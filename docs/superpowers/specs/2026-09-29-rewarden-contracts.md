@@ -32,6 +32,7 @@ Every endpoint except `PUT /device` additionally requires that the caller's devi
 | A4 | `POST /requests/{id}/response` | `proto::relay::RelayResponse` | 204 | 404 `not_found`; 409 `already_answered`; 400 `bad_version` if `v != 1` |
 | A5 | `GET /pairings/{id}` | — | 200 `proto::pairing::PairingRequest` (marks delivered) | 404 |
 | A6 | `POST /pairings/{id}/response` | `proto::pairing::PairingResponse` | 200 `PairingResult { connection_id: Option<ConnectionId> }` (`None` when denied) | 404; 409 `wrong_code` — the pairing is cancelled and the browser shows failure |
+| A6b | `POST /pairings/claim` | `proto::pairing::PairingClaim { v, user_code }` (the code of a computer's QR code, RFC 8628 device flow) | 200 `PairingRequest`, already delivered, answered with A6 | 404 unknown or expired code; 409 `already_answered` another account claimed it; 429 |
 | A7 | `GET /connections` | — | 200 `Connections { connections: Vec<ConnectionInfo> }` | 403 |
 | A8 | `DELETE /connections/{id}` | — | 204 (deletes connection + its refresh tokens; its access tokens stop working immediately) | 404 |
 
