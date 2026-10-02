@@ -7,7 +7,7 @@
 # on macOS a download made with curl carries no quarantine flag, so Gatekeeper lets the (unsigned) program run.
 #
 # On a computer with a screen it then offers the Reins app (the menu bar / tray app that does the rest with a window;
-# REINS_APP=yes or no answers for you). Without the app it finishes the setup here: pairs with your phone (when not
+# REINS_APP=yes or no answers for you; on a Mac it goes to /Applications, or REINS_APP_DIR). Without the app it finishes the setup here: pairs with your phone (when not
 # paired yet), adds Reins to every AI harness it finds (Claude Code, Codex, Gemini CLI, Cursor) and starts the
 # background service with git going through it. REWARDEN_NO_SETUP=1 skips that; REWARDEN_SERVER pairs with another
 # server than the default one.
@@ -142,8 +142,8 @@ install_app_macos() {
     mnt="$tmp/mnt"
     mkdir -p "$mnt"
     hdiutil attach -quiet -nobrowse -readonly -mountpoint "$mnt" "$tmp/Reins.dmg" || return 1
-    apps=/Applications
-    [ -w "$apps" ] || apps="$HOME/Applications"
+    apps="${REINS_APP_DIR:-/Applications}"
+    [ -w "$apps" ] || [ -n "${REINS_APP_DIR:-}" ] || apps="$HOME/Applications"
     mkdir -p "$apps"
     rm -rf "$apps/Reins.app"
     if ! ditto "$mnt/Reins.app" "$apps/Reins.app"; then
