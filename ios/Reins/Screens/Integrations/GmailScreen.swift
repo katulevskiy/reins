@@ -1,12 +1,9 @@
 import SwiftUI
 
-/// Placeholder: replaced by the real screen.
+/// The Gmail accounts: add as many as you like, or remove any of them. The same page as every other integration;
+/// Gmail only has its own calls in the core.
 struct GmailScreen: View {
-
     var body: some View {
-        EmptyState(symbol: "hammer", title: "Gmail", message: "Coming soon.")
-            .frame(maxWidth: .infinity, maxHeight: .infinity)
-            .pageBackground()
-            .navigationTitle("Gmail")
+        AccountsScreen(serviceId: "gmail")
     }
 }

@@ -10,14 +10,7 @@ use jsonwebtoken::{Algorithm, EncodingKey, Header};
 use rewarden_proto::pairing::PushMessage;
 use serde_json::Value;
 
-use crate::{
-    CONFIG,
-    db::{
-        DbPool,
-        models::{RewardenDevice, UserId},
-    },
-    http_client::make_http_request,
-};
+use crate::{CONFIG, http_client::make_http_request};
 
 pub const FCM_SCOPE: &str = "https://www.googleapis.com/auth/firebase.messaging";
 pub const DEFAULT_TOKEN_URI: &str = "https://oauth2.googleapis.com/token";
@@ -97,6 +90,7 @@ pub fn message_body(fcm_token: &str, push: &PushMessage) -> Value {
     })
 }
 
+/// The outcome of a push that reached the push service (FCM or APNs).
 #[derive(Debug, PartialEq, Eq)]
 pub enum SendOutcome {
     Sent,
@@ -206,30 +200,9 @@ static SENDER: LazyLock<Option<FcmSender>> = LazyLock::new(|| {
     }
 });
 
-/// Wakes the approval device without blocking the caller (Decision 31).
-pub fn spawn_push(pool: DbPool, user_uuid: UserId, fcm_token: Option<String>, push: PushMessage) {
-    let Some(sender) = SENDER.as_ref() else {
-        debug!("Rewarden push not configured; the phone must poll for {:?} {}", push.t, push.id);
-        return;
-    };
-    let Some(fcm_token) = fcm_token else {
-        debug!("Rewarden approval device of {user_uuid} has no FCM token; it must poll");
-        return;
-    };
-    tokio::spawn(async move {
-        match sender.send(&fcm_token, &push).await {
-            Ok(SendOutcome::Sent) => debug!("Rewarden push {:?} {} sent", push.t, push.id),
-            Ok(SendOutcome::Unregistered) => {
-                warn!("FCM token of the Rewarden device of {user_uuid} is unregistered; clearing it");
-                if let Ok(conn) = pool.get().await
-                    && let Err(e) = RewardenDevice::clear_fcm_token(&user_uuid, &fcm_token, &conn).await
-                {
-                    warn!("Could not clear the Rewarden FCM token: {e:?}");
-                }
-            }
-            Err(e) => warn!("Rewarden push failed: {e}"),
-        }
-    });
+/// The FCM sender, when `REWARDEN_FCM_SERVICE_ACCOUNT` is configured.
+pub fn sender() -> Option<&'static FcmSender> {
+    SENDER.as_ref()
 }
 
 #[cfg(test)]

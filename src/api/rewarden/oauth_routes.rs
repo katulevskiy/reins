@@ -22,7 +22,7 @@ use rocket::{
 use serde_json::{Value, json};
 
 use super::{
-    HUB, REFRESH_TOKEN_SECS, fcm,
+    HUB, REFRESH_TOKEN_SECS,
     limits::{self, rate_limited_text, retry_secs},
     now_unix,
     oauth::{
@@ -34,6 +34,7 @@ use super::{
     oauth_state::{AuthSession, OAUTH, StartedPairing},
     outbound, pages,
     pairing::{PairingClient, PairingStatus, sanitize_client_name},
+    push,
 };
 use crate::{
     CONFIG,
@@ -366,7 +367,7 @@ async fn authorize_post(data: Data<'_>, ip: ClientIp, conn: DbConn, pool: &State
         return error_flow(Status::ServiceUnavailable, "Server busy", "Please try again in a few minutes.");
     };
     if let Some((user_uuid, device)) = &target {
-        fcm::spawn_push(
+        push::spawn_push(
             pool.inner().clone(),
             user_uuid.clone(),
             device.fcm_token.clone(),

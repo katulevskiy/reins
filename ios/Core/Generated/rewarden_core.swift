@@ -2592,6 +2592,12 @@ public protocol RewardenCoreProtocol: AnyObject, Sendable {
      */
     func handlePush(kind: String, id: String) async throws 
     
+    /**
+     * Like `handle_push` without Autopilot's pass, for a process that cannot run the model (the iOS notification
+     * extension): the item waits unjudged, and the app's next pass judges it.
+     */
+    func handlePushDeferringAutopilot(kind: String, id: String) async throws 
+    
     func login(serverUrl: String, email: String, password: String, totp: String?) async throws  -> SessionInfo
     
     /**
@@ -3330,6 +3336,26 @@ open func handlePush(kind: String, id: String)async throws   {
         try  await uniffiRustCallAsync(
             rustFutureFunc: {
                 uniffi_rewarden_core_fn_method_rewardencore_handle_push(
+                        self.uniffiCloneHandle(),FfiConverterString.lower(kind),FfiConverterString.lower(id)
+                )
+            },
+            pollFunc: ffi_rewarden_core_rust_future_poll_void,
+            completeFunc: ffi_rewarden_core_rust_future_complete_void,
+            freeFunc: ffi_rewarden_core_rust_future_free_void,
+            liftFunc: { $0 },
+            errorHandler: FfiConverterTypeCoreError_lift
+        )
+}
+    
+    /**
+     * Like `handle_push` without Autopilot's pass, for a process that cannot run the model (the iOS notification
+     * extension): the item waits unjudged, and the app's next pass judges it.
+     */
+open func handlePushDeferringAutopilot(kind: String, id: String)async throws   {
+    return
+        try  await uniffiRustCallAsync(
+            rustFutureFunc: {
+                uniffi_rewarden_core_fn_method_rewardencore_handle_push_deferring_autopilot(
                         self.uniffiCloneHandle(),FfiConverterString.lower(kind),FfiConverterString.lower(id)
                 )
             },
@@ -11204,6 +11230,9 @@ private let initializationResult: InitializationResult = {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_rewarden_core_checksum_method_rewardencore_handle_push() != 24778) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_rewarden_core_checksum_method_rewardencore_handle_push_deferring_autopilot() != 33611) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_rewarden_core_checksum_method_rewardencore_login() != 49678) {

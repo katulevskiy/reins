@@ -286,6 +286,27 @@ async fn without_a_model_requests_wait_as_before_and_say_why() {
 }
 
 #[tokio::test]
+async fn a_push_parked_without_the_model_is_judged_by_the_next_pass() {
+    let env = env(true).await;
+    env.mode(None, AutopilotMode::Auto).await;
+    env.unlock("gmail/send").await;
+    env.model.set_default(logits(0.999, 0.0005, 0.0005));
+    let relayed = serde_json::to_value(request("r1", OLD, email("friend@x.com", "hi"))).unwrap();
+    mount(&env.server, "GET", "/rewarden/api/requests/r1", 200, relayed).await;
+
+    // The notification extension parks it: listed, not judged, nothing sent.
+    env.core.handle_push_deferring_autopilot("req".to_owned(), "r1".to_owned()).await.unwrap();
+    assert_eq!(env.waiting().await, ["r1"]);
+    assert!(env.core.autopilot_suggestion("r1".to_owned()).await.unwrap().is_none());
+    assert_eq!(env.sent().await, 0);
+
+    // The app's next pass, with the model, judges it (it asks: the recipient is new for this connection).
+    env.deliver(json!({"requests": [], "pairings": [], "blobs": []})).await;
+    let s = env.suggestion("r1").await;
+    assert!(s.judged && !s.reason.contains("could not judge"), "{s:?}");
+}
+
+#[tokio::test]
 async fn a_failing_model_never_loses_a_request() {
     let env = env(true).await;
     env.mode(None, AutopilotMode::Auto).await;
