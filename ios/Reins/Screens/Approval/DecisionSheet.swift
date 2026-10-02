@@ -73,17 +73,14 @@ struct DecisionBar: View {
 
     var body: some View {
         GlassEffectContainer(spacing: 12) {
-            GeometryReader { geo in
-                let deny = (geo.size.width - 12) / 2.3
-                HStack(spacing: 12) {
+            RatioRow(spacing: 12, ratio: 1 / 1.3) {
                     Button(action: onDeny) {
                         Text(denyTitle)
                             .font(RFont.sans(17, .semibold))
                             .foregroundStyle(Palette.text)
-                            .frame(maxWidth: .infinity, minHeight: 50)
+                            .frame(maxWidth: .infinity, minHeight: 40)
                     }
                     .buttonStyle(.glass)
-                    .frame(width: deny)
                     .accessibilityIdentifier("deny")
 
                     Button(action: onApprove) {
@@ -93,21 +90,48 @@ struct DecisionBar: View {
                         }
                         .font(RFont.sans(17, .semibold))
                         .foregroundStyle(accent ? Color.white : Palette.background)
-                        .frame(maxWidth: .infinity, minHeight: 50)
+                        .frame(maxWidth: .infinity, minHeight: 40)
                     }
                     .buttonStyle(.glassProminent)
                     .tint(accent ? Palette.accent : Palette.text)
                     .disabled(!approveEnabled)
                     .opacity(approveEnabled ? 1 : 0.55)
                     .accessibilityIdentifier("approve")
-                }
             }
-            .frame(height: 50)
         }
         .disabled(busy)
         .padding(.horizontal, 16)
         .padding(.top, 10)
         .padding(.bottom, 10)
+    }
+}
+
+/// Two views side by side, the first `ratio` times as wide as the second (Deny is narrower than Approve), as tall as
+/// the taller one needs.
+private struct RatioRow: Layout {
+    var spacing: CGFloat
+    var ratio: CGFloat
+
+    private func widths(_ total: CGFloat) -> (CGFloat, CGFloat) {
+        let free = max(total - spacing, 0)
+        let first = free * ratio / (1 + ratio)
+        return (first, free - first)
+    }
+
+    func sizeThatFits(proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) -> CGSize {
+        let width = proposal.width ?? 360
+        let (a, b) = widths(width)
+        let heights = zip(subviews, [a, b]).map { $0.sizeThatFits(ProposedViewSize(width: $1, height: nil)).height }
+        return CGSize(width: width, height: heights.max() ?? 0)
+    }
+
+    func placeSubviews(in bounds: CGRect, proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) {
+        let (a, b) = widths(bounds.width)
+        var x = bounds.minX
+        for (view, w) in zip(subviews, [a, b]) {
+            view.place(at: CGPoint(x: x, y: bounds.midY), anchor: .leading, proposal: ProposedViewSize(width: w, height: bounds.height))
+            x += w + spacing
+        }
     }
 }
 

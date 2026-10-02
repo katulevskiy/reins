@@ -79,25 +79,36 @@ struct ActivityScreen: View {
 
     // MARK: Parts
 
+    /// The title with the pills beside it, or under it when the column is too narrow for both (an iPad's content
+    /// column).
     private var header: some View {
-        PageHeader(title: "Activity") {
-            HStack(spacing: 8) {
-                if let autopilot = model.autopilot {
-                    ActivityModePill(settings: autopilot) {
-                        feedback.play(.tap)
-                        model.show(.autopilot)
-                    }
-                }
-                GlassPill(symbol: "square.grid.2x2", text: "Integrations") {
-                    feedback.play(.tap)
-                    model.show(.integrations)
-                }
-                .accessibilityIdentifier("integrations")
+        ViewThatFits(in: .horizontal) {
+            PageHeader(title: "Activity") { pills }
+            VStack(alignment: .leading, spacing: 10) {
+                PageHeader(title: "Activity") { EmptyView() }
+                pills
             }
         }
         .padding(.horizontal, 20)
         .padding(.top, 12)
         .padding(.bottom, 4)
+    }
+
+    private var pills: some View {
+        HStack(spacing: 8) {
+            if let autopilot = model.autopilot {
+                ActivityModePill(settings: autopilot) {
+                    feedback.play(.tap)
+                    model.show(.autopilot)
+                }
+            }
+            GlassPill(symbol: "square.grid.2x2", text: "Integrations") {
+                feedback.play(.tap)
+                model.show(.integrations)
+            }
+            .accessibilityIdentifier("integrations")
+        }
+        .fixedSize()
     }
 
     @ViewBuilder private var banners: some View {
@@ -228,6 +239,8 @@ private struct NewMarker: View {
 private struct PendingCard: View {
     var item: PendingItem
     var onOpen: () -> Void
+    /// In a narrow column (an iPad's content column) the text gets the room and a chevron stands in for "Review".
+    @State private var narrow = false
 
     var body: some View {
         // An upload waits until the server deletes it (an hour or so), not for an AI that is holding on: no countdown.
@@ -262,13 +275,20 @@ private struct PendingCard: View {
                             .foregroundStyle(timeColor(u))
                             .monospacedDigit()
                     }
-                    Text("Review")
-                        .font(RFont.sans(15, .semibold))
-                        .foregroundStyle(.white)
-                        .padding(.horizontal, 16)
-                        .padding(.vertical, 9)
-                        .background(Palette.accent, in: Capsule())
-                        .accessibilityHidden(true)
+                    if narrow {
+                        Image(systemName: "chevron.right")
+                            .font(.system(size: 14, weight: .semibold))
+                            .foregroundStyle(Palette.accent)
+                            .accessibilityHidden(true)
+                    } else {
+                        Text("Review")
+                            .font(RFont.sans(15, .semibold))
+                            .foregroundStyle(.white)
+                            .padding(.horizontal, 16)
+                            .padding(.vertical, 9)
+                            .background(Palette.accent, in: Capsule())
+                            .accessibilityHidden(true)
+                    }
                 }
                 .padding(14)
                 .background(Palette.elevated, in: RoundedRectangle(cornerRadius: 18, style: .continuous))
@@ -278,6 +298,7 @@ private struct PendingCard: View {
             .accessibilityElement(children: .combine)
             .accessibilityHint("Review")
         }
+        .onGeometryChange(for: Bool.self) { $0.size.width < 370 } action: { narrow = $0 }
         .contextMenu {
             Button("Review", systemImage: "checkmark.shield", action: onOpen)
             Button("Copy", systemImage: "doc.on.doc") { UIPasteboard.general.string = item.headline }
