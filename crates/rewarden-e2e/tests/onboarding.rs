@@ -30,7 +30,7 @@ fn http() -> reqwest::Client {
 async fn sync_as_a_bitwarden_client(server: &Server) -> (reqwest::Client, String, Value) {
     let http = http();
     let url = ServerUrl::parse(&server.base).unwrap();
-    let tokens = VaultClient::new(&http, &url)
+    let (tokens, _) = VaultClient::new(&http, &url)
         .login(EMAIL, Zeroizing::new(PASSWORD.to_owned()), None, "another-client")
         .await
         .expect("a second client signs in with the same password");

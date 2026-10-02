@@ -1,22 +1,28 @@
 //! Phone-facing API (contracts §A) under `{domain_path}/rewarden/api`.
 //!
 //! Auth is the normal Vaultwarden login (`Headers`); every endpoint but A1 also requires the
-//! caller to be the user's registered approval device.
+//! caller to be the user's registered approval device ([`is_caller`]: its Vaultwarden device and its device key). A1
+//! itself lets another device take that role only with a proof ([`check_takeover`]).
 
 use std::time::Duration;
 
 use rewarden_proto::{
     check_version,
     device::{
-        ApiError, Connections, DeviceRegistered, DeviceRegistration, MAX_PENDING_WAIT_SECS, PairingResult, Pending,
-        codes,
+        ApiError, Connections, DEVICE_KEY_HEADER, DeviceRegistered, DeviceRegistration, MAX_PENDING_WAIT_SECS,
+        PairingResult, Pending, TAKEOVER_REFUSED, codes, device_key_hash,
     },
     ids::{ConnectionId, PairingId, RequestId},
     pairing::{PairingClaim, PairingRequest, PairingResponse, PushKind, PushMessage},
     relay::{RelayRequest, RelayResponse},
 };
 use rocket::{
-    Catcher, Data, Route, State, data::ToByteUnit, http::Status, response::status::Custom, serde::json::Json,
+    Catcher, Data, Request, Route, State,
+    data::ToByteUnit,
+    http::Status,
+    request::{FromRequest, Outcome},
+    response::status::Custom,
+    serde::json::Json,
 };
 use serde::de::DeserializeOwned;
 use serde_json::Value;
@@ -139,9 +145,40 @@ pub fn user_key(headers: &Headers) -> String {
     headers.user.uuid.to_string()
 }
 
-pub async fn require_approval_device(headers: &Headers, conn: &DbConn) -> PhoneResult<()> {
+/// The caller's device key ([`DEVICE_KEY_HEADER`]) as the server keeps it ([`device_key_hash`]); `None` when the
+/// header is missing or malformed.
+pub struct DeviceKey(Option<String>);
+
+impl DeviceKey {
+    pub fn hash(&self) -> Option<&str> {
+        self.0.as_deref()
+    }
+}
+
+#[rocket::async_trait]
+impl<'r> FromRequest<'r> for DeviceKey {
+    type Error = ();
+
+    async fn from_request(request: &'r Request<'_>) -> Outcome<Self, ()> {
+        Outcome::Success(Self(request.headers().get_one(DEVICE_KEY_HEADER).and_then(device_key_hash)))
+    }
+}
+
+/// Whether the approval device `row` is the caller: the same Vaultwarden device, with the same device key. The device
+/// id alone proves nothing (the account's device list shows it, and a sign-in may claim any id). A row kept before
+/// device keys existed matches on the device alone, until that device registers again with its key.
+pub fn is_caller(row: &RewardenDevice, headers: &Headers, key: &DeviceKey) -> bool {
+    row.device_uuid == headers.device.uuid
+        && match (&row.key_hash, key.hash()) {
+            (None, _) => true,
+            (Some(kept), Some(given)) => crate::crypto::ct_eq(kept, given),
+            (Some(_), None) => false,
+        }
+}
+
+pub async fn require_approval_device(headers: &Headers, key: &DeviceKey, conn: &DbConn) -> PhoneResult<()> {
     match RewardenDevice::find_by_user(&headers.user.uuid, conn).await {
-        Some(device) if device.device_uuid == headers.device.uuid => Ok(()),
+        Some(device) if is_caller(&device, headers, key) => Ok(()),
         _ => Err(api_err(
             Status::Forbidden,
             codes::NOT_APPROVAL_DEVICE,
@@ -157,11 +194,35 @@ fn answer_error(e: &AnswerError) -> Custom<Json<ApiError>> {
     }
 }
 
-/// A1: makes the calling device the approval device; tells the replaced one via push.
+/// Whether a device that is not the account's approval device may take the role: an approval of its "add another
+/// phone" request (spent here), or the master password hash of the account secret or master password. Wrong hashes
+/// count against the account ([`super::limits::DEVICE_PROOFS`]).
+fn check_takeover(headers: &Headers, key: &DeviceKey, master_password_hash: Option<&str>) -> PhoneResult<()> {
+    let user = user_key(headers);
+    if HUB.joins.take_takeover(&user, &headers.device.uuid.to_string(), key.hash(), now_unix()) {
+        return Ok(());
+    }
+    let Some(hash) = master_password_hash.filter(|h| !h.is_empty()) else {
+        return Err(api_err(Status::Forbidden, codes::PROOF_REQUIRED, TAKEOVER_REFUSED));
+    };
+    if let Err(wait) = super::limits::DEVICE_PROOFS.check(&user) {
+        return Err(rate_limited("too many wrong recovery codes or passwords for this account", wait));
+    }
+    if headers.user.check_valid_password(hash) {
+        return Ok(());
+    }
+    super::limits::DEVICE_PROOFS.fail(&user);
+    warn!("Rewarden: a device of user {user} sent a wrong proof to become the approval device");
+    Err(api_err(Status::Forbidden, codes::WRONG_PROOF, TAKEOVER_REFUSED))
+}
+
+/// A1: makes the calling device the approval device; tells the replaced one via push. The account's first approval
+/// device, and the approval device registering again, need no proof; any other device needs one ([`check_takeover`]).
 #[put("/rewarden/api/device", data = "<data>")]
 async fn put_device(
     data: Data<'_>,
     headers: Headers,
+    key: DeviceKey,
     conn: DbConn,
     pool: &State<DbPool>,
 ) -> PhoneResult<Json<DeviceRegistered>> {
@@ -172,15 +233,23 @@ async fn put_device(
         serde_json::from_slice(&body).map_err(|e| bad_request(format!("invalid body: {e}")))?
     };
     let fcm_token = normalize_fcm_token(registration.fcm_token).map_err(bad_request)?;
+    let current = RewardenDevice::find_by_user(&headers.user.uuid, &conn).await;
+    if let Some(current) = &current
+        && !is_caller(current, &headers, &key)
+    {
+        check_takeover(&headers, &key, registration.master_password_hash.as_deref())?;
+    }
     let row = RewardenDevice {
         user_uuid: headers.user.uuid.clone(),
         device_uuid: headers.device.uuid.clone(),
         fcm_token,
         updated_at: now_unix(),
+        key_hash: key.hash().map(str::to_owned),
     };
     let previous = row.replace(&conn).await.map_err(|e| internal(&e))?;
-    let replaced = previous.filter(|p| p.device_uuid != row.device_uuid);
-    if let Some(old) = &replaced {
+    let replaced = previous.filter(|p| !is_caller(p, &headers, &key));
+    // Not to this phone itself (the same push token: it lost its device key and proved itself again).
+    if let Some(old) = replaced.as_ref().filter(|old| old.fcm_token != row.fcm_token) {
         push::spawn_push(
             pool.inner().clone(),
             headers.user.uuid.clone(),
@@ -199,8 +268,8 @@ async fn put_device(
 /// The integrations that have an account on the phone (ids only) and the MCP servers added there (tools, never
 /// tokens); the server lists just their tools to the AI.
 #[put("/rewarden/api/services", data = "<data>")]
-async fn put_services(data: Data<'_>, headers: Headers, conn: DbConn) -> PhoneResult<Status> {
-    require_approval_device(&headers, &conn).await?;
+async fn put_services(data: Data<'_>, headers: Headers, key: DeviceKey, conn: DbConn) -> PhoneResult<Status> {
+    require_approval_device(&headers, &key, &conn).await?;
     drop(conn);
     let report: rewarden_proto::device::ServicesReport =
         serde_json::from_slice(&read_body(data).await?).map_err(|e| bad_request(format!("invalid body: {e}")))?;
@@ -217,8 +286,13 @@ async fn put_services(data: Data<'_>, headers: Headers, conn: DbConn) -> PhoneRe
 
 /// A2: undelivered requests and pairings; long-polls up to `wait` seconds when empty.
 #[get("/rewarden/api/pending?<wait>")]
-async fn get_pending(wait: Option<String>, headers: Headers, conn: DbConn) -> PhoneResult<Json<Pending>> {
-    require_approval_device(&headers, &conn).await?;
+async fn get_pending(
+    wait: Option<String>,
+    headers: Headers,
+    key: DeviceKey,
+    conn: DbConn,
+) -> PhoneResult<Json<Pending>> {
+    require_approval_device(&headers, &key, &conn).await?;
     // Never hold a pooled DB connection during a long-poll.
     drop(conn);
     let _poll = super::limits::DEVICE_POLLS
@@ -230,15 +304,21 @@ async fn get_pending(wait: Option<String>, headers: Headers, conn: DbConn) -> Ph
 
 /// A3
 #[get("/rewarden/api/requests/<id>")]
-async fn get_request(id: &str, headers: Headers, conn: DbConn) -> PhoneResult<Json<RelayRequest>> {
-    require_approval_device(&headers, &conn).await?;
+async fn get_request(id: &str, headers: Headers, key: DeviceKey, conn: DbConn) -> PhoneResult<Json<RelayRequest>> {
+    require_approval_device(&headers, &key, &conn).await?;
     HUB.relay.fetch(&user_key(&headers), &RequestId::from(id)).map(Json).ok_or_else(not_found)
 }
 
 /// A4
 #[post("/rewarden/api/requests/<id>/response", data = "<data>")]
-async fn post_request_response(id: &str, data: Data<'_>, headers: Headers, conn: DbConn) -> PhoneResult<Status> {
-    require_approval_device(&headers, &conn).await?;
+async fn post_request_response(
+    id: &str,
+    data: Data<'_>,
+    headers: Headers,
+    key: DeviceKey,
+    conn: DbConn,
+) -> PhoneResult<Status> {
+    require_approval_device(&headers, &key, &conn).await?;
     let response: RelayResponse = parse_versioned(&read_body(data).await?)?;
     HUB.relay.answer(&user_key(&headers), &RequestId::from(id), response.outcome).map_err(|e| answer_error(&e))?;
     Ok(Status::NoContent)
@@ -246,8 +326,8 @@ async fn post_request_response(id: &str, data: Data<'_>, headers: Headers, conn:
 
 /// A5
 #[get("/rewarden/api/pairings/<id>")]
-async fn get_pairing(id: &str, headers: Headers, conn: DbConn) -> PhoneResult<Json<PairingRequest>> {
-    require_approval_device(&headers, &conn).await?;
+async fn get_pairing(id: &str, headers: Headers, key: DeviceKey, conn: DbConn) -> PhoneResult<Json<PairingRequest>> {
+    require_approval_device(&headers, &key, &conn).await?;
     HUB.pairings.fetch(&user_key(&headers), &PairingId::from(id)).map(Json).ok_or_else(not_found)
 }
 
@@ -257,9 +337,10 @@ async fn post_pairing_response(
     id: &str,
     data: Data<'_>,
     headers: Headers,
+    key: DeviceKey,
     conn: DbConn,
 ) -> PhoneResult<Json<PairingResult>> {
-    require_approval_device(&headers, &conn).await?;
+    require_approval_device(&headers, &key, &conn).await?;
     let response: PairingResponse = parse_versioned(&read_body(data).await?)?;
     let pairing_id = PairingId::from(id);
     match HUB.pairings.answer(&user_key(&headers), &pairing_id, &response) {
@@ -302,8 +383,13 @@ async fn post_pairing_response(
 /// A6b: the phone scanned a computer's QR code (or opened its link): the pairing its code stands for, started now for
 /// this account and answered with A6 like any other.
 #[post("/rewarden/api/pairings/claim", data = "<data>")]
-async fn post_pairing_claim(data: Data<'_>, headers: Headers, conn: DbConn) -> PhoneResult<Json<PairingRequest>> {
-    require_approval_device(&headers, &conn).await?;
+async fn post_pairing_claim(
+    data: Data<'_>,
+    headers: Headers,
+    key: DeviceKey,
+    conn: DbConn,
+) -> PhoneResult<Json<PairingRequest>> {
+    require_approval_device(&headers, &key, &conn).await?;
     drop(conn);
     let claim: PairingClaim = parse_versioned(&read_body_limited(data, 4096).await?)?;
     // Counted with the pairings started for this account's email: every claim may start one.
@@ -328,8 +414,8 @@ async fn post_pairing_claim(data: Data<'_>, headers: Headers, conn: DbConn) -> P
 
 /// A7
 #[get("/rewarden/api/connections")]
-async fn get_connections(headers: Headers, conn: DbConn) -> PhoneResult<Json<Connections>> {
-    require_approval_device(&headers, &conn).await?;
+async fn get_connections(headers: Headers, key: DeviceKey, conn: DbConn) -> PhoneResult<Json<Connections>> {
+    require_approval_device(&headers, &key, &conn).await?;
     let connections = RewardenConnection::find_by_user(&headers.user.uuid, &conn).await;
     Ok(Json(Connections {
         connections: connections.iter().map(RewardenConnection::to_info).collect(),
@@ -338,8 +424,8 @@ async fn get_connections(headers: Headers, conn: DbConn) -> PhoneResult<Json<Con
 
 /// A8: access tokens die at once because every MCP call re-checks the connection.
 #[delete("/rewarden/api/connections/<id>")]
-async fn delete_connection(id: &str, headers: Headers, conn: DbConn) -> PhoneResult<Status> {
-    require_approval_device(&headers, &conn).await?;
+async fn delete_connection(id: &str, headers: Headers, key: DeviceKey, conn: DbConn) -> PhoneResult<Status> {
+    require_approval_device(&headers, &key, &conn).await?;
     let Some(connection) = RewardenConnection::find_by_uuid_and_user(id, &headers.user.uuid, &conn).await else {
         return Err(not_found());
     };

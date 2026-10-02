@@ -18,6 +18,9 @@ pub struct RewardenDevice {
     pub fcm_token: Option<String>,
     /// Unix seconds.
     pub updated_at: i64,
+    /// SHA-256 (hex) of the device's device key (`rewarden_proto::device::DEVICE_KEY_HEADER`); `None` for a row
+    /// from before device keys, or a client that sent none.
+    pub key_hash: Option<String>,
 }
 
 impl RewardenDevice {
@@ -84,6 +87,7 @@ mod tests {
             device_uuid: DeviceId::from(dev.to_owned()),
             fcm_token: token.map(str::to_owned),
             updated_at: 1,
+            key_hash: Some(format!("key-of-{dev}")),
         }
     }
 
@@ -98,6 +102,8 @@ mod tests {
         let now = q_find_by_user(&mut c, &UserId::from("u1".to_owned())).unwrap();
         assert_eq!(now.device_uuid, DeviceId::from("d2".to_owned()));
         assert_eq!(now.fcm_token, None);
+        assert_eq!(now.key_hash.as_deref(), Some("key-of-d2"));
+        assert_eq!(prev.key_hash.as_deref(), Some("key-of-d1"));
     }
 
     #[test]

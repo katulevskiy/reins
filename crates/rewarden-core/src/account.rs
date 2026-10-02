@@ -165,7 +165,8 @@ impl Engine {
     }
 
     /// Opens the account's keys with its recovery code (kept from then on, like on the phone that made it), or with
-    /// the master password of an account that has one.
+    /// the master password of an account that has one. Either also lets this phone take the approval role from
+    /// another (`register_device` sends its master password hash).
     pub async fn unlock_account(&self, code_or_password: Zeroizing<String>) -> Result<(), CoreError> {
         let session = self.session()?;
         let (user_id, wrapped) = self.account_profile(&session).await?;
@@ -181,16 +182,19 @@ impl Engine {
         }
         let kdf = VaultClient::new(&session.http, &session.server).prelogin(&email).await?;
         let salt = email.clone();
-        let key = tokio::task::spawn_blocking(move || -> Result<VaultKey, CoreError> {
-            let stretched = crypto::master_key(&code_or_password, &salt, kdf)?.stretch();
-            let raw = stretched
+        let (key, proof) = tokio::task::spawn_blocking(move || -> Result<(VaultKey, Zeroizing<String>), CoreError> {
+            let master = crypto::master_key(&code_or_password, &salt, kdf)?;
+            let raw = master
+                .stretch()
                 .decrypt(&wrapped)
                 .map_err(|_| CoreError::invalid("That is neither the recovery code nor the master password."))?;
-            VaultKey::from_bytes(&raw)
+            Ok((VaultKey::from_bytes(&raw)?, crypto::master_password_hash(&master, &code_or_password)))
         })
         .await
         .map_err(interrupted)??;
         self.keep_vault_key(&email, &key)?;
+        // What lets this phone take the approval role from another (`register_device`).
+        session.keep_proof(proof);
         Ok(())
     }
 

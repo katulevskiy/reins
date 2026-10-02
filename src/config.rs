@@ -587,6 +587,10 @@ make_config! {
         rewarden_register_ratelimit_max_burst: u32, false, def, 10;
         /// Long-polls per device |> Concurrent GET /rewarden/api/pending long-polls of one approval device. 0 disables the limit.
         rewarden_device_max_polls:      u32,    false,  def,    4;
+        /// Wrong takeover proofs per account |> Wrong proofs (master password hashes) one account's other devices may send with PUT /rewarden/api/device to become its approval device, within the window below; then every attempt is refused until the oldest ages out. 0 disables the limit.
+        rewarden_device_proof_max_failures: u32, false, def,    5;
+        /// Wrong takeover proofs window (seconds) |> The window the limit above counts wrong proofs in.
+        rewarden_device_proof_window_seconds: u64, false, def,  900;
         /// Apple team id (app links) |> The Apple Developer team id of the Reins iOS app, so that pairing links (`{DOMAIN}/pair`) open the app (`/.well-known/apple-app-site-association`). Empty: the APNs team id, if set.
         rewarden_apple_team_id:         String, false,  def,    String::new();
         /// Android signing certificates (app links) |> SHA-256 fingerprints (`AB:CD:...`, comma-separated) of the certificates the Reins Android app is signed with, so that pairing links open the app (`/.well-known/assetlinks.json`). Empty: links open the page.

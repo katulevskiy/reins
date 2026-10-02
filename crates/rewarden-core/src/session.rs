@@ -26,6 +26,12 @@ pub struct Session {
     pub http: reqwest::Client,
     store: Arc<Store>,
     state: Mutex<TokenState>,
+    /// This phone's device key, sent with every phone-API call (`None`: the store could not make one; the server then
+    /// does not take this phone for the approval device).
+    device_key: Option<String>,
+    /// The master password hash of the password this session signed in or unlocked with, kept until the phone is
+    /// the approval device: the proof `PUT /device` wants when another device approves for the account.
+    proof: std::sync::Mutex<Option<Zeroizing<String>>>,
 }
 
 impl Session {
@@ -41,6 +47,7 @@ impl Session {
     ) -> Self {
         let access =
             access.map(|(token, secs)| (token, Instant::now() + Duration::from_secs(u64::try_from(secs).unwrap_or(0))));
+        let device_key = store.device_key().map_err(|e| log::warn!("no device key: {e}")).ok();
         Self {
             server,
             email,
@@ -50,7 +57,31 @@ impl Session {
                 access,
                 refresh,
             }),
+            device_key,
+            proof: std::sync::Mutex::default(),
         }
+    }
+
+    /// The value of the device key header ([`rewarden_proto::device::DEVICE_KEY_HEADER`]).
+    pub fn device_key(&self) -> Option<&str> {
+        self.device_key.as_deref()
+    }
+
+    fn proof_slot(&self) -> std::sync::MutexGuard<'_, Option<Zeroizing<String>>> {
+        self.proof.lock().unwrap_or_else(std::sync::PoisonError::into_inner)
+    }
+
+    /// Keeps the master password hash of the password just used, for taking the approval role.
+    pub(crate) fn keep_proof(&self, master_password_hash: Zeroizing<String>) {
+        *self.proof_slot() = Some(master_password_hash);
+    }
+
+    pub(crate) fn proof(&self) -> Option<Zeroizing<String>> {
+        self.proof_slot().clone()
+    }
+
+    pub(crate) fn forget_proof(&self) {
+        *self.proof_slot() = None;
     }
 
     pub fn from_login(
@@ -118,7 +149,8 @@ macro_rules! api_call {
         loop {
             let outcome = match session.access_token().await {
                 Ok(token) => {
-                    let $api = $crate::phone_api::PhoneApi::new(&session.http, &session.server, &token);
+                    let $api = $crate::phone_api::PhoneApi::new(&session.http, &session.server, &token)
+                        .with_device_key(session.device_key());
                     let result = $body.await;
                     result
                 }

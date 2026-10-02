@@ -357,6 +357,7 @@ table! {
         device_uuid -> Text,
         fcm_token -> Nullable<Text>,
         updated_at -> BigInt,
+        key_hash -> Nullable<Text>,
     }
 }
 

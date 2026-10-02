@@ -4,7 +4,9 @@
 use std::time::Duration;
 
 use reqwest::{Method, RequestBuilder, StatusCode};
-use rewarden_proto::device::{Connections, DeviceRegistered, DeviceRegistration, PairingResult, Pending};
+use rewarden_proto::device::{
+    Connections, DEVICE_KEY_HEADER, DeviceRegistered, DeviceRegistration, PairingResult, Pending,
+};
 use rewarden_proto::pairing::{PairingClaim, PairingRequest, PairingResponse};
 use rewarden_proto::relay::{RelayRequest, RelayResponse};
 use serde::de::DeserializeOwned;
@@ -70,6 +72,14 @@ impl ApiFailure {
     }
 }
 
+/// Adds the device key header to a phone-API request (never to a request to anything but the Reins server).
+pub(crate) fn with_device_key(builder: RequestBuilder, device_key: Option<&str>) -> RequestBuilder {
+    match device_key {
+        Some(key) => builder.header(DEVICE_KEY_HEADER, key),
+        None => builder,
+    }
+}
+
 /// Ids are interpolated into URL paths: only `[A-Za-z0-9_-]{1,64}` is accepted.
 pub fn check_id(id: &str) -> Result<(), CoreError> {
     if !id.is_empty()
@@ -86,6 +96,7 @@ pub struct PhoneApi<'a> {
     http: &'a reqwest::Client,
     server: &'a ServerUrl,
     token: &'a str,
+    device_key: Option<&'a str>,
 }
 
 impl<'a> PhoneApi<'a> {
@@ -94,11 +105,22 @@ impl<'a> PhoneApi<'a> {
             http,
             server,
             token,
+            device_key: None,
         }
     }
 
+    /// Sends this phone's device key with every call ([`DEVICE_KEY_HEADER`]).
+    #[must_use]
+    pub fn with_device_key(mut self, device_key: Option<&'a str>) -> Self {
+        self.device_key = device_key;
+        self
+    }
+
     pub(crate) fn request(&self, method: Method, path: &str) -> RequestBuilder {
-        self.http.request(method, self.server.join(&format!("/rewarden/api{path}"))).bearer_auth(self.token)
+        with_device_key(
+            self.http.request(method, self.server.join(&format!("/rewarden/api{path}"))).bearer_auth(self.token),
+            self.device_key,
+        )
     }
 
     pub(crate) async fn send(builder: RequestBuilder) -> Result<(StatusCode, String), ApiFailure> {
@@ -229,6 +251,7 @@ mod tests {
         Mock::given(method("PUT"))
             .and(path("/rewarden/api/device"))
             .and(header("authorization", "Bearer TOKEN"))
+            .and(header(DEVICE_KEY_HEADER, "KEY-1"))
             .and(body_json(json!({"fcm_token": "fcm-1"})))
             .respond_with(ResponseTemplate::new(200).set_body_json(json!({"replaced_previous": true})))
             .expect(1)
@@ -236,6 +259,7 @@ mod tests {
             .await;
         Mock::given(method("GET"))
             .and(path("/rewarden/api/connections"))
+            .and(header(DEVICE_KEY_HEADER, "KEY-1"))
             .respond_with(ResponseTemplate::new(200).set_body_json(json!({"connections": [
                 {"id": "c1", "label": "ChatGPT", "client_name": "ChatGPT", "client_host": "chatgpt.com",
                  "created_at": 1, "last_used_at": null}]})))
@@ -248,9 +272,10 @@ mod tests {
             .mount(&server)
             .await;
         let (http, url) = setup(&server);
-        let api = PhoneApi::new(&http, &url, "TOKEN");
+        let api = PhoneApi::new(&http, &url, "TOKEN").with_device_key(Some("KEY-1"));
         let reg = DeviceRegistration {
             fcm_token: Some("fcm-1".to_owned()),
+            master_password_hash: None,
         };
         assert!(api.register_device(&reg).await.unwrap().replaced_previous);
         assert_eq!(api.connections().await.unwrap().connections[0].client_host, "chatgpt.com");

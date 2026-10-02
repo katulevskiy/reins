@@ -127,6 +127,7 @@ async fn another_phone_gets_the_keys_from_the_approval_device() {
 
     let second = Phone::signed_out(|_| {}).await;
     assert_eq!(second.sso_sign_in(&server.base).await.unwrap().keys, AccountKeys::Locked);
+    assert_eq!(second.core.register_device(None).await.unwrap_err(), CoreError::OtherApprovalDevice);
 
     // A refusal first: the new phone learns it, and nothing was handed over.
     let asked = second.core.join_begin("Pixel 9".to_owned()).await.expect("join");
@@ -135,6 +136,7 @@ async fn another_phone_gets_the_keys_from_the_approval_device() {
     first.core.answer_join(item.id, false).await.unwrap();
     assert_eq!(second.core.join_poll().await.unwrap(), JoinProgress::Denied);
     assert_eq!(second.core.account_keys().await.unwrap(), AccountKeys::Locked);
+    assert_eq!(second.core.register_device(None).await.unwrap_err(), CoreError::OtherApprovalDevice);
 
     // Then an approval: both phones show the same code, and the keys open on the new phone.
     let asked = second.core.join_begin("Pixel 9".to_owned()).await.expect("join");
@@ -148,8 +150,48 @@ async fn another_phone_gets_the_keys_from_the_approval_device() {
     assert_eq!(second.core.account_recovery_code().await.unwrap(), first.core.account_recovery_code().await.unwrap());
     assert!(matches!(second.core.join_poll().await, Err(CoreError::NotFound)), "the request is over");
 
-    // The approval device itself cannot ask, and the new phone takes over approvals when it registers.
+    // The approval device itself cannot ask, and the new phone takes over approvals when it registers: the approval
+    // was its proof.
     assert!(first.core.join_begin("again".to_owned()).await.is_err());
     second.core.register_device(None).await.unwrap();
     assert!(first.core.sync(0).await.is_err(), "the first phone no longer approves");
+}
+
+/// Whoever controls the identity Grace signs in with (her Google account, her email) gets a signed-in phone, but not
+/// the approval role: that takes the recovery code or her phone's yes.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_phone_signed_in_to_the_identity_does_not_get_the_approval_role() {
+    let workos = FakeWorkos::start().await;
+    let server = Server::start_with_env(5, 3, &workos.server_env()).await;
+    let grace = User {
+        id: "user_01GRACE".to_owned(),
+        email: "grace@example.com".to_owned(),
+    };
+    workos.sign_in_as(&grace);
+    let phone = Phone::signed_out(|_| {}).await;
+    assert_eq!(phone.sso_sign_in(&server.base).await.unwrap().keys, AccountKeys::Created);
+    phone.core.register_device(None).await.expect("the first phone needs no proof");
+    phone.core.register_device(Some("fcm-1".to_owned())).await.expect("nor does it to register again");
+    let code = phone.core.account_recovery_code().await.unwrap();
+
+    // Someone else signs in as Grace: the keys stay locked, and the server will not make that phone approve.
+    let other = Phone::signed_out(|_| {}).await;
+    assert_eq!(other.sso_sign_in(&server.base).await.unwrap().keys, AccountKeys::Locked);
+    let refused = other.core.register_device(None).await.unwrap_err();
+    assert_eq!(refused, CoreError::OtherApprovalDevice);
+    assert_eq!(
+        refused.to_string(),
+        "This account already has a phone for approvals. Approve this phone from it, or enter your recovery code."
+    );
+    assert!(other.core.sync(0).await.is_err(), "it gets no requests");
+    phone.core.sync(0).await.expect("Grace's phone still approves");
+
+    // With the recovery code (Grace's new phone, say), the phone proves itself and takes over.
+    other.core.unlock_account(code).await.unwrap();
+    other.core.register_device(None).await.expect("the account secret is the proof");
+    other.core.sync(0).await.expect("the new phone approves");
+    assert!(phone.core.sync(0).await.is_err(), "the old one no longer does");
+    // The old phone keeps the secret too, so "Use this phone" there moves the role back without asking.
+    phone.core.register_device(None).await.expect("its secret proves it");
+    phone.core.sync(0).await.unwrap();
 }

@@ -158,14 +158,15 @@ impl<'a> VaultClient<'a> {
         Err(registration_refused(status, &resp.text().await?, true))
     }
 
-    /// Full password login. `totp` is only sent when the server asks for it.
+    /// Full password login. `totp` is only sent when the server asks for it. Also answers the master password hash
+    /// that signed in: the proof that lets this phone take the approval role from another (`PUT /device`).
     pub async fn login(
         &self,
         email: &str,
         password: Zeroizing<String>,
         totp: Option<&str>,
         device_id: &str,
-    ) -> Result<Tokens, CoreError> {
+    ) -> Result<(Tokens, Zeroizing<String>), CoreError> {
         let email = email.trim().to_lowercase();
         let totp = totp.map(normalize_totp).transpose()?;
         let kdf = self.prelogin(&email).await?;
@@ -187,7 +188,7 @@ impl<'a> VaultClient<'a> {
             ("deviceIdentifier", device_id),
             ("deviceName", DEVICE_NAME),
         ];
-        match self.token(&form).await? {
+        let tokens = match self.token(&form).await? {
             TokenOutcome::Tokens(t) => Ok(t),
             TokenOutcome::TwoFactor(providers) if !providers.iter().any(|p| p == TOTP_PROVIDER) => {
                 Err(CoreError::UnsupportedTwoFactor)
@@ -214,7 +215,8 @@ impl<'a> VaultClient<'a> {
                 status,
                 message,
             } => Err(rejected(status, message, false)),
-        }
+        }?;
+        Ok((tokens, hash.clone()))
     }
 
     /// Exchanges a refresh token. A rejected refresh token → `NotLoggedIn`.
@@ -373,7 +375,10 @@ mod tests {
     async fn login(server: &MockServer, totp: Option<&str>) -> Result<Tokens, CoreError> {
         let http = client().unwrap();
         let url = ServerUrl::parse(&server.uri()).unwrap();
-        VaultClient::new(&http, &url).login(EMAIL, Zeroizing::new(PASSWORD.to_owned()), totp, "dev-1").await
+        VaultClient::new(&http, &url)
+            .login(EMAIL, Zeroizing::new(PASSWORD.to_owned()), totp, "dev-1")
+            .await
+            .map(|(t, _)| t)
     }
 
     #[tokio::test]

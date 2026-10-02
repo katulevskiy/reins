@@ -7,6 +7,9 @@
 //!   [`JoinRequest`].
 //! - `POST /rewarden/api/joins/<id>/response` (the approval device): approves with the sealed secret, or denies.
 //!
+//! An approval also lets the asking device take the approval role (`PUT /rewarden/api/device`) without another proof:
+//! once, within [`TAKEOVER_TTL`], and only with the device key it asked with ([`JoinHub::take_takeover`]).
+//!
 //! Everything is in memory for [`ITEM_TTL`] like pairings.
 
 use std::{
@@ -27,8 +30,8 @@ use rocket::{Data, Route, State, http::Status, serde::json::Json};
 use super::{
     HUB, ITEM_TTL,
     device_api::{
-        PhoneResult, api_err, bad_request, not_found, parse_versioned, read_body_limited, require_approval_device,
-        user_key,
+        DeviceKey, PhoneResult, api_err, bad_request, is_caller, not_found, parse_versioned, read_body_limited,
+        require_approval_device, user_key,
     },
     now_unix,
     pairing::sanitize_display,
@@ -45,17 +48,25 @@ use crate::{
 pub const MAX_PER_USER: usize = 3;
 /// Open requests the server holds in all.
 pub const MAX_JOINS: usize = 1_000;
+/// How long after the approval the asking device may take the approval role on its strength (seconds).
+pub const TAKEOVER_TTL: i64 = 5 * 60;
 const MAX_BODY_BYTES: u64 = 8 * 1024;
 
 struct Entry {
     user: String,
     /// The asking device (Vaultwarden device id).
     device: String,
+    /// Hash of the asking device's device key; an approval lets only this key take the approval role.
+    key_hash: Option<String>,
     request: JoinRequest,
     delivered: bool,
     status: JoinStatus,
     sealed: Option<String>,
     expires_at: i64,
+    /// When it was approved; the takeover it allows runs out [`TAKEOVER_TTL`] later.
+    approved_at: Option<i64>,
+    /// The approval was spent on a takeover.
+    takeover_used: bool,
 }
 
 #[derive(Debug, PartialEq, Eq)]
@@ -100,7 +111,14 @@ impl JoinHub {
         self.entries.lock().unwrap_or_else(PoisonError::into_inner)
     }
 
-    pub fn create(&self, user: &str, device: &str, new: &NewJoin, now: i64) -> Result<JoinCreated, JoinError> {
+    pub fn create(
+        &self,
+        user: &str,
+        device: &str,
+        key_hash: Option<&str>,
+        new: &NewJoin,
+        now: i64,
+    ) -> Result<JoinCreated, JoinError> {
         if rewarden_proto::desktop::decode_key(&new.public_key).is_none() {
             return Err(JoinError::Invalid("public_key must be 32 bytes, base64url".to_owned()));
         }
@@ -120,6 +138,7 @@ impl JoinHub {
             Entry {
                 user: user.to_owned(),
                 device: device.to_owned(),
+                key_hash: key_hash.map(str::to_owned),
                 request: JoinRequest {
                     v: PROTOCOL_VERSION,
                     id: id.clone(),
@@ -131,6 +150,8 @@ impl JoinHub {
                 status: JoinStatus::Waiting,
                 sealed: None,
                 expires_at,
+                approved_at: None,
+                takeover_used: false,
             },
         );
         drop(entries);
@@ -194,10 +215,29 @@ impl JoinHub {
             }
             entry.status = JoinStatus::Approved;
             entry.sealed = Some(sealed.to_owned());
+            entry.approved_at = Some(now);
         } else {
             entry.status = JoinStatus::Denied;
         }
         Ok(())
+    }
+
+    /// Spends an approval of `device`'s request, asked with the device key `key_hash`, on taking the approval role:
+    /// `true` once per approval, within [`TAKEOVER_TTL`].
+    pub fn take_takeover(&self, user: &str, device: &str, key_hash: Option<&str>, now: i64) -> bool {
+        let Some(key_hash) = key_hash else {
+            return false;
+        };
+        let mut entries = self.lock();
+        let grant = entries.values_mut().find(|e| {
+            e.user == user
+                && e.device == device
+                && e.status == JoinStatus::Approved
+                && !e.takeover_used
+                && e.approved_at.is_some_and(|at| now < at + TAKEOVER_TTL)
+                && e.key_hash.as_deref().is_some_and(|k| crate::crypto::ct_eq(k, key_hash))
+        });
+        grant.map(|e| e.takeover_used = true).is_some()
     }
 
     pub fn purge(&self, now: i64) {
@@ -211,6 +251,7 @@ impl JoinHub {
 async fn post_join(
     data: Data<'_>,
     headers: Headers,
+    key: DeviceKey,
     conn: DbConn,
     pool: &State<DbPool>,
 ) -> PhoneResult<Json<JoinCreated>> {
@@ -222,16 +263,17 @@ async fn post_join(
             "This account has no approval device to ask; use the recovery code",
         ));
     };
-    if approval.device_uuid == headers.device.uuid {
+    if is_caller(&approval, &headers, &key) {
         return Err(bad_request("This is the approval device"));
     }
     let new: NewJoin = parse_versioned(&read_body_limited(data, MAX_BODY_BYTES).await?)?;
-    let created = HUB.joins.create(&user_key(&headers), &headers.device.uuid.to_string(), &new, now_unix()).map_err(
-        |e| match e {
+    let created = HUB
+        .joins
+        .create(&user_key(&headers), &headers.device.uuid.to_string(), key.hash(), &new, now_unix())
+        .map_err(|e| match e {
             JoinError::Full => api_err(Status::TooManyRequests, codes::RATE_LIMITED, "Too many open requests"),
             JoinError::Invalid(m) => bad_request(m),
-        },
-    )?;
+        })?;
     push::spawn_push(
         pool.inner().clone(),
         headers.user.uuid.clone(),
@@ -245,21 +287,27 @@ async fn post_join(
 }
 
 #[get("/rewarden/api/joins/<id>")]
-async fn get_join(id: &str, headers: Headers, conn: DbConn) -> PhoneResult<Json<serde_json::Value>> {
+async fn get_join(id: &str, headers: Headers, key: DeviceKey, conn: DbConn) -> PhoneResult<Json<serde_json::Value>> {
     let view =
         HUB.joins.view(&user_key(&headers), &headers.device.uuid.to_string(), id, now_unix()).ok_or_else(not_found)?;
     match view {
         View::Requester(state) => Ok(Json(serde_json::to_value(state).unwrap_or_default())),
         View::Approver(request) => {
-            require_approval_device(&headers, &conn).await?;
+            require_approval_device(&headers, &key, &conn).await?;
             Ok(Json(serde_json::to_value(request).unwrap_or_default()))
         }
     }
 }
 
 #[post("/rewarden/api/joins/<id>/response", data = "<data>")]
-async fn post_join_response(id: &str, data: Data<'_>, headers: Headers, conn: DbConn) -> PhoneResult<Status> {
-    require_approval_device(&headers, &conn).await?;
+async fn post_join_response(
+    id: &str,
+    data: Data<'_>,
+    headers: Headers,
+    key: DeviceKey,
+    conn: DbConn,
+) -> PhoneResult<Status> {
+    require_approval_device(&headers, &key, &conn).await?;
     let answer: JoinAnswer = parse_versioned(&read_body_limited(data, MAX_BODY_BYTES).await?)?;
     HUB.joins.answer(&user_key(&headers), id, &answer, now_unix()).map_err(|e| match e {
         AnswerError::NotFound => not_found(),
@@ -292,7 +340,7 @@ mod tests {
     #[test]
     fn a_join_goes_from_the_new_phone_to_the_approval_device_and_back() {
         let hub = hub();
-        let created = hub.create("u1", "new-phone", &new_join("Pixel\u{202E} 9"), 100).unwrap();
+        let created = hub.create("u1", "new-phone", Some("k-new"), &new_join("Pixel\u{202E} 9"), 100).unwrap();
         // The approval device sees it once (cleaned name), the other account never.
         let seen = hub.take_undelivered("u1", 101);
         assert_eq!(seen.len(), 1);
@@ -328,19 +376,54 @@ mod tests {
     }
 
     #[test]
+    fn an_approval_lets_the_asking_key_take_over_once_for_a_while() {
+        let hub = hub();
+        let approve = JoinAnswer {
+            v: 1,
+            approve: true,
+            sealed: Some("SEALED".to_owned()),
+        };
+        let created = hub.create("u1", "new", Some("k-new"), &new_join("Pixel"), 100).unwrap();
+        assert!(!hub.take_takeover("u1", "new", Some("k-new"), 101), "not before the approval");
+        hub.answer("u1", &created.id, &approve, 110).unwrap();
+        assert!(!hub.take_takeover("u2", "new", Some("k-new"), 111), "another account");
+        assert!(!hub.take_takeover("u1", "other", Some("k-new"), 111), "another device");
+        assert!(!hub.take_takeover("u1", "new", Some("k-other"), 111), "the same device id with another key");
+        assert!(!hub.take_takeover("u1", "new", None, 111), "no key");
+        assert!(hub.take_takeover("u1", "new", Some("k-new"), 111));
+        assert!(!hub.take_takeover("u1", "new", Some("k-new"), 112), "once");
+
+        // Too late, denied, or asked without a key: no takeover.
+        let late = hub.create("u1", "new", Some("k-new"), &new_join("Pixel"), 200).unwrap();
+        hub.answer("u1", &late.id, &approve, 200).unwrap();
+        assert!(!hub.take_takeover("u1", "new", Some("k-new"), 200 + TAKEOVER_TTL));
+        let denied = hub.create("u1", "d2", Some("k2"), &new_join("b"), 300).unwrap();
+        let deny = JoinAnswer {
+            v: 1,
+            approve: false,
+            sealed: None,
+        };
+        hub.answer("u1", &denied.id, &deny, 301).unwrap();
+        assert!(!hub.take_takeover("u1", "d2", Some("k2"), 302));
+        let keyless = hub.create("u1", "d3", None, &new_join("c"), 300).unwrap();
+        hub.answer("u1", &keyless.id, &approve, 301).unwrap();
+        assert!(!hub.take_takeover("u1", "d3", None, 302));
+    }
+
+    #[test]
     fn limits_replacement_and_expiry() {
         let hub = hub();
-        let first = hub.create("u1", "d1", &new_join("a"), 100).unwrap();
-        let again = hub.create("u1", "d1", &new_join("a"), 101).unwrap();
+        let first = hub.create("u1", "d1", None, &new_join("a"), 100).unwrap();
+        let again = hub.create("u1", "d1", None, &new_join("a"), 101).unwrap();
         assert!(hub.view("u1", "d1", &first.id, 101).is_none(), "a device's new request replaces its old one");
-        hub.create("u1", "d2", &new_join("b"), 101).unwrap();
-        hub.create("u1", "d3", &new_join("c"), 101).unwrap();
-        assert_eq!(hub.create("u1", "d4", &new_join("d"), 101), Err(JoinError::Full));
+        hub.create("u1", "d2", None, &new_join("b"), 101).unwrap();
+        hub.create("u1", "d3", None, &new_join("c"), 101).unwrap();
+        assert_eq!(hub.create("u1", "d4", None, &new_join("d"), 101), Err(JoinError::Full));
         let bad = NewJoin {
             public_key: "short".to_owned(),
             ..new_join("x")
         };
-        assert!(matches!(hub.create("u2", "d1", &bad, 101), Err(JoinError::Invalid(_))));
+        assert!(matches!(hub.create("u2", "d1", None, &bad, 101), Err(JoinError::Invalid(_))));
         let late = again.expires_at;
         assert_eq!(
             hub.view("u1", "d1", &again.id, late),

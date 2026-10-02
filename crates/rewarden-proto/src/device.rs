@@ -30,13 +30,55 @@ pub mod codes {
     pub const UNAUTHORIZED: &str = "unauthorized";
     /// 500: server-side failure (e.g. database); retry later.
     pub const INTERNAL: &str = "internal_error";
+    /// 403 to `PUT /device`: another device approves for this account, and this one brought no proof that it may take
+    /// over (see [`super::DeviceRegistration`]).
+    pub const PROOF_REQUIRED: &str = "proof_required";
+    /// 403 to `PUT /device`: the proof does not match the account (counted; too many → `rate_limited`).
+    pub const WRONG_PROOF: &str = "wrong_proof";
 }
 
+/// The header every phone-API call of a phone carries: its device key, 32 random bytes in base64url that never leave
+/// the phone otherwise. The server keeps a hash of the approval device's key with its row: the Vaultwarden device id
+/// alone is not a secret (the account's device list shows it, and a sign-in may name any id), so the key is what tells
+/// the approval device from another sign-in that claims its id.
+pub const DEVICE_KEY_HEADER: &str = "Reins-Device-Key";
+
+/// What the server keeps of a [`DEVICE_KEY_HEADER`] value: SHA-256 of the key, hex. `None` for a value that is not
+/// 32 bytes in base64url.
+#[must_use]
+pub fn device_key_hash(key: &str) -> Option<String> {
+    use sha2::{Digest, Sha256};
+    let raw = crate::desktop::decode_key(key.trim())?;
+    Some(data_encoding::HEXLOWER.encode(&Sha256::digest(raw)))
+}
+
+/// What `PUT /device` answers when another device approves for the account and this one may not take over: the text
+/// the apps show, with the two ways out.
+pub const TAKEOVER_REFUSED: &str =
+    "This account already has a phone for approvals. Approve this phone from it, or enter your recovery code.";
+
 /// A1 `PUT /device` body.
-#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+///
+/// The first device of an account, and the approval device registering again, need nothing else. Another device takes
+/// the role only with a proof: `master_password_hash`, the Bitwarden master password hash of the account secret (or
+/// of the master password, for accounts made with one) that the server checks like a password sign-in, or the
+/// approval device's yes to this device's "add another phone" request ([`crate::join`]), which the server remembers
+/// for a few minutes, once.
+#[derive(Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct DeviceRegistration {
     #[serde(default)]
     pub fcm_token: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub master_password_hash: Option<String>,
+}
+
+impl std::fmt::Debug for DeviceRegistration {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("DeviceRegistration")
+            .field("fcm_token", &self.fcm_token)
+            .field("master_password_hash", &self.master_password_hash.as_ref().map(|_| "<redacted>"))
+            .finish()
+    }
 }
 
 /// `PUT /services` body: which integrations have an account on the phone, so that the server lists only their tools
@@ -136,6 +178,25 @@ mod tests {
         assert_eq!(r.fcm_token, None);
         let r: DeviceRegistration = serde_json::from_value(json!({"fcm_token": "tok"})).unwrap();
         assert_eq!(r.fcm_token.as_deref(), Some("tok"));
+        assert_eq!(r.master_password_hash, None);
+        assert_eq!(serde_json::to_value(&r).unwrap(), json!({"fcm_token": "tok"}), "no proof, no field");
+        let proof = DeviceRegistration {
+            fcm_token: None,
+            master_password_hash: Some("HASH".to_owned()),
+        };
+        assert_eq!(serde_json::to_value(&proof).unwrap(), json!({"fcm_token": null, "master_password_hash": "HASH"}));
+        assert!(!format!("{proof:?}").contains("HASH"));
+    }
+
+    #[test]
+    fn device_keys_are_32_bytes_and_hashed() {
+        let key = crate::desktop::encode_key(&[5u8; 32]);
+        let hash = device_key_hash(&key).unwrap();
+        assert_eq!(hash.len(), 64);
+        assert_eq!(device_key_hash(&format!(" {key} ")), Some(hash.clone()));
+        assert_ne!(device_key_hash(&crate::desktop::encode_key(&[6u8; 32])), Some(hash));
+        assert_eq!(device_key_hash("short"), None);
+        assert_eq!(device_key_hash(""), None);
         assert_eq!(
             serde_json::to_value(DeviceRegistered {
                 replaced_previous: true
