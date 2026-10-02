@@ -3,8 +3,9 @@ import Foundation
 /// The `-demo` launch argument's in-memory core (screenshots, UI tests, a look around without a server).
 ///
 /// Launch arguments: `-signedout` starts signed out (any password signs in; an email containing "2fa" also needs a
-/// code), `-demoArrive` makes a new request arrive about 6 s after launch, `-demoNoModel` starts with the Autopilot
-/// model not downloaded.
+/// code; creating an account works like signing in), `-demoArrive` makes a new request arrive about 6 s after launch,
+/// `-demoNoModel` starts with the Autopilot model not downloaded. Any pairing code pairs a desktop app, except those
+/// starting with "BBBB", which have expired.
 enum DemoCore {
     static func make() -> (any RewardenCoreProtocol)? {
         let args = ProcessInfo.processInfo.arguments
@@ -113,6 +114,18 @@ final class DemoRewardenCore: RewardenCoreProtocol, @unchecked Sendable {
         return info
     }
 
+    /// Like `login`, with the server's checks: an email containing "taken" is already registered, a master password
+    /// needs 12 characters.
+    func createAccount(serverUrl: String, email: String, password: String) async throws -> SessionInfo {
+        try await latency(0.6)
+        guard serverUrl.hasPrefix("http") else { throw CoreError.Network(reason: "could not reach \(serverUrl)") }
+        if email.lowercased().contains("taken") { throw CoreError.Invalid(reason: "An account with this email already exists.") }
+        if password.count < 12 { throw CoreError.Invalid(reason: "The master password must be at least 12 characters long.") }
+        let info = SessionInfo(serverUrl: serverUrl, email: email)
+        locked { $0.session = info }
+        return info
+    }
+
     func logout() async throws { locked { $0.session = nil } }
 
     func registerDevice(fcmToken: String?) async throws {}
@@ -171,6 +184,25 @@ final class DemoRewardenCore: RewardenCoreProtocol, @unchecked Sendable {
         try locked { s in
             guard let v = s.views[requestId], s.pending.contains(where: { $0.id == requestId }) else { throw CoreError.NotFound }
             return v
+        }
+    }
+
+    /// A desktop app on "studio" asks to pair, parked like a pushed pairing. Codes starting with "BBBB" have expired.
+    func pairingByCode(userCode: String) async throws -> PairingView {
+        try await latency()
+        guard let code = PairingCode.normalize(userCode) else { throw CoreError.Invalid(reason: "That is not a pairing code.") }
+        if code.hasPrefix("BBBB") { throw CoreError.NotFound }
+        return locked { s in
+            let id = "code-\(code)"
+            if let parked = s.pairings[id] { return parked }
+            let p = PairingView(
+                id: id, clientName: "Reins desktop app on studio", clientHost: "studio", choices: Data([47, 12, 83]),
+                createdAt: Self.now(), keyFingerprint: "3170 6422"
+            )
+            s.pairings[id] = p
+            s.pending.insert(DemoData.pairingItem(p), at: 0)
+            s.pendingVersion += 1
+            return p
         }
     }
 

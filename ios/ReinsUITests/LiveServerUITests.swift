@@ -102,7 +102,8 @@ final class LiveServerUITests: XCTestCase {
         app.launch()
 
         // Sign in, to the local server rather than the hosted one the screen starts with.
-        wait("otherServer", 30).tap()
+        wait("signInChoice", 30).tap()
+        wait("otherServer").tap()
         replace(wait("server"), with: server)
         replace(wait("email"), with: email)
         wait("password").tap()
@@ -110,11 +111,15 @@ final class LiveServerUITests: XCTestCase {
         shot("01-sign-in")
         wait("signIn").tap()
 
-        // Signed in: the app asks for notifications (allowed), then the Activity tab, and no banner saying registration
-        // failed.
-        wait("integrations", 60)
+        // Signed in: the app asks for notifications (allowed), the onboarding steps show this first time (skipped
+        // through: the AI here pairs the old way), then the Activity tab, and no banner saying registration failed.
+        wait("onboardingNext", 60)
         let allow = XCUIApplication(bundleIdentifier: "com.apple.springboard").buttons["Allow"]
         if allow.waitForExistence(timeout: 10) { allow.tap() }
+        wait("phoneReady", 30)
+        wait("onboardingNext").tap()
+        wait("onboardingDone").tap()
+        wait("integrations", 30)
         Thread.sleep(forTimeInterval: 3)
         XCTAssertFalse(element("registrationBanner").exists, "registering as the approval device failed")
         shot("02-signed-in")

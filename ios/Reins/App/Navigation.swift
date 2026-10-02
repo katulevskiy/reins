@@ -60,10 +60,13 @@ enum SheetTarget: Hashable, Identifiable {
     case approval(String)
     case pairing(String)
     case upload(String)
+    /// Scanning (or typing) the code a computer shows; the pairing it stands for then takes the sheet's place.
+    case connectComputer
 
     var id: String {
         switch self {
         case let .approval(id), let .pairing(id), let .upload(id): id
+        case .connectComputer: "connectComputer"
         }
     }
 }
