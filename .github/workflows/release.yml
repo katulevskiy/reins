@@ -1,8 +1,10 @@
 name: Release
 # Publishes a GitHub release for every push to main that passes CI. The version comes from the commits since the last
 # vX.Y.Z tag (scripts/next-version.sh; CONTRIBUTING.md, "Releases"); the tag is created on the exact commit CI tested.
-# Assets: the desktop app for Linux (static musl), macOS and Windows (a zip with rewarden.exe), the server binary, the
-# server image on GHCR, the Android APK when the signing secrets are configured, and SHA256SUMS.
+# Assets: the desktop app for Linux (static musl), macOS and Windows (a zip with rewarden.exe), the Reins app's
+# installers (a .dmg, an .msi, an AppImage and its tarball), the server binary, the server image on GHCR, the Android
+# APK when the signing secrets are configured, and SHA256SUMS. The desktop archives and the installers come under a
+# versioned name and under a fixed one (reins-desktop-<target>.tar.gz, Reins-macOS.dmg, ...) for "latest" links.
 
 # workflow_run runs with this repository's token, so it must never build code CI ran for someone else: the plan job
 # only accepts CI runs of a push to main in this repository, and then checks out exactly the commit CI tested.
@@ -208,6 +210,8 @@ jobs:
             tar -C dist -czf "dist/$name.tar.gz" "$name"
           fi
           rm -rf "dist/${name:?}"
+          # The same archive without the version, for https://github.com/<repo>/releases/latest/download/<name> links.
+          for f in dist/"$name".*; do cp "$f" "dist/reins-desktop-$TARGET.${f#dist/"$name".}"; done
           ls -l dist
       - uses: actions/upload-artifact@v7
         with:
@@ -215,6 +219,134 @@ jobs:
           path: |
             dist/*.tar.gz
             dist/*.zip
+          if-no-files-found: error
+          retention-days: 7
+
+  # The Reins desktop app (crates/rewarden-desktop-app, GPUI) with rewarden inside, as installers: Reins-macOS.dmg
+  # (universal), Reins-Windows-x64.msi (per user, WiX v4), Reins-Linux-x86_64.AppImage and its plain tarball, each also
+  # under a versioned name. scripts/package/ builds them; the names without a version are what the website's
+  # /download/<platform> links point at (releases/latest/download/<name>).
+  #
+  # macOS signing and notarization, all optional (without them the app is signed ad hoc and Gatekeeper asks once):
+  #   MACOS_CERT_P12, MACOS_CERT_PASSWORD   the "Developer ID Application" certificate and key (.p12, base64)
+  #   AC_API_KEY_P8, AC_API_KEY_ID, AC_API_ISSUER_ID   an App Store Connect API key for notarytool
+  # Windows signing, optional: WINDOWS_CERT_PFX (base64) and WINDOWS_CERT_PASSWORD.
+  desktop-app:
+    name: Desktop app (${{ matrix.platform }})
+    needs: plan
+    if: needs.plan.outputs.release == 'true'
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 90
+    permissions:
+      contents: read
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { platform: macOS, os: macos-15 }
+          - { platform: Windows-x64, os: windows-2025 }
+          # The oldest supported Ubuntu: the AppImage needs this glibc or newer.
+          - { platform: Linux-x86_64, os: ubuntu-22.04 }
+    env:
+      VERSION: ${{ needs.plan.outputs.version }}
+      REWARDEN_BUILD: ${{ needs.plan.outputs.build }}
+      REWARDEN_BUILD_TIME: ${{ needs.plan.outputs.build-time }}
+      MACOSX_DEPLOYMENT_TARGET: "12.0"
+    steps:
+      - name: Check out without CRLF
+        if: runner.os == 'Windows'
+        run: git config --global core.autocrlf false
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ needs.plan.outputs.sha }}
+          persist-credentials: false
+      - name: Install Rust toolchain
+        run: |
+          rustup toolchain install
+          [[ "$RUNNER_OS" == macOS ]] && rustup target add aarch64-apple-darwin x86_64-apple-darwin
+          [[ "$RUNNER_OS" == Windows ]] && rustup target add x86_64-pc-windows-msvc
+          [[ "$RUNNER_OS" == Linux ]] && rustup target add x86_64-unknown-linux-gnu
+          rustc -vV
+      - name: GPUI build dependencies
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq libxkbcommon-dev libxkbcommon-x11-dev libwayland-dev libx11-dev libxcb1-dev \
+            libx11-xcb-dev libfontconfig1-dev libfreetype-dev libvulkan-dev pkg-config
+      - name: Set the version
+        run: scripts/set-desktop-version.sh "$VERSION"
+      - name: Developer ID certificate
+        if: runner.os == 'macOS'
+        env:
+          MACOS_CERT_P12: ${{ secrets.MACOS_CERT_P12 }}
+          MACOS_CERT_PASSWORD: ${{ secrets.MACOS_CERT_PASSWORD }}
+          AC_API_KEY_P8: ${{ secrets.AC_API_KEY_P8 }}
+          AC_API_KEY_ID: ${{ secrets.AC_API_KEY_ID }}
+          AC_API_ISSUER_ID: ${{ secrets.AC_API_ISSUER_ID }}
+        run: |
+          if [[ -z "$MACOS_CERT_P12" ]]; then
+            echo "::notice::macOS app not signed with a Developer ID: MACOS_CERT_P12 is not configured"
+            exit 0
+          fi
+          keychain="$RUNNER_TEMP/release.keychain-db"
+          pass="$(openssl rand -hex 16)"
+          security create-keychain -p "$pass" "$keychain"
+          security set-keychain-settings -lut 3600 "$keychain"
+          security unlock-keychain -p "$pass" "$keychain"
+          base64 -d <<<"$MACOS_CERT_P12" > "$RUNNER_TEMP/cert.p12"
+          security import "$RUNNER_TEMP/cert.p12" -k "$keychain" -P "$MACOS_CERT_PASSWORD" -T /usr/bin/codesign
+          rm -f "$RUNNER_TEMP/cert.p12"
+          security set-key-partition-list -S apple-tool:,apple: -s -k "$pass" "$keychain" > /dev/null
+          security list-keychains -d user -s "$keychain" login.keychain-db
+          identity="$(security find-identity -v -p codesigning "$keychain" |
+            sed -n 's/.*"\(Developer ID Application: [^"]*\)".*/\1/p' | head -1)"
+          [[ -n "$identity" ]] || { echo "::error::the .p12 holds no Developer ID Application identity"; exit 1; }
+          echo "REINS_DEVELOPER_ID=$identity" >> "$GITHUB_ENV"
+          if [[ -n "$AC_API_KEY_P8" && -n "$AC_API_KEY_ID" && -n "$AC_API_ISSUER_ID" ]]; then
+            printf '%s' "$AC_API_KEY_P8" > "$RUNNER_TEMP/notary.p8"
+            {
+              echo "REINS_NOTARY_KEY=$RUNNER_TEMP/notary.p8"
+              echo "REINS_NOTARY_KEY_ID=$AC_API_KEY_ID"
+              echo "REINS_NOTARY_ISSUER=$AC_API_ISSUER_ID"
+            } >> "$GITHUB_ENV"
+          fi
+      - name: Package (macOS)
+        if: runner.os == 'macOS'
+        env:
+          ARCHS: aarch64 x86_64
+        run: scripts/package/macos.sh
+      - name: Package (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        env:
+          # The C runtime linked in: no Visual C++ Redistributable needed.
+          RUSTFLAGS: -C target-feature=+crt-static
+          WINDOWS_CERT_PFX: ${{ secrets.WINDOWS_CERT_PFX }}
+          REINS_WINDOWS_CERT_PASSWORD: ${{ secrets.WINDOWS_CERT_PASSWORD }}
+        run: |
+          if ($env:WINDOWS_CERT_PFX) {
+            $pfx = Join-Path $env:RUNNER_TEMP 'cert.pfx'
+            [IO.File]::WriteAllBytes($pfx, [Convert]::FromBase64String($env:WINDOWS_CERT_PFX))
+            $env:REINS_WINDOWS_CERT = $pfx
+          }
+          ./scripts/package/windows.ps1 -Version $env:VERSION
+      - name: Package (Linux)
+        if: runner.os == 'Linux'
+        run: scripts/package/linux.sh
+      - name: Collect
+        run: |
+          mkdir -p dist
+          cp target/package/Reins-*.dmg target/package/Reins-*.msi target/package/Reins-*.AppImage \
+            target/package/Reins-*.tar.gz dist/ 2>/dev/null || true
+          ls -l dist
+          [[ -n "$(ls dist)" ]] || { echo "::error::no installer was made"; exit 1; }
+      - name: Remove signing material
+        if: always()
+        run: rm -f "$RUNNER_TEMP/notary.p8" "$RUNNER_TEMP/cert.pfx"
+      - uses: actions/upload-artifact@v7
+        with:
+          name: dist-app-${{ matrix.platform }}
+          path: dist/*
           if-no-files-found: error
           retention-days: 7
 
@@ -402,10 +534,11 @@ jobs:
 
   publish:
     name: Publish the release
-    needs: [plan, desktop, server, docker, android]
+    needs: [plan, desktop, desktop-app, server, docker, android]
     if: >-
       always() && needs.plan.outputs.release == 'true' &&
-      needs.desktop.result == 'success' && needs.server.result == 'success' && needs.docker.result == 'success' &&
+      needs.desktop.result == 'success' && needs.desktop-app.result == 'success' &&
+      needs.server.result == 'success' && needs.docker.result == 'success' &&
       (needs.android.result == 'success' || (needs.android.result == 'skipped' && needs.plan.outputs.apk != 'true'))
     runs-on: ubuntu-24.04
     timeout-minutes: 15
