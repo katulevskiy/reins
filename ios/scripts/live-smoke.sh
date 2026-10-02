@@ -45,11 +45,16 @@ echo "building the server and the host half"
 # Run the example binary itself: under `cargo run`, the server build it starts sees cargo's variables and rebuilds.
 (cd "$ROOT" && exec "${CARGO_TARGET_DIR:-$ROOT/target}/debug/examples/ios_smoke" "$OUT") >"$OUT/host.log" 2>&1 &
 HOST=$!
-WATCH=""
+WATCH="" SERVER=""
 cleanup() {
   touch "$OUT/done"
   [[ -n "$WATCH" ]] && kill "$WATCH" 2>/dev/null
-  sleep 1; kill "$HOST" 2>/dev/null || true
+  sleep 1
+  if kill -0 "$HOST" 2>/dev/null; then
+    # Still waiting on the phone (a failed run): stop it, and the server it started, which a kill leaves running.
+    kill "$HOST" 2>/dev/null || true
+    [[ -n "$SERVER" ]] && lsof -ti "tcp:${SERVER##*:}" -sTCP:LISTEN 2>/dev/null | xargs kill 2>/dev/null || true
+  fi
 }
 trap cleanup EXIT
 wait_for "$OUT/host.log" '^MCP ' 900
