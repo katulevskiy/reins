@@ -46,7 +46,14 @@ jobs:
       - name: Install Rust toolchain
         run: rustup toolchain install && rustc -vV
       - uses: Swatinem/rust-cache@v2
+      # The desktop app (GPUI) links the system's X11/Wayland, font and Vulkan libraries.
+      - name: GUI libraries
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq libxkbcommon-dev libxkbcommon-x11-dev libwayland-dev libx11-dev libxcb1-dev \
+            libx11-xcb-dev libfontconfig1-dev libfreetype-dev libvulkan-dev pkg-config
       - run: cargo clippy --locked --workspace --exclude vaultwarden --all-targets -- -D warnings
+      - run: cargo test --locked -p rewarden-desktop-app
 
   test:
     name: Rust tests (Rewarden crates + e2e)
