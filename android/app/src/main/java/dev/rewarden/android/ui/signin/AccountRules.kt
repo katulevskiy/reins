@@ -16,7 +16,7 @@ object AccountRules {
         val length = password.codePointCount(0, password.length)
         if (length < MIN_PASSWORD) return Strength.Weak
         if (password.toSet().size < 5) return Strength.Weak
-        val kinds = listOf<(Char) -> Boolean>(Char::isLowerCase, Char::isUpperCase, Char::isDigit, { !it.isLetterOrDigit() })
+        val kinds = listOf<(Char) -> Boolean>(Char::isLowerCase, Char::isUpperCase, Char::isDigit, { c: Char -> !c.isLetterOrDigit() })
             .count { kind -> password.any(kind) }
         return when {
             length >= 20 -> Strength.Strong
