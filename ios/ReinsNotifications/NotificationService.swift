@@ -6,8 +6,9 @@ import UserNotifications
 /// quiet notification. Sounds follow the in-app switches.
 ///
 /// Anything that cannot be done in time, or safely, delivers the generic text with the right category and sound:
-/// the app in front (it handles the push itself), no store or no session, a locked keychain, a network failure, or
-/// Autopilot needing its model (which only the app can run; this process has a few MB of memory).
+/// the app in front (it handles the push itself), no store or no session, a locked keychain, a network failure.
+/// When Autopilot needs its model (which only the app can run; this process has a few MB of memory), the item is
+/// parked without Autopilot's pass and the app judges it when it next runs (the push also wakes it in the background).
 final class NotificationService: UNNotificationServiceExtension {
     private let lock = NSLock()
     private var deliver: ((UNNotificationContent) -> Void)?
@@ -60,11 +61,15 @@ final class NotificationService: UNNotificationServiceExtension {
         // `mayReset: false`: whatever goes wrong with the keychain here, the core never starts over from this process.
         guard let core = try? CoreFactory.make(notifier: capture, keys: KeychainKeyWrapper(mayReset: false)) else { return nil }
         guard await core.session() != nil else { return nil }
-        // Assisted and Auto judge with the model, which only the app runs. Handling the push here would settle the
-        // item as "could not judge", and Autopilot would never look at it again; the app fetches it instead.
-        if let autopilot = try? await core.autopilotSettings(), ExtensionPolicy.needsModel(autopilot) { return nil }
+        // Assisted and Auto judge with the model, which only the app runs: park the item unjudged (handling it fully here
+        // would settle it as "could not judge" for good) and leave the judging to the app's next pass.
+        let deferred = (try? await core.autopilotSettings()).map(ExtensionPolicy.needsModel) ?? true
         do {
-            try await core.handlePush(kind: payload.kind, id: payload.id)
+            if deferred {
+                try await core.handlePushDeferringAutopilot(kind: payload.kind, id: payload.id)
+            } else {
+                try await core.handlePush(kind: payload.kind, id: payload.id)
+            }
         } catch {
             return nil
         }
