@@ -24,13 +24,29 @@ extension EnvironmentValues {
 
 /// Reads the hinge through UIKit's `UIHingeInteraction` (iOS 27.1) and publishes it to the views inside.
 struct HingeReader<Content: View>: View {
-    @State private var posture: HingePosture = .flat
+    @State private var posture: HingePosture = HingeReader.forced ?? .flat
+
+    /// DEBUG `-hinge bent|closed|flat`: the Simulator offers no way to fold a device from a script.
+    private static var forced: HingePosture? {
+        #if DEBUG
+        let args = ProcessInfo.processInfo.arguments
+        guard let i = args.firstIndex(of: "-hinge"), i + 1 < args.count else { return nil }
+        switch args[i + 1] {
+        case "bent": return .bent
+        case "closed": return .closed
+        case "flat": return .flat
+        default: return nil
+        }
+        #else
+        return nil
+        #endif
+    }
     @ViewBuilder var content: (HingePosture) -> Content
 
     var body: some View {
         content(posture)
             .environment(\.hinge, posture)
-            .background(HingeProbe(posture: $posture).allowsHitTesting(false))
+            .background(Group { if Self.forced == nil { HingeProbe(posture: $posture).allowsHitTesting(false) } })
     }
 }
 
