@@ -30,6 +30,12 @@ allow = [
     "Zlib",
 ]
 
+exceptions = [
+    # bzip2's own license, permissive (BSD-style), in the Rust port of libbzip2 that GPUI's HTTP client
+    # (async-compression, the desktop app) brings in.
+    { allow = ["bzip2-1.0.6"], crate = "libbz2-rs-sys" },
+]
+
 # The workspace's own crates are not published; their licenses are set per crate (Cargo.toml) and explained in
 # LICENSING.md.
 [licenses.private]
