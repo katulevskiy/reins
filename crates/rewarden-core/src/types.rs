@@ -6,6 +6,40 @@ pub struct SessionInfo {
     pub email: String,
 }
 
+/// A sign-in through the server's SSO, started: open `url` in the browser session (ASWebAuthenticationSession, a
+/// Custom Tab) and wait for `callback_scheme`; keep `state` and `verifier` for `sso_finish`.
+#[derive(Clone, PartialEq, Eq, uniffi::Record)]
+pub struct SsoStart {
+    pub url: String,
+    pub callback_scheme: String,
+    pub state: String,
+    pub verifier: String,
+}
+
+impl std::fmt::Debug for SsoStart {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("SsoStart").field("url", &self.url).finish_non_exhaustive()
+    }
+}
+
+/// Whether this phone can open the account's vault.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, uniffi::Enum)]
+pub enum AccountKeys {
+    /// A new account: this phone just made its keys and keeps their secret.
+    Created,
+    /// This phone keeps what opens the keys.
+    Unlocked,
+    /// The account has keys this phone cannot open yet: approve it from the phone that has them, or enter the
+    /// recovery code (or the master password of an account made with one).
+    Locked,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, uniffi::Record)]
+pub struct SsoOutcome {
+    pub session: SessionInfo,
+    pub keys: AccountKeys,
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq, uniffi::Enum)]
 pub enum PendingKind {
     Request,

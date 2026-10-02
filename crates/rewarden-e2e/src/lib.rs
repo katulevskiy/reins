@@ -11,6 +11,7 @@
 pub mod ai;
 pub mod phone;
 pub mod server;
+pub mod workos;
 
 pub use ai::AiClient;
 pub use phone::Phone;

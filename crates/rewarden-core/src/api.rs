@@ -15,8 +15,8 @@ use crate::connector::device::{DeviceBridge, DeviceCalendar, DeviceContacts, Sms
 use crate::connector::{Connector, LoginProgress};
 use crate::engine::{CoreConfig, Engine};
 use crate::types::{
-    AccountView, ActivityEntry, ApprovalChoice, ApprovalKind, ApprovalView, ConnectionView, EmailContent, GmailStatus,
-    GrantView, PairingView, PendingItem, ServiceView, SessionInfo, StandingGrant,
+    AccountKeys, AccountView, ActivityEntry, ApprovalChoice, ApprovalKind, ApprovalView, ConnectionView, EmailContent,
+    GmailStatus, GrantView, PairingView, PendingItem, ServiceView, SessionInfo, SsoOutcome, SsoStart, StandingGrant,
 };
 use crate::{CoreError, GoogleTokenProvider, KeyWrapper, Notifier, rt};
 
@@ -110,6 +110,49 @@ impl RewardenCore {
         let engine = Arc::clone(&self.engine);
         let password = Zeroizing::new(password);
         rt::run(async move { engine.login(&server_url, &email, password, totp).await }).await
+    }
+
+    /// Starts a sign-in through the server's SSO ("Continue": Google, Apple, GitHub or an email code on
+    /// app.reins2fa.com). Open `url` in ASWebAuthenticationSession / a Custom Tab, wait for `callback_scheme`, then
+    /// call `sso_finish` with the URL it came back with and this `state` and `verifier`.
+    pub async fn sso_begin(&self, server_url: String) -> Result<SsoStart, CoreError> {
+        let engine = Arc::clone(&self.engine);
+        rt::run(async move { engine.sso_begin(&server_url) }).await
+    }
+
+    /// Finishes the sign-in, keeps the session like `login`, and makes (a new account) or opens the account's keys.
+    /// `keys` is `Locked` when another phone or the recovery code has what opens them.
+    pub async fn sso_finish(
+        &self,
+        server_url: String,
+        callback_url: String,
+        state: String,
+        verifier: String,
+    ) -> Result<SsoOutcome, CoreError> {
+        let engine = Arc::clone(&self.engine);
+        let verifier = Zeroizing::new(verifier);
+        rt::run(async move { engine.sso_finish(&server_url, &callback_url, &state, verifier).await }).await
+    }
+
+    /// Whether this phone can open the signed-in account's vault.
+    pub async fn account_keys(&self) -> Result<AccountKeys, CoreError> {
+        let engine = Arc::clone(&self.engine);
+        rt::run(async move { engine.account_keys().await }).await
+    }
+
+    /// Opens a `Locked` account with its recovery code (case, spaces and dashes do not count), or with the master
+    /// password of an account made with one.
+    pub async fn unlock_account(&self, code_or_password: String) -> Result<(), CoreError> {
+        let engine = Arc::clone(&self.engine);
+        let secret = Zeroizing::new(code_or_password);
+        rt::run(async move { engine.unlock_account(secret).await }).await
+    }
+
+    /// The account's recovery code (`ABCD-EFGH-...`, 13 groups), when this phone keeps its secret. Ask for biometrics
+    /// before showing it.
+    pub async fn account_recovery_code(&self) -> Result<String, CoreError> {
+        let engine = Arc::clone(&self.engine);
+        rt::run(async move { engine.account_recovery_code().await }).await
     }
 
     pub async fn logout(&self) -> Result<(), CoreError> {

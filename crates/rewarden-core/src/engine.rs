@@ -340,6 +340,11 @@ impl Engine {
         self.session.lock().unwrap_or_else(PoisonError::into_inner)
     }
 
+    /// Replaces the signed-in session (a finished sign-in).
+    pub(crate) fn set_session(&self, session: Option<Arc<Session>>) {
+        *self.session_slot() = session;
+    }
+
     pub(crate) fn session(&self) -> Result<Arc<Session>, CoreError> {
         self.session_slot().clone().ok_or(CoreError::NotLoggedIn)
     }

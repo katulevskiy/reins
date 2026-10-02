@@ -24,6 +24,7 @@ pub mod relay;
 pub mod sniff;
 pub mod tools;
 pub mod ttl;
+pub mod workos_sync;
 
 use std::{
     sync::{Arc, LazyLock},
@@ -154,6 +155,12 @@ impl Hub {
         }
     }
 
+    /// Drops what the hub remembers about a deleted account (its reported integrations and MCP servers).
+    pub fn forget_user(&self, user: &str) {
+        self.services.lock().unwrap_or_else(std::sync::PoisonError::into_inner).remove(user);
+        self.mcp_servers.lock().unwrap_or_else(std::sync::PoisonError::into_inner).remove(user);
+    }
+
     pub fn purge(&self) {
         self.relay.purge();
         self.pairings.purge();
@@ -213,6 +220,7 @@ pub fn routes() -> Vec<Route> {
     routes.extend(desktop_routes::routes());
     routes.extend(blob_routes::routes());
     routes.extend(proxy_call::routes());
+    routes.extend(workos_sync::routes());
     routes
 }
 

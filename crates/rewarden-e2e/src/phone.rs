@@ -5,8 +5,8 @@ use std::time::Duration;
 
 use data_encoding::BASE64URL_NOPAD;
 use rewarden_core::{
-    AutoDecisionView, AutopilotEvent, CoreConfig, ForeignError, GoogleTokenProvider, KeyWrapper, Notifier, PendingItem,
-    RewardenCore,
+    AutoDecisionView, AutopilotEvent, CoreConfig, CoreError, ForeignError, GoogleTokenProvider, KeyWrapper, Notifier,
+    PendingItem, RewardenCore, SsoOutcome,
 };
 use serde_json::{Value, json};
 use wiremock::matchers::{method, path};
@@ -108,6 +108,15 @@ impl Phone {
         password: &str,
         configure: impl FnOnce(&mut CoreConfig),
     ) -> Self {
+        let phone = Self::signed_out(configure).await;
+        phone.core.login(server_url.to_owned(), email.to_owned(), password.to_owned(), None).await.expect("login");
+        phone.core.register_device(None).await.expect("register device");
+        phone.connect_gmail().await;
+        phone
+    }
+
+    /// A freshly installed phone: the core, signed in to nothing.
+    pub async fn signed_out(configure: impl FnOnce(&mut CoreConfig)) -> Self {
         let gmail = MockServer::start().await;
         let dir = tempfile::tempdir().expect("tempdir");
         let notes = Arc::new(Notes::default());
@@ -121,20 +130,30 @@ impl Phone {
         let core =
             RewardenCore::with_config(dir.path().to_str().expect("utf8"), &Keys, Arc::new(Google), notifier, cfg)
                 .expect("core");
-        core.login(server_url.to_owned(), email.to_owned(), password.to_owned(), None).await.expect("login");
-        core.register_device(None).await.expect("register device");
-        Mock::given(method("GET"))
-            .and(path("/users/me/profile"))
-            .respond_with(ResponseTemplate::new(200).set_body_json(json!({"emailAddress": GMAIL_ACCOUNT})))
-            .mount(&gmail)
-            .await;
-        core.add_account(GMAIL_ACCOUNT.to_owned()).await.expect("connect the Gmail account");
         Self {
             core,
             gmail,
             notes,
             _dir: dir,
         }
+    }
+
+    /// Connects the fake Gmail account [`GMAIL_ACCOUNT`].
+    pub async fn connect_gmail(&self) {
+        Mock::given(method("GET"))
+            .and(path("/users/me/profile"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!({"emailAddress": GMAIL_ACCOUNT})))
+            .mount(&self.gmail)
+            .await;
+        self.core.add_account(GMAIL_ACCOUNT.to_owned()).await.expect("connect the Gmail account");
+    }
+
+    /// "Continue": the server's SSO sign-in, with the browser part run by [`crate::workos::browse_to_callback`]
+    /// (whoever the identity provider signs in is up to it).
+    pub async fn sso_sign_in(&self, server_url: &str) -> Result<SsoOutcome, CoreError> {
+        let start = self.core.sso_begin(server_url.to_owned()).await?;
+        let callback = crate::workos::browse_to_callback(&start.url, &start.callback_scheme).await;
+        self.core.sso_finish(server_url.to_owned(), callback, start.state, start.verifier).await
     }
 
     /// Makes Gmail return these messages `(id, from)` for any search, and their full text.

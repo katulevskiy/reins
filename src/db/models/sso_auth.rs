@@ -35,6 +35,9 @@ pub struct OIDCAuthenticatedUser {
     pub email: String,
     pub email_verified: Option<bool>,
     pub user_name: Option<String>,
+    /// The provider's session id, when it has one (WorkOS: the `sid` of its access token).
+    #[serde(default)]
+    pub session_id: Option<String>,
 }
 
 impl_FromToSqlText!(OIDCAuthenticatedUser);

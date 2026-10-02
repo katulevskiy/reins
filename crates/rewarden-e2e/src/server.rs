@@ -48,13 +48,19 @@ fn free_port() -> u16 {
 impl Server {
     /// Starts a server with short relay timings (`wait` and `offline` in seconds).
     pub async fn start(relay_wait: u64, offline: u64) -> Self {
+        Self::start_with_env(relay_wait, offline, &[]).await
+    }
+
+    /// Like [`Server::start`], with these environment settings added (SSO, ...).
+    pub async fn start_with_env(relay_wait: u64, offline: u64, env: &[(String, String)]) -> Self {
         let bin = binary().to_owned();
         let port = free_port();
         let dir = std::env::temp_dir().join(format!("rewarden-e2e-{}", uuid::Uuid::new_v4()));
         std::fs::create_dir_all(&dir).expect("temp dir");
         let log = File::create(dir.join("server.log")).expect("log");
         let base = format!("http://127.0.0.1:{port}");
-        let child = Command::new(bin)
+        let mut command = Command::new(bin);
+        command
             .current_dir(&dir)
             .env_clear()
             .env("DATA_FOLDER", &dir)
@@ -68,10 +74,10 @@ impl Server {
             .env("REWARDEN_OFFLINE_SECS", offline.to_string())
             // The tests' fake GitHub and MCP servers listen on loopback over http.
             .env("REWARDEN_TEST_ALLOW_LOOPBACK", "1")
+            .envs(env.iter().map(|(k, v)| (k.as_str(), v.as_str())))
             .stdout(log.try_clone().expect("clone"))
-            .stderr(log)
-            .spawn()
-            .expect("spawn vaultwarden");
+            .stderr(log);
+        let child = command.spawn().expect("spawn vaultwarden");
         let server = Self {
             base,
             child,

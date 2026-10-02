@@ -390,6 +390,22 @@ table! {
     }
 }
 
+table! {
+    rewarden_settings (name) {
+        name -> Text,
+        value -> Text,
+    }
+}
+
+table! {
+    rewarden_sso_sessions (session_id) {
+        session_id -> Text,
+        user_uuid -> Text,
+        device_uuid -> Text,
+        created_at -> BigInt,
+    }
+}
+
 joinable!(archives -> users (user_uuid));
 joinable!(archives -> ciphers (cipher_uuid));
 joinable!(attachments -> ciphers (cipher_uuid));

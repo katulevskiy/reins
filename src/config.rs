@@ -591,6 +591,12 @@ make_config! {
         rewarden_outbound_requests_per_minute: u32, false, def, 60;
         /// Concurrent outbound requests per account |> Requests the server makes for one account's phone at the same time. 0 disables the limit.
         rewarden_outbound_max_concurrent: u32,  false,  def,    4;
+        /// WorkOS sync interval (seconds) |> With WorkOS as the SSO provider: how often the server reads the WorkOS events (email changes, deleted users, revoked sessions) and applies them to the accounts. 0 disables the sync.
+        rewarden_workos_sync_secs:      u64,    false,  def,    30;
+        /// WorkOS API key |> The key the WorkOS sync reads events with. Empty uses SSO_CLIENT_SECRET (WorkOS takes the API key as the client secret).
+        rewarden_workos_api_key:        Pass,   false,  option;
+        /// WorkOS webhook secret |> The signing secret of a WorkOS webhook pointed at {DOMAIN}/rewarden/workos/webhook. A signed delivery makes the sync run at once; without it, the endpoint is off and the sync only polls.
+        rewarden_workos_webhook_secret: Pass,   false,  option;
     },
     jobs {
         /// Job scheduler poll interval |> How often the job scheduler thread checks for jobs to run.
@@ -885,6 +891,8 @@ make_config! {
         sso_client_secret:              Pass,   true,   def,    String::new();
         /// Authority Server |> Base url of the OIDC provider discovery endpoint (without `/.well-known/openid-configuration`)
         sso_authority:                  String, true,   def,    String::new();
+        /// Provider |> `workos` for WorkOS AuthKit (`SSO_AUTHORITY=https://api.workos.com/user_management/<client id>`), `oidc` for any other OpenID Connect provider. Empty picks `workos` for an authority on api.workos.com.
+        sso_provider:                   String, true,   def,    String::new();
         /// Authorization request scopes |> List the of the needed scope (`openid` is implicit)
         sso_scopes:                     String, true,  def,   "email profile".to_owned();
         /// Authorization request extra parameters
@@ -1198,6 +1206,15 @@ fn validate_config(cfg: &ConfigItems, on_update: bool) -> Result<(), Error> {
         validate_internal_sso_issuer_url(&cfg.sso_authority)?;
         validate_internal_sso_redirect_url(&cfg.sso_callback_path)?;
         validate_sso_master_password_policy(cfg.sso_master_password_policy.as_ref())?;
+
+        if !matches!(cfg.sso_provider.trim().to_ascii_lowercase().as_str(), "" | "oidc" | "workos") {
+            err!("`SSO_PROVIDER` must be `workos`, `oidc` or empty")
+        }
+        if crate::sso_workos::provider_is_workos(&cfg.sso_provider, &cfg.sso_authority)
+            && crate::sso_workos::api_base_of(&cfg.sso_authority).is_none()
+        {
+            err!("With WorkOS, `SSO_AUTHORITY` must be https://api.workos.com/user_management/<client id>")
+        }
     }
 
     if cfg._enable_yubico {

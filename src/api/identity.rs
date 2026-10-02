@@ -366,10 +366,25 @@ async fn sso_login(
             }
 
             if user.email != user_infos.email {
-                if CONFIG.mail_enabled() {
-                    mail::send_sso_change_email(&user_infos.email).await?;
+                // WorkOS owns the identity: a verified new email there becomes the account's (the WorkOS sync does
+                // the same between sign-ins), unless another account has it.
+                if crate::sso_workos::enabled()
+                    && sso_user.is_some()
+                    && user_infos.email_verified == Some(true)
+                    && User::find_by_mail(&user_infos.email, conn).await.is_none()
+                {
+                    info!("User {} email follows WorkOS from {} to {}", user.uuid, user.email, user_infos.email);
+                    user.email.clone_from(&user_infos.email);
+                    user.save(conn).await?;
+                } else {
+                    if CONFIG.mail_enabled() {
+                        mail::send_sso_change_email(&user_infos.email).await?;
+                    }
+                    info!(
+                        "User {} email changed in SSO provider from {} to {}",
+                        user.uuid, user.email, user_infos.email
+                    );
                 }
-                info!("User {} email changed in SSO provider from {} to {}", user.uuid, user.email, user_infos.email);
             }
 
             (user, device, twofactor_token, sso_user)
