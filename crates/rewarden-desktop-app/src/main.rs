@@ -61,6 +61,8 @@ impl Args {
             match arg.as_str() {
                 "--background" => args.background = true,
                 "--demo" => args.demo = true,
+                // The Windows installer starts the app with it; a normal start.
+                "--installed" => {}
                 "--version" | "-V" => {
                     println!("Reins {}", rewarden_desktop::update::LONG_VERSION);
                     std::process::exit(0);
@@ -90,7 +92,6 @@ fn main() {
             std::process::exit(2);
         }
     };
-    rewarden_desktop::daemon::init_logging();
     let backend = match backend::Backend::from_env() {
         Ok(b) => Arc::new(b),
         Err(e) => {
@@ -98,6 +99,11 @@ fn main() {
             std::process::exit(1);
         }
     };
+    // An app started from the desktop has no terminal: the log goes to `app.log` in the state directory as well.
+    if let Err(e) = backend.paths().ensure() {
+        eprintln!("reins-app: {e}");
+    }
+    rewarden_desktop::daemon::init_logging(Some(&backend.paths().state_dir.join("app.log")));
     // One Reins per user: a second start asks the first one to show its window, then ends.
     let Some(instance) = single::Instance::acquire(&backend.paths().state_dir) else {
         log::info!("Reins is already running; asked it to show its window");
@@ -114,7 +120,7 @@ fn main() {
     let handle = runtime.handle().clone();
 
     let app = gpui_platform::application().with_quit_mode(QuitMode::Explicit);
-    app.on_reopen(|cx| model::Model::show_window(cx));
+    app.on_reopen(model::Model::show_window);
     app.run(move |cx: &mut App| {
         gpui_tokio::init_from_handle(cx, handle);
         theme::register_fonts(cx);

@@ -14,6 +14,11 @@ publish.workspace = true
 name = "reins-app"
 path = "src/main.rs"
 
+[features]
+# Pairing by QR code through `rewarden_desktop::server::device` (the onboarding work). Without it, the app pairs with
+# the browser sign-in only. Make it a default feature once that module is on the branch.
+device-flow = []
+
 [dependencies]
 rewarden-desktop = { path = "../rewarden-desktop" }
 # GPUI from the zui fork, the same revision Zeron's desktop app uses (see Zeron's Cargo.toml for what the fork adds).

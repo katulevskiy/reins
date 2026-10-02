@@ -1,0 +1,81 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  The Reins installer for Windows (WiX v4): scripts/package/windows.ps1 builds it with
+
+    wix build -arch x64 -ext WixToolset.Util.wixext -d Version=X.Y.Z -d AppExe=...\Reins.exe
+      -d CliExe=...\rewarden.exe -d IconFile=...\Reins.ico -o Reins-X.Y.Z-Windows-x64.msi Reins.wxs
+
+  A per-user install, so it needs no administrator: %LOCALAPPDATA%\Programs\Reins with Reins.exe (the app) and
+  rewarden.exe (the command line program the AI harnesses and the background service run), a Start menu shortcut,
+  that folder on the user's PATH, and Reins in the user's Run key so it starts at logon (value "Reins app", the one
+  the app's own "Open Reins when you log in" switch writes; the background service is the "Reins" value, which
+  `rewarden service install` writes). Reins starts when the installation finishes.
+
+  Uninstalling stops and removes the background service first (`rewarden service uninstall`), then the files. What
+  Reins added to the harnesses' settings stays (the app's switches, or `rewarden harness remove`, take it out).
+-->
+<Wix xmlns="http://wixtoolset.org/schemas/v4/wxs" xmlns:util="http://wixtoolset.org/schemas/v4/wxs/util">
+  <Package Name="Reins" Manufacturer="Reins" Version="$(var.Version)" Language="1033" Scope="perUser"
+           UpgradeCode="7BEB4F1E-7577-4E11-AD49-DD4D3A2B764C" Compressed="yes">
+    <SummaryInformation Description="Reins: keeps your AI agents on a leash" Manufacturer="Reins" />
+    <MajorUpgrade DowngradeErrorMessage="A newer version of Reins is already installed." AllowSameVersionUpgrades="yes" />
+    <MediaTemplate EmbedCab="yes" />
+
+    <Icon Id="ReinsIcon" SourceFile="$(var.IconFile)" />
+    <Property Id="ARPPRODUCTICON" Value="ReinsIcon" />
+    <Property Id="ARPURLINFOABOUT" Value="https://reins2fa.com" />
+    <Property Id="ARPHELPLINK" Value="https://github.com/katulevskiy/reins" />
+    <Property Id="ARPNOREPAIR" Value="1" />
+
+    <!-- Per user, ProgramFiles6432Folder is %LOCALAPPDATA%\Programs. -->
+    <StandardDirectory Id="ProgramFiles6432Folder">
+      <Directory Id="INSTALLFOLDER" Name="Reins" />
+    </StandardDirectory>
+
+    <!-- Per-user components keep their key path in HKCU (a file under the profile cannot be one). -->
+    <ComponentGroup Id="ReinsFiles" Directory="INSTALLFOLDER">
+      <Component Id="AppExe">
+        <File Id="ReinsExe" Source="$(var.AppExe)" Name="Reins.exe" KeyPath="no" />
+        <RegistryValue Root="HKCU" Key="Software\Reins\Desktop" Name="App" Type="string" Value="[INSTALLFOLDER]Reins.exe" KeyPath="yes" />
+        <RemoveFolder Id="RemoveInstallFolder" On="uninstall" />
+      </Component>
+      <Component Id="CliExe">
+        <File Id="RewardenExe" Source="$(var.CliExe)" Name="rewarden.exe" KeyPath="no" />
+        <RegistryValue Root="HKCU" Key="Software\Reins\Desktop" Name="Cli" Type="string" Value="[INSTALLFOLDER]rewarden.exe" KeyPath="yes" />
+      </Component>
+      <Component Id="CliOnPath">
+        <Environment Id="ReinsPath" Name="PATH" Value="[INSTALLFOLDER]" Action="set" Part="last" System="no" Permanent="no" />
+        <RegistryValue Root="HKCU" Key="Software\Reins\Desktop" Name="Path" Type="integer" Value="1" KeyPath="yes" />
+      </Component>
+      <Component Id="Autostart">
+        <RegistryValue Root="HKCU" Key="Software\Microsoft\Windows\CurrentVersion\Run" Name="Reins app" Type="string"
+                       Value="&quot;[INSTALLFOLDER]Reins.exe&quot; --background" KeyPath="yes" />
+      </Component>
+    </ComponentGroup>
+
+    <StandardDirectory Id="ProgramMenuFolder">
+      <Component Id="StartMenuShortcut">
+        <Shortcut Id="ReinsShortcut" Name="Reins" Description="Keeps your AI agents on a leash" Target="[INSTALLFOLDER]Reins.exe"
+                  WorkingDirectory="INSTALLFOLDER" Icon="ReinsIcon" />
+        <RegistryValue Root="HKCU" Key="Software\Reins\Desktop" Name="Shortcut" Type="integer" Value="1" KeyPath="yes" />
+      </Component>
+    </StandardDirectory>
+
+    <Feature Id="Reins" Title="Reins" Level="1">
+      <ComponentGroupRef Id="ReinsFiles" />
+      <ComponentRef Id="StartMenuShortcut" />
+    </Feature>
+
+    <!-- A running Reins (tray only, no window to close) is ended before its files are replaced or removed. -->
+    <util:CloseApplication Id="CloseReins" Target="Reins.exe" TerminateProcess="0" RebootPrompt="no" />
+
+    <!-- On uninstall (not on an upgrade), stop and remove the background service while rewarden.exe is still there. -->
+    <CustomAction Id="RemoveService" FileRef="RewardenExe" ExeCommand="service uninstall" Execute="immediate" Return="ignore" Impersonate="yes" />
+    <!-- After installing or upgrading, start Reins: it shows the pairing window the first time. -->
+    <CustomAction Id="StartReins" FileRef="ReinsExe" ExeCommand="--installed" Execute="immediate" Return="asyncNoWait" Impersonate="yes" />
+    <InstallExecuteSequence>
+      <Custom Action="RemoveService" Before="RemoveFiles" Condition="REMOVE=&quot;ALL&quot; AND NOT UPGRADINGPRODUCTCODE" />
+      <Custom Action="StartReins" After="InstallFinalize" Condition="NOT REMOVE" />
+    </InstallExecuteSequence>
+  </Package>
+</Wix>

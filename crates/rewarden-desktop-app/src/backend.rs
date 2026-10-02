@@ -6,7 +6,7 @@
 //! as long as the app runs.
 
 use std::path::{Path, PathBuf};
-use std::sync::Mutex;
+
 use std::time::{Duration, Instant};
 
 use rewarden_desktop::config::{Config, Paths};
@@ -15,9 +15,9 @@ use rewarden_desktop::daemon::{Daemon, Options};
 use rewarden_desktop::harness::{self, Harness, detect};
 use rewarden_desktop::identity::Identity;
 use rewarden_desktop::server::oauth;
+use rewarden_desktop::service;
 use rewarden_desktop::setup::{Git, Scope};
 use rewarden_desktop::update::{self, Check};
-use rewarden_desktop::service;
 
 use crate::state::Saved;
 
@@ -68,16 +68,10 @@ pub struct Snapshot {
 pub struct Backend {
     paths: Paths,
     home: PathBuf,
+    /// How git is run (with `HOME` set when `REINS_HOME` stands in for it).
+    git: Git,
     /// The daemon, when it runs inside the app.
-    in_app: Mutex<Option<tokio::task::JoinHandle<()>>>,
-}
-
-fn home_dir() -> Result<PathBuf, String> {
-    std::env::var_os("HOME")
-        .or_else(|| std::env::var_os("USERPROFILE"))
-        .filter(|h| !h.is_empty())
-        .map(PathBuf::from)
-        .ok_or_else(|| "cannot find your home directory (HOME is not set)".to_owned())
+    in_app: tokio::sync::Mutex<Option<tokio::task::JoinHandle<()>>>,
 }
 
 /// A copy of the app that will not be at this path next time: inside a disk image, moved aside by Gatekeeper
@@ -90,12 +84,32 @@ fn is_transient(path: &Path) -> bool {
 }
 
 impl Backend {
+    /// From the environment. `REINS_HOME` stands in for the home directory (the harnesses' settings, git's global
+    /// config, the login items, and Reins's own settings and state under it), to try the app without touching the
+    /// real ones.
     pub fn from_env() -> Result<Self, String> {
+        if let Some(home) = std::env::var_os("REINS_HOME").filter(|h| !h.is_empty()).map(PathBuf::from) {
+            return Ok(Self {
+                paths: Paths {
+                    config_dir: home.join(".config").join("rewarden"),
+                    state_dir: home.join(".local").join("state").join("rewarden"),
+                },
+                git: Git::default().env("HOME", &home).env("XDG_CONFIG_HOME", home.join(".config")),
+                home,
+                in_app: tokio::sync::Mutex::new(None),
+            });
+        }
         Ok(Self {
             paths: Paths::from_env().map_err(|e| e.to_string())?,
-            home: home_dir()?,
-            in_app: Mutex::new(None),
+            home: rewarden_desktop::config::home_dir()?,
+            git: Git::default(),
+            in_app: tokio::sync::Mutex::new(None),
         })
+    }
+
+    /// The home directory the harnesses' settings are under.
+    pub fn home(&self) -> &Path {
+        &self.home
     }
 
     #[cfg(test)]
@@ -103,7 +117,8 @@ impl Backend {
         Self {
             paths: Paths::under(root),
             home: root.to_path_buf(),
-            in_app: Mutex::new(None),
+            git: Git::default().env("HOME", root),
+            in_app: tokio::sync::Mutex::new(None),
         }
     }
 
@@ -137,7 +152,6 @@ impl Backend {
         Identity::load_or_create(&self.paths.identity_file()).map(|id| id.fingerprint()).map_err(|e| e.to_string())
     }
 
-    #[must_use]
     pub fn identity(&self) -> Result<Identity, String> {
         self.paths.ensure().map_err(|e| e.to_string())?;
         Identity::load_or_create(&self.paths.identity_file()).map_err(|e| e.to_string())
@@ -270,10 +284,9 @@ impl Backend {
             Ok(c) => self.daemon_status(c).await,
             Err(e) => DaemonState::Unknown(e.clone()),
         };
-        let git_routed = config.as_ref().map_or_else(
-            |_| Vec::new(),
-            |c| Git::default().hosts_set_up(&Scope::Global, c).unwrap_or_default(),
-        );
+        let git_routed = config
+            .as_ref()
+            .map_or_else(|_| Vec::new(), |c| self.git.hosts_set_up(&Scope::Global, c).unwrap_or_default());
         Snapshot {
             server: self.paired_server(),
             daemon,
@@ -285,7 +298,29 @@ impl Backend {
 
     /// Whether the daemon should run inside the app rather than as a service.
     fn daemon_in_app() -> bool {
-        std::env::var("REINS_DAEMON").is_ok_and(|v| v == "in-app") || service::Manager::current().is_err()
+        std::env::var("REINS_DAEMON").is_ok_and(|v| v == "in-app")
+            || (!cfg!(windows) && service::Manager::current().is_err())
+    }
+
+    /// Installs the background service for the bundled `rewarden` and starts it (the `Run` key's windowless copy on
+    /// Windows, launchd or systemd elsewhere).
+    // Only Windows waits (for the daemon's control API).
+    #[cfg_attr(not(windows), allow(clippy::unused_async, clippy::unused_async_trait_impl))]
+    async fn install_service(&self, config: &Config) -> Result<(), String> {
+        let cli = self.cli()?;
+        #[cfg(windows)]
+        {
+            let what = service::windows::install(&self.paths, config, &cli, true).await?;
+            log::info!("installed the service: {what}");
+        }
+        #[cfg(not(windows))]
+        {
+            let _ = config;
+            let manager = service::Manager::current()?;
+            let file = service::install(manager, &self.home, &cli, true)?;
+            log::info!("installed the service at {}", file.display());
+        }
+        Ok(())
     }
 
     /// Starts the background service (installing it if needed) and waits until the daemon answers. Says how it runs.
@@ -298,18 +333,20 @@ impl Backend {
             self.start_in_app(config.clone()).await?;
             "Reins runs the service while it is open."
         } else {
-            let manager = service::Manager::current()?;
-            let file = service::install(manager, &self.home, &self.cli()?, true)?;
-            log::info!("installed the service at {}", file.display());
+            self.install_service(&config).await?;
             "The background service runs at login."
         };
         let deadline = Instant::now() + SERVICE_START;
         loop {
             match self.daemon_status(&config).await {
-                DaemonState::Running { .. } => return Ok(how.to_owned()),
+                DaemonState::Running {
+                    ..
+                } => return Ok(how.to_owned()),
                 _ if Instant::now() > deadline => {
-                    return Err("the background service did not start (run `rewarden daemon` in a terminal to see why)"
-                        .to_owned());
+                    return Err(
+                        "the background service did not start (run `rewarden daemon` in a terminal to see why)"
+                            .to_owned(),
+                    );
                 }
                 _ => tokio::time::sleep(Duration::from_millis(250)).await,
             }
@@ -317,7 +354,7 @@ impl Backend {
     }
 
     async fn start_in_app(&self, config: Config) -> Result<(), String> {
-        let mut running = self.in_app.lock().map_err(|_| "the app's daemon lock is poisoned".to_owned())?;
+        let mut running = self.in_app.lock().await;
         if running.as_ref().is_some_and(|t| !t.is_finished()) {
             return Ok(());
         }
@@ -343,19 +380,23 @@ impl Backend {
     pub async fn resume(&self) -> Result<(), String> {
         self.start_service().await?;
         let config = self.config()?;
-        Git::default().setup_hosts(&Scope::Global, &config)?;
+        self.git.setup_hosts(&Scope::Global, &config)?;
         Ok(())
     }
 
     /// git talks to the hosts directly again.
     pub fn pause(&self) -> Result<(), String> {
         let config = self.config()?;
-        Git::default().unsetup_hosts(&Scope::Global, &config)?;
+        self.git.unsetup_hosts(&Scope::Global, &config)?;
         Ok(())
     }
 
     /// A newer release, if there is one for this computer.
     pub async fn update_available(&self) -> Option<String> {
+        // A build from source has no release time: every release would look newer.
+        if update::BUILD == "dev" {
+            return None;
+        }
         let config = self.config().ok()?;
         let updater = update::Updater::for_this_binary(&config.releases).ok()?;
         match updater.check().await {
