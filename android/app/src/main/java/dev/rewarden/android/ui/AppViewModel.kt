@@ -14,10 +14,12 @@ import dev.rewarden.android.platform.Foreground
 import dev.rewarden.android.platform.McpSignInResult
 import dev.rewarden.android.state.McpNotice
 import dev.rewarden.android.state.SessionState
+import dev.rewarden.android.ui.common.userMessage
 import dev.rewarden.android.ui.nav.DeepLink
 import dev.rewarden.android.ui.nav.Route
 import dev.rewarden.android.ui.nav.SheetTarget
 import dev.rewarden.android.ui.nav.Tab
+import dev.rewarden.android.ui.pairing.PairingCode
 import dev.rewarden.core.CoreException
 import dev.rewarden.core.PendingItem
 import dev.rewarden.core.PendingKind
@@ -26,7 +28,16 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
+
+/** Connecting a computer by the code it shows: looking it up, why that failed, and whether the code field is open. */
+data class ConnectUi(
+    val busy: Boolean = false,
+    val error: String? = null,
+    /** The field to type the code in (always offered; opened by itself when the scanner cannot run). */
+    val manual: Boolean = false,
+)
 
 /** Navigation and session lifecycle for the whole activity. */
 class AppViewModel(private val container: AppContainer) : ViewModel() {
@@ -45,6 +56,13 @@ class AppViewModel(private val container: AppContainer) : ViewModel() {
     /** Items already popped up once; dismissing one leaves it in the list without popping up again. */
     private val presented = mutableSetOf<String>()
 
+    private val _connect = MutableStateFlow(ConnectUi())
+    val connect: StateFlow<ConnectUi> = _connect.asStateFlow()
+
+    /** A pairing link opened while signed out: it is used as soon as someone signs in. */
+    private val _waitingCode = MutableStateFlow<String?>(null)
+    val waitingCode: StateFlow<String?> = _waitingCode.asStateFlow()
+
     val current: Route? get() = stack.lastOrNull()
 
     init {
@@ -53,6 +71,20 @@ class AppViewModel(private val container: AppContainer) : ViewModel() {
         viewModelScope.launch(Dispatchers.Main) { container.refreshSession() }
         viewModelScope.launch(Dispatchers.Main) {
             container.state.pending.collect { maybePresent(it) }
+        }
+        viewModelScope.launch(Dispatchers.Main) {
+            container.state.session.collect { session ->
+                if (session is SessionState.SignedOut) {
+                    // The next sign-in starts on the main screen, not where the last one signed out.
+                    home()
+                    _sheet.value = null
+                    _connect.value = ConnectUi()
+                }
+                if (session !is SessionState.SignedIn) return@collect
+                val code = _waitingCode.value ?: return@collect
+                _waitingCode.value = null
+                connectWithCode(code, fromLink = true)
+            }
         }
     }
 
@@ -184,6 +216,100 @@ class AppViewModel(private val container: AppContainer) : ViewModel() {
         container.state.setSession(SessionState.SignedOut)
         home()
         _sheet.value = null
+        _connect.value = ConnectUi()
+    }
+
+    // ---- connecting a computer by its code -----------------------------------------------------------------------
+
+    /** What Google's scanner read. Anything but a pairing code (or a link to one) is refused. */
+    fun connectScanned(text: String) {
+        val code = PairingCode.parse(text)
+        if (code == null) {
+            failConnect("That QR code is not a Reins pairing code. Scan the one your computer shows.")
+            return
+        }
+        connectWithCode(code, fromLink = false)
+    }
+
+    /** What the user typed into the code field. */
+    fun connectTyped(text: String) {
+        val code = PairingCode.parse(text)
+        if (code == null) {
+            failConnect("Enter the 8 letters your computer shows, like BCDF-GHJK.")
+            return
+        }
+        connectWithCode(code, fromLink = false)
+    }
+
+    /** The scanner could not run: say so and open the field to type the code. */
+    fun scannerUnavailable() {
+        failConnect("The QR scanner is not available on this phone. Type the code your computer shows instead.", openField = true)
+    }
+
+    fun showCodeField() = _connect.update { it.copy(manual = true) }
+
+    /** The connect screens closed: their error does not wait for the next visit. */
+    fun resetConnect() {
+        if (!_connect.value.busy) _connect.value = ConnectUi()
+    }
+
+    /**
+     * A `/pair` link (an App Link or `reins://pair`), already reduced to a well-formed code. Signed in, it opens the
+     * pairing at once; signed out, it waits for the sign-in.
+     */
+    fun openPairingLink(code: String) {
+        if (container.state.session.value is SessionState.SignedIn) {
+            connectWithCode(code, fromLink = true)
+        } else {
+            _waitingCode.value = code
+        }
+    }
+
+    /**
+     * Asks the server (through the core) for the pairing [code] stands for and opens the usual pairing sheet for it:
+     * the user still taps the number the computer shows, names it and confirms with biometrics.
+     */
+    private fun connectWithCode(code: String, fromLink: Boolean) {
+        if (_connect.value.busy) return
+        _connect.update { it.copy(busy = true, error = null) }
+        viewModelScope.launch {
+            try {
+                val view = container.core.pairingByCode(code)
+                _connect.value = ConnectUi()
+                if (fromLink) home()
+                // Open first, so the refresh below cannot pop up some other waiting item ahead of it.
+                openSheet(SheetTarget.Pairing(view.id))
+                container.refreshPending()
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                val message = if (e is CoreException.NotFound) CODE_EXPIRED else e.userMessage()
+                failConnect(message)
+                if (fromLink) {
+                    // A link has no connect screen behind it: the main screen says what happened.
+                    home()
+                    _notice.value = message
+                }
+            }
+        }
+    }
+
+    private fun failConnect(message: String, openField: Boolean = false) {
+        container.feedback.play(Event.Error)
+        _connect.update { it.copy(busy = false, error = message, manual = it.manual || openField) }
+    }
+
+    /** The setup after signing in was finished or skipped. */
+    fun finishSetup() {
+        viewModelScope.launch {
+            container.finishOnboarding()
+            _connect.value = ConnectUi()
+            home()
+        }
+    }
+
+    private companion object {
+        const val CODE_EXPIRED = "This code has expired or was already used. Show a new one on your computer."
     }
 }
 

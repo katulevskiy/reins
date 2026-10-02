@@ -4,6 +4,10 @@
 <dict>
 	<key>aps-environment</key>
 	<string>$(REINS_APS_ENVIRONMENT)</string>
+	<key>com.apple.developer.associated-domains</key>
+	<array>
+		<string>applinks:app.reins2fa.com</string>
+	</array>
 	<key>com.apple.developer.usernotifications.time-sensitive</key>
 	<true/>
 	<key>com.apple.security.application-groups</key>

@@ -109,7 +109,17 @@ xcodebuild test -project Reins.xcodeproj -scheme Reins -destination 'platform=iO
 ```
 
 `ios/scripts/live-smoke.sh` runs the real app, with the real core, against a real local server and a simulated AI
-(the `rewarden-e2e` harness Android's `device-smoke.sh` uses).
+(the `rewarden-e2e` harness Android's `device-smoke.sh` uses). `ios/scripts/live-onboarding.sh` creates an account
+in the real app and pairs a simulated computer by its code (`rewarden login`'s device flow).
+
+## Pairing a computer
+
+`rewarden login` and the desktop app show a QR code for `https://<server>/pair?code=BCDF-GHJK` and the code under it.
+The phone scans it in the app (VisionKit; Settings > AI connections > Connect a computer, or the onboarding step),
+opens it as a universal link (Associated Domains `applinks:app.reins2fa.com`; the server serves the
+`apple-app-site-association` file when `REWARDEN_APPLE_TEAM_ID` is set), as `reins://pair?code=...`, or takes it
+typed. Only the code is used, redeemed on the phone's own server (`pairingByCode`); the pairing sheet then asks for the
+number the computer shows and compares its key. Without a camera (the simulator) the code is typed.
 
 ## Not on iOS
 

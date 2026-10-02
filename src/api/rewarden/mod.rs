@@ -7,6 +7,7 @@ pub mod blob_io;
 pub mod blob_routes;
 pub mod desktop_routes;
 pub mod device_api;
+pub mod device_flow;
 pub mod fcm;
 pub mod join;
 pub mod limits;
@@ -190,6 +191,7 @@ pub async fn purge(pool: crate::db::DbPool) {
     debug!("Purging Rewarden state");
     HUB.purge();
     oauth_state::OAUTH.purge();
+    device_flow::DEVICE_GRANTS.purge();
     limits::retain_recent();
     if let Ok(conn) = pool.get().await {
         if let Err(e) = crate::db::models::RewardenRefreshToken::delete_expired(now_unix(), &conn).await {
@@ -227,6 +229,7 @@ pub fn routes() -> Vec<Route> {
     routes.extend(desktop_routes::routes());
     routes.extend(blob_routes::routes());
     routes.extend(proxy_call::routes());
+    routes.extend(pages::routes());
     routes.extend(join::routes());
     routes.extend(workos_sync::routes());
     routes
@@ -264,12 +267,14 @@ pub fn loggable_path(path: &str) -> std::borrow::Cow<'_, str> {
     }
 }
 
-/// OAuth/RFC 9728 discovery documents, mounted at the server root `/`.
+/// OAuth/RFC 9728 discovery documents and the phone apps' link associations, mounted at the server root `/`.
 pub fn well_known_routes() -> Vec<Route> {
     if !enabled() {
         return Vec::new();
     }
-    oauth_routes::well_known_routes()
+    let mut routes = oauth_routes::well_known_routes();
+    routes.extend(pages::app_link_routes());
+    routes
 }
 
 /// Catchers registered at `{domain_path}/rewarden/api`.

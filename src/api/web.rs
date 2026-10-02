@@ -30,15 +30,11 @@ pub fn routes() -> Vec<Route> {
     // crate::utils::LOGGED_ROUTES to make sure they appear in the log
     let mut routes = routes![attachments, alive, alive_head, static_files];
     if CONFIG.web_vault_enabled() {
-        routes.append(&mut routes![
-            web_index,
-            web_index_direct,
-            web_index_head,
-            app_id,
-            apple_app_site_association,
-            web_files,
-            vaultwarden_css
-        ]);
+        routes.append(&mut routes![web_index, web_index_direct, web_index_head, app_id, web_files, vaultwarden_css]);
+        // With Rewarden enabled, its own document (with the same web credentials) is served at the root.
+        if !crate::api::rewarden::enabled() {
+            routes.append(&mut routes![apple_app_site_association]);
+        }
     }
 
     #[cfg(debug_assertions)]

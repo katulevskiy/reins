@@ -42,8 +42,8 @@ impl TokenSource {
         } else if let Some(name) = spec.strip_prefix("env:").filter(|n| !n.is_empty()) {
             Ok(Self::Env(name.to_owned()))
         } else if let Some(path) = spec.strip_prefix("file:").filter(|p| !p.is_empty()) {
-            let path = match (path.strip_prefix("~/"), std::env::var_os("HOME")) {
-                (Some(rest), Some(home)) => std::path::PathBuf::from(home).join(rest),
+            let path = match (path.strip_prefix("~/"), crate::config::home_dir()) {
+                (Some(rest), Ok(home)) => home.join(rest),
                 _ => std::path::PathBuf::from(path),
             };
             Ok(Self::File(path))
@@ -57,7 +57,11 @@ impl TokenSource {
             Self::Gh {
                 host,
             } => {
-                let run = tokio::process::Command::new("gh")
+                let mut gh = tokio::process::Command::new("gh");
+                // The background daemon has no console; without this every token fetch would flash a window.
+                #[cfg(windows)]
+                crate::win::hidden_async(&mut gh);
+                let run = gh
                     .args(["auth", "token", "--hostname", host])
                     .stdin(std::process::Stdio::null())
                     .stderr(std::process::Stdio::null())
@@ -401,7 +405,7 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         std::fs::write(dir.path().join("gl"), "glpat-1\n").unwrap();
         let text = format!(
-            "[[git.hosts]]\nhost = \"gitlab.com\"\nenabled = true\ntoken = \"file:{}\"\n[[git.hosts]]\nhost = \"codeberg.org\"\nenabled = true\n[[policy.rules]]\nhost = \"gitlab.com\"\nrepo = \"group/secret/**\"\nread = \"deny\"\n",
+            "[[git.hosts]]\nhost = \"gitlab.com\"\nenabled = true\ntoken = 'file:{}'\n[[git.hosts]]\nhost = \"codeberg.org\"\nenabled = true\n[[policy.rules]]\nhost = \"gitlab.com\"\nrepo = \"group/secret/**\"\nread = \"deny\"\n",
             dir.path().join("gl").display()
         );
         let c = config(dir.path(), &text);

@@ -124,6 +124,9 @@ final class GrantsSettingsUITests: XCTestCase {
         app.terminate()
 
         launch(["-signedout"])
+        wait("signInChoice")
+        shot("welcome")
+        tap("signInChoice")
         wait("signIn")
         shot("signin")
     }
@@ -266,13 +269,14 @@ final class GrantsSettingsUITests: XCTestCase {
         scrollTo("signOut")
         tap("signOut")
         confirm("Sign out")
-        wait("signIn")
+        wait("signInChoice")
     }
 
     // MARK: Sign-in
 
     func testSignInAsksForATwoStepCodeWhenTheServerDoes() {
         launch(["-signedout"])
+        tap("signInChoice")
         XCTAssertFalse(wait("signIn").isEnabled)
         typeInto("email", "me2fa@example.com")
         typeInto("password", "hunter2")
@@ -285,6 +289,7 @@ final class GrantsSettingsUITests: XCTestCase {
 
     func testTheServerFieldWaitsBehindUseAnotherServer() {
         launch(["-signedout"])
+        tap("signInChoice")
         wait("signIn")
         XCTAssertFalse(element("server").exists)
         tap("otherServer")
@@ -294,6 +299,7 @@ final class GrantsSettingsUITests: XCTestCase {
 
     func testWrongCredentialsShowAnActionableError() {
         launch(["-signedout"])
+        tap("signInChoice")
         typeInto("email", "me@example.com")
         typeInto("password", "wrong")
         tap("signIn")

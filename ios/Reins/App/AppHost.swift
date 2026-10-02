@@ -41,7 +41,7 @@ final class AppHost {
                 // `-open reins://...`: open a link at launch (simctl openurl stops at a confirmation prompt).
                 let args = ProcessInfo.processInfo.arguments
                 if let i = args.firstIndex(of: "-open"), i + 1 < args.count, let url = URL(string: args[i + 1]),
-                   let link = DeepLink(url: url) {
+                   let link = DeepLink.opened(url) {
                     await model.handle(link)
                 }
                 #if DEBUG

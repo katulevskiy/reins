@@ -40,8 +40,8 @@ android {
         buildConfigField("String", "BUILD_ID", "\"$buildId\"")
         ndk { abiFilters += listOf("arm64-v8a", "x86_64") }
         buildConfigField("boolean", "HAS_FIREBASE", hasFirebase.toString())
-        // Fills in the sign-in server field: the hosted server (gradle.properties) unless
-        // -Prewarden.defaultServer=https://your.server says otherwise.
+        // The server new accounts and sign-ins use unless the user picks another: the hosted server
+        // (gradle.properties) unless -Prewarden.defaultServer=https://your.server says otherwise.
         val defaultServer = providers.gradleProperty("rewarden.defaultServer").get().trimEnd('/')
         buildConfigField("String", "DEFAULT_SERVER", "\"$defaultServer\"")
         // Telegram's application credentials (my.telegram.org). They identify this app to Telegram, not the user, and
@@ -296,6 +296,8 @@ dependencies {
     implementation(libs.work.runtime.ktx)
     implementation(libs.firebase.messaging)
     implementation(libs.play.services.auth)
+    // Google's QR code scanner (its own camera screen in Play services; no camera permission) for pairing codes.
+    implementation(libs.play.services.code.scanner)
     implementation(libs.coroutines.android)
     implementation(libs.androidsvg)
     // Custom Tabs for MCP servers' sign-in pages.

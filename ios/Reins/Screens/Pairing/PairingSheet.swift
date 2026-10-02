@@ -1,7 +1,7 @@
 import Observation
 import SwiftUI
 
-/// Connecting a new AI: tap the two-digit code the browser shows (one of three), name the connection, confirm with
+/// Connecting a new AI or computer: tap the two-digit code it shows (one of three), name the connection, confirm with
 /// Face ID, Touch ID or the passcode. The Rewarden desktop app also shows its key to compare.
 struct PairingSheet: View {
     var pairingId: String
@@ -39,7 +39,7 @@ final class PairingModel {
     let pairingId: String
     private(set) var loading = true
     private(set) var view: PairingView?
-    /// The two-digit code the user tapped; the AI is connected only if it is the one their browser shows.
+    /// The two-digit code the user tapped; the AI is connected only if it is the one their computer or browser shows.
     var chosen: UInt8? {
         didSet { error = nil }
     }
@@ -81,7 +81,7 @@ final class PairingModel {
         guard !busy else { return }
         guard let code = chosen else {
             app.feedback.play(.error)
-            error = "Tap the code your browser shows."
+            error = "Tap the code your computer or browser shows."
             return
         }
         busy = true
@@ -148,7 +148,7 @@ private struct PairingContent: View {
                     title: "Connect",
                     known: false
                 ) {
-                    Text("Only continue if you just started this connection yourself. Tap the two-digit code that your browser is showing.")
+                    Text("Only continue if you just started this connection yourself. Tap the two-digit code shown on your computer or in your browser.")
                         .font(RFont.sans(15))
                         .foregroundStyle(Palette.secondary)
                         .padding(.top, 14)

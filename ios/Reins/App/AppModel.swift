@@ -74,6 +74,12 @@ final class AppModel {
     var registrationError: String?
     /// How the last MCP sign-in ended, shown on that server's page until it is left.
     var mcpNotice: McpNotice?
+    /// After a fresh sign-in (or a new account) on the sign-in screen: the steps that connect a computer and an AI
+    /// show instead of the app until "Done".
+    private(set) var onboarding = false
+    /// A pairing code from a link opened before this phone could redeem it (signed out, still starting, not yet the
+    /// approval device); redeemed as soon as it can be.
+    private(set) var waitingPairCode: String?
 
     // MARK: Navigation
 
@@ -154,6 +160,7 @@ final class AppModel {
         setMcpServers([])
         mcpNotice = nil
         approvalDevice = false
+        onboarding = false
         autopilot = nil
         sheet = nil
         paths = [:]
@@ -166,6 +173,27 @@ final class AppModel {
     func signedIn(_ info: SessionInfo) async {
         setSession(.signedIn(info))
         await refreshSession()
+    }
+
+    /// Signing in or creating an account on the sign-in screen: the session, the approval role (taken even from a
+    /// phone another one took it from), and the onboarding steps the first time this account signs in on this phone.
+    /// Notifications are asked for once the session is there (`onSignedIn`).
+    func finishSignIn(_ info: SessionInfo) async {
+        registrationError = nil
+        // The demo core keeps nothing across launches, so it shows the steps every time.
+        onboarding = demo || OnboardingRecord.firstTime(server: info.serverUrl, email: info.email)
+        await signedIn(info)
+        if !approvalDevice {
+            do {
+                try await registerDevice(force: true)
+            } catch {
+                registrationError = error.userMessage
+            }
+        }
+    }
+
+    func finishOnboarding() {
+        onboarding = false
     }
 
     func signOut() async {
@@ -287,6 +315,10 @@ final class AppModel {
         approvalDevice = true
         registrationError = nil
         publish()
+        if let code = waitingPairCode {
+            waitingPairCode = nil
+            await openPairing(code: code)
+        }
     }
 
     private func registerDeviceQuietly() async {
@@ -422,8 +454,49 @@ final class AppModel {
         openSheet(next.sheetTarget)
     }
 
-    /// A link from a notification, widget, control or Live Activity. Items open only if the core really has them.
+    // MARK: Pairing codes
+
+    /// A computer's pairing code from a link: redeemed now if this phone approves requests, else kept until it does.
+    func openPairing(code: String) async {
+        switch session {
+        case .signedIn where approvalDevice:
+            do {
+                let view = try await redeemPairingCode(code)
+                openSheet(.pairing(view.id))
+            } catch {
+                feedback.play(.error)
+                notice = Self.pairingCodeMessage(error)
+            }
+        case .signedIn where deviceReplaced:
+            feedback.play(.error)
+            notice = "Use this phone for approvals (Settings), then open the code again."
+        default:
+            waitingPairCode = code
+        }
+    }
+
+    /// Asks the server for the pairing `code` stands for; the core parks it like a pushed one, for the pairing sheet.
+    func redeemPairingCode(_ code: String) async throws -> PairingView {
+        let view = try await core.pairingByCode(userCode: code)
+        // It is answered where it was opened, and does not pop up again by itself.
+        presented.insert(view.id)
+        await refreshPending()
+        return view
+    }
+
+    /// What to say when a pairing code does not work.
+    static func pairingCodeMessage(_ error: Error) -> String {
+        if case CoreError.NotFound = error {
+            return "This code has expired or was already used. Show a new one on your computer."
+        }
+        return error.userMessage
+    }
+
+    /// A link from a notification, widget, control, Live Activity or a computer's pairing code. Items open only if the
+    /// core really has them.
     func handle(_ link: DeepLink) async {
+        if case let .pair(code) = link { return await openPairing(code: code) }
+        guard case .signedIn = session else { return }
         switch link {
         case let .item(kind, id):
             let items = (try? await core.pending()) ?? pending
@@ -449,6 +522,8 @@ final class AppModel {
             show(.integrations, in: .activity)
         case .home:
             home()
+        case .pair:
+            break
         }
     }
 
@@ -480,6 +555,24 @@ final class AppModel {
         s.save()
         WidgetCenter.shared.reloadAllTimelines()
         ControlCenter.shared.reloadAllControls()
+    }
+}
+
+/// Which accounts have been through the onboarding steps on this phone: they show once per account (server and
+/// email), after it signs in on the sign-in screen, so never for a session from before they existed.
+enum OnboardingRecord {
+    static func key(server: String, email: String) -> String {
+        var s = server.trimmingCharacters(in: .whitespaces).lowercased()
+        while s.hasSuffix("/") { s.removeLast() }
+        return "onboarded:\(s)|\(email.trimmingCharacters(in: .whitespaces).lowercased())"
+    }
+
+    /// True the first time `email` on `server` signs in on this phone; records that it did.
+    static func firstTime(server: String, email: String, defaults: UserDefaults = AppGroup.defaults) -> Bool {
+        let k = key(server: server, email: email)
+        guard !defaults.bool(forKey: k) else { return false }
+        defaults.set(true, forKey: k)
+        return true
     }
 }
 

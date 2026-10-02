@@ -64,8 +64,11 @@ flowchart TB
 | `POST /mcp` | AI clients, `rewarden mcp` | OAuth bearer token (1 h JWT) |
 | `/.well-known/oauth-authorization-server`, `/.well-known/oauth-protected-resource[/mcp]` | AI clients | none |
 | `/rewarden/oauth/register`, `/authorize`, `/token` | AI clients, `rewarden login` | PKCE S256; public clients (dynamic registration or client ID metadata document) |
+| `POST /rewarden/oauth/device_authorization` | `rewarden login` (QR code) | public clients; RFC 8628, polled at `/token` |
+| `GET /pair?code=` | a phone that scanned a computer's QR code without the app | none; opens the app or offers it |
+| `/.well-known/apple-app-site-association`, `/.well-known/assetlinks.json` | iOS, Android | none; pairing links open the app (`REWARDEN_APPLE_TEAM_ID`, `REWARDEN_ANDROID_CERT_SHA256`) |
 | `POST /rewarden/desktop/calls`, `GET /rewarden/desktop/calls/<id>` | desktop app | the same OAuth token as MCP; only desktop-only tools |
-| `/rewarden/api/*` (`device`, `pending`, `requests`, `pairings`, `connections`, `services`, `blobs`, `mcp/call`) | the phone | Vaultwarden login token, and the caller must be the account's approval device |
+| `/rewarden/api/*` (`device`, `pending`, `requests`, `pairings`, `pairings/claim`, `connections`, `services`, `blobs`, `mcp/call`) | the phone | Vaultwarden login token, and the caller must be the account's approval device |
 | `POST /rewarden/api/joins`, `GET /rewarden/api/joins/<id>` | a phone of the account that cannot open its keys | Vaultwarden login token (any device of the account but the approval device) |
 | `GET /rewarden/api/joins/<id>`, `POST /rewarden/api/joins/<id>/response` | the approval device | as the rest of `/rewarden/api/*` |
 | `PUT`/`POST`/`GET /rewarden/blob/<secret>` | whoever holds the link (AI, curl) | the unguessable link itself, single-purpose, expiring |
@@ -146,6 +149,17 @@ prefilter, so query syntax cannot widen what a grant allows.
    app, the phone pins the key to the new connection.
 4. The page redirects with an authorization code. The client exchanges it for an access token (1 h) and a rotating
    refresh token (30 days).
+
+`rewarden login` pairs without a browser by default (OAuth device authorization, RFC 8628):
+
+1. The app asks `/rewarden/oauth/device_authorization` for a code, with its key. It shows a QR code of
+   `https://<server>/pair?code=BCDF-GHJK`, the code itself, a two-digit number and its key's fingerprint.
+2. The phone scans the QR code (the camera opens the link in the app; the app's own scanner reads it), and claims the
+   code (`POST /rewarden/api/pairings/claim`). That starts an ordinary pairing for the phone's account, with the
+   computer's number among the three choices.
+3. The user taps that number, compares the key and confirms with biometrics, as above. The phone pins the key.
+4. The app polls `/rewarden/oauth/token` (grant type `urn:ietf:params:oauth:grant-type:device_code`) and gets the same
+   tokens. Codes live 10 minutes, in memory.
 
 ### A git push through the desktop app
 

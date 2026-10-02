@@ -2550,6 +2550,13 @@ public protocol RewardenCoreProtocol: AnyObject, Sendable {
     func correctDecision(activityId: Int64, shouldHave: Verdict) async throws 
     
     /**
+     * Creates a Bitwarden-compatible account on the server (PBKDF2-SHA256 with 600 000 iterations, a fresh vault key
+     * and RSA key pair), then signs in to it like `login`. A master password shorter than 12 characters, a taken
+     * email or closed sign-ups are `Invalid` with a message for the user.
+     */
+    func createAccount(serverUrl: String, email: String, password: String) async throws  -> SessionInfo
+    
+    /**
      * Creates a permission ahead of any request (`kind` is `Read` or `Send`).
      */
     func createGrant(connectionId: String, account: String, kind: ApprovalKind, standing: StandingGrant) async throws 
@@ -2618,6 +2625,13 @@ public protocol RewardenCoreProtocol: AnyObject, Sendable {
     func logout() async throws 
     
     func modelStatus() async  -> ModelStatus
+    
+    /**
+     * The pairing a computer's code stands for (`BCDF-GHJK`, scanned from its QR code or opened from a link; case,
+     * spaces and dashes do not count). It is parked like a pushed pairing and answered with `answer_pairing`. An
+     * unknown or expired code is `NotFound`.
+     */
+    func pairingByCode(userCode: String) async throws  -> PairingView
     
     func pairingView(pairingId: String) async throws  -> PairingView
     
@@ -2727,7 +2741,7 @@ public protocol RewardenCoreProtocol: AnyObject, Sendable {
     func mcpAddWithToken(url: String, token: String, name: String?) async throws  -> McpServerView
     
     /**
-     * The sign-in page redirected to `com.reins2fa.app://mcp-oauth?…`.
+     * The sign-in page redirected to `dev.rewarden.android://mcp-oauth?…`.
      */
     func mcpFinishSignIn(serverId: String, redirectUrl: String) async throws  -> McpServerView
     
@@ -3150,6 +3164,27 @@ open func correctDecision(activityId: Int64, shouldHave: Verdict)async throws   
 }
     
     /**
+     * Creates a Bitwarden-compatible account on the server (PBKDF2-SHA256 with 600 000 iterations, a fresh vault key
+     * and RSA key pair), then signs in to it like `login`. A master password shorter than 12 characters, a taken
+     * email or closed sign-ups are `Invalid` with a message for the user.
+     */
+open func createAccount(serverUrl: String, email: String, password: String)async throws  -> SessionInfo  {
+    return
+        try  await uniffiRustCallAsync(
+            rustFutureFunc: {
+                uniffi_rewarden_core_fn_method_rewardencore_create_account(
+                        self.uniffiCloneHandle(),FfiConverterString.lower(serverUrl),FfiConverterString.lower(email),FfiConverterString.lower(password)
+                )
+            },
+            pollFunc: ffi_rewarden_core_rust_future_poll_rust_buffer,
+            completeFunc: ffi_rewarden_core_rust_future_complete_rust_buffer,
+            freeFunc: ffi_rewarden_core_rust_future_free_rust_buffer,
+            liftFunc: FfiConverterTypeSessionInfo_lift,
+            errorHandler: FfiConverterTypeCoreError_lift
+        )
+}
+    
+    /**
      * Creates a permission ahead of any request (`kind` is `Read` or `Send`).
      */
 open func createGrant(connectionId: String, account: String, kind: ApprovalKind, standing: StandingGrant)async throws   {
@@ -3470,6 +3505,27 @@ open func modelStatus()async  -> ModelStatus  {
             liftFunc: FfiConverterTypeModelStatus_lift,
             errorHandler: nil
             
+        )
+}
+    
+    /**
+     * The pairing a computer's code stands for (`BCDF-GHJK`, scanned from its QR code or opened from a link; case,
+     * spaces and dashes do not count). It is parked like a pushed pairing and answered with `answer_pairing`. An
+     * unknown or expired code is `NotFound`.
+     */
+open func pairingByCode(userCode: String)async throws  -> PairingView  {
+    return
+        try  await uniffiRustCallAsync(
+            rustFutureFunc: {
+                uniffi_rewarden_core_fn_method_rewardencore_pairing_by_code(
+                        self.uniffiCloneHandle(),FfiConverterString.lower(userCode)
+                )
+            },
+            pollFunc: ffi_rewarden_core_rust_future_poll_rust_buffer,
+            completeFunc: ffi_rewarden_core_rust_future_complete_rust_buffer,
+            freeFunc: ffi_rewarden_core_rust_future_free_rust_buffer,
+            liftFunc: FfiConverterTypePairingView_lift,
+            errorHandler: FfiConverterTypeCoreError_lift
         )
 }
     
@@ -3912,7 +3968,7 @@ open func mcpAddWithToken(url: String, token: String, name: String?)async throws
 }
     
     /**
-     * The sign-in page redirected to `com.reins2fa.app://mcp-oauth?…`.
+     * The sign-in page redirected to `dev.rewarden.android://mcp-oauth?…`.
      */
 open func mcpFinishSignIn(serverId: String, redirectUrl: String)async throws  -> McpServerView  {
     return
@@ -9400,7 +9456,7 @@ public enum McpAddStep: Equatable, Hashable {
     case added(server: McpServerView
     )
     /**
-     * Open `authorize_url` in a browser tab; the redirect to `com.reins2fa.app://mcp-oauth` goes to
+     * Open `authorize_url` in a browser tab; the redirect to `dev.rewarden.android://mcp-oauth` goes to
      * `mcp_finish_sign_in`.
      */
     case needsSignIn(serverId: String, authorizeUrl: String
@@ -11199,6 +11255,9 @@ private let initializationResult: InitializationResult = {
     if (uniffi_rewarden_core_checksum_method_rewardencore_correct_decision() != 34541) {
         return InitializationResult.apiChecksumMismatch
     }
+    if (uniffi_rewarden_core_checksum_method_rewardencore_create_account() != 34743) {
+        return InitializationResult.apiChecksumMismatch
+    }
     if (uniffi_rewarden_core_checksum_method_rewardencore_create_grant() != 8698) {
         return InitializationResult.apiChecksumMismatch
     }
@@ -11251,6 +11310,9 @@ private let initializationResult: InitializationResult = {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_rewarden_core_checksum_method_rewardencore_model_status() != 11237) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_rewarden_core_checksum_method_rewardencore_pairing_by_code() != 39601) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_rewarden_core_checksum_method_rewardencore_pairing_view() != 62634) {
@@ -11325,7 +11387,7 @@ private let initializationResult: InitializationResult = {
     if (uniffi_rewarden_core_checksum_method_rewardencore_mcp_add_with_token() != 51093) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_rewarden_core_checksum_method_rewardencore_mcp_finish_sign_in() != 47710) {
+    if (uniffi_rewarden_core_checksum_method_rewardencore_mcp_finish_sign_in() != 59859) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_rewarden_core_checksum_method_rewardencore_mcp_refresh() != 39029) {

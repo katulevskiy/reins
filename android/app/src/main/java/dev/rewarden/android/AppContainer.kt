@@ -27,11 +27,13 @@ import dev.rewarden.android.platform.update.UpdateProvider
 import dev.rewarden.android.platform.update.Updater
 import dev.rewarden.android.state.AppState
 import dev.rewarden.android.state.DeviceStatusStore
+import dev.rewarden.android.state.OnboardingStore
 import dev.rewarden.android.state.SessionState
 import dev.rewarden.core.AutopilotSettings
 import dev.rewarden.core.CoreException
 import dev.rewarden.core.RewardenCore
 import dev.rewarden.core.RewardenCoreInterface
+import dev.rewarden.core.SessionInfo
 import kotlin.coroutines.cancellation.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -65,6 +67,9 @@ class AppContainer(private val context: Context) {
     /** The model download job. */
     val modelDownloads: ModelDownloads by lazy { WorkModelDownloads(context) }
     val deviceStatus = DeviceStatusStore(context)
+
+    /** Whether the setup after a fresh sign-in is still to be shown, per account. */
+    val onboarding = OnboardingStore(context)
     val phone = PhoneBridge(context)
 
     /**
@@ -118,6 +123,8 @@ class AppContainer(private val context: Context) {
             withContext(Dispatchers.IO) {
                 state.setSeenActivityId(deviceStatus.seenActivityId())
                 state.setApprovalDevice(deviceStatus.isApprovalDevice() && !deviceStatus.isReplaced())
+                // Before the session flips, so the main screen does not flash up ahead of the setup.
+                state.setSetupPending(onboarding.isPending(info))
             }
         }
         state.setSession(if (info == null) SessionState.SignedOut else SessionState.SignedIn(info))
@@ -180,6 +187,18 @@ class AppContainer(private val context: Context) {
             // Whatever could not be stopped still ends at its time; the refresh below shows what is left.
         }
         refreshAutopilot()
+    }
+
+    /** A sign-in or a new account from the onboarding screens: the setup after it is to be shown (once per account). */
+    suspend fun beginOnboarding(info: SessionInfo) {
+        withContext(Dispatchers.IO) { onboarding.begin(info) }
+    }
+
+    /** The setup after signing in was finished or skipped: the main screen from now on. */
+    suspend fun finishOnboarding() {
+        val info = (state.session.value as? SessionState.SignedIn)?.info
+        if (info != null) withContext(Dispatchers.IO) { onboarding.finish(info) }
+        state.setSetupPending(false)
     }
 
     /** The AI connections (a network call; failures keep the last list). */

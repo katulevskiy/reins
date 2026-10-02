@@ -38,7 +38,11 @@ cd android
 ./gradlew assembleFullRelease          # the direct APK (scripts/release-android.sh does this and publishes it)
 ./gradlew bundlePlayRelease \
     -Prewarden.versionCode=N -Prewarden.versionName=0.1.0 -Prewarden.build=0.1.0-N
+<<<<<<< HEAD
+# → app/build/outputs/bundle/playRelease/app-play-release.aab
+=======
 # → app/build/outputs/bundle/playRelease/app-play-release.aab (signs in to rewarden.defaultServer, gradle.properties)
+>>>>>>> origin/ios-app
 ./gradlew testFullDebugUnitTest testPlayDebugUnitTest
 ```
 

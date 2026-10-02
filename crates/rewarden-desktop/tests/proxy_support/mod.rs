@@ -101,6 +101,13 @@ async fn cgi(
         .stdin(std::process::Stdio::piped())
         .stdout(std::process::Stdio::piped())
         .stderr(std::process::Stdio::piped());
+    // Windows programs need these to start at all (the system directory, temporary files).
+    #[cfg(windows)]
+    for var in ["SystemRoot", "SystemDrive", "TEMP", "TMP", "windir", "ComSpec", "PATHEXT"] {
+        if let Some(v) = std::env::var_os(var) {
+            cmd.env(var, v);
+        }
+    }
     for (name, var) in [("content-encoding", "HTTP_CONTENT_ENCODING"), ("git-protocol", "HTTP_GIT_PROTOCOL")] {
         if headers.contains_key(name) {
             cmd.env(var, header(name));

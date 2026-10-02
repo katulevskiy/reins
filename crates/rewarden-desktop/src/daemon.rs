@@ -280,14 +280,21 @@ impl Daemon {
         }
     }
 
-    /// Serves until Ctrl-C or SIGTERM, then removes the control token.
+    /// Serves until Ctrl-C, SIGTERM (on Windows also the console closing, logoff and shutdown) or `POST shutdown` on the
+    /// control API, then removes the control token.
     pub async fn run(self) -> Result<(), String> {
         let token_file = self.token_file.clone();
+        let stop = self.state.control.stop_handle();
         let serve = Self::accept_loop(self.listener, self.state);
         tokio::select! {
             () = serve => {}
             () = crate::ssh_agent::serve(self.ssh) => {}
             () = shutdown_signal() => log::info!("stopping"),
+            () = stop.notified() => {
+                log::info!("stopping");
+                // Lets the answer to the shutdown request reach the command line.
+                tokio::time::sleep(Duration::from_millis(200)).await;
+            }
         }
         if let Err(e) = std::fs::remove_file(&token_file) {
             log::warn!("{}: {e}", token_file.display());
@@ -320,28 +327,85 @@ async fn shutdown_signal() {
             _ = term.recv() => {}
         }
     }
-    #[cfg(not(unix))]
+    // Ctrl-C and Ctrl-Break in its console; the console window closing, the user logging off and Windows shutting down.
+    // The background service has no console: then only the control API stops it (a handler that cannot be set up
+    // waits forever instead of stopping the daemon at once).
+    #[cfg(windows)]
+    {
+        use tokio::signal::windows;
+        macro_rules! event {
+            ($handler:expr) => {
+                async {
+                    match $handler {
+                        Ok(mut s) => {
+                            s.recv().await;
+                        }
+                        Err(_) => std::future::pending::<()>().await,
+                    }
+                }
+            };
+        }
+        tokio::select! {
+            () = event!(windows::ctrl_c()) => {}
+            () = event!(windows::ctrl_break()) => {}
+            () = event!(windows::ctrl_close()) => {}
+            () = event!(windows::ctrl_logoff()) => {}
+            () = event!(windows::ctrl_shutdown()) => {}
+        }
+    }
+    #[cfg(not(any(unix, windows)))]
     {
         tokio::signal::ctrl_c().await.ok();
     }
 }
 
-/// Logs to stderr (the service manager keeps it). `REWARDEN_LOG`: `error`, `warn`, `info` (default), `debug`.
-pub fn init_logging() {
-    struct Stderr(log::LevelFilter);
-    impl log::Log for Stderr {
+/// Above this size the log file is moved to `<file>.old` when the daemon starts.
+const MAX_LOG: u64 = 4 << 20;
+
+/// Logs to stderr (the service manager keeps it), and with `file` (the Windows background service, which has no
+/// stderr) appended to that file as well. `REWARDEN_LOG`: `error`, `warn`, `info` (default), `debug`.
+pub fn init_logging(file: Option<&std::path::Path>) {
+    struct Logger {
+        level: log::LevelFilter,
+        file: Option<Mutex<std::fs::File>>,
+    }
+    impl log::Log for Logger {
         fn enabled(&self, m: &log::Metadata<'_>) -> bool {
-            m.level() <= self.0 && m.target().starts_with("rewarden")
+            m.level() <= self.level && m.target().starts_with("rewarden")
         }
         fn log(&self, r: &log::Record<'_>) {
             if self.enabled(r.metadata()) {
                 eprintln!("{} {}", r.level(), r.args());
+                if let Some(f) = &self.file {
+                    let mut f = f.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+                    let line = format!("{} {} {}\n", crate::now_unix(), r.level(), r.args());
+                    std::io::Write::write_all(&mut *f, line.as_bytes()).ok();
+                }
             }
         }
         fn flush(&self) {}
     }
     let level = std::env::var("REWARDEN_LOG").ok().and_then(|l| l.parse().ok()).unwrap_or(log::LevelFilter::Info);
-    if log::set_logger(Box::leak(Box::new(Stderr(level)))).is_ok() {
+    let file = file.and_then(|path| {
+        if std::fs::metadata(path).is_ok_and(|m| m.len() > MAX_LOG) {
+            let mut old = path.as_os_str().to_owned();
+            old.push(".old");
+            std::fs::rename(path, old).ok();
+        }
+        match std::fs::OpenOptions::new().create(true).append(true).open(path) {
+            Ok(f) => Some(Mutex::new(f)),
+            Err(e) => {
+                eprintln!("rewarden: {}: {e}", path.display());
+                None
+            }
+        }
+    });
+    if log::set_logger(Box::leak(Box::new(Logger {
+        level,
+        file,
+    })))
+    .is_ok()
+    {
         log::set_max_level(level);
     }
 }

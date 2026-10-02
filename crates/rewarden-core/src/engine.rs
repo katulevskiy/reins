@@ -11,6 +11,7 @@ use rewarden_proto::device::DeviceRegistration;
 use rewarden_proto::ids::{ConnectionId, GrantId};
 use zeroize::Zeroizing;
 
+use crate::crypto::{Kdf, new_account_keys};
 use crate::gmail::{self, GmailClient, Probe};
 use crate::http::{self, ServerUrl};
 use crate::phone_api::{ApiFailure, check_id};
@@ -22,6 +23,16 @@ use crate::types::{
 use crate::vault::VaultClient;
 use crate::views::{self, ParkedRequest};
 use crate::{CoreError, GoogleTokenProvider, KeyWrapper, Notifier};
+
+/// Bitwarden's shortest master password for a new account.
+pub const MIN_MASTER_PASSWORD_CHARS: usize = 12;
+/// Longest account email (Bitwarden's limit is 256; 254 is the longest address SMTP carries).
+const MAX_EMAIL_BYTES: usize = 254;
+/// What a new account derives its master key with: PBKDF2-SHA256 with 600 000 iterations, the default of the
+/// Bitwarden clients and of Vaultwarden.
+pub const NEW_ACCOUNT_KDF: Kdf = Kdf::Pbkdf2 {
+    iterations: 600_000,
+};
 
 /// Settings that tests override; the exported constructor uses the defaults.
 #[derive(Clone, Debug)]
@@ -409,6 +420,35 @@ impl Engine {
         let session = Session::from_login(self.http.clone(), Arc::clone(&self.store), server, email, tokens);
         *self.session_slot() = Some(Arc::new(session));
         Ok(info)
+    }
+
+    /// Creates an account on the server (Bitwarden-compatible: its vault opens in any Bitwarden client), then signs in
+    /// to it exactly like [`Engine::login`].
+    pub async fn create_account(
+        &self,
+        server_url: &str,
+        email: &str,
+        password: Zeroizing<String>,
+    ) -> Result<SessionInfo, CoreError> {
+        let server = ServerUrl::parse(server_url)?;
+        let email = email.trim().to_lowercase();
+        let looks_like_email = email.split_once('@').is_some_and(|(local, domain)| {
+            !local.is_empty() && domain.contains('.') && !domain.starts_with('.') && !domain.ends_with('.')
+        });
+        if !looks_like_email || email.len() > MAX_EMAIL_BYTES || email.chars().any(char::is_whitespace) {
+            return Err(CoreError::invalid("Enter a valid email address."));
+        }
+        if password.chars().count() < MIN_MASTER_PASSWORD_CHARS {
+            return Err(CoreError::invalid(format!(
+                "The master password needs at least {MIN_MASTER_PASSWORD_CHARS} characters."
+            )));
+        }
+        let (secret, salt) = (password.clone(), email.clone());
+        let keys = tokio::task::spawn_blocking(move || new_account_keys(&secret, &salt, NEW_ACCOUNT_KDF))
+            .await
+            .map_err(|_| CoreError::storage("key derivation was interrupted"))??;
+        VaultClient::new(&self.http, &server).register(&email, &keys, NEW_ACCOUNT_KDF).await?;
+        self.login(server.as_str(), &email, password, None).await
     }
 
     /// Signs out. Grants, audit log and the device id are kept; parked items and the desktop apps' keys are dropped

@@ -9,6 +9,8 @@ enum DeepLink: Equatable {
     case autopilot
     /// The Integrations page (services and MCP servers), over Activity.
     case integrations
+    /// A computer's pairing code ("BCDF-GHJK"), to redeem and answer in the pairing sheet.
+    case pair(code: String)
     case home
 
     static let scheme = "reins"
@@ -30,6 +32,9 @@ enum DeepLink: Equatable {
             c.host = "autopilot"
         case .integrations:
             c.host = "integrations"
+        case let .pair(code):
+            c.host = "pair"
+            c.queryItems = [URLQueryItem(name: "code", value: code)]
         case .home:
             c.host = "home"
         }
@@ -55,8 +60,18 @@ enum DeepLink: Equatable {
             self = .grant(id: id)
         case "autopilot": self = .autopilot
         case "integrations": self = .integrations
+        case "pair":
+            guard let code = query["code"].flatMap(PairingCode.normalize) else { return nil }
+            self = .pair(code: code)
         case "home": self = .home
         default: return nil
         }
+    }
+
+    /// A link the app was opened with: a `reins://` link, or a pairing link on a server's own address (a universal
+    /// link or a scanned QR code), of which only the code is used.
+    static func opened(_ url: URL) -> DeepLink? {
+        if url.scheme == scheme { return DeepLink(url: url) }
+        return PairingCode.parse(url.absoluteString).map { .pair(code: $0) }
     }
 }

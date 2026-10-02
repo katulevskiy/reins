@@ -25,6 +25,7 @@ import dev.rewarden.android.sync.ForegroundSync
 import dev.rewarden.android.ui.AppViewModel
 import dev.rewarden.android.ui.RewardenRoot
 import dev.rewarden.android.ui.nav.DeepLink
+import dev.rewarden.android.ui.pairing.PairingCode
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 
@@ -130,6 +131,18 @@ class MainActivity : FragmentActivity() {
             lifecycleScope.launch {
                 container.state.session.first { it is SessionState.SignedIn }
                 app.openAutopilot()
+            }
+            return
+        }
+        if (intent?.action == Intent.ACTION_VIEW) {
+            // A `/pair` App Link or `reins://pair`: only the code in it is used, and only when it is well-formed. The
+            // pairing it names still has to be confirmed in the sheet like any other.
+            val code = PairingCode.parse(intent?.dataString)
+            if (code != null) {
+                lifecycleScope.launch {
+                    container.state.session.first { it !is SessionState.Loading }
+                    app.openPairingLink(code)
+                }
             }
             return
         }

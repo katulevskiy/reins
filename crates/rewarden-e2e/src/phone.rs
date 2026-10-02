@@ -102,14 +102,38 @@ impl Phone {
         Self::sign_in_configured(server_url, email, PASSWORD, configure).await
     }
 
+    /// Creates the account `email` from the phone (the core's `create_account`, nothing registered before), then goes
+    /// on like [`Phone::sign_in`].
+    pub async fn create_account(server_url: &str, email: &str) -> Self {
+        Self::start(server_url, email, PASSWORD, true, |_| {}).await
+    }
+
     async fn sign_in_configured(
         server_url: &str,
         email: &str,
         password: &str,
         configure: impl FnOnce(&mut CoreConfig),
     ) -> Self {
+        Self::start(server_url, email, password, false, configure).await
+    }
+
+    async fn start(
+        server_url: &str,
+        email: &str,
+        password: &str,
+        create: bool,
+        configure: impl FnOnce(&mut CoreConfig),
+    ) -> Self {
         let phone = Self::signed_out(configure).await;
-        phone.core.login(server_url.to_owned(), email.to_owned(), password.to_owned(), None).await.expect("login");
+        if create {
+            phone
+                .core
+                .create_account(server_url.to_owned(), email.to_owned(), password.to_owned())
+                .await
+                .expect("create the account");
+        } else {
+            phone.core.login(server_url.to_owned(), email.to_owned(), password.to_owned(), None).await.expect("login");
+        }
         phone.core.register_device(None).await.expect("register device");
         phone.connect_gmail().await;
         phone

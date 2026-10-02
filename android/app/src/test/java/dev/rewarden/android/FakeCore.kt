@@ -52,6 +52,24 @@ class FakeCore : RewardenCoreInterface {
     val logins = CopyOnWriteArrayList<List<String?>>()
     val registrations = CopyOnWriteArrayList<String?>()
 
+    /** Thrown by `createAccount` (an email already registered, a weak password, sign-ups closed). */
+    @Volatile var createAccountError: CoreException? = null
+    val createdAccounts = CopyOnWriteArrayList<List<String>>()
+
+    /** Thrown by `pairingByCode` (an unknown or expired code: `NotFound`). */
+    @Volatile var pairingByCodeError: CoreException? = null
+    /** What `pairingByCode` parks and returns; null: [TestData.pairingView] of the desktop app. */
+    @Volatile var pairingByCodeResult: PairingView? = null
+    val pairingCodes = CopyOnWriteArrayList<String>()
+
+    fun resetOnboarding() {
+        createAccountError = null
+        createdAccounts.clear()
+        pairingByCodeError = null
+        pairingByCodeResult = null
+        pairingCodes.clear()
+    }
+
     override suspend fun activity(limit: UInt) = activity
 
     override suspend fun answerPairing(pairingId: String, approve: Boolean, chosenCode: UByte?, label: String?) {
@@ -213,11 +231,27 @@ class FakeCore : RewardenCoreInterface {
         return SessionInfo(serverUrl, email).also { session = it }
     }
 
+    override suspend fun createAccount(serverUrl: String, email: String, password: String): SessionInfo {
+        createdAccounts += listOf(serverUrl, email, password)
+        createAccountError?.let { throw it }
+        return SessionInfo(serverUrl, email).also { session = it }
+    }
+
     override suspend fun logout() {
         session = null
     }
 
     override suspend fun pairingView(pairingId: String) = pairing ?: throw CoreException.NotFound()
+
+    /** Parks the pairing the code stands for, like a pushed one: it is then pending and has a view. */
+    override suspend fun pairingByCode(userCode: String): PairingView {
+        pairingCodes += userCode
+        pairingByCodeError?.let { throw it }
+        val view = pairingByCodeResult ?: TestData.pairingView("pair-code", "Reins desktop app on laptop", "laptop", keyFingerprint = "4821 9930")
+        pairing = view
+        pending = pending.filterNot { it.id == view.id } + TestData.pairingItem(view.id)
+        return view
+    }
 
     override suspend fun pending() = pending
 

@@ -44,6 +44,22 @@ permissions) and the password vault (master password once) are each added from t
 `docs/deployment.md` for what each needs. Telegram's credentials come from `rewarden.telegramApiId` /
 `rewarden.telegramApiHash` in `~/.gradle/gradle.properties`.
 
+### Onboarding, pairing codes and links
+
+Signed out, the app shows a welcome with "Create account" and "Sign in" (`ui/signin`). Both use
+`BuildConfig.DEFAULT_SERVER` (`rewarden.defaultServer`, default `https://app.reins2fa.com`); "Use another server" reveals
+the address field for self-hosters. A fresh sign-in from these screens then shows a short setup once per account
+(`state/OnboardingStore`): notifications, "connect your computer" and the `/mcp` address for Claude.ai or ChatGPT. People
+who were signed in before it existed never see it.
+
+A computer pairs by the code it shows ("BCDF-GHJK", as a QR code of `https://app.reins2fa.com/pair?code=...`, or
+`reins://pair?code=...`). The phone scans it with Google's code scanner (`play-services-code-scanner`: Play services shows
+the camera, so the app needs no camera permission), or the user types it; `ui/pairing/PairingCode` reduces whatever
+arrives to a well-formed code, the core's `pairingByCode` fetches the pairing from the user's own server, and the usual
+pairing sheet confirms it. The same link opens the app directly (an App Link on `app.reins2fa.com/pair`, which needs the
+server's `/.well-known/assetlinks.json` to list this package and its signing certificate's SHA-256; and the `reins`
+scheme). Settings > AI connections > Connect a computer does the same later.
+
 ### Icons and avatars
 
 Provider logos in `app/src/main/assets/providers/` are the real brand SVGs (see `NOTICE.md` there), rasterised with
@@ -59,6 +75,8 @@ library's own golden corpus (1000 names plus backdrops, by SHA-256 of the markup
 scripts/device-smoke.sh          # real server + simulated AI on this machine, real core on the emulator
 ```
 
+* `OnboardingFlowTest` covers the welcome, new accounts, the setup after signing in, and connecting a computer by a
+  scanned, typed or linked code (the scanner is replaced through `QrScannerProvider`).
 * `AppFlowTest` (Robolectric) drives every screen against an in-memory `FakeCore`: sign-in, 2FA, approvals (once,
   standing, public-domain warning), biometric fail-closed paths, pairing, deep-link spoofing, `FLAG_SECURE`, grants,
   activity.

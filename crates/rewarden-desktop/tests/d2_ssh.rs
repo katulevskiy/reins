@@ -19,8 +19,18 @@ use rewarden_desktop::daemon::{Daemon, Options, Running};
 /// it says nothing; see `tell_pid` in ssh_agent/mod.rs).
 const TELLS_THE_CLIENT: bool = cfg!(target_os = "linux");
 
+/// An OpenSSH tool: on Windows the one that comes with Windows (Git's MSYS OpenSSH, maybe first on `PATH`, cannot talk
+/// to a named pipe).
+fn openssh(tool: &str) -> PathBuf {
+    if cfg!(windows) {
+        rewarden_desktop::win::system32(&format!("OpenSSH\\{tool}.exe"))
+    } else {
+        PathBuf::from(tool)
+    }
+}
+
 fn have(tool: &str) -> bool {
-    std::process::Command::new(tool).arg("-?").output().is_ok()
+    std::process::Command::new(openssh(tool)).arg("-?").output().is_ok()
 }
 
 struct Agent {
@@ -36,7 +46,11 @@ impl Agent {
         capture_logs();
         let mock = Mock::start().await;
         let app = logged_in(&mock);
-        let socket = app.dir.path().join("agent.sock");
+        let socket = if cfg!(windows) {
+            rewarden_desktop::win::ssh_pipe(&app.paths.state_dir)
+        } else {
+            app.dir.path().join("agent.sock")
+        };
         let known_hosts = app.dir.path().join("known_hosts");
         let mut config = Config {
             listen: "127.0.0.1:0".parse().unwrap(),
@@ -74,7 +88,7 @@ impl Agent {
     }
 
     async fn tool(&self, program: &str, args: &[&str], stdin: Option<&Path>) -> Output {
-        let mut c = tokio::process::Command::new(program);
+        let mut c = tokio::process::Command::new(openssh(program));
         c.args(args).env("SSH_AUTH_SOCK", &self.socket).current_dir(self.app.dir.path());
         if let Some(f) = stdin {
             c.stdin(std::fs::File::open(f).unwrap());
@@ -119,8 +133,11 @@ async fn ssh_add_lists_the_phones_key_and_the_socket_is_private() {
     let out = a.tool("ssh-add", &["-D"], None).await;
     assert!(!out.status.success());
 
-    // The socket goes away with the daemon.
+    // The socket goes away with the daemon (a named pipe is no file to look for).
     drop(a.running.take());
+    if cfg!(windows) {
+        return;
+    }
     for _ in 0..100 {
         if !a.socket.exists() {
             break;
@@ -348,6 +365,7 @@ fn ssh_setup_and_unsetup_edit_only_the_given_home() {
         let out = std::process::Command::new(env!("CARGO_BIN_EXE_rewarden"))
             .args(args)
             .env("HOME", &home)
+            .env("USERPROFILE", &home)
             .env("REWARDEN_CONFIG_DIR", dir.path().join("config"))
             .env("REWARDEN_STATE_DIR", &state)
             .env_remove("XDG_RUNTIME_DIR")
@@ -356,23 +374,29 @@ fn ssh_setup_and_unsetup_edit_only_the_given_home() {
         assert!(out.status.success(), "{out:?}");
         String::from_utf8_lossy(&out.stdout).into_owned()
     };
-    // With its own state directory, the socket is there.
-    let socket = state.join("ssh-agent.sock");
+    // With its own state directory, the socket is there (on Windows: that directory's named pipe).
+    let socket = if cfg!(windows) {
+        rewarden_desktop::win::ssh_pipe(&state)
+    } else {
+        state.join("ssh-agent.sock")
+    };
+    let written = rewarden_desktop::ssh_agent::setup::config_form(&socket.display().to_string());
     let said = run(&["ssh", "setup"]);
     assert!(said.contains(&socket.display().to_string()), "{said}");
     let text = std::fs::read_to_string(home.join(".ssh/config")).unwrap();
     assert!(text.starts_with(user_config), "{text}");
-    assert!(text.contains(&format!("Host *\n    IdentityAgent \"{}\"", socket.display())), "{text}");
+    assert!(text.contains(&format!("Host *\n    IdentityAgent \"{written}\"")), "{text}");
     assert!(run(&["ssh", "setup"]).contains("already"));
     assert_eq!(std::fs::read_to_string(home.join(".ssh/config")).unwrap(), text);
     let status = run(&["ssh", "status"]);
     assert!(status.contains("not running"), "{status}");
-    assert!(status.contains(&format!("uses {}", socket.display())), "{status}");
+    assert!(status.contains(&format!("uses {written}")), "{status}");
     if have("ssh") {
         // ssh itself reads the block.
         let effective =
             rewarden_desktop::ssh_agent::setup::effective_agent(&home.join(".ssh/config")).unwrap_or_default();
-        assert_eq!(effective, socket.display().to_string());
+        let effective = rewarden_desktop::ssh_agent::setup::config_form(&effective);
+        assert!(effective.eq_ignore_ascii_case(&written), "{effective} is not {written}");
     }
     assert!(run(&["ssh", "unsetup"]).contains("removed"));
     assert_eq!(std::fs::read_to_string(home.join(".ssh/config")).unwrap(), user_config);

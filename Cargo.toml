@@ -335,6 +335,10 @@ panic = "abort"
 [profile.dev.package.argon2]
 opt-level = 3
 
+# The phone core makes an RSA-2048 key pair when it creates an account; unoptimized that takes many seconds.
+[profile.dev.package.num-bigint-dig]
+opt-level = 3
+
 # Linting config
 # https://doc.rust-lang.org/rustc/lints/groups.html
 [workspace.lints.rust]

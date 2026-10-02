@@ -45,7 +45,7 @@ import dev.rewarden.android.design.Spinner
 import dev.rewarden.android.platform.Authenticator
 import dev.rewarden.android.ui.common.untrusted
 
-/** Connecting a new AI: confirm the two-digit code the browser shows, name it, approve. */
+/** Connecting a new AI or computer: confirm the two-digit code it shows (in the browser or the desktop app), name it, approve. */
 @Composable
 fun PairingSheet(viewModel: PairingViewModel, authenticator: Authenticator, onDone: () -> Unit) {
     val c = LocalColors.current
@@ -76,7 +76,7 @@ fun PairingSheet(viewModel: PairingViewModel, authenticator: Authenticator, onDo
                     RText("Connect", RType.sans(26f, FontWeight.SemiBold), c.text, Modifier.testTag("what"))
                 }
                 RText(
-                    "Only continue if you just started this connection yourself. Tap the two-digit code that your browser is showing.",
+                    "Only continue if you just started this connection yourself. Tap the two-digit code shown on your computer or in your browser.",
                     RType.sans(15f, lineHeight = 21f),
                     c.secondary,
                     Modifier.padding(top = 14.dp),

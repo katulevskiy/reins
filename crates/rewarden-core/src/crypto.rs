@@ -209,6 +209,80 @@ impl MasterKey {
     }
 }
 
+/// What a new account stores on the server (Bitwarden's account keys), made from its master password.
+pub struct NewAccountKeys {
+    /// The master password hash, as for login.
+    pub master_password_hash: Zeroizing<String>,
+    /// The 64-byte user key (`enc || mac`), wrapped with the stretched master key: `2.<iv>|<data>|<mac>`.
+    pub key: String,
+    /// The RSA-2048 public key, SubjectPublicKeyInfo DER in base64 (organizations and emergency access share keys
+    /// to it).
+    pub public_key: String,
+    /// Its private key, PKCS#8 DER wrapped with the user key.
+    pub encrypted_private_key: String,
+}
+
+impl fmt::Debug for NewAccountKeys {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("NewAccountKeys").field("public_key", &self.public_key).finish_non_exhaustive()
+    }
+}
+
+/// ring's system generator as the `rand_core` generator RSA key generation takes.
+struct SystemRng(SystemRandom);
+
+impl rsa::rand_core::RngCore for SystemRng {
+    fn next_u32(&mut self) -> u32 {
+        let mut b = [0u8; 4];
+        self.fill_bytes(&mut b);
+        u32::from_le_bytes(b)
+    }
+
+    fn next_u64(&mut self) -> u64 {
+        let mut b = [0u8; 8];
+        self.fill_bytes(&mut b);
+        u64::from_le_bytes(b)
+    }
+
+    fn fill_bytes(&mut self, dest: &mut [u8]) {
+        // rand_core 0.6 gives this no way to fail; ring's generator only fails when the OS has none at all.
+        assert!(self.0.fill(dest).is_ok(), "system random generator failed");
+    }
+
+    fn try_fill_bytes(&mut self, dest: &mut [u8]) -> Result<(), rsa::rand_core::Error> {
+        self.0.fill(dest).map_err(|_| rsa::rand_core::Error::from(NonZeroU32::MIN))
+    }
+}
+
+impl rsa::rand_core::CryptoRng for SystemRng {}
+
+/// The keys of a new account, as the Bitwarden clients make them: a random 64-byte user key wrapped with the stretched
+/// master key, and an RSA-2048 key pair whose private half is wrapped with the user key.
+/// CPU-heavy (the KDF and the RSA key): call from `tokio::task::spawn_blocking`.
+pub fn new_account_keys(password: &str, email: &str, kdf: Kdf) -> Result<NewAccountKeys, CoreError> {
+    use rsa::pkcs8::{EncodePrivateKey, EncodePublicKey};
+
+    let master = master_key(password, email, kdf)?;
+    let master_password_hash = master_password_hash(&master, password);
+    let user_key = VaultKey::from_bytes(&Zeroizing::new(random_bytes::<64>()?)[..])?;
+    let key = master.stretch().encrypt(&user_key.to_bytes())?;
+    let private = rsa::RsaPrivateKey::new(&mut SystemRng(SystemRandom::new()), 2048)
+        .map_err(|e| CoreError::storage(format!("could not make the account's key pair: {e}")))?;
+    let public_der = rsa::RsaPublicKey::from(&private)
+        .to_public_key_der()
+        .map_err(|e| CoreError::storage(format!("could not encode the account's public key: {e}")))?;
+    let private_der = private
+        .to_pkcs8_der()
+        .map_err(|e| CoreError::storage(format!("could not encode the account's private key: {e}")))?;
+    let encrypted_private_key = user_key.encrypt(private_der.as_bytes())?;
+    Ok(NewAccountKeys {
+        master_password_hash,
+        key,
+        public_key: BASE64.encode(public_der.as_bytes()),
+        encrypted_private_key,
+    })
+}
+
 /// `base64(PBKDF2-SHA256(key = master_key, salt = password, 1 iteration))`,
 /// the value sent as `password` to `/identity/connect/token` (contracts §B.3).
 pub fn master_password_hash(key: &MasterKey, password: &str) -> Zeroizing<String> {
@@ -361,6 +435,33 @@ mod tests {
         ] {
             assert!(Kdf::from_prelogin(kdf, it, mem, par).is_err(), "accepted {kdf} {it} {mem:?} {par:?}");
         }
+    }
+
+    #[test]
+    fn new_account_keys_unlock_like_a_bitwarden_client_would() {
+        use rsa::pkcs8::{DecodePrivateKey, DecodePublicKey};
+        use rsa::traits::PublicKeyParts;
+
+        let kdf = Kdf::Pbkdf2 {
+            iterations: 5_000,
+        };
+        let keys = new_account_keys("correct horse battery", "New@Example.com", kdf).unwrap();
+        // Login sends the same hash that a later sign-in derives.
+        let again = master_key("correct horse battery", "new@example.com", kdf).unwrap();
+        assert_eq!(*keys.master_password_hash, *master_password_hash(&again, "correct horse battery"));
+        // Unlocking: the stretched master key opens the user key, the user key opens the private key.
+        let user = VaultKey::from_bytes(&again.stretch().decrypt(&keys.key).unwrap()).unwrap();
+        let private = rsa::RsaPrivateKey::from_pkcs8_der(&user.decrypt(&keys.encrypted_private_key).unwrap()).unwrap();
+        let public =
+            rsa::RsaPublicKey::from_public_key_der(&BASE64.decode(keys.public_key.as_bytes()).unwrap()).unwrap();
+        assert_eq!(rsa::RsaPublicKey::from(&private), public);
+        assert_eq!(public.size(), 256, "RSA-2048");
+        assert!(!format!("{keys:?}").contains(&keys.key));
+        // Another password opens nothing; two accounts never share a user key.
+        let wrong = master_key("wrong", "new@example.com", kdf).unwrap();
+        assert!(wrong.stretch().decrypt(&keys.key).is_err());
+        let other = new_account_keys("correct horse battery", "new@example.com", kdf).unwrap();
+        assert_ne!(*again.stretch().decrypt(&other.key).unwrap(), *user.to_bytes());
     }
 
     #[test]
