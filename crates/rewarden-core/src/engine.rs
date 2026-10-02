@@ -456,6 +456,13 @@ impl Engine {
         result
     }
 
+    /// Like [`Engine::handle_push`], without Autopilot's pass: for a process that cannot run the model (the iOS
+    /// notification extension). The item is parked and listed by `pending`, but not judged; the next pass in a
+    /// process that has the model (the app's sync or push) judges it, instead of this one recording that it could not.
+    pub async fn handle_push_deferring_autopilot(&self, kind: &str, id: &str) -> Result<(), CoreError> {
+        self.handle_push_inner(kind, id).await
+    }
+
     async fn handle_push_inner(&self, kind: &str, id: &str) -> Result<(), CoreError> {
         match kind {
             "replaced" => {

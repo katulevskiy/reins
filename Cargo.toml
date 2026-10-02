@@ -281,6 +281,9 @@ rewarden-proto = { path = "crates/rewarden-proto" }
 [dev-dependencies]
 # Paused-clock relay timing tests and #[tokio::test]
 tokio = { version = "1.53.1", features = ["macros", "test-util"] }
+# The mock HTTP/2 server of the APNs sender tests (already built for reqwest's HTTP/2)
+h2 = "0.4.19"
+http = "1.5.0"
 
 # Strip debuginfo from the release builds
 # The debug symbols are to provide better panic traces

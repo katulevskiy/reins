@@ -46,7 +46,7 @@ flowchart TB
 
 | Component | Where | Language | What it does |
 |---|---|---|---|
-| Server | `src/` (Vaultwarden fork), Reins code in `src/api/rewarden/` | Rust (Rocket, Diesel) | Accounts and vault (Vaultwarden), MCP endpoint, OAuth 2.1 authorization server, relay, phone API, desktop API, file slots, FCM sender |
+| Server | `src/` (Vaultwarden fork), Reins code in `src/api/rewarden/` | Rust (Rocket, Diesel) | Accounts and vault (Vaultwarden), MCP endpoint, OAuth 2.1 authorization server, relay, phone API, desktop API, file slots, FCM and APNs senders |
 | Protocol | `crates/rewarden-proto` | Rust, no IO | Wire types shared by server, phone and desktop: tool specs and argument validation, relay requests and results, pairing, desktop tools, sealed payloads, file slots, MCP server reports |
 | Policy | `crates/rewarden-policy` | Rust, no IO | Grants and their evaluation: scopes, patterns, expiry, uses |
 | Phone core | `crates/rewarden-core` | Rust, exported to Kotlin with UniFFI | Request handling, connectors (Gmail, Google, GitHub, git hosts, Telegram, device data, vault, remote MCP, desktop tools), encrypted SQLite store, audit log, Autopilot |

@@ -7,6 +7,8 @@ enum DeepLink: Equatable {
     case activity(id: Int64)
     case grant(id: String)
     case autopilot
+    /// The Integrations page (services and MCP servers), over Activity.
+    case integrations
     case home
 
     static let scheme = "reins"
@@ -26,6 +28,8 @@ enum DeepLink: Equatable {
             c.queryItems = [URLQueryItem(name: "id", value: id)]
         case .autopilot:
             c.host = "autopilot"
+        case .integrations:
+            c.host = "integrations"
         case .home:
             c.host = "home"
         }
@@ -50,6 +54,7 @@ enum DeepLink: Equatable {
             guard let id = query["id"], Self.isId(id) else { return nil }
             self = .grant(id: id)
         case "autopilot": self = .autopilot
+        case "integrations": self = .integrations
         case "home": self = .home
         default: return nil
         }

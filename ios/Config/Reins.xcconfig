@@ -15,7 +15,9 @@ REINS_GOOGLE_CLIENT_ID =
 // Its reversed form, the redirect scheme, e.g. com.googleusercontent.apps.1234-abcd.
 REINS_GOOGLE_REDIRECT_SCHEME = dev.rewarden.ios.google
 
-// development or production: the APNs environment the app registers for.
+// The APNs environment the app registers for. It also picks the token prefix the server sees (apns-sandbox: or apns:);
+// a token sent to the wrong environment is refused by Apple and deleted by the server.
 REINS_APS_ENVIRONMENT = development
+REINS_APS_ENVIRONMENT[config=Release] = production
 
 #include? "Local.xcconfig"

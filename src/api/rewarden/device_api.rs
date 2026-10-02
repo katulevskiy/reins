@@ -22,8 +22,9 @@ use serde::de::DeserializeOwned;
 use serde_json::Value;
 
 use super::{
-    HUB, fcm, now_unix,
+    HUB, apns, now_unix,
     pairing::{PairingAnswer, PairingAnswerError},
+    push,
     relay::AnswerError,
 };
 use crate::{
@@ -93,7 +94,8 @@ pub fn clamp_wait(raw: Option<&str>) -> u32 {
     raw.and_then(|w| w.trim().parse::<u32>().ok()).unwrap_or(0).min(MAX_PENDING_WAIT_SECS)
 }
 
-/// Decision 32: trimmed, empty → `None`, bounded, no control characters.
+/// Decision 32: trimmed, empty → `None`, bounded, no control characters. The iOS app's tokens
+/// (`apns:` or `apns-sandbox:` and 64 hex digits) must be well formed and are stored with lowercase hex.
 pub fn normalize_fcm_token(raw: Option<String>) -> Result<Option<String>, String> {
     let Some(token) = raw.map(|t| t.trim().to_owned()).filter(|t| !t.is_empty()) else {
         return Ok(None);
@@ -101,7 +103,10 @@ pub fn normalize_fcm_token(raw: Option<String>) -> Result<Option<String>, String
     if token.len() > MAX_FCM_TOKEN_BYTES || token.chars().any(char::is_control) {
         return Err(format!("fcm_token must be at most {MAX_FCM_TOKEN_BYTES} bytes without control characters"));
     }
-    Ok(Some(token))
+    match apns::normalize_token(&token) {
+        Some(apns) => apns.map(Some).map_err(|e| format!("fcm_token: {e}")),
+        None => Ok(Some(token)),
+    }
 }
 
 /// Parses a relay/pairing message, checking `v` first so a newer phone gets `bad_version`
@@ -173,7 +178,7 @@ async fn put_device(
     let previous = row.replace(&conn).await.map_err(|e| internal(&e))?;
     let replaced = previous.filter(|p| p.device_uuid != row.device_uuid);
     if let Some(old) = &replaced {
-        fcm::spawn_push(
+        push::spawn_push(
             pool.inner().clone(),
             headers.user.uuid.clone(),
             old.fcm_token.clone(),
@@ -345,6 +350,23 @@ mod tests {
         assert_eq!(normalize_fcm_token(Some(" abc:DEF_1 ".to_owned())), Ok(Some("abc:DEF_1".to_owned())));
         assert!(normalize_fcm_token(Some("x".repeat(MAX_FCM_TOKEN_BYTES + 1))).is_err());
         assert!(normalize_fcm_token(Some("a\nb".to_owned())).is_err());
+    }
+
+    #[test]
+    fn apns_tokens_must_be_64_hex_digits_and_are_lowercased() {
+        let hex = "0123456789abcdef".repeat(4);
+        for prefix in ["apns:", "apns-sandbox:"] {
+            let upper = format!(" {prefix}{} \n", hex.to_ascii_uppercase());
+            assert_eq!(normalize_fcm_token(Some(upper)), Ok(Some(format!("{prefix}{hex}"))));
+            assert!(normalize_fcm_token(Some(format!("{prefix}{}", &hex[2..]))).unwrap_err().contains("64 hex"));
+            assert!(normalize_fcm_token(Some(format!("{prefix}{hex}00"))).is_err());
+            assert!(normalize_fcm_token(Some(format!("{prefix}{}zz", &hex[2..]))).is_err());
+            assert!(normalize_fcm_token(Some(format!("{prefix}{}:{}", &hex[..32], &hex[33..]))).is_err());
+            assert!(normalize_fcm_token(Some(prefix.to_owned())).is_err());
+        }
+        // Not an APNs prefix: an FCM token, kept as is.
+        let fcm = format!("APNS:{hex}");
+        assert_eq!(normalize_fcm_token(Some(fcm.clone())), Ok(Some(fcm)));
     }
 
     #[test]
