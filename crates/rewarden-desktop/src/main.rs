@@ -32,7 +32,11 @@ struct Cli {
 #[derive(Subcommand)]
 enum Cmd {
     /// Run the daemon in the foreground (what the service runs).
-    Daemon,
+    Daemon {
+        /// Also append the log to this file (the Windows background service has no other place for it).
+        #[arg(long, value_name = "FILE")]
+        log_file: Option<PathBuf>,
+    },
     /// Whether the daemon runs, who decides, the listen address, the server and this app's key fingerprint.
     Status,
     /// Route the enabled git hosts' remotes (`[[git.hosts]]`) through the proxy, or stop doing so.
@@ -61,7 +65,7 @@ enum Cmd {
     },
     /// Forget the Rewarden server session.
     Logout,
-    /// Run the daemon at login (systemd user unit or launchd agent).
+    /// Run the daemon at login (systemd user unit, launchd agent, or on Windows the user's Run key).
     Service {
         #[command(subcommand)]
         action: ServiceCmd,
@@ -111,7 +115,39 @@ enum ServiceCmd {
 }
 
 fn home() -> Result<PathBuf, String> {
-    std::env::var_os("HOME").filter(|h| !h.is_empty()).map(PathBuf::from).ok_or_else(|| "HOME is not set".to_owned())
+    rewarden_desktop::config::home_dir()
+}
+
+/// Installs the background service for `exe` and starts it; what was installed, for the message.
+// Only Windows waits (for the daemon's control API).
+#[cfg_attr(not(windows), allow(clippy::unused_async))]
+async fn install_service(paths: &Paths, config: &Config, exe: &std::path::Path) -> Result<String, String> {
+    #[cfg(windows)]
+    {
+        service::windows::install(paths, config, exe, true).await
+    }
+    #[cfg(not(windows))]
+    {
+        let _ = (paths, config);
+        let manager = service::Manager::current()?;
+        Ok(service::install(manager, &home()?, exe, true)?.display().to_string())
+    }
+}
+
+/// `rewarden status`'s service line (Windows only: elsewhere the service manager shows it).
+fn service_status(paths: &Paths) -> Option<String> {
+    #[cfg(windows)]
+    {
+        Some(match service::windows::installed() {
+            Ok(value) => service::windows::describe(value.as_deref(), paths),
+            Err(e) => format!("unknown ({e})"),
+        })
+    }
+    #[cfg(not(windows))]
+    {
+        let _ = paths;
+        None
+    }
 }
 
 async fn status(paths: &Paths, config: &Config) -> Result<(), String> {
@@ -126,6 +162,9 @@ async fn status(paths: &Paths, config: &Config) -> Result<(), String> {
                 out!("Key:           {}", s.fingerprint);
                 out!("Pending:       {}", s.pending);
                 out!("Git:           {}", git_mode(config));
+                if let Some(line) = service_status(paths) {
+                    out!("Service:       {line}");
+                }
                 return Ok(());
             }
             Err(ClientError::NotRunning) => {}
@@ -144,6 +183,9 @@ async fn status(paths: &Paths, config: &Config) -> Result<(), String> {
     }
     out!("Listen:        {}", config.listen);
     out!("Git:           {}", git_mode(config));
+    if let Some(line) = service_status(paths) {
+        out!("Service:       {line}");
+    }
     Ok(())
 }
 
@@ -180,8 +222,12 @@ async fn run(cmd: Cmd) -> Result<(), String> {
     let paths = Paths::from_env().map_err(|e| e.to_string())?;
     let config = Config::load(&paths).map_err(|e| e.to_string())?;
     match cmd {
-        Cmd::Daemon => {
-            init_logging();
+        Cmd::Daemon {
+            log_file,
+        } => {
+            init_logging(log_file.as_deref());
+            #[cfg(windows)]
+            update::remove_set_aside(&std::env::current_exe().unwrap_or_default());
             let daemon = Daemon::bind(&paths, config, Options::default()).await?;
             log::info!("listening on http://{} ({} decides)", daemon.local_addr(), daemon.describe());
             daemon.run().await
@@ -263,16 +309,21 @@ async fn run(cmd: Cmd) -> Result<(), String> {
         Cmd::Service {
             action,
         } => {
-            let manager = service::Manager::current()?;
-            let home = home()?;
             match action {
                 ServiceCmd::Install => {
+                    #[cfg(windows)]
+                    let exe = update::current_executable()?;
+                    #[cfg(not(windows))]
                     let exe = std::env::current_exe().map_err(|e| format!("cannot find this program: {e}"))?;
-                    let file = service::install(manager, &home, &exe, true)?;
-                    out!("Installed and started {}", file.display());
+                    let installed = install_service(&paths, &config, &exe).await?;
+                    out!("Installed and started {installed}");
                 }
                 ServiceCmd::Uninstall => {
-                    if service::uninstall(manager, &home, true)? {
+                    #[cfg(windows)]
+                    let removed = service::windows::uninstall(&paths, &config, true).await?;
+                    #[cfg(not(windows))]
+                    let removed = service::uninstall(service::Manager::current()?, &home()?, true)?;
+                    if removed {
                         out!("Stopped and removed the service.");
                     } else {
                         out!("The service was not installed.");
@@ -283,7 +334,7 @@ async fn run(cmd: Cmd) -> Result<(), String> {
         }
         Cmd::Update {
             check,
-        } => self_update(&config, check).await,
+        } => self_update(&paths, &config, check).await,
         Cmd::Pause => pause(&config),
         Cmd::Resume => resume(&paths, &config).await,
         Cmd::Agents(_) => unreachable!("handled in main"),
@@ -321,10 +372,9 @@ fn pause(config: &Config) -> Result<(), String> {
 
 async fn resume(paths: &Paths, config: &Config) -> Result<(), String> {
     if !daemon_running(paths, config).await {
-        let manager = service::Manager::current()?;
         let exe = update::current_executable()?;
-        let file = service::install(manager, &home()?, &exe, true)?;
-        out!("Started the background service ({}).", file.display());
+        let installed = install_service(paths, config, &exe).await?;
+        out!("Started the background service ({installed}).");
         let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
         while !daemon_running(paths, config).await {
             if std::time::Instant::now() > deadline {
@@ -345,7 +395,9 @@ async fn resume(paths: &Paths, config: &Config) -> Result<(), String> {
     Ok(())
 }
 
-async fn self_update(config: &Config, check_only: bool) -> Result<(), String> {
+async fn self_update(paths: &Paths, config: &Config, check_only: bool) -> Result<(), String> {
+    #[cfg(not(windows))]
+    let _ = paths;
     let updater = update::Updater::for_this_binary(&config.releases)?;
     match updater.check().await? {
         Check::UpToDate(latest) => {
@@ -362,6 +414,11 @@ async fn self_update(config: &Config, check_only: bool) -> Result<(), String> {
             let exe = update::current_executable()?;
             update::replace_executable(&exe, &bytes)?;
             out!("Updated {} to {} ({}).", exe.display(), latest.version, latest.build);
+            #[cfg(windows)]
+            if let Some(done) = service::windows::restart_if_installed(paths, config, &exe).await? {
+                out!("{done}");
+            }
+            #[cfg(not(windows))]
             if let Ok(manager) = service::Manager::current()
                 && let Some(done) = service::restart_if_installed(manager, &home()?)?
             {

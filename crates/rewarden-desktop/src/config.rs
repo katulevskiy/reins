@@ -1,9 +1,10 @@
 //! Where the app keeps things, and its settings (`config.toml`).
 //!
 //! Config (settings the user edits) lives in `$REWARDEN_CONFIG_DIR`, else `$XDG_CONFIG_HOME/rewarden`, else
-//! `~/.config/rewarden`. State (the identity key, the server session, the control token) lives in
-//! `$REWARDEN_STATE_DIR`, else `$XDG_STATE_HOME/rewarden`, else `~/.local/state/rewarden`. Both are created 0700 and
-//! every secret file 0600.
+//! `~/.config/rewarden` (on Windows `%APPDATA%\rewarden`). State (the identity key, the server session, the control
+//! token) lives in `$REWARDEN_STATE_DIR`, else `$XDG_STATE_HOME/rewarden`, else `~/.local/state/rewarden` (on Windows
+//! `%LOCALAPPDATA%\rewarden`). Both are created 0700 and every secret file 0600; on Windows a new directory and every
+//! secret file get an access list that leaves them to the user alone instead (see `win::make_private`).
 
 use std::net::SocketAddr;
 use std::path::{Path, PathBuf};
@@ -38,17 +39,51 @@ fn env_dir(name: &str) -> Option<PathBuf> {
     std::env::var_os(name).filter(|v| !v.is_empty()).map(PathBuf::from)
 }
 
+/// The user's home directory, where the harnesses, ssh and git keep their settings: `$HOME`; on Windows
+/// `%USERPROFILE%` (where Claude Code, Codex, the other harnesses and Windows' OpenSSH look; Git Bash sets `HOME` to the
+/// same place), else `$HOME`.
+pub fn home_dir() -> Result<PathBuf, String> {
+    home_from(env_dir, cfg!(windows)).ok_or_else(|| {
+        if cfg!(windows) {
+            "USERPROFILE is not set".to_owned()
+        } else {
+            "HOME is not set".to_owned()
+        }
+    })
+}
+
+fn home_from(env: impl Fn(&str) -> Option<PathBuf>, windows: bool) -> Option<PathBuf> {
+    if windows {
+        env("USERPROFILE").or_else(|| env("HOME"))
+    } else {
+        env("HOME")
+    }
+}
+
 impl Paths {
     /// From the environment (see the module docs).
     pub fn from_env() -> Result<Self, ConfigError> {
-        let home = env_dir("HOME").or_else(|| env_dir("USERPROFILE"));
-        let config_dir = env_dir("REWARDEN_CONFIG_DIR")
-            .or_else(|| env_dir("XDG_CONFIG_HOME").map(|d| d.join("rewarden")))
-            .or_else(|| home.as_ref().map(|h| h.join(".config").join("rewarden")))
+        Self::from_vars(env_dir, cfg!(windows))
+    }
+
+    fn from_vars(env: impl Fn(&str) -> Option<PathBuf>, windows: bool) -> Result<Self, ConfigError> {
+        let (config_base, state_base) = if windows {
+            let home = home_from(&env, true);
+            (
+                env("APPDATA").or_else(|| home.as_ref().map(|h| h.join("AppData").join("Roaming"))),
+                env("LOCALAPPDATA").or_else(|| home.as_ref().map(|h| h.join("AppData").join("Local"))),
+            )
+        } else {
+            let home = env("HOME").or_else(|| env("USERPROFILE"));
+            (home.as_ref().map(|h| h.join(".config")), home.as_ref().map(|h| h.join(".local").join("state")))
+        };
+        let config_dir = env("REWARDEN_CONFIG_DIR")
+            .or_else(|| env("XDG_CONFIG_HOME").map(|d| d.join("rewarden")))
+            .or_else(|| config_base.map(|d| d.join("rewarden")))
             .ok_or(ConfigError::NoHome)?;
-        let state_dir = env_dir("REWARDEN_STATE_DIR")
-            .or_else(|| env_dir("XDG_STATE_HOME").map(|d| d.join("rewarden")))
-            .or_else(|| home.as_ref().map(|h| h.join(".local").join("state").join("rewarden")))
+        let state_dir = env("REWARDEN_STATE_DIR")
+            .or_else(|| env("XDG_STATE_HOME").map(|d| d.join("rewarden")))
+            .or_else(|| state_base.map(|d| d.join("rewarden")))
             .ok_or(ConfigError::NoHome)?;
         Ok(Self {
             config_dir,
@@ -88,9 +123,11 @@ impl Paths {
         self.state_dir.join("control.token")
     }
 
-    /// Creates both directories (0700 on Unix).
+    /// Creates both directories (0700 on Unix; on Windows a new one is left to the user alone).
     pub fn ensure(&self) -> Result<(), ConfigError> {
         for dir in [&self.config_dir, &self.state_dir] {
+            #[cfg(windows)]
+            let existed = dir.is_dir();
             std::fs::create_dir_all(dir).map_err(|source| ConfigError::Io {
                 path: dir.clone(),
                 source,
@@ -104,6 +141,12 @@ impl Paths {
                         source,
                     }
                 })?;
+            }
+            // Files made in it inherit its access list. Under the user's profile it is private to the user already,
+            // so a failure only leaves it as Windows made it.
+            #[cfg(windows)]
+            if !existed && let Err(e) = crate::win::make_private(dir, true) {
+                log::warn!("{}: {e}", dir.display());
             }
         }
         Ok(())
@@ -119,6 +162,9 @@ pub fn write_private(path: &Path, bytes: &[u8]) -> std::io::Result<()> {
         use std::os::unix::fs::PermissionsExt as _;
         tmp.as_file().set_permissions(std::fs::Permissions::from_mode(0o600))?;
     }
+    // Before anything is written to it; the rename keeps the access list.
+    #[cfg(windows)]
+    crate::win::make_private(tmp.path(), false)?;
     std::io::Write::write_all(&mut tmp, bytes)?;
     tmp.as_file().sync_all()?;
     tmp.persist(path).map_err(|e| e.error)?;
@@ -569,5 +615,40 @@ mod tests {
             assert_eq!(std::fs::metadata(&f).unwrap().permissions().mode() & 0o777, 0o600);
             assert_eq!(std::fs::metadata(&paths.state_dir).unwrap().permissions().mode() & 0o777, 0o700);
         }
+    }
+
+    fn vars<'a>(vars: &'a [(&'a str, &'a str)]) -> impl Fn(&str) -> Option<PathBuf> + 'a {
+        move |name| vars.iter().find(|(k, _)| *k == name).map(|(_, v)| PathBuf::from(v))
+    }
+
+    #[test]
+    fn directories_follow_each_platforms_conventions() {
+        let unix = Paths::from_vars(vars(&[("HOME", "/home/me")]), false).unwrap();
+        assert_eq!(unix.config_dir, Path::new("/home/me/.config/rewarden"));
+        assert_eq!(unix.state_dir, Path::new("/home/me/.local/state/rewarden"));
+        let windows = [
+            ("USERPROFILE", r"C:\Users\me"),
+            ("APPDATA", r"C:\Users\me\AppData\Roaming"),
+            ("LOCALAPPDATA", r"C:\Users\me\AppData\Local"),
+        ];
+        let w = Paths::from_vars(vars(&windows), true).unwrap();
+        assert_eq!(w.config_dir, Path::new(r"C:\Users\me\AppData\Roaming").join("rewarden"));
+        assert_eq!(w.state_dir, Path::new(r"C:\Users\me\AppData\Local").join("rewarden"));
+        let profile_only = Paths::from_vars(vars(&[("USERPROFILE", "/p")]), true).unwrap();
+        assert_eq!(profile_only.config_dir, Path::new("/p").join("AppData").join("Roaming").join("rewarden"));
+        assert_eq!(profile_only.state_dir, Path::new("/p").join("AppData").join("Local").join("rewarden"));
+        let set = Paths::from_vars(vars(&[("REWARDEN_CONFIG_DIR", "/c"), ("XDG_STATE_HOME", "/s"), windows[0]]), true)
+            .unwrap();
+        assert_eq!((set.config_dir, set.state_dir), (PathBuf::from("/c"), Path::new("/s").join("rewarden")));
+        assert!(matches!(Paths::from_vars(vars(&[]), true), Err(ConfigError::NoHome)));
+    }
+
+    #[test]
+    fn the_home_directory_is_the_profile_on_windows() {
+        let both = [("HOME", "/h"), ("USERPROFILE", "/p")];
+        assert_eq!(home_from(vars(&both), false), Some(PathBuf::from("/h")));
+        assert_eq!(home_from(vars(&both), true), Some(PathBuf::from("/p")));
+        assert_eq!(home_from(vars(&[("HOME", "/h")]), true), Some(PathBuf::from("/h")));
+        assert_eq!(home_from(vars(&[("USERPROFILE", "/p")]), false), None);
     }
 }

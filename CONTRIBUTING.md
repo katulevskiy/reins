@@ -71,6 +71,13 @@ scripts/check-doc-links.py                      # relative links in README.md, t
 Some tests need tools on the machine (`git`, for the git proxy tests) or skip themselves when optional data is absent
 (the Laya model package: set `REWARDEN_LAYA_PKG`).
 
+The desktop app's Windows code: CI runs its clippy and tests on a Windows runner (`desktop-windows` in
+`.github/workflows/ci.yml`), including `tests/windows_service.rs`, which installs and removes the real background
+service and so runs only with `REWARDEN_TEST_WINDOWS_SERVICE=1`. From Linux or macOS, `rustup target add
+x86_64-pc-windows-gnu` and MinGW-w64 let you check it: `cargo clippy -p rewarden-desktop --all-targets --target
+x86_64-pc-windows-gnu -- -D warnings`. Code that only Windows runs lives behind `cfg(windows)`; what can be a plain
+function (paths, quoting, the PE header, `reg` output) lives in `src/win.rs` without one, so its tests run everywhere.
+
 Android (needs the Android SDK and NDK; see [android/README.md](android/README.md)):
 
 ```sh
@@ -104,7 +111,7 @@ cd android
 
 Every push to `main` that passes CI is released: `.github/workflows/release.yml` tags the commit CI tested as
 `vX.Y.Z` and publishes a [GitHub release](https://github.com/katulevskiy/reins/releases) with the desktop app (Linux
-x86_64/aarch64, static; macOS Apple silicon/Intel), the server binary, the server image
+x86_64/aarch64, static; macOS Apple silicon/Intel; Windows x86_64/Arm as zips), the server binary, the server image
 `ghcr.io/katulevskiy/reins-server`, the Android APK and `SHA256SUMS`, with notes generated from the commits. Nobody
 bumps a version by hand: the tags are the source of truth, and `scripts/next-version.sh` computes the next one from
 the commits since the latest tag:

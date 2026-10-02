@@ -180,8 +180,8 @@ pub fn spawn_prompt(
     });
 }
 
-/// The desktop's own way of asking: `notify-send` with actions on Linux, an `osascript` dialog on macOS, nothing
-/// elsewhere (or when the tool is missing): the CLI still answers.
+/// The desktop's own way of asking: `notify-send` with actions on Linux, an `osascript` dialog on macOS, a message box
+/// on Windows, nothing elsewhere (or when the tool is missing): the CLI still answers.
 pub struct DesktopPrompter;
 
 /// Notification servers read a little markup; the text comes from the agent's push.
@@ -211,6 +211,12 @@ impl DesktopPrompter {
                 &body,
             ]);
             Some(c)
+        } else if cfg!(windows) {
+            // Yes/No buttons; no timeout of its own: the prompt is dropped (and the box killed) after `REMEMBER`.
+            crate::win::message_box(
+                &format!("Rewarden: {}", item.what),
+                &format!("{body}\n\nApprove? (Yes approves, No denies.)"),
+            )
         } else if cfg!(unix) {
             let mut c = tokio::process::Command::new("notify-send");
             c.args([
@@ -237,7 +243,9 @@ impl Prompter for DesktopPrompter {
         let out = cmd.output().await.ok()?;
         let text = String::from_utf8_lossy(&out.stdout);
         let text = text.trim();
-        if text == "approve" || text.ends_with("button returned:Approve") {
+        if cfg!(windows) {
+            crate::win::message_box_answer(text)
+        } else if text == "approve" || text.ends_with("button returned:Approve") {
             Some(true)
         } else if text == "deny" || text.ends_with("button returned:Deny") {
             Some(false)

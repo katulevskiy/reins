@@ -13,7 +13,7 @@ In scope: the current release and the default branch of everything in this repos
   keys, approval and standing-permission logic, the connectors (Gmail, GitHub and other git hosts, Telegram, calendar,
   contacts, SMS, the vault, MCP servers), and the in-app updater.
 * **Desktop app and daemon** (`crates/rewarden-desktop`): login and key pinning, the git, SSH-agent and API proxies,
-  `rewarden ask`/`run`, harness hooks, the local MCP server, release signing and `rewarden update`, `scripts/install.sh`.
+  `rewarden ask`/`run`, harness hooks, the local MCP server, release signing and `rewarden update`, `scripts/install.sh`, `scripts/install.ps1`.
 * **Protocol and policy** (`crates/rewarden-proto`, `crates/rewarden-policy`): anything that lets a request do more
   than the user approved.
 * **Autopilot** (`crates/rewarden-core/src/autopilot`, `crates/rewarden-laya`, `tools/laya`): ways to make the

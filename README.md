@@ -93,7 +93,8 @@ You need an Android phone or an iPhone and an account on a Reins server (the hos
 
 1. **Phone.** Install the app from <https://reins2fa.com/app> and sign in with your email and master password. The
    phone becomes your approval device. Connect services under **Integrations**.
-2. **Desktop app** (Linux or macOS; macOS is alpha):
+2. **Desktop app** (Linux or macOS; on Windows, in PowerShell: `irm https://reins2fa.com/install.ps1 | iex` instead of
+   the first line):
    ```sh
    curl -fsSL https://reins2fa.com/install.sh | sh
    rewarden login     # compare the key shown here with the one on your phone
@@ -196,10 +197,10 @@ and only after it has agreed with you often enough. Model card: [tools/laya/MODE
 
 - Phone: Android (Android 12 or later) and iOS / iPadOS 26 or later (iPhone, iPad, iPhone Duo; build it from
   [`ios/`](ios/README.md), no App Store release yet). iOS has no text messages integration: apps cannot read SMS there.
-- Desktop app: Linux (x86_64 and aarch64) and macOS (Apple silicon and Intel), both through the install script. macOS
-  is newer: built and tested on CI, not yet field-tested end to end on a real Mac, and without two Linux protections
-  (git shows no "waiting for approval" notice; no shielding from same-user debuggers). See the
-  [desktop app README](crates/rewarden-desktop/README.md#macos-alpha). Windows is not supported.
+- Desktop app: Linux (x86_64, aarch64), macOS (Apple silicon, Intel) and Windows (x86_64, and Arm when it builds)
+  builds are published with every release. macOS and Windows are alpha: built and tested on GitHub's runners, not yet
+  field-tested end to end ([macOS](crates/rewarden-desktop/README.md#macos-alpha),
+  [Windows](crates/rewarden-desktop/README.md#windows-alpha)).
 - Gmail and Google Calendar/Contacts use Google scopes that need Google's app verification before the general public
   can use them.
 - Push notifications need an app build that matches the server's Firebase project. With a self-hosted server and the
@@ -213,6 +214,11 @@ cd reins
 cargo build --release --features sqlite --bin vaultwarden   # the server
 cargo build --release -p rewarden-desktop                   # the desktop app (target/release/rewarden)
 ```
+
+The desktop app also builds on Windows, with the Rust MSVC toolchain (Visual Studio's C++ build tools), as
+`target\release\rewarden.exe`; the release links the C runtime in with `RUSTFLAGS="-C target-feature=+crt-static"`.
+Linux and macOS can check the Windows code with `cargo clippy -p rewarden-desktop --target x86_64-pc-windows-gnu`
+(rustup's target and MinGW-w64).
 
 The Android app builds with Gradle from `android/`; the iOS app with Xcode from `ios/` ([ios/README.md](ios/README.md)). [CONTRIBUTING.md](CONTRIBUTING.md) has the full build and test
 commands; [docs/self-hosting.md](docs/self-hosting.md) covers running the server, including with Docker.

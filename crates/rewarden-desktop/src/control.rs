@@ -1,5 +1,6 @@
 //! The daemon's control API under `/_rewarden/`, used by the CLI: `GET status`, `GET pending`,
-//! `POST pending/<id>/approve`, `POST pending/<id>/deny`. Every call needs `X-Rewarden-Token` with the secret the
+//! `POST pending/<id>/approve`, `POST pending/<id>/deny`, and `POST shutdown` (how the Windows background service is
+//! stopped: there is no service manager there to send it a signal). Every call needs `X-Rewarden-Token` with the secret the
 //! daemon wrote to `control.token` (0600), so only the user (and what runs as the user) can approve.
 
 use std::sync::Arc;
@@ -36,6 +37,7 @@ pub struct Control {
     token: Zeroizing<String>,
     pending: Arc<Pending>,
     status: Box<dyn Fn() -> Status + Send + Sync>,
+    stop: Arc<tokio::sync::Notify>,
 }
 
 /// Compares without stopping at the first difference.
@@ -64,7 +66,14 @@ impl Control {
             token,
             pending,
             status,
+            stop: Arc::new(tokio::sync::Notify::new()),
         }
+    }
+
+    /// Notified when `POST shutdown` asks the daemon to stop.
+    #[must_use]
+    pub fn stop_handle(&self) -> Arc<tokio::sync::Notify> {
+        Arc::clone(&self.stop)
     }
 
     #[must_use]
@@ -85,6 +94,11 @@ impl Control {
                 } else {
                     text(StatusCode::NOT_FOUND, &format!("No pending approval {id}."))
                 }
+            }
+            (&Method::POST, ["shutdown"]) => {
+                log::info!("asked to stop from the command line");
+                self.stop.notify_one();
+                json(&serde_json::json!({ "ok": true }))
             }
             _ => text(StatusCode::NOT_FOUND, "Unknown control path."),
         }
@@ -163,6 +177,26 @@ impl Client {
         };
         self.call::<serde_json::Value>(Method::POST, &format!("pending/{id}/{action}")).await.map(drop)
     }
+
+    /// Asks the daemon to stop and waits up to `wait` until it no longer answers. `Ok(false)`: it was not running.
+    pub async fn shutdown(&self, wait: Duration) -> Result<bool, ClientError> {
+        match self.call::<serde_json::Value>(Method::POST, "shutdown").await {
+            Err(ClientError::NotRunning) => return Ok(false),
+            Err(ClientError::Other(e)) if e.contains("Unknown control path") => {
+                return Err(ClientError::Other("the running daemon is too old to be stopped this way".to_owned()));
+            }
+            // Anything else may be the daemon going away while it answers.
+            Ok(_) | Err(ClientError::Other(_)) => {}
+        }
+        let deadline = std::time::Instant::now() + wait;
+        while self.status().await.is_ok() {
+            if std::time::Instant::now() > deadline {
+                return Err(ClientError::Other("the daemon did not stop".to_owned()));
+            }
+            tokio::time::sleep(Duration::from_millis(100)).await;
+        }
+        Ok(true)
+    }
 }
 
 #[cfg(test)]
@@ -176,5 +210,21 @@ mod tests {
         assert!(!same(b"abc", b"ab"));
         assert_eq!(new_token().len(), 64);
         assert_ne!(*new_token(), *new_token());
+    }
+
+    #[tokio::test]
+    async fn shutdown_needs_the_token_and_tells_the_daemon() {
+        let control = Control::new(
+            Zeroizing::new("t".to_owned()),
+            Arc::new(Pending::default()),
+            Box::new(|| unreachable!("the status is not asked for")),
+        );
+        let stop = control.stop_handle();
+        let mut headers = HeaderMap::new();
+        assert_eq!(control.handle(&Method::POST, "/_rewarden/shutdown", &headers).status(), StatusCode::UNAUTHORIZED);
+        headers.insert(TOKEN_HEADER, "t".parse().unwrap());
+        assert_eq!(control.handle(&Method::GET, "/_rewarden/shutdown", &headers).status(), StatusCode::NOT_FOUND);
+        assert_eq!(control.handle(&Method::POST, "/_rewarden/shutdown", &headers).status(), StatusCode::OK);
+        tokio::time::timeout(Duration::from_secs(1), stop.notified()).await.expect("the daemon is told to stop");
     }
 }
