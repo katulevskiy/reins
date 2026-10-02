@@ -40,9 +40,6 @@ android {
         buildConfigField("String", "BUILD_ID", "\"$buildId\"")
         ndk { abiFilters += listOf("arm64-v8a", "x86_64") }
         buildConfigField("boolean", "HAS_FIREBASE", hasFirebase.toString())
-        // Screenshots are allowed while testing; -Prewarden.secureScreens=true turns FLAG_SECURE back on.
-        val secure = providers.gradleProperty("rewarden.secureScreens").getOrElse("false")
-        buildConfigField("boolean", "SECURE_SCREENS", secure)
         // Pre-fills the sign-in server field (-Prewarden.defaultServer=https://your.server).
         val defaultServer = providers.gradleProperty("rewarden.defaultServer").getOrElse("https://")
         buildConfigField("String", "DEFAULT_SERVER", "\"$defaultServer\"")
@@ -104,8 +101,18 @@ android {
         }
     }
 
+    // FLAG_SECURE (no screenshots, blank in recents) on the screens that show secrets: on in release builds, off in
+    // debug builds so the Robolectric flow and screenshot tests can capture them. -Prewarden.secureScreens=true|false
+    // overrides both.
+    val secureScreensOverride = providers.gradleProperty("rewarden.secureScreens").orNull?.toBooleanStrict()
+    fun secureScreens(default: Boolean) = (secureScreensOverride ?: default).toString()
+
     buildTypes {
+        debug {
+            buildConfigField("boolean", "SECURE_SCREENS", secureScreens(default = false))
+        }
         release {
+            buildConfigField("boolean", "SECURE_SCREENS", secureScreens(default = true))
             isMinifyEnabled = true
             isShrinkResources = true
             proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro")

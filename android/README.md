@@ -73,8 +73,9 @@ scripts/device-smoke.sh          # real server + simulated AI on this machine, r
 ./gradlew testFullDebugUnitTest --tests '*Screenshots*' -Drewarden.screenshots=/tmp/shots   # dark and light PNGs of every screen
 ```
 
-Rendered through Robolectric with frozen clocks, so they are reproducible. `FLAG_SECURE` is off while testing
-(`-Prewarden.secureScreens=true` turns it back on).
+Rendered through Robolectric with frozen clocks, so they are reproducible. `FLAG_SECURE` (no screenshots of the
+screens that show secrets) is off in debug builds, which the tests use, and on in release builds;
+`-Prewarden.secureScreens=true|false` overrides it for either.
 
 ## Layout
 

@@ -1757,11 +1757,12 @@ class AppFlowTest {
     // ---- misc ----------------------------------------------------------------------------------------------------
 
     @Test
-    fun screensAreNotSecureWhileTesting() {
+    fun approvalScreenIsSecureExactlyWhenTheBuildSaysSo() {
+        // Off in debug builds (these tests, unless -Prewarden.secureScreens=true), on in release builds.
         searchRequest()
         launch()
         openItem("req1")
-        assertFalse(secure())
+        assertEquals(BuildConfig.SECURE_SCREENS, secure())
     }
 
     companion object {

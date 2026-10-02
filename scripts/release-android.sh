@@ -74,7 +74,9 @@ echo "Android release $build (versionCode $version_code)"
 
 stage="$(mktemp -d)"
 trap 'rm -rf "$stage"' EXIT
+# Screens with secrets are never capturable in a published APK, whatever ~/.gradle/gradle.properties says.
 (cd android && ./gradlew assembleFullRelease -q \
+    "-Prewarden.secureScreens=true" \
     "-Prewarden.site=$SITE" \
     "-Prewarden.defaultServer=$SITE" \
     "-Prewarden.versionCode=$version_code" \
