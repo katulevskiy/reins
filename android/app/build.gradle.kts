@@ -100,6 +100,25 @@ android {
             keyPassword = providers.gradleProperty("rewarden.uploadKeyPassword").get()
         }
     }
+    // The key of the published `full` APK, when a Gradle property or the environment names it (the GitHub release
+    // workflow uses the environment): rewarden.releaseKeystore / REWARDEN_RELEASE_KEYSTORE,
+    // rewarden.releaseKeystorePassword / REWARDEN_RELEASE_KEYSTORE_PASSWORD, rewarden.releaseKeyAlias /
+    // REWARDEN_RELEASE_KEY_ALIAS, rewarden.releaseKeyPassword / REWARDEN_RELEASE_KEY_PASSWORD (default: the keystore
+    // password). It signs `fullRelease` (see below). Without it `fullRelease` has the debug key, and
+    // scripts/release-android.sh re-signs it with apksigner.
+    fun releaseSetting(property: String, env: String) =
+        providers.gradleProperty(property).orElse(providers.environmentVariable(env)).orNull?.takeIf { it.isNotEmpty() }
+    releaseSetting("rewarden.releaseKeystore", "REWARDEN_RELEASE_KEYSTORE")?.let { keystore ->
+        val storePass = releaseSetting("rewarden.releaseKeystorePassword", "REWARDEN_RELEASE_KEYSTORE_PASSWORD")
+            ?: error("rewarden.releaseKeystore is set, but not its password (REWARDEN_RELEASE_KEYSTORE_PASSWORD)")
+        signingConfigs.create("release") {
+            storeFile = file(keystore)
+            storePassword = storePass
+            keyAlias = releaseSetting("rewarden.releaseKeyAlias", "REWARDEN_RELEASE_KEY_ALIAS")
+                ?: error("rewarden.releaseKeystore is set, but not the key alias (REWARDEN_RELEASE_KEY_ALIAS)")
+            keyPassword = releaseSetting("rewarden.releaseKeyPassword", "REWARDEN_RELEASE_KEY_PASSWORD") ?: storePass
+        }
+    }
 
     // FLAG_SECURE (no screenshots, blank in recents) on the screens that show secrets: on in release builds, off in
     // debug builds so the Robolectric flow and screenshot tests can capture them. -Prewarden.secureScreens=true|false
@@ -231,6 +250,9 @@ androidComponents {
     // The release build type's debug key would otherwise win over a flavor's signing config.
     onVariants(selector().withBuildType("release").withFlavor("distribution" to "play")) { variant ->
         android.signingConfigs.findByName("upload")?.let { variant.signingConfig.setConfig(it) }
+    }
+    onVariants(selector().withBuildType("release").withFlavor("distribution" to "full")) { variant ->
+        android.signingConfigs.findByName("release")?.let { variant.signingConfig.setConfig(it) }
     }
     onVariants { variant ->
         val name = variant.name.replaceFirstChar { it.uppercase() }
