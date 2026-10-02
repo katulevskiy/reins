@@ -212,7 +212,7 @@ fn launch_info() {
     println!(
         "\
         /--------------------------------------------------------------------\\\n\
-        |                        Starting Vaultwarden                        |"
+        |                     Starting the Reins server                      |"
     );
 
     if let Some(version) = VERSION {
@@ -222,13 +222,12 @@ fn launch_info() {
     println!(
         "\
         |--------------------------------------------------------------------|\n\
-        | This is an *unofficial* Bitwarden implementation, DO NOT use the   |\n\
-        | official channels to report bugs/features, regardless of client.   |\n\
-        | Send usage/configuration questions or feature requests to:         |\n\
-        |   https://github.com/dani-garcia/vaultwarden/discussions or        |\n\
-        |   https://vaultwarden.discourse.group/                             |\n\
-        | Report suspected bugs/issues in the software itself at:            |\n\
-        |   https://github.com/dani-garcia/vaultwarden/issues/new            |\n\
+        | The Reins server is a fork of Vaultwarden, an *unofficial*         |\n\
+        | Bitwarden implementation. DO NOT use Bitwarden's or Vaultwarden's  |\n\
+        | channels to report bugs or request features, regardless of client. |\n\
+        | Questions, bugs and feature requests:                              |\n\
+        |   https://github.com/katulevskiy/reins/issues                      |\n\
+        | Security issues: see SECURITY.md (report privately).               |\n\
         \\--------------------------------------------------------------------/\n"
     );
 }

@@ -30,8 +30,9 @@ reaching another's data; bypassing key pinning or update signatures.
 Please report privately, not in a public issue or pull request:
 
 * **GitHub private vulnerability reporting**: the repository's *Security* tab → *Report a vulnerability*.
-* **Email**: `security@<domain>` <!-- TODO: set the security contact address (and optionally a PGP key) once the
-  project's domain is final. -->
+* **Email**: `security@<domain>` is a placeholder: there is no security email address yet, so please use GitHub
+  private vulnerability reporting until this line names one. <!-- TODO: set the security contact address (and
+  optionally a PGP key) once the project's domain is final. -->
 
 Include what is affected (component, version or commit), how to reproduce it, the impact you see, and any proof of
 concept. If you are not sure whether something is a security issue, report it privately anyway.

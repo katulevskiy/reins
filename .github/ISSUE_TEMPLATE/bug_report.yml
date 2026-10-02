@@ -1,5 +1,5 @@
 name: Bug Report
-description: Something in Rewarden does not work as expected
+description: Something in Reins does not work as expected
 labels: ["bug"]
 body:
   - type: markdown

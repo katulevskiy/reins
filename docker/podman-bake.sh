@@ -20,10 +20,10 @@ case "${1}" in
 esac
 
 LABEL_ARGS=(
-    --label org.opencontainers.image.description="Unofficial Bitwarden compatible server written in Rust"
+    --label org.opencontainers.image.description="Reins server: the AI permission relay and a Bitwarden-compatible vault server (a Vaultwarden fork)"
     --label org.opencontainers.image.licenses="AGPL-3.0-only"
-    --label org.opencontainers.image.documentation="https://github.com/dani-garcia/vaultwarden/wiki"
-    --label org.opencontainers.image.url="https://github.com/dani-garcia/vaultwarden"
+    --label org.opencontainers.image.documentation="https://github.com/katulevskiy/reins/tree/main/docs"
+    --label org.opencontainers.image.url="https://github.com/katulevskiy/reins"
     --label org.opencontainers.image.created="$(date --utc --iso-8601=seconds)"
 )
 if [[ -n "${SOURCE_REPOSITORY_URL}" ]]; then
@@ -55,7 +55,7 @@ fi
 
 # Set the default CONTAINER_REGISTRIES if non are provided
 if [[ -z "${CONTAINER_REGISTRIES}" ]]; then
-    CONTAINER_REGISTRIES="vaultwarden/server"
+    CONTAINER_REGISTRIES="reins/server"
 fi
 
 # Check which Dockerfile we need to use, default is debian

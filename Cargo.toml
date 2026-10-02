@@ -11,7 +11,8 @@ members = ["macros", "crates/rewarden-proto", "crates/rewarden-policy", "crates/
 [package]
 name = "vaultwarden"
 version = "1.0.0"
-authors = ["Daniel García <dani-garcia@users.noreply.github.com>"]
+# Daniel García is the original author of Vaultwarden, which this server is a fork of (NOTICE).
+authors = ["The Reins contributors", "Daniel García <dani-garcia@users.noreply.github.com> (Vaultwarden)"]
 build = "build.rs"
 repository.workspace = true
 edition.workspace = true

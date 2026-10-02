@@ -43,9 +43,9 @@ variable "BASE_TAGS" {
 
 // Which container registries should be used for the tagging
 // This can be a comma separated value
-// Use a full URI like `ghcr.io/dani-garcia/vaultwarden,docker.io/vaultwarden/server`
+// Use a full URI like `ghcr.io/<owner>/reins,docker.io/<owner>/reins`
 variable "CONTAINER_REGISTRIES" {
-  default = "vaultwarden/server"
+  default = "reins/server"
 }
 
 
@@ -60,10 +60,10 @@ group "default" {
 function "labels" {
   params = []
   result = {
-    "org.opencontainers.image.description" = "Unofficial Bitwarden compatible server written in Rust - ${SOURCE_VERSION}"
+    "org.opencontainers.image.description" = "Reins server: the AI permission relay and a Bitwarden-compatible vault server (a Vaultwarden fork) - ${SOURCE_VERSION}"
     "org.opencontainers.image.licenses" = "AGPL-3.0-only"
-    "org.opencontainers.image.documentation" = "https://github.com/dani-garcia/vaultwarden/wiki"
-    "org.opencontainers.image.url" = "https://github.com/dani-garcia/vaultwarden"
+    "org.opencontainers.image.documentation" = "https://github.com/katulevskiy/reins/tree/main/docs"
+    "org.opencontainers.image.url" = "https://github.com/katulevskiy/reins"
     "org.opencontainers.image.created" =  "${formatdate("YYYY-MM-DD'T'hh:mm:ssZZZZZ", timestamp())}"
     "org.opencontainers.image.source" = "${SOURCE_REPOSITORY_URL}"
     "org.opencontainers.image.revision" = "${SOURCE_COMMIT}"
