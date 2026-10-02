@@ -168,6 +168,25 @@ final class OnboardingUITests: XCTestCase {
         wait("scanQR", 10)
     }
 
+    func testAPhoneTheServerRefusesTheApprovalRoleOffersTheOtherPhoneOrTheRecoveryCode() {
+        launch(["-demoOtherPhone"])
+        XCTAssertEqual(
+            wait("unlockReason", 10).label,
+            "This account already has a phone for approvals. Approve this phone from it, or enter your recovery code."
+        )
+        wait("askOtherPhone")
+        wait("enterRecoveryCode")
+        shot("13-takeover-refused")
+        tap("askOtherPhone")
+        XCTAssertEqual(wait("joinCode").label, "Code 482 193")
+        tap("cancelJoin")
+        tap("enterRecoveryCode")
+        typeInto("recoveryCode", "tkrq 7hxm 2pla w4zd qe6n b3vy jf5c k8su rm2g xt7h napq d6wl ze4b")
+        tap("unlock")
+        wait("phoneReady", 10)
+        shot("14-takeover-done")
+    }
+
     func testAnotherPhoneAsksToJoinAndThisOneApproves() {
         launch(["-demoJoin"])
         let tab = app.tabBars.buttons["Activity"]

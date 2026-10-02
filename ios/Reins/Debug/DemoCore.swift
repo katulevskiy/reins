@@ -8,15 +8,21 @@ import Foundation
 /// starting with "BBBB", which have expired. "Continue" (passwordless sign-in) makes a new account; `-demoLocked` finds
 /// one whose keys are on another phone instead (the recovery code is `DemoData.recoveryCode`; asking the other phone
 /// works after two polls, `-demoJoinDenied` refuses). `-demoJoin` has another phone ask this one for the keys.
+/// `-demoOtherPhone`: another phone approves for the account, and registering this one is refused
+/// (`CoreError.OtherApprovalDevice`) until the recovery code or the other phone's approval gives it a proof.
 enum DemoCore {
     static func make() -> (any RewardenCoreProtocol)? {
         let args = ProcessInfo.processInfo.arguments
+        let otherPhone = args.contains("-demoOtherPhone")
+        // This phone never held the role: the refusal shows the Unlock screen, not the "replaced" banner.
+        if otherPhone { DeviceStatus.clear() }
         return DemoRewardenCore(
             signedIn: !args.contains("-signedout"),
             arriveAfter: args.contains("-demoArrive") ? 6 : nil,
             modelInstalled: !args.contains("-demoNoModel"),
             keysLocked: args.contains("-demoLocked"),
-            joinWaiting: args.contains("-demoJoin")
+            joinWaiting: args.contains("-demoJoin"),
+            approvalElsewhere: otherPhone
         )
     }
 }
@@ -63,6 +69,8 @@ final class DemoRewardenCore: RewardenCoreProtocol, @unchecked Sendable {
         var joinPolls: Int?
         /// Other phones asking this one for the account's keys.
         var joins: [String: JoinView] = [:]
+        /// Another phone approves for the account: `registerDevice` is refused until this one brings a proof.
+        var approvalElsewhere = false
     }
 
     private let lock = NSLock()
@@ -72,7 +80,7 @@ final class DemoRewardenCore: RewardenCoreProtocol, @unchecked Sendable {
 
     init(
         signedIn: Bool = true, arriveAfter: Int64? = nil, modelInstalled: Bool = true, syncCap: Double = 5, keysLocked: Bool = false,
-        joinWaiting: Bool = false
+        joinWaiting: Bool = false, approvalElsewhere: Bool = false
     ) {
         let now = Self.now()
         let seeded = DemoData.pending(now)
@@ -94,6 +102,7 @@ final class DemoRewardenCore: RewardenCoreProtocol, @unchecked Sendable {
         s.apConnections = ["c1": ApRow(mode: .auto, bypassUntil: nil, profileId: "work")]
         s.arriveAt = arriveAfter.map { now + $0 }
         s.keys = keysLocked ? .locked : .created
+        s.approvalElsewhere = approvalElsewhere
         if joinWaiting {
             let join = DemoData.join(now)
             s.joins[join.id] = join
@@ -183,7 +192,10 @@ final class DemoRewardenCore: RewardenCoreProtocol, @unchecked Sendable {
         guard clean == DemoData.recoveryCode.filter({ $0 != "-" }) || codeOrPassword == "correct horse battery staple" else {
             throw CoreError.Invalid(reason: "That recovery code does not open this account.")
         }
-        locked { $0.keys = .unlocked }
+        locked { s in
+            s.keys = .unlocked
+            s.approvalElsewhere = false
+        }
     }
 
     func accountRecoveryCode() async throws -> String {
@@ -216,6 +228,7 @@ final class DemoRewardenCore: RewardenCoreProtocol, @unchecked Sendable {
             s.joinPolls = nil
             if denied { return .denied }
             s.keys = .unlocked
+            s.approvalElsewhere = false
             return .joined
         }
     }
@@ -240,7 +253,11 @@ final class DemoRewardenCore: RewardenCoreProtocol, @unchecked Sendable {
 
     func logout() async throws { locked { $0.session = nil } }
 
-    func registerDevice(fcmToken: String?) async throws {}
+    /// Refused with `-demoOtherPhone` until the recovery code or the other phone's approval, like the server, which
+    /// wants the proof the core attaches.
+    func registerDevice(fcmToken: String?) async throws {
+        if locked({ $0.approvalElsewhere }) { throw CoreError.OtherApprovalDevice }
+    }
 
     func handlePush(kind: String, id: String) async throws {}
 

@@ -3,6 +3,8 @@ import UIKit
 
 /// After "Continue", for an account whose keys this phone cannot open yet: another phone has them (it approves this
 /// one, comparing a code), or the recovery code does. This phone takes the approval role only once it can open them.
+/// The same two ways let a phone take the approval role from another one when the server asks for a proof
+/// (`SessionState.otherApprovalDevice`).
 struct UnlockScreen: View {
     @Environment(AppModel.self) private var model
     @Environment(\.horizontalSizeClass) private var sizeClass
@@ -31,6 +33,12 @@ struct UnlockScreen: View {
         .onDisappear { vm.stopWaiting() }
     }
 
+    /// Signed in, but the server would not make this phone the approval device without a proof: the same two ways give
+    /// it one.
+    private var takeover: Bool {
+        if case .otherApprovalDevice = model.session { true } else { false }
+    }
+
     @ViewBuilder private var content: some View {
         VStack(alignment: .leading, spacing: 12) {
             Image(systemName: "iphone.gen3")
@@ -40,12 +48,12 @@ struct UnlockScreen: View {
                 .background(Palette.accentSoft, in: RoundedRectangle(cornerRadius: 18, style: .continuous))
                 .accessibilityHidden(true)
                 .padding(.bottom, 6)
-            Text("Your account is on another phone")
+            Text(takeover ? "Another phone approves for this account" : "Your account is on another phone")
                 .font(RFont.sans(28, .semibold))
                 .foregroundStyle(Palette.text)
                 .fixedSize(horizontal: false, vertical: true)
                 .accessibilityAddTraits(.isHeader)
-            if case let .keysLocked(info) = model.session {
+            if let info = model.session.unlocking {
                 Text(info.email)
                     .font(RFont.mono(14))
                     .foregroundStyle(Palette.secondary)
@@ -75,11 +83,14 @@ struct UnlockScreen: View {
 
     private var choose: some View {
         VStack(alignment: .leading, spacing: 12) {
-            Text("This account's vault is encrypted with keys that only your other phone and your recovery code can open. Ask that phone, or enter the code.")
+            Text(takeover
+                ? CoreError.OtherApprovalDevice.userMessage
+                : "This account's vault is encrypted with keys that only your other phone and your recovery code can open. Ask that phone, or enter the code.")
                 .font(RFont.sans(15.5))
                 .foregroundStyle(Palette.secondary)
                 .fixedSize(horizontal: false, vertical: true)
                 .padding(.bottom, 10)
+                .accessibilityIdentifier("unlockReason")
             Button {
                 feedback.play(.tap)
                 Task { await vm.ask(model) }

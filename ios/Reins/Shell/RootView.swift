@@ -17,7 +17,7 @@ struct RootView: View {
                 SignInScreen()
             case .signedIn:
                 if model.onboarding { OnboardingScreen() } else { MainShell() }
-            case .keysLocked:
+            case .keysLocked, .otherApprovalDevice:
                 UnlockScreen()
             }
         }

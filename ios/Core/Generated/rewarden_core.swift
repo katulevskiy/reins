@@ -9647,6 +9647,12 @@ enum CoreError: Swift.Error, Equatable, Hashable, Foundation.LocalizedError {
     )
     case Storage(reason: String
     )
+    /**
+     * `register_device`: another phone approves for this account, and this one may not take over yet. The app offers
+     * the two ways: the other phone's approval ("add another phone", `join_begin`) or the recovery code (or the
+     * master password) with `unlock_account`; then `register_device` again.
+     */
+    case OtherApprovalDevice
 
     
 
@@ -9704,6 +9710,7 @@ public struct FfiConverterTypeCoreError: FfiConverterRustBuffer {
         case 13: return .Storage(
             reason: try FfiConverterString.read(from: &buf)
             )
+        case 14: return .OtherApprovalDevice
 
          default: throw UniffiInternalError.unexpectedEnumCase
         }
@@ -9775,6 +9782,10 @@ public struct FfiConverterTypeCoreError: FfiConverterRustBuffer {
             writeInt(&buf, Int32(13))
             FfiConverterString.write(reason, into: &buf)
             
+        
+        case .OtherApprovalDevice:
+            writeInt(&buf, Int32(14))
+        
         }
     }
 }

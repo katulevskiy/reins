@@ -113,6 +113,108 @@ final class PasswordlessTests: XCTestCase {
         XCTAssertNotNil(sso.error, "an answer to another sign-in is refused")
     }
 
+    // MARK: Taking the approval role from another phone
+
+    func testARefusedTakeoverShowsTheUnlockScreenAndTheRecoveryCodeTakesTheRole() async {
+        XCTAssertEqual(
+            CoreError.OtherApprovalDevice.userMessage,
+            "This account already has a phone for approvals. Approve this phone from it, or enter your recovery code."
+        )
+        let core = DemoRewardenCore(syncCap: 0.3, approvalElsewhere: true)
+        let app = model(core, demo: false)
+        await app.refreshSession()
+        let info = SessionInfo(serverUrl: DemoData.server, email: DemoData.email)
+        XCTAssertEqual(app.session, .otherApprovalDevice(info))
+        XCTAssertEqual(app.session.unlocking, info)
+        XCTAssertFalse(app.approvalDevice)
+        XCTAssertFalse(app.deviceReplaced)
+        XCTAssertNil(app.registrationError, "the Unlock screen says why, not a banner")
+
+        // Nothing is kept: a relaunch is refused again and shows the same.
+        let relaunched = model(core, demo: false)
+        await relaunched.refreshSession()
+        XCTAssertEqual(relaunched.session, .otherApprovalDevice(info))
+
+        let unlock = UnlockModel()
+        unlock.showRecovery()
+        unlock.code = "AAAA-BBBB"
+        await unlock.unlock(relaunched)
+        XCTAssertNotNil(unlock.error)
+        XCTAssertEqual(relaunched.session, .otherApprovalDevice(info))
+        unlock.code = DemoData.recoveryCode
+        await unlock.unlock(relaunched)
+        XCTAssertNil(unlock.error)
+        XCTAssertEqual(relaunched.session, .signedIn(info))
+        XCTAssertTrue(relaunched.approvalDevice)
+        XCTAssertTrue(DeviceStatus.approvalDevice)
+        XCTAssertNil(relaunched.registrationError)
+    }
+
+    func testTheOtherPhonesApprovalLetsThisOneTakeTheRole() async {
+        let core = DemoRewardenCore(syncCap: 0.3, approvalElsewhere: true)
+        let app = model(core)
+        await app.refreshSession()
+        guard case .otherApprovalDevice = app.session else { return XCTFail("refused: \(app.session)") }
+        let unlock = UnlockModel()
+        unlock.pollInterval = .seconds(3600) // polled by hand below
+        await unlock.ask(app)
+        XCTAssertEqual(unlock.stage, .waiting("482 193"))
+        _ = await unlock.pollOnce(app)
+        _ = await unlock.pollOnce(app)
+        let done = await unlock.pollOnce(app)
+        XCTAssertTrue(done)
+        guard case .signedIn = app.session else { return XCTFail("signed in: \(app.session)") }
+        XCTAssertTrue(app.approvalDevice)
+        unlock.stopWaiting()
+    }
+
+    func testASignInThatIsRefusedTheRoleGoesThroughTheOnboardingStepsOnceItHasIt() async throws {
+        let core = DemoRewardenCore(signedIn: false, syncCap: 0.3, approvalElsewhere: true)
+        let app = model(core, demo: false)
+        await app.refreshSession()
+        let info = try await core.login(serverUrl: DemoData.server, email: "takeover-\(UUID().uuidString)@example.com", password: "pw", totp: nil)
+        await app.finishSignIn(info)
+        XCTAssertEqual(app.session, .otherApprovalDevice(info))
+        XCTAssertFalse(app.onboarding)
+        XCTAssertNil(app.registrationError)
+
+        let unlock = UnlockModel()
+        unlock.showRecovery()
+        unlock.code = "correct horse battery staple" // the master password works too
+        await unlock.unlock(app)
+        XCTAssertEqual(app.session, .signedIn(info))
+        XCTAssertTrue(app.approvalDevice)
+        XCTAssertTrue(app.onboarding, "the first sign-in's steps still show")
+    }
+
+    func testAPhoneThatHeldTheRoleShowsAsReplacedUntilItAsksForTheRoleAgain() async {
+        DeviceStatus.approvalDevice = true
+        let core = DemoRewardenCore(syncCap: 0.3, approvalElsewhere: true)
+        let app = model(core)
+        await app.refreshSession()
+        guard case .signedIn = app.session else { return XCTFail("signed in: \(app.session)") }
+        XCTAssertTrue(app.deviceReplaced, "a refused refresh means another phone took the role")
+        XCTAssertFalse(app.approvalDevice)
+        XCTAssertNil(app.registrationError)
+
+        // "Use this phone for approvals" in Settings.
+        do {
+            try await app.registerDevice(force: true)
+            XCTFail("refused")
+        } catch CoreError.OtherApprovalDevice {
+        } catch {
+            XCTFail("\(error)")
+        }
+        guard case .otherApprovalDevice = app.session else { return XCTFail("the Unlock screen: \(app.session)") }
+        let unlock = UnlockModel()
+        unlock.showRecovery()
+        unlock.code = DemoData.recoveryCode
+        await unlock.unlock(app)
+        guard case .signedIn = app.session else { return XCTFail("signed in: \(app.session)") }
+        XCTAssertTrue(app.approvalDevice)
+        XCTAssertFalse(app.deviceReplaced)
+    }
+
     // MARK: The approval side
 
     func testAnotherPhoneAsksAndTheApprovalDeviceAddsIt() async throws {
