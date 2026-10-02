@@ -1,0 +1,157 @@
+Reins
+Copyright 2026 Daniel Katulevskiy and the Reins contributors
+
+This repository is licensed in parts under the GNU Affero General Public License v3.0 only (LICENSE.txt) and the
+Apache License 2.0 (LICENSE-APACHE); LICENSING.md says which part is under which. It includes or uses the third-party
+works below, which keep their own licenses. Dependencies fetched by the build tools (Rust crates, Gradle libraries)
+are not listed here; their licenses are checked by deny.toml (Rust) and recorded in their own packages.
+
+
+================================================================================================================
+Vaultwarden
+================================================================================================================
+
+The server (the root crate: src/, macros/, migrations/, tests/, docker/, playwright/, resources/ and related files)
+is a fork of Vaultwarden 1.37.3, https://github.com/dani-garcia/vaultwarden
+Copyright (c) Daniel García and the Vaultwarden contributors.
+Licensed under the GNU Affero General Public License v3.0 only (LICENSE.txt).
+
+Vaultwarden ships these third-party files in src/static/, under their own licenses (headers in the files):
+  - Bootstrap 5.3.8 (src/static/scripts/bootstrap.*), Copyright 2011-2025 The Bootstrap Authors, MIT License.
+  - DataTables (src/static/scripts/datatables.*), Copyright SpryMedia Ltd, MIT License (datatables.net/license).
+  - Jdenticon 3.3.0 (src/static/scripts/jdenticon-3.3.0.js), Copyright (c) 2014-2024 Daniel Mester Pirttijärvi,
+    MIT License.
+  - src/static/global_domains.json: the equivalent-domains list, generated from Bitwarden's server data by
+    tools/global_domains.py.
+
+Vaultwarden is not associated with Bitwarden, Inc. Neither is Reins.
+
+
+================================================================================================================
+Bitwarden web vault (Docker images only)
+================================================================================================================
+
+The Docker build (docker/Dockerfile.*) copies the "web-vault" image published by the Vaultwarden project
+(docker.io/vaultwarden/web-vault, built by https://github.com/dani-garcia/bw_web_builds from Bitwarden's web client,
+https://github.com/bitwarden/clients) into the server image. It is not part of this repository. The Bitwarden web
+client is licensed under the GNU General Public License v3.0; see those projects for its source and notices.
+Bitwarden is a trademark of Bitwarden, Inc.
+
+
+================================================================================================================
+Laya
+================================================================================================================
+
+Autopilot's model is a fine-tune of Laya (multilingual checkpoint), https://huggingface.co/convaiinnovations/laya
+Copyright Convai Innovations. Licensed under the Apache License 2.0 (LICENSE-APACHE).
+
+  - crates/rewarden-core/src/autopilot/sequence.rs is a port to Rust of Laya's input sequence builder
+    (`rl_common.build_sequence`), modified for Autopilot's fixed question; tools/laya/sequence.py is a reference
+    implementation of the same.
+  - tools/laya/ loads, fine-tunes and exports Laya checkpoints (Laya itself is downloaded, not included).
+  - The published model packages (not in this repository) are derived from Laya's weights.
+
+
+================================================================================================================
+mmBERT-base
+================================================================================================================
+
+Laya's multilingual checkpoint, and so the Autopilot model, is built on mmBERT-base,
+https://huggingface.co/jhu-clsp/mmBERT-base, by the Johns Hopkins University Center for Language and Speech
+Processing (JHU CLSP). Licensed under the MIT License (model card: "license: mit").
+TODO(verify): the exact copyright line of mmBERT's MIT license, and the terms of its tokenizer, which the model card
+says is Gemma 2's (the tokenizer ships inside the model package, not in this repository).
+
+
+================================================================================================================
+ONNX Runtime
+================================================================================================================
+
+The Android app bundles ONNX Runtime for Android (com.microsoft.onnxruntime:onnxruntime-android), and rewarden-laya
+downloads the ONNX Runtime library through the `ort` crate. https://github.com/microsoft/onnxruntime
+Copyright (c) Microsoft Corporation. Licensed under the MIT License.
+
+
+================================================================================================================
+Sound effects (android/app/src/main/res/raw/fx_*.wav)
+================================================================================================================
+
+The interface sounds and chimes come from Zeron (https://github.com/zeronsh/zeron).
+
+MIT License
+
+Copyright (c) 2026 Wing
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+
+
+================================================================================================================
+Geist and Geist Mono fonts (android/app/src/main/assets/fonts/)
+================================================================================================================
+
+Copyright 2024 The Geist Project Authors, https://github.com/vercel/geist-font
+Licensed under the SIL Open Font License 1.1, https://openfontlicense.org (the license is also embedded in the font
+files' metadata).
+
+
+================================================================================================================
+Logos (android/app/src/main/assets/providers/, android/app/src/main/assets/services/)
+================================================================================================================
+
+The AI provider logos in assets/providers/ are copied unmodified from LobeHub Icons (@lobehub/icons-static-svg),
+https://github.com/lobehub/lobe-icons:
+
+MIT License
+
+Copyright (c) 2023 LobeHub
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+
+The service logos in assets/services/ (Bitbucket, Codeberg, GitHub, GitLab, Gmail, Google Calendar, Telegram, and the
+Bitwarden mark used for the vault) are from Simple Icons, https://github.com/simple-icons/simple-icons, dedicated to
+the public domain under CC0 1.0. gcontacts.svg, device_calendar.svg, device_contacts.svg, sms.svg and mcp.svg were
+drawn for Reins.
+
+All of these marks are trademarks of their respective owners. They are shown only to identify the product or service
+a connection belongs to and do not imply endorsement. See also android/app/src/main/assets/providers/NOTICE.md.
+
+
+================================================================================================================
+EFF large wordlist (crates/rewarden-core/src/connector/vault/eff_large_wordlist.txt)
+================================================================================================================
+
+The passphrase generator uses the EFF's Large Wordlist for Passphrases, https://www.eff.org/dice
+Copyright Electronic Frontier Foundation. Licensed under the Creative Commons Attribution 3.0 United States License,
+https://creativecommons.org/licenses/by/3.0/us/ (unmodified).

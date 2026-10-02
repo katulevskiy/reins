@@ -1,0 +1,19 @@
+# Local build artifacts
+target
+
+# Data folder
+data
+
+# IDE files
+.vscode
+.idea
+*.iml
+
+# Environment file
+.env
+
+# Release settings (scripts/release.env.example)
+scripts/release.env
+
+# Web vault
+web-vault

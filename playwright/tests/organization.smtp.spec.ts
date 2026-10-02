@@ -1,0 +1,160 @@
+import { test, expect, type TestInfo } from '@playwright/test';
+import { MailDev } from 'maildev';
+
+import * as utils from '../global-utils';
+import * as orgs from './setups/orgs';
+import { createAccount, logUser } from './setups/user';
+import { activateTOTP } from './setups/2fa';
+
+let users = utils.loadEnv();
+
+let mailServer, mail1Buffer, mail2Buffer, mail3Buffer;
+
+test.beforeAll('Setup', async ({ browser }, testInfo: TestInfo) => {
+    mailServer = new MailDev({
+        port: process.env.MAILDEV_SMTP_PORT,
+        web: { port: process.env.MAILDEV_HTTP_PORT },
+    })
+
+    await mailServer.listen();
+
+    await utils.startVault(browser, testInfo, {
+        SMTP_HOST: process.env.MAILDEV_HOST,
+        SMTP_FROM: process.env.PW_SMTP_FROM,
+        EMAIL_2FA_AUTO_FALLBACK: "true",
+    });
+
+    mail1Buffer = mailServer.buffer(users.user1.email);
+    mail2Buffer = mailServer.buffer(users.user2.email);
+    mail3Buffer = mailServer.buffer(users.user3.email);
+});
+
+test.afterAll('Teardown', async ({}, testInfo: TestInfo) => {
+    utils.stopVault(testInfo);
+    [mail1Buffer, mail2Buffer, mail3Buffer, mailServer].map((m) => m?.close());
+});
+
+test('Create user3', async ({ page }) => {
+    await createAccount(test, page, users.user3, mail3Buffer);
+});
+
+test('Invite users', async ({ page }) => {
+    await createAccount(test, page, users.user1, mail1Buffer);
+
+    await orgs.create(test, page, 'Test');
+
+    await test.step(`Set account recovery`, async () => {
+        await orgs.policies(test, page, 'Test');
+        await page.getByRole('button', { name: 'Account recovery' }).click();
+        await page.getByRole('checkbox', { name: 'Turn on' }).check();
+        await page.getByRole('checkbox', { name: 'Automatically enroll new' }).check();
+        await page.getByRole('button', { name: 'Save' }).click();
+        await utils.checkNotification(page, 'Edited policy Account recovery');
+    });
+
+    await orgs.members(test, page, 'Test');
+    await orgs.invite(test, page, 'Test', users.user2.email);
+    await orgs.invite(test, page, 'Test', users.user3.email, {
+        navigate: false,
+    });
+});
+
+test('invited with new account', async ({ page }) => {
+    const invited = await mail2Buffer.expect((mail) => mail.subject === 'Join Test');
+
+    await test.step('Create account', async () => {
+        await page.setContent(invited.html);
+        const link = await page.getByTestId('invite').getAttribute('href');
+        await page.goto(link);
+        await expect(page).toHaveTitle(/Create account | Vaultwarden Web/);
+
+        // await page.getByLabel('Name').fill(users.user2.name);
+        await page.getByRole('textbox', { name: 'Master password * (required)', exact: true }).fill(users.user2.password);
+        await page.getByRole('textbox', { name: 'Confirm master password * (' }).fill(users.user2.password);
+        await page.getByRole('button', { name: 'Create account' }).click();
+        await utils.checkNotification(page, 'Your new account has been created');
+
+        // Redirected to the vault
+        await expect(page).toHaveTitle('Vaults | Vaultwarden Web');
+        // await utils.checkNotification(page, 'You have been logged in!');
+        await utils.checkNotification(page, 'Successfully accepted your invitation');
+    });
+
+    await test.step('Check mails', async () => {
+        await mail2Buffer.expect((m) => m.subject === 'Welcome');
+        await mail2Buffer.expect((m) => m.subject === 'New Device Logged In From Firefox');
+        await mail1Buffer.expect((m) => m.subject.includes('Invitation to Test accepted'));
+    });
+});
+
+test('invited with existing account', async ({ page }) => {
+    const invited = await mail3Buffer.expect((mail) => mail.subject === 'Join Test');
+
+    await page.setContent(invited.html);
+    const link = await page.getByTestId('invite').getAttribute('href');
+
+    await page.goto(link);
+
+    // We should be on login page with email prefilled
+    await expect(page).toHaveTitle(/Vaultwarden Web/);
+    await page.getByRole('button', { name: 'Continue' }).click();
+
+    // Unlock page
+    await page.getByRole('textbox', { name: 'Master password * (required)', exact: true }).fill(users.user3.password);
+    await page.getByRole('button', { name: 'Log in', exact: true }).click();
+
+    // We are now in the default vault page
+    await expect(page).toHaveTitle(/Vaultwarden Web/);
+    await utils.checkNotification(page, 'Successfully accepted your invitation');
+
+    await mail3Buffer.expect((m) => m.subject === 'New Device Logged In From Firefox');
+    await mail1Buffer.expect((m) => m.subject.includes('Invitation to Test accepted'));
+});
+
+test('Confirm invited user', async ({ page }) => {
+    await logUser(test, page, users.user1, { mailBuffer: mail1Buffer });
+
+    await orgs.members(test, page, 'Test');
+    await orgs.confirm(test, page, 'Test', users.user2.email);
+
+    await mail2Buffer.expect((m) => m.subject.includes('Invitation to Test confirmed'));
+});
+
+test('Organization is visible', async ({ page }) => {
+    await logUser(test, page, users.user2, { mailBuffer: mail2Buffer });
+    await page.getByRole('button', { name: 'vault: Test', exact: true }).click();
+    await expect(page.getByLabel('Filter: Default collection')).toBeVisible();
+});
+
+test('Recover user password', async ({ page }) => {
+    await logUser(test, page, users.user2, { mailBuffer: mail2Buffer });
+    await activateTOTP(test, page, users.user2);
+
+    await logUser(test, page, users.user1, { mailBuffer: mail1Buffer });
+
+    let newPassword = "TotoNewPassword";
+
+    await orgs.members(test, page, 'Test');
+    await test.step(`Recover ${users.user2.email}`, async () => {
+        await expect(page.getByRole('heading', { name: 'Members' })).toBeVisible();
+        await page.getByRole('row').filter({hasText: users.user2.email}).getByLabel('Options').click();
+        await page.getByRole('menuitem', { name: 'Recover account' }).click();
+        await page.getByRole('textbox', { name: 'New master password * (required)', exact: true }).fill(newPassword);
+        await page.getByRole('textbox', { name: 'Confirm new master password * (' }).fill(newPassword);
+        await page.getByRole('checkbox', { name: 'Reset two-step login' }).check();
+        await page.getByRole('button', { name: 'Save' }).click();
+        await utils.checkNotification(page, 'Account recovery success');
+        await mail2Buffer.expect((m) => m.subject.includes('Admin account recovery from Test organization'));
+    });
+
+    let user2 = {
+        email: users.user2.email,
+        name: users.user2.name,
+        password: newPassword,
+    };
+    await logUser(test, page, user2, {
+        mailBuffer: mail2Buffer,
+        mail2fa: true,
+        notNewDevice: true,
+    });
+});

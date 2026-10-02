@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- What only the APK from rewarden.arc-chat.com has; Google Play does not allow either (the `play` flavor). -->
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+
+    <!-- In-app updates: installs a downloaded, verified release over this app (the user allows it once). -->
+    <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES" />
+    <!-- Only asked for when the user connects that service: the phone's own text messages. -->
+    <uses-permission android:name="android.permission.READ_SMS" />
+    <uses-permission android:name="android.permission.SEND_SMS" />
+    <uses-feature android:name="android.hardware.telephony" android:required="false" />
+
+    <application>
+        <receiver
+            android:name=".platform.update.InstallResultReceiver"
+            android:exported="false" />
+    </application>
+</manifest>

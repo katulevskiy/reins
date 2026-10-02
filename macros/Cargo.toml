@@ -1,0 +1,20 @@
+[package]
+name = "macros"
+version = "0.1.0"
+repository.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license = "AGPL-3.0-only"
+publish.workspace = true
+
+[lib]
+name = "macros"
+path = "src/lib.rs"
+proc-macro = true
+
+[dependencies]
+quote = "1.0.47"
+syn = "3.0.5"
+
+[lints]
+workspace = true

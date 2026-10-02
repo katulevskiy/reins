@@ -1,0 +1,160 @@
+# Harnesses
+
+Reins connects to AI harnesses in two ways:
+
+- **MCP tools.** The agent gets tools for the services connected on your phone (`gmail_search`, `github_pr_create`,
+  `calendar_create_event`, ...) plus Reins's own tools (`rewarden_get_result`, `rewarden_request_access`,
+  `rewarden_list_accounts`, `rewarden_upload`). Every call goes to your phone.
+- **Hooks.** Before the harness runs a shell command or touches a file, it asks `rewarden hook <harness>`. Commands and
+  files that match the guard rules go to your phone. Everything else passes through untouched.
+
+Git needs neither: once `rewarden resume` (or `rewarden git setup`) is done, every git command on the computer goes
+through the desktop app, whichever harness runs it.
+
+## Prerequisites
+
+```sh
+curl -fsSL https://rewarden.arc-chat.com/install.sh | sh
+rewarden login https://rewarden.arc-chat.com
+```
+
+Without `rewarden login`, the MCP server has no server to reach, and the hook asks in a desktop notification instead
+of on your phone.
+
+## Commands
+
+```sh
+rewarden harness add <harness>       # register the MCP server and the hook
+rewarden harness remove <harness>    # take out exactly what add put in
+rewarden harness list [<harness>]    # what is set up, for one harness or all
+```
+
+`<harness>` is `claude-code`, `codex`, `gemini` or `cursor` (`claude` and `gemini-cli` also work).
+
+`add` edits the harness's settings files as text. It inserts one entry per file and leaves the rest of the file as
+it was. It records what it changed in `~/.local/state/rewarden/harnesses.json`. `remove` uses that record to restore
+each file byte for byte, as long as nobody edited around the entry in the meantime. If an entry named `rewarden`
+already exists with a different value, `add` stops and says so. It does not overwrite.
+
+The MCP server entry runs `rewarden mcp --via "<Harness name>"`, a stdio MCP server that forwards to
+`<server>/mcp` with the desktop app's session. The name is shown on your phone ("Laptop · Claude Code"). The hook
+entry runs `rewarden hook <harness>` with a timeout 30 s longer than the guard's own.
+
+## Claude Code
+
+```sh
+rewarden harness add claude-code
+```
+
+| What | Where |
+|---|---|
+| MCP server `rewarden` (stdio) | `~/.claude.json`, `mcpServers` |
+| `PreToolUse` hook, matcher `Bash\|Edit\|Write\|MultiEdit\|NotebookEdit\|Read` | `~/.claude/settings.json`, `hooks.PreToolUse` |
+
+Restart Claude Code. `/mcp` and `/hooks` show the new entries.
+
+The hook answers with Claude Code's `permissionDecision`: `allow` when you approved on the phone, `deny` when you
+refused, `ask` (Claude Code's own prompt) when the guard is set to `on_no_answer = "ask"` and nobody answered.
+Commands that match no rule get no answer from the hook, so Claude Code's normal permission rules apply.
+
+Alternative without the desktop app: Claude Code can also use the server's MCP endpoint directly as a remote HTTP
+server. It signs in through the browser with the same two-digit code. That gives you the tools but no hook.
+
+## Codex
+
+```sh
+rewarden harness add codex
+```
+
+| What | Where |
+|---|---|
+| MCP server table `[mcp_servers.rewarden]` | `~/.codex/config.toml` |
+| `PreToolUse` hook, matcher `^(Bash\|apply_patch)$` | `~/.codex/hooks.json`, `hooks.PreToolUse` |
+
+Restart Codex, then **trust the hook once with `/hooks`**. Codex runs only hooks you have reviewed. For `apply_patch`
+the guard checks every file the patch adds, updates or deletes. Codex hooks cannot answer "ask". When the guard would
+ask and nobody answered, the hook stays silent and Codex's own approval policy decides.
+
+## Gemini CLI
+
+```sh
+rewarden harness add gemini
+```
+
+| What | Where |
+|---|---|
+| MCP server `rewarden` | `~/.gemini/settings.json`, `mcpServers` |
+| `BeforeTool` hook, matcher `^(run_shell_command\|write_file\|replace\|read_file)$` | `~/.gemini/settings.json`, `hooks.BeforeTool` |
+
+Restart Gemini CLI. `/mcp` and `/hooks` show the entries. Gemini's hook answers are `allow` or `deny`. "No answer"
+with `on_no_answer = "ask"` leaves the decision to Gemini CLI.
+
+## Cursor
+
+```sh
+rewarden harness add cursor
+```
+
+| What | Where |
+|---|---|
+| MCP server `rewarden` (stdio) | `~/.cursor/mcp.json`, `mcpServers` |
+| hooks `beforeShellExecution`, `beforeReadFile`, `preToolUse` (matcher `Write\|Delete`) | `~/.cursor/hooks.json` (`"version": 1` is added if missing) |
+
+Restart Cursor. Settings → MCP and Hooks show the entries. Cursor's file hooks know only `allow` and `deny`, so
+"ask" becomes `deny` there. Unlike with the other harnesses, the hook answers Cursor every time: commands and files
+that match no rule get an explicit `allow`.
+
+## Cloud AIs
+
+Claude.ai and ChatGPT connect to `https://<server>/mcp` as a custom connector (OAuth, with the two-digit code on your
+phone). They get the tools but not hooks, since they do not run commands on your computer. Other MCP clients that
+support remote servers with OAuth 2.1 (dynamic client registration or client ID metadata documents) can connect the
+same way. One limit: requests sent from a web page are accepted only from the Claude and ChatGPT origins.
+
+## The guard rules (`[guard]`)
+
+The hook sends a command or file to your phone when it matches a rule in `~/.config/rewarden/config.toml`:
+
+```toml
+[guard]
+defaults = true                 # use the built-in rules below as well as yours
+commands = ["make deploy", "text:delete from"]
+files = ["secrets/*"]
+allow_commands = []             # exceptions, checked first
+allow_files = ["*.pub"]
+timeout_secs = 120              # how long the hook waits for the phone
+on_no_answer = "deny"           # or "ask": leave it to the harness's own prompt
+```
+
+**Command patterns** are shell words. The first word names the program (`git`, `/usr/bin/git` and `sudo git` all
+count). The other words must appear among the arguments in that order, not necessarily next to each other: `git push
+--force` matches `git -C app push origin main --force`. `*` matches any run of characters within a word. `-x` also
+matches a group of short options containing it (`rm -r` matches `rm -rf`). A pattern starting with `text:` matches
+those words anywhere in the command, ignoring case and punctuation (`text:drop table`).
+
+**File patterns** without a `/` match the file name (`*.pem`, `.env`). With a `/` they match the end of the path
+(`.ssh/*`, `.aws/credentials`). A command's arguments are checked against the file patterns too, so `cat .env`
+matches.
+
+**Built-in command rules:** force pushes and ref deletions (`git push -f`, `--force*`, `+refspec`, `-d`, `--delete`,
+`--mirror`, `--prune`, `:ref`), `git reset --hard`, `git clean -f`, `git branch -D`, `git checkout -f`,
+`git filter-branch`, `git filter-repo`, `rm -r`, `terraform`/`tofu` `apply` and `destroy`, `kubectl apply`/`delete`,
+`helm uninstall`/`delete`, `DROP TABLE`/`DATABASE`/`SCHEMA`, `TRUNCATE TABLE`, package publishing (`npm`, `pnpm`,
+`yarn`, `cargo`, `poetry`, `uv`, `twine`, `gem`, `docker push`), `gh repo delete`, `gh release delete`, `mkfs*`,
+`dd of=*`.
+
+**Built-in file rules:** `.env`, `.env.*`, `*.pem`, `*.key`, `*.p12`, `*.pfx`, `*.jks`, `*.keystore`, `*.tfstate`,
+SSH private keys (`id_rsa`, `id_ed25519`, ...), `.ssh/*`, cloud and registry credentials (`.aws/credentials`,
+`.aws/config`, `.config/gcloud/*`, `.azure/*`, `.kube/config`, `.docker/config.json`, `.netrc`, `.git-credentials`,
+`.npmrc`, `.pypirc`, `.vault-token`, `credentials.json`). Exceptions: `*.pub`, `known_hosts`, `.env.example`,
+`.env.sample`, `.env.template`, `.env.dist`.
+
+The phone shows the harness that asked, the command (or files), the working directory and the rule that matched. A standing answer can
+cover a topic such as `command:make deploy`.
+
+## What hooks do not do
+
+Hooks match text patterns. A determined agent can get around them, for example by writing a script and running it.
+They are guard rails against mistakes. The protection against a hostile agent is that it holds no credentials: git
+tokens, API keys and passwords stay on the phone and are released per action. See
+[security-model.md](security-model.md).

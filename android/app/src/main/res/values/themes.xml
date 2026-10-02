@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- The window paints the app background from the first frame (no white flash before Compose draws);
+         edge-to-edge is enabled in MainActivity. Light and dark come from values/ and values-night/ colors. -->
+    <style name="Theme.Rewarden" parent="android:Theme.Material.NoActionBar">
+        <item name="android:windowBackground">@color/rewarden_background</item>
+        <item name="android:statusBarColor">@android:color/transparent</item>
+        <item name="android:navigationBarColor">@android:color/transparent</item>
+    </style>
+</resources>

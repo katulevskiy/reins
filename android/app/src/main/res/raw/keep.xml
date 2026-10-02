@@ -1,0 +1,3 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- The sounds are looked up by name (SoundBank, notification channel URIs), which the resource shrinker cannot see. -->
+<resources xmlns:tools="http://schemas.android.com/tools" tools:keep="@raw/fx_*,@raw/silence_keepalive" />

@@ -1,0 +1,12 @@
+version: 2
+updates:
+  # Workflows pin actions to version tags; this keeps those tags current.
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: monthly
+    groups:
+      actions:
+        patterns: ["*"]
+    commit-message:
+      prefix: "ci"

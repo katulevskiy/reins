@@ -1,0 +1,7 @@
+# zizmor configuration (https://docs.zizmor.sh/configuration/).
+rules:
+  unpinned-uses:
+    config:
+      policies:
+        # Actions are pinned to a version tag (major tag where the action publishes one); Dependabot keeps them current.
+        "*": ref-pin

@@ -1,0 +1,74 @@
+name: Bug Report
+description: Something in Rewarden does not work as expected
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for taking the time to report a bug!
+
+        **Security issues:** please do not open a public issue; report them privately as described in `SECURITY.md`.
+
+        Please search existing issues (open **and** closed) first. Never paste secrets, tokens, master passwords or
+        private message contents into an issue; redact logs before posting them.
+  - id: components
+    type: dropdown
+    attributes:
+      label: Component
+      description: Where do you see the problem?
+      multiple: true
+      options:
+        - Server
+        - Android app
+        - Desktop app (rewarden)
+        - AI harness / MCP integration
+        - Bitwarden-compatible vault client
+        - Other
+    validations:
+      required: true
+  - id: version
+    type: input
+    attributes:
+      label: Versions
+      description: Server, app and desktop versions (Settings shows the app's build; `rewarden --version` the desktop's).
+      placeholder: ex. Android 0.1.0-202610010115-a9643bcb, desktop 0.1.0, server built from 3b9e07c1
+    validations:
+      required: true
+  - id: environment
+    type: textarea
+    attributes:
+      label: Environment
+      description: How the server is deployed (and behind which reverse proxy), the phone model and Android version, the desktop OS, and which AI harness you use.
+  - id: reproduce
+    type: textarea
+    attributes:
+      label: Steps To Reproduce
+      value: |
+        1.
+        2.
+        3.
+    validations:
+      required: true
+  - id: expected
+    type: textarea
+    attributes:
+      label: Expected Result
+    validations:
+      required: true
+  - id: actual
+    type: textarea
+    attributes:
+      label: Actual Result
+    validations:
+      required: true
+  - id: logs
+    type: textarea
+    attributes:
+      label: Logs
+      description: Relevant server, desktop or `adb logcat` output, with secrets removed.
+      render: text
+  - id: additional-context
+    type: textarea
+    attributes:
+      label: Additional Context
+      description: Screenshots, screen recordings or anything else that helps.

@@ -1,0 +1,28 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- The Rewarden mark: a shield with a check, centred in the adaptive-icon safe zone. -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+    <group
+        android:translateX="27"
+        android:translateY="27"
+        android:scaleX="2.25"
+        android:scaleY="2.25">
+        <path
+            android:fillColor="#00000000"
+            android:strokeColor="#C9C1FB"
+            android:strokeWidth="1.5"
+            android:strokeLineCap="round"
+            android:strokeLineJoin="round"
+            android:pathData="M12,3l7.5,3v5.5c0,4.6 -3.1,8.4 -7.5,9.5 -4.4,-1.1 -7.5,-4.9 -7.5,-9.5V6z" />
+        <path
+            android:fillColor="#00000000"
+            android:strokeColor="#FFFFFF"
+            android:strokeWidth="1.7"
+            android:strokeLineCap="round"
+            android:strokeLineJoin="round"
+            android:pathData="M8.7,12l2.4,2.4 4.2,-4.6" />
+    </group>
+</vector>

@@ -1,0 +1,293 @@
+import javax.inject.Inject
+
+plugins {
+    alias(libs.plugins.android.application)
+    alias(libs.plugins.kotlin.compose)
+}
+
+// google-services.json is optional (plan Decision 18). Copy it in from outside the repo when
+// available; apply the plugin only when the file is present so the app builds without Firebase.
+val googleServicesSource = file(
+    providers.gradleProperty("rewarden.googleServicesJson")
+        .getOrElse("${System.getProperty("user.home")}/.config/rewarden/google-services.json"),
+)
+val googleServicesTarget = file("google-services.json")
+if (!googleServicesTarget.exists() && googleServicesSource.isFile) {
+    googleServicesSource.copyTo(googleServicesTarget)
+}
+val rewardenNdkVersion = "27.2.12479018"
+val hasFirebase = googleServicesTarget.isFile
+if (hasFirebase) {
+    apply(plugin = "com.google.gms.google-services")
+}
+
+android {
+    namespace = "dev.rewarden.android"
+    compileSdk = 37
+    ndkVersion = rewardenNdkVersion
+
+    defaultConfig {
+        applicationId = "dev.rewarden.android"
+        minSdk = 31
+        targetSdk = 36
+        // scripts/release-android.sh sets these (versionCode = release time in minutes, so every release is newer) and
+        // reads the default versionName from the line below; keep its shape.
+        versionCode = providers.gradleProperty("rewarden.versionCode").map(String::toInt).getOrElse(1)
+        versionName = providers.gradleProperty("rewarden.versionName").getOrElse("0.1.0")
+        testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
+        // Shown next to the version in Settings ("0.1.0-202610010115-a9643bcb" for releases, "dev" for local builds).
+        val buildId = providers.gradleProperty("rewarden.build").getOrElse("dev")
+        buildConfigField("String", "BUILD_ID", "\"$buildId\"")
+        ndk { abiFilters += listOf("arm64-v8a", "x86_64") }
+        buildConfigField("boolean", "HAS_FIREBASE", hasFirebase.toString())
+        // Screenshots are allowed while testing; -Prewarden.secureScreens=true turns FLAG_SECURE back on.
+        val secure = providers.gradleProperty("rewarden.secureScreens").getOrElse("false")
+        buildConfigField("boolean", "SECURE_SCREENS", secure)
+        // Pre-fills the sign-in server field (-Prewarden.defaultServer=https://your.server).
+        val defaultServer = providers.gradleProperty("rewarden.defaultServer").getOrElse("https://")
+        buildConfigField("String", "DEFAULT_SERVER", "\"$defaultServer\"")
+        // Telegram's application credentials (my.telegram.org). They identify this app to Telegram, not the user, and
+        // live in ~/.gradle/gradle.properties, never in the repository. Without them Telegram shows "needs setup".
+        val telegramId = providers.gradleProperty("rewarden.telegramApiId").getOrElse("0")
+        val telegramHash = providers.gradleProperty("rewarden.telegramApiHash").getOrElse("")
+        buildConfigField("int", "TELEGRAM_API_ID", telegramId)
+        buildConfigField("String", "TELEGRAM_API_HASH", "\"$telegramHash\"")
+    }
+
+    // Where the app comes from. Both have the same application id: one is installed at a time, and as Google Play
+    // signs `play` with its own key, switching between them means uninstalling (see PLAY_STORE.md).
+    flavorDimensions += "distribution"
+    productFlavors {
+        // The APK on rewarden.arc-chat.com (scripts/release-android.sh): text messages, and it updates itself.
+        create("full") {
+            dimension = "distribution"
+            isDefault = true
+            buildConfigField("boolean", "HAS_SMS", "true")
+            buildConfigField("boolean", "SELF_UPDATE", "true")
+            // Where the in-app updater looks for new releases (written by scripts/release-android.sh).
+            val site = providers.gradleProperty("rewarden.site").get().trimEnd('/')
+            val updateUrl = providers.gradleProperty("rewarden.updateUrl").getOrElse("$site/releases/android/latest.json")
+            buildConfigField("String", "UPDATE_URL", "\"$updateUrl\"")
+        }
+        // Google Play: no SMS permissions (only default SMS apps may have them) and no updater or
+        // REQUEST_INSTALL_PACKAGES (Play installs the updates). What only `full` declares is in src/full.
+        create("play") {
+            dimension = "distribution"
+            buildConfigField("boolean", "HAS_SMS", "false")
+            buildConfigField("boolean", "SELF_UPDATE", "false")
+            buildConfigField("String", "UPDATE_URL", "\"\"")
+        }
+    }
+
+    // Native libraries (the core, ONNX Runtime) are compressed in the APK: a much smaller download, unpacked once at
+    // install.
+    packaging { jniLibs { useLegacyPackaging = true } }
+
+    // -Prewarden.testBuildType=release runs the instrumented tests against the minified (R8) build.
+    providers.gradleProperty("rewarden.testBuildType").orNull?.let { testBuildType = it }
+
+    // The SHA-1 registered with Google/Firebase is that of ~/.android/debug.keystore. AGP may pick another
+    // debug keystore (it follows ANDROID_USER_HOME), so pin it when it exists.
+    signingConfigs.getByName("debug") {
+        val registered = file("${System.getProperty("user.home")}/.android/debug.keystore")
+        if (registered.isFile) storeFile = registered
+    }
+    // The Google Play upload key, when ~/.gradle/gradle.properties names it (rewarden.uploadKeystore,
+    // rewarden.uploadKeystorePassword, rewarden.uploadKeyAlias, rewarden.uploadKeyPassword): it signs `playRelease`
+    // (see below). Without it that bundle has the debug key, which is fine for checking it locally; Play refuses it.
+    providers.gradleProperty("rewarden.uploadKeystore").orNull?.let { keystore ->
+        signingConfigs.create("upload") {
+            storeFile = file(keystore)
+            storePassword = providers.gradleProperty("rewarden.uploadKeystorePassword").get()
+            keyAlias = providers.gradleProperty("rewarden.uploadKeyAlias").get()
+            keyPassword = providers.gradleProperty("rewarden.uploadKeyPassword").get()
+        }
+    }
+
+    buildTypes {
+        release {
+            isMinifyEnabled = true
+            isShrinkResources = true
+            proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro")
+            // MVP: only the debug keystore's SHA-1 is registered with Firebase / Google Cloud. scripts/release-android.sh
+            // re-signs `full` with the app's key; a `play` bundle is signed with the upload key (PLAY_STORE.md).
+            signingConfig = signingConfigs.getByName("debug")
+            testProguardFiles("proguard-test-rules.pro")
+        }
+    }
+
+    buildFeatures {
+        compose = true
+        buildConfig = true
+    }
+
+    compileOptions {
+        sourceCompatibility = JavaVersion.VERSION_21
+        targetCompatibility = JavaVersion.VERSION_21
+    }
+
+
+    testOptions {
+        unitTests.isReturnDefaultValues = true
+        unitTests.isIncludeAndroidResources = true
+        // -Drewarden.screenshots=/dir renders the design-review screenshots (see ScreenshotsTest).
+        unitTests.all { test -> System.getProperty("rewarden.screenshots")?.let { test.systemProperty("rewarden.screenshots", it) } }
+    }
+}
+
+kotlin {
+    jvmToolchain(21)
+    compilerOptions {
+        freeCompilerArgs.addAll(
+            "-opt-in=androidx.compose.material3.ExperimentalMaterial3Api",
+            "-opt-in=androidx.compose.material3.ExperimentalMaterial3ExpressiveApi",
+        )
+    }
+}
+
+// ---- Rust core: cargo-ndk builds the shared libraries, uniffi-bindgen generates the Kotlin bindings. ----
+
+val repoRoot: File = rootProject.projectDir.parentFile
+val rustProfile = providers.gradleProperty("rewarden.rustProfile").getOrElse("release")
+val cargoBin = "${System.getProperty("user.home")}/.cargo/bin"
+
+/** Builds `rewarden-core` for the shipped ABIs with 16 KB page alignment. cargo is incremental, so this always runs. */
+abstract class CargoNdkTask : DefaultTask() {
+    @get:Internal abstract val workspaceRoot: DirectoryProperty
+    @get:Input abstract val profile: Property<String>
+    @get:Input abstract val ndkDir: Property<String>
+    @get:Input abstract val cargoBinDir: Property<String>
+    @get:OutputDirectory abstract val outputDir: DirectoryProperty
+    @get:Inject abstract val exec: ExecOperations
+
+    init {
+        outputs.upToDateWhen { false }
+    }
+
+    @TaskAction
+    fun build() {
+        val out = outputDir.get().asFile
+        out.deleteRecursively()
+        out.mkdirs()
+        val profileName = profile.get()
+        // cargo's `dev` profile lives in `debug/`; every other profile has its own directory name.
+        val cargoProfile = if (profileName == "debug") "dev" else profileName
+        exec.exec {
+            workingDir = workspaceRoot.get().asFile
+            environment("PATH", "${cargoBinDir.get()}:${System.getenv("PATH")}")
+            environment("ANDROID_NDK_HOME", ndkDir.get())
+            environment("CARGO_ENCODED_RUSTFLAGS", "-Clink-arg=-Wl,-z,max-page-size=16384")
+            commandLine(
+                "${cargoBinDir.get()}/cargo", "ndk", "-t", "arm64-v8a", "-t", "x86_64", "--platform", "31", "-o", out.absolutePath,
+                "build", "--profile", cargoProfile, "-p", "rewarden-core", "--lib", "--locked",
+            )
+        }
+    }
+}
+
+/**
+ * Generates the Kotlin bindings from a host build of the same crate (the UniFFI metadata does not depend on
+ * the target, and host builds keep their symbols whatever profile the Android libraries use).
+ */
+abstract class UniffiBindgenTask : DefaultTask() {
+    @get:Internal abstract val workspaceRoot: DirectoryProperty
+    @get:Input abstract val cargoBinDir: Property<String>
+    @get:InputFiles @get:PathSensitive(PathSensitivity.RELATIVE) abstract val rustSources: ConfigurableFileCollection
+    @get:OutputDirectory abstract val outputDir: DirectoryProperty
+    @get:Inject abstract val exec: ExecOperations
+
+    @TaskAction
+    fun generate() {
+        val root = workspaceRoot.get().asFile
+        val out = outputDir.get().asFile
+        out.deleteRecursively()
+        out.mkdirs()
+        val path = "${cargoBinDir.get()}:${System.getenv("PATH")}"
+        exec.exec {
+            workingDir = root
+            environment("PATH", path)
+            commandLine("${cargoBinDir.get()}/cargo", "build", "-p", "rewarden-core", "--lib", "--features", "bindgen", "--locked")
+        }
+        exec.exec {
+            workingDir = root
+            environment("PATH", path)
+            commandLine(
+                "${cargoBinDir.get()}/cargo", "run", "-q", "-p", "rewarden-core", "--features", "bindgen", "--bin", "uniffi-bindgen",
+                "--locked", "--", "generate", "--library", "target/debug/librewarden_core.so",
+                "--language", "kotlin", "--no-format", "--out-dir", out.absolutePath,
+            )
+        }
+    }
+}
+
+androidComponents {
+    // The release build type's debug key would otherwise win over a flavor's signing config.
+    onVariants(selector().withBuildType("release").withFlavor("distribution" to "play")) { variant ->
+        android.signingConfigs.findByName("upload")?.let { variant.signingConfig.setConfig(it) }
+    }
+    onVariants { variant ->
+        val name = variant.name.replaceFirstChar { it.uppercase() }
+        val cargo = tasks.register<CargoNdkTask>("cargoNdk$name") {
+            workspaceRoot.set(repoRoot)
+            profile.set(rustProfile)
+            ndkDir.set(androidComponents.sdkComponents.sdkDirectory.map { it.asFile.resolve("ndk/$rewardenNdkVersion").absolutePath })
+            cargoBinDir.set(cargoBin)
+            outputDir.set(layout.buildDirectory.dir("rustJniLibs/${variant.name}"))
+        }
+        variant.sources.jniLibs?.addGeneratedSourceDirectory(cargo, CargoNdkTask::outputDir)
+
+        val bindgen = tasks.register<UniffiBindgenTask>("uniffiBindgen$name") {
+            workspaceRoot.set(repoRoot)
+            cargoBinDir.set(cargoBin)
+            rustSources.from(
+                fileTree(repoRoot) {
+                    include("crates/rewarden-core/src/**", "crates/rewarden-core/Cargo.toml", "crates/rewarden-core/uniffi.toml")
+                    include("crates/rewarden-proto/src/**", "crates/rewarden-policy/src/**", "Cargo.lock")
+                },
+            )
+            outputDir.set(layout.buildDirectory.dir("generated/uniffi/${variant.name}/kotlin"))
+        }
+        variant.sources.kotlin?.addGeneratedSourceDirectory(bindgen, UniffiBindgenTask::outputDir)
+    }
+}
+
+dependencies {
+    implementation(platform(libs.compose.bom))
+    implementation(libs.compose.foundation)
+    implementation(libs.compose.material3)
+    implementation(libs.compose.material.icons)
+    implementation(libs.compose.ui)
+    implementation(libs.compose.ui.tooling.preview)
+    debugImplementation(libs.compose.ui.tooling)
+    implementation(libs.activity.compose)
+    implementation(libs.lifecycle.viewmodel.compose)
+    implementation(libs.lifecycle.runtime.compose)
+    implementation(libs.biometric)
+    implementation(libs.work.runtime.ktx)
+    implementation(libs.firebase.messaging)
+    implementation(libs.play.services.auth)
+    implementation(libs.coroutines.android)
+    implementation(libs.androidsvg)
+    // Custom Tabs for MCP servers' sign-in pages.
+    implementation(libs.androidx.browser)
+    implementation(libs.jna) { artifact { type = "aar" } }
+    // Autopilot's model runs on the phone (the core does everything else; see autopilot/OnnxModelRuntime).
+    implementation(libs.onnxruntime.android)
+
+    testImplementation(libs.junit)
+    testImplementation(libs.coroutines.test)
+    testImplementation(libs.work.testing)
+    testImplementation(libs.robolectric)
+    testImplementation(libs.androidx.test.core)
+    testImplementation(libs.androidx.test.ext.junit)
+    testImplementation(platform(libs.compose.bom))
+    testImplementation(libs.compose.ui.test.junit4)
+
+    androidTestImplementation(platform(libs.compose.bom))
+    androidTestImplementation(libs.compose.ui.test.junit4)
+    androidTestImplementation(libs.androidx.test.runner)
+    androidTestImplementation(libs.androidx.test.ext.junit)
+    androidTestImplementation(libs.espresso.core)
+    androidTestImplementation(libs.coroutines.test)
+    debugImplementation(libs.compose.ui.test.manifest)
+}

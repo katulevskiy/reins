@@ -1,0 +1,192 @@
+# Security model
+
+Reins assumes the AI agent may be wrong, confused, or steered by text it read (prompt injection). It does not
+assume the agent is honest. The design rests on one rule: **the agent never holds credentials.** It can ask for
+actions. The phone decides, and the phone (or, for git, a short-lived credential the phone seals to your computer)
+carries them out.
+
+## Parties
+
+| Party | Trusted with | Not trusted with |
+|---|---|---|
+| **You, through your phone** | every decision; every credential | |
+| **AI agent** (Claude Code, Codex, Cursor, Gemini CLI, Claude.ai, ChatGPT) | the results of actions you allowed | credentials; deciding anything |
+| **Reins server** | relaying requests and answers; your account | your service credentials; deciding anything |
+| **Desktop app** (`rewarden`, on your computer) | short-lived, single-purpose credentials sealed to its key | long-lived tokens; deciding anything in phone mode |
+| **Google Firebase** | waking your phone (a request id only) | request contents |
+
+## What the agent can and cannot do
+
+The agent **can**:
+
+- call the tools of the services you connected. Each call waits for your phone unless a standing permission you gave
+  covers it;
+- ask for a standing permission (`rewarden_request_access`). The phone shows it highlighted, and you can grant less
+  than was asked for, or nothing;
+- run git through the desktop app. Reads and pushes need your approval or a standing permission for that repository;
+- run commands on your computer as far as its harness allows. Hooks send the risky ones to your phone.
+
+The agent **cannot**:
+
+- read a Gmail, GitHub, Telegram, vault or MCP server token. They are on the phone;
+- read the git token. The desktop app holds it in memory, adds it to the upstream request itself, and never writes it
+  to disk or logs;
+- push something other than what you approved. A push approval is bound to a digest of the exact bytes git sent;
+- reuse an approval. Sealed answers carry a fresh random nonce from the desktop app and an expiry;
+- see which accounts you connected, unless you allow it. `rewarden_list_accounts` lists integrations only. Addresses
+  need your approval, and errors never reveal them;
+- talk Autopilot into approving. AI-written text can only lower its approval score ([below](#autopilot)).
+
+## Where secrets live
+
+| Secret | Where | Protection |
+|---|---|---|
+| Gmail, Google Calendar and Contacts access | phone, Google Play services | per-app tokens bound to the app's package and signing key. No refresh token exists in Reins. |
+| GitHub, GitLab, Codeberg, Bitbucket tokens; Telegram session; MCP server tokens; vault key | phone, encrypted store | AES-256-GCM, with a data key wrapped by the Android Keystore. |
+| Vault items | server (encrypted), phone (decrypts on request) | Bitwarden's end-to-end encryption. The phone unlocks the vault key once with your master password and keeps it sealed. It does not keep the password. |
+| Grants, activity log, Autopilot memory | phone, encrypted store | as above. Never sent to the server. |
+| Desktop app key (X25519) | `~/.local/state/rewarden/identity.key`, 0600 | readable by your OS user. |
+| Desktop app session (OAuth tokens for the server) | `~/.local/state/rewarden/session.json`, 0600 | readable by your OS user. |
+| Released git credentials, API keys, `rewarden run` secrets | desktop app memory | until the lease ends (git fetch 1 h, push 10 min, API proxy as configured). `rewarden run` wipes the values once the command starts. |
+| SSH private keys | phone (vault) | signatures are made on the phone. The key never leaves it. |
+
+Vault secrets an AI asks to see (passwords, one-time codes, notes, card numbers, SSH private keys) are asked for
+every time. They can never be covered by a standing permission, and their values are not written to the activity log.
+Secrets released to the desktop app (`rewarden run`, the API proxy) and SSH signatures can be covered by a standing
+permission for one item, or for one key on one server, if you choose to give one. Autopilot never releases them on its
+own.
+
+## Approving
+
+- Approving needs the phone's screen lock or biometrics. Denying is one tap.
+- One-time approvals execute exactly what was shown and create no permission. Standing permissions are limited to one
+  connection and can be narrowed by target (sender, recipient, repository, branch, kind of change), time and number of
+  uses.
+- Some requests are **asked every time** and never covered by a standing permission: vault secrets an AI asks to
+  see, force pushes and other history rewrites, deleting branches or repositories, transfers, visibility, collaborators, invitations, teams,
+  webhooks, deploy keys, repository secrets, branch protection and rulesets, organization-level deletions, and MCP
+  tools their server marks destructive.
+
+## Pairing
+
+**AI connections.** Connecting an AI opens a browser page on the server. You type your account email, and the page
+shows a two-digit code. Your phone shows three codes, and you tap the matching one, name the connection and confirm
+with biometrics. The page looks the same for unknown emails, so it does not reveal which accounts exist. The AI gets
+an OAuth access token valid for 1 hour, and a refresh token valid for 30 days that rotates and is stored hashed.
+Removing the connection on the phone revokes both.
+
+**The desktop app** pairs the same way, and adds its X25519 public key to the request. The terminal, the browser page
+and the phone all show the key's fingerprint (eight digits, such as `4821 9930`). You approve only if they match. The
+phone then **pins** the key to that connection. Requests for desktop-only tools (git, `ask`, secret release, SSH) are
+answered only for a connection whose pinned key matches the key in the request. Other AI clients never see those
+tools.
+
+## Sealed answers
+
+Whatever the phone sends to the desktop app (a git credential, a yes to `rewarden ask`, released secrets, an SSH
+signature) is a sealed box: X25519 with XSalsa20-Poly1305, encrypted to the pinned key. The server relays it but
+cannot open it. The desktop app accepts an answer only if:
+
+- it opens with the app's private key;
+- it echoes the nonce of this very request;
+- it names the same repository and access (read or write), and for a push, the same push digest;
+- it has not expired.
+
+So a server that is compromised cannot read the credential, cannot substitute its own key (the key was pinned when
+you compared fingerprints), and cannot replay an older answer.
+
+**Git pushes.** The desktop app reads the pack git is about to send and works out what it does: which branches or
+tags it touches, whether each update is a fast-forward (asking the host's API when needed), the commits, the files,
+and the line counts. That summary is what the phone shows. The digest is computed over the repository, the ref
+updates, the SHA-256 of the pack and the push options. The phone's credential is valid only for that digest. When
+part of the analysis cannot be completed, the screen shows a note instead of a guess. A push whose history could not
+be checked is treated as a force push.
+
+## What the server sees
+
+The server is a relay, and it is in a position to read what it relays.
+
+**Stored in its database:** your Vaultwarden account (email, master password hash, encrypted vault, devices), the
+phone's push token, the AI clients that registered, your AI connections (name, label, host, creation and last-use
+times), and hashed refresh tokens.
+
+**In memory only:** waiting requests and their results (at most 10 minutes), pairings and sign-in sessions (minutes),
+which integrations your phone has (ids only, no account names), and the names and tool lists of MCP servers you added
+on the phone.
+
+**On disk for one operation:** large files (at most an hour, deleted when the operation is done).
+
+**Sees in transit:** tool arguments (the email the AI wants to send) and results (the emails it was allowed to
+read). This is unavoidable: the AI receives the results over the same connection. They are not logged. The server also
+sees sealed desktop answers, which it cannot open.
+
+**Passes credentials through, in two cases.** When a file is too large for a tool call (a release asset upload, a big
+download), and when an MCP tool you added returns very large results, the phone asks the server to make that one HTTPS
+request, with the authorization header it needs. The server uses the header for that request only, does not store or
+log it, and refuses private, loopback and cloud metadata addresses. Every other credential stays on the phone.
+
+**A compromised server could:** read arguments and results in transit; forge requests that look like they come from
+one of your connections, which the phone still has to approve unless a standing permission covers them; show you a
+misleading pairing page; withhold or delay requests; capture a header passed through for a large-file operation.
+
+**It could not:** reach Gmail or any connected service on its own; open sealed desktop answers; get around a pinned
+desktop key; approve anything; read your vault; read your grants, activity log or Autopilot memory.
+
+Push notifications through Firebase carry only a request id. The phone then fetches the request from the server.
+
+## The desktop app
+
+- It listens on loopback only (`127.0.0.1:7457` by default). Requests must carry a loopback `Host` header, which
+  blocks DNS rebinding. Requests with an `Origin` header and `OPTIONS` requests are refused, so web pages cannot reach
+  it.
+- Its control API (`rewarden pending`, `approve`, `deny`, `status`) needs a random token stored in a 0600 file.
+- On Linux the daemon marks itself non-dumpable, so other processes of the same user cannot attach to it or read its
+  memory through `/proc`.
+- Release updates (`rewarden update`) install only builds signed with the release key built into the binary, and
+  never an older build. The install script checks the published SHA-256.
+
+**Same-user limits.** An agent running as your OS user can read the files in `~/.local/state/rewarden/`, including
+the app's key and session. With them it could act as the desktop app: call the server, receive sealed answers, and
+open them. It still cannot get anything you do not approve on the phone. It does benefit from standing permissions
+you gave the desktop connection, and it could approve local-mode prompts through the control API. For full
+separation, run the daemon as its own OS user and keep the agent from reading that user's files.
+
+**Local mode** (not logged in): the GitHub token comes from `gh auth token`, an environment variable or a file the
+agent's user can usually read. Local mode protects against an agent's mistakes. Phone mode protects against a hostile
+agent.
+
+## Hooks
+
+Harness hooks compare commands and file paths with patterns ([harnesses.md](harnesses.md#the-guard-rules-guard)).
+They catch the obvious: force pushes, `rm -r`, `terraform apply`, reading `.env` or private keys. They cannot catch
+a command hidden in a script, an alias, or a tool the hook does not see. Treat them as guard rails against mistakes,
+not as a sandbox. When the phone does not answer, the hook denies by default (`on_no_answer = "deny"`).
+
+## Autopilot
+
+Autopilot runs only on the phone. Nothing it uses or learns leaves the phone. It is limited three ways.
+
+- **Hard floor.** Some requests always wait for you, in every mode: new connections, standing permission requests,
+  account listings, secret releases, SSH signatures, everything that is asked every time (above), destructive MCP
+  tools, pushes that rewrite or delete history (or whose history could not be checked), uploaded files that may hold
+  something to run, and anything from a connection paired less than 10 minutes ago. Lockdown denies, and never
+  approves.
+- **Prompt-injection rule.** The model scores each request twice: once on the facts the phone verified (service,
+  action, target, history), and once with the AI-written text added (reason, email body, commit messages, arguments).
+  The approve score it uses is the lower of the two, and the deny score the higher. AI-written text can therefore make
+  a request look riskier, never safer.
+- **Approve once.** Autopilot never creates standing permissions. Its automatic decisions never train it, so it
+  cannot reinforce its own mistakes.
+
+Details: [autopilot.md](autopilot.md).
+
+## Known gaps
+
+- The server sees tool arguments and results in transit (above). End-to-end encryption between the AI and the phone
+  is not possible while the AI needs the plaintext.
+- One approval device per account. Signing in on a second phone moves the role there. That phone has no service
+  credentials and no grants of the first, but it can approve new connections.
+- Hooks are pattern-based (above).
+- Autopilot's model was trained and evaluated on synthetic data ([model card](../tools/laya/MODEL_CARD.md)).
+
+To report a vulnerability, see [SECURITY.md](../SECURITY.md).

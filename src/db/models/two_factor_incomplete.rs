@@ -1,0 +1,122 @@
+use chrono::{NaiveDateTime, Utc};
+use diesel::prelude::*;
+
+use crate::{
+    CONFIG,
+    api::EmptyResult,
+    auth::ClientIp,
+    db::{
+        DbConn,
+        models::{DeviceId, UserId},
+        schema::twofactor_incomplete,
+    },
+    error::MapResult,
+};
+
+#[derive(Identifiable, Queryable, Insertable, AsChangeset)]
+#[diesel(table_name = twofactor_incomplete)]
+#[diesel(primary_key(user_uuid, device_uuid))]
+pub struct TwoFactorIncomplete {
+    pub user_uuid: UserId,
+    // This device UUID is simply what's claimed by the device. It doesn't
+    // necessarily correspond to any UUID in the devices table, since a device
+    // must complete 2FA login before being added into the devices table.
+    pub device_uuid: DeviceId,
+    pub device_name: String,
+    pub device_type: i32,
+    pub login_time: NaiveDateTime,
+    pub ip_address: String,
+}
+
+impl TwoFactorIncomplete {
+    pub async fn mark_incomplete(
+        user_uuid: &UserId,
+        device_uuid: &DeviceId,
+        device_name: &str,
+        device_type: i32,
+        ip: &ClientIp,
+        conn: &DbConn,
+    ) -> EmptyResult {
+        if CONFIG.incomplete_2fa_time_limit() <= 0 || !CONFIG.mail_enabled() {
+            return Ok(());
+        }
+
+        // Don't update the data for an existing user/device pair, since that
+        // would allow an attacker to arbitrarily delay notifications by
+        // sending repeated 2FA attempts to reset the timer.
+        let existing = Self::find_by_user_and_device(user_uuid, device_uuid, conn).await;
+        if existing.is_some() {
+            return Ok(());
+        }
+
+        conn.run(move |conn| {
+            diesel::insert_into(twofactor_incomplete::table)
+                .values((
+                    twofactor_incomplete::user_uuid.eq(user_uuid),
+                    twofactor_incomplete::device_uuid.eq(device_uuid),
+                    twofactor_incomplete::device_name.eq(device_name),
+                    twofactor_incomplete::device_type.eq(device_type),
+                    twofactor_incomplete::login_time.eq(Utc::now().naive_utc()),
+                    twofactor_incomplete::ip_address.eq(ip.ip.to_string()),
+                ))
+                .execute(conn)
+                .map_res("Error adding twofactor_incomplete record")
+        })
+        .await
+    }
+
+    pub async fn mark_complete(user_uuid: &UserId, device_uuid: &DeviceId, conn: &DbConn) -> EmptyResult {
+        if CONFIG.incomplete_2fa_time_limit() <= 0 || !CONFIG.mail_enabled() {
+            return Ok(());
+        }
+
+        Self::delete_by_user_and_device(user_uuid, device_uuid, conn).await
+    }
+
+    pub async fn find_by_user_and_device(user_uuid: &UserId, device_uuid: &DeviceId, conn: &DbConn) -> Option<Self> {
+        conn.run(move |conn| {
+            twofactor_incomplete::table
+                .filter(twofactor_incomplete::user_uuid.eq(user_uuid))
+                .filter(twofactor_incomplete::device_uuid.eq(device_uuid))
+                .first::<Self>(conn)
+                .ok()
+        })
+        .await
+    }
+
+    pub async fn find_logins_before(dt: &NaiveDateTime, conn: &DbConn) -> Vec<Self> {
+        conn.run(move |conn| {
+            twofactor_incomplete::table
+                .filter(twofactor_incomplete::login_time.lt(dt))
+                .load::<Self>(conn)
+                .expect("Error loading twofactor_incomplete")
+        })
+        .await
+    }
+
+    pub async fn delete(self, conn: &DbConn) -> EmptyResult {
+        Self::delete_by_user_and_device(&self.user_uuid, &self.device_uuid, conn).await
+    }
+
+    pub async fn delete_by_user_and_device(user_uuid: &UserId, device_uuid: &DeviceId, conn: &DbConn) -> EmptyResult {
+        conn.run(move |conn| {
+            diesel::delete(
+                twofactor_incomplete::table
+                    .filter(twofactor_incomplete::user_uuid.eq(user_uuid))
+                    .filter(twofactor_incomplete::device_uuid.eq(device_uuid)),
+            )
+            .execute(conn)
+            .map_res("Error in twofactor_incomplete::delete_by_user_and_device()")
+        })
+        .await
+    }
+
+    pub async fn delete_all_by_user(user_uuid: &UserId, conn: &DbConn) -> EmptyResult {
+        conn.run(move |conn| {
+            diesel::delete(twofactor_incomplete::table.filter(twofactor_incomplete::user_uuid.eq(user_uuid)))
+                .execute(conn)
+                .map_res("Error in twofactor_incomplete::delete_all_by_user()")
+        })
+        .await
+    }
+}
