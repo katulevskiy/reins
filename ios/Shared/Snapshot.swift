@@ -23,6 +23,9 @@ struct Snapshot: Codable, Equatable {
         var expiresAt: Int64
         /// Autopilot's suggestion line, when it made one.
         var suggestion: String?
+        /// The provider logo picked for the connection (`ConnectionView.icon`: "claude", "blob", ...), nil when none
+        /// was picked (the name then suggests one).
+        var connectionIcon: String? = nil
     }
 
     struct Entry: Codable, Equatable, Identifiable {

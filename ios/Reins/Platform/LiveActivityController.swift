@@ -46,7 +46,7 @@ final class LiveActivityController {
         guard let model else { return }
         let now = Glance.now()
         let signedIn: Bool = if case .signedIn = model.session { true } else { false }
-        let approval = signedIn ? Glance.approvalState(model.pending.map(\.snapshotItem), now: now) : nil
+        let approval = signedIn ? Glance.approvalState(model.pending.map(model.snapshotItem), now: now) : nil
         let previous = Activity<BypassActivityAttributes>.activities.first?.content.state
         let bypass: BypassActivityAttributes.ContentState? = if signedIn, let s = model.autopilot {
             Glance.bypassState(
@@ -59,7 +59,7 @@ final class LiveActivityController {
         } else {
             nil
         }
-        Self.log.debug("sync: requests \(approval?.count ?? 0), bypass until \(bypass?.until.description ?? "-", privacy: .public), mode \(model.autopilot.map { "\($0.mode)" } ?? "-", privacy: .public)")
+        Self.log.debug("sync: enabled \(Self.enabled), can start \(Self.canStart), running \(Activity<ApprovalActivityAttributes>.activities.count)+\(Activity<BypassActivityAttributes>.activities.count), requests \(approval?.count ?? 0), bypass until \(bypass?.until.description ?? "-", privacy: .public), mode \(model.autopilot.map { "\($0.mode)" } ?? "-", privacy: .public)")
         enqueue {
             await Self.apply(approval)
             await Self.apply(bypass)

@@ -434,12 +434,19 @@ final class AppModel {
 
     // MARK: Widgets
 
+    /// An item as widgets and Live Activities show it, with its connection's logo pick.
+    func snapshotItem(_ item: PendingItem) -> Snapshot.Item {
+        var s = item.snapshotItem
+        s.connectionIcon = connection(item.connectionId)?.icon
+        return s
+    }
+
     /// Writes what widgets and controls show and asks WidgetKit to redraw.
     func publish() {
         var s = Snapshot()
         if case .signedIn = session { s.signedIn = true }
         s.approvalDevice = approvalDevice
-        s.pending = pending.map(\.snapshotItem)
+        s.pending = pending.map(snapshotItem)
         s.latest = activity.prefix(6).map(\.snapshotEntry)
         if let a = autopilot {
             s.autopilotMode = a.mode.key

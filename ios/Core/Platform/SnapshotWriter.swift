@@ -52,7 +52,15 @@ enum SnapshotWriter {
     static func update(from core: any RewardenCoreProtocol) async {
         var s = Snapshot.load()
         s.signedIn = await core.session() != nil
-        if let pending = try? await core.pending() { s.pending = pending.map(item) }
+        if let pending = try? await core.pending() {
+            // The connections (and their logo picks) are a network call away: keep the picks the app last wrote.
+            let icons = Dictionary(s.pending.map { ($0.connection, $0.connectionIcon) }, uniquingKeysWith: { a, _ in a })
+            s.pending = pending.map { p in
+                var i = item(p)
+                i.connectionIcon = icons[i.connection] ?? nil
+                return i
+            }
+        }
         if let activity = try? await core.activity(limit: 6) { s.latest = activity.map(entry) }
         if let a = try? await core.autopilotSettings() {
             s.autopilotMode = modeKey(a.mode)

@@ -19,6 +19,8 @@ struct ApprovalActivityAttributes: ActivityAttributes {
         /// When it arrived (the countdown ring's start).
         var createdAt: Date
         var suggestion: String?
+        /// The connection's picked provider logo (see `Snapshot.Item.connectionIcon`).
+        var connectionIcon: String? = nil
     }
 }
 

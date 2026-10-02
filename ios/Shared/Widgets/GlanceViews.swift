@@ -26,16 +26,42 @@ enum GlanceStyle {
 
 // MARK: Pieces
 
-/// The AI behind an item: its initial in a violet disc (a link glyph for pairings, which have no AI yet).
+/// The AI behind an item: its provider's logo on the app's round plate when one is picked or its name suggests one,
+/// else its initial in a violet disc (a link glyph for pairings, which have no AI yet). The app draws a blobatar
+/// where widgets draw the initial: the blobatar library is not in the widget extension.
 struct GlanceAvatar: View {
     var label: String
     var kind: Snapshot.Item.Kind = .request
+    var icon: String? = nil
     var size: CGFloat = 28
     @Environment(\.widgetRenderingMode) private var renderingMode
 
     var body: some View {
+        if kind != .pairing, let provider = Providers.resolve(label: label, pick: icon) {
+            logo(provider)
+        } else {
+            initial
+        }
+    }
+
+    private func logo(_ provider: Provider) -> some View {
         let full = renderingMode == .fullColor
-        Circle()
+        return Image(provider.asset)
+            .renderingMode(provider.mono || !full ? .template : .original)
+            .resizable()
+            .scaledToFit()
+            .foregroundStyle(full ? Palette.text : Color.primary)
+            .frame(width: size * 0.56, height: size * 0.56)
+            .frame(width: size, height: size)
+            .background(full ? Palette.dynamic(0xFFFFFF, 0x1D1D21) : Color.primary.opacity(0.16), in: Circle())
+            .overlay(Circle().strokeBorder(full ? Palette.hairline : .clear, lineWidth: 1))
+            .widgetAccentable()
+            .accessibilityHidden(true)
+    }
+
+    private var initial: some View {
+        let full = renderingMode == .fullColor
+        return Circle()
             .fill(full ? Palette.accentSoft : Color.primary.opacity(0.16))
             .overlay {
                 Group {
@@ -237,7 +263,7 @@ struct WaitingRow: View {
 
     var body: some View {
         HStack(spacing: 10) {
-            GlanceAvatar(label: item.connection, kind: item.kind, size: 28)
+            GlanceAvatar(label: item.connection, kind: item.kind, icon: item.connectionIcon, size: 28)
             VStack(alignment: .leading, spacing: 1) {
                 Text(Glance.operation(item)).font(RFont.fixedSans(13, .semibold)).foregroundStyle(Palette.text).lineLimit(1)
                 let byline = Glance.byline(item)
@@ -270,7 +296,7 @@ struct WaitingSmallView: View {
                         .foregroundStyle(Palette.accent)
                         .widgetAccentable()
                     Spacer(minLength: 4)
-                    GlanceAvatar(label: newest.connection, kind: newest.kind, size: 30)
+                    GlanceAvatar(label: newest.connection, kind: newest.kind, icon: newest.connectionIcon, size: 30)
                 }
                 Text(list.count == 1 ? "waits for you" : "wait for you")
                     .font(RFont.fixedSans(12, .medium))
@@ -562,7 +588,7 @@ struct ApprovalLiveViews {
 
     var more: String? { state.count > 1 ? "+\(state.count - 1) more waiting" : nil }
 
-    var avatar: GlanceAvatar { GlanceAvatar(label: state.connection, kind: state.kind, size: 40) }
+    var avatar: GlanceAvatar { GlanceAvatar(label: state.connection, kind: state.kind, icon: state.connectionIcon, size: 40) }
 
     var ring: CountdownRing { CountdownRing(from: state.createdAt, to: state.expiresAt, size: 44) }
 
@@ -608,7 +634,7 @@ struct ApprovalLiveViews {
 
     // The Dynamic Island.
 
-    var compactLeading: some View { GlanceAvatar(label: state.connection, kind: state.kind, size: 24) }
+    var compactLeading: some View { GlanceAvatar(label: state.connection, kind: state.kind, icon: state.connectionIcon, size: 24) }
 
     var compactTrailing: some View {
         Countdown(from: state.createdAt, to: state.expiresAt, size: 13, color: Palette.accent)
