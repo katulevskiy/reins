@@ -7,6 +7,9 @@ extend-exclude = [
     # Rewarden test data: hash corpora, SSH keys and multilingual synthetic samples
     "android/app/src/test/resources/blobatar-gen2-hashes.tsv",
     "crates/rewarden-core/tests/fixtures/",
+    # iOS: the blobatar hash corpus (as for Android) and Xcode's generated object ids
+    "ios/ReinsTests/Fixtures/",
+    "ios/Reins.xcodeproj/",
     "tools/laya/gen_data.py",
 ]
 ignore-hidden = false
@@ -49,3 +52,6 @@ tru = "tru"
 abd = "abd"
 # Entry of a common-passwords list
 tigger = "tigger"
+# iOS: Core Audio sound files (.caf) and simulator device ids (UDID)
+caf = "caf"
+udid = "udid"

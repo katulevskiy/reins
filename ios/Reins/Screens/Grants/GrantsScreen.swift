@@ -104,7 +104,7 @@ struct GrantsScreen: View {
         }
         .pageBackground()
         .navigationTitle("Grants")
-        .toolbar(.hidden, for: .navigationBar)
+        .rootNavigationBar()
         .sheet(item: $resuming) { pick in
             let grant = pick.grant
             ResumeSheet(grant: grant) { seconds, standing in

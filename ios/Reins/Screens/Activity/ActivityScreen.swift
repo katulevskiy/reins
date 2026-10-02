@@ -73,7 +73,7 @@ struct ActivityScreen: View {
         .onChange(of: visible) { markSeen() }
         .onChange(of: atTop) { markSeen() }
         .pageBackground()
-        .toolbar(.hidden, for: .navigationBar)
+        .rootNavigationBar()
         .navigationTitle("Activity")
     }
 

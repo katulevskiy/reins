@@ -329,3 +329,17 @@ extension View {
         simultaneousGesture(TapGesture().onEnded { feedback.play(event) })
     }
 }
+
+/// A section root draws its own large header, so a phone hides the navigation bar; in the split view (iPad, an
+/// unfolded iPhone Duo) the bar stays, because it carries the button that brings a hidden sidebar back.
+private struct RootNavigationBar: ViewModifier {
+    @Environment(\.horizontalSizeClass) private var sizeClass
+
+    func body(content: Content) -> some View {
+        content.toolbar(sizeClass == .regular ? .automatic : .hidden, for: .navigationBar)
+    }
+}
+
+extension View {
+    func rootNavigationBar() -> some View { modifier(RootNavigationBar()) }
+}

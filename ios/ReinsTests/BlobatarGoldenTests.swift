@@ -30,7 +30,7 @@ final class BlobatarGoldenTests: XCTestCase {
         SHA256.hash(data: Data(text.utf8)).map { String(format: "%02x", $0) }.joined().prefix(16).description
     }
 
-    func testThePortRendersTheLibrarysMarkupForItsWholeGoldenCorpus() throws {
+    func testThePortRendersTheLibraryMarkupForItsWholeGoldenCorpus() throws {
         let rows = try lines("blobatar-gen2-hashes")
         XCTAssertGreaterThanOrEqual(rows.count, 1000, "fixture looks truncated")
         let wrong = rows.filter { $0.count >= 3 && sha16(Blobatar.svg($0[0], backdrop: backdrop($0[1]))) != $0[2] }
