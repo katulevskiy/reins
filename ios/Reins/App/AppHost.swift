@@ -33,6 +33,9 @@ final class AppHost {
         if let model {
             let notifier = notifier
             model.onModelDownloadFinished = { failure in notifier.modelDownloadFinished(failure: failure) }
+            // Widget buttons, controls and Siri reach the model through these (an intent may be why we launched).
+            IntentBridge.model = model
+            LiveActivityController.shared.install(model: model)
             Task {
                 await model.refreshSession()
                 // `-open reins://...`: open a link at launch (simctl openurl stops at a confirmation prompt).

@@ -1,4 +1,3 @@
-import ActivityKit
 import Foundation
 import Network
 import Observation
@@ -239,12 +238,11 @@ final class PathNetwork: NetworkWatching {
     }
 }
 
-/// Background time from UIKit and the Live Activity from ActivityKit.
+/// Background time from UIKit, and the Live Activity through `ModelDownloadActivity` (the Lock Screen and the
+/// Dynamic Island).
 @MainActor
 final class SystemDownloadSurroundings: DownloadSurroundings {
     private var backgroundTask: UIBackgroundTaskIdentifier = .invalid
-    private var activity: Activity<ModelDownloadActivityAttributes>?
-    private var lastPushed = Date.distantPast
 
     var inFront: Bool { UIApplication.shared.applicationState == .active }
 
@@ -263,29 +261,11 @@ final class SystemDownloadSurroundings: DownloadSurroundings {
         backgroundTask = .invalid
     }
 
-    func activityStarted(total: UInt64) {
-        guard activity == nil, ActivityAuthorizationInfo().areActivitiesEnabled else { return }
-        let state = ModelDownloadActivityAttributes.ContentState(downloaded: 0, total: Int64(total), finished: false, failed: false)
-        activity = try? Activity.request(attributes: ModelDownloadActivityAttributes(), content: .init(state: state, staleDate: nil))
-    }
+    func activityStarted(total: UInt64) { ModelDownloadActivity.start(total: Int64(total)) }
 
     func activityProgress(downloaded: UInt64, total: UInt64) {
-        guard let activity else { return }
-        // ActivityKit budgets updates; once a second is plenty for a progress bar.
-        let now = Date()
-        guard now.timeIntervalSince(lastPushed) >= 1 || downloaded == total else { return }
-        lastPushed = now
-        let state = ModelDownloadActivityAttributes.ContentState(downloaded: Int64(downloaded), total: Int64(total), finished: false, failed: false)
-        Task { await activity.update(.init(state: state, staleDate: nil)) }
+        ModelDownloadActivity.update(downloaded: Int64(downloaded), total: Int64(total))
     }
 
-    func activityEnded(failed: Bool) {
-        guard let activity else { return }
-        self.activity = nil
-        var state = activity.content.state
-        state.finished = !failed
-        state.failed = failed
-        if !failed { state.downloaded = max(state.downloaded, state.total) }
-        Task { await activity.end(.init(state: state, staleDate: nil), dismissalPolicy: .after(.now + 8)) }
-    }
+    func activityEnded(failed: Bool) { ModelDownloadActivity.end(failed: failed) }
 }

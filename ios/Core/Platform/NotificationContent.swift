@@ -103,10 +103,13 @@ enum NotificationText {
     }
 
     /// The headline, and under it what Autopilot would do (Assisted).
+    /// What waits, then its detail (the account, the query) and Autopilot's suggestion, one per line. The detail is
+    /// not the notification's subtitle: iOS sets that in bold above the body, which would put the query before what
+    /// the AI wants to do.
     static func body(_ item: PendingItem) -> String {
-        let text = headline(item)
-        guard let line = item.suggestion.map(untrusted), !line.isEmpty else { return text }
-        return "\(text)\n\(line)"
+        [headline(item), untrusted(item.subtitle), item.suggestion.map(untrusted) ?? ""]
+            .filter { !$0.isEmpty }
+            .joined(separator: "\n")
     }
 
     static func decisionTitle(_ d: AutoDecisionView) -> String {
@@ -154,7 +157,6 @@ enum NotificationContent {
         let category = NotificationCategory(item.kind)
         c.title = NotificationText.title(item)
         c.body = NotificationText.body(item)
-        c.subtitle = untrusted(item.subtitle)
         c.categoryIdentifier = category.rawValue
         c.threadIdentifier = category.thread
         c.interruptionLevel = .timeSensitive
@@ -179,8 +181,8 @@ enum NotificationContent {
         let c = UNMutableNotificationContent()
         let approved = d.verdict == .approve
         c.title = NotificationText.decisionTitle(d)
-        c.body = NotificationText.decisionText(d)
-        c.subtitle = NotificationText.decisionDetail(d) ?? ""
+        // The detail ("97% sure") goes under the text, not in the bold subtitle above it.
+        c.body = [NotificationText.decisionText(d), NotificationText.decisionDetail(d) ?? ""].filter { !$0.isEmpty }.joined(separator: "\n")
         c.categoryIdentifier = NotificationCategory.autopilot.rawValue
         c.threadIdentifier = NotificationCategory.autopilot.thread
         c.interruptionLevel = approved ? .passive : .active

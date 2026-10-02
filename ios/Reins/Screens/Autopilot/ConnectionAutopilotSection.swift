@@ -114,7 +114,7 @@ struct ConnectionAutopilotContent: View {
             .accessibilityElement(children: .contain)
             .accessibilityIdentifier("connectionMode")
 
-            FlowLayout(spacing: 8) {
+            FlowRow(spacing: 8) {
                 AutopilotChip(title: "Like every AI", selected: chosen == nil, identifier: "connMode:follow") {
                     if chosen != nil { Task { await ap.setMode(nil, connectionId: connectionId) } }
                 }
@@ -131,7 +131,7 @@ struct ConnectionAutopilotContent: View {
                 RowDivider()
                 VStack(alignment: .leading, spacing: 10) {
                     AutopilotCaption("Learns into")
-                    FlowLayout(spacing: 8) {
+                    FlowRow(spacing: 8) {
                         ForEach(ap.profiles, id: \.id) { p in
                             let title = "\(AutopilotText.profileIcon(p))  \(untrusted(p.name))" + (p.id == s.defaultProfileId ? " (default)" : "")
                             AutopilotChip(title: title, selected: p.id == profileId, identifier: "connProfile:\(p.id)") {

@@ -21,7 +21,7 @@ struct MainShell: View {
             }
         }
         .sheet(item: $model.sheet, onDismiss: { model.feedback.cueUnlessRecent(.close) }) { target in
-            SheetContent(target: target)
+            SheetContent(target: target, regular: sizeClass == .regular)
         }
         .overlay(alignment: .top) {
             if let notice = model.notice {
@@ -204,6 +204,9 @@ struct RouteView: View {
 /// The sheet for an item that waits: tall on a phone (the content stays visible above it), a form sheet on iPad.
 private struct SheetContent: View {
     var target: SheetTarget
+    /// The shell's width class (inside a form sheet the sheet's own is compact): a regular width gets a plain form
+    /// sheet, since a fractional detent there pushes the sheet's bottom, and its buttons, off the screen.
+    var regular: Bool
     @Environment(AppModel.self) private var model
 
     var body: some View {
@@ -216,10 +219,23 @@ private struct SheetContent: View {
         }
         .environment(model)
         .environment(\.feedback, model.feedback)
-        .presentationDetents([.fraction(0.86), .large])
-        .presentationDragIndicator(.visible)
-        .presentationCornerRadius(32)
-        .presentationSizing(.form)
+        .modifier(SheetShape(regular: regular))
         .onAppear { model.feedback.cue(.open) }
+    }
+}
+
+/// Detents on a phone; a plain form sheet, with no detents, on a regular width.
+private struct SheetShape: ViewModifier {
+    var regular: Bool
+
+    func body(content: Content) -> some View {
+        if regular {
+            content.presentationSizing(.form)
+        } else {
+            content
+                .presentationDetents([.fraction(0.86), .large])
+                .presentationDragIndicator(.visible)
+                .presentationCornerRadius(32)
+        }
     }
 }

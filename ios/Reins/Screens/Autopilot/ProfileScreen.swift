@@ -268,7 +268,7 @@ private struct ClassRow: View {
             .accessibilityHint(open ? "Hides the lock" : "Shows the lock")
             .accessibilityIdentifier("class:\(cls.classKey)")
             if open {
-                FlowLayout(spacing: 8) {
+                FlowRow(spacing: 8) {
                     AutopilotChip(title: "Learn by itself", selected: cls.manual == nil, identifier: "lock:auto:\(cls.classKey)") { onLock(nil) }
                     AutopilotChip(title: "Always ask", selected: cls.manual == false, identifier: "lock:on:\(cls.classKey)") { onLock(true) }
                     AutopilotChip(title: "Unlock now", selected: cls.manual == true, identifier: "lock:off:\(cls.classKey)") { onLock(false) }
