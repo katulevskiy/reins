@@ -30,6 +30,7 @@ impl Env {
         let mut c = Command::new(env!("CARGO_BIN_EXE_rewarden"));
         c.args(args)
             .env("HOME", &home)
+            .env("USERPROFILE", &home)
             .env("XDG_CONFIG_HOME", home.join(".config"))
             .env("GIT_CONFIG_GLOBAL", home.join(".gitconfig"))
             .env("GIT_CONFIG_NOSYSTEM", "1")
@@ -133,5 +134,31 @@ fn the_daemon_binary_serves_the_cli_and_cleans_up_on_sigterm() {
     #[cfg(not(unix))]
     {
         daemon.kill().ok();
+        daemon.wait().ok();
     }
+}
+
+/// How the Windows background service is stopped (`service uninstall`, the restart after an update).
+#[test]
+fn the_daemon_stops_cleanly_when_the_control_api_asks() {
+    let port = free_port();
+    let env = Env::new(port);
+    let mut daemon = env.command(&["daemon"]).stderr(std::process::Stdio::null()).spawn().unwrap();
+    let token = env.dir.path().join("state/control.token");
+    wait_for(&token);
+    let paths = rewarden_desktop::config::Paths {
+        config_dir: env.dir.path().join("config"),
+        state_dir: env.dir.path().join("state"),
+    };
+    let rt = tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap();
+    let client = rewarden_desktop::control::Client::new(&paths, ([127, 0, 0, 1], port).into()).unwrap();
+    let stopped = rt.block_on(client.shutdown(Duration::from_secs(10)));
+    if stopped.is_err() {
+        daemon.kill().ok();
+    }
+    let status = daemon.wait().unwrap();
+    assert!(stopped.unwrap(), "it was running and stopped");
+    assert!(status.success(), "{status:?}");
+    assert!(!token.exists(), "the control token goes with it");
+    assert!(!rt.block_on(client.shutdown(Duration::from_secs(1))).unwrap(), "not running any more");
 }

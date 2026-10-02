@@ -28,6 +28,7 @@ pub mod service;
 pub mod setup;
 pub mod ssh_agent;
 pub mod update;
+pub mod win;
 
 /// Unix seconds.
 #[must_use]

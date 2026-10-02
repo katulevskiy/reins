@@ -1,5 +1,8 @@
 //! `rewarden service install`: a systemd user unit (Linux) or a launchd agent (macOS) that runs `rewarden daemon` at
-//! login and restarts it when it fails.
+//! login and restarts it when it fails. On Windows, see [`windows`]: an entry in the user's `Run` key that starts a
+//! windowless copy of the program at logon, started at once as well.
+
+pub mod windows;
 
 use std::path::{Path, PathBuf};
 use std::process::Command;
@@ -14,14 +17,14 @@ pub enum Manager {
 }
 
 impl Manager {
-    /// This system's service manager.
+    /// This system's service manager (Windows has none: [`windows`] does the same job).
     pub fn current() -> Result<Self, String> {
         if cfg!(target_os = "macos") {
             Ok(Self::Launchd)
         } else if cfg!(target_os = "linux") {
             Ok(Self::Systemd)
         } else {
-            Err("installing a service is supported on Linux (systemd) and macOS (launchd); run `rewarden daemon` instead".to_owned())
+            Err("installing a service is supported on Linux (systemd), macOS (launchd) and Windows; run `rewarden daemon` instead".to_owned())
         }
     }
 
@@ -120,7 +123,11 @@ pub fn restart_if_installed(manager: Manager, home: &Path) -> Result<Option<Stri
     match manager {
         Manager::Systemd => run("systemctl", &["--user", "try-restart", SYSTEMD_UNIT])?,
         Manager::Launchd => {
-            let target = format!("gui/{}/{LAUNCHD_LABEL}", rustix::process::getuid().as_raw());
+            #[cfg(unix)]
+            let uid = rustix::process::getuid().as_raw();
+            #[cfg(not(unix))]
+            let uid = 0;
+            let target = format!("gui/{uid}/{LAUNCHD_LABEL}");
             run("launchctl", &["kickstart", "-k", &target])?;
         }
     }
