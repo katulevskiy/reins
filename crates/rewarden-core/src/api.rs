@@ -128,6 +128,13 @@ impl RewardenCore {
         rt::run(async move { engine.handle_push(&kind, &id).await }).await
     }
 
+    /// Like `handle_push` without Autopilot's pass, for a process that cannot run the model (the iOS notification
+    /// extension): the item waits unjudged, and the app's next pass judges it.
+    pub async fn handle_push_deferring_autopilot(&self, kind: String, id: String) -> Result<(), CoreError> {
+        let engine = Arc::clone(&self.engine);
+        rt::run(async move { engine.handle_push_deferring_autopilot(&kind, &id).await }).await
+    }
+
     /// Foreground long-poll, then everything received is processed like a push.
     pub async fn sync(&self, wait_secs: u32) -> Result<Vec<PendingItem>, CoreError> {
         let engine = Arc::clone(&self.engine);

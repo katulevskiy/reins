@@ -41,12 +41,19 @@ final class AppHost {
                    let link = DeepLink(url: url) {
                     await model.handle(link)
                 }
+                #if DEBUG
+                // `-show sounds`: open Settings > Sounds & haptics at launch (screenshots, manual checks).
+                if let i = args.firstIndex(of: "-show"), i + 1 < args.count, args[i + 1] == "sounds" {
+                    model.show(.sounds, in: .settings)
+                }
+                #endif
             }
         }
     }
 }
 
-/// Picks the feedback engine; replaced by the real haptics and sounds once they land.
+/// Picks the feedback engine: Core Haptics and the preloaded sound set, following the user's Sounds & haptics settings.
 enum AppFeedback {
-    static func make() -> Feedback { NoFeedback.shared }
+    @MainActor
+    static func make() -> Feedback { FeedbackEngine() }
 }
