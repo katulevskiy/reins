@@ -1,0 +1,23 @@
+// Build settings every target shares. Machine-specific values (a signing team, API keys) go in Config/Local.xcconfig,
+// which is git-ignored; see Config/Local.xcconfig.example.
+
+REINS_VERSION = 0.1.0
+REINS_BUILD_NUMBER = 1
+REINS_TEAM =
+
+// Telegram (your own account): https://my.telegram.org. 0 and empty leave Telegram unavailable.
+REINS_TELEGRAM_API_ID = 0
+REINS_TELEGRAM_API_HASH =
+
+// Google sign-in for Gmail, Calendar and Contacts: an "iOS" OAuth client of your Google Cloud project, e.g.
+// 1234-abcd.apps.googleusercontent.com. Empty: those integrations show "needs setup".
+REINS_GOOGLE_CLIENT_ID =
+// Its reversed form, the redirect scheme, e.g. com.googleusercontent.apps.1234-abcd.
+REINS_GOOGLE_REDIRECT_SCHEME = dev.rewarden.ios.google
+
+// The APNs environment the app registers for. It also picks the token prefix the server sees (apns-sandbox: or apns:);
+// a token sent to the wrong environment is refused by Apple and deleted by the server.
+REINS_APS_ENVIRONMENT = development
+REINS_APS_ENVIRONMENT[config=Release] = production
+
+#include? "Local.xcconfig"

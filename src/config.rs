@@ -541,6 +541,14 @@ make_config! {
         rewarden_enabled:               bool,   false,  def,    false;
         /// FCM service account |> Path to the Firebase service-account JSON used to wake the approval device. Empty disables push.
         rewarden_fcm_service_account:   String, false,  def,    String::new();
+        /// APNs key file |> Path to the APNs signing key (.p8) used to wake the iOS app. Empty disables APNs; set it together with the key id and team id.
+        rewarden_apns_key_file:         String, false,  def,    String::new();
+        /// APNs key id |> The 10-character id of the APNs key, shown next to it in the Apple Developer account.
+        rewarden_apns_key_id:           String, false,  def,    String::new();
+        /// APNs team id |> The Apple Developer team id that owns the APNs key.
+        rewarden_apns_team_id:          String, false,  def,    String::new();
+        /// APNs topic |> The bundle id of the iOS app the pushes are for.
+        rewarden_apns_topic:            String, false,  def,    crate::api::rewarden::apns::DEFAULT_TOPIC.to_owned();
         /// Relay wait (seconds) |> How long an MCP tool call waits for the phone. Must be below ChatGPT's 60 s tool timeout (max 55).
         rewarden_relay_wait_secs:       u64,    false,  def,    45;
         /// Offline threshold (seconds) |> A request not fetched by the phone within this time is reported as "device offline".
@@ -1117,6 +1125,12 @@ fn validate_config(cfg: &ConfigItems, on_update: bool) -> Result<(), Error> {
             cfg.rewarden_relay_wait_secs,
             cfg.rewarden_offline_secs,
             &cfg.rewarden_fcm_service_account,
+            &crate::api::rewarden::apns::Settings {
+                key_file: cfg.rewarden_apns_key_file.clone(),
+                key_id: cfg.rewarden_apns_key_id.clone(),
+                team_id: cfg.rewarden_apns_team_id.clone(),
+                topic: cfg.rewarden_apns_topic.clone(),
+            },
         )
     {
         err!(e)

@@ -7620,6 +7620,7 @@ dependencies = [
  "futures",
  "governor",
  "grass_compiler",
+ "h2",
  "handlebars",
  "hickory-resolver",
  "html5gum",

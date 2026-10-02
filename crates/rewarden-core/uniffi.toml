@@ -1,3 +1,8 @@
 [bindings.kotlin]
 package_name = "dev.rewarden.core"
 cdylib_name = "rewarden_core"
+
+[bindings.swift]
+module_name = "rewarden_core"
+ffi_module_name = "rewarden_coreFFI"
+ffi_module_filename = "rewarden_coreFFI"

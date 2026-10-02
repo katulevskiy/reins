@@ -20,7 +20,7 @@ flowchart TB
     end
     fcm["Firebase Cloud Messaging"]
     subgraph phone["Phone"]
-        app["Android app (android/)<br/>UI, Keystore, biometrics, push"]
+        app["Android app (android/), iOS app (ios/)<br/>UI, Keystore / keychain, biometrics, push"]
         core["rewarden-core (Rust, UniFFI)<br/>grants, connectors, store,<br/>Autopilot"]
     end
     services["Gmail, GitHub, Calendar, Contacts,<br/>Telegram, vault, MCP servers"]
@@ -46,11 +46,12 @@ flowchart TB
 
 | Component | Where | Language | What it does |
 |---|---|---|---|
-| Server | `src/` (Vaultwarden fork), Reins code in `src/api/rewarden/` | Rust (Rocket, Diesel) | Accounts and vault (Vaultwarden), MCP endpoint, OAuth 2.1 authorization server, relay, phone API, desktop API, file slots, FCM sender |
+| Server | `src/` (Vaultwarden fork), Reins code in `src/api/rewarden/` | Rust (Rocket, Diesel) | Accounts and vault (Vaultwarden), MCP endpoint, OAuth 2.1 authorization server, relay, phone API, desktop API, file slots, FCM and APNs senders |
 | Protocol | `crates/rewarden-proto` | Rust, no IO | Wire types shared by server, phone and desktop: tool specs and argument validation, relay requests and results, pairing, desktop tools, sealed payloads, file slots, MCP server reports |
 | Policy | `crates/rewarden-policy` | Rust, no IO | Grants and their evaluation: scopes, patterns, expiry, uses |
 | Phone core | `crates/rewarden-core` | Rust, exported to Kotlin with UniFFI | Request handling, connectors (Gmail, Google, GitHub, git hosts, Telegram, device data, vault, remote MCP, desktop tools), encrypted SQLite store, audit log, Autopilot |
 | Android app | `android/` | Kotlin, Jetpack Compose | UI, Android Keystore (wraps the core's data key), biometrics, Google Play services tokens, FCM, WorkManager, ONNX Runtime for Autopilot |
+| iOS app | `ios/` | Swift, SwiftUI | UI, keychain (wraps the core's data key), Face ID, Google OAuth tokens, APNs and a notification service extension, widgets and Live Activities, ONNX Runtime for Autopilot |
 | Desktop app | `crates/rewarden-desktop` | Rust | The `rewarden` CLI and daemon |
 | Model runtime for tools | `crates/rewarden-laya` | Rust (`ort`) | Runs the Autopilot model on desktop CPUs for tests and `laya-try`. Not part of the phone. |
 | Model tooling | `tools/laya` | Python | Synthetic data, fine-tuning, ONNX export, evaluation |

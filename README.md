@@ -36,7 +36,7 @@ Reins puts you back in charge. Your agents keep their power, but you hold the re
 
 | Part | What it does |
 | --- | --- |
-| **Phone app** (Android) | Your remote control. Shows each request, approves or denies it, keeps your passwords and tokens, and does the actual work: sends the email, calls GitHub, reads the calendar. |
+| **Phone app** (Android, iPhone and iPad) | Your remote control. Shows each request, approves or denies it, keeps your passwords and tokens, and does the actual work: sends the email, calls GitHub, reads the calendar. |
 | **Desktop app** (`rewarden`) | Sits between the AI agents on your computer and the outside world: it stops risky commands until you approve them, and lets `git push` reach GitHub without the agent ever seeing your token. Works with Claude Code, Codex, Cursor and Gemini CLI. |
 | **Server** | A small relay that carries requests from agents (including Claude.ai and ChatGPT in the browser) to your phone and the answers back. It never stores your credentials. Use the hosted one or [run your own](docs/self-hosting.md). |
 | **Autopilot** (optional) | An AI model that runs entirely on your phone and learns your decisions. It approves what you'd clearly approve, blocks what you'd clearly block, and asks you about everything else. Risky things (passwords, deletions, new connections) always wait for you. |
@@ -89,11 +89,11 @@ flowchart LR
 
 ## Quick start
 
-You need an Android phone and an account on a Reins server (the hosted one or [your own](docs/self-hosting.md)).
+You need an Android phone or an iPhone and an account on a Reins server (the hosted one or [your own](docs/self-hosting.md)).
 
 1. **Phone.** Install the app from <https://rewarden.arc-chat.com/app>, sign in with the server address, your email and
    master password. The phone becomes your approval device. Connect services under **Integrations**.
-2. **Desktop app** (Linux or macOS; macOS is alpha):
+2. **Desktop app** (Linux or macOS):
    ```sh
    curl -fsSL https://rewarden.arc-chat.com/install.sh | sh
    rewarden login https://rewarden.arc-chat.com    # compare the key shown here with the one on your phone
@@ -194,11 +194,10 @@ and only after it has agreed with you often enough. Model card: [tools/laya/MODE
 
 **Alpha.** Expect rough edges, and breaking changes between releases.
 
-- Phone: **Android only** (Android 12 or later). There is no iOS app yet.
-- Desktop app: Linux (x86_64 and aarch64) and macOS (Apple silicon and Intel), both through the install script. macOS
-  is newer: built and tested on CI, not yet field-tested end to end on a real Mac, and without two Linux protections
-  (git shows no "waiting for approval" notice; no shielding from same-user debuggers). See the
-  [desktop app README](crates/rewarden-desktop/README.md#macos-alpha). Windows is not supported.
+- Phone: Android (Android 12 or later) and iOS / iPadOS 26 or later (iPhone, iPad, iPhone Duo; build it from
+  [`ios/`](ios/README.md), no App Store release yet). iOS has no text messages integration: apps cannot read SMS there.
+- Desktop app: Linux (x86_64, aarch64) and macOS (Apple silicon, Intel) builds are published with every release.
+  Windows is not supported.
 - Gmail and Google Calendar/Contacts use Google scopes that need Google's app verification before the general public
   can use them.
 - Push notifications need an app build that matches the server's Firebase project. With a self-hosted server and the
@@ -213,7 +212,7 @@ cargo build --release --features sqlite --bin vaultwarden   # the server
 cargo build --release -p rewarden-desktop                   # the desktop app (target/release/rewarden)
 ```
 
-The Android app builds with Gradle from `android/`. [CONTRIBUTING.md](CONTRIBUTING.md) has the full build and test
+The Android app builds with Gradle from `android/`; the iOS app with Xcode from `ios/` ([ios/README.md](ios/README.md)). [CONTRIBUTING.md](CONTRIBUTING.md) has the full build and test
 commands; [docs/self-hosting.md](docs/self-hosting.md) covers running the server, including with Docker.
 
 ## Documentation
