@@ -85,11 +85,11 @@ private struct SplitShell: View {
         @Bindable var model = model
         NavigationSplitView(columnVisibility: $columns) {
             Sidebar()
-                .navigationSplitViewColumnWidth(min: 220, ideal: 250, max: 300)
+                .navigationSplitViewColumnWidth(min: 200, ideal: 230, max: 280)
         } content: {
             SectionRoot(section: model.section)
                 .id(model.section)
-                .navigationSplitViewColumnWidth(min: 340, ideal: hinge == .bent ? 400 : 420, max: 520)
+                .navigationSplitViewColumnWidth(min: 380, ideal: hinge == .bent ? 400 : 440, max: 540)
         } detail: {
             DetailColumn()
         }
