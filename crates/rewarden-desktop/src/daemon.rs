@@ -371,7 +371,8 @@ pub fn init_logging(file: Option<&std::path::Path>) {
     }
     impl log::Log for Logger {
         fn enabled(&self, m: &log::Metadata<'_>) -> bool {
-            m.level() <= self.level && m.target().starts_with("rewarden")
+            // This crate's modules, and the desktop app's (`reins_app`).
+            m.level() <= self.level && (m.target().starts_with("rewarden") || m.target().starts_with("reins"))
         }
         fn log(&self, r: &log::Record<'_>) {
             if self.enabled(r.metadata()) {

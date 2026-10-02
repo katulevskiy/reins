@@ -446,8 +446,17 @@ async fn self_update(paths: &Paths, config: &Config, check_only: bool) -> Result
             out!("Update available: {} → {}. Run `rewarden update`.", update::BUILD, latest.build);
         }
         Check::Available(latest, asset) => {
-            let bytes = updater.download(&asset).await?;
             let exe = update::current_executable()?;
+            if update::installed_with_app(&exe) {
+                out!(
+                    "Update available: {} → {}. This rewarden came with the Reins app: update the app ({}).",
+                    update::BUILD,
+                    latest.build,
+                    update::APP_DOWNLOADS
+                );
+                return Ok(());
+            }
+            let bytes = updater.download(&asset).await?;
             update::replace_executable(&exe, &bytes)?;
             out!("Updated {} to {} ({}).", exe.display(), latest.version, latest.build);
             #[cfg(windows)]

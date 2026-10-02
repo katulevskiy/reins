@@ -6,7 +6,7 @@ repository = "https://github.com/katulevskiy/reins"
 publish = false
 
 [workspace]
-members = ["macros", "crates/rewarden-proto", "crates/rewarden-policy", "crates/rewarden-core", "crates/rewarden-e2e", "crates/rewarden-desktop", "crates/rewarden-laya"]
+members = ["macros", "crates/rewarden-proto", "crates/rewarden-policy", "crates/rewarden-core", "crates/rewarden-e2e", "crates/rewarden-desktop", "crates/rewarden-desktop-app", "crates/rewarden-laya"]
 
 [package]
 name = "vaultwarden"
@@ -293,6 +293,13 @@ strip = "debuginfo"
 lto = "fat"
 codegen-units = 1
 debug = false
+
+# The desktop app (GPUI, scripts/package/): thin LTO, as Zeron's desktop app builds it. Fat LTO over all of GPUI takes
+# many times longer for little gain.
+[profile.release-app]
+inherits = "release"
+lto = "thin"
+codegen-units = 16
 
 # Optimize for size
 [profile.release-micro]

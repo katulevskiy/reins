@@ -36,6 +36,7 @@ to [Vaultwarden](https://github.com/dani-garcia/vaultwarden) directly; we pick i
 | `crates/rewarden-policy` | standing permissions: scopes and their evaluation | Apache-2.0 |
 | `crates/rewarden-core` | the phone's core (Rust, exposed to Kotlin through UniFFI): vault, connectors, approvals, Autopilot | Apache-2.0 |
 | `crates/rewarden-desktop` | the desktop app (`rewarden`): daemon, git/SSH/API proxies, harness hooks | Apache-2.0 |
+| `crates/rewarden-desktop-app` | the Reins app (GPUI): pairing window, setup, tray icon; installers via `scripts/package/` | Apache-2.0 |
 | `crates/rewarden-laya` | Autopilot's model on the desktop (ONNX Runtime) and `laya-try` | Apache-2.0 |
 | `crates/rewarden-e2e` | end-to-end tests: the real server, the real phone core, the desktop daemon | Apache-2.0 |
 | `android/` | the Android app (Kotlin, Jetpack Compose) | Apache-2.0 |

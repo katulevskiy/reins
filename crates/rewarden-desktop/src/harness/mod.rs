@@ -13,6 +13,7 @@
 //! the containers and files `add` created): a file that existed before is byte for byte what it was, as long as nobody
 //! else edited around the entry meanwhile.
 
+pub mod detect;
 pub mod jsonedit;
 
 use std::collections::BTreeMap;
@@ -951,8 +952,45 @@ fn remove_dirs(dirs: &[PathBuf]) {
     }
 }
 
-/// What is registered for `h`: one line per part.
-pub fn list(paths: &Paths, s: &Setup, h: Harness) -> Result<Vec<String>, String> {
+/// What is in `h`'s settings of this app's.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Registered {
+    /// The MCP server entry.
+    pub mcp: bool,
+    /// How many of the hook entries are there, of how many.
+    pub hooks: (usize, usize),
+    /// `add` recorded what it did (so `remove` undoes exactly that).
+    pub recorded: bool,
+}
+
+impl Registered {
+    /// The MCP server and every hook entry are there.
+    #[must_use]
+    pub fn complete(&self) -> bool {
+        self.mcp && self.hooks.0 == self.hooks.1
+    }
+
+    /// Anything of this app's is there.
+    #[must_use]
+    pub fn any(&self) -> bool {
+        self.mcp || self.hooks.0 > 0
+    }
+}
+
+/// What is registered for `h`.
+pub fn registered(paths: &Paths, s: &Setup, h: Harness) -> Result<Registered, String> {
+    let (mcp, hooks, recorded) = parts(paths, s, h)?;
+    Ok(Registered {
+        mcp: mcp.is_some_and(|(present, _)| present),
+        hooks: (hooks.iter().filter(|(present, _)| *present).count(), hooks.len()),
+        recorded,
+    })
+}
+
+type Parts = (Option<(bool, String)>, Vec<(bool, String)>, bool);
+
+/// The MCP server part and the hook parts of `h` (present, file shown), and whether `add` recorded them.
+fn parts(paths: &Paths, s: &Setup, h: Harness) -> Result<Parts, String> {
     let recorded = load_manifest(paths)?.harnesses.contains_key(h.id());
     let mut mcp = None;
     let mut hooks: Vec<(bool, String)> = Vec::new();
@@ -984,6 +1022,12 @@ pub fn list(paths: &Paths, s: &Setup, h: Harness) -> Result<Vec<String>, String>
             Role::Support => {}
         }
     }
+    Ok((mcp, hooks, recorded))
+}
+
+/// What is registered for `h`: one line per part.
+pub fn list(paths: &Paths, s: &Setup, h: Harness) -> Result<Vec<String>, String> {
+    let (mcp, hooks, recorded) = parts(paths, s, h)?;
     let yes_no = |(present, shown): &(bool, String)| {
         if *present {
             format!("yes ({shown})")

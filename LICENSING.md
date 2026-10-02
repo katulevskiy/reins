@@ -10,6 +10,7 @@ are listed in [NOTICE](NOTICE).
 | Phone core (vault client, connectors, approvals, Autopilot) | `crates/rewarden-core` | Apache-2.0 |
 | Android app | `android/` | Apache-2.0 |
 | Desktop app: daemon, git/SSH/API proxies, harness hooks | `crates/rewarden-desktop` | Apache-2.0 |
+| Desktop app: window and tray (GPUI, Apache-2.0; Geist fonts, OFL-1.1) | `crates/rewarden-desktop-app` | Apache-2.0 |
 | Wire protocol types | `crates/rewarden-proto` | Apache-2.0 |
 | Permission policy engine | `crates/rewarden-policy` | Apache-2.0 |
 | Autopilot model runtime for the desktop and `laya-try` | `crates/rewarden-laya` | Apache-2.0 |
