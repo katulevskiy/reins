@@ -111,8 +111,13 @@ private fun RootContent(container: AppContainer, app: AppViewModel, authenticato
         is SessionState.SignedIn -> {
             val info = (session as SessionState.SignedIn).info
             val locked by container.state.keysLocked.collectAsStateWithLifecycle()
-            if (locked) {
-                UnlockScreen(viewModel(key = "unlock") { UnlockViewModel(container, deviceName = Build.MODEL) }, info.email)
+            val takeover by container.state.approvalTakeover.collectAsStateWithLifecycle()
+            if (locked || takeover) {
+                UnlockScreen(
+                    viewModel(key = "unlock") { UnlockViewModel(container, deviceName = Build.MODEL) },
+                    info.email,
+                    takeover = takeover && !locked,
+                )
             } else {
                 SignedInContent(container, app, authenticator, info.serverUrl)
             }

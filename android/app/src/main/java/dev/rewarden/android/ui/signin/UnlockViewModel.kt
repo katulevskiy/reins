@@ -56,6 +56,10 @@ suspend fun awaitJoin(poll: suspend () -> JoinProgress, pause: suspend () -> Uni
  * phone"), or open them with the recovery code (or the master password of an account made with one). Once open, this
  * phone finishes the sign-in like any other and becomes the approval device. [deviceName] is what the other phone
  * shows ("Add Pixel 9?").
+ *
+ * The same two ways let this phone take the approval role over when the server refused it because another phone
+ * approves for the account ([dev.rewarden.android.state.AppState.approvalTakeover]): the other phone's yes, or the
+ * recovery code, is the proof the next registration brings.
  */
 class UnlockViewModel(
     private val container: AppContainer,
@@ -126,6 +130,16 @@ class UnlockViewModel(
         }
     }
 
+    /** "Not now" while taking over: the app shows again, this phone not approving; Settings offers it again. */
+    fun later() {
+        if (_ui.value.busy) return
+        _ui.update { it.copy(busy = true, error = null) }
+        viewModelScope.launch {
+            container.setApprovalTakeover(false)
+            _ui.value = UnlockUi()
+        }
+    }
+
     /** Back to the welcome screen; an open request is withdrawn first. */
     fun signOut() {
         if (_ui.value.busy) return
@@ -147,8 +161,19 @@ class UnlockViewModel(
         }
     }
 
-    /** The keys are open on this phone: the sign-in finishes like any other. */
+    /**
+     * The keys are open on this phone: the sign-in finishes like any other. Taking over (the keys were open already):
+     * this phone registers again, now with the proof, and the app carries on where the sign-in or Settings left it.
+     */
     private suspend fun unlocked() {
+        if (!container.state.keysLocked.value) {
+            container.registerDevice(force = true)
+            container.state.setRegistrationError(null)
+            container.feedback.play(Event.Connected)
+            container.refreshSession()
+            _ui.value = UnlockUi()
+            return
+        }
         val info = (container.state.session.value as? SessionState.SignedIn)?.info ?: container.core.session()
         if (info == null) {
             container.setKeysLocked(false)

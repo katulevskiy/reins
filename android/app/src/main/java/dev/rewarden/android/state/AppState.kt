@@ -95,6 +95,18 @@ class AppState {
         _keysLocked.value = value
     }
 
+    /**
+     * Registering this phone as the approval device was refused: another phone approves for the account. The Unlock
+     * screen shows instead of the app with the two ways to take over (approve from that phone, or the recovery code),
+     * until it succeeds or the user puts it off.
+     */
+    private val _approvalTakeover = MutableStateFlow(false)
+    val approvalTakeover: StateFlow<Boolean> = _approvalTakeover.asStateFlow()
+
+    fun setApprovalTakeover(value: Boolean) {
+        _approvalTakeover.value = value
+    }
+
     /** Why registering this phone as the approval device failed, until it succeeds. */
     private val _registrationError = MutableStateFlow<String?>(null)
     val registrationError: StateFlow<String?> = _registrationError.asStateFlow()
@@ -125,6 +137,7 @@ class AppState {
             _mcpNotice.value = null
             _approvalDevice.value = false
             _keysLocked.value = false
+            _approvalTakeover.value = false
             _autopilot.value = null
         }
     }

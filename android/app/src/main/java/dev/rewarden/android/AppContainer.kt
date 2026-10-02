@@ -131,6 +131,7 @@ class AppContainer(private val context: Context) {
                 // Before the session flips, so the main screen does not flash up ahead of the setup or the Unlock screen.
                 state.setSetupPending(onboarding.isPending(info))
                 state.setKeysLocked(deviceStatus.keysLocked())
+                state.setApprovalTakeover(deviceStatus.needsTakeover())
             }
         }
         state.setSession(if (info == null) SessionState.SignedOut else SessionState.SignedIn(info))
@@ -257,18 +258,36 @@ class AppContainer(private val context: Context) {
      * Makes this phone the approval device (with an FCM token when Firebase is configured). [force] is for the user's
      * explicit "register this phone"; background token refreshes never take the role back from a replacing phone. A
      * phone whose account keys are still locked is never registered: the phone that has them must approve it first.
+     * When another phone approves for the account and this one brings no proof, the server refuses
+     * ([CoreException.OtherApprovalDevice], rethrown): the Unlock screen then offers the two ways to take over.
      */
     suspend fun registerDevice(force: Boolean) {
         val (replaced, locked) = withContext(Dispatchers.IO) { deviceStatus.isReplaced() to deviceStatus.keysLocked() }
         if (locked || (replaced && !force)) return
         val token = FirebaseSupport.token(context)
-        core.registerDevice(token)
+        try {
+            core.registerDevice(token)
+        } catch (e: CoreException.OtherApprovalDevice) {
+            setApprovalTakeover(true)
+            throw e
+        }
         withContext(Dispatchers.IO) {
             deviceStatus.setReplaced(false)
             deviceStatus.setApprovalDevice(true)
+            deviceStatus.setNeedsTakeover(false)
         }
         state.setDeviceReplaced(false)
         state.setApprovalDevice(true)
+        state.setApprovalTakeover(false)
+    }
+
+    /**
+     * Whether the Unlock screen offers taking the approval role over from the other phone ([needed]), or the user put
+     * it off ("Not now"; Settings offers it again). Kept on disk, so a relaunch comes back to it.
+     */
+    suspend fun setApprovalTakeover(needed: Boolean) {
+        withContext(Dispatchers.IO) { deviceStatus.setNeedsTakeover(needed) }
+        state.setApprovalTakeover(needed)
     }
 
     /** The server says another phone is the approval device now. */
@@ -284,6 +303,7 @@ class AppContainer(private val context: Context) {
         state.setApprovalDevice(false)
         state.setDeviceReplaced(false)
         state.setKeysLocked(false)
+        state.setApprovalTakeover(false)
     }
 
     private companion object {

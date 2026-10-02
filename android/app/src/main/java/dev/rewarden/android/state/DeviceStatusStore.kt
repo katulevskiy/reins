@@ -30,6 +30,14 @@ class DeviceStatusStore(context: Context) {
 
     fun setKeysLocked(value: Boolean) = prefs.edit { putBoolean(KEY_KEYS_LOCKED, value) }
 
+    /**
+     * The server refused to make this phone the approval device: another phone approves for the account, and this one
+     * must be approved from it (or bring the recovery code) first.
+     */
+    fun needsTakeover(): Boolean = prefs.getBoolean(KEY_TAKEOVER, false)
+
+    fun setNeedsTakeover(value: Boolean) = prefs.edit { putBoolean(KEY_TAKEOVER, value) }
+
     fun seenActivityId(): Long = prefs.getLong(KEY_SEEN_ACTIVITY, 0L)
 
     fun setSeenActivityId(id: Long) = prefs.edit { putLong(KEY_SEEN_ACTIVITY, id) }
@@ -42,5 +50,6 @@ class DeviceStatusStore(context: Context) {
         const val KEY_APPROVAL_DEVICE = "approval_device"
         const val KEY_SEEN_ACTIVITY = "seen_activity"
         const val KEY_KEYS_LOCKED = "keys_locked"
+        const val KEY_TAKEOVER = "needs_takeover"
     }
 }

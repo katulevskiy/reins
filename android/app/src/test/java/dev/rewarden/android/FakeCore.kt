@@ -296,6 +296,9 @@ class FakeCore : RewardenCoreInterface {
         joinCancels.set(0)
         joins.clear()
         joinAnswers.clear()
+        otherApprovalDevice = false
+        takeoverProof = false
+        refusedRegistrations.set(0)
     }
 
     override suspend fun ssoBegin(serverUrl: String): SsoStart {
@@ -326,6 +329,7 @@ class FakeCore : RewardenCoreInterface {
         }
         keys = AccountKeys.UNLOCKED
         recoveryCode = RECOVERY_CODE
+        takeoverProof = true
     }
 
     override suspend fun accountRecoveryCode(): String {
@@ -345,6 +349,7 @@ class FakeCore : RewardenCoreInterface {
         if (joinAnswer == JoinProgress.JOINED) {
             keys = AccountKeys.UNLOCKED
             recoveryCode = RECOVERY_CODE
+            takeoverProof = true
         }
         return joinAnswer
     }
@@ -375,7 +380,19 @@ class FakeCore : RewardenCoreInterface {
 
     override suspend fun pending() = pending
 
+    /**
+     * Another phone approves for the account: `registerDevice` is refused ([CoreException.OtherApprovalDevice]) until
+     * this phone brings a proof, from `unlockAccount` or a join the other phone approved.
+     */
+    @Volatile var otherApprovalDevice = false
+    @Volatile var takeoverProof = false
+    val refusedRegistrations = java.util.concurrent.atomic.AtomicInteger()
+
     override suspend fun registerDevice(fcmToken: String?) {
+        if (otherApprovalDevice && !takeoverProof) {
+            refusedRegistrations.incrementAndGet()
+            throw CoreException.OtherApprovalDevice()
+        }
         registrations += fcmToken
     }
 

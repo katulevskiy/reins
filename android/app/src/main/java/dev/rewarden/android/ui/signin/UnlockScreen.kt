@@ -41,14 +41,17 @@ import dev.rewarden.android.design.RTextField
 import dev.rewarden.android.design.RType
 import dev.rewarden.android.design.Screen
 import dev.rewarden.android.design.Spinner
+import dev.rewarden.android.ui.common.OTHER_APPROVAL_DEVICE
 import dev.rewarden.android.ui.common.SecureWindow
 
 /**
  * Signed in through "Continue" to an account whose keys are on another phone: ask that phone, enter the recovery code,
- * or sign out. Shown instead of the app until the keys are open (also after a relaunch).
+ * or sign out. Shown instead of the app until the keys are open (also after a relaunch). With [takeover], the server
+ * refused to make this phone the approval device because another phone approves for the account: the same two ways
+ * let it take over, and "Not now" goes back to the app.
  */
 @Composable
-fun UnlockScreen(viewModel: UnlockViewModel, email: String) {
+fun UnlockScreen(viewModel: UnlockViewModel, email: String, takeover: Boolean = false) {
     val c = LocalColors.current
     val ui by viewModel.ui.collectAsStateWithLifecycle()
     BackHandler(enabled = ui.step != UnlockStep.Choose) {
@@ -62,17 +65,25 @@ fun UnlockScreen(viewModel: UnlockViewModel, email: String) {
                 contentAlignment = Alignment.Center,
             ) { GlyphIcon(Glyph.Lock, c.accent, size = 32.dp) }
             Spacer(Modifier.height(6.dp))
-            RText("Your account is on another phone", RType.sans(28f, FontWeight.SemiBold, lineHeight = 34f), c.text)
             RText(
-                "You're signed in as $email, but its vault opens on the phone you set it up with. Approve this phone " +
-                    "from there, or enter your recovery code.",
+                if (takeover) "Another phone approves for you" else "Your account is on another phone",
+                RType.sans(28f, FontWeight.SemiBold, lineHeight = 34f),
+                c.text,
+            )
+            RText(
+                if (takeover) {
+                    OTHER_APPROVAL_DEVICE
+                } else {
+                    "You're signed in as $email, but its vault opens on the phone you set it up with. Approve this " +
+                        "phone from there, or enter your recovery code."
+                },
                 RType.sans(16f, lineHeight = 22f),
                 c.secondary,
-                Modifier.testTag("unlockText"),
+                Modifier.testTag(if (takeover) "takeoverText" else "unlockText"),
             )
             Spacer(Modifier.height(20.dp))
             when (ui.step) {
-                UnlockStep.Choose -> Choose(viewModel, ui)
+                UnlockStep.Choose -> Choose(viewModel, ui, takeover)
                 UnlockStep.Asking -> Asking(viewModel, ui)
                 UnlockStep.Recovery -> Recovery(viewModel, ui)
             }
@@ -82,7 +93,7 @@ fun UnlockScreen(viewModel: UnlockViewModel, email: String) {
 }
 
 @Composable
-private fun Choose(viewModel: UnlockViewModel, ui: UnlockUi) {
+private fun Choose(viewModel: UnlockViewModel, ui: UnlockUi, takeover: Boolean) {
     ui.ended?.let { Banner(it, kind = BannerKind.Warning, tag = "joinEnded") }
     ui.error?.let { Banner(it, kind = BannerKind.Error, tag = "unlockError") }
     CapsuleButton(
@@ -101,7 +112,11 @@ private fun Choose(viewModel: UnlockViewModel, ui: UnlockUi) {
         glyph = Glyph.Key,
         onClick = viewModel::showRecovery,
     )
-    Row(Modifier.fillMaxWidth().padding(top = 4.dp), horizontalArrangement = Arrangement.Center) {
+    Row(
+        Modifier.fillMaxWidth().padding(top = 4.dp),
+        horizontalArrangement = Arrangement.spacedBy(24.dp, Alignment.CenterHorizontally),
+    ) {
+        if (takeover) TextLink("Not now", "takeoverLater", enabled = !ui.busy, onClick = viewModel::later)
         TextLink("Sign out", "unlockSignOut", enabled = !ui.busy, onClick = viewModel::signOut)
     }
 }
