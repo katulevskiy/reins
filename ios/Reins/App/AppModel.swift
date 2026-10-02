@@ -418,6 +418,9 @@ final class AppModel {
         case .autopilot:
             section = .autopilot
             paths[.autopilot] = []
+        case .integrations:
+            home()
+            show(.integrations, in: .activity)
         case .home:
             home()
         }
