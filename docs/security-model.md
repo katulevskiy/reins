@@ -78,10 +78,35 @@ has Bitwarden's end-to-end encryption; only what protects its key changes:
 
 **What changes in trust.** WorkOS (and whoever controls the Google, Apple, GitHub or email account you sign in with)
 can now sign in to your Reins account. That gets them the server-side account, not the vault: opening it takes the
-account secret. A signed-in device can also register as the approval device, replacing yours, as a password sign-in
-could; it has none of your phone's service credentials or grants, but it would see and could approve new connection
-requests. The server refuses WorkOS impersonation sessions, follows WorkOS when it revokes a session or deletes a user,
-and takes an email change only once WorkOS has verified the new address.
+account secret. Nor does it get them the approval role: once the account has an approval device, another device takes
+it only with the recovery code or your phone's yes ([which device approves](#which-device-approves)). The server
+refuses WorkOS impersonation sessions, follows WorkOS when it revokes a session or deletes a user, and takes an email
+change only once WorkOS has verified the new address.
+
+## Which device approves
+
+One device per account approves: it gets the AIs' requests and new connections. The server decides which
+(`PUT /rewarden/api/device`):
+
+- **The account's first approval device** needs nothing.
+- **The approval device registering again** (a new push token, a restart, a new sign-in on the same phone) needs
+  nothing. The same device means the same Vaultwarden device *and* the same device key: 32 random bytes the phone
+  makes once, keeps in its encrypted store and sends with every phone-API call (`Reins-Device-Key`); the server keeps
+  their SHA-256. A Vaultwarden device id is no secret (the account's device list shows it, and a sign-in may name any
+  id), so a sign-in that claims the approval device's id without its key is another device, for registering and for
+  every call only the approval device may make.
+- **Any other device** takes the role only with a proof:
+  - the master password hash of the account secret (the phone has the secret after the recovery code or another
+    phone's approval), or, for accounts made with one, of the master password; the server checks it like a password
+    sign-in. Wrong hashes count against the account: after 5 within 15 minutes (`REWARDEN_DEVICE_PROOF_*`) every
+    attempt waits;
+  - or the approval device's yes to that device's "add another phone" request: the server keeps it for 5 minutes,
+    for one takeover, and only for the device key that asked.
+
+Without a proof the server answers `403 proof_required`, and the apps say "This account already has a phone for
+approvals. Approve this phone from it, or enter your recovery code.", with exactly those two ways on. The phone that
+loses the role is told by push. The phone's core attaches the proof itself when it has one, so a phone that just got
+the secret, or signed in with the master password, moves the role without asking again.
 
 - Approving needs the phone's screen lock or biometrics. Denying is one tap.
 - One-time approvals execute exactly what was shown and create no permission. Standing permissions are limited to one
@@ -212,10 +237,14 @@ Details: [autopilot.md](autopilot.md).
 
 - The server sees tool arguments and results in transit (above). End-to-end encryption between the AI and the phone
   is not possible while the AI needs the plaintext.
-- One approval device per account. Signing in on a second phone moves the role there. That phone has no service
-  credentials and no grants of the first, but it can approve new connections. With sign-in through WorkOS, this
-  includes anyone who controls the identity you sign in with; the server does not yet require proof of the account
-  secret (a "master password hash") before a new device takes the role.
+- One approval device per account, and the first one needs no proof ([which device approves](#which-device-approves)):
+  an account that never had one (signed up, no phone set up yet) goes to whichever of its signed-in devices registers
+  first. A phone that moves the role with the recovery code or the master password has none of the first phone's
+  service credentials or grants.
+- An approval device registered before device keys (servers from before October 2026) is known by its device id
+  until it registers again; its first registration with a device key keeps that key.
+- On an account made with a master password, the approval device has no account secret to send, so "add another
+  phone" cannot approve there; the new phone proves itself with the master password.
 - Hooks are pattern-based (above).
 - Autopilot's model was trained and evaluated on synthetic data ([model card](../tools/laya/MODEL_CARD.md)).
 

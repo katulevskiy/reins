@@ -22,7 +22,8 @@ You need:
    second phone, **Continue** finds the account's keys on the first one: tap **Ask my other phone**, check that both
    show the same six digits, and approve on the first phone (or enter the recovery code). The new phone then takes
    over the role, and the old one is told it was replaced. **Use this phone for approvals** in the settings moves it
-   back.
+   back. Signing in alone never moves the role: a phone without your other phone's yes or the recovery code is told
+   "This account already has a phone for approvals" ([why](security-model.md#which-device-approves)).
 4. Allow notifications. Requests arrive as notifications, even when the app is closed.
 
 The app supports authenticator-app (TOTP) two-factor login. Other second factors are not supported by the app yet.

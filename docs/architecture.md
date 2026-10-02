@@ -108,8 +108,11 @@ sequenceDiagram
 
 A second phone finds the keys locked and gets the secret from the approval device ("Add another phone": an X25519 key,
 a six-digit code compared on both screens, the secret sealed to the key and relayed by the server) or from the recovery
-code. The server follows WorkOS in the background (`src/api/rewarden/workos_sync.rs`): verified email changes,
-deleted users, revoked sessions. See [security-model.md](security-model.md#accounts-without-a-master-password).
+code. Either is also what lets it take the approval role from the first phone: the server wants that approval, or the
+master password hash of the secret, before another device approves
+([security-model.md](security-model.md#which-device-approves)). The server follows WorkOS in the background
+(`src/api/rewarden/workos_sync.rs`): verified email changes, deleted users, revoked sessions. See
+[security-model.md](security-model.md#accounts-without-a-master-password).
 
 ### A tool call from an AI
 

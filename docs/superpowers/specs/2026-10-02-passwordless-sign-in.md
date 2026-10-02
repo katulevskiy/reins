@@ -77,7 +77,41 @@ In memory on the server for 10 minutes (`ITEM_TTL`), at most 3 open per account,
 - The core parks a join as `PendingKind::Join` (`action: "join"`, store migration 9 adds the kind); Autopilot never
   judges it. `answer_join(id, true)` needs the account secret on this phone (accounts made with a master password
   have none: they sign in with it on the new phone).
-- After `Joined`, the new phone registers as the approval device like any sign-in: the old phone gets `replaced`.
+- After `Joined`, the new phone registers as the approval device; the approval is its proof (below), and the old phone
+  gets `replaced`.
+
+## Taking the approval role (server: `src/api/rewarden/device_api.rs`; core: `engine.rs` `register_device`)
+
+Signing in proves only that someone controls the identity (WorkOS) or knows the password; it no longer makes a device
+the approval device by itself.
+
+- **Device key.** The core makes 32 random bytes once (store secret `reins.device-key`) and sends them, base64url,
+  as `Reins-Device-Key` with every phone-API call (`PhoneApi`, `mcp/server_api.rs`; never to another host). The server
+  keeps `SHA-256` hex in `rewarden_devices.key_hash` (migration `2026-10-02-100000_rewarden_device_key`). The caller is
+  the approval device when the Vaultwarden device id and the key both match (`is_caller`); a row without a key (from
+  before) matches on the id and takes the key of its device's next registration.
+- **`PUT /rewarden/api/device`** (`DeviceRegistration {fcm_token, master_password_hash?}`): no proof when the account
+  has no approval device or the caller is it. Otherwise one of:
+  1. an approval of the caller's join request (`JoinHub::take_takeover`): status approved, within `TAKEOVER_TTL`
+     (5 minutes) of the answer, asked with the caller's device key, spent by the first use;
+  2. `master_password_hash` that `User::check_valid_password` accepts: the hash of the account secret's "password"
+     (`AccountSecret::master_password_hash`) or of the master password (the login hash).
+
+  Missing: `403 proof_required`; wrong: `403 wrong_proof`, counted per account (`limits::DEVICE_PROOFS`,
+  `REWARDEN_DEVICE_PROOF_MAX_FAILURES` = 5 in `REWARDEN_DEVICE_PROOF_WINDOW_SECONDS` = 900); at the limit every proof
+  gets `429 rate_limited` until the oldest failure ages out. Both 403s carry the message
+  `rewarden_proto::device::TAKEOVER_REFUSED`.
+- **Core.** `register_device` first sends no proof; on a 403 above it computes one (the hash of the password this
+  session signed in or unlocked with, kept in memory until the registration succeeds, else of the account secret in
+  the store; PBKDF2 off the async threads) and tries once more. Without a proof, or refused again:
+  `CoreError::OtherApprovalDevice`, whose text is that message.
+- **Apps.** On `OtherApprovalDevice` the phone shows the Unlock screen ("Another phone approves for this account") with
+  that message and its two ways: **Ask my other phone** (the join flow: the approval is the proof) and **Enter recovery
+  code** (`unlock_account`, which keeps the secret, or the master password's hash); then `register_device` again and on
+  as after a sign-in. iOS: `SessionState.otherApprovalDevice`, not kept across launches (the next launch is refused
+  again); a quietly refused phone that thought it approved shows the "replaced" banner instead, and **Use this phone**
+  leads to the screen. Android: a flag kept in `DeviceStatusStore`, a **Not now** link back to the app, and
+  `RegisterDeviceWorker` gives up on this error instead of retrying.
 
 ## WorkOS lifecycle (server: `src/api/rewarden/workos_sync.rs`)
 
@@ -96,5 +130,9 @@ the body is ignored). The cursor (`rewarden_settings` `workos.events.after`) mov
 ## Checks
 
 - `cargo test -p rewarden-e2e --test sso_workos`: the real server and phone cores against a fake WorkOS (sign-in,
-  keys, recovery code, email change, revoked session, deleted user, another phone approved and denied).
+  keys, recovery code, email change, revoked session, deleted user, another phone approved and denied, a phone that
+  signed in to the identity refused the approval role until it has the recovery code or the approval).
+- `cargo test --features sqlite --test rewarden_server takeover`: the takeover rule against the real server (first
+  device, same device, another device without, with a right and with wrong proofs, the rate limit, a join approval
+  spent once, a device id claimed without its key).
 - `scripts/workos-live.sh`: the same against a WorkOS staging environment, headless (Chrome on AuthKit's hosted page).
