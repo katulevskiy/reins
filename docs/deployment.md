@@ -38,6 +38,10 @@ WEB_VAULT_ENABLED=true          # only needed to create accounts; Bitwarden clie
 
 REWARDEN_ENABLED=true
 REWARDEN_FCM_SERVICE_ACCOUNT=/etc/rewarden/fcm-service-account.json
+REWARDEN_APNS_KEY_FILE=/etc/rewarden/AuthKey_ABC123DEFG.p8
+REWARDEN_APNS_KEY_ID=ABC123DEFG
+REWARDEN_APNS_TEAM_ID=DEF123GHIJ
+# REWARDEN_APNS_TOPIC=dev.rewarden.ios   # the iOS app's bundle id
 # REWARDEN_RELAY_WAIT_SECS=45   # ChatGPT aborts tool calls after 60 s; Claude allows 240 s
 # REWARDEN_OFFLINE_SECS=10
 ```
@@ -105,6 +109,15 @@ Create a Firebase project (or use your Google Cloud project) and add an Android 
    only). Keep it out of the repo; mode `0600`.
 2. Build the Android app with `google-services.json` in place (`android/README.md`). Without it the app still works but
    only receives requests while it is open.
+
+### Apple (push to the iOS app)
+
+1. In the Apple Developer account of the team that signs the iOS app: *Keys* → create a key with *Apple Push
+   Notifications service (APNs)*. Download the `.p8` (only once possible) to `REWARDEN_APNS_KEY_FILE`, mode `0600`;
+   set `REWARDEN_APNS_KEY_ID` to its key id and `REWARDEN_APNS_TEAM_ID` to the team id.
+2. All three are set together or not at all; the server does not start with a partial set or an unreadable key.
+3. Phones that registered an `apns:` or `apns-sandbox:` token are woken through APNs (production or sandbox), all
+   others through FCM. The payload is a fixed alert plus the request id, nothing else.
 
 ## 6. Google Cloud (Gmail on the phone)
 
@@ -203,6 +216,8 @@ Arguments (a push lists commits and files) are never logged.
 
 * Back up `DATA_FOLDER` (accounts, tokens). Losing it signs everyone out; grants and audit logs live on the phones.
 * Rotating the FCM key: create the new key, update the file, restart; delete the old key in IAM.
+* Rotating the APNs key: create a new key, update the file and `REWARDEN_APNS_KEY_ID`, restart; then revoke the old
+  key in the Apple Developer account.
 * Revoking a phone: sign in from another phone and tap **Use this phone for approvals**; the old phone is told it was
   replaced and stops receiving requests.
 * Logs never contain tokens, message contents or Gmail data; `LOG_LEVEL=info` is safe.

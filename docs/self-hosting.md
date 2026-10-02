@@ -64,7 +64,10 @@ DATA_FOLDER=/var/lib/rewarden
 IP_HEADER=X-Real-IP              # whichever header your proxy sets with the client's address
 
 REWARDEN_ENABLED=true
-REWARDEN_FCM_SERVICE_ACCOUNT=/etc/rewarden/fcm-service-account.json   # empty: no push
+REWARDEN_FCM_SERVICE_ACCOUNT=/etc/rewarden/fcm-service-account.json   # empty: no push to Android
+# REWARDEN_APNS_KEY_FILE=/etc/rewarden/AuthKey_ABC123DEFG.p8           # empty: no push to iPhone
+# REWARDEN_APNS_KEY_ID=ABC123DEFG
+# REWARDEN_APNS_TEAM_ID=DEF123GHIJ
 # REWARDEN_RELAY_WAIT_SECS=45    # how long a tool call waits for the phone, 1..=55
 # REWARDEN_OFFLINE_SECS=10       # a request the phone has not fetched by then is reported as "device offline"
 # REWARDEN_PURGE_SCHEDULE="0 25 * * * *"   # cron: purge expired refresh tokens, files and memory entries
@@ -77,6 +80,8 @@ SIGNUPS_ALLOWED=true             # turn off once your accounts exist, or use inv
 | `DOMAIN` | Required. Must be `https://` (plain `http://` only for `localhost`, `127.0.0.1`, `[::1]`). It becomes the OAuth issuer and the MCP resource `{DOMAIN}/mcp`. Serve Reins at the root of a host name: the `/.well-known/oauth-*` documents must be at the root. |
 | `REWARDEN_ENABLED` | Mounts `/mcp`, `/rewarden/oauth/*`, `/.well-known/oauth-*`, `/rewarden/api/*` (phone), `/rewarden/desktop/*` and `/rewarden/blob/*`. |
 | `REWARDEN_FCM_SERVICE_ACCOUNT` | Path to a Firebase service-account JSON key. Keep it out of the repository, mode 0600 or 0640. |
+| `REWARDEN_APNS_KEY_FILE`, `REWARDEN_APNS_KEY_ID`, `REWARDEN_APNS_TEAM_ID` | The APNs key (`.p8` file), its key id and your Apple team id, for push to the iOS app. Set all three or none; the server refuses to start with only some, or with a key it cannot read. Same file permissions as the Firebase key. |
+| `REWARDEN_APNS_TOPIC` | Bundle id of the iOS app. Default `dev.rewarden.ios`; change it only for an app built under another bundle id. |
 | `REWARDEN_RELAY_WAIT_SECS` | ChatGPT aborts tool calls after 60 s; Claude allows longer. After this time the AI is told to call `rewarden_get_result` later. |
 | `REWARDEN_OFFLINE_SECS` | Must be at most `REWARDEN_RELAY_WAIT_SECS`. |
 | `REWARDEN_TEST_ALLOW_LOOPBACK` | For the test suite only. Never set it in production. |
@@ -192,6 +197,26 @@ with the scopes `gmail.readonly`, `gmail.send`, `calendar.events`, `calendar.rea
 Gmail scopes are *restricted*: beyond 100 users Google requires verification and a security assessment. Telegram needs
 an `api_id`/`api_hash` from <https://my.telegram.org>, compiled into the app (`rewarden.telegramApiId`,
 `rewarden.telegramApiHash` in `~/.gradle/gradle.properties`).
+
+## Push notifications on iPhone (APNs)
+
+The iOS app is woken by Apple's push service directly, without Firebase. Like the Android push, the notification
+carries only an id and a fixed text ("Something is waiting for you"); the app fetches the request from your server and
+shows it. No request content goes through Apple.
+
+1. In the Apple Developer account, under *Certificates, Identifiers & Profiles* → *Keys*, create a key with *Apple Push
+   Notifications service (APNs)* enabled. Download the `.p8` file (Apple lets you download it once) and note its key
+   id. Your team id is shown under *Membership*.
+2. Point `REWARDEN_APNS_KEY_FILE` at the `.p8` file and set `REWARDEN_APNS_KEY_ID` and `REWARDEN_APNS_TEAM_ID`.
+3. The key has to belong to the team that signs the iOS app, and `REWARDEN_APNS_TOPIC` has to be the app's bundle id.
+
+One key serves both of Apple's environments. The app registers its token as `apns:<token>` (App Store and TestFlight
+builds) or `apns-sandbox:<token>` (development builds), and the server sends each to the matching Apple endpoint.
+Tokens Apple reports as gone are forgotten, as with Firebase. The server talks to `api.push.apple.com` and
+`api.sandbox.push.apple.com` over HTTPS (HTTP/2, port 443).
+
+**The published iOS app belongs to the hosted service's Apple team.** With your own server it signs in and works, but
+it gets no push unless your server has that team's key. Requests then reach the phone only while the app is open.
 
 ## Desktop app against your server
 

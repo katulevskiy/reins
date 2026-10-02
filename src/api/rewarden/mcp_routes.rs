@@ -19,11 +19,12 @@ use rocket::{
 use serde_json::{Value, json};
 
 use super::{
-    HUB, fcm,
+    HUB,
     limits::{self, Admitted, rate_limited_text, retry_secs},
     mcp::{self, Action, INVALID_PARAMS, INVALID_REQUEST, McpHeaders, RATE_LIMITED},
     now_unix,
     oauth::canonical_mcp_url,
+    push,
     relay::QueueFull,
     tools::{self, ToolArgError, ToolInvocation},
 };
@@ -288,7 +289,7 @@ pub async fn submit_to_phone(
             QueueFull::Account => SubmitError::Queued,
         })?;
     if let Some(device) = RewardenDevice::find_by_user(&connection.user_uuid, conn).await {
-        fcm::spawn_push(
+        push::spawn_push(
             pool.clone(),
             connection.user_uuid.clone(),
             device.fcm_token,
