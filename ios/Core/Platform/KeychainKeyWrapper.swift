@@ -6,13 +6,25 @@ import Security
 /// Keystore wrapper). The key is readable after the first unlock so pushes can be handled on a locked phone, is
 /// not synced or backed up (`ThisDeviceOnly`), and lives in the shared keychain group so the notification extension
 /// opens the same store. Output is nonce || ciphertext || tag.
+///
+/// The core treats `Failed` from `unwrap` as a lost key and starts over (it deletes the session and what waits), so
+/// only a definite answer may say that: a keychain that cannot be read right now (locked before the first unlock,
+/// interaction not allowed) is `NeedsUserInteraction`, which makes opening the store fail without changing anything.
 final class KeychainKeyWrapper: KeyWrapper, @unchecked Sendable {
     private let service = "dev.rewarden.ios.key-wrap"
     private let account = "core-dek-wrap-v1"
     private let lock = NSLock()
     private var cached: SymmetricKey?
+    /// False in the notification extension: it never creates a key or a data key and never lets the core start over
+    /// (a keychain group it cannot see would otherwise wipe the app's store); the app is the only one that may.
+    private let mayReset: Bool
+
+    init(mayReset: Bool = true) {
+        self.mayReset = mayReset
+    }
 
     func wrap(plaintext: Data) throws -> Data {
+        guard mayReset else { throw ForeignError.NeedsUserInteraction }
         do {
             let box = try AES.GCM.seal(plaintext, using: try key(create: true))
             guard let combined = box.combined else { throw ForeignError.Failed(reason: "sealing failed") }
@@ -28,8 +40,10 @@ final class KeychainKeyWrapper: KeyWrapper, @unchecked Sendable {
         do {
             return try AES.GCM.open(AES.GCM.SealedBox(combined: wrapped), using: try key(create: false))
         } catch let error as ForeignError {
+            if !mayReset { throw ForeignError.NeedsUserInteraction }
             throw error
         } catch {
+            if !mayReset { throw ForeignError.NeedsUserInteraction }
             throw ForeignError.Failed(reason: "the stored key does not open this data")
         }
     }
@@ -59,9 +73,11 @@ final class KeychainKeyWrapper: KeyWrapper, @unchecked Sendable {
             cached = key
             return key
         }
-        guard status == errSecItemNotFound, create else {
-            throw ForeignError.Failed(reason: "the key store is unavailable (\(status))")
+        guard status == errSecItemNotFound else {
+            // Locked, interaction not allowed, or another passing state: the key is there but cannot be read now.
+            throw ForeignError.NeedsUserInteraction
         }
+        guard create else { throw ForeignError.Failed(reason: "the key store has no key for this data") }
         let key = SymmetricKey(size: .bits256)
         var add = baseQuery()
         add[kSecValueData as String] = key.withUnsafeBytes { Data($0) }
