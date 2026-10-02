@@ -360,12 +360,11 @@ jobs:
           REWARDEN_RELEASE_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
         run: |
           export REWARDEN_RELEASE_KEYSTORE="$RUNNER_TEMP/release.keystore"
-          site="$(sed -n 's/^rewarden\.site=//p' gradle.properties)"
           version_code="$(($(date -u +%s) / 60))"
           echo "version-code=$version_code" >> "$GITHUB_OUTPUT"
+          # The site and the sign-in screen's server are gradle.properties' rewarden.site / rewarden.defaultServer.
           ./gradlew --no-daemon --no-configuration-cache :app:assembleFullRelease \
             -Prewarden.secureScreens=true \
-            "-Prewarden.defaultServer=$site" \
             "-Prewarden.versionCode=$version_code" \
             "-Prewarden.versionName=$VERSION" \
             "-Prewarden.build=$BUILD"

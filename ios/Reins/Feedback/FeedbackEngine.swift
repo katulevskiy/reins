@@ -20,7 +20,7 @@ extension FeedbackPreviewing {
 /// Reins's moments is made of. Nothing plays while the app is in the background: the events that matter there arrive
 /// as notifications, which sound the same chimes.
 ///
-/// Debug builds log one line per request (subsystem `dev.rewarden.ios`, category `feedback`): what played or why not.
+/// Debug builds log one line per request (subsystem `com.reins2fa.app`, category `feedback`): what played or why not.
 final class FeedbackEngine: Feedback, FeedbackPreviewing, @unchecked Sendable {
     let store: FeedbackStore
     private let env: AppEnvironment
@@ -28,7 +28,7 @@ final class FeedbackEngine: Feedback, FeedbackPreviewing, @unchecked Sendable {
     private let claims: ClaimTracker
     private let haptics = HapticPlayer()
     private let sounds: SoundPlayer
-    private let log = Logger(subsystem: "dev.rewarden.ios", category: "feedback")
+    private let log = Logger(subsystem: "com.reins2fa.app", category: "feedback")
     private var observers: [NSObjectProtocol] = []
 
     @MainActor

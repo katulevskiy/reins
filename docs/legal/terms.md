@@ -1,8 +1,9 @@
 # Terms of service (hosted service)
 
 > **DRAFT. Not legal advice. Needs review by a qualified lawyer before publication.** Placeholders are in
-> `[BRACKETS]`. These terms cover the hosted Reins service at `https://rewarden.arc-chat.com`. They do not cover the
-> open-source code, which is licensed separately (see [LICENSING.md](../../LICENSING.md)).
+> `[BRACKETS]`. These terms cover the hosted Reins service at `https://app.reins2fa.com` and its website,
+> `https://reins2fa.com`. They do not cover the open-source code, which is licensed separately (see
+> [LICENSING.md](../../LICENSING.md)).
 
 Last updated: [DATE]
 

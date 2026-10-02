@@ -10,7 +10,7 @@ git sends, and the approval is bound to exactly those bytes. Pack data goes from
 ## Install
 
 ```sh
-curl -fsSL https://rewarden.arc-chat.com/install.sh | sh
+curl -fsSL https://reins2fa.com/install.sh | sh
 ```
 
 Linux x86_64 and arm64 (static binaries, any distro) and macOS (Apple silicon and Intel). It installs to
@@ -26,7 +26,7 @@ aarch64) and macOS (Apple silicon and Intel), as `reins-desktop-<version>-<targe
 On Windows, in PowerShell:
 
 ```powershell
-irm https://rewarden.arc-chat.com/install.ps1 | iex
+irm https://reins2fa.com/install.ps1 | iex
 ```
 
 ### macOS (alpha)
@@ -92,10 +92,13 @@ SmartScreen may warn before the first start (More info → Run anyway, or **Unbl
 ## Set up
 
 ```sh
-rewarden login https://rewarden.arc-chat.com   # browser sign-in; the phone shows a key: it must match the terminal
-rewarden resume                                # start the background service, send github.com git through it
+rewarden login     # browser sign-in; the phone shows a key: it must match the terminal
+rewarden resume    # start the background service, send github.com git through it
 rewarden status
 ```
+
+`rewarden login` pairs with the hosted server, `https://app.reins2fa.com`; for a self-hosted one, give its address
+(`rewarden login https://reins.example.com`).
 
 `rewarden pause` switches git back to talking to GitHub directly (it removes exactly the git config lines `resume`
 added; the service keeps running and does nothing); `rewarden resume` switches back. For finer control: `rewarden

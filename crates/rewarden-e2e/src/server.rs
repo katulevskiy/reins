@@ -19,7 +19,7 @@ fn repo_root() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).join("../..").canonicalize().expect("repo root")
 }
 
-/// `target/debug/vaultwarden`, built once per test process.
+/// `target/debug/vaultwarden` (or under `CARGO_TARGET_DIR` when set), built once per test process.
 fn binary() -> &'static Path {
     static BIN: OnceLock<PathBuf> = OnceLock::new();
     BIN.get_or_init(|| {
@@ -30,7 +30,8 @@ fn binary() -> &'static Path {
             .status()
             .expect("cargo build");
         assert!(status.success(), "building the server failed");
-        root.join("target/debug/vaultwarden")
+        let target = std::env::var_os("CARGO_TARGET_DIR").map_or_else(|| root.join("target"), PathBuf::from);
+        target.join("debug/vaultwarden")
     })
 }
 

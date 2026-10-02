@@ -18,7 +18,7 @@
     $ErrorActionPreference = 'Stop'
     $ProgressPreference = 'SilentlyContinue' # Windows PowerShell downloads far slower while drawing progress
     # The site the next steps name. scripts/release-desktop.sh rewrites this line to the site it publishes to.
-    $DefaultSite = "https://rewarden.arc-chat.com"
+    $DefaultSite = "https://reins2fa.com"
     $Repo = 'katulevskiy/reins'
 
     function Fail([string] $Message) {
@@ -134,7 +134,7 @@
         if (-not $wasInstalled) {
             Write-Host ""
             Write-Host "Next:"
-            Write-Host "  rewarden login $DefaultSite"
+            Write-Host "  rewarden login"
             Write-Host "      sign in; your phone shows a key: approve only if it matches the one printed here"
             Write-Host "  rewarden resume"
             Write-Host "      start the background service and send GitHub git through it (rewarden pause undoes it)"

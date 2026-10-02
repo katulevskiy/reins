@@ -31,7 +31,7 @@ use crate::store::{McpTool, StoredMcpServer};
 use crate::{CoreError, text};
 
 /// Where the authorization server sends the browser back to (the app's intent filter).
-pub const REDIRECT_URI: &str = "dev.rewarden.android://mcp-oauth";
+pub const REDIRECT_URI: &str = "com.reins2fa.app://mcp-oauth";
 
 /// Hosts an MCP server or authorization server may be reached on over plain HTTP (development, the emulator's host).
 const PLAIN_HTTP_HOSTS: [&str; 4] = ["localhost", "127.0.0.1", "10.0.2.2", "[::1]"];
@@ -212,7 +212,7 @@ pub enum McpAddStep {
     Added {
         server: McpServerView,
     },
-    /// Open `authorize_url` in a browser tab; the redirect to `dev.rewarden.android://mcp-oauth` goes to
+    /// Open `authorize_url` in a browser tab; the redirect to `com.reins2fa.app://mcp-oauth` goes to
     /// `mcp_finish_sign_in`.
     NeedsSignIn {
         server_id: String,

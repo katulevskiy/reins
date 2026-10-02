@@ -56,6 +56,8 @@ enum Cmd {
     },
     /// Pair with a Rewarden server; your phone approves and decides from then on.
     Login {
+        /// The server your phone signed in to; a self-hosted one needs its address here.
+        #[arg(default_value = rewarden_proto::DEFAULT_SERVER)]
         server_url: String,
         /// Print the sign-in link instead of opening the browser.
         #[arg(long)]
@@ -387,7 +389,7 @@ async fn resume(paths: &Paths, config: &Config) -> Result<(), String> {
     Git::default().setup_hosts(&Scope::Global, config)?;
     out!("git sends {} through Rewarden (http://{}/).", enabled_hosts(config)?, config.listen);
     if server::oauth::logged_in_server(paths).is_none() {
-        out!("Not logged in: the local policy decides. `rewarden login <server>` to decide on your phone.");
+        out!("Not logged in: the local policy decides. `rewarden login` to decide on your phone.");
     }
     out!("`rewarden pause` switches back to talking to the git hosts directly.");
     Ok(())

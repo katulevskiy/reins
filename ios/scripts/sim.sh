@@ -35,9 +35,9 @@ APP="$DD/Build/Products/Debug-iphonesimulator/Reins.app"
 [[ -d "$APP" ]] || { echo "build failed" >&2; exit 1; }
 xcrun simctl boot "$UDID" 2>/dev/null || true
 xcrun simctl bootstatus "$UDID" -b >/dev/null
-xcrun simctl terminate "$UDID" dev.rewarden.ios 2>/dev/null || true
+xcrun simctl terminate "$UDID" com.reins2fa.app 2>/dev/null || true
 xcrun simctl install "$UDID" "$APP"
-xcrun simctl launch --terminate-running-process "$UDID" dev.rewarden.ios "$@" >/dev/null
+xcrun simctl launch --terminate-running-process "$UDID" com.reins2fa.app "$@" >/dev/null
 if [[ -n "$SHOT" ]]; then
   sleep "$WAIT"
   xcrun simctl io "$UDID" screenshot "$SHOT" >/dev/null 2>&1

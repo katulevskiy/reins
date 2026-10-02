@@ -1,7 +1,8 @@
 # Quick start
 
-This guide takes you from nothing to an agent whose actions wait for your phone. The examples use the hosted server
-`https://rewarden.arc-chat.com`. If you run your own, use its address instead ([self-hosting](self-hosting.md)).
+This guide takes you from nothing to an agent whose actions wait for your phone. The apps use the hosted server,
+`https://app.reins2fa.com`, unless you tell them otherwise. If you run your own, see [self-hosting](self-hosting.md) for
+pointing them at it.
 
 You need:
 
@@ -11,19 +12,19 @@ You need:
 
 ## 1. Create an account
 
-Reins accounts are Vaultwarden (Bitwarden-compatible) accounts. Open the server's address in a browser, for example
-`https://rewarden.arc-chat.com/`, and choose **Create account**. Any Bitwarden client pointed at the server works as
-well. Remember the master password. The phone uses it to sign in, and to unlock the vault if you connect the vault
-later.
+Reins accounts are Vaultwarden (Bitwarden-compatible) accounts. Open <https://app.reins2fa.com/> in a browser and
+choose **Create account**. Any Bitwarden client pointed at the server works as well. Remember the master password.
+The phone uses it to sign in, and to unlock the vault if you connect the vault later.
 
 The phone app supports authenticator-app (TOTP) two-factor login. Other second factors are not supported by the app
 yet.
 
 ## 2. Install the phone app
 
-1. On the phone, open <https://rewarden.arc-chat.com/app> and install the APK (Android asks you to allow installs from
-   your browser once). The app updates itself from the same place.
-2. Sign in with the server address, your email and your master password.
+1. On the phone, open <https://reins2fa.com/app> and install the APK (Android asks you to allow installs from your
+   browser once). The app updates itself from the same place.
+2. Sign in with your email and your master password. The server is already filled in with the hosted one; replace it
+   only if you run your own.
 3. Signing in makes this phone your **approval device**. Only one phone per account is the approval device. To move
    the role to another phone, sign in there, or tap **Use this phone for approvals** in its settings. The old phone is
    told it was replaced.
@@ -45,7 +46,7 @@ Go to **Activity → Integrations**. Each service is connected on the phone and 
 
 ## 4a. Connect a cloud AI (Claude.ai, ChatGPT)
 
-- **Claude.ai**: Settings → Connectors → Add custom connector, URL `https://rewarden.arc-chat.com/mcp`.
+- **Claude.ai**: Settings → Connectors → Add custom connector, URL `https://app.reins2fa.com/mcp`.
 - **ChatGPT**: Settings → Connectors (developer mode), same URL.
 
 A browser page asks for your account email and shows a two-digit code. Your phone shows three codes. Tap the one that
@@ -55,7 +56,7 @@ connected, and each call waits for your phone unless a standing permission cover
 ## 4b. Install the desktop app
 
 ```sh
-curl -fsSL https://rewarden.arc-chat.com/install.sh | sh
+curl -fsSL https://reins2fa.com/install.sh | sh
 ```
 
 It works on Linux and macOS. The script downloads the build for your computer, checks its SHA-256, and installs
@@ -78,7 +79,7 @@ downloaded with a browser is quarantined and Gatekeeper refuses the unsigned pro
 On Windows, in PowerShell (no administrator needed):
 
 ```powershell
-irm https://rewarden.arc-chat.com/install.ps1 | iex
+irm https://reins2fa.com/install.ps1 | iex
 ```
 
 The script downloads the latest GitHub release's `reins-desktop-<version>-x86_64-pc-windows-msvc.zip` (or
@@ -94,13 +95,14 @@ GitHub's Windows runners, not yet field-tested end to end on a real PC; see the
 Pair it with your phone:
 
 ```sh
-rewarden login https://rewarden.arc-chat.com
+rewarden login
 ```
 
-A browser opens (use `--no-browser` to print the link instead). The terminal prints the app's key, for example
-`4821 9930`. Your phone shows the same digits in a **Desktop app key** card, next to the two-digit browser code.
-**Approve only if the digits match.** On approval the phone pins this key to the connection. From then on only this
-computer can open the credentials the phone sends it.
+It pairs with the hosted server; for your own, add its address (`rewarden login https://reins.example.com`). A browser
+opens (use `--no-browser` to print the link instead). The terminal prints the app's key, for example `4821 9930`. Your
+phone shows the same digits in a **Desktop app key** card, next to the two-digit browser code. **Approve only if the
+digits match.** On approval the phone pins this key to the connection. From then on only this computer can open the
+credentials the phone sends it.
 
 Start the background service and send git through it:
 

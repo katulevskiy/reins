@@ -458,7 +458,7 @@ pub(crate) struct Access {
 }
 
 fn not_logged_in() -> LinkError {
-    LinkError::LoggedOut("not logged in to a Rewarden server; run `rewarden login <server>`".to_owned())
+    LinkError::LoggedOut("not logged in to a Rewarden server; run `rewarden login`".to_owned())
 }
 
 impl SessionTokens {
