@@ -104,6 +104,8 @@ final class AppModel {
     var onPendingChanged: (([PendingItem]) -> Void)?
     var onAutopilotChanged: ((AutopilotSettings?) -> Void)?
     var onGrantsChanged: (([GrantView]) -> Void)?
+    /// The session is there (at launch or after signing in): the moment to ask for notifications.
+    var onSignedIn: (() -> Void)?
 
     init(core: any RewardenCoreProtocol, feedback: Feedback, authenticator: Authenticating, demo: Bool = false) {
         self.core = core
@@ -122,6 +124,7 @@ final class AppModel {
         }
         setSession(info.map(SessionState.signedIn) ?? .signedOut)
         if info != nil {
+            onSignedIn?()
             await refreshPending()
             await refreshConnections()
             if !DeviceStatus.replaced { await registerDeviceQuietly() }
@@ -144,6 +147,8 @@ final class AppModel {
         sheet = nil
         paths = [:]
         section = .activity
+        onPendingChanged?([])
+        onGrantsChanged?([])
         publish()
     }
 
@@ -287,6 +292,7 @@ final class AppModel {
     func setActive(_ active: Bool) {
         guard active != isActive else { return }
         isActive = active
+        AppPresence.setActive(active)
         if active {
             startSync()
             Task {

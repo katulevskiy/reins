@@ -21,9 +21,9 @@ enum McpSignInResult: Equatable {
 /// It plays `.connected` / `.error`, sets `model.mcpNotice` with Android's wording and reloads the servers.
 @MainActor
 enum McpSignIn {
-    static let redirectScheme = "dev.rewarden.android"
-    static let redirectHost = "mcp-oauth"
-    private static let maxRedirectChars = 8_192
+    nonisolated static let redirectScheme = "dev.rewarden.android"
+    nonisolated static let redirectHost = "mcp-oauth"
+    nonisolated private static let maxRedirectChars = 8_192
 
     static func run(serverId: String, authorizeUrl: String, model: AppModel) async -> McpSignInResult {
         guard let url = URL(string: authorizeUrl), isWebPage(url) else {
@@ -69,13 +69,13 @@ enum McpSignIn {
     }
 
     /// The core's own redirect address (anything else is never handed to it).
-    static func isRedirect(_ uri: String) -> Bool {
+    nonisolated static func isRedirect(_ uri: String) -> Bool {
         guard uri.count <= maxRedirectChars, let c = URLComponents(string: uri) else { return false }
         return c.scheme == redirectScheme && c.host == redirectHost && c.user == nil && c.port == nil
     }
 
     /// A sign-in page may only be a web page (never a `file:` or an app's address).
-    static func isWebPage(_ url: URL) -> Bool {
+    nonisolated static func isWebPage(_ url: URL) -> Bool {
         (url.scheme == "https" || url.scheme == "http") && !(url.host ?? "").isEmpty
     }
 }
