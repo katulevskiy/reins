@@ -309,7 +309,7 @@ private struct PendingCard: View {
     private func timeLine(_ u: Urgency?) -> String {
         guard let u else { return TimeText.relative(item.createdAt) }
         if u.stale { return "Stopped waiting · you can still approve" }
-        return u.urgent ? "\(u.remainingSeconds) s left" : "\(u.remainingSeconds) s · waiting for you"
+        return u.urgent ? "\(u.remainingText) left" : "\(u.remainingText) · waiting for you"
     }
 
     private func timeColor(_ u: Urgency?) -> Color {

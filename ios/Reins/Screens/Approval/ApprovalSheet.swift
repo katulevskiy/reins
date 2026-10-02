@@ -200,7 +200,7 @@ private struct WaitLine: View {
                         .padding(.top, 14)
                         .accessibilityIdentifier("lateBanner")
                 } else {
-                    Text("\(label) is waiting · \(u.remainingSeconds) s left")
+                    Text("\(label) is waiting · \(u.remainingText) left")
                         .font(RFont.sans(13.5, .medium))
                         .foregroundStyle(u.urgent ? Palette.danger : Palette.secondary)
                         .monospacedDigit()

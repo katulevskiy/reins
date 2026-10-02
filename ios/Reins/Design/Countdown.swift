@@ -45,6 +45,11 @@ struct Urgency: Equatable {
             urgent: !stale && remaining <= Double(urgentSeconds)
         )
     }
+
+    /// "40 s" under a minute, "9:55" above (Android shows seconds only; "595 s" reads badly).
+    var remainingText: String {
+        remainingSeconds < 60 ? "\(remainingSeconds) s" : String(format: "%d:%02d", remainingSeconds / 60, remainingSeconds % 60)
+    }
 }
 
 /// Redraws `content` with the current time while timers are live: four times a second by default, which keeps a

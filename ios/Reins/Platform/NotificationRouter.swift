@@ -33,9 +33,11 @@ final class NotificationRouter: NSObject, UNUserNotificationCenterDelegate {
             self?.dropStale(keeping: Set(list.map(\.id)))
         }
         let signedIn = model.onSignedIn
+        // The `-demo` build asks only when told to (`-askNotifications`): the prompt would cover every screenshot.
+        let ask = !model.demo
         model.onSignedIn = { [weak self] in
             signedIn?()
-            Task { await self?.requestPermission() }
+            if ask { Task { await self?.requestPermission() } }
         }
     }
 
