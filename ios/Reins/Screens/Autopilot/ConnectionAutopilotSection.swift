@@ -115,11 +115,11 @@ struct ConnectionAutopilotContent: View {
             .accessibilityIdentifier("connectionMode")
 
             FlowLayout(spacing: 8) {
-                SelectChip(title: "Like every AI", selected: chosen == nil, identifier: "connMode:follow") {
+                AutopilotChip(title: "Like every AI", selected: chosen == nil, identifier: "connMode:follow") {
                     if chosen != nil { Task { await ap.setMode(nil, connectionId: connectionId) } }
                 }
                 ForEach(AutopilotText.modes, id: \.self) { m in
-                    SelectChip(title: AutopilotText.name(m), selected: chosen == m, identifier: "connMode:\(AutopilotText.key(m))") {
+                    AutopilotChip(title: AutopilotText.name(m), selected: chosen == m, identifier: "connMode:\(AutopilotText.key(m))") {
                         pick(m, chosen: chosen)
                     }
                 }
@@ -134,7 +134,7 @@ struct ConnectionAutopilotContent: View {
                     FlowLayout(spacing: 8) {
                         ForEach(ap.profiles, id: \.id) { p in
                             let title = "\(AutopilotText.profileIcon(p))  \(untrusted(p.name))" + (p.id == s.defaultProfileId ? " (default)" : "")
-                            SelectChip(title: title, selected: p.id == profileId, identifier: "connProfile:\(p.id)") {
+                            AutopilotChip(title: title, selected: p.id == profileId, identifier: "connProfile:\(p.id)") {
                                 if p.id != profileId {
                                     Task { await ap.assignProfile(connectionId, p.id == s.defaultProfileId ? nil : p.id) }
                                 }

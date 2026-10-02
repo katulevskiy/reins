@@ -125,7 +125,7 @@ struct BypassSheet: View {
                     .padding(.bottom, 8)
                 HStack(spacing: 8) {
                     ForEach(AutopilotText.bypassMinutes, id: \.self) { m in
-                        SelectChip(title: AutopilotText.bypassChoice(m), selected: minutes == m, identifier: "bypass:\(m)") { minutes = m }
+                        AutopilotChip(title: AutopilotText.bypassChoice(m), selected: minutes == m, identifier: "bypass:\(m)") { minutes = m }
                     }
                 }
                 HStack(spacing: 10) {

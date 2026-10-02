@@ -34,7 +34,7 @@ struct TryItScreen: View {
 
                 chips("Examples") {
                     ForEach(AutopilotText.examples, id: \.title) { e in
-                        SelectChip(title: e.title, selected: example == e.title, identifier: "example:\(e.title)") {
+                        AutopilotChip(title: e.title, selected: example == e.title, identifier: "example:\(e.title)") {
                             example = e.title
                             text = e.situation
                             ap.clearEvaluation()
@@ -45,7 +45,7 @@ struct TryItScreen: View {
                 if ap.profiles.count > 1 {
                     chips("Profile") {
                         ForEach(ap.profiles, id: \.id) { p in
-                            SelectChip(title: "\(AutopilotText.profileIcon(p))  \(untrusted(p.name))", selected: p.id == profile?.id, identifier: "tryProfile:\(p.id)") {
+                            AutopilotChip(title: "\(AutopilotText.profileIcon(p))  \(untrusted(p.name))", selected: p.id == profile?.id, identifier: "tryProfile:\(p.id)") {
                                 chosenProfile = p.id
                                 ap.clearEvaluation()
                             }
@@ -173,7 +173,7 @@ private struct VerdictCard: View {
             }
             if !s.neighbours.isEmpty {
                 AutopilotCaption("Like these decisions of yours").padding(.top, 16).padding(.bottom, 2)
-                ForEach(Array(s.neighbours.enumerated()), id: \.offset) { _, n in NeighbourRow(neighbour: n) }
+                ForEach(Array(s.neighbours.enumerated()), id: \.offset) { _, n in AutopilotNeighbourRow(neighbour: n) }
             }
             ForEach(AutopilotText.suggestionNotes(s), id: \.self) { note in
                 AutopilotNoteRow(text: note).padding(.top, 12)

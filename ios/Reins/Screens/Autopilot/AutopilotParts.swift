@@ -1,9 +1,8 @@
 import SwiftUI
 
 // The pieces Autopilot's screens share (the Android app's `AutopilotParts`): each mode's colour and symbol, tiles,
-// rings and meters, the mode picker, chips, the suggestion strip of the approval sheet, the activity badge and the
-// header pill. Other screens may use them: `AutopilotModePill` (Activity's header), `AutopilotSuggestionStrip`
-// (the approval sheet), `AutopilotBadge` (activity rows).
+// rings and meters, the mode picker and chips. (Activity's mode pill, the approval sheet's suggestion and the
+// activity badge live with those screens.)
 
 enum AutopilotStyle {
     /// Neutral for Manual, blue for Assisted, the accent for Auto, red for Bypass, amber for Lockdown.
@@ -150,7 +149,7 @@ struct ProbabilityRow: View {
 }
 
 /// A remembered decision like the one at hand: what the user did, what it was, how alike.
-struct NeighbourRow: View {
+struct AutopilotNeighbourRow: View {
     var neighbour: NeighbourView
 
     var body: some View {
@@ -191,7 +190,7 @@ struct NeighbourRow: View {
 }
 
 /// A choice in a row of choices: tinted when chosen. Plays the selection.
-struct SelectChip: View {
+struct AutopilotChip: View {
     var title: String
     var selected: Bool
     var identifier: String? = nil
@@ -423,148 +422,5 @@ struct AutopilotNoteRow: View {
             Image(systemName: "info.circle").font(.system(size: 14)).foregroundStyle(Palette.secondary)
             Text(text).font(RFont.sans(13.5)).foregroundStyle(Palette.secondary).fixedSize(horizontal: false, vertical: true)
         }
-    }
-}
-
-// MARK: For other screens
-
-/// The Activity header's Autopilot pill: the global mode at a glance. Red with a live countdown while a bypass runs,
-/// amber in Lockdown, quiet otherwise. `action` opens Autopilot.
-struct AutopilotModePill: View {
-    var settings: AutopilotSettings?
-    var action: () -> Void
-
-    var body: some View {
-        let mode = settings?.mode ?? .manual
-        let strong = mode == .bypass
-        let tint = AutopilotStyle.tint(mode)
-        Button(action: action) {
-            TimelineView(.periodic(from: .now, by: 1)) { context in
-                HStack(spacing: 6) {
-                    if strong {
-                        Circle().fill(.white).frame(width: 8, height: 8)
-                            .phaseAnimator([1.0, 0.35]) { dot, a in dot.opacity(a) } animation: { _ in .linear(duration: 0.9) }
-                    } else {
-                        Image(systemName: AutopilotText.symbol(mode)).font(.system(size: 13, weight: .semibold))
-                    }
-                    if strong, let until = settings?.bypassUntil {
-                        Text(AutopilotText.clock(until: until, now: Int64(context.date.timeIntervalSince1970)))
-                            .font(RFont.mono(13.5, .semibold)).monospacedDigit()
-                    } else {
-                        Text(AutopilotText.name(mode)).font(RFont.sans(13.5, .semibold))
-                    }
-                }
-                .foregroundStyle(strong ? Color.white : mode == .manual ? Palette.secondary : tint)
-                .padding(.leading, 11)
-                .padding(.trailing, 13)
-                .frame(height: 34)
-                .background(strong ? Palette.danger : tint.opacity(mode == .manual ? 0.08 : 0.13), in: Capsule())
-            }
-        }
-        .buttonStyle(PressDim())
-        .accessibilityLabel("Autopilot: \(AutopilotText.name(mode))")
-        .accessibilityIdentifier("modePill")
-    }
-}
-
-/// The approval sheet's line from Autopilot: what it would do and how sure it is; tapping opens why (the
-/// remembered decisions it is like, and anything that keeps it from deciding).
-struct AutopilotSuggestionStrip: View {
-    var suggestion: SuggestionView
-    @State private var open = false
-    @Environment(\.feedback) private var feedback
-
-    var body: some View {
-        let s = suggestion
-        let tint: Color = s.floor ? Palette.secondary : !s.judged ? Palette.tertiary : AutopilotStyle.tint(s.verdict)
-        VStack(alignment: .leading, spacing: 0) {
-            Button {
-                withAnimation(.spring(response: 0.35, dampingFraction: 0.9)) { open.toggle() }
-                feedback.play(.expand(open))
-            } label: {
-                HStack(spacing: 12) {
-                    if s.judged && !s.floor {
-                        ProgressRing(fraction: Double(s.verdict == .deny ? s.pDeny : s.pApprove), tint: tint, size: 34, stroke: 3.5) {
-                            Image(systemName: "sparkles").font(.system(size: 13, weight: .semibold)).foregroundStyle(tint)
-                        }
-                    } else {
-                        IconTile(symbol: s.floor ? "shield.fill" : "sparkles", tint: tint, size: 34)
-                    }
-                    VStack(alignment: .leading, spacing: 2) {
-                        Text(AutopilotText.suggestionHeadline(s))
-                            .font(RFont.sans(15, .semibold))
-                            .foregroundStyle(Palette.text)
-                            .accessibilityIdentifier("suggestionHeadline")
-                        if !open && s.judged && !s.reason.isEmpty {
-                            Text(untrusted(s.reason)).font(RFont.sans(12.5)).foregroundStyle(Palette.secondary).lineLimit(1)
-                        }
-                    }
-                    Spacer(minLength: 8)
-                    Image(systemName: "chevron.right")
-                        .font(.system(size: 13, weight: .semibold))
-                        .foregroundStyle(Palette.tertiary)
-                        .rotationEffect(.degrees(open ? 90 : 0))
-                }
-                .padding(.horizontal, 14)
-                .padding(.vertical, 12)
-                .contentShape(Rectangle())
-            }
-            .buttonStyle(.plain)
-            .accessibilityIdentifier("suggestionToggle")
-            if open {
-                VStack(alignment: .leading, spacing: 8) {
-                    if s.judged {
-                        ProbabilityRow(label: "Approve", p: s.pApprove, tint: Palette.success)
-                        ProbabilityRow(label: "Deny", p: s.pDeny, tint: Palette.danger)
-                        ProbabilityRow(label: "Confidence", p: s.confidence, tint: Palette.accent)
-                        if !s.reason.isEmpty {
-                            Text(untrusted(s.reason)).font(RFont.sans(14)).foregroundStyle(Palette.text).padding(.top, 4)
-                        }
-                    }
-                    if !s.neighbours.isEmpty {
-                        AutopilotCaption("Like these decisions of yours").padding(.top, 4)
-                        ForEach(Array(s.neighbours.prefix(4).enumerated()), id: \.offset) { i, n in
-                            NeighbourRow(neighbour: n).accessibilityIdentifier("neighbour:\(i)")
-                        }
-                    }
-                    ForEach(AutopilotText.suggestionNotes(s), id: \.self) { AutopilotNoteRow(text: $0) }
-                    Text("Profile \(untrusted(s.profileName)) · decided on this phone")
-                        .font(RFont.sans(12))
-                        .foregroundStyle(Palette.tertiary)
-                        .padding(.top, 4)
-                }
-                .padding(.horizontal, 14)
-                .padding(.bottom, 14)
-                .transition(.opacity.combined(with: .move(edge: .top)))
-                .accessibilityIdentifier("suggestionDetail")
-            }
-        }
-        .background(tint.opacity(0.08), in: RoundedRectangle(cornerRadius: 18, style: .continuous))
-        .overlay(RoundedRectangle(cornerRadius: 18, style: .continuous).strokeBorder(tint.opacity(0.25), lineWidth: 0.75))
-        .clipShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
-        .accessibilityIdentifier("suggestion")
-    }
-}
-
-/// The small mark on activity entries Autopilot, a bypass or Lockdown decided (`decidedBy`).
-struct AutopilotBadge: View {
-    var decidedBy: String
-
-    var body: some View {
-        let (label, symbol, tint): (String, String, Color) = switch decidedBy {
-        case "bypass": ("Bypass", "bolt.fill", Palette.danger)
-        case "lockdown": ("Lockdown", "lock.fill", Palette.warning)
-        default: ("Autopilot", "sparkles", Palette.accent)
-        }
-        HStack(spacing: 4) {
-            Image(systemName: symbol).font(.system(size: 10, weight: .bold))
-            Text(label).font(RFont.sans(11.5, .semibold)).lineLimit(1)
-        }
-        .foregroundStyle(tint)
-        .padding(.leading, 6)
-        .padding(.trailing, 8)
-        .frame(height: 22)
-        .background(tint.opacity(0.12), in: Capsule())
-        .accessibilityIdentifier("autoBadge")
     }
 }

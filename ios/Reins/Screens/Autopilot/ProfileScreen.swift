@@ -188,7 +188,7 @@ private struct ProfileHeader: View {
             HStack(spacing: 10) {
                 Stat(value: "\(profile.memoryCount)", label: "remembered").accessibilityIdentifier("statMemory")
                 Stat(value: "\(profile.classes.filter(\.autoApprove).count) of \(profile.classes.count)", label: "on Auto")
-                Stat(value: profile.trainedAt.map(NeighbourRow.relative) ?? "not yet", label: "trained")
+                Stat(value: profile.trainedAt.map(AutopilotNeighbourRow.relative) ?? "not yet", label: "trained")
             }
             .padding(.top, 18)
         }
@@ -253,7 +253,7 @@ private struct ClassRow: View {
                             .foregroundStyle(locked ? Palette.secondary : cls.autoApprove ? Palette.success : Palette.accent)
                             .fixedSize(horizontal: false, vertical: true)
                             .accessibilityIdentifier("classStatus:\(cls.classKey)")
-                        Text(AutopilotText.classNumbers(cls)).font(RFont.sans(12.5)).foregroundStyle(Palette.tertiary).lineLimit(1)
+                        Text(AutopilotText.classNumbers(cls)).font(RFont.sans(12.5)).foregroundStyle(Palette.tertiary).fixedSize(horizontal: false, vertical: true)
                     }
                     Spacer(minLength: 8)
                     if cls.autoDeny { StatusPill(text: "Denies", tint: Palette.danger) }
@@ -269,9 +269,9 @@ private struct ClassRow: View {
             .accessibilityIdentifier("class:\(cls.classKey)")
             if open {
                 FlowLayout(spacing: 8) {
-                    SelectChip(title: "Learn by itself", selected: cls.manual == nil, identifier: "lock:auto:\(cls.classKey)") { onLock(nil) }
-                    SelectChip(title: "Always ask", selected: cls.manual == false, identifier: "lock:on:\(cls.classKey)") { onLock(true) }
-                    SelectChip(title: "Unlock now", selected: cls.manual == true, identifier: "lock:off:\(cls.classKey)") { onLock(false) }
+                    AutopilotChip(title: "Learn by itself", selected: cls.manual == nil, identifier: "lock:auto:\(cls.classKey)") { onLock(nil) }
+                    AutopilotChip(title: "Always ask", selected: cls.manual == false, identifier: "lock:on:\(cls.classKey)") { onLock(true) }
+                    AutopilotChip(title: "Unlock now", selected: cls.manual == true, identifier: "lock:off:\(cls.classKey)") { onLock(false) }
                 }
                 .padding(.leading, 84)
                 .padding(.trailing, 16)

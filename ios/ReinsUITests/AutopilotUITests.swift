@@ -84,7 +84,8 @@ final class AutopilotUITests: XCTestCase {
         waitFor("endLockdown")
         shot("autopilot-lockdown")
         tap("endLockdown")
-        text("Autopilot answers what it is sure of")
+        // Lockdown replaced the mode picked before it, so it ends in Manual (as on Android).
+        text("Autopilot stays out of the way")
     }
 
     func testTheModelDownloadsWithProgressAndCanBeDeleted() {

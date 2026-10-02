@@ -41,7 +41,8 @@ final class OnnxModelRuntime: ModelRuntime, @unchecked Sendable {
         runtime.memoryObserver = NotificationCenter.default.addObserver(
             forName: UIApplication.didReceiveMemoryWarningNotification, object: nil, queue: nil
         ) { [weak runtime] _ in
-            runtime?.relieveMemory()
+            // Off the main thread: a run in progress holds the session until it is done.
+            DispatchQueue.global(qos: .utility).async { runtime?.relieveMemory() }
         }
         return runtime
     }
