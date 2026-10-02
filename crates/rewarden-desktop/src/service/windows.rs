@@ -216,22 +216,25 @@ mod imp {
     /// Stops the daemon (when `stop_now`), removes the `Run` value and the copy. `Ok(false)` when it was not installed.
     pub async fn uninstall(paths: &Paths, config: &Config, stop_now: bool) -> Result<bool, String> {
         let daemon = daemon_exe(paths);
-        let value = installed()?;
-        if value.is_none() && !daemon.exists() {
+        if installed()?.is_none() {
+            // A copy an earlier uninstall could not delete yet.
+            std::fs::remove_file(&daemon).ok();
             return Ok(false);
         }
         if stop_now {
             stop(paths, config).await?;
         }
-        if value.is_some() {
-            let out = reg(&["delete", RUN_KEY, "/v", RUN_VALUE, "/f"])?;
-            if !out.status.success() {
-                return Err(format!("cannot remove {}: {}", shown(), String::from_utf8_lossy(&out.stderr).trim()));
-            }
+        let out = reg(&["delete", RUN_KEY, "/v", RUN_VALUE, "/f"])?;
+        if !out.status.success() {
+            return Err(format!("cannot remove {}: {}", shown(), String::from_utf8_lossy(&out.stderr).trim()));
         }
-        // Still running (not stopped): it goes with the next update or install.
-        if std::fs::remove_file(&daemon).is_err() && daemon.exists() {
-            log::info!("{} is in use; removed later", daemon.display());
+        // The stopped daemon may take a moment to exit; still running (not stopped), the copy goes with the next
+        // uninstall, install or update.
+        for _ in 0..20 {
+            if std::fs::remove_file(&daemon).is_ok() || !daemon.exists() {
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(100)).await;
         }
         crate::update::remove_set_aside(&daemon);
         Ok(true)
