@@ -7,7 +7,7 @@ import dev.rewarden.android.MainActivity
 import dev.rewarden.android.ui.mcp.isMcpRedirect
 
 /**
- * Receives `dev.rewarden.android://mcp-oauth?…`, where an MCP server's sign-in page sends the browser back to, and hands
+ * Receives `com.reins2fa.app://mcp-oauth?…`, where an MCP server's sign-in page sends the browser back to, and hands
  * it to [MainActivity]. Clearing the top of the task closes the Custom Tab the page was shown in, instead of stacking a
  * second app screen on top of it. Shows nothing itself.
  */

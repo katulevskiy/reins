@@ -61,7 +61,7 @@
                 <action android:name="android.intent.action.VIEW" />
                 <category android:name="android.intent.category.DEFAULT" />
                 <category android:name="android.intent.category.BROWSABLE" />
-                <data android:scheme="dev.rewarden.android" android:host="mcp-oauth" />
+                <data android:scheme="com.reins2fa.app" android:host="mcp-oauth" />
             </intent-filter>
         </activity>
 

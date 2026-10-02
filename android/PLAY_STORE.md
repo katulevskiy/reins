@@ -7,8 +7,8 @@ drafts that someone responsible for the app's legal commitments must check befor
 
 | | `full` | `play` |
 |---|---|---|
-| Distributed as | APK on rewarden.arc-chat.com (`scripts/release-android.sh`) | App bundle uploaded to Google Play |
-| Application id | `dev.rewarden.android` | `dev.rewarden.android` (the same) |
+| Distributed as | APK on reins2fa.com (`scripts/release-android.sh`) | App bundle uploaded to Google Play |
+| Application id | `com.reins2fa.app` | `com.reins2fa.app` (the same) |
 | Text messages (READ_SMS, SEND_SMS) | yes | no: no permission, the core is not offered the integration, the Integrations screen does not list it |
 | Updates | in-app updater (REQUEST_INSTALL_PACKAGES, `latest.json`) | Google Play; no updater, no "App updates" channel, no background check |
 | Signed by | the app's key (the script re-signs; SHA-1 `0dda03e6…`) | the upload key; Play re-signs with the app signing key it holds (Play App Signing) |
@@ -17,7 +17,7 @@ Both have the same application id. Only one of them can be installed on a phone,
 Android refuses to update one with the other: switching from the APK to Play (or back) means uninstalling first, which
 deletes the phone's data (it is in no-backup storage and bound to the phone's Keystore). The user signs in again and
 registers the phone again; grants, history and Autopilot's training stay on the old phone's data and are lost. A
-separate id (`dev.rewarden.android.play`) would let both coexist, but would need a second Firebase app, a second Android
+separate id (`com.reins2fa.app.play`) would let both coexist, but would need a second Firebase app, a second Android
 OAuth client and its own redirect scheme for no real benefit: one person needs one approval phone.
 
 What the flavors change is kept in one place each:
@@ -38,7 +38,11 @@ cd android
 ./gradlew assembleFullRelease          # the direct APK (scripts/release-android.sh does this and publishes it)
 ./gradlew bundlePlayRelease \
     -Prewarden.versionCode=N -Prewarden.versionName=0.1.0 -Prewarden.build=0.1.0-N
+<<<<<<< HEAD
 # → app/build/outputs/bundle/playRelease/app-play-release.aab
+=======
+# → app/build/outputs/bundle/playRelease/app-play-release.aab (signs in to rewarden.defaultServer, gradle.properties)
+>>>>>>> origin/ios-app
 ./gradlew testFullDebugUnitTest testPlayDebugUnitTest
 ```
 
@@ -67,7 +71,7 @@ Merged `play` release manifest (dependencies included) against Google Play's pol
 | RECEIVE_BOOT_COMPLETED | app (grant reminders), WorkManager | OK | kept |
 | USE_BIOMETRIC, USE_FINGERPRINT | androidx.biometric | OK | kept |
 | com.google.android.c2dm.permission.RECEIVE | Firebase Messaging | OK | kept |
-| `dev.rewarden.android.DYNAMIC_RECEIVER_NOT_EXPORTED_PERMISSION` | androidx.core (signature) | OK | kept |
+| `com.reins2fa.app.DYNAMIC_RECEIVER_NOT_EXPORTED_PERMISSION` | androidx.core (signature) | OK | kept |
 | FOREGROUND_SERVICE, FOREGROUND_SERVICE_DATA_SYNC (WorkManager's `SystemForegroundService`, type `dataSync`) | app (Autopilot model download) | **Needs declaration** (Foreground service permissions form, with a video) | kept |
 | READ_CALENDAR, WRITE_CALENDAR | app (Phone calendar) | OK; personal and sensitive data: prominent disclosure + Data safety | kept |
 | READ_CONTACTS | app (Phone contacts) | OK; personal and sensitive data: prominent disclosure + Data safety | kept |
@@ -79,8 +83,8 @@ Merged `play` release manifest (dependencies included) against Google Play's pol
 | ACCESS_BACKGROUND_LOCATION, any location | not requested | n/a | absent |
 | Accessibility service, VPN service, MANAGE_EXTERNAL_STORAGE, USE_FULL_SCREEN_INTENT | not used | n/a | absent |
 | `com.google.android.gms.permission.AD_ID` | not requested, no ads or analytics SDK | Declare "no advertising ID" | absent |
-| Exported `McpRedirectActivity` (`dev.rewarden.android://mcp-oauth`) | app | OK; it only hands a well-formed redirect to `MainActivity` | kept |
-| Autopilot model download (~400 MB ONNX from rewarden.arc-chat.com/models) | app | OK: data, not executable code; pinned by SHA-256 in the core | kept |
+| Exported `McpRedirectActivity` (`com.reins2fa.app://mcp-oauth`) | app | OK; it only hands a well-formed redirect to `MainActivity` | kept |
+| Autopilot model download (~400 MB ONNX from reins2fa.com/models) | app | OK: data, not executable code; pinned by SHA-256 in the core | kept |
 | ONNX Runtime telemetry (`ai.onnxruntime.TelemetryInitializer`) | onnxruntime-android | removed from the manifest (`tools:node="remove"`) | removed |
 | Gmail restricted scopes (`gmail.readonly`, `gmail.send`) | Google sign-in | Not a Play rule, but Google OAuth verification of restricted scopes, including a yearly security assessment (CASA) because the content reaches a server | owner action |
 
@@ -95,13 +99,13 @@ Other policy points:
   reachable from the app. **[legal review]**
 - **Account deletion.** Accounts are created on the Reins (Vaultwarden) server, not in the app, so the in-app
   deletion requirement may not apply; Play still asks for a web link where users can request deletion of their account
-  and data. Provide one for rewarden.arc-chat.com. **[legal review]**
+  and data. Provide one for app.reins2fa.com. **[legal review]**
 - **App access for review.** Everything is behind sign-in: give the reviewers a demo server account (email, password,
   no two-step) and instructions to pair an AI, in Play Console > App content > App access.
 - **New developer accounts** (personal, created after 2023-11-13) must run a closed test with at least 12 testers for
   14 days before applying for production.
 - **Android developer verification** (enforced from 2026-09 in Brazil, Indonesia, Singapore and Thailand, later
-  worldwide) also covers the `full` APK: register `dev.rewarden.android` and both signing certificates (the APK's key
+  worldwide) also covers the `full` APK: register `com.reins2fa.app` and both signing certificates (the APK's key
   and the Play app signing key) in the Android Developer Console, or the APK will stop installing there. Note that the
   APK is currently signed with a debug keystore. **[owner action]**
 - **Android 15 `dataSync` limit**: a `dataSync` foreground service may run 6 hours a day. The model download is far
@@ -111,7 +115,7 @@ Other policy points:
 
 Derived from the code (`crates/rewarden-core`, `android/app`). "Collected" in Play's sense means sent off the device by
 the app, to the developer or anyone else; data sent to a self-hosted server still counts, so the answers assume the
-worst case (the user uses rewarden.arc-chat.com). **[legal review]** for the whole section.
+worst case (the user uses app.reins2fa.com). **[legal review]** for the whole section.
 
 **Does the app collect or share user data?** Yes.
 
@@ -144,7 +148,7 @@ is a service provider. **[legal review]**
 
 Stays on the phone (not collected): the Google, Telegram, git host and vault credentials (in the encrypted store, bound
 to the Keystore, excluded from backups); the activity history; Autopilot's model, its decisions and what it learns
-(the model runs on the phone; only the download of the model package reaches rewarden.arc-chat.com, without user data).
+(the model runs on the phone; only the download of the model package reaches reins2fa.com, without user data).
 
 ## Store listing and other forms
 
@@ -164,5 +168,5 @@ to the Keystore, excluded from backups); the activity history; Autopilot's model
     -Drewarden.screenshots=/tmp/shots` renders the screens; do not show text messages or the updater);
   - optional 7" and 10" tablet screenshots;
   - short description (≤ 80 characters), full description (≤ 4000);
-  - privacy policy URL, support email, website (https://rewarden.arc-chat.com).
+  - privacy policy URL, support email, website (https://reins2fa.com).
 - **Description**: do not mention text messages or self-updating for the Play listing.
