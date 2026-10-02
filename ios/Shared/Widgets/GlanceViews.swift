@@ -455,7 +455,7 @@ struct AutopilotWidgetView: View {
 
 // MARK: Latest activity
 
-struct ActivityRow: View {
+struct GlanceActivityRow: View {
     var entry: Snapshot.Entry
     var now: Int64
 
@@ -489,7 +489,7 @@ struct LatestActivityView: View {
                 Spacer(minLength: 6)
                 VStack(alignment: .leading, spacing: rows > 3 ? 12 : 9) {
                     ForEach(snapshot.latest.prefix(rows)) { entry in
-                        Link(destination: DeepLink.activity(id: entry.id).url) { ActivityRow(entry: entry, now: now) }
+                        Link(destination: DeepLink.activity(id: entry.id).url) { GlanceActivityRow(entry: entry, now: now) }
                     }
                 }
                 Spacer(minLength: 0)
