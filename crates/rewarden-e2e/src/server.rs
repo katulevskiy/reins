@@ -53,12 +53,18 @@ impl Server {
 
     /// Like [`Server::start`], with these environment settings added (SSO, ...).
     pub async fn start_with_env(relay_wait: u64, offline: u64, env: &[(String, String)]) -> Self {
+        Self::start_at(&format!("http://127.0.0.1:{}", free_port()), relay_wait, offline, env).await
+    }
+
+    /// Like [`Server::start_with_env`] at `base` (`http://localhost:8765`: a fixed address an identity provider
+    /// knows as a redirect URI).
+    pub async fn start_at(base: &str, relay_wait: u64, offline: u64, env: &[(String, String)]) -> Self {
         let bin = binary().to_owned();
-        let port = free_port();
+        let port = url::Url::parse(base).ok().and_then(|u| u.port()).expect("a base with a port");
+        let base = base.to_owned();
         let dir = std::env::temp_dir().join(format!("rewarden-e2e-{}", uuid::Uuid::new_v4()));
         std::fs::create_dir_all(&dir).expect("temp dir");
         let log = File::create(dir.join("server.log")).expect("log");
-        let base = format!("http://127.0.0.1:{port}");
         let mut command = Command::new(bin);
         command
             .current_dir(&dir)
