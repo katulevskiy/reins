@@ -154,5 +154,5 @@ private struct UploadContent: View {
 }
 
 #Preview("Upload") {
-    PreviewHost { UploadSheet(model: UploadModel(view: Fixtures.blob())) }
+    PreviewHost { UploadSheet(blobId: "blob_q3numbers") }
 }

@@ -244,5 +244,5 @@ private struct DesktopKeyCard: View {
 }
 
 #Preview("Desktop app") {
-    PreviewHost { PairingSheet(model: PairingModel(view: Fixtures.pairingView(keyFingerprint: "4821 9930"))) }
+    PreviewHost { PairingSheet(pairingId: "pair2") }
 }

@@ -114,24 +114,31 @@ private struct MessageRow: View {
 /// An email to be sent, in full: who it goes to, the subject and every word of it.
 struct EmailPreview: View {
     var email: EmailView
+    /// On its own card (the approval sheet), or bare inside a group (an activity entry).
+    var framed = true
 
     var body: some View {
-        Card(padding: 16) {
-            VStack(alignment: .leading, spacing: 4) {
-                Caption("To")
-                ForEach(Array(email.to.enumerated()), id: \.offset) { _, a in address(a) }
-                if !email.cc.isEmpty {
-                    Caption("Cc").padding(.top, 6)
-                    ForEach(Array(email.cc.enumerated()), id: \.offset) { _, a in address(a) }
-                }
-                Caption("Subject").padding(.top, 6)
-                Text(untrusted(email.subject)).font(RFont.sans(16, .semibold)).foregroundStyle(Palette.text)
-                Caption("Message").padding(.top, 6)
-                Text(untrusted(email.body)).font(RFont.sans(15)).foregroundStyle(Palette.text).lineSpacing(3)
-            }
-            .textSelection(.enabled)
+        if framed {
+            Card(padding: 16) { fields }.accessibilityIdentifier("emailPreview")
+        } else {
+            fields.padding(16).frame(maxWidth: .infinity, alignment: .leading)
         }
-        .accessibilityIdentifier("emailPreview")
+    }
+
+    private var fields: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            Caption("To")
+            ForEach(Array(email.to.enumerated()), id: \.offset) { _, a in address(a) }
+            if !email.cc.isEmpty {
+                Caption("Cc").padding(.top, 6)
+                ForEach(Array(email.cc.enumerated()), id: \.offset) { _, a in address(a) }
+            }
+            Caption("Subject").padding(.top, 6)
+            Text(untrusted(email.subject)).font(RFont.sans(16, .semibold)).foregroundStyle(Palette.text)
+            Caption("Message").padding(.top, 6)
+            Text(untrusted(email.body)).font(RFont.sans(15)).foregroundStyle(Palette.text).lineSpacing(3)
+        }
+        .textSelection(.enabled)
     }
 
     private func address(_ text: String) -> some View {

@@ -213,13 +213,13 @@ private struct WaitLine: View {
 }
 
 #Preview("Search") {
-    PreviewHost { ApprovalSheet(model: ApprovalModel(view: Fixtures.searchView(waitUntil: Int64(Date().timeIntervalSince1970) + 40), suggestion: Fixtures.suggestion())) }
+    PreviewHost { ApprovalSheet(requestId: "req1") }
 }
 
 #Preview("Push") {
-    PreviewHost { ApprovalSheet(model: ApprovalModel(view: Fixtures.gitPushView())) }
+    PreviewHost { ApprovalSheet(requestId: "req20") }
 }
 
 #Preview("Permission") {
-    PreviewHost { ApprovalSheet(model: ApprovalModel(view: Fixtures.grantView())) }
+    PreviewHost { ApprovalSheet(requestId: "req3") }
 }
