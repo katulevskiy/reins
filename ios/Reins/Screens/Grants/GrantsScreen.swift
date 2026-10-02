@@ -35,7 +35,7 @@ struct GrantsScreen: View {
                 .plainRow(EdgeInsets(top: 0, leading: 20, bottom: 6, trailing: 16))
 
                 if let error {
-                    Banner(text: error)
+                    FormBanner(text: error)
                         .accessibilityIdentifier("resumeError")
                         .plainRow(EdgeInsets(top: 6, leading: 16, bottom: 6, trailing: 16))
                 }

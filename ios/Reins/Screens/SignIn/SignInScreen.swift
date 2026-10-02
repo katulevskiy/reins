@@ -93,7 +93,7 @@ struct SignInScreen: View {
                     .transition(.opacity.combined(with: .move(edge: .top)))
             }
             if let error = state.error {
-                Banner(text: error).transition(.opacity)
+                FormBanner(text: error).transition(.opacity)
             }
             Button(action: submit) {
                 HStack(spacing: 10) {

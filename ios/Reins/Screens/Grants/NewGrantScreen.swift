@@ -174,7 +174,7 @@ struct NewGrantScreen: View {
                 }
 
                 if let error = form.error {
-                    Banner(text: error).padding(.top, 18)
+                    FormBanner(text: error).padding(.top, 18)
                 }
 
                 Button {

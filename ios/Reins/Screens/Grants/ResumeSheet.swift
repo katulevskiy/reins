@@ -45,7 +45,7 @@ struct ResumeSheet: View {
                     if draft.moreOpen { more.transition(.opacity.combined(with: .move(edge: .top))) }
 
                     if let error {
-                        Banner(text: error).padding(.top, 14).accessibilityIdentifier("resumeInvalid")
+                        FormBanner(text: error).padding(.top, 14).accessibilityIdentifier("resumeInvalid")
                     }
                 }
                 .padding(.horizontal, 22)

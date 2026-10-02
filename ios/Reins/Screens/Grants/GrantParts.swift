@@ -106,31 +106,6 @@ struct TintedTag: View {
     }
 }
 
-/// Which integration and account something concerns, as small tags.
-struct ConnectorTags: View {
-    var service: String
-    var account: String?
-
-    var body: some View {
-        ChipFlow(spacing: 6) {
-            if !service.trimmingCharacters(in: .whitespaces).isEmpty { ServiceTag(text: serviceName(service)) }
-            if let account, !account.trimmingCharacters(in: .whitespaces).isEmpty { AccountTag(text: account) }
-        }
-    }
-}
-
-/// An AI connection's avatar with the icon the user picked for it.
-struct ConnectionIcon: View {
-    var connectionId: String
-    var label: String
-    var size: CGFloat = 40
-    @Environment(AppModel.self) private var model
-
-    var body: some View {
-        ConnectionAvatar(label: untrusted(label), pick: model.iconPick(connectionId: connectionId, label: label), size: size)
-    }
-}
-
 /// A heading above a form group in the grant forms ("FOR WHICH AI?").
 struct FormLabel: View {
     var text: String
@@ -165,7 +140,7 @@ extension View {
 }
 
 /// A message under a form: what is wrong, or what went well.
-struct Banner: View {
+struct FormBanner: View {
     enum Kind { case error, info }
     var text: String
     var kind: Kind = .error

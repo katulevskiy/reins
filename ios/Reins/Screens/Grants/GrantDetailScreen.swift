@@ -109,7 +109,7 @@ struct GrantDetailScreen: View {
             Section {
                 VStack(spacing: 10) {
                     if let error {
-                        Banner(text: error)
+                        FormBanner(text: error)
                     }
                     if !grant.active {
                         Button {

@@ -81,10 +81,10 @@ private struct ApprovalDeviceGroup: View {
         Section {
             button.cardRow()
             if let message {
-                Banner(text: message, kind: .info).cardRow()
+                FormBanner(text: message, kind: .info).cardRow()
             }
             if let error = error ?? (model.approvalDevice ? nil : model.registrationError) {
-                Banner(text: error).cardRow()
+                FormBanner(text: error).cardRow()
             }
         } header: {
             GroupHeader("Approval device")
