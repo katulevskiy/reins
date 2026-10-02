@@ -95,7 +95,7 @@ pub fn clamp_wait(raw: Option<&str>) -> u32 {
 }
 
 /// Decision 32: trimmed, empty → `None`, bounded, no control characters. The iOS app's tokens
-/// (`apns:` or `apns-sandbox:` and 64 hex digits) must be well formed and are stored with lowercase hex.
+/// (`apns:` or `apns-sandbox:` and 64 to 200 hex digits) must be well formed and are stored with lowercase hex.
 pub fn normalize_fcm_token(raw: Option<String>) -> Result<Option<String>, String> {
     let Some(token) = raw.map(|t| t.trim().to_owned()).filter(|t| !t.is_empty()) else {
         return Ok(None);
@@ -353,13 +353,20 @@ mod tests {
     }
 
     #[test]
-    fn apns_tokens_must_be_64_hex_digits_and_are_lowercased() {
+    fn apns_tokens_must_be_64_to_200_hex_digits_and_are_lowercased() {
         let hex = "0123456789abcdef".repeat(4);
         for prefix in ["apns:", "apns-sandbox:"] {
             let upper = format!(" {prefix}{} \n", hex.to_ascii_uppercase());
             assert_eq!(normalize_fcm_token(Some(upper)), Ok(Some(format!("{prefix}{hex}"))));
-            assert!(normalize_fcm_token(Some(format!("{prefix}{}", &hex[2..]))).unwrap_err().contains("64 hex"));
-            assert!(normalize_fcm_token(Some(format!("{prefix}{hex}00"))).is_err());
+            assert!(normalize_fcm_token(Some(format!("{prefix}{}", &hex[2..]))).unwrap_err().contains("64 to 200 hex"));
+            // A simulator's token is 80 bytes; Apple allows for up to 100.
+            let simulator = "ab".repeat(80);
+            assert_eq!(
+                normalize_fcm_token(Some(format!("{prefix}{simulator}"))),
+                Ok(Some(format!("{prefix}{simulator}")))
+            );
+            assert!(normalize_fcm_token(Some(format!("{prefix}{}", "ab".repeat(101)))).is_err());
+            assert!(normalize_fcm_token(Some(format!("{prefix}{hex}0"))).is_err());
             assert!(normalize_fcm_token(Some(format!("{prefix}{}zz", &hex[2..]))).is_err());
             assert!(normalize_fcm_token(Some(format!("{prefix}{}:{}", &hex[..32], &hex[33..]))).is_err());
             assert!(normalize_fcm_token(Some(prefix.to_owned())).is_err());

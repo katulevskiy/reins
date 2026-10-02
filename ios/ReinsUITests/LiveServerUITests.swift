@@ -61,19 +61,34 @@ final class LiveServerUITests: XCTestCase {
         field.typeText(text)
     }
 
-    /// Taps the approve button of the open sheet and keeps Face ID matching until the sheet is gone.
+    /// Taps the approve button of the open sheet and keeps Face ID matching until the sheet is gone, or shows the next
+    /// request (which pops up as soon as this one is answered).
     private func approve(_ sheet: String) {
         FileManager.default.createFile(atPath: file("faceid").path, contents: nil)
         defer { try? FileManager.default.removeItem(at: file("faceid")) }
+        let before = element("what").exists ? element("what").label : nil
         wait("approve").tap()
-        if !element(sheet).waitForNonExistence(timeout: 30) {
-            shot("failed-\(sheet)-stayed")
-            XCTFail("\(sheet) did not close after approving")
+        let deadline = Date().addingTimeInterval(30)
+        while Date() < deadline {
+            if !element(sheet).exists { return }
+            if let before, element("what").exists, element("what").label != before { return }
+            Thread.sleep(forTimeInterval: 0.5)
         }
+        shot("failed-\(sheet)-stayed")
+        XCTFail("\(sheet) did not close after approving")
     }
 
     private func section(_ title: String) {
+        // Back to the section's root first: a pushed page that scrolled has the tab bar minimized, where a tap on the
+        // remaining button only brings the bar back.
+        var tries = 0
+        while app.navigationBars.buttons["BackButton"].exists && tries < 4 {
+            app.navigationBars.buttons["BackButton"].tap()
+            Thread.sleep(forTimeInterval: 0.8)
+            tries += 1
+        }
         let tab = app.tabBars.buttons[title]
+        if !(tab.exists && tab.isHittable) { app.swipeDown() }
         XCTAssertTrue(tab.waitForExistence(timeout: 5), "no tab \(title)")
         tab.tap()
     }
@@ -94,8 +109,12 @@ final class LiveServerUITests: XCTestCase {
         shot("01-sign-in")
         wait("signIn").tap()
 
-        // Signed in: the Activity tab, and no banner saying registration failed.
+        // Signed in: the app asks for notifications (allowed), then the Activity tab, and no banner saying registration
+        // failed.
         wait("integrations", 60)
+        let allow = XCUIApplication(bundleIdentifier: "com.apple.springboard").buttons["Allow"]
+        if allow.waitForExistence(timeout: 10) { allow.tap() }
+        Thread.sleep(forTimeInterval: 3)
         XCTAssertFalse(element("registrationBanner").exists, "registering as the approval device failed")
         shot("02-signed-in")
 
@@ -111,22 +130,21 @@ final class LiveServerUITests: XCTestCase {
 
         // Add the host's MCP server (Integrations > Add MCP server).
         wait("integrations").tap()
-        let add = wait("addMcp")
+        // Rows further down are made only once they scroll into view.
+        XCTAssertTrue(app.staticTexts["Gmail"].waitForExistence(timeout: 10), "Integrations did not open")
         var tries = 0
-        while !add.isHittable && tries < 6 { app.swipeUp(); tries += 1 }
-        add.tap()
+        while !(element("addMcp").exists && element("addMcp").isHittable) && tries < 8 { app.swipeUp(); tries += 1 }
+        wait("addMcp").tap()
         replace(wait("mcpUrl"), with: mcp)
         replace(wait("mcpName"), with: "Notes")
         shot("05-mcp-add")
         wait("mcpAddSubmit").tap()
         XCTAssertTrue(element("mcpUrl").waitForNonExistence(timeout: 30), "the MCP server was not added")
         XCTAssertFalse(element("mcpError").exists)
-        shot("06-mcp-added")
-        section("Activity")
-        section("Activity")
-
-        // First call: a change (add_note), approved once.
+        // First call: a change (add_note), approved once. Its sheet comes up over whatever is open (the server's page:
+        // the AI calls as soon as the tools are offered).
         wait("approvalSheet", 120)
+        shot("06-mcp-added")
         XCTAssertEqual(wait("mcpEffect").label, "Changes things")
         shot("07-approve-once")
         approve("approvalSheet")
@@ -135,7 +153,8 @@ final class LiveServerUITests: XCTestCase {
         wait("approvalSheet", 60)
         XCTAssertEqual(wait("mcpEffect").label, "Read only")
         wait("moreToggle").tap()
-        let hour = wait("allMail:hour")
+        // "Remember this for: 1 hour".
+        let hour = wait("lifetime:hour")
         tries = 0
         while !hour.isHittable && tries < 6 { app.swipeUp(); tries += 1 }
         hour.tap()
@@ -145,20 +164,22 @@ final class LiveServerUITests: XCTestCase {
         // The third call is answered by that permission: no sheet; the host saw every result.
         XCTAssertNotNil(waitForFile("host-done", 90), "the host did not get all its results")
         XCTAssertFalse(element("approvalSheet").exists, "the permission should have answered the third call")
+        shot("09-mcp-server")
+        section("Activity")
         Thread.sleep(forTimeInterval: 2)
-        shot("09-activity")
+        shot("10-activity")
 
         section("Grants")
         Thread.sleep(forTimeInterval: 1)
-        shot("10-grants")
+        shot("11-grants")
 
         section("Settings")
         Thread.sleep(forTimeInterval: 1)
         XCTAssertTrue(app.staticTexts[email].waitForExistence(timeout: 5) || app.descendants(matching: .any)
             .matching(NSPredicate(format: "label CONTAINS %@", email)).firstMatch.exists, "Settings does not show the account")
         XCTAssertTrue(wait("registerPhone").label.contains("This phone is used for approvals"), "not the approval device")
-        shot("11-settings")
+        shot("12-settings")
         app.swipeUp()
-        shot("12-settings-connections")
+        shot("13-settings-connections")
     }
 }
