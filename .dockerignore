@@ -3,6 +3,7 @@
 
 # Allow what is needed
 !.git
+!crates
 !docker/healthcheck.sh
 !docker/start.sh
 !macros

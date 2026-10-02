@@ -76,6 +76,8 @@ RUN . /env-cargo && \
 # Copies over *only* your manifests and build files
 COPY ./Cargo.* ./rust-toolchain.toml ./build.rs ./
 COPY ./macros ./macros
+# The other workspace members: Cargo needs every member to load the workspace, and the server uses rewarden-proto
+COPY ./crates ./crates
 
 ARG CARGO_PROFILE=release
 
