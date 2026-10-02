@@ -6,7 +6,14 @@ final class AppDelegate: NSObject, UIApplicationDelegate {
 
     func application(_ application: UIApplication, didFinishLaunchingWithOptions launchOptions: [UIApplication.LaunchOptionsKey: Any]? = nil) -> Bool {
         // Before launching ends: a tapped notification and the background refresh arrive right after.
+        #if DEBUG
+        // `-noNotifications`: some simulators' notification service never answers, which blocks the main thread.
+        if !ProcessInfo.processInfo.arguments.contains("-noNotifications") {
+            NotificationRouter.shared.install(model: host.model, notifier: host.notifier)
+        }
+        #else
         NotificationRouter.shared.install(model: host.model, notifier: host.notifier)
+        #endif
         BackgroundRefresh.register(host: host)
         application.registerForRemoteNotifications()
         #if DEBUG

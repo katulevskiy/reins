@@ -107,7 +107,7 @@ private struct ConnectionAutopilotGroup: View {
                 profileChips.padding(.vertical, 6).cardRow()
             }
             if let error {
-                Banner(text: error).accessibilityIdentifier("connAutopilotError").cardRow()
+                FormBanner(text: error).accessibilityIdentifier("connAutopilotError").cardRow()
             }
         } header: {
             GroupHeader("Autopilot")
@@ -276,7 +276,7 @@ private struct ConnectionIconGroup: View {
             ProviderPicker(label: untrusted(connection.label), selection: connection.icon, size: 50, onPick: setIcon)
                 .padding(.vertical, 8)
                 .cardRow()
-            if let error { Banner(text: error).cardRow() }
+            if let error { FormBanner(text: error).cardRow() }
         } header: {
             GroupHeader("Icon")
         } footer: {
@@ -329,7 +329,7 @@ private struct DisconnectGroup: View {
     var body: some View {
         Section {
             VStack(spacing: 10) {
-                if let error { Banner(text: error) }
+                if let error { FormBanner(text: error) }
                 Button(role: .destructive) {
                     confirm = true
                 } label: {

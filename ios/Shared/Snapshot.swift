@@ -23,6 +23,9 @@ struct Snapshot: Codable, Equatable {
         var expiresAt: Int64
         /// Autopilot's suggestion line, when it made one.
         var suggestion: String?
+        /// The provider logo picked for the connection (`ConnectionView.icon`: "claude", "blob", ...), nil when none
+        /// was picked (the name then suggests one).
+        var connectionIcon: String? = nil
     }
 
     struct Entry: Codable, Equatable, Identifiable {
@@ -42,6 +45,11 @@ struct Snapshot: Codable, Equatable {
     var autopilotMode: String = "manual"
     /// Unix seconds when a running bypass ends.
     var bypassUntil: Int64?
+    /// The global mode a bypass went back to when it ended ("manual", "assisted", ...), so a bypass that ran out
+    /// before the next refresh shows the right mode.
+    var baseMode: String?
+    /// When the last running bypass ends, the global one or any connection's (the Stop button shows while one runs).
+    var anyBypassUntil: Int64?
     var activeGrants: Int = 0
     var updatedAt: Int64 = 0
 

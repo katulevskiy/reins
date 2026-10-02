@@ -85,15 +85,23 @@ enum GrantReminders {
         let wanted = plan(grants, now: now)
         let scheduled = Set(defaults.stringArray(forKey: scheduledKey) ?? [])
         let (remove, add) = diff(wanted: wanted, scheduled: scheduled)
-        if !remove.isEmpty {
-            center.removePendingNotificationRequests(withIdentifiers: remove)
-            center.removeDeliveredNotifications(withIdentifiers: remove)
-        }
         let settings = FeedbackSettings.load()
-        for r in add {
+        let requests = add.map { r in
             let trigger = UNTimeIntervalNotificationTrigger(timeInterval: TimeInterval(max(dueAt(r, now: now) - now, 1)), repeats: false)
-            center.add(UNNotificationRequest(identifier: r.identifier, content: content(r, now: now, settings: settings), trigger: trigger))
+            return UNNotificationRequest(identifier: r.identifier, content: content(r, now: now, settings: settings), trigger: trigger)
+        }
+        // Off the main thread: the notification center's calls go through a system service that can be slow to
+        // answer (and never answers on a simulator whose notification service has not started).
+        notificationQueue.async {
+            if !remove.isEmpty {
+                center.removePendingNotificationRequests(withIdentifiers: remove)
+                center.removeDeliveredNotifications(withIdentifiers: remove)
+            }
+            requests.forEach { center.add($0) }
         }
         defaults.set(wanted.map(\.identifier).sorted(), forKey: scheduledKey)
     }
 }
+
+/// Where the app talks to the notification center when it does not need the answer.
+let notificationQueue = DispatchQueue(label: "dev.rewarden.ios.notifications", qos: .utility)
