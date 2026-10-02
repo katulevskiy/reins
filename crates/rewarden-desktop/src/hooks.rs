@@ -1,6 +1,6 @@
 //! `rewarden hook <harness>`: a harness's pre-tool hook. Reads the hook's JSON on stdin, and when the command or file
 //! matches the guard rules (`[guard]`) asks the phone (or the person at the computer) and answers in that harness's
-//! format; anything else is allowed silently.
+//! format; anything else gets no decision, so the harness's own permission settings apply.
 //!
 //! Formats (each harness's current docs):
 //! - Claude Code `PreToolUse` (<https://code.claude.com/docs/en/hooks>): `tool_name` `Bash` (`tool_input.command`),
@@ -12,7 +12,11 @@
 //!   output.
 //! - Cursor (<https://cursor.com/docs/agent/hooks>): `beforeShellExecution` (`command`; answer `permission`
 //!   `allow`/`deny`/`ask` with `user_message`, `agent_message`), `beforeReadFile` (`file_path`) and `preToolUse`
-//!   (`tool_name` `Write`/`Delete`, `tool_input.file_path`), which know `allow`/`deny` only.
+//!   (`tool_name` `Write`/`Delete`, `tool_input.file_path`), which know `allow`/`deny` only. `allow` lets the action
+//!   run without Cursor's own approval (that is what `ask` is for), so it is only said for an approved request. No
+//!   output is no decision: Cursor counts it as a failed hook, which fails open (unless the hook sets `failClosed`,
+//!   which `rewarden harness add` does not) and leaves the action to Cursor's own settings. The exception is
+//!   `beforeReadFile`: Cursor never asks before reading, so an explicit `allow` takes nothing from the user there.
 //! - Gemini CLI `BeforeTool` (<https://geminicli.com/docs/hooks/reference/>): `run_shell_command`
 //!   (`tool_input.command`), `write_file`/`replace`/`read_file` (`tool_input.file_path`); answer `{"decision":
 //!   "allow"|"deny", "reason": …}`, no output for no decision.
@@ -46,9 +50,12 @@ pub enum Action {
 pub enum Event {
     /// Claude Code or Codex `PreToolUse`.
     PreToolUse,
+    /// Cursor's `beforeShellExecution`: allow, deny or ask.
     CursorShell,
-    /// Cursor's `beforeReadFile` and `preToolUse`: allow or deny only.
-    CursorFile,
+    /// Cursor's `beforeReadFile`: allow or deny only.
+    CursorRead,
+    /// Cursor's `preToolUse`: allow or deny only.
+    CursorTool,
     GeminiBeforeTool,
     /// An event this app does not handle (answered with no decision).
     Unknown,
@@ -148,7 +155,7 @@ pub fn parse(harness: Harness, input: &[u8]) -> Result<HookCall, String> {
             "beforeShellExecution" => {
                 (Event::CursorShell, str_at(&v, "/command").map_or(Action::Other, |c| Action::Command(c.to_owned())))
             }
-            "beforeReadFile" => (Event::CursorFile, files(false, file_in(&v))),
+            "beforeReadFile" => (Event::CursorRead, files(false, file_in(&v))),
             "preToolUse" => {
                 // Cursor may send `tool_input` as an object or as JSON text.
                 let ti = match &tool_input {
@@ -161,7 +168,7 @@ pub fn parse(harness: Harness, input: &[u8]) -> Result<HookCall, String> {
                     "Shell" => str_at(&ti, "/command").map_or(Action::Other, |c| Action::Command(c.to_owned())),
                     _ => Action::Other,
                 };
-                (Event::CursorFile, action)
+                (Event::CursorTool, action)
             }
             _ => (Event::Unknown, Action::Other),
         },
@@ -258,7 +265,9 @@ pub fn verdict(answer: Answer, on_no_answer: OnNoAnswer) -> Verdict {
 pub fn render(call: &HookCall, verdict: &Verdict) -> (Option<String>, u8) {
     let out = |v: Value| (Some(v.to_string()), 0);
     match (call.event, verdict) {
-        (Event::CursorShell | Event::CursorFile, Verdict::Unmatched) => out(json!({"permission": "allow"})),
+        // Cursor never asks before a read, so allowing one takes no decision away from the user; an empty answer
+        // would only show up as a failed hook in Cursor's log.
+        (Event::CursorRead, Verdict::Unmatched) => out(json!({"permission": "allow"})),
         (Event::Unknown, _) | (_, Verdict::Unmatched) => (None, 0),
         (Event::PreToolUse, v) => {
             let (decision, reason) = match v {
@@ -274,12 +283,12 @@ pub fn render(call: &HookCall, verdict: &Verdict) -> (Option<String>, u8) {
                 "permissionDecisionReason": reason,
             }}))
         }
-        (Event::CursorShell | Event::CursorFile, v) => {
+        (Event::CursorShell | Event::CursorRead | Event::CursorTool, v) => {
             let (permission, message) = match v {
                 Verdict::Allow(r) => ("allow", r),
                 Verdict::Ask(r) if call.event == Event::CursorShell => ("ask", r),
                 Verdict::Deny(r) | Verdict::Ask(r) => ("deny", r),
-                Verdict::Unmatched => ("allow", &String::new()),
+                Verdict::Unmatched => return (None, 0),
             };
             out(json!({"permission": permission, "user_message": message, "agent_message": message}))
         }
@@ -332,5 +341,44 @@ mod tests {
         assert!(matches!(verdict(Answer::No("x".into()), OnNoAnswer::Ask), Verdict::Deny(_)));
         assert!(matches!(verdict(Answer::Unanswered("t".into()), OnNoAnswer::Deny), Verdict::Deny(_)));
         assert!(matches!(verdict(Answer::Unanswered("t".into()), OnNoAnswer::Ask), Verdict::Ask(_)));
+    }
+
+    fn cursor(input: &str) -> HookCall {
+        parse(Harness::Cursor, input.as_bytes()).unwrap()
+    }
+
+    #[test]
+    fn cursor_gets_no_decision_for_unmatched_commands_and_tools() {
+        // An explicit `allow` would run the command without Cursor's own approval; no output leaves it to Cursor.
+        let shell = cursor(r#"{"hook_event_name": "beforeShellExecution", "command": "rm -rf build"}"#);
+        assert_eq!(shell.event, Event::CursorShell);
+        assert_eq!(render(&shell, &Verdict::Unmatched), (None, 0));
+        let write =
+            cursor(r#"{"hook_event_name": "preToolUse", "tool_name": "Delete", "tool_input": {"file_path": "/a"}}"#);
+        assert_eq!(write.event, Event::CursorTool);
+        assert_eq!(render(&write, &Verdict::Unmatched), (None, 0));
+        let shell_tool =
+            cursor(r#"{"hook_event_name": "preToolUse", "tool_name": "Shell", "tool_input": "{\"command\": \"ls\"}"}"#);
+        assert_eq!(shell_tool.action, Action::Command("ls".to_owned()));
+        assert_eq!(render(&shell_tool, &Verdict::Unmatched), (None, 0));
+    }
+
+    #[test]
+    fn cursor_reads_are_allowed_explicitly_and_decisions_keep_their_words() {
+        let read = cursor(r#"{"hook_event_name": "beforeReadFile", "file_path": "/a/main.rs"}"#);
+        assert_eq!(read.event, Event::CursorRead);
+        assert_eq!(render(&read, &Verdict::Unmatched), (Some(r#"{"permission":"allow"}"#.to_owned()), 0));
+
+        let shell = cursor(r#"{"hook_event_name": "beforeShellExecution", "command": "kubectl delete ns x"}"#);
+        let permission = |call: &HookCall, v: Verdict| {
+            let (out, code) = render(call, &v);
+            assert_eq!(code, 0);
+            serde_json::from_str::<Value>(&out.unwrap()).unwrap()["permission"].as_str().unwrap().to_owned()
+        };
+        assert_eq!(permission(&shell, Verdict::Allow("ok".into())), "allow");
+        assert_eq!(permission(&shell, Verdict::Deny("no".into())), "deny");
+        assert_eq!(permission(&shell, Verdict::Ask("?".into())), "ask");
+        // Read and tool hooks know no "ask".
+        assert_eq!(permission(&read, Verdict::Ask("?".into())), "deny");
     }
 }

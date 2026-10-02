@@ -51,6 +51,12 @@ const CURSOR_READ_OK: &str = r#"{"conversation_id": "c1", "hook_event_name": "be
 const CURSOR_WRITE: &str = r#"{"conversation_id": "c1", "hook_event_name": "preToolUse", "tool_name": "Write",
   "tool_input": {"file_path": "/home/me/app/certs/server.key", "contents": "x"}, "tool_use_id": "t", "cwd": "/home/me/app"}"#;
 
+const CURSOR_LS: &str = r#"{"conversation_id": "c1", "hook_event_name": "beforeShellExecution",
+  "command": "ls -la", "cwd": "/home/me/app", "sandbox": false}"#;
+
+const CURSOR_WRITE_OK: &str = r#"{"conversation_id": "c1", "hook_event_name": "preToolUse", "tool_name": "Write",
+  "tool_input": {"file_path": "/home/me/app/src/main.rs", "contents": "x"}, "tool_use_id": "t", "cwd": "/home/me/app"}"#;
+
 const GEMINI_SHELL: &str = r#"{"session_id": "g1", "transcript_path": "/tmp/t.json", "cwd": "/home/me/app",
   "hook_event_name": "BeforeTool", "timestamp": "2026-09-30T10:00:00Z", "tool_name": "run_shell_command",
   "tool_input": {"command": "rm -rf build dist", "description": "clean"}}"#;
@@ -184,7 +190,12 @@ async fn cursor_before_shell_execution_and_file_hooks() {
     assert_eq!(run.out.unwrap()["permission"], "deny");
     assert_eq!(asked.unwrap()["question"], "Cursor wants to change /home/me/app/certs/server.key");
 
-    // Unmatched: Cursor gets an explicit allow (its file hooks read a missing answer as a refusal).
+    // Unmatched commands and tools get no decision, so Cursor's own approval settings apply (an explicit `allow`
+    // would run them without asking). Reads, which Cursor never asks about, get an explicit allow.
+    let (run, asked) = hook(&mock, Harness::Cursor, CURSOR_LS, &config).await;
+    assert_eq!((run.out, run.code, asked), (None, 0, None));
+    let (run, asked) = hook(&mock, Harness::Cursor, CURSOR_WRITE_OK, &config).await;
+    assert_eq!((run.out, run.code, asked), (None, 0, None));
     let (run, asked) = hook(&mock, Harness::Cursor, CURSOR_READ_OK, &config).await;
     assert_eq!((run.out, run.code, asked), (Some(json!({"permission": "allow"})), 0, None));
 }
@@ -234,6 +245,7 @@ fn the_command_line_reads_stdin_and_answers() {
     };
     assert_eq!(run("claude-code", CLAUDE_LS), (0, String::new(), String::new()));
     assert_eq!(run("cursor", CURSOR_READ_OK).1.trim(), r#"{"permission":"allow"}"#);
+    assert_eq!(run("cursor", CURSOR_LS), (0, String::new(), String::new()));
     let (code, out, err) = run("gemini", "not json");
     assert_eq!((code, out.as_str()), (2, ""));
     assert!(err.contains("not JSON") && err.contains("not allowed"), "{err}");

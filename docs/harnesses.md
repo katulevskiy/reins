@@ -101,8 +101,9 @@ rewarden harness add cursor
 | hooks `beforeShellExecution`, `beforeReadFile`, `preToolUse` (matcher `Write\|Delete`) | `~/.cursor/hooks.json` (`"version": 1` is added if missing) |
 
 Restart Cursor. Settings → MCP and Hooks show the entries. Cursor's file hooks know only `allow` and `deny`, so
-"ask" becomes `deny` there. Unlike with the other harnesses, the hook answers Cursor every time: commands and files
-that match no rule get an explicit `allow`.
+"ask" becomes `deny` there. As with the other harnesses, commands and file changes that match no rule get no answer,
+so your own Cursor approval settings still apply to them (Cursor logs the empty answer as a hook that did not decide
+and goes on). Reads that match no rule get an explicit `allow`, since Cursor never asks before reading a file.
 
 ## Cloud AIs
 
