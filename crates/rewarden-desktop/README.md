@@ -13,17 +13,32 @@ git sends, and the approval is bound to exactly those bytes. Pack data goes from
 curl -fsSL https://rewarden.arc-chat.com/install.sh | sh
 ```
 
-Linux x86_64 and arm64 (static binaries, any distro). It installs to `~/.local/bin` (`REWARDEN_INSTALL_DIR` to change).
-`rewarden update` installs the latest release later; it only accepts releases signed with the Reins release key
-built into the app, never an older one, and restarts the background service.
+Linux x86_64 and arm64 (static binaries, any distro) and macOS (Apple silicon and Intel). It installs to
+`~/.local/bin` (`REWARDEN_INSTALL_DIR` to change). `rewarden update` installs the latest release later; it only accepts
+releases signed with the Reins release key built into the app, never an older one, and restarts the background
+service.
 
 Every [GitHub release](https://github.com/katulevskiy/reins/releases) also has the app for Linux (static, x86_64 and
-aarch64) and macOS (Apple silicon and Intel), as `reins-desktop-<version>-<target>.tar.gz`. On macOS, install it from
-there (the install script and `rewarden update` serve Linux builds only for now). It works as on Linux, with the
-background service as a launchd agent (`~/Library/LaunchAgents/dev.rewarden.daemon.plist`, log in
-`~/Library/Logs/rewarden.log`) and approvals on the desktop as a dialog. Two Linux-only protections are absent on
-macOS: git does not print "waiting for approval on your phone" while it waits (the daemon finds the git process
-through `/proc`), and the daemon's memory is not shielded from debuggers of the same user (Linux's non-dumpable flag).
+aarch64) and macOS (Apple silicon and Intel), as `reins-desktop-<version>-<target>.tar.gz`, checked against
+`SHA256SUMS`.
+
+### macOS (alpha)
+
+The install script and `rewarden update` serve macOS builds too. macOS support is alpha: the builds are made and
+tested on GitHub's macOS runners, but the whole flow (login, service, approvals) has not been field-tested end to end
+on a real Mac yet. It works as on Linux, with the background service as a launchd agent
+(`~/Library/LaunchAgents/dev.rewarden.daemon.plist`, log in `~/Library/Logs/rewarden.log`) and approvals on the
+desktop as a dialog. `~/.local/bin` is usually not on a Mac's `PATH`; the script says how to add it (in `~/.zshrc`).
+
+The program is not signed with an Apple Developer ID. A download made with `curl` (as the install script does) carries
+no quarantine flag, so Gatekeeper lets it run. If you downloaded the archive with a browser instead, macOS refuses to
+open it until you clear the flag: `xattr -d com.apple.quarantine rewarden`.
+
+Two Linux-only protections are absent on macOS:
+
+- git does not print "waiting for approval on your phone" while it waits (the daemon finds the git process through
+  `/proc`, which macOS does not have); the push or clone simply waits until you answer;
+- the daemon's memory is not shielded from debuggers of the same user (Linux's non-dumpable flag).
 
 ## Set up
 
@@ -160,5 +175,7 @@ on_no_answer = "deny"           # deny | ask (leave it to the harness's own prom
 
 `scripts/release-desktop.sh` builds static binaries from the current commit, signs the manifest with the release key
 (`~/.config/rewarden-release/release-signing.pk8`, never in the repository) and uploads it; installs and updates use it
-at once. Losing the key means existing installs can no longer update themselves (they would need the install script
+at once. `scripts/release-desktop.sh --macos-from vX.Y.Z` (or `latest`) publishes a GitHub release instead: the Linux
+binaries built here from its tag, the macOS ones taken from its archives (checked against its `SHA256SUMS`), all with
+the GitHub release's version and build id, in one signed manifest. The script's header explains how versions compare. Losing the key means existing installs can no longer update themselves (they would need the install script
 again with a new key built in).

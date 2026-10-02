@@ -57,15 +57,22 @@ connected, and each call waits for your phone unless a standing permission cover
 curl -fsSL https://rewarden.arc-chat.com/install.sh | sh
 ```
 
-The script downloads the build for your computer, checks its SHA-256, and installs `rewarden` to `~/.local/bin` (set
-`REWARDEN_INSTALL_DIR` to change that). Later updates: `rewarden update`. It installs only releases signed with the
-release key built into the program.
+It works on Linux and macOS. The script downloads the build for your computer, checks its SHA-256, and installs
+`rewarden` to `~/.local/bin` (set `REWARDEN_INSTALL_DIR` to change that). Later updates: `rewarden update`. It installs
+only releases signed with the release key built into the program.
+
+On a Mac, `~/.local/bin` is usually not on your `PATH`; the script prints the line to add to `~/.zshrc`. macOS support
+is alpha: built and tested on GitHub's macOS runners, not yet field-tested end to end on a real Mac. Two things differ
+from Linux: git does not print "waiting for approval on your phone" while a push or clone waits (it just waits), and
+the daemon's memory is not shielded from debuggers running as you. See the
+[desktop app README](../crates/rewarden-desktop/README.md#macos-alpha).
 
 Or download it from the [latest GitHub release](https://github.com/katulevskiy/reins/releases/latest): the
 `reins-desktop-<version>-<target>.tar.gz` archive for your computer (`x86_64-unknown-linux-musl`,
 `aarch64-unknown-linux-musl`, `aarch64-apple-darwin` for Apple silicon, `x86_64-apple-darwin` for Intel Macs), checked
-against `SHA256SUMS`. Unpack it and put `rewarden` on your `PATH`, for example in `~/.local/bin`. On a Mac this is the
-way to install it for now: the install script and `rewarden update` serve Linux builds only.
+against `SHA256SUMS`. Unpack it and put `rewarden` on your `PATH`, for example in `~/.local/bin`. On a Mac, an archive
+downloaded with a browser is quarantined and Gatekeeper refuses the unsigned program; clear the flag with
+`xattr -d com.apple.quarantine rewarden` (`curl` downloads, like the install script's, are not quarantined).
 
 Pair it with your phone:
 
@@ -81,7 +88,8 @@ computer can open the credentials the phone sends it.
 Start the background service and send git through it:
 
 ```sh
-rewarden resume     # installs a systemd user service if needed, then routes github.com remotes through it
+rewarden resume     # installs the background service if needed (systemd user unit, or launchd agent on a Mac),
+                    # then routes github.com remotes through it
 rewarden status     # version, who decides, server, key, pending local approvals, git routing
 ```
 
