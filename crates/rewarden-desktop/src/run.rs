@@ -283,11 +283,11 @@ pub async fn main(paths: &Paths, config: &Config, args: &RunArgs) -> u8 {
     if config.mode == Mode::Local {
         return fail(
             "secrets live in the vault on your phone, and this app is in local mode (`mode = \"local\"` in \
-             config.toml); set `mode = \"auto\"` and run `rewarden login <server>`",
+             config.toml); set `mode = \"auto\"` and run `rewarden login`",
         );
     }
     if crate::server::oauth::logged_in_server(paths).is_none() {
-        return fail("secrets live in the vault on your phone: run `rewarden login <server>` to pair this app with it");
+        return fail("secrets live in the vault on your phone: run `rewarden login` to pair this app with it");
     }
     let identity = match Identity::load_or_create(&paths.identity_file()) {
         Ok(i) => Arc::new(i),

@@ -9,7 +9,7 @@ enum McpSignInResult: Equatable {
 }
 
 /// The sign-in to an MCP server that needs one (`McpAddStep.needsSignIn`, `mcpRefresh`): its page opens in the system's
-/// web sheet, the redirect to the core's fixed `dev.rewarden.android://mcp-oauth` comes straight back here, and the
+/// web sheet, the redirect to the core's fixed `com.reins2fa.app://mcp-oauth` comes straight back here, and the
 /// core finishes it (it checks state and PKCE). On iOS the sheet returns in-process, so nothing waits on disk the way
 /// Android's sign-in survives the app being stopped.
 ///
@@ -21,7 +21,7 @@ enum McpSignInResult: Equatable {
 /// It plays `.connected` / `.error`, sets `model.mcpNotice` with Android's wording and reloads the servers.
 @MainActor
 enum McpSignIn {
-    nonisolated static let redirectScheme = "dev.rewarden.android"
+    nonisolated static let redirectScheme = "com.reins2fa.app"
     nonisolated static let redirectHost = "mcp-oauth"
     nonisolated private static let maxRedirectChars = 8_192
 

@@ -60,7 +60,7 @@ abstract class ScreenshotsBase(private val suffix: String) {
         Timers.frozenNowMillis = now * 1000
         Foreground.focused = false
         Foreground.autoPopup = false
-        core.session = SessionInfo("https://rewarden.arc-chat.com", "me@example.com")
+        core.session = SessionInfo("https://app.reins2fa.com", "me@example.com")
         core.pending = emptyList()
         core.approval = null
         core.pairing = null

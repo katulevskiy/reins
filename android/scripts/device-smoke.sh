@@ -10,7 +10,7 @@ OUT="$(mktemp -d)"; echo "logs in $OUT"
 GO=/tmp/rewarden-smoke-go
 DONE=/tmp/rewarden-smoke-done
 rm -f "$GO" "$DONE"
-adb -s "$SERIAL" shell run-as dev.rewarden.android rm -f files/live-code 2>/dev/null || true
+adb -s "$SERIAL" shell run-as com.reins2fa.app rm -f files/live-code 2>/dev/null || true
 
 cd "$ROOT"
 cargo build -q -p rewarden-e2e --example device_smoke
@@ -40,7 +40,7 @@ wait_for "$SERVER_DIR/server.log" "PUT /rewarden/api/device" 300
 touch "$GO"
 wait_for "$OUT/host.log" CODE 60
 CODE=$(awk '/^CODE/{print $2}' "$OUT/host.log")
-adb -s "$SERIAL" shell "run-as dev.rewarden.android sh -c 'echo $CODE > files/live-code'"
+adb -s "$SERIAL" shell "run-as com.reins2fa.app sh -c 'echo $CODE > files/live-code'"
 
 wait_for "$OUT/host.log" TOOL_RESULT 90
 touch "$DONE"

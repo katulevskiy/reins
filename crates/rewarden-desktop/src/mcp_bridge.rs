@@ -290,7 +290,7 @@ where
 {
     let http = crate::http::client(None)?;
     if crate::server::oauth::logged_in_server(paths).is_none() {
-        eprintln!("rewarden mcp: not logged in to a Rewarden server; run `rewarden login <server>` in a terminal.");
+        eprintln!("rewarden mcp: not logged in to a Rewarden server; run `rewarden login` in a terminal.");
     }
     let bridge = Arc::new(Bridge {
         tokens: SessionTokens::new(paths, http.clone()),

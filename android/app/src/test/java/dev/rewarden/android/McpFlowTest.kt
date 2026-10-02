@@ -27,7 +27,7 @@ import org.robolectric.annotation.GraphicsMode
 @GraphicsMode(GraphicsMode.Mode.NATIVE)
 @Config(sdk = [35], qualifiers = "w411dp-h891dp-normal-xxhdpi")
 class McpFlowTest : FlowHarness() {
-    private val redirect = "dev.rewarden.android://mcp-oauth?code=abc123&state=st4te"
+    private val redirect = "com.reins2fa.app://mcp-oauth?code=abc123&state=st4te"
 
     private fun redirectIntent(uri: String = redirect) = Intent(context, MainActivity::class.java)
         .setAction(McpRedirectActivity.ACTION_SIGNED_IN)

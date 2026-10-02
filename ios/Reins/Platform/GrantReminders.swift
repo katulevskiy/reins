@@ -104,4 +104,4 @@ enum GrantReminders {
 }
 
 /// Where the app talks to the notification center when it does not need the answer.
-let notificationQueue = DispatchQueue(label: "dev.rewarden.ios.notifications", qos: .utility)
+let notificationQueue = DispatchQueue(label: "com.reins2fa.app.notifications", qos: .utility)

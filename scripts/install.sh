@@ -9,10 +9,9 @@ set -eu
 
 # The site to install from (REWARDEN_RELEASES overrides the releases URL). scripts/release-desktop.sh rewrites this line
 # to the site it publishes to, so the installer it serves always points back at that site.
-DEFAULT_SITE="https://rewarden.arc-chat.com"
+DEFAULT_SITE="https://reins2fa.com"
 RELEASES="${REWARDEN_RELEASES:-$DEFAULT_SITE/releases}"
 INSTALL_DIR="${REWARDEN_INSTALL_DIR:-$HOME/.local/bin}"
-SERVER="${RELEASES%/releases}"
 
 say() { printf '%s\n' "$*"; }
 fail() {
@@ -93,8 +92,9 @@ esac
 if [ "$was_installed" = false ]; then
     say ""
     say "Next:"
-    say "  rewarden login $SERVER"
-    say "      sign in; your phone shows a key: approve only if it matches the one printed here"
+    say "  rewarden login"
+    say "      sign in (a self-hosted server: rewarden login https://your.server); your phone shows a key: approve only"
+    say "      if it matches the one printed here"
     say "  rewarden resume"
     say "      start the background service and send GitHub git through it (rewarden pause undoes it)"
 fi

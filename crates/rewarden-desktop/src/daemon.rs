@@ -60,7 +60,7 @@ impl ModeAuthorizer {
             return match self.mode {
                 Mode::Auto => Ok(Arc::<LocalAuthorizer>::clone(&self.local)),
                 _ => Err(Refusal::Unavailable(
-                    "Not logged in to a Rewarden server: run `rewarden login <server>`.".to_owned(),
+                    "Not logged in to a Rewarden server: run `rewarden login`.".to_owned(),
                 )),
             };
         };

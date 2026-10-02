@@ -201,7 +201,7 @@ fn harness_cmd(paths: &Paths, config: &Config, action: HarnessCmd) -> Result<(),
             }
             say(harness::after_add_note(harness));
             if crate::server::oauth::logged_in_server(paths).is_none() {
-                say("Not logged in yet: `rewarden login <server>` so the MCP server and the hook reach your phone.");
+                say("Not logged in yet: `rewarden login` so the MCP server and the hook reach your phone.");
             }
         }
         HarnessCmd::Remove {

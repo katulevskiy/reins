@@ -81,7 +81,7 @@ SIGNUPS_ALLOWED=true             # turn off once your accounts exist, or use inv
 | `REWARDEN_ENABLED` | Mounts `/mcp`, `/rewarden/oauth/*`, `/.well-known/oauth-*`, `/rewarden/api/*` (phone), `/rewarden/desktop/*` and `/rewarden/blob/*`. |
 | `REWARDEN_FCM_SERVICE_ACCOUNT` | Path to a Firebase service-account JSON key. Keep it out of the repository, mode 0600 or 0640. |
 | `REWARDEN_APNS_KEY_FILE`, `REWARDEN_APNS_KEY_ID`, `REWARDEN_APNS_TEAM_ID` | The APNs key (`.p8` file), its key id and your Apple team id, for push to the iOS app. Set all three or none; the server refuses to start with only some, or with a key it cannot read. Same file permissions as the Firebase key. |
-| `REWARDEN_APNS_TOPIC` | Bundle id of the iOS app. Default `dev.rewarden.ios`; change it only for an app built under another bundle id. |
+| `REWARDEN_APNS_TOPIC` | Bundle id of the iOS app. Default `com.reins2fa.app`; change it only for an app built under another bundle id. |
 | `REWARDEN_RELAY_WAIT_SECS` | ChatGPT aborts tool calls after 60 s; Claude allows longer. After this time the AI is told to call `rewarden_get_result` later. |
 | `REWARDEN_OFFLINE_SECS` | Must be at most `REWARDEN_RELAY_WAIT_SECS`. |
 | `REWARDEN_TEST_ALLOW_LOOPBACK` | For the test suite only. Never set it in production. |
@@ -177,7 +177,7 @@ Without push, the app receives requests only while it is open (it long-polls `/r
 data-only Firebase message carrying just a request id wakes the phone, and the phone then fetches the request from
 your server. No request content goes through Google.
 
-1. Create a Firebase project and add an Android app with the package `dev.rewarden.android`.
+1. Create a Firebase project and add an Android app with the package `com.reins2fa.app`.
 2. Create a service account with the role *Firebase Cloud Messaging Admin* only, download its JSON key, and point
    `REWARDEN_FCM_SERVICE_ACCOUNT` at it.
 3. Build the Android app with that project's `google-services.json` (see `android/README.md`):
@@ -237,8 +237,10 @@ curl -si -X POST https://rewarden.example.com/mcp -d '{}'
 # 401 with a WWW-Authenticate header
 ```
 
-Then sign in on the phone, connect an AI, and ask it to search your mail or list your repositories. A notification
-should appear, and the AI gets the result only after you approve. With the phone offline, the AI is told to open the
+Then sign in on the phone, connect an AI, and ask it to search your mail or list your repositories. The apps come
+filled in with the hosted server: replace it with yours (on iPhone under **Use another server**), or build the Android
+app with `-Prewarden.defaultServer` as above. A notification should appear, and the AI gets the result only after you
+approve. With the phone offline, the AI is told to open the
 app within `REWARDEN_OFFLINE_SECS`.
 
 ## Operating

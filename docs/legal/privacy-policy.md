@@ -1,8 +1,8 @@
 # Privacy policy (hosted service)
 
 > **DRAFT. Not legal advice. Needs review by a qualified lawyer before publication.** Placeholders are in
-> `[BRACKETS]`. This policy covers the hosted Reins service at `https://rewarden.arc-chat.com`. It does not cover
-> servers that other people run with Reins's open-source code.
+> `[BRACKETS]`. This policy covers the hosted Reins service at `https://app.reins2fa.com` and its website,
+> `https://reins2fa.com`. It does not cover servers that other people run with Reins's open-source code.
 
 Last updated: [DATE]
 

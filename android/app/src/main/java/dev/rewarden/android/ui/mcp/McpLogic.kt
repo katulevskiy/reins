@@ -4,7 +4,7 @@ import dev.rewarden.core.McpToolView
 import java.net.URI
 
 /** Where an MCP server's sign-in page sends the browser back to (the core registers it with the server). */
-const val MCP_REDIRECT_SCHEME = "dev.rewarden.android"
+const val MCP_REDIRECT_SCHEME = "com.reins2fa.app"
 const val MCP_REDIRECT_HOST = "mcp-oauth"
 
 /** Longest redirect address passed on to the core; a real one is a code and a state. */
