@@ -445,6 +445,20 @@ mod tests {
 
     #[test]
     fn dns_setup_does_not_initialize_config() {
+        // CONFIG is process-wide and other tests in this binary initialize it, in any order. So the check runs in a
+        // fresh process of this test binary that runs only this test.
+        const FRESH: &str = "VW_TEST_DNS_SETUP_FRESH_PROCESS";
+        if std::env::var_os(FRESH).is_none() {
+            let output = std::process::Command::new(std::env::current_exe().unwrap())
+                .args(["--exact", "http_client::tests::dns_setup_does_not_initialize_config", "--test-threads=1"])
+                .env(FRESH, "1")
+                .output()
+                .unwrap();
+            let stdout = String::from_utf8_lossy(&output.stdout);
+            assert!(output.status.success(), "{stdout}{}", String::from_utf8_lossy(&output.stderr));
+            assert!(stdout.contains("1 passed"), "the test did not run in the fresh process: {stdout}");
+            return;
+        }
         assert!(LazyLock::get(&CONFIG).is_none());
         drop(CustomDns::instance(false));
         assert!(LazyLock::get(&CONFIG).is_none());
