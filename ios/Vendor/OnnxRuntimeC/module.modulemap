@@ -1,0 +1,7 @@
+// ONNX Runtime's C API as a Swift module. The Objective-C wrapper of the Swift package has no boolean tensors, and
+// Autopilot's model takes one (`marker_mask`), so the app talks to the C API the wrapper is built on. The header
+// comes from the package's `onnxruntime.framework`, which Xcode puts in the products folder.
+module OnnxRuntimeC [system] {
+    header "OnnxRuntimeC.h"
+    export *
+}

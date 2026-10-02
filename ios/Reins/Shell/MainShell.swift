@@ -11,7 +11,7 @@ struct MainShell: View {
 
     var body: some View {
         @Bindable var model = model
-        HingeReader { _ in
+        HingeReader { posture in
             Group {
                 if sizeClass == .regular {
                     SplitShell()
@@ -19,9 +19,11 @@ struct MainShell: View {
                     TabShell()
                 }
             }
-        }
-        .sheet(item: $model.sheet, onDismiss: { model.feedback.cueUnlessRecent(.close) }) { target in
-            SheetContent(target: target, regular: sizeClass == .regular)
+            .sheet(item: $model.sheet, onDismiss: { model.feedback.cueUnlessRecent(.close) }) { target in
+                // Presented content does not inherit the presenter's environment reliably: hand the fold over.
+                SheetContent(target: target, regular: sizeClass == .regular)
+                    .environment(\.hinge, posture)
+            }
         }
         .overlay(alignment: .top) {
             if let notice = model.notice {
@@ -83,11 +85,11 @@ private struct SplitShell: View {
         @Bindable var model = model
         NavigationSplitView(columnVisibility: $columns) {
             Sidebar()
-                .navigationSplitViewColumnWidth(min: 220, ideal: 250, max: 300)
+                .navigationSplitViewColumnWidth(min: 200, ideal: 230, max: 280)
         } content: {
             SectionRoot(section: model.section)
                 .id(model.section)
-                .navigationSplitViewColumnWidth(min: 340, ideal: hinge == .bent ? 400 : 420, max: 520)
+                .navigationSplitViewColumnWidth(min: 380, ideal: hinge == .bent ? 400 : 440, max: 540)
         } detail: {
             DetailColumn()
         }

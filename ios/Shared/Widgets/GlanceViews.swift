@@ -27,8 +27,8 @@ enum GlanceStyle {
 // MARK: Pieces
 
 /// The AI behind an item: its provider's logo on the app's round plate when one is picked or its name suggests one,
-/// else its initial in a violet disc (a link glyph for pairings, which have no AI yet). The app draws a blobatar
-/// where widgets draw the initial: the blobatar library is not in the widget extension.
+/// else its blobatar, the same figure the app draws (in the tinted and vibrant renderings, its initial in a disc; a
+/// link glyph for pairings, which have no AI yet).
 struct GlanceAvatar: View {
     var label: String
     var kind: Snapshot.Item.Kind = .request
@@ -39,6 +39,8 @@ struct GlanceAvatar: View {
     var body: some View {
         if kind != .pairing, let provider = Providers.resolve(label: label, pick: icon) {
             logo(provider)
+        } else if kind != .pairing, renderingMode == .fullColor, !Glance.initial(label).isEmpty {
+            blob
         } else {
             initial
         }
@@ -57,6 +59,21 @@ struct GlanceAvatar: View {
             .overlay(Circle().strokeBorder(full ? Palette.hairline : .clear, lineWidth: 1))
             .widgetAccentable()
             .accessibilityHidden(true)
+    }
+
+    private var blob: some View {
+        let marks = BlobatarDrawing.marks(for: label)
+        return Canvas { context, canvas in
+            let scale = min(canvas.width, canvas.height) / 100
+            context.scaleBy(x: scale, y: scale)
+            for mark in marks { context.fill(mark.path, with: .color(mark.color)) }
+        }
+        .frame(width: size * 0.92, height: size * 0.92)
+        .frame(width: size, height: size)
+        .background(Palette.dynamic(0xFFFFFF, 0x1D1D21), in: Circle())
+        .overlay(Circle().strokeBorder(Palette.hairline, lineWidth: 1))
+        .clipShape(Circle())
+        .accessibilityHidden(true)
     }
 
     private var initial: some View {

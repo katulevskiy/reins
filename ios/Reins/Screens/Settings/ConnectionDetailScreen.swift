@@ -121,7 +121,7 @@ private struct ConnectionAutopilotGroup: View {
             Text("Everything it asks for is denied at once, what waits now included. Other AIs are not affected.")
         }
         .sheet(isPresented: $askBypass) {
-            BypassSheet(who: label) { minutes in
+            ConnectionBypassSheet(who: label) { minutes in
                 askBypass = false
                 setMode(.bypass, minutes: minutes)
             }
@@ -421,7 +421,7 @@ private struct IconPicker: View {
 }
 
 /// Turning on a bypass for one AI: how long, and what it means.
-private struct BypassSheet: View {
+private struct ConnectionBypassSheet: View {
     var who: String
     var onConfirm: (UInt32) -> Void
     @Environment(\.dismiss) private var dismiss
