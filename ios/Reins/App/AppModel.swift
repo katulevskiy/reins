@@ -444,12 +444,15 @@ final class AppModel {
         if let a = autopilot {
             s.autopilotMode = a.mode.key
             s.bypassUntil = a.bypassUntil
+            s.baseMode = a.baseMode.key
+            s.anyBypassUntil = a.lastBypassEnd
         }
         s.activeGrants = activeGrants
         s.updatedAt = Int64(Date().timeIntervalSince1970)
         guard s != Snapshot.load() || s.updatedAt == 0 else { return }
         s.save()
         WidgetCenter.shared.reloadAllTimelines()
+        ControlCenter.shared.reloadAllControls()
     }
 }
 

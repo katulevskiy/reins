@@ -57,10 +57,22 @@ enum SnapshotWriter {
         if let a = try? await core.autopilotSettings() {
             s.autopilotMode = modeKey(a.mode)
             s.bypassUntil = a.bypassUntil
+            s.baseMode = modeKey(a.baseMode)
+            s.anyBypassUntil = a.lastBypassEnd
         }
         if let grants = try? await core.grants() { s.activeGrants = grants.filter(\.active).count }
         s.updatedAt = Int64(Date().timeIntervalSince1970)
         s.save()
         WidgetCenter.shared.reloadAllTimelines()
+        ControlCenter.shared.reloadAllControls()
     }
+}
+
+extension AutopilotSettings {
+    /// When the last running bypass ends (the global one or any connection's), nil when none runs.
+    func lastBypassEnd(now: Int64 = Int64(Date().timeIntervalSince1970)) -> Int64? {
+        ([bypassUntil] + connections.map(\.bypassUntil)).compactMap { $0 }.filter { $0 > now }.max()
+    }
+
+    var lastBypassEnd: Int64? { lastBypassEnd() }
 }
