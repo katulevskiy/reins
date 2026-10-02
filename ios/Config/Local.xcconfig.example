@@ -1,0 +1,6 @@
+// Copy to Local.xcconfig (git-ignored) and fill in what you have.
+REINS_TEAM = ABCDE12345
+REINS_TELEGRAM_API_ID = 123456
+REINS_TELEGRAM_API_HASH = 0123456789abcdef0123456789abcdef
+REINS_GOOGLE_CLIENT_ID = 1234-abcd.apps.googleusercontent.com
+REINS_GOOGLE_REDIRECT_SCHEME = com.googleusercontent.apps.1234-abcd

@@ -1,0 +1,919 @@
+// !$*UTF8*$!
+{
+	archiveVersion = 1;
+	classes = {
+	};
+	objectVersion = 77;
+	objects = {
+
+/* Begin PBXBuildFile section */
+		142B2987001C3B41FC18B800 = {
+			isa = PBXBuildFile;
+			fileRef = C52976123585A007A461829D;
+			settings = {
+				ATTRIBUTES = (
+					RemoveHeadersOnCopy,
+				);
+			};
+		};
+		1EDE7FDF79D388F050F64D2F = {
+			isa = PBXBuildFile;
+			productRef = "29737CB6C16A5E34C87037A3";
+		};
+		F912E701182D086B0F7CAA07 = {
+			isa = PBXBuildFile;
+			fileRef = "5ACD98726ACB1EEB235263E3";
+			settings = {
+				ATTRIBUTES = (
+					RemoveHeadersOnCopy,
+				);
+			};
+		};
+/* End PBXBuildFile section */
+
+/* Begin PBXContainerItemProxy section */
+		1DCE263CEFBF9AC4B96C18FF = {
+			isa = PBXContainerItemProxy;
+			containerPortal = "98F54143AB4E86B28C3AFEE0";
+			proxyType = "1";
+			remoteGlobalIDString = CE9CAA34A8CFBB3A353694F2;
+			remoteInfo = ReinsNotifications;
+		};
+		358C55B58ABC0F6A2E944B5D = {
+			isa = PBXContainerItemProxy;
+			containerPortal = "98F54143AB4E86B28C3AFEE0";
+			proxyType = "1";
+			remoteGlobalIDString = "078A542EA37CA7FA2C3F9692";
+			remoteInfo = ReinsWidgets;
+		};
+		857A2A85EC49B9255F81277F = {
+			isa = PBXContainerItemProxy;
+			containerPortal = "98F54143AB4E86B28C3AFEE0";
+			proxyType = "1";
+			remoteGlobalIDString = FA025642F7DE92E23F09291D;
+			remoteInfo = Reins;
+		};
+		D57E846162A669AA18B46A77 = {
+			isa = PBXContainerItemProxy;
+			containerPortal = "98F54143AB4E86B28C3AFEE0";
+			proxyType = "1";
+			remoteGlobalIDString = FA025642F7DE92E23F09291D;
+			remoteInfo = Reins;
+		};
+/* End PBXContainerItemProxy section */
+
+/* Begin PBXCopyFilesBuildPhase section */
+		DF28D1961EC010042FC5B422 = {
+			isa = PBXCopyFilesBuildPhase;
+			buildActionMask = "2147483647";
+			dstPath = "";
+			dstSubfolderSpec = "13";
+			files = (
+				"142B2987001C3B41FC18B800",
+				F912E701182D086B0F7CAA07,
+			);
+			name = "Embed Foundation Extensions";
+			runOnlyForDeploymentPostprocessing = "0";
+		};
+/* End PBXCopyFilesBuildPhase section */
+
+/* Begin PBXFileReference section */
+		42B0F2EAE970B136EAF8ECFE = {
+			isa = PBXFileReference;
+			explicitFileType = wrapper.application;
+			includeInIndex = "0";
+			path = Reins.app;
+			sourceTree = BUILT_PRODUCTS_DIR;
+		};
+		49C45D5AD92F515FADC43625 = {
+			isa = PBXFileReference;
+			explicitFileType = wrapper.cfbundle;
+			includeInIndex = "0";
+			path = ReinsUITests.xctest;
+			sourceTree = BUILT_PRODUCTS_DIR;
+		};
+		59C6F094C5CD0CF0658FD18B = {
+			isa = PBXFileReference;
+			explicitFileType = wrapper.cfbundle;
+			includeInIndex = "0";
+			path = ReinsTests.xctest;
+			sourceTree = BUILT_PRODUCTS_DIR;
+		};
+		5ACD98726ACB1EEB235263E3 = {
+			isa = PBXFileReference;
+			explicitFileType = "wrapper.app-extension";
+			includeInIndex = "0";
+			path = ReinsNotifications.appex;
+			sourceTree = BUILT_PRODUCTS_DIR;
+		};
+		88CEAA489E5229503EE15E09 = {
+			isa = PBXFileReference;
+			lastKnownFileType = text.xcconfig;
+			path = Config/Reins.xcconfig;
+			sourceTree = "<group>";
+		};
+		C52976123585A007A461829D = {
+			isa = PBXFileReference;
+			explicitFileType = "wrapper.app-extension";
+			includeInIndex = "0";
+			path = ReinsWidgets.appex;
+			sourceTree = BUILT_PRODUCTS_DIR;
+		};
+/* End PBXFileReference section */
+
+/* Begin PBXFileSystemSynchronizedBuildFileExceptionSet section */
+		B37505F96BA5D3009B248E74 = {
+			isa = PBXFileSystemSynchronizedBuildFileExceptionSet;
+			membershipExceptions = (
+				Info.plist,
+			);
+			target = FA025642F7DE92E23F09291D;
+		};
+		C00DC91365B915C87BAE85C4 = {
+			isa = PBXFileSystemSynchronizedBuildFileExceptionSet;
+			membershipExceptions = (
+				Info.plist,
+			);
+			target = "078A542EA37CA7FA2C3F9692";
+		};
+		FBAD4F9B5CE6F52A5DE87634 = {
+			isa = PBXFileSystemSynchronizedBuildFileExceptionSet;
+			membershipExceptions = (
+				Info.plist,
+			);
+			target = CE9CAA34A8CFBB3A353694F2;
+		};
+/* End PBXFileSystemSynchronizedBuildFileExceptionSet section */
+
+/* Begin PBXFileSystemSynchronizedRootGroup section */
+		432B60725E11C4E5C96FAF9E = {
+			isa = PBXFileSystemSynchronizedRootGroup;
+			exceptions = (
+				FBAD4F9B5CE6F52A5DE87634,
+			);
+			path = ReinsNotifications;
+			sourceTree = "<group>";
+		};
+		5F30DECF8227AE1FF4FD5480 = {
+			isa = PBXFileSystemSynchronizedRootGroup;
+			path = ReinsUITests;
+			sourceTree = "<group>";
+		};
+		67721DCC6205844093A31C07 = {
+			isa = PBXFileSystemSynchronizedRootGroup;
+			exceptions = (
+				B37505F96BA5D3009B248E74,
+			);
+			path = Reins;
+			sourceTree = "<group>";
+		};
+		7E1C827E485A5287AD7242F2 = {
+			isa = PBXFileSystemSynchronizedRootGroup;
+			path = Shared;
+			sourceTree = "<group>";
+		};
+		89EBA3469D88DE089FB59360 = {
+			isa = PBXFileSystemSynchronizedRootGroup;
+			exceptions = (
+				C00DC91365B915C87BAE85C4,
+			);
+			path = ReinsWidgets;
+			sourceTree = "<group>";
+		};
+		9E3AD264482EE9B7F7D35FEA = {
+			isa = PBXFileSystemSynchronizedRootGroup;
+			path = ReinsTests;
+			sourceTree = "<group>";
+		};
+		A90FB683184E5628DF4D288E = {
+			isa = PBXFileSystemSynchronizedRootGroup;
+			path = Core;
+			sourceTree = "<group>";
+		};
+/* End PBXFileSystemSynchronizedRootGroup section */
+
+/* Begin PBXFrameworksBuildPhase section */
+		1A23664401A58596753ED23B = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = "2147483647";
+			files = (
+				"1EDE7FDF79D388F050F64D2F",
+			);
+			runOnlyForDeploymentPostprocessing = "0";
+		};
+		3B996760647D8F09FC67F63C = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = "2147483647";
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = "0";
+		};
+		5CD71DF0AA3DEA34C93FF94A = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = "2147483647";
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = "0";
+		};
+		6D0BD2126498885F814DE411 = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = "2147483647";
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = "0";
+		};
+		8D6E3E299FE13AF51B5E7A65 = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = "2147483647";
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = "0";
+		};
+/* End PBXFrameworksBuildPhase section */
+
+/* Begin PBXGroup section */
+		0500089CBF0A8CDDA7483BA4 = {
+			isa = PBXGroup;
+			children = (
+				"42B0F2EAE970B136EAF8ECFE",
+				C52976123585A007A461829D,
+				"5ACD98726ACB1EEB235263E3",
+				"59C6F094C5CD0CF0658FD18B",
+				"49C45D5AD92F515FADC43625",
+			);
+			name = Products;
+			sourceTree = "<group>";
+		};
+		66ADC382DA4DC6DC7D4A96AB = {
+			isa = PBXGroup;
+			children = (
+				"88CEAA489E5229503EE15E09",
+				"67721DCC6205844093A31C07",
+				"7E1C827E485A5287AD7242F2",
+				A90FB683184E5628DF4D288E,
+				"89EBA3469D88DE089FB59360",
+				"432B60725E11C4E5C96FAF9E",
+				"9E3AD264482EE9B7F7D35FEA",
+				"5F30DECF8227AE1FF4FD5480",
+				"0500089CBF0A8CDDA7483BA4",
+			);
+			sourceTree = "<group>";
+		};
+/* End PBXGroup section */
+
+/* Begin PBXNativeTarget section */
+		078A542EA37CA7FA2C3F9692 = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = "99984FEBE85EBEC47F399154";
+			buildPhases = (
+				"05B0E1F50DA2D172B9E7F444",
+				"3B996760647D8F09FC67F63C",
+				"31BA23B21C8D9F878D885D8E",
+			);
+			buildRules = (
+			);
+			dependencies = (
+			);
+			fileSystemSynchronizedGroups = (
+				"89EBA3469D88DE089FB59360",
+				"7E1C827E485A5287AD7242F2",
+			);
+			name = ReinsWidgets;
+			packageProductDependencies = (
+			);
+			productName = ReinsWidgets;
+			productReference = C52976123585A007A461829D;
+			productType = "com.apple.product-type.app-extension";
+		};
+		8B3E0FE7AB652AA0DD39B7CA = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = CF067E98C17707376A107256;
+			buildPhases = (
+				"8D4C1136103F493A449A8849",
+				"8D6E3E299FE13AF51B5E7A65",
+				AA9AEE4126671ECE1D631BDE,
+			);
+			buildRules = (
+			);
+			dependencies = (
+				E254DE19972FCE2F898EC89F,
+			);
+			fileSystemSynchronizedGroups = (
+				"9E3AD264482EE9B7F7D35FEA",
+			);
+			name = ReinsTests;
+			packageProductDependencies = (
+			);
+			productName = ReinsTests;
+			productReference = "59C6F094C5CD0CF0658FD18B";
+			productType = "com.apple.product-type.bundle.unit-test";
+		};
+		CE9CAA34A8CFBB3A353694F2 = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = AD050F941E9A0E3BBD6A0441;
+			buildPhases = (
+				FAFB70DA2F195F25CCA8FDA7,
+				"9A1FF755175509DEEC45542E",
+				"5CD71DF0AA3DEA34C93FF94A",
+				F255D819BF04C87EF919D223,
+			);
+			buildRules = (
+			);
+			dependencies = (
+			);
+			fileSystemSynchronizedGroups = (
+				"432B60725E11C4E5C96FAF9E",
+				"7E1C827E485A5287AD7242F2",
+				A90FB683184E5628DF4D288E,
+			);
+			name = ReinsNotifications;
+			packageProductDependencies = (
+			);
+			productName = ReinsNotifications;
+			productReference = "5ACD98726ACB1EEB235263E3";
+			productType = "com.apple.product-type.app-extension";
+		};
+		FA025642F7DE92E23F09291D = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = F1AB57CD859E89E2C7DE60DC;
+			buildPhases = (
+				"577B648A569030D7F42B1EC2",
+				"3C026DB15D01944179E2CFE0",
+				"1A23664401A58596753ED23B",
+				"8F1C8925CF17215F28DD53EB",
+				DF28D1961EC010042FC5B422,
+			);
+			buildRules = (
+			);
+			dependencies = (
+				DA8DFCC9B16417A9D34D8B83,
+				"23C0CB8AF871A7BCBA707A4D",
+			);
+			fileSystemSynchronizedGroups = (
+				"67721DCC6205844093A31C07",
+				"7E1C827E485A5287AD7242F2",
+				A90FB683184E5628DF4D288E,
+			);
+			name = Reins;
+			packageProductDependencies = (
+				"29737CB6C16A5E34C87037A3",
+			);
+			productName = Reins;
+			productReference = "42B0F2EAE970B136EAF8ECFE";
+			productType = "com.apple.product-type.application";
+		};
+		FD1BD7DA6C3D081C9106C191 = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = B884CDEC8B252ADD4468B188;
+			buildPhases = (
+				"2C4AF1ECB94623003EB4DB36",
+				"6D0BD2126498885F814DE411",
+				BD4BAE23D53E1B8D1D492628,
+			);
+			buildRules = (
+			);
+			dependencies = (
+				A6BA77DE1DCD06C1D5665B04,
+			);
+			fileSystemSynchronizedGroups = (
+				"5F30DECF8227AE1FF4FD5480",
+			);
+			name = ReinsUITests;
+			packageProductDependencies = (
+			);
+			productName = ReinsUITests;
+			productReference = "49C45D5AD92F515FADC43625";
+			productType = "com.apple.product-type.bundle.ui-testing";
+		};
+/* End PBXNativeTarget section */
+
+/* Begin PBXProject section */
+		98F54143AB4E86B28C3AFEE0 = {
+			isa = PBXProject;
+			attributes = {
+				BuildIndependentTargetsInParallel = "1";
+				LastSwiftUpdateCheck = "2710";
+				LastUpgradeCheck = "2710";
+			};
+			buildConfigurationList = BFEC26E428B1CE6CDD0DDA4F;
+			developmentRegion = en;
+			hasScannedForEncodings = "0";
+			knownRegions = (
+				en,
+				Base,
+			);
+			mainGroup = "66ADC382DA4DC6DC7D4A96AB";
+			minimizedProjectReferenceProxies = "1";
+			packageReferences = (
+				"982BE9BE903F309709BFFB52",
+			);
+			preferredProjectObjectVersion = "77";
+			productRefGroup = "0500089CBF0A8CDDA7483BA4";
+			projectDirPath = "";
+			projectRoot = "";
+			targets = (
+				FA025642F7DE92E23F09291D,
+				"078A542EA37CA7FA2C3F9692",
+				CE9CAA34A8CFBB3A353694F2,
+				"8B3E0FE7AB652AA0DD39B7CA",
+				FD1BD7DA6C3D081C9106C191,
+			);
+		};
+/* End PBXProject section */
+
+/* Begin PBXResourcesBuildPhase section */
+		31BA23B21C8D9F878D885D8E = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = "2147483647";
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = "0";
+		};
+		8F1C8925CF17215F28DD53EB = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = "2147483647";
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = "0";
+		};
+		AA9AEE4126671ECE1D631BDE = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = "2147483647";
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = "0";
+		};
+		BD4BAE23D53E1B8D1D492628 = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = "2147483647";
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = "0";
+		};
+		F255D819BF04C87EF919D223 = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = "2147483647";
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = "0";
+		};
+/* End PBXResourcesBuildPhase section */
+
+/* Begin PBXShellScriptBuildPhase section */
+		577B648A569030D7F42B1EC2 = {
+			isa = PBXShellScriptBuildPhase;
+			alwaysOutOfDate = "1";
+			buildActionMask = "2147483647";
+			files = (
+			);
+			inputPaths = (
+			);
+			name = "Rust core";
+			outputPaths = (
+			);
+			runOnlyForDeploymentPostprocessing = "0";
+			shellPath = /bin/sh;
+			shellScript = "exec \"$SRCROOT/scripts/build-core.sh\"\n";
+			showEnvVarsInLog = "0";
+		};
+		FAFB70DA2F195F25CCA8FDA7 = {
+			isa = PBXShellScriptBuildPhase;
+			alwaysOutOfDate = "1";
+			buildActionMask = "2147483647";
+			files = (
+			);
+			inputPaths = (
+			);
+			name = "Rust core";
+			outputPaths = (
+			);
+			runOnlyForDeploymentPostprocessing = "0";
+			shellPath = /bin/sh;
+			shellScript = "exec \"$SRCROOT/scripts/build-core.sh\"\n";
+			showEnvVarsInLog = "0";
+		};
+/* End PBXShellScriptBuildPhase section */
+
+/* Begin PBXSourcesBuildPhase section */
+		05B0E1F50DA2D172B9E7F444 = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = "2147483647";
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = "0";
+		};
+		2C4AF1ECB94623003EB4DB36 = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = "2147483647";
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = "0";
+		};
+		3C026DB15D01944179E2CFE0 = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = "2147483647";
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = "0";
+		};
+		8D4C1136103F493A449A8849 = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = "2147483647";
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = "0";
+		};
+		9A1FF755175509DEEC45542E = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = "2147483647";
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = "0";
+		};
+/* End PBXSourcesBuildPhase section */
+
+/* Begin PBXTargetDependency section */
+		23C0CB8AF871A7BCBA707A4D = {
+			isa = PBXTargetDependency;
+			target = CE9CAA34A8CFBB3A353694F2;
+			targetProxy = "1DCE263CEFBF9AC4B96C18FF";
+		};
+		A6BA77DE1DCD06C1D5665B04 = {
+			isa = PBXTargetDependency;
+			target = FA025642F7DE92E23F09291D;
+			targetProxy = D57E846162A669AA18B46A77;
+		};
+		DA8DFCC9B16417A9D34D8B83 = {
+			isa = PBXTargetDependency;
+			target = "078A542EA37CA7FA2C3F9692";
+			targetProxy = "358C55B58ABC0F6A2E944B5D";
+		};
+		E254DE19972FCE2F898EC89F = {
+			isa = PBXTargetDependency;
+			target = FA025642F7DE92E23F09291D;
+			targetProxy = "857A2A85EC49B9255F81277F";
+		};
+/* End PBXTargetDependency section */
+
+/* Begin XCBuildConfiguration section */
+		06F97114608B76022E102DC2 = {
+			isa = XCBuildConfiguration;
+			baseConfigurationReference = "88CEAA489E5229503EE15E09";
+			buildSettings = {
+				GENERATE_INFOPLIST_FILE = YES;
+				PRODUCT_BUNDLE_IDENTIFIER = dev.rewarden.ios.uitests;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				TARGETED_DEVICE_FAMILY = "1,2";
+				TEST_TARGET_NAME = Reins;
+			};
+			name = Debug;
+		};
+		31CA8C3C2868ECEBFE53F643 = {
+			isa = XCBuildConfiguration;
+			baseConfigurationReference = "88CEAA489E5229503EE15E09";
+			buildSettings = {
+				BUNDLE_LOADER = "$(TEST_HOST)";
+				GENERATE_INFOPLIST_FILE = YES;
+				PRODUCT_BUNDLE_IDENTIFIER = dev.rewarden.ios.tests;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				"SWIFT_INCLUDE_PATHS[sdk=iphoneos*]" = "$(SRCROOT)/../target/ios-core/iphoneos/include";
+				"SWIFT_INCLUDE_PATHS[sdk=iphonesimulator*]" = "$(SRCROOT)/../target/ios-core/iphonesimulator/include";
+				TARGETED_DEVICE_FAMILY = "1,2";
+				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/Reins.app/$(BUNDLE_EXECUTABLE_FOLDER_PATH)/Reins";
+			};
+			name = Debug;
+		};
+		577B2E971B047CFEA9E155AD = {
+			isa = XCBuildConfiguration;
+			baseConfigurationReference = "88CEAA489E5229503EE15E09";
+			buildSettings = {
+				ALWAYS_SEARCH_USER_PATHS = NO;
+				CLANG_ENABLE_MODULES = YES;
+				CLANG_ENABLE_OBJC_ARC = YES;
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = "$(REINS_BUILD_NUMBER)";
+				DEBUG_INFORMATION_FORMAT = dwarf;
+				DEVELOPMENT_TEAM = "$(REINS_TEAM)";
+				ENABLE_PREVIEWS = YES;
+				ENABLE_STRICT_OBJC_MSGSEND = YES;
+				ENABLE_TESTABILITY = YES;
+				ENABLE_USER_SCRIPT_SANDBOXING = NO;
+				"EXCLUDED_ARCHS[sdk=iphonesimulator*]" = x86_64;
+				GCC_C_LANGUAGE_STANDARD = gnu17;
+				GCC_OPTIMIZATION_LEVEL = "0";
+				GCC_PREPROCESSOR_DEFINITIONS = (
+					"DEBUG=1",
+					"$(inherited)",
+				);
+				IPHONEOS_DEPLOYMENT_TARGET = "26.0";
+				MARKETING_VERSION = "$(REINS_VERSION)";
+				ONLY_ACTIVE_ARCH = YES;
+				SDKROOT = iphoneos;
+				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";
+				SUPPORTS_MACCATALYST = NO;
+				SWIFT_ACTIVE_COMPILATION_CONDITIONS = "DEBUG $(inherited)";
+				SWIFT_EMIT_LOC_STRINGS = YES;
+				SWIFT_OPTIMIZATION_LEVEL = "-Onone";
+				SWIFT_VERSION = "5.0";
+			};
+			name = Debug;
+		};
+		6E02751F28A095BE5126A4C2 = {
+			isa = XCBuildConfiguration;
+			baseConfigurationReference = "88CEAA489E5229503EE15E09";
+			buildSettings = {
+				ALWAYS_SEARCH_USER_PATHS = NO;
+				CLANG_ENABLE_MODULES = YES;
+				CLANG_ENABLE_OBJC_ARC = YES;
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = "$(REINS_BUILD_NUMBER)";
+				DEBUG_INFORMATION_FORMAT = "dwarf-with-dsym";
+				DEVELOPMENT_TEAM = "$(REINS_TEAM)";
+				ENABLE_NS_ASSERTIONS = NO;
+				ENABLE_PREVIEWS = YES;
+				ENABLE_STRICT_OBJC_MSGSEND = YES;
+				ENABLE_USER_SCRIPT_SANDBOXING = NO;
+				"EXCLUDED_ARCHS[sdk=iphonesimulator*]" = x86_64;
+				GCC_C_LANGUAGE_STANDARD = gnu17;
+				IPHONEOS_DEPLOYMENT_TARGET = "26.0";
+				MARKETING_VERSION = "$(REINS_VERSION)";
+				SDKROOT = iphoneos;
+				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";
+				SUPPORTS_MACCATALYST = NO;
+				SWIFT_COMPILATION_MODE = wholemodule;
+				SWIFT_EMIT_LOC_STRINGS = YES;
+				SWIFT_OPTIMIZATION_LEVEL = "-O";
+				SWIFT_VERSION = "5.0";
+				VALIDATE_PRODUCT = YES;
+			};
+			name = Release;
+		};
+		71A918CF51F1BACD663FC5EE = {
+			isa = XCBuildConfiguration;
+			baseConfigurationReference = "88CEAA489E5229503EE15E09";
+			buildSettings = {
+				CODE_SIGN_ENTITLEMENTS = ReinsWidgets/ReinsWidgets.entitlements;
+				INFOPLIST_FILE = ReinsWidgets/Info.plist;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+					"@executable_path/../../Frameworks",
+				);
+				PRODUCT_BUNDLE_IDENTIFIER = dev.rewarden.ios.widgets;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SKIP_INSTALL = YES;
+				SWIFT_ACTIVE_COMPILATION_CONDITIONS = "REINS_WIDGETS $(inherited)";
+				TARGETED_DEVICE_FAMILY = "1,2";
+			};
+			name = Release;
+		};
+		811FAA35805AC8915527DE9A = {
+			isa = XCBuildConfiguration;
+			baseConfigurationReference = "88CEAA489E5229503EE15E09";
+			buildSettings = {
+				CODE_SIGN_ENTITLEMENTS = ReinsWidgets/ReinsWidgets.entitlements;
+				INFOPLIST_FILE = ReinsWidgets/Info.plist;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+					"@executable_path/../../Frameworks",
+				);
+				PRODUCT_BUNDLE_IDENTIFIER = dev.rewarden.ios.widgets;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SKIP_INSTALL = YES;
+				SWIFT_ACTIVE_COMPILATION_CONDITIONS = "REINS_WIDGETS DEBUG $(inherited)";
+				TARGETED_DEVICE_FAMILY = "1,2";
+			};
+			name = Debug;
+		};
+		8CBA5D8589A41D55A18F63D1 = {
+			isa = XCBuildConfiguration;
+			baseConfigurationReference = "88CEAA489E5229503EE15E09";
+			buildSettings = {
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
+				CODE_SIGN_ENTITLEMENTS = Reins/Reins.entitlements;
+				INFOPLIST_FILE = Reins/Info.plist;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+				);
+				"LIBRARY_SEARCH_PATHS[sdk=iphoneos*]" = "$(SRCROOT)/../target/ios-core/iphoneos";
+				"LIBRARY_SEARCH_PATHS[sdk=iphonesimulator*]" = "$(SRCROOT)/../target/ios-core/iphonesimulator";
+				OTHER_LDFLAGS = (
+					"-lrewarden_core",
+					"-lc++",
+					"-framework",
+					Security,
+					"-framework",
+					SystemConfiguration,
+				);
+				PRODUCT_BUNDLE_IDENTIFIER = dev.rewarden.ios;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SWIFT_ACTIVE_COMPILATION_CONDITIONS = "REINS_APP $(inherited)";
+				"SWIFT_INCLUDE_PATHS[sdk=iphoneos*]" = "$(SRCROOT)/../target/ios-core/iphoneos/include";
+				"SWIFT_INCLUDE_PATHS[sdk=iphonesimulator*]" = "$(SRCROOT)/../target/ios-core/iphonesimulator/include";
+				TARGETED_DEVICE_FAMILY = "1,2";
+			};
+			name = Release;
+		};
+		977DEBF8A5973D00A2CE7D7B = {
+			isa = XCBuildConfiguration;
+			baseConfigurationReference = "88CEAA489E5229503EE15E09";
+			buildSettings = {
+				BUNDLE_LOADER = "$(TEST_HOST)";
+				GENERATE_INFOPLIST_FILE = YES;
+				PRODUCT_BUNDLE_IDENTIFIER = dev.rewarden.ios.tests;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				"SWIFT_INCLUDE_PATHS[sdk=iphoneos*]" = "$(SRCROOT)/../target/ios-core/iphoneos/include";
+				"SWIFT_INCLUDE_PATHS[sdk=iphonesimulator*]" = "$(SRCROOT)/../target/ios-core/iphonesimulator/include";
+				TARGETED_DEVICE_FAMILY = "1,2";
+				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/Reins.app/$(BUNDLE_EXECUTABLE_FOLDER_PATH)/Reins";
+			};
+			name = Release;
+		};
+		A5ABC5946466022C650E70B8 = {
+			isa = XCBuildConfiguration;
+			baseConfigurationReference = "88CEAA489E5229503EE15E09";
+			buildSettings = {
+				GENERATE_INFOPLIST_FILE = YES;
+				PRODUCT_BUNDLE_IDENTIFIER = dev.rewarden.ios.uitests;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				TARGETED_DEVICE_FAMILY = "1,2";
+				TEST_TARGET_NAME = Reins;
+			};
+			name = Release;
+		};
+		B80F4EF1D9123C72EA2C0F96 = {
+			isa = XCBuildConfiguration;
+			baseConfigurationReference = "88CEAA489E5229503EE15E09";
+			buildSettings = {
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
+				CODE_SIGN_ENTITLEMENTS = Reins/Reins.entitlements;
+				INFOPLIST_FILE = Reins/Info.plist;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+				);
+				"LIBRARY_SEARCH_PATHS[sdk=iphoneos*]" = "$(SRCROOT)/../target/ios-core/iphoneos";
+				"LIBRARY_SEARCH_PATHS[sdk=iphonesimulator*]" = "$(SRCROOT)/../target/ios-core/iphonesimulator";
+				OTHER_LDFLAGS = (
+					"-lrewarden_core",
+					"-lc++",
+					"-framework",
+					Security,
+					"-framework",
+					SystemConfiguration,
+				);
+				PRODUCT_BUNDLE_IDENTIFIER = dev.rewarden.ios;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SWIFT_ACTIVE_COMPILATION_CONDITIONS = "REINS_APP DEBUG $(inherited)";
+				"SWIFT_INCLUDE_PATHS[sdk=iphoneos*]" = "$(SRCROOT)/../target/ios-core/iphoneos/include";
+				"SWIFT_INCLUDE_PATHS[sdk=iphonesimulator*]" = "$(SRCROOT)/../target/ios-core/iphonesimulator/include";
+				TARGETED_DEVICE_FAMILY = "1,2";
+			};
+			name = Debug;
+		};
+		F8F0491DA6A5504581B13733 = {
+			isa = XCBuildConfiguration;
+			baseConfigurationReference = "88CEAA489E5229503EE15E09";
+			buildSettings = {
+				CODE_SIGN_ENTITLEMENTS = ReinsNotifications/ReinsNotifications.entitlements;
+				INFOPLIST_FILE = ReinsNotifications/Info.plist;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+					"@executable_path/../../Frameworks",
+				);
+				"LIBRARY_SEARCH_PATHS[sdk=iphoneos*]" = "$(SRCROOT)/../target/ios-core/iphoneos";
+				"LIBRARY_SEARCH_PATHS[sdk=iphonesimulator*]" = "$(SRCROOT)/../target/ios-core/iphonesimulator";
+				OTHER_LDFLAGS = (
+					"-lrewarden_core",
+					"-lc++",
+					"-framework",
+					Security,
+					"-framework",
+					SystemConfiguration,
+				);
+				PRODUCT_BUNDLE_IDENTIFIER = dev.rewarden.ios.notifications;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SKIP_INSTALL = YES;
+				SWIFT_ACTIVE_COMPILATION_CONDITIONS = "REINS_EXTENSION DEBUG $(inherited)";
+				"SWIFT_INCLUDE_PATHS[sdk=iphoneos*]" = "$(SRCROOT)/../target/ios-core/iphoneos/include";
+				"SWIFT_INCLUDE_PATHS[sdk=iphonesimulator*]" = "$(SRCROOT)/../target/ios-core/iphonesimulator/include";
+				TARGETED_DEVICE_FAMILY = "1,2";
+			};
+			name = Debug;
+		};
+		FFAA138C95F9A5DF913EA7EF = {
+			isa = XCBuildConfiguration;
+			baseConfigurationReference = "88CEAA489E5229503EE15E09";
+			buildSettings = {
+				CODE_SIGN_ENTITLEMENTS = ReinsNotifications/ReinsNotifications.entitlements;
+				INFOPLIST_FILE = ReinsNotifications/Info.plist;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+					"@executable_path/../../Frameworks",
+				);
+				"LIBRARY_SEARCH_PATHS[sdk=iphoneos*]" = "$(SRCROOT)/../target/ios-core/iphoneos";
+				"LIBRARY_SEARCH_PATHS[sdk=iphonesimulator*]" = "$(SRCROOT)/../target/ios-core/iphonesimulator";
+				OTHER_LDFLAGS = (
+					"-lrewarden_core",
+					"-lc++",
+					"-framework",
+					Security,
+					"-framework",
+					SystemConfiguration,
+				);
+				PRODUCT_BUNDLE_IDENTIFIER = dev.rewarden.ios.notifications;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SKIP_INSTALL = YES;
+				SWIFT_ACTIVE_COMPILATION_CONDITIONS = "REINS_EXTENSION $(inherited)";
+				"SWIFT_INCLUDE_PATHS[sdk=iphoneos*]" = "$(SRCROOT)/../target/ios-core/iphoneos/include";
+				"SWIFT_INCLUDE_PATHS[sdk=iphonesimulator*]" = "$(SRCROOT)/../target/ios-core/iphonesimulator/include";
+				TARGETED_DEVICE_FAMILY = "1,2";
+			};
+			name = Release;
+		};
+/* End XCBuildConfiguration section */
+
+/* Begin XCConfigurationList section */
+		99984FEBE85EBEC47F399154 = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				"811FAA35805AC8915527DE9A",
+				"71A918CF51F1BACD663FC5EE",
+			);
+			defaultConfigurationIsVisible = "0";
+			defaultConfigurationName = Release;
+		};
+		AD050F941E9A0E3BBD6A0441 = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				F8F0491DA6A5504581B13733,
+				FFAA138C95F9A5DF913EA7EF,
+			);
+			defaultConfigurationIsVisible = "0";
+			defaultConfigurationName = Release;
+		};
+		B884CDEC8B252ADD4468B188 = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				"06F97114608B76022E102DC2",
+				A5ABC5946466022C650E70B8,
+			);
+			defaultConfigurationIsVisible = "0";
+			defaultConfigurationName = Release;
+		};
+		BFEC26E428B1CE6CDD0DDA4F = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				"577B2E971B047CFEA9E155AD",
+				"6E02751F28A095BE5126A4C2",
+			);
+			defaultConfigurationIsVisible = "0";
+			defaultConfigurationName = Release;
+		};
+		CF067E98C17707376A107256 = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				"31CA8C3C2868ECEBFE53F643",
+				"977DEBF8A5973D00A2CE7D7B",
+			);
+			defaultConfigurationIsVisible = "0";
+			defaultConfigurationName = Release;
+		};
+		F1AB57CD859E89E2C7DE60DC = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				B80F4EF1D9123C72EA2C0F96,
+				"8CBA5D8589A41D55A18F63D1",
+			);
+			defaultConfigurationIsVisible = "0";
+			defaultConfigurationName = Release;
+		};
+/* End XCConfigurationList section */
+
+/* Begin XCRemoteSwiftPackageReference section */
+		982BE9BE903F309709BFFB52 = {
+			isa = XCRemoteSwiftPackageReference;
+			repositoryURL = "https://github.com/microsoft/onnxruntime-swift-package-manager";
+			requirement = {
+				kind = upToNextMajorVersion;
+				minimumVersion = "1.20.0";
+			};
+		};
+/* End XCRemoteSwiftPackageReference section */
+
+/* Begin XCSwiftPackageProductDependency section */
+		29737CB6C16A5E34C87037A3 = {
+			isa = XCSwiftPackageProductDependency;
+			package = "982BE9BE903F309709BFFB52";
+			productName = onnxruntime;
+		};
+/* End XCSwiftPackageProductDependency section */
+	};
+	rootObject = 98F54143AB4E86B28C3AFEE0;
+}

@@ -1,0 +1,40 @@
+import Foundation
+
+/// Builds the process's one core and model at launch, before any scene: pushes and notification actions arrive in
+/// the background with no UI, and need both.
+@MainActor
+final class AppHost {
+    private(set) var model: AppModel?
+    private(set) var startupError: String?
+    let notifier = AppNotifier()
+
+    /// Launched with `-demo`: an in-memory core with sample data, no server.
+    static var isDemo: Bool { ProcessInfo.processInfo.arguments.contains("-demo") }
+
+    init() {
+        let feedback: Feedback = AppFeedback.make()
+        if Self.isDemo, let demo = DemoCore.make() {
+            let model = AppModel(core: demo, feedback: feedback, authenticator: TrustingAuthenticator(), demo: true)
+            if ProcessInfo.processInfo.arguments.contains("-noPopup") { model.autoPopup = false }
+            self.model = model
+            notifier.model = model
+        } else {
+            do {
+                let core = try CoreFactory.make(notifier: notifier)
+                let model = AppModel(core: core, feedback: feedback, authenticator: Authenticator())
+                self.model = model
+                notifier.model = model
+            } catch {
+                startupError = error.userMessage
+            }
+        }
+        if let model {
+            Task { await model.refreshSession() }
+        }
+    }
+}
+
+/// Picks the feedback engine; replaced by the real haptics and sounds once they land.
+enum AppFeedback {
+    static func make() -> Feedback { NoFeedback.shared }
+}
