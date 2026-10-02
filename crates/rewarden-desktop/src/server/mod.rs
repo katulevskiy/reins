@@ -2,6 +2,7 @@
 //! API git access requests go through.
 
 pub mod client;
+pub mod device;
 pub mod oauth;
 
 use crypto_box::aead::OsRng;

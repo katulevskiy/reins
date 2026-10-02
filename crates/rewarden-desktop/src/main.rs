@@ -50,12 +50,15 @@ enum Cmd {
     Deny {
         id: String,
     },
-    /// Pair with a Rewarden server; your phone approves and decides from then on.
+    /// Pair with your phone: scan the QR code shown here with the Reins app. Your phone decides from then on.
     Login {
         /// The server your phone signed in to; a self-hosted one needs its address here.
         #[arg(default_value = rewarden_proto::DEFAULT_SERVER)]
         server_url: String,
-        /// Print the sign-in link instead of opening the browser.
+        /// Sign in in the browser (enter your email there) instead of scanning a QR code.
+        #[arg(long)]
+        browser: bool,
+        /// With --browser: print the sign-in link instead of opening the browser.
         #[arg(long)]
         no_browser: bool,
     },
@@ -108,6 +111,24 @@ enum GitCmd {
 enum ServiceCmd {
     Install,
     Uninstall,
+}
+
+/// What `rewarden login` shows while the phone has to scan: the QR code, the code to type instead, the number to tap
+/// and the key to compare.
+fn show_pairing(pairing: &server::device::DevicePairing) {
+    use std::io::IsTerminal as _;
+    out!("Scan this QR code with the Reins app on your phone (or with the phone's camera):\n");
+    match server::device::terminal_qr(&pairing.qr_url, std::io::stdout().is_terminal()) {
+        Ok(qr) => out!("{qr}"),
+        Err(e) => out!("({e}; open {} on your phone instead)\n", pairing.qr_url),
+    }
+    out!("No camera? In the Reins app: Settings, Connect a computer, and enter {}.", pairing.user_code);
+    if let Some(number) = pairing.confirm_code {
+        out!("Then tap {number} on your phone.");
+    }
+    out!("Your phone shows this computer's key {}. Approve only if it matches.\n", pairing.key_fingerprint);
+    let minutes = (pairing.expires_at - rewarden_desktop::now_unix()).max(60) / 60;
+    out!("Waiting for your phone (the code works for {minutes} minutes)...");
 }
 
 fn home() -> Result<PathBuf, String> {
@@ -244,11 +265,26 @@ async fn run(cmd: Cmd) -> Result<(), String> {
         } => answer(&paths, &config, &id, false).await,
         Cmd::Login {
             server_url,
+            browser,
             no_browser,
         } => {
             paths.ensure().map_err(|e| e.to_string())?;
             let identity = Identity::load_or_create(&paths.identity_file()).map_err(|e| e.to_string())?;
-            let server = server::oauth::login(&paths, &identity, &server_url, !no_browser).await?;
+            let server = if browser || no_browser {
+                server::oauth::login(&paths, &identity, &server_url, !no_browser).await?
+            } else {
+                match server::device::DevicePairing::start(&identity, &server_url).await {
+                    Ok(mut pairing) => {
+                        show_pairing(&pairing);
+                        pairing.wait(&paths).await?
+                    }
+                    Err(server::device::StartError::Unsupported) => {
+                        out!("This server cannot pair by QR code; signing in through the browser instead.\n");
+                        server::oauth::login(&paths, &identity, &server_url, true).await?
+                    }
+                    Err(server::device::StartError::Failed(e)) => return Err(e),
+                }
+            };
             out!("Logged in to {server}. Your phone decides from now on.");
             Ok(())
         }

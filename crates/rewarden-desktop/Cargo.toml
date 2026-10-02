@@ -47,6 +47,7 @@ toml = "0.8.23"
 url = "2.5.8"
 webpki-roots = "1.0.9"
 zeroize = "1.9.0"
+qrcode = { version = "0.14.1", default-features = false }
 
 [dev-dependencies]
 # No rewarden-core / rewarden-e2e here, even for tests: they are AGPL-3.0 and this crate is Apache-2.0. The test that
