@@ -15,8 +15,8 @@ import os
 /// app (`WarmPolicy`), so the tap that sounds finds the output awake; after a quiet spell it stops and costs nothing.
 /// Interruptions, route and configuration changes stop the engine; the next cue starts it again.
 final class SoundPlayer: @unchecked Sendable {
-    private let queue = DispatchQueue(label: "dev.rewarden.ios.sounds", qos: .userInteractive)
-    private let log = Logger(subsystem: "dev.rewarden.ios", category: "feedback")
+    private let queue = DispatchQueue(label: "com.reins2fa.app.sounds", qos: .userInteractive)
+    private let log = Logger(subsystem: "com.reins2fa.app", category: "feedback")
     private let clock: () -> Int64
     private let warm: WarmPolicy
 

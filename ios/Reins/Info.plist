@@ -4,8 +4,8 @@
 <dict>
 	<key>BGTaskSchedulerPermittedIdentifiers</key>
 	<array>
-		<string>dev.rewarden.ios.refresh</string>
-		<string>dev.rewarden.ios.model-download</string>
+		<string>com.reins2fa.app.refresh</string>
+		<string>com.reins2fa.app.model-download</string>
 	</array>
 	<key>CFBundleDevelopmentRegion</key>
 	<string>$(DEVELOPMENT_LANGUAGE)</string>
@@ -27,7 +27,7 @@
 	<array>
 		<dict>
 			<key>CFBundleURLName</key>
-			<string>dev.rewarden.ios.open</string>
+			<string>com.reins2fa.app.open</string>
 			<key>CFBundleURLSchemes</key>
 			<array>
 				<string>reins</string>
@@ -35,7 +35,7 @@
 		</dict>
 		<dict>
 			<key>CFBundleURLName</key>
-			<string>dev.rewarden.ios.google</string>
+			<string>com.reins2fa.app.google</string>
 			<key>CFBundleURLSchemes</key>
 			<array>
 				<string>$(REINS_GOOGLE_REDIRECT_SCHEME)</string>
@@ -62,7 +62,7 @@
 	<key>NSSupportsLiveActivitiesFrequentUpdates</key>
 	<true/>
 	<key>ReinsAppGroup</key>
-	<string>group.dev.rewarden.ios</string>
+	<string>group.com.reins2fa.app</string>
 	<key>ReinsApsEnvironment</key>
 	<string>$(REINS_APS_ENVIRONMENT)</string>
 	<key>ReinsGoogleClientId</key>
@@ -70,7 +70,7 @@
 	<key>ReinsGoogleRedirectScheme</key>
 	<string>$(REINS_GOOGLE_REDIRECT_SCHEME)</string>
 	<key>ReinsKeychainGroup</key>
-	<string>$(AppIdentifierPrefix)dev.rewarden.ios.shared</string>
+	<string>$(AppIdentifierPrefix)com.reins2fa.app.shared</string>
 	<key>ReinsTelegramApiHash</key>
 	<string>$(REINS_TELEGRAM_API_HASH)</string>
 	<key>ReinsTelegramApiId</key>

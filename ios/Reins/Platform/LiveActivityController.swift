@@ -129,7 +129,7 @@ final class LiveActivityController {
         }
     }
 
-    private static let log = Logger(subsystem: "dev.rewarden.ios", category: "LiveActivities")
+    private static let log = Logger(subsystem: "com.reins2fa.app", category: "LiveActivities")
 }
 
 /// Autopilot's model download on the Lock Screen and in the Dynamic Island, for whoever runs the download (the

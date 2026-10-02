@@ -112,7 +112,7 @@ pub fn decider(paths: &Paths, config: &Config) -> Result<Decider, String> {
         (Mode::Local, _) | (Mode::Auto, false) => Ok(Decider::Local),
         (_, true) => Ok(Decider::Phone),
         (Mode::Rewarden, false) => {
-            Err("not logged in to a Rewarden server (mode = \"rewarden\"); run `rewarden login <server>`".to_owned())
+            Err("not logged in to a Rewarden server (mode = \"rewarden\"); run `rewarden login`".to_owned())
         }
     }
 }

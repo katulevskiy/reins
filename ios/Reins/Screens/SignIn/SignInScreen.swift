@@ -7,6 +7,10 @@ struct SignInState: Equatable {
     var needsTotp = false
     var error: String?
 
+    /// The hosted Reins server: the sign-in starts with it, and the server field stays hidden behind "Use another
+    /// server" (`rewarden_proto::default_server!`).
+    static let defaultServer = "https://app.reins2fa.com"
+
     /// Sign in is possible once a server address, an email and a password are there.
     static func canSubmit(server: String, email: String, password: String) -> Bool {
         server.trimmingCharacters(in: .whitespaces).count > "https://".count
@@ -15,13 +19,15 @@ struct SignInState: Equatable {
     }
 }
 
-/// Signing in to a Reins server: its address, the account's email and master password, and a two-step code when the
-/// server asks for one. A centred card on wide screens, the full width on a phone.
+/// Signing in to a Reins server: the account's email and master password, and a two-step code when the server asks
+/// for one. The server is the hosted one unless "Use another server" opens its field. A centred card on wide screens,
+/// the full width on a phone.
 struct SignInScreen: View {
     @Environment(AppModel.self) private var model
     @Environment(\.horizontalSizeClass) private var sizeClass
     @State private var state = SignInState()
-    @State private var server = "https://"
+    @State private var server = SignInState.defaultServer
+    @State private var otherServer = false
     @State private var email = ""
     // The password lives only here and in the call; it is never kept anywhere else.
     @State private var password = ""
@@ -47,7 +53,7 @@ struct SignInScreen: View {
         }
         .pageBackground()
         .onAppear {
-            if model.demo && server == "https://" { server = DemoData.server }
+            if model.demo && server == SignInState.defaultServer { server = DemoData.server }
         }
     }
 
@@ -70,7 +76,10 @@ struct SignInScreen: View {
                 .fixedSize(horizontal: false, vertical: true)
                 .padding(.bottom, 10)
 
-            field("Server", text: $server, field: .server, next: .email, content: .URL, keyboard: .URL)
+            if otherServer {
+                field("Server", text: $server, field: .server, next: .email, content: .URL, keyboard: .URL)
+                    .transition(.opacity.combined(with: .move(edge: .top)))
+            }
             field("Email", text: $email, field: .email, next: .password, content: .username, keyboard: .emailAddress)
             SecureField("Master password", text: $password)
                 .textContentType(.password)
@@ -106,8 +115,24 @@ struct SignInScreen: View {
             .opacity(SignInState.canSubmit(server: server, email: email, password: password) ? 1 : 0.45)
             .padding(.top, 4)
             .accessibilityIdentifier("signIn")
+            if !otherServer {
+                Button {
+                    otherServer = true
+                    focus = .server
+                } label: {
+                    Text("Use another server")
+                        .font(RFont.sans(14, .medium))
+                        .foregroundStyle(Palette.secondary)
+                        .frame(maxWidth: .infinity)
+                        .padding(.vertical, 8)
+                }
+                .buttonStyle(.plain)
+                .disabled(state.busy)
+                .accessibilityIdentifier("otherServer")
+            }
         }
         .animation(.smooth(duration: 0.25), value: state)
+        .animation(.smooth(duration: 0.25), value: otherServer)
     }
 
     private func field(

@@ -116,14 +116,14 @@ final class IntegrationsLogicTests: XCTestCase {
     }
 
     func testOnlyTheAppsOwnRedirectFinishesASignIn() {
-        XCTAssertTrue(McpLogic.isRedirect("dev.rewarden.android://mcp-oauth?code=a&state=b"))
-        XCTAssertTrue(McpLogic.isRedirect("dev.rewarden.android://mcp-oauth/?error=access_denied&state=b"))
+        XCTAssertTrue(McpLogic.isRedirect("com.reins2fa.app://mcp-oauth?code=a&state=b"))
+        XCTAssertTrue(McpLogic.isRedirect("com.reins2fa.app://mcp-oauth/?error=access_denied&state=b"))
         XCTAssertFalse(McpLogic.isRedirect(nil))
         XCTAssertFalse(McpLogic.isRedirect("https://evil.example.com/mcp-oauth?code=a"))
-        XCTAssertFalse(McpLogic.isRedirect("dev.rewarden.android://other?code=a"))
-        XCTAssertFalse(McpLogic.isRedirect("dev.rewarden.android://mcp-oauth.evil.com?code=a"))
-        XCTAssertFalse(McpLogic.isRedirect("dev.rewarden.android://user@mcp-oauth?code=a"))
-        XCTAssertFalse(McpLogic.isRedirect("dev.rewarden.android://mcp-oauth?code=" + String(repeating: "a", count: 9_000)))
+        XCTAssertFalse(McpLogic.isRedirect("com.reins2fa.app://other?code=a"))
+        XCTAssertFalse(McpLogic.isRedirect("com.reins2fa.app://mcp-oauth.evil.com?code=a"))
+        XCTAssertFalse(McpLogic.isRedirect("com.reins2fa.app://user@mcp-oauth?code=a"))
+        XCTAssertFalse(McpLogic.isRedirect("com.reins2fa.app://mcp-oauth?code=" + String(repeating: "a", count: 9_000)))
     }
 
     func testOnlyWebPagesAreOpenedForASignIn() {

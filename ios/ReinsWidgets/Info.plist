@@ -17,9 +17,9 @@
 	<key>CFBundleVersion</key>
 	<string>$(CURRENT_PROJECT_VERSION)</string>
 	<key>ReinsAppGroup</key>
-	<string>group.dev.rewarden.ios</string>
+	<string>group.com.reins2fa.app</string>
 	<key>ReinsKeychainGroup</key>
-	<string>$(AppIdentifierPrefix)dev.rewarden.ios.shared</string>
+	<string>$(AppIdentifierPrefix)com.reins2fa.app.shared</string>
 	<key>CFBundleDisplayName</key>
 	<string>Reins</string>
 	<key>CFBundlePackageType</key>

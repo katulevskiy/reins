@@ -27,7 +27,7 @@ android {
     ndkVersion = rewardenNdkVersion
 
     defaultConfig {
-        applicationId = "dev.rewarden.android"
+        applicationId = "com.reins2fa.app"
         minSdk = 31
         targetSdk = 36
         // scripts/release-android.sh sets these (versionCode = release time in minutes, so every release is newer) and
@@ -40,8 +40,9 @@ android {
         buildConfigField("String", "BUILD_ID", "\"$buildId\"")
         ndk { abiFilters += listOf("arm64-v8a", "x86_64") }
         buildConfigField("boolean", "HAS_FIREBASE", hasFirebase.toString())
-        // Pre-fills the sign-in server field (-Prewarden.defaultServer=https://your.server).
-        val defaultServer = providers.gradleProperty("rewarden.defaultServer").getOrElse("https://")
+        // Fills in the sign-in server field: the hosted server (gradle.properties) unless
+        // -Prewarden.defaultServer=https://your.server says otherwise.
+        val defaultServer = providers.gradleProperty("rewarden.defaultServer").get().trimEnd('/')
         buildConfigField("String", "DEFAULT_SERVER", "\"$defaultServer\"")
         // Telegram's application credentials (my.telegram.org). They identify this app to Telegram, not the user, and
         // live in ~/.gradle/gradle.properties, never in the repository. Without them Telegram shows "needs setup".
@@ -55,7 +56,7 @@ android {
     // signs `play` with its own key, switching between them means uninstalling (see PLAY_STORE.md).
     flavorDimensions += "distribution"
     productFlavors {
-        // The APK on rewarden.arc-chat.com (scripts/release-android.sh): text messages, and it updates itself.
+        // The APK on reins2fa.com (scripts/release-android.sh): text messages, and it updates itself.
         create("full") {
             dimension = "distribution"
             isDefault = true

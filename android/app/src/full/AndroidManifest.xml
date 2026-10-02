@@ -1,5 +1,5 @@
 <?xml version="1.0" encoding="utf-8"?>
-<!-- What only the APK from rewarden.arc-chat.com has; Google Play does not allow either (the `play` flavor). -->
+<!-- What only the APK from reins2fa.com has; Google Play does not allow either (the `play` flavor). -->
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
 
     <!-- In-app updates: installs a downloaded, verified release over this app (the user allows it once). -->

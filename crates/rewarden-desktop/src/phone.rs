@@ -52,7 +52,7 @@ impl Phone {
     /// Fails when the app is not logged in to a Rewarden server.
     pub fn new(paths: &Paths, identity: Arc<Identity>, timeout: Duration) -> Result<Self, String> {
         let server = crate::server::oauth::logged_in_server(paths)
-            .ok_or_else(|| "not logged in to a Rewarden server; run `rewarden login <server>`".to_owned())?;
+            .ok_or_else(|| "not logged in to a Rewarden server; run `rewarden login`".to_owned())?;
         Ok(Self {
             server,
             identity,
@@ -241,12 +241,12 @@ impl PhoneLink {
         if self.mode == Mode::Local {
             return Err(unavailable(
                 "Secrets and SSH keys live on your phone, and this app is in local mode (`mode = \"local\"`). Set \
-                 `mode = \"auto\"` and run `rewarden login <server>`.",
+                 `mode = \"auto\"` and run `rewarden login`.",
             ));
         }
         let Some(server) = crate::server::oauth::logged_in_server(&self.paths) else {
             return Err(unavailable(
-                "Secrets and SSH keys live on your phone: run `rewarden login <server>` to pair this app with it.",
+                "Secrets and SSH keys live on your phone: run `rewarden login` to pair this app with it.",
             ));
         };
         let mut current = self.current.lock().unwrap_or_else(PoisonError::into_inner);

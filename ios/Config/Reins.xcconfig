@@ -13,7 +13,7 @@ REINS_TELEGRAM_API_HASH =
 // 1234-abcd.apps.googleusercontent.com. Empty: those integrations show "needs setup".
 REINS_GOOGLE_CLIENT_ID =
 // Its reversed form, the redirect scheme, e.g. com.googleusercontent.apps.1234-abcd.
-REINS_GOOGLE_REDIRECT_SCHEME = dev.rewarden.ios.google
+REINS_GOOGLE_REDIRECT_SCHEME = com.reins2fa.app.google
 
 // The APNs environment the app registers for. It also picks the token prefix the server sees (apns-sandbox: or apns:);
 // a token sent to the wrong environment is refused by Apple and deleted by the server.

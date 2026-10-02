@@ -11,7 +11,7 @@ import Security
 /// only a definite answer may say that: a keychain that cannot be read right now (locked before the first unlock,
 /// interaction not allowed) is `NeedsUserInteraction`, which makes opening the store fail without changing anything.
 final class KeychainKeyWrapper: KeyWrapper, @unchecked Sendable {
-    private let service = "dev.rewarden.ios.key-wrap"
+    private let service = "com.reins2fa.app.key-wrap"
     private let account = "core-dek-wrap-v1"
     private let lock = NSLock()
     private var cached: SymmetricKey?

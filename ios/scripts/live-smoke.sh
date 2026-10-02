@@ -35,7 +35,7 @@ field() { awk -v k="$1" '$1==k{print $2; exit}' "$OUT/host.log"; }
 # A fresh phone: no app, no keychain items, Face ID enrolled.
 xcrun simctl boot "$UDID" 2>/dev/null || true
 xcrun simctl bootstatus "$UDID" -b >/dev/null
-xcrun simctl uninstall "$UDID" dev.rewarden.ios 2>/dev/null || true
+xcrun simctl uninstall "$UDID" com.reins2fa.app 2>/dev/null || true
 xcrun simctl keychain "$UDID" reset >/dev/null 2>&1 || true
 xcrun simctl spawn "$UDID" notifyutil -s com.apple.BiometricKit.enrollmentChanged 1
 xcrun simctl spawn "$UDID" notifyutil -p com.apple.BiometricKit.enrollmentChanged

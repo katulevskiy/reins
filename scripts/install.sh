@@ -15,7 +15,7 @@ set -eu
 
 # The site to install from (REWARDEN_RELEASES overrides the releases URL). scripts/release-desktop.sh rewrites this line
 # to the site it publishes to, so the installer it serves always points back at that site.
-DEFAULT_SITE="https://rewarden.arc-chat.com"
+DEFAULT_SITE="https://reins2fa.com"
 RELEASES="${REWARDEN_RELEASES:-$DEFAULT_SITE/releases}"
 INSTALL_DIR="${REWARDEN_INSTALL_DIR:-$HOME/.local/bin}"
 

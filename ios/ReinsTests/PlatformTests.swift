@@ -255,10 +255,10 @@ final class PlatformTests: XCTestCase {
     // MARK: Sign-in helpers
 
     func testOnlyTheCoresRedirectGoesToTheCore() {
-        XCTAssertTrue(McpSignIn.isRedirect("dev.rewarden.android://mcp-oauth?code=a&state=b"))
-        XCTAssertFalse(McpSignIn.isRedirect("dev.rewarden.android://other?code=a"))
+        XCTAssertTrue(McpSignIn.isRedirect("com.reins2fa.app://mcp-oauth?code=a&state=b"))
+        XCTAssertFalse(McpSignIn.isRedirect("com.reins2fa.app://other?code=a"))
         XCTAssertFalse(McpSignIn.isRedirect("https://mcp-oauth/?code=a"))
-        XCTAssertFalse(McpSignIn.isRedirect("dev.rewarden.android://mcp-oauth?" + String(repeating: "a", count: 9_000)))
+        XCTAssertFalse(McpSignIn.isRedirect("com.reins2fa.app://mcp-oauth?" + String(repeating: "a", count: 9_000)))
         XCTAssertTrue(McpSignIn.isWebPage(URL(string: "https://linear.app/oauth")!))
         XCTAssertFalse(McpSignIn.isWebPage(URL(string: "file:///etc/passwd")!))
         XCTAssertFalse(McpSignIn.isWebPage(URL(string: "reins://home")!))
