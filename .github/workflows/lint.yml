@@ -29,6 +29,16 @@ jobs:
       # When this version is updated, do not forget to update it in `.pre-commit-config.yaml` too.
       - uses: crate-ci/typos@v1.50.1
 
+  doc-links:
+    name: Relative links in the docs
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - run: python3 scripts/check-doc-links.py
+
   workflows:
     name: Workflow security (zizmor)
     runs-on: ubuntu-24.04

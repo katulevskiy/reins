@@ -44,8 +44,9 @@ to [Vaultwarden](https://github.com/dani-garcia/vaultwarden) directly; we pick i
 
 ## Building and testing
 
-The Rust toolchain is pinned in `rust-toolchain.toml`; use rustup so the pinned version is picked up. The server needs
-at least one database backend feature; SQLite is the easiest locally.
+Get the code with `git clone https://github.com/katulevskiy/reins`. The Rust toolchain is pinned in
+`rust-toolchain.toml`; use rustup so the pinned version is picked up. The server needs at least one database backend
+feature; SQLite is the easiest locally.
 
 ```sh
 # Server
@@ -64,6 +65,7 @@ cargo fmt --all -- --check
 cargo clippy --workspace --exclude vaultwarden --all-targets -- -D warnings
 cargo clippy --features sqlite --all-targets -- -D warnings
 cargo deny --workspace check licenses bans      # https://github.com/EmbarkStudios/cargo-deny
+scripts/check-doc-links.py                      # relative links in README.md, the top-level *.md and docs/
 ```
 
 Some tests need tools on the machine (`git`, for the git proxy tests) or skip themselves when optional data is absent

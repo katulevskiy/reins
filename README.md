@@ -1,5 +1,9 @@
 # Reins
 
+[![CI](https://github.com/katulevskiy/reins/actions/workflows/ci.yml/badge.svg)](https://github.com/katulevskiy/reins/actions/workflows/ci.yml)
+[![License: Apache-2.0 / AGPL-3.0 (server)](https://img.shields.io/badge/license-Apache--2.0%20%2F%20AGPL--3.0%20%28server%29-blue)](LICENSING.md)
+[![Status: alpha](https://img.shields.io/badge/status-alpha-orange)](#project-status)
+
 **Let AI agents work on your accounts without giving them your keys. Your phone approves each action and keeps the credentials.**
 
 > Reins was called Rewarden while it was being built. The commands, crates and the Android package still carry the
@@ -164,6 +168,18 @@ and only after it has agreed with you often enough. Model card: [tools/laya/MODE
   can use them.
 - Push notifications need an app build that matches the server's Firebase project. With a self-hosted server and the
   published APK, requests arrive only while the app is open.
+
+## Building from source
+
+```sh
+git clone https://github.com/katulevskiy/reins
+cd reins
+cargo build --release --features sqlite --bin vaultwarden   # the server
+cargo build --release -p rewarden-desktop                   # the desktop app (target/release/rewarden)
+```
+
+The Android app builds with Gradle from `android/`. [CONTRIBUTING.md](CONTRIBUTING.md) has the full build and test
+commands; [docs/self-hosting.md](docs/self-hosting.md) covers running the server, including with Docker.
 
 ## Documentation
 

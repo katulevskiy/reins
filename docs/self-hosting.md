@@ -22,6 +22,7 @@ memory. A restart drops calls in flight; AI clients retry them.
 The toolchain is pinned in `rust-toolchain.toml`.
 
 ```sh
+git clone https://github.com/katulevskiy/reins && cd reins
 # SQLite (bundled). Use --features mysql or --features postgresql for those databases.
 cargo build --release --features sqlite --bin vaultwarden
 # A portable Linux binary: add vendored_openssl
@@ -31,8 +32,10 @@ cargo build --release --features sqlite,vendored_openssl --bin vaultwarden
 The binary is `target/release/vaultwarden`. Run it as its own user, with `DATA_FOLDER` owned by that user and mode
 0700.
 
-**Docker:** the files under `docker/` are Vaultwarden's. They do not build Reins yet: their build context leaves out
-the `crates/` workspace members the server depends on. Build the binary as above until they are updated.
+**Docker:** `docker build -t reins-server .` builds an image with the server and the web vault (`Dockerfile` is
+`docker/Dockerfile.debian`; `docker/Dockerfile.alpine` and `docker buildx bake` are described in
+[docker/README.md](../docker/README.md)). The image keeps its data in `/data`; set the variables below with `-e` or an
+env file.
 
 ## Configure
 
