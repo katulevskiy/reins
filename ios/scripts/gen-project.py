@@ -33,6 +33,9 @@ PACKAGES = {
     ),
 }
 
+# ONNX Runtime's C API as a Clang module (the package's Objective-C wrapper has no boolean tensors).
+ORT_C = "$(SRCROOT)/Vendor/OnnxRuntimeC"
+
 TARGETS = [
     {
         "name": "Reins",
@@ -43,6 +46,7 @@ TARGETS = [
         "core": True,
         "embed": ["ReinsWidgets", "ReinsNotifications"],
         "packages": ["onnxruntime"],
+        "swift_includes": [ORT_C],
         "settings": {
             "INFOPLIST_FILE": "Reins/Info.plist",
             "CODE_SIGN_ENTITLEMENTS": "Reins/Reins.entitlements",
@@ -93,6 +97,7 @@ TARGETS = [
         "product": "ReinsTests.xctest",
         "folders": ["ReinsTests"],
         "host": "Reins",
+        "swift_includes": [ORT_C],
         "settings": {
             "PRODUCT_BUNDLE_IDENTIFIER": BUNDLE + ".tests",
             "GENERATE_INFOPLIST_FILE": "YES",
@@ -318,6 +323,9 @@ def main() -> None:
         settings = dict(t["settings"])
         if t.get("core"):
             settings.update(CORE_LINK)
+        # Extra Clang modules for Swift (ONNX Runtime's C API), next to the core's.
+        for key in [k for k in settings if k.startswith("SWIFT_INCLUDE_PATHS")]:
+            settings[key] = " ".join([settings[key], *t.get("swift_includes", [])])
         configs = []
         for cfg, extra in (("Debug", {}), ("Release", {})):
             cid = oid("config", name, cfg)

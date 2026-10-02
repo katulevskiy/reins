@@ -576,8 +576,8 @@
 				GENERATE_INFOPLIST_FILE = YES;
 				PRODUCT_BUNDLE_IDENTIFIER = dev.rewarden.ios.tests;
 				PRODUCT_NAME = "$(TARGET_NAME)";
-				"SWIFT_INCLUDE_PATHS[sdk=iphoneos*]" = "$(SRCROOT)/../target/ios-core/iphoneos/include";
-				"SWIFT_INCLUDE_PATHS[sdk=iphonesimulator*]" = "$(SRCROOT)/../target/ios-core/iphonesimulator/include";
+				"SWIFT_INCLUDE_PATHS[sdk=iphoneos*]" = "$(SRCROOT)/../target/ios-core/iphoneos/include $(SRCROOT)/Vendor/OnnxRuntimeC";
+				"SWIFT_INCLUDE_PATHS[sdk=iphonesimulator*]" = "$(SRCROOT)/../target/ios-core/iphonesimulator/include $(SRCROOT)/Vendor/OnnxRuntimeC";
 				TARGETED_DEVICE_FAMILY = "1,2";
 				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/Reins.app/$(BUNDLE_EXECUTABLE_FOLDER_PATH)/Reins";
 			};
@@ -711,8 +711,8 @@
 				PRODUCT_BUNDLE_IDENTIFIER = dev.rewarden.ios;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SWIFT_ACTIVE_COMPILATION_CONDITIONS = "REINS_APP $(inherited)";
-				"SWIFT_INCLUDE_PATHS[sdk=iphoneos*]" = "$(SRCROOT)/../target/ios-core/iphoneos/include";
-				"SWIFT_INCLUDE_PATHS[sdk=iphonesimulator*]" = "$(SRCROOT)/../target/ios-core/iphonesimulator/include";
+				"SWIFT_INCLUDE_PATHS[sdk=iphoneos*]" = "$(SRCROOT)/../target/ios-core/iphoneos/include $(SRCROOT)/Vendor/OnnxRuntimeC";
+				"SWIFT_INCLUDE_PATHS[sdk=iphonesimulator*]" = "$(SRCROOT)/../target/ios-core/iphonesimulator/include $(SRCROOT)/Vendor/OnnxRuntimeC";
 				TARGETED_DEVICE_FAMILY = "1,2";
 			};
 			name = Release;
@@ -725,8 +725,8 @@
 				GENERATE_INFOPLIST_FILE = YES;
 				PRODUCT_BUNDLE_IDENTIFIER = dev.rewarden.ios.tests;
 				PRODUCT_NAME = "$(TARGET_NAME)";
-				"SWIFT_INCLUDE_PATHS[sdk=iphoneos*]" = "$(SRCROOT)/../target/ios-core/iphoneos/include";
-				"SWIFT_INCLUDE_PATHS[sdk=iphonesimulator*]" = "$(SRCROOT)/../target/ios-core/iphonesimulator/include";
+				"SWIFT_INCLUDE_PATHS[sdk=iphoneos*]" = "$(SRCROOT)/../target/ios-core/iphoneos/include $(SRCROOT)/Vendor/OnnxRuntimeC";
+				"SWIFT_INCLUDE_PATHS[sdk=iphonesimulator*]" = "$(SRCROOT)/../target/ios-core/iphonesimulator/include $(SRCROOT)/Vendor/OnnxRuntimeC";
 				TARGETED_DEVICE_FAMILY = "1,2";
 				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/Reins.app/$(BUNDLE_EXECUTABLE_FOLDER_PATH)/Reins";
 			};
@@ -769,8 +769,8 @@
 				PRODUCT_BUNDLE_IDENTIFIER = dev.rewarden.ios;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SWIFT_ACTIVE_COMPILATION_CONDITIONS = "REINS_APP DEBUG $(inherited)";
-				"SWIFT_INCLUDE_PATHS[sdk=iphoneos*]" = "$(SRCROOT)/../target/ios-core/iphoneos/include";
-				"SWIFT_INCLUDE_PATHS[sdk=iphonesimulator*]" = "$(SRCROOT)/../target/ios-core/iphonesimulator/include";
+				"SWIFT_INCLUDE_PATHS[sdk=iphoneos*]" = "$(SRCROOT)/../target/ios-core/iphoneos/include $(SRCROOT)/Vendor/OnnxRuntimeC";
+				"SWIFT_INCLUDE_PATHS[sdk=iphonesimulator*]" = "$(SRCROOT)/../target/ios-core/iphonesimulator/include $(SRCROOT)/Vendor/OnnxRuntimeC";
 				TARGETED_DEVICE_FAMILY = "1,2";
 			};
 			name = Debug;

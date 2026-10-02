@@ -104,14 +104,25 @@ final class AppModel {
     var onPendingChanged: (([PendingItem]) -> Void)?
     var onAutopilotChanged: ((AutopilotSettings?) -> Void)?
     var onGrantsChanged: (([GrantView]) -> Void)?
+    /// A model download ended: nil when the model is installed, else why it failed.
+    var onModelDownloadFinished: ((String?) -> Void)?
     /// The session is there (at launch or after signing in): the moment to ask for notifications.
     var onSignedIn: (() -> Void)?
 
-    init(core: any RewardenCoreProtocol, feedback: Feedback, authenticator: Authenticating, demo: Bool = false) {
+    /// Autopilot's model coming down: the job, its bytes, the network it waits for (the screen, the Live Activity).
+    let modelDownloads: ModelDownloads
+
+    init(core: any RewardenCoreProtocol, feedback: Feedback, authenticator: Authenticating, demo: Bool = false,
+         modelDownloads: ModelDownloads? = nil) {
         self.core = core
         self.feedback = feedback
         self.authenticator = authenticator
         self.demo = demo
+        self.modelDownloads = modelDownloads ?? ModelDownloads(core: core, feedback: feedback)
+        self.modelDownloads.onFinished = { [weak self] failure in
+            await self?.refreshAutopilot()
+            self?.onModelDownloadFinished?(failure)
+        }
     }
 
     // MARK: Session
