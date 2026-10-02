@@ -27,7 +27,7 @@ struct SettingsScreen: View {
         }
         .reinsGrouped()
         .navigationTitle("Settings")
-        .toolbar(.hidden, for: .navigationBar)
+        .rootNavigationBar()
         .refreshable {
             await model.refreshConnections()
             await model.refreshPending()
