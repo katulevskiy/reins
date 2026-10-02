@@ -26,7 +26,7 @@ enum Glance {
 
     /// "Claude · me@gmail.com", or whichever of the two there is.
     static func byline(_ item: Snapshot.Item) -> String {
-        [item.kind == .pairing ? "" : item.connection, item.subtitle].filter { !$0.isEmpty }.joined(separator: " · ")
+        [item.kind == .pairing || item.kind == .join ? "" : item.connection, item.subtitle].filter { !$0.isEmpty }.joined(separator: " · ")
     }
 
     /// The first letter of the AI's name, for the round avatar.

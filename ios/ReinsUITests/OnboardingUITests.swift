@@ -64,9 +64,10 @@ final class OnboardingUITests: XCTestCase {
 
     func testCreatingAnAccountLeadsThroughTheOnboardingStepsIntoTheApp() {
         launch(["-signedout"])
-        wait("createAccount", 15)
-        wait("signInChoice")
+        wait("continue", 15)
         shot("1-welcome")
+        tap("otherServer")
+        wait("signInChoice")
         tap("createAccount")
 
         typeInto("email", "new@example.com")
@@ -133,5 +134,48 @@ final class OnboardingUITests: XCTestCase {
         launch(["-open", "reins://pair?code=BCDF-GHJK"])
         wait("keyFingerprint", 10)
         wait("code:47")
+    }
+
+    // MARK: Continue (passwordless)
+
+    func testContinueMakesTheAccountAndGoesStraightToTheOnboardingSteps() {
+        launch(["-signedout"])
+        wait("continue", 15)
+        XCTAssertFalse(element("password").exists, "no password on the hosted server")
+        tap("continue")
+        wait("scanQR", 10)
+        shot("8-after-continue")
+    }
+
+    func testAnAccountOnAnotherPhoneOpensWithTheOtherPhoneOrTheRecoveryCode() {
+        launch(["-signedout", "-demoLocked"])
+        tap("continue")
+        wait("askOtherPhone", 10)
+        shot("9-unlock")
+        tap("askOtherPhone")
+        XCTAssertEqual(wait("joinCode").label, "Code 482 193")
+        shot("10-ask-other-phone")
+        tap("cancelJoin")
+        tap("enterRecoveryCode")
+        typeInto("recoveryCode", "AAAA-BBBB")
+        tap("unlock")
+        wait("unlockError")
+        shot("11-wrong-code")
+        tap("unlockBack")
+        tap("enterRecoveryCode")
+        typeInto("recoveryCode", "tkrq 7hxm 2pla w4zd qe6n b3vy jf5c k8su rm2g xt7h napq d6wl ze4b")
+        tap("unlock")
+        wait("scanQR", 10)
+    }
+
+    func testAnotherPhoneAsksToJoinAndThisOneApproves() {
+        launch(["-demoJoin"])
+        let tab = app.tabBars.buttons["Activity"]
+        XCTAssertTrue(tab.waitForExistence(timeout: 10))
+        tap("pending:join-pixel")
+        XCTAssertEqual(wait("joinCode").label, "Code 482 193")
+        shot("12-join-sheet")
+        tap("approve")
+        XCTAssertTrue(element("joinSheet").waitForNonExistence(timeout: 8))
     }
 }

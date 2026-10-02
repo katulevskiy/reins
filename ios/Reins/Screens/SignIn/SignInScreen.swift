@@ -35,11 +35,19 @@ enum NewAccountRules {
     }
 }
 
-/// The signed-out root: a welcome with the two ways in, then the account entry for the one picked. A centred card on
-/// wide screens, the full width on a phone. What follows a sign-in (the onboarding steps) is `OnboardingScreen`.
+/// The signed-out root: a welcome whose way in is "Continue" (passwordless, through the server's sign-in page:
+/// WorkOS AuthKit on the hosted server), with "Use another server" for self-hosters, which also offers the master
+/// password forms. A centred card on wide screens, the full width on a phone. What follows a sign-in (the onboarding
+/// steps) is `OnboardingScreen`; an account whose keys are on another phone goes to `UnlockScreen` first.
 struct SignInScreen: View {
     @Environment(\.horizontalSizeClass) private var sizeClass
+    @Environment(AppModel.self) private var model
+    @Environment(\.feedback) private var feedback
     @State private var mode: AccountEntryView.Mode?
+    @State private var sso = SsoSignIn()
+    @State private var otherServer = false
+    @State private var server = SignInState.defaultServer
+    @FocusState private var serverFocused: Bool
 
     var body: some View {
         GeometryReader { geo in
@@ -48,7 +56,7 @@ struct SignInScreen: View {
                     Spacer(minLength: sizeClass == .regular ? 40 : 24)
                     Group {
                         if let mode {
-                            AccountEntryView(mode: mode) { self.mode = nil }
+                            AccountEntryView(mode: mode, server: server) { self.mode = nil }
                         } else {
                             welcome
                         }
@@ -64,7 +72,14 @@ struct SignInScreen: View {
         }
         .pageBackground()
         .animation(.smooth(duration: 0.25), value: mode)
+        .animation(.smooth(duration: 0.25), value: otherServer)
+        .animation(.smooth(duration: 0.25), value: sso.error)
+        .onAppear {
+            if model.demo && server == SignInState.defaultServer { server = DemoData.server }
+        }
     }
+
+    private var serverUrl: String { server.trimmingCharacters(in: .whitespaces) }
 
     private var welcome: some View {
         VStack(alignment: .leading, spacing: 12) {
@@ -74,14 +89,115 @@ struct SignInScreen: View {
                 .foregroundStyle(Palette.secondary)
                 .fixedSize(horizontal: false, vertical: true)
                 .padding(.bottom, 14)
-            Button("Create account") { mode = .create }
-                .buttonStyle(CapsuleButtonStyle(kind: .primary))
+            if otherServer {
+                TextField("Server", text: $server)
+                    .textContentType(.URL)
+                    .keyboardType(.URL)
+                    .textInputAutocapitalization(.never)
+                    .autocorrectionDisabled()
+                    .submitLabel(.done)
+                    .focused($serverFocused)
+                    .disabled(sso.busy)
+                    .fieldWell()
+                    .accessibilityIdentifier("server")
+                    .transition(.opacity.combined(with: .move(edge: .top)))
+            }
+            Button {
+                serverFocused = false
+                Task { await sso.run(model, feedback: feedback, server: serverUrl) }
+            } label: {
+                HStack(spacing: 10) {
+                    if sso.busy { ProgressView().tint(Palette.background) }
+                    Text("Continue")
+                }
+            }
+            .buttonStyle(CapsuleButtonStyle(kind: .primary))
+            .disabled(sso.busy || serverUrl.count <= "https://".count)
+            .accessibilityIdentifier("continue")
+            Text("With Google, Apple, GitHub or a code sent to your email. There is no password to remember.")
+                .font(RFont.sans(13.5))
+                .foregroundStyle(Palette.tertiary)
+                .fixedSize(horizontal: false, vertical: true)
+            if let error = sso.error {
+                FormBanner(text: error).transition(.opacity)
+            }
+            if otherServer {
+                // A server of your own may have no sign-in page: its accounts use a master password.
+                Button("Sign in with a master password") { mode = .signIn }
+                    .buttonStyle(CapsuleButtonStyle(kind: .secondary))
+                    .disabled(sso.busy)
+                    .padding(.top, 8)
+                    .accessibilityIdentifier("signInChoice")
+                Button {
+                    mode = .create
+                } label: {
+                    Text("Create an account with a master password")
+                        .font(RFont.sans(14, .medium))
+                        .foregroundStyle(Palette.secondary)
+                        .frame(maxWidth: .infinity)
+                        .padding(.vertical, 8)
+                }
+                .buttonStyle(.plain)
+                .disabled(sso.busy)
                 .accessibilityIdentifier("createAccount")
-            Button("Sign in") { mode = .signIn }
-                .buttonStyle(CapsuleButtonStyle(kind: .secondary))
-                .accessibilityIdentifier("signInChoice")
+            } else {
+                Button {
+                    otherServer = true
+                    serverFocused = true
+                } label: {
+                    Text("Use another server")
+                        .font(RFont.sans(14, .medium))
+                        .foregroundStyle(Palette.secondary)
+                        .frame(maxWidth: .infinity)
+                        .padding(.vertical, 8)
+                }
+                .buttonStyle(.plain)
+                .disabled(sso.busy)
+                .padding(.top, 4)
+                .accessibilityIdentifier("otherServer")
+            }
         }
         .transition(.opacity)
+    }
+}
+
+/// "Continue": the server's sign-in page in the system's web sheet, then the core makes or opens the account's keys
+/// (`ssoFinish`). A closed sheet is no error. Where the account goes next is the model's (`AppModel.finishSso`).
+@Observable
+@MainActor
+final class SsoSignIn {
+    private(set) var busy = false
+    var error: String?
+    /// The web sheet; tests put a fake in its place.
+    var browse: (URL, String) async throws -> URL = { url, scheme in try await WebAuth.run(url, callbackScheme: scheme) }
+
+    func run(_ model: AppModel, feedback: Feedback, server: String) async {
+        guard !busy else { return }
+        busy = true
+        error = nil
+        defer { busy = false }
+        do {
+            let start = try await model.core.ssoBegin(serverUrl: server)
+            guard let url = URL(string: start.url) else { throw WebAuth.Failure.failed("The server's sign-in address is not valid.") }
+            let callback = model.demo
+                ? URL(string: "\(start.callbackScheme)://sso-callback?code=demo&state=\(start.state)")!
+                : try await browse(url, start.callbackScheme)
+            let outcome = try await model.core.ssoFinish(
+                serverUrl: server, callbackUrl: callback.absoluteString, state: start.state, verifier: start.verifier
+            )
+            feedback.play(.connected)
+            await model.finishSso(outcome)
+        } catch WebAuth.Failure.cancelled {
+            // The person closed the page: back to the welcome as it was.
+        } catch let WebAuth.Failure.failed(message) {
+            feedback.play(.error)
+            error = message
+        } catch WebAuth.Failure.noWindow {
+            error = "Open Reins and try again."
+        } catch {
+            feedback.play(.error)
+            self.error = error.userMessage
+        }
     }
 }
 
@@ -107,18 +223,26 @@ struct BrandMark: View {
 /// How an account gets onto this phone: creating one, or signing in to one (email, master password, and a two-step
 /// code when the server asks for one). The server is the hosted one unless "Use another server" opens its field.
 ///
-/// This is the one seam for the ways in: other sign-in methods (WorkOS AuthKit's "Continue") replace or join these
-/// fields here, and hand the session to `AppModel.finishSignIn` like they do.
+/// The welcome's "Continue" (`SsoSignIn`) is the way in on the hosted server; these forms are for a server of one's own
+/// whose accounts use a master password. Both hand the session to the model (`finishSignIn`, `finishSso`).
 struct AccountEntryView: View {
     enum Mode: Hashable { case create, signIn }
     var mode: Mode
     var onBack: () -> Void
 
+    /// `server`: the one picked under "Use another server" on the welcome (its field shows here too).
+    init(mode: Mode, server: String = SignInState.defaultServer, onBack: @escaping () -> Void) {
+        self.mode = mode
+        self.onBack = onBack
+        _server = State(initialValue: server)
+        _otherServer = State(initialValue: server != SignInState.defaultServer)
+    }
+
     @Environment(AppModel.self) private var model
     @Environment(\.feedback) private var feedback
     @State private var state = SignInState()
-    @State private var server = SignInState.defaultServer
-    @State private var otherServer = false
+    @State private var server: String
+    @State private var otherServer: Bool
     @State private var email = ""
     // The password lives only here and in the call; it is never kept anywhere else.
     @State private var password = ""

@@ -117,7 +117,7 @@ struct ActionTile: View {
         case .read, .upload: Palette.read
         case .grant: Palette.grant
         case .accounts: Palette.accounts
-        case .pair: Palette.pair
+        case .pair, .join: Palette.pair
         case .other: Palette.secondary
         }
     }

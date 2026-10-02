@@ -62,8 +62,13 @@ private struct AccountGroup: View {
                 .accessibilityHint("Copies the server address")
                 .accessibilityIdentifier("copyServer")
                 .cardRow()
+                if model.recoveryCodeAvailable { RecoveryCodeRow() }
             } header: {
                 GroupHeader("Account")
+            } footer: {
+                if model.recoveryCodeAvailable {
+                    GroupFooter("To add another phone, sign in on it; this phone asks you to approve it.")
+                }
             }
         }
     }

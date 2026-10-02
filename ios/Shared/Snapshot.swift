@@ -5,7 +5,8 @@ import Foundation
 /// the notifications show; nothing secret is in here.
 struct Snapshot: Codable, Equatable {
     struct Item: Codable, Equatable, Identifiable {
-        enum Kind: String, Codable { case request, pairing, blob }
+        /// `join`: another phone asks for the account's keys.
+        enum Kind: String, Codable { case request, pairing, blob, join }
 
         var id: String
         var kind: Kind

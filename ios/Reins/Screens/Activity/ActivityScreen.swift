@@ -245,15 +245,17 @@ private struct PendingCard: View {
     var body: some View {
         // An upload waits until the server deletes it (an hour or so), not for an AI that is holding on: no countdown.
         let waitUntil = item.kind == .blob ? nil : item.waitUntil
-        let pairing = item.kind == .pairing
+        // A new connection or another phone of the account: no connection of its own yet.
+        let pairing = item.kind == .pairing || item.kind == .join
+        let joining = item.kind == .join
         CountdownFrame(createdAt: item.createdAt, waitUntil: waitUntil) { u in
             Button(action: onOpen) {
                 HStack(spacing: 14) {
-                    ActionTile(kind: pairing ? .pair : (item.kind == .blob ? .upload : ActionKind.of(item.action)), count: Int(item.count), size: 46)
+                    ActionTile(kind: joining ? .join : pairing ? .pair : (item.kind == .blob ? .upload : ActionKind.of(item.action)), count: Int(item.count), size: 46)
                     VStack(alignment: .leading, spacing: 4) {
                         HStack(spacing: 8) {
                             if !pairing { ConnectionIcon(connectionId: item.connectionId, label: item.connectionLabel, size: 20) }
-                            Text(pairing ? "\(untrusted(item.connectionLabel)): wants to connect" : item.headline)
+                            Text(joining ? "\(untrusted(item.connectionLabel)) asks to join your account" : pairing ? "\(untrusted(item.connectionLabel)): wants to connect" : item.headline)
                                 .font(RFont.sans(16, .semibold))
                                 .foregroundStyle(Palette.text)
                                 .lineLimit(2)

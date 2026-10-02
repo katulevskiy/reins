@@ -71,6 +71,7 @@ final class NotificationRouter: NSObject, UNUserNotificationCenterDelegate {
             category(.request, [deny]),
             category(.pairing),
             category(.blob),
+            category(.join),
             category(.autopilot, [report]),
             category(.grant),
             category(.status),
@@ -125,7 +126,7 @@ final class NotificationRouter: NSObject, UNUserNotificationCenterDelegate {
         DispatchQueue.main.async {
             MainActor.assumeIsolated {
                 switch category {
-                case .request, .pairing, .blob:
+                case .request, .pairing, .blob, .join:
                     if let payload, payload.itemKind != nil, let model = self.model {
                         Task {
                             try? await model.core.handlePush(kind: payload.kind, id: payload.id)

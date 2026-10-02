@@ -213,6 +213,7 @@ struct SheetContent: View {
             case let .approval(id): ApprovalSheet(requestId: id)
             case let .pairing(id): PairingSheet(pairingId: id)
             case let .upload(id): UploadSheet(blobId: id)
+            case let .join(id): JoinSheet(joinId: id)
             case .connectComputer: ConnectComputerSheet()
             }
         }

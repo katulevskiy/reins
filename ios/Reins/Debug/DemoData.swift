@@ -7,6 +7,21 @@ enum DemoData {
     static let server = "https://rewarden.example.com"
     static let email = "me@example.com"
     static let desktop = "Rewarden desktop app on laptop"
+    /// The demo account's recovery code (`AccountSecret`'s format: thirteen groups of four, base32).
+    static let recoveryCode = "TKRQ-7HXM-2PLA-W4ZD-QE6N-B3VY-JF5C-K8SU-RM2G-XT7H-NAPQ-D6WL-ZE4B"
+
+    /// Another phone, "Pixel 9", asking this one for the account's keys (`-demoJoin`).
+    static func join(_ now: Int64) -> JoinView {
+        JoinView(id: "join-pixel", deviceName: "Pixel 9", code: "482 193", createdAt: now - 4)
+    }
+
+    static func joinItem(_ j: JoinView) -> PendingItem {
+        PendingItem(
+            kind: .join, id: j.id, title: "Add \(j.deviceName) to your account?", subtitle: "Another phone asks for this account's keys",
+            createdAt: j.createdAt, connectionId: "", connectionLabel: j.deviceName, action: "join", count: 1, service: "",
+            account: nil, waitUntil: nil, op: "", opTitle: "", suggestion: nil
+        )
+    }
 
     // ---- connections ------------------------------------------------------------------------------------------
 

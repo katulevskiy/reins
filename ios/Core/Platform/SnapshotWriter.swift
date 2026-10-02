@@ -9,9 +9,10 @@ enum SnapshotWriter {
         case .request: .request
         case .pairing: .pairing
         case .blob: .blob
+        case .join: .join
         }
         let title: String = switch p.kind {
-        case .pairing: untrusted(p.title)
+        case .pairing, .join: untrusted(p.title)
         case .blob: "\(untrusted(p.connectionLabel)): Share a file"
         case .request: fullTitle(label: p.connectionLabel, action: p.action, count: Int(p.count), service: p.service, title: p.opTitle, op: p.op)
         }

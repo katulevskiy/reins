@@ -17,6 +17,8 @@ struct RootView: View {
                 SignInScreen()
             case .signedIn:
                 if model.onboarding { OnboardingScreen() } else { MainShell() }
+            case .keysLocked:
+                UnlockScreen()
             }
         }
         .environment(\.feedback, model.feedback)

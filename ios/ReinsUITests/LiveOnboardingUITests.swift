@@ -93,11 +93,11 @@ final class LiveOnboardingUITests: XCTestCase {
         app.launch()
 
         // Welcome, then a new account on the local server rather than the hosted one the screen starts with.
-        wait("createAccount", 30)
+        wait("otherServer", 30)
         shot("01-welcome")
-        element("createAccount").tap()
-        wait("otherServer").tap()
+        element("otherServer").tap()
         replace(wait("server"), with: server)
+        wait("createAccount").tap()
         replace(wait("email"), with: email)
         wait("password").tap()
         element("password").typeText(password)

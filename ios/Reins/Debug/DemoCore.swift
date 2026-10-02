@@ -5,14 +5,18 @@ import Foundation
 /// Launch arguments: `-signedout` starts signed out (any password signs in; an email containing "2fa" also needs a
 /// code; creating an account works like signing in), `-demoArrive` makes a new request arrive about 6 s after launch,
 /// `-demoNoModel` starts with the Autopilot model not downloaded. Any pairing code pairs a desktop app, except those
-/// starting with "BBBB", which have expired.
+/// starting with "BBBB", which have expired. "Continue" (passwordless sign-in) makes a new account; `-demoLocked` finds
+/// one whose keys are on another phone instead (the recovery code is `DemoData.recoveryCode`; asking the other phone
+/// works after two polls, `-demoJoinDenied` refuses). `-demoJoin` has another phone ask this one for the keys.
 enum DemoCore {
     static func make() -> (any RewardenCoreProtocol)? {
         let args = ProcessInfo.processInfo.arguments
         return DemoRewardenCore(
             signedIn: !args.contains("-signedout"),
             arriveAfter: args.contains("-demoArrive") ? 6 : nil,
-            modelInstalled: !args.contains("-demoNoModel")
+            modelInstalled: !args.contains("-demoNoModel"),
+            keysLocked: args.contains("-demoLocked"),
+            joinWaiting: args.contains("-demoJoin")
         )
     }
 }
@@ -53,6 +57,12 @@ final class DemoRewardenCore: RewardenCoreProtocol, @unchecked Sendable {
         var arriveAt: Int64?
         var nextGrant = 100
         var nextConnection = 100
+        /// What a passwordless sign-in finds: a new account, or keys another phone has.
+        var keys = AccountKeys.created
+        /// This phone asked its other phone for the keys: how often it asked since.
+        var joinPolls: Int?
+        /// Other phones asking this one for the account's keys.
+        var joins: [String: JoinView] = [:]
     }
 
     private let lock = NSLock()
@@ -60,7 +70,10 @@ final class DemoRewardenCore: RewardenCoreProtocol, @unchecked Sendable {
     /// The longest a `sync` waits, so tests need not wait the real 25 s.
     private let syncCap: Double
 
-    init(signedIn: Bool = true, arriveAfter: Int64? = nil, modelInstalled: Bool = true, syncCap: Double = 5) {
+    init(
+        signedIn: Bool = true, arriveAfter: Int64? = nil, modelInstalled: Bool = true, syncCap: Double = 5, keysLocked: Bool = false,
+        joinWaiting: Bool = false
+    ) {
         let now = Self.now()
         let seeded = DemoData.pending(now)
         var s = State(model: modelInstalled ? DemoData.model(.installed) : DemoData.model(.notInstalled))
@@ -80,6 +93,12 @@ final class DemoRewardenCore: RewardenCoreProtocol, @unchecked Sendable {
         s.suggestions = DemoData.suggestions(now)
         s.apConnections = ["c1": ApRow(mode: .auto, bypassUntil: nil, profileId: "work")]
         s.arriveAt = arriveAfter.map { now + $0 }
+        s.keys = keysLocked ? .locked : .created
+        if joinWaiting {
+            let join = DemoData.join(now)
+            s.joins[join.id] = join
+            s.pending.insert(DemoData.joinItem(join), at: 0)
+        }
         state = s
         self.syncCap = syncCap
     }
@@ -124,6 +143,99 @@ final class DemoRewardenCore: RewardenCoreProtocol, @unchecked Sendable {
         let info = SessionInfo(serverUrl: serverUrl, email: email)
         locked { $0.session = info }
         return info
+    }
+
+    // ---- passwordless sign-in, the account's keys, another phone ----------------------------------------------------
+
+    /// "Continue": the browser part is skipped (`ssoBegin`'s URL is a data page the app never opens in the demo); the
+    /// account is `Created`, or `Locked` with `-demoLocked` (another phone has its keys).
+    func ssoBegin(serverUrl: String) async throws -> SsoStart {
+        guard serverUrl.hasPrefix("http") else { throw CoreError.Network(reason: "could not reach \(serverUrl)") }
+        return SsoStart(url: "\(serverUrl)/identity/connect/authorize?demo=1", callbackScheme: "com.reins2fa.app", state: "demo-state", verifier: "demo-verifier")
+    }
+
+    func ssoFinish(serverUrl: String, callbackUrl: String, state: String, verifier: String) async throws -> SsoOutcome {
+        try await latency(0.6)
+        // Like the core: the callback must answer this sign-in (its `state`).
+        let answered = URLComponents(string: callbackUrl)?.queryItems?.first { $0.name == "state" }?.value
+        guard state == "demo-state", answered == state, callbackUrl.hasPrefix("com.reins2fa.app://sso-callback") else {
+            throw CoreError.Invalid(reason: "The sign-in did not come back as expected. Try again.")
+        }
+        let info = SessionInfo(serverUrl: serverUrl, email: DemoData.email)
+        let keys = locked { s -> AccountKeys in
+            s.session = info
+            return s.keys
+        }
+        return SsoOutcome(session: info, keys: keys)
+    }
+
+    func accountKeys() async throws -> AccountKeys {
+        try locked { s in
+            guard s.session != nil else { throw CoreError.NotLoggedIn }
+            return s.keys
+        }
+    }
+
+    /// The demo's recovery code is `DemoData.recoveryCode`; "correct horse battery staple" stands for a master password.
+    func unlockAccount(codeOrPassword: String) async throws {
+        try await latency(0.5)
+        let clean = codeOrPassword.uppercased().filter { $0.isLetter || $0.isNumber }
+        guard clean == DemoData.recoveryCode.filter({ $0 != "-" }) || codeOrPassword == "correct horse battery staple" else {
+            throw CoreError.Invalid(reason: "That recovery code does not open this account.")
+        }
+        locked { $0.keys = .unlocked }
+    }
+
+    func accountRecoveryCode() async throws -> String {
+        try await latency(0.2)
+        return try locked { s in
+            guard s.session != nil else { throw CoreError.NotLoggedIn }
+            guard s.keys != .locked else { throw CoreError.Invalid(reason: "This phone cannot open the account yet.") }
+            return DemoData.recoveryCode
+        }
+    }
+
+    /// The other phone answers after two polls (`-demoJoinDenied`: it refuses).
+    func joinBegin(deviceName: String) async throws -> JoinStart {
+        try await latency()
+        return locked { s in
+            s.joinPolls = 0
+            return JoinStart(id: "join-1", code: "482 193", expiresAt: Self.now() + 600)
+        }
+    }
+
+    func joinPoll() async throws -> JoinProgress {
+        try await latency(0.2)
+        let denied = ProcessInfo.processInfo.arguments.contains("-demoJoinDenied")
+        return try locked { s in
+            guard let polls = s.joinPolls else { throw CoreError.NotFound }
+            if polls < 2 {
+                s.joinPolls = polls + 1
+                return .waiting
+            }
+            s.joinPolls = nil
+            if denied { return .denied }
+            s.keys = .unlocked
+            return .joined
+        }
+    }
+
+    func joinCancel() async throws { locked { $0.joinPolls = nil } }
+
+    func joinView(id: String) async throws -> JoinView {
+        try locked { s in
+            guard let v = s.joins[id] else { throw CoreError.NotFound }
+            return v
+        }
+    }
+
+    func answerJoin(id: String, approve: Bool) async throws {
+        try await latency()
+        try locked { s in
+            guard s.joins[id] != nil else { throw CoreError.NotFound }
+            s.joins[id] = nil
+            Self.removePending(&s, id)
+        }
     }
 
     func logout() async throws { locked { $0.session = nil } }

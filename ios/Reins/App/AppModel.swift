@@ -7,6 +7,23 @@ enum SessionState: Equatable {
     case loading
     case signedOut
     case signedIn(SessionInfo)
+    /// Signed in through "Continue" to an account whose keys this phone cannot open yet (another phone, or the recovery
+    /// code, has them): the Unlock screen shows, and this phone does not take the approval role until it can.
+    case keysLocked(SessionInfo)
+}
+
+/// The account a passwordless sign-in left locked on this phone (server and email), kept across launches so a restart
+/// comes back to the Unlock screen instead of registering the phone.
+enum KeysLock {
+    private static let key = "account.keysLocked"
+
+    static func set(_ info: SessionInfo) { AppGroup.defaults.set("\(info.serverUrl)|\(info.email)", forKey: key) }
+
+    static func matches(_ info: SessionInfo) -> Bool {
+        AppGroup.defaults.string(forKey: key) == "\(info.serverUrl)|\(info.email)"
+    }
+
+    static func clear() { AppGroup.defaults.removeObject(forKey: key) }
 }
 
 /// Whether this phone receives approval requests, kept across launches and shared with the extensions (the Android
@@ -72,6 +89,9 @@ final class AppModel {
     private(set) var approvalDevice = false
     /// Why registering this phone as the approval device failed, until it succeeds.
     var registrationError: String?
+    /// The account was made without a master password and this phone keeps its secret: Settings offers the recovery
+    /// code.
+    private(set) var recoveryCodeAvailable = false
     /// How the last MCP sign-in ended, shown on that server's page until it is left.
     var mcpNotice: McpNotice?
     /// After a fresh sign-in (or a new account) on the sign-in screen: the steps that connect a computer and an AI
@@ -135,6 +155,11 @@ final class AppModel {
 
     func refreshSession() async {
         let info = await core.session()
+        // The demo core keeps nothing across launches, so neither does its lock.
+        if let info, !demo, KeysLock.matches(info) {
+            setSession(.keysLocked(info))
+            return
+        }
         if info != nil {
             seenActivityId = DeviceStatus.seenActivityId
             approvalDevice = DeviceStatus.approvalDevice && !DeviceStatus.replaced
@@ -144,6 +169,7 @@ final class AppModel {
             onSignedIn?()
             await refreshPending()
             await refreshConnections()
+            recoveryCodeAvailable = (try? await core.accountRecoveryCode()) != nil
             if !DeviceStatus.replaced { await registerDeviceQuietly() }
         }
     }
@@ -160,6 +186,7 @@ final class AppModel {
         setMcpServers([])
         mcpNotice = nil
         approvalDevice = false
+        recoveryCodeAvailable = false
         onboarding = false
         autopilot = nil
         sheet = nil
@@ -192,12 +219,33 @@ final class AppModel {
         }
     }
 
+    /// "Continue" came back. A new account (its keys were just made) or one this phone can open goes on like a password
+    /// sign-in; one whose keys another phone has waits on the Unlock screen.
+    func finishSso(_ outcome: SsoOutcome) async {
+        registrationError = nil
+        if outcome.keys == .locked {
+            if !demo { KeysLock.set(outcome.session) }
+            setSession(.keysLocked(outcome.session))
+        } else {
+            KeysLock.clear()
+            await finishSignIn(outcome.session)
+        }
+    }
+
+    /// The Unlock screen opened the keys (the other phone approved, or the recovery code): on as after a sign-in.
+    func finishUnlock() async {
+        guard case let .keysLocked(info) = session else { return }
+        KeysLock.clear()
+        await finishSignIn(info)
+    }
+
     func finishOnboarding() {
         onboarding = false
     }
 
     func signOut() async {
         try? await core.logout()
+        KeysLock.clear()
         DeviceStatus.clear()
         approvalDevice = false
         deviceReplaced = false
@@ -615,7 +663,7 @@ extension PendingItem {
 
     var headline: String {
         switch kind {
-        case .pairing: untrusted(title)
+        case .pairing, .join: untrusted(title)
         case .blob: "\(untrusted(connectionLabel)): Share a file"
         case .request: fullTitle(label: connectionLabel, action: action, count: Int(count), service: service, title: opTitle, op: op)
         }
