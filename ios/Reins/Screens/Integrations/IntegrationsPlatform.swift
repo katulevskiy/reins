@@ -68,101 +68,41 @@ extension AppModel {
 
 // MARK: The real platform
 
-/// The system's pieces. Google's sign-in comes with the platform layer (`GoogleSignIn`); until it is wired in here
-/// a build with a client id says so instead of failing somewhere deeper. Phone permissions and the MCP browser
-/// sheet work as they are.
+/// The system's pieces: Google's sign-in (`GoogleSignIn`), this phone's permissions (`PhoneBridge`) and the MCP
+/// browser sheet (`McpSignIn`).
 @MainActor
-final class SystemIntegrations: NSObject, IntegrationsPlatform, ASWebAuthenticationPresentationContextProviding {
+final class SystemIntegrations: IntegrationsPlatform {
     static let shared = SystemIntegrations()
 
-    /// The client id and redirect scheme from Info.plist (`REINS_GOOGLE_CLIENT_ID`, `REINS_GOOGLE_REDIRECT_SCHEME`);
-    /// an unset build setting leaves them empty.
-    var googleConfigured: Bool {
-        let info = Bundle.main.infoDictionary ?? [:]
-        return [info["ReinsGoogleClientId"], info["ReinsGoogleRedirectScheme"]].allSatisfy {
-            let value = ($0 as? String ?? "").trimmingCharacters(in: .whitespaces)
-            return !value.isEmpty && !value.hasPrefix("$")
-        }
-    }
+    var googleConfigured: Bool { GoogleSignIn.shared.isConfigured }
 
-    let googleSetupMessage =
-        "Google access needs setup: create an iOS OAuth client in Google Cloud, put its client id and reversed client id in REINS_GOOGLE_CLIENT_ID and REINS_GOOGLE_REDIRECT_SCHEME, and enable the Gmail, Calendar and People APIs."
+    let googleSetupMessage = GoogleConfig.setupMessage
 
     func authorizeGoogle(service: String, loginHint: String?) async throws -> String? {
-        guard googleConfigured else { throw IntegrationsFailure(googleSetupMessage) }
-        throw IntegrationsFailure("Google sign-in is not part of this build.")
+        do {
+            return try await GoogleSignIn.shared.authorize(service: service, loginHint: loginHint)
+        } catch GoogleAuthError.cancelled {
+            return nil
+        }
     }
 
-    func revokeGoogle(account: String, service: String) async {}
+    func revokeGoogle(account: String, service: String) async {
+        await GoogleSignIn.shared.revoke(account: account, service: service)
+    }
 
     func requestPhoneAccess(service: String) async -> Bool {
-        switch service {
-        case "device_calendar":
-            return (try? await EKEventStore().requestFullAccessToEvents()) ?? false
-        case "device_contacts":
-            let granted = (try? await CNContactStore().requestAccess(for: .contacts)) ?? false
-            let status = CNContactStore.authorizationStatus(for: .contacts)
-            return granted || status == .authorized || status == .limited
-        default:
-            return false
-        }
+        await PhoneBridge.shared.requestAccess(service: service)
     }
 
     func mcpSignIn(serverId: String, authorizeUrl: String, model: AppModel) async -> McpSignInOutcome {
-        guard let url = URL(string: authorizeUrl), McpLogic.isWebPage(authorizeUrl) else {
+        guard McpLogic.isWebPage(authorizeUrl) else {
             return await model.finishMcpSignIn(.failure(IntegrationsFailure("The server's sign-in page is not a web address.")), serverId: serverId)
         }
-        let redirect: URL
-        do {
-            redirect = try await webAuth(url, callbackScheme: McpLogic.redirectScheme)
-        } catch ASWebAuthenticationSessionError.canceledLogin {
-            return .cancelled
-        } catch {
-            return await model.finishMcpSignIn(.failure(error), serverId: serverId)
+        switch await McpSignIn.run(serverId: serverId, authorizeUrl: authorizeUrl, model: model) {
+        case let .done(server): return .done(serverId: server.id)
+        case let .failed(id, _): return .failed(serverId: id)
+        case .cancelled: return .cancelled
         }
-        guard McpLogic.isRedirect(redirect.absoluteString) else {
-            return await model.finishMcpSignIn(.failure(IntegrationsFailure("The sign-in page sent the browser somewhere else.")), serverId: serverId)
-        }
-        let result: Result<McpServerView, Error>
-        do {
-            result = .success(try await model.core.mcpFinishSignIn(serverId: serverId, redirectUrl: redirect.absoluteString))
-        } catch {
-            result = .failure(error)
-        }
-        return await model.finishMcpSignIn(result, serverId: serverId)
-    }
-
-    /// The window the web sheet is shown over, found before it starts.
-    private var anchor: UIWindow!
-
-    /// The system's web sheet; it returns the address the page redirected to.
-    private func webAuth(_ url: URL, callbackScheme: String) async throws -> URL {
-        let scenes = UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }
-        let windows = scenes.filter { $0.activationState == .foregroundActive }.flatMap(\.windows) + scenes.flatMap(\.windows)
-        guard let window = windows.first(where: \.isKeyWindow) ?? windows.first else {
-            throw IntegrationsFailure("Open Reins to sign in.")
-        }
-        anchor = window
-        return try await withCheckedThrowingContinuation { continuation in
-            let session = ASWebAuthenticationSession(url: url, callback: .customScheme(callbackScheme)) { callback, error in
-                if let callback {
-                    continuation.resume(returning: callback)
-                } else {
-                    continuation.resume(throwing: error ?? ASWebAuthenticationSessionError(.canceledLogin))
-                }
-            }
-            session.presentationContextProvider = self
-            // Keep the browser's cookies: the user is usually signed in to the service there already.
-            session.prefersEphemeralWebBrowserSession = false
-            if !session.start() {
-                continuation.resume(throwing: IntegrationsFailure("The sign-in page could not be opened. Open Reins and try again."))
-            }
-        }
-    }
-
-    nonisolated func presentationAnchor(for session: ASWebAuthenticationSession) -> ASPresentationAnchor {
-        // Only asked after `webAuth` set `anchor` and started the session.
-        MainActor.assumeIsolated { anchor }
     }
 }
 
