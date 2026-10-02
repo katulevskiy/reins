@@ -24,6 +24,10 @@ const DIGEST: &str = "d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1
 struct Hosts {
     desk: Desk,
     gitlab: MockServer,
+    // Kept for the whole test: wiremock pools its servers, and one dropped early goes back to the pool, where another
+    // test running at the same time takes it and resets its mocks (the host then answers 404 to everything).
+    _codeberg: MockServer,
+    _bitbucket: MockServer,
 }
 
 fn basic() -> String {
@@ -94,6 +98,8 @@ async fn hosts() -> Hosts {
     Hosts {
         desk,
         gitlab,
+        _codeberg: codeberg,
+        _bitbucket: bitbucket,
     }
 }
 
