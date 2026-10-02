@@ -516,7 +516,9 @@ async fn poll_device_code(device_code: &str, client_id: &str, conn: &DbConn) -> 
     let pending = |error: &'static str, description: &str| OAuthError::new(400, error, description);
     match DEVICE_GRANTS.poll(device_code, client_id, &HUB.pairings) {
         Poll::Pending => Err(pending("authorization_pending", "waiting for the phone to approve")),
-        Poll::SlowDown => Err(pending("slow_down", "polling too often; wait 5 seconds more between polls")),
+        Poll::SlowDown {
+            interval,
+        } => Err(pending("slow_down", &format!("polling too often; wait {} s between polls", interval.as_secs()))),
         Poll::Denied => Err(pending("access_denied", "the pairing was denied on the phone")),
         Poll::Expired => Err(pending("expired_token", "the pairing code expired or was used; start again")),
         Poll::WrongClient => Err(OAuthError::invalid_grant("the device code belongs to another client")),

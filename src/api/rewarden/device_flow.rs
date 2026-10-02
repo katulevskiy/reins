@@ -90,8 +90,10 @@ pub enum ClaimError {
 pub enum Poll {
     /// `authorization_pending`: nobody has answered yet.
     Pending,
-    /// `slow_down`: polled sooner than the interval; the interval grew.
-    SlowDown,
+    /// `slow_down`: polled sooner than the interval; the interval grew to this.
+    SlowDown {
+        interval: Duration,
+    },
     /// The pairing was approved: issue tokens for this connection. The grant is gone; the next poll is `Expired`.
     Approved {
         user: String,
@@ -199,7 +201,9 @@ impl DeviceGrants {
         grant.last_poll = Some(now);
         if too_soon {
             grant.interval += SLOW_DOWN_STEP;
-            return Poll::SlowDown;
+            return Poll::SlowDown {
+                interval: grant.interval,
+            };
         }
         let Some(claim) = grant.claim.clone() else {
             return Poll::Pending;
@@ -218,11 +222,6 @@ impl DeviceGrants {
         // Only the poll that removes the grant gets the outcome: approved tokens are issued once.
         grants.remove(&key);
         outcome
-    }
-
-    /// The interval the desktop app should keep to now (it grows with each `slow_down`).
-    pub fn interval(&self, device_code: &str) -> Duration {
-        self.lock().get(&hash_token(device_code)).map_or(POLL_INTERVAL, |g| g.interval)
     }
 
     pub fn purge(&self) {
@@ -275,7 +274,7 @@ mod tests {
 
     /// Polls after the interval has passed.
     async fn poll(grants: &DeviceGrants, device_code: &str, pairings: &PairingHub) -> Poll {
-        tokio::time::advance(grants.interval(device_code)).await;
+        tokio::time::advance(POLL_INTERVAL).await;
         grants.poll(device_code, "desktop-client", pairings)
     }
 
@@ -361,11 +360,14 @@ mod tests {
         let (grants, pairings) = (DeviceGrants::new(), hub());
         let started = grants.start(desktop()).unwrap();
         assert_eq!(grants.poll(&started.device_code, "desktop-client", &pairings), Poll::Pending);
-        assert_eq!(grants.poll(&started.device_code, "desktop-client", &pairings), Poll::SlowDown);
-        assert_eq!(grants.interval(&started.device_code), POLL_INTERVAL + SLOW_DOWN_STEP);
+        let slower = |secs| Poll::SlowDown {
+            interval: Duration::from_secs(secs),
+        };
+        assert_eq!(grants.poll(&started.device_code, "desktop-client", &pairings), slower(10));
         tokio::time::advance(POLL_INTERVAL).await;
-        assert_eq!(grants.poll(&started.device_code, "desktop-client", &pairings), Poll::SlowDown, "10 s now");
-        assert_eq!(poll(&grants, &started.device_code, &pairings).await, Poll::Pending);
+        assert_eq!(grants.poll(&started.device_code, "desktop-client", &pairings), slower(15), "10 s now");
+        tokio::time::advance(Duration::from_secs(15)).await;
+        assert_eq!(grants.poll(&started.device_code, "desktop-client", &pairings), Poll::Pending);
     }
 
     #[tokio::test(start_paused = true)]
