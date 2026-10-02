@@ -5,6 +5,9 @@ updates:
     directory: /
     schedule:
       interval: monthly
+    # New releases wait a week before an update is proposed (zizmor: dependabot-cooldown).
+    cooldown:
+      default-days: 7
     groups:
       actions:
         patterns: ["*"]
