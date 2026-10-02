@@ -169,5 +169,5 @@ its summary; compare them before relying on it. Locally the same signing is
 `REWARDEN_RELEASE_KEYSTORE=... REWARDEN_RELEASE_KEYSTORE_PASSWORD=... REWARDEN_RELEASE_KEY_ALIAS=... ./gradlew
 assembleFullRelease` (or the `rewarden.releaseKeystore` Gradle properties; see `android/app/build.gradle.kts`).
 
-The server image is published to GitHub Packages as `reins-server`. A new package is private until its visibility is
-set to public once, in the package's settings.
+The server image is published to GitHub Packages as `ghcr.io/katulevskiy/reins-server` (public, linked to this
+repository), tagged with the version and `latest`.
