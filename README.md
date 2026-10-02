@@ -1,4 +1,6 @@
-# Reins
+<p align="center"><img src="docs/assets/logo.svg" width="112" alt="Reins logo: a shield with a check"></p>
+
+<h1 align="center">Reins</h1>
 
 [![CI](https://github.com/katulevskiy/reins/actions/workflows/ci.yml/badge.svg)](https://github.com/katulevskiy/reins/actions/workflows/ci.yml)
 [![License: Apache-2.0 / AGPL-3.0 (server)](https://img.shields.io/badge/license-Apache--2.0%20%2F%20AGPL--3.0%20%28server%29-blue)](LICENSING.md)
