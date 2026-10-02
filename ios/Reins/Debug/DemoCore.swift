@@ -119,6 +119,8 @@ final class DemoRewardenCore: RewardenCoreProtocol, @unchecked Sendable {
 
     func handlePush(kind: String, id: String) async throws {}
 
+    func handlePushDeferringAutopilot(kind: String, id: String) async throws {}
+
     // ---- pending and the long poll --------------------------------------------------------------------------------
 
     /// `-demoArrive`: puts the new request in once its time has come.

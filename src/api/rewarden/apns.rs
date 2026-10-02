@@ -170,6 +170,9 @@ pub fn notification(push: &PushMessage) -> Notification {
         "alert": {"title": ALERT_TITLE, "body": ALERT_BODY},
         "sound": ALERT_SOUND,
         "mutable-content": 1,
+        // Also wakes the app in the background (when iOS allows): it runs Autopilot's model, which the notification
+        // extension cannot.
+        "content-available": 1,
         "category": category,
         "thread-id": THREAD_ID,
         "interruption-level": "time-sensitive"
@@ -456,6 +459,7 @@ mod tests {
                         "alert": {"title": "Reins", "body": "Something is waiting for you"},
                         "sound": "reins_request.caf",
                         "mutable-content": 1,
+                        "content-available": 1,
                         "category": category,
                         "thread-id": "requests",
                         "interruption-level": "time-sensitive"
