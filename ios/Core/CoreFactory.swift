@@ -6,13 +6,21 @@ enum CoreFactory {
     /// `<App Group>/Library/Application Support/core`.
     static var dataDir: URL { AppGroup.directory("core") }
 
-    static func make(notifier: Notifier, google: GoogleTokenProvider = GoogleTokens.shared) throws -> RewardenCore {
+    /// Whether the app ever opened the store here (the notification extension never creates one).
+    static var storeExists: Bool { FileManager.default.fileExists(atPath: dataDir.appendingPathComponent("dek.bin").path) }
+
+    /// `keys`: the extension passes `KeychainKeyWrapper(mayReset: false)` so it can never make the core start over.
+    static func make(
+        notifier: Notifier,
+        google: GoogleTokenProvider = GoogleTokens.shared,
+        keys: KeyWrapper = KeychainKeyWrapper()
+    ) throws -> RewardenCore {
         let info = Bundle.main.infoDictionary ?? [:]
         let apiId = Int32((info["ReinsTelegramApiId"] as? String) ?? "") ?? 0
         let apiHash = (info["ReinsTelegramApiHash"] as? String) ?? ""
         return try RewardenCore(
             dataDir: dataDir.path,
-            keys: KeychainKeyWrapper(),
+            keys: keys,
             google: google,
             notifier: notifier,
             device: PhoneBridge.shared,
