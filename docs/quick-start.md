@@ -9,27 +9,22 @@ You need:
 - an Android phone (Android 12 or later);
 - for the desktop app, a Linux computer (x86_64 or aarch64) or a Mac (Apple silicon or Intel).
 
-## 1. Create an account
-
-Reins accounts are Vaultwarden (Bitwarden-compatible) accounts. Open <https://app.reins2fa.com/> in a browser and
-choose **Create account**. Any Bitwarden client pointed at the server works as well. Remember the master password.
-The phone uses it to sign in, and to unlock the vault if you connect the vault later.
-
-The phone app supports authenticator-app (TOTP) two-factor login. Other second factors are not supported by the app
-yet.
-
-## 2. Install the phone app
+## 1. Install the phone app and create an account
 
 1. On the phone, open <https://reins2fa.com/app> and install the APK (Android asks you to allow installs from your
    browser once). The app updates itself from the same place.
-2. Sign in with your email and your master password. The server is already filled in with the hosted one; replace it
-   only if you run your own.
-3. Signing in makes this phone your **approval device**. Only one phone per account is the approval device. To move
-   the role to another phone, sign in there, or tap **Use this phone for approvals** in its settings. The old phone is
-   told it was replaced.
+2. Choose **Create account**: your email and a master password (at least 12 characters), twice. Nobody can recover
+   the master password, not even Reins: write it down. The account is a Vaultwarden (Bitwarden-compatible) account,
+   so its vault also opens in any Bitwarden client pointed at the server. Already have an account? Choose **Sign
+   in**. The app uses the hosted server; **Use another server** is for your own.
+3. Creating the account or signing in makes this phone your **approval device**. Only one phone per account is the
+   approval device. To move the role to another phone, sign in there, or tap **Use this phone for approvals** in its
+   settings. The old phone is told it was replaced.
 4. Allow notifications. Requests arrive as notifications, even when the app is closed.
 
-## 3. Connect services on the phone
+The app supports authenticator-app (TOTP) two-factor login. Other second factors are not supported by the app yet.
+
+## 2. Connect services on the phone
 
 Go to **Activity → Integrations**. Each service is connected on the phone and its credentials stay there:
 
@@ -43,7 +38,7 @@ Go to **Activity → Integrations**. Each service is connected on the phone and 
 | Password vault | Your master password, entered once. The phone keeps the vault key sealed, not the password. |
 | Other MCP servers | Add the server's URL. The app signs in with OAuth or a token you give it. |
 
-## 4a. Connect a cloud AI (Claude.ai, ChatGPT)
+## 3a. Connect a cloud AI (Claude.ai, ChatGPT)
 
 - **Claude.ai**: Settings → Connectors → Add custom connector, URL `https://app.reins2fa.com/mcp`.
 - **ChatGPT**: Settings → Connectors (developer mode), same URL.
@@ -52,7 +47,7 @@ A browser page asks for your account email and shows a two-digit code. Your phon
 matches, give the connection a name, and confirm. From then on that AI has Reins's tools for the services you
 connected, and each call waits for your phone unless a standing permission covers it.
 
-## 4b. Install the desktop app
+## 3b. Install the desktop app
 
 ```sh
 curl -fsSL https://reins2fa.com/install.sh | sh
@@ -81,11 +76,13 @@ Pair it with your phone:
 rewarden login
 ```
 
-It pairs with the hosted server; for your own, add its address (`rewarden login https://reins.example.com`). A browser
-opens (use `--no-browser` to print the link instead). The terminal prints the app's key, for example `4821 9930`. Your
-phone shows the same digits in a **Desktop app key** card, next to the two-digit browser code. **Approve only if the
-digits match.** On approval the phone pins this key to the connection. From then on only this computer can open the
-credentials the phone sends it.
+It pairs with the hosted server; for your own, add its address (`rewarden login https://reins.example.com`). The
+terminal shows a QR code. Scan it with the phone's camera, or in the app (**Settings → Connect a computer**; without a
+camera, type the code printed under it). The phone shows three numbers: tap the one the terminal shows. The terminal
+also prints the app's key, for example `4821 9930`, and the phone shows the same digits in a **Desktop app key** card.
+**Approve only if the digits match.** On approval the phone pins this key to the connection. From then on only this
+computer can open the credentials the phone sends it. `rewarden login --browser` signs in through a browser page
+instead (enter your email there; `--no-browser` prints the link instead of opening it).
 
 Start the background service and send git through it:
 
@@ -104,7 +101,7 @@ Try it: clone a private repository or push a branch. Your phone shows the reposi
 changed files. Approve, then run the git command again if git stopped waiting. The daemon keeps git waiting up to
 `approval_timeout_secs` (120 s by default).
 
-## 5. Connect a local agent
+## 4. Connect a local agent
 
 ```sh
 rewarden harness add claude-code      # or: codex, gemini, cursor

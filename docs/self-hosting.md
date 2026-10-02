@@ -82,6 +82,8 @@ SIGNUPS_ALLOWED=true             # turn off once your accounts exist, or use inv
 | `REWARDEN_FCM_SERVICE_ACCOUNT` | Path to a Firebase service-account JSON key. Keep it out of the repository, mode 0600 or 0640. |
 | `REWARDEN_APNS_KEY_FILE`, `REWARDEN_APNS_KEY_ID`, `REWARDEN_APNS_TEAM_ID` | The APNs key (`.p8` file), its key id and your Apple team id, for push to the iOS app. Set all three or none; the server refuses to start with only some, or with a key it cannot read. Same file permissions as the Firebase key. |
 | `REWARDEN_APNS_TOPIC` | Bundle id of the iOS app. Default `com.reins2fa.app`; change it only for an app built under another bundle id. |
+| `REWARDEN_APPLE_TEAM_ID` | Apple team id of the iOS app, served in `/.well-known/apple-app-site-association` so that a computer's pairing QR code (`{DOMAIN}/pair?code=...`) opens in the app. Empty: `REWARDEN_APNS_TEAM_ID`; neither: no app links (the link opens a page that offers the app). |
+| `REWARDEN_ANDROID_CERT_SHA256` | SHA-256 fingerprints of the Android app's signing certificates (comma-separated, `AB:CD:...`), served in `/.well-known/assetlinks.json` for the same links. Empty: none. |
 | `REWARDEN_RELAY_WAIT_SECS` | ChatGPT aborts tool calls after 60 s; Claude allows longer. After this time the AI is told to call `rewarden_get_result` later. |
 | `REWARDEN_OFFLINE_SECS` | Must be at most `REWARDEN_RELAY_WAIT_SECS`. |
 | `REWARDEN_TEST_ALLOW_LOOPBACK` | For the test suite only. Never set it in production. |
@@ -90,8 +92,11 @@ Everything else (database URL, SMTP, `ADMIN_TOKEN`, two-factor options) works as
 
 ## Accounts and the web vault
 
-People need an account before the phone can sign in. There are three ways to create one:
+People need an account before the phone can sign in. There are four ways to create one:
 
+- **The phone app.** **Create account** (with **Use another server** set to yours) registers the account with real
+  vault keys, like a Bitwarden client, while `SIGNUPS_ALLOWED=true`. With `SIGNUPS_VERIFY=true` the app can sign in once the
+  link in the server's welcome email was opened.
 - **The web vault.** Download a Vaultwarden web-vault build (the `docker/` files pin the version this fork is tested
   with, `vaultwarden/web-vault` v2026.7.0), unpack it, and set `WEB_VAULT_FOLDER` to it (`WEB_VAULT_ENABLED=true` is
   the default). Visitors to `https://<domain>/` can then **Create account** while `SIGNUPS_ALLOWED=true`.
@@ -224,7 +229,9 @@ it gets no push unless your server has that team's key. Requests then reach the 
 rewarden login https://rewarden.example.com
 ```
 
-Nothing else is needed on the server. Updates come from `releases` in `~/.config/rewarden/config.toml`, by default the
+It shows a QR code for the phone to scan. The published apps open pairing links of the hosted domain only, so with
+your own server scan the code in the app (**Settings → Connect a computer**) rather than with the camera, or type the
+code. Nothing else is needed on the server. Updates come from `releases` in `~/.config/rewarden/config.toml`, by default the
 hosted release site. The phone downloads the Autopilot model from the hosted site as well. Its files are checked
 against SHA-256 hashes built into the app, so where they come from does not change what is installed.
 

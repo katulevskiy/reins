@@ -91,12 +91,12 @@ flowchart LR
 
 You need an Android phone or an iPhone and an account on a Reins server (the hosted one or [your own](docs/self-hosting.md)).
 
-1. **Phone.** Install the app from <https://reins2fa.com/app> and sign in with your email and master password. The
-   phone becomes your approval device. Connect services under **Integrations**.
+1. **Phone.** Install the app from <https://reins2fa.com/app> and create an account in it (or sign in). The phone
+   becomes your approval device. Connect services under **Integrations**.
 2. **Desktop app** (Linux or macOS; macOS is alpha):
    ```sh
    curl -fsSL https://reins2fa.com/install.sh | sh
-   rewarden login     # compare the key shown here with the one on your phone
+   rewarden login     # scan the QR code with the phone; compare the key shown here with the one on the phone
    rewarden resume    # start the background service; send GitHub git through it
    ```
 3. **Connect your agent:**
