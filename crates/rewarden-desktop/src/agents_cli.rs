@@ -53,7 +53,11 @@ pub enum HarnessCmd {
     /// Register `rewarden mcp` and the hook in the harness's settings.
     Add {
         /// claude-code, codex, gemini or cursor.
-        harness: Harness,
+        #[arg(required_unless_present = "all", conflicts_with = "all")]
+        harness: Option<Harness>,
+        /// Every harness found on this computer (settings directory or program installed).
+        #[arg(long)]
+        all: bool,
     },
     /// Take out exactly what `add` put in.
     Remove {
@@ -194,11 +198,24 @@ fn harness_cmd(paths: &Paths, config: &Config, action: HarnessCmd) -> Result<(),
     match action {
         HarnessCmd::Add {
             harness,
+            all,
         } => {
-            for line in harness::add(paths, &s, harness)? {
-                say(&line);
+            let chosen = match harness {
+                Some(h) if !all => vec![h],
+                _ => harness::detect::all_found(&s.home),
+            };
+            if chosen.is_empty() {
+                say("No AI harness found on this computer (Claude Code, Codex, Gemini CLI, Cursor).");
             }
-            say(harness::after_add_note(harness));
+            for h in chosen {
+                if all {
+                    say(&format!("{}:", h.label()));
+                }
+                for line in harness::add(paths, &s, h)? {
+                    say(&line);
+                }
+                say(harness::after_add_note(h));
+            }
             if crate::server::oauth::logged_in_server(paths).is_none() {
                 say("Not logged in yet: `rewarden login` so the MCP server and the hook reach your phone.");
             }
@@ -221,6 +238,9 @@ fn harness_cmd(paths: &Paths, config: &Config, action: HarnessCmd) -> Result<(),
             for h in all {
                 for line in harness::list(paths, &s, h)? {
                     say(&line);
+                }
+                if !harness::detect::found(h, &s.home) {
+                    say("  (not found on this computer)");
                 }
             }
         }

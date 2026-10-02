@@ -280,9 +280,33 @@ pub fn current_executable() -> Result<PathBuf, String> {
     })
 }
 
+/// Where the Reins app (which brings its own `rewarden`) is downloaded.
+pub const APP_DOWNLOADS: &str = concat!(rewarden_proto::official_site!(), "/download");
+
+/// The Reins desktop app's executable names, next to the `rewarden` it ships (the macOS bundle's `Contents/MacOS`,
+/// the Windows install directory, the AppImage's `usr/bin`).
+const APP_EXECUTABLES: [&str; 3] = ["Reins", "Reins.exe", "reins-app"];
+
+/// Whether `exe` came with the Reins app. The app updates it (a new app brings a new one); replacing it in place
+/// would break the macOS bundle's signature and be undone by the Windows installer.
+#[must_use]
+pub fn installed_with_app(exe: &Path) -> bool {
+    exe.parent().is_some_and(|dir| APP_EXECUTABLES.iter().any(|name| dir.join(name).is_file()))
+}
+
 #[cfg(test)]
 mod tests {
     use ring::signature::KeyPair as _;
+
+    #[test]
+    fn a_rewarden_next_to_the_app_is_the_apps() {
+        let dir = tempfile::tempdir().unwrap();
+        let exe = dir.path().join("rewarden");
+        std::fs::write(&exe, b"").unwrap();
+        assert!(!installed_with_app(&exe));
+        std::fs::write(dir.path().join("Reins"), b"").unwrap();
+        assert!(installed_with_app(&exe));
+    }
 
     use super::*;
 

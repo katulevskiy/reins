@@ -27,11 +27,16 @@ of on your phone.
 
 ```sh
 rewarden harness add <harness>       # register the MCP server and the hook
+rewarden harness add --all           # the same for every harness found on this computer
 rewarden harness remove <harness>    # take out exactly what add put in
 rewarden harness list [<harness>]    # what is set up, for one harness or all
 ```
 
-`<harness>` is `claude-code`, `codex`, `gemini` or `cursor` (`claude` and `gemini-cli` also work).
+`<harness>` is `claude-code`, `codex`, `gemini` or `cursor` (`claude` and `gemini-cli` also work). A harness counts as
+found when its settings directory is in your home directory (`~/.claude` or `~/.claude.json`, `~/.codex`, `~/.gemini`,
+`~/.cursor`), its program is on the `PATH` or in a usual install directory (`~/.local/bin`, `/opt/homebrew/bin`,
+`/usr/local/bin`, npm's), or, for Cursor, the app is installed. The install script and the Reins app add Reins to
+exactly these.
 
 `add` edits the harness's settings files as text. It inserts one entry per file and leaves the rest of the file as
 it was. It records what it changed in `~/.local/state/rewarden/harnesses.json`. `remove` uses that record to restore

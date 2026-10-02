@@ -63,6 +63,14 @@ It works on Linux and macOS. The script downloads the build for your computer, c
 `rewarden` to `~/.local/bin` (set `REWARDEN_INSTALL_DIR` to change that). Later updates: `rewarden update`. It installs
 only releases signed with the release key built into the program.
 
+Run in a terminal, the script then finishes the setup: it pairs with your phone unless this computer is paired already
+(the steps below), adds Reins to every AI harness it finds (`rewarden harness add --all`) and starts the background
+service with git going through it (`rewarden resume`). `REWARDEN_NO_SETUP=1` skips that. On a computer with a screen
+it first offers the **Reins app** instead, which does the same with a window: a QR code to scan with your phone, a
+checklist of your AI tools, and afterwards a shield in the menu bar (macOS) or tray (Windows, Linux) with Pause and
+Resume. The app is also a download of its own: `Reins-macOS.dmg`, `Reins-Windows-x64.msi` or
+`Reins-Linux-x86_64.AppImage` from the [latest release](https://github.com/katulevskiy/reins/releases/latest).
+
 On a Mac, `~/.local/bin` is usually not on your `PATH`; the script prints the line to add to `~/.zshrc`. macOS support
 is alpha: built and tested on GitHub's macOS runners, not yet field-tested end to end on a real Mac. Two things differ
 from Linux: git does not print "waiting for approval on your phone" while a push or clone waits (it just waits), and
@@ -129,7 +137,7 @@ changed files. Approve, then run the git command again if git stopped waiting. T
 ## 5. Connect a local agent
 
 ```sh
-rewarden harness add claude-code      # or: codex, gemini, cursor
+rewarden harness add claude-code      # or: codex, gemini, cursor; --all for every one found on this computer
 ```
 
 This registers `rewarden mcp` as an MCP server and `rewarden hook` as the harness's pre-tool hook. Restart the
