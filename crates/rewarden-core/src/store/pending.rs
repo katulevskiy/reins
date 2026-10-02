@@ -31,6 +31,7 @@ fn kind_str(kind: PendingKind) -> &'static str {
         PendingKind::Request => "request",
         PendingKind::Pairing => "pairing",
         PendingKind::Blob => "blob",
+        PendingKind::Join => "join",
     }
 }
 
@@ -80,6 +81,7 @@ impl Store {
             let kind = match kind.as_str() {
                 "pairing" => PendingKind::Pairing,
                 "blob" => PendingKind::Blob,
+                "join" => PendingKind::Join,
                 _ => PendingKind::Request,
             };
             match self.unseal(&aad(&id), &sealed) {

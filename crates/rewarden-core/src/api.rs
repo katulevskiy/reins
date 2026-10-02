@@ -16,7 +16,8 @@ use crate::connector::{Connector, LoginProgress};
 use crate::engine::{CoreConfig, Engine};
 use crate::types::{
     AccountKeys, AccountView, ActivityEntry, ApprovalChoice, ApprovalKind, ApprovalView, ConnectionView, EmailContent,
-    GmailStatus, GrantView, PairingView, PendingItem, ServiceView, SessionInfo, SsoOutcome, SsoStart, StandingGrant,
+    GmailStatus, GrantView, JoinProgress, JoinStart, JoinView, PairingView, PendingItem, ServiceView, SessionInfo,
+    SsoOutcome, SsoStart, StandingGrant,
 };
 use crate::{CoreError, GoogleTokenProvider, KeyWrapper, Notifier, rt};
 
@@ -153,6 +154,38 @@ impl RewardenCore {
     pub async fn account_recovery_code(&self) -> Result<String, CoreError> {
         let engine = Arc::clone(&self.engine);
         rt::run(async move { engine.account_recovery_code().await }).await
+    }
+
+    /// "Add another phone", on the new phone (keys `Locked`): asks the account's approval device for its keys. Show
+    /// `code` and ask the user to check that the other phone shows the same, then call `join_poll` every few
+    /// seconds.
+    pub async fn join_begin(&self, device_name: String) -> Result<JoinStart, CoreError> {
+        let engine = Arc::clone(&self.engine);
+        rt::run(async move { engine.join_begin(&device_name).await }).await
+    }
+
+    /// Where the request stands; `Joined` once the keys are open on this phone. `NotFound` when none is open.
+    pub async fn join_poll(&self) -> Result<JoinProgress, CoreError> {
+        let engine = Arc::clone(&self.engine);
+        rt::run(async move { engine.join_poll().await }).await
+    }
+
+    pub async fn join_cancel(&self) -> Result<(), CoreError> {
+        let engine = Arc::clone(&self.engine);
+        rt::run(async move { engine.join_cancel() }).await
+    }
+
+    /// On the approval device: the phone asking (`PendingKind::Join`), with the code it should show.
+    pub async fn join_view(&self, id: String) -> Result<JoinView, CoreError> {
+        let engine = Arc::clone(&self.engine);
+        rt::run(async move { engine.join_view(&id) }).await
+    }
+
+    /// On the approval device: gives the account's keys to the asking phone (sealed to it), or refuses. Ask for
+    /// biometrics before approving.
+    pub async fn answer_join(&self, id: String, approve: bool) -> Result<(), CoreError> {
+        let engine = Arc::clone(&self.engine);
+        rt::run(async move { engine.answer_join(&id, approve).await }).await
     }
 
     pub async fn logout(&self) -> Result<(), CoreError> {

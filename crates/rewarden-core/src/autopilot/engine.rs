@@ -401,7 +401,12 @@ impl Engine {
         self.store.ap_prune(now)?;
         let evaluated = self.store.ap_evaluated()?;
         let mut rows: Vec<PendingRow> =
-            self.store.pending_rows(now)?.into_iter().filter(|r| !evaluated.contains(&r.id)).collect();
+            // Another phone asking for the account's keys is only ever answered by the user, and is not judged.
+            self.store
+                .pending_rows(now)?
+                .into_iter()
+                .filter(|r| r.kind != PendingKind::Join && !evaluated.contains(&r.id))
+                .collect();
         if rows.is_empty() {
             return Ok(());
         }
@@ -439,13 +444,14 @@ impl Engine {
                 serde_json::from_slice::<PairingRequest>(&row.payload).ok().map(|p| views::pairing_item(&p))
             }
             PendingKind::Blob => Self::blob_pending_item(&row.payload),
+            PendingKind::Join => serde_json::from_slice(&row.payload).ok().map(|j| crate::join::join_item(&j)),
         }
     }
 
     fn ap_subject(row: &PendingRow) -> Result<Option<Subject>, CoreError> {
         let corrupt = || CoreError::storage("corrupt parked item");
         Ok(match row.kind {
-            PendingKind::Pairing => None,
+            PendingKind::Pairing | PendingKind::Join => None,
             PendingKind::Request => {
                 let parked: ParkedRequest = serde_json::from_slice(&row.payload).map_err(|_| corrupt())?;
                 let view = views::approval_view(&parked);
@@ -834,7 +840,9 @@ impl Engine {
             (PendingKind::Request, Verdict::Approve) => self.approve_claimed(&subject.id, subject.choice.clone()).await,
             (PendingKind::Request, _) => self.deny_claimed(&subject.id).await,
             (PendingKind::Blob, v) => self.answer_blob_claimed(&subject.id, v == Verdict::Approve).await,
-            (PendingKind::Pairing, _) => Err(CoreError::invalid("a pairing is never decided automatically")),
+            (PendingKind::Pairing | PendingKind::Join, _) => {
+                Err(CoreError::invalid("a pairing or another phone is never decided automatically"))
+            }
         }
     }
 

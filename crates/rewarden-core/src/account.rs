@@ -200,7 +200,6 @@ impl Engine {
 
     /// The account secret this phone keeps for the signed-in account, for sealing to a new phone (`None`: an account
     /// with a master password).
-    #[allow(dead_code, reason = "the device join flow, next")]
     pub(crate) async fn signed_in_secret(&self) -> Result<Option<AccountSecret>, CoreError> {
         let session = self.session()?;
         let token = session.access_token().await?;
@@ -209,7 +208,6 @@ impl Engine {
     }
 
     /// Keeps a secret another phone sealed to this one, after checking that it opens the account.
-    #[allow(dead_code, reason = "the device join flow, next")]
     pub(crate) async fn adopt_secret(&self, secret: AccountSecret) -> Result<(), CoreError> {
         let session = self.session()?;
         let (user_id, wrapped) = self.account_profile(&session).await?;

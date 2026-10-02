@@ -66,12 +66,15 @@ pub struct Pending {
     /// Uploads that arrived and wait for the user ([`crate::blob::BlobPurpose::Upload`]).
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub blobs: Vec<crate::blob::BlobInfo>,
+    /// Phones of the account asking for its secret ([`crate::join`]).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub joins: Vec<crate::join::JoinRequest>,
 }
 
 impl Pending {
     #[must_use]
     pub fn is_empty(&self) -> bool {
-        self.requests.is_empty() && self.pairings.is_empty() && self.blobs.is_empty()
+        self.requests.is_empty() && self.pairings.is_empty() && self.blobs.is_empty() && self.joins.is_empty()
     }
 }
 
@@ -159,6 +162,7 @@ mod tests {
                 client_key: None,
             }],
             blobs: vec![],
+            joins: vec![],
         };
         assert!(!p.is_empty());
         let v = serde_json::to_value(&p).unwrap();

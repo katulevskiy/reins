@@ -40,6 +40,8 @@ pub enum PushKind {
     Replaced,
     /// An upload arrived (the id is the blob's).
     Blob,
+    /// Another phone of the account asks for its secret (the id is the join's).
+    Join,
 }
 
 /// FCM data payload. Carries only an id; content is fetched over HTTPS.

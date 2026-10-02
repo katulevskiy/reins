@@ -475,6 +475,7 @@ impl Engine {
                 Ok(())
             }
             "blob" => self.handle_blob_push(id).await,
+            "join" => self.fetch_and_park_join(id).await,
             "req" | "pair" => {
                 check_id(id)?;
                 let session = self.session()?;
@@ -532,6 +533,14 @@ impl Engine {
                 log::warn!("could not park a pairing: {e}");
             }
         }
+        for join in pending.joins {
+            let Some(_guard) = self.begin(&join.id)? else {
+                continue;
+            };
+            if let Err(e) = self.park_join(&join) {
+                log::warn!("could not park a request from another phone: {e}");
+            }
+        }
         self.park_blobs(pending.blobs)
     }
 
@@ -546,6 +555,7 @@ impl Engine {
                 }
                 PendingKind::Pairing => serde_json::from_slice(&row.payload).ok().map(|p| views::pairing_item(&p)),
                 PendingKind::Blob => Self::blob_pending_item(&row.payload),
+                PendingKind::Join => serde_json::from_slice(&row.payload).ok().map(|j| crate::join::join_item(&j)),
             };
             if let Some(mut item) = item {
                 item.suggestion = self

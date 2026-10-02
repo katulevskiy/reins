@@ -8,6 +8,7 @@ pub mod desktop;
 pub mod device;
 pub mod gmail;
 pub mod ids;
+pub mod join;
 pub mod pairing;
 pub mod relay;
 pub mod remote_mcp;

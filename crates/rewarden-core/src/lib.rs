@@ -22,6 +22,7 @@ pub mod gmail;
 pub mod google;
 pub mod handler;
 pub mod http;
+pub mod join;
 pub mod mcp;
 pub mod phone_api;
 pub mod rt;
@@ -47,7 +48,7 @@ pub use engine::{CoreConfig, Engine};
 pub use error::{CoreError, ForeignError};
 pub use mcp::{McpAddStep, McpCallView, McpServerView, McpToolView};
 pub use traits::{GoogleTokenProvider, KeyWrapper, Notifier};
-pub use types::{AccountKeys, SsoOutcome, SsoStart};
+pub use types::{AccountKeys, JoinProgress, JoinStart, JoinView, SsoOutcome, SsoStart};
 pub use types::{
     AccountView, ActivityEntry, ActivityInfo, ActivityMessage, ApprovalChoice, ApprovalKind, ApprovalView, BlobView,
     ConnectionView, EmailContent, EmailView, GitCommitView, GitFileView, GitPushView, GitRefView, GmailStatus,

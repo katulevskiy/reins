@@ -159,6 +159,7 @@ pub fn notification(push: &PushMessage) -> Notification {
         PushKind::Req => "request",
         PushKind::Pair => "pairing",
         PushKind::Blob => "blob",
+        PushKind::Join => "join",
         PushKind::Replaced => {
             let mut payload = json!(push);
             payload["aps"] = json!({"content-available": 1});

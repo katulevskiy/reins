@@ -40,12 +40,43 @@ pub struct SsoOutcome {
     pub keys: AccountKeys,
 }
 
+/// This phone asked the approval device for the account's keys: show `code` ("482 193") and ask the user to check
+/// that the other phone shows the same.
+#[derive(Clone, Debug, PartialEq, Eq, uniffi::Record)]
+pub struct JoinStart {
+    pub id: String,
+    pub code: String,
+    pub expires_at: i64,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, uniffi::Enum)]
+pub enum JoinProgress {
+    /// Not answered yet: ask again in a few seconds.
+    Waiting,
+    /// Approved: the account's keys are open on this phone.
+    Joined,
+    Denied,
+    Expired,
+}
+
+/// Another phone asking the approval device for the account's keys (`PendingKind::Join`).
+#[derive(Clone, Debug, PartialEq, Eq, uniffi::Record)]
+pub struct JoinView {
+    pub id: String,
+    pub device_name: String,
+    /// The code the other phone shows, computed here from the key the server relayed.
+    pub code: String,
+    pub created_at: i64,
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq, uniffi::Enum)]
 pub enum PendingKind {
     Request,
     Pairing,
     /// A file an AI uploaded with `rewarden_upload`, waiting for the user's decision (see [`BlobView`]).
     Blob,
+    /// Another phone of the account asks for its keys ("Add another phone", see [`JoinView`]).
+    Join,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, uniffi::Record)]

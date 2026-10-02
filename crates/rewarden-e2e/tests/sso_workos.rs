@@ -107,3 +107,47 @@ async fn sso_sign_in_makes_a_keyless_vault_that_follows_workos() {
     let log = server.log();
     assert!(log.contains("was deleted; deleting account"), "{log}");
 }
+
+#[tokio::test(flavor = "multi_thread")]
+async fn another_phone_gets_the_keys_from_the_approval_device() {
+    use rewarden_core::{JoinProgress, PendingKind};
+
+    let workos = FakeWorkos::start().await;
+    let server = Server::start_with_env(5, 3, &workos.server_env()).await;
+    let grace = User {
+        id: "user_01GRACE".to_owned(),
+        email: "grace@example.com".to_owned(),
+    };
+    workos.sign_in_as(&grace);
+    let first = Phone::signed_out(|_| {}).await;
+    assert_eq!(first.sso_sign_in(&server.base).await.unwrap().keys, AccountKeys::Created);
+    first.core.register_device(None).await.unwrap();
+
+    let second = Phone::signed_out(|_| {}).await;
+    assert_eq!(second.sso_sign_in(&server.base).await.unwrap().keys, AccountKeys::Locked);
+
+    // A refusal first: the new phone learns it, and nothing was handed over.
+    let asked = second.core.join_begin("Pixel 9".to_owned()).await.expect("join");
+    let item = first.wait_for_item(Duration::from_secs(10)).await;
+    assert_eq!((item.kind, item.id.as_str()), (PendingKind::Join, asked.id.as_str()));
+    first.core.answer_join(item.id, false).await.unwrap();
+    assert_eq!(second.core.join_poll().await.unwrap(), JoinProgress::Denied);
+    assert_eq!(second.core.account_keys().await.unwrap(), AccountKeys::Locked);
+
+    // Then an approval: both phones show the same code, and the keys open on the new phone.
+    let asked = second.core.join_begin("Pixel 9".to_owned()).await.expect("join");
+    assert_eq!(second.core.join_poll().await.unwrap(), JoinProgress::Waiting);
+    let item = first.wait_for_item(Duration::from_secs(10)).await;
+    let view = first.core.join_view(item.id.clone()).await.unwrap();
+    assert_eq!((view.device_name.as_str(), view.code.as_str()), ("Pixel 9", asked.code.as_str()));
+    first.core.answer_join(item.id, true).await.unwrap();
+    assert_eq!(second.core.join_poll().await.unwrap(), JoinProgress::Joined);
+    assert_eq!(second.core.account_keys().await.unwrap(), AccountKeys::Unlocked);
+    assert_eq!(second.core.account_recovery_code().await.unwrap(), first.core.account_recovery_code().await.unwrap());
+    assert!(matches!(second.core.join_poll().await, Err(CoreError::NotFound)), "the request is over");
+
+    // The approval device itself cannot ask, and the new phone takes over approvals when it registers.
+    assert!(first.core.join_begin("again".to_owned()).await.is_err());
+    second.core.register_device(None).await.unwrap();
+    assert!(first.core.sync(0).await.is_err(), "the first phone no longer approves");
+}

@@ -8,6 +8,7 @@ pub mod blob_routes;
 pub mod desktop_routes;
 pub mod device_api;
 pub mod fcm;
+pub mod join;
 pub mod limits;
 pub mod mcp;
 pub mod mcp_routes;
@@ -36,6 +37,7 @@ use rocket::{Catcher, Route};
 
 use self::{
     blob::{BlobHub, BlobLimits},
+    join::JoinHub,
     pairing::PairingHub,
     relay::{ItemSignal, RelayHub},
 };
@@ -81,6 +83,8 @@ pub struct Hub {
     pub pairings: PairingHub,
     /// Files held for one operation (files spec, S1).
     pub blobs: BlobHub,
+    /// Phones asking the approval device for the account secret.
+    pub joins: JoinHub,
     /// Per user: the integrations that have an account on the approval device (as the phone last reported them).
     /// Unknown (the phone has not reported since the server started) means every tool is listed.
     services: std::sync::Mutex<std::collections::HashMap<String, Vec<String>>>,
@@ -102,6 +106,7 @@ impl Hub {
             relay: RelayHub::new(timing, Arc::clone(&signal)).with_max_queued(max_queued),
             pairings: PairingHub::new(Arc::clone(&signal)),
             blobs: BlobHub::with_limits(Arc::clone(&signal), blob_limits),
+            joins: JoinHub::new(Arc::clone(&signal)),
             signal,
             services: std::sync::Mutex::default(),
             mcp_servers: std::sync::Mutex::default(),
@@ -145,6 +150,7 @@ impl Hub {
                 requests: self.relay.take_undelivered(user),
                 pairings: self.pairings.take_undelivered(user),
                 blobs: self.blobs.take_undelivered(user, now_unix()),
+                joins: self.joins.take_undelivered(user, now_unix()),
             };
             if !pending.is_empty() || tokio::time::Instant::now() >= deadline {
                 return pending;
@@ -165,6 +171,7 @@ impl Hub {
         self.relay.purge();
         self.pairings.purge();
         self.blobs.purge(now_unix());
+        self.joins.purge(now_unix());
     }
 }
 
@@ -220,6 +227,7 @@ pub fn routes() -> Vec<Route> {
     routes.extend(desktop_routes::routes());
     routes.extend(blob_routes::routes());
     routes.extend(proxy_call::routes());
+    routes.extend(join::routes());
     routes.extend(workos_sync::routes());
     routes
 }
