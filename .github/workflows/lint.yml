@@ -27,7 +27,7 @@ jobs:
         with:
           persist-credentials: false
       # When this version is updated, do not forget to update it in `.pre-commit-config.yaml` too.
-      - uses: crate-ci/typos@v1.50.1
+      - uses: crate-ci/typos@v1.50.3
 
   doc-links:
     name: Relative links in the docs
