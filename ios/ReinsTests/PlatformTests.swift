@@ -135,14 +135,14 @@ final class PlatformTests: XCTestCase {
         XCTAssertEqual(c.userInfo[NotificationKey.link] as? String, "reins://item?kind=request&id=r1")
         XCTAssertEqual(NotificationText.title(item(action: "grant")), "Permission requested")
         XCTAssertEqual(NotificationText.title(item(.pairing)), "Connect an AI")
-        XCTAssertEqual(NotificationText.body(item(.pairing)), "Connect Gemini to Rewarden?")
+        XCTAssertEqual(NotificationText.body(item(.pairing)), "Connect Gemini to Rewarden?\nme@gmail.com")
         XCTAssertEqual(NotificationText.title(item(.blob)), "File to check")
         XCTAssertEqual(NotificationContent.pending(item(.blob), settings: FeedbackSettings()).categoryIdentifier, "blob")
     }
 
     func testAPendingItemCarriesAutopilotsSuggestion() {
         let c = NotificationContent.pending(item(suggestion: "Autopilot would approve · 97%"), settings: FeedbackSettings())
-        XCTAssertEqual(c.body, "Claude: Send email to 2\nAutopilot would approve · 97%")
+        XCTAssertEqual(c.body, "Claude: Send email to 2\nme@gmail.com\nAutopilot would approve · 97%")
     }
 
     func testRequestSoundsFollowTheInAppSwitches() {

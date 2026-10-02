@@ -19,7 +19,7 @@ struct SettingsScreen: View {
             }
             AccountGroup()
             ApprovalDeviceGroup()
-            AutopilotGroup()
+            SettingsAutopilotGroup()
             ConnectionsGroup()
             NavigationGroups()
             VersionGroup()
@@ -149,7 +149,7 @@ private struct ApprovalDeviceGroup: View {
 }
 
 /// Autopilot's mode and model, opening its page.
-private struct AutopilotGroup: View {
+private struct SettingsAutopilotGroup: View {
     @Environment(AppModel.self) private var model
 
     var body: some View {
