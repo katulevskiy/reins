@@ -41,7 +41,10 @@ extension Error {
             case .UnsupportedTwoFactor: return "This account's two-step method is not supported. Use an authenticator app."
             case .InvalidCredentials: return "Wrong email, password or code."
             case let .Network(reason): return "No connection: \(reason)"
-            case let .Server(status, reason): return reason.isEmpty ? "The server answered \(status)." : reason
+            // `reason` is often the server's error code ("bad_request"), so it never stands alone (as on Android).
+            case let .Server(status, reason):
+                if status == 403 { return "Another phone is your approval device now." }
+                return "The server had a problem (\(status)). \(untrusted(reason))".trimmingCharacters(in: .whitespaces)
             case .GmailNeedsConsent: return "Gmail needs your consent again."
             case let .Gmail(reason): return reason
             case let .Service(reason): return reason

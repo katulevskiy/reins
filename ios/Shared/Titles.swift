@@ -89,11 +89,22 @@ enum McpNames {
         defer { lock.unlock() }
         return servers[serverId]?.tools[tool]
     }
+
+    /// The server a permission names: permissions call it `mcp_<id>` with `-` as `_` (the core's `grant_service`).
+    static func server(grantService: String) -> String? {
+        lock.lock()
+        defer { lock.unlock() }
+        return servers.first { mcpGrantPrefix + $0.key.replacingOccurrences(of: "-", with: "_") == grantService }?.value.name
+    }
 }
+
+/// The service id an MCP server's permissions name: `mcp_<server id>`.
+let mcpGrantPrefix = "mcp_"
 
 /// "Gmail", "Google Calendar", "Linear" (an MCP server's name).
 func serviceName(_ service: String) -> String {
     if service.hasPrefix(mcpPrefix) { return McpNames.server(String(service.dropFirst(mcpPrefix.count))) ?? "MCP server" }
+    if service.hasPrefix(mcpGrantPrefix) { return McpNames.server(grantService: service) ?? "MCP server" }
     switch service {
     case "gmail": return "Gmail"
     case "telegram": return "Telegram"

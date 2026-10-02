@@ -48,7 +48,7 @@ nothing else.
 the push as a hint only: it always fetches via A3/A5 (or A2) over HTTPS. `replaced` tells the
 phone it is no longer the approval device (show a notice; A2 will return 403).
 
-The iOS app registers `fcm_token` as `apns:<64 hex>` (production) or `apns-sandbox:<64 hex>` (development); the
+The iOS app registers `fcm_token` as `apns:<hex>` (production) or `apns-sandbox:<hex>` (development), 64 to 200 hex digits (APNs tokens vary in length: 32 bytes on a phone, 80 on a simulator); the
 server sends those through APNs instead of FCM (`src/api/rewarden/apns.rs`). The APNs payload is
 `{"aps": {...fixed alert, category "request" | "pairing" | "blob"...}, "t", "id"}` (alert push, priority 10), and
 `{"aps": {"content-available": 1}, "t": "replaced", "id": ""}` (background push, priority 5) for `replaced`.
