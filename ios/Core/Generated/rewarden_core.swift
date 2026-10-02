@@ -2727,7 +2727,7 @@ public protocol RewardenCoreProtocol: AnyObject, Sendable {
     func mcpAddWithToken(url: String, token: String, name: String?) async throws  -> McpServerView
     
     /**
-     * The sign-in page redirected to `dev.rewarden.android://mcp-oauth?…`.
+     * The sign-in page redirected to `com.reins2fa.app://mcp-oauth?…`.
      */
     func mcpFinishSignIn(serverId: String, redirectUrl: String) async throws  -> McpServerView
     
@@ -3912,7 +3912,7 @@ open func mcpAddWithToken(url: String, token: String, name: String?)async throws
 }
     
     /**
-     * The sign-in page redirected to `dev.rewarden.android://mcp-oauth?…`.
+     * The sign-in page redirected to `com.reins2fa.app://mcp-oauth?…`.
      */
 open func mcpFinishSignIn(serverId: String, redirectUrl: String)async throws  -> McpServerView  {
     return
@@ -9400,7 +9400,7 @@ public enum McpAddStep: Equatable, Hashable {
     case added(server: McpServerView
     )
     /**
-     * Open `authorize_url` in a browser tab; the redirect to `dev.rewarden.android://mcp-oauth` goes to
+     * Open `authorize_url` in a browser tab; the redirect to `com.reins2fa.app://mcp-oauth` goes to
      * `mcp_finish_sign_in`.
      */
     case needsSignIn(serverId: String, authorizeUrl: String
@@ -11325,7 +11325,7 @@ private let initializationResult: InitializationResult = {
     if (uniffi_rewarden_core_checksum_method_rewardencore_mcp_add_with_token() != 51093) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_rewarden_core_checksum_method_rewardencore_mcp_finish_sign_in() != 59859) {
+    if (uniffi_rewarden_core_checksum_method_rewardencore_mcp_finish_sign_in() != 47710) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_rewarden_core_checksum_method_rewardencore_mcp_refresh() != 39029) {

@@ -60,6 +60,7 @@ fun SettingsScreen(
     onIntegrations: () -> Unit,
     onSounds: () -> Unit,
     onAutopilot: () -> Unit = {},
+    onConnectComputer: () -> Unit = {},
 ) {
     val c = LocalColors.current
     val feedback = LocalFeedback.current
@@ -170,6 +171,16 @@ fun SettingsScreen(
                     GlyphIcon(Glyph.ChevronRight, c.tertiary, size = 14.dp)
                 }
             }
+            Hairline(inset = if (connections.isEmpty()) 16.dp else 68.dp)
+            ListRow(
+                "Connect a computer",
+                Modifier.testTag("connectComputer"),
+                subtitle = "Scan the QR code the desktop app or rewarden login shows",
+                glyph = Glyph.Qr,
+                tint = c.accent,
+                chevron = true,
+                onClick = onConnectComputer,
+            )
         }
 
         Group(header = "Integrations") {

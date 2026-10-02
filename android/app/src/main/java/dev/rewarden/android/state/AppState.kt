@@ -92,9 +92,18 @@ class AppState {
         _registrationError.value = message
     }
 
+    /** The setup after a fresh sign-in (connect a computer, connect an AI) is showing instead of the main screen. */
+    private val _setupPending = MutableStateFlow(false)
+    val setupPending: StateFlow<Boolean> = _setupPending.asStateFlow()
+
+    fun setSetupPending(value: Boolean) {
+        _setupPending.value = value
+    }
+
     fun setSession(state: SessionState) {
         _session.value = state
         if (state !is SessionState.SignedIn) {
+            _setupPending.value = false
             _pending.value = emptyList()
             _activity.value = emptyList()
             _grants.value = emptyList()

@@ -62,6 +62,7 @@ import dev.rewarden.android.ui.upload.UploadViewModel
 import dev.rewarden.android.ui.nav.Route
 import dev.rewarden.android.ui.nav.SheetTarget
 import dev.rewarden.android.ui.nav.Tab
+import dev.rewarden.android.ui.pairing.ConnectComputerScreen
 import dev.rewarden.android.ui.pairing.PairingSheet
 import dev.rewarden.android.ui.pairing.PairingViewModel
 import dev.rewarden.android.ui.settings.ConnectionDetailScreen
@@ -71,7 +72,8 @@ import dev.rewarden.android.ui.settings.SoundsScreen
 import dev.rewarden.android.ui.sheet.SheetHost
 import dev.rewarden.android.ui.services.ServiceScreen
 import dev.rewarden.android.ui.services.ServiceViewModel
-import dev.rewarden.android.ui.signin.SignInScreen
+import dev.rewarden.android.ui.signin.OnboardingScreen
+import dev.rewarden.android.ui.signin.SetupScreen
 import dev.rewarden.android.ui.signin.SignInViewModel
 import dev.rewarden.android.ui.update.UpdatePromptHost
 import kotlin.coroutines.cancellation.CancellationException
@@ -91,7 +93,8 @@ private fun RootContent(container: AppContainer, app: AppViewModel, authenticato
             Spinner(LocalColors.current.accent, size = 48.dp)
         }
         SessionState.SignedOut -> Box(Modifier.fillMaxSize()) {
-            SignInScreen(viewModel(key = "signin") { SignInViewModel(container) })
+            val waitingCode by app.waitingCode.collectAsStateWithLifecycle()
+            OnboardingScreen(viewModel(key = "signin") { SignInViewModel(container) }, linkWaiting = waitingCode != null)
             container.updates?.let {
                 UpdatePromptHost(
                     it,
@@ -100,13 +103,14 @@ private fun RootContent(container: AppContainer, app: AppViewModel, authenticato
                 )
             }
         }
-        is SessionState.SignedIn -> SignedInContent(container, app, authenticator)
+        is SessionState.SignedIn -> SignedInContent(container, app, authenticator, (session as SessionState.SignedIn).info.serverUrl)
     }
 }
 
 @Composable
-private fun SignedInContent(container: AppContainer, app: AppViewModel, authenticator: Authenticator) {
+private fun SignedInContent(container: AppContainer, app: AppViewModel, authenticator: Authenticator, serverUrl: String) {
     val state = container.state
+    val setup by state.setupPending.collectAsStateWithLifecycle()
     val connections by state.connections.collectAsStateWithLifecycle()
     val entries by state.activity.collectAsStateWithLifecycle()
     val grants by state.grants.collectAsStateWithLifecycle()
@@ -118,13 +122,13 @@ private fun SignedInContent(container: AppContainer, app: AppViewModel, authenti
     val mcp = viewModel(key = "mcp") { McpViewModel(container) }
     val autopilot = viewModel(key = "autopilot") { AutopilotViewModel(container) }
     val scope = rememberCoroutineScope()
-    val route = app.current
-    BackHandler(enabled = app.stack.isNotEmpty()) { app.back() }
+    val route = if (setup) null else app.current
+    BackHandler(enabled = !setup && app.stack.isNotEmpty()) { app.back() }
     PageFeedback(app.stack.size)
 
     CompositionLocalProvider(LocalConnections provides connections) {
         Box(Modifier.fillMaxSize().background(LocalColors.current.background)) {
-            when (route) {
+            if (setup) SetupScreen(app, serverUrl) else when (route) {
                 null -> when (app.tab) {
                     Tab.Activity -> ActivityScreen(
                         container = container,
@@ -153,7 +157,9 @@ private fun SignedInContent(container: AppContainer, app: AppViewModel, authenti
                     onIntegrations = { app.open(Route.Integrations) },
                     onSounds = { app.open(Route.Sounds) },
                     onAutopilot = { app.open(Route.Autopilot) },
+                    onConnectComputer = { app.open(Route.ConnectComputer) },
                 )
+                Route.ConnectComputer -> ConnectComputerScreen(app, onBack = { app.back() })
                 Route.Sounds -> SoundsScreen(container.feedback, onBack = { app.back() })
                 Route.Autopilot -> AutopilotScreen(
                     autopilot,
@@ -249,7 +255,7 @@ private fun SignedInContent(container: AppContainer, app: AppViewModel, authenti
                     onDone = { app.back() },
                 )
             }
-            if (route == null) {
+            if (!setup && route == null) {
                 Column(Modifier.align(Alignment.BottomCenter).windowInsetsPadding(WindowInsets.navigationBars)) {
                     // Above the tab bar, and never while an approval sheet is up.
                     container.updates?.let { UpdatePromptHost(it, allowed = sheet == null, modifier = Modifier.padding(top = 10.dp)) }

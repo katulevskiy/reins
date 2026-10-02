@@ -31,6 +31,36 @@ pub struct PairingResponse {
     pub label: Option<String>,
 }
 
+/// The letters of a pairing code (the RFC 8628 "user code" a computer shows as a QR code): consonants only, so no code
+/// spells a word, and none that are easily confused (no vowels, so no `O`/`0` or `I`/`1`).
+pub const USER_CODE_ALPHABET: &str = "BCDFGHJKLMNPQRSTVWXZ";
+/// Letters in a pairing code: 20^8, about 2.6 * 10^10 codes.
+pub const USER_CODE_LEN: usize = 8;
+
+/// A pairing code as people and links write it (`bcdf ghjk`, `BCDF-GHJK`): case, spaces and dashes do not count.
+/// `None` when it cannot be one. The result is the form the server shows and expects, `BCDF-GHJK`.
+#[must_use]
+pub fn normalize_user_code(raw: &str) -> Option<String> {
+    let letters: Vec<char> = raw
+        .chars()
+        .filter(|c| !c.is_whitespace() && *c != '-')
+        .map(|c| c.to_ascii_uppercase())
+        .collect();
+    if letters.len() != USER_CODE_LEN || !letters.iter().all(|c| USER_CODE_ALPHABET.contains(*c)) {
+        return None;
+    }
+    let (first, second) = letters.split_at(USER_CODE_LEN / 2);
+    Some(format!("{}-{}", first.iter().collect::<String>(), second.iter().collect::<String>()))
+}
+
+/// A6b `POST /pairings/claim` body: the phone scanned (or opened a link with) the code a computer shows, and asks for
+/// the pairing it stands for. The answer is a [`PairingRequest`], answered like any other (A6).
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct PairingClaim {
+    pub v: u32,
+    pub user_code: String,
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum PushKind {
@@ -72,6 +102,18 @@ mod tests {
         };
         assert_eq!(serde_json::to_value(&p).unwrap(), json!({"t": "replaced", "id": ""}));
         assert_eq!(serde_json::from_value::<PushMessage>(json!({"t": "replaced", "id": ""})).unwrap(), p);
+    }
+
+    #[test]
+    fn user_codes_ignore_case_spaces_and_dashes() {
+        assert_eq!(normalize_user_code("BCDF-GHJK").as_deref(), Some("BCDF-GHJK"));
+        assert_eq!(normalize_user_code(" bcdf ghjk ").as_deref(), Some("BCDF-GHJK"));
+        assert_eq!(normalize_user_code("bcdfghjk").as_deref(), Some("BCDF-GHJK"));
+        assert_eq!(normalize_user_code("B-C-D-F-G-H-J-K").as_deref(), Some("BCDF-GHJK"));
+        for bad in ["", "BCDF-GHJ", "BCDF-GHJKL", "ABCD-EFGH", "BCDF-GHJ1", "BCDF_GHJK", "BCDF-GHJ\u{e9}"] {
+            assert_eq!(normalize_user_code(bad), None, "{bad:?}");
+        }
+        assert_eq!(USER_CODE_ALPHABET.len(), 20);
     }
 
     #[test]

@@ -587,6 +587,10 @@ make_config! {
         rewarden_register_ratelimit_max_burst: u32, false, def, 10;
         /// Long-polls per device |> Concurrent GET /rewarden/api/pending long-polls of one approval device. 0 disables the limit.
         rewarden_device_max_polls:      u32,    false,  def,    4;
+        /// Apple team id (app links) |> The Apple Developer team id of the Reins iOS app, so that pairing links (`{DOMAIN}/pair`) open the app (`/.well-known/apple-app-site-association`). Empty: the APNs team id, if set.
+        rewarden_apple_team_id:         String, false,  def,    String::new();
+        /// Android signing certificates (app links) |> SHA-256 fingerprints (`AB:CD:...`, comma-separated) of the certificates the Reins Android app is signed with, so that pairing links open the app (`/.well-known/assetlinks.json`). Empty: links open the page.
+        rewarden_android_cert_sha256:   String, false,  def,    String::new();
         /// Outbound requests per account (per minute) |> Requests the server makes for one account's phone (file sends and fetches, proxied MCP calls) per minute. 0 disables the limit.
         rewarden_outbound_requests_per_minute: u32, false, def, 60;
         /// Concurrent outbound requests per account |> Requests the server makes for one account's phone at the same time. 0 disables the limit.

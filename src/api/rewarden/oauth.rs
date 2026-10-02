@@ -8,7 +8,7 @@ use data_encoding::BASE64URL_NOPAD;
 use serde_json::{Value, json};
 use url::Url;
 
-use super::ACCESS_TOKEN_SECS;
+use super::{ACCESS_TOKEN_SECS, device_flow::DEVICE_CODE_GRANT};
 use crate::crypto::ct_eq;
 
 pub const SCOPE: &str = "mcp";
@@ -56,8 +56,9 @@ pub fn authorization_server_metadata(domain: &str) -> Value {
         "authorization_endpoint": format!("{iss}/rewarden/oauth/authorize"),
         "token_endpoint": format!("{iss}/rewarden/oauth/token"),
         "registration_endpoint": format!("{iss}/rewarden/oauth/register"),
+        "device_authorization_endpoint": format!("{iss}/rewarden/oauth/device_authorization"),
         "response_types_supported": ["code"],
-        "grant_types_supported": ["authorization_code", "refresh_token"],
+        "grant_types_supported": ["authorization_code", "refresh_token", DEVICE_CODE_GRANT],
         "code_challenge_methods_supported": ["S256"],
         "token_endpoint_auth_methods_supported": ["none"],
         "scopes_supported": [SCOPE],
@@ -426,6 +427,11 @@ pub enum TokenGrant {
         refresh_token: String,
         client_id: Option<String>,
     },
+    /// RFC 8628 §3.4: the desktop app polls with its device code.
+    DeviceCode {
+        device_code: String,
+        client_id: String,
+    },
 }
 
 pub fn parse_token_request(form: &HashMap<String, String>, mcp_url: &str) -> Result<TokenGrant, OAuthError> {
@@ -446,9 +452,80 @@ pub fn parse_token_request(form: &HashMap<String, String>, mcp_url: &str) -> Res
             refresh_token: require("refresh_token")?,
             client_id: get("client_id").map(str::to_owned),
         }),
+        Some(DEVICE_CODE_GRANT) => Ok(TokenGrant::DeviceCode {
+            device_code: require("device_code")?,
+            client_id: require("client_id")?,
+        }),
         Some(other) => Err(OAuthError::new(400, "unsupported_grant_type", format!("unsupported grant_type `{other}`"))),
         None => Err(OAuthError::invalid_request("missing grant_type")),
     }
+}
+
+/// A valid RFC 8628 device authorization request: the client, and the desktop app's key when it sent one.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DeviceAuthorization {
+    pub client_id: String,
+    pub client_key: Option<String>,
+}
+
+/// Validates `POST /rewarden/oauth/device_authorization` (form-encoded): `client_id` is required; `scope`, when given,
+/// must be `mcp`; `resource`, when given, the MCP URL; `key_param` (`rewarden_client_key`), when given, a valid
+/// desktop app key: refused rather than dropped, as in the authorize flow.
+pub fn parse_device_authorization(
+    form: &HashMap<String, String>,
+    mcp_url: &str,
+    key_param: &str,
+) -> Result<DeviceAuthorization, OAuthError> {
+    let get = |k: &str| form.get(k).map(String::as_str).filter(|v| !v.is_empty());
+    let client_id = get("client_id").ok_or_else(|| OAuthError::invalid_request("missing client_id"))?;
+    if get("scope").is_some_and(|scope| scope.split(' ').any(|s| !s.is_empty() && s != SCOPE)) {
+        return Err(OAuthError::new(400, "invalid_scope", format!("the only scope is `{SCOPE}`")));
+    }
+    if get("resource").is_some_and(|r| canonicalize_resource(r) != mcp_url) {
+        return Err(OAuthError::new(400, "invalid_target", "resource must be the Rewarden MCP URL"));
+    }
+    let client_key = match form.get(key_param) {
+        None => None,
+        Some(key) if rewarden_proto::desktop::decode_key(key).is_some() => Some(key.clone()),
+        Some(_) => return Err(OAuthError::invalid_request("the desktop app key is not valid")),
+    };
+    Ok(DeviceAuthorization {
+        client_id: client_id.to_owned(),
+        client_key,
+    })
+}
+
+/// The pairing page a computer's QR code links to: `{DOMAIN}/pair`, and with `?code=` the code itself.
+pub fn pairing_page_url(domain: &str, user_code: Option<&str>) -> String {
+    let page = format!("{}/pair", issuer(domain));
+    match (user_code, Url::parse(&page)) {
+        (Some(code), Ok(mut url)) => {
+            url.query_pairs_mut().append_pair("code", code);
+            url.into()
+        }
+        _ => page,
+    }
+}
+
+/// The RFC 8628 §3.2 answer, with the number the desktop app shows (`rewarden_confirm_code`), which the user taps on
+/// the phone among three.
+pub fn device_authorization_response(
+    domain: &str,
+    device_code: &str,
+    user_code: &str,
+    confirm_code: u8,
+    expires_in: u64,
+    interval: u64,
+) -> Value {
+    json!({
+        "device_code": device_code,
+        "user_code": user_code,
+        "verification_uri": pairing_page_url(domain, None),
+        "verification_uri_complete": pairing_page_url(domain, Some(user_code)),
+        "expires_in": expires_in,
+        "interval": interval,
+        "rewarden_confirm_code": confirm_code
+    })
 }
 
 /// Checks a presented code exchange against what the code was issued for.
@@ -741,6 +818,45 @@ mod tests {
             e(b"grant_type=refresh_token&refresh_token=R&resource=https%3A%2F%2Fother.example%2Fmcp"),
             "invalid_target"
         );
+        let device = parse_form(b"grant_type=urn%3Aietf%3Aparams%3Aoauth%3Agrant-type%3Adevice_code&device_code=D&client_id=cid");
+        assert_eq!(
+            parse_token_request(&device, MCP).unwrap(),
+            TokenGrant::DeviceCode {
+                device_code: "D".into(),
+                client_id: "cid".into()
+            }
+        );
+        assert_eq!(e(b"grant_type=urn%3Aietf%3Aparams%3Aoauth%3Agrant-type%3Adevice_code&device_code=D"), "invalid_request");
+    }
+
+    #[test]
+    fn device_authorization_requests_and_answers() {
+        let key = rewarden_proto::desktop::encode_key(&[3u8; 32]);
+        let form = |pairs: &[(&str, &str)]| params(pairs);
+        let parse = |f: &HashMap<String, String>| parse_device_authorization(f, MCP, "rewarden_client_key");
+        assert_eq!(
+            parse(&form(&[("client_id", "cid"), ("scope", "mcp"), ("rewarden_client_key", &key)])).unwrap(),
+            DeviceAuthorization {
+                client_id: "cid".into(),
+                client_key: Some(key.clone())
+            }
+        );
+        assert_eq!(parse(&form(&[("client_id", "cid"), ("resource", MCP)])).unwrap().client_key, None);
+        let error = |f: HashMap<String, String>| parse(&f).unwrap_err().error;
+        assert_eq!(error(form(&[])), "invalid_request");
+        assert_eq!(error(form(&[("client_id", "cid"), ("scope", "mcp admin")])), "invalid_scope");
+        assert_eq!(error(form(&[("client_id", "cid"), ("resource", "https://other.example/mcp")])), "invalid_target");
+        assert_eq!(error(form(&[("client_id", "cid"), ("rewarden_client_key", "nope")])), "invalid_request");
+
+        let answer = device_authorization_response("https://rw.example.com/", "DC", "BCDF-GHJK", 47, 600, 5);
+        assert_eq!(answer["verification_uri"], "https://rw.example.com/pair");
+        assert_eq!(answer["verification_uri_complete"], "https://rw.example.com/pair?code=BCDF-GHJK");
+        assert_eq!((answer["expires_in"].as_u64(), answer["interval"].as_u64()), (Some(600), Some(5)));
+        assert_eq!(answer["rewarden_confirm_code"], 47);
+        assert_eq!(pairing_page_url("http://127.0.0.1:8000/vw", Some("BCDF-GHJK")), "http://127.0.0.1:8000/vw/pair?code=BCDF-GHJK");
+        let meta = authorization_server_metadata(DOMAIN);
+        assert_eq!(meta["device_authorization_endpoint"], "https://rw.example.com/rewarden/oauth/device_authorization");
+        assert!(meta["grant_types_supported"].as_array().unwrap().iter().any(|g| g == DEVICE_CODE_GRANT));
     }
 
     #[test]

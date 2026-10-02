@@ -91,13 +91,13 @@ flowchart LR
 
 You need an Android phone or an iPhone and an account on a Reins server (the hosted one or [your own](docs/self-hosting.md)).
 
-1. **Phone.** Install the app from <https://rewarden.arc-chat.com/app>, sign in with the server address, your email and
-   master password. The phone becomes your approval device. Connect services under **Integrations**.
+1. **Phone.** Install the app from <https://reins2fa.com/app> and sign in with your email and master password. The
+   phone becomes your approval device. Connect services under **Integrations**.
 2. **Desktop app** (Linux or macOS; macOS is alpha):
    ```sh
-   curl -fsSL https://rewarden.arc-chat.com/install.sh | sh
-   rewarden login https://rewarden.arc-chat.com    # compare the key shown here with the one on your phone
-   rewarden resume                                  # start the background service; send GitHub git through it
+   curl -fsSL https://reins2fa.com/install.sh | sh
+   rewarden login     # compare the key shown here with the one on your phone
+   rewarden resume    # start the background service; send GitHub git through it
    ```
 3. **Connect your agent:**
    ```sh
@@ -105,7 +105,7 @@ You need an Android phone or an iPhone and an account on a Reins server (the hos
    ```
    Restart the harness. It now has Reins's tools, and risky commands wait for your phone.
 
-Cloud AIs connect without the desktop app: add `https://rewarden.arc-chat.com/mcp` as a custom connector in Claude.ai
+Cloud AIs connect without the desktop app: add `https://app.reins2fa.com/mcp` as a custom connector in Claude.ai
 or ChatGPT. The full walkthrough is in [docs/quick-start.md](docs/quick-start.md).
 
 ## Features

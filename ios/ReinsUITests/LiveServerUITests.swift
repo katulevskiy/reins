@@ -101,8 +101,9 @@ final class LiveServerUITests: XCTestCase {
         app = XCUIApplication()
         app.launch()
 
-        // Sign in.
-        replace(wait("server", 30), with: server)
+        // Sign in, to the local server rather than the hosted one the screen starts with.
+        wait("otherServer", 30).tap()
+        replace(wait("server"), with: server)
         replace(wait("email"), with: email)
         wait("password").tap()
         element("password").typeText(password)

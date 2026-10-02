@@ -23,7 +23,7 @@ pub const SANDBOX_PREFIX: &str = "apns-sandbox:";
 /// of variable length: a phone's are 32 bytes today, a simulator's 80, and up to 100 bytes is allowed for.
 pub const DEVICE_TOKEN_HEX_LEN: std::ops::RangeInclusive<usize> = 64..=200;
 /// The iOS app's bundle id, the default `apns-topic`.
-pub const DEFAULT_TOPIC: &str = "dev.rewarden.ios";
+pub const DEFAULT_TOPIC: &str = "com.reins2fa.app";
 const PRODUCTION_ORIGIN: &str = "https://api.push.apple.com";
 const SANDBOX_ORIGIN: &str = "https://api.sandbox.push.apple.com";
 /// Apple refuses provider tokens older than an hour and throttles new ones signed more often than every 20 minutes.
@@ -635,7 +635,7 @@ mod tests {
         .await;
         let (private_pem, public_pem) = key_pair();
         let key = ProviderKey::from_pem(private_pem.as_bytes(), "ABC123DEFG", "DEF123GHIJ").unwrap();
-        let mut sender = ApnsSender::new(key, "dev.rewarden.ios".to_owned());
+        let mut sender = ApnsSender::new(key, "com.reins2fa.app".to_owned());
         // main() installs the process-wide TLS provider; reqwest needs one even for plain HTTP.
         rustls::crypto::ring::default_provider().install_default().ok();
         sender.test_server = Some((reqwest::Client::builder().http2_prior_knowledge().build().unwrap(), origin));
@@ -646,7 +646,7 @@ mod tests {
         let req = seen.recv().await.unwrap();
         assert_eq!(req.path, format!("/3/device/{DEVICE}"));
         let header = |name: &str| req.headers.get(name).map(|v| v.to_str().unwrap().to_owned());
-        assert_eq!(header("apns-topic").as_deref(), Some("dev.rewarden.ios"));
+        assert_eq!(header("apns-topic").as_deref(), Some("com.reins2fa.app"));
         assert_eq!(header("apns-push-type").as_deref(), Some("alert"));
         assert_eq!(header("apns-priority").as_deref(), Some("10"));
         assert_eq!(header("apns-collapse-id").as_deref(), Some("r-1"));

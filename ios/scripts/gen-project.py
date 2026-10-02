@@ -13,8 +13,8 @@ from pathlib import Path
 IOS = Path(__file__).resolve().parent.parent
 PROJECT = IOS / "Reins.xcodeproj"
 DEPLOYMENT = "26.0"
-BUNDLE = "dev.rewarden.ios"
-APP_GROUP = "group.dev.rewarden.ios"
+BUNDLE = "com.reins2fa.app"
+APP_GROUP = "group.com.reins2fa.app"
 
 CORE_LINK = {
     "LIBRARY_SEARCH_PATHS[sdk=iphoneos*]": "$(SRCROOT)/../target/ios-core/iphoneos",

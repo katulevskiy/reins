@@ -7,9 +7,10 @@
 //! Who is limited by what:
 //! - an AI connection: requests to `/mcp` and the desktop API per minute, calls waiting for the phone at once;
 //! - an account: calls relayed to its phone per minute (each may wake it with a push), outbound requests the server
-//!   makes for its phone (per minute and at once), connection requests (pairings) naming its email;
+//!   makes for its phone (per minute and at once), connection requests (pairings) naming its email or scanned by its
+//!   phone;
 //! - an approval device: concurrent `GET /pending` long-polls;
-//! - an IP address: OAuth dynamic client registrations.
+//! - an IP address: OAuth dynamic client registrations, device authorizations (QR codes to pair a computer).
 
 use std::{
     collections::HashMap,
@@ -155,6 +156,12 @@ pub static PAIRINGS: LazyLock<RateLimit<String>> = LazyLock::new(|| {
     RateLimit::with_period(CONFIG.rewarden_pairing_ratelimit_seconds(), CONFIG.rewarden_pairing_ratelimit_max_burst())
 });
 
+/// Device authorizations (a computer asking for a QR code to pair, RFC 8628) per IP address, with the pairing
+/// settings: each may become a pairing.
+pub static DEVICE_AUTHORIZATIONS: LazyLock<RateLimit<IpAddr>> = LazyLock::new(|| {
+    RateLimit::with_period(CONFIG.rewarden_pairing_ratelimit_seconds(), CONFIG.rewarden_pairing_ratelimit_max_burst())
+});
+
 /// OAuth dynamic client registrations per IP address.
 pub static REGISTRATIONS: LazyLock<RateLimit<IpAddr>> = LazyLock::new(|| {
     RateLimit::with_period(CONFIG.rewarden_register_ratelimit_seconds(), CONFIG.rewarden_register_ratelimit_max_burst())
@@ -177,6 +184,7 @@ pub fn retain_recent() {
     CONNECTION_REQUESTS.retain_recent();
     ACCOUNT_CALLS.retain_recent();
     PAIRINGS.retain_recent();
+    DEVICE_AUTHORIZATIONS.retain_recent();
     REGISTRATIONS.retain_recent();
     OUTBOUND_REQUESTS.retain_recent();
 }

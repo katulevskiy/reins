@@ -5,7 +5,7 @@ use std::time::Duration;
 
 use reqwest::{Method, RequestBuilder, StatusCode};
 use rewarden_proto::device::{Connections, DeviceRegistered, DeviceRegistration, PairingResult, Pending};
-use rewarden_proto::pairing::{PairingRequest, PairingResponse};
+use rewarden_proto::pairing::{PairingClaim, PairingRequest, PairingResponse};
 use rewarden_proto::relay::{RelayRequest, RelayResponse};
 use serde::de::DeserializeOwned;
 
@@ -178,6 +178,17 @@ impl<'a> PhoneApi<'a> {
     pub async fn answer_pairing(&self, id: &str, response: &PairingResponse) -> Result<PairingResult, ApiFailure> {
         check_id(id)?;
         Self::json(self.request(Method::POST, &format!("/pairings/{id}/response")).json(response)).await
+    }
+
+    /// A6b `POST /pairings/claim`: the pairing a computer's code (already normalized) stands for.
+    pub async fn claim_pairing(&self, user_code: &str) -> Result<PairingRequest, ApiFailure> {
+        let claim = PairingClaim {
+            v: rewarden_proto::PROTOCOL_VERSION,
+            user_code: user_code.to_owned(),
+        };
+        let pairing: PairingRequest = Self::json(self.request(Method::POST, "/pairings/claim").json(&claim)).await?;
+        check_id(&pairing.id.0)?;
+        Ok(pairing)
     }
 
     /// A7 `GET /connections`.
@@ -354,6 +365,29 @@ mod tests {
         assert_eq!(api.answer_pairing("p1", &answer).await.unwrap().connection_id.unwrap().0, "c9");
         let wrong = api.answer_pairing("p2", &answer).await.unwrap_err();
         assert!(matches!(&wrong, ApiFailure::Status { status: 409, code, .. } if code == "wrong_code"));
+    }
+
+    #[tokio::test]
+    async fn claiming_a_code_returns_its_pairing() {
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/rewarden/api/pairings/claim"))
+            .and(body_json(json!({"v": 1, "user_code": "BCDF-GHJK"})))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!({"v": 1, "id": "p1",
+                "client_name": "Reins desktop app on mac", "client_host": "127.0.0.1", "choices": [12, 47, 83],
+                "created_at": 7, "client_key": "k"})))
+            .mount(&server)
+            .await;
+        Mock::given(method("POST"))
+            .and(path("/rewarden/api/pairings/claim"))
+            .respond_with(ResponseTemplate::new(404).set_body_json(json!({"error": "not_found", "message": "m"})))
+            .mount(&server)
+            .await;
+        let (http, url) = setup(&server);
+        let api = PhoneApi::new(&http, &url, "TOKEN");
+        let pairing = api.claim_pairing("BCDF-GHJK").await.unwrap();
+        assert_eq!((pairing.id.0.as_str(), pairing.client_key.as_deref()), ("p1", Some("k")));
+        assert_eq!(api.claim_pairing("ZZZZ-ZZZZ").await.unwrap_err().into_core(), CoreError::NotFound);
     }
 
     #[tokio::test]

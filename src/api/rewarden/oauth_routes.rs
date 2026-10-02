@@ -23,13 +23,14 @@ use serde_json::{Value, json};
 
 use super::{
     HUB, REFRESH_TOKEN_SECS,
+    device_flow::{DEVICE_GRANT_TTL, DEVICE_GRANTS, POLL_INTERVAL, Poll},
     limits::{self, rate_limited_text, retry_secs},
     now_unix,
     oauth::{
         self, AuthCode, AuthorizeFailure, ClientInfo, OAuthError, TokenGrant, canonical_mcp_url, check_code_redemption,
-        error_redirect, is_cimd_client_id, issuer, parse_client_metadata, parse_form, parse_registration,
-        parse_token_request, redirect_host, registration_response, success_redirect, token_response,
-        validate_authorize,
+        device_authorization_response, error_redirect, is_cimd_client_id, issuer, parse_client_metadata,
+        parse_device_authorization, parse_form, parse_registration, parse_token_request, redirect_host,
+        registration_response, success_redirect, token_response, validate_authorize,
     },
     oauth_state::{AuthSession, OAUTH, StartedPairing},
     outbound, pages,
@@ -56,7 +57,7 @@ const MAX_EMAIL_BYTES: usize = 254;
 pub const CLIENT_KEY_PARAM: &str = "rewarden_client_key";
 
 pub fn routes() -> Vec<Route> {
-    routes![authorize_get, authorize_post, authorize_wait, token, register]
+    routes![authorize_get, authorize_post, authorize_wait, token, register, device_authorization]
 }
 
 pub fn well_known_routes() -> Vec<Route> {
@@ -458,6 +459,81 @@ fn authorize_wait(session: &str) -> Flow {
 }
 
 // ---------------------------------------------------------------------------------------
+// Device authorization (RFC 8628): the desktop app shows a QR code, the phone scans it
+// ---------------------------------------------------------------------------------------
+
+/// RFC 8628 §3.1-3.2: a grant for the desktop app (or any public client), which the phone of an account claims by
+/// scanning its code (`device_api`, A6b). Answers with the codes to show and how often to poll the token endpoint.
+#[post("/rewarden/oauth/device_authorization", data = "<data>")]
+async fn device_authorization(data: Data<'_>, ip: ClientIp, conn: DbConn) -> JsonResponse {
+    if ratelimit::check_limit_unauthenticated(&ip.ip).is_err() {
+        return JsonResponse(Status::TooManyRequests, json!({"error": "slow_down"}));
+    }
+    if let Err(wait) = limits::DEVICE_AUTHORIZATIONS.check(&ip.ip) {
+        let description = rate_limited_text("too many pairing codes for this address", wait);
+        return JsonResponse(Status::TooManyRequests, json!({"error": "slow_down", "error_description": description}));
+    }
+    let Some(body) = read_limited(data, MAX_FORM_BYTES).await else {
+        return oauth_error(&OAuthError::invalid_request("request body too large"));
+    };
+    let request = match parse_device_authorization(&parse_form(&body), &mcp_url(), CLIENT_KEY_PARAM) {
+        Ok(r) => r,
+        Err(e) => return oauth_error(&e),
+    };
+    let client = match resolve_client(&request.client_id, &conn).await {
+        Ok(c) => c,
+        Err(e) => return oauth_error(&OAuthError::new(401, "invalid_client", e)),
+    };
+    // What the phone shows under the name, as for the authorize flow: the host the client registered.
+    let client_host = client.redirect_uris.first().map(|uri| redirect_host(uri)).unwrap_or_default();
+    let pairing_client = PairingClient {
+        client_id: client.client_id,
+        client_name: sanitize_client_name(&client.client_name),
+        client_host,
+        client_key: request.client_key,
+    };
+    match DEVICE_GRANTS.start(pairing_client) {
+        Ok(started) => JsonResponse(
+            Status::Ok,
+            device_authorization_response(
+                &CONFIG.domain(),
+                &started.device_code,
+                &started.user_code,
+                started.confirm_code,
+                DEVICE_GRANT_TTL.as_secs(),
+                POLL_INTERVAL.as_secs(),
+            ),
+        ),
+        Err(_) => JsonResponse(
+            Status::ServiceUnavailable,
+            json!({"error": "temporarily_unavailable", "error_description": "the server is busy, try again soon"}),
+        ),
+    }
+}
+
+/// RFC 8628 §3.5: one poll of the desktop app.
+async fn poll_device_code(device_code: &str, client_id: &str, conn: &DbConn) -> Result<Value, OAuthError> {
+    let pending = |error: &'static str, description: &str| OAuthError::new(400, error, description);
+    match DEVICE_GRANTS.poll(device_code, client_id, &HUB.pairings) {
+        Poll::Pending => Err(pending("authorization_pending", "waiting for the phone to approve")),
+        Poll::SlowDown => Err(pending("slow_down", "polling too often; wait 5 seconds more between polls")),
+        Poll::Denied => Err(pending("access_denied", "the pairing was denied on the phone")),
+        Poll::Expired => Err(pending("expired_token", "the pairing code expired or was used; start again")),
+        Poll::WrongClient => Err(OAuthError::invalid_grant("the device code belongs to another client")),
+        Poll::Approved {
+            user,
+            connection,
+        } => {
+            let user = UserId::from(user);
+            let connection = RewardenConnection::find_by_uuid_and_user(&connection.0, &user, conn)
+                .await
+                .ok_or_else(|| OAuthError::invalid_grant("the connection no longer exists"))?;
+            issue_tokens(&connection, conn).await
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------------------
 // Token endpoint
 // ---------------------------------------------------------------------------------------
 
@@ -510,6 +586,10 @@ async fn exchange(grant: TokenGrant, conn: &DbConn) -> Result<Value, OAuthError>
             }
             issue_tokens(&connection, conn).await
         }
+        TokenGrant::DeviceCode {
+            device_code,
+            client_id,
+        } => poll_device_code(&device_code, &client_id, conn).await,
     }
 }
 

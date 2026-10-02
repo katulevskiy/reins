@@ -533,7 +533,7 @@ async fn mcp_through_the_phone() -> String {
     };
     let page = url::Url::parse(&authorize_url).unwrap();
     let state_param = page.query_pairs().find(|(k, _)| k == "state").unwrap().1.into_owned();
-    let redirect = format!("dev.rewarden.android://mcp-oauth?code=CODE-1&state={state_param}");
+    let redirect = format!("com.reins2fa.app://mcp-oauth?code=CODE-1&state={state_param}");
     core.mcp_finish_sign_in(server_id, redirect).await.unwrap();
     let other_url = format!("{}/mcp", other.uri());
     let wrong = core.mcp_add_with_token(other_url.clone(), "WRONG".to_owned(), None).await.unwrap_err();

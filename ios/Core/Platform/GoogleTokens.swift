@@ -252,7 +252,7 @@ struct GoogleHTTP: Sendable {
 }
 
 /// One refresh token per (service, account) in the keychain: generic passwords of service
-/// `dev.rewarden.ios.google`, account `<service> <address>`, not synced, readable after the first unlock, in the
+/// `com.reins2fa.app.google`, account `<service> <address>`, not synced, readable after the first unlock, in the
 /// shared group when the build has one.
 struct GoogleKeychain: Sendable {
     struct Grant: Codable, Equatable {
@@ -260,7 +260,7 @@ struct GoogleKeychain: Sendable {
         var scopes: [String]
     }
 
-    var service = "dev.rewarden.ios.google"
+    var service = "com.reins2fa.app.google"
 
     private func base() -> [String: Any] {
         var query: [String: Any] = [

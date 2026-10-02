@@ -12,7 +12,7 @@ use rewarden_proto::{
         codes,
     },
     ids::{ConnectionId, PairingId, RequestId},
-    pairing::{PairingRequest, PairingResponse, PushKind, PushMessage},
+    pairing::{PairingClaim, PairingRequest, PairingResponse, PushKind, PushMessage},
     relay::{RelayRequest, RelayResponse},
 };
 use rocket::{
@@ -22,7 +22,9 @@ use serde::de::DeserializeOwned;
 use serde_json::Value;
 
 use super::{
-    HUB, apns, now_unix,
+    HUB, apns,
+    device_flow::{ClaimError, DEVICE_GRANTS},
+    now_unix,
     pairing::{PairingAnswer, PairingAnswerError},
     push,
     relay::AnswerError,
@@ -49,6 +51,7 @@ pub fn routes() -> Vec<Route> {
         post_request_response,
         get_pairing,
         post_pairing_response,
+        post_pairing_claim,
         get_connections,
         delete_connection
     ]
@@ -293,6 +296,33 @@ async fn post_pairing_response(
         Err(PairingAnswerError::NotFound) => Err(not_found()),
         Err(PairingAnswerError::AlreadyAnswered) => Err(already_answered()),
         Err(PairingAnswerError::Invalid(message)) => Err(bad_request(message)),
+    }
+}
+
+/// A6b: the phone scanned a computer's QR code (or opened its link): the pairing its code stands for, started now for
+/// this account and answered with A6 like any other.
+#[post("/rewarden/api/pairings/claim", data = "<data>")]
+async fn post_pairing_claim(data: Data<'_>, headers: Headers, conn: DbConn) -> PhoneResult<Json<PairingRequest>> {
+    require_approval_device(&headers, &conn).await?;
+    drop(conn);
+    let claim: PairingClaim = parse_versioned(&read_body_limited(data, 4096).await?)?;
+    // Counted with the pairings started for this account's email: every claim may start one.
+    if let Err(wait) = super::limits::PAIRINGS.check(&headers.user.email.to_lowercase()) {
+        return Err(rate_limited("too many connection requests for this account", wait));
+    }
+    match DEVICE_GRANTS.claim(&user_key(&headers), &claim.user_code, &HUB.pairings, now_unix()) {
+        Ok(pairing) => Ok(Json(pairing)),
+        Err(ClaimError::NotFound) => Err(api_err(
+            Status::NotFound,
+            codes::NOT_FOUND,
+            "Unknown or expired pairing code; show a new one on the computer",
+        )),
+        Err(ClaimError::Taken) => {
+            Err(api_err(Status::Conflict, codes::ALREADY_ANSWERED, "Another account's phone already scanned this code"))
+        }
+        Err(ClaimError::Busy) => {
+            Err(api_err(Status::ServiceUnavailable, codes::INTERNAL, "The server is busy; try again in a minute"))
+        }
     }
 }
 

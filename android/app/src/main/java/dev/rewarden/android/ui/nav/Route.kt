@@ -21,6 +21,9 @@ sealed interface Route {
 
     data class Connection(val id: String) : Route
 
+    /** Settings > AI connections > Connect a computer: scan (or type) the code the desktop app or `rewarden login` shows. */
+    data object ConnectComputer : Route
+
     /** The services that can be connected (Gmail, ...). */
     data object Integrations : Route
 

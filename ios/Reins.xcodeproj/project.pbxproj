@@ -561,7 +561,7 @@
 			baseConfigurationReference = "88CEAA489E5229503EE15E09";
 			buildSettings = {
 				GENERATE_INFOPLIST_FILE = YES;
-				PRODUCT_BUNDLE_IDENTIFIER = dev.rewarden.ios.uitests;
+				PRODUCT_BUNDLE_IDENTIFIER = com.reins2fa.app.uitests;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				TARGETED_DEVICE_FAMILY = "1,2";
 				TEST_TARGET_NAME = Reins;
@@ -574,7 +574,7 @@
 			buildSettings = {
 				BUNDLE_LOADER = "$(TEST_HOST)";
 				GENERATE_INFOPLIST_FILE = YES;
-				PRODUCT_BUNDLE_IDENTIFIER = dev.rewarden.ios.tests;
+				PRODUCT_BUNDLE_IDENTIFIER = com.reins2fa.app.tests;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				"SWIFT_INCLUDE_PATHS[sdk=iphoneos*]" = "$(SRCROOT)/../target/ios-core/iphoneos/include $(SRCROOT)/Vendor/OnnxRuntimeC";
 				"SWIFT_INCLUDE_PATHS[sdk=iphonesimulator*]" = "$(SRCROOT)/../target/ios-core/iphonesimulator/include $(SRCROOT)/Vendor/OnnxRuntimeC";
@@ -659,7 +659,7 @@
 					"@executable_path/Frameworks",
 					"@executable_path/../../Frameworks",
 				);
-				PRODUCT_BUNDLE_IDENTIFIER = dev.rewarden.ios.widgets;
+				PRODUCT_BUNDLE_IDENTIFIER = com.reins2fa.app.widgets;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SKIP_INSTALL = YES;
 				SWIFT_ACTIVE_COMPILATION_CONDITIONS = "REINS_WIDGETS $(inherited)";
@@ -678,7 +678,7 @@
 					"@executable_path/Frameworks",
 					"@executable_path/../../Frameworks",
 				);
-				PRODUCT_BUNDLE_IDENTIFIER = dev.rewarden.ios.widgets;
+				PRODUCT_BUNDLE_IDENTIFIER = com.reins2fa.app.widgets;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SKIP_INSTALL = YES;
 				SWIFT_ACTIVE_COMPILATION_CONDITIONS = "REINS_WIDGETS DEBUG $(inherited)";
@@ -708,7 +708,7 @@
 					"-framework",
 					SystemConfiguration,
 				);
-				PRODUCT_BUNDLE_IDENTIFIER = dev.rewarden.ios;
+				PRODUCT_BUNDLE_IDENTIFIER = com.reins2fa.app;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SWIFT_ACTIVE_COMPILATION_CONDITIONS = "REINS_APP $(inherited)";
 				"SWIFT_INCLUDE_PATHS[sdk=iphoneos*]" = "$(SRCROOT)/../target/ios-core/iphoneos/include $(SRCROOT)/Vendor/OnnxRuntimeC";
@@ -723,7 +723,7 @@
 			buildSettings = {
 				BUNDLE_LOADER = "$(TEST_HOST)";
 				GENERATE_INFOPLIST_FILE = YES;
-				PRODUCT_BUNDLE_IDENTIFIER = dev.rewarden.ios.tests;
+				PRODUCT_BUNDLE_IDENTIFIER = com.reins2fa.app.tests;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				"SWIFT_INCLUDE_PATHS[sdk=iphoneos*]" = "$(SRCROOT)/../target/ios-core/iphoneos/include $(SRCROOT)/Vendor/OnnxRuntimeC";
 				"SWIFT_INCLUDE_PATHS[sdk=iphonesimulator*]" = "$(SRCROOT)/../target/ios-core/iphonesimulator/include $(SRCROOT)/Vendor/OnnxRuntimeC";
@@ -737,7 +737,7 @@
 			baseConfigurationReference = "88CEAA489E5229503EE15E09";
 			buildSettings = {
 				GENERATE_INFOPLIST_FILE = YES;
-				PRODUCT_BUNDLE_IDENTIFIER = dev.rewarden.ios.uitests;
+				PRODUCT_BUNDLE_IDENTIFIER = com.reins2fa.app.uitests;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				TARGETED_DEVICE_FAMILY = "1,2";
 				TEST_TARGET_NAME = Reins;
@@ -766,7 +766,7 @@
 					"-framework",
 					SystemConfiguration,
 				);
-				PRODUCT_BUNDLE_IDENTIFIER = dev.rewarden.ios;
+				PRODUCT_BUNDLE_IDENTIFIER = com.reins2fa.app;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SWIFT_ACTIVE_COMPILATION_CONDITIONS = "REINS_APP DEBUG $(inherited)";
 				"SWIFT_INCLUDE_PATHS[sdk=iphoneos*]" = "$(SRCROOT)/../target/ios-core/iphoneos/include $(SRCROOT)/Vendor/OnnxRuntimeC";
@@ -796,7 +796,7 @@
 					"-framework",
 					SystemConfiguration,
 				);
-				PRODUCT_BUNDLE_IDENTIFIER = dev.rewarden.ios.notifications;
+				PRODUCT_BUNDLE_IDENTIFIER = com.reins2fa.app.notifications;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SKIP_INSTALL = YES;
 				SWIFT_ACTIVE_COMPILATION_CONDITIONS = "REINS_EXTENSION DEBUG $(inherited)";
@@ -827,7 +827,7 @@
 					"-framework",
 					SystemConfiguration,
 				);
-				PRODUCT_BUNDLE_IDENTIFIER = dev.rewarden.ios.notifications;
+				PRODUCT_BUNDLE_IDENTIFIER = com.reins2fa.app.notifications;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SKIP_INSTALL = YES;
 				SWIFT_ACTIVE_COMPILATION_CONDITIONS = "REINS_EXTENSION $(inherited)";

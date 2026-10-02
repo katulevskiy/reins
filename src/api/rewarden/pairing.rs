@@ -184,6 +184,18 @@ impl PairingHub {
 
     fn insert(&self, user: Option<String>, client: PairingClient, now_unix: i64) -> Result<(PairingRequest, u8), Full> {
         let (code, choices) = generate_choices();
+        self.insert_with(user, client, code, choices, false, now_unix).map(|request| (request, code))
+    }
+
+    fn insert_with(
+        &self,
+        user: Option<String>,
+        client: PairingClient,
+        code: u8,
+        choices: [u8; 3],
+        delivered: bool,
+        now_unix: i64,
+    ) -> Result<PairingRequest, Full> {
         let client = PairingClient {
             client_name: sanitize_client_name(&client.client_name),
             ..client
@@ -202,11 +214,24 @@ impl PairingHub {
             client,
             code,
             request: request.clone(),
-            delivered: false,
+            delivered,
             stage: Stage::Open,
         };
         self.lock().insert(request.id.clone(), entry)?;
-        Ok((request, code))
+        Ok(request)
+    }
+
+    /// A pairing `user`'s phone asked for itself (it scanned a computer's code, see `device_flow`): `code` is the
+    /// number the computer shows, among `choices`. It is delivered already, so it is neither pushed nor listed again.
+    pub fn start_claimed(
+        &self,
+        user: &str,
+        client: PairingClient,
+        code: u8,
+        choices: [u8; 3],
+        now_unix: i64,
+    ) -> Result<PairingRequest, Full> {
+        self.insert_with(Some(user.to_owned()), client, code, choices, true, now_unix)
     }
 
     /// Starts a pairing for `user`'s approval device; returns it and the browser code.

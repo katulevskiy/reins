@@ -109,9 +109,14 @@ class MainSafeCore(
     override suspend fun login(serverUrl: String, email: String, password: String, totp: String?): SessionInfo =
         io { login(serverUrl, email, password, totp) }
 
+    override suspend fun createAccount(serverUrl: String, email: String, password: String): SessionInfo =
+        io { createAccount(serverUrl, email, password) }
+
     override suspend fun logout() = io { logout() }
 
     override suspend fun pairingView(pairingId: String): PairingView = io { pairingView(pairingId) }
+
+    override suspend fun pairingByCode(userCode: String): PairingView = io { pairingByCode(userCode) }
 
     override suspend fun pending(): List<PendingItem> = io { pending() }
 

@@ -283,6 +283,15 @@ final class GrantsSettingsUITests: XCTestCase {
         XCTAssertTrue(element("signIn").waitForNonExistence(timeout: 8))
     }
 
+    func testTheServerFieldWaitsBehindUseAnotherServer() {
+        launch(["-signedout"])
+        wait("signIn")
+        XCTAssertFalse(element("server").exists)
+        tap("otherServer")
+        wait("server")
+        XCTAssertFalse(element("otherServer").exists)
+    }
+
     func testWrongCredentialsShowAnActionableError() {
         launch(["-signedout"])
         typeInto("email", "me@example.com")

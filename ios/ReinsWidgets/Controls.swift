@@ -7,7 +7,7 @@ import WidgetKit
 
 /// Lockdown on or off. The intent runs in the app and needs an unlocked phone.
 struct LockdownControl: ControlWidget {
-    static let kind = "dev.rewarden.ios.control.lockdown"
+    static let kind = "com.reins2fa.app.control.lockdown"
 
     var body: some ControlWidgetConfiguration {
         StaticControlConfiguration(kind: Self.kind, provider: Provider()) { on in
@@ -32,7 +32,7 @@ struct LockdownControl: ControlWidget {
 
 /// Opens the newest waiting request (the app's home when nothing waits), with the count.
 struct WaitingControl: ControlWidget {
-    static let kind = "dev.rewarden.ios.control.waiting"
+    static let kind = "com.reins2fa.app.control.waiting"
 
     var body: some ControlWidgetConfiguration {
         StaticControlConfiguration(kind: Self.kind, provider: Provider()) { count in
@@ -56,7 +56,7 @@ struct WaitingControl: ControlWidget {
 
 /// Ends every running bypass.
 struct StopBypassControl: ControlWidget {
-    static let kind = "dev.rewarden.ios.control.stopBypass"
+    static let kind = "com.reins2fa.app.control.stopBypass"
 
     var body: some ControlWidgetConfiguration {
         StaticControlConfiguration(kind: Self.kind) {

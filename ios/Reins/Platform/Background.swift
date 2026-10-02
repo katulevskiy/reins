@@ -27,11 +27,11 @@ enum PushReceiver {
     }
 }
 
-/// `dev.rewarden.ios.refresh`: now and then while the app is in the background, a short sync (what push may have
+/// `com.reins2fa.app.refresh`: now and then while the app is in the background, a short sync (what push may have
 /// missed, Autopilot's pass, grants that ran out) so the notifications, widgets and grant reminders stay right.
 @MainActor
 enum BackgroundRefresh {
-    static let identifier = "dev.rewarden.ios.refresh"
+    static let identifier = "com.reins2fa.app.refresh"
     /// iOS decides when; this is the earliest it may.
     static let interval: TimeInterval = 15 * 60
 

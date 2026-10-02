@@ -72,6 +72,7 @@ abstract class ScreenshotsBase(private val suffix: String) {
         core.mcp = emptyList()
         core.blobs.clear()
         core.resetAutopilot()
+        core.resetOnboarding()
         UpdateProvider.fetcher = updates
         UpdateProvider.installer = FakeInstaller()
         androidx.work.testing.WorkManagerTestInitHelper.initializeTestWorkManager(context)
@@ -933,8 +934,51 @@ abstract class ScreenshotsBase(private val suffix: String) {
     fun signIn() {
         core.session = null
         launch()
+        await("welcome")
+        shoot("14-welcome")
+        tap("startSignIn")
         await("signIn")
-        shoot("14-signin")
+        shoot("14a-signin")
+    }
+
+    @Test
+    fun createAccount() {
+        core.session = null
+        launch()
+        tap("createAccount")
+        await("create")
+        rule.onNodeWithTag("email").performTextReplacement("me@example.com")
+        rule.onNodeWithTag("password").performTextReplacement("correct horse battery")
+        rule.onNodeWithTag("confirmPassword").performTextReplacement("correct horse battery")
+        shoot("14b-create-account")
+    }
+
+    @Test
+    fun setupAfterSigningIn() {
+        core.session = null
+        launch()
+        tap("startSignIn")
+        await("signIn")
+        rule.onNodeWithTag("email").performTextReplacement("me@example.com")
+        rule.onNodeWithTag("password").performTextReplacement("correct horse battery")
+        tap("signIn")
+        await("setupComputer")
+        shoot("14c-setup-computer")
+        tap("typeCode")
+        await("pairCode")
+        shoot("14d-setup-type-code")
+        tap("setupNext")
+        await("setupAi")
+        shoot("14e-setup-ai")
+    }
+
+    @Test
+    fun connectComputer() {
+        launch()
+        tap("openSettings")
+        tap("connectComputer")
+        await("scanQr")
+        shoot("14f-connect-computer")
     }
 
     companion object {

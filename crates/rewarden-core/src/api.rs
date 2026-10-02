@@ -112,6 +112,20 @@ impl RewardenCore {
         rt::run(async move { engine.login(&server_url, &email, password, totp).await }).await
     }
 
+    /// Creates a Bitwarden-compatible account on the server (PBKDF2-SHA256 with 600 000 iterations, a fresh vault key
+    /// and RSA key pair), then signs in to it like `login`. A master password shorter than 12 characters, a taken
+    /// email or closed sign-ups are `Invalid` with a message for the user.
+    pub async fn create_account(
+        &self,
+        server_url: String,
+        email: String,
+        password: String,
+    ) -> Result<SessionInfo, CoreError> {
+        let engine = Arc::clone(&self.engine);
+        let password = Zeroizing::new(password);
+        rt::run(async move { engine.create_account(&server_url, &email, password).await }).await
+    }
+
     pub async fn logout(&self) -> Result<(), CoreError> {
         let engine = Arc::clone(&self.engine);
         rt::run(async move { engine.logout() }).await
@@ -165,6 +179,14 @@ impl RewardenCore {
     pub async fn pairing_view(&self, pairing_id: String) -> Result<PairingView, CoreError> {
         let engine = Arc::clone(&self.engine);
         rt::run(async move { engine.pairing_view(&pairing_id) }).await
+    }
+
+    /// The pairing a computer's code stands for (`BCDF-GHJK`, scanned from its QR code or opened from a link; case,
+    /// spaces and dashes do not count). It is parked like a pushed pairing and answered with `answer_pairing`. An
+    /// unknown or expired code is `NotFound`.
+    pub async fn pairing_by_code(&self, user_code: String) -> Result<PairingView, CoreError> {
+        let engine = Arc::clone(&self.engine);
+        rt::run(async move { engine.pairing_by_code(&user_code).await }).await
     }
 
     pub async fn answer_pairing(

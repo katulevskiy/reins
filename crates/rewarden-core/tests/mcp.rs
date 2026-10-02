@@ -98,7 +98,7 @@ impl World {
     /// The sign-in page "redirects back" with code CODE-1.
     async fn finish_sign_in(&self, id: &str, page: &Url) -> McpServerView {
         let state = query(page)["state"].clone();
-        let redirect = format!("dev.rewarden.android://mcp-oauth?code=CODE-1&state={state}&iss={}", self.auth.uri());
+        let redirect = format!("com.reins2fa.app://mcp-oauth?code=CODE-1&state={state}&iss={}", self.auth.uri());
         self.core.mcp_finish_sign_in(id.to_owned(), redirect).await.unwrap()
     }
 
@@ -179,14 +179,14 @@ async fn a_server_is_added_with_an_oauth_sign_in_and_its_tools_are_reported() {
     let q = query(&page);
     assert_eq!(q["response_type"], "code");
     assert_eq!(q["client_id"], "client-1");
-    assert_eq!(q["redirect_uri"], "dev.rewarden.android://mcp-oauth");
+    assert_eq!(q["redirect_uri"], "com.reins2fa.app://mcp-oauth");
     assert_eq!(q["code_challenge_method"], "S256");
     assert_eq!(q["code_challenge"].len(), 43);
     assert!(q["state"].len() >= 16);
     assert_eq!(q["resource"], w.url());
     assert_eq!(q["scope"], "issues", "the scopes of the resource metadata");
     let registration = bodies(&w.auth, "POST", "/register").await.pop().unwrap();
-    assert_eq!(registration["redirect_uris"], json!(["dev.rewarden.android://mcp-oauth"]));
+    assert_eq!(registration["redirect_uris"], json!(["com.reins2fa.app://mcp-oauth"]));
     assert_eq!(registration["token_endpoint_auth_method"], "none");
     let waiting = w.core.mcp_servers().await.unwrap();
     assert_eq!((waiting[0].status.as_str(), waiting[0].tools.len()), ("needs_sign_in", 0));
@@ -196,7 +196,7 @@ async fn a_server_is_added_with_an_oauth_sign_in_and_its_tools_are_reported() {
     );
 
     // An answer for another sign-in, or another app's redirect, is refused.
-    let forged = format!("dev.rewarden.android://mcp-oauth?code=CODE-1&state={}", "x".repeat(22));
+    let forged = format!("com.reins2fa.app://mcp-oauth?code=CODE-1&state={}", "x".repeat(22));
     assert!(matches!(w.core.mcp_finish_sign_in(id.clone(), forged).await, Err(CoreError::Invalid { .. })));
     let elsewhere = format!("https://evil.example/cb?code=CODE-1&state={}", q["state"]);
     assert!(matches!(w.core.mcp_finish_sign_in(id.clone(), elsewhere).await, Err(CoreError::Invalid { .. })));
@@ -230,7 +230,7 @@ async fn a_server_is_added_with_an_oauth_sign_in_and_its_tools_are_reported() {
 
     // Adding it again is refused; the started sign-in is over.
     assert!(w.core.mcp_add(w.url(), None).await.is_err());
-    let again = format!("dev.rewarden.android://mcp-oauth?code=CODE-1&state={}", q["state"]);
+    let again = format!("com.reins2fa.app://mcp-oauth?code=CODE-1&state={}", q["state"]);
     assert!(w.core.mcp_finish_sign_in(id, again).await.is_err());
 }
 

@@ -115,6 +115,7 @@ class AppFlowTest {
         core.icons.clear()
         core.logins.clear()
         core.registrations.clear()
+        core.resetOnboarding()
         authResult = AuthResult.Success
         prompts.set(0)
         // The updater (in the `full` build) never reaches a real server or installer; its tests are UpdatesFlowTest.
@@ -222,16 +223,32 @@ class AppFlowTest {
 
     // ---- sign-in ------------------------------------------------------------------------------------------------
 
+    /** Signed out: the welcome screen, then "Sign in" on it. */
+    private fun openSignIn() {
+        launch()
+        awaitTag("welcome")
+        tap("startSignIn")
+        awaitTag("signIn")
+    }
+
+    /** The setup after a fresh sign-in, skipped. */
+    private fun skipSetup() {
+        awaitTag("setupComputer")
+        tap("setupSkip")
+    }
+
     @Test
     fun signInRegistersThePhoneAndShowsActivity() {
         core.session = null
-        launch()
-        awaitTag("signIn")
+        openSignIn()
         rule.onNodeWithTag("signIn").assertIsNotEnabled()
+        tap("useAnotherServer")
+        awaitTag("server")
         rule.onNodeWithTag("server").performTextReplacement("https://s.example.com")
         rule.onNodeWithTag("email").performTextReplacement("me@example.com")
         rule.onNodeWithTag("password").performTextReplacement("hunter2")
-        rule.onNodeWithTag("signIn").assertIsEnabled().performClick()
+        rule.onNodeWithTag("signIn").performScrollTo().assertIsEnabled().performClick()
+        skipSetup()
         awaitTag("noActivity")
         assertEquals(listOf("https://s.example.com", "me@example.com", "hunter2", null), core.logins.single())
         val state = (context.applicationContext as RewardenApp).container.state
@@ -240,11 +257,25 @@ class AppFlowTest {
     }
 
     @Test
+    fun signInUsesTheDefaultServerUnlessAnotherIsChosen() {
+        core.session = null
+        openSignIn()
+        assertFalse(has("server"))
+        rule.onNodeWithTag("email").performTextReplacement("me@example.com")
+        rule.onNodeWithTag("password").performTextReplacement("hunter2")
+        tap("signIn")
+        skipSetup()
+        awaitTag("noActivity")
+        assertEquals(dev.rewarden.android.ui.signin.AccountRules.serverUrl(BuildConfig.DEFAULT_SERVER), core.logins.single()[0])
+    }
+
+    @Test
     fun aTwoFactorPromptAppearsWhenTheServerAsksForOne() {
         core.session = null
         core.loginError = CoreException.TwoFactorRequired()
-        launch()
-        awaitTag("signIn")
+        openSignIn()
+        tap("useAnotherServer")
+        awaitTag("server")
         rule.onNodeWithTag("server").performTextReplacement("https://s.example.com")
         rule.onNodeWithTag("email").performTextReplacement("me@example.com")
         rule.onNodeWithTag("password").performTextReplacement("hunter2")
@@ -253,6 +284,7 @@ class AppFlowTest {
         core.loginError = null
         rule.onNodeWithTag("totp").performTextReplacement("123456")
         rule.onNodeWithTag("signIn").performScrollTo().assertIsEnabled().performClick()
+        skipSetup()
         awaitTag("noActivity")
         assertEquals("123456", core.logins.last()[3])
     }
@@ -261,8 +293,9 @@ class AppFlowTest {
     fun wrongCredentialsShowAnActionableError() {
         core.session = null
         core.loginError = CoreException.InvalidCredentials()
-        launch()
-        awaitTag("signIn")
+        openSignIn()
+        tap("useAnotherServer")
+        awaitTag("server")
         rule.onNodeWithTag("server").performTextReplacement("https://s.example.com")
         rule.onNodeWithTag("email").performTextReplacement("me@example.com")
         rule.onNodeWithTag("password").performTextReplacement("nope")
@@ -1751,6 +1784,8 @@ class AppFlowTest {
         tap("openSettings")
         tap("signOut")
         rule.onAllNodes(hasText("Sign out")).let { it[it.fetchSemanticsNodes().lastIndex] }.performClick()
+        awaitTag("welcome")
+        tap("startSignIn")
         awaitTag("signIn")
     }
 

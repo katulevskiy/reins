@@ -33,6 +33,21 @@
                 <action android:name="android.intent.action.MAIN" />
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
+            <!-- The pairing link a computer shows as a QR code (verified through
+                 https://app.reins2fa.com/.well-known/assetlinks.json). Only the code in it is used. -->
+            <intent-filter android:autoVerify="true">
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <category android:name="android.intent.category.BROWSABLE" />
+                <data android:scheme="https" android:host="app.reins2fa.com" android:pathPrefix="/pair" />
+            </intent-filter>
+            <!-- The same link where App Links cannot be used (a self-hosted server, a browser that opens it). -->
+            <intent-filter>
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <category android:name="android.intent.category.BROWSABLE" />
+                <data android:scheme="reins" android:host="pair" />
+            </intent-filter>
         </activity>
 
         <!-- Where an MCP server's sign-in page sends the browser back to; it hands the address to MainActivity. -->
@@ -49,6 +64,11 @@
                 <data android:scheme="dev.rewarden.android" android:host="mcp-oauth" />
             </intent-filter>
         </activity>
+
+        <!-- Google Play installs the QR code scanner's module with the app, so the first scan does not wait for it. -->
+        <meta-data
+            android:name="com.google.mlkit.vision.DEPENDENCIES"
+            android:value="barcode_ui" />
 
         <receiver
             android:name=".platform.GrantReminders$Receiver"

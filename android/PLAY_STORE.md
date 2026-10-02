@@ -37,8 +37,7 @@ What the flavors change is kept in one place each:
 cd android
 ./gradlew assembleFullRelease          # the direct APK (scripts/release-android.sh does this and publishes it)
 ./gradlew bundlePlayRelease \
-    -Prewarden.versionCode=N -Prewarden.versionName=0.1.0 -Prewarden.build=0.1.0-N \
-    -Prewarden.defaultServer=https://rewarden.arc-chat.com
+    -Prewarden.versionCode=N -Prewarden.versionName=0.1.0 -Prewarden.build=0.1.0-N
 # → app/build/outputs/bundle/playRelease/app-play-release.aab
 ./gradlew testFullDebugUnitTest testPlayDebugUnitTest
 ```
