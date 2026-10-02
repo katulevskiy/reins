@@ -6,26 +6,56 @@
 [![License: Apache-2.0 / AGPL-3.0 (server)](https://img.shields.io/badge/license-Apache--2.0%20%2F%20AGPL--3.0%20%28server%29-blue)](LICENSING.md)
 [![Status: alpha](https://img.shields.io/badge/status-alpha-orange)](#project-status)
 
-**Let AI agents work on your accounts without giving them your keys. Your phone approves each action and keeps the credentials.**
+**Give your AI agents real power without handing them control of your life.**
 
 > Reins was called Rewarden while it was being built. The commands, crates and the Android package still carry the
 > `rewarden` name for now; they will be renamed in a later release.
 
-Reins is a permission layer for AI agents. Agents (Claude Code, Codex, Cursor, Gemini CLI, Claude.ai, ChatGPT)
-reach your email, GitHub, calendar, messages, passwords and git remotes through Reins. Every request shows up on
-your phone with exactly what will happen: the email that will be sent, the commits that will be pushed, the command
-that will run. You approve it once, for a while, or not at all. The phone does the work with credentials that never
-leave it, and the agent gets only the result. An optional on-device model, Autopilot, learns from your decisions and
-can take routine approvals off your hands.
+## Why Reins
+
+AI agents are finally useful. They write code, push it, answer email, book meetings and run commands for you. To do
+that, they need access to your accounts, and today that usually means handing them everything: your GitHub token,
+your inbox, your shell. One bad guess, one misread instruction or one malicious web page later, an agent can delete
+your production database with `rm -rf`, force-push over a week of work, or send an email you never meant to send.
+
+An AI can't be held responsible for that. You can, so you should be the one deciding.
+
+Reins puts you back in charge. Your agents keep their power, but you hold the reins:
+
+- **Nothing important happens without your OK.** Every action that matters shows up on your phone first, exactly as it
+  will happen: the email with its recipients and text, the commits that will be pushed, the command that will run. One
+  tap approves it, one tap stops it.
+- **Agents never get your keys.** Passwords and tokens stay on your phone. The phone does the work and hands the agent
+  only the result, so there is nothing for an agent to leak or misuse later.
+- **It doesn't nag you.** Allow routine things for a while ("read my email for the next hour"), and let Autopilot, a
+  small model that runs on your phone, learn which requests you always approve and which you never would.
+- **You can always see what happened.** Every request, approval and denial is in your activity log.
+
+## What's in it
+
+| Part | What it does |
+| --- | --- |
+| **Phone app** (Android) | Your remote control. Shows each request, approves or denies it, keeps your passwords and tokens, and does the actual work: sends the email, calls GitHub, reads the calendar. |
+| **Desktop app** (`rewarden`) | Sits between the AI agents on your computer and the outside world: it stops risky commands until you approve them, and lets `git push` reach GitHub without the agent ever seeing your token. Works with Claude Code, Codex, Cursor and Gemini CLI. |
+| **Server** | A small relay that carries requests from agents (including Claude.ai and ChatGPT in the browser) to your phone and the answers back. It never stores your credentials. Use the hosted one or [run your own](docs/self-hosting.md). |
+| **Autopilot** (optional) | An AI model that runs entirely on your phone and learns your decisions. It approves what you'd clearly approve, blocks what you'd clearly block, and asks you about everything else. Risky things (passwords, deletions, new connections) always wait for you. |
+
+In short: the agent asks, your phone shows you exactly what will happen, you decide, and the phone does it with keys the
+agent never sees.
 
 <p align="center">
-  <img src="docs/assets/git-push.png" width="220" alt="A git push waiting for approval: branch, commits, authors">
-  <img src="docs/assets/suggestion.png" width="220" alt="The same approval with Autopilot's suggestion: would approve, 97%">
-  <img src="docs/assets/autopilot.png" width="220" alt="The Autopilot screen: Manual, Assisted, Auto, Bypass, Lockdown">
-  <img src="docs/assets/pairing.png" width="220" alt="Pairing the desktop app: the phone shows the app's key to compare">
+  <img src="docs/assets/git-push.png" width="200" alt="A git push waiting for approval: branch, commits, authors">
+  <img src="docs/assets/suggestion.png" width="200" alt="The same approval with Autopilot's suggestion: would approve, 97%">
+  <img src="docs/assets/autopilot.png" width="200" alt="The Autopilot screen: Manual, Assisted, Auto, Bypass, Lockdown">
+  <img src="docs/assets/pairing.png" width="200" alt="Pairing the desktop app: the phone shows the app's key to compare">
+</p>
+<p align="center">
+  <img src="docs/assets/activity.png" width="200" alt="Activity: requests waiting for you and everything that happened">
+  <img src="docs/assets/grants.png" width="200" alt="Grants: what each AI may do on its own, and for how long">
+  <img src="docs/assets/settings.png" width="200" alt="Settings: account, approval device, Autopilot, AI connections">
 </p>
 
-## How it works
+## How it works, in detail
 
 ```mermaid
 flowchart LR
