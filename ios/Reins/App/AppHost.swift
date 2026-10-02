@@ -29,7 +29,15 @@ final class AppHost {
             }
         }
         if let model {
-            Task { await model.refreshSession() }
+            Task {
+                await model.refreshSession()
+                // `-open reins://...`: open a link at launch (simctl openurl stops at a confirmation prompt).
+                let args = ProcessInfo.processInfo.arguments
+                if let i = args.firstIndex(of: "-open"), i + 1 < args.count, let url = URL(string: args[i + 1]),
+                   let link = DeepLink(url: url) {
+                    await model.handle(link)
+                }
+            }
         }
     }
 }
