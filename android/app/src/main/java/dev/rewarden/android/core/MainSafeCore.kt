@@ -104,6 +104,8 @@ class MainSafeCore(
 
     override suspend fun handlePush(kind: String, id: String) = io { handlePush(kind, id) }
 
+    override suspend fun handlePushDeferringAutopilot(kind: String, id: String) = io { handlePushDeferringAutopilot(kind, id) }
+
     override suspend fun login(serverUrl: String, email: String, password: String, totp: String?): SessionInfo =
         io { login(serverUrl, email, password, totp) }
 

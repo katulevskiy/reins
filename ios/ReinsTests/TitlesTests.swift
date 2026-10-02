@@ -17,4 +17,14 @@ final class TitlesTests: XCTestCase {
         XCTAssertEqual(DeepLink(url: link.url), link)
         XCTAssertNil(DeepLink(url: URL(string: "reins://item?kind=request&id=../x")!))
     }
+
+    /// Calls name an MCP server `mcp:<id>`, its permissions `mcp_<id>` with `-` as `_`: both read as its name.
+    func testMcpServersAreNamedInCallsAndPermissions() {
+        McpNames.update(["my-notes": McpNames.Server(name: "Notes", tools: [:])])
+        defer { McpNames.update([:]) }
+        XCTAssertEqual(serviceName("mcp:my-notes"), "Notes")
+        XCTAssertEqual(serviceName("mcp_my_notes"), "Notes")
+        XCTAssertEqual(serviceName("mcp_gone"), "MCP server")
+        XCTAssertEqual(serviceName("gmail"), "Gmail")
+    }
 }

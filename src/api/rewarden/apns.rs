@@ -19,8 +19,9 @@ use crate::{CONFIG, http_client::make_http_request};
 pub const PRODUCTION_PREFIX: &str = "apns:";
 /// Stored push-token prefix of a development APNs device token (builds signed for development).
 pub const SANDBOX_PREFIX: &str = "apns-sandbox:";
-/// An APNs device token is 32 bytes, sent by the app as lowercase or uppercase hex.
-pub const DEVICE_TOKEN_HEX_LEN: usize = 64;
+/// An APNs device token's length in hex digits (sent by the app as lowercase or uppercase hex). Apple says tokens are
+/// of variable length: a phone's are 32 bytes today, a simulator's 80, and up to 100 bytes is allowed for.
+pub const DEVICE_TOKEN_HEX_LEN: std::ops::RangeInclusive<usize> = 64..=200;
 /// The iOS app's bundle id, the default `apns-topic`.
 pub const DEFAULT_TOPIC: &str = "dev.rewarden.ios";
 const PRODUCTION_ORIGIN: &str = "https://api.push.apple.com";
@@ -69,9 +70,12 @@ pub fn split_token(token: &str) -> Option<(Environment, &str)> {
 /// `None` when `token` is not an APNs token; otherwise the token with its hex lowercased, or why it is malformed.
 pub fn normalize_token(token: &str) -> Option<Result<String, String>> {
     let (environment, device) = split_token(token)?;
-    if device.len() != DEVICE_TOKEN_HEX_LEN || !device.bytes().all(|b| b.is_ascii_hexdigit()) {
+    let whole_bytes = device.len().is_multiple_of(2);
+    if !DEVICE_TOKEN_HEX_LEN.contains(&device.len()) || !whole_bytes || !device.bytes().all(|b| b.is_ascii_hexdigit()) {
         return Some(Err(format!(
-            "an APNs token is `{PRODUCTION_PREFIX}` or `{SANDBOX_PREFIX}` followed by {DEVICE_TOKEN_HEX_LEN} hex digits"
+            "an APNs token is `{PRODUCTION_PREFIX}` or `{SANDBOX_PREFIX}` followed by {} to {} hex digits (whole bytes)",
+            DEVICE_TOKEN_HEX_LEN.start(),
+            DEVICE_TOKEN_HEX_LEN.end()
         )));
     }
     Some(Ok(format!("{}{}", environment.prefix(), device.to_ascii_lowercase())))

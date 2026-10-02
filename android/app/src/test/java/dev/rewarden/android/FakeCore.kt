@@ -205,6 +205,8 @@ class FakeCore : RewardenCoreInterface {
 
     override suspend fun handlePush(kind: String, id: String) = Unit
 
+    override suspend fun handlePushDeferringAutopilot(kind: String, id: String) = Unit
+
     override suspend fun login(serverUrl: String, email: String, password: String, totp: String?): SessionInfo {
         logins += listOf(serverUrl, email, password, totp)
         loginError?.let { throw it }
