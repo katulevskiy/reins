@@ -437,7 +437,7 @@ impl Engine {
         })
     }
 
-    /// The browser came back to `dev.rewarden.android://mcp-oauth?code=…&state=…`: trades the code for tokens, then
+    /// The browser came back to `com.reins2fa.app://mcp-oauth?code=…&state=…`: trades the code for tokens, then
     /// lists the tools.
     pub async fn mcp_finish_sign_in(&self, server_id: &str, redirect_url: &str) -> Result<McpServerView, CoreError> {
         let server = self.store.mcp_server(server_id)?.ok_or(CoreError::NotFound)?;

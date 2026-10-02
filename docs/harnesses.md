@@ -14,8 +14,8 @@ through the desktop app, whichever harness runs it.
 ## Prerequisites
 
 ```sh
-curl -fsSL https://rewarden.arc-chat.com/install.sh | sh
-rewarden login https://rewarden.arc-chat.com
+curl -fsSL https://reins2fa.com/install.sh | sh
+rewarden login     # the hosted server; on your own: rewarden login https://reins.example.com
 ```
 
 Without `rewarden login`, the MCP server has no server to reach, and the hook asks in a desktop notification instead

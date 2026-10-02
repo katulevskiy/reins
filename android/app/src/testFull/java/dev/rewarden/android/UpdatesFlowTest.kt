@@ -20,7 +20,7 @@ import org.junit.runner.RunWith
 import org.robolectric.annotation.Config
 import org.robolectric.annotation.GraphicsMode
 
-/** The in-app updater of the `full` build (the APK from rewarden.arc-chat.com); the `play` build has none. */
+/** The in-app updater of the `full` build (the APK from reins2fa.com); the `play` build has none. */
 @RunWith(AndroidJUnit4::class)
 @GraphicsMode(GraphicsMode.Mode.NATIVE)
 @Config(sdk = [35], qualifiers = "w411dp-h891dp-normal-xxhdpi")

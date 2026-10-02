@@ -104,7 +104,7 @@ enum GitHosts {
 
 enum McpLogic {
     /// Where an MCP server's sign-in page sends the browser back to (the core registers it with the server).
-    static let redirectScheme = "dev.rewarden.android"
+    static let redirectScheme = "com.reins2fa.app"
     static let redirectHost = "mcp-oauth"
     /// Longest redirect address passed on to the core; a real one is a code and a state.
     static let maxRedirectChars = 8_192

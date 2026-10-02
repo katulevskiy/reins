@@ -307,7 +307,7 @@ private final class FakePlatform: IntegrationsPlatform {
         if signInCancels { return .cancelled }
         if let signInFails { return await model.finishMcpSignIn(.failure(signInFails), serverId: serverId) }
         do {
-            let server = try await model.core.mcpFinishSignIn(serverId: serverId, redirectUrl: "dev.rewarden.android://mcp-oauth?code=c&state=s")
+            let server = try await model.core.mcpFinishSignIn(serverId: serverId, redirectUrl: "com.reins2fa.app://mcp-oauth?code=c&state=s")
             return await model.finishMcpSignIn(.success(server), serverId: serverId)
         } catch {
             return await model.finishMcpSignIn(.failure(error), serverId: serverId)

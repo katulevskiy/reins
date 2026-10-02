@@ -11,8 +11,8 @@ import UIKit
 final class HapticPlayer: @unchecked Sendable {
     static let supportsCoreHaptics = CHHapticEngine.capabilitiesForHardware().supportsHaptics
 
-    private let queue = DispatchQueue(label: "dev.rewarden.ios.haptics", qos: .userInteractive)
-    private let log = Logger(subsystem: "dev.rewarden.ios", category: "feedback")
+    private let queue = DispatchQueue(label: "com.reins2fa.app.haptics", qos: .userInteractive)
+    private let log = Logger(subsystem: "com.reins2fa.app", category: "feedback")
     private var engine: CHHapticEngine?
     private var running = false
     private var players: [PlayerKey: CHHapticPatternPlayer] = [:]

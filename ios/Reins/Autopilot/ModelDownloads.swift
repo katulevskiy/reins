@@ -230,7 +230,7 @@ final class PathNetwork: NetworkWatching {
                 self.onChange?(state)
             }
         }
-        monitor.start(queue: DispatchQueue(label: "dev.rewarden.ios.network"))
+        monitor.start(queue: DispatchQueue(label: "com.reins2fa.app.network"))
     }
 
     nonisolated private static func state(_ path: NWPath) -> NetworkState {

@@ -41,7 +41,7 @@ REWARDEN_FCM_SERVICE_ACCOUNT=/etc/rewarden/fcm-service-account.json
 REWARDEN_APNS_KEY_FILE=/etc/rewarden/AuthKey_ABC123DEFG.p8
 REWARDEN_APNS_KEY_ID=ABC123DEFG
 REWARDEN_APNS_TEAM_ID=DEF123GHIJ
-# REWARDEN_APNS_TOPIC=dev.rewarden.ios   # the iOS app's bundle id
+# REWARDEN_APNS_TOPIC=com.reins2fa.app   # the iOS app's bundle id
 # REWARDEN_RELAY_WAIT_SECS=45   # ChatGPT aborts tool calls after 60 s; Claude allows 240 s
 # REWARDEN_OFFLINE_SECS=10
 ```
@@ -103,7 +103,7 @@ check that its proxy timeout (100 s) is above the long-poll times and that WebSo
 
 ## 5. Firebase (push)
 
-Create a Firebase project (or use your Google Cloud project) and add an Android app with package `dev.rewarden.android`.
+Create a Firebase project (or use your Google Cloud project) and add an Android app with package `com.reins2fa.app`.
 
 1. `REWARDEN_FCM_SERVICE_ACCOUNT` = the key of a dedicated service account (role *Firebase Cloud Messaging Admin*
    only). Keep it out of the repo; mode `0600`.
@@ -128,7 +128,7 @@ The phone asks Google Play services for Gmail tokens. That needs, in the same pr
    *In production* for anyone else.
 3. **Data access**: add `gmail.readonly` and `gmail.send`. Both are *restricted* scopes: more than 100 users requires
    Google's verification and a third-party security assessment.
-4. **Clients → Create client → Android**: package `dev.rewarden.android`, SHA-1 of the signing certificate. Register
+4. **Clients → Create client → Android**: package `com.reins2fa.app`, SHA-1 of the signing certificate. Register
    the SHA-1 of every key you sign with, debug and release
    (`keytool -list -v -keystore release.jks`).
 5. Re-download `google-services.json` (`firebase apps:sdkconfig android <app-id> --project <project-id>`).

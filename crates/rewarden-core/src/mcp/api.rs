@@ -23,7 +23,7 @@ impl RewardenCore {
         rt::run(async move { engine.mcp_add(&url, name).await }).await
     }
 
-    /// The sign-in page redirected to `dev.rewarden.android://mcp-oauth?…`.
+    /// The sign-in page redirected to `com.reins2fa.app://mcp-oauth?…`.
     pub async fn mcp_finish_sign_in(
         &self,
         server_id: String,

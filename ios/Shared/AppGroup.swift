@@ -2,9 +2,9 @@ import Foundation
 
 /// What the app, its notification extension and its widgets share: one App Group container and one keychain group.
 enum AppGroup {
-    static let id: String = Bundle.main.object(forInfoDictionaryKey: "ReinsAppGroup") as? String ?? "group.dev.rewarden.ios"
+    static let id: String = Bundle.main.object(forInfoDictionaryKey: "ReinsAppGroup") as? String ?? "group.com.reins2fa.app"
 
-    /// `$(AppIdentifierPrefix)dev.rewarden.ios.shared`, or nil when the build has no team prefix (unsigned simulator
+    /// `$(AppIdentifierPrefix)com.reins2fa.app.shared`, or nil when the build has no team prefix (unsigned simulator
     /// builds), in which case keychain items stay in the process's default group.
     static let keychainGroup: String? = {
         guard let group = Bundle.main.object(forInfoDictionaryKey: "ReinsKeychainGroup") as? String,

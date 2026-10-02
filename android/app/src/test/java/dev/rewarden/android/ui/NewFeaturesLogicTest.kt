@@ -68,13 +68,13 @@ class NewFeaturesLogicTest {
 
     @Test
     fun `only the app's own redirect finishes a sign-in`() {
-        assertTrue(isMcpRedirect("dev.rewarden.android://mcp-oauth?code=a&state=b"))
-        assertTrue(isMcpRedirect("dev.rewarden.android://mcp-oauth/?error=access_denied&state=b"))
+        assertTrue(isMcpRedirect("com.reins2fa.app://mcp-oauth?code=a&state=b"))
+        assertTrue(isMcpRedirect("com.reins2fa.app://mcp-oauth/?error=access_denied&state=b"))
         assertFalse(isMcpRedirect(null))
         assertFalse(isMcpRedirect("https://evil.example.com/mcp-oauth?code=a"))
-        assertFalse(isMcpRedirect("dev.rewarden.android://other?code=a"))
-        assertFalse(isMcpRedirect("dev.rewarden.android://mcp-oauth.evil.com?code=a"))
-        assertFalse(isMcpRedirect("dev.rewarden.android://mcp-oauth?code=" + "a".repeat(9_000)))
+        assertFalse(isMcpRedirect("com.reins2fa.app://other?code=a"))
+        assertFalse(isMcpRedirect("com.reins2fa.app://mcp-oauth.evil.com?code=a"))
+        assertFalse(isMcpRedirect("com.reins2fa.app://mcp-oauth?code=" + "a".repeat(9_000)))
     }
 
     @Test

@@ -91,13 +91,13 @@ flowchart LR
 
 You need an Android phone or an iPhone and an account on a Reins server (the hosted one or [your own](docs/self-hosting.md)).
 
-1. **Phone.** Install the app from <https://rewarden.arc-chat.com/app>, sign in with the server address, your email and
-   master password. The phone becomes your approval device. Connect services under **Integrations**.
-2. **Desktop app** (Linux or macOS):
+1. **Phone.** Install the app from <https://reins2fa.com/app> and sign in with your email and master password. The
+   phone becomes your approval device. Connect services under **Integrations**.
+2. **Desktop app** (Linux or macOS; macOS is alpha):
    ```sh
-   curl -fsSL https://rewarden.arc-chat.com/install.sh | sh
-   rewarden login https://rewarden.arc-chat.com    # compare the key shown here with the one on your phone
-   rewarden resume                                  # start the background service; send GitHub git through it
+   curl -fsSL https://reins2fa.com/install.sh | sh
+   rewarden login     # compare the key shown here with the one on your phone
+   rewarden resume    # start the background service; send GitHub git through it
    ```
 3. **Connect your agent:**
    ```sh
@@ -105,7 +105,7 @@ You need an Android phone or an iPhone and an account on a Reins server (the hos
    ```
    Restart the harness. It now has Reins's tools, and risky commands wait for your phone.
 
-Cloud AIs connect without the desktop app: add `https://rewarden.arc-chat.com/mcp` as a custom connector in Claude.ai
+Cloud AIs connect without the desktop app: add `https://app.reins2fa.com/mcp` as a custom connector in Claude.ai
 or ChatGPT. The full walkthrough is in [docs/quick-start.md](docs/quick-start.md).
 
 ## Features
@@ -196,8 +196,10 @@ and only after it has agreed with you often enough. Model card: [tools/laya/MODE
 
 - Phone: Android (Android 12 or later) and iOS / iPadOS 26 or later (iPhone, iPad, iPhone Duo; build it from
   [`ios/`](ios/README.md), no App Store release yet). iOS has no text messages integration: apps cannot read SMS there.
-- Desktop app: Linux (x86_64, aarch64) and macOS (Apple silicon, Intel) builds are published with every release.
-  Windows is not supported.
+- Desktop app: Linux (x86_64 and aarch64) and macOS (Apple silicon and Intel), both through the install script. macOS
+  is newer: built and tested on CI, not yet field-tested end to end on a real Mac, and without two Linux protections
+  (git shows no "waiting for approval" notice; no shielding from same-user debuggers). See the
+  [desktop app README](crates/rewarden-desktop/README.md#macos-alpha). Windows is not supported.
 - Gmail and Google Calendar/Contacts use Google scopes that need Google's app verification before the general public
   can use them.
 - Push notifications need an app build that matches the server's Firebase project. With a self-hosted server and the
