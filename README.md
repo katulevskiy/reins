@@ -3,6 +3,7 @@
 <h1 align="center">Reins</h1>
 
 [![CI](https://github.com/katulevskiy/reins/actions/workflows/ci.yml/badge.svg)](https://github.com/katulevskiy/reins/actions/workflows/ci.yml)
+[![Release](https://img.shields.io/github/v/release/katulevskiy/reins?sort=semver)](https://github.com/katulevskiy/reins/releases/latest)
 [![License: Apache-2.0 / AGPL-3.0 (server)](https://img.shields.io/badge/license-Apache--2.0%20%2F%20AGPL--3.0%20%28server%29-blue)](LICENSING.md)
 [![Status: alpha](https://img.shields.io/badge/status-alpha-orange)](#project-status)
 
@@ -92,7 +93,7 @@ You need an Android phone and an account on a Reins server (the hosted one or [y
 
 1. **Phone.** Install the app from <https://rewarden.arc-chat.com/app>, sign in with the server address, your email and
    master password. The phone becomes your approval device. Connect services under **Integrations**.
-2. **Desktop app** (Linux):
+2. **Desktop app** (Linux; on a Mac, take `rewarden` from the [latest release](https://github.com/katulevskiy/reins/releases/latest)):
    ```sh
    curl -fsSL https://rewarden.arc-chat.com/install.sh | sh
    rewarden login https://rewarden.arc-chat.com    # compare the key shown here with the one on your phone

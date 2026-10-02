@@ -1,8 +1,8 @@
 Reins
 Copyright 2026 Daniel Katulevskiy and the Reins contributors
 
-This repository is licensed in parts under the GNU Affero General Public License v3.0 only (LICENSE.txt) and the
-Apache License 2.0 (LICENSE-APACHE); LICENSING.md says which part is under which. It includes or uses the third-party
+This repository is licensed in parts under the Apache License 2.0 (LICENSE) and the GNU Affero General Public
+License v3.0 only (LICENSE-AGPL); LICENSING.md says which part is under which. It includes or uses the third-party
 works below, which keep their own licenses. Dependencies fetched by the build tools (Rust crates, Gradle libraries)
 are not listed here; their licenses are checked by deny.toml (Rust) and recorded in their own packages.
 
@@ -14,7 +14,7 @@ Vaultwarden
 The server (the root crate: src/, macros/, migrations/, tests/, docker/, playwright/, resources/ and related files)
 is a fork of Vaultwarden 1.37.3, https://github.com/dani-garcia/vaultwarden
 Copyright (c) Daniel García and the Vaultwarden contributors.
-Licensed under the GNU Affero General Public License v3.0 only (LICENSE.txt).
+Licensed under the GNU Affero General Public License v3.0 only (LICENSE-AGPL).
 
 Vaultwarden ships these third-party files in src/static/, under their own licenses (headers in the files):
   - Bootstrap 5.3.8 (src/static/scripts/bootstrap.*), Copyright 2011-2025 The Bootstrap Authors, MIT License.
@@ -43,7 +43,7 @@ Laya
 ================================================================================================================
 
 Autopilot's model is a fine-tune of Laya (multilingual checkpoint), https://huggingface.co/convaiinnovations/laya
-Copyright Convai Innovations. Licensed under the Apache License 2.0 (LICENSE-APACHE).
+Copyright Convai Innovations. Licensed under the Apache License 2.0 (LICENSE).
 
   - crates/rewarden-core/src/autopilot/sequence.rs is a port to Rust of Laya's input sequence builder
     (`rl_common.build_sequence`), modified for Autopilot's fixed question; tools/laya/sequence.py is a reference

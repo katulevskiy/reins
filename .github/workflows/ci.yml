@@ -68,6 +68,32 @@ jobs:
       - name: Test end to end
         run: cargo test --locked -p rewarden-e2e
 
+  desktop-macos:
+    name: Desktop app on macOS (clippy + tests)
+    # The release builds the desktop app for macOS too (release.yml); this keeps it compiling and its tests passing.
+    runs-on: macos-15
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - name: Install Rust toolchain
+        run: rustup toolchain install && rustc -vV
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo clippy --locked -p rewarden-desktop --all-targets -- -D warnings
+      - run: cargo test --locked -p rewarden-desktop
+
+  release-scripts:
+    name: Release scripts (versioning, notes)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - run: bash -n scripts/next-version.sh scripts/release-notes.sh scripts/set-desktop-version.sh
+      - run: scripts/test-next-version.sh
+
   server:
     name: Server (sqlite) clippy + tests
     runs-on: ubuntu-24.04

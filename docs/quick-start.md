@@ -6,7 +6,7 @@ This guide takes you from nothing to an agent whose actions wait for your phone.
 You need:
 
 - an Android phone (Android 12 or later);
-- for the desktop app, a Linux computer (x86_64 or aarch64). No macOS build is published yet.
+- for the desktop app, a Linux computer (x86_64 or aarch64) or a Mac (Apple silicon or Intel).
 
 ## 1. Create an account
 
@@ -60,6 +60,12 @@ curl -fsSL https://rewarden.arc-chat.com/install.sh | sh
 The script downloads the build for your computer, checks its SHA-256, and installs `rewarden` to `~/.local/bin` (set
 `REWARDEN_INSTALL_DIR` to change that). Later updates: `rewarden update`. It installs only releases signed with the
 release key built into the program.
+
+Or download it from the [latest GitHub release](https://github.com/katulevskiy/reins/releases/latest): the
+`reins-desktop-<version>-<target>.tar.gz` archive for your computer (`x86_64-unknown-linux-musl`,
+`aarch64-unknown-linux-musl`, `aarch64-apple-darwin` for Apple silicon, `x86_64-apple-darwin` for Intel Macs), checked
+against `SHA256SUMS`. Unpack it and put `rewarden` on your `PATH`, for example in `~/.local/bin`. On a Mac this is the
+way to install it for now: the install script and `rewarden update` serve Linux builds only.
 
 Pair it with your phone:
 

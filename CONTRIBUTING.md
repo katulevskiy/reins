@@ -94,9 +94,38 @@ cd android
 * Tests: new behaviour comes with tests, and a bug fix with a test that fails without it. Security-relevant code (the
   relay, policy evaluation, sealing, approvals) needs tests for the hostile cases too.
 * Commits: one logical change each, with a subject that names the area, like the existing history
-  (`core: ...`, `android: ...`, `server: ...`, `desktop: ...`, `docs: ...`).
+  (`core: ...`, `android: ...`, `server: ...`, `desktop: ...`, `docs: ...`), or a
+  [Conventional Commits](https://www.conventionalcommits.org) type (`feat(desktop): ...`, `fix: ...`). The subject
+  decides the next version number; see [Commit messages and releases](#commit-messages-and-releases).
 * Do not commit secrets, real account data or personal information, including in test fixtures; use `example.com`
   addresses.
+
+## Commit messages and releases
+
+Every push to `main` that passes CI is released: `.github/workflows/release.yml` tags the commit CI tested as
+`vX.Y.Z` and publishes a [GitHub release](https://github.com/katulevskiy/reins/releases) with the desktop app (Linux
+x86_64/aarch64, static; macOS Apple silicon/Intel), the server binary, the server image
+`ghcr.io/katulevskiy/reins-server`, the Android APK and `SHA256SUMS`, with notes generated from the commits. Nobody
+bumps a version by hand: the tags are the source of truth, and `scripts/next-version.sh` computes the next one from
+the commits since the latest tag:
+
+| Commit message | Bump | Example |
+| --- | --- | --- |
+| `!` after the type or scope, or a `BREAKING CHANGE:` footer | major (minor while the version is 0.x) | `feat(proto)!: version 2 of the wire format` |
+| `feat: ...` or `feat(scope): ...` | minor | `feat(desktop): macOS builds` |
+| anything else: `fix`, `perf`, `docs`, `ci`, `chore`, `refactor`, `test`, and the `area: message` style | patch | `android: fix the settings screen` |
+
+The highest level among the commits wins, so a release with one feature and ten fixes is a minor release. A commit
+whose message contains `[skip release]` does not count; when nothing since the last tag counts, nothing is released
+(the next counting commit releases everything). Release notes group the commits into Breaking changes, Features
+(`feat`), Fixes (`fix`) and Other.
+
+Try it locally: `scripts/next-version.sh --describe` (what would be released from `HEAD`), `scripts/release-notes.sh
+--version X.Y.Z --previous vA.B.C --repo https://github.com/katulevskiy/reins` (the notes), and
+`scripts/test-next-version.sh` (the tests CI runs).
+
+Maintainers can release by hand from the Actions tab: run **Release** on `main` and pick a bump level (`auto` uses the
+commits). It releases the tip of `main` if CI passed on it.
 
 ## Pull requests
 
@@ -121,3 +150,24 @@ The CLA check is `.github/workflows/cla.yml`, using
    (`signatures/version2/cla.json`) so everyone signs the new version.
 
 Bots and maintainers who do not need to sign are listed in the workflow's `allowlist`.
+
+## Maintainers: signing the APK in releases
+
+The release workflow builds the Android APK only when these repository secrets exist (Settings → Secrets and variables
+→ Actions); without them the release says "APK not built: signing secrets are not configured".
+
+| Secret | Value |
+| --- | --- |
+| `ANDROID_KEYSTORE_BASE64` | the keystore that signs the published APK, base64-encoded (`base64 -w0 release.keystore`) |
+| `ANDROID_KEYSTORE_PASSWORD` | its password |
+| `ANDROID_KEY_ALIAS` | the key's alias in it |
+| `ANDROID_KEY_PASSWORD` | the key's password (often the same as the keystore's) |
+
+Use the same key as the APKs already installed (`scripts/release-android.sh`, `REWARDEN_ANDROID_CERT_SHA1`): Android
+installs an update only when it is signed with the same certificate. The workflow prints the certificate digests in
+its summary; compare them before relying on it. Locally the same signing is
+`REWARDEN_RELEASE_KEYSTORE=... REWARDEN_RELEASE_KEYSTORE_PASSWORD=... REWARDEN_RELEASE_KEY_ALIAS=... ./gradlew
+assembleFullRelease` (or the `rewarden.releaseKeystore` Gradle properties; see `android/app/build.gradle.kts`).
+
+The server image is published to GitHub Packages as `reins-server`. A new package is private until its visibility is
+set to public once, in the package's settings.

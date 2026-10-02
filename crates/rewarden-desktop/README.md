@@ -17,6 +17,14 @@ Linux x86_64 and arm64 (static binaries, any distro). It installs to `~/.local/b
 `rewarden update` installs the latest release later; it only accepts releases signed with the Reins release key
 built into the app, never an older one, and restarts the background service.
 
+Every [GitHub release](https://github.com/katulevskiy/reins/releases) also has the app for Linux (static, x86_64 and
+aarch64) and macOS (Apple silicon and Intel), as `reins-desktop-<version>-<target>.tar.gz`. On macOS, install it from
+there (the install script and `rewarden update` serve Linux builds only for now). It works as on Linux, with the
+background service as a launchd agent (`~/Library/LaunchAgents/dev.rewarden.daemon.plist`, log in
+`~/Library/Logs/rewarden.log`) and approvals on the desktop as a dialog. Two Linux-only protections are absent on
+macOS: git does not print "waiting for approval on your phone" while it waits (the daemon finds the git process
+through `/proc`), and the daemon's memory is not shielded from debuggers of the same user (Linux's non-dumpable flag).
+
 ## Set up
 
 ```sh

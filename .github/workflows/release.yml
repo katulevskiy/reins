@@ -1,0 +1,430 @@
+name: Release
+# Publishes a GitHub release for every push to main that passes CI. The version comes from the commits since the last
+# vX.Y.Z tag (scripts/next-version.sh; CONTRIBUTING.md, "Releases"); the tag is created on the exact commit CI tested.
+# Assets: the desktop app for Linux (static musl) and macOS, the server binary, the server image on GHCR, the Android
+# APK when the signing secrets are configured, and SHA256SUMS.
+
+# workflow_run runs with this repository's token, so it must never build code CI ran for someone else: the plan job
+# only accepts CI runs of a push to main in this repository, and then checks out exactly the commit CI tested.
+on: # zizmor: ignore[dangerous-triggers]
+  workflow_run:
+    workflows: [CI]
+    types: [completed]
+    branches: [main]
+  workflow_dispatch:
+    inputs:
+      bump:
+        description: Bump level (auto = from the commits)
+        type: choice
+        options: [auto, patch, minor, major]
+        default: auto
+
+permissions: {}
+
+concurrency:
+  group: release
+  cancel-in-progress: false
+
+defaults:
+  run:
+    shell: bash
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  plan:
+    name: Plan
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    if: >-
+      github.event_name == 'workflow_dispatch' ||
+      (github.event.workflow_run.conclusion == 'success' &&
+       github.event.workflow_run.event == 'push' &&
+       github.event.workflow_run.head_branch == 'main' &&
+       github.event.workflow_run.head_repository.full_name == github.repository)
+    permissions:
+      actions: read # the CI result of a manually released commit
+      contents: read
+    outputs:
+      release: ${{ steps.version.outputs.release }}
+      version: ${{ steps.version.outputs.version }}
+      tag: ${{ steps.version.outputs.tag }}
+      previous: ${{ steps.version.outputs.previous }}
+      sha: ${{ steps.commit.outputs.sha }}
+      build: ${{ steps.version.outputs.build }}
+      build-time: ${{ steps.version.outputs.build-time }}
+      apk: ${{ steps.signing.outputs.apk }}
+    steps:
+      - name: Commit to release
+        id: commit
+        env:
+          EVENT: ${{ github.event_name }}
+          REF: ${{ github.ref }}
+          DISPATCH_SHA: ${{ github.sha }}
+          CI_SHA: ${{ github.event.workflow_run.head_sha }}
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          if [[ "$EVENT" == workflow_dispatch ]]; then
+            [[ "$REF" == refs/heads/main ]] || { echo "::error::Releases are made from main, not $REF"; exit 1; }
+            sha="$DISPATCH_SHA"
+            ci="$(gh run list --workflow ci.yml --commit "$sha" --event push --limit 1 --json conclusion --jq '.[0].conclusion // ""')"
+            [[ "$ci" == success ]] || { echo "::error::CI has not passed on $sha (${ci:-no run})"; exit 1; }
+          else
+            sha="$CI_SHA"
+          fi
+          [[ "$sha" =~ ^[0-9a-f]{40}$ ]] || { echo "::error::Unexpected commit '$sha'"; exit 1; }
+          echo "sha=$sha" >> "$GITHUB_OUTPUT"
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ steps.commit.outputs.sha }}
+          fetch-depth: 0
+          fetch-tags: true
+          persist-credentials: false
+      - name: Next version
+        id: version
+        env:
+          SHA: ${{ steps.commit.outputs.sha }}
+          BUMP: ${{ inputs.bump }}
+        run: |
+          # A newer push to main has its own CI run, which releases it with these commits included.
+          tip="$(git ls-remote origin refs/heads/main | cut -f1)"
+          if [[ "$tip" != "$SHA" ]]; then
+            echo "::notice::$SHA is no longer the tip of main ($tip); the newer commit will be released"
+            echo "release=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          [[ "$BUMP" == auto ]] && BUMP=""
+          scripts/next-version.sh --rev "$SHA" ${BUMP:+--bump "$BUMP"} --describe | tee -a "$GITHUB_OUTPUT"
+          version="$(scripts/next-version.sh --rev "$SHA" ${BUMP:+--bump "$BUMP"})"
+          if [[ -z "$version" ]]; then
+            echo "::notice::Nothing to release since the last tag (only [skip release] commits, or none)"
+            echo "release=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          # The build id the desktop app and the APK show: version, commit time (UTC) and commit.
+          time="$(git log -1 --format=%ct "$SHA")"
+          stamp="$(TZ=UTC git log -1 --date=format-local:%Y%m%d%H%M --format=%cd "$SHA")"
+          {
+            echo "release=true"
+            echo "build=$version-$stamp-${SHA:0:8}"
+            echo "build-time=$time"
+          } >> "$GITHUB_OUTPUT"
+          echo "::notice::Releasing v$version from $SHA"
+      - name: Android signing secrets
+        id: signing
+        env:
+          KEYSTORE: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+          KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+          KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+        run: |
+          if [[ -n "$KEYSTORE" && -n "$KEYSTORE_PASSWORD" && -n "$KEY_ALIAS" && -n "$KEY_PASSWORD" ]]; then
+            echo "apk=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "::notice::APK not built: signing secrets are not configured"
+            echo "apk=false" >> "$GITHUB_OUTPUT"
+          fi
+
+  desktop:
+    name: Desktop (${{ matrix.target }})
+    needs: plan
+    if: needs.plan.outputs.release == 'true'
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 45
+    permissions:
+      contents: read
+    strategy:
+      matrix:
+        include:
+          - { target: x86_64-unknown-linux-musl, os: ubuntu-24.04, zig: true, native: true }
+          - { target: aarch64-unknown-linux-musl, os: ubuntu-24.04, zig: true, native: false }
+          - { target: aarch64-apple-darwin, os: macos-15, zig: false, native: true }
+          - { target: x86_64-apple-darwin, os: macos-15, zig: false, native: false }
+    env:
+      TARGET: ${{ matrix.target }}
+      VERSION: ${{ needs.plan.outputs.version }}
+      REWARDEN_BUILD: ${{ needs.plan.outputs.build }}
+      REWARDEN_BUILD_TIME: ${{ needs.plan.outputs.build-time }}
+      MACOSX_DEPLOYMENT_TARGET: "11.0"
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ needs.plan.outputs.sha }}
+          persist-credentials: false
+      - name: Install Rust toolchain
+        run: |
+          rustup toolchain install
+          rustup target add "$TARGET"
+          rustc -vV
+      # The static Linux builds link with zig, as scripts/release-desktop.sh does.
+      - name: Install cargo-zigbuild
+        if: matrix.zig
+        run: |
+          python3 -m venv "$RUNNER_TEMP/zig"
+          "$RUNNER_TEMP/zig/bin/pip" install --quiet cargo-zigbuild==0.23.4 ziglang==0.16.0
+      # Tags are the source of truth; the binary reports the release version.
+      - name: Set the version
+        run: scripts/set-desktop-version.sh "$VERSION"
+      - name: Build
+        run: |
+          if [[ "$TARGET" == *-linux-musl ]]; then
+            PATH="$RUNNER_TEMP/zig/bin:$PATH" cargo zigbuild --release --locked -p rewarden-desktop --bin rewarden --target "$TARGET"
+          else
+            cargo build --release --locked -p rewarden-desktop --bin rewarden --target "$TARGET"
+          fi
+      - name: Smoke test
+        if: matrix.native
+        run: |
+          out="$("target/$TARGET/release/rewarden" --version)"
+          echo "$out"
+          [[ "$out" == *"$VERSION ($REWARDEN_BUILD)"* ]] || { echo "::error::unexpected version: $out"; exit 1; }
+      - name: Package
+        run: |
+          name="reins-desktop-$VERSION-$TARGET"
+          mkdir -p "dist/$name"
+          cp "target/$TARGET/release/rewarden" LICENSE LICENSE-AGPL LICENSING.md NOTICE README.md "dist/$name/"
+          tar -C dist -czf "dist/$name.tar.gz" "$name"
+          rm -rf "dist/${name:?}"
+          ls -l dist
+      - uses: actions/upload-artifact@v7
+        with:
+          name: dist-desktop-${{ matrix.target }}
+          path: dist/*.tar.gz
+          if-no-files-found: error
+          retention-days: 7
+
+  server:
+    name: Server binary (x86_64-unknown-linux-gnu)
+    needs: plan
+    if: needs.plan.outputs.release == 'true'
+    # The oldest supported Ubuntu: the binary needs this glibc or newer.
+    runs-on: ubuntu-22.04
+    timeout-minutes: 60
+    permissions:
+      contents: read
+    env:
+      VERSION: ${{ needs.plan.outputs.version }}
+      TARGET: x86_64-unknown-linux-gnu
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ needs.plan.outputs.sha }}
+          persist-credentials: false
+      - name: Install Rust toolchain
+        run: rustup toolchain install && rustc -vV
+      # SQLite is bundled; OpenSSL is vendored so the binary does not depend on the system's libssl.
+      - name: Build
+        env:
+          VW_VERSION: ${{ needs.plan.outputs.version }}
+        run: cargo build --release --locked --features sqlite,vendored_openssl --bin vaultwarden --target "$TARGET"
+      - name: Smoke test
+        run: |
+          out="$("target/$TARGET/release/vaultwarden" --version)"
+          echo "$out"
+          [[ "$out" == *"$VERSION"* ]] || { echo "::error::unexpected version: $out"; exit 1; }
+      - name: Package
+        run: |
+          name="reins-server-$VERSION-$TARGET"
+          mkdir -p "dist/$name"
+          cp "target/$TARGET/release/vaultwarden" .env.template LICENSE LICENSE-AGPL LICENSING.md NOTICE README.md \
+            "dist/$name/"
+          tar -C dist -czf "dist/$name.tar.gz" "$name"
+          rm -rf "dist/${name:?}"
+          ls -l dist
+      - uses: actions/upload-artifact@v7
+        with:
+          name: dist-server
+          path: dist/*.tar.gz
+          if-no-files-found: error
+          retention-days: 7
+
+  docker:
+    name: Server image (GHCR)
+    needs: plan
+    if: needs.plan.outputs.release == 'true'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 150
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ needs.plan.outputs.sha }}
+          persist-credentials: false
+      - name: Image name
+        id: image
+        env:
+          OWNER: ${{ github.repository_owner }}
+        run: echo "name=ghcr.io/${OWNER,,}/reins-server" >> "$GITHUB_OUTPUT"
+      # The Dockerfile cross-compiles the server for arm64 on the amd64 runner; QEMU runs the arm64 image's apt-get.
+      - uses: docker/setup-qemu-action@v4
+        with:
+          platforms: arm64
+      - uses: docker/setup-buildx-action@v4
+      - uses: docker/login-action@v4
+        with:
+          registry: ghcr.io
+          username: ${{ github.repository_owner }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - uses: docker/build-push-action@v7
+        with:
+          context: .
+          file: docker/Dockerfile.debian
+          platforms: linux/amd64,linux/arm64
+          push: true
+          build-args: |
+            VW_VERSION=${{ needs.plan.outputs.version }}
+          tags: |
+            ${{ steps.image.outputs.name }}:${{ needs.plan.outputs.version }}
+            ${{ steps.image.outputs.name }}:latest
+          labels: |
+            org.opencontainers.image.title=Reins server
+            org.opencontainers.image.description=The Reins server: Vaultwarden with the Reins permission relay for AI agents
+            org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}
+            org.opencontainers.image.version=${{ needs.plan.outputs.version }}
+            org.opencontainers.image.revision=${{ needs.plan.outputs.sha }}
+            org.opencontainers.image.licenses=AGPL-3.0-only
+
+  android:
+    name: Android APK (full)
+    needs: plan
+    if: needs.plan.outputs.release == 'true' && needs.plan.outputs.apk == 'true'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    permissions:
+      contents: read
+    env:
+      VERSION: ${{ needs.plan.outputs.version }}
+      BUILD: ${{ needs.plan.outputs.build }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ needs.plan.outputs.sha }}
+          persist-credentials: false
+      - uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: "21"
+      - name: Install Rust toolchain and Android targets
+        run: |
+          rustup toolchain install
+          rustup target add aarch64-linux-android x86_64-linux-android
+          rustc -vV
+      - name: Install cargo-ndk
+        run: cargo install --locked cargo-ndk@4.1.2
+      - name: Install Android NDK
+        run: |
+          ndk="$(grep -oP 'rewardenNdkVersion = "\K[^"]+' android/app/build.gradle.kts)"
+          echo "NDK ${ndk}"
+          "${ANDROID_HOME}/cmdline-tools/latest/bin/sdkmanager" --install "ndk;${ndk}" > /dev/null
+      - name: Keystore
+        env:
+          KEYSTORE: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+        run: |
+          umask 077
+          base64 -d <<<"$KEYSTORE" > "$RUNNER_TEMP/release.keystore"
+      # android/app/build.gradle.kts signs fullRelease with the REWARDEN_RELEASE_* key. versionCode is the build time in
+      # minutes, as in scripts/release-android.sh, so every release installs over the previous one.
+      - name: Build the APK
+        id: build
+        working-directory: android
+        env:
+          REWARDEN_RELEASE_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          REWARDEN_RELEASE_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+          REWARDEN_RELEASE_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+        run: |
+          export REWARDEN_RELEASE_KEYSTORE="$RUNNER_TEMP/release.keystore"
+          site="$(sed -n 's/^rewarden\.site=//p' gradle.properties)"
+          version_code="$(($(date -u +%s) / 60))"
+          echo "version-code=$version_code" >> "$GITHUB_OUTPUT"
+          ./gradlew --no-daemon --no-configuration-cache :app:assembleFullRelease \
+            -Prewarden.secureScreens=true \
+            "-Prewarden.defaultServer=$site" \
+            "-Prewarden.versionCode=$version_code" \
+            "-Prewarden.versionName=$VERSION" \
+            "-Prewarden.build=$BUILD"
+      - name: Remove the keystore
+        if: always()
+        run: rm -f "$RUNNER_TEMP/release.keystore"
+      - name: Verify and name the APK
+        env:
+          VERSION_CODE: ${{ steps.build.outputs.version-code }}
+        run: |
+          build_tools="$(ls -d "$ANDROID_HOME"/build-tools/* | sort -V | tail -1)"
+          apk="dist/reins-$VERSION-android.apk"
+          mkdir -p dist
+          cp android/app/build/outputs/apk/full/release/app-full-release.apk "$apk"
+          "$build_tools/apksigner" verify --print-certs "$apk" | tee certs.txt
+          badging="$("$build_tools/aapt2" dump badging "$apk" | head -1)"
+          echo "$badging"
+          [[ "$badging" == *"versionCode='$VERSION_CODE'"* && "$badging" == *"versionName='$VERSION'"* ]] || {
+            echo "::error::the APK does not carry versionCode $VERSION_CODE / versionName $VERSION"
+            exit 1
+          }
+          {
+            echo "### APK signing certificate"
+            echo '```'
+            grep -E 'certificate SHA-(1|256) digest' certs.txt
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+      - uses: actions/upload-artifact@v7
+        with:
+          name: dist-android
+          path: dist/*.apk
+          if-no-files-found: error
+          retention-days: 7
+
+  publish:
+    name: Publish the release
+    needs: [plan, desktop, server, docker, android]
+    if: >-
+      always() && needs.plan.outputs.release == 'true' &&
+      needs.desktop.result == 'success' && needs.server.result == 'success' && needs.docker.result == 'success' &&
+      (needs.android.result == 'success' || (needs.android.result == 'skipped' && needs.plan.outputs.apk != 'true'))
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    permissions:
+      contents: write
+    env:
+      VERSION: ${{ needs.plan.outputs.version }}
+      TAG: ${{ needs.plan.outputs.tag }}
+      PREVIOUS: ${{ needs.plan.outputs.previous }}
+      SHA: ${{ needs.plan.outputs.sha }}
+      APK: ${{ needs.plan.outputs.apk }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ needs.plan.outputs.sha }}
+          fetch-depth: 0
+          fetch-tags: true
+          persist-credentials: false
+      - uses: actions/download-artifact@v8
+        with:
+          pattern: dist-*
+          merge-multiple: true
+          path: dist
+      - name: Checksums
+        working-directory: dist
+        run: |
+          sha256sum -- * > SHA256SUMS
+          cat SHA256SUMS
+      - name: Release notes
+        env:
+          OWNER: ${{ github.repository_owner }}
+        run: |
+          notes=()
+          [[ "$APK" == true ]] || notes+=(--note "APK not built: signing secrets are not configured.")
+          scripts/release-notes.sh --version "$VERSION" --previous "$PREVIOUS" --rev "$SHA" \
+            --repo "$GITHUB_SERVER_URL/$GITHUB_REPOSITORY" --image "ghcr.io/${OWNER,,}/reins-server" \
+            ${notes[@]+"${notes[@]}"} > notes.md
+          cat notes.md >> "$GITHUB_STEP_SUMMARY"
+      - name: Create the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          gh release create "$TAG" dist/* --target "$SHA" --title "Reins $TAG" --notes-file notes.md --latest
+          echo "::notice::Published $GITHUB_SERVER_URL/$GITHUB_REPOSITORY/releases/tag/$TAG"

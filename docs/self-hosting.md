@@ -32,7 +32,21 @@ cargo build --release --features sqlite,vendored_openssl --bin vaultwarden
 The binary is `target/release/vaultwarden`. Run it as its own user, with `DATA_FOLDER` owned by that user and mode
 0700.
 
-**Docker:** `docker build -t reins-server .` builds an image with the server and the web vault (`Dockerfile` is
+**Prebuilt:** every [release](https://github.com/katulevskiy/reins/releases) has the server image on GitHub's
+container registry, for linux/amd64 and linux/arm64, with the web vault and all three databases:
+
+```sh
+docker pull ghcr.io/katulevskiy/reins-server:latest     # or a version: ghcr.io/katulevskiy/reins-server:0.1.0
+docker run -d --name reins -v /srv/reins:/data -p 127.0.0.1:8000:80 --env-file reins.env \
+  ghcr.io/katulevskiy/reins-server:latest
+```
+
+The image listens on port 80 inside the container and keeps its data in `/data`, so leave `ROCKET_ADDRESS`,
+`ROCKET_PORT` and `DATA_FOLDER` out of the env file. Releases also have a Linux x86_64
+binary with SQLite (`reins-server-<version>-x86_64-unknown-linux-gnu.tar.gz`, glibc 2.35 or newer), without the web
+vault ([below](#accounts-and-the-web-vault)).
+
+**Docker from source:** `docker build -t reins-server .` builds an image with the server and the web vault (`Dockerfile` is
 `docker/Dockerfile.debian`; `docker/Dockerfile.alpine` and `docker buildx bake` are described in
 [docker/README.md](../docker/README.md)). The image keeps its data in `/data`; set the variables below with `-e` or an
 env file.
