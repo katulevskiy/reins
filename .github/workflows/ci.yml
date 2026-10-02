@@ -1,0 +1,126 @@
+name: CI
+
+on:
+  push:
+    branches: ["**"]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+defaults:
+  run:
+    shell: bash
+
+env:
+  CARGO_TERM_COLOR: always
+  RUST_BACKTRACE: "1"
+
+jobs:
+  fmt:
+    name: Rust fmt
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      # Installs the channel and components pinned in rust-toolchain.toml.
+      - name: Install Rust toolchain
+        run: rustup toolchain install && rustc -vV
+      - run: cargo fmt --all -- --check
+
+  clippy:
+    name: Rust clippy (Rewarden crates)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - name: Install Rust toolchain
+        run: rustup toolchain install && rustc -vV
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo clippy --locked --workspace --exclude vaultwarden --all-targets -- -D warnings
+
+  test:
+    name: Rust tests (Rewarden crates + e2e)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - name: Install Rust toolchain
+        run: rustup toolchain install && rustc -vV
+      - uses: Swatinem/rust-cache@v2
+      # The desktop and e2e tests start the real server; crates/rewarden-e2e/src/server.rs builds it with exactly
+      # these arguments, so building it up front makes that a no-op and shows compile errors on their own.
+      - name: Build server (sqlite)
+        run: cargo build --locked --features sqlite --bin vaultwarden
+      - name: Test crates
+        run: cargo test --locked -p rewarden-proto -p rewarden-policy -p rewarden-core -p rewarden-desktop -p rewarden-laya
+      - name: Test end to end
+        run: cargo test --locked -p rewarden-e2e
+
+  server:
+    name: Server (sqlite) clippy + tests
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - name: Install Rust toolchain
+        run: rustup toolchain install && rustc -vV
+      - uses: Swatinem/rust-cache@v2
+      # Not --all-targets: upstream Vaultwarden's own test modules (src/api/admin.rs, src/http_client.rs) trip newer
+      # clippy lints, and upstream CI never linted test targets either. Rewarden's crates are linted with all targets.
+      - run: cargo clippy --locked --features sqlite -- -D warnings
+      - run: cargo test --locked --features sqlite
+
+  android:
+    name: Android unit tests + debug APK
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: "21"
+      - name: Install Rust toolchain and Android targets
+        run: |
+          rustup toolchain install
+          rustup target add aarch64-linux-android x86_64-linux-android
+          rustc -vV
+      - uses: Swatinem/rust-cache@v2
+      - name: Install cargo-ndk
+        run: cargo ndk --version || cargo install --locked cargo-ndk@4.1.2
+      # The NDK version is the one app/build.gradle.kts pins (rewardenNdkVersion); the build looks it up by path.
+      - name: Install Android NDK
+        run: |
+          ndk="$(grep -oP 'rewardenNdkVersion = "\K[^"]+' android/app/build.gradle.kts)"
+          echo "NDK ${ndk}"
+          "${ANDROID_HOME}/cmdline-tools/latest/bin/sdkmanager" --install "ndk;${ndk}" > /dev/null
+      - uses: gradle/actions/setup-gradle@v6
+        with:
+          cache-provider: basic
+      # No google-services.json in CI: the build skips the Firebase plugin (hasFirebase) and still assembles.
+      - name: Unit tests and debug APK
+        working-directory: android
+        run: ./gradlew --no-daemon :app:testFullDebugUnitTest :app:testPlayDebugUnitTest :app:assembleFullDebug -Prewarden.rustProfile=debug
+      - name: Upload test reports
+        if: failure()
+        uses: actions/upload-artifact@v7
+        with:
+          name: android-test-reports
+          path: android/app/build/reports/tests/
+          if-no-files-found: ignore

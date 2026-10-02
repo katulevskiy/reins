@@ -1,0 +1,68 @@
+name: Lint
+
+on:
+  push:
+    branches: ["**"]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  typos:
+    name: Spelling (typos)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      # When this version is updated, do not forget to update it in `.pre-commit-config.yaml` too.
+      - uses: crate-ci/typos@v1.50.1
+
+  workflows:
+    name: Workflow security (zizmor)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: zizmorcore/zizmor-action@v0.6.4
+        with:
+          inputs: ./.github/
+          # Report in the log and fail the job instead of uploading SARIF (needs code scanning).
+          advanced-security: false
+
+  docker:
+    name: Docker templates + hadolint
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - name: Dockerfiles are rendered from Dockerfile.j2
+        working-directory: docker
+        run: |
+          make
+          git diff --exit-code
+      - uses: hadolint/hadolint-action@v3.5.0
+        with:
+          dockerfile: docker/Dockerfile.debian
+      - uses: hadolint/hadolint-action@v3.5.0
+        with:
+          dockerfile: docker/Dockerfile.alpine
+      - name: docker build --check
+        run: |
+          docker build --check . -f docker/Dockerfile.debian
+          docker build --check . -f docker/Dockerfile.alpine
