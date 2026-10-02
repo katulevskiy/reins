@@ -228,12 +228,13 @@ private struct ModelCard: View {
             HStack(spacing: 14) {
                 IconTile(symbol: "cpu", tint: Palette.accent, size: 46, filled: m.state == .installed)
                 VStack(alignment: .leading, spacing: 2) {
-                    Text(m.label).font(RFont.sans(16.5, .semibold)).foregroundStyle(Palette.text).lineLimit(2)
+                    Text(m.label).font(RFont.sans(16.5, .semibold)).foregroundStyle(Palette.text).lineLimit(3)
                     Text("Version \(m.version) · \(AutopilotText.modelSize(m))")
                         .font(RFont.sans(13))
                         .foregroundStyle(Palette.secondary)
                         .lineLimit(2)
                 }
+                .layoutPriority(1)
                 Spacer(minLength: 8)
                 if !downloading {
                     if waiting {
