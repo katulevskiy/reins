@@ -196,8 +196,9 @@ impl FakeWorkos {
         let mut st = self.state.lock().expect("state");
         st.serial += 1;
         let id = format!("event_{:04}", st.serial);
-        st.events.push(json!({"object": "event", "id": id, "event": kind, "data": data,
-                               "created_at": "2026-10-02T10:00:00.000Z"}));
+        let mut event = json!({"object": "event", "id": id, "event": kind, "created_at": "2026-10-02T10:00:00.000Z"});
+        event["data"] = data;
+        st.events.push(event);
     }
 }
 

@@ -246,16 +246,17 @@ impl Engine {
             sealed,
         };
         let result = api_call!(&session, |api| api.answer_join(id, &answer));
-        if let Err(e) = result {
-            if !matches!(
+        // Gone or answered already (the request expired, another tap won): the item is over either way.
+        if let Err(e) = result
+            && !matches!(
                 &e,
                 ApiFailure::Status {
                     status: 404 | 409,
                     ..
                 }
-            ) {
-                return Err(e.into_core());
-            }
+            )
+        {
+            return Err(e.into_core());
         }
         self.store.remove_pending(id)?;
         self.store.mark_handled(id, unix_now())?;

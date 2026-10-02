@@ -56,10 +56,10 @@ pub fn api_base_of(authority: &str) -> Option<String> {
 
 /// The WorkOS API base of this server's `SSO_AUTHORITY`.
 pub fn api_base() -> ApiResult<String> {
-    match api_base_of(&CONFIG.sso_authority()) {
-        Some(base) => Ok(base),
-        None => err!("SSO_AUTHORITY must be https://api.workos.com/user_management/<client id> for WorkOS"),
-    }
+    let Some(base) = api_base_of(&CONFIG.sso_authority()) else {
+        err!("SSO_AUTHORITY must be https://api.workos.com/user_management/<client id> for WorkOS")
+    };
+    Ok(base)
 }
 
 /// The key the User Management and Events APIs take: `REWARDEN_WORKOS_API_KEY`, else `SSO_CLIENT_SECRET` (WorkOS
