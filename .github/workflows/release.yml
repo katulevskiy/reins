@@ -275,9 +275,11 @@ jobs:
             libx11-xcb-dev libfontconfig1-dev libfreetype-dev libvulkan-dev pkg-config
       - name: Set the version
         run: scripts/set-desktop-version.sh "$VERSION"
-      - name: Developer ID certificate
+      - name: Package (macOS)
         if: runner.os == 'macOS'
+        # Signing set up and used in one step: the identity and notary key never pass through GITHUB_ENV.
         env:
+          ARCHS: aarch64 x86_64
           MACOS_CERT_P12: ${{ secrets.MACOS_CERT_P12 }}
           MACOS_CERT_PASSWORD: ${{ secrets.MACOS_CERT_PASSWORD }}
           AC_API_KEY_P8: ${{ secrets.AC_API_KEY_P8 }}
@@ -286,35 +288,28 @@ jobs:
         run: |
           if [[ -z "$MACOS_CERT_P12" ]]; then
             echo "::notice::macOS app not signed with a Developer ID: MACOS_CERT_P12 is not configured"
-            exit 0
+          else
+            keychain="$RUNNER_TEMP/release.keychain-db"
+            pass="$(openssl rand -hex 16)"
+            security create-keychain -p "$pass" "$keychain"
+            security set-keychain-settings -lut 3600 "$keychain"
+            security unlock-keychain -p "$pass" "$keychain"
+            base64 -d <<<"$MACOS_CERT_P12" > "$RUNNER_TEMP/cert.p12"
+            security import "$RUNNER_TEMP/cert.p12" -k "$keychain" -P "$MACOS_CERT_PASSWORD" -T /usr/bin/codesign
+            rm -f "$RUNNER_TEMP/cert.p12"
+            security set-key-partition-list -S apple-tool:,apple: -s -k "$pass" "$keychain" > /dev/null
+            security list-keychains -d user -s "$keychain" login.keychain-db
+            REINS_DEVELOPER_ID="$(security find-identity -v -p codesigning "$keychain" |
+              sed -n 's/.*"\(Developer ID Application: [^"]*\)".*/\1/p' | head -1)"
+            [[ -n "$REINS_DEVELOPER_ID" ]] || { echo "::error::the .p12 holds no Developer ID Application identity"; exit 1; }
+            export REINS_DEVELOPER_ID
+            if [[ -n "$AC_API_KEY_P8" && -n "$AC_API_KEY_ID" && -n "$AC_API_ISSUER_ID" ]]; then
+              printf '%s' "$AC_API_KEY_P8" > "$RUNNER_TEMP/notary.p8"
+              export REINS_NOTARY_KEY="$RUNNER_TEMP/notary.p8" REINS_NOTARY_KEY_ID="$AC_API_KEY_ID" \
+                REINS_NOTARY_ISSUER="$AC_API_ISSUER_ID"
+            fi
           fi
-          keychain="$RUNNER_TEMP/release.keychain-db"
-          pass="$(openssl rand -hex 16)"
-          security create-keychain -p "$pass" "$keychain"
-          security set-keychain-settings -lut 3600 "$keychain"
-          security unlock-keychain -p "$pass" "$keychain"
-          base64 -d <<<"$MACOS_CERT_P12" > "$RUNNER_TEMP/cert.p12"
-          security import "$RUNNER_TEMP/cert.p12" -k "$keychain" -P "$MACOS_CERT_PASSWORD" -T /usr/bin/codesign
-          rm -f "$RUNNER_TEMP/cert.p12"
-          security set-key-partition-list -S apple-tool:,apple: -s -k "$pass" "$keychain" > /dev/null
-          security list-keychains -d user -s "$keychain" login.keychain-db
-          identity="$(security find-identity -v -p codesigning "$keychain" |
-            sed -n 's/.*"\(Developer ID Application: [^"]*\)".*/\1/p' | head -1)"
-          [[ -n "$identity" ]] || { echo "::error::the .p12 holds no Developer ID Application identity"; exit 1; }
-          echo "REINS_DEVELOPER_ID=$identity" >> "$GITHUB_ENV"
-          if [[ -n "$AC_API_KEY_P8" && -n "$AC_API_KEY_ID" && -n "$AC_API_ISSUER_ID" ]]; then
-            printf '%s' "$AC_API_KEY_P8" > "$RUNNER_TEMP/notary.p8"
-            {
-              echo "REINS_NOTARY_KEY=$RUNNER_TEMP/notary.p8"
-              echo "REINS_NOTARY_KEY_ID=$AC_API_KEY_ID"
-              echo "REINS_NOTARY_ISSUER=$AC_API_ISSUER_ID"
-            } >> "$GITHUB_ENV"
-          fi
-      - name: Package (macOS)
-        if: runner.os == 'macOS'
-        env:
-          ARCHS: aarch64 x86_64
-        run: scripts/package/macos.sh
+          scripts/package/macos.sh
       - name: Package (Windows)
         if: runner.os == 'Windows'
         shell: pwsh
