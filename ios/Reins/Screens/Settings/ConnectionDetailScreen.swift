@@ -273,14 +273,14 @@ private struct ConnectionIconGroup: View {
 
     var body: some View {
         Section {
-            IconPicker(label: untrusted(connection.label), selected: connection.icon, onPick: setIcon)
+            ProviderPicker(label: untrusted(connection.label), selection: connection.icon, size: 50, onPick: setIcon)
                 .padding(.vertical, 8)
                 .cardRow()
             if let error { FormBanner(text: error).cardRow() }
         } header: {
             GroupHeader("Icon")
         } footer: {
-            GroupFooter("Auto picks a known AI from the name, or draws a blobatar for it.")
+            GroupFooter(ProviderPicker.footnote)
         }
     }
 
@@ -367,56 +367,6 @@ private struct DisconnectGroup: View {
             }
             busy = false
         }
-    }
-}
-
-/// The icons an AI connection can wear: Auto (the provider its name suggests, or a blobatar), a blobatar, or a
-/// provider's logo. A plain grid for now; the shared provider picker can replace it once it exists.
-private struct IconPicker: View {
-    var label: String
-    var selected: String?
-    var onPick: (String?) -> Void
-    @Environment(\.feedback) private var feedback
-
-    /// Provider keys (the `provider-<key>` images) and their names, in the Android app's order.
-    static let providers: [(key: String, name: String)] = [
-        ("claude", "Claude"), ("openai", "ChatGPT"), ("gemini", "Gemini"), ("grok", "Grok"), ("hermes", "Hermes"),
-        ("perplexity", "Perplexity"), ("mistral", "Mistral"), ("deepseek", "DeepSeek"), ("copilot", "Copilot"),
-        ("cursor", "Cursor"), ("qwen", "Qwen"), ("kimi", "Kimi"), ("meta", "Meta AI"), ("ollama", "Ollama"),
-    ]
-
-    var body: some View {
-        LazyVGrid(columns: [GridItem(.adaptive(minimum: 66), spacing: 10)], spacing: 14) {
-            choice(tag: "auto", name: "Auto", isOn: selected == nil, avatarPick: nil, avatarLabel: label) { onPick(nil) }
-            choice(tag: "blob", name: "Blobatar", isOn: selected == "blob", avatarPick: "blob", avatarLabel: label) { onPick("blob") }
-            ForEach(Self.providers, id: \.key) { p in
-                choice(tag: p.key, name: p.name, isOn: selected == p.key, avatarPick: p.key, avatarLabel: p.name) { onPick(p.key) }
-            }
-        }
-    }
-
-    private func choice(tag: String, name: String, isOn: Bool, avatarPick: String?, avatarLabel: String, action: @escaping () -> Void) -> some View {
-        Button {
-            feedback.play(.selection)
-            action()
-        } label: {
-            VStack(spacing: 5) {
-                ConnectionAvatar(label: avatarLabel, pick: avatarPick, size: 50)
-                    .padding(3)
-                    .overlay(Circle().strokeBorder(isOn ? Palette.accent : .clear, lineWidth: 2.5))
-                Text(name)
-                    .font(RFont.sans(12, isOn ? .semibold : .regular))
-                    .foregroundStyle(isOn ? Palette.accent : Palette.secondary)
-                    .lineLimit(1)
-                    .minimumScaleFactor(0.8)
-            }
-            .frame(maxWidth: .infinity)
-            .contentShape(Rectangle())
-        }
-        .buttonStyle(.plain)
-        .accessibilityLabel(name)
-        .accessibilityAddTraits(isOn ? [.isSelected] : [])
-        .accessibilityIdentifier("icon:\(tag)")
     }
 }
 
