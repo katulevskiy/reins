@@ -450,7 +450,8 @@ async fn a_fetch_is_parked_then_answered_with_a_sealed_read_credential_and_a_rea
     );
     assert_eq!(grant.token, TOKEN);
     assert_eq!(grant.digest, None);
-    assert!((before + FETCH_LEASE_SECS..=unix_now() + FETCH_LEASE_SECS).contains(&grant.expires_at));
+    // A second of slack: the lease can be stamped in the second before `before` was read.
+    assert!((before - 1 + FETCH_LEASE_SECS..=unix_now() + FETCH_LEASE_SECS).contains(&grant.expires_at));
     assert_eq!(first["expires_at"], grant.expires_at);
     assert!(!answered.to_string().contains(TOKEN), "the token only travels sealed");
 

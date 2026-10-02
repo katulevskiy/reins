@@ -17,3 +17,6 @@ scripts/release.env
 
 # Web vault
 web-vault
+
+# Local service credentials (cloudflare.env, workos.env, ...)
+*.env

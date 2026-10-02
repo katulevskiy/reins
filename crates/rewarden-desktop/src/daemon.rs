@@ -59,9 +59,7 @@ impl ModeAuthorizer {
         let Some(server) = crate::server::oauth::logged_in_server(&self.paths) else {
             return match self.mode {
                 Mode::Auto => Ok(Arc::<LocalAuthorizer>::clone(&self.local)),
-                _ => Err(Refusal::Unavailable(
-                    "Not logged in to a Rewarden server: run `rewarden login`.".to_owned(),
-                )),
+                _ => Err(Refusal::Unavailable("Not logged in to a Rewarden server: run `rewarden login`.".to_owned())),
             };
         };
         let mut phone = self.phone.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
