@@ -376,8 +376,11 @@ async fn git_is_told_while_an_approval_is_awaited() {
     let proxy = Proxy::scripted(&up, &auth).await;
     let home = Home::new(proxy.addr());
     let clone = home.git_ok("", &["clone", "-q", "https://github.com/me/priv", "priv"]).await;
-    assert!(clone.stderr.contains("rewarden: waiting for approval: read github.com/me/priv…"), "{}", clone.all());
-    assert!(clone.stderr.contains("rewarden: approved."), "{}", clone.all());
+    // The daemon tells the client through /proc (Linux only; elsewhere it says nothing, see notice.rs).
+    if cfg!(target_os = "linux") {
+        assert!(clone.stderr.contains("rewarden: waiting for approval: read github.com/me/priv…"), "{}", clone.all());
+        assert!(clone.stderr.contains("rewarden: approved."), "{}", clone.all());
+    }
     home.commit("priv", "a.txt", b"hello\n", "Add a").await;
     let push = home.git_ok("priv", &["push", "origin", "main"]).await;
     assert!(push.stderr.contains("push to github.com/me/priv: main (1 commit)…"), "{}", push.all());

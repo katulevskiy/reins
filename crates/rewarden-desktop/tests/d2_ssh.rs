@@ -15,6 +15,10 @@ use rewarden_desktop::auth::prompt::NoPrompter;
 use rewarden_desktop::config::{Config, Mode};
 use rewarden_desktop::daemon::{Daemon, Options, Running};
 
+/// Whether the agent can write to the client's stderr: it finds the client through /proc, so only on Linux (elsewhere
+/// it says nothing; see `tell_pid` in ssh_agent/mod.rs).
+const TELLS_THE_CLIENT: bool = cfg!(target_os = "linux");
+
 fn have(tool: &str) -> bool {
     std::process::Command::new(tool).arg("-?").output().is_ok()
 }
@@ -152,8 +156,13 @@ async fn a_signature_made_on_the_phone_verifies_with_ssh_keygen() {
     let (out, data) = sign(&a).await;
     let (_, stderr) = text(&out);
     assert!(out.status.success(), "{stderr}");
-    assert!(stderr.contains("rewarden: waiting for approval in your Rewarden app: sign with Deploy key"), "{stderr}");
-    assert!(stderr.contains("rewarden: approved."), "{stderr}");
+    if TELLS_THE_CLIENT {
+        assert!(
+            stderr.contains("rewarden: waiting for approval in your Rewarden app: sign with Deploy key"),
+            "{stderr}"
+        );
+        assert!(stderr.contains("rewarden: approved."), "{stderr}");
+    }
     let signers = a.file("allowed_signers", &format!("me@example.com {}\n", a.mock.key.line()));
     let sig = format!("{}.sig", data.display());
     let verify = a
@@ -194,7 +203,7 @@ async fn refused_or_forged_signatures_fail_the_client() {
         let (out, data) = sign(&a).await;
         let (_, stderr) = text(&out);
         assert!(!out.status.success(), "{step:?}");
-        if let Some(said) = said {
+        if let Some(said) = said.filter(|_| TELLS_THE_CLIENT) {
             assert!(stderr.contains(said), "{step:?}: {stderr}");
         }
         assert!(!Path::new(&format!("{}.sig", data.display())).exists(), "{step:?}");
@@ -306,9 +315,10 @@ async fn login(sshd: &Path, kind: &str, algorithms: &str) {
     assert_eq!(stdout.trim(), "hello-through-the-phone");
     let server_name = format!("127.0.0.1:{port}");
     assert!(
-        stderr.contains(&format!(
-            "rewarden: waiting for approval in your Rewarden app: sign in to {server_name} as {user} with Deploy key"
-        )),
+        !TELLS_THE_CLIENT
+            || stderr.contains(&format!(
+                "rewarden: waiting for approval in your Rewarden app: sign in to {server_name} as {user} with Deploy key"
+            )),
         "{stderr}"
     );
     let calls = a.mock.calls_of("vault_ssh_sign");

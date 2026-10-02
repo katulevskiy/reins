@@ -226,5 +226,12 @@ async fn the_waiting_notice_names_the_host() {
     *auth.delay.lock().unwrap() = Duration::from_secs(2);
     let (_proxy, home) = start(&up, &auth).await;
     let clone = home.git_ok("", &["clone", "-q", "https://gitlab.com/group/sub/app", "app"]).await;
-    assert!(clone.stderr.contains("rewarden: waiting for approval: read gitlab.com/group/sub/app…"), "{}", clone.all());
+    // The daemon tells the client through /proc (Linux only; elsewhere it says nothing, see notice.rs).
+    if cfg!(target_os = "linux") {
+        assert!(
+            clone.stderr.contains("rewarden: waiting for approval: read gitlab.com/group/sub/app…"),
+            "{}",
+            clone.all()
+        );
+    }
 }
