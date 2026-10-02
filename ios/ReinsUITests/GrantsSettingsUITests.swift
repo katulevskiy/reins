@@ -51,11 +51,14 @@ final class GrantsSettingsUITests: XCTestCase {
 
     private func tap(_ id: String) { wait(id).tap() }
 
-    /// Scrolls down until `id` is on screen (rows of a long list are made only when they come into view).
-    private func scrollTo(_ id: String, in container: XCUIElement? = nil) {
+    /// Scrolls down until `id` is on screen (rows of a long list are made only when they come into view). On iPad,
+    /// `detail` scrolls the right-hand column, else the section's list in the middle.
+    private func scrollTo(_ id: String, detail: Bool = false) {
+        let x = pad ? (detail ? 0.78 : 0.4) : 0.5
         var tries = 0
         while !(element(id).exists && element(id).isHittable) && tries < 8 {
-            (container ?? app).swipeUp()
+            app.coordinate(withNormalizedOffset: CGVector(dx: x, dy: 0.75))
+                .press(forDuration: 0.05, thenDragTo: app.coordinate(withNormalizedOffset: CGVector(dx: x, dy: 0.3)))
             tries += 1
         }
         XCTAssertTrue(element(id).exists, "\(id) not found")
@@ -154,7 +157,7 @@ final class GrantsSettingsUITests: XCTestCase {
         tap("grant:g1")
         wait("grantTitle")
         XCTAssertTrue(app.staticTexts["Used 12 times"].exists)
-        scrollTo("revoke")
+        scrollTo("revoke", detail: true)
         tap("revoke")
         confirm("Delete")
         if pad {
@@ -204,17 +207,20 @@ final class GrantsSettingsUITests: XCTestCase {
         launch()
         section("Grants")
         tap("newGrant")
-        scrollTo("createGrant")
+        scrollTo("createGrant", detail: true)
         tap("createGrant")
         XCTAssertTrue(app.staticTexts["Choose which AI this is for."].waitForExistence(timeout: 3))
-        app.swipeDown()
-        app.swipeDown()
+        let x = pad ? 0.78 : 0.5
+        for _ in 0..<2 {
+            app.coordinate(withNormalizedOffset: CGVector(dx: x, dy: 0.3))
+                .press(forDuration: 0.05, thenDragTo: app.coordinate(withNormalizedOffset: CGVector(dx: x, dy: 0.8)))
+        }
         tap("conn:c1")
         tap("acct:me@gmail.com")
         typeInto("parties", "alerts@bank.com, @statements.bank.com\n\n")
-        scrollTo("newLifetime:oneTime")
+        scrollTo("newLifetime:oneTime", detail: true)
         tap("newLifetime:oneTime")
-        scrollTo("createGrant")
+        scrollTo("createGrant", detail: true)
         tap("createGrant")
         wait("newGrant")
     }
@@ -241,9 +247,9 @@ final class GrantsSettingsUITests: XCTestCase {
         let predicate = NSPredicate(format: "label BEGINSWITH 'Like every AI'")
         expectation(for: predicate, evaluatedWith: line)
         waitForExpectations(timeout: 5)
-        scrollTo("icon:grok")
+        scrollTo("icon:grok", detail: true)
         tap("icon:grok")
-        scrollTo("disconnect")
+        scrollTo("disconnect", detail: true)
         tap("disconnect")
         confirm("Disconnect")
         if pad {

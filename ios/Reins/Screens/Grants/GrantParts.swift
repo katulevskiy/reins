@@ -210,14 +210,18 @@ struct GrantTile: View {
                     TintedTag(GrantText.verb(grant.action), tint: ActionTile.color(kind))
                         .padding(.leading, 1)
                 }
-                UsesMeter(uses: Int(grant.uses), maxUses: grant.maxUses.map(Int.init))
+                // "Ends soon" shares the meter's line, so a narrow column (iPad, a folded Duo) keeps the title whole.
+                HStack(spacing: 8) {
+                    UsesMeter(uses: Int(grant.uses), maxUses: grant.maxUses.map(Int.init))
+                    Spacer(minLength: 0)
+                    if clock.soon {
+                        TintedTag("Ends soon", tint: Palette.danger)
+                    }
+                }
                 ConnectorTags(service: grant.service, account: grant.account)
                     .padding(.top, 1)
             }
             .frame(maxWidth: .infinity, alignment: .leading)
-            if clock.soon {
-                TintedTag("Ends soon", tint: Palette.danger)
-            }
         }
         .padding(14)
         .background(Palette.elevated, in: RoundedRectangle(cornerRadius: 20, style: .continuous))
