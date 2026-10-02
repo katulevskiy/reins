@@ -273,7 +273,14 @@ final class AppModel {
     /// refreshes never take the role back from a phone that replaced this one.
     func registerDevice(force: Bool) async throws {
         if DeviceStatus.replaced && !force { return }
-        try await core.registerDevice(fcmToken: registrationToken)
+        let token = registrationToken
+        do {
+            try await core.registerDevice(fcmToken: token)
+        } catch let CoreError.Server(status, _) where status == 400 && token != nil {
+            // A server that refuses the push token still takes the phone, which then gets requests while the app is
+            // open: servers from before October 2026 accept only 32-byte APNs tokens, and a simulator's are 80 bytes.
+            try await core.registerDevice(fcmToken: nil)
+        }
         DeviceStatus.replaced = false
         DeviceStatus.approvalDevice = true
         deviceReplaced = false
@@ -333,7 +340,9 @@ final class AppModel {
                     failures = 0
                 } catch CoreError.NotLoggedIn {
                     self.setSession(.signedOut)
-                } catch let CoreError.Server(status, _) where status == 403 {
+                } catch let CoreError.Server(status, _) where status == 403 && self.approvalDevice {
+                    // Only a phone that held the role was replaced. One whose registration has not gone through yet
+                    // (registrationError says why) keeps trying, and its banner does not blame another phone.
                     self.markReplaced()
                 } catch {
                     if Task.isCancelled { return }
