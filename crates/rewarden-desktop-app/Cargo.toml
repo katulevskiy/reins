@@ -1,0 +1,54 @@
+[package]
+name = "rewarden-desktop-app"
+version = "0.1.0"
+description = "Reins desktop app: pairs this computer with your phone, adds Reins to your AI harnesses and keeps the background service running, from a window and a tray icon."
+repository.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+# Apache-2.0 (LICENSE at the repository root). See LICENSING.md. GPUI (Zed's UI framework, through the zui fork) is
+# Apache-2.0 too; the fork's one GPL crate (`path`) is not in this app's dependency graph.
+license = "Apache-2.0"
+publish.workspace = true
+
+[[bin]]
+name = "reins-app"
+path = "src/main.rs"
+
+[dependencies]
+rewarden-desktop = { path = "../rewarden-desktop" }
+# GPUI from the zui fork, the same revision Zeron's desktop app uses (see Zeron's Cargo.toml for what the fork adds).
+gpui = { git = "https://github.com/katulevskiy/zui", rev = "667d0aaf9531d2d1b2d0674a5e55f977df1b09f6" }
+gpui_platform = { git = "https://github.com/katulevskiy/zui", rev = "667d0aaf9531d2d1b2d0674a5e55f977df1b09f6", features = ["font-kit", "runtime_shaders", "wayland", "x11"] }
+gpui_tokio = { git = "https://github.com/katulevskiy/zui", rev = "667d0aaf9531d2d1b2d0674a5e55f977df1b09f6" }
+async-trait = "0.1.92"
+futures = "0.3.34"
+log = "0.4.34"
+png = "0.18.1"
+qrcode = { version = "0.14.1", default-features = false }
+serde = { version = "1.0.229", features = ["derive"] }
+serde_json = "1.0.151"
+tokio = { version = "1.53.1", features = ["rt-multi-thread", "time", "sync", "macros"] }
+
+[target.'cfg(any(target_os = "macos", target_os = "windows"))'.dependencies]
+# The tray icon and its menu (muda). Not on Linux: there it needs GTK; Linux uses ksni (StatusNotifierItem over D-Bus).
+tray-icon = { version = "0.26.0", default-features = false }
+
+[target.'cfg(target_os = "macos")'.dependencies]
+objc2 = "0.6.4"
+objc2-app-kit = { version = "0.3.2", default-features = false, features = ["std", "NSApplication", "NSResponder", "NSRunningApplication"] }
+
+[target.'cfg(target_os = "linux")'.dependencies]
+ksni = "0.3.6"
+
+[target.'cfg(windows)'.dependencies]
+winreg = "0.56.0"
+
+[build-dependencies]
+# The Windows icon resource (build.rs does nothing for other targets).
+embed-resource = "3.0.11"
+
+[dev-dependencies]
+tempfile = "3.27.0"
+
+[lints]
+workspace = true
