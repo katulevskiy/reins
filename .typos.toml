@@ -38,6 +38,8 @@ extend-ignore-re = [
     "\\b[0-9A-F]{16}\\b",
     "\"content\": \"[A-Za-z0-9+/=\\\\n]+\"",
     "5ecret",
+    # Windows: the format switch of whoami (`/fo csv`)
+    "/fo\\b",
     "caf\\\\u\\{e9\\}",
 ]
 

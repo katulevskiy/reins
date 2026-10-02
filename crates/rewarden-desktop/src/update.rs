@@ -70,6 +70,8 @@ pub fn platform() -> Option<&'static str> {
         ("linux", "aarch64") => Some("linux-aarch64"),
         ("macos", "x86_64") => Some("macos-x86_64"),
         ("macos", "aarch64") => Some("macos-aarch64"),
+        ("windows", "x86_64") => Some("windows-x86_64"),
+        ("windows", "aarch64") => Some("windows-aarch64"),
         _ => None,
     }
 }
@@ -184,8 +186,12 @@ impl Updater {
 }
 
 /// Puts `bytes` in place of the executable at `exe`: written next to it, made executable, then renamed over it (the
-/// running process keeps its old copy). Nothing is changed on failure.
+/// running process keeps its old copy). Nothing is changed on failure. On Windows a running program cannot be
+/// replaced, only renamed: see [`replace_moving_aside`].
 pub fn replace_executable(exe: &Path, bytes: &[u8]) -> Result<(), String> {
+    if cfg!(windows) {
+        return replace_moving_aside(exe, bytes);
+    }
     let dir = exe.parent().ok_or("the executable has no directory")?;
     let mut tmp = tempfile::Builder::new().prefix(".rewarden-update-").tempfile_in(dir).map_err(|e| {
         format!(
@@ -204,10 +210,74 @@ pub fn replace_executable(exe: &Path, bytes: &[u8]) -> Result<(), String> {
     Ok(())
 }
 
-/// The running executable, following symlinks to the real file.
+/// The name an executable that is moved aside gets: `rewarden.exe.<pid>-<nanoseconds>.old`, next to it.
+fn aside_name(file_name: &str) -> String {
+    let nanos = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.subsec_nanos());
+    format!("{file_name}.{}-{nanos}.old", std::process::id())
+}
+
+/// The Windows way to replace a program that may be running (Windows refuses to overwrite or delete a running
+/// program's file, but lets it be renamed): the new file is written next to it, the old one renamed aside, the new one
+/// renamed into its place. If that last step fails the old one is put back, so nothing is changed on failure. The
+/// renamed old file goes when nothing runs it any more ([`remove_set_aside`], at the next update or service start).
+pub fn replace_moving_aside(exe: &Path, bytes: &[u8]) -> Result<(), String> {
+    let dir = exe.parent().ok_or("the executable has no directory")?;
+    let name = exe.file_name().and_then(|n| n.to_str()).ok_or("the executable has no file name")?;
+    remove_set_aside(exe);
+    let mut tmp = tempfile::Builder::new().prefix(".rewarden-update-").tempfile_in(dir).map_err(|e| {
+        format!(
+            "cannot write next to {}: {e} (reinstall with the install script, or run with permission to write there)",
+            exe.display()
+        )
+    })?;
+    std::io::Write::write_all(&mut tmp, bytes).map_err(|e| e.to_string())?;
+    tmp.as_file().sync_all().map_err(|e| e.to_string())?;
+    let aside = dir.join(aside_name(name));
+    let moved = match std::fs::rename(exe, &aside) {
+        Ok(()) => true,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => false,
+        Err(e) => return Err(format!("cannot move {} aside: {e}", exe.display())),
+    };
+    if let Err(e) = tmp.persist_noclobber(exe) {
+        if moved {
+            std::fs::rename(&aside, exe).ok();
+        }
+        return Err(format!("cannot replace {}: {}", exe.display(), e.error));
+    }
+    // Gone at once when the old program was not running.
+    if moved {
+        std::fs::remove_file(&aside).ok();
+    }
+    Ok(())
+}
+
+/// Removes the old copies [`replace_moving_aside`] left next to `exe`, those no program runs any more (best effort).
+pub fn remove_set_aside(exe: &Path) {
+    let (Some(dir), Some(name)) = (exe.parent(), exe.file_name().and_then(|n| n.to_str())) else {
+        return;
+    };
+    let prefix = format!("{name}.");
+    let Ok(entries) = std::fs::read_dir(dir) else {
+        return;
+    };
+    for entry in entries.flatten() {
+        let file = entry.file_name();
+        let old = Path::new(&file).extension().is_some_and(|e| e.eq_ignore_ascii_case("old"));
+        if old && file.to_string_lossy().starts_with(&prefix) {
+            std::fs::remove_file(entry.path()).ok();
+        }
+    }
+}
+
+/// The running executable, following symlinks to the real file (on Windows without the `\\?\` prefix).
 pub fn current_executable() -> Result<PathBuf, String> {
     let exe = std::env::current_exe().map_err(|e| format!("cannot find this executable: {e}"))?;
-    std::fs::canonicalize(&exe).map_err(|e| format!("{}: {e}", exe.display()))
+    let real = std::fs::canonicalize(&exe).map_err(|e| format!("{}: {e}", exe.display()))?;
+    Ok(if cfg!(windows) {
+        crate::win::strip_verbatim(&real)
+    } else {
+        real
+    })
 }
 
 #[cfg(test)]
@@ -283,5 +353,36 @@ mod tests {
             assert_eq!(std::fs::metadata(&exe).unwrap().permissions().mode() & 0o777, 0o755);
         }
         assert_eq!(std::fs::read_dir(dir.path()).unwrap().count(), 1, "no temporary file left behind");
+    }
+
+    #[test]
+    fn windows_platforms_have_release_names() {
+        let names =
+            ["linux-x86_64", "linux-aarch64", "macos-x86_64", "macos-aarch64", "windows-x86_64", "windows-aarch64"];
+        assert!(platform().is_some_and(|p| names.contains(&p)));
+    }
+
+    #[test]
+    fn a_program_is_replaced_by_moving_the_old_one_aside() {
+        let dir = tempfile::tempdir().unwrap();
+        let exe = dir.path().join("rewarden.exe");
+        std::fs::write(&exe, b"old").unwrap();
+        // What an earlier update left next to it, and someone else's file.
+        std::fs::write(dir.path().join("rewarden.exe.1-2.old"), b"older").unwrap();
+        std::fs::write(dir.path().join("notes.old"), b"keep").unwrap();
+        replace_moving_aside(&exe, b"new binary").unwrap();
+        assert_eq!(std::fs::read(&exe).unwrap(), b"new binary");
+        let mut left: Vec<String> = std::fs::read_dir(dir.path())
+            .unwrap()
+            .map(|e| e.unwrap().file_name().to_string_lossy().into_owned())
+            .collect();
+        left.sort();
+        assert_eq!(left, ["notes.old", "rewarden.exe"], "the old copies are gone, nothing else");
+        // A first install: nothing to move aside.
+        let fresh = dir.path().join("rewarden-daemon.exe");
+        replace_moving_aside(&fresh, b"gui").unwrap();
+        assert_eq!(std::fs::read(&fresh).unwrap(), b"gui");
+        let aside = aside_name("rewarden.exe");
+        assert!(aside.starts_with("rewarden.exe.") && Path::new(&aside).extension().is_some_and(|e| e == "old"));
     }
 }

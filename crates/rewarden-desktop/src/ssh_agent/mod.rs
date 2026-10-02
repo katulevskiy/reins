@@ -4,6 +4,11 @@
 //! (`vault_ssh_sign`, sealed to this app). ssh's `session-bind@openssh.com` tells the agent which server it is
 //! talking to (its host key, checked against the key exchange signature), and `~/.ssh/known_hosts` its name when the
 //! entry is not hashed; the phone shows both. While the phone decides, the ssh process is told so on its stderr.
+//!
+//! On Windows the agent listens on a named pipe instead (`\\.\pipe\rewarden-ssh-agent-<id>`, as Windows' own OpenSSH
+//! agent does on `\\.\pipe\openssh-ssh-agent`). It is created as the first instance of its name (no other program can
+//! have taken the name before), refuses remote clients, and keeps Windows' default access list for pipes: only this
+//! user, the administrators and SYSTEM may write to it, so no other user can send it a request.
 
 pub mod keys;
 pub mod setup;
@@ -50,7 +55,8 @@ const SESSION_BIND: &str = "session-bind@openssh.com";
 pub struct SshConfig {
     /// Whether the daemon runs the SSH agent.
     pub enabled: bool,
-    /// The agent's socket; by default `$XDG_RUNTIME_DIR/rewarden/ssh-agent.sock`, else in the state directory.
+    /// The agent's socket; by default `$XDG_RUNTIME_DIR/rewarden/ssh-agent.sock`, else in the state directory. On
+    /// Windows a named pipe, `\\.\pipe\…`.
     pub socket: Option<PathBuf>,
     /// Where server names are looked up; by default `~/.ssh/known_hosts` and `~/.ssh/known_hosts2`.
     pub known_hosts: Vec<PathBuf>,
@@ -68,7 +74,11 @@ impl Default for SshConfig {
 
 impl SshConfig {
     pub fn validate(&self) -> Result<(), String> {
-        if self.socket.as_ref().is_some_and(|s| !s.is_absolute()) {
+        if cfg!(windows) {
+            if self.socket.as_ref().is_some_and(|s| !crate::win::is_pipe_path(s)) {
+                return Err(r"`ssh.socket` must be a named pipe (\\.\pipe\name) on Windows".to_owned());
+            }
+        } else if self.socket.as_ref().is_some_and(|s| !s.is_absolute()) {
             return Err("`ssh.socket` must be an absolute path".to_owned());
         }
         if self.known_hosts.iter().any(|p| !p.is_absolute()) {
@@ -81,10 +91,9 @@ impl SshConfig {
         if !self.known_hosts.is_empty() {
             return self.known_hosts.clone();
         }
-        std::env::var_os("HOME")
-            .filter(|h| !h.is_empty())
+        crate::config::home_dir()
             .map(|h| {
-                let ssh = PathBuf::from(h).join(".ssh");
+                let ssh = h.join(".ssh");
                 vec![ssh.join("known_hosts"), ssh.join("known_hosts2")]
             })
             .unwrap_or_default()
@@ -93,11 +102,15 @@ impl SshConfig {
 
 /// Where the agent listens: `ssh.socket`; else, for the app's usual state directory, `$XDG_RUNTIME_DIR/rewarden/`;
 /// else (`REWARDEN_STATE_DIR` or another state directory, as in tests, or no runtime directory) the state directory,
-/// so a second instance never takes over the usual socket.
+/// so a second instance never takes over the usual socket. On Windows the named pipe of the state directory
+/// ([`crate::win::ssh_pipe`]).
 #[must_use]
 pub fn socket_path(paths: &Paths, config: &SshConfig) -> PathBuf {
     if let Some(s) = &config.socket {
         return s.clone();
+    }
+    if cfg!(windows) {
+        return crate::win::ssh_pipe(&paths.state_dir);
     }
     let usual = std::env::var_os("REWARDEN_STATE_DIR").is_none_or(|d| d.is_empty())
         && Paths::from_env().is_ok_and(|p| p.state_dir == paths.state_dir);
@@ -435,8 +448,21 @@ impl Drop for SocketFile {
 pub struct SshAgent {
     #[cfg(unix)]
     listener: tokio::net::UnixListener,
+    /// The pipe instance waiting for the next client.
+    #[cfg(windows)]
+    server: tokio::net::windows::named_pipe::NamedPipeServer,
     file: SocketFile,
     agent: Arc<Agent>,
+}
+
+/// A pipe instance of `name`: remote clients refused, Windows' default access list (this user, the administrators and
+/// SYSTEM may write). `first`: fails when the name exists already, so no other program can be serving it.
+#[cfg(windows)]
+fn pipe_instance(name: &Path, first: bool) -> std::io::Result<tokio::net::windows::named_pipe::NamedPipeServer> {
+    tokio::net::windows::named_pipe::ServerOptions::new()
+        .first_pipe_instance(first)
+        .reject_remote_clients(true)
+        .create(name)
 }
 
 impl SshAgent {
@@ -473,9 +499,29 @@ impl SshAgent {
         })
     }
 
-    #[cfg(not(unix))]
+    /// Creates the named pipe `path` (`\\.\pipe\…`); another agent already serving it is an error.
+    #[cfg(windows)]
+    pub fn bind(path: &Path, agent: Agent) -> Result<Self, String> {
+        let server = pipe_instance(path, true).map_err(|e| {
+            if e.kind() == std::io::ErrorKind::PermissionDenied {
+                format!("another SSH agent is already serving {}", path.display())
+            } else {
+                format!("cannot listen on {}: {e}", path.display())
+            }
+        })?;
+        Ok(Self {
+            server,
+            file: SocketFile {
+                path: path.to_owned(),
+                id: None,
+            },
+            agent: Arc::new(agent),
+        })
+    }
+
+    #[cfg(not(any(unix, windows)))]
     pub fn bind(_path: &Path, _agent: Agent) -> Result<Self, String> {
-        Err("the SSH agent needs unix sockets".to_owned())
+        Err("the SSH agent needs unix sockets or named pipes".to_owned())
     }
 
     #[must_use]
@@ -497,7 +543,38 @@ impl SshAgent {
             };
             tokio::spawn(connection(stream, Arc::clone(&self.agent)));
         }
-        #[cfg(not(unix))]
+        #[cfg(windows)]
+        {
+            let Self {
+                mut server,
+                file,
+                agent,
+            } = self;
+            loop {
+                if let Err(e) = server.connect().await {
+                    log::warn!("ssh agent: accept: {e}");
+                    tokio::time::sleep(Duration::from_millis(100)).await;
+                    match pipe_instance(&file.path, false) {
+                        Ok(fresh) => server = fresh,
+                        Err(e) => log::warn!("ssh agent: {e}"),
+                    }
+                    continue;
+                }
+                // The next client gets a new instance; this one is the connected client's.
+                let next = loop {
+                    match pipe_instance(&file.path, false) {
+                        Ok(s) => break s,
+                        Err(e) => {
+                            log::warn!("ssh agent: {e}");
+                            tokio::time::sleep(Duration::from_millis(500)).await;
+                        }
+                    }
+                };
+                let client = std::mem::replace(&mut server, next);
+                tokio::spawn(messages(client, Arc::clone(&agent), Session::default()));
+            }
+        }
+        #[cfg(not(any(unix, windows)))]
         std::future::pending::<()>().await;
     }
 }
@@ -531,8 +608,7 @@ pub async fn serve(agent: Option<SshAgent>) {
 }
 
 #[cfg(unix)]
-async fn connection(mut stream: tokio::net::UnixStream, agent: Arc<Agent>) {
-    use tokio::io::{AsyncReadExt as _, AsyncWriteExt as _};
+async fn connection(stream: tokio::net::UnixStream, agent: Arc<Agent>) {
     // SO_PEERCRED: only this user's processes, and the pid to tell while the phone decides.
     let Ok(cred) = stream.peer_cred() else {
         return;
@@ -541,10 +617,20 @@ async fn connection(mut stream: tokio::net::UnixStream, agent: Arc<Agent>) {
         log::warn!("ssh agent: refused a connection from another user");
         return;
     }
-    let mut session = Session {
+    let session = Session {
         pid: cred.pid(),
         ..Session::default()
     };
+    messages(stream, agent, session).await;
+}
+
+/// Answers one client's agent messages (length-prefixed) until it goes away.
+async fn messages(
+    mut stream: impl tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin,
+    agent: Arc<Agent>,
+    mut session: Session,
+) {
+    use tokio::io::{AsyncReadExt as _, AsyncWriteExt as _};
     loop {
         let Ok(len) = stream.read_u32().await else {
             return;
@@ -654,12 +740,23 @@ mod tests {
     fn the_socket_lives_in_the_state_directory_unless_it_is_the_usual_one() {
         let dir = tempfile::tempdir().unwrap();
         let paths = Paths::under(dir.path());
-        assert_eq!(socket_path(&paths, &SshConfig::default()), paths.state_dir.join(SOCKET_NAME));
+        let default = socket_path(&paths, &SshConfig::default());
+        if cfg!(windows) {
+            assert_eq!(default, crate::win::ssh_pipe(&paths.state_dir));
+        } else {
+            assert_eq!(default, paths.state_dir.join(SOCKET_NAME));
+        }
+        let own = if cfg!(windows) {
+            r"\\.\pipe\my-agent"
+        } else {
+            "/tmp/x.sock"
+        };
         let set = SshConfig {
-            socket: Some(PathBuf::from("/tmp/x.sock")),
+            socket: Some(PathBuf::from(own)),
             ..SshConfig::default()
         };
-        assert_eq!(socket_path(&paths, &set), PathBuf::from("/tmp/x.sock"));
+        set.validate().unwrap();
+        assert_eq!(socket_path(&paths, &set), PathBuf::from(own));
         assert!(
             SshConfig {
                 socket: Some(PathBuf::from("rel.sock")),

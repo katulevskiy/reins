@@ -18,6 +18,8 @@ curl -fsSL https://reins2fa.com/install.sh | sh
 rewarden login     # the hosted server; on your own: rewarden login https://reins.example.com
 ```
 
+On Windows, in PowerShell: `irm https://reins2fa.com/install.ps1 | iex`, then the same `rewarden login`.
+
 Without `rewarden login`, the MCP server has no server to reach, and the hook asks in a desktop notification instead
 of on your phone.
 
@@ -39,6 +41,21 @@ already exists with a different value, `add` stops and says so. It does not over
 The MCP server entry runs `rewarden mcp --via "<Harness name>"`, a stdio MCP server that forwards to
 `<server>/mcp` with the desktop app's session. The name is shown on your phone ("Laptop · Claude Code"). The hook
 entry runs `rewarden hook <harness>` with a timeout 30 s longer than the guard's own.
+
+### Windows
+
+`~` is your profile folder (`%USERPROFILE%`, for example `C:\Users\me`): the harnesses keep their settings there on
+Windows too, so the files below are the same (`C:\Users\me\.claude.json`, `C:\Users\me\.codex\config.toml`, ...). The
+record of what `add` changed is in `%LOCALAPPDATA%\rewarden\harnesses.json`, and the guard settings in
+`%APPDATA%\rewarden\config.toml`.
+
+The MCP server entry names `rewarden.exe` by its full path. Harnesses run hook commands through a shell, and which one
+differs (Claude Code uses Git Bash, or PowerShell without it; others use PowerShell or cmd), so the hook command is
+written in the one form all of them run: the path with forward slashes and no quotes,
+`C:/Users/me/AppData/Local/Programs/Reins/rewarden.exe hook claude-code`. When the path needs quotes (a space in your
+user name), the hook runs plain `rewarden` if that folder is on your `PATH` (the install script puts it there), else
+the quoted path, which Git Bash and cmd run but PowerShell does not. Run `rewarden harness add` again after moving
+`rewarden.exe`.
 
 ## Claude Code
 
@@ -133,6 +150,13 @@ count). The other words must appear among the arguments in that order, not neces
 matches a group of short options containing it (`rm -r` matches `rm -rf`). A pattern starting with `text:` matches
 those words anywhere in the command, ignoring case and punctuation (`text:drop table`).
 
+Windows commands are matched too. Program names match ignoring case and an `.exe`, `.cmd` or `.bat` ending
+(`C:\Program Files\Git\cmd\git.exe push --force` is `git push --force`). A cmd switch in a pattern (`/s`) matches
+ignoring case, also among switches written together (`rd /S/Q`). A PowerShell parameter in a pattern, written with a
+capital (`-Recurse`), matches ignoring case and any abbreviation PowerShell accepts (`-r`, `-rec`, `-Recurse:$true`).
+Backslashes in paths are kept (`type C:\Users\me\app\.env` matches `.env`), and the commands inside `cmd /c`,
+`powershell -Command`, `pwsh -c`, `powershell -EncodedCommand` and `Invoke-Expression` are checked as well.
+
 **File patterns** without a `/` match the file name (`*.pem`, `.env`). With a `/` they match the end of the path
 (`.ssh/*`, `.aws/credentials`). A command's arguments are checked against the file patterns too, so `cat .env`
 matches.
@@ -142,12 +166,14 @@ matches.
 `git filter-branch`, `git filter-repo`, `rm -r`, `terraform`/`tofu` `apply` and `destroy`, `kubectl apply`/`delete`,
 `helm uninstall`/`delete`, `DROP TABLE`/`DATABASE`/`SCHEMA`, `TRUNCATE TABLE`, package publishing (`npm`, `pnpm`,
 `yarn`, `cargo`, `poetry`, `uv`, `twine`, `gem`, `docker push`), `gh repo delete`, `gh release delete`, `mkfs*`,
-`dd of=*`.
+`dd of=*`. On Windows: `Remove-Item -Recurse` and its aliases (`ri`, `del`, `erase`, `rd`, `rmdir`; `rm -Recurse` is
+`rm -r`), cmd's `rd /s`, `rmdir /s`, `del /s`, `erase /s`, `format <drive>:`, `Format-Volume`, `Clear-Disk`.
 
 **Built-in file rules:** `.env`, `.env.*`, `*.pem`, `*.key`, `*.p12`, `*.pfx`, `*.jks`, `*.keystore`, `*.tfstate`,
 SSH private keys (`id_rsa`, `id_ed25519`, ...), `.ssh/*`, cloud and registry credentials (`.aws/credentials`,
-`.aws/config`, `.config/gcloud/*`, `.azure/*`, `.kube/config`, `.docker/config.json`, `.netrc`, `.git-credentials`,
-`.npmrc`, `.pypirc`, `.vault-token`, `credentials.json`). Exceptions: `*.pub`, `known_hosts`, `.env.example`,
+`.aws/config`, `.config/gcloud/*` (on Windows `AppData/Roaming/gcloud/*`), `.azure/*`, `.kube/config`,
+`.docker/config.json`, `.netrc` (on Windows also `_netrc`), `.git-credentials`, `.npmrc`, `.pypirc`, `.vault-token`,
+`credentials.json`). Exceptions: `*.pub`, `known_hosts`, `.env.example`,
 `.env.sample`, `.env.template`, `.env.dist`.
 
 The phone shows the harness that asked, the command (or files), the working directory and the rule that matched. A standing answer can

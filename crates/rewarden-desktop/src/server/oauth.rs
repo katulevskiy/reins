@@ -194,7 +194,7 @@ fn open_in_browser(url: &str) {
         tokio::process::Command::new("open")
     } else if cfg!(windows) {
         // Not `cmd /C start`: cmd would split the link at `&`.
-        let mut c = tokio::process::Command::new("rundll32");
+        let mut c = tokio::process::Command::new(crate::win::system32("rundll32.exe"));
         c.arg("url.dll,FileProtocolHandler");
         c
     } else {

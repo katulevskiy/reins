@@ -7,7 +7,8 @@ pointing them at it.
 You need:
 
 - an Android phone (Android 12 or later);
-- for the desktop app, a Linux computer (x86_64 or aarch64) or a Mac (Apple silicon or Intel).
+- for the desktop app, a Linux computer (x86_64 or aarch64), a Mac (Apple silicon or Intel) or a Windows 10 or 11
+  computer (x86_64; Arm when the release has a build for it).
 
 ## 1. Install the phone app and create an account
 
@@ -70,6 +71,22 @@ against `SHA256SUMS`. Unpack it and put `rewarden` on your `PATH`, for example i
 downloaded with a browser is quarantined and Gatekeeper refuses the unsigned program; clear the flag with
 `xattr -d com.apple.quarantine rewarden` (`curl` downloads, like the install script's, are not quarantined).
 
+On Windows, in PowerShell (no administrator needed):
+
+```powershell
+irm https://reins2fa.com/install.ps1 | iex
+```
+
+The script downloads the latest GitHub release's `reins-desktop-<version>-x86_64-pc-windows-msvc.zip` (or
+`aarch64-pc-windows-msvc` on Arm), checks it against the release's `SHA256SUMS`, installs `rewarden.exe` to
+`%LOCALAPPDATA%\Programs\Reins` (set `REWARDEN_INSTALL_DIR` to change that) and adds that folder to your user `PATH`.
+Open a new terminal afterwards. `$env:REWARDEN_VERSION = "v0.2.0"` before it installs that release instead of the
+latest. Later updates: `rewarden update` (from the same signed release feed as on Linux and macOS) or the script
+again. You can also
+unpack the zip yourself and put `rewarden.exe` anywhere on your `PATH`. Windows support is alpha: built and tested on
+GitHub's Windows runners, not yet field-tested end to end on a real PC; see the
+[desktop app README](../crates/rewarden-desktop/README.md#windows-alpha) for what differs.
+
 Pair it with your phone:
 
 ```sh
@@ -87,10 +104,15 @@ instead (enter your email there; `--no-browser` prints the link instead of openi
 Start the background service and send git through it:
 
 ```sh
-rewarden resume     # installs the background service if needed (systemd user unit, or launchd agent on a Mac),
-                    # then routes github.com remotes through it
+rewarden resume     # installs the background service if needed (systemd user unit, launchd agent on a Mac, or
+                    # on Windows an entry in your Run key), then routes github.com remotes through it
 rewarden status     # version, who decides, server, key, pending local approvals, git routing
 ```
+
+On Windows the background service is a windowless copy of `rewarden.exe` in `%LOCALAPPDATA%\rewarden`, started at
+once and at every logon from `HKCU\Software\Microsoft\Windows\CurrentVersion\Run` (Task Manager lists it under
+Startup apps as `rewarden-daemon.exe`). Its log is `%LOCALAPPDATA%\rewarden\daemon.log`. Unlike systemd it is not
+restarted when it stops; `rewarden status` says so and `rewarden resume` starts it again.
 
 `rewarden resume` adds `url.<proxy>.insteadOf` rules to your global git config. `https://github.com/...`,
 `git@github.com:...` and `ssh://git@github.com/...` remotes then go to the daemon at `http://127.0.0.1:7457/github.com/`.
@@ -137,7 +159,7 @@ values are released sealed to this computer and set as environment variables for
 `rewarden`'s memory. Fields: `password`, `username`, `totp` (the current code), `notes`, `uri`, or a custom field's
 name. The item is named by its id or exact name.
 
-Named sets go in `~/.config/rewarden/config.toml`:
+Named sets go in `~/.config/rewarden/config.toml` (on Windows `%APPDATA%\rewarden\config.toml`):
 
 ```toml
 [run.profiles.openai]
@@ -149,7 +171,8 @@ purpose = "OpenAI scripts"
 rewarden run --profile openai -- python script.py
 ```
 
-`rewarden run` exits with the command's own exit code. It exits with 125 when the secrets were not released.
+`rewarden run` exits with the command's own exit code. It exits with 125 when the secrets were not released. On
+Windows a bare name also finds `.cmd` and `.bat` programs (`rewarden run ... -- npm test` runs `npm.cmd`).
 
 ### Call an API without handing out its key
 
@@ -175,10 +198,17 @@ rewarden ssh status
 The daemon runs an SSH agent whose identities are the SSH key items in your vault. Each signature is made on the
 phone after you approve it. The phone shows the key and the server you are connecting to.
 
+On Windows the agent is a named pipe (`\\.\pipe\rewarden-ssh-agent-...`, `rewarden ssh status` shows it), and
+`rewarden ssh setup` points Windows' own OpenSSH (`C:\Windows\System32\OpenSSH\ssh.exe`) at it through
+`%USERPROFILE%\.ssh\config`. Git for Windows brings its own ssh, which cannot use the pipe; for git over SSH set
+`git config --global core.sshCommand C:/Windows/System32/OpenSSH/ssh.exe` (git through `rewarden resume` uses HTTPS
+and needs no agent). Tools that read `SSH_AUTH_SOCK` instead can be given the pipe's name.
+
 ### Without a phone: local mode
 
 When the desktop app is not logged in, git requests are decided by a local policy. The default policy allows reads,
-and asks about pushes and risky pushes. The questions appear as desktop notifications, or you answer them with
+and asks about pushes and risky pushes. The questions appear as desktop notifications (a dialog on macOS, a Yes/No
+message box on Windows), or you answer them with
 `rewarden pending`, `rewarden approve <id>`, `rewarden deny <id>`. The GitHub token comes from `gh auth token` by
 default (`[github] token = "env:NAME"` or `"file:PATH"` to change that). Local mode protects against an agent's
 mistakes, not against a hostile agent (see [security-model.md](security-model.md)).
@@ -194,5 +224,8 @@ rewarden logout
 rm ~/.local/bin/rewarden
 ```
 
-Settings live in `~/.config/rewarden/` and state (the app's key, the session) in `~/.local/state/rewarden/`. Delete
-both to forget everything. On the phone, remove the connection under Settings to revoke the computer's access.
+On Windows the last step is deleting `%LOCALAPPDATA%\Programs\Reins` and taking it out of your user `PATH` (Settings →
+System → About → Advanced system settings → Environment Variables).
+
+Settings live in `~/.config/rewarden/` and state (the app's key, the session) in `~/.local/state/rewarden/` (on
+Windows `%APPDATA%\rewarden\` and `%LOCALAPPDATA%\rewarden\`). Delete both to forget everything. On the phone, remove the connection under Settings to revoke the computer's access.

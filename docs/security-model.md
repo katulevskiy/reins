@@ -141,7 +141,10 @@ Push notifications through Firebase carry only a request id. The phone then fetc
   it.
 - Its control API (`rewarden pending`, `approve`, `deny`, `status`) needs a random token stored in a 0600 file.
 - On Linux the daemon marks itself non-dumpable, so other processes of the same user cannot attach to it or read its
-  memory through `/proc`.
+  memory through `/proc`. macOS and Windows have no such protection here.
+- On Windows the state files (`%LOCALAPPDATA%\rewarden\`) get an access list for your user alone instead of mode 0600,
+  the SSH agent's named pipe can be written only by your user (and the administrators), and the background service is
+  a copy of the program in that same folder, so another user cannot replace what runs at your logon.
 - Release updates (`rewarden update`) install only builds signed with the release key built into the binary, and
   never an older build. The install script checks the published SHA-256.
 

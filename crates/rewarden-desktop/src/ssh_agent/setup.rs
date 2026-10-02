@@ -32,13 +32,35 @@ pub fn config_file(home: &Path) -> PathBuf {
     home.join(".ssh").join("config")
 }
 
+/// How `socket` is written in `~/.ssh/config`: as it is; on Windows with forward slashes (`//./pipe/…`), which Windows
+/// opens like `\\.\pipe\…` and which reads the same in OpenSSH versions that take a backslash as an escape and in those
+/// that do not.
+#[must_use]
+pub fn config_form(socket: &str) -> String {
+    if cfg!(windows) {
+        crate::win::forward_slashes(socket)
+    } else {
+        socket.to_owned()
+    }
+}
+
+/// Whether ssh's `IdentityAgent` value `effective` is `socket` (on Windows ignoring case and the slashes' direction).
+fn same_agent(effective: &str, socket: &Path) -> bool {
+    let socket = socket.display().to_string();
+    if cfg!(windows) {
+        config_form(effective).eq_ignore_ascii_case(&config_form(&socket))
+    } else {
+        effective == socket
+    }
+}
+
 /// The block for `socket` (quoted; `%` escaped, since ssh expands `%` tokens in `IdentityAgent`).
 pub fn block(socket: &Path) -> Result<String, String> {
     let s = socket.to_str().ok_or("the socket path is not UTF-8")?;
     if s.contains('"') || s.chars().any(char::is_control) {
         return Err(format!("the socket path {s} cannot be written in ~/.ssh/config"));
     }
-    Ok(format!("{BEGIN}\nHost *\n    IdentityAgent \"{}\"\n{END}\n", s.replace('%', "%%")))
+    Ok(format!("{BEGIN}\nHost *\n    IdentityAgent \"{}\"\n{END}\n", config_form(s).replace('%', "%%")))
 }
 
 /// Byte range of this app's block (with the blank line before it, when there is one).
@@ -177,7 +199,17 @@ fn running(socket: &Path) -> bool {
     std::os::unix::net::UnixStream::connect(socket).is_ok()
 }
 
-#[cfg(not(unix))]
+/// A named pipe answers an open; all instances busy (`ERROR_PIPE_BUSY`) means it runs too.
+#[cfg(windows)]
+fn running(socket: &Path) -> bool {
+    const ERROR_PIPE_BUSY: i32 = 231;
+    match std::fs::OpenOptions::new().read(true).write(true).open(socket) {
+        Ok(_) => true,
+        Err(e) => e.raw_os_error() == Some(ERROR_PIPE_BUSY),
+    }
+}
+
+#[cfg(not(any(unix, windows)))]
 fn running(_socket: &Path) -> bool {
     false
 }
@@ -197,6 +229,14 @@ pub fn run(cmd: &SshCmd, paths: &Paths, config: &Config, home: &Path) -> Result<
             };
             out.push(line);
             out.extend(warnings(&file, &socket, config));
+            if cfg!(windows) {
+                out.push(format!(
+                    "Windows' OpenSSH (ssh.exe in C:\\Windows\\System32\\OpenSSH) reads this. Git Bash's own ssh cannot use the \
+                     agent: for git over SSH run `git config --global core.sshCommand C:/Windows/System32/OpenSSH/ssh.exe`. \
+                     Programs that read SSH_AUTH_SOCK instead: set it to {}.",
+                    socket.display()
+                ));
+            }
             out.push("Your phone lists the keys and signs each login. `rewarden ssh unsetup` undoes this.".to_owned());
         }
         SshCmd::Unsetup => {
@@ -232,7 +272,7 @@ fn warnings(file: &Path, socket: &Path, config: &Config) -> Vec<String> {
     }
     if current(file).ok().flatten().is_some()
         && let Some(effective) = effective_agent(file)
-        && effective != socket.display().to_string()
+        && !same_agent(&effective, socket)
     {
         out.push(format!(
             "Note: an earlier `IdentityAgent` in {} wins ({effective}); remove it for ssh to use Rewarden's agent.",

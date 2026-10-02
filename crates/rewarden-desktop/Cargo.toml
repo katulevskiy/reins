@@ -33,7 +33,6 @@ hyper-util = { version = "0.1.20", features = ["tokio"] }
 log = "0.4.34"
 ring = "0.17.14"
 reqwest = { version = "0.13.5", default-features = false, features = ["rustls-no-provider", "json", "form", "stream", "http2", "query"] }
-rustix = { version = "1.1.4", features = ["process"] }
 rustls = { version = "0.23.44", default-features = false, features = ["ring", "std", "tls12"] }
 serde = { version = "1.0.229", features = ["derive"] }
 serde_json = "1.0.151"
@@ -48,6 +47,10 @@ url = "2.5.8"
 webpki-roots = "1.0.9"
 zeroize = "1.9.0"
 qrcode = { version = "0.14.1", default-features = false }
+
+# The user id, signals and the non-dumpable flag. Windows has none of these; see src/win.rs for what it does instead.
+[target.'cfg(unix)'.dependencies]
+rustix = { version = "1.1.4", features = ["process"] }
 
 [dev-dependencies]
 # No rewarden-core / rewarden-e2e here, even for tests: they are AGPL-3.0 and this crate is Apache-2.0. The test that

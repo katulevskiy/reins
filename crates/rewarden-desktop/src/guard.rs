@@ -6,6 +6,13 @@
 //! also matches a group of short options containing it (`rm -r` matches `rm -rf`). A pattern starting with `text:`
 //! matches those whole words anywhere in the command, ignoring case and punctuation (`text:drop table`).
 //!
+//! Windows commands too: the program's name matches ignoring case and an `.exe`, `.cmd`, `.bat` or `.com` ending
+//! (`C:\Git\cmd\GIT.EXE` is `git`); a cmd switch in a pattern (`/s`) matches ignoring case, also among switches written
+//! together (`/S/Q`); a PowerShell parameter in a pattern (a dash and a capital, `-Recurse`) matches ignoring case and
+//! any abbreviation PowerShell accepts (`-r`, `-rec`, `-Recurse:$true`). Commands are read as a POSIX shell reads them
+//! and also with backslashes as part of the words (cmd, PowerShell: `C:\Users\me\.env`); `cmd /c`, `powershell
+//! -Command` and `-EncodedCommand`, `pwsh -c` and `Invoke-Expression` are looked into like `sh -c`.
+//!
 //! File patterns: without a `/` a pattern matches the file name (`*.pem`, `.env`); with one it matches the end of the
 //! path (`.ssh/*`, `.aws/credentials`). A command's arguments are checked against the file patterns too (`cat .env`).
 //!
@@ -59,6 +66,21 @@ pub const DEFAULT_COMMANDS: &[&str] = &[
     "gh release delete",
     "mkfs*",
     "dd of=*",
+    // Windows: PowerShell's Remove-Item and its aliases with -Recurse (`rm -r` above covers `rm -Recurse`), cmd's
+    // recursive deletes, and wiping disks.
+    "Remove-Item -Recurse",
+    "ri -Recurse",
+    "del -Recurse",
+    "erase -Recurse",
+    "rd -Recurse",
+    "rmdir -Recurse",
+    "rd /s",
+    "rmdir /s",
+    "del /s",
+    "erase /s",
+    "format *:",
+    "Format-Volume",
+    "Clear-Disk",
 ];
 
 /// Built-in file patterns: secrets and keys.
@@ -84,6 +106,8 @@ pub const DEFAULT_FILES: &[&str] = &[
     ".kube/config",
     ".docker/config.json",
     ".netrc",
+    "_netrc",
+    "AppData/Roaming/gcloud/*",
     ".git-credentials",
     ".npmrc",
     ".pypirc",
@@ -253,7 +277,32 @@ fn word_matches(pattern: &str, word: &str) -> bool {
     {
         return word[1..].contains(letter);
     }
+    if let Some(switch) = cmd_switch(pattern) {
+        return word.starts_with('/') && word.split('/').any(|s| s.eq_ignore_ascii_case(switch));
+    }
+    if let Some(name) = powershell_parameter(pattern) {
+        let Some(given) = word.strip_prefix('-').filter(|w| !w.starts_with('-')) else {
+            return false;
+        };
+        let given = given.split_once(':').map_or(given, |(p, _)| p);
+        return !given.is_empty()
+            && given.len() <= name.len()
+            && name[..given.len()].eq_ignore_ascii_case(given)
+            && given.chars().all(|c| c.is_ascii_alphanumeric());
+    }
     glob(pattern, word)
+}
+
+/// `s` for the cmd switch `/s` in a pattern.
+fn cmd_switch(pattern: &str) -> Option<&str> {
+    pattern.strip_prefix('/').filter(|s| !s.is_empty() && s.chars().all(|c| c.is_ascii_alphanumeric()))
+}
+
+/// `Recurse` for the PowerShell parameter `-Recurse` in a pattern: a dash, a capital letter, then letters.
+fn powershell_parameter(pattern: &str) -> Option<&str> {
+    let name = pattern.strip_prefix('-')?;
+    let mut chars = name.chars();
+    (chars.next()?.is_ascii_uppercase() && name.len() > 1 && chars.all(|c| c.is_ascii_alphanumeric())).then_some(name)
 }
 
 /// Whether a command pattern (not `text:`) matches one simple command (`seg[0]` the program's name).
@@ -265,7 +314,7 @@ fn command_matches(pattern: &str, seg: &[String], _: Option<()>) -> bool {
     let Some((name, args)) = seg.split_first() else {
         return false;
     };
-    if !glob(program, name) {
+    if !glob(&program.to_lowercase(), &name.to_lowercase()) {
         return false;
     }
     let mut args = args.iter();
@@ -293,17 +342,65 @@ fn words(text: &str) -> Vec<String> {
 /// The simple commands in a shell command line, each as its words with the program's name first: quotes and escapes
 /// resolved, `;`, `&`, `|`, `&&`, `||`, newlines, parentheses, `$(…)` and backticks separate commands; variable
 /// assignments and wrappers (`sudo`, `env`, `nohup`, `time`, `command`, `exec`, `nice`, `doas`) before the program are
-/// skipped, and `sh -c "…"` / `bash -c` / `eval` are looked into.
+/// skipped, and `sh -c "…"` / `bash -c` / `eval` are looked into. Then the commands the line holds when read the
+/// Windows way (backslashes are part of words, a backtick escapes; `cmd /c`, `powershell -Command` looked into), as far
+/// as they differ.
 #[must_use]
 pub fn segments(command: &str) -> Vec<Vec<String>> {
     let mut out = Vec::new();
-    for raw in split_commands(command) {
-        resolve(&raw, &mut out, 0);
+    for raw in split_commands(command, false) {
+        resolve(&raw, &mut out, 0, false);
+    }
+    let mut windows = Vec::new();
+    for raw in split_commands(command, true) {
+        resolve(&raw, &mut windows, 0, true);
+    }
+    for seg in windows {
+        if !out.contains(&seg) {
+            out.push(seg);
+        }
     }
     out
 }
 
-fn resolve(raw: &[String], out: &mut Vec<Vec<String>>, depth: usize) {
+/// The command PowerShell runs for `-EncodedCommand`: base64 of UTF-16LE text.
+fn decode_powershell(encoded: &str) -> Option<String> {
+    let bytes = data_encoding::BASE64.decode(encoded.trim().as_bytes()).ok()?;
+    let (pairs, rest) = bytes.as_chunks::<2>();
+    if !rest.is_empty() {
+        return None;
+    }
+    let units: Vec<u16> = pairs.iter().map(|b| u16::from_le_bytes(*b)).collect();
+    String::from_utf16(&units).ok()
+}
+
+/// What `cmd /c …`, `powershell -Command …`, `pwsh -EncodedCommand …` or `Invoke-Expression …` runs.
+fn windows_inner(seg: &[String]) -> Option<String> {
+    let program = seg.first()?.to_ascii_lowercase();
+    let rest = |i: usize| (i + 1 < seg.len()).then(|| seg[i + 1..].join(" "));
+    match program.as_str() {
+        "cmd" => {
+            let i = seg.iter().position(|w| w.eq_ignore_ascii_case("/c") || w.eq_ignore_ascii_case("/k"))?;
+            rest(i)
+        }
+        "powershell" | "pwsh" => seg.iter().enumerate().skip(1).find_map(|(i, w)| {
+            let opt = w.strip_prefix('-')?.to_ascii_lowercase();
+            if opt.is_empty() {
+                None
+            } else if "command".starts_with(&opt) {
+                rest(i)
+            } else if opt == "ec" || "encodedcommand".starts_with(&opt) {
+                decode_powershell(seg.get(i + 1)?)
+            } else {
+                None
+            }
+        }),
+        "iex" | "invoke-expression" => rest(0),
+        _ => None,
+    }
+}
+
+fn resolve(raw: &[String], out: &mut Vec<Vec<String>>, depth: usize, windows: bool) {
     const WRAPPERS: &[&str] = &["sudo", "doas", "env", "nohup", "time", "command", "exec", "nice", "builtin"];
     let mut i = 0;
     loop {
@@ -337,19 +434,26 @@ fn resolve(raw: &[String], out: &mut Vec<Vec<String>>, depth: usize) {
                 .position(|w| w == "-c" || (w.starts_with('-') && !w.starts_with("--") && w.ends_with('c')))
                 .and_then(|p| seg.get(p + 1).cloned()),
             "eval" => Some(seg[1..].join(" ")),
+            _ if windows => windows_inner(&seg),
             _ => None,
         };
         if let Some(inner) = inner {
-            for raw in split_commands(&inner) {
-                resolve(&raw, out, depth + 1);
+            for raw in split_commands(&inner, windows) {
+                resolve(&raw, out, depth + 1, windows);
             }
         }
     }
     out.push(seg);
 }
 
+/// The program's name: no directory, and without a Windows program ending (`git.exe`, `npm.cmd`).
 fn program_name(word: &str) -> String {
-    word.rsplit(['/', '\\']).next().unwrap_or(word).to_owned()
+    let name = word.rsplit(['/', '\\']).next().unwrap_or(word);
+    let lower = name.to_ascii_lowercase();
+    match [".exe", ".cmd", ".bat", ".com"].iter().find(|ext| lower.ends_with(*ext) && name.len() > ext.len()) {
+        Some(ext) => name[..name.len() - ext.len()].to_owned(),
+        None => name.to_owned(),
+    }
 }
 
 fn is_assignment(word: &str) -> bool {
@@ -360,8 +464,9 @@ fn is_assignment(word: &str) -> bool {
     })
 }
 
-/// Splits a command line into simple commands (lists of words), resolving quotes and escapes.
-fn split_commands(command: &str) -> Vec<Vec<String>> {
+/// Splits a command line into simple commands (lists of words), resolving quotes and escapes. `windows`: as cmd and
+/// PowerShell read it, where a backslash is part of the word (`C:\Users`) and a backtick escapes the next character.
+fn split_commands(command: &str, windows: bool) -> Vec<Vec<String>> {
     let mut commands: Vec<Vec<String>> = Vec::new();
     let mut current: Vec<String> = Vec::new();
     let mut word = String::new();
@@ -388,6 +493,31 @@ fn split_commands(command: &str) -> Vec<Vec<String>> {
                     }
                     word.push(q);
                 }
+            }
+            '"' if windows => {
+                in_word = true;
+                while let Some(q) = chars.next() {
+                    match q {
+                        '"' => break,
+                        '`' => {
+                            if let Some(n) = chars.next() {
+                                word.push(n);
+                            }
+                        }
+                        _ => word.push(q),
+                    }
+                }
+            }
+            '`' if windows => {
+                in_word = true;
+                match chars.next() {
+                    Some('\n') | None => {}
+                    Some(n) => word.push(n),
+                }
+            }
+            '\\' if windows => {
+                in_word = true;
+                word.push('\\');
             }
             '"' => {
                 in_word = true;
@@ -530,6 +660,82 @@ mod tests {
         ] {
             assert_eq!(cmd(c), None, "{c}");
         }
+    }
+
+    #[test]
+    fn windows_commands_are_caught_too() {
+        let encoded = |s: &str| {
+            let bytes: Vec<u8> = s.encode_utf16().flat_map(u16::to_le_bytes).collect();
+            data_encoding::BASE64.encode(&bytes)
+        };
+        let hidden = format!("powershell.exe -NoProfile -EncodedCommand {}", encoded("Remove-Item -Recurse C:\\src"));
+        for (c, rule) in [
+            ("Remove-Item -Recurse -Force C:\\Users\\me\\src", "Remove-Item -Recurse"),
+            ("remove-item .\\build -rec", "Remove-Item -Recurse"),
+            ("Remove-Item -Path build -Recurse:$true", "Remove-Item -Recurse"),
+            ("ri build -r", "ri -Recurse"),
+            ("rm -Recurse -Force build", "rm -r"),
+            ("rd /s /q C:\\work", "rd /s"),
+            ("RMDIR /S/Q build", "rmdir /s"),
+            ("del /f /s /q *.log", "del /s"),
+            ("cmd /c \"rd /s /q build\"", "rd /s"),
+            ("cmd.exe /C del /S x", "del /s"),
+            ("pwsh -c \"Remove-Item -Recurse x\"", "Remove-Item -Recurse"),
+            (hidden.as_str(), "Remove-Item -Recurse"),
+            ("iex 'Remove-Item x -Recurse'", "Remove-Item -Recurse"),
+            ("format D: /q", "format *:"),
+            ("Format-Volume -DriveLetter D", "Format-Volume"),
+            ("& \"C:\\Program Files\\Git\\cmd\\git.exe\" push --force", "git push --force*"),
+            ("GIT.EXE push -f origin main", "git push -f"),
+            ("npm.cmd publish", "npm publish"),
+            ("type C:\\Users\\me\\project\\.env", ".env"),
+            ("Get-Content $env:USERPROFILE\\.ssh\\id_ed25519", "id_ed25519"),
+            ("copy C:\\Users\\me\\.aws\\credentials C:\\tmp", ".aws/credentials"),
+            ("type %USERPROFILE%\\_netrc", "_netrc"),
+            ("Remove-Item `\n  -Recurse build", "Remove-Item -Recurse"),
+        ] {
+            assert_eq!(cmd(c).as_deref(), Some(rule), "{c}");
+        }
+        for c in [
+            "Remove-Item build.log",
+            "Remove-Item -Force x",
+            "rd build",
+            "del /q x.tmp",
+            "dir /s",
+            "Get-ChildItem -Recurse",
+            "git push origin main",
+            "type C:\\Users\\me\\.env.example",
+            "Get-Content C:\\Users\\me\\.ssh\\id_ed25519.pub",
+            "powershell -Command \"Get-ChildItem\"",
+            "cmd /c dir",
+        ] {
+            assert_eq!(cmd(c), None, "{c}");
+        }
+        let g = guard();
+        assert_eq!(
+            g.check_file("C:\\Users\\me\\AppData\\Roaming\\gcloud\\credentials.db").map(|m| m.pattern),
+            Some("AppData/Roaming/gcloud/*".to_owned())
+        );
+    }
+
+    #[test]
+    fn windows_switches_and_parameters_match_the_windows_way() {
+        assert!(word_matches("/s", "/S"));
+        assert!(word_matches("/s", "/q/s"));
+        assert!(!word_matches("/s", "/q"));
+        assert!(!word_matches("/s", "s"));
+        assert!(word_matches("-Recurse", "-r"));
+        assert!(word_matches("-Recurse", "-RECURSE"));
+        assert!(word_matches("-Recurse", "-recurse:$false"));
+        assert!(!word_matches("-Recurse", "-Recursive"));
+        assert!(!word_matches("-Recurse", "--recurse"));
+        assert!(!word_matches("-Recurse", "-"));
+        // Unix patterns keep their case.
+        assert!(!word_matches("-D", "-d"));
+        assert_eq!(program_name("C:\\Git\\cmd\\git.exe"), "git");
+        assert_eq!(program_name("/usr/bin/git"), "git");
+        assert_eq!(program_name(".exe"), ".exe");
+        assert_eq!(decode_powershell("not base64!"), None);
     }
 
     #[test]
