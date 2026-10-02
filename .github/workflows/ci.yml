@@ -128,8 +128,10 @@ jobs:
           $failed = $false
           try { Get-Content scripts\install.ps1 -Raw | Invoke-Expression } catch { $failed = $_.ToString() -match 'checksum' }
           if (-not $failed) { throw 'a download that does not match SHA256SUMS was installed' }
-      # The release builds Windows on Arm on this runner, without running it; this shows early that it compiles.
+      # The release builds Windows on Arm on this runner, without running it, and leaves it out when it fails; this
+      # shows early whether it compiles, without failing CI (and so holding releases back) when it does not.
       - name: Check aarch64-pc-windows-msvc
+        continue-on-error: true
         run: cargo check --locked -p rewarden-desktop --bin rewarden --target aarch64-pc-windows-msvc
 
   release-scripts:
