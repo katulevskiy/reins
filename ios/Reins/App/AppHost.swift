@@ -21,6 +21,8 @@ final class AppHost {
         } else {
             do {
                 let core = try CoreFactory.make(notifier: notifier)
+                // Autopilot's forward pass; the core loads the model on first need.
+                core.setModelRuntime(runtime: OnnxModelRuntime.forApp())
                 let model = AppModel(core: core, feedback: feedback, authenticator: Authenticator())
                 self.model = model
                 notifier.model = model
@@ -29,6 +31,8 @@ final class AppHost {
             }
         }
         if let model {
+            let notifier = notifier
+            model.onModelDownloadFinished = { failure in notifier.modelDownloadFinished(failure: failure) }
             Task {
                 await model.refreshSession()
                 // `-open reins://...`: open a link at launch (simctl openurl stops at a confirmation prompt).
