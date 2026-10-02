@@ -65,7 +65,7 @@ private struct ApprovalContent: View {
         }
         .onAppear { if model.pending.contains(where: { $0.id == view.requestId }) { wasListed = true } }
         .onChange(of: model.pending.map(\.id)) { _, ids in if ids.contains(view.requestId) { wasListed = true } }
-        .accessibilityIdentifier("approvalSheet")
+        .accessibilityContainer("approvalSheet")
     }
 
     @ViewBuilder private var details: some View {

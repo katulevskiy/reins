@@ -310,3 +310,11 @@ struct FlowRow: Layout {
         return rows
     }
 }
+
+extension View {
+    /// Names a group for UI tests without hiding the names of what is inside it (an identifier on a plain container
+    /// would be given to every element in it).
+    func accessibilityContainer(_ identifier: String) -> some View {
+        accessibilityElement(children: .contain).accessibilityIdentifier(identifier)
+    }
+}

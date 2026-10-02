@@ -37,7 +37,7 @@ struct GitPushSection: View {
         }
         .padding(.horizontal, 16)
         .padding(.vertical, 8)
-        .accessibilityIdentifier("gitPush")
+        .accessibilityContainer("gitPush")
     }
 }
 

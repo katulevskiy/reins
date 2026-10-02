@@ -39,7 +39,7 @@ struct ActivityScreen: View {
                 }
                 .padding(.bottom, 32)
             }
-            .accessibilityIdentifier("activityList")
+            .accessibilityContainer("activityList")
             .refreshable {
                 await model.refreshPending()
                 feedback.play(.refresh)

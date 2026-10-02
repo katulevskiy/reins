@@ -149,7 +149,7 @@ private struct UploadContent: View {
                 onApprove: { Task { await vm.approve(model) } }
             )
         }
-        .accessibilityIdentifier("uploadSheet")
+        .accessibilityContainer("uploadSheet")
     }
 }
 

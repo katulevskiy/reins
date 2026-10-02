@@ -202,7 +202,7 @@ struct EntryAutopilotSection: View {
                 if let error { Banner(error, kind: .error) }
             }
             .padding(16)
-            .accessibilityIdentifier("entryAutopilot")
+            .accessibilityContainer("entryAutopilot")
         }
         .alert(should == .deny ? "Should this have been denied?" : "Should this have been approved?", isPresented: $asking) {
             Button(should == .deny ? "Deny next time" : "Approve next time") { Task { await correct(should) } }

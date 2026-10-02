@@ -35,7 +35,18 @@ struct DecisionLayout<Details: View, Recap: View, Decision: View>: View {
                 } else {
                     ScrollView { details.padding(.bottom, 12) }
                         .scrollDismissesKeyboard(.interactively)
-                        .safeAreaInset(edge: .bottom, spacing: 0) { decision }
+                        .safeAreaInset(edge: .bottom, spacing: 0) {
+                            // The glass buttons float over the details; a fade underneath keeps both readable.
+                            decision.background {
+                                LinearGradient(
+                                    stops: [.init(color: Palette.background.opacity(0), location: 0), .init(color: Palette.background.opacity(0.92), location: 0.45)],
+                                    startPoint: .top,
+                                    endPoint: .bottom
+                                )
+                                .ignoresSafeArea()
+                                .allowsHitTesting(false)
+                            }
+                        }
                 }
             }
         }

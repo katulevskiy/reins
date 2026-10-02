@@ -185,7 +185,7 @@ private struct PairingContent: View {
                 }
             )
         }
-        .accessibilityIdentifier("pairingSheet")
+        .accessibilityContainer("pairingSheet")
     }
 
     private var codes: some View {

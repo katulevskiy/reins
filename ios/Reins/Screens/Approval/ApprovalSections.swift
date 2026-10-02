@@ -23,15 +23,16 @@ struct MessagesSection: View {
                         Button("Clear") {
                             vm.draft.selected = []
                             vm.draft.allMail = nil
+                            feedback.play(.tap)
                         }
                         .font(RFont.sans(14.5, .medium))
                         .foregroundStyle(Palette.accent)
-                        .feedbackTap(.tap, feedback)
                         .accessibilityIdentifier("clearAll")
                     } else {
                         Button {
                             vm.draft.selected = Set(allIds)
                             vm.draft.allMail = nil
+                            feedback.play(.tap)
                         } label: {
                             Label("Select all", systemImage: "checkmark").font(RFont.sans(14.5, .medium))
                         }
@@ -39,7 +40,6 @@ struct MessagesSection: View {
                         .buttonBorderShape(.capsule)
                         .tint(Palette.accent)
                         .controlSize(.small)
-                        .feedbackTap(.tap, feedback)
                         .accessibilityIdentifier("selectAll")
                     }
                 }
@@ -119,7 +119,7 @@ struct EmailPreview: View {
 
     var body: some View {
         if framed {
-            Card(padding: 16) { fields }.accessibilityIdentifier("emailPreview")
+            Card(padding: 16) { fields }.accessibilityContainer("emailPreview")
         } else {
             fields.padding(16).frame(maxWidth: .infinity, alignment: .leading)
         }
@@ -166,7 +166,7 @@ struct WritePreview: View {
         }
         .padding(.horizontal, 16)
         .padding(.vertical, 8)
-        .accessibilityIdentifier("writePreview")
+        .accessibilityContainer("writePreview")
     }
 }
 
@@ -272,6 +272,6 @@ struct AccountsCard: View {
         }
         .padding(.horizontal, 16)
         .padding(.vertical, 8)
-        .accessibilityIdentifier("accountsCard")
+        .accessibilityContainer("accountsCard")
     }
 }

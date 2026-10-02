@@ -53,7 +53,7 @@ struct McpCallSection: View {
         }
         .padding(.horizontal, 16)
         .padding(.vertical, 8)
-        .accessibilityIdentifier("mcpCall")
+        .accessibilityContainer("mcpCall")
     }
 }
 
@@ -68,7 +68,7 @@ struct AttachedFileSection: View {
         }
         .padding(.horizontal, 16)
         .padding(.vertical, 8)
-        .accessibilityIdentifier("attachedFile")
+        .accessibilityContainer("attachedFile")
     }
 }
 
@@ -96,7 +96,7 @@ struct AskSection: View {
         }
         .padding(.horizontal, 16)
         .padding(.vertical, 8)
-        .accessibilityIdentifier("ask")
+        .accessibilityContainer("ask")
     }
 }
 
@@ -129,7 +129,7 @@ struct SecretsSection: View {
         }
         .padding(.horizontal, 16)
         .padding(.vertical, 8)
-        .accessibilityIdentifier("secrets")
+        .accessibilityContainer("secrets")
     }
 }
 
@@ -158,6 +158,6 @@ struct SshSection: View {
         }
         .padding(.horizontal, 16)
         .padding(.vertical, 8)
-        .accessibilityIdentifier("ssh")
+        .accessibilityContainer("ssh")
     }
 }

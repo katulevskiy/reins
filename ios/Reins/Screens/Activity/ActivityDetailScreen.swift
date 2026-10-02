@@ -76,7 +76,7 @@ struct ActivityDetailScreen: View {
             }
             if let email = info.email {
                 GroupCard(header: "The email") {
-                    EmailPreview(email: email, framed: false).accessibilityIdentifier("detailEmail")
+                    EmailPreview(email: email, framed: false).accessibilityContainer("detailEmail")
                 }
             }
             if !info.messages.isEmpty { messages(entry) }

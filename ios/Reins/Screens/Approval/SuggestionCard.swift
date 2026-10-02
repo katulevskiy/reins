@@ -57,7 +57,7 @@ struct SuggestionCard: View {
         .background(tint.opacity(scheme == .dark ? 0.10 : 0.07), in: RoundedRectangle(cornerRadius: 18, style: .continuous))
         .overlay(RoundedRectangle(cornerRadius: 18, style: .continuous).strokeBorder(tint.opacity(0.25), lineWidth: 0.75))
         .clipShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
-        .accessibilityIdentifier("suggestion")
+        .accessibilityContainer("suggestion")
     }
 
     @ViewBuilder private func detail(_ s: SuggestionView) -> some View {
@@ -94,7 +94,7 @@ struct SuggestionCard: View {
         }
         .padding(.horizontal, 14)
         .padding(.bottom, 14)
-        .accessibilityIdentifier("suggestionDetail")
+        .accessibilityContainer("suggestionDetail")
     }
 }
 
