@@ -220,6 +220,8 @@ pub struct NewAccountKeys {
     pub public_key: String,
     /// Its private key, PKCS#8 DER wrapped with the user key.
     pub encrypted_private_key: String,
+    /// The user key itself, for the phone to keep (the vault opens without asking again).
+    pub user_key: VaultKey,
 }
 
 impl fmt::Debug for NewAccountKeys {
@@ -280,6 +282,7 @@ pub fn new_account_keys(password: &str, email: &str, kdf: Kdf) -> Result<NewAcco
         key,
         public_key: BASE64.encode(public_der.as_bytes()),
         encrypted_private_key,
+        user_key,
     })
 }
 

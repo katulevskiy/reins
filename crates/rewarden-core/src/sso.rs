@@ -20,7 +20,7 @@
 
 use std::fmt;
 
-use data_encoding::{BASE32_NOPAD, BASE64, BASE64URL_NOPAD};
+use data_encoding::{BASE32_NOPAD, BASE64URL_NOPAD};
 use reqwest::header::ACCEPT;
 use ring::digest;
 use serde::Deserialize;
@@ -28,7 +28,7 @@ use url::Url;
 use zeroize::Zeroizing;
 
 use crate::CoreError;
-use crate::crypto::{Kdf, MasterKey, VaultKey, master_key, master_password_hash, random_bytes};
+use crate::crypto::{self, Kdf, MasterKey, NewAccountKeys, VaultKey, master_key, master_password_hash, random_bytes};
 use crate::http::{ServerUrl, error_text};
 use crate::vault::{DEVICE_NAME, DEVICE_TYPE_ANDROID, Tokens};
 
@@ -286,78 +286,11 @@ impl AccountSecret {
     }
 }
 
-/// The keys of a new account made with an account secret: what `/api/accounts/set-password` takes, and the user key
-/// itself to keep on the phone.
-pub struct KeylessKeys {
-    pub master_password_hash: Zeroizing<String>,
-    /// The user key wrapped with the stretched master key.
-    pub key: String,
-    pub public_key: String,
-    pub encrypted_private_key: String,
-    pub user_key: VaultKey,
-}
-
-impl fmt::Debug for KeylessKeys {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.debug_struct("KeylessKeys").field("public_key", &self.public_key).finish_non_exhaustive()
-    }
-}
-
-/// ring's system generator as the `rand_core` generator RSA key generation takes.
-struct SystemRng;
-
-impl rsa::rand_core::RngCore for SystemRng {
-    fn next_u32(&mut self) -> u32 {
-        let mut b = [0u8; 4];
-        self.fill_bytes(&mut b);
-        u32::from_le_bytes(b)
-    }
-
-    fn next_u64(&mut self) -> u64 {
-        let mut b = [0u8; 8];
-        self.fill_bytes(&mut b);
-        u64::from_le_bytes(b)
-    }
-
-    fn fill_bytes(&mut self, dest: &mut [u8]) {
-        use ring::rand::SecureRandom;
-        // rand_core 0.6 gives this no way to fail; ring's generator only fails when the OS has none at all.
-        assert!(ring::rand::SystemRandom::new().fill(dest).is_ok(), "system random generator failed");
-    }
-
-    fn try_fill_bytes(&mut self, dest: &mut [u8]) -> Result<(), rsa::rand_core::Error> {
-        self.fill_bytes(dest);
-        Ok(())
-    }
-}
-
-impl rsa::rand_core::CryptoRng for SystemRng {}
-
-/// A random user key wrapped with the secret's master key, and an RSA-2048 key pair whose private half is wrapped
-/// with the user key, as the Bitwarden clients make them. CPU-heavy: call from `spawn_blocking`.
-pub fn new_keys(secret: &AccountSecret) -> Result<KeylessKeys, CoreError> {
-    use rsa::pkcs8::{EncodePrivateKey, EncodePublicKey};
-
-    let master = secret.master_key()?;
-    let master_password_hash = secret.master_password_hash(&master);
-    let user_key = VaultKey::from_bytes(&Zeroizing::new(random_bytes::<64>()?)[..])?;
-    let key = master.stretch().encrypt(&user_key.to_bytes())?;
-    let private = rsa::RsaPrivateKey::new(&mut SystemRng, 2048)
-        .map_err(|e| CoreError::storage(format!("could not make the account's key pair: {e}")))?;
-    let public_der = rsa::RsaPublicKey::from(&private)
-        .to_public_key_der()
-        .map_err(|e| CoreError::storage(format!("could not encode the account's public key: {e}")))?;
-    let private_der = private
-        .to_pkcs8_der()
-        .map_err(|e| CoreError::storage(format!("could not encode the account's private key: {e}")))?;
-    let encrypted_private_key = user_key.encrypt(private_der.as_bytes())?;
-    Ok(KeylessKeys {
-        master_password_hash,
-        key,
-        public_key: BASE64.encode(public_der.as_bytes()),
-        encrypted_private_key,
-        user_key,
-    })
+/// A new account's keys with `secret` in the master password's place: a random user key wrapped with the secret's
+/// master key, and an RSA-2048 key pair whose private half is wrapped with the user key, as the Bitwarden clients
+/// make them ([`crypto::new_account_keys`]). CPU-heavy: call from `spawn_blocking`.
+pub fn new_keys(secret: &AccountSecret) -> Result<NewAccountKeys, CoreError> {
+    crypto::new_account_keys(&secret.password(), SECRET_SALT, SECRET_KDF)
 }
 
 /// Gives the signed-in account its keys (`/api/accounts/set-password`, the call Bitwarden clients make after a
@@ -366,7 +299,7 @@ pub async fn set_keys(
     http: &reqwest::Client,
     server: &ServerUrl,
     access_token: &str,
-    keys: &KeylessKeys,
+    keys: &NewAccountKeys,
 ) -> Result<(), CoreError> {
     let Kdf::Pbkdf2 {
         iterations,
