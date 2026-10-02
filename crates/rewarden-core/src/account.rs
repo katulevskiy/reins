@@ -81,7 +81,7 @@ impl Engine {
                         .map_err(interrupted)?;
                     match opened {
                         Ok(key) => {
-                            self.store.secret_put(VAULT, &email, &key.to_bytes())?;
+                            self.keep_vault_key(&email, &key)?;
                             AccountKeys::Unlocked
                         }
                         // A secret from an earlier account of the same id would be odd; it does not open this one.
@@ -107,8 +107,15 @@ impl Engine {
         // never keys whose secret is lost.
         self.store.secret_put(SECRET_SERVICE, user_id, &raw)?;
         sso::set_keys(&self.http, server, access, &keys).await?;
-        self.store.secret_put(VAULT, email, &keys.user_key.to_bytes())?;
+        self.keep_vault_key(email, &keys.user_key)?;
         Ok(())
+    }
+
+    /// Keeps the vault key sealed, as unlocking the vault with a master password does, and lists the vault as a
+    /// connected integration: an account without a master password never asks for one.
+    fn keep_vault_key(&self, email: &str, key: &VaultKey) -> Result<(), CoreError> {
+        self.store.secret_put(VAULT, email, &key.to_bytes())?;
+        self.register_account(VAULT, email).map(drop)
     }
 
     fn secret_of(&self, user_id: &str) -> Result<Option<AccountSecret>, CoreError> {
@@ -150,7 +157,7 @@ impl Engine {
         };
         match tokio::task::spawn_blocking(move || secret.open_user_key(&wrapped)).await.map_err(interrupted)? {
             Ok(key) => {
-                self.store.secret_put(VAULT, &session.email, &key.to_bytes())?;
+                self.keep_vault_key(&session.email, &key)?;
                 Ok(AccountKeys::Unlocked)
             }
             Err(_) => Ok(AccountKeys::Locked),
@@ -169,7 +176,7 @@ impl Engine {
             let key =
                 tokio::task::spawn_blocking(move || secret.open_user_key(&wrapped)).await.map_err(interrupted)??;
             self.store.secret_put(SECRET_SERVICE, &user_id, &raw)?;
-            self.store.secret_put(VAULT, &email, &key.to_bytes())?;
+            self.keep_vault_key(&email, &key)?;
             return Ok(());
         }
         let kdf = VaultClient::new(&session.http, &session.server).prelogin(&email).await?;
@@ -183,7 +190,7 @@ impl Engine {
         })
         .await
         .map_err(interrupted)??;
-        self.store.secret_put(VAULT, &email, &key.to_bytes())?;
+        self.keep_vault_key(&email, &key)?;
         Ok(())
     }
 
@@ -215,7 +222,7 @@ impl Engine {
         let raw = Zeroizing::new(secret.as_bytes().to_vec());
         let key = tokio::task::spawn_blocking(move || secret.open_user_key(&wrapped)).await.map_err(interrupted)??;
         self.store.secret_put(SECRET_SERVICE, &user_id, &raw)?;
-        self.store.secret_put(VAULT, &session.email, &key.to_bytes())?;
+        self.keep_vault_key(&session.email, &key)?;
         Ok(())
     }
 }

@@ -14,13 +14,15 @@ You need:
 
 1. On the phone, open <https://reins2fa.com/app> and install the APK (Android asks you to allow installs from your
    browser once). The app updates itself from the same place.
-2. Choose **Create account**: your email and a master password (at least 12 characters), twice. Nobody can recover
-   the master password, not even Reins: write it down. The account is a Vaultwarden (Bitwarden-compatible) account,
-   so its vault also opens in any Bitwarden client pointed at the server. Already have an account? Choose **Sign
-   in**. The app uses the hosted server; **Use another server** is for your own.
-3. Creating the account or signing in makes this phone your **approval device**. Only one phone per account is the
-   approval device. To move the role to another phone, sign in there, or tap **Use this phone for approvals** in its
-   settings. The old phone is told it was replaced.
+2. Tap **Continue** and sign in with Google, Apple, GitHub or a code sent to your email. There is no password: the
+   first time, the phone makes your account and the keys of its vault by itself and keeps them. **Settings →
+   Account → Recovery code** shows the code that opens the vault if you lose the phone; write it down. **Use another
+   server** is for your own server, which may also offer a master password instead.
+3. Signing in makes this phone your **approval device**. Only one phone per account is the approval device. On a
+   second phone, **Continue** finds the account's keys on the first one: tap **Ask my other phone**, check that both
+   show the same six digits, and approve on the first phone (or enter the recovery code). The new phone then takes
+   over the role, and the old one is told it was replaced. **Use this phone for approvals** in the settings moves it
+   back.
 4. Allow notifications. Requests arrive as notifications, even when the app is closed.
 
 The app supports authenticator-app (TOTP) two-factor login. Other second factors are not supported by the app yet.
@@ -36,7 +38,7 @@ Go to **Activity → Integrations**. Each service is connected on the phone and 
 | GitLab, Codeberg, Bitbucket | A token, for git through the desktop app. |
 | Telegram | Your own account: phone number, code, and 2-step password if you have one. |
 | Phone calendar, contacts, SMS | Android permissions, asked when you connect each one. |
-| Password vault | Your master password, entered once. The phone keeps the vault key sealed, not the password. |
+| Password vault | Nothing to enter for an account made with **Continue**. Otherwise your master password, entered once. The phone keeps the vault key sealed, not the password. |
 | Other MCP servers | Add the server's URL. The app signs in with OAuth or a token you give it. |
 
 ## 3a. Connect a cloud AI (Claude.ai, ChatGPT)

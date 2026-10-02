@@ -49,6 +49,8 @@ async fn sso_sign_in_makes_a_keyless_vault_that_follows_workos() {
     assert_eq!(outcome.keys, AccountKeys::Created);
     first.core.register_device(None).await.expect("the first phone is the approval device");
     assert_eq!(first.core.account_keys().await.unwrap(), AccountKeys::Unlocked);
+    let accounts = first.core.accounts().await.unwrap();
+    assert!(accounts.iter().any(|a| a.service == "vault" && a.account == "ada@example.com"), "the vault is connected");
     let code = first.core.account_recovery_code().await.expect("recovery code");
     assert_eq!(code.split('-').count(), 13, "{code}");
     assert_eq!(prelogin_iterations(&server, "ada@example.com").await, 100_000);

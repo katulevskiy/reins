@@ -231,3 +231,5 @@ The design specs under `docs/superpowers/specs/` record the detailed contracts a
 - `2026-09-30-github-vault-tools.md`: the GitHub and vault tools.
 - `2026-10-01-files-mcp-daemon.md`: large files, remote MCP, and the desktop app's other parts.
 - `2026-10-01-autopilot-laya.md`: Autopilot.
+- `2026-10-02-passwordless-sign-in.md`: sign-in through WorkOS AuthKit, the keyless vault, another phone, the WorkOS
+  sync.
