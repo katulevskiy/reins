@@ -36,7 +36,8 @@ import org.robolectric.annotation.GraphicsMode
 class OnboardingFlowTest : FlowHarness() {
     private val password = "correct horse battery staple"
     private val expired = "This code has expired or was already used. Show a new one on your computer."
-    private val server get() = AccountRules.serverUrl(BuildConfig.DEFAULT_SERVER)!!
+    /** The password forms are only offered for a server people run themselves. */
+    private val server = "https://reins.example.com"
 
     /** What the next scan returns. */
     @Volatile private var scan: ScanResult = ScanResult.Cancelled
@@ -65,7 +66,15 @@ class OnboardingFlowTest : FlowHarness() {
 
     private fun viewLink(uri: String) = Intent(Intent.ACTION_VIEW, Uri.parse(uri)).setClass(context, MainActivity::class.java)
 
+    /** "Use another server" on the welcome page, with [server] typed in. */
+    private fun useOwnServer() {
+        tap("useAnotherServer")
+        awaitTag("server")
+        rule.onNodeWithTag("server").performTextReplacement(server)
+    }
+
     private fun fillCreateForm(email: String = "new@example.com") {
+        useOwnServer()
         tap("createAccount")
         awaitTag("create")
         rule.onNodeWithTag("email").performTextReplacement(email)
@@ -75,6 +84,7 @@ class OnboardingFlowTest : FlowHarness() {
     }
 
     private fun signInFromWelcome(email: String = "me@example.com") {
+        useOwnServer()
         tap("startSignIn")
         awaitTag("signIn")
         rule.onNodeWithTag("email").performTextReplacement(email)
@@ -92,23 +102,48 @@ class OnboardingFlowTest : FlowHarness() {
     // ---- welcome, new account, sign-in -------------------------------------------------------------------------------
 
     @Test
-    fun signedOutTheAppWelcomesWithTwoChoices() {
+    fun signedOutTheAppWelcomesWithContinue() {
         core.session = null
         launch()
         awaitTag("welcome")
-        assertTrue(has("createAccount"))
-        assertTrue(has("startSignIn"))
+        rule.onNodeWithTag("continue").assertIsEnabled()
+        rule.onNodeWithTag("serverName").assertTextContains(AccountRules.displayHost(BuildConfig.DEFAULT_SERVER), substring = true)
+        assertFalse(has("createAccount"))
+        assertFalse(has("startSignIn"))
         assertFalse(has("server"))
+    }
+
+    @Test
+    fun thePasswordFormsAreOnlyOfferedForAnotherServer() {
+        core.session = null
+        launch()
+        tap("useAnotherServer")
+        awaitTag("server")
+        // "https://" alone is no address yet.
+        rule.onNodeWithTag("continue").assertIsNotEnabled()
+        assertFalse(has("startSignIn"))
+        rule.onNodeWithTag("server").performTextReplacement("reins.example.com")
+        rule.onNodeWithTag("continue").assertIsEnabled()
+        awaitTag("startSignIn")
+        assertTrue(has("createAccount"))
+        // Typing the hosted server's address does not bring them back for it.
+        rule.onNodeWithTag("server").performTextReplacement(BuildConfig.DEFAULT_SERVER)
+        awaitGone("startSignIn")
+        assertFalse(has("createAccount"))
+        tap("defaultServer")
+        awaitGone("server")
+        assertFalse(has("startSignIn"))
     }
 
     @Test
     fun creatingAnAccountChecksTheFormThenRegistersThePhone() {
         core.session = null
         launch()
+        useOwnServer()
         tap("createAccount")
         awaitTag("create")
         rule.onNodeWithTag("create").assertIsNotEnabled()
-        rule.onNodeWithTag("serverName").assertTextContains(AccountRules.displayHost(BuildConfig.DEFAULT_SERVER), substring = true)
+        rule.onNodeWithTag("serverName").assertTextContains("reins.example.com", substring = true)
         assertTrue(has("noRecovery"))
         assertTrue(showsText("not even Reins", substring = true))
 
@@ -148,19 +183,6 @@ class OnboardingFlowTest : FlowHarness() {
         assertTrue(has("create"))
         assertFalse(has("setupComputer"))
         assertTrue(core.registrations.isEmpty())
-    }
-
-    @Test
-    fun anotherServerCanBeChosenForANewAccount() {
-        core.session = null
-        launch()
-        fillCreateForm()
-        tap("useAnotherServer")
-        awaitTag("server")
-        rule.onNodeWithTag("server").performTextReplacement("reins.example.com")
-        tap("create")
-        awaitTag("setupComputer")
-        assertEquals("https://reins.example.com", core.createdAccounts.single()[0])
     }
 
     // ---- the setup after signing in ------------------------------------------------------------------------------------

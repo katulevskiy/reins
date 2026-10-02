@@ -16,6 +16,7 @@ import dev.rewarden.android.platform.AppNotifier
 import dev.rewarden.android.platform.Foreground
 import dev.rewarden.android.platform.GrantReminders
 import dev.rewarden.android.platform.McpRedirectActivity
+import dev.rewarden.android.platform.SsoRedirectActivity
 import dev.rewarden.android.ui.mcp.isMcpRedirect
 import dev.rewarden.android.platform.AuthenticatorProvider
 import dev.rewarden.android.platform.update.UpdateNotifier
@@ -26,6 +27,7 @@ import dev.rewarden.android.ui.AppViewModel
 import dev.rewarden.android.ui.RewardenRoot
 import dev.rewarden.android.ui.nav.DeepLink
 import dev.rewarden.android.ui.pairing.PairingCode
+import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 
@@ -44,10 +46,12 @@ class MainActivity : FragmentActivity() {
         if (savedInstanceState == null) handleIntent(intent)
         if (container.updates != null) UpdateWorker.schedule(applicationContext)
 
-        // Long-poll only while the screen is on and someone is signed in.
+        // Long-poll only while the screen is on and someone is signed in whose keys this phone can open (a phone
+        // waiting on the Unlock screen is not the approval device).
         lifecycleScope.launch {
             repeatOnLifecycle(Lifecycle.State.STARTED) {
-                container.state.session.first { it is SessionState.SignedIn }
+                combine(container.state.session, container.state.keysLocked) { session, locked -> session is SessionState.SignedIn && !locked }
+                    .first { it }
                 container.refreshPending()
                 ForegroundSync(container).run()
             }
@@ -144,6 +148,11 @@ class MainActivity : FragmentActivity() {
                     app.openPairingLink(code)
                 }
             }
+            return
+        }
+        if (intent?.action == SsoRedirectActivity.ACTION_SIGNED_IN) {
+            // The sign-in screen finishes it, and only when a sign-in started on this phone waits for it.
+            intent.dataString?.let { container.ssoSignIn.deliver(it) }
             return
         }
         if (intent?.action == McpRedirectActivity.ACTION_SIGNED_IN) {

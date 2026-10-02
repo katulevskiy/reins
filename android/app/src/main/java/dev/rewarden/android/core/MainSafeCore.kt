@@ -1,5 +1,6 @@
 package dev.rewarden.android.core
 
+import dev.rewarden.core.AccountKeys
 import dev.rewarden.core.AccountView
 import dev.rewarden.core.AutopilotMode
 import dev.rewarden.core.AutopilotSettings
@@ -20,6 +21,9 @@ import dev.rewarden.core.ConnectionView
 import dev.rewarden.core.EmailContent
 import dev.rewarden.core.GmailStatus
 import dev.rewarden.core.GrantView
+import dev.rewarden.core.JoinProgress
+import dev.rewarden.core.JoinStart
+import dev.rewarden.core.JoinView
 import dev.rewarden.core.LoginProgress
 import dev.rewarden.core.McpAddStep
 import dev.rewarden.core.McpServerView
@@ -28,6 +32,8 @@ import dev.rewarden.core.PairingView
 import dev.rewarden.core.PendingItem
 import dev.rewarden.core.RewardenCoreInterface
 import dev.rewarden.core.SessionInfo
+import dev.rewarden.core.SsoOutcome
+import dev.rewarden.core.SsoStart
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
@@ -113,6 +119,27 @@ class MainSafeCore(
         io { createAccount(serverUrl, email, password) }
 
     override suspend fun logout() = io { logout() }
+
+    override suspend fun ssoBegin(serverUrl: String): SsoStart = io { ssoBegin(serverUrl) }
+
+    override suspend fun ssoFinish(serverUrl: String, callbackUrl: String, state: String, verifier: String): SsoOutcome =
+        io { ssoFinish(serverUrl, callbackUrl, state, verifier) }
+
+    override suspend fun accountKeys(): AccountKeys = io { accountKeys() }
+
+    override suspend fun unlockAccount(codeOrPassword: String) = io { unlockAccount(codeOrPassword) }
+
+    override suspend fun accountRecoveryCode(): String = io { accountRecoveryCode() }
+
+    override suspend fun joinBegin(deviceName: String): JoinStart = io { joinBegin(deviceName) }
+
+    override suspend fun joinPoll(): JoinProgress = io { joinPoll() }
+
+    override suspend fun joinCancel() = io { joinCancel() }
+
+    override suspend fun joinView(id: String): JoinView = io { joinView(id) }
+
+    override suspend fun answerJoin(id: String, approve: Boolean) = io { answerJoin(id, approve) }
 
     override suspend fun pairingView(pairingId: String): PairingView = io { pairingView(pairingId) }
 

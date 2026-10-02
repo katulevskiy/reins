@@ -84,6 +84,17 @@ class AppState {
     private val _approvalDevice = MutableStateFlow(false)
     val approvalDevice: StateFlow<Boolean> = _approvalDevice.asStateFlow()
 
+    /**
+     * Signed in, but this phone cannot open the account's keys yet: the Unlock screen shows instead of the app, and the
+     * phone is not registered as the approval device (the phone that has the keys must approve this one).
+     */
+    private val _keysLocked = MutableStateFlow(false)
+    val keysLocked: StateFlow<Boolean> = _keysLocked.asStateFlow()
+
+    fun setKeysLocked(value: Boolean) {
+        _keysLocked.value = value
+    }
+
     /** Why registering this phone as the approval device failed, until it succeeds. */
     private val _registrationError = MutableStateFlow<String?>(null)
     val registrationError: StateFlow<String?> = _registrationError.asStateFlow()
@@ -113,6 +124,7 @@ class AppState {
             setMcpServers(emptyList())
             _mcpNotice.value = null
             _approvalDevice.value = false
+            _keysLocked.value = false
             _autopilot.value = null
         }
     }

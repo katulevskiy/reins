@@ -28,6 +28,7 @@ fun operationTitle(action: String, count: Int, service: String, title: String = 
         ActionKind.Grant -> "Ask for access"
         ActionKind.Accounts -> if (service.isBlank()) "See integrations" else "See $what accounts"
         ActionKind.Pair -> "Connect"
+        ActionKind.Join -> "Add a phone"
         ActionKind.Upload -> "Share a file"
         ActionKind.Other -> "Request"
     }

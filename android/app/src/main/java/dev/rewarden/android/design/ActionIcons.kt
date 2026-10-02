@@ -15,6 +15,7 @@ import androidx.compose.material.icons.rounded.Key
 import androidx.compose.material.icons.rounded.Link
 import androidx.compose.material.icons.rounded.MarkEmailRead
 import androidx.compose.material.icons.rounded.People
+import androidx.compose.material.icons.rounded.PhoneAndroid
 import androidx.compose.material.icons.rounded.Search
 import androidx.compose.material.icons.rounded.UploadFile
 import androidx.compose.material.icons.rounded.VerifiedUser
@@ -39,6 +40,8 @@ enum class ActionKind(val key: String) {
     Grant("grant"),
     Accounts("accounts"),
     Pair("pair"),
+    /** Another phone of the account asks for its keys. */
+    Join("join"),
     /** A file an AI uploaded through the server. */
     Upload("upload"),
     Other("request");
@@ -53,6 +56,7 @@ enum class ActionKind(val key: String) {
             Grant -> Icons.Rounded.VerifiedUser
             Accounts -> Icons.Rounded.People
             Pair -> Icons.Rounded.Link
+            Join -> Icons.Rounded.PhoneAndroid
             Upload -> Icons.Rounded.UploadFile
             Other -> Icons.Rounded.Key
         }
@@ -66,6 +70,7 @@ enum class ActionKind(val key: String) {
         Grant -> c.grant
         Accounts -> c.accounts
         Pair -> c.pair
+        Join -> c.pair
         Upload -> c.read
         Other -> c.secondary
     }

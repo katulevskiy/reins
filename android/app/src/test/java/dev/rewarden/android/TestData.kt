@@ -65,6 +65,15 @@ object TestData {
         PendingKind.PAIRING, id, "Connect Claude to Rewarden?", "claude.ai", 1_700_000_200, "", "Claude", "pair", 1u, "", null, null, "", "", null,
     )
 
+    /** Another phone asking this one for the account's keys, as the core parks it. */
+    fun joinItem(id: String = "join1", device: String = "Pixel 9") = PendingItem(
+        PendingKind.JOIN, id, "Add $device to your account?", "Another phone asks for this account's keys", 1_700_000_200, "", device, "join", 1u, "",
+        null, null, "", "", null,
+    )
+
+    fun joinView(id: String = "join1", device: String = "Pixel 9", code: String = "482 193") =
+        dev.rewarden.core.JoinView(id, device, code, 1_700_000_200)
+
     /** A pairing; the Rewarden desktop app's carries the eight digits of its key. */
     fun pairingView(id: String = "pair1", name: String = "Claude", host: String = "claude.ai", keyFingerprint: String? = null) =
         PairingView(id, name, host, byteArrayOf(7, 42, 99), 1_700_000_200, keyFingerprint)

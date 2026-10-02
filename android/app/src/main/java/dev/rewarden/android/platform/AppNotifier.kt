@@ -122,6 +122,7 @@ class AppNotifier(
                 if (item.action == "grant") "Permission requested" else "Approval needed"
             PendingKind.PAIRING -> "Connect an AI"
             PendingKind.BLOB -> "File to check"
+            PendingKind.JOIN -> "Add a phone"
         }
         val public = Notification.Builder(context, channel)
             .setSmallIcon(R.drawable.ic_notification)
@@ -132,7 +133,7 @@ class AppNotifier(
             .setSmallIcon(R.drawable.ic_notification)
             .setContentTitle(title)
             .setContentText(
-                if (item.kind == PendingKind.PAIRING) {
+                if (item.kind == PendingKind.PAIRING || item.kind == PendingKind.JOIN) {
                     untrusted(item.title)
                 } else {
                     fullTitle(item.connectionLabel, item.action, item.count.toInt(), item.service, item.opTitle, item.op)
@@ -342,6 +343,7 @@ class AppNotifier(
                     PendingKind.REQUEST -> KIND_REQUEST
                     PendingKind.PAIRING -> KIND_PAIRING
                     PendingKind.BLOB -> KIND_BLOB
+                    PendingKind.JOIN -> KIND_JOIN
                 },
             )
             .putExtra(EXTRA_ID, item.id)
@@ -396,6 +398,7 @@ class AppNotifier(
         const val KIND_REQUEST = "request"
         const val KIND_PAIRING = "pairing"
         const val KIND_BLOB = "blob"
+        const val KIND_JOIN = "join"
         const val ACTION_OPEN_ACTIVITY = "dev.rewarden.android.OPEN_ACTIVITY"
         const val EXTRA_ACTIVITY_ID = "activity"
         const val ACTION_OPEN_AUTOPILOT = "dev.rewarden.android.OPEN_AUTOPILOT"

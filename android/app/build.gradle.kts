@@ -235,14 +235,16 @@ abstract class UniffiBindgenTask : DefaultTask() {
             environment("PATH", path)
             commandLine("${cargoBinDir.get()}/cargo", "build", "-p", "rewarden-core", "--lib", "--features", "bindgen", "--locked")
         }
-        // The host's own build of the core (bindgen reads its metadata): .dylib on macOS, .so elsewhere.
+        // The host's own build of the core (bindgen reads its metadata): .dylib on macOS, .so elsewhere, in
+        // CARGO_TARGET_DIR when that is set.
         val hostLibrary = if (System.getProperty("os.name").startsWith("Mac")) "librewarden_core.dylib" else "librewarden_core.so"
+        val targetDir = System.getenv("CARGO_TARGET_DIR")?.takeIf { it.isNotEmpty() }?.let { root.resolve(it) } ?: root.resolve("target")
         exec.exec {
             workingDir = root
             environment("PATH", path)
             commandLine(
                 "${cargoBinDir.get()}/cargo", "run", "-q", "-p", "rewarden-core", "--features", "bindgen", "--bin", "uniffi-bindgen",
-                "--locked", "--", "generate", "--library", "target/debug/$hostLibrary",
+                "--locked", "--", "generate", "--library", targetDir.resolve("debug/$hostLibrary").absolutePath,
                 "--language", "kotlin", "--no-format", "--out-dir", out.absolutePath,
             )
         }

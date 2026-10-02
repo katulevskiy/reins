@@ -90,6 +90,7 @@ class AppFlowTest {
         core.activity = emptyList()
         core.gmail = GmailStatus.Ready
         core.resetAutopilot()
+        core.resetSso()
         core.accounts = listOf(AccountView("gmail", "me@gmail.com", 1_700_000_000))
         core.accountStatuses = emptyMap()
         core.serviceAdded.clear()
@@ -223,10 +224,13 @@ class AppFlowTest {
 
     // ---- sign-in ------------------------------------------------------------------------------------------------
 
-    /** Signed out: the welcome screen, then "Sign in" on it. */
+    /** Signed out: the welcome screen, "Use another server" (the password forms are only for one), then "Sign in". */
     private fun openSignIn() {
         launch()
         awaitTag("welcome")
+        tap("useAnotherServer")
+        awaitTag("server")
+        rule.onNodeWithTag("server").performTextReplacement("https://s.example.com")
         tap("startSignIn")
         awaitTag("signIn")
     }
@@ -242,9 +246,6 @@ class AppFlowTest {
         core.session = null
         openSignIn()
         rule.onNodeWithTag("signIn").assertIsNotEnabled()
-        tap("useAnotherServer")
-        awaitTag("server")
-        rule.onNodeWithTag("server").performTextReplacement("https://s.example.com")
         rule.onNodeWithTag("email").performTextReplacement("me@example.com")
         rule.onNodeWithTag("password").performTextReplacement("hunter2")
         rule.onNodeWithTag("signIn").performScrollTo().assertIsEnabled().performClick()
@@ -257,16 +258,11 @@ class AppFlowTest {
     }
 
     @Test
-    fun signInUsesTheDefaultServerUnlessAnotherIsChosen() {
+    fun theSignInFormSaysWhichServerItUses() {
         core.session = null
         openSignIn()
         assertFalse(has("server"))
-        rule.onNodeWithTag("email").performTextReplacement("me@example.com")
-        rule.onNodeWithTag("password").performTextReplacement("hunter2")
-        tap("signIn")
-        skipSetup()
-        awaitTag("noActivity")
-        assertEquals(dev.rewarden.android.ui.signin.AccountRules.serverUrl(BuildConfig.DEFAULT_SERVER), core.logins.single()[0])
+        rule.onNodeWithTag("serverName").assertTextContains("s.example.com", substring = true)
     }
 
     @Test
@@ -274,9 +270,6 @@ class AppFlowTest {
         core.session = null
         core.loginError = CoreException.TwoFactorRequired()
         openSignIn()
-        tap("useAnotherServer")
-        awaitTag("server")
-        rule.onNodeWithTag("server").performTextReplacement("https://s.example.com")
         rule.onNodeWithTag("email").performTextReplacement("me@example.com")
         rule.onNodeWithTag("password").performTextReplacement("hunter2")
         rule.onNodeWithTag("signIn").performScrollTo().performClick()
@@ -294,9 +287,6 @@ class AppFlowTest {
         core.session = null
         core.loginError = CoreException.InvalidCredentials()
         openSignIn()
-        tap("useAnotherServer")
-        awaitTag("server")
-        rule.onNodeWithTag("server").performTextReplacement("https://s.example.com")
         rule.onNodeWithTag("email").performTextReplacement("me@example.com")
         rule.onNodeWithTag("password").performTextReplacement("nope")
         rule.onNodeWithTag("signIn").performScrollTo().performClick()
@@ -1785,8 +1775,7 @@ class AppFlowTest {
         tap("signOut")
         rule.onAllNodes(hasText("Sign out")).let { it[it.fetchSemanticsNodes().lastIndex] }.performClick()
         awaitTag("welcome")
-        tap("startSignIn")
-        awaitTag("signIn")
+        awaitTag("continue")
     }
 
     // ---- misc ----------------------------------------------------------------------------------------------------

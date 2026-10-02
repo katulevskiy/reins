@@ -59,4 +59,7 @@ sealed interface SheetTarget {
 
     /** A file an AI uploaded, waiting for the user's decision. */
     data class Upload(override val id: String) : SheetTarget
+
+    /** Another phone of the account asks for its keys ("Add another phone"). */
+    data class Join(override val id: String) : SheetTarget
 }

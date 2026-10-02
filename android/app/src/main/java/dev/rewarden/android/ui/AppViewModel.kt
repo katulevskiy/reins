@@ -28,6 +28,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 
@@ -73,14 +74,15 @@ class AppViewModel(private val container: AppContainer) : ViewModel() {
             container.state.pending.collect { maybePresent(it) }
         }
         viewModelScope.launch(Dispatchers.Main) {
-            container.state.session.collect { session ->
+            combine(container.state.session, container.state.keysLocked, ::Pair).collect { (session, locked) ->
                 if (session is SessionState.SignedOut) {
                     // The next sign-in starts on the main screen, not where the last one signed out.
                     home()
                     _sheet.value = null
                     _connect.value = ConnectUi()
                 }
-                if (session !is SessionState.SignedIn) return@collect
+                // A waiting link is used once the app itself shows (not on the Unlock screen).
+                if (session !is SessionState.SignedIn || locked) return@collect
                 val code = _waitingCode.value ?: return@collect
                 _waitingCode.value = null
                 connectWithCode(code, fromLink = true)
@@ -123,6 +125,11 @@ class AppViewModel(private val container: AppContainer) : ViewModel() {
 
     fun dismissNotice() {
         _notice.value = null
+    }
+
+    /** A line on the main screen about something that just happened ("Pixel 9 can open your account now."). */
+    fun showNotice(message: String) {
+        _notice.value = message
     }
 
     /** Opens the sheet for [target]; it will not pop up by itself again. */
@@ -255,10 +262,10 @@ class AppViewModel(private val container: AppContainer) : ViewModel() {
 
     /**
      * A `/pair` link (an App Link or `reins://pair`), already reduced to a well-formed code. Signed in, it opens the
-     * pairing at once; signed out, it waits for the sign-in.
+     * pairing at once; signed out (or on the Unlock screen), it waits for the sign-in to finish.
      */
     fun openPairingLink(code: String) {
-        if (container.state.session.value is SessionState.SignedIn) {
+        if (container.state.session.value is SessionState.SignedIn && !container.state.keysLocked.value) {
             connectWithCode(code, fromLink = true)
         } else {
             _waitingCode.value = code
@@ -317,4 +324,5 @@ fun PendingItem.toTarget(): SheetTarget = when (kind) {
     PendingKind.REQUEST -> SheetTarget.Approval(id)
     PendingKind.PAIRING -> SheetTarget.Pairing(id)
     PendingKind.BLOB -> SheetTarget.Upload(id)
+    PendingKind.JOIN -> SheetTarget.Join(id)
 }

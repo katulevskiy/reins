@@ -16,6 +16,7 @@ data class DeepLink(val kind: PendingKind, val id: String) {
                 "request" -> PendingKind.REQUEST
                 "pairing" -> PendingKind.PAIRING
                 "blob" -> PendingKind.BLOB
+                "join" -> PendingKind.JOIN
                 else -> return null
             }
             return DeepLink(parsed, id)
@@ -29,6 +30,7 @@ data class DeepLink(val kind: PendingKind, val id: String) {
             PendingKind.REQUEST -> SheetTarget.Approval(item.id)
             PendingKind.PAIRING -> SheetTarget.Pairing(item.id)
             PendingKind.BLOB -> SheetTarget.Upload(item.id)
+            PendingKind.JOIN -> SheetTarget.Join(item.id)
         }
     }
 }

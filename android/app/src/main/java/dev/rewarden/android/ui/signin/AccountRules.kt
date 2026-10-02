@@ -3,7 +3,7 @@ package dev.rewarden.android.ui.signin
 /** How hard a master password looks to guess: a hint only; the server's one rule is the length. */
 enum class Strength { Weak, Fair, Strong }
 
-/** What the onboarding forms check before they call the core. Pure, so it is unit-tested. */
+/** What the onboarding screens check before they call the core. Pure, so it is unit-tested. */
 object AccountRules {
     /** The server refuses shorter master passwords. */
     const val MIN_PASSWORD = 12
@@ -67,4 +67,27 @@ object AccountRules {
 
     /** Where AI apps reach Reins on [server]: its `/mcp` endpoint. */
     fun mcpUrl(server: String): String = server.trim().trimEnd('/') + "/mcp"
+
+    /** The scheme and host the server's sign-in page sends the browser back to (`com.reins2fa.app://sso-callback`). */
+    const val SSO_CALLBACK_SCHEME = "com.reins2fa.app"
+    const val SSO_CALLBACK_HOST = "sso-callback"
+    private const val MAX_CALLBACK_CHARS = 8_192
+
+    /** The browser came back to the app's own sign-in address; nothing else is ever handed to `ssoFinish`. */
+    fun isSsoCallback(uri: String?): Boolean {
+        if (uri == null || uri.length > MAX_CALLBACK_CHARS) return false
+        return try {
+            val parsed = java.net.URI(uri)
+            parsed.scheme == SSO_CALLBACK_SCHEME && parsed.rawAuthority == SSO_CALLBACK_HOST
+        } catch (e: java.net.URISyntaxException) {
+            false
+        }
+    }
+
+    /** True for the hosted server (the build's default), where the password forms are not offered. */
+    fun isDefaultServer(server: String, default: String): Boolean {
+        val a = serverUrl(server) ?: return false
+        val b = serverUrl(default) ?: return false
+        return a.lowercase(java.util.Locale.ROOT) == b.lowercase(java.util.Locale.ROOT)
+    }
 }

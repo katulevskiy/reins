@@ -65,6 +65,21 @@
             </intent-filter>
         </activity>
 
+        <!-- Where the server's sign-in page ("Continue") sends the browser back to; it hands the address to MainActivity. -->
+        <activity
+            android:name=".platform.SsoRedirectActivity"
+            android:exported="true"
+            android:excludeFromRecents="true"
+            android:noHistory="true"
+            android:theme="@android:style/Theme.Translucent.NoTitleBar">
+            <intent-filter>
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <category android:name="android.intent.category.BROWSABLE" />
+                <data android:scheme="com.reins2fa.app" android:host="sso-callback" />
+            </intent-filter>
+        </activity>
+
         <!-- Google Play installs the QR code scanner's module with the app, so the first scan does not wait for it. -->
         <meta-data
             android:name="com.google.mlkit.vision.DEPENDENCIES"

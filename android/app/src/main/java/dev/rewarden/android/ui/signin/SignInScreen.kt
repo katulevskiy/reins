@@ -55,9 +55,10 @@ import dev.rewarden.android.ui.common.ReinsLinks
 enum class OnboardingPage { Welcome, Create, SignIn }
 
 /**
- * Signed out: a welcome with two choices, then creating an account or signing in. Both use [BuildConfig.DEFAULT_SERVER]
- * (app.reins2fa.com) unless the user opens "Use another server". [linkWaiting]: a pairing link was opened and waits for
- * the sign-in.
+ * Signed out: a welcome with one button, "Continue", which signs in (or up) on the server's own sign-in page in the
+ * browser. It uses [BuildConfig.DEFAULT_SERVER] (app.reins2fa.com) unless the user opens "Use another server", which
+ * also offers creating an account or signing in with email and master password on that server (never on the hosted
+ * one). [linkWaiting]: a pairing link was opened and waits for the sign-in.
  */
 @Composable
 fun OnboardingScreen(viewModel: SignInViewModel, linkWaiting: Boolean = false) {
@@ -73,32 +74,43 @@ fun OnboardingScreen(viewModel: SignInViewModel, linkWaiting: Boolean = false) {
         page = next
     }
     BackHandler(enabled = page != OnboardingPage.Welcome) { go(OnboardingPage.Welcome) }
-    val serverChoice: @Composable (Boolean) -> Unit = { enabled ->
-        ServerChoice(
+    when (page) {
+        OnboardingPage.Welcome -> WelcomePage(
+            viewModel = viewModel,
+            linkWaiting = linkWaiting,
             server = server,
             onServer = { server = it },
             custom = customServer,
             onCustom = { custom ->
+                viewModel.clearError()
                 customServer = custom
                 server = if (custom) "https://" else BuildConfig.DEFAULT_SERVER
             },
-            enabled = enabled,
-        )
-    }
-    when (page) {
-        OnboardingPage.Welcome -> WelcomePage(
-            linkWaiting = linkWaiting,
             onCreate = { go(OnboardingPage.Create) },
             onSignIn = { go(OnboardingPage.SignIn) },
         )
-        OnboardingPage.Create -> CreateAccountPage(viewModel, server, email, { email = it }, serverChoice, onBack = { go(OnboardingPage.Welcome) })
-        OnboardingPage.SignIn -> SignInPage(viewModel, server, email, { email = it }, serverChoice, onBack = { go(OnboardingPage.Welcome) })
+        OnboardingPage.Create -> CreateAccountPage(viewModel, server, email, { email = it }, onBack = { go(OnboardingPage.Welcome) })
+        OnboardingPage.SignIn -> SignInPage(viewModel, server, email, { email = it }, onBack = { go(OnboardingPage.Welcome) })
     }
 }
 
 @Composable
-private fun WelcomePage(linkWaiting: Boolean, onCreate: () -> Unit, onSignIn: () -> Unit) {
+private fun WelcomePage(
+    viewModel: SignInViewModel,
+    linkWaiting: Boolean,
+    server: String,
+    onServer: (String) -> Unit,
+    custom: Boolean,
+    onCustom: (Boolean) -> Unit,
+    onCreate: () -> Unit,
+    onSignIn: () -> Unit,
+) {
     val c = LocalColors.current
+    val context = LocalContext.current
+    val ui by viewModel.ui.collectAsStateWithLifecycle()
+    val valid = AccountRules.serverUrl(server) != null
+    // Passwords are for servers people run themselves; the hosted server signs in through "Continue" only.
+    val passwordForms = custom && valid && !AccountRules.isDefaultServer(server, BuildConfig.DEFAULT_SERVER)
     Screen(title = null, modifier = Modifier.testTag("welcome")) {
         Column(Modifier.padding(horizontal = 24.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
             Spacer(Modifier.height(72.dp))
@@ -114,11 +126,34 @@ private fun WelcomePage(linkWaiting: Boolean, onCreate: () -> Unit, onSignIn: ()
                 c.secondary,
             )
             if (linkWaiting) {
-                Banner("Sign in or create an account, and your computer connects right after.", Modifier.padding(top = 6.dp), tag = "linkWaiting")
+                Banner("Continue to sign in, and your computer connects right after.", Modifier.padding(top = 6.dp), tag = "linkWaiting")
             }
             Spacer(Modifier.height(36.dp))
-            CapsuleButton("Create account", Modifier.fillMaxWidth().testTag("createAccount"), style = ButtonStyle.Primary, onClick = onCreate)
-            CapsuleButton("Sign in", Modifier.fillMaxWidth().testTag("startSignIn"), style = ButtonStyle.Secondary, onClick = onSignIn)
+            ui.error?.let { Banner(it, kind = BannerKind.Error, tag = "signInError") }
+            CapsuleButton(
+                "Continue",
+                Modifier.fillMaxWidth().testTag("continue"),
+                style = ButtonStyle.Primary,
+                enabled = valid,
+                busy = ui.busy,
+            ) { viewModel.continueWithSso(server) { Browser.open(context, it) } }
+            ServerChoice(server, onServer, custom, onCustom, enabled = !ui.busy)
+            if (passwordForms) {
+                RText(
+                    "Or with email and master password on this server:",
+                    RType.sans(13.5f, lineHeight = 19f),
+                    c.secondary,
+                    Modifier.padding(start = 4.dp, top = 8.dp),
+                )
+                CapsuleButton("Sign in", Modifier.fillMaxWidth().testTag("startSignIn"), style = ButtonStyle.Secondary, enabled = !ui.busy, onClick = onSignIn)
+                CapsuleButton(
+                    "Create account",
+                    Modifier.fillMaxWidth().testTag("createAccount"),
+                    style = ButtonStyle.Secondary,
+                    enabled = !ui.busy,
+                    onClick = onCreate,
+                )
+            }
             Spacer(Modifier.height(24.dp))
         }
     }
@@ -130,7 +165,6 @@ private fun CreateAccountPage(
     server: String,
     email: String,
     onEmail: (String) -> Unit,
-    serverChoice: @Composable (Boolean) -> Unit,
     onBack: () -> Unit,
 ) {
     val ui by viewModel.ui.collectAsStateWithLifecycle()
@@ -176,7 +210,7 @@ private fun CreateAccountPage(
                 TextLink("Terms of Service", "openTerms") { Browser.open(context, ReinsLinks.TERMS) }
                 TextLink("Privacy Policy", "openPrivacy") { Browser.open(context, ReinsLinks.PRIVACY) }
             }
-            serverChoice(!ui.busy)
+            ServerLine(server)
             ui.error?.let { Banner(it, kind = BannerKind.Error, tag = "signInError") }
             Spacer(Modifier.height(4.dp))
             CapsuleButton(
@@ -197,7 +231,6 @@ private fun SignInPage(
     server: String,
     email: String,
     onEmail: (String) -> Unit,
-    serverChoice: @Composable (Boolean) -> Unit,
     onBack: () -> Unit,
 ) {
     val ui by viewModel.ui.collectAsStateWithLifecycle()
@@ -224,7 +257,7 @@ private fun SignInPage(
                     keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number, autoCorrectEnabled = false),
                 )
             }
-            serverChoice(!ui.busy)
+            ServerLine(server)
             ui.error?.let { Banner(it, kind = BannerKind.Error, tag = "signInError") }
             Spacer(Modifier.height(4.dp))
             CapsuleButton(
@@ -302,9 +335,22 @@ private fun ServerChoice(server: String, onServer: (String) -> Unit, custom: Boo
     }
 }
 
+/** Which server a password form uses (chosen on the welcome page). */
+@Composable
+private fun ServerLine(server: String) {
+    RText(
+        "Server: ${AccountRules.displayHost(server)}",
+        RType.sans(13f),
+        LocalColors.current.tertiary,
+        Modifier.padding(start = 4.dp).testTag("serverName"),
+        maxLines = 1,
+        ltr = true,
+    )
+}
+
 /** A small accent-coloured text button. */
 @Composable
-private fun TextLink(text: String, tag: String, enabled: Boolean = true, onClick: () -> Unit) {
+internal fun TextLink(text: String, tag: String, enabled: Boolean = true, onClick: () -> Unit) {
     RText(
         text,
         RType.sans(13.5f, FontWeight.Medium),

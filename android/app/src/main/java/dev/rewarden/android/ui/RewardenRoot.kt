@@ -1,5 +1,6 @@
 package dev.rewarden.android.ui
 
+import android.os.Build
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
@@ -53,6 +54,8 @@ import dev.rewarden.android.ui.grants.deleteGrant
 import dev.rewarden.android.ui.grants.resumeGrant
 import dev.rewarden.android.ui.grants.NewGrantScreen
 import dev.rewarden.android.ui.grants.NewGrantViewModel
+import dev.rewarden.android.ui.join.JoinSheet
+import dev.rewarden.android.ui.join.JoinViewModel
 import dev.rewarden.android.ui.main.FloatingNavBar
 import dev.rewarden.android.ui.mcp.McpAddScreen
 import dev.rewarden.android.ui.mcp.McpServerScreen
@@ -75,6 +78,8 @@ import dev.rewarden.android.ui.services.ServiceViewModel
 import dev.rewarden.android.ui.signin.OnboardingScreen
 import dev.rewarden.android.ui.signin.SetupScreen
 import dev.rewarden.android.ui.signin.SignInViewModel
+import dev.rewarden.android.ui.signin.UnlockScreen
+import dev.rewarden.android.ui.signin.UnlockViewModel
 import dev.rewarden.android.ui.update.UpdatePromptHost
 import kotlin.coroutines.cancellation.CancellationException
 
@@ -103,7 +108,15 @@ private fun RootContent(container: AppContainer, app: AppViewModel, authenticato
                 )
             }
         }
-        is SessionState.SignedIn -> SignedInContent(container, app, authenticator, (session as SessionState.SignedIn).info.serverUrl)
+        is SessionState.SignedIn -> {
+            val info = (session as SessionState.SignedIn).info
+            val locked by container.state.keysLocked.collectAsStateWithLifecycle()
+            if (locked) {
+                UnlockScreen(viewModel(key = "unlock") { UnlockViewModel(container, deviceName = Build.MODEL) }, info.email)
+            } else {
+                SignedInContent(container, app, authenticator, info.serverUrl)
+            }
+        }
     }
 }
 
@@ -158,6 +171,7 @@ private fun SignedInContent(container: AppContainer, app: AppViewModel, authenti
                     onSounds = { app.open(Route.Sounds) },
                     onAutopilot = { app.open(Route.Autopilot) },
                     onConnectComputer = { app.open(Route.ConnectComputer) },
+                    authenticator = authenticator,
                 )
                 Route.ConnectComputer -> ConnectComputerScreen(app, onBack = { app.back() })
                 Route.Sounds -> SoundsScreen(container.feedback, onBack = { app.back() })
@@ -284,6 +298,14 @@ private fun SignedInContent(container: AppContainer, app: AppViewModel, authenti
                         viewModel = viewModel(key = "upload:${target.id}") { UploadViewModel(container, target.id) },
                         authenticator = authenticator,
                         onDone = app::closeSheet,
+                    )
+                    is SheetTarget.Join -> JoinSheet(
+                        viewModel = viewModel(key = "join:${target.id}") { JoinViewModel(container, target.id) },
+                        authenticator = authenticator,
+                        onDone = { notice ->
+                            app.closeSheet()
+                            notice?.let(app::showNotice)
+                        },
                     )
                 }
             }
