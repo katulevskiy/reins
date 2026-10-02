@@ -59,7 +59,8 @@ pub fn found(h: Harness, home: &Path) -> bool {
     if files.iter().any(|f| home.join(f).exists()) || app_paths(h, home).iter().any(|p| p.exists()) {
         return true;
     }
-    let mut dirs: Vec<PathBuf> = std::env::var_os("PATH").map(|p| std::env::split_paths(&p).collect()).unwrap_or_default();
+    let mut dirs: Vec<PathBuf> =
+        std::env::var_os("PATH").map(|p| std::env::split_paths(&p).collect()).unwrap_or_default();
     dirs.extend(usual_bin_dirs(home));
     dirs.iter().any(|dir| programs.iter().any(|p| program_in(dir, p)))
 }
