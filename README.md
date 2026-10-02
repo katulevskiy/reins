@@ -93,7 +93,7 @@ You need an Android phone and an account on a Reins server (the hosted one or [y
 
 1. **Phone.** Install the app from <https://rewarden.arc-chat.com/app>, sign in with the server address, your email and
    master password. The phone becomes your approval device. Connect services under **Integrations**.
-2. **Desktop app** (Linux; on a Mac, take `rewarden` from the [latest release](https://github.com/katulevskiy/reins/releases/latest)):
+2. **Desktop app** (Linux or macOS; macOS is alpha):
    ```sh
    curl -fsSL https://rewarden.arc-chat.com/install.sh | sh
    rewarden login https://rewarden.arc-chat.com    # compare the key shown here with the one on your phone
@@ -195,8 +195,10 @@ and only after it has agreed with you often enough. Model card: [tools/laya/MODE
 **Alpha.** Expect rough edges, and breaking changes between releases.
 
 - Phone: **Android only** (Android 12 or later). There is no iOS app yet.
-- Desktop app: Linux x86_64 and aarch64 builds are published. The code supports macOS (launchd service, dialogs), but
-  no macOS build is published yet. Windows is not supported.
+- Desktop app: Linux (x86_64 and aarch64) and macOS (Apple silicon and Intel), both through the install script. macOS
+  is newer: built and tested on CI, not yet field-tested end to end on a real Mac, and without two Linux protections
+  (git shows no "waiting for approval" notice; no shielding from same-user debuggers). See the
+  [desktop app README](crates/rewarden-desktop/README.md#macos-alpha). Windows is not supported.
 - Gmail and Google Calendar/Contacts use Google scopes that need Google's app verification before the general public
   can use them.
 - Push notifications need an app build that matches the server's Firebase project. With a self-hosted server and the

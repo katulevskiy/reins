@@ -3,7 +3,8 @@
 #
 # Downloads the latest release for this computer, checks it against the published SHA-256, installs it to
 # ~/.local/bin (REWARDEN_INSTALL_DIR to change), and restarts the background service if it is installed.
-# Later updates: `rewarden update` (which also checks the release signature).
+# Later updates: `rewarden update` (which also checks the release signature). Linux and macOS (Apple silicon and Intel);
+# on macOS a download made with curl carries no quarantine flag, so Gatekeeper lets the (unsigned) program run.
 set -eu
 
 # The site to install from (REWARDEN_RELEASES overrides the releases URL). scripts/release-desktop.sh rewrites this line
@@ -80,7 +81,12 @@ case ":$PATH:" in
 *)
     say ""
     say "$INSTALL_DIR is not on your PATH. Add it, for example:"
-    say "  echo 'export PATH=\"$INSTALL_DIR:\$PATH\"' >> ~/.bashrc   # or ~/.zshrc"
+    if [ "$os" = macos ]; then
+        # zsh is the shell macOS sets up for new accounts.
+        say "  echo 'export PATH=\"$INSTALL_DIR:\$PATH\"' >> ~/.zshrc   # then open a new terminal"
+    else
+        say "  echo 'export PATH=\"$INSTALL_DIR:\$PATH\"' >> ~/.bashrc   # or ~/.zshrc"
+    fi
     ;;
 esac
 
