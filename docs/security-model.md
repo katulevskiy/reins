@@ -56,7 +56,32 @@ Secrets released to the desktop app (`rewarden run`, the API proxy) and SSH sign
 permission for one item, or for one key on one server, if you choose to give one. Autopilot never releases them on its
 own.
 
-## Approving
+## Accounts without a master password
+
+On the hosted server, people sign in through WorkOS AuthKit (Google, Apple, GitHub, Microsoft or an email code) and
+never set a password ([self-hosting](self-hosting.md#sign-in-without-passwords-workos-authkit)). The vault still
+has Bitwarden's end-to-end encryption; only what protects its key changes:
+
+- **The account secret.** After the first sign-in the phone makes the account's keys itself: a random user key and an
+  RSA key pair, wrapped exactly as a Bitwarden client wraps them for a master password, with a random 256-bit secret
+  in the password's place (PBKDF2-SHA256 over a fixed salt, so that an email change at WorkOS does not lock the
+  vault). The server stores the wrapped keys and a hash of that "password", as for any account. The secret stays in
+  the phone's encrypted store (its data key wrapped by the Android Keystore or the iOS keychain); it is never shown
+  unless you ask for the recovery code, and never typed.
+- **The recovery code** is the secret in base32, in thirteen groups of four. Settings > Account shows it after
+  biometrics. Whoever has it and can sign in to the account can open the vault; without it and without a phone that
+  keeps the secret, the vault cannot be opened by anyone, including the server.
+- **Another phone** gets the secret from the approval device ("Add another phone"): the new phone makes an X25519 key
+  and asks through the server; both phones show a six-digit code derived from that key; you compare them and approve
+  with biometrics; the approval device seals the secret to the key (a sealed box naming the request), and the server
+  relays it without being able to open it. A server that swapped the key would make the codes differ.
+
+**What changes in trust.** WorkOS (and whoever controls the Google, Apple, GitHub or email account you sign in with)
+can now sign in to your Reins account. That gets them the server-side account, not the vault: opening it takes the
+account secret. A signed-in device can also register as the approval device, replacing yours, as a password sign-in
+could; it has none of your phone's service credentials or grants, but it would see and could approve new connection
+requests. The server refuses WorkOS impersonation sessions, follows WorkOS when it revokes a session or deletes a user,
+and takes an email change only once WorkOS has verified the new address.
 
 - Approving needs the phone's screen lock or biometrics. Denying is one tap.
 - One-time approvals execute exactly what was shown and create no permission. Standing permissions are limited to one
@@ -185,7 +210,9 @@ Details: [autopilot.md](autopilot.md).
 - The server sees tool arguments and results in transit (above). End-to-end encryption between the AI and the phone
   is not possible while the AI needs the plaintext.
 - One approval device per account. Signing in on a second phone moves the role there. That phone has no service
-  credentials and no grants of the first, but it can approve new connections.
+  credentials and no grants of the first, but it can approve new connections. With sign-in through WorkOS, this
+  includes anyone who controls the identity you sign in with; the server does not yet require proof of the account
+  secret (a "master password hash") before a new device takes the role.
 - Hooks are pattern-based (above).
 - Autopilot's model was trained and evaluated on synthetic data ([model card](../tools/laya/MODEL_CARD.md)).
 

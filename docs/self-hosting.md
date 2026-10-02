@@ -102,6 +102,57 @@ People need an account before the phone can sign in. There are three ways to cre
 
 When the accounts exist, set `SIGNUPS_ALLOWED=false`, or use Vaultwarden's invitations and admin page.
 
+## Sign-in without passwords (WorkOS AuthKit)
+
+The hosted server signs people in through [WorkOS AuthKit](https://workos.com/docs/authkit): the phone apps'
+**Continue** opens AuthKit's page (Google, Apple, GitHub, Microsoft or a code by email, with WorkOS checking the
+email and keeping bots out), and nobody sets a password. Your server can do the same with your own WorkOS
+environment:
+
+```ini
+SSO_ENABLED=true
+SSO_AUTHORITY=https://api.workos.com/user_management/client_01ABC...   # your WorkOS client id at the end
+SSO_CLIENT_ID=client_01ABC...
+SSO_CLIENT_SECRET=sk_live_...       # the WorkOS API key
+SSO_AUTH_ONLY_NOT_SESSION=true      # WorkOS signs people in; the server keeps its own sessions (see below)
+SSO_SIGNUPS_MATCH_EMAIL=true        # an existing account with the same (WorkOS-verified) email is linked
+# SSO_ONLY=true                     # no password sign-in at all (the hosted server's setting)
+# SSO_AUTHORIZE_EXTRA_PARAMS="screen_hint=sign-up"   # extra AuthKit parameters
+# REWARDEN_WORKOS_SYNC_SECS=30
+# REWARDEN_WORKOS_WEBHOOK_SECRET=...
+```
+
+In the WorkOS dashboard (or through its API), add `https://<domain>/identity/connect/oidc-signin` to the redirect
+URIs and turn on the sign-in methods you want under **Authentication**; Google, Apple and GitHub need their own
+OAuth credentials for production (WorkOS's shared test credentials work in a staging environment).
+
+How it fits together:
+
+- The server speaks to WorkOS's User Management API directly (`SSO_PROVIDER=workos`, picked automatically for an
+  authority on `api.workos.com`): AuthKit's discovery document names another issuer than its URL and has no userinfo
+  endpoint, so a generic OpenID Connect client cannot use it. AuthKit verifies emails, so
+  `SSO_ALLOW_UNKNOWN_EMAIL_VERIFICATION` stays `false`. A sign-in WorkOS marks as an impersonation is refused.
+- The phone apps open `/identity/connect/authorize` with `client_id=mobile` and their own redirect,
+  `com.reins2fa.app://sso-callback`, which the server allows in addition to the Bitwarden clients' ones.
+- A new account gets its vault keys from the phone, protected by a random account secret instead of a master
+  password ([security model](security-model.md#accounts-without-a-master-password)). Bitwarden clients can still sign
+  in with SSO, but cannot open such a vault.
+- `SSO_AUTH_ONLY_NOT_SESSION=true` keeps the server's own 30-day sessions, so approvals keep working when WorkOS is
+  unreachable; WorkOS's revocations still reach the server through the sync. With `false`, every token refresh asks
+  WorkOS (its access tokens live five minutes).
+- **The WorkOS sync.** Every `REWARDEN_WORKOS_SYNC_SECS` the server reads the WorkOS events after the last one it
+  applied (the cursor survives restarts): a verified new email becomes the account's email, a deleted WorkOS user's
+  account is deleted with its AI connections and devices, and a revoked WorkOS session signs out the device that
+  signed in with it. Point a WorkOS webhook at `https://<domain>/rewarden/workos/webhook` with
+  `REWARDEN_WORKOS_WEBHOOK_SECRET` set to make this immediate; the webhook only wakes the sync, which still reads the
+  events API.
+- `SSO_ONLY=true` turns password sign-in off for everyone, including accounts made with a password before; they get
+  in through AuthKit with the same email (`SSO_SIGNUPS_MATCH_EMAIL=true`) and open their vault with their master
+  password once. Without it, password sign-in stays available (the apps show it under **Use another server**).
+
+`scripts/workos-live.sh` checks all of this against a WorkOS staging environment, headless: it makes a test user,
+signs two phone cores in through AuthKit's page in headless Chrome, and has WorkOS change, revoke and delete.
+
 ## Reverse proxy
 
 Requirements:

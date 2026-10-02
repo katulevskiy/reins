@@ -66,13 +66,47 @@ flowchart TB
 | `/rewarden/oauth/register`, `/authorize`, `/token` | AI clients, `rewarden login` | PKCE S256; public clients (dynamic registration or client ID metadata document) |
 | `POST /rewarden/desktop/calls`, `GET /rewarden/desktop/calls/<id>` | desktop app | the same OAuth token as MCP; only desktop-only tools |
 | `/rewarden/api/*` (`device`, `pending`, `requests`, `pairings`, `connections`, `services`, `blobs`, `mcp/call`) | the phone | Vaultwarden login token, and the caller must be the account's approval device |
+| `POST /rewarden/api/joins`, `GET /rewarden/api/joins/<id>` | a phone of the account that cannot open its keys | Vaultwarden login token (any device of the account but the approval device) |
+| `GET /rewarden/api/joins/<id>`, `POST /rewarden/api/joins/<id>/response` | the approval device | as the rest of `/rewarden/api/*` |
 | `PUT`/`POST`/`GET /rewarden/blob/<secret>` | whoever holds the link (AI, curl) | the unguessable link itself, single-purpose, expiring |
+| `/identity/connect/authorize`, `/identity/connect/oidc-signin`, `/identity/connect/token` (`authorization_code`) | the phone apps' "Continue", through the browser | SSO (WorkOS AuthKit on the hosted server), PKCE S256 end to end |
+| `POST /rewarden/workos/webhook` | WorkOS | `WorkOS-Signature` (HMAC-SHA256); only wakes the WorkOS sync |
 
 Persistent tables: `rewarden_devices` (the approval device and its push token), `rewarden_clients` (registered OAuth
-clients), `rewarden_connections` (authorized AIs and desktop apps), `rewarden_refresh_tokens` (SHA-256 hashed).
-Everything else is in memory with a time limit, so there is one server process per deployment.
+clients), `rewarden_connections` (authorized AIs and desktop apps), `rewarden_refresh_tokens` (SHA-256 hashed),
+`rewarden_sso_sessions` (the WorkOS session each device signed in with), `rewarden_settings` (the WorkOS events
+cursor). Everything else is in memory with a time limit, so there is one server process per deployment.
 
 ## Flows
+
+### Signing in without a password
+
+```mermaid
+sequenceDiagram
+    participant A as Phone app
+    participant B as Browser session
+    participant S as Server
+    participant W as WorkOS AuthKit
+    A->>A: sso_begin: state, PKCE verifier
+    A->>B: open /identity/connect/authorize (client_id=mobile, redirect com.reins2fa.app://sso-callback)
+    B->>S: authorize
+    S->>B: redirect to AuthKit (provider=authkit, the app's PKCE challenge), binding cookie
+    B->>W: Google / Apple / GitHub / email code
+    W->>B: redirect to /identity/connect/oidc-signin?code
+    B->>S: oidc-signin (cookie checked)
+    S->>B: redirect to com.reins2fa.app://sso-callback?code&state
+    B->>A: callback URL
+    A->>S: sso_finish: /identity/connect/token (authorization_code, verifier)
+    S->>W: /user_management/authenticate (code, verifier, API key)
+    W-->>S: user (verified email), session id
+    S-->>A: tokens (+ the wrapped user key, if the account has keys)
+    A->>A: new account: make the keys with a random account secret, POST /api/accounts/set-password
+```
+
+A second phone finds the keys locked and gets the secret from the approval device ("Add another phone": an X25519 key,
+a six-digit code compared on both screens, the secret sealed to the key and relayed by the server) or from the recovery
+code. The server follows WorkOS in the background (`src/api/rewarden/workos_sync.rs`): verified email changes,
+deleted users, revoked sessions. See [security-model.md](security-model.md#accounts-without-a-master-password).
 
 ### A tool call from an AI
 
