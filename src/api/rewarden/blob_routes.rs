@@ -37,10 +37,10 @@ use super::{
         PhoneResult, already_answered, api_err, bad_request, not_found, parse_versioned, rate_limited,
         read_body_limited, require_approval_device, too_many_running, user_key,
     },
-    fcm,
     limits::{self, Admitted},
     now_unix,
     outbound::{self, NoBody, OutboundError},
+    push,
     sniff::{BINARY_TYPE, content_disposition},
 };
 use crate::{
@@ -529,7 +529,7 @@ async fn wake_phone(pool: &DbPool, user: String, blob_id: &str) {
     };
     let user_uuid = UserId::from(user);
     if let Some(device) = RewardenDevice::find_by_user(&user_uuid, &conn).await {
-        fcm::spawn_push(
+        push::spawn_push(
             pool.clone(),
             user_uuid,
             device.fcm_token,

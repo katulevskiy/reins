@@ -1,6 +1,7 @@
 //! Rewarden server: MCP endpoint, OAuth 2.1 authorization server for AI clients,
 //! phone API and in-memory relay (spec §4, contracts §A and §C).
 
+pub mod apns;
 pub mod blob;
 pub mod blob_io;
 pub mod blob_routes;
@@ -18,6 +19,7 @@ pub mod outbound;
 pub mod pages;
 pub mod pairing;
 pub mod proxy_call;
+pub mod push;
 pub mod relay;
 pub mod sniff;
 pub mod tools;
@@ -269,6 +271,7 @@ pub fn validate_settings(
     wait_secs: u64,
     offline_secs: u64,
     fcm_path: &str,
+    apns: &apns::Settings,
 ) -> Result<(), String> {
     if !domain_set {
         return Err("`REWARDEN_ENABLED` requires `DOMAIN` to be set to the public URL of this server".to_owned());
@@ -297,6 +300,7 @@ pub fn validate_settings(
     if !fcm_path.is_empty() {
         fcm::ServiceAccount::from_file(fcm_path).map_err(|e| format!("`REWARDEN_FCM_SERVICE_ACCOUNT`: {e}"))?;
     }
+    apns.load()?;
     Ok(())
 }
 
@@ -305,35 +309,67 @@ mod tests {
     use super::*;
 
     const OK_DOMAIN: &str = "https://rewarden.example.com";
+    const NO_APNS: apns::Settings = apns::Settings {
+        key_file: String::new(),
+        key_id: String::new(),
+        team_id: String::new(),
+        topic: String::new(),
+    };
 
     #[test]
     fn accepts_defaults() {
-        assert_eq!(validate_settings(OK_DOMAIN, true, 45, 10, ""), Ok(()));
-        assert_eq!(validate_settings("http://127.0.0.1:8000", true, 45, 10, ""), Ok(()));
-        assert_eq!(validate_settings("http://localhost:8000/vw", true, 4, 2, ""), Ok(()));
-        assert_eq!(validate_settings("http://[::1]:8000", true, 55, 55, ""), Ok(()));
+        assert_eq!(validate_settings(OK_DOMAIN, true, 45, 10, "", &NO_APNS), Ok(()));
+        assert_eq!(validate_settings("http://127.0.0.1:8000", true, 45, 10, "", &NO_APNS), Ok(()));
+        assert_eq!(validate_settings("http://localhost:8000/vw", true, 4, 2, "", &NO_APNS), Ok(()));
+        assert_eq!(validate_settings("http://[::1]:8000", true, 55, 55, "", &NO_APNS), Ok(()));
     }
 
     #[test]
     fn requires_explicit_https_domain() {
-        assert!(validate_settings(OK_DOMAIN, false, 45, 10, "").unwrap_err().contains("DOMAIN"));
-        assert!(validate_settings("http://rewarden.example.com", true, 45, 10, "").unwrap_err().contains("https"));
-        assert!(validate_settings("not a url", true, 45, 10, "").is_err());
+        assert!(validate_settings(OK_DOMAIN, false, 45, 10, "", &NO_APNS).unwrap_err().contains("DOMAIN"));
+        assert!(
+            validate_settings("http://rewarden.example.com", true, 45, 10, "", &NO_APNS).unwrap_err().contains("https")
+        );
+        assert!(validate_settings("not a url", true, 45, 10, "", &NO_APNS).is_err());
     }
 
     #[test]
     fn timing_bounds() {
-        assert!(validate_settings(OK_DOMAIN, true, 0, 0, "").unwrap_err().contains("REWARDEN_RELAY_WAIT_SECS"));
-        assert!(validate_settings(OK_DOMAIN, true, 56, 10, "").unwrap_err().contains("REWARDEN_RELAY_WAIT_SECS"));
-        assert!(validate_settings(OK_DOMAIN, true, 45, 0, "").unwrap_err().contains("REWARDEN_OFFLINE_SECS"));
-        assert!(validate_settings(OK_DOMAIN, true, 10, 11, "").unwrap_err().contains("REWARDEN_OFFLINE_SECS"));
+        assert!(
+            validate_settings(OK_DOMAIN, true, 0, 0, "", &NO_APNS).unwrap_err().contains("REWARDEN_RELAY_WAIT_SECS")
+        );
+        assert!(
+            validate_settings(OK_DOMAIN, true, 56, 10, "", &NO_APNS).unwrap_err().contains("REWARDEN_RELAY_WAIT_SECS")
+        );
+        assert!(validate_settings(OK_DOMAIN, true, 45, 0, "", &NO_APNS).unwrap_err().contains("REWARDEN_OFFLINE_SECS"));
+        assert!(
+            validate_settings(OK_DOMAIN, true, 10, 11, "", &NO_APNS).unwrap_err().contains("REWARDEN_OFFLINE_SECS")
+        );
     }
 
     #[test]
     fn fcm_path_must_exist_when_set() {
         let missing = std::env::temp_dir().join("rewarden-missing-service-account.json");
-        let err = validate_settings(OK_DOMAIN, true, 45, 10, missing.to_str().unwrap()).unwrap_err();
+        let err = validate_settings(OK_DOMAIN, true, 45, 10, missing.to_str().unwrap(), &NO_APNS).unwrap_err();
         assert!(err.contains("REWARDEN_FCM_SERVICE_ACCOUNT"), "{err}");
+    }
+
+    #[test]
+    fn apns_settings_are_checked_at_startup() {
+        let partial = apns::Settings {
+            key_id: "ABC123DEFG".to_owned(),
+            ..NO_APNS
+        };
+        let err = validate_settings(OK_DOMAIN, true, 45, 10, "", &partial).unwrap_err();
+        assert!(err.contains("REWARDEN_APNS_KEY_FILE"), "{err}");
+        let missing = apns::Settings {
+            key_file: "/nonexistent/AuthKey_ABC123DEFG.p8".to_owned(),
+            team_id: "DEF123GHIJ".to_owned(),
+            topic: apns::DEFAULT_TOPIC.to_owned(),
+            ..partial
+        };
+        let err = validate_settings(OK_DOMAIN, true, 45, 10, "", &missing).unwrap_err();
+        assert!(err.contains("REWARDEN_APNS_KEY_FILE") && err.contains("/nonexistent"), "{err}");
     }
 
     #[test]
