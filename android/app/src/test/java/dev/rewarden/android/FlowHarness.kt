@@ -80,6 +80,8 @@ abstract class FlowHarness {
         core.mcpRemoved.clear()
         core.mcpHeavy.clear()
         core.resetAutopilot()
+        core.resetSso()
+        container.ssoSignIn.clear()
         authResult = AuthResult.Success
         prompts.set(0)
         UpdateProvider.fetcher = FakeUpdateServer()

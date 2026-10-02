@@ -46,7 +46,10 @@ async fn authorized<T: DeserializeOwned>(
 }
 
 fn request(session: &Session, method: Method, path: &str, token: &str) -> RequestBuilder {
-    session.http.request(method, session.server.join(&format!("/rewarden/api{path}"))).bearer_auth(token)
+    crate::phone_api::with_device_key(
+        session.http.request(method, session.server.join(&format!("/rewarden/api{path}"))).bearer_auth(token),
+        session.device_key(),
+    )
 }
 
 /// Hands the server a result made on the phone; the AI gets the download link.

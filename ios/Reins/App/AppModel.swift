@@ -7,6 +7,37 @@ enum SessionState: Equatable {
     case loading
     case signedOut
     case signedIn(SessionInfo)
+    /// Signed in through "Continue" to an account whose keys this phone cannot open yet (another phone, or the recovery
+    /// code, has them): the Unlock screen shows, and this phone does not take the approval role until it can.
+    case keysLocked(SessionInfo)
+    /// Signed in, but the server would not make this phone the approval device: the account has another one, and this
+    /// phone could not prove it may take over (it holds neither the account's secret nor the password it signed in
+    /// with). The Unlock screen shows with that reason: the other phone approves this one, or the recovery code (or
+    /// the master password) gives it the proof. Not kept across launches: the next launch's registration is refused
+    /// again.
+    case otherApprovalDevice(SessionInfo)
+
+    /// The account the Unlock screen is about.
+    var unlocking: SessionInfo? {
+        switch self {
+        case let .keysLocked(info), let .otherApprovalDevice(info): info
+        case .loading, .signedOut, .signedIn: nil
+        }
+    }
+}
+
+/// The account a passwordless sign-in left locked on this phone (server and email), kept across launches so a restart
+/// comes back to the Unlock screen instead of registering the phone.
+enum KeysLock {
+    private static let key = "account.keysLocked"
+
+    static func set(_ info: SessionInfo) { AppGroup.defaults.set("\(info.serverUrl)|\(info.email)", forKey: key) }
+
+    static func matches(_ info: SessionInfo) -> Bool {
+        AppGroup.defaults.string(forKey: key) == "\(info.serverUrl)|\(info.email)"
+    }
+
+    static func clear() { AppGroup.defaults.removeObject(forKey: key) }
 }
 
 /// Whether this phone receives approval requests, kept across launches and shared with the extensions (the Android
@@ -72,8 +103,20 @@ final class AppModel {
     private(set) var approvalDevice = false
     /// Why registering this phone as the approval device failed, until it succeeds.
     var registrationError: String?
+    /// The account was made without a master password and this phone keeps its secret: Settings offers the recovery
+    /// code.
+    private(set) var recoveryCodeAvailable = false
     /// How the last MCP sign-in ended, shown on that server's page until it is left.
     var mcpNotice: McpNotice?
+    /// After a fresh sign-in (or a new account) on the sign-in screen: the steps that connect a computer and an AI
+    /// show instead of the app until "Done".
+    private(set) var onboarding = false
+    /// The onboarding steps were due when the approval role was refused (`otherApprovalDevice`): they show once this
+    /// phone gets it.
+    private var onboardingAfterUnlock = false
+    /// A pairing code from a link opened before this phone could redeem it (signed out, still starting, not yet the
+    /// approval device); redeemed as soon as it can be.
+    private(set) var waitingPairCode: String?
 
     // MARK: Navigation
 
@@ -129,6 +172,11 @@ final class AppModel {
 
     func refreshSession() async {
         let info = await core.session()
+        // The demo core keeps nothing across launches, so neither does its lock.
+        if let info, !demo, KeysLock.matches(info) {
+            setSession(.keysLocked(info))
+            return
+        }
         if info != nil {
             seenActivityId = DeviceStatus.seenActivityId
             approvalDevice = DeviceStatus.approvalDevice && !DeviceStatus.replaced
@@ -138,6 +186,7 @@ final class AppModel {
             onSignedIn?()
             await refreshPending()
             await refreshConnections()
+            recoveryCodeAvailable = (try? await core.accountRecoveryCode()) != nil
             if !DeviceStatus.replaced { await registerDeviceQuietly() }
         }
     }
@@ -154,6 +203,8 @@ final class AppModel {
         setMcpServers([])
         mcpNotice = nil
         approvalDevice = false
+        recoveryCodeAvailable = false
+        onboarding = false
         autopilot = nil
         sheet = nil
         paths = [:]
@@ -168,11 +219,65 @@ final class AppModel {
         await refreshSession()
     }
 
+    /// Signing in or creating an account on the sign-in screen: the session, the approval role (taken even from a
+    /// phone another one took it from), and the onboarding steps the first time this account signs in on this phone.
+    /// Notifications are asked for once the session is there (`onSignedIn`).
+    func finishSignIn(_ info: SessionInfo) async {
+        registrationError = nil
+        // The demo core keeps nothing across launches, so it shows the steps every time.
+        onboarding = demo || onboardingAfterUnlock || OnboardingRecord.firstTime(server: info.serverUrl, email: info.email)
+        onboardingAfterUnlock = false
+        await signedIn(info)
+        // The quiet registration may already have been refused (`otherApprovalDevice`).
+        if case .signedIn = session, !approvalDevice {
+            do {
+                try await registerDevice(force: true)
+            } catch CoreError.OtherApprovalDevice {
+                // The Unlock screen shows why.
+            } catch {
+                registrationError = error.userMessage
+            }
+        }
+    }
+
+    /// "Continue" came back. A new account (its keys were just made) or one this phone can open goes on like a password
+    /// sign-in; one whose keys another phone has waits on the Unlock screen.
+    func finishSso(_ outcome: SsoOutcome) async {
+        registrationError = nil
+        if outcome.keys == .locked {
+            if !demo { KeysLock.set(outcome.session) }
+            setSession(.keysLocked(outcome.session))
+        } else {
+            KeysLock.clear()
+            await finishSignIn(outcome.session)
+        }
+    }
+
+    /// The Unlock screen opened the keys, or brought the proof that lets this phone take the approval role (the other
+    /// phone approved, or the recovery code): on as after a sign-in.
+    func finishUnlock() async {
+        switch session {
+        case let .keysLocked(info):
+            KeysLock.clear()
+            await finishSignIn(info)
+        case let .otherApprovalDevice(info):
+            await finishSignIn(info)
+        case .loading, .signedOut, .signedIn:
+            return
+        }
+    }
+
+    func finishOnboarding() {
+        onboarding = false
+    }
+
     func signOut() async {
         try? await core.logout()
+        KeysLock.clear()
         DeviceStatus.clear()
         approvalDevice = false
         deviceReplaced = false
+        onboardingAfterUnlock = false
         setSession(.signedOut)
     }
 
@@ -271,15 +376,24 @@ final class AppModel {
 
     /// Makes this phone the approval device. `force` is the user's explicit "use this phone"; background token
     /// refreshes never take the role back from a phone that replaced this one.
+    ///
+    /// The server refuses a phone that is not the approval device and brings no proof it may take over
+    /// (`CoreError.OtherApprovalDevice`): the Unlock screen then shows, or, for a quiet registration of a phone that held
+    /// the role, it learns it was replaced.
     func registerDevice(force: Bool) async throws {
         if DeviceStatus.replaced && !force { return }
         let token = registrationToken
         do {
-            try await core.registerDevice(fcmToken: token)
-        } catch let CoreError.Server(status, _) where status == 400 && token != nil {
-            // A server that refuses the push token still takes the phone, which then gets requests while the app is
-            // open: servers from before October 2026 accept only 32-byte APNs tokens, and a simulator's are 80 bytes.
-            try await core.registerDevice(fcmToken: nil)
+            do {
+                try await core.registerDevice(fcmToken: token)
+            } catch let CoreError.Server(status, _) where status == 400 && token != nil {
+                // A server that refuses the push token still takes the phone, which then gets requests while the app
+                // is open: servers from before October 2026 accept only 32-byte APNs tokens, a simulator's are 80 bytes.
+                try await core.registerDevice(fcmToken: nil)
+            }
+        } catch CoreError.OtherApprovalDevice {
+            takeoverRefused(force: force)
+            throw CoreError.OtherApprovalDevice
         }
         DeviceStatus.replaced = false
         DeviceStatus.approvalDevice = true
@@ -287,14 +401,34 @@ final class AppModel {
         approvalDevice = true
         registrationError = nil
         publish()
+        if let code = waitingPairCode {
+            waitingPairCode = nil
+            await openPairing(code: code)
+        }
     }
 
     private func registerDeviceQuietly() async {
         do {
             try await registerDevice(force: false)
+        } catch CoreError.OtherApprovalDevice {
+            // The Unlock screen, or the "replaced" banner, says it.
         } catch {
             registrationError = error.userMessage
         }
+    }
+
+    /// Another phone approves for the account and this one could not prove it may take over. A phone that held the role
+    /// and only refreshed its registration lost it without hearing (a missed `replaced` push): it shows as replaced,
+    /// and "Use this phone" in Settings comes back here with `force`. Otherwise the Unlock screen offers the two ways.
+    private func takeoverRefused(force: Bool) {
+        if !force && approvalDevice {
+            markReplaced()
+            return
+        }
+        guard case let .signedIn(info) = session else { return }
+        onboardingAfterUnlock = onboarding
+        registrationError = nil
+        setSession(.otherApprovalDevice(info))
     }
 
     /// The server says another phone is the approval device now.
@@ -422,8 +556,49 @@ final class AppModel {
         openSheet(next.sheetTarget)
     }
 
-    /// A link from a notification, widget, control or Live Activity. Items open only if the core really has them.
+    // MARK: Pairing codes
+
+    /// A computer's pairing code from a link: redeemed now if this phone approves requests, else kept until it does.
+    func openPairing(code: String) async {
+        switch session {
+        case .signedIn where approvalDevice:
+            do {
+                let view = try await redeemPairingCode(code)
+                openSheet(.pairing(view.id))
+            } catch {
+                feedback.play(.error)
+                notice = Self.pairingCodeMessage(error)
+            }
+        case .signedIn where deviceReplaced:
+            feedback.play(.error)
+            notice = "Use this phone for approvals (Settings), then open the code again."
+        default:
+            waitingPairCode = code
+        }
+    }
+
+    /// Asks the server for the pairing `code` stands for; the core parks it like a pushed one, for the pairing sheet.
+    func redeemPairingCode(_ code: String) async throws -> PairingView {
+        let view = try await core.pairingByCode(userCode: code)
+        // It is answered where it was opened, and does not pop up again by itself.
+        presented.insert(view.id)
+        await refreshPending()
+        return view
+    }
+
+    /// What to say when a pairing code does not work.
+    static func pairingCodeMessage(_ error: Error) -> String {
+        if case CoreError.NotFound = error {
+            return "This code has expired or was already used. Show a new one on your computer."
+        }
+        return error.userMessage
+    }
+
+    /// A link from a notification, widget, control, Live Activity or a computer's pairing code. Items open only if the
+    /// core really has them.
     func handle(_ link: DeepLink) async {
+        if case let .pair(code) = link { return await openPairing(code: code) }
+        guard case .signedIn = session else { return }
         switch link {
         case let .item(kind, id):
             let items = (try? await core.pending()) ?? pending
@@ -449,6 +624,8 @@ final class AppModel {
             show(.integrations, in: .activity)
         case .home:
             home()
+        case .pair:
+            break
         }
     }
 
@@ -480,6 +657,24 @@ final class AppModel {
         s.save()
         WidgetCenter.shared.reloadAllTimelines()
         ControlCenter.shared.reloadAllControls()
+    }
+}
+
+/// Which accounts have been through the onboarding steps on this phone: they show once per account (server and
+/// email), after it signs in on the sign-in screen, so never for a session from before they existed.
+enum OnboardingRecord {
+    static func key(server: String, email: String) -> String {
+        var s = server.trimmingCharacters(in: .whitespaces).lowercased()
+        while s.hasSuffix("/") { s.removeLast() }
+        return "onboarded:\(s)|\(email.trimmingCharacters(in: .whitespaces).lowercased())"
+    }
+
+    /// True the first time `email` on `server` signs in on this phone; records that it did.
+    static func firstTime(server: String, email: String, defaults: UserDefaults = AppGroup.defaults) -> Bool {
+        let k = key(server: server, email: email)
+        guard !defaults.bool(forKey: k) else { return false }
+        defaults.set(true, forKey: k)
+        return true
     }
 }
 
@@ -522,7 +717,7 @@ extension PendingItem {
 
     var headline: String {
         switch kind {
-        case .pairing: untrusted(title)
+        case .pairing, .join: untrusted(title)
         case .blob: "\(untrusted(connectionLabel)): Share a file"
         case .request: fullTitle(label: connectionLabel, action: action, count: Int(count), service: service, title: opTitle, op: op)
         }

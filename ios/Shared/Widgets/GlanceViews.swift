@@ -82,8 +82,8 @@ struct GlanceAvatar: View {
             .fill(full ? Palette.accentSoft : Color.primary.opacity(0.16))
             .overlay {
                 Group {
-                    if kind == .pairing || Glance.initial(label).isEmpty {
-                        Image(systemName: kind == .pairing ? "link" : "key.fill")
+                    if kind == .pairing || kind == .join || Glance.initial(label).isEmpty {
+                        Image(systemName: kind == .pairing ? "link" : kind == .join ? "iphone.gen3" : "key.fill")
                             .font(.system(size: size * 0.4, weight: .semibold))
                     } else {
                         Text(Glance.initial(label)).font(RFont.fixedSans(size * 0.44, .semibold))
@@ -324,7 +324,7 @@ struct WaitingSmallView: View {
                     .foregroundStyle(Palette.text)
                     .lineLimit(2)
                 HStack(spacing: 4) {
-                    Text(newest.kind == .pairing ? "New connection" : newest.connection)
+                    Text(newest.kind == .pairing ? "New connection" : newest.kind == .join ? "Another phone" : newest.connection)
                         .font(RFont.fixedSans(11))
                         .foregroundStyle(Palette.secondary)
                         .lineLimit(1)
@@ -598,7 +598,7 @@ struct ApprovalLiveViews {
     var link: URL { DeepLink.item(kind: state.kind, id: state.itemId).url }
 
     var byline: String {
-        [state.kind == .pairing ? "" : state.connection, state.subtitle].filter { !$0.isEmpty }.joined(separator: " · ")
+        [state.kind == .pairing || state.kind == .join ? "" : state.connection, state.subtitle].filter { !$0.isEmpty }.joined(separator: " · ")
     }
 
     var title: String { stale ? "No longer waiting" : state.title }

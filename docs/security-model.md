@@ -56,7 +56,57 @@ Secrets released to the desktop app (`rewarden run`, the API proxy) and SSH sign
 permission for one item, or for one key on one server, if you choose to give one. Autopilot never releases them on its
 own.
 
-## Approving
+## Accounts without a master password
+
+On the hosted server, people sign in through WorkOS AuthKit (Google, Apple, GitHub, Microsoft or an email code) and
+never set a password ([self-hosting](self-hosting.md#sign-in-without-passwords-workos-authkit)). The vault still
+has Bitwarden's end-to-end encryption; only what protects its key changes:
+
+- **The account secret.** After the first sign-in the phone makes the account's keys itself: a random user key and an
+  RSA key pair, wrapped exactly as a Bitwarden client wraps them for a master password, with a random 256-bit secret
+  in the password's place (PBKDF2-SHA256 over a fixed salt, so that an email change at WorkOS does not lock the
+  vault). The server stores the wrapped keys and a hash of that "password", as for any account. The secret stays in
+  the phone's encrypted store (its data key wrapped by the Android Keystore or the iOS keychain); it is never shown
+  unless you ask for the recovery code, and never typed.
+- **The recovery code** is the secret in base32, in thirteen groups of four. Settings > Account shows it after
+  biometrics. Whoever has it and can sign in to the account can open the vault; without it and without a phone that
+  keeps the secret, the vault cannot be opened by anyone, including the server.
+- **Another phone** gets the secret from the approval device ("Add another phone"): the new phone makes an X25519 key
+  and asks through the server; both phones show a six-digit code derived from that key; you compare them and approve
+  with biometrics; the approval device seals the secret to the key (a sealed box naming the request), and the server
+  relays it without being able to open it. A server that swapped the key would make the codes differ.
+
+**What changes in trust.** WorkOS (and whoever controls the Google, Apple, GitHub or email account you sign in with)
+can now sign in to your Reins account. That gets them the server-side account, not the vault: opening it takes the
+account secret. Nor does it get them the approval role: once the account has an approval device, another device takes
+it only with the recovery code or your phone's yes ([which device approves](#which-device-approves)). The server
+refuses WorkOS impersonation sessions, follows WorkOS when it revokes a session or deletes a user, and takes an email
+change only once WorkOS has verified the new address.
+
+## Which device approves
+
+One device per account approves: it gets the AIs' requests and new connections. The server decides which
+(`PUT /rewarden/api/device`):
+
+- **The account's first approval device** needs nothing.
+- **The approval device registering again** (a new push token, a restart, a new sign-in on the same phone) needs
+  nothing. The same device means the same Vaultwarden device *and* the same device key: 32 random bytes the phone
+  makes once, keeps in its encrypted store and sends with every phone-API call (`Reins-Device-Key`); the server keeps
+  their SHA-256. A Vaultwarden device id is no secret (the account's device list shows it, and a sign-in may name any
+  id), so a sign-in that claims the approval device's id without its key is another device, for registering and for
+  every call only the approval device may make.
+- **Any other device** takes the role only with a proof:
+  - the master password hash of the account secret (the phone has the secret after the recovery code or another
+    phone's approval), or, for accounts made with one, of the master password; the server checks it like a password
+    sign-in. Wrong hashes count against the account: after 5 within 15 minutes (`REWARDEN_DEVICE_PROOF_*`) every
+    attempt waits;
+  - or the approval device's yes to that device's "add another phone" request: the server keeps it for 5 minutes,
+    for one takeover, and only for the device key that asked.
+
+Without a proof the server answers `403 proof_required`, and the apps say "This account already has a phone for
+approvals. Approve this phone from it, or enter your recovery code.", with exactly those two ways on. The phone that
+loses the role is told by push. The phone's core attaches the proof itself when it has one, so a phone that just got
+the secret, or signed in with the master password, moves the role without asking again.
 
 - Approving needs the phone's screen lock or biometrics. Denying is one tap.
 - One-time approvals execute exactly what was shown and create no permission. Standing permissions are limited to one
@@ -187,8 +237,14 @@ Details: [autopilot.md](autopilot.md).
 
 - The server sees tool arguments and results in transit (above). End-to-end encryption between the AI and the phone
   is not possible while the AI needs the plaintext.
-- One approval device per account. Signing in on a second phone moves the role there. That phone has no service
-  credentials and no grants of the first, but it can approve new connections.
+- One approval device per account, and the first one needs no proof ([which device approves](#which-device-approves)):
+  an account that never had one (signed up, no phone set up yet) goes to whichever of its signed-in devices registers
+  first. A phone that moves the role with the recovery code or the master password has none of the first phone's
+  service credentials or grants.
+- An approval device registered before device keys (servers from before October 2026) is known by its device id
+  until it registers again; its first registration with a device key keeps that key.
+- On an account made with a master password, the approval device has no account secret to send, so "add another
+  phone" cannot approve there; the new phone proves itself with the master password.
 - Hooks are pattern-based (above).
 - Autopilot's model was trained and evaluated on synthetic data ([model card](../tools/laya/MODEL_CARD.md)).
 

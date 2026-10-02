@@ -36,10 +36,6 @@ struct MainShell: View {
         .onChange(of: scenePhase, initial: true) { _, phase in
             model.setActive(phase == .active)
         }
-        .onOpenURL { url in
-            guard let link = DeepLink(url: url) else { return }
-            Task { await model.handle(link) }
-        }
     }
 }
 
@@ -204,7 +200,7 @@ struct RouteView: View {
 }
 
 /// The sheet for an item that waits: tall on a phone (the content stays visible above it), a form sheet on iPad.
-private struct SheetContent: View {
+struct SheetContent: View {
     var target: SheetTarget
     /// The shell's width class (inside a form sheet the sheet's own is compact): a regular width gets a plain form
     /// sheet, since a fractional detent there pushes the sheet's bottom, and its buttons, off the screen.
@@ -217,6 +213,8 @@ private struct SheetContent: View {
             case let .approval(id): ApprovalSheet(requestId: id)
             case let .pairing(id): PairingSheet(pairingId: id)
             case let .upload(id): UploadSheet(blobId: id)
+            case let .join(id): JoinSheet(joinId: id)
+            case .connectComputer: ConnectComputerSheet()
             }
         }
         .environment(model)

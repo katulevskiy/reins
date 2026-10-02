@@ -52,6 +52,8 @@ extension Error {
             case .NotFound: return "That is no longer there."
             case let .Invalid(reason): return reason
             case let .Storage(reason): return "Storage problem: \(reason)"
+            case .OtherApprovalDevice:
+                return "This account already has a phone for approvals. Approve this phone from it, or enter your recovery code."
             }
         case let e as ForeignError:
             switch e {

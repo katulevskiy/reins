@@ -44,6 +44,39 @@ permissions) and the password vault (master password once) are each added from t
 `docs/deployment.md` for what each needs. Telegram's credentials come from `rewarden.telegramApiId` /
 `rewarden.telegramApiHash` in `~/.gradle/gradle.properties`.
 
+### Onboarding, pairing codes and links
+
+Signed out, the app shows a welcome with one button, "Continue" (`ui/signin`). It calls the core's `ssoBegin` for
+`BuildConfig.DEFAULT_SERVER` (`rewarden.defaultServer`, default `https://app.reins2fa.com`) and opens the server's
+sign-in page (Google, Apple, GitHub or an email code) in a Custom Tab. The page sends the browser to
+`com.reins2fa.app://sso-callback`, which `platform/SsoRedirectActivity` hands to `MainActivity` (closing the tab), and the
+sign-in screen finishes it with `ssoFinish`. `platform/SsoSignIn` keeps the server, `state` and PKCE verifier in the
+app's private storage while the page is open, so the sign-in still finishes when Android stopped the app meanwhile.
+"Use another server" reveals the address field for self-hosters, with "Continue" for that server and, there only, the
+email and master password forms ("Sign in", "Create account").
+
+`ssoFinish` says whether this phone can open the account's keys. A new account (`Created`) or one whose secret this
+phone keeps (`Unlocked`) finishes like a password sign-in: this phone becomes the approval device and the setup
+follows. `Locked` (the keys are on another phone) shows the Unlock screen instead and does not register this phone:
+"Ask my other phone" (`joinBegin` with `Build.MODEL`, the code shown large, `joinPoll` every 2 seconds) or "Enter
+recovery code" (`unlockAccount`, which also takes the master password of an account made with one). The locked state
+is kept in `state/DeviceStatusStore`, so a relaunch comes back to the Unlock screen; unlocking or signing out clears it.
+On the approval device the request is a `PendingKind.JOIN` item (push `t=join`): its sheet shows the code the new
+phone shows, and approving asks for biometrics first. Settings > Account shows the recovery code (after biometrics)
+when the core has one for the account.
+
+A fresh sign-in from these screens then shows a short setup once per account (`state/OnboardingStore`):
+notifications, "connect your computer" and the `/mcp` address for Claude.ai or ChatGPT. People who were signed in
+before it existed never see it.
+
+A computer pairs by the code it shows ("BCDF-GHJK", as a QR code of `https://app.reins2fa.com/pair?code=...`, or
+`reins://pair?code=...`). The phone scans it with Google's code scanner (`play-services-code-scanner`: Play services shows
+the camera, so the app needs no camera permission), or the user types it; `ui/pairing/PairingCode` reduces whatever
+arrives to a well-formed code, the core's `pairingByCode` fetches the pairing from the user's own server, and the usual
+pairing sheet confirms it. The same link opens the app directly (an App Link on `app.reins2fa.com/pair`, which needs the
+server's `/.well-known/assetlinks.json` to list this package and its signing certificate's SHA-256; and the `reins`
+scheme). Settings > AI connections > Connect a computer does the same later.
+
 ### Icons and avatars
 
 Provider logos in `app/src/main/assets/providers/` are the real brand SVGs (see `NOTICE.md` there), rasterised with
@@ -59,6 +92,11 @@ library's own golden corpus (1000 names plus backdrops, by SHA-256 of the markup
 scripts/device-smoke.sh          # real server + simulated AI on this machine, real core on the emulator
 ```
 
+* `OnboardingFlowTest` covers the welcome, new accounts, the setup after signing in, and connecting a computer by a
+  scanned, typed or linked code (the scanner is replaced through `QrScannerProvider`).
+* `PasswordlessFlowTest` covers "Continue" (the Custom Tab, the callback, a callback nobody waits for), the Unlock
+  screen (asking the other phone, the recovery code, relaunching while locked), the approval device's side of "Add
+  another phone" and the recovery code in Settings.
 * `AppFlowTest` (Robolectric) drives every screen against an in-memory `FakeCore`: sign-in, 2FA, approvals (once,
   standing, public-domain warning), biometric fail-closed paths, pairing, deep-link spoofing, `FLAG_SECURE`, grants,
   activity.
@@ -91,5 +129,6 @@ app/src/main/java/dev/rewarden/android/
   design/     palette, Geist type, components, action icons, provider logos + blobatars, countdown border, grant clocks
   ui/         activity (home tab + details), grants (tab, details, new grant), sheet (80% approval/pairing sheet),
               approval (pure grant builder, sheet content), settings (account, AI connections + icons, integrations),
-              main (floating nav bar), signin, nav
+              main (floating nav bar), signin (welcome, password forms, Unlock), join (another phone asks for the
+              account's keys), nav
 ```

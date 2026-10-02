@@ -357,6 +357,7 @@ table! {
         device_uuid -> Text,
         fcm_token -> Nullable<Text>,
         updated_at -> BigInt,
+        key_hash -> Nullable<Text>,
     }
 }
 
@@ -387,6 +388,22 @@ table! {
         token_hash -> Text,
         connection_uuid -> Text,
         expires_at -> BigInt,
+    }
+}
+
+table! {
+    rewarden_settings (name) {
+        name -> Text,
+        value -> Text,
+    }
+}
+
+table! {
+    rewarden_sso_sessions (session_id) {
+        session_id -> Text,
+        user_uuid -> Text,
+        device_uuid -> Text,
+        created_at -> BigInt,
     }
 }
 

@@ -7,7 +7,7 @@ use rewarden_policy::{AddrRule, Grant, Pattern, ReadScope, Scope, SendScope};
 use rewarden_proto::PROTOCOL_VERSION;
 use rewarden_proto::gmail::{GrantAction, GrantRequest, MessageSummary, ToolCall};
 use rewarden_proto::ids::{ConnectionId, GrantId};
-use rewarden_proto::pairing::{PairingRequest, PairingResponse};
+use rewarden_proto::pairing::{PairingRequest, PairingResponse, normalize_user_code};
 use rewarden_proto::relay::{RelayOutcome, ToolResult};
 
 use crate::autopilot::Verdict;
@@ -562,6 +562,38 @@ impl Engine {
         Ok(views::pairing_view(&self.parked_pairing(id)?))
     }
 
+    /// The pairing a computer's code stands for (scanned from its QR code, or from a link): the server hands it to this
+    /// phone, which parks it like a pushed one. It is answered with [`Engine::answer_pairing`]: the user still taps the
+    /// number the computer shows and compares its key.
+    pub async fn pairing_by_code(&self, user_code: &str) -> Result<PairingView, CoreError> {
+        let code = normalize_user_code(user_code).ok_or_else(|| {
+            CoreError::invalid("That is not a Reins pairing code. Scan the QR code your computer shows.")
+        })?;
+        let session = self.session()?;
+        let pairing = match api_call!(&session, |api| api.claim_pairing(&code)) {
+            Ok(p) => p,
+            Err(ApiFailure::Status {
+                status: 409,
+                ..
+            }) => {
+                return Err(CoreError::invalid(
+                    "This code was already used. Show a new one on your computer and scan it again.",
+                ));
+            }
+            Err(e) => return Err(e.into_core()),
+        };
+        let id = pairing.id.0.clone();
+        // Scanned twice: the pairing is parked already.
+        if let Ok(view) = self.pairing_view(&id) {
+            return Ok(view);
+        }
+        let Some(_guard) = self.begin(&id)? else {
+            return self.pairing_view(&id);
+        };
+        self.park_pairing(pairing)?;
+        self.pairing_view(&id)
+    }
+
     /// Sends the user's answer for an AI-connection request.
     pub async fn answer_pairing(
         &self,
@@ -577,7 +609,7 @@ impl Engine {
         let pairing = self.parked_pairing(id)?;
         if approve {
             let Some(code) = chosen_code else {
-                return Err(CoreError::invalid("choose the number shown in the browser"));
+                return Err(CoreError::invalid("choose the number shown on your computer or in the browser"));
             };
             if !pairing.choices.contains(&code) {
                 return Err(CoreError::invalid("that number was not offered"));

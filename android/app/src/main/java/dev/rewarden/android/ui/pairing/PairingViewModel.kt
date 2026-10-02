@@ -19,7 +19,7 @@ import kotlinx.coroutines.launch
 data class PairingUi(
     val loading: Boolean = true,
     val view: PairingView? = null,
-    /** The two-digit code the user tapped; the AI is connected only if it is the one their browser shows. */
+    /** The two-digit code the user tapped; the AI is connected only if it is the one their computer or browser shows. */
     val chosen: Int? = null,
     val label: String = "",
     val busy: Boolean = false,
@@ -57,7 +57,7 @@ class PairingViewModel(private val container: AppContainer, private val pairingI
         if (current.busy) return
         if (code == null) {
             container.feedback.play(Event.Error)
-            _ui.update { it.copy(error = "Tap the code your browser shows.") }
+            _ui.update { it.copy(error = "Tap the code your computer or browser shows.") }
             return
         }
         _ui.update { it.copy(busy = true, error = null) }

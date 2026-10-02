@@ -15,8 +15,9 @@ name = "reins-app"
 path = "src/main.rs"
 
 [features]
-# Pairing by QR code through `rewarden_desktop::server::device` (the onboarding work). Without it, the app pairs with
-# the browser sign-in only. Make it a default feature once that module is on the branch.
+default = ["device-flow"]
+# Pairing by QR code through `rewarden_desktop::server::device` (the device flow). Without it, the app pairs with the
+# browser sign-in only.
 device-flow = []
 
 [dependencies]

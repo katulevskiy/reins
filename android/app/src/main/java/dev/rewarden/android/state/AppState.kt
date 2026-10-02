@@ -84,6 +84,29 @@ class AppState {
     private val _approvalDevice = MutableStateFlow(false)
     val approvalDevice: StateFlow<Boolean> = _approvalDevice.asStateFlow()
 
+    /**
+     * Signed in, but this phone cannot open the account's keys yet: the Unlock screen shows instead of the app, and the
+     * phone is not registered as the approval device (the phone that has the keys must approve this one).
+     */
+    private val _keysLocked = MutableStateFlow(false)
+    val keysLocked: StateFlow<Boolean> = _keysLocked.asStateFlow()
+
+    fun setKeysLocked(value: Boolean) {
+        _keysLocked.value = value
+    }
+
+    /**
+     * Registering this phone as the approval device was refused: another phone approves for the account. The Unlock
+     * screen shows instead of the app with the two ways to take over (approve from that phone, or the recovery code),
+     * until it succeeds or the user puts it off.
+     */
+    private val _approvalTakeover = MutableStateFlow(false)
+    val approvalTakeover: StateFlow<Boolean> = _approvalTakeover.asStateFlow()
+
+    fun setApprovalTakeover(value: Boolean) {
+        _approvalTakeover.value = value
+    }
+
     /** Why registering this phone as the approval device failed, until it succeeds. */
     private val _registrationError = MutableStateFlow<String?>(null)
     val registrationError: StateFlow<String?> = _registrationError.asStateFlow()
@@ -92,9 +115,18 @@ class AppState {
         _registrationError.value = message
     }
 
+    /** The setup after a fresh sign-in (connect a computer, connect an AI) is showing instead of the main screen. */
+    private val _setupPending = MutableStateFlow(false)
+    val setupPending: StateFlow<Boolean> = _setupPending.asStateFlow()
+
+    fun setSetupPending(value: Boolean) {
+        _setupPending.value = value
+    }
+
     fun setSession(state: SessionState) {
         _session.value = state
         if (state !is SessionState.SignedIn) {
+            _setupPending.value = false
             _pending.value = emptyList()
             _activity.value = emptyList()
             _grants.value = emptyList()
@@ -104,6 +136,8 @@ class AppState {
             setMcpServers(emptyList())
             _mcpNotice.value = null
             _approvalDevice.value = false
+            _keysLocked.value = false
+            _approvalTakeover.value = false
             _autopilot.value = null
         }
     }

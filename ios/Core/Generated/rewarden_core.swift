@@ -2474,6 +2474,17 @@ public func FfiConverterTypeNotifier_lower(_ value: Notifier) -> UInt64 {
 public protocol RewardenCoreProtocol: AnyObject, Sendable {
     
     /**
+     * Whether this phone can open the signed-in account's vault.
+     */
+    func accountKeys() async throws  -> AccountKeys
+    
+    /**
+     * The account's recovery code (`ABCD-EFGH-...`, 13 groups), when this phone keeps its secret. Ask for biometrics
+     * before showing it.
+     */
+    func accountRecoveryCode() async throws  -> String
+    
+    /**
      * Whether one connected account can be used right now.
      */
     func accountStatus(account: String) async  -> GmailStatus
@@ -2505,6 +2516,12 @@ public protocol RewardenCoreProtocol: AnyObject, Sendable {
      * The user's decision on an uploaded file: approved, its download link works; refused, the server deletes it.
      */
     func answerBlob(id: String, approve: Bool) async throws 
+    
+    /**
+     * On the approval device: gives the account's keys to the asking phone (sealed to it), or refuses. Ask for
+     * biometrics before approving.
+     */
+    func answerJoin(id: String, approve: Bool) async throws 
     
     func answerPairing(pairingId: String, approve: Bool, chosenCode: UInt8?, label: String?) async throws 
     
@@ -2548,6 +2565,13 @@ public protocol RewardenCoreProtocol: AnyObject, Sendable {
      * "This was wrong" on an activity entry (`should_have` is `Approve` or `Deny`).
      */
     func correctDecision(activityId: Int64, shouldHave: Verdict) async throws 
+    
+    /**
+     * Creates a Bitwarden-compatible account on the server (PBKDF2-SHA256 with 600 000 iterations, a fresh vault key
+     * and RSA key pair), then signs in to it like `login`. A master password shorter than 12 characters, a taken
+     * email or closed sign-ups are `Invalid` with a message for the user.
+     */
+    func createAccount(serverUrl: String, email: String, password: String) async throws  -> SessionInfo
     
     /**
      * Creates a permission ahead of any request (`kind` is `Read` or `Send`).
@@ -2598,6 +2622,25 @@ public protocol RewardenCoreProtocol: AnyObject, Sendable {
      */
     func handlePushDeferringAutopilot(kind: String, id: String) async throws 
     
+    /**
+     * "Add another phone", on the new phone (keys `Locked`): asks the account's approval device for its keys. Show
+     * `code` and ask the user to check that the other phone shows the same, then call `join_poll` every few
+     * seconds.
+     */
+    func joinBegin(deviceName: String) async throws  -> JoinStart
+    
+    func joinCancel() async throws 
+    
+    /**
+     * Where the request stands; `Joined` once the keys are open on this phone. `NotFound` when none is open.
+     */
+    func joinPoll() async throws  -> JoinProgress
+    
+    /**
+     * On the approval device: the phone asking (`PendingKind::Join`), with the code it should show.
+     */
+    func joinView(id: String) async throws  -> JoinView
+    
     func login(serverUrl: String, email: String, password: String, totp: String?) async throws  -> SessionInfo
     
     /**
@@ -2618,6 +2661,13 @@ public protocol RewardenCoreProtocol: AnyObject, Sendable {
     func logout() async throws 
     
     func modelStatus() async  -> ModelStatus
+    
+    /**
+     * The pairing a computer's code stands for (`BCDF-GHJK`, scanned from its QR code or opened from a link; case,
+     * spaces and dashes do not count). It is parked like a pushed pairing and answered with `answer_pairing`. An
+     * unknown or expired code is `NotFound`.
+     */
+    func pairingByCode(userCode: String) async throws  -> PairingView
     
     func pairingView(pairingId: String) async throws  -> PairingView
     
@@ -2711,9 +2761,28 @@ public protocol RewardenCoreProtocol: AnyObject, Sendable {
     func setPreset(profileId: String, preset: Preset) async throws 
     
     /**
+     * Starts a sign-in through the server's SSO ("Continue": Google, Apple, GitHub or an email code on
+     * app.reins2fa.com). Open `url` in ASWebAuthenticationSession / a Custom Tab, wait for `callback_scheme`, then
+     * call `sso_finish` with the URL it came back with and this `state` and `verifier`.
+     */
+    func ssoBegin(serverUrl: String) async throws  -> SsoStart
+    
+    /**
+     * Finishes the sign-in, keeps the session like `login`, and makes (a new account) or opens the account's keys.
+     * `keys` is `Locked` when another phone or the recovery code has what opens them.
+     */
+    func ssoFinish(serverUrl: String, callbackUrl: String, state: String, verifier: String) async throws  -> SsoOutcome
+    
+    /**
      * Foreground long-poll, then everything received is processed like a push.
      */
     func sync(waitSecs: UInt32) async throws  -> [PendingItem]
+    
+    /**
+     * Opens a `Locked` account with its recovery code (case, spaces and dashes do not count), or with the master
+     * password of an account made with one.
+     */
+    func unlockAccount(codeOrPassword: String) async throws 
     
     /**
      * Adds an MCP server by its address: added at once, or a sign-in page to open (its redirect goes to
@@ -2819,6 +2888,45 @@ public convenience init(dataDir: String, keys: KeyWrapper, google: GoogleTokenPr
 
     
 
+    
+    /**
+     * Whether this phone can open the signed-in account's vault.
+     */
+open func accountKeys()async throws  -> AccountKeys  {
+    return
+        try  await uniffiRustCallAsync(
+            rustFutureFunc: {
+                uniffi_rewarden_core_fn_method_rewardencore_account_keys(
+                        self.uniffiCloneHandle()
+                )
+            },
+            pollFunc: ffi_rewarden_core_rust_future_poll_rust_buffer,
+            completeFunc: ffi_rewarden_core_rust_future_complete_rust_buffer,
+            freeFunc: ffi_rewarden_core_rust_future_free_rust_buffer,
+            liftFunc: FfiConverterTypeAccountKeys_lift,
+            errorHandler: FfiConverterTypeCoreError_lift
+        )
+}
+    
+    /**
+     * The account's recovery code (`ABCD-EFGH-...`, 13 groups), when this phone keeps its secret. Ask for biometrics
+     * before showing it.
+     */
+open func accountRecoveryCode()async throws  -> String  {
+    return
+        try  await uniffiRustCallAsync(
+            rustFutureFunc: {
+                uniffi_rewarden_core_fn_method_rewardencore_account_recovery_code(
+                        self.uniffiCloneHandle()
+                )
+            },
+            pollFunc: ffi_rewarden_core_rust_future_poll_rust_buffer,
+            completeFunc: ffi_rewarden_core_rust_future_complete_rust_buffer,
+            freeFunc: ffi_rewarden_core_rust_future_free_rust_buffer,
+            liftFunc: FfiConverterString.lift,
+            errorHandler: FfiConverterTypeCoreError_lift
+        )
+}
     
     /**
      * Whether one connected account can be used right now.
@@ -2941,6 +3049,26 @@ open func answerBlob(id: String, approve: Bool)async throws   {
         try  await uniffiRustCallAsync(
             rustFutureFunc: {
                 uniffi_rewarden_core_fn_method_rewardencore_answer_blob(
+                        self.uniffiCloneHandle(),FfiConverterString.lower(id),FfiConverterBool.lower(approve)
+                )
+            },
+            pollFunc: ffi_rewarden_core_rust_future_poll_void,
+            completeFunc: ffi_rewarden_core_rust_future_complete_void,
+            freeFunc: ffi_rewarden_core_rust_future_free_void,
+            liftFunc: { $0 },
+            errorHandler: FfiConverterTypeCoreError_lift
+        )
+}
+    
+    /**
+     * On the approval device: gives the account's keys to the asking phone (sealed to it), or refuses. Ask for
+     * biometrics before approving.
+     */
+open func answerJoin(id: String, approve: Bool)async throws   {
+    return
+        try  await uniffiRustCallAsync(
+            rustFutureFunc: {
+                uniffi_rewarden_core_fn_method_rewardencore_answer_join(
                         self.uniffiCloneHandle(),FfiConverterString.lower(id),FfiConverterBool.lower(approve)
                 )
             },
@@ -3145,6 +3273,27 @@ open func correctDecision(activityId: Int64, shouldHave: Verdict)async throws   
             completeFunc: ffi_rewarden_core_rust_future_complete_void,
             freeFunc: ffi_rewarden_core_rust_future_free_void,
             liftFunc: { $0 },
+            errorHandler: FfiConverterTypeCoreError_lift
+        )
+}
+    
+    /**
+     * Creates a Bitwarden-compatible account on the server (PBKDF2-SHA256 with 600 000 iterations, a fresh vault key
+     * and RSA key pair), then signs in to it like `login`. A master password shorter than 12 characters, a taken
+     * email or closed sign-ups are `Invalid` with a message for the user.
+     */
+open func createAccount(serverUrl: String, email: String, password: String)async throws  -> SessionInfo  {
+    return
+        try  await uniffiRustCallAsync(
+            rustFutureFunc: {
+                uniffi_rewarden_core_fn_method_rewardencore_create_account(
+                        self.uniffiCloneHandle(),FfiConverterString.lower(serverUrl),FfiConverterString.lower(email),FfiConverterString.lower(password)
+                )
+            },
+            pollFunc: ffi_rewarden_core_rust_future_poll_rust_buffer,
+            completeFunc: ffi_rewarden_core_rust_future_complete_rust_buffer,
+            freeFunc: ffi_rewarden_core_rust_future_free_rust_buffer,
+            liftFunc: FfiConverterTypeSessionInfo_lift,
             errorHandler: FfiConverterTypeCoreError_lift
         )
 }
@@ -3367,6 +3516,81 @@ open func handlePushDeferringAutopilot(kind: String, id: String)async throws   {
         )
 }
     
+    /**
+     * "Add another phone", on the new phone (keys `Locked`): asks the account's approval device for its keys. Show
+     * `code` and ask the user to check that the other phone shows the same, then call `join_poll` every few
+     * seconds.
+     */
+open func joinBegin(deviceName: String)async throws  -> JoinStart  {
+    return
+        try  await uniffiRustCallAsync(
+            rustFutureFunc: {
+                uniffi_rewarden_core_fn_method_rewardencore_join_begin(
+                        self.uniffiCloneHandle(),FfiConverterString.lower(deviceName)
+                )
+            },
+            pollFunc: ffi_rewarden_core_rust_future_poll_rust_buffer,
+            completeFunc: ffi_rewarden_core_rust_future_complete_rust_buffer,
+            freeFunc: ffi_rewarden_core_rust_future_free_rust_buffer,
+            liftFunc: FfiConverterTypeJoinStart_lift,
+            errorHandler: FfiConverterTypeCoreError_lift
+        )
+}
+    
+open func joinCancel()async throws   {
+    return
+        try  await uniffiRustCallAsync(
+            rustFutureFunc: {
+                uniffi_rewarden_core_fn_method_rewardencore_join_cancel(
+                        self.uniffiCloneHandle()
+                )
+            },
+            pollFunc: ffi_rewarden_core_rust_future_poll_void,
+            completeFunc: ffi_rewarden_core_rust_future_complete_void,
+            freeFunc: ffi_rewarden_core_rust_future_free_void,
+            liftFunc: { $0 },
+            errorHandler: FfiConverterTypeCoreError_lift
+        )
+}
+    
+    /**
+     * Where the request stands; `Joined` once the keys are open on this phone. `NotFound` when none is open.
+     */
+open func joinPoll()async throws  -> JoinProgress  {
+    return
+        try  await uniffiRustCallAsync(
+            rustFutureFunc: {
+                uniffi_rewarden_core_fn_method_rewardencore_join_poll(
+                        self.uniffiCloneHandle()
+                )
+            },
+            pollFunc: ffi_rewarden_core_rust_future_poll_rust_buffer,
+            completeFunc: ffi_rewarden_core_rust_future_complete_rust_buffer,
+            freeFunc: ffi_rewarden_core_rust_future_free_rust_buffer,
+            liftFunc: FfiConverterTypeJoinProgress_lift,
+            errorHandler: FfiConverterTypeCoreError_lift
+        )
+}
+    
+    /**
+     * On the approval device: the phone asking (`PendingKind::Join`), with the code it should show.
+     */
+open func joinView(id: String)async throws  -> JoinView  {
+    return
+        try  await uniffiRustCallAsync(
+            rustFutureFunc: {
+                uniffi_rewarden_core_fn_method_rewardencore_join_view(
+                        self.uniffiCloneHandle(),FfiConverterString.lower(id)
+                )
+            },
+            pollFunc: ffi_rewarden_core_rust_future_poll_rust_buffer,
+            completeFunc: ffi_rewarden_core_rust_future_complete_rust_buffer,
+            freeFunc: ffi_rewarden_core_rust_future_free_rust_buffer,
+            liftFunc: FfiConverterTypeJoinView_lift,
+            errorHandler: FfiConverterTypeCoreError_lift
+        )
+}
+    
 open func login(serverUrl: String, email: String, password: String, totp: String?)async throws  -> SessionInfo  {
     return
         try  await uniffiRustCallAsync(
@@ -3470,6 +3694,27 @@ open func modelStatus()async  -> ModelStatus  {
             liftFunc: FfiConverterTypeModelStatus_lift,
             errorHandler: nil
             
+        )
+}
+    
+    /**
+     * The pairing a computer's code stands for (`BCDF-GHJK`, scanned from its QR code or opened from a link; case,
+     * spaces and dashes do not count). It is parked like a pushed pairing and answered with `answer_pairing`. An
+     * unknown or expired code is `NotFound`.
+     */
+open func pairingByCode(userCode: String)async throws  -> PairingView  {
+    return
+        try  await uniffiRustCallAsync(
+            rustFutureFunc: {
+                uniffi_rewarden_core_fn_method_rewardencore_pairing_by_code(
+                        self.uniffiCloneHandle(),FfiConverterString.lower(userCode)
+                )
+            },
+            pollFunc: ffi_rewarden_core_rust_future_poll_rust_buffer,
+            completeFunc: ffi_rewarden_core_rust_future_complete_rust_buffer,
+            freeFunc: ffi_rewarden_core_rust_future_free_rust_buffer,
+            liftFunc: FfiConverterTypePairingView_lift,
+            errorHandler: FfiConverterTypeCoreError_lift
         )
 }
     
@@ -3854,6 +4099,47 @@ open func setPreset(profileId: String, preset: Preset)async throws   {
 }
     
     /**
+     * Starts a sign-in through the server's SSO ("Continue": Google, Apple, GitHub or an email code on
+     * app.reins2fa.com). Open `url` in ASWebAuthenticationSession / a Custom Tab, wait for `callback_scheme`, then
+     * call `sso_finish` with the URL it came back with and this `state` and `verifier`.
+     */
+open func ssoBegin(serverUrl: String)async throws  -> SsoStart  {
+    return
+        try  await uniffiRustCallAsync(
+            rustFutureFunc: {
+                uniffi_rewarden_core_fn_method_rewardencore_sso_begin(
+                        self.uniffiCloneHandle(),FfiConverterString.lower(serverUrl)
+                )
+            },
+            pollFunc: ffi_rewarden_core_rust_future_poll_rust_buffer,
+            completeFunc: ffi_rewarden_core_rust_future_complete_rust_buffer,
+            freeFunc: ffi_rewarden_core_rust_future_free_rust_buffer,
+            liftFunc: FfiConverterTypeSsoStart_lift,
+            errorHandler: FfiConverterTypeCoreError_lift
+        )
+}
+    
+    /**
+     * Finishes the sign-in, keeps the session like `login`, and makes (a new account) or opens the account's keys.
+     * `keys` is `Locked` when another phone or the recovery code has what opens them.
+     */
+open func ssoFinish(serverUrl: String, callbackUrl: String, state: String, verifier: String)async throws  -> SsoOutcome  {
+    return
+        try  await uniffiRustCallAsync(
+            rustFutureFunc: {
+                uniffi_rewarden_core_fn_method_rewardencore_sso_finish(
+                        self.uniffiCloneHandle(),FfiConverterString.lower(serverUrl),FfiConverterString.lower(callbackUrl),FfiConverterString.lower(state),FfiConverterString.lower(verifier)
+                )
+            },
+            pollFunc: ffi_rewarden_core_rust_future_poll_rust_buffer,
+            completeFunc: ffi_rewarden_core_rust_future_complete_rust_buffer,
+            freeFunc: ffi_rewarden_core_rust_future_free_rust_buffer,
+            liftFunc: FfiConverterTypeSsoOutcome_lift,
+            errorHandler: FfiConverterTypeCoreError_lift
+        )
+}
+    
+    /**
      * Foreground long-poll, then everything received is processed like a push.
      */
 open func sync(waitSecs: UInt32)async throws  -> [PendingItem]  {
@@ -3868,6 +4154,26 @@ open func sync(waitSecs: UInt32)async throws  -> [PendingItem]  {
             completeFunc: ffi_rewarden_core_rust_future_complete_rust_buffer,
             freeFunc: ffi_rewarden_core_rust_future_free_rust_buffer,
             liftFunc: FfiConverterSequenceTypePendingItem.lift,
+            errorHandler: FfiConverterTypeCoreError_lift
+        )
+}
+    
+    /**
+     * Opens a `Locked` account with its recovery code (case, spaces and dashes do not count), or with the master
+     * password of an account made with one.
+     */
+open func unlockAccount(codeOrPassword: String)async throws   {
+    return
+        try  await uniffiRustCallAsync(
+            rustFutureFunc: {
+                uniffi_rewarden_core_fn_method_rewardencore_unlock_account(
+                        self.uniffiCloneHandle(),FfiConverterString.lower(codeOrPassword)
+                )
+            },
+            pollFunc: ffi_rewarden_core_rust_future_poll_void,
+            completeFunc: ffi_rewarden_core_rust_future_complete_void,
+            freeFunc: ffi_rewarden_core_rust_future_free_void,
+            liftFunc: { $0 },
             errorHandler: FfiConverterTypeCoreError_lift
         )
 }
@@ -6773,6 +7079,139 @@ public func FfiConverterTypeGrantView_lower(_ value: GrantView) -> RustBuffer {
 
 
 /**
+ * This phone asked the approval device for the account's keys: show `code` ("482 193") and ask the user to check
+ * that the other phone shows the same.
+ */
+public struct JoinStart: Equatable, Hashable {
+    public var id: String
+    public var code: String
+    public var expiresAt: Int64
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(id: String, code: String, expiresAt: Int64) {
+        self.id = id
+        self.code = code
+        self.expiresAt = expiresAt
+    }
+
+    
+
+    
+}
+
+#if compiler(>=6)
+extension JoinStart: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeJoinStart: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> JoinStart {
+        return
+            try JoinStart(
+                id: FfiConverterString.read(from: &buf), 
+                code: FfiConverterString.read(from: &buf), 
+                expiresAt: FfiConverterInt64.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: JoinStart, into buf: inout [UInt8]) {
+        FfiConverterString.write(value.id, into: &buf)
+        FfiConverterString.write(value.code, into: &buf)
+        FfiConverterInt64.write(value.expiresAt, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeJoinStart_lift(_ buf: RustBuffer) throws -> JoinStart {
+    return try FfiConverterTypeJoinStart.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeJoinStart_lower(_ value: JoinStart) -> RustBuffer {
+    return FfiConverterTypeJoinStart.lower(value)
+}
+
+
+/**
+ * Another phone asking the approval device for the account's keys (`PendingKind::Join`).
+ */
+public struct JoinView: Equatable, Hashable {
+    public var id: String
+    public var deviceName: String
+    /**
+     * The code the other phone shows, computed here from the key the server relayed.
+     */
+    public var code: String
+    public var createdAt: Int64
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(id: String, deviceName: String, 
+        /**
+         * The code the other phone shows, computed here from the key the server relayed.
+         */code: String, createdAt: Int64) {
+        self.id = id
+        self.deviceName = deviceName
+        self.code = code
+        self.createdAt = createdAt
+    }
+
+    
+
+    
+}
+
+#if compiler(>=6)
+extension JoinView: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeJoinView: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> JoinView {
+        return
+            try JoinView(
+                id: FfiConverterString.read(from: &buf), 
+                deviceName: FfiConverterString.read(from: &buf), 
+                code: FfiConverterString.read(from: &buf), 
+                createdAt: FfiConverterInt64.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: JoinView, into buf: inout [UInt8]) {
+        FfiConverterString.write(value.id, into: &buf)
+        FfiConverterString.write(value.deviceName, into: &buf)
+        FfiConverterString.write(value.code, into: &buf)
+        FfiConverterInt64.write(value.createdAt, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeJoinView_lift(_ buf: RustBuffer) throws -> JoinView {
+    return try FfiConverterTypeJoinView.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeJoinView_lower(_ value: JoinView) -> RustBuffer {
+    return FfiConverterTypeJoinView.lower(value)
+}
+
+
+/**
  * A call to a tool of an added MCP server, spelled out for the approval.
  */
 public struct McpCallView: Equatable, Hashable {
@@ -8445,6 +8884,126 @@ public func FfiConverterTypeSshSignView_lower(_ value: SshSignView) -> RustBuffe
 }
 
 
+public struct SsoOutcome: Equatable, Hashable {
+    public var session: SessionInfo
+    public var keys: AccountKeys
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(session: SessionInfo, keys: AccountKeys) {
+        self.session = session
+        self.keys = keys
+    }
+
+    
+
+    
+}
+
+#if compiler(>=6)
+extension SsoOutcome: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeSsoOutcome: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> SsoOutcome {
+        return
+            try SsoOutcome(
+                session: FfiConverterTypeSessionInfo.read(from: &buf), 
+                keys: FfiConverterTypeAccountKeys.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: SsoOutcome, into buf: inout [UInt8]) {
+        FfiConverterTypeSessionInfo.write(value.session, into: &buf)
+        FfiConverterTypeAccountKeys.write(value.keys, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeSsoOutcome_lift(_ buf: RustBuffer) throws -> SsoOutcome {
+    return try FfiConverterTypeSsoOutcome.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeSsoOutcome_lower(_ value: SsoOutcome) -> RustBuffer {
+    return FfiConverterTypeSsoOutcome.lower(value)
+}
+
+
+/**
+ * A sign-in through the server's SSO, started: open `url` in the browser session (ASWebAuthenticationSession, a
+ * Custom Tab) and wait for `callback_scheme`; keep `state` and `verifier` for `sso_finish`.
+ */
+public struct SsoStart: Equatable, Hashable {
+    public var url: String
+    public var callbackScheme: String
+    public var state: String
+    public var verifier: String
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(url: String, callbackScheme: String, state: String, verifier: String) {
+        self.url = url
+        self.callbackScheme = callbackScheme
+        self.state = state
+        self.verifier = verifier
+    }
+
+    
+
+    
+}
+
+#if compiler(>=6)
+extension SsoStart: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeSsoStart: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> SsoStart {
+        return
+            try SsoStart(
+                url: FfiConverterString.read(from: &buf), 
+                callbackScheme: FfiConverterString.read(from: &buf), 
+                state: FfiConverterString.read(from: &buf), 
+                verifier: FfiConverterString.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: SsoStart, into buf: inout [UInt8]) {
+        FfiConverterString.write(value.url, into: &buf)
+        FfiConverterString.write(value.callbackScheme, into: &buf)
+        FfiConverterString.write(value.state, into: &buf)
+        FfiConverterString.write(value.verifier, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeSsoStart_lift(_ buf: RustBuffer) throws -> SsoStart {
+    return try FfiConverterTypeSsoStart.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeSsoStart_lower(_ value: SsoStart) -> RustBuffer {
+    return FfiConverterTypeSsoStart.lower(value)
+}
+
+
 /**
  * Optional standing grant created alongside the approval.
  */
@@ -8651,6 +9210,92 @@ public func FfiConverterTypeSuggestionView_lift(_ buf: RustBuffer) throws -> Sug
 public func FfiConverterTypeSuggestionView_lower(_ value: SuggestionView) -> RustBuffer {
     return FfiConverterTypeSuggestionView.lower(value)
 }
+
+
+/**
+ * Whether this phone can open the account's vault.
+ */
+
+public enum AccountKeys: Equatable, Hashable {
+    
+    /**
+     * A new account: this phone just made its keys and keeps their secret.
+     */
+    case created
+    /**
+     * This phone keeps what opens the keys.
+     */
+    case unlocked
+    /**
+     * The account has keys this phone cannot open yet: approve it from the phone that has them, or enter the
+     * recovery code (or the master password of an account made with one).
+     */
+    case locked
+
+
+
+
+
+}
+
+#if compiler(>=6)
+extension AccountKeys: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeAccountKeys: FfiConverterRustBuffer {
+    typealias SwiftType = AccountKeys
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> AccountKeys {
+        let variant: Int32 = try readInt(&buf)
+        switch variant {
+        
+        case 1: return .created
+        
+        case 2: return .unlocked
+        
+        case 3: return .locked
+        
+        default: throw UniffiInternalError.unexpectedEnumCase
+        }
+    }
+
+    public static func write(_ value: AccountKeys, into buf: inout [UInt8]) {
+        switch value {
+        
+        
+        case .created:
+            writeInt(&buf, Int32(1))
+        
+        
+        case .unlocked:
+            writeInt(&buf, Int32(2))
+        
+        
+        case .locked:
+            writeInt(&buf, Int32(3))
+        
+        }
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeAccountKeys_lift(_ buf: RustBuffer) throws -> AccountKeys {
+    return try FfiConverterTypeAccountKeys.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeAccountKeys_lower(_ value: AccountKeys) -> RustBuffer {
+    return FfiConverterTypeAccountKeys.lower(value)
+}
+
 
 
 
@@ -9002,6 +9647,12 @@ enum CoreError: Swift.Error, Equatable, Hashable, Foundation.LocalizedError {
     )
     case Storage(reason: String
     )
+    /**
+     * `register_device`: another phone approves for this account, and this one may not take over yet. The app offers
+     * the two ways: the other phone's approval ("add another phone", `join_begin`) or the recovery code (or the
+     * master password) with `unlock_account`; then `register_device` again.
+     */
+    case OtherApprovalDevice
 
     
 
@@ -9059,6 +9710,7 @@ public struct FfiConverterTypeCoreError: FfiConverterRustBuffer {
         case 13: return .Storage(
             reason: try FfiConverterString.read(from: &buf)
             )
+        case 14: return .OtherApprovalDevice
 
          default: throw UniffiInternalError.unexpectedEnumCase
         }
@@ -9130,6 +9782,10 @@ public struct FfiConverterTypeCoreError: FfiConverterRustBuffer {
             writeInt(&buf, Int32(13))
             FfiConverterString.write(reason, into: &buf)
             
+        
+        case .OtherApprovalDevice:
+            writeInt(&buf, Int32(14))
+        
         }
     }
 }
@@ -9306,6 +9962,92 @@ public func FfiConverterTypeGmailStatus_lift(_ buf: RustBuffer) throws -> GmailS
 #endif
 public func FfiConverterTypeGmailStatus_lower(_ value: GmailStatus) -> RustBuffer {
     return FfiConverterTypeGmailStatus.lower(value)
+}
+
+
+
+
+public enum JoinProgress: Equatable, Hashable {
+    
+    /**
+     * Not answered yet: ask again in a few seconds.
+     */
+    case waiting
+    /**
+     * Approved: the account's keys are open on this phone.
+     */
+    case joined
+    case denied
+    case expired
+
+
+
+
+
+}
+
+#if compiler(>=6)
+extension JoinProgress: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeJoinProgress: FfiConverterRustBuffer {
+    typealias SwiftType = JoinProgress
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> JoinProgress {
+        let variant: Int32 = try readInt(&buf)
+        switch variant {
+        
+        case 1: return .waiting
+        
+        case 2: return .joined
+        
+        case 3: return .denied
+        
+        case 4: return .expired
+        
+        default: throw UniffiInternalError.unexpectedEnumCase
+        }
+    }
+
+    public static func write(_ value: JoinProgress, into buf: inout [UInt8]) {
+        switch value {
+        
+        
+        case .waiting:
+            writeInt(&buf, Int32(1))
+        
+        
+        case .joined:
+            writeInt(&buf, Int32(2))
+        
+        
+        case .denied:
+            writeInt(&buf, Int32(3))
+        
+        
+        case .expired:
+            writeInt(&buf, Int32(4))
+        
+        }
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeJoinProgress_lift(_ buf: RustBuffer) throws -> JoinProgress {
+    return try FfiConverterTypeJoinProgress.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeJoinProgress_lower(_ value: JoinProgress) -> RustBuffer {
+    return FfiConverterTypeJoinProgress.lower(value)
 }
 
 
@@ -9563,6 +10305,10 @@ public enum PendingKind: Equatable, Hashable {
      * A file an AI uploaded with `rewarden_upload`, waiting for the user's decision (see [`BlobView`]).
      */
     case blob
+    /**
+     * Another phone of the account asks for its keys ("Add another phone", see [`JoinView`]).
+     */
+    case join
 
 
 
@@ -9590,6 +10336,8 @@ public struct FfiConverterTypePendingKind: FfiConverterRustBuffer {
         
         case 3: return .blob
         
+        case 4: return .join
+        
         default: throw UniffiInternalError.unexpectedEnumCase
         }
     }
@@ -9608,6 +10356,10 @@ public struct FfiConverterTypePendingKind: FfiConverterRustBuffer {
         
         case .blob:
             writeInt(&buf, Int32(3))
+        
+        
+        case .join:
+            writeInt(&buf, Int32(4))
         
         }
     }
@@ -11145,6 +11897,12 @@ private let initializationResult: InitializationResult = {
     if bindings_contract_version != scaffolding_contract_version {
         return InitializationResult.contractVersionMismatch
     }
+    if (uniffi_rewarden_core_checksum_method_rewardencore_account_keys() != 55556) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_rewarden_core_checksum_method_rewardencore_account_recovery_code() != 25859) {
+        return InitializationResult.apiChecksumMismatch
+    }
     if (uniffi_rewarden_core_checksum_method_rewardencore_account_status() != 57626) {
         return InitializationResult.apiChecksumMismatch
     }
@@ -11164,6 +11922,9 @@ private let initializationResult: InitializationResult = {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_rewarden_core_checksum_method_rewardencore_answer_blob() != 15626) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_rewarden_core_checksum_method_rewardencore_answer_join() != 47286) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_rewarden_core_checksum_method_rewardencore_answer_pairing() != 57523) {
@@ -11197,6 +11958,9 @@ private let initializationResult: InitializationResult = {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_rewarden_core_checksum_method_rewardencore_correct_decision() != 34541) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_rewarden_core_checksum_method_rewardencore_create_account() != 34743) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_rewarden_core_checksum_method_rewardencore_create_grant() != 8698) {
@@ -11235,6 +11999,18 @@ private let initializationResult: InitializationResult = {
     if (uniffi_rewarden_core_checksum_method_rewardencore_handle_push_deferring_autopilot() != 33611) {
         return InitializationResult.apiChecksumMismatch
     }
+    if (uniffi_rewarden_core_checksum_method_rewardencore_join_begin() != 7205) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_rewarden_core_checksum_method_rewardencore_join_cancel() != 34469) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_rewarden_core_checksum_method_rewardencore_join_poll() != 55590) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_rewarden_core_checksum_method_rewardencore_join_view() != 30696) {
+        return InitializationResult.apiChecksumMismatch
+    }
     if (uniffi_rewarden_core_checksum_method_rewardencore_login() != 49678) {
         return InitializationResult.apiChecksumMismatch
     }
@@ -11251,6 +12027,9 @@ private let initializationResult: InitializationResult = {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_rewarden_core_checksum_method_rewardencore_model_status() != 11237) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_rewarden_core_checksum_method_rewardencore_pairing_by_code() != 39601) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_rewarden_core_checksum_method_rewardencore_pairing_view() != 62634) {
@@ -11316,7 +12095,16 @@ private let initializationResult: InitializationResult = {
     if (uniffi_rewarden_core_checksum_method_rewardencore_set_preset() != 49459) {
         return InitializationResult.apiChecksumMismatch
     }
+    if (uniffi_rewarden_core_checksum_method_rewardencore_sso_begin() != 31222) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_rewarden_core_checksum_method_rewardencore_sso_finish() != 49441) {
+        return InitializationResult.apiChecksumMismatch
+    }
     if (uniffi_rewarden_core_checksum_method_rewardencore_sync() != 34004) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_rewarden_core_checksum_method_rewardencore_unlock_account() != 1080) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_rewarden_core_checksum_method_rewardencore_mcp_add() != 45649) {

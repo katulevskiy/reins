@@ -15,8 +15,9 @@ use crate::connector::device::{DeviceBridge, DeviceCalendar, DeviceContacts, Sms
 use crate::connector::{Connector, LoginProgress};
 use crate::engine::{CoreConfig, Engine};
 use crate::types::{
-    AccountView, ActivityEntry, ApprovalChoice, ApprovalKind, ApprovalView, ConnectionView, EmailContent, GmailStatus,
-    GrantView, PairingView, PendingItem, ServiceView, SessionInfo, StandingGrant,
+    AccountKeys, AccountView, ActivityEntry, ApprovalChoice, ApprovalKind, ApprovalView, ConnectionView, EmailContent,
+    GmailStatus, GrantView, JoinProgress, JoinStart, JoinView, PairingView, PendingItem, ServiceView, SessionInfo,
+    SsoOutcome, SsoStart, StandingGrant,
 };
 use crate::{CoreError, GoogleTokenProvider, KeyWrapper, Notifier, rt};
 
@@ -112,6 +113,95 @@ impl RewardenCore {
         rt::run(async move { engine.login(&server_url, &email, password, totp).await }).await
     }
 
+    /// Starts a sign-in through the server's SSO ("Continue": Google, Apple, GitHub or an email code on
+    /// app.reins2fa.com). Open `url` in ASWebAuthenticationSession / a Custom Tab, wait for `callback_scheme`, then
+    /// call `sso_finish` with the URL it came back with and this `state` and `verifier`.
+    pub async fn sso_begin(&self, server_url: String) -> Result<SsoStart, CoreError> {
+        let engine = Arc::clone(&self.engine);
+        rt::run(async move { engine.sso_begin(&server_url) }).await
+    }
+
+    /// Finishes the sign-in, keeps the session like `login`, and makes (a new account) or opens the account's keys.
+    /// `keys` is `Locked` when another phone or the recovery code has what opens them.
+    pub async fn sso_finish(
+        &self,
+        server_url: String,
+        callback_url: String,
+        state: String,
+        verifier: String,
+    ) -> Result<SsoOutcome, CoreError> {
+        let engine = Arc::clone(&self.engine);
+        let verifier = Zeroizing::new(verifier);
+        rt::run(async move { engine.sso_finish(&server_url, &callback_url, &state, verifier).await }).await
+    }
+
+    /// Whether this phone can open the signed-in account's vault.
+    pub async fn account_keys(&self) -> Result<AccountKeys, CoreError> {
+        let engine = Arc::clone(&self.engine);
+        rt::run(async move { engine.account_keys().await }).await
+    }
+
+    /// Opens a `Locked` account with its recovery code (case, spaces and dashes do not count), or with the master
+    /// password of an account made with one.
+    pub async fn unlock_account(&self, code_or_password: String) -> Result<(), CoreError> {
+        let engine = Arc::clone(&self.engine);
+        let secret = Zeroizing::new(code_or_password);
+        rt::run(async move { engine.unlock_account(secret).await }).await
+    }
+
+    /// The account's recovery code (`ABCD-EFGH-...`, 13 groups), when this phone keeps its secret. Ask for biometrics
+    /// before showing it.
+    pub async fn account_recovery_code(&self) -> Result<String, CoreError> {
+        let engine = Arc::clone(&self.engine);
+        rt::run(async move { engine.account_recovery_code().await }).await
+    }
+
+    /// "Add another phone", on the new phone (keys `Locked`): asks the account's approval device for its keys. Show
+    /// `code` and ask the user to check that the other phone shows the same, then call `join_poll` every few
+    /// seconds.
+    pub async fn join_begin(&self, device_name: String) -> Result<JoinStart, CoreError> {
+        let engine = Arc::clone(&self.engine);
+        rt::run(async move { engine.join_begin(&device_name).await }).await
+    }
+
+    /// Where the request stands; `Joined` once the keys are open on this phone. `NotFound` when none is open.
+    pub async fn join_poll(&self) -> Result<JoinProgress, CoreError> {
+        let engine = Arc::clone(&self.engine);
+        rt::run(async move { engine.join_poll().await }).await
+    }
+
+    pub async fn join_cancel(&self) -> Result<(), CoreError> {
+        let engine = Arc::clone(&self.engine);
+        rt::run(async move { engine.join_cancel() }).await
+    }
+
+    /// On the approval device: the phone asking (`PendingKind::Join`), with the code it should show.
+    pub async fn join_view(&self, id: String) -> Result<JoinView, CoreError> {
+        let engine = Arc::clone(&self.engine);
+        rt::run(async move { engine.join_view(&id) }).await
+    }
+
+    /// On the approval device: gives the account's keys to the asking phone (sealed to it), or refuses. Ask for
+    /// biometrics before approving.
+    pub async fn answer_join(&self, id: String, approve: bool) -> Result<(), CoreError> {
+        let engine = Arc::clone(&self.engine);
+        rt::run(async move { engine.answer_join(&id, approve).await }).await
+    }
+
+    /// Creates a Bitwarden-compatible account on the server (PBKDF2-SHA256 with 600 000 iterations, a fresh vault key
+    /// and RSA key pair), then signs in to it like `login`. A master password shorter than 12 characters, a taken
+    /// email or closed sign-ups are `Invalid` with a message for the user.
+    pub async fn create_account(
+        &self,
+        server_url: String,
+        email: String,
+        password: String,
+    ) -> Result<SessionInfo, CoreError> {
+        let engine = Arc::clone(&self.engine);
+        let password = Zeroizing::new(password);
+        rt::run(async move { engine.create_account(&server_url, &email, password).await }).await
+    }
+
     pub async fn logout(&self) -> Result<(), CoreError> {
         let engine = Arc::clone(&self.engine);
         rt::run(async move { engine.logout() }).await
@@ -165,6 +255,14 @@ impl RewardenCore {
     pub async fn pairing_view(&self, pairing_id: String) -> Result<PairingView, CoreError> {
         let engine = Arc::clone(&self.engine);
         rt::run(async move { engine.pairing_view(&pairing_id) }).await
+    }
+
+    /// The pairing a computer's code stands for (`BCDF-GHJK`, scanned from its QR code or opened from a link; case,
+    /// spaces and dashes do not count). It is parked like a pushed pairing and answered with `answer_pairing`. An
+    /// unknown or expired code is `NotFound`.
+    pub async fn pairing_by_code(&self, user_code: String) -> Result<PairingView, CoreError> {
+        let engine = Arc::clone(&self.engine);
+        rt::run(async move { engine.pairing_by_code(&user_code).await }).await
     }
 
     pub async fn answer_pairing(

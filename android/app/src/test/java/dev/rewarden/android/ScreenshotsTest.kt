@@ -72,6 +72,8 @@ abstract class ScreenshotsBase(private val suffix: String) {
         core.mcp = emptyList()
         core.blobs.clear()
         core.resetAutopilot()
+        core.resetSso()
+        core.resetOnboarding()
         UpdateProvider.fetcher = updates
         UpdateProvider.installer = FakeInstaller()
         androidx.work.testing.WorkManagerTestInitHelper.initializeTestWorkManager(context)
@@ -929,12 +931,121 @@ abstract class ScreenshotsBase(private val suffix: String) {
         shoot("78-connection-autopilot")
     }
 
+    /** "Use another server" on the welcome page, with a self-hosted server typed in (the password forms are for one). */
+    private fun useOwnServer() {
+        tap("useAnotherServer")
+        await("server")
+        rule.onNodeWithTag("server").performTextReplacement("https://reins.example.com")
+    }
+
     @Test
     fun signIn() {
         core.session = null
         launch()
+        await("welcome")
+        shoot("14-welcome")
+        useOwnServer()
+        await("startSignIn")
+        shoot("14j-welcome-own-server")
+        tap("startSignIn")
         await("signIn")
-        shoot("14-signin")
+        shoot("14a-signin")
+    }
+
+    @Test
+    fun unlock() {
+        core.session = null
+        core.ssoKeys = dev.rewarden.core.AccountKeys.LOCKED
+        launch()
+        tap("continue")
+        rule.waitUntil(10_000) { container().ssoSignIn.pending() != null }
+        scenario?.close()
+        launch(
+            Intent(context, MainActivity::class.java)
+                .setAction(dev.rewarden.android.platform.SsoRedirectActivity.ACTION_SIGNED_IN)
+                .setData(android.net.Uri.parse("com.reins2fa.app://sso-callback?code=c0de&state=${FakeCore.SSO_STATE}")),
+        )
+        await("unlock")
+        shoot("14g-unlock")
+        core.joinWaits = Int.MAX_VALUE
+        tap("askOtherPhone")
+        await("joinCode")
+        shoot("14h-unlock-asking")
+        tap("cancelJoin")
+        tap("enterRecoveryCode")
+        await("recoveryCode")
+        shoot("14i-unlock-recovery-code")
+    }
+
+    @Test
+    fun joinSheet() {
+        core.pending = listOf(TestData.joinItem())
+        core.joins["join1"] = TestData.joinView()
+        launch(link("join", "join1"))
+        await("joinCode")
+        shoot("7b-join")
+    }
+
+    @Test
+    fun recoveryCode() {
+        core.recoveryCode = FakeCore.RECOVERY_CODE
+        val biometrics = dev.rewarden.android.platform.AuthenticatorProvider.factory
+        dev.rewarden.android.platform.AuthenticatorProvider.factory = {
+            dev.rewarden.android.platform.Authenticator { _, _ -> dev.rewarden.android.platform.AuthResult.Success }
+        }
+        try {
+            launch()
+            tap("openSettings")
+            tap("recoveryCodeRow")
+            await("recoveryCodeSheet")
+            shoot("50b-recovery-code", dialogs = true)
+        } finally {
+            dev.rewarden.android.platform.AuthenticatorProvider.factory = biometrics
+        }
+    }
+
+    private fun container() = (context.applicationContext as RewardenApp).container
+
+    @Test
+    fun createAccount() {
+        core.session = null
+        launch()
+        useOwnServer()
+        tap("createAccount")
+        await("create")
+        rule.onNodeWithTag("email").performTextReplacement("me@example.com")
+        rule.onNodeWithTag("password").performTextReplacement("correct horse battery")
+        rule.onNodeWithTag("confirmPassword").performTextReplacement("correct horse battery")
+        shoot("14b-create-account")
+    }
+
+    @Test
+    fun setupAfterSigningIn() {
+        core.session = null
+        launch()
+        useOwnServer()
+        tap("startSignIn")
+        await("signIn")
+        rule.onNodeWithTag("email").performTextReplacement("me@example.com")
+        rule.onNodeWithTag("password").performTextReplacement("correct horse battery")
+        tap("signIn")
+        await("setupComputer")
+        shoot("14c-setup-computer")
+        tap("typeCode")
+        await("pairCode")
+        shoot("14d-setup-type-code")
+        tap("setupNext")
+        await("setupAi")
+        shoot("14e-setup-ai")
+    }
+
+    @Test
+    fun connectComputer() {
+        launch()
+        tap("openSettings")
+        tap("connectComputer")
+        await("scanQr")
+        shoot("14f-connect-computer")
     }
 
     companion object {

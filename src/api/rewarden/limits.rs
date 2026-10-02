@@ -7,17 +7,18 @@
 //! Who is limited by what:
 //! - an AI connection: requests to `/mcp` and the desktop API per minute, calls waiting for the phone at once;
 //! - an account: calls relayed to its phone per minute (each may wake it with a push), outbound requests the server
-//!   makes for its phone (per minute and at once), connection requests (pairings) naming its email;
+//!   makes for its phone (per minute and at once), connection requests (pairings) naming its email or scanned by its
+//!   phone, wrong proofs sent to take its approval role;
 //! - an approval device: concurrent `GET /pending` long-polls;
-//! - an IP address: OAuth dynamic client registrations.
+//! - an IP address: OAuth dynamic client registrations, device authorizations (QR codes to pair a computer).
 
 use std::{
-    collections::HashMap,
+    collections::{HashMap, VecDeque},
     hash::Hash,
     net::IpAddr,
     num::NonZeroU32,
     sync::{Arc, LazyLock, Mutex, PoisonError},
-    time::Duration,
+    time::{Duration, Instant},
 };
 
 use governor::{
@@ -127,6 +128,76 @@ impl<K: Hash + Eq + Clone> Concurrency<K> {
     }
 }
 
+/// At most `max` failures per key within `window`; then the key is refused until its oldest failure ages out. Unlike
+/// [`RateLimit`], only failures count, and asking whether a key is refused costs nothing. `0` disables the limit.
+pub struct FailureLimit<K: Hash + Eq + Clone> {
+    max: usize,
+    window: Duration,
+    failures: Mutex<HashMap<K, VecDeque<Instant>>>,
+}
+
+impl<K: Hash + Eq + Clone> FailureLimit<K> {
+    pub fn new(max: u32, window: Duration) -> Self {
+        Self {
+            max: usize::try_from(max).unwrap_or(usize::MAX),
+            window,
+            failures: Mutex::default(),
+        }
+    }
+
+    /// `Err` with the time until `key` may try again when it has `max` failures within the window.
+    pub fn check(&self, key: &K) -> Result<(), Duration> {
+        self.check_at(key, Instant::now())
+    }
+
+    /// Counts a failure of `key`.
+    pub fn fail(&self, key: &K) {
+        self.fail_at(key, Instant::now());
+    }
+
+    fn check_at(&self, key: &K, now: Instant) -> Result<(), Duration> {
+        if self.max == 0 {
+            return Ok(());
+        }
+        let mut failures = self.failures.lock().unwrap_or_else(PoisonError::into_inner);
+        let Some(times) = failures.get_mut(key) else {
+            return Ok(());
+        };
+        while times.front().is_some_and(|t| now.duration_since(*t) >= self.window) {
+            times.pop_front();
+        }
+        match times.front() {
+            None => {
+                failures.remove(key);
+                Ok(())
+            }
+            Some(oldest) if times.len() >= self.max => Err(self.window.saturating_sub(now.duration_since(*oldest))),
+            Some(_) => Ok(()),
+        }
+    }
+
+    fn fail_at(&self, key: &K, now: Instant) {
+        if self.max == 0 {
+            return;
+        }
+        let mut failures = self.failures.lock().unwrap_or_else(PoisonError::into_inner);
+        let times = failures.entry(key.clone()).or_default();
+        times.push_back(now);
+        while times.len() > self.max {
+            times.pop_front();
+        }
+    }
+
+    /// Forgets keys whose failures all aged out.
+    pub fn retain_recent(&self) {
+        let now = Instant::now();
+        self.failures
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .retain(|_, times| times.back().is_some_and(|t| now.duration_since(*t) < self.window));
+    }
+}
+
 /// Whole seconds to wait, rounded up, at least 1 (what error messages and `Retry-After` show).
 pub fn retry_secs(wait: Duration) -> u64 {
     (wait.as_secs() + u64::from(wait.subsec_nanos() > 0)).max(1)
@@ -155,6 +226,12 @@ pub static PAIRINGS: LazyLock<RateLimit<String>> = LazyLock::new(|| {
     RateLimit::with_period(CONFIG.rewarden_pairing_ratelimit_seconds(), CONFIG.rewarden_pairing_ratelimit_max_burst())
 });
 
+/// Device authorizations (a computer asking for a QR code to pair, RFC 8628) per IP address, with the pairing
+/// settings: each may become a pairing.
+pub static DEVICE_AUTHORIZATIONS: LazyLock<RateLimit<IpAddr>> = LazyLock::new(|| {
+    RateLimit::with_period(CONFIG.rewarden_pairing_ratelimit_seconds(), CONFIG.rewarden_pairing_ratelimit_max_burst())
+});
+
 /// OAuth dynamic client registrations per IP address.
 pub static REGISTRATIONS: LazyLock<RateLimit<IpAddr>> = LazyLock::new(|| {
     RateLimit::with_period(CONFIG.rewarden_register_ratelimit_seconds(), CONFIG.rewarden_register_ratelimit_max_burst())
@@ -163,6 +240,15 @@ pub static REGISTRATIONS: LazyLock<RateLimit<IpAddr>> = LazyLock::new(|| {
 /// `GET /pending` long-polls of one approval device at once (key: device id).
 pub static DEVICE_POLLS: LazyLock<Concurrency<String>> =
     LazyLock::new(|| Concurrency::new(CONFIG.rewarden_device_max_polls()));
+
+/// Wrong proofs sent to take the approval role (`PUT /rewarden/api/device` with a master password hash) for one
+/// account (key: user id).
+pub static DEVICE_PROOFS: LazyLock<FailureLimit<String>> = LazyLock::new(|| {
+    FailureLimit::new(
+        CONFIG.rewarden_device_proof_max_failures(),
+        Duration::from_secs(CONFIG.rewarden_device_proof_window_seconds()),
+    )
+});
 
 /// Outbound requests (file sends and fetches, proxied MCP calls) made for one account (key: user id).
 pub static OUTBOUND_REQUESTS: LazyLock<RateLimit<String>> =
@@ -177,8 +263,10 @@ pub fn retain_recent() {
     CONNECTION_REQUESTS.retain_recent();
     ACCOUNT_CALLS.retain_recent();
     PAIRINGS.retain_recent();
+    DEVICE_AUTHORIZATIONS.retain_recent();
     REGISTRATIONS.retain_recent();
     OUTBOUND_REQUESTS.retain_recent();
+    DEVICE_PROOFS.retain_recent();
 }
 
 /// Cross-field checks of the limit settings; only called when Rewarden is enabled.
@@ -248,6 +336,28 @@ mod tests {
             held.push(unlimited.try_enter(&1).expect("no limit"));
         }
         assert_eq!(unlimited.active(&1), 100);
+    }
+
+    #[test]
+    fn failures_refuse_a_key_until_the_oldest_ages_out() {
+        let limit = FailureLimit::<String>::new(3, Duration::from_secs(60));
+        let (key, t0) = ("u1".to_owned(), Instant::now());
+        assert_eq!(limit.check_at(&key, t0), Ok(()));
+        limit.fail_at(&key, t0);
+        limit.fail_at(&key, t0 + Duration::from_secs(10));
+        assert_eq!(limit.check_at(&key, t0 + Duration::from_secs(11)), Ok(()), "asking does not count");
+        assert_eq!(limit.check_at(&key, t0 + Duration::from_secs(11)), Ok(()));
+        limit.fail_at(&key, t0 + Duration::from_secs(20));
+        assert_eq!(limit.check_at(&key, t0 + Duration::from_secs(30)), Err(Duration::from_secs(30)));
+        assert_eq!(limit.check_at(&"u2".to_owned(), t0 + Duration::from_secs(30)), Ok(()), "per key");
+        assert_eq!(limit.check_at(&key, t0 + Duration::from_secs(60)), Ok(()), "the first failure aged out");
+        limit.fail_at(&key, t0 + Duration::from_secs(61));
+        assert_eq!(limit.check_at(&key, t0 + Duration::from_secs(62)), Err(Duration::from_secs(8)));
+        assert_eq!(limit.check_at(&key, t0 + Duration::from_secs(200)), Ok(()));
+        assert!(limit.failures.lock().unwrap().is_empty(), "an idle key is forgotten");
+        let off = FailureLimit::<u8>::new(0, Duration::from_secs(60));
+        (0..100).for_each(|_| off.fail(&1));
+        assert_eq!(off.check(&1), Ok(()));
     }
 
     #[test]

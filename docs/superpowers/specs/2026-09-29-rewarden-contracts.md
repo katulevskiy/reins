@@ -22,16 +22,19 @@ error body is acceptable there).
 
 Every endpoint except `PUT /device` additionally requires that the caller's device
 (`claims.device`) is the user's registered approval device, else **403
-`not_approval_device`**.
+`not_approval_device`**. The phone sends its device key with every call (header
+`Reins-Device-Key`, 32 random bytes in base64url); a registered key must match too
+(`proto::device::DEVICE_KEY_HEADER`, October 2026).
 
 | # | Method, path | Request body | Success | Errors |
 |---|---|---|---|---|
-| A1 | `PUT /device` | `DeviceRegistration { fcm_token: Option<String> }` | 200 `DeviceRegistered { replaced_previous: bool }` | — |
+| A1 | `PUT /device` | `DeviceRegistration { fcm_token: Option<String>, master_password_hash: Option<String> }` | 200 `DeviceRegistered { replaced_previous: bool }` | 403 `proof_required` / `wrong_proof` when another device approves for the account and this one brings no valid proof (the hash, or an approved join); 429 after too many wrong proofs ([passwordless spec](2026-10-02-passwordless-sign-in.md#taking-the-approval-role-server-srcapirewardendevice_apirs-core-enginers-register_device)) |
 | A2 | `GET /pending?wait=<0..=25>` | — | 200 `Pending { requests: Vec<proto::relay::RelayRequest>, pairings: Vec<proto::pairing::PairingRequest> }`; when both lists are empty and `wait > 0`, the server holds the response up to `wait` s and returns as soon as an item appears. Values > 25 are clamped. Returning items **marks them delivered**. | 403 |
 | A3 | `GET /requests/{id}` | — | 200 `proto::relay::RelayRequest` (marks delivered) | 404 `not_found` (unknown, expired, other user) |
 | A4 | `POST /requests/{id}/response` | `proto::relay::RelayResponse` | 204 | 404 `not_found`; 409 `already_answered`; 400 `bad_version` if `v != 1` |
 | A5 | `GET /pairings/{id}` | — | 200 `proto::pairing::PairingRequest` (marks delivered) | 404 |
 | A6 | `POST /pairings/{id}/response` | `proto::pairing::PairingResponse` | 200 `PairingResult { connection_id: Option<ConnectionId> }` (`None` when denied) | 404; 409 `wrong_code` — the pairing is cancelled and the browser shows failure |
+| A6b | `POST /pairings/claim` | `proto::pairing::PairingClaim { v, user_code }` (the code of a computer's QR code, RFC 8628 device flow) | 200 `PairingRequest`, already delivered, answered with A6 | 404 unknown or expired code; 409 `already_answered` another account claimed it; 429 |
 | A7 | `GET /connections` | — | 200 `Connections { connections: Vec<ConnectionInfo> }` | 403 |
 | A8 | `DELETE /connections/{id}` | — | 204 (deletes connection + its refresh tokens; its access tokens stop working immediately) | 404 |
 

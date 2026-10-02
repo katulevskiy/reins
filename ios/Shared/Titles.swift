@@ -24,6 +24,8 @@ enum ActionKind: String, CaseIterable {
     case search, list, read, write, send, grant, accounts, pair
     /// A file an AI uploaded through the server.
     case upload
+    /// Another phone asks for the account's keys.
+    case join
     case other = "request"
 
     static func of(_ action: String) -> ActionKind { ActionKind(rawValue: action) ?? .other }
@@ -40,6 +42,7 @@ enum ActionKind: String, CaseIterable {
         case .accounts: "person.2.fill"
         case .pair: "link"
         case .upload: "doc.badge.arrow.up"
+        case .join: "iphone.gen3"
         case .other: "key.fill"
         }
     }
@@ -150,6 +153,7 @@ func operationTitle(action: String, count: Int, service: String, title: String =
     case .accounts: return service.isEmpty ? "See integrations" : "See \(what) accounts"
     case .pair: return "Connect"
     case .upload: return "Share a file"
+    case .join: return "Add a phone"
     case .other: return "Request"
     }
 }

@@ -14,6 +14,7 @@ mod organization;
 mod rewarden_client;
 mod rewarden_connection;
 mod rewarden_device;
+pub mod rewarden_workos;
 mod send;
 mod sso_auth;
 mod two_factor;
@@ -40,6 +41,7 @@ pub use self::organization::{
 pub use self::rewarden_client::RewardenClient;
 pub use self::rewarden_connection::{RewardenConnection, RewardenRefreshToken};
 pub use self::rewarden_device::RewardenDevice;
+pub use self::rewarden_workos::{RewardenSetting, RewardenSsoSession};
 pub use self::send::{Send, SendFileId, SendId, SendType};
 pub use self::sso_auth::{OIDCAuthenticatedUser, OIDCCodeResponseError, SsoAuth};
 pub use self::two_factor::{TwoFactor, TwoFactorType};

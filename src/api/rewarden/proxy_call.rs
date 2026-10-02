@@ -13,7 +13,9 @@ use serde_json::{Value, json};
 
 use super::{
     blob_routes::{admit_outbound, outbound_err, owner_of, store_output},
-    device_api::{PhoneResult, api_err, bad_request, parse_versioned, read_body_limited, require_approval_device},
+    device_api::{
+        DeviceKey, PhoneResult, api_err, bad_request, parse_versioned, read_body_limited, require_approval_device,
+    },
     outbound::{self, BytesBody},
     sniff::{self, valid_file_name},
 };
@@ -218,8 +220,13 @@ async fn read_sse(mut response: reqwest::Response, id: &Value) -> Result<Option<
 }
 
 #[post("/rewarden/api/mcp/call", data = "<data>")]
-async fn post_call(data: Data<'_>, headers: Headers, conn: DbConn) -> PhoneResult<Json<ProxyCallResult>> {
-    require_approval_device(&headers, &conn).await?;
+async fn post_call(
+    data: Data<'_>,
+    headers: Headers,
+    key: DeviceKey,
+    conn: DbConn,
+) -> PhoneResult<Json<ProxyCallResult>> {
+    require_approval_device(&headers, &key, &conn).await?;
     let call: ProxyCall = parse_versioned(&read_body_limited(data, MAX_BODY).await?)?;
     let owner = owner_of(&headers, &call.connection_id, None, &conn).await?;
     drop(conn);

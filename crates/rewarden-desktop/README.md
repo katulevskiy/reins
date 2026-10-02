@@ -92,13 +92,16 @@ SmartScreen may warn before the first start (More info → Run anyway, or **Unbl
 ## Set up
 
 ```sh
-rewarden login     # browser sign-in; the phone shows a key: it must match the terminal
+rewarden login     # scan the QR code with the phone; the phone shows a key: it must match the terminal
 rewarden resume    # start the background service, send github.com git through it
 rewarden status
 ```
 
 `rewarden login` pairs with the hosted server, `https://app.reins2fa.com`; for a self-hosted one, give its address
-(`rewarden login https://reins.example.com`).
+(`rewarden login https://reins.example.com`). It shows a QR code (OAuth device authorization, RFC 8628): the phone
+scans it, the user taps the number shown in the terminal and compares the key. `rewarden login --browser` uses the
+browser sign-in instead (also what a server without the device flow gets). The desktop window uses the same flow
+through `server::device::DevicePairing` (`start`, then draw `qr_url`, for example with `qr_modules`, then `wait`).
 
 `rewarden pause` switches git back to talking to GitHub directly (it removes exactly the git config lines `resume`
 added; the service keeps running and does nothing); `rewarden resume` switches back. For finer control: `rewarden

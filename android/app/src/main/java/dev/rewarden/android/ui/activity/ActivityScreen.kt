@@ -251,6 +251,9 @@ private fun PendingCard(item: PendingItem, modifier: Modifier = Modifier, onClic
     val waitUntil = if (item.kind == PendingKind.BLOB) null else item.waitUntil
     val u = urgency(item.createdAt, waitUntil, now)
     val pairing = item.kind == PendingKind.PAIRING
+    val join = item.kind == PendingKind.JOIN
+    // Neither comes from an AI connection: no connection icon, no integration tags.
+    val fromAi = !pairing && !join
     CountdownFrame(item.createdAt, waitUntil, modifier.testTag("pending:${item.id}")) {
         Row(
             Modifier
@@ -264,15 +267,15 @@ private fun PendingCard(item: PendingItem, modifier: Modifier = Modifier, onClic
             Spacer(Modifier.width(14.dp))
             Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(3.dp)) {
                 Row(verticalAlignment = Alignment.CenterVertically) {
-                    if (!pairing) {
+                    if (fromAi) {
                         ConnectionIcon(item.connectionId, item.connectionLabel, size = 20.dp)
                         Spacer(Modifier.width(8.dp))
                     }
                     RText(
-                        if (!pairing) {
-                            fullTitle(item.connectionLabel, item.action, item.count.toInt(), item.service, item.opTitle, item.op)
-                        } else {
-                            "${untrusted(item.connectionLabel)}: wants to connect"
+                        when {
+                            pairing -> "${untrusted(item.connectionLabel)}: wants to connect"
+                            join -> "Add ${untrusted(item.connectionLabel)}?"
+                            else -> fullTitle(item.connectionLabel, item.action, item.count.toInt(), item.service, item.opTitle, item.op)
                         },
                         RType.sans(16f, FontWeight.SemiBold),
                         c.text,
@@ -283,7 +286,8 @@ private fun PendingCard(item: PendingItem, modifier: Modifier = Modifier, onClic
                 if (item.kind == PendingKind.BLOB && item.subtitle.isNotBlank()) {
                     RText(untrusted(item.subtitle), RType.sans(13.5f), c.secondary, maxLines = 2)
                 }
-                if (!pairing) ConnectorTags(item.service, item.account)
+                if (join) RText("Another phone signed in to your account", RType.sans(13.5f), c.secondary, maxLines = 2)
+                if (fromAi) ConnectorTags(item.service, item.account)
                 item.suggestion?.let { line ->
                     Row(Modifier.testTag("pendingSuggestion:${item.id}"), verticalAlignment = Alignment.CenterVertically) {
                         dev.rewarden.android.design.GlyphIcon(Glyph.Sparkle, c.accent, size = 13.dp, weight = 1.9f)

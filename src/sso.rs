@@ -184,6 +184,9 @@ pub fn decode_state(base64_state: &str) -> ApiResult<OIDCState> {
     Ok(state)
 }
 
+/// Where the Reins phone apps (client id `mobile`) want the SSO result: their own URL scheme.
+pub const REINS_APP_REDIRECTS: &[&str] = &["com.reins2fa.app://sso-callback"];
+
 // redirect_uri from: https://github.com/bitwarden/server/blob/main/src/Identity/IdentityServer/ApiClient.cs
 pub async fn authorize_url(
     state: OIDCState,
@@ -195,6 +198,8 @@ pub async fn authorize_url(
 ) -> ApiResult<Url> {
     let redirect_uri = match client_id {
         "web" | "browser" => format!("{}/sso-connector.html", CONFIG.domain()),
+        // The Reins phone apps open the sign-in in ASWebAuthenticationSession / a Custom Tab and catch their own scheme.
+        "mobile" if REINS_APP_REDIRECTS.contains(&raw_redirect_uri) => raw_redirect_uri.to_owned(),
         "desktop" | "mobile" => "bitwarden://sso-callback".to_owned(),
         "cli" => {
             let port_regex = Regex::new(r"^http://localhost:([0-9]{4})$").unwrap();
@@ -209,7 +214,11 @@ pub async fn authorize_url(
         _ => err!(format!("Unsupported client {client_id}")),
     };
 
-    let (auth_url, sso_auth) = Client::authorize_url(state, client_challenge, redirect_uri, binding_hash).await?;
+    let (auth_url, sso_auth) = if crate::sso_workos::enabled() {
+        crate::sso_workos::authorize_url(state, client_challenge, redirect_uri, binding_hash)?
+    } else {
+        Client::authorize_url(state, client_challenge, redirect_uri, binding_hash).await?
+    };
     sso_auth.save(&conn).await?;
     Ok(auth_url)
 }
@@ -235,9 +244,19 @@ pub async fn authorize_url(
 pub struct OIDCIdentifier(String);
 
 impl OIDCIdentifier {
-    fn new(issuer: &str, subject: &str) -> Self {
+    pub(crate) fn new(issuer: &str, subject: &str) -> Self {
         OIDCIdentifier(format!("{issuer}/{subject}"))
     }
+}
+
+/// Without PKCE at the provider, the client's verifier is checked against the challenge it sent to `authorize`.
+fn check_client_challenge(verifier: &OIDCCodeVerifier, sso_auth: &SsoAuth) -> ApiResult<()> {
+    let verifier = openidconnect::PkceCodeVerifier::new(verifier.to_string());
+    let challenge = openidconnect::PkceCodeChallenge::from_code_verifier_sha256(&verifier);
+    if challenge.as_str() != &*sso_auth.client_challenge {
+        err!("PKCE client challenge failed")
+    }
+    Ok(())
 }
 
 // During the 2FA flow we will
@@ -276,6 +295,18 @@ pub async fn exchange_code(
         }
     };
 
+    if crate::sso_workos::enabled() {
+        if !CONFIG.sso_pkce() {
+            check_client_challenge(&client_verifier, &sso_auth)?;
+        }
+        let authenticated_user = crate::sso_workos::exchange_code(&code, client_verifier).await?;
+        debug!("Authenticated user {authenticated_user:?}");
+        sso_auth.auth_response = Some(authenticated_user.clone());
+        sso_auth.updated_at = Utc::now().naive_utc();
+        sso_auth.save(conn).await?;
+        return Ok((sso_auth, authenticated_user));
+    }
+
     let client = Client::cached().await?;
     let (token_response, id_claims) = client.exchange_code(code, client_verifier, &sso_auth).await?;
 
@@ -305,6 +336,7 @@ pub async fn exchange_code(
         email: email.clone(),
         email_verified,
         user_name: user_name.clone(),
+        session_id: None,
     };
 
     debug!("Authenticated user {authenticated_user:?}");
@@ -333,6 +365,18 @@ pub async fn redeem(
             identifier: auth_user.identifier.clone(),
         };
         user_sso.save(conn).await?;
+    }
+
+    // Remembered so that the provider revoking this session signs the device out (api::rewarden::workos_sync).
+    if let Some(session_id) = auth_user.session_id.clone() {
+        crate::db::models::RewardenSsoSession {
+            session_id,
+            user_uuid: user.uuid.clone(),
+            device_uuid: device.uuid.clone(),
+            created_at: Utc::now().timestamp(),
+        }
+        .save(conn)
+        .await?;
     }
 
     if CONFIG.sso_auth_only_not_session() {
@@ -434,8 +478,11 @@ pub async fn exchange_refresh_token(
     match refresh_claims.token {
         Some(TokenWrapper::Refresh(refresh_token)) => {
             // Use new refresh_token if returned
-            let (new_refresh_token, access_token, expires_in) =
-                Client::exchange_refresh_token(refresh_token.clone()).await?;
+            let (new_refresh_token, access_token, expires_in) = if crate::sso_workos::enabled() {
+                crate::sso_workos::exchange_refresh_token(refresh_token.clone()).await?
+            } else {
+                Client::exchange_refresh_token(refresh_token.clone()).await?
+            };
 
             create_auth_tokens(
                 device,
@@ -454,6 +501,10 @@ pub async fn exchange_refresh_token(
                 err_silent!("Access token is close to expiration but we have no refresh token")
             }
 
+            if crate::sso_workos::enabled() {
+                // WorkOS always hands out refresh tokens and has no userinfo endpoint to check an access token with.
+                err_silent!("WorkOS session without a refresh token")
+            }
             Client::check_validity(access_token.clone()).await?;
 
             let access_claims = auth::LoginJwtClaims::new(

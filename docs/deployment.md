@@ -218,8 +218,8 @@ Arguments (a push lists commits and files) are never logged.
 * Rotating the FCM key: create the new key, update the file, restart; delete the old key in IAM.
 * Rotating the APNs key: create a new key, update the file and `REWARDEN_APNS_KEY_ID`, restart; then revoke the old
   key in the Apple Developer account.
-* Revoking a phone: sign in from another phone and tap **Use this phone for approvals**; the old phone is told it was
-  replaced and stops receiving requests.
+* Revoking a phone: sign in from another phone and tap **Use this phone for approvals** (it needs the recovery code or
+  master password, or the old phone's approval); the old phone is told it was replaced and stops receiving requests.
 * Logs never contain tokens, message contents or Gmail data; `LOG_LEVEL=info` is safe.
 
 ### Which tools the AI sees

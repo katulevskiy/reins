@@ -90,6 +90,7 @@ class AppFlowTest {
         core.activity = emptyList()
         core.gmail = GmailStatus.Ready
         core.resetAutopilot()
+        core.resetSso()
         core.accounts = listOf(AccountView("gmail", "me@gmail.com", 1_700_000_000))
         core.accountStatuses = emptyMap()
         core.serviceAdded.clear()
@@ -115,6 +116,7 @@ class AppFlowTest {
         core.icons.clear()
         core.logins.clear()
         core.registrations.clear()
+        core.resetOnboarding()
         authResult = AuthResult.Success
         prompts.set(0)
         // The updater (in the `full` build) never reaches a real server or installer; its tests are UpdatesFlowTest.
@@ -222,16 +224,32 @@ class AppFlowTest {
 
     // ---- sign-in ------------------------------------------------------------------------------------------------
 
+    /** Signed out: the welcome screen, "Use another server" (the password forms are only for one), then "Sign in". */
+    private fun openSignIn() {
+        launch()
+        awaitTag("welcome")
+        tap("useAnotherServer")
+        awaitTag("server")
+        rule.onNodeWithTag("server").performTextReplacement("https://s.example.com")
+        tap("startSignIn")
+        awaitTag("signIn")
+    }
+
+    /** The setup after a fresh sign-in, skipped. */
+    private fun skipSetup() {
+        awaitTag("setupComputer")
+        tap("setupSkip")
+    }
+
     @Test
     fun signInRegistersThePhoneAndShowsActivity() {
         core.session = null
-        launch()
-        awaitTag("signIn")
+        openSignIn()
         rule.onNodeWithTag("signIn").assertIsNotEnabled()
-        rule.onNodeWithTag("server").performTextReplacement("https://s.example.com")
         rule.onNodeWithTag("email").performTextReplacement("me@example.com")
         rule.onNodeWithTag("password").performTextReplacement("hunter2")
-        rule.onNodeWithTag("signIn").assertIsEnabled().performClick()
+        rule.onNodeWithTag("signIn").performScrollTo().assertIsEnabled().performClick()
+        skipSetup()
         awaitTag("noActivity")
         assertEquals(listOf("https://s.example.com", "me@example.com", "hunter2", null), core.logins.single())
         val state = (context.applicationContext as RewardenApp).container.state
@@ -240,12 +258,18 @@ class AppFlowTest {
     }
 
     @Test
+    fun theSignInFormSaysWhichServerItUses() {
+        core.session = null
+        openSignIn()
+        assertFalse(has("server"))
+        rule.onNodeWithTag("serverName").assertTextContains("s.example.com", substring = true)
+    }
+
+    @Test
     fun aTwoFactorPromptAppearsWhenTheServerAsksForOne() {
         core.session = null
         core.loginError = CoreException.TwoFactorRequired()
-        launch()
-        awaitTag("signIn")
-        rule.onNodeWithTag("server").performTextReplacement("https://s.example.com")
+        openSignIn()
         rule.onNodeWithTag("email").performTextReplacement("me@example.com")
         rule.onNodeWithTag("password").performTextReplacement("hunter2")
         rule.onNodeWithTag("signIn").performScrollTo().performClick()
@@ -253,6 +277,7 @@ class AppFlowTest {
         core.loginError = null
         rule.onNodeWithTag("totp").performTextReplacement("123456")
         rule.onNodeWithTag("signIn").performScrollTo().assertIsEnabled().performClick()
+        skipSetup()
         awaitTag("noActivity")
         assertEquals("123456", core.logins.last()[3])
     }
@@ -261,9 +286,7 @@ class AppFlowTest {
     fun wrongCredentialsShowAnActionableError() {
         core.session = null
         core.loginError = CoreException.InvalidCredentials()
-        launch()
-        awaitTag("signIn")
-        rule.onNodeWithTag("server").performTextReplacement("https://s.example.com")
+        openSignIn()
         rule.onNodeWithTag("email").performTextReplacement("me@example.com")
         rule.onNodeWithTag("password").performTextReplacement("nope")
         rule.onNodeWithTag("signIn").performScrollTo().performClick()
@@ -1751,7 +1774,8 @@ class AppFlowTest {
         tap("openSettings")
         tap("signOut")
         rule.onAllNodes(hasText("Sign out")).let { it[it.fetchSemanticsNodes().lastIndex] }.performClick()
-        awaitTag("signIn")
+        awaitTag("welcome")
+        awaitTag("continue")
     }
 
     // ---- misc ----------------------------------------------------------------------------------------------------

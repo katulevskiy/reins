@@ -6,12 +6,77 @@ pub struct SessionInfo {
     pub email: String,
 }
 
+/// A sign-in through the server's SSO, started: open `url` in the browser session (ASWebAuthenticationSession, a
+/// Custom Tab) and wait for `callback_scheme`; keep `state` and `verifier` for `sso_finish`.
+#[derive(Clone, PartialEq, Eq, uniffi::Record)]
+pub struct SsoStart {
+    pub url: String,
+    pub callback_scheme: String,
+    pub state: String,
+    pub verifier: String,
+}
+
+impl std::fmt::Debug for SsoStart {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("SsoStart").field("url", &self.url).finish_non_exhaustive()
+    }
+}
+
+/// Whether this phone can open the account's vault.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, uniffi::Enum)]
+pub enum AccountKeys {
+    /// A new account: this phone just made its keys and keeps their secret.
+    Created,
+    /// This phone keeps what opens the keys.
+    Unlocked,
+    /// The account has keys this phone cannot open yet: approve it from the phone that has them, or enter the
+    /// recovery code (or the master password of an account made with one).
+    Locked,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, uniffi::Record)]
+pub struct SsoOutcome {
+    pub session: SessionInfo,
+    pub keys: AccountKeys,
+}
+
+/// This phone asked the approval device for the account's keys: show `code` ("482 193") and ask the user to check
+/// that the other phone shows the same.
+#[derive(Clone, Debug, PartialEq, Eq, uniffi::Record)]
+pub struct JoinStart {
+    pub id: String,
+    pub code: String,
+    pub expires_at: i64,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, uniffi::Enum)]
+pub enum JoinProgress {
+    /// Not answered yet: ask again in a few seconds.
+    Waiting,
+    /// Approved: the account's keys are open on this phone.
+    Joined,
+    Denied,
+    Expired,
+}
+
+/// Another phone asking the approval device for the account's keys (`PendingKind::Join`).
+#[derive(Clone, Debug, PartialEq, Eq, uniffi::Record)]
+pub struct JoinView {
+    pub id: String,
+    pub device_name: String,
+    /// The code the other phone shows, computed here from the key the server relayed.
+    pub code: String,
+    pub created_at: i64,
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq, uniffi::Enum)]
 pub enum PendingKind {
     Request,
     Pairing,
     /// A file an AI uploaded with `rewarden_upload`, waiting for the user's decision (see [`BlobView`]).
     Blob,
+    /// Another phone of the account asks for its keys ("Add another phone", see [`JoinView`]).
+    Join,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, uniffi::Record)]

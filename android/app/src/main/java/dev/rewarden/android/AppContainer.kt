@@ -17,6 +17,7 @@ import dev.rewarden.android.platform.GoogleAuthorizer
 import dev.rewarden.android.platform.KeystoreKeyWrapper
 import dev.rewarden.android.platform.McpSignIn
 import dev.rewarden.android.platform.PhoneBridge
+import dev.rewarden.android.platform.SsoSignIn
 import dev.rewarden.android.platform.Foreground
 import dev.rewarden.android.platform.update.HttpUpdateFetcher
 import dev.rewarden.android.platform.update.PlatformInstaller
@@ -27,11 +28,14 @@ import dev.rewarden.android.platform.update.UpdateProvider
 import dev.rewarden.android.platform.update.Updater
 import dev.rewarden.android.state.AppState
 import dev.rewarden.android.state.DeviceStatusStore
+import dev.rewarden.android.state.OnboardingStore
 import dev.rewarden.android.state.SessionState
+import dev.rewarden.android.ui.common.userMessage
 import dev.rewarden.core.AutopilotSettings
 import dev.rewarden.core.CoreException
 import dev.rewarden.core.RewardenCore
 import dev.rewarden.core.RewardenCoreInterface
+import dev.rewarden.core.SessionInfo
 import kotlin.coroutines.cancellation.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -65,6 +69,9 @@ class AppContainer(private val context: Context) {
     /** The model download job. */
     val modelDownloads: ModelDownloads by lazy { WorkModelDownloads(context) }
     val deviceStatus = DeviceStatusStore(context)
+
+    /** Whether the setup after a fresh sign-in is still to be shown, per account. */
+    val onboarding = OnboardingStore(context)
     val phone = PhoneBridge(context)
 
     /**
@@ -95,6 +102,9 @@ class AppContainer(private val context: Context) {
     /** The MCP server sign-in that waits for its browser page to come back. */
     val mcpSignIn = McpSignIn(context, { core }, state)
 
+    /** The sign-in through the server's SSO ("Continue") that waits for its browser page to come back. */
+    val ssoSignIn = SsoSignIn(context)
+
     private fun createRealCore(): RewardenCoreInterface {
         val dataDir = java.io.File(context.noBackupFilesDir, "core").apply { mkdirs() }
         return RewardenCore(
@@ -118,10 +128,14 @@ class AppContainer(private val context: Context) {
             withContext(Dispatchers.IO) {
                 state.setSeenActivityId(deviceStatus.seenActivityId())
                 state.setApprovalDevice(deviceStatus.isApprovalDevice() && !deviceStatus.isReplaced())
+                // Before the session flips, so the main screen does not flash up ahead of the setup or the Unlock screen.
+                state.setSetupPending(onboarding.isPending(info))
+                state.setKeysLocked(deviceStatus.keysLocked())
+                state.setApprovalTakeover(deviceStatus.needsTakeover())
             }
         }
         state.setSession(if (info == null) SessionState.SignedOut else SessionState.SignedIn(info))
-        if (info != null) {
+        if (info != null && !state.keysLocked.value) {
             refreshPending()
             refreshConnections()
         }
@@ -182,6 +196,46 @@ class AppContainer(private val context: Context) {
         refreshAutopilot()
     }
 
+    /**
+     * A sign-in, a new account, or "Continue" with the account's keys open on this phone: the setup after it is to be
+     * shown (once per account), and this phone becomes the approval device. A failed registration is kept in
+     * [AppState.registrationError] (Settings offers it again); the sign-in itself stands.
+     */
+    suspend fun finishSignIn(info: SessionInfo) {
+        setKeysLocked(false)
+        beginOnboarding(info)
+        state.setRegistrationError(null)
+        refreshSession()
+        try {
+            registerDevice(force = true)
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            state.setRegistrationError(e.userMessage())
+        }
+    }
+
+    /**
+     * "Continue" signed in to an account whose keys this phone cannot open yet ([locked]), or they were just opened.
+     * Kept on disk, so a relaunch comes back to the Unlock screen instead of registering this phone.
+     */
+    suspend fun setKeysLocked(locked: Boolean) {
+        withContext(Dispatchers.IO) { deviceStatus.setKeysLocked(locked) }
+        state.setKeysLocked(locked)
+    }
+
+    /** A sign-in or a new account from the onboarding screens: the setup after it is to be shown (once per account). */
+    suspend fun beginOnboarding(info: SessionInfo) {
+        withContext(Dispatchers.IO) { onboarding.begin(info) }
+    }
+
+    /** The setup after signing in was finished or skipped: the main screen from now on. */
+    suspend fun finishOnboarding() {
+        val info = (state.session.value as? SessionState.SignedIn)?.info
+        if (info != null) withContext(Dispatchers.IO) { onboarding.finish(info) }
+        state.setSetupPending(false)
+    }
+
     /** The AI connections (a network call; failures keep the last list). */
     suspend fun refreshConnections() {
         try {
@@ -202,19 +256,38 @@ class AppContainer(private val context: Context) {
 
     /**
      * Makes this phone the approval device (with an FCM token when Firebase is configured). [force] is for the user's
-     * explicit "register this phone"; background token refreshes never take the role back from a replacing phone.
+     * explicit "register this phone"; background token refreshes never take the role back from a replacing phone. A
+     * phone whose account keys are still locked is never registered: the phone that has them must approve it first.
+     * When another phone approves for the account and this one brings no proof, the server refuses
+     * ([CoreException.OtherApprovalDevice], rethrown): the Unlock screen then offers the two ways to take over.
      */
     suspend fun registerDevice(force: Boolean) {
-        val replaced = withContext(Dispatchers.IO) { deviceStatus.isReplaced() }
-        if (replaced && !force) return
+        val (replaced, locked) = withContext(Dispatchers.IO) { deviceStatus.isReplaced() to deviceStatus.keysLocked() }
+        if (locked || (replaced && !force)) return
         val token = FirebaseSupport.token(context)
-        core.registerDevice(token)
+        try {
+            core.registerDevice(token)
+        } catch (e: CoreException.OtherApprovalDevice) {
+            setApprovalTakeover(true)
+            throw e
+        }
         withContext(Dispatchers.IO) {
             deviceStatus.setReplaced(false)
             deviceStatus.setApprovalDevice(true)
+            deviceStatus.setNeedsTakeover(false)
         }
         state.setDeviceReplaced(false)
         state.setApprovalDevice(true)
+        state.setApprovalTakeover(false)
+    }
+
+    /**
+     * Whether the Unlock screen offers taking the approval role over from the other phone ([needed]), or the user put
+     * it off ("Not now"; Settings offers it again). Kept on disk, so a relaunch comes back to it.
+     */
+    suspend fun setApprovalTakeover(needed: Boolean) {
+        withContext(Dispatchers.IO) { deviceStatus.setNeedsTakeover(needed) }
+        state.setApprovalTakeover(needed)
     }
 
     /** The server says another phone is the approval device now. */
@@ -229,6 +302,8 @@ class AppContainer(private val context: Context) {
         withContext(Dispatchers.IO) { deviceStatus.clear() }
         state.setApprovalDevice(false)
         state.setDeviceReplaced(false)
+        state.setKeysLocked(false)
+        state.setApprovalTakeover(false)
     }
 
     private companion object {

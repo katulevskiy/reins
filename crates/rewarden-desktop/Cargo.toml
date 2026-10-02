@@ -46,6 +46,7 @@ toml = "0.8.23"
 url = "2.5.8"
 webpki-roots = "1.0.9"
 zeroize = "1.9.0"
+qrcode = { version = "0.14.1", default-features = false }
 
 # The user id, signals and the non-dumpable flag. Windows has none of these; see src/win.rs for what it does instead.
 [target.'cfg(unix)'.dependencies]

@@ -3,7 +3,7 @@ use std::time::{Duration, Instant};
 use reqwest::StatusCode;
 use serde_json::json;
 
-use crate::harness::{Server, client};
+use crate::harness::{PASSWORD_HASH, Server, client};
 
 #[tokio::test]
 async fn unauthenticated_calls_get_json_401() {
@@ -28,9 +28,10 @@ async fn only_the_registered_device_may_use_the_api() {
     let (status, body) = a.get("/pending?wait=0").await;
     assert_eq!((status, body), (StatusCode::OK, json!({"requests": [], "pairings": []})));
 
+    // Another device takes the role with a proof (see `takeover.rs` for the rest of the rule).
     let b = server.second_device("alice@example.com").await;
     assert_eq!(b.get("/connections").await.0, StatusCode::FORBIDDEN);
-    let (status, body) = b.put("/device", &json!({})).await;
+    let (status, body) = b.put("/device", &json!({"master_password_hash": PASSWORD_HASH})).await;
     assert_eq!((status, body), (StatusCode::OK, json!({"replaced_previous": true})));
     assert_eq!(b.get("/connections").await.0, StatusCode::OK);
     let (status, body) = a.get("/pending").await;

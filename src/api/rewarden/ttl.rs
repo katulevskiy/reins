@@ -56,6 +56,12 @@ impl<K: Eq + Hash, V> TtlMap<K, V> {
         self.entries.values().filter(move |(expires, _)| now < *expires).map(|(_, v)| v)
     }
 
+    /// Live values, mutable, in unspecified order.
+    pub fn values_mut(&mut self) -> impl Iterator<Item = &mut V> {
+        let now = Instant::now();
+        self.entries.values_mut().filter(move |(expires, _)| now < *expires).map(|(_, v)| v)
+    }
+
     pub fn purge(&mut self) {
         let now = Instant::now();
         self.entries.retain(|_, (expires, _)| now < *expires);

@@ -39,6 +39,25 @@ jobs:
           persist-credentials: false
       - run: python3 scripts/check-doc-links.py
 
+  conflict-markers:
+    name: No merge-conflict markers
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      # Committed text files only (`-I` skips binaries); patches may carry the markers on purpose.
+      - name: git grep for conflict markers
+        run: |
+          status=0
+          git grep -n -I -E '^(<<<<<<<|>>>>>>>)( |$)|^=======$' -- . ':(exclude)*.patch' ':(exclude)*.diff' || status=$?
+          if [ "$status" -eq 0 ]; then
+            echo "::error::Merge-conflict markers are committed (the lines above)."
+            exit 1
+          fi
+          [ "$status" -eq 1 ]
+
   workflows:
     name: Workflow security (zizmor)
     runs-on: ubuntu-24.04

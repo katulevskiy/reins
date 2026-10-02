@@ -13,6 +13,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -44,6 +45,7 @@ import dev.rewarden.android.feedback.Event
 import dev.rewarden.android.feedback.FeedbackSettings
 import dev.rewarden.android.feedback.LocalFeedback
 import dev.rewarden.android.feedback.play
+import dev.rewarden.android.platform.Authenticator
 import dev.rewarden.android.platform.FirebaseSupport
 import dev.rewarden.android.state.AppState
 import dev.rewarden.android.state.SessionState
@@ -60,6 +62,8 @@ fun SettingsScreen(
     onIntegrations: () -> Unit,
     onSounds: () -> Unit,
     onAutopilot: () -> Unit = {},
+    onConnectComputer: () -> Unit = {},
+    authenticator: Authenticator,
 ) {
     val c = LocalColors.current
     val feedback = LocalFeedback.current
@@ -71,12 +75,15 @@ fun SettingsScreen(
     val approvalDevice by state.approvalDevice.collectAsStateWithLifecycle()
     val accounts by state.accounts.collectAsStateWithLifecycle()
     val autopilot by state.autopilot.collectAsStateWithLifecycle()
+    val hasRecoveryCode by viewModel.hasRecoveryCode.collectAsStateWithLifecycle()
+    val recoveryCode by viewModel.recoveryCode.collectAsStateWithLifecycle()
     var confirmSignOut by remember { mutableStateOf(false) }
     val pushAvailable = FirebaseSupport.available(LocalContext.current)
+    LaunchedEffect(session) { viewModel.checkRecoveryCode() }
 
     Screen(title = "Settings", onBack = onBack) {
         (session as? SessionState.SignedIn)?.let {
-            Group(header = "Account") {
+            Group(header = "Account", footer = "To add another phone, sign in on it; this phone asks you to approve it.") {
                 ListRow("Email", subtitle = it.info.email, glyph = Glyph.Mail, ltrSubtitle = true)
                 Hairline(inset = 51.dp)
                 ListRow(
@@ -91,6 +98,16 @@ fun SettingsScreen(
                     feedback.play(Event.Copied)
                     // Android 13 and later confirm a copy themselves.
                     if (Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU) viewModel.notice("Server address copied.")
+                }
+                if (hasRecoveryCode) {
+                    Hairline(inset = 51.dp)
+                    ListRow(
+                        "Recovery code",
+                        Modifier.testTag("recoveryCodeRow"),
+                        subtitle = "Opens your account if you lose this phone",
+                        glyph = Glyph.Key,
+                        chevron = true,
+                    ) { viewModel.showRecoveryCode(authenticator) }
                 }
             }
         }
@@ -170,6 +187,16 @@ fun SettingsScreen(
                     GlyphIcon(Glyph.ChevronRight, c.tertiary, size = 14.dp)
                 }
             }
+            Hairline(inset = if (connections.isEmpty()) 16.dp else 68.dp)
+            ListRow(
+                "Connect a computer",
+                Modifier.testTag("connectComputer"),
+                subtitle = "Scan the QR code the desktop app or rewarden login shows",
+                glyph = Glyph.Qr,
+                tint = c.accent,
+                chevron = true,
+                onClick = onConnectComputer,
+            )
         }
 
         Group(header = "Integrations") {
@@ -227,6 +254,17 @@ fun SettingsScreen(
             }
         }
         Spacer(Modifier.height(32.dp))
+    }
+
+    recoveryCode?.let { code ->
+        RecoveryCodeSheet(
+            code,
+            onCopy = {
+                copySecret(context, "Reins recovery code", code)
+                feedback.play(Event.Copied)
+            },
+            onDone = viewModel::hideRecoveryCode,
+        )
     }
 
     if (confirmSignOut) {

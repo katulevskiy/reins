@@ -7,10 +7,11 @@ use std::path::Path;
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 use std::time::Duration;
 
-use rewarden_proto::device::DeviceRegistration;
+use rewarden_proto::device::{DeviceRegistration, codes};
 use rewarden_proto::ids::{ConnectionId, GrantId};
 use zeroize::Zeroizing;
 
+use crate::crypto::{Kdf, new_account_keys};
 use crate::gmail::{self, GmailClient, Probe};
 use crate::http::{self, ServerUrl};
 use crate::phone_api::{ApiFailure, check_id};
@@ -22,6 +23,16 @@ use crate::types::{
 use crate::vault::VaultClient;
 use crate::views::{self, ParkedRequest};
 use crate::{CoreError, GoogleTokenProvider, KeyWrapper, Notifier};
+
+/// Bitwarden's shortest master password for a new account.
+pub const MIN_MASTER_PASSWORD_CHARS: usize = 12;
+/// Longest account email (Bitwarden's limit is 256; 254 is the longest address SMTP carries).
+const MAX_EMAIL_BYTES: usize = 254;
+/// What a new account derives its master key with: PBKDF2-SHA256 with 600 000 iterations, the default of the
+/// Bitwarden clients and of Vaultwarden.
+pub const NEW_ACCOUNT_KDF: Kdf = Kdf::Pbkdf2 {
+    iterations: 600_000,
+};
 
 /// Settings that tests override; the exported constructor uses the defaults.
 #[derive(Clone, Debug)]
@@ -340,6 +351,11 @@ impl Engine {
         self.session.lock().unwrap_or_else(PoisonError::into_inner)
     }
 
+    /// Replaces the signed-in session (a finished sign-in).
+    pub(crate) fn set_session(&self, session: Option<Arc<Session>>) {
+        *self.session_slot() = session;
+    }
+
     pub(crate) fn session(&self) -> Result<Arc<Session>, CoreError> {
         self.session_slot().clone().ok_or(CoreError::NotLoggedIn)
     }
@@ -391,7 +407,8 @@ impl Engine {
             return Err(CoreError::invalid("enter your account email address"));
         }
         let device_id = self.store.device_id()?;
-        let tokens = VaultClient::new(&self.http, &server).login(&email, password, totp.as_deref(), &device_id).await?;
+        let (tokens, proof) =
+            VaultClient::new(&self.http, &server).login(&email, password, totp.as_deref(), &device_id).await?;
         self.store.save_session(&StoredSession {
             server_url: server.as_str().to_owned(),
             email: email.clone(),
@@ -402,8 +419,38 @@ impl Engine {
             email: email.clone(),
         };
         let session = Session::from_login(self.http.clone(), Arc::clone(&self.store), server, email, tokens);
+        session.keep_proof(proof);
         *self.session_slot() = Some(Arc::new(session));
         Ok(info)
+    }
+
+    /// Creates an account on the server (Bitwarden-compatible: its vault opens in any Bitwarden client), then signs in
+    /// to it exactly like [`Engine::login`].
+    pub async fn create_account(
+        &self,
+        server_url: &str,
+        email: &str,
+        password: Zeroizing<String>,
+    ) -> Result<SessionInfo, CoreError> {
+        let server = ServerUrl::parse(server_url)?;
+        let email = email.trim().to_lowercase();
+        let looks_like_email = email.split_once('@').is_some_and(|(local, domain)| {
+            !local.is_empty() && domain.contains('.') && !domain.starts_with('.') && !domain.ends_with('.')
+        });
+        if !looks_like_email || email.len() > MAX_EMAIL_BYTES || email.chars().any(char::is_whitespace) {
+            return Err(CoreError::invalid("Enter a valid email address."));
+        }
+        if password.chars().count() < MIN_MASTER_PASSWORD_CHARS {
+            return Err(CoreError::invalid(format!(
+                "The master password needs at least {MIN_MASTER_PASSWORD_CHARS} characters."
+            )));
+        }
+        let (secret, salt) = (password.clone(), email.clone());
+        let keys = tokio::task::spawn_blocking(move || new_account_keys(&secret, &salt, NEW_ACCOUNT_KDF))
+            .await
+            .map_err(|_| CoreError::storage("key derivation was interrupted"))??;
+        VaultClient::new(&self.http, &server).register(&email, &keys, NEW_ACCOUNT_KDF).await?;
+        self.login(server.as_str(), &email, password, None).await
     }
 
     /// Signs out. Grants, audit log and the device id are kept; parked items and the desktop apps' keys are dropped
@@ -419,12 +466,58 @@ impl Engine {
         self.store.delete_all_pending()
     }
 
+    /// Makes this phone the account's approval device. When another device approves for the account, the server wants
+    /// a proof that this one may take over: the other device's yes to this phone's "add another phone" request (the
+    /// server remembers it), or the master password hash of the account secret this phone keeps or of the password it
+    /// signed in or unlocked with. Without one: [`CoreError::OtherApprovalDevice`], and the app offers those two ways.
     pub async fn register_device(&self, fcm_token: Option<String>) -> Result<(), CoreError> {
         let session = self.session()?;
-        let registration = DeviceRegistration {
+        let mut registration = DeviceRegistration {
             fcm_token,
+            master_password_hash: None,
         };
-        api_call!(&session, |api| api.register_device(&registration)).map(drop).map_err(ApiFailure::into_core)
+        match api_call!(&session, |api| api.register_device(&registration)) {
+            Ok(_) => {
+                session.forget_proof();
+                return Ok(());
+            }
+            Err(e) if !is_takeover_refusal(&e) => return Err(e.into_core()),
+            Err(_) => {}
+        }
+        let Some(proof) = self.takeover_proof(&session).await? else {
+            return Err(CoreError::OtherApprovalDevice);
+        };
+        registration.master_password_hash = Some(proof.to_string());
+        let result = api_call!(&session, |api| api.register_device(&registration));
+        if let Some(sent) = registration.master_password_hash.take() {
+            drop(Zeroizing::new(sent));
+        }
+        match result {
+            Ok(_) => {
+                session.forget_proof();
+                Ok(())
+            }
+            Err(e) if is_takeover_refusal(&e) => Err(CoreError::OtherApprovalDevice),
+            Err(e) => Err(e.into_core()),
+        }
+    }
+
+    /// The master password hash that lets this phone take the approval role: of the password this session signed in
+    /// or unlocked with, else of the account secret this phone keeps.
+    async fn takeover_proof(&self, session: &Session) -> Result<Option<Zeroizing<String>>, CoreError> {
+        if let Some(proof) = session.proof() {
+            return Ok(Some(proof));
+        }
+        let Some(secret) = self.signed_in_secret().await? else {
+            return Ok(None);
+        };
+        let hash = tokio::task::spawn_blocking(move || -> Result<Zeroizing<String>, CoreError> {
+            let master = secret.master_key()?;
+            Ok(secret.master_password_hash(&master))
+        })
+        .await
+        .map_err(|_| CoreError::storage("key derivation was interrupted"))??;
+        Ok(Some(hash))
     }
 
     /// Tells the server which integrations have an account here and which MCP servers were added with their tools,
@@ -470,6 +563,7 @@ impl Engine {
                 Ok(())
             }
             "blob" => self.handle_blob_push(id).await,
+            "join" => self.fetch_and_park_join(id).await,
             "req" | "pair" => {
                 check_id(id)?;
                 let session = self.session()?;
@@ -527,6 +621,14 @@ impl Engine {
                 log::warn!("could not park a pairing: {e}");
             }
         }
+        for join in pending.joins {
+            let Some(_guard) = self.begin(&join.id)? else {
+                continue;
+            };
+            if let Err(e) = self.park_join(&join) {
+                log::warn!("could not park a request from another phone: {e}");
+            }
+        }
         self.park_blobs(pending.blobs)
     }
 
@@ -541,6 +643,7 @@ impl Engine {
                 }
                 PendingKind::Pairing => serde_json::from_slice(&row.payload).ok().map(|p| views::pairing_item(&p)),
                 PendingKind::Blob => Self::blob_pending_item(&row.payload),
+                PendingKind::Join => serde_json::from_slice(&row.payload).ok().map(|j| crate::join::join_item(&j)),
             };
             if let Some(mut item) = item {
                 item.suggestion = self
@@ -719,4 +822,9 @@ impl Engine {
         }
         GmailStatus::Ready
     }
+}
+
+/// `PUT /device` refused: another device approves for the account, and this one's proof was missing or wrong.
+fn is_takeover_refusal(e: &ApiFailure) -> bool {
+    matches!(e, ApiFailure::Status { status: 403, code, .. } if code == codes::PROOF_REQUIRED || code == codes::WRONG_PROOF)
 }

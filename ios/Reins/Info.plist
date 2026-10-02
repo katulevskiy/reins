@@ -53,6 +53,8 @@
 	</dict>
 	<key>NSCalendarsFullAccessUsageDescription</key>
 	<string>Your AI clients can see and add calendar events only when you allow each request.</string>
+	<key>NSCameraUsageDescription</key>
+	<string>The camera scans the QR code your computer shows when you connect it to Reins. Nothing is recorded.</string>
 	<key>NSContactsUsageDescription</key>
 	<string>Your AI clients can look up contacts only when you allow each request.</string>
 	<key>NSFaceIDUsageDescription</key>

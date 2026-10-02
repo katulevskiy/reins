@@ -1,5 +1,6 @@
 package dev.rewarden.android
 
+import dev.rewarden.core.AccountKeys
 import dev.rewarden.core.AccountView
 import dev.rewarden.core.AutopilotMode
 import dev.rewarden.core.AutopilotSettings
@@ -23,6 +24,9 @@ import dev.rewarden.core.CoreException
 import dev.rewarden.core.EmailContent
 import dev.rewarden.core.GmailStatus
 import dev.rewarden.core.GrantView
+import dev.rewarden.core.JoinProgress
+import dev.rewarden.core.JoinStart
+import dev.rewarden.core.JoinView
 import dev.rewarden.core.LoginProgress
 import dev.rewarden.core.McpAddStep
 import dev.rewarden.core.McpServerView
@@ -31,6 +35,8 @@ import dev.rewarden.core.PairingView
 import dev.rewarden.core.PendingItem
 import dev.rewarden.core.RewardenCoreInterface
 import dev.rewarden.core.SessionInfo
+import dev.rewarden.core.SsoOutcome
+import dev.rewarden.core.SsoStart
 import java.util.concurrent.CopyOnWriteArrayList
 
 /** In-memory core for UI tests: holds state, records the calls that matter. */
@@ -51,6 +57,24 @@ class FakeCore : RewardenCoreInterface {
     val revokedGrants = CopyOnWriteArrayList<String>()
     val logins = CopyOnWriteArrayList<List<String?>>()
     val registrations = CopyOnWriteArrayList<String?>()
+
+    /** Thrown by `createAccount` (an email already registered, a weak password, sign-ups closed). */
+    @Volatile var createAccountError: CoreException? = null
+    val createdAccounts = CopyOnWriteArrayList<List<String>>()
+
+    /** Thrown by `pairingByCode` (an unknown or expired code: `NotFound`). */
+    @Volatile var pairingByCodeError: CoreException? = null
+    /** What `pairingByCode` parks and returns; null: [TestData.pairingView] of the desktop app. */
+    @Volatile var pairingByCodeResult: PairingView? = null
+    val pairingCodes = CopyOnWriteArrayList<String>()
+
+    fun resetOnboarding() {
+        createAccountError = null
+        createdAccounts.clear()
+        pairingByCodeError = null
+        pairingByCodeResult = null
+        pairingCodes.clear()
+    }
 
     override suspend fun activity(limit: UInt) = activity
 
@@ -213,15 +237,162 @@ class FakeCore : RewardenCoreInterface {
         return SessionInfo(serverUrl, email).also { session = it }
     }
 
+    override suspend fun createAccount(serverUrl: String, email: String, password: String): SessionInfo {
+        createdAccounts += listOf(serverUrl, email, password)
+        createAccountError?.let { throw it }
+        return SessionInfo(serverUrl, email).also { session = it }
+    }
+
     override suspend fun logout() {
         session = null
     }
 
+    // ---- passwordless sign-in and "Add another phone" ------------------------------------------------------------
+
+    /** What "Continue" finds: a new account (keys made silently), one this phone opens, or one locked on another phone. */
+    @Volatile var ssoKeys: AccountKeys = AccountKeys.CREATED
+    @Volatile var ssoEmail: String = "me@example.com"
+    /** Thrown by `ssoBegin` / `ssoFinish`. */
+    @Volatile var ssoBeginError: CoreException? = null
+    @Volatile var ssoFinishError: CoreException? = null
+    val ssoBegins = CopyOnWriteArrayList<String>()
+    /** Server, callback, state, verifier of each `ssoFinish`. */
+    val ssoFinishes = CopyOnWriteArrayList<List<String>>()
+
+    /** The signed-in account's keys on this phone, and its recovery code (null: an account made with a master password). */
+    @Volatile var keys: AccountKeys = AccountKeys.UNLOCKED
+    @Volatile var recoveryCode: String? = null
+    val unlockAttempts = CopyOnWriteArrayList<String>()
+    val recoveryCodeReads = java.util.concurrent.atomic.AtomicInteger()
+
+    /** `joinPoll` answers `Waiting` this many times, then [joinAnswer]. */
+    @Volatile var joinWaits = 2
+    @Volatile var joinAnswer: JoinProgress = JoinProgress.JOINED
+    @Volatile var joinBeginError: CoreException? = null
+    val joinBegins = CopyOnWriteArrayList<String>()
+    val joinPolls = java.util.concurrent.atomic.AtomicInteger()
+    val joinCancels = java.util.concurrent.atomic.AtomicInteger()
+
+    /** Phones that asked this one (the approval device) for the keys, by request id. */
+    val joins = java.util.concurrent.ConcurrentHashMap<String, JoinView>()
+    val joinAnswers = CopyOnWriteArrayList<Pair<String, Boolean>>()
+
+    fun resetSso() {
+        ssoKeys = AccountKeys.CREATED
+        ssoEmail = "me@example.com"
+        ssoBeginError = null
+        ssoFinishError = null
+        ssoBegins.clear()
+        ssoFinishes.clear()
+        keys = AccountKeys.UNLOCKED
+        recoveryCode = null
+        unlockAttempts.clear()
+        recoveryCodeReads.set(0)
+        joinWaits = 2
+        joinAnswer = JoinProgress.JOINED
+        joinBeginError = null
+        joinBegins.clear()
+        joinPolls.set(0)
+        joinCancels.set(0)
+        joins.clear()
+        joinAnswers.clear()
+        otherApprovalDevice = false
+        takeoverProof = false
+        refusedRegistrations.set(0)
+    }
+
+    override suspend fun ssoBegin(serverUrl: String): SsoStart {
+        ssoBegins += serverUrl
+        ssoBeginError?.let { throw it }
+        return SsoStart("$serverUrl/identity/connect/authorize?state=$SSO_STATE", "com.reins2fa.app", SSO_STATE, SSO_VERIFIER)
+    }
+
+    /** Like the core: the callback must answer the sign-in that sent `state`. */
+    override suspend fun ssoFinish(serverUrl: String, callbackUrl: String, state: String, verifier: String): SsoOutcome {
+        ssoFinishes += listOf(serverUrl, callbackUrl, state, verifier)
+        ssoFinishError?.let { throw it }
+        if ("state=$state" !in callbackUrl) throw CoreException.Invalid("The sign-in did not come back as expected. Try again.")
+        val info = SessionInfo(serverUrl, ssoEmail)
+        session = info
+        keys = ssoKeys
+        recoveryCode = if (ssoKeys == AccountKeys.LOCKED) null else RECOVERY_CODE
+        return SsoOutcome(info, ssoKeys)
+    }
+
+    override suspend fun accountKeys(): AccountKeys = keys
+
+    override suspend fun unlockAccount(codeOrPassword: String) {
+        unlockAttempts += codeOrPassword
+        val normalized = codeOrPassword.filter { it.isLetterOrDigit() }.uppercase()
+        if (normalized != RECOVERY_CODE.filter { it.isLetterOrDigit() } && codeOrPassword != "correct horse battery staple") {
+            throw CoreException.Invalid("That is neither the recovery code nor the master password.")
+        }
+        keys = AccountKeys.UNLOCKED
+        recoveryCode = RECOVERY_CODE
+        takeoverProof = true
+    }
+
+    override suspend fun accountRecoveryCode(): String {
+        recoveryCodeReads.incrementAndGet()
+        return recoveryCode ?: throw CoreException.Invalid("This account has no recovery code: it was made with a master password.")
+    }
+
+    override suspend fun joinBegin(deviceName: String): JoinStart {
+        joinBegins += deviceName
+        joinBeginError?.let { throw it }
+        joinPolls.set(0)
+        return JoinStart("join-1", "482 193", 1_700_000_700)
+    }
+
+    override suspend fun joinPoll(): JoinProgress {
+        if (joinPolls.incrementAndGet() <= joinWaits) return JoinProgress.WAITING
+        if (joinAnswer == JoinProgress.JOINED) {
+            keys = AccountKeys.UNLOCKED
+            recoveryCode = RECOVERY_CODE
+            takeoverProof = true
+        }
+        return joinAnswer
+    }
+
+    override suspend fun joinCancel() {
+        joinCancels.incrementAndGet()
+    }
+
+    override suspend fun joinView(id: String): JoinView = joins[id] ?: throw CoreException.NotFound()
+
+    override suspend fun answerJoin(id: String, approve: Boolean) {
+        joinAnswers += id to approve
+        joins.remove(id)
+        pending = pending.filterNot { it.id == id }
+    }
+
     override suspend fun pairingView(pairingId: String) = pairing ?: throw CoreException.NotFound()
+
+    /** Parks the pairing the code stands for, like a pushed one: it is then pending and has a view. */
+    override suspend fun pairingByCode(userCode: String): PairingView {
+        pairingCodes += userCode
+        pairingByCodeError?.let { throw it }
+        val view = pairingByCodeResult ?: TestData.pairingView("pair-code", "Reins desktop app on laptop", "laptop", keyFingerprint = "4821 9930")
+        pairing = view
+        pending = pending.filterNot { it.id == view.id } + TestData.pairingItem(view.id)
+        return view
+    }
 
     override suspend fun pending() = pending
 
+    /**
+     * Another phone approves for the account: `registerDevice` is refused ([CoreException.OtherApprovalDevice]) until
+     * this phone brings a proof, from `unlockAccount` or a join the other phone approved.
+     */
+    @Volatile var otherApprovalDevice = false
+    @Volatile var takeoverProof = false
+    val refusedRegistrations = java.util.concurrent.atomic.AtomicInteger()
+
     override suspend fun registerDevice(fcmToken: String?) {
+        if (otherApprovalDevice && !takeoverProof) {
+            refusedRegistrations.incrementAndGet()
+            throw CoreException.OtherApprovalDevice()
+        }
         registrations += fcmToken
     }
 
@@ -538,5 +709,9 @@ class FakeCore : RewardenCoreInterface {
 
         /** One instance per test process; tests reset it. */
         val shared = FakeCore()
+
+        const val SSO_STATE = "st4te"
+        const val SSO_VERIFIER = "v3rifier"
+        const val RECOVERY_CODE = "ABCD-EFGH-IJKL-MNOP-QRST-UVWX-YZ23-4567-ABCD-EFGH-IJKL-MNOP-QRST"
     }
 }

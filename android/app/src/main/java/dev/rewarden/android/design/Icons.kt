@@ -48,6 +48,12 @@ enum class Glyph(val d: String, val fill: Boolean = false) {
     Play("M8 5.5v13l10.5-6.5z"),
     Copy("M9 9h10.5v10.5H9zM15 9V4.5H4.5V15H9"),
 
+    /** A QR code to scan (a computer's pairing code). */
+    Qr("M4 4h6v6H4zM14 4h6v6h-6zM4 14h6v6H4zM14 14h2v2h-2zM18 18h2v2h-2zM14 18.5h1.5M18.5 14H20v1.5"),
+
+    /** A computer (the desktop app). */
+    Laptop("M5.5 6h13v9h-13zM3 18.5h18"),
+
     // Autopilot.
     /** Manual: your own hand decides. */
     Hand("M8 13V6.5a1.5 1.5 0 0 1 3 0V11M11 11V5a1.5 1.5 0 0 1 3 0v6M14 11V6.5a1.5 1.5 0 0 1 3 0V14.5a6 6 0 0 1-6 6h-.6a5.4 5.4 0 0 1-4.5-2.4L4.6 16a1.5 1.5 0 0 1 2.5-1.7L8 15.5"),

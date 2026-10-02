@@ -40,8 +40,8 @@ android {
         buildConfigField("String", "BUILD_ID", "\"$buildId\"")
         ndk { abiFilters += listOf("arm64-v8a", "x86_64") }
         buildConfigField("boolean", "HAS_FIREBASE", hasFirebase.toString())
-        // Fills in the sign-in server field: the hosted server (gradle.properties) unless
-        // -Prewarden.defaultServer=https://your.server says otherwise.
+        // The server new accounts and sign-ins use unless the user picks another: the hosted server
+        // (gradle.properties) unless -Prewarden.defaultServer=https://your.server says otherwise.
         val defaultServer = providers.gradleProperty("rewarden.defaultServer").get().trimEnd('/')
         buildConfigField("String", "DEFAULT_SERVER", "\"$defaultServer\"")
         // Telegram's application credentials (my.telegram.org). They identify this app to Telegram, not the user, and
@@ -235,12 +235,16 @@ abstract class UniffiBindgenTask : DefaultTask() {
             environment("PATH", path)
             commandLine("${cargoBinDir.get()}/cargo", "build", "-p", "rewarden-core", "--lib", "--features", "bindgen", "--locked")
         }
+        // The host's own build of the core (bindgen reads its metadata): .dylib on macOS, .so elsewhere, in
+        // CARGO_TARGET_DIR when that is set.
+        val hostLibrary = if (System.getProperty("os.name").startsWith("Mac")) "librewarden_core.dylib" else "librewarden_core.so"
+        val targetDir = System.getenv("CARGO_TARGET_DIR")?.takeIf { it.isNotEmpty() }?.let { root.resolve(it) } ?: root.resolve("target")
         exec.exec {
             workingDir = root
             environment("PATH", path)
             commandLine(
                 "${cargoBinDir.get()}/cargo", "run", "-q", "-p", "rewarden-core", "--features", "bindgen", "--bin", "uniffi-bindgen",
-                "--locked", "--", "generate", "--library", "target/debug/librewarden_core.so",
+                "--locked", "--", "generate", "--library", targetDir.resolve("debug/$hostLibrary").absolutePath,
                 "--language", "kotlin", "--no-format", "--out-dir", out.absolutePath,
             )
         }
@@ -296,6 +300,8 @@ dependencies {
     implementation(libs.work.runtime.ktx)
     implementation(libs.firebase.messaging)
     implementation(libs.play.services.auth)
+    // Google's QR code scanner (its own camera screen in Play services; no camera permission) for pairing codes.
+    implementation(libs.play.services.code.scanner)
     implementation(libs.coroutines.android)
     implementation(libs.androidsvg)
     // Custom Tabs for MCP servers' sign-in pages.

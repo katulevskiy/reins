@@ -9,6 +9,7 @@ import androidx.work.OneTimeWorkRequestBuilder
 import androidx.work.WorkManager
 import androidx.work.WorkerParameters
 import dev.rewarden.android.RewardenApp
+import dev.rewarden.android.ui.common.userMessage
 import dev.rewarden.core.CoreException
 import kotlin.coroutines.cancellation.CancellationException
 
@@ -24,6 +25,12 @@ class RegisterDeviceWorker(context: Context, params: WorkerParameters) : Corouti
             throw e
         } catch (e: CoreException) {
             when {
+                // Final: another phone approves for the account. Retrying cannot help; the app asks the user to take
+                // over (approve this phone from the other one, or the recovery code).
+                e is CoreException.OtherApprovalDevice -> {
+                    container.state.setRegistrationError(e.userMessage())
+                    Result.failure()
+                }
                 e is CoreException.Network -> Result.retry()
                 e is CoreException.Server && e.status.toInt() >= 500 -> Result.retry()
                 else -> Result.failure()

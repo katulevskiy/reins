@@ -156,12 +156,20 @@ impl Server {
         self.second_device(email).await
     }
 
-    /// Another logged-in device of an already registered user.
+    /// Another logged-in device of an already registered user, with its own device key.
     pub async fn second_device(&self, email: &str) -> Phone {
-        let token = self.login(email, &uuid::Uuid::new_v4().to_string()).await;
+        self.device_with_id(email, &uuid::Uuid::new_v4().to_string(), Some(new_device_key())).await
+    }
+
+    /// A sign-in of `email` as the Vaultwarden device `device_id` (any id, also one another device uses) that sends
+    /// `key` as its device key.
+    pub async fn device_with_id(&self, email: &str, device_id: &str, key: Option<String>) -> Phone {
+        let token = self.login(email, device_id).await;
         Phone {
             base: self.url("/rewarden/api"),
             token,
+            device_id: device_id.to_owned(),
+            key,
         }
     }
 }
@@ -174,15 +182,27 @@ impl Drop for Server {
     }
 }
 
+/// A fresh device key (`Reins-Device-Key`), as a phone makes it.
+pub fn new_device_key() -> String {
+    let mut key = [0u8; 32];
+    key[..16].copy_from_slice(uuid::Uuid::new_v4().as_bytes());
+    key[16..].copy_from_slice(uuid::Uuid::new_v4().as_bytes());
+    rewarden_proto::desktop::encode_key(&key)
+}
+
 /// A logged-in device talking to the phone API.
 pub struct Phone {
     pub base: String,
     pub token: String,
+    /// Its Vaultwarden device id.
+    pub device_id: String,
+    /// Its device key, sent with every call.
+    pub key: Option<String>,
 }
 
 impl Phone {
     async fn call(&self, method: reqwest::Method, path: &str, body: Option<&Value>) -> (StatusCode, Value) {
-        let mut request = client().request(method, format!("{}{path}", self.base)).bearer_auth(&self.token);
+        let mut request = self.raw(method, path);
         if let Some(body) = body {
             request = request.json(body);
         }
@@ -210,7 +230,11 @@ impl Phone {
 
     /// A raw request (bytes in, response out) as this device.
     pub fn raw(&self, method: reqwest::Method, path: &str) -> reqwest::RequestBuilder {
-        client().request(method, format!("{}{path}", self.base)).bearer_auth(&self.token)
+        let request = client().request(method, format!("{}{path}", self.base)).bearer_auth(&self.token);
+        match &self.key {
+            Some(key) => request.header(rewarden_proto::device::DEVICE_KEY_HEADER, key),
+            None => request,
+        }
     }
 
     /// Registers this device as the approval device.

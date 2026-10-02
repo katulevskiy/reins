@@ -62,8 +62,13 @@ private struct AccountGroup: View {
                 .accessibilityHint("Copies the server address")
                 .accessibilityIdentifier("copyServer")
                 .cardRow()
+                if model.recoveryCodeAvailable { RecoveryCodeRow() }
             } header: {
                 GroupHeader("Account")
+            } footer: {
+                if model.recoveryCodeAvailable {
+                    GroupFooter("To add another phone, sign in on it; this phone asks you to approve it.")
+                }
             }
         }
     }
@@ -214,6 +219,10 @@ private struct ConnectionsGroup: View {
                 .accessibilityIdentifier("connection:\(connection.id)")
                 .cardRow()
             }
+            SettingsLinkRow(
+                title: "Connect a computer", subtitle: "Scan the QR code from rewarden login or the desktop app", symbol: "qrcode.viewfinder",
+                tint: Palette.pair, id: "connectComputer"
+            ) { model.openSheet(.connectComputer) }
         } header: {
             GroupHeader("AI connections")
         }

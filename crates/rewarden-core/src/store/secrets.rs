@@ -1,6 +1,8 @@
 //! Secrets of the integrations (a Telegram session, a GitHub token), sealed with the data key.
 
+use data_encoding::BASE64URL_NOPAD;
 use rusqlite::{OptionalExtension, params};
+use zeroize::Zeroizing;
 
 use super::Store;
 use crate::CoreError;
@@ -36,7 +38,32 @@ impl Store {
         self.lock().execute("DELETE FROM secrets WHERE service = ?1 AND account = ?2", params![service, account])?;
         Ok(())
     }
+
+    /// This phone's device key ([`rewarden_proto::device::DEVICE_KEY_HEADER`]), base64url: 32 random bytes made the
+    /// first time and kept sealed. Lost with the data key, it is made again, and the server then wants a proof from
+    /// this phone before it approves again, as from any other.
+    pub fn device_key(&self) -> Result<String, CoreError> {
+        let (service, account) = DEVICE_KEY;
+        match self.secret_get(service, account)? {
+            Some(raw) if raw.len() == 32 => return Ok(BASE64URL_NOPAD.encode(&raw)),
+            Some(_) => self.secret_delete(service, account)?,
+            None => {}
+        }
+        let fresh = Zeroizing::new(crate::crypto::random_bytes::<32>()?);
+        let sealed = self.seal(&aad(service, account), &fresh[..])?;
+        // Of two first calls at once, the first key stays.
+        self.lock().execute(
+            "INSERT INTO secrets (service, account, value) VALUES (?1, ?2, ?3) ON CONFLICT (service, account) DO NOTHING",
+            params![service, account, sealed],
+        )?;
+        let raw =
+            self.secret_get(service, account)?.ok_or_else(|| CoreError::storage("the device key was not kept"))?;
+        Ok(BASE64URL_NOPAD.encode(&raw))
+    }
 }
+
+/// Where the device key is kept (service, account).
+const DEVICE_KEY: (&str, &str) = ("reins.device-key", "this");
 
 #[cfg(test)]
 mod tests {
@@ -56,5 +83,15 @@ mod tests {
         assert!(store.secret_get("github", "thief").is_err());
         store.secret_delete("github", "thief").unwrap();
         assert_eq!(store.secret_get("github", "thief").unwrap(), None);
+    }
+
+    #[test]
+    fn the_device_key_is_made_once_and_kept() {
+        let dir = tempfile::tempdir().unwrap();
+        let key = open(dir.path()).device_key().unwrap();
+        assert!(rewarden_proto::device::device_key_hash(&key).is_some(), "32 bytes, base64url");
+        assert_eq!(open(dir.path()).device_key().unwrap(), key, "the same after a restart");
+        let other = tempfile::tempdir().unwrap();
+        assert_ne!(open(other.path()).device_key().unwrap(), key);
     }
 }

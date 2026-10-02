@@ -60,6 +60,7 @@ mod mail;
 mod ratelimit;
 mod sso;
 mod sso_client;
+mod sso_workos;
 mod storage;
 mod util;
 
@@ -602,6 +603,11 @@ async fn launch_rocket(pool: db::DbPool, extra_debug: bool) -> Result<(), Error>
         .await?;
 
     CONFIG.set_rocket_shutdown_handle(instance.shutdown());
+
+    // WorkOS user lifecycle (emails, deleted users, revoked sessions), when WorkOS is the SSO provider.
+    if let Some(pool) = instance.state::<db::DbPool>() {
+        api::rewarden::workos_sync::spawn(pool.clone());
+    }
 
     spawn_shutdown_signal_handler();
 

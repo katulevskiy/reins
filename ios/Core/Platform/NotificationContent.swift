@@ -10,6 +10,8 @@ enum NotificationCategory: String, CaseIterable {
     case pairing
     /// A file an AI uploaded waits.
     case blob
+    /// Another phone asks for the account's keys.
+    case join
     /// Autopilot, a bypass or Lockdown decided by itself: "Report" opens the activity entry.
     case autopilot
     /// A grant ends soon.
@@ -20,7 +22,7 @@ enum NotificationCategory: String, CaseIterable {
     /// What the lock screen says instead of the text while previews are hidden (the Android app's public versions).
     var hiddenPlaceholder: String {
         switch self {
-        case .request, .pairing, .blob: NotificationText.genericBody
+        case .request, .pairing, .blob, .join: NotificationText.genericBody
         case .autopilot: "Open Reins to see what it was"
         case .grant: "A grant ends soon"
         case .status: "Open Reins to see more"
@@ -29,7 +31,7 @@ enum NotificationCategory: String, CaseIterable {
 
     var thread: String {
         switch self {
-        case .request, .pairing, .blob: "requests"
+        case .request, .pairing, .blob, .join: "requests"
         case .autopilot: "autopilot"
         case .grant: "grants"
         case .status: "status"
@@ -41,6 +43,7 @@ enum NotificationCategory: String, CaseIterable {
         case .request: self = .request
         case .pairing: self = .pairing
         case .blob: self = .blob
+        case .join: self = .join
         }
     }
 
@@ -49,6 +52,7 @@ enum NotificationCategory: String, CaseIterable {
         case .request: self = .request
         case .pairing: self = .pairing
         case .blob: self = .blob
+        case .join: self = .join
         }
     }
 }
@@ -93,12 +97,13 @@ enum NotificationText {
         case .request: item.action == "grant" ? "Permission requested" : "Approval needed"
         case .pairing: "Connect an AI"
         case .blob: "File to check"
+        case .join: "Add a phone"
         }
     }
 
     /// "Claude: Send email to 2"; a pairing names the client.
     static func headline(_ item: PendingItem) -> String {
-        if item.kind == .pairing { return untrusted(item.title) }
+        if item.kind == .pairing || item.kind == .join { return untrusted(item.title) }
         return fullTitle(label: item.connectionLabel, action: item.action, count: Int(item.count), service: item.service, title: item.opTitle, op: item.op)
     }
 
@@ -166,6 +171,7 @@ enum NotificationContent {
         case .request: .request
         case .pairing: .pairing
         case .blob: .blob
+        case .join: .join
         }
         c.userInfo = [
             NotificationKey.kind: PushPayload.kind(of: kind),

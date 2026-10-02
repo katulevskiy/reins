@@ -79,7 +79,7 @@ CREATE TABLE IF NOT EXISTS connection_prefs (connection_id TEXT PRIMARY KEY, ico
 ";
 
 /// Columns added after the first release, applied once each (`PRAGMA user_version`).
-const MIGRATIONS: [&str; 7] = [
+const MIGRATIONS: [&str; 8] = [
     "
 ALTER TABLE audit ADD COLUMN connection_id TEXT NOT NULL DEFAULT '';
 ALTER TABLE audit ADD COLUMN service TEXT NOT NULL DEFAULT 'gmail';
@@ -192,6 +192,20 @@ CREATE TABLE autopilot_targets (
     key TEXT PRIMARY KEY,
     at INTEGER NOT NULL
 );
+",
+    // Another phone asking for the account's keys is parked too: the kind check gains `join`.
+    "
+CREATE TABLE pending_kinds (
+    id TEXT PRIMARY KEY,
+    kind TEXT NOT NULL CHECK (kind IN ('request', 'pairing', 'blob', 'join')),
+    created_at INTEGER NOT NULL,
+    parked_at INTEGER NOT NULL,
+    payload BLOB NOT NULL
+);
+INSERT INTO pending_kinds (id, kind, created_at, parked_at, payload)
+    SELECT id, kind, created_at, parked_at, payload FROM pending;
+DROP TABLE pending;
+ALTER TABLE pending_kinds RENAME TO pending;
 ",
 ];
 
@@ -552,13 +566,14 @@ pub(crate) mod tests {
         assert_eq!((old[0].at, old[0].connection_label.as_str(), old[0].service.as_str()), (7, "Old", "gmail"));
         assert_eq!(old[0].detail, DETAIL_UNAVAILABLE, "rows from before the details existed have none");
         let version: i64 = store.lock().query_row("PRAGMA user_version", [], |r| r.get(0)).unwrap();
-        assert_eq!(version, 8);
+        assert_eq!(version, 9);
         assert_eq!(store.desktop_key("c1").unwrap(), None, "the desktop keys table exists");
         assert!(store.ap_profiles().unwrap().is_empty(), "the Autopilot tables exist");
         assert_eq!(store.ap_mode_row("").unwrap(), crate::autopilot::modes::ModeRow::default());
         assert!(store.ap_memory("p").unwrap().is_empty());
         assert!(store.mcp_servers().unwrap().is_empty(), "the MCP servers table exists");
         assert!(store.park("b1", crate::PendingKind::Blob, 1, 2, b"x").unwrap(), "uploads can be parked");
+        assert!(store.park("j1", crate::PendingKind::Join, 1, 2, b"x").unwrap(), "other phones can be parked");
         let accounts: Vec<_> = store.accounts().unwrap().into_iter().map(|a| a.account).collect();
         assert_eq!(accounts, ["me@gmail.com"], "the one account of earlier versions is registered");
         assert_eq!(

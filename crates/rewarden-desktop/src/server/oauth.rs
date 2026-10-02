@@ -24,7 +24,7 @@ use crate::identity::Identity;
 const CALLBACK_WAIT: Duration = Duration::from_mins(15);
 /// An access token is refreshed this long before it expires, so it does not expire in flight.
 const EXPIRY_MARGIN_SECS: i64 = 60;
-const MAX_ANSWER_BYTES: usize = 64 * 1024;
+pub(super) const MAX_ANSWER_BYTES: usize = 64 * 1024;
 
 /// What `session.json` holds.
 #[derive(Clone, Serialize, Deserialize)]
@@ -69,7 +69,7 @@ fn load_session(paths: &Paths) -> Result<Option<Session>, String> {
     }
 }
 
-fn save_session(paths: &Paths, session: &Session) -> Result<(), String> {
+pub(super) fn save_session(paths: &Paths, session: &Session) -> Result<(), String> {
     paths.ensure().map_err(|e| e.to_string())?;
     let json = Zeroizing::new(serde_json::to_vec_pretty(session).map_err(|e| e.to_string())?);
     write_private(&paths.session_file(), &json).map_err(|e| format!("{}: {e}", paths.session_file().display()))
@@ -210,14 +210,20 @@ fn open_in_browser(url: &str) {
 }
 
 #[derive(Deserialize)]
-struct Metadata {
+pub(super) struct Metadata {
     #[serde(default)]
     issuer: Option<String>,
     authorization_endpoint: String,
-    token_endpoint: String,
+    pub(super) token_endpoint: String,
     #[serde(default)]
     registration_endpoint: Option<String>,
+    /// RFC 8628: where a QR code to scan with the phone is asked for (servers since the device flow).
+    #[serde(default)]
+    pub(super) device_authorization_endpoint: Option<String>,
 }
+
+/// The `grant_type` that redeems a device code (RFC 8628 §3.4).
+pub(super) const DEVICE_CODE_GRANT: &str = "urn:ietf:params:oauth:grant-type:device_code";
 
 async fn get_json<T: serde::de::DeserializeOwned>(http: &reqwest::Client, url: &str) -> Result<Option<T>, String> {
     let resp = http.get(url).send().await.map_err(|e| format!("cannot reach {url}: {}", e.without_url()))?;
@@ -233,7 +239,7 @@ async fn get_json<T: serde::de::DeserializeOwned>(http: &reqwest::Client, url: &
 }
 
 /// RFC 8414 metadata: at `<server>/.well-known/…`, or path-inserted for a server below a path.
-async fn discover(http: &reqwest::Client, server: &str) -> Result<Metadata, String> {
+pub(super) async fn discover(http: &reqwest::Client, server: &str) -> Result<Metadata, String> {
     let base = url::Url::parse(server).map_err(|e| e.to_string())?;
     let mut candidates = vec![format!("{server}/.well-known/oauth-authorization-server")];
     let path = base.path().trim_end_matches('/');
@@ -243,10 +249,14 @@ async fn discover(http: &reqwest::Client, server: &str) -> Result<Metadata, Stri
     }
     for url in candidates {
         if let Some(meta) = get_json::<Metadata>(http, &url).await? {
-            for endpoint in
-                [Some(&meta.authorization_endpoint), Some(&meta.token_endpoint), meta.registration_endpoint.as_ref()]
-                    .into_iter()
-                    .flatten()
+            for endpoint in [
+                Some(&meta.authorization_endpoint),
+                Some(&meta.token_endpoint),
+                meta.registration_endpoint.as_ref(),
+                meta.device_authorization_endpoint.as_ref(),
+            ]
+            .into_iter()
+            .flatten()
             {
                 let parsed = url::Url::parse(endpoint).map_err(|e| format!("{url}: bad endpoint {endpoint}: {e}"))?;
                 check_url(&parsed).map_err(|e| format!("{url}: endpoint {endpoint} {e}"))?;
@@ -272,7 +282,7 @@ fn client_name() -> String {
 }
 
 /// RFC 7591 dynamic registration as a public client with a loopback redirect (any port, RFC 8252).
-async fn register(http: &reqwest::Client, meta: &Metadata) -> Result<String, String> {
+pub(super) async fn register(http: &reqwest::Client, meta: &Metadata) -> Result<String, String> {
     #[derive(Deserialize)]
     struct Registered {
         client_id: String,
@@ -282,7 +292,7 @@ async fn register(http: &reqwest::Client, meta: &Metadata) -> Result<String, Str
     let body = serde_json::json!({
         "client_name": client_name(),
         "redirect_uris": ["http://127.0.0.1/callback"],
-        "grant_types": ["authorization_code", "refresh_token"],
+        "grant_types": ["authorization_code", "refresh_token", DEVICE_CODE_GRANT],
         "response_types": ["code"],
         "token_endpoint_auth_method": "none",
     });

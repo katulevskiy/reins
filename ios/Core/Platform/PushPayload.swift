@@ -31,6 +31,7 @@ struct PushPayload: Equatable {
         case "req": .request
         case "pair": .pairing
         case "blob": .blob
+        case "join": .join
         default: nil
         }
     }
@@ -41,6 +42,7 @@ struct PushPayload: Equatable {
         case .request: "req"
         case .pairing: "pair"
         case .blob: "blob"
+        case .join: "join"
         }
     }
 

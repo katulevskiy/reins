@@ -34,7 +34,7 @@ use super::{
     blob::{BlobError, Owner, Received, WriteTicket},
     blob_io::{BlobWriter, FileBody, WriteError, parse_range, write_reader},
     device_api::{
-        PhoneResult, already_answered, api_err, bad_request, not_found, parse_versioned, rate_limited,
+        DeviceKey, PhoneResult, already_answered, api_err, bad_request, not_found, parse_versioned, rate_limited,
         read_body_limited, require_approval_device, too_many_running, user_key,
     },
     limits::{self, Admitted},
@@ -264,8 +264,8 @@ async fn open_file(path: &std::path::Path) -> Option<tokio::fs::File> {
 
 /// Opens a slot the AI uploads into.
 #[post("/rewarden/api/blobs", data = "<data>")]
-async fn open_slot(data: Data<'_>, headers: Headers, conn: DbConn) -> PhoneResult<Json<BlobSlot>> {
-    require_approval_device(&headers, &conn).await?;
+async fn open_slot(data: Data<'_>, headers: Headers, key: DeviceKey, conn: DbConn) -> PhoneResult<Json<BlobSlot>> {
+    require_approval_device(&headers, &key, &conn).await?;
     let request: BlobSlotRequest = parse_versioned(&read_body_limited(data, MAX_JSON_BODY).await?)?;
     let owner = owner_of(&headers, &request.connection_id, request.request_id.clone(), &conn).await?;
     let slot = HUB.blobs.open_slot(&owner, &request, now_unix()).map_err(blob_err)?;
@@ -278,23 +278,35 @@ async fn open_slot(data: Data<'_>, headers: Headers, conn: DbConn) -> PhoneResul
 }
 
 #[get("/rewarden/api/blobs/<id>")]
-async fn get_info(id: &str, headers: Headers, conn: DbConn) -> PhoneResult<Json<BlobInfo>> {
-    require_approval_device(&headers, &conn).await?;
+async fn get_info(id: &str, headers: Headers, key: DeviceKey, conn: DbConn) -> PhoneResult<Json<BlobInfo>> {
+    require_approval_device(&headers, &key, &conn).await?;
     HUB.blobs.info(&user_key(&headers), id, now_unix()).map(Json).ok_or_else(not_found)
 }
 
 /// The user's answer for an upload made with `rewarden_upload`.
 #[post("/rewarden/api/blobs/<id>/decision", data = "<data>")]
-async fn post_decision(id: &str, data: Data<'_>, headers: Headers, conn: DbConn) -> PhoneResult<Json<BlobInfo>> {
-    require_approval_device(&headers, &conn).await?;
+async fn post_decision(
+    id: &str,
+    data: Data<'_>,
+    headers: Headers,
+    key: DeviceKey,
+    conn: DbConn,
+) -> PhoneResult<Json<BlobInfo>> {
+    require_approval_device(&headers, &key, &conn).await?;
     let decision: BlobDecision = parse_versioned(&read_body_limited(data, MAX_JSON_BODY).await?)?;
     HUB.blobs.decide(&user_key(&headers), id, decision.approved, now_unix()).map(Json).map_err(blob_err)
 }
 
 /// The bytes, for the phone to transform them itself (vault encryption); `Range` optional.
 #[get("/rewarden/api/blobs/<id>/content")]
-async fn get_content(id: &str, range: RangeHeader, headers: Headers, conn: DbConn) -> PhoneResult<FileResponse> {
-    require_approval_device(&headers, &conn).await?;
+async fn get_content(
+    id: &str,
+    range: RangeHeader,
+    headers: Headers,
+    key: DeviceKey,
+    conn: DbConn,
+) -> PhoneResult<FileResponse> {
+    require_approval_device(&headers, &key, &conn).await?;
     drop(conn);
     let user = user_key(&headers);
     let readable = HUB.blobs.readable(&user, id, now_unix()).map_err(blob_err)?;
@@ -318,6 +330,7 @@ async fn get_content(id: &str, range: RangeHeader, headers: Headers, conn: DbCon
 
 /// A result the phone made itself (a decrypted vault attachment) becomes a download for the AI.
 #[put("/rewarden/api/blobs/output?<connection_id>&<name>&<ttl_secs>&<request_id>", data = "<data>")]
+#[expect(clippy::too_many_arguments, reason = "Rocket hands the query fields and guards over as arguments")]
 async fn put_output(
     connection_id: Option<&str>,
     name: Option<&str>,
@@ -325,9 +338,10 @@ async fn put_output(
     request_id: Option<&str>,
     data: Data<'_>,
     headers: Headers,
+    key: DeviceKey,
     conn: DbConn,
 ) -> PhoneResult<Json<BlobDownload>> {
-    require_approval_device(&headers, &conn).await?;
+    require_approval_device(&headers, &key, &conn).await?;
     let (Some(connection_id), Some(name)) = (connection_id, name) else {
         return Err(bad_request("`connection_id` and `name` are required"));
     };
@@ -340,8 +354,14 @@ async fn put_output(
 
 /// Streams a blob to the URL the phone names, with the phone's headers for this one request.
 #[post("/rewarden/api/blobs/<id>/send", data = "<data>")]
-async fn post_send(id: &str, data: Data<'_>, headers: Headers, conn: DbConn) -> PhoneResult<Json<BlobSendResult>> {
-    require_approval_device(&headers, &conn).await?;
+async fn post_send(
+    id: &str,
+    data: Data<'_>,
+    headers: Headers,
+    key: DeviceKey,
+    conn: DbConn,
+) -> PhoneResult<Json<BlobSendResult>> {
+    require_approval_device(&headers, &key, &conn).await?;
     drop(conn);
     let send: BlobSend = parse_versioned(&read_body_limited(data, MAX_JSON_BODY).await?)?;
     let method = match send.method.to_ascii_uppercase().as_str() {
@@ -400,8 +420,8 @@ async fn post_send(id: &str, data: Data<'_>, headers: Headers, conn: DbConn) -> 
 
 /// Downloads a large result into a new blob the AI may fetch.
 #[post("/rewarden/api/blobs/fetch", data = "<data>")]
-async fn post_fetch(data: Data<'_>, headers: Headers, conn: DbConn) -> PhoneResult<Json<BlobDownload>> {
-    require_approval_device(&headers, &conn).await?;
+async fn post_fetch(data: Data<'_>, headers: Headers, key: DeviceKey, conn: DbConn) -> PhoneResult<Json<BlobDownload>> {
+    require_approval_device(&headers, &key, &conn).await?;
     let fetch: BlobFetch = parse_versioned(&read_body_limited(data, MAX_JSON_BODY).await?)?;
     let owner = owner_of(&headers, &fetch.connection_id, fetch.request_id.clone(), &conn).await?;
     drop(conn);
@@ -442,8 +462,8 @@ async fn write_response(mut response: reqwest::Response, ticket: &WriteTicket) -
 }
 
 #[delete("/rewarden/api/blobs/<id>")]
-async fn delete_blob(id: &str, headers: Headers, conn: DbConn) -> PhoneResult<Status> {
-    require_approval_device(&headers, &conn).await?;
+async fn delete_blob(id: &str, headers: Headers, key: DeviceKey, conn: DbConn) -> PhoneResult<Status> {
+    require_approval_device(&headers, &key, &conn).await?;
     HUB.blobs.remove(&user_key(&headers), id).map_err(blob_err)?;
     Ok(Status::NoContent)
 }
