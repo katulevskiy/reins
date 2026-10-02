@@ -190,7 +190,8 @@ fn register(s: &mut State, body: &[u8]) -> Resp {
     let name = doc["client_name"].as_str().unwrap_or_default().to_owned();
     if doc["redirect_uris"] != json!(["http://127.0.0.1/callback"])
         || doc["token_endpoint_auth_method"] != "none"
-        || doc["grant_types"] != json!(["authorization_code", "refresh_token"])
+        || doc["grant_types"]
+            != json!(["authorization_code", "refresh_token", "urn:ietf:params:oauth:grant-type:device_code"])
         || !name.starts_with("Rewarden desktop app on ")
     {
         return json_resp(400, &json!({"error": "invalid_client_metadata", "error_description": doc.to_string()}));

@@ -566,8 +566,9 @@ impl Engine {
     /// phone, which parks it like a pushed one. It is answered with [`Engine::answer_pairing`]: the user still taps the
     /// number the computer shows and compares its key.
     pub async fn pairing_by_code(&self, user_code: &str) -> Result<PairingView, CoreError> {
-        let code = normalize_user_code(user_code)
-            .ok_or_else(|| CoreError::invalid("That is not a Reins pairing code. Scan the QR code your computer shows."))?;
+        let code = normalize_user_code(user_code).ok_or_else(|| {
+            CoreError::invalid("That is not a Reins pairing code. Scan the QR code your computer shows.")
+        })?;
         let session = self.session()?;
         let pairing = match api_call!(&session, |api| api.claim_pairing(&code)) {
             Ok(p) => p,

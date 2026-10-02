@@ -121,7 +121,8 @@ async fn the_phone_creates_the_account_and_its_vault_works_like_a_bitwarden_vaul
     phone.core.logout().await.unwrap();
     let again = phone.core.create_account(server.base.clone(), EMAIL.to_owned(), PASSWORD.to_owned()).await;
     assert_eq!(again.unwrap_err(), CoreError::invalid("An account with this email already exists. Sign in instead."));
-    let short = phone.core.create_account(server.base.clone(), "other@example.com".to_owned(), "short".to_owned()).await;
+    let short =
+        phone.core.create_account(server.base.clone(), "other@example.com".to_owned(), "short".to_owned()).await;
     assert!(matches!(short, Err(CoreError::Invalid { reason }) if reason.contains("12 characters")));
     assert!(!server.log().contains("panicked"), "server log: {}", server.log());
 }

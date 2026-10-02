@@ -41,11 +41,8 @@ pub const USER_CODE_LEN: usize = 8;
 /// `None` when it cannot be one. The result is the form the server shows and expects, `BCDF-GHJK`.
 #[must_use]
 pub fn normalize_user_code(raw: &str) -> Option<String> {
-    let letters: Vec<char> = raw
-        .chars()
-        .filter(|c| !c.is_whitespace() && *c != '-')
-        .map(|c| c.to_ascii_uppercase())
-        .collect();
+    let letters: Vec<char> =
+        raw.chars().filter(|c| !c.is_whitespace() && *c != '-').map(|c| c.to_ascii_uppercase()).collect();
     if letters.len() != USER_CODE_LEN || !letters.iter().all(|c| USER_CODE_ALPHABET.contains(*c)) {
         return None;
     }

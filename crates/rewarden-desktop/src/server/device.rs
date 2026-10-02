@@ -334,7 +334,10 @@ mod tests {
     #[test]
     fn links_to_show_must_be_plain_https() {
         assert_eq!(plain_link("https://app.reins2fa.com/pair").as_deref(), Some("https://app.reins2fa.com/pair"));
-        assert_eq!(plain_link("http://127.0.0.1:8000/pair?code=X").as_deref(), Some("http://127.0.0.1:8000/pair?code=X"));
+        assert_eq!(
+            plain_link("http://127.0.0.1:8000/pair?code=X").as_deref(),
+            Some("http://127.0.0.1:8000/pair?code=X")
+        );
         for bad in ["http://evil.example/pair", "javascript:alert(1)", "https://u:p@a.example/pair", "pair"] {
             assert_eq!(plain_link(bad), None, "{bad}");
         }

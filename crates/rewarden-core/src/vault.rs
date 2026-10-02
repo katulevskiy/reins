@@ -600,7 +600,13 @@ mod tests {
 
         let server = MockServer::start().await;
         verification(ResponseTemplate::new(500)).mount(&server).await;
-        assert!(matches!(register(&server).await.unwrap_err(), CoreError::Server { status: 500, .. }));
+        assert!(matches!(
+            register(&server).await.unwrap_err(),
+            CoreError::Server {
+                status: 500,
+                ..
+            }
+        ));
     }
 
     #[tokio::test]

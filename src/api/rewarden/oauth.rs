@@ -818,7 +818,9 @@ mod tests {
             e(b"grant_type=refresh_token&refresh_token=R&resource=https%3A%2F%2Fother.example%2Fmcp"),
             "invalid_target"
         );
-        let device = parse_form(b"grant_type=urn%3Aietf%3Aparams%3Aoauth%3Agrant-type%3Adevice_code&device_code=D&client_id=cid");
+        let device = parse_form(
+            b"grant_type=urn%3Aietf%3Aparams%3Aoauth%3Agrant-type%3Adevice_code&device_code=D&client_id=cid",
+        );
         assert_eq!(
             parse_token_request(&device, MCP).unwrap(),
             TokenGrant::DeviceCode {
@@ -826,7 +828,10 @@ mod tests {
                 client_id: "cid".into()
             }
         );
-        assert_eq!(e(b"grant_type=urn%3Aietf%3Aparams%3Aoauth%3Agrant-type%3Adevice_code&device_code=D"), "invalid_request");
+        assert_eq!(
+            e(b"grant_type=urn%3Aietf%3Aparams%3Aoauth%3Agrant-type%3Adevice_code&device_code=D"),
+            "invalid_request"
+        );
     }
 
     #[test]
@@ -853,7 +858,10 @@ mod tests {
         assert_eq!(answer["verification_uri_complete"], "https://rw.example.com/pair?code=BCDF-GHJK");
         assert_eq!((answer["expires_in"].as_u64(), answer["interval"].as_u64()), (Some(600), Some(5)));
         assert_eq!(answer["rewarden_confirm_code"], 47);
-        assert_eq!(pairing_page_url("http://127.0.0.1:8000/vw", Some("BCDF-GHJK")), "http://127.0.0.1:8000/vw/pair?code=BCDF-GHJK");
+        assert_eq!(
+            pairing_page_url("http://127.0.0.1:8000/vw", Some("BCDF-GHJK")),
+            "http://127.0.0.1:8000/vw/pair?code=BCDF-GHJK"
+        );
         let meta = authorization_server_metadata(DOMAIN);
         assert_eq!(meta["device_authorization_endpoint"], "https://rw.example.com/rewarden/oauth/device_authorization");
         assert!(meta["grant_types_supported"].as_array().unwrap().iter().any(|g| g == DEVICE_CODE_GRANT));

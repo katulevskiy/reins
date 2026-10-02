@@ -270,8 +270,7 @@ fn apple_app_site_association_doc() -> (rocket::http::ContentType, String) {
     let team = Some(crate::CONFIG.rewarden_apple_team_id())
         .filter(|t| !t.trim().is_empty())
         .unwrap_or_else(|| crate::CONFIG.rewarden_apns_team_id());
-    let doc =
-        apple_app_site_association(&team, &crate::CONFIG.domain_path(), crate::CONFIG.web_vault_enabled());
+    let doc = apple_app_site_association(&team, &crate::CONFIG.domain_path(), crate::CONFIG.web_vault_enabled());
     (rocket::http::ContentType::JSON, doc.to_string())
 }
 
