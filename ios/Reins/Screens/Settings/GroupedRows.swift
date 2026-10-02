@@ -9,6 +9,8 @@ extension View {
         listStyle(.insetGrouped)
             .scrollContentBackground(.hidden)
             .listSectionSpacing(22)
+            // The first group sits close under the navigation bar, not a whole section gap below it.
+            .contentMargins(.top, 0, for: .scrollContent)
             .pageBackground()
     }
 

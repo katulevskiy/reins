@@ -201,7 +201,11 @@ struct GrantsScreen: View {
         }
         .scrollBounceBehavior(.basedOnSize)
         .frame(height: min(max(panelContentHeight, 80), maxHeight))
-        .glassEffect(.regular, in: RoundedRectangle(cornerRadius: 26, style: .continuous))
+        // Nearly opaque: the rows must read cleanly over the tiles below.
+        .background(Palette.plate, in: RoundedRectangle(cornerRadius: 26, style: .continuous))
+        .clipShape(RoundedRectangle(cornerRadius: 26, style: .continuous))
+        .overlay(RoundedRectangle(cornerRadius: 26, style: .continuous).strokeBorder(Palette.plateEdge, lineWidth: 0.5))
+        .shadow(color: .black.opacity(0.18), radius: 24, y: 8)
         .padding(.horizontal, 16)
         .padding(.bottom, 8)
         .accessibilityIdentifier("expiredList")
