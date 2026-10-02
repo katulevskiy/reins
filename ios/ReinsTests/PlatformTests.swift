@@ -125,8 +125,8 @@ final class PlatformTests: XCTestCase {
     func testARequestSaysWhoWantsWhat() {
         let c = NotificationContent.pending(item(), settings: FeedbackSettings())
         XCTAssertEqual(c.title, "Approval needed")
-        XCTAssertEqual(c.body, "Claude: Send email to 2")
-        XCTAssertEqual(c.subtitle, "me@gmail.com")
+        XCTAssertEqual(c.body, "Claude: Send email to 2\nme@gmail.com")
+        XCTAssertEqual(c.subtitle, "")
         XCTAssertEqual(c.categoryIdentifier, "request")
         XCTAssertEqual(c.threadIdentifier, "requests")
         XCTAssertEqual(c.interruptionLevel, .timeSensitive)
@@ -168,8 +168,8 @@ final class PlatformTests: XCTestCase {
     func testAnAutomaticApprovalIsQuietAndCanBeReported() {
         let c = NotificationContent.decision(decision(.approve), settings: FeedbackSettings())
         XCTAssertEqual(c.title, "Autopilot approved")
-        XCTAssertEqual(c.body, "Push to a branch · dkat/rewarden — Claude Code")
-        XCTAssertEqual(c.subtitle, "97% sure")
+        XCTAssertEqual(c.body, "Push to a branch · dkat/rewarden — Claude Code\n97% sure")
+        XCTAssertEqual(c.subtitle, "")
         XCTAssertNil(c.sound)
         XCTAssertEqual(c.interruptionLevel, .passive)
         XCTAssertEqual(c.categoryIdentifier, "autopilot")
