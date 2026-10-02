@@ -248,7 +248,12 @@ async fn the_phone_approves_git_reads_and_pushes_and_refuses_a_force_push() {
     assert_eq!(upstream.head(REPO, "feature").as_deref(), Some(second.as_str()));
 
     // ---- a force push is asked every time, cannot be remembered, and the user denies it ----
-    run_git(&home.path("app"), &[], &["commit", "-q", "--amend", "-m", "Rewritten"]);
+    // An explicit identity: run_git does not use the test HOME's git config (CI runners have no global identity).
+    run_git(
+        &home.path("app"),
+        &[],
+        &["-c", "user.name=Me", "-c", "user.email=me@example.com", "commit", "-q", "--amend", "-m", "Rewritten"],
+    );
     let force = home.git("app", &FORCE_FEATURE);
     let user = async {
         let item = next_item(&phone).await;
