@@ -5,29 +5,33 @@
 #
 #   scripts/release-desktop.sh                       # Linux only, from the current commit; refuses uncommitted changes
 #   scripts/release-desktop.sh --dirty               # publish anyway (the build id says so)
-#   scripts/release-desktop.sh --macos-from v0.2.0   # the GitHub release v0.2.0, Linux and macOS
-#   scripts/release-desktop.sh --macos-from latest   # the latest GitHub release, Linux and macOS
+#   scripts/release-desktop.sh --macos-from v0.2.0   # the GitHub release v0.2.0, Linux, macOS and Windows
+#   scripts/release-desktop.sh --macos-from latest   # the latest GitHub release, Linux, macOS and Windows
+#   (--from is the same flag)
 #
-# macOS binaries cannot be built here, so --macos-from takes them from a GitHub release (made by
-# .github/workflows/release.yml on a macOS runner): it downloads the release's SHA256SUMS and the two
-# reins-desktop-X.Y.Z-{aarch64,x86_64}-apple-darwin.tar.gz archives, checks each archive against SHA256SUMS, checks the
-# binary inside is a Mach-O for the right processor that carries the release's build id, and publishes it as
-# macos-aarch64 / macos-x86_64 next to the Linux binaries: same manifest, signed with the same key, same
-# latest-<platform>.txt pointers. The Linux binaries are built here as always, but from the release's tag (in a
-# temporary git worktree, with the version set as the workflow sets it), not from the current commit.
+# macOS and Windows binaries cannot be built here, so --macos-from takes them from a GitHub release (made by
+# .github/workflows/release.yml on macOS and Windows runners): it downloads the release's SHA256SUMS and the
+# reins-desktop-X.Y.Z-{aarch64,x86_64}-apple-darwin.tar.gz and reins-desktop-X.Y.Z-{x86_64,aarch64}-pc-windows-msvc.zip
+# archives, checks each archive against SHA256SUMS, checks the binary inside is a Mach-O or a Windows console program
+# for the right processor that carries the release's build id, and publishes it as macos-aarch64 / macos-x86_64 /
+# windows-x86_64 / windows-aarch64 next to the Linux binaries: same manifest, signed with the same key, same
+# latest-<platform>.txt pointers. The Windows on Arm build is optional (the workflow may leave it out); the others are
+# required. The Linux binaries are built here as always, but from the release's tag (in a temporary git worktree, with
+# the version set as the workflow sets it), not from the current commit.
 #
 # Versions with --macos-from: the whole feed release takes the GitHub release's identity, computed exactly as the
 # release workflow computes it from the tagged commit:
 #   version     X.Y.Z from the tag vX.Y.Z
 #   build id    X.Y.Z-<commit time, UTC, YYYYMMDDhhmm>-<first 8 hex digits of the commit>
 #   build time  the commit time (Unix seconds)
-# The macOS binaries already carry that build id and time (the workflow builds with them), and the Linux ones are
+# The macOS and Windows binaries already carry that build id and time (the workflow builds with them), and the Linux ones are
 # built with them here, so every binary in the feed reports the same `rewarden --version` as the GitHub release and
 # carries the same build time as the signed manifest. `rewarden update` offers a release only when the manifest's build
 # time is later than the running binary's, so a fresh install is up to date and the next release is offered once
 # published. Without --macos-from the build time is the time of publishing and the version comes from
-# crates/rewarden-desktop/Cargo.toml, as before; the manifest then names no macOS build (Macs keep the
-# latest-macos-*.txt of the last --macos-from release, and `rewarden update` on a Mac says there is no build for it).
+# crates/rewarden-desktop/Cargo.toml, as before; the manifest then names no macOS or Windows build (they keep the
+# latest-<platform>.txt of the last --macos-from release, and `rewarden update` there says there is no build for it).
+# The feed serves install.ps1 too (the Windows installer, which installs from the GitHub releases).
 # Either way the script refuses to publish a release older than the one the feed already serves, since installed apps
 # would never move to it.
 #
@@ -54,7 +58,9 @@ GITHUB_REPO="${REWARDEN_GITHUB_REPO:-katulevskiy/reins}"
 TARGETS=("linux-x86_64:x86_64-unknown-linux-musl" "linux-aarch64:aarch64-unknown-linux-musl")
 # platform:target triple:the processor as `file` names it
 MACOS_TARGETS=("macos-aarch64:aarch64-apple-darwin:arm64" "macos-x86_64:x86_64-apple-darwin:x86_64")
-ALL_PLATFORMS="linux-x86_64 linux-aarch64 macos-x86_64 macos-aarch64"
+# platform:target triple:the processor as `file` names it (a pattern):required
+WINDOWS_TARGETS=("windows-x86_64:x86_64-pc-windows-msvc:x86-64:required" "windows-aarch64:aarch64-pc-windows-msvc:(aarch64|arm64):optional")
+ALL_PLATFORMS="linux-x86_64 linux-aarch64 macos-x86_64 macos-aarch64 windows-x86_64 windows-aarch64"
 
 usage() {
     echo "usage: $0 [--dirty | --macos-from vX.Y.Z|latest]" >&2
@@ -70,12 +76,12 @@ macos_from=""
 while (($#)); do
     case "$1" in
     --dirty) dirty_ok=true ;;
-    --macos-from)
+    --macos-from | --from)
         [[ -n "${2:-}" ]] || usage
         macos_from="$2"
         shift
         ;;
-    --macos-from=*) macos_from="${1#*=}" ;;
+    --macos-from=* | --from=*) macos_from="${1#*=}" ;;
     *) usage ;;
     esac
     shift
@@ -100,7 +106,7 @@ mkdir -p "$stage/files"
 # What to publish: the tree the Linux binaries are built from, and the release's version, build id and build time.
 src="$repo"
 if [[ -n "$macos_from" ]]; then
-    for tool in curl file tar sha256sum; do
+    for tool in curl file tar unzip sha256sum; do
         command -v "$tool" >/dev/null || die "--macos-from needs $tool"
     done
     tag="$macos_from"
@@ -193,6 +199,33 @@ if [[ -n "$macos_from" ]]; then
         cp "$bin" "$stage/files/$file"
         assets+=("$platform=$stage/files/$file")
     done
+    for t in "${WINDOWS_TARGETS[@]}"; do
+        IFS=: read -r platform triple cpu need <<<"$t"
+        archive="reins-desktop-$version-$triple.zip"
+        want="$(awk -v f="$archive" '$2 == f || $2 == "*" f { print $1 }' "$stage/gh/SHA256SUMS")"
+        if [[ -z "$want" && "$need" == optional ]]; then
+            echo "Skipping $platform: $tag has no $archive"
+            continue
+        fi
+        echo "Fetching $platform ($archive from $tag)..."
+        [[ "$want" =~ ^[0-9a-f]{64}$ ]] || die "SHA256SUMS of $tag does not list $archive"
+        curl -fsSL "$gh/$archive" -o "$stage/gh/$archive" || die "could not download $archive"
+        got="$(sha256sum "$stage/gh/$archive" | cut -d' ' -f1)"
+        [[ "$got" == "$want" ]] || die "$archive does not match SHA256SUMS of $tag"
+        unzip -q -o "$stage/gh/$archive" "reins-desktop-$version-$triple/rewarden.exe" -d "$stage/gh" ||
+            die "$archive has no reins-desktop-$version-$triple/rewarden.exe"
+        bin="$stage/gh/reins-desktop-$version-$triple/rewarden.exe"
+        kind="$(file -b "$bin")"
+        # `file` words it "PE32+ executable (console) x86-64, for MS Windows" or, newer, "PE32+ executable for MS
+        # Windows 6.00 (console), x86-64, 7 sections".
+        [[ "$kind" == "PE32+ executable"*"(console)"* ]] && grep -qiE "$cpu" <<<"$kind" ||
+            die "$archive: rewarden.exe is not a Windows $cpu console program ($kind)"
+        grep -qaF "$version ($build)" "$bin" || die "$archive: rewarden.exe does not carry the build id $build"
+        # No .exe in the feed's file name: `rewarden update` writes it over the program it replaces.
+        file="rewarden-$build-$platform"
+        cp "$bin" "$stage/files/$file"
+        assets+=("$platform=$stage/files/$file")
+    done
 fi
 
 cargo run --release --locked -q -p rewarden-desktop --bin rewarden-release -- manifest \
@@ -200,11 +233,13 @@ cargo run --release --locked -q -p rewarden-desktop --bin rewarden-release -- ma
 # The installer it serves (this checkout's) points at this site.
 sed "s|^DEFAULT_SITE=.*|DEFAULT_SITE=\"$SITE\"|" scripts/install.sh >"$stage/install.sh"
 grep -qxF "DEFAULT_SITE=\"$SITE\"" "$stage/install.sh" || die "could not set DEFAULT_SITE in install.sh"
+sed 's|^\( *\)\$DefaultSite = .*|\1$DefaultSite = "'"$SITE"'"|' scripts/install.ps1 >"$stage/install.ps1"
+grep -qF "\$DefaultSite = \"$SITE\"" "$stage/install.ps1" || die "could not set \$DefaultSite in install.ps1"
 
 echo "Uploading to $SSH_TARGET:$REMOTE_DIR..."
 ssh "$SSH_TARGET" "mkdir -p '$REMOTE_DIR/files' '$REMOTE_DIR/.incoming'"
 scp -q "$stage"/files/* "$SSH_TARGET:$REMOTE_DIR/files/"
-scp -q "$stage"/latest.json "$stage"/latest-*.txt "$stage"/install.sh "$SSH_TARGET:$REMOTE_DIR/.incoming/"
+scp -q "$stage"/latest.json "$stage"/latest-*.txt "$stage"/install.sh "$stage"/install.ps1 "$SSH_TARGET:$REMOTE_DIR/.incoming/"
 # Binaries are in place first; each pointer then switches with an atomic rename. Old builds beyond $KEEP are removed.
 ssh "$SSH_TARGET" "set -e; cd '$REMOTE_DIR'; chmod 644 files/* .incoming/*;
     for f in .incoming/*; do mv -f \"\$f\" .; done;
@@ -220,4 +255,5 @@ if [[ -z "$macos_from" ]] && curl -fsSo /dev/null "$URL/latest-macos-aarch64.txt
     echo "  macOS is not part of this release: Macs keep the last one published with --macos-from"
 fi
 echo "  install: curl -fsSL $SITE/install.sh | sh"
+echo "  Windows: irm $SITE/install.ps1 | iex"
 echo "  update:  rewarden update"

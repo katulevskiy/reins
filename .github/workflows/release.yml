@@ -1,8 +1,8 @@
 name: Release
 # Publishes a GitHub release for every push to main that passes CI. The version comes from the commits since the last
 # vX.Y.Z tag (scripts/next-version.sh; CONTRIBUTING.md, "Releases"); the tag is created on the exact commit CI tested.
-# Assets: the desktop app for Linux (static musl) and macOS, the server binary, the server image on GHCR, the Android
-# APK when the signing secrets are configured, and SHA256SUMS.
+# Assets: the desktop app for Linux (static musl), macOS and Windows (a zip with rewarden.exe), the server binary, the
+# server image on GHCR, the Android APK when the signing secrets are configured, and SHA256SUMS.
 
 # workflow_run runs with this repository's token, so it must never build code CI ran for someone else: the plan job
 # only accepts CI runs of a push to main in this repository, and then checks out exactly the commit CI tested.
@@ -135,13 +135,18 @@ jobs:
     timeout-minutes: 45
     permissions:
       contents: read
+    # Windows on Arm is built on the x64 runner (ring needs clang for it, which the runner has) and cannot be run there;
+    # a failure leaves that one archive out of the release instead of holding the release back.
+    continue-on-error: ${{ matrix.optional }}
     strategy:
       matrix:
         include:
-          - { target: x86_64-unknown-linux-musl, os: ubuntu-24.04, zig: true, native: true }
-          - { target: aarch64-unknown-linux-musl, os: ubuntu-24.04, zig: true, native: false }
-          - { target: aarch64-apple-darwin, os: macos-15, zig: false, native: true }
-          - { target: x86_64-apple-darwin, os: macos-15, zig: false, native: false }
+          - { target: x86_64-unknown-linux-musl, os: ubuntu-24.04, zig: true, native: true, optional: false }
+          - { target: aarch64-unknown-linux-musl, os: ubuntu-24.04, zig: true, native: false, optional: false }
+          - { target: aarch64-apple-darwin, os: macos-15, zig: false, native: true, optional: false }
+          - { target: x86_64-apple-darwin, os: macos-15, zig: false, native: false, optional: false }
+          - { target: x86_64-pc-windows-msvc, os: windows-2025, zig: false, native: true, optional: false }
+          - { target: aarch64-pc-windows-msvc, os: windows-2025, zig: false, native: false, optional: true }
     env:
       TARGET: ${{ matrix.target }}
       VERSION: ${{ needs.plan.outputs.version }}
@@ -149,6 +154,10 @@ jobs:
       REWARDEN_BUILD_TIME: ${{ needs.plan.outputs.build-time }}
       MACOSX_DEPLOYMENT_TARGET: "11.0"
     steps:
+      # Git on the Windows runners checks text files out with CRLF; the scripts below expect the files as committed.
+      - name: Check out without CRLF
+        if: runner.os == 'Windows'
+        run: git config --global core.autocrlf false
       - uses: actions/checkout@v7
         with:
           ref: ${{ needs.plan.outputs.sha }}
@@ -172,26 +181,40 @@ jobs:
           if [[ "$TARGET" == *-linux-musl ]]; then
             PATH="$RUNNER_TEMP/zig/bin:$PATH" cargo zigbuild --release --locked -p rewarden-desktop --bin rewarden --target "$TARGET"
           else
+            # Windows: the C runtime linked in, so rewarden.exe needs no Visual C++ Redistributable. With --target,
+            # RUSTFLAGS reach only the program, not build scripts.
+            [[ "$TARGET" == *-windows-msvc ]] && export RUSTFLAGS="-C target-feature=+crt-static"
             cargo build --release --locked -p rewarden-desktop --bin rewarden --target "$TARGET"
           fi
       - name: Smoke test
         if: matrix.native
         run: |
-          out="$("target/$TARGET/release/rewarden" --version)"
+          exe="target/$TARGET/release/rewarden"
+          [[ "$TARGET" == *-windows-* ]] && exe="$exe.exe"
+          out="$("$exe" --version)"
           echo "$out"
           [[ "$out" == *"$VERSION ($REWARDEN_BUILD)"* ]] || { echo "::error::unexpected version: $out"; exit 1; }
+      # A tar.gz with rewarden on Linux and macOS, a zip with rewarden.exe on Windows (what Windows opens, and what
+      # scripts/install.ps1 unpacks); the same layout inside.
       - name: Package
         run: |
           name="reins-desktop-$VERSION-$TARGET"
           mkdir -p "dist/$name"
-          cp "target/$TARGET/release/rewarden" LICENSE LICENSE-AGPL LICENSING.md NOTICE README.md "dist/$name/"
-          tar -C dist -czf "dist/$name.tar.gz" "$name"
+          if [[ "$TARGET" == *-windows-* ]]; then
+            cp "target/$TARGET/release/rewarden.exe" LICENSE LICENSE-AGPL LICENSING.md NOTICE README.md "dist/$name/"
+            (cd dist && 7z a -tzip -bso0 -bsp0 "$name.zip" "$name")
+          else
+            cp "target/$TARGET/release/rewarden" LICENSE LICENSE-AGPL LICENSING.md NOTICE README.md "dist/$name/"
+            tar -C dist -czf "dist/$name.tar.gz" "$name"
+          fi
           rm -rf "dist/${name:?}"
           ls -l dist
       - uses: actions/upload-artifact@v7
         with:
           name: dist-desktop-${{ matrix.target }}
-          path: dist/*.tar.gz
+          path: |
+            dist/*.tar.gz
+            dist/*.zip
           if-no-files-found: error
           retention-days: 7
 

@@ -82,8 +82,7 @@ fn fail(e: &str) -> ExitCode {
 }
 
 fn setup(config: &Config) -> Result<Setup, String> {
-    let home =
-        std::env::var_os("HOME").filter(|h| !h.is_empty()).map(std::path::PathBuf::from).ok_or("HOME is not set")?;
+    let home = crate::config::home_dir()?;
     Ok(Setup {
         home,
         exe: crate::update::current_executable()?,
@@ -126,7 +125,7 @@ pub async fn run(cmd: Command) -> ExitCode {
         Command::Mcp {
             via,
         } => {
-            crate::daemon::init_logging();
+            crate::daemon::init_logging(None);
             let stdin = tokio::io::BufReader::new(tokio::io::stdin());
             match crate::mcp_bridge::run(&paths, via.as_deref(), stdin, tokio::io::stdout()).await {
                 Ok(()) => ExitCode::SUCCESS,

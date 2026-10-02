@@ -17,6 +17,7 @@ fn command(app: &App, config: &str, args: &[&str]) -> tokio::process::Command {
     c.arg("run")
         .args(args)
         .env("HOME", &home)
+        .env("USERPROFILE", &home)
         .env("REWARDEN_CONFIG_DIR", &app.paths.config_dir)
         .env("REWARDEN_STATE_DIR", &app.paths.state_dir)
         .env_remove("REWARDEN_LOG")
@@ -36,7 +37,23 @@ fn stdout(o: &Output) -> String {
     String::from_utf8_lossy(&o.stdout).into_owned()
 }
 
+#[cfg(not(windows))]
 const PRINT_AND_EXIT_7: &[&str] = &["--", "sh", "-c", "printf '[%s|%s]' \"$TOKEN\" \"$WHO\"; exit 7"];
+#[cfg(windows)]
+const PRINT_AND_EXIT_7: &[&str] = &[
+    "--",
+    "powershell",
+    "-NoProfile",
+    "-Command",
+    "[Console]::Out.Write('[' + $env:TOKEN + '|' + $env:WHO + ']'); exit 7",
+];
+
+/// A command that does nothing and succeeds, and how the phone shows it.
+const SUCCEED: (&[&str], &str) = if cfg!(windows) {
+    (&["cmd", "/c", "exit 0"], "cmd /c 'exit 0'")
+} else {
+    (&["true"], "true")
+};
 
 #[tokio::test]
 async fn the_released_secrets_reach_the_command_and_its_exit_code_comes_back() {
@@ -54,7 +71,15 @@ async fn the_released_secrets_reach_the_command_and_its_exit_code_comes_back() {
     let a = &calls[0].arguments;
     assert_eq!(calls[0].tool, "vault_secret_release");
     assert_eq!(a["secrets"], serde_json::json!(["Deploy/password", "Deploy/username"]));
-    assert_eq!(a["command"], "sh -c 'printf '\\''[%s|%s]'\\'' \"$TOKEN\" \"$WHO\"; exit 7'");
+    if cfg!(windows) {
+        assert!(
+            a["command"].as_str().unwrap().starts_with("powershell -NoProfile -Command '[Console]"),
+            "{}",
+            a["command"]
+        );
+    } else {
+        assert_eq!(a["command"], "sh -c 'printf '\\''[%s|%s]'\\'' \"$TOKEN\" \"$WHO\"; exit 7'");
+    }
     assert_eq!(a["purpose"], "ship");
     assert_eq!(a["lease_secs"], 60);
     assert_eq!(a["client_key"], app.public_key());
@@ -66,11 +91,19 @@ async fn profiles_come_from_the_config_and_stdin_passes_through() {
     let mock = Mock::start().await;
     let app = logged_in(&mock);
     let config = "[run.profiles.ai]\npurpose = \"coding\"\nenv = { OPENAI_API_KEY = \"vault:OpenAI/password\" }\n";
-    let mut cmd = command(
-        &app,
-        config,
-        &["--profile", "ai", "--", "sh", "-c", "read line; printf '%s %s' \"$line\" \"$OPENAI_API_KEY\""],
-    );
+    let echo: &[&str] = if cfg!(windows) {
+        &[
+            "powershell",
+            "-NoProfile",
+            "-Command",
+            "$line = [Console]::In.ReadLine(); [Console]::Out.Write($line + ' ' + $env:OPENAI_API_KEY)",
+        ]
+    } else {
+        &["sh", "-c", "read line; printf '%s %s' \"$line\" \"$OPENAI_API_KEY\""]
+    };
+    let mut args = vec!["--profile", "ai", "--"];
+    args.extend_from_slice(echo);
+    let mut cmd = command(&app, config, &args);
     cmd.stdin(std::process::Stdio::piped()).stdout(std::process::Stdio::piped()).stderr(std::process::Stdio::piped());
     let mut child = cmd.spawn().unwrap();
     {
@@ -95,8 +128,20 @@ async fn refused(step: Step, expected: &str) {
     let app = logged_in(&mock);
     mock.plan(&[step]);
     let marker = app.dir.path().join("ran");
-    let script = format!("touch {}", marker.display());
-    let out = run(&app, "", &["--env", "TOKEN=vault:Deploy/password", "--", "sh", "-c", &script]).await;
+    let script = if cfg!(windows) {
+        format!("New-Item -ItemType File -Path '{}'", marker.display())
+    } else {
+        format!("touch {}", marker.display())
+    };
+    let shell: &[&str] = if cfg!(windows) {
+        &["powershell", "-NoProfile", "-Command"]
+    } else {
+        &["sh", "-c"]
+    };
+    let mut args = vec!["--env", "TOKEN=vault:Deploy/password", "--"];
+    args.extend_from_slice(shell);
+    args.push(&script);
+    let out = run(&app, "", &args).await;
     assert_eq!(out.status.code(), Some(125), "{step:?}: {}", stderr(&out));
     assert!(stderr(&out).contains(expected), "{step:?}: {}", stderr(&out));
     assert!(!marker.exists(), "{step:?}: the command must not run");
@@ -142,9 +187,12 @@ async fn a_slow_phone_is_announced_on_stderr() {
     let mock = Mock::start().await;
     let app = logged_in(&mock);
     mock.plan(&[Step::Pending, Step::Approve]);
-    let out = run(&app, "", &["-e", "A=vault:Deploy/password", "--", "true"]).await;
+    let (succeed, shown) = SUCCEED;
+    let mut args = vec!["-e", "A=vault:Deploy/password", "--"];
+    args.extend_from_slice(succeed);
+    let out = run(&app, "", &args).await;
     assert!(out.status.success(), "{}", stderr(&out));
     let err = stderr(&out);
-    assert!(err.contains("waiting for approval in your Rewarden app: secrets for `true`"), "{err}");
+    assert!(err.contains(&format!("waiting for approval in your Rewarden app: secrets for `{shown}`")), "{err}");
     assert!(err.contains("rewarden: approved."), "{err}");
 }

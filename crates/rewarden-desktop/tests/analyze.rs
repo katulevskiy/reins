@@ -273,6 +273,8 @@ async fn ofs_and_ref_deltas_inside_the_pack() {
     }
 }
 
+// Makes a symbolic link in the work tree, which Windows allows only with developer mode or as an administrator.
+#[cfg(unix)]
 #[tokio::test]
 async fn binary_and_type_changed_files() {
     let (f, _) = base_repo();

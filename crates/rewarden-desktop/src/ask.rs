@@ -295,14 +295,15 @@ pub async fn ask_desktop(prompter: &dyn Prompter, q: &Question, timeout: Duratio
         Ok(Some(false)) => Answer::No("Denied on the desktop.".to_owned()),
         Ok(None) => Answer::Unanswered(
             "No answer: the desktop prompt was dismissed or is not available (notify-send on Linux, osascript on \
-             macOS). Run `rewarden ask` in a terminal, or log in to decide on your phone."
+             macOS, PowerShell on Windows). Run `rewarden ask` in a terminal, or log in to decide on your phone."
                 .to_owned(),
         ),
         Err(_) => Answer::Unanswered(format!("No answer within {} s.", timeout.as_secs())),
     }
 }
 
-/// A desktop notification with Allow/Deny on Linux (`notify-send`), a dialog on macOS (`osascript`).
+/// A desktop notification with Allow/Deny on Linux (`notify-send`), a dialog on macOS (`osascript`), a Yes/No message
+/// box on Windows.
 pub struct DesktopAsk;
 
 fn escape_markup(s: &str) -> String {
@@ -331,6 +332,8 @@ impl Prompter for DesktopAsk {
                 &body,
             ]);
             c
+        } else if cfg!(windows) {
+            crate::win::message_box(&format!("Rewarden: {}", item.what), &format!("{body}\n\nAllow?"))?
         } else if cfg!(unix) {
             let mut c = tokio::process::Command::new("notify-send");
             c.args([
@@ -349,6 +352,9 @@ impl Prompter for DesktopAsk {
         cmd.stdin(std::process::Stdio::null()).stderr(std::process::Stdio::null()).kill_on_drop(true);
         let out = cmd.output().await.ok()?;
         let text = String::from_utf8_lossy(&out.stdout);
+        if cfg!(windows) {
+            return crate::win::message_box_answer(&text);
+        }
         match text.trim() {
             t if t == "allow" || t.ends_with("button returned:Allow") => Some(true),
             t if t == "deny" || t.ends_with("button returned:Deny") => Some(false),

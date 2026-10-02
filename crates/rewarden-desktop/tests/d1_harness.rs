@@ -323,6 +323,7 @@ fn the_command_line_uses_home_and_this_program() {
         let out = std::process::Command::new(env!("CARGO_BIN_EXE_rewarden"))
             .args(args)
             .env("HOME", env.home.path())
+            .env("USERPROFILE", env.home.path())
             .env("REWARDEN_CONFIG_DIR", env.state.path().join("config"))
             .env("REWARDEN_STATE_DIR", env.state.path().join("state"))
             .output()
@@ -332,7 +333,7 @@ fn the_command_line_uses_home_and_this_program() {
     };
     let said = run(&["harness", "add", "cursor"]);
     assert!(said.contains("~/.cursor/mcp.json") && said.contains("Restart Cursor"), "{said}");
-    let exe = std::fs::canonicalize(env!("CARGO_BIN_EXE_rewarden")).unwrap();
+    let exe = rewarden_desktop::win::strip_verbatim(&std::fs::canonicalize(env!("CARGO_BIN_EXE_rewarden")).unwrap());
     assert_eq!(env.json(".cursor/mcp.json")["mcpServers"]["rewarden"]["command"], exe.display().to_string());
     let listed = run(&["harness", "list"]);
     assert!(listed.contains("cursor") && listed.contains("MCP server: yes (~/.cursor/mcp.json)"), "{listed}");

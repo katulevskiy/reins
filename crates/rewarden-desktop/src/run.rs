@@ -199,6 +199,17 @@ pub async fn execute(command: &[OsString], vars: Vec<(String, Zeroizing<String>)
     let Some((program, args)) = command.split_first() else {
         return EXIT_FAILED;
     };
+    // On Windows `npm` is `npm.cmd`, which `Command` does not find by itself.
+    #[cfg(windows)]
+    let resolved = {
+        let dirs: Vec<std::path::PathBuf> =
+            std::env::var_os("PATH").map(|p| std::env::split_paths(&p).collect()).unwrap_or_default();
+        let pathext = std::env::var("PATHEXT").ok();
+        crate::win::resolve_program(program, &dirs, pathext.as_deref(), std::path::Path::is_file)
+    };
+    #[cfg(windows)]
+    let mut cmd = tokio::process::Command::new(resolved.as_deref().map_or(program.as_os_str(), |p| p.as_os_str()));
+    #[cfg(not(windows))]
     let mut cmd = tokio::process::Command::new(program);
     cmd.args(args);
     for (k, v) in &vars {
@@ -251,13 +262,39 @@ async fn wait(child: &mut tokio::process::Child) -> std::io::Result<std::process
     }
 }
 
-#[cfg(not(unix))]
+/// Windows has no signals to pass on. Ctrl-C and Ctrl-Break reach every program in the console, the command too, so
+/// rewarden only keeps waiting for it to finish (instead of quitting and leaving it behind).
+#[cfg(windows)]
+async fn wait(child: &mut tokio::process::Child) -> std::io::Result<std::process::ExitStatus> {
+    use tokio::signal::windows::{ctrl_break, ctrl_c};
+    let (Ok(mut c), Ok(mut b)) = (ctrl_c(), ctrl_break()) else {
+        return child.wait().await;
+    };
+    loop {
+        tokio::select! {
+            s = child.wait() => return s,
+            _ = c.recv() => {}
+            _ = b.recv() => {}
+        }
+    }
+}
+
+#[cfg(not(any(unix, windows)))]
 async fn wait(child: &mut tokio::process::Child) -> std::io::Result<std::process::ExitStatus> {
     child.wait().await
 }
 
+/// A Windows exit code as `rewarden`'s own: 0 to 255 as they are, anything else (an `NTSTATUS` such as
+/// `0xC000013A` after Ctrl-C) 1.
+fn windows_exit_code(code: i32) -> u8 {
+    u8::try_from(code).unwrap_or(1)
+}
+
 fn exit_code(status: std::process::ExitStatus) -> u8 {
     if let Some(code) = status.code() {
+        if cfg!(windows) {
+            return windows_exit_code(code);
+        }
         return u8::try_from(code & 0xff).unwrap_or(1);
     }
     #[cfg(unix)]
@@ -374,6 +411,15 @@ mod tests {
             let c: Config = toml::from_str(bad).unwrap();
             assert!(c.validate().is_err(), "{bad}");
         }
+    }
+
+    #[test]
+    fn windows_exit_codes_fit_or_say_failure() {
+        assert_eq!(windows_exit_code(0), 0);
+        assert_eq!(windows_exit_code(7), 7);
+        assert_eq!(windows_exit_code(255), 255);
+        assert_eq!(windows_exit_code(256), 1);
+        assert_eq!(windows_exit_code(0xC000_013A_u32.cast_signed()), 1, "Ctrl-C");
     }
 
     #[test]

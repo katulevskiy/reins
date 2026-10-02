@@ -83,6 +83,57 @@ jobs:
       - run: cargo clippy --locked -p rewarden-desktop --all-targets -- -D warnings
       - run: cargo test --locked --no-fail-fast -p rewarden-desktop
 
+  desktop-windows:
+    name: Desktop app on Windows (clippy + tests)
+    # The release builds the desktop app for Windows too (release.yml); this keeps it compiling and its tests passing,
+    # and runs the background service for real (tests/windows_service.rs writes this runner's HKCU Run key).
+    runs-on: windows-2025
+    timeout-minutes: 60
+    env:
+      REWARDEN_TEST_WINDOWS_SERVICE: "1"
+    steps:
+      # Git on the Windows runners checks text files out with CRLF; the tests expect the files as committed.
+      - name: Check out without CRLF
+        run: git config --global core.autocrlf false
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - name: Install Rust toolchain
+        run: rustup toolchain install && rustup target add aarch64-pc-windows-msvc && rustc -vV
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo clippy --locked -p rewarden-desktop --all-targets -- -D warnings
+      - run: cargo test --locked --no-fail-fast -p rewarden-desktop
+      # scripts/install.ps1 as `irm | iex` runs it, in Windows PowerShell 5.1, from a release made here of the test
+      # build: install, then install over it, then the user PATH has it.
+      - name: Install script
+        shell: powershell
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $rel = Join-Path $env:RUNNER_TEMP 'release'
+          $name = 'reins-desktop-0.0.0-x86_64-pc-windows-msvc'
+          New-Item -ItemType Directory -Force -Path "$rel\$name" | Out-Null
+          Copy-Item target\debug\rewarden.exe "$rel\$name\"
+          Compress-Archive -Path "$rel\$name" -DestinationPath "$rel\$name.zip"
+          $hash = (Get-FileHash -Algorithm SHA256 "$rel\$name.zip").Hash.ToLowerInvariant()
+          Set-Content -Path "$rel\SHA256SUMS" -Value "$hash  $name.zip"
+          $env:REWARDEN_RELEASE_DIR = $rel
+          $env:REWARDEN_INSTALL_DIR = Join-Path $env:RUNNER_TEMP 'Reins'
+          Get-Content scripts\install.ps1 -Raw | Invoke-Expression
+          Get-Content scripts\install.ps1 -Raw | Invoke-Expression
+          & "$env:REWARDEN_INSTALL_DIR\rewarden.exe" --version
+          if ($LASTEXITCODE -ne 0) { throw 'the installed rewarden.exe does not run' }
+          $userPath = (Get-Item 'HKCU:\Environment').GetValue('Path', '', 'DoNotExpandEnvironmentNames')
+          if (($userPath -split ';') -notcontains $env:REWARDEN_INSTALL_DIR) { throw "not on the user PATH: $userPath" }
+          Set-Content -Path "$rel\SHA256SUMS" -Value "$('0' * 64)  $name.zip"
+          $failed = $false
+          try { Get-Content scripts\install.ps1 -Raw | Invoke-Expression } catch { $failed = $_.ToString() -match 'checksum' }
+          if (-not $failed) { throw 'a download that does not match SHA256SUMS was installed' }
+      # The release builds Windows on Arm on this runner, without running it, and leaves it out when it fails; this
+      # shows early whether it compiles, without failing CI (and so holding releases back) when it does not.
+      - name: Check aarch64-pc-windows-msvc
+        continue-on-error: true
+        run: cargo check --locked -p rewarden-desktop --bin rewarden --target aarch64-pc-windows-msvc
+
   release-scripts:
     name: Release scripts (versioning, notes)
     runs-on: ubuntu-24.04
@@ -91,8 +142,15 @@ jobs:
       - uses: actions/checkout@v7
         with:
           persist-credentials: false
-      - run: bash -n scripts/next-version.sh scripts/release-notes.sh scripts/set-desktop-version.sh
+      - run: bash -n scripts/next-version.sh scripts/release-notes.sh scripts/set-desktop-version.sh scripts/release-desktop.sh
       - run: scripts/test-next-version.sh
+      # The Windows install script parses (pwsh is on the Linux runners too).
+      - name: Parse scripts/install.ps1
+        shell: pwsh
+        run: |
+          $errors = $null
+          [System.Management.Automation.Language.Parser]::ParseFile("$PWD/scripts/install.ps1", [ref]$null, [ref]$errors) | Out-Null
+          if ($errors) { $errors | ForEach-Object { Write-Error $_.ToString() }; exit 1 }
 
   server:
     name: Server (sqlite) clippy + tests

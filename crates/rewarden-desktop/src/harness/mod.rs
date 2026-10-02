@@ -90,7 +90,15 @@ pub struct Setup {
 
 impl Setup {
     fn hook_command(&self, h: Harness) -> String {
-        format!("{} hook {}", shell_quote(&self.exe.to_string_lossy()), h.id())
+        let exe = self.exe.to_string_lossy();
+        let program = if cfg!(windows) {
+            let dirs: Vec<PathBuf> =
+                std::env::var_os("PATH").map(|p| std::env::split_paths(&p).collect()).unwrap_or_default();
+            crate::win::hook_program(&exe, crate::win::dir_on_path(&self.exe, &dirs))
+        } else {
+            shell_quote(&exe)
+        };
+        format!("{program} hook {}", h.id())
     }
 
     fn harness_timeout_secs(&self) -> u64 {
@@ -695,6 +703,7 @@ fn blank_root(text: &str) -> bool {
 /// One line of `add`'s or `remove`'s report.
 fn tilde(s: &Setup, p: &Path) -> String {
     match p.strip_prefix(&s.home) {
+        Ok(rest) if cfg!(windows) => format!("~/{}", rest.display().to_string().replace('\\', "/")),
         Ok(rest) => format!("~/{}", rest.display()),
         Err(_) => p.display().to_string(),
     }
