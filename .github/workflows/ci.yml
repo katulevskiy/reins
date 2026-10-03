@@ -1,9 +1,18 @@
 name: CI
 
+# Pull requests are tested once, on the pull_request event (the merge result), not again on every push to their branch;
+# pushes are tested on main only, which is what release.yml releases. Any branch can still be run by hand.
 on:
   push:
-    branches: ["**"]
+    branches: [main]
   pull_request:
+    # Nothing here reads them; Lint still checks the docs' spelling and links.
+    paths-ignore:
+      - "**.md"
+      - "docs/**"
+      - ".github/ISSUE_TEMPLATE/**"
+      - "LICENSE*"
+      - "NOTICE"
   workflow_dispatch:
 
 permissions:
@@ -20,6 +29,8 @@ defaults:
 env:
   CARGO_TERM_COLOR: always
   RUST_BACKTRACE: "1"
+  # No debug info in CI builds: smaller target dirs and caches, faster links. Panics still name the file and line.
+  CARGO_PROFILE_DEV_DEBUG: "0"
 
 jobs:
   fmt:
@@ -45,7 +56,11 @@ jobs:
           persist-credentials: false
       - name: Install Rust toolchain
         run: rustup toolchain install && rustc -vV
+      # Each job's dependency build is cached per Cargo.lock and toolchain. Only main writes the caches; pull requests
+      # (and main itself) read main's, so branch copies never crowd main's out of the repository's 10 GB.
       - uses: Swatinem/rust-cache@v2
+        with:
+          save-if: ${{ github.ref == 'refs/heads/main' }}
       # The desktop app (GPUI) links the system's X11/Wayland, font and Vulkan libraries.
       - name: GUI libraries
         run: |
@@ -56,7 +71,7 @@ jobs:
       - run: cargo test --locked -p rewarden-desktop-app
 
   test:
-    name: Rust tests (Rewarden crates + e2e)
+    name: Rust tests (Rewarden crates)
     runs-on: ubuntu-24.04
     timeout-minutes: 45
     steps:
@@ -66,12 +81,32 @@ jobs:
       - name: Install Rust toolchain
         run: rustup toolchain install && rustc -vV
       - uses: Swatinem/rust-cache@v2
+        with:
+          save-if: ${{ github.ref == 'refs/heads/main' }}
       # The desktop and e2e tests start the real server; crates/rewarden-e2e/src/server.rs builds it with exactly
       # these arguments, so building it up front makes that a no-op and shows compile errors on their own.
       - name: Build server (sqlite)
         run: cargo build --locked --features sqlite --bin vaultwarden
       - name: Test crates
         run: cargo test --locked -p rewarden-proto -p rewarden-policy -p rewarden-core -p rewarden-desktop -p rewarden-laya
+
+  # Its own job: cargo runs test binaries one after another, and these take minutes, as do the crates' above.
+  e2e:
+    name: Rust tests (end to end)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - name: Install Rust toolchain
+        run: rustup toolchain install && rustc -vV
+      - uses: Swatinem/rust-cache@v2
+        with:
+          save-if: ${{ github.ref == 'refs/heads/main' }}
+      # As in the test job: the tests' own build of the server becomes a no-op.
+      - name: Build server (sqlite)
+        run: cargo build --locked --features sqlite --bin vaultwarden
       - name: Test end to end
         run: cargo test --locked -p rewarden-e2e
 
@@ -87,6 +122,8 @@ jobs:
       - name: Install Rust toolchain
         run: rustup toolchain install && rustc -vV
       - uses: Swatinem/rust-cache@v2
+        with:
+          save-if: ${{ github.ref == 'refs/heads/main' }}
       - run: cargo clippy --locked -p rewarden-desktop --all-targets -- -D warnings
       - run: cargo test --locked --no-fail-fast -p rewarden-desktop
 
@@ -108,6 +145,8 @@ jobs:
       - name: Install Rust toolchain
         run: rustup toolchain install && rustup target add aarch64-pc-windows-msvc && rustc -vV
       - uses: Swatinem/rust-cache@v2
+        with:
+          save-if: ${{ github.ref == 'refs/heads/main' }}
       - run: cargo clippy --locked -p rewarden-desktop --all-targets -- -D warnings
       - run: cargo test --locked --no-fail-fast -p rewarden-desktop
       # scripts/install.ps1 as `irm | iex` runs it, in Windows PowerShell 5.1, from a release made here of the test
@@ -170,6 +209,8 @@ jobs:
       - name: Install Rust toolchain
         run: rustup toolchain install && rustc -vV
       - uses: Swatinem/rust-cache@v2
+        with:
+          save-if: ${{ github.ref == 'refs/heads/main' }}
       # Not --all-targets: upstream Vaultwarden's own test modules (src/api/admin.rs, src/http_client.rs) trip newer
       # clippy lints, and upstream CI never linted test targets either. Rewarden's crates are linted with all targets.
       - run: cargo clippy --locked --features sqlite -- -D warnings
@@ -193,6 +234,8 @@ jobs:
           rustup target add aarch64-linux-android x86_64-linux-android
           rustc -vV
       - uses: Swatinem/rust-cache@v2
+        with:
+          save-if: ${{ github.ref == 'refs/heads/main' }}
       - name: Install cargo-ndk
         run: cargo ndk --version || cargo install --locked cargo-ndk@4.1.2
       # The NDK version is the one app/build.gradle.kts pins (rewardenNdkVersion); the build looks it up by path.

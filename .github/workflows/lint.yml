@@ -1,8 +1,9 @@
 name: Lint
 
+# As in ci.yml: pull requests once, on pull_request; pushes on main only.
 on:
   push:
-    branches: ["**"]
+    branches: [main]
   pull_request:
   workflow_dispatch:
 
