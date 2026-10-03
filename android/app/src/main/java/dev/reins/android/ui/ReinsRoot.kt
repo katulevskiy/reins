@@ -82,6 +82,7 @@ import dev.reins.android.ui.signin.UnlockScreen
 import dev.reins.android.ui.signin.UnlockViewModel
 import dev.reins.android.ui.update.UpdatePromptHost
 import kotlin.coroutines.cancellation.CancellationException
+import kotlinx.coroutines.launch
 
 @Composable
 fun ReinsRoot(container: AppContainer, app: AppViewModel, authenticator: Authenticator) {
@@ -92,6 +93,7 @@ fun ReinsRoot(container: AppContainer, app: AppViewModel, authenticator: Authent
 
 @Composable
 private fun RootContent(container: AppContainer, app: AppViewModel, authenticator: Authenticator) {
+    val context = androidx.compose.ui.platform.LocalContext.current
     val session by container.state.session.collectAsStateWithLifecycle()
     when (session) {
         SessionState.Loading -> Box(Modifier.fillMaxSize().background(LocalColors.current.background), contentAlignment = Alignment.Center) {
@@ -112,11 +114,29 @@ private fun RootContent(container: AppContainer, app: AppViewModel, authenticato
             val info = (session as SessionState.SignedIn).info
             val locked by container.state.keysLocked.collectAsStateWithLifecycle()
             val takeover by container.state.approvalTakeover.collectAsStateWithLifecycle()
+            val recovery by container.state.recoveryToRecord.collectAsStateWithLifecycle()
+            val recoveryError by container.state.recoveryLoadError.collectAsStateWithLifecycle()
+            val recoveryScope = rememberCoroutineScope()
             if (locked || takeover) {
                 UnlockScreen(
                     viewModel(key = "unlock") { UnlockViewModel(container, deviceName = Build.MODEL) },
                     info.email,
                     takeover = takeover && !locked,
+                )
+            } else if (recoveryError != null) {
+                dev.reins.android.design.Screen(title = "Recovery setup") {
+                    androidx.compose.foundation.layout.Column(Modifier.padding(24.dp)) {
+                        dev.reins.android.design.RText(recoveryError!!, dev.reins.android.design.RType.sans(16f), LocalColors.current.secondary)
+                        dev.reins.android.design.CapsuleButton("Try again", onClick = { recoveryScope.launch { container.refreshSession() } })
+                    }
+                }
+            } else if (recovery != null) {
+                BackHandler { /* Recording recovery is required; Back cannot skip it. */ }
+                dev.reins.android.ui.settings.RecoveryCodeSheet(
+                    code = recovery!!,
+                    required = true,
+                    onCopy = { dev.reins.android.ui.settings.copySecret(context, "Reins recovery code", recovery!!) },
+                    onDone = { recoveryScope.launch { container.confirmRecoveryRecord() } },
                 )
             } else {
                 SignedInContent(container, app, authenticator, info.serverUrl)

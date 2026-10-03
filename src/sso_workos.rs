@@ -133,6 +133,8 @@ struct AuthenticateResponse {
     /// Set when a WorkOS dashboard user impersonates the user.
     #[serde(default)]
     impersonator: Option<Value>,
+    #[serde(default)]
+    authentication_method: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -209,10 +211,10 @@ pub async fn exchange_code(code: &OIDCCode, verifier: OIDCCodeVerifier) -> ApiRe
         body["code_verifier"] = Value::String(verifier.to_string());
     }
     let text = authenticate(&body).await?;
-    parse_authenticated(&text)
+    parse_authenticated(&text, CONFIG.reins_enabled() && CONFIG.reins_workos_require_passkey())
 }
 
-fn parse_authenticated(text: &str) -> ApiResult<OIDCAuthenticatedUser> {
+fn parse_authenticated(text: &str, require_passkey: bool) -> ApiResult<OIDCAuthenticatedUser> {
     let auth: AuthenticateResponse = match serde_json::from_str(text) {
         Ok(a) => a,
         Err(e) => err!(format!("Unexpected WorkOS authenticate answer: {e}")),
@@ -220,7 +222,13 @@ fn parse_authenticated(text: &str) -> ApiResult<OIDCAuthenticatedUser> {
     if auth.impersonator.as_ref().is_some_and(|i| !i.is_null()) {
         err!("A WorkOS impersonation session cannot sign in to Reins")
     }
+    if require_passkey && auth.authentication_method.as_deref() != Some("Passkey") {
+        err!("A passkey is required. Create a passkey in the WorkOS sign-up screen, then sign in with your passkey.")
+    }
     let claims = access_claims(&auth.access_token);
+    if require_passkey && claims.sid.as_deref().is_none_or(str::is_empty) {
+        err!("WorkOS did not return a session identifier; please sign in again")
+    }
     let name = [auth.user.first_name.as_deref(), auth.user.last_name.as_deref()]
         .into_iter()
         .flatten()
@@ -294,7 +302,7 @@ mod tests {
             "refresh_token": "rt-1",
             "authentication_method": "GoogleOAuth",
         });
-        let user = parse_authenticated(&answer.to_string()).unwrap();
+        let user = parse_authenticated(&answer.to_string(), false).unwrap();
         assert_eq!(user.email, "me@example.com");
         assert_eq!(user.email_verified, Some(true));
         assert_eq!(user.user_name.as_deref(), Some("Ada Lovelace"));
@@ -312,12 +320,28 @@ mod tests {
             "access_token": "opaque",
             "impersonator": {"email": "admin@example.com", "reason": "support"},
         });
-        assert!(parse_authenticated(&answer.to_string()).is_err());
-        assert!(parse_authenticated("{\"access_token\": \"x\"}").is_err());
+        assert!(parse_authenticated(&answer.to_string(), false).is_err());
+        assert!(parse_authenticated("{\"access_token\": \"x\"}", false).is_err());
         // An opaque access token still signs in; it has no session id or expiry.
         let answer = json!({"user": {"id": "u", "email": "a@b.c"}, "access_token": "opaque"});
-        let user = parse_authenticated(&answer.to_string()).unwrap();
+        let user = parse_authenticated(&answer.to_string(), false).unwrap();
         assert_eq!((user.session_id, user.expires_in, user.email_verified), (None, None, None));
+    }
+
+    #[test]
+    fn passkey_policy_refuses_other_and_missing_authentication_methods() {
+        let mut answer = json!({"user": {"id": "u", "email": "a@b.c", "email_verified": true},
+                                "access_token": "opaque"});
+        assert!(parse_authenticated(&answer.to_string(), true).is_err());
+        for method in ["Password", "MagicAuth", "GoogleOAuth", "passkey"] {
+            answer["authentication_method"] = json!(method);
+            assert!(parse_authenticated(&answer.to_string(), true).is_err(), "{method}");
+            assert!(parse_authenticated(&answer.to_string(), false).is_ok());
+        }
+        answer["authentication_method"] = json!("Passkey");
+        assert!(parse_authenticated(&answer.to_string(), true).is_err(), "revocation needs a WorkOS session id");
+        answer["access_token"] = json!(token(&json!({"sid": "session_passkey"})));
+        assert!(parse_authenticated(&answer.to_string(), true).is_ok());
     }
 
     #[test]

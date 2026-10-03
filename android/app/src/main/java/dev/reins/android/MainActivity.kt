@@ -28,6 +28,8 @@ import dev.reins.android.ui.ReinsRoot
 import dev.reins.android.ui.nav.DeepLink
 import dev.reins.android.ui.pairing.PairingCode
 import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.collectLatest
+import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 
@@ -50,10 +52,14 @@ class MainActivity : FragmentActivity() {
         // waiting on the Unlock screen is not the approval device).
         lifecycleScope.launch {
             repeatOnLifecycle(Lifecycle.State.STARTED) {
-                combine(container.state.session, container.state.keysLocked) { session, locked -> session is SessionState.SignedIn && !locked }
-                    .first { it }
-                container.refreshPending()
-                ForegroundSync(container).run()
+                combine(container.state.session, container.state.keysLocked, container.state.recoveryToRecord, container.state.recoveryLoadError) { session, locked, recovery, recoveryError ->
+                    session is SessionState.SignedIn && !locked && recovery == null && recoveryError == null
+                }.distinctUntilChanged().collectLatest { eligible ->
+                    if (eligible) {
+                        container.refreshPending()
+                        ForegroundSync(container).run()
+                    }
+                }
             }
         }
     }

@@ -987,7 +987,17 @@ abstract class ScreenshotsBase(private val suffix: String) {
     }
 
     @Test
+    fun recoverySetup() {
+        context.getSharedPreferences("recovery-record", Context.MODE_PRIVATE).edit().clear().commit()
+        core.recoveryCode = FakeCore.RECOVERY_CODE
+        launch()
+        await("recoveryRecorded")
+        shoot("14j-required-recovery", dialogs = true)
+    }
+
+    @Test
     fun recoveryCode() {
+        dev.reins.android.state.RecoveryRecord(context).confirm(core.session!!.serverUrl, FakeCore.RECOVERY_CODE)
         core.recoveryCode = FakeCore.RECOVERY_CODE
         val biometrics = dev.reins.android.platform.AuthenticatorProvider.factory
         dev.reins.android.platform.AuthenticatorProvider.factory = {

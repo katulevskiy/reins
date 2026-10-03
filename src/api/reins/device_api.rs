@@ -291,6 +291,7 @@ async fn get_pending(
     headers: Headers,
     key: DeviceKey,
     conn: DbConn,
+    pool: &State<DbPool>,
 ) -> PhoneResult<Json<Pending>> {
     require_approval_device(&headers, &key, &conn).await?;
     // Never hold a pooled DB connection during a long-poll.
@@ -299,7 +300,19 @@ async fn get_pending(
         .try_enter(&headers.device.uuid.to_string())
         .ok_or_else(|| too_many_running("too many long-polls of this device are open"))?;
     let wait = Duration::from_secs(u64::from(clamp_wait(wait.as_deref())));
-    Ok(Json(HUB.pending(&user_key(&headers), wait).await))
+    let mut pending = HUB.pending(&user_key(&headers), wait).await;
+    if crate::sso_workos::enabled() {
+        // Carry the authoritative email with the existing poll; no extra mobile profile requests are needed.
+        // Reacquire only after the wait so a change during a long-poll appears in that response.
+        let conn = pool.get().await.map_err(|e| internal(&e))?;
+        let user = crate::db::models::reins_workos::user_by_id(&headers.user.uuid, &conn)
+            .await
+            .map_err(|e| internal(&e))?
+            .filter(|user| user.enabled)
+            .ok_or_else(|| api_err(Status::Unauthorized, codes::UNAUTHORIZED, "The account is no longer active"))?;
+        pending.account_email = Some(user.email);
+    }
+    Ok(Json(pending))
 }
 
 /// A3

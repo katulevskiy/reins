@@ -3,7 +3,7 @@
 Date: 2026-10-02. Status: implemented (server, core, e2e, iOS and Android apps).
 
 A new user never sets a password: "Continue" in the phone apps signs in through WorkOS AuthKit (Google, Apple,
-GitHub, Microsoft, an email code; WorkOS verifies emails and keeps bots out), the phone makes the vault's keys itself,
+GitHub, Microsoft, an email code for legacy deployments; hosted Reins requires a passkey), the phone makes the vault's keys itself,
 and WorkOS's user lifecycle follows into Reins.
 
 ## Sign-in (server: `src/sso.rs`, `src/sso_workos.rs`; core: `crates/reins-core/src/sso.rs`, `account.rs`)
@@ -38,8 +38,20 @@ OpenID Connect client: its `issuer` is another client id than the one in its URL
 6. With `SSO_AUTH_ONLY_NOT_SESSION=true` (recommended) the server issues its own tokens; otherwise refreshes go to
    `authenticate` with `grant_type=refresh_token` (WorkOS access tokens live five minutes).
 
-`SSO_ONLY=true` turns password sign-in off: the hosted server's setting. Self-hosted servers keep it `false` (default)
-and the apps show the master-password forms under "Use another server".
+With `REINS_ENABLED=true` and WorkOS, password sign-in, password-token refresh and local account registration are
+always disabled, even if `SSO_ONLY` is omitted. Other self-hosted identity providers retain their existing settings.
+`REINS_WORKOS_REQUIRE_PASSKEY=true` (default) also checks the server-to-server WorkOS authentication response:
+only `authentication_method: "Passkey"` may produce a Reins session. A missing method, password, social OAuth or email
+code is refused with an actionable message. `false` is an explicit legacy/staging exception, used by the headless
+Magic Auth harness only.
+
+Enable passkeys on the production AuthKit custom domain **before** deploying this policy. WorkOS supports passkeys
+through hosted AuthKit only; progressive enrollment can be skipped and currently applies to password users. It has
+no public native passkey enrollment API or passkey management screen. Consequently, social/email sign-in alone
+cannot satisfy the policy: the user must enroll and authenticate with a passkey through AuthKit. Configure and
+verify the production signup journey before rollout; do not describe optional enrollment as mandatory.
+See [WorkOS passkeys](https://workos.com/docs/authkit/passkeys) and the
+[authentication response](https://workos.com/docs/reference/authkit/authentication).
 
 ## The keyless vault (core: `sso.rs`, `account.rs`)
 
@@ -121,11 +133,14 @@ every `REINS_WORKOS_SYNC_SECS` (30; 0 disables) and on a signed webhook delivery
 the body is ignored). The cursor (`reins_settings` `workos.events.after`) moves after each applied event.
 
 - `user.updated` with `email_verified: true` and a new email: the account's email changes (refused and logged when
-  another account has it); the name follows.
-- `user.deleted`: the Reins data (`reins_connections` and their refresh tokens, `reins_devices`,
-  `reins_sso_sessions`, `sso_users`) and the Vaultwarden account are deleted.
+  another account has it); the name follows. The normal approval-phone poll includes the email after its wait, so
+  existing phones migrate their vault alias, grants and saved session atomically before token expiry.
+- `user.deleted`: the account is disabled and its device tokens invalidated before deletion. The Reins data (`reins_connections` and their refresh tokens, `reins_devices`,
+  `reins_sso_sessions`, `sso_users`) and the Vaultwarden account are deleted. The account id is queued durably before removing its identity; failed vault-account
+  cleanup retries without blocking later lifecycle events. A last organization owner needs administrator intervention while the account remains disabled.
 - `session.revoked`: the device that signed in with that session (`reins_sso_sessions`) loses its Vaultwarden
-  device row, so its refresh token and access tokens stop working at once.
+  device row, so its refresh token and access tokens stop working at once. Deleting the device and session mapping is
+  transactional, so database errors leave both intact for a retry.
 
 ## Checks
 

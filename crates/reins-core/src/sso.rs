@@ -1,7 +1,7 @@
 //! Signing in without a password, and the vault that needs none.
 //!
-//! **Sign-in.** The server's SSO (Vaultwarden's flow; WorkOS AuthKit on app.reins2fa.com, with Google, Apple, GitHub
-//! and email codes) runs in the system browser: the app opens [`begin`]'s URL in ASWebAuthenticationSession (iOS) or a
+//! **Sign-in.** The server's SSO (Vaultwarden's flow; passkeys through WorkOS AuthKit on app.reins2fa.com) runs in the
+//! system browser: the app opens [`begin`]'s URL in ASWebAuthenticationSession (iOS) or a
 //! Custom Tab (Android), the server sends the browser on to the identity provider and back, and finally to
 //! [`REDIRECT_URI`] with `code` and `state`. The app hands that URL to `sso_finish`, which exchanges the code at
 //! `/identity/connect/token` (`grant_type=authorization_code`, PKCE: the server forwards the challenge to the provider,
@@ -10,7 +10,7 @@
 //! **Keys.** A new SSO account has no master password and so no vault keys. The phone makes them, exactly as a
 //! Bitwarden client does for a master password, with a random 256-bit *account secret* in the password's place
 //! (`/api/accounts/set-password`). The secret stays in this phone's store (sealed with the key the OS keystore
-//! wraps); it is never typed. Its recovery code (the secret in base32, in groups of four) is shown once on request,
+//! wraps); it is never typed. Its recovery code (the secret in base32, in groups of four) must be recorded in setup,
 //! and a new phone gets the secret from this one or from that code.
 //!
 //! The secret derives the master key with PBKDF2-SHA256 over a fixed salt ([`SECRET_SALT`], [`SECRET_KDF`]) instead

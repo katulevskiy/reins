@@ -49,6 +49,7 @@ class PasswordlessFlowTest : FlowHarness() {
         core.session = null
         core.registrations.clear()
         core.resetOnboarding()
+        context.getSharedPreferences("recovery-record", android.content.Context.MODE_PRIVATE).edit().clear().commit()
     }
 
     /** What SsoRedirectActivity hands MainActivity when the browser comes back. */
@@ -77,6 +78,50 @@ class PasswordlessFlowTest : FlowHarness() {
         settle()
     }
 
+    private fun recordRecovery() {
+        awaitTag("recoveryRecorded")
+        rule.onNodeWithTag("recoveryCodeDone").assertIsNotEnabled()
+        tap("recoveryRecorded")
+        rule.onNodeWithTag("recoveryConfirmGroup").performTextReplacement(FakeCore.RECOVERY_CODE.substringAfterLast('-'))
+        tap("recoveryCodeDone")
+        awaitGone("recoveryRecorded")
+    }
+
+    @Test
+    fun recoveryRecordingIsRequiredAndSurvivesARestart() {
+        tapContinue()
+        relaunch(callbackIntent())
+        awaitTag("recoveryRecorded")
+        assertFalse(has("setupComputer"))
+        assertEquals("Recovery setup must finish before foreground polling starts", 0, core.syncStarts.get())
+        rule.onNodeWithTag("recoveryCodeDone").assertIsNotEnabled()
+        tap("copyRecoveryCode")
+        rule.onNodeWithTag("recoveryCodeDone").assertIsNotEnabled()
+        relaunch(Intent(context, MainActivity::class.java))
+        awaitTag("recoveryRecorded")
+        recordRecovery()
+        awaitTag("setupComputer")
+        relaunch(Intent(context, MainActivity::class.java))
+        awaitTag("setupComputer")
+        assertFalse(has("recoveryRecorded"))
+    }
+
+    @Test
+    fun signingOutAndInWhileTheActivityIsStartedRestartsForegroundSync() {
+        val info = dev.reins.core.SessionInfo(server, "me@example.com")
+        core.session = info
+        launch()
+        awaitCore { core.syncStarts.get() > 0 }
+        container.state.setSession(dev.reins.android.state.SessionState.SignedOut)
+        awaitTag("welcome")
+        val stopped = core.syncStarts.get()
+        shadowOf(Looper.getMainLooper()).idleFor(Duration.ofMillis(300))
+        settle()
+        assertEquals(stopped, core.syncStarts.get())
+        container.state.setSession(dev.reins.android.state.SessionState.SignedIn(info))
+        awaitCore { core.syncStarts.get() > stopped }
+    }
+
     // ---- "Continue" --------------------------------------------------------------------------------------------------
 
     @Test
@@ -88,6 +133,7 @@ class PasswordlessFlowTest : FlowHarness() {
         assertEquals("$server/identity/connect/authorize?state=${FakeCore.SSO_STATE}", opened!!.dataString)
 
         relaunch(callbackIntent())
+        recordRecovery()
         awaitTag("setupComputer")
         assertEquals(listOf(server, callback, FakeCore.SSO_STATE, FakeCore.SSO_VERIFIER), core.ssoFinishes.single())
         awaitCore { container.state.approvalDevice.value }
@@ -102,6 +148,7 @@ class PasswordlessFlowTest : FlowHarness() {
         core.ssoKeys = AccountKeys.UNLOCKED
         tapContinue()
         relaunch(callbackIntent())
+        recordRecovery()
         awaitTag("setupComputer")
         awaitCore { core.registrations.size == 1 }
         assertFalse(has("unlock"))
@@ -156,6 +203,7 @@ class PasswordlessFlowTest : FlowHarness() {
         rule.waitUntil(10_000) { container.ssoSignIn.pending() != null }
         assertEquals(listOf("https://reins.example.com"), core.ssoBegins.toList())
         relaunch(callbackIntent())
+        recordRecovery()
         awaitTag("setupComputer")
         assertEquals("https://reins.example.com", core.ssoFinishes.single()[0])
     }
@@ -208,6 +256,7 @@ class PasswordlessFlowTest : FlowHarness() {
         assertTrue(showsText("Check that your other phone shows"))
         assertTrue(core.registrations.isEmpty())
         repeat(3) { pollOnce() }
+        recordRecovery()
         awaitTag("setupComputer")
         assertEquals(3, core.joinPolls.get())
         awaitCore { core.registrations.size == 1 }
@@ -278,6 +327,7 @@ class PasswordlessFlowTest : FlowHarness() {
         val typed = FakeCore.RECOVERY_CODE.lowercase().replace('-', ' ')
         rule.onNodeWithTag("recoveryCode").performTextReplacement(typed)
         tap("unlockAccount")
+        recordRecovery()
         awaitTag("setupComputer")
         assertEquals(typed, core.unlockAttempts.last())
         awaitCore { core.registrations.size == 1 }
@@ -363,6 +413,7 @@ class PasswordlessFlowTest : FlowHarness() {
         core.session = dev.reins.core.SessionInfo("http://127.0.0.1:8000", "me@example.com")
         core.recoveryCode = FakeCore.RECOVERY_CODE
         launch()
+        recordRecovery()
         tap("openSettings")
         authResult = AuthResult.Cancelled
         tap("recoveryCodeRow")

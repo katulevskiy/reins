@@ -123,9 +123,23 @@ class AppState {
         _setupPending.value = value
     }
 
+    /** A passwordless account must record its recovery code before the app's normal screens appear. Never persisted. */
+    private val _recoveryToRecord = MutableStateFlow<String?>(null)
+    val recoveryToRecord: StateFlow<String?> = _recoveryToRecord.asStateFlow()
+
+    fun setRecoveryToRecord(code: String?) {
+        _recoveryToRecord.value = code
+    }
+
+    private val _recoveryLoadError = MutableStateFlow<String?>(null)
+    val recoveryLoadError: StateFlow<String?> = _recoveryLoadError.asStateFlow()
+    fun setRecoveryLoadError(error: String?) { _recoveryLoadError.value = error }
+
     fun setSession(state: SessionState) {
         _session.value = state
         if (state !is SessionState.SignedIn) {
+            _recoveryToRecord.value = null
+            _recoveryLoadError.value = null
             _setupPending.value = false
             _pending.value = emptyList()
             _activity.value = emptyList()

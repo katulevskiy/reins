@@ -8393,6 +8393,7 @@ dependencies = [
  "reins-proto",
  "reqwest",
  "ring",
+ "rusqlite",
  "rustls 0.23.44",
  "serde_json",
  "tempfile",

@@ -1,18 +1,9 @@
 name: CI
 
-# Pull requests are tested once, on the pull_request event (the merge result), not again on every push to their branch;
-# pushes are tested on main only, which is what release.yml releases. Any branch can still be run by hand.
 on:
   push:
     branches: [main]
   pull_request:
-    # Nothing here reads them; Lint still checks the docs' spelling and links.
-    paths-ignore:
-      - "**.md"
-      - "docs/**"
-      - ".github/ISSUE_TEMPLATE/**"
-      - "LICENSE*"
-      - "NOTICE"
   workflow_dispatch:
 
 permissions:
@@ -29,90 +20,161 @@ defaults:
 env:
   CARGO_TERM_COLOR: always
   RUST_BACKTRACE: "1"
-  # No debug info in CI builds: smaller target dirs and caches, faster links. Panics still name the file and line.
   CARGO_PROFILE_DEV_DEBUG: "0"
 
 jobs:
-  fmt:
-    name: Rust fmt
+  changes:
+    name: Changed components
     runs-on: ubuntu-24.04
-    timeout-minutes: 10
+    timeout-minutes: 5
+    outputs:
+      rust: ${{ steps.paths.outputs.rust }}
+      android: ${{ steps.paths.outputs.android }}
+      docker: ${{ steps.paths.outputs.docker }}
     steps:
       - uses: actions/checkout@v7
         with:
+          fetch-depth: 0
           persist-credentials: false
-      # Installs the channel and components pinned in rust-toolchain.toml.
-      - name: Install Rust toolchain
-        run: rustup toolchain install && rustc -vV
-      - run: cargo fmt --all -- --check
+      - name: Select build lanes
+        id: paths
+        env:
+          EVENT: ${{ github.event_name }}
+          BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.before }}
+        run: |
+          rust=false android=false docker=false
+          if [[ "$EVENT" == workflow_dispatch || -z "$BASE_SHA" || "$BASE_SHA" == 0000000000000000000000000000000000000000 ]]; then
+            rust=true android=true docker=true
+          else
+            while IFS= read -r -d '' path; do
+              case "$path" in
+                .github/*) rust=true android=true docker=true ;;
+                Cargo.*|rust-toolchain.toml|crates/reins-core/*|crates/reins-proto/*|crates/reins-policy/*)
+                  rust=true android=true ;;
+                rustfmt.toml|build.rs|src/*|macros/*|crates/*|migrations/*|tests/*) rust=true ;;
+                android/*) android=true ;;
+                scripts/*) rust=true android=true ;;
+                docker/*|Dockerfile|.dockerignore|.hadolint.yaml) docker=true ;;
+              esac
+            done < <(git diff --name-only -z "$BASE_SHA" HEAD)
+          fi
+          { echo "rust=$rust"; echo "android=$android"; echo "docker=$docker"; } >> "$GITHUB_OUTPUT"
 
-  clippy:
-    name: Rust clippy (Reins crates)
+  checks:
+    name: Format, docs, scripts and workflow checks
+    needs: changes
     runs-on: ubuntu-24.04
-    timeout-minutes: 30
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@v7
         with:
           persist-credentials: false
       - name: Install Rust toolchain
-        run: rustup toolchain install && rustc -vV
-      # Each job's dependency build is cached per Cargo.lock and toolchain. Only main writes the caches; pull requests
-      # (and main itself) read main's, so branch copies never crowd main's out of the repository's 10 GB.
+        run: rustup toolchain install
+      - run: cargo fmt --all -- --check
+      - uses: crate-ci/typos@v1.50.1
+      - run: python3 scripts/check-doc-links.py
+      - name: Conflict markers and shell syntax
+        run: |
+          status=0
+          git grep -n -I -E '^(<<<<<<<|>>>>>>>)( |$)|^=======$' -- . ':(exclude)*.patch' ':(exclude)*.diff' || status=$?
+          [[ "$status" == 1 ]] || { echo "::error::Conflict marker check failed"; exit 1; }
+          while IFS= read -r -d '' script; do bash -n "$script"; done < <(git ls-files -z 'scripts/*.sh' 'scripts/package/*.sh')
+          scripts/test-next-version.sh
+      - name: Parse PowerShell installer
+        shell: pwsh
+        run: |
+          $errors = $null
+          [System.Management.Automation.Language.Parser]::ParseFile("$PWD/scripts/install.ps1", [ref]$null, [ref]$errors) | Out-Null
+          if ($errors) { $errors | ForEach-Object { Write-Error $_.ToString() }; exit 1 }
+      - uses: zizmorcore/zizmor-action@v0.6.4
+        with:
+          inputs: ./.github/
+          advanced-security: false
+      - name: Docker templates
+        if: needs.changes.outputs.docker == 'true'
+        working-directory: docker
+        run: |
+          make
+          git diff --exit-code
+      - uses: hadolint/hadolint-action@v3.5.0
+        if: needs.changes.outputs.docker == 'true'
+        with:
+          dockerfile: docker/Dockerfile.debian
+      - uses: hadolint/hadolint-action@v3.5.0
+        if: needs.changes.outputs.docker == 'true'
+        with:
+          dockerfile: docker/Dockerfile.alpine
+      - name: Docker build checks
+        if: needs.changes.outputs.docker == 'true'
+        run: |
+          docker build --check . -f docker/Dockerfile.debian
+          docker build --check . -f docker/Dockerfile.alpine
+
+  rust:
+    name: Server and core (clippy + parallel tests)
+    needs: changes
+    if: needs.changes.outputs.rust == 'true'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - name: Install Rust toolchain
+        run: rustup toolchain install
       - uses: Swatinem/rust-cache@v2
         with:
+          shared-key: linux-server-core
           save-if: ${{ github.ref == 'refs/heads/main' }}
-      # The desktop app (GPUI) links the system's X11/Wayland, font and Vulkan libraries.
+      # E2E tests start this exact server binary. Compile it once before running both suites.
+      - run: cargo build --locked --features sqlite --bin vaultwarden
+      - run: cargo test --locked --workspace --exclude reins-desktop-app --features sqlite --no-run
+      - name: Run independent tests and clippy in parallel
+        env:
+          # Avoid nested Cargo builds/locks in every E2E executable. This was built from this checkout above.
+          REINS_TEST_SERVER_BINARY: ${{ github.workspace }}/target/debug/vaultwarden
+        run: |
+          cargo test --locked -p vaultwarden --features sqlite & server=$!
+          cargo test --locked -p reins-proto -p reins-policy -p reins-core -p reins-desktop -p reins-laya & core=$!
+          cargo test --locked -p reins-e2e & e2e=$!
+          (
+            cargo clippy --locked --workspace --exclude vaultwarden --exclude reins-desktop-app --all-targets -- -D warnings
+            cargo clippy --locked --features sqlite -- -D warnings
+          ) & lint=$!
+          result=0
+          for pid in "$server" "$core" "$e2e" "$lint"; do wait "$pid" || result=1; done
+          exit "$result"
+
+  desktop-linux:
+    name: Desktop UI on Linux (clippy + tests)
+    needs: changes
+    if: needs.changes.outputs.rust == 'true'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - name: Install Rust toolchain
+        run: rustup toolchain install
+      - uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: linux-desktop-ui
+          save-if: ${{ github.ref == 'refs/heads/main' }}
       - name: GUI libraries
         run: |
           sudo apt-get update -qq
           sudo apt-get install -y -qq libxkbcommon-dev libxkbcommon-x11-dev libwayland-dev libx11-dev libxcb1-dev \
             libx11-xcb-dev libfontconfig1-dev libfreetype-dev libvulkan-dev pkg-config
-      - run: cargo clippy --locked --workspace --exclude vaultwarden --all-targets -- -D warnings
+      - run: cargo clippy --locked -p reins-desktop-app --all-targets -- -D warnings
       - run: cargo test --locked -p reins-desktop-app
-
-  test:
-    name: Rust tests (Reins crates)
-    runs-on: ubuntu-24.04
-    timeout-minutes: 45
-    steps:
-      - uses: actions/checkout@v7
-        with:
-          persist-credentials: false
-      - name: Install Rust toolchain
-        run: rustup toolchain install && rustc -vV
-      - uses: Swatinem/rust-cache@v2
-        with:
-          save-if: ${{ github.ref == 'refs/heads/main' }}
-      # The desktop and e2e tests start the real server; crates/reins-e2e/src/server.rs builds it with exactly
-      # these arguments, so building it up front makes that a no-op and shows compile errors on their own.
-      - name: Build server (sqlite)
-        run: cargo build --locked --features sqlite --bin vaultwarden
-      - name: Test crates
-        run: cargo test --locked -p reins-proto -p reins-policy -p reins-core -p reins-desktop -p reins-laya
-
-  # Its own job: cargo runs test binaries one after another, and these take minutes, as do the crates' above.
-  e2e:
-    name: Rust tests (end to end)
-    runs-on: ubuntu-24.04
-    timeout-minutes: 45
-    steps:
-      - uses: actions/checkout@v7
-        with:
-          persist-credentials: false
-      - name: Install Rust toolchain
-        run: rustup toolchain install && rustc -vV
-      - uses: Swatinem/rust-cache@v2
-        with:
-          save-if: ${{ github.ref == 'refs/heads/main' }}
-      # As in the test job: the tests' own build of the server becomes a no-op.
-      - name: Build server (sqlite)
-        run: cargo build --locked --features sqlite --bin vaultwarden
-      - name: Test end to end
-        run: cargo test --locked -p reins-e2e
 
   desktop-macos:
     name: Desktop app on macOS (clippy + tests)
     # The release builds the desktop app for macOS too (release.yml); this keeps it compiling and its tests passing.
+    needs: changes
+    if: needs.changes.outputs.rust == 'true'
     runs-on: macos-15
     timeout-minutes: 45
     steps:
@@ -131,6 +193,8 @@ jobs:
     name: Desktop app on Windows (clippy + tests)
     # The release builds the desktop app for Windows too (release.yml); this keeps it compiling and its tests passing,
     # and runs the background service for real (tests/windows_service.rs writes this runner's HKCU Run key).
+    needs: changes
+    if: needs.changes.outputs.rust == 'true'
     runs-on: windows-2025
     timeout-minutes: 60
     env:
@@ -180,44 +244,10 @@ jobs:
         continue-on-error: true
         run: cargo check --locked -p reins-desktop --bin reins --target aarch64-pc-windows-msvc
 
-  release-scripts:
-    name: Release scripts (versioning, notes)
-    runs-on: ubuntu-24.04
-    timeout-minutes: 5
-    steps:
-      - uses: actions/checkout@v7
-        with:
-          persist-credentials: false
-      - run: bash -n scripts/next-version.sh scripts/release-notes.sh scripts/set-desktop-version.sh scripts/release-desktop.sh
-      - run: scripts/test-next-version.sh
-      # The Windows install script parses (pwsh is on the Linux runners too).
-      - name: Parse scripts/install.ps1
-        shell: pwsh
-        run: |
-          $errors = $null
-          [System.Management.Automation.Language.Parser]::ParseFile("$PWD/scripts/install.ps1", [ref]$null, [ref]$errors) | Out-Null
-          if ($errors) { $errors | ForEach-Object { Write-Error $_.ToString() }; exit 1 }
-
-  server:
-    name: Server (sqlite) clippy + tests
-    runs-on: ubuntu-24.04
-    timeout-minutes: 45
-    steps:
-      - uses: actions/checkout@v7
-        with:
-          persist-credentials: false
-      - name: Install Rust toolchain
-        run: rustup toolchain install && rustc -vV
-      - uses: Swatinem/rust-cache@v2
-        with:
-          save-if: ${{ github.ref == 'refs/heads/main' }}
-      # Not --all-targets: upstream Vaultwarden's own test modules (src/api/admin.rs, src/http_client.rs) trip newer
-      # clippy lints, and upstream CI never linted test targets either. Reins's crates are linted with all targets.
-      - run: cargo clippy --locked --features sqlite -- -D warnings
-      - run: cargo test --locked --features sqlite
-
   android:
     name: Android unit tests + debug APK
+    needs: changes
+    if: needs.changes.outputs.android == 'true'
     runs-on: ubuntu-24.04
     timeout-minutes: 60
     steps:
@@ -236,6 +266,10 @@ jobs:
       - uses: Swatinem/rust-cache@v2
         with:
           save-if: ${{ github.ref == 'refs/heads/main' }}
+      - uses: actions/cache@v5
+        with:
+          path: ~/.cargo/bin/cargo-ndk
+          key: cargo-ndk-${{ runner.os }}-4.1.2
       - name: Install cargo-ndk
         run: cargo ndk --version || cargo install --locked cargo-ndk@4.1.2
       # The NDK version is the one app/build.gradle.kts pins (reinsNdkVersion); the build looks it up by path.
@@ -250,7 +284,7 @@ jobs:
       # No google-services.json in CI: the build skips the Firebase plugin (hasFirebase) and still assembles.
       - name: Unit tests and debug APK
         working-directory: android
-        run: ./gradlew --no-daemon :app:testFullDebugUnitTest :app:testPlayDebugUnitTest :app:assembleFullDebug -Preins.rustProfile=debug
+        run: ./gradlew --no-daemon --parallel :app:testFullDebugUnitTest :app:testPlayDebugUnitTest :app:assembleFullDebug -Preins.rustProfile=debug
       - name: Upload test reports
         if: failure()
         uses: actions/upload-artifact@v7

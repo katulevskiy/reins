@@ -1,0 +1,23 @@
+name: Android signing secrets
+description: Fetch the Android signing identity from Infisical using GitHub OIDC
+inputs:
+  identity-id:
+    description: Infisical machine identity with read access to the signing folder
+    required: true
+  environment:
+    description: Infisical environment slug
+    default: prod
+  secret-path:
+    description: Infisical Android signing folder
+    default: /signing/android
+runs:
+  using: composite
+  steps:
+    - uses: Infisical/secrets-action@v1.0.18
+      with:
+        method: oidc
+        identity-id: ${{ inputs.identity-id }}
+        project-id: 1fe9cbb8-7e10-44d1-973a-9a3bc80efb7a
+        env-slug: ${{ inputs.environment }}
+        secret-path: ${{ inputs.secret-path }}
+        export-type: env

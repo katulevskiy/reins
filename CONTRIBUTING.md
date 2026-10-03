@@ -84,7 +84,7 @@ x86_64-pc-windows-gnu` and MinGW-w64 let you check it: `cargo clippy -p reins-de
 x86_64-pc-windows-gnu -- -D warnings`. Code that only Windows runs lives behind `cfg(windows)`; what can be a plain
 function (paths, quoting, the PE header, `reg` output) lives in `src/win.rs` without one, so its tests run everywhere.
 
-CI (`.github/workflows/ci.yml`, `lint.yml`) runs once per pull request update and on every push to `main`, not on pushes
+CI (`.github/workflows/ci.yml`) runs once per pull request update and on every push to `main`, not on pushes
 to other branches; `gh workflow run ci.yml --ref <branch>` runs it on a branch without a pull request. Pull requests that
 only touch the docs skip the Rust jobs. The Rust build caches are written by `main` only and read everywhere.
 
@@ -170,19 +170,35 @@ Bots and maintainers who do not need to sign are listed in the workflow's `allow
 
 ## Maintainers: signing the APK in releases
 
-The release workflow builds the Android APK only when these repository secrets exist (Settings → Secrets and variables
-→ Actions); without them the release says "APK not built: signing secrets are not configured".
+Infisical is the source of the Android release signing secrets. The release workflow reads `/signing/android` in the
+`prod` environment through GitHub OIDC. Configure a machine identity with read-only access to that folder, trusting
+only this repository's release workflow on `main`, then set the GitHub Actions variable
+`INFISICAL_RELEASE_IDENTITY_ID` to its identity id. `INFISICAL_RELEASE_ENVIRONMENT` and
+`INFISICAL_ANDROID_SIGNING_PATH` override the environment and folder when needed. The project id is in
+`.infisical.json`; the workflow never needs an Infisical API key. See the
+[Infisical GitHub OIDC setup](https://infisical.com/docs/documentation/platform/identities/oidc-auth/github).
 
-| Secret | Value |
+| Infisical secret | Value |
 | --- | --- |
-| `ANDROID_KEYSTORE_BASE64` | the keystore that signs the published APK, base64-encoded (`base64 -w0 release.keystore`) |
+| `ANDROID_KEYSTORE_BASE64` | the existing APK signing keystore, base64-encoded |
 | `ANDROID_KEYSTORE_PASSWORD` | its password |
-| `ANDROID_KEY_ALIAS` | the key's alias in it |
-| `ANDROID_KEY_PASSWORD` | the key's password (often the same as the keystore's) |
+| `ANDROID_KEY_ALIAS` | the key alias |
+| `ANDROID_KEY_PASSWORD` | the key password |
 
-Use the same key as the APKs already installed (`scripts/release-android.sh`, `REINS_ANDROID_CERT_SHA1`): Android
-installs an update only when it is signed with the same certificate. The workflow prints the certificate digests in
-its summary; compare them before relying on it. Locally the same signing is
+Import a private dotenv file with `infisical secrets set --env=prod --path=/signing/android --file=/private/android.env`.
+Keep the keystore and import file outside the repository, with mode `0600`. Existing GitHub repository secrets of the
+same names remain a fallback while migrating. With neither configured, the release explicitly reports that the APK
+was omitted.
+
+Preserve the signing key. `android/release-signing.sha256` pins the historical certificate, and release CI refuses to
+publish an APK with a different certificate. The old Rewarden APK used `dev.rewarden.android`; current Reins uses
+`com.reins2fa.app`. Android treats these as different apps, so preserving the certificate does not enable an in-place
+update from the old package. The existing APK identity is `androiddebugkey`, SHA-256
+`86177dbb7d7160f2d4ea332717adacdc234679d3f193eaa20e56b00a08ab5f83`. A new password-protected keystore can hold this
+same private key; generating a new key would break updates. Google Play uses its separate upload key and app-signing
+certificate (see `android/PLAY_STORE.md`).
+
+Locally the same signing is
 `REINS_RELEASE_KEYSTORE=... REINS_RELEASE_KEYSTORE_PASSWORD=... REINS_RELEASE_KEY_ALIAS=... ./gradlew
 assembleFullRelease` (or the `reins.releaseKeystore` Gradle properties; see `android/app/build.gradle.kts`).
 

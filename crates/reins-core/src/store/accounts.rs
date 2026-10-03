@@ -1,6 +1,6 @@
 //! The accounts the user has connected (several per service), and the grants tied to them.
 
-use rusqlite::params;
+use rusqlite::{OptionalExtension, params};
 
 use super::Store;
 use crate::CoreError;
@@ -15,6 +15,47 @@ pub struct StoredAccount {
 }
 
 impl Store {
+    /// Moves the vault alias, resealed key, grants, session and cached account id in one durable transaction.
+    /// Secrets bind their account name as AAD, so a SQL-only rename would make them undecryptable.
+    pub(crate) fn rename_session_account(
+        &self,
+        service: &str,
+        from: &str,
+        session: &super::StoredSession,
+        account_id_key: &str,
+        account_id: &str,
+    ) -> Result<(), CoreError> {
+        let to = &session.email;
+        let token = self.seal("session.refresh_token", session.refresh_token.as_bytes())?;
+        let mut conn = self.lock();
+        let tx = conn.transaction()?;
+        if from != to {
+            let raw: Option<Vec<u8>> = tx
+                .query_row(
+                    "SELECT value FROM secrets WHERE service = ?1 AND account = ?2",
+                    params![service, from],
+                    |r| r.get(0),
+                )
+                .optional()?;
+            if let Some(raw) = raw {
+                let secret = zeroize::Zeroizing::new(self.unseal(&format!("secret.{service}.{from}"), &raw)?);
+                let sealed = self.seal(&format!("secret.{service}.{to}"), &secret)?;
+                tx.execute("INSERT INTO secrets (service, account, value) VALUES (?1, ?2, ?3) ON CONFLICT (service, account) DO UPDATE SET value = excluded.value", params![service, to, sealed])?;
+                tx.execute("DELETE FROM secrets WHERE service = ?1 AND account = ?2", params![service, from])?;
+            }
+            tx.execute("INSERT OR IGNORE INTO accounts (service, account, added_at) SELECT service, ?3, added_at FROM accounts WHERE service = ?1 AND account = ?2", params![service, from, to])?;
+            tx.execute("DELETE FROM accounts WHERE service = ?1 AND account = ?2", params![service, from])?;
+            tx.execute("UPDATE grants SET grant_json = json_set(grant_json, '$.account', ?3) WHERE json_extract(grant_json, '$.account') = ?2 AND COALESCE(json_extract(grant_json, '$.scope.service'), 'gmail') = ?1", params![service, from, to])?;
+        }
+        tx.execute(
+            "INSERT INTO meta (key, value) VALUES (?1, ?2) ON CONFLICT (key) DO UPDATE SET value = excluded.value",
+            params![format!("app.{account_id_key}"), account_id],
+        )?;
+        tx.execute("INSERT INTO session (id, server_url, email, refresh_token) VALUES (1, ?1, ?2, ?3) ON CONFLICT (id) DO UPDATE SET server_url = excluded.server_url, email = excluded.email, refresh_token = excluded.refresh_token", params![session.server_url, session.email, token])?;
+        tx.commit()?;
+        Ok(())
+    }
+
     /// Every connected account, oldest first.
     pub fn accounts(&self) -> Result<Vec<StoredAccount>, CoreError> {
         let conn = self.lock();
@@ -75,6 +116,61 @@ impl Store {
 mod tests {
     use crate::store::grants::tests::read_grant;
     use crate::store::tests::open;
+
+    #[test]
+    fn session_rename_keeps_other_services_and_rolls_back_everything_on_write_failure() {
+        use super::super::StoredSession;
+        use reins_policy::{Scope, ServiceScope};
+        use zeroize::Zeroizing;
+        let dir = tempfile::tempdir().unwrap();
+        let store = open(dir.path());
+        let (old, new) = ("old@example.com", "new@example.com");
+        let initial = StoredSession {
+            server_url: "https://app.example.com".into(),
+            email: old.into(),
+            refresh_token: Zeroizing::new("refresh-old".into()),
+        };
+        store.save_session(&initial).unwrap();
+        store.secret_put("vault", old, b"key").unwrap();
+        store.add_account("vault", old, 10).unwrap();
+        store.add_account("gmail", old, 11).unwrap();
+        let mut vault = read_grant("vault-grant", "c1", None).for_account(Some(old.into()));
+        vault.scope = Scope::Service(ServiceScope {
+            service: "vault".into(),
+            access: "read".into(),
+            resources: vec!["item-id".into()],
+            labels: vec![],
+            any: false,
+            classes: vec![],
+        });
+        store.insert_grant(&vault, "AI").unwrap();
+        store.insert_grant(&read_grant("mail-grant", "c1", None).for_account(Some(old.into())), "AI").unwrap();
+        let renamed = StoredSession {
+            email: new.into(),
+            refresh_token: Zeroizing::new("refresh-new".into()),
+            ..initial.clone()
+        };
+        store.lock().execute_batch("CREATE TEMP TRIGGER refuse_rename BEFORE INSERT ON session BEGIN SELECT RAISE(ABORT, 'test write failure'); END;").unwrap();
+        assert!(store.rename_session_account("vault", old, &renamed, "subject-new", "account-id").is_err());
+        assert_eq!(store.load_session().unwrap().unwrap(), initial);
+        assert_eq!(store.secret_get("vault", old).unwrap().unwrap(), b"key");
+        assert!(store.secret_get("vault", new).unwrap().is_none());
+        assert!(store.meta_get("subject-new").unwrap().is_none());
+        assert!(store.grants().unwrap().iter().all(|g| g.grant.account.as_deref() == Some(old)));
+        store.lock().execute_batch("DROP TRIGGER refuse_rename").unwrap();
+        store.rename_session_account("vault", old, &renamed, "subject-new", "account-id").unwrap();
+        assert_eq!(store.load_session().unwrap().unwrap(), renamed);
+        assert_eq!(store.secret_get("vault", new).unwrap().unwrap(), b"key");
+        assert_eq!(store.meta_get("subject-new").unwrap().as_deref(), Some("account-id"));
+        let grants = store.grants().unwrap();
+        assert_eq!(grants.iter().find(|g| g.grant.id.0 == "vault-grant").unwrap().grant.account.as_deref(), Some(new));
+        assert_eq!(grants.iter().find(|g| g.grant.id.0 == "mail-grant").unwrap().grant.account.as_deref(), Some(old));
+        assert!(store.accounts().unwrap().iter().any(|a| a.service == "gmail" && a.account == old));
+        // Two concurrent metadata sources can discover the same rename; repeating it must never delete the key.
+        store.rename_session_account("vault", new, &renamed, "subject-new", "account-id").unwrap();
+        assert_eq!(store.secret_get("vault", new).unwrap().unwrap(), b"key");
+        assert!(store.accounts().unwrap().iter().any(|a| a.service == "vault" && a.account == new));
+    }
 
     #[test]
     fn accounts_are_kept_in_order_and_unique() {

@@ -16,7 +16,16 @@ struct RootView: View {
             case .signedOut:
                 SignInScreen()
             case .signedIn:
-                if model.onboarding { OnboardingScreen() } else { MainShell() }
+                if let error = model.recoveryLoadError {
+                    VStack(spacing: 20) {
+                        Text("Recovery setup").font(RFont.sans(26, .semibold))
+                        Text(error).font(RFont.sans(16))
+                        Button("Try again") { Task { await model.refreshSession() } }
+                            .buttonStyle(CapsuleButtonStyle(kind: .primary))
+                    }.padding(24).pageBackground()
+                } else if let code = model.recoveryToRecord {
+                    RecoveryCodeSheet(code: code, required: true, onDone: model.confirmRecoveryRecord)
+                } else if model.onboarding { OnboardingScreen() } else { MainShell() }
             case .keysLocked, .otherApprovalDevice:
                 UnlockScreen()
             }

@@ -390,7 +390,7 @@ impl Engine {
     pub fn session_info(&self) -> Option<SessionInfo> {
         self.session_slot().as_ref().map(|s| SessionInfo {
             server_url: s.server.as_str().to_owned(),
-            email: s.email.clone(),
+            email: s.email(),
         })
     }
 
@@ -608,6 +608,9 @@ impl Engine {
         let session = self.session()?;
         self.report_services(&session).await;
         let pending = api_call!(&session, |api| api.pending(wait_secs)).map_err(ApiFailure::into_core)?;
+        if let Some(email) = pending.account_email.as_deref() {
+            session.adopt_account_email(email).await?;
+        }
         for request in pending.requests {
             if let Err(e) = self.process_request(&session, request).await {
                 log::warn!("could not process a request: {e}");

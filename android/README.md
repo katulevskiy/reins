@@ -46,9 +46,10 @@ permissions) and the password vault (master password once) are each added from t
 
 ### Onboarding, pairing codes and links
 
-Signed out, the app shows a welcome with one button, "Continue" (`ui/signin`). It calls the core's `ssoBegin` for
+Signed out, the app shows a welcome with "Continue with a passkey" (`ui/signin`). It calls the core's `ssoBegin` for
 `BuildConfig.DEFAULT_SERVER` (`reins.defaultServer`, default `https://app.reins2fa.com`) and opens the server's
-sign-in page (Google, Apple, GitHub or an email code) in a Custom Tab. The page sends the browser to
+WorkOS AuthKit sign-in page in a Custom Tab. Hosted sign-in requires a passkey; enabling passkeys and using
+a stable AuthKit custom domain are WorkOS environment configuration. Other servers can keep their own SSO policy. The page sends the browser to
 `com.reins2fa.app://sso-callback`, which `platform/SsoRedirectActivity` hands to `MainActivity` (closing the tab), and the
 sign-in screen finishes it with `ssoFinish`. `platform/SsoSignIn` keeps the server, `state` and PKCE verifier in the
 app's private storage while the page is open, so the sign-in still finishes when Android stopped the app meanwhile.
@@ -63,7 +64,12 @@ recovery code" (`unlockAccount`, which also takes the master password of an acco
 is kept in `state/DeviceStatusStore`, so a relaunch comes back to the Unlock screen; unlocking or signing out clears it.
 On the approval device the request is a `PendingKind.JOIN` item (push `t=join`): its sheet shows the code the new
 phone shows, and approving asks for biometrics first. Settings > Account shows the recovery code (after biometrics)
-when the core has one for the account.
+when the core has one for the account. Before normal app screens can appear, every passwordless account must
+record its recovery code, check the acknowledgement, and type the final group from its written copy. Back, outside
+taps, and copying the code cannot skip this gate. Restarting resumes it; only a server/secret fingerprint is persisted
+in `state/RecoveryRecord`, so a WorkOS email change does not repeat the step and a new recovery code does. The core
+remembers the authenticated account id to read the encrypted recovery secret offline after subsequent restarts.
+Older installations may need one online refresh for that migration; a failure shows a retry screen.
 
 A fresh sign-in from these screens then shows a short setup once per account (`state/OnboardingStore`):
 notifications, "connect your computer" and the `/mcp` address for Claude.ai or ChatGPT. People who were signed in

@@ -26,5 +26,5 @@
 
 **Design records**
 
-The specs in [`superpowers/specs/`](superpowers/specs/) and plans in [`superpowers/plans/`](superpowers/plans/)
-record how each part was designed. They are working documents and may describe details that have since changed.
+The specs in [`superpowers/specs/`](superpowers/specs/) record the architecture and security decisions.
+The completed implementation recipes have been removed; current behavior is documented above and covered by tests.

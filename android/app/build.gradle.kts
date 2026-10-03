@@ -251,6 +251,29 @@ abstract class UniffiBindgenTask : DefaultTask() {
     }
 }
 
+// Both distributions use the same native core and bindings. Generate them once per Gradle invocation;
+// separate per-variant tasks repeated the host build, bindgen and two ABI builds during unit tests.
+val sharedCargo = tasks.register<CargoNdkTask>("cargoNdk") {
+    workspaceRoot.set(repoRoot)
+    profile.set(rustProfile)
+    ndkDir.set(androidComponents.sdkComponents.sdkDirectory.map { it.asFile.resolve("ndk/$reinsNdkVersion").absolutePath })
+    cargoBinDir.set(cargoBin)
+    outputDir.set(layout.buildDirectory.dir("rustJniLibs/shared"))
+}
+
+val sharedBindgen = tasks.register<UniffiBindgenTask>("uniffiBindgen") {
+    workspaceRoot.set(repoRoot)
+    cargoBinDir.set(cargoBin)
+    rustSources.from(
+        fileTree(repoRoot) {
+            include("crates/reins-core/src/**", "crates/reins-core/Cargo.toml", "crates/reins-core/uniffi.toml")
+            include("crates/reins-proto/src/**", "crates/reins-proto/Cargo.toml")
+            include("crates/reins-policy/src/**", "crates/reins-policy/Cargo.toml", "Cargo.toml", "Cargo.lock")
+        },
+    )
+    outputDir.set(layout.buildDirectory.dir("generated/uniffi/shared/kotlin"))
+}
+
 androidComponents {
     // The release build type's debug key would otherwise win over a flavor's signing config.
     onVariants(selector().withBuildType("release").withFlavor("distribution" to "play")) { variant ->
@@ -260,28 +283,8 @@ androidComponents {
         android.signingConfigs.findByName("release")?.let { variant.signingConfig.setConfig(it) }
     }
     onVariants { variant ->
-        val name = variant.name.replaceFirstChar { it.uppercase() }
-        val cargo = tasks.register<CargoNdkTask>("cargoNdk$name") {
-            workspaceRoot.set(repoRoot)
-            profile.set(rustProfile)
-            ndkDir.set(androidComponents.sdkComponents.sdkDirectory.map { it.asFile.resolve("ndk/$reinsNdkVersion").absolutePath })
-            cargoBinDir.set(cargoBin)
-            outputDir.set(layout.buildDirectory.dir("rustJniLibs/${variant.name}"))
-        }
-        variant.sources.jniLibs?.addGeneratedSourceDirectory(cargo, CargoNdkTask::outputDir)
-
-        val bindgen = tasks.register<UniffiBindgenTask>("uniffiBindgen$name") {
-            workspaceRoot.set(repoRoot)
-            cargoBinDir.set(cargoBin)
-            rustSources.from(
-                fileTree(repoRoot) {
-                    include("crates/reins-core/src/**", "crates/reins-core/Cargo.toml", "crates/reins-core/uniffi.toml")
-                    include("crates/reins-proto/src/**", "crates/reins-policy/src/**", "Cargo.lock")
-                },
-            )
-            outputDir.set(layout.buildDirectory.dir("generated/uniffi/${variant.name}/kotlin"))
-        }
-        variant.sources.kotlin?.addGeneratedSourceDirectory(bindgen, UniffiBindgenTask::outputDir)
+        variant.sources.jniLibs?.addGeneratedSourceDirectory(sharedCargo, CargoNdkTask::outputDir)
+        variant.sources.kotlin?.addGeneratedSourceDirectory(sharedBindgen, UniffiBindgenTask::outputDir)
     }
 }
 

@@ -106,6 +106,9 @@ final class AppModel {
     /// The account was made without a master password and this phone keeps its secret: Settings offers the recovery
     /// code.
     private(set) var recoveryCodeAvailable = false
+    /// Normal screens remain behind the mandatory acknowledgement, also after the app restarts.
+    private(set) var recoveryToRecord: String?
+    private(set) var recoveryLoadError: String?
     /// How the last MCP sign-in ended, shown on that server's page until it is left.
     var mcpNotice: McpNotice?
     /// After a fresh sign-in (or a new account) on the sign-in screen: the steps that connect a computer and an AI
@@ -181,12 +184,21 @@ final class AppModel {
             seenActivityId = DeviceStatus.seenActivityId
             approvalDevice = DeviceStatus.approvalDevice && !DeviceStatus.replaced
         }
+        if let info {
+            var recoveryFailure: String?
+            var code: String?
+            do { code = try await core.accountRecoveryCode() }
+            catch CoreError.Invalid { /* Password accounts have no recovery secret. */ }
+            catch { recoveryFailure = error.userMessage }
+            recoveryCodeAvailable = code != nil
+            recoveryToRecord = code.flatMap { RecoveryRecord.confirmed(server: info.serverUrl, code: $0) ? nil : $0 }
+            recoveryLoadError = recoveryFailure
+        }
         setSession(info.map(SessionState.signedIn) ?? .signedOut)
         if info != nil {
             onSignedIn?()
             await refreshPending()
             await refreshConnections()
-            recoveryCodeAvailable = (try? await core.accountRecoveryCode()) != nil
             if !DeviceStatus.replaced { await registerDeviceQuietly() }
         }
     }
@@ -204,6 +216,8 @@ final class AppModel {
         mcpNotice = nil
         approvalDevice = false
         recoveryCodeAvailable = false
+        recoveryToRecord = nil
+        recoveryLoadError = nil
         onboarding = false
         autopilot = nil
         sheet = nil
@@ -268,7 +282,14 @@ final class AppModel {
     }
 
     func finishOnboarding() {
+        guard recoveryToRecord == nil else { return }
         onboarding = false
+    }
+
+    func confirmRecoveryRecord() {
+        guard case let .signedIn(info) = session, let code = recoveryToRecord else { return }
+        RecoveryRecord.confirm(server: info.serverUrl, code: code)
+        recoveryToRecord = nil
     }
 
     func signOut() async {
@@ -292,6 +313,9 @@ final class AppModel {
             accounts = try await core.accounts()
             services = try await core.services().filter { $0.service != "sms" }
             setMcpServers(try await core.mcpServers())
+            if let info = await core.session(), case .signedIn = session {
+                setSession(.signedIn(info))
+            }
             await refreshAutopilot()
             onGrantsChanged?(grants)
         } catch CoreError.NotLoggedIn {
@@ -463,18 +487,21 @@ final class AppModel {
         syncTask = Task { [weak self] in
             var failures = 0
             while !Task.isCancelled {
-                guard let self, case .signedIn = self.session, !self.deviceReplaced else {
+                guard let self, case .signedIn = self.session, !self.deviceReplaced, self.recoveryToRecord == nil, self.recoveryLoadError == nil else {
                     try? await Task.sleep(for: .seconds(2))
                     continue
                 }
                 do {
                     _ = try await self.core.sync(waitSecs: 25)
+                    if Task.isCancelled { return }
                     // Requests that grants answered by themselves leave no prompt, only a new activity entry.
                     await self.refreshPending()
                     failures = 0
                 } catch CoreError.NotLoggedIn {
+                    if Task.isCancelled { return }
                     self.setSession(.signedOut)
                 } catch let CoreError.Server(status, _) where status == 403 && self.approvalDevice {
+                    if Task.isCancelled { return }
                     // Only a phone that held the role was replaced. One whose registration has not gone through yet
                     // (registrationError says why) keeps trying, and its banner does not blame another phone.
                     self.markReplaced()
@@ -652,8 +679,10 @@ final class AppModel {
             s.anyBypassUntil = a.lastBypassEnd
         }
         s.activeGrants = activeGrants
+        let previous = Snapshot.load()
+        s.updatedAt = previous.updatedAt
+        guard s != previous || s.updatedAt == 0 else { return }
         s.updatedAt = Int64(Date().timeIntervalSince1970)
-        guard s != Snapshot.load() || s.updatedAt == 0 else { return }
         s.save()
         WidgetCenter.shared.reloadAllTimelines()
         ControlCenter.shared.reloadAllControls()

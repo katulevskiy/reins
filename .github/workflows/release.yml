@@ -48,6 +48,7 @@ jobs:
     permissions:
       actions: read # the CI result of a manually released commit
       contents: read
+      id-token: write # short-lived Infisical OIDC login
     outputs:
       release: ${{ steps.version.outputs.release }}
       version: ${{ steps.version.outputs.version }}
@@ -114,6 +115,13 @@ jobs:
             echo "build-time=$time"
           } >> "$GITHUB_OUTPUT"
           echo "::notice::Releasing v$version from $SHA"
+      - name: Fetch signing identity from Infisical
+        if: steps.version.outputs.release == 'true' && vars.INFISICAL_RELEASE_IDENTITY_ID != ''
+        uses: ./.github/actions/android-signing # zizmor: ignore[self-repository] use the exact CI-tested checkout
+        with:
+          identity-id: ${{ vars.INFISICAL_RELEASE_IDENTITY_ID }}
+          environment: ${{ vars.INFISICAL_RELEASE_ENVIRONMENT || 'prod' }}
+          secret-path: ${{ vars.INFISICAL_ANDROID_SIGNING_PATH || '/signing/android' }}
       - name: Android signing secrets
         id: signing
         env:
@@ -122,6 +130,10 @@ jobs:
           KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
           KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
         run: |
+          KEYSTORE="${KEYSTORE:-${ANDROID_KEYSTORE_BASE64:-}}"
+          KEYSTORE_PASSWORD="${KEYSTORE_PASSWORD:-${ANDROID_KEYSTORE_PASSWORD:-}}"
+          KEY_ALIAS="${KEY_ALIAS:-${ANDROID_KEY_ALIAS:-}}"
+          KEY_PASSWORD="${KEY_PASSWORD:-${ANDROID_KEY_PASSWORD:-}}"
           if [[ -n "$KEYSTORE" && -n "$KEYSTORE_PASSWORD" && -n "$KEY_ALIAS" && -n "$KEY_PASSWORD" ]]; then
             echo "apk=true" >> "$GITHUB_OUTPUT"
           else
@@ -170,6 +182,10 @@ jobs:
           rustup target add "$TARGET"
           rustc -vV
       # The static Linux builds link with zig, as scripts/release-desktop.sh does.
+      - uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: release-desktop-${{ matrix.target }}
+
       - name: Install cargo-zigbuild
         if: matrix.zig
         run: |
@@ -267,6 +283,10 @@ jobs:
           [[ "$RUNNER_OS" == Windows ]] && rustup target add x86_64-pc-windows-msvc
           [[ "$RUNNER_OS" == Linux ]] && rustup target add x86_64-unknown-linux-gnu
           rustc -vV
+      - uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: release-desktop-app-${{ runner.os }}
+
       - name: GPUI build dependencies
         if: runner.os == 'Linux'
         run: |
@@ -365,6 +385,10 @@ jobs:
       - name: Install Rust toolchain
         run: rustup toolchain install && rustc -vV
       # SQLite is bundled; OpenSSL is vendored so the binary does not depend on the system's libssl.
+      - uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: release-server-${{ runner.os }}
+
       - name: Build
         env:
           VW_VERSION: ${{ needs.plan.outputs.version }}
@@ -425,6 +449,8 @@ jobs:
           file: docker/Dockerfile.debian
           platforms: linux/amd64,linux/arm64
           push: true
+          cache-from: type=gha,scope=server-image
+          cache-to: type=gha,mode=max,scope=server-image
           build-args: |
             VW_VERSION=${{ needs.plan.outputs.version }}
           tags: |
@@ -446,6 +472,7 @@ jobs:
     timeout-minutes: 90
     permissions:
       contents: read
+      id-token: write # Infisical OIDC
     env:
       VERSION: ${{ needs.plan.outputs.version }}
       BUILD: ${{ needs.plan.outputs.build }}
@@ -463,18 +490,38 @@ jobs:
           rustup toolchain install
           rustup target add aarch64-linux-android x86_64-linux-android
           rustc -vV
+      - uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: release-android-${{ runner.os }}
+
+      - uses: actions/cache@v5
+        with:
+          path: ~/.cargo/bin/cargo-ndk
+          key: cargo-ndk-${{ runner.os }}-4.1.2
       - name: Install cargo-ndk
-        run: cargo install --locked cargo-ndk@4.1.2
+        run: cargo ndk --version || cargo install --locked cargo-ndk@4.1.2
       - name: Install Android NDK
         run: |
           ndk="$(grep -oP 'reinsNdkVersion = "\K[^"]+' android/app/build.gradle.kts)"
           echo "NDK ${ndk}"
           "${ANDROID_HOME}/cmdline-tools/latest/bin/sdkmanager" --install "ndk;${ndk}" > /dev/null
+      - uses: gradle/actions/setup-gradle@v6
+        with:
+          cache-provider: basic
+      - name: Fetch signing identity from Infisical
+        if: vars.INFISICAL_RELEASE_IDENTITY_ID != ''
+        uses: ./.github/actions/android-signing # zizmor: ignore[self-repository] use the exact CI-tested checkout
+        with:
+          identity-id: ${{ vars.INFISICAL_RELEASE_IDENTITY_ID }}
+          environment: ${{ vars.INFISICAL_RELEASE_ENVIRONMENT || 'prod' }}
+          secret-path: ${{ vars.INFISICAL_ANDROID_SIGNING_PATH || '/signing/android' }}
       - name: Keystore
         env:
           KEYSTORE: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
         run: |
           umask 077
+          KEYSTORE="${KEYSTORE:-${ANDROID_KEYSTORE_BASE64:-}}"
+          [[ -n "$KEYSTORE" ]] || { echo "::error::Android signing keystore is missing"; exit 1; }
           base64 -d <<<"$KEYSTORE" > "$RUNNER_TEMP/release.keystore"
       # android/app/build.gradle.kts signs fullRelease with the REINS_RELEASE_* key. versionCode is the build time in
       # minutes, as in scripts/release-android.sh, so every release installs over the previous one.
@@ -486,11 +533,14 @@ jobs:
           REINS_RELEASE_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
           REINS_RELEASE_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
         run: |
+          export REINS_RELEASE_KEYSTORE_PASSWORD="${REINS_RELEASE_KEYSTORE_PASSWORD:-${ANDROID_KEYSTORE_PASSWORD:-}}"
+          export REINS_RELEASE_KEY_ALIAS="${REINS_RELEASE_KEY_ALIAS:-${ANDROID_KEY_ALIAS:-}}"
+          export REINS_RELEASE_KEY_PASSWORD="${REINS_RELEASE_KEY_PASSWORD:-${ANDROID_KEY_PASSWORD:-}}"
           export REINS_RELEASE_KEYSTORE="$RUNNER_TEMP/release.keystore"
           version_code="$(($(date -u +%s) / 60))"
           echo "version-code=$version_code" >> "$GITHUB_OUTPUT"
           # The site and the sign-in screen's server are gradle.properties' reins.site / reins.defaultServer.
-          ./gradlew --no-daemon --no-configuration-cache :app:assembleFullRelease \
+          ./gradlew --no-daemon --parallel --no-configuration-cache :app:assembleFullRelease \
             -Preins.secureScreens=true \
             "-Preins.versionCode=$version_code" \
             "-Preins.versionName=$VERSION" \
@@ -507,6 +557,9 @@ jobs:
           mkdir -p dist
           cp android/app/build/outputs/apk/full/release/app-full-release.apk "$apk"
           "$build_tools/apksigner" verify --print-certs "$apk" | tee certs.txt
+          expected="$(cat android/release-signing.sha256)"
+          actual="$(sed -n 's/.*certificate SHA-256 digest: //p' certs.txt | head -1)"
+          [[ "$actual" == "$expected" ]] || { echo "::error::APK signing certificate changed; existing users cannot update"; exit 1; }
           badging="$("$build_tools/aapt2" dump badging "$apk" | head -1)"
           echo "$badging"
           [[ "$badging" == *"versionCode='$VERSION_CODE'"* && "$badging" == *"versionName='$VERSION'"* ]] || {
