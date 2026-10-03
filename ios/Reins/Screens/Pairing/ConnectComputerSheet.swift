@@ -1,7 +1,7 @@
 import SwiftUI
 import VisionKit
 
-/// Connecting a computer: scan the QR code `rewarden login` (or the Reins desktop app) shows, or type the code under
+/// Connecting a computer: scan the QR code `reins login` (or the Reins desktop app) shows, or type the code under
 /// it, and the pairing it stands for takes this sheet's place, to be answered like any other (the number the computer
 /// shows, its key, Face ID). Without a usable camera (the simulator, no permission) the code is typed.
 struct ConnectComputerSheet: View {
@@ -47,8 +47,8 @@ struct ConnectComputerSheet: View {
                 .accessibilityAddTraits(.isHeader)
             // A key, not a String, so the command shows in code type.
             Text(LocalizedStringKey(typing
-                ? "Run `rewarden login` on your computer, or open the Reins desktop app, and type the code it shows."
-                : "Run `rewarden login` on your computer, or open the Reins desktop app, and point the camera at the QR code it shows."))
+                ? "Run `reins login` on your computer, or open the Reins desktop app, and type the code it shows."
+                : "Run `reins login` on your computer, or open the Reins desktop app, and point the camera at the QR code it shows."))
                 .font(RFont.sans(15.5))
                 .foregroundStyle(Palette.secondary)
                 .fixedSize(horizontal: false, vertical: true)

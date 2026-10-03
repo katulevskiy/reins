@@ -8,23 +8,23 @@ plugins {
 // google-services.json is optional (plan Decision 18). Copy it in from outside the repo when
 // available; apply the plugin only when the file is present so the app builds without Firebase.
 val googleServicesSource = file(
-    providers.gradleProperty("rewarden.googleServicesJson")
-        .getOrElse("${System.getProperty("user.home")}/.config/rewarden/google-services.json"),
+    providers.gradleProperty("reins.googleServicesJson")
+        .getOrElse("${System.getProperty("user.home")}/.config/reins/google-services.json"),
 )
 val googleServicesTarget = file("google-services.json")
 if (!googleServicesTarget.exists() && googleServicesSource.isFile) {
     googleServicesSource.copyTo(googleServicesTarget)
 }
-val rewardenNdkVersion = "27.2.12479018"
+val reinsNdkVersion = "27.2.12479018"
 val hasFirebase = googleServicesTarget.isFile
 if (hasFirebase) {
     apply(plugin = "com.google.gms.google-services")
 }
 
 android {
-    namespace = "dev.rewarden.android"
+    namespace = "dev.reins.android"
     compileSdk = 37
-    ndkVersion = rewardenNdkVersion
+    ndkVersion = reinsNdkVersion
 
     defaultConfig {
         applicationId = "com.reins2fa.app"
@@ -32,22 +32,22 @@ android {
         targetSdk = 36
         // scripts/release-android.sh sets these (versionCode = release time in minutes, so every release is newer) and
         // reads the default versionName from the line below; keep its shape.
-        versionCode = providers.gradleProperty("rewarden.versionCode").map(String::toInt).getOrElse(1)
-        versionName = providers.gradleProperty("rewarden.versionName").getOrElse("0.1.0")
+        versionCode = providers.gradleProperty("reins.versionCode").map(String::toInt).getOrElse(1)
+        versionName = providers.gradleProperty("reins.versionName").getOrElse("0.1.0")
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         // Shown next to the version in Settings ("0.1.0-202610010115-a9643bcb" for releases, "dev" for local builds).
-        val buildId = providers.gradleProperty("rewarden.build").getOrElse("dev")
+        val buildId = providers.gradleProperty("reins.build").getOrElse("dev")
         buildConfigField("String", "BUILD_ID", "\"$buildId\"")
         ndk { abiFilters += listOf("arm64-v8a", "x86_64") }
         buildConfigField("boolean", "HAS_FIREBASE", hasFirebase.toString())
         // The server new accounts and sign-ins use unless the user picks another: the hosted server
-        // (gradle.properties) unless -Prewarden.defaultServer=https://your.server says otherwise.
-        val defaultServer = providers.gradleProperty("rewarden.defaultServer").get().trimEnd('/')
+        // (gradle.properties) unless -Preins.defaultServer=https://your.server says otherwise.
+        val defaultServer = providers.gradleProperty("reins.defaultServer").get().trimEnd('/')
         buildConfigField("String", "DEFAULT_SERVER", "\"$defaultServer\"")
         // Telegram's application credentials (my.telegram.org). They identify this app to Telegram, not the user, and
         // live in ~/.gradle/gradle.properties, never in the repository. Without them Telegram shows "needs setup".
-        val telegramId = providers.gradleProperty("rewarden.telegramApiId").getOrElse("0")
-        val telegramHash = providers.gradleProperty("rewarden.telegramApiHash").getOrElse("")
+        val telegramId = providers.gradleProperty("reins.telegramApiId").getOrElse("0")
+        val telegramHash = providers.gradleProperty("reins.telegramApiHash").getOrElse("")
         buildConfigField("int", "TELEGRAM_API_ID", telegramId)
         buildConfigField("String", "TELEGRAM_API_HASH", "\"$telegramHash\"")
     }
@@ -63,8 +63,8 @@ android {
             buildConfigField("boolean", "HAS_SMS", "true")
             buildConfigField("boolean", "SELF_UPDATE", "true")
             // Where the in-app updater looks for new releases (written by scripts/release-android.sh).
-            val site = providers.gradleProperty("rewarden.site").get().trimEnd('/')
-            val updateUrl = providers.gradleProperty("rewarden.updateUrl").getOrElse("$site/releases/android/latest.json")
+            val site = providers.gradleProperty("reins.site").get().trimEnd('/')
+            val updateUrl = providers.gradleProperty("reins.updateUrl").getOrElse("$site/releases/android/latest.json")
             buildConfigField("String", "UPDATE_URL", "\"$updateUrl\"")
         }
         // Google Play: no SMS permissions (only default SMS apps may have them) and no updater or
@@ -81,8 +81,8 @@ android {
     // install.
     packaging { jniLibs { useLegacyPackaging = true } }
 
-    // -Prewarden.testBuildType=release runs the instrumented tests against the minified (R8) build.
-    providers.gradleProperty("rewarden.testBuildType").orNull?.let { testBuildType = it }
+    // -Preins.testBuildType=release runs the instrumented tests against the minified (R8) build.
+    providers.gradleProperty("reins.testBuildType").orNull?.let { testBuildType = it }
 
     // The SHA-1 registered with Google/Firebase is that of ~/.android/debug.keystore. AGP may pick another
     // debug keystore (it follows ANDROID_USER_HOME), so pin it when it exists.
@@ -90,41 +90,41 @@ android {
         val registered = file("${System.getProperty("user.home")}/.android/debug.keystore")
         if (registered.isFile) storeFile = registered
     }
-    // The Google Play upload key, when ~/.gradle/gradle.properties names it (rewarden.uploadKeystore,
-    // rewarden.uploadKeystorePassword, rewarden.uploadKeyAlias, rewarden.uploadKeyPassword): it signs `playRelease`
+    // The Google Play upload key, when ~/.gradle/gradle.properties names it (reins.uploadKeystore,
+    // reins.uploadKeystorePassword, reins.uploadKeyAlias, reins.uploadKeyPassword): it signs `playRelease`
     // (see below). Without it that bundle has the debug key, which is fine for checking it locally; Play refuses it.
-    providers.gradleProperty("rewarden.uploadKeystore").orNull?.let { keystore ->
+    providers.gradleProperty("reins.uploadKeystore").orNull?.let { keystore ->
         signingConfigs.create("upload") {
             storeFile = file(keystore)
-            storePassword = providers.gradleProperty("rewarden.uploadKeystorePassword").get()
-            keyAlias = providers.gradleProperty("rewarden.uploadKeyAlias").get()
-            keyPassword = providers.gradleProperty("rewarden.uploadKeyPassword").get()
+            storePassword = providers.gradleProperty("reins.uploadKeystorePassword").get()
+            keyAlias = providers.gradleProperty("reins.uploadKeyAlias").get()
+            keyPassword = providers.gradleProperty("reins.uploadKeyPassword").get()
         }
     }
     // The key of the published `full` APK, when a Gradle property or the environment names it (the GitHub release
-    // workflow uses the environment): rewarden.releaseKeystore / REWARDEN_RELEASE_KEYSTORE,
-    // rewarden.releaseKeystorePassword / REWARDEN_RELEASE_KEYSTORE_PASSWORD, rewarden.releaseKeyAlias /
-    // REWARDEN_RELEASE_KEY_ALIAS, rewarden.releaseKeyPassword / REWARDEN_RELEASE_KEY_PASSWORD (default: the keystore
+    // workflow uses the environment): reins.releaseKeystore / REINS_RELEASE_KEYSTORE,
+    // reins.releaseKeystorePassword / REINS_RELEASE_KEYSTORE_PASSWORD, reins.releaseKeyAlias /
+    // REINS_RELEASE_KEY_ALIAS, reins.releaseKeyPassword / REINS_RELEASE_KEY_PASSWORD (default: the keystore
     // password). It signs `fullRelease` (see below). Without it `fullRelease` has the debug key, and
     // scripts/release-android.sh re-signs it with apksigner.
     fun releaseSetting(property: String, env: String) =
         providers.gradleProperty(property).orElse(providers.environmentVariable(env)).orNull?.takeIf { it.isNotEmpty() }
-    releaseSetting("rewarden.releaseKeystore", "REWARDEN_RELEASE_KEYSTORE")?.let { keystore ->
-        val storePass = releaseSetting("rewarden.releaseKeystorePassword", "REWARDEN_RELEASE_KEYSTORE_PASSWORD")
-            ?: error("rewarden.releaseKeystore is set, but not its password (REWARDEN_RELEASE_KEYSTORE_PASSWORD)")
+    releaseSetting("reins.releaseKeystore", "REINS_RELEASE_KEYSTORE")?.let { keystore ->
+        val storePass = releaseSetting("reins.releaseKeystorePassword", "REINS_RELEASE_KEYSTORE_PASSWORD")
+            ?: error("reins.releaseKeystore is set, but not its password (REINS_RELEASE_KEYSTORE_PASSWORD)")
         signingConfigs.create("release") {
             storeFile = file(keystore)
             storePassword = storePass
-            keyAlias = releaseSetting("rewarden.releaseKeyAlias", "REWARDEN_RELEASE_KEY_ALIAS")
-                ?: error("rewarden.releaseKeystore is set, but not the key alias (REWARDEN_RELEASE_KEY_ALIAS)")
-            keyPassword = releaseSetting("rewarden.releaseKeyPassword", "REWARDEN_RELEASE_KEY_PASSWORD") ?: storePass
+            keyAlias = releaseSetting("reins.releaseKeyAlias", "REINS_RELEASE_KEY_ALIAS")
+                ?: error("reins.releaseKeystore is set, but not the key alias (REINS_RELEASE_KEY_ALIAS)")
+            keyPassword = releaseSetting("reins.releaseKeyPassword", "REINS_RELEASE_KEY_PASSWORD") ?: storePass
         }
     }
 
     // FLAG_SECURE (no screenshots, blank in recents) on the screens that show secrets: on in release builds, off in
-    // debug builds so the Robolectric flow and screenshot tests can capture them. -Prewarden.secureScreens=true|false
+    // debug builds so the Robolectric flow and screenshot tests can capture them. -Preins.secureScreens=true|false
     // overrides both.
-    val secureScreensOverride = providers.gradleProperty("rewarden.secureScreens").orNull?.toBooleanStrict()
+    val secureScreensOverride = providers.gradleProperty("reins.secureScreens").orNull?.toBooleanStrict()
     fun secureScreens(default: Boolean) = (secureScreensOverride ?: default).toString()
 
     buildTypes {
@@ -157,8 +157,8 @@ android {
     testOptions {
         unitTests.isReturnDefaultValues = true
         unitTests.isIncludeAndroidResources = true
-        // -Drewarden.screenshots=/dir renders the design-review screenshots (see ScreenshotsTest).
-        unitTests.all { test -> System.getProperty("rewarden.screenshots")?.let { test.systemProperty("rewarden.screenshots", it) } }
+        // -Dreins.screenshots=/dir renders the design-review screenshots (see ScreenshotsTest).
+        unitTests.all { test -> System.getProperty("reins.screenshots")?.let { test.systemProperty("reins.screenshots", it) } }
     }
 }
 
@@ -175,10 +175,10 @@ kotlin {
 // ---- Rust core: cargo-ndk builds the shared libraries, uniffi-bindgen generates the Kotlin bindings. ----
 
 val repoRoot: File = rootProject.projectDir.parentFile
-val rustProfile = providers.gradleProperty("rewarden.rustProfile").getOrElse("release")
+val rustProfile = providers.gradleProperty("reins.rustProfile").getOrElse("release")
 val cargoBin = "${System.getProperty("user.home")}/.cargo/bin"
 
-/** Builds `rewarden-core` for the shipped ABIs with 16 KB page alignment. cargo is incremental, so this always runs. */
+/** Builds `reins-core` for the shipped ABIs with 16 KB page alignment. cargo is incremental, so this always runs. */
 abstract class CargoNdkTask : DefaultTask() {
     @get:Internal abstract val workspaceRoot: DirectoryProperty
     @get:Input abstract val profile: Property<String>
@@ -206,7 +206,7 @@ abstract class CargoNdkTask : DefaultTask() {
             environment("CARGO_ENCODED_RUSTFLAGS", "-Clink-arg=-Wl,-z,max-page-size=16384")
             commandLine(
                 "${cargoBinDir.get()}/cargo", "ndk", "-t", "arm64-v8a", "-t", "x86_64", "--platform", "31", "-o", out.absolutePath,
-                "build", "--profile", cargoProfile, "-p", "rewarden-core", "--lib", "--locked",
+                "build", "--profile", cargoProfile, "-p", "reins-core", "--lib", "--locked",
             )
         }
     }
@@ -233,17 +233,17 @@ abstract class UniffiBindgenTask : DefaultTask() {
         exec.exec {
             workingDir = root
             environment("PATH", path)
-            commandLine("${cargoBinDir.get()}/cargo", "build", "-p", "rewarden-core", "--lib", "--features", "bindgen", "--locked")
+            commandLine("${cargoBinDir.get()}/cargo", "build", "-p", "reins-core", "--lib", "--features", "bindgen", "--locked")
         }
         // The host's own build of the core (bindgen reads its metadata): .dylib on macOS, .so elsewhere, in
         // CARGO_TARGET_DIR when that is set.
-        val hostLibrary = if (System.getProperty("os.name").startsWith("Mac")) "librewarden_core.dylib" else "librewarden_core.so"
+        val hostLibrary = if (System.getProperty("os.name").startsWith("Mac")) "libreins_core.dylib" else "libreins_core.so"
         val targetDir = System.getenv("CARGO_TARGET_DIR")?.takeIf { it.isNotEmpty() }?.let { root.resolve(it) } ?: root.resolve("target")
         exec.exec {
             workingDir = root
             environment("PATH", path)
             commandLine(
-                "${cargoBinDir.get()}/cargo", "run", "-q", "-p", "rewarden-core", "--features", "bindgen", "--bin", "uniffi-bindgen",
+                "${cargoBinDir.get()}/cargo", "run", "-q", "-p", "reins-core", "--features", "bindgen", "--bin", "uniffi-bindgen",
                 "--locked", "--", "generate", "--library", targetDir.resolve("debug/$hostLibrary").absolutePath,
                 "--language", "kotlin", "--no-format", "--out-dir", out.absolutePath,
             )
@@ -264,7 +264,7 @@ androidComponents {
         val cargo = tasks.register<CargoNdkTask>("cargoNdk$name") {
             workspaceRoot.set(repoRoot)
             profile.set(rustProfile)
-            ndkDir.set(androidComponents.sdkComponents.sdkDirectory.map { it.asFile.resolve("ndk/$rewardenNdkVersion").absolutePath })
+            ndkDir.set(androidComponents.sdkComponents.sdkDirectory.map { it.asFile.resolve("ndk/$reinsNdkVersion").absolutePath })
             cargoBinDir.set(cargoBin)
             outputDir.set(layout.buildDirectory.dir("rustJniLibs/${variant.name}"))
         }
@@ -275,8 +275,8 @@ androidComponents {
             cargoBinDir.set(cargoBin)
             rustSources.from(
                 fileTree(repoRoot) {
-                    include("crates/rewarden-core/src/**", "crates/rewarden-core/Cargo.toml", "crates/rewarden-core/uniffi.toml")
-                    include("crates/rewarden-proto/src/**", "crates/rewarden-policy/src/**", "Cargo.lock")
+                    include("crates/reins-core/src/**", "crates/reins-core/Cargo.toml", "crates/reins-core/uniffi.toml")
+                    include("crates/reins-proto/src/**", "crates/reins-policy/src/**", "Cargo.lock")
                 },
             )
             outputDir.set(layout.buildDirectory.dir("generated/uniffi/${variant.name}/kotlin"))

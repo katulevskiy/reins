@@ -45,7 +45,7 @@ Laya
 Autopilot's model is a fine-tune of Laya (multilingual checkpoint), https://huggingface.co/convaiinnovations/laya
 Copyright Convai Innovations. Licensed under the Apache License 2.0 (LICENSE).
 
-  - crates/rewarden-core/src/autopilot/sequence.rs is a port to Rust of Laya's input sequence builder
+  - crates/reins-core/src/autopilot/sequence.rs is a port to Rust of Laya's input sequence builder
     (`rl_common.build_sequence`), modified for Autopilot's fixed question; tools/laya/sequence.py is a reference
     implementation of the same.
   - tools/laya/ loads, fine-tunes and exports Laya checkpoints (Laya itself is downloaded, not included).
@@ -67,7 +67,7 @@ says is Gemma 2's (the tokenizer ships inside the model package, not in this rep
 ONNX Runtime
 ================================================================================================================
 
-The Android app bundles ONNX Runtime for Android (com.microsoft.onnxruntime:onnxruntime-android), and rewarden-laya
+The Android app bundles ONNX Runtime for Android (com.microsoft.onnxruntime:onnxruntime-android), and reins-laya
 downloads the ONNX Runtime library through the `ort` crate. https://github.com/microsoft/onnxruntime
 Copyright (c) Microsoft Corporation. Licensed under the MIT License.
 
@@ -149,7 +149,7 @@ a connection belongs to and do not imply endorsement. See also android/app/src/m
 
 
 ================================================================================================================
-EFF large wordlist (crates/rewarden-core/src/connector/vault/eff_large_wordlist.txt)
+EFF large wordlist (crates/reins-core/src/connector/vault/eff_large_wordlist.txt)
 ================================================================================================================
 
 The passphrase generator uses the EFF's Large Wordlist for Passphrases, https://www.eff.org/dice

@@ -1,0 +1,37 @@
+[package]
+name = "reins-e2e"
+version = "0.1.0"
+repository.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+reins-core = { path = "../reins-core", features = ["testing"] }
+async-trait = "0.1.92"
+data-encoding = "2.11.1"
+reqwest = { version = "0.13.5", default-features = false, features = ["json", "form", "query"] }
+ring = "0.17.14"
+rustls = { version = "0.23.44", default-features = false, features = ["ring", "std"] }
+serde_json = "1.0.151"
+tempfile = "3.27.0"
+tokio = { version = "1.53.1", features = ["rt-multi-thread", "time", "macros", "process"] }
+url = "2.5.8"
+uuid = { version = "1.26.0", features = ["v4"] }
+wiremock = "0.6.5"
+zeroize = "1.9.0"
+
+[dev-dependencies]
+# tests/desktop_phone.rs: the desktop daemon against the real server and phone core (and its shared test support,
+# crates/reins-desktop/tests/proxy_support).
+reins-desktop = { path = "../reins-desktop" }
+reins-proto = { path = "../reins-proto" }
+bytes = "1.12.1"
+http-body-util = "0.1.5"
+hyper = { version = "1.11.1", features = ["server", "http1"] }
+hyper-util = { version = "0.1.20", features = ["tokio"] }
+log = "0.4.34"
+
+[lints]
+workspace = true

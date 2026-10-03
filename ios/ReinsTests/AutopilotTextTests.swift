@@ -20,7 +20,7 @@ final class AutopilotTextTests: XCTestCase {
     }
 
     private func suggestion(verdict: Verdict = .approve, pDeny: Float = 0.02, floor: Bool = false, novel: Bool = false, judged: Bool = true,
-                            reason: String = "Like 4 times you approved: Push to a branch · dkat/rewarden") -> SuggestionView {
+                            reason: String = "Like 4 times you approved: Push to a branch · dkat/reins") -> SuggestionView {
         SuggestionView(requestId: "req1", verdict: verdict, mode: .assisted, pApprove: 0.97, pDeny: pDeny, confidence: 0.91, reason: reason,
                        neighbours: [], profileId: "personal", profileName: "Personal", classKey: "github/write/push", novel: novel,
                        floor: floor, judged: judged)
@@ -28,7 +28,7 @@ final class AutopilotTextTests: XCTestCase {
 
     private func decision(_ verdict: Verdict = .approve, by: String = "autopilot") -> AutoDecisionView {
         AutoDecisionView(requestId: "req1", kind: .request, connectionId: "c1", connectionLabel: "Claude Code",
-                         title: "Push to a branch · dkat/rewarden", verdict: verdict, decidedBy: by, pApprove: 0.97, confidence: 0.91, activityId: 42)
+                         title: "Push to a branch · dkat/reins", verdict: verdict, decidedBy: by, pApprove: 0.97, confidence: 0.91, activityId: 42)
     }
 
     func testSwitchingModesSoundsLikeWhatItLetsHappen() {
@@ -80,7 +80,7 @@ final class AutopilotTextTests: XCTestCase {
         XCTAssertEqual(AutopilotText.decisionTitle(decision(.deny, by: "lockdown")), "Denied by Lockdown")
         XCTAssertEqual(AutopilotText.decisionDetail(decision()), "91% sure")
         XCTAssertNil(AutopilotText.decisionDetail(decision(by: "bypass")))
-        XCTAssertEqual(AutopilotText.decisionText(decision()), "Push to a branch · dkat/rewarden — Claude Code")
+        XCTAssertEqual(AutopilotText.decisionText(decision()), "Push to a branch · dkat/reins — Claude Code")
     }
 
     func testSuggestionsSayWhatAutopilotWouldDoAndWhyItHoldsBack() {

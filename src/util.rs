@@ -305,7 +305,7 @@ const LOGGED_ROUTES: [&str; 10] = [
     "/attachments",
     "/events",
     "/notifications",
-    "/rewarden",
+    "/reins",
     "/mcp",
     "/.well-known",
 ];
@@ -355,8 +355,8 @@ impl Fairing for BetterLogging {
         let uri_path_str = uri_path.url_decode_lossy();
         let uri_subpath = uri_path_str.strip_prefix(&CONFIG.domain_path()).unwrap_or(&uri_path_str);
         if self.0 || LOGGED_ROUTES.iter().any(|r| uri_subpath.starts_with(r)) {
-            // Rewarden blob URLs carry their capability secret in the path.
-            let uri_path_str = crate::api::rewarden::loggable_path(&uri_path_str);
+            // Reins blob URLs carry their capability secret in the path.
+            let uri_path_str = crate::api::reins::loggable_path(&uri_path_str);
             match uri.query() {
                 Some(q) => info!(target: "request", "{method} {uri_path_str}?{}", &q[..q.len().min(30)]),
                 None => info!(target: "request", "{method} {uri_path_str}"),

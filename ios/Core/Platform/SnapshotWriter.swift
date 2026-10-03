@@ -50,7 +50,7 @@ enum SnapshotWriter {
     }
 
     /// Re-reads what widgets show and saves it; keeps the last values of anything that cannot be read.
-    static func update(from core: any RewardenCoreProtocol) async {
+    static func update(from core: any ReinsCoreProtocol) async {
         var s = Snapshot.load()
         s.signedIn = await core.session() != nil
         if let pending = try? await core.pending() {

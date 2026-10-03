@@ -131,7 +131,7 @@ enum AutopilotText {
         operation: Push to a branch
         class: push
         account: dkat
-        target: dkat/rewarden
+        target: dkat/reins
         target is new: no
         details: branch feature/laya (not the default branch); 3 commits; 7 files changed; no force
         --- written by the AI ---
@@ -159,7 +159,7 @@ enum AutopilotText {
         action: ask
         operation: Run a command
         class: command
-        target: cargo test -p rewarden-core
+        target: cargo test -p reins-core
         target is new: no
         --- written by the AI ---
         content: Run the core's tests to check the fix?
@@ -260,7 +260,7 @@ extension AutopilotText {
 
     static func decisionTitle(_ d: AutoDecisionView) -> String { decisionTitle(decidedBy: d.decidedBy, approved: d.verdict == .approve) }
 
-    /// "Push to a branch · dkat/rewarden — Claude Code" (both parts come from outside, so they are cleaned).
+    /// "Push to a branch · dkat/reins — Claude Code" (both parts come from outside, so they are cleaned).
     static func decisionText(_ d: AutoDecisionView) -> String { "\(untrusted(d.title)) — \(untrusted(d.connectionLabel))" }
 
     /// "97% sure" for Autopilot's own decisions; bypass and lockdown do not judge.

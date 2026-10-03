@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Renders the desktop app's icons from the Reins mark (docs/assets/logo.svg) into crates/rewarden-desktop-app/assets/.
+# Renders the desktop app's icons from the Reins mark (docs/assets/logo.svg) into crates/reins-desktop-app/assets/.
 # The PNGs are committed; run this again only when the mark changes. Needs resvg (`cargo install resvg`) or
 # rsvg-convert to render SVG, and ImageMagick 7 (`magick`) to compose and to write the .ico.
 #
@@ -11,7 +11,7 @@
 set -euo pipefail
 
 root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
-out="$root/crates/rewarden-desktop-app/assets/icons"
+out="$root/crates/reins-desktop-app/assets/icons"
 command -v magick >/dev/null || {
     echo "icons.sh needs ImageMagick 7 (magick)" >&2
     exit 1
@@ -36,7 +36,7 @@ svg "$root/docs/assets/logo.svg" 256 "$out/app-256.png"
 svg "$root/docs/assets/logo.svg" 824 "$tmp/plate.png"
 magick -size 1024x1024 xc:none "$tmp/plate.png" -gravity center -composite "$out/app-macos-1024.png"
 for s in 16 24 32 48 64 128 256; do svg "$root/docs/assets/logo.svg" "$s" "$tmp/ico-$s.png"; done
-magick "$tmp"/ico-{16,24,32,48,64,128,256}.png "$root/crates/rewarden-desktop-app/packaging/windows/Reins.ico"
+magick "$tmp"/ico-{16,24,32,48,64,128,256}.png "$root/crates/reins-desktop-app/packaging/windows/Reins.ico"
 
 # The tray glyphs: the shield of the mark with what is inside it saying the state.
 shield='M12,3l7.5,3v5.5c0,4.6 -3.1,8.4 -7.5,9.5 -4.4,-1.1 -7.5,-4.9 -7.5,-9.5V6z'

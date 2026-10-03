@@ -3,33 +3,33 @@
 Reins connects to AI harnesses in two ways:
 
 - **MCP tools.** The agent gets tools for the services connected on your phone (`gmail_search`, `github_pr_create`,
-  `calendar_create_event`, ...) plus Reins's own tools (`rewarden_get_result`, `rewarden_request_access`,
-  `rewarden_list_accounts`, `rewarden_upload`). Every call goes to your phone.
-- **Hooks.** Before the harness runs a shell command or touches a file, it asks `rewarden hook <harness>`. Commands and
+  `calendar_create_event`, ...) plus Reins's own tools (`reins_get_result`, `reins_request_access`,
+  `reins_list_accounts`, `reins_upload`). Every call goes to your phone.
+- **Hooks.** Before the harness runs a shell command or touches a file, it asks `reins hook <harness>`. Commands and
   files that match the guard rules go to your phone. Everything else passes through untouched.
 
-Git needs neither: once `rewarden resume` (or `rewarden git setup`) is done, every git command on the computer goes
+Git needs neither: once `reins resume` (or `reins git setup`) is done, every git command on the computer goes
 through the desktop app, whichever harness runs it.
 
 ## Prerequisites
 
 ```sh
 curl -fsSL https://reins2fa.com/install.sh | sh
-rewarden login     # the hosted server; on your own: rewarden login https://reins.example.com
+reins login     # the hosted server; on your own: reins login https://reins.example.com
 ```
 
-On Windows, in PowerShell: `irm https://reins2fa.com/install.ps1 | iex`, then the same `rewarden login`.
+On Windows, in PowerShell: `irm https://reins2fa.com/install.ps1 | iex`, then the same `reins login`.
 
-Without `rewarden login`, the MCP server has no server to reach, and the hook asks in a desktop notification instead
+Without `reins login`, the MCP server has no server to reach, and the hook asks in a desktop notification instead
 of on your phone.
 
 ## Commands
 
 ```sh
-rewarden harness add <harness>       # register the MCP server and the hook
-rewarden harness add --all           # the same for every harness found on this computer
-rewarden harness remove <harness>    # take out exactly what add put in
-rewarden harness list [<harness>]    # what is set up, for one harness or all
+reins harness add <harness>       # register the MCP server and the hook
+reins harness add --all           # the same for every harness found on this computer
+reins harness remove <harness>    # take out exactly what add put in
+reins harness list [<harness>]    # what is set up, for one harness or all
 ```
 
 `<harness>` is `claude-code`, `codex`, `gemini` or `cursor` (`claude` and `gemini-cli` also work). A harness counts as
@@ -39,38 +39,38 @@ found when its settings directory is in your home directory (`~/.claude` or `~/.
 exactly these.
 
 `add` edits the harness's settings files as text. It inserts one entry per file and leaves the rest of the file as
-it was. It records what it changed in `~/.local/state/rewarden/harnesses.json`. `remove` uses that record to restore
-each file byte for byte, as long as nobody edited around the entry in the meantime. If an entry named `rewarden`
+it was. It records what it changed in `~/.local/state/reins/harnesses.json`. `remove` uses that record to restore
+each file byte for byte, as long as nobody edited around the entry in the meantime. If an entry named `reins`
 already exists with a different value, `add` stops and says so. It does not overwrite.
 
-The MCP server entry runs `rewarden mcp --via "<Harness name>"`, a stdio MCP server that forwards to
+The MCP server entry runs `reins mcp --via "<Harness name>"`, a stdio MCP server that forwards to
 `<server>/mcp` with the desktop app's session. The name is shown on your phone ("Laptop · Claude Code"). The hook
-entry runs `rewarden hook <harness>` with a timeout 30 s longer than the guard's own.
+entry runs `reins hook <harness>` with a timeout 30 s longer than the guard's own.
 
 ### Windows
 
 `~` is your profile folder (`%USERPROFILE%`, for example `C:\Users\me`): the harnesses keep their settings there on
 Windows too, so the files below are the same (`C:\Users\me\.claude.json`, `C:\Users\me\.codex\config.toml`, ...). The
-record of what `add` changed is in `%LOCALAPPDATA%\rewarden\harnesses.json`, and the guard settings in
-`%APPDATA%\rewarden\config.toml`.
+record of what `add` changed is in `%LOCALAPPDATA%\reins\harnesses.json`, and the guard settings in
+`%APPDATA%\reins\config.toml`.
 
-The MCP server entry names `rewarden.exe` by its full path. Harnesses run hook commands through a shell, and which one
+The MCP server entry names `reins.exe` by its full path. Harnesses run hook commands through a shell, and which one
 differs (Claude Code uses Git Bash, or PowerShell without it; others use PowerShell or cmd), so the hook command is
 written in the one form all of them run: the path with forward slashes and no quotes,
-`C:/Users/me/AppData/Local/Programs/Reins/rewarden.exe hook claude-code`. When the path needs quotes (a space in your
-user name), the hook runs plain `rewarden` if that folder is on your `PATH` (the install script puts it there), else
-the quoted path, which Git Bash and cmd run but PowerShell does not. Run `rewarden harness add` again after moving
-`rewarden.exe`.
+`C:/Users/me/AppData/Local/Programs/Reins/reins.exe hook claude-code`. When the path needs quotes (a space in your
+user name), the hook runs plain `reins` if that folder is on your `PATH` (the install script puts it there), else
+the quoted path, which Git Bash and cmd run but PowerShell does not. Run `reins harness add` again after moving
+`reins.exe`.
 
 ## Claude Code
 
 ```sh
-rewarden harness add claude-code
+reins harness add claude-code
 ```
 
 | What | Where |
 |---|---|
-| MCP server `rewarden` (stdio) | `~/.claude.json`, `mcpServers` |
+| MCP server `reins` (stdio) | `~/.claude.json`, `mcpServers` |
 | `PreToolUse` hook, matcher `Bash\|Edit\|Write\|MultiEdit\|NotebookEdit\|Read` | `~/.claude/settings.json`, `hooks.PreToolUse` |
 
 Restart Claude Code. `/mcp` and `/hooks` show the new entries.
@@ -85,12 +85,12 @@ server. It signs in through the browser with the same two-digit code. That gives
 ## Codex
 
 ```sh
-rewarden harness add codex
+reins harness add codex
 ```
 
 | What | Where |
 |---|---|
-| MCP server table `[mcp_servers.rewarden]` | `~/.codex/config.toml` |
+| MCP server table `[mcp_servers.reins]` | `~/.codex/config.toml` |
 | `PreToolUse` hook, matcher `^(Bash\|apply_patch)$` | `~/.codex/hooks.json`, `hooks.PreToolUse` |
 
 Restart Codex, then **trust the hook once with `/hooks`**. Codex runs only hooks you have reviewed. For `apply_patch`
@@ -100,12 +100,12 @@ ask and nobody answered, the hook stays silent and Codex's own approval policy d
 ## Gemini CLI
 
 ```sh
-rewarden harness add gemini
+reins harness add gemini
 ```
 
 | What | Where |
 |---|---|
-| MCP server `rewarden` | `~/.gemini/settings.json`, `mcpServers` |
+| MCP server `reins` | `~/.gemini/settings.json`, `mcpServers` |
 | `BeforeTool` hook, matcher `^(run_shell_command\|write_file\|replace\|read_file)$` | `~/.gemini/settings.json`, `hooks.BeforeTool` |
 
 Restart Gemini CLI. `/mcp` and `/hooks` show the entries. Gemini's hook answers are `allow` or `deny`. "No answer"
@@ -114,12 +114,12 @@ with `on_no_answer = "ask"` leaves the decision to Gemini CLI.
 ## Cursor
 
 ```sh
-rewarden harness add cursor
+reins harness add cursor
 ```
 
 | What | Where |
 |---|---|
-| MCP server `rewarden` (stdio) | `~/.cursor/mcp.json`, `mcpServers` |
+| MCP server `reins` (stdio) | `~/.cursor/mcp.json`, `mcpServers` |
 | hooks `beforeShellExecution`, `beforeReadFile`, `preToolUse` (matcher `Write\|Delete`) | `~/.cursor/hooks.json` (`"version": 1` is added if missing) |
 
 Restart Cursor. Settings → MCP and Hooks show the entries. Cursor's file hooks know only `allow` and `deny`, so
@@ -136,7 +136,7 @@ same way. One limit: requests sent from a web page are accepted only from the Cl
 
 ## The guard rules (`[guard]`)
 
-The hook sends a command or file to your phone when it matches a rule in `~/.config/rewarden/config.toml`:
+The hook sends a command or file to your phone when it matches a rule in `~/.config/reins/config.toml`:
 
 ```toml
 [guard]

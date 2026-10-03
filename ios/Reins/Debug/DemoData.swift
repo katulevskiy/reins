@@ -4,9 +4,9 @@ import UIKit
 /// The `-demo` core's sample data: builders with sensible defaults (Android's `TestData`) and the seeded world the
 /// screens open on (what Android's `ScreenshotsTest` sets up), with every time relative to launch so countdowns run.
 enum DemoData {
-    static let server = "https://rewarden.example.com"
+    static let server = "https://reins.example.com"
     static let email = "me@example.com"
-    static let desktop = "Rewarden desktop app on laptop"
+    static let desktop = "Reins desktop app on laptop"
     /// The demo account's recovery code (`AccountSecret`'s format: thirteen groups of four, base32).
     static let recoveryCode = "TKRQ-7HXM-2PLA-W4ZD-QE6N-B3VY-JF5C-K8SU-RM2G-XT7H-NAPQ-D6WL-ZE4B"
 
@@ -51,7 +51,7 @@ enum DemoData {
 
     static func pairingItem(_ p: PairingView) -> PendingItem {
         PendingItem(
-            kind: .pairing, id: p.id, title: "Connect \(p.clientName) to Rewarden?", subtitle: p.clientHost, createdAt: p.createdAt,
+            kind: .pairing, id: p.id, title: "Connect \(p.clientName) to Reins?", subtitle: p.clientHost, createdAt: p.createdAt,
             connectionId: "", connectionLabel: p.clientName, action: "pair", count: 1, service: "", account: nil, waitUntil: nil,
             op: "", opTitle: "", suggestion: nil
         )
@@ -108,7 +108,7 @@ enum DemoData {
         [
             GitFileView(path: "src/auth/session.rs", status: "modified", additions: 42, deletions: 7, binary: false),
             GitFileView(path: "src/auth/login.rs", status: "added", additions: 88, deletions: 0, binary: false),
-            GitFileView(path: "crates/rewarden-core/src/connector/github/very/deeply/nested/module/path/git.rs", status: "modified", additions: 12, deletions: 3, binary: false),
+            GitFileView(path: "crates/reins-core/src/connector/github/very/deeply/nested/module/path/git.rs", status: "modified", additions: 12, deletions: 3, binary: false),
             GitFileView(path: "assets/logo.png", status: "added", additions: nil, deletions: nil, binary: true),
             GitFileView(path: "src/old_login.rs", status: "deleted", additions: 0, deletions: 64, binary: false),
             GitFileView(path: "scripts/run.sh", status: "type_changed", additions: 0, deletions: 0, binary: false),
@@ -366,7 +366,7 @@ enum DemoData {
 
         // Pairings: an AI on the web (three codes to pick from), and the desktop app with its key's digits.
         let pair1 = PairingView(id: "pair1", clientName: "Gemini", clientHost: "gemini.google.com", choices: Data([7, 42, 88]), createdAt: now - 12, keyFingerprint: nil)
-        let pair2 = PairingView(id: "pair2", clientName: "Rewarden desktop app on studio", clientHost: "studio", choices: Data([19, 63, 5]), createdAt: now - 600, keyFingerprint: "4821 9930")
+        let pair2 = PairingView(id: "pair2", clientName: "Reins desktop app on studio", clientHost: "studio", choices: Data([19, 63, 5]), createdAt: now - 600, keyFingerprint: "4821 9930")
         items.append(pairingItem(pair1))
         items.append(pairingItem(pair2))
 
@@ -452,10 +452,10 @@ enum DemoData {
             mode: mode, suggested: suggested, pApprove: pApprove, pDeny: 1 - pApprove, confidence: 0.93, profileId: "personal",
             profileName: "Personal",
             neighbours: suggested == .approve
-                ? ["approved: Push to a branch · dkat/rewarden", "approved: Push to a branch · dkat/laya"]
+                ? ["approved: Push to a branch · dkat/reins", "approved: Push to a branch · dkat/laya"]
                 : ["denied: Send an email · unknown recipient", "denied: Forward emails · outside address"],
             reason: suggested == .approve
-                ? "Like 4 times you approved: Push to a branch · dkat/rewarden"
+                ? "Like 4 times you approved: Push to a branch · dkat/reins"
                 : "Like 2 times you denied: Send an email · unknown recipient",
             correctable: correctable
         )
@@ -474,7 +474,7 @@ enum DemoData {
         ]
         return [
             entry(14, at: now - 60, conn: "c6", label: desktop, action: "write", outcome: "sent",
-                  detail: "feature/laya → dkat/rewarden · 3 commits", service: "github", account: "dkat", op: "git_push",
+                  detail: "feature/laya → dkat/reins · 3 commits", service: "github", account: "dkat", op: "git_push",
                   opTitle: "Push to a branch", decidedBy: "autopilot", autopilot: note()),
             entry(13, at: now - 300, conn: "c4", label: "notes-bot", action: "send", outcome: "denied",
                   detail: "To backup-svc@protonmail.example", count: 1,
@@ -645,15 +645,15 @@ enum DemoData {
 
     static func neighbours(_ now: Int64) -> [NeighbourView] {
         [
-            NeighbourView(label: "Push to a branch · dkat/rewarden", verdict: .approve, similarity: 0.97, at: now - 3_600),
+            NeighbourView(label: "Push to a branch · dkat/reins", verdict: .approve, similarity: 0.97, at: now - 3_600),
             NeighbourView(label: "Push to a branch · dkat/laya", verdict: .approve, similarity: 0.91, at: now - 86_400),
-            NeighbourView(label: "Force push · dkat/rewarden", verdict: .deny, similarity: 0.74, at: now - 86_400 * 3),
+            NeighbourView(label: "Force push · dkat/reins", verdict: .deny, similarity: 0.74, at: now - 86_400 * 3),
         ]
     }
 
     static func suggestion(
         _ id: String, _ verdict: Verdict = .approve, pApprove: Float = 0.97, pDeny: Float = 0.02, confidence: Float = 0.91,
-        floor: Bool = false, novel: Bool = false, judged: Bool = true, reason: String = "Like 4 times you approved: Push to a branch · dkat/rewarden",
+        floor: Bool = false, novel: Bool = false, judged: Bool = true, reason: String = "Like 4 times you approved: Push to a branch · dkat/reins",
         neighbours: [NeighbourView], classKey: String = "github/write/push"
     ) -> SuggestionView {
         SuggestionView(

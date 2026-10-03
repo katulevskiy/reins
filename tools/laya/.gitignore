@@ -1,4 +1,4 @@
-# Weights, exports and datasets live under ~/.cache/rewarden-laya/, never here.
+# Weights, exports and datasets live under ~/.cache/reins-laya/, never here.
 *.onnx
 *.onnx.data
 *.safetensors

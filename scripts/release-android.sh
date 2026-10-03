@@ -1,45 +1,45 @@
 #!/usr/bin/env bash
-# Publishes the Rewarden Android app from the current commit: builds the release APK (the `full` flavor: text messages
+# Publishes the Reins Android app from the current commit: builds the release APK (the `full` flavor: text messages
 # and the in-app updater) with an automatic version,
 # signs it with the app's key, uploads it, then switches the permanent link to it:
 #
-#   $REWARDEN_SITE/rewarden.apk  the latest APK
+#   $REINS_SITE/reins.apk  the latest APK
 #
-# The app's updater reads releases/android/latest.json; the download page, $REWARDEN_SITE/app, is the website's. Run
+# The app's updater reads releases/android/latest.json; the download page, $REINS_SITE/app, is the website's. Run
 # from anywhere in the repository:
 #
 #   scripts/release-android.sh            # refuses uncommitted changes
 #   scripts/release-android.sh --dirty    # publish anyway (the build id says so)
 #
 # Settings, from the environment or scripts/release.env (see scripts/release.env.example):
-#   REWARDEN_SITE                  the site that serves the releases (required)
-#   REWARDEN_SERVER                the sign-in screen's server (rewarden.defaultServer in android/gradle.properties)
-#   REWARDEN_RELEASE_SSH           SSH destination to upload to (required)
-#   REWARDEN_RELEASE_DIR           directory on it that the site serves as /releases (required)
-#   REWARDEN_ANDROID_CERT_SHA1     SHA-1 of the certificate every release must be signed with, so a wrong key never
+#   REINS_SITE                  the site that serves the releases (required)
+#   REINS_SERVER                the sign-in screen's server (reins.defaultServer in android/gradle.properties)
+#   REINS_RELEASE_SSH           SSH destination to upload to (required)
+#   REINS_RELEASE_DIR           directory on it that the site serves as /releases (required)
+#   REINS_ANDROID_CERT_SHA1     SHA-1 of the certificate every release must be signed with, so a wrong key never
 #                                  ships (required)
-#   REWARDEN_ANDROID_KEYSTORE      keystore to sign with (~/.android/debug.keystore)
-#   REWARDEN_ANDROID_KEYSTORE_PASS its password (android)
-#   REWARDEN_RELEASE_KEEP          APKs kept on the server (5)
+#   REINS_ANDROID_KEYSTORE      keystore to sign with (~/.android/debug.keystore)
+#   REINS_ANDROID_KEYSTORE_PASS its password (android)
+#   REINS_RELEASE_KEEP          APKs kept on the server (5)
 #
 # The Google Play build is the `play` flavor, an app bundle this script does not make or upload (android/PLAY_STORE.md):
 #
-#   (cd android && ./gradlew bundlePlayRelease -Prewarden.versionCode=N -Prewarden.versionName=0.1.0 \
-#       -Prewarden.build=0.1.0-N)   # app/build/outputs/bundle/playRelease/app-play-release.aab
+#   (cd android && ./gradlew bundlePlayRelease -Preins.versionCode=N -Preins.versionName=0.1.0 \
+#       -Preins.build=0.1.0-N)   # app/build/outputs/bundle/playRelease/app-play-release.aab
 set -euo pipefail
 
 source "$(dirname "${BASH_SOURCE[0]}")/release-env.sh"
-require_settings REWARDEN_SITE REWARDEN_RELEASE_SSH REWARDEN_RELEASE_DIR REWARDEN_ANDROID_CERT_SHA1
+require_settings REINS_SITE REINS_RELEASE_SSH REINS_RELEASE_DIR REINS_ANDROID_CERT_SHA1
 
-SSH_TARGET="$REWARDEN_RELEASE_SSH"
-REMOTE_DIR="$REWARDEN_RELEASE_DIR"
-SITE="${REWARDEN_SITE%/}"
-KEYSTORE="${REWARDEN_ANDROID_KEYSTORE:-$HOME/.android/debug.keystore}"
-KEYSTORE_PASS="${REWARDEN_ANDROID_KEYSTORE_PASS:-android}"
-CERT_SHA1="$REWARDEN_ANDROID_CERT_SHA1"
-KEEP="${REWARDEN_RELEASE_KEEP:-5}"
+SSH_TARGET="$REINS_RELEASE_SSH"
+REMOTE_DIR="$REINS_RELEASE_DIR"
+SITE="${REINS_SITE%/}"
+KEYSTORE="${REINS_ANDROID_KEYSTORE:-$HOME/.android/debug.keystore}"
+KEYSTORE_PASS="${REINS_ANDROID_KEYSTORE_PASS:-android}"
+CERT_SHA1="$REINS_ANDROID_CERT_SHA1"
+KEEP="${REINS_RELEASE_KEEP:-5}"
 server_arg=()
-if [[ -n "${REWARDEN_SERVER:-}" ]]; then server_arg=("-Prewarden.defaultServer=${REWARDEN_SERVER%/}"); fi
+if [[ -n "${REINS_SERVER:-}" ]]; then server_arg=("-Preins.defaultServer=${REINS_SERVER%/}"); fi
 
 dirty_ok=false
 [[ "${1:-}" == "--dirty" ]] && dirty_ok=true
@@ -67,24 +67,24 @@ if [[ -n "$(git status --porcelain --untracked-files=no)" ]]; then
     }
     sha="$sha.dirty"
 fi
-version="$(sed -n 's/.*"rewarden.versionName").getOrElse("\([^"]*\)").*/\1/p' android/app/build.gradle.kts | head -1)"
+version="$(sed -n 's/.*"reins.versionName").getOrElse("\([^"]*\)").*/\1/p' android/app/build.gradle.kts | head -1)"
 version="${version:-0.1.0}"
 build_time="$(date -u +%s)"
 version_code="$((build_time / 60))"
 build="$version-$(date -u -d "@$build_time" +%Y%m%d%H%M)-$sha"
-file="rewarden-$build.apk"
+file="reins-$build.apk"
 echo "Android release $build (versionCode $version_code)"
 
 stage="$(mktemp -d)"
 trap 'rm -rf "$stage"' EXIT
 # Screens with secrets are never capturable in a published APK, whatever ~/.gradle/gradle.properties says.
 (cd android && ./gradlew assembleFullRelease -q \
-    "-Prewarden.secureScreens=true" \
-    "-Prewarden.site=$SITE" \
+    "-Preins.secureScreens=true" \
+    "-Preins.site=$SITE" \
     ${server_arg[@]+"${server_arg[@]}"} \
-    "-Prewarden.versionCode=$version_code" \
-    "-Prewarden.versionName=$version" \
-    "-Prewarden.build=$build")
+    "-Preins.versionCode=$version_code" \
+    "-Preins.versionName=$version" \
+    "-Preins.build=$build")
 "$build_tools/zipalign" -f -P 16 4 android/app/build/outputs/apk/full/release/app-full-release.apk "$stage/aligned.apk"
 "$build_tools/apksigner" sign --ks "$KEYSTORE" --ks-pass "pass:$KEYSTORE_PASS" --key-pass "pass:$KEYSTORE_PASS" \
     --out "$stage/$file" "$stage/aligned.apk"
@@ -114,21 +114,21 @@ scp -q "$stage/latest.json" "$SSH_TARGET:$REMOTE_DIR/android/.incoming/"
 # The APK is in place first; the link and latest.json then switch with atomic renames. The download page ($SITE/app)
 # belongs to the website, not to this script.
 ssh "$SSH_TARGET" "set -e; cd '$REMOTE_DIR/android'; chmod 644 'files/$file' .incoming/*;
-    ln -sfn 'files/$file' rewarden.apk.new && mv -Tf rewarden.apk.new rewarden.apk;
+    ln -sfn 'files/$file' reins.apk.new && mv -Tf reins.apk.new reins.apk;
     mv -f .incoming/latest.json latest.json;
     ls -1t files/ | tail -n +$((KEEP + 1)) | sed 's|^|files/|' | xargs -r rm -f"
 
-cp "$stage/$file" "$HOME/Downloads/rewarden.apk" 2>/dev/null || true
+cp "$stage/$file" "$HOME/Downloads/reins.apk" 2>/dev/null || true
 published="$(curl -fsS "$SITE/releases/android/latest.json")"
 [[ "$published" == *"$build"* ]] || {
     echo "the server does not show the new release: $published" >&2
     exit 1
 }
-served="$(curl -fsSL "$SITE/rewarden.apk" | sha256sum | cut -d' ' -f1)"
+served="$(curl -fsSL "$SITE/reins.apk" | sha256sum | cut -d' ' -f1)"
 [[ "$served" == "$apk_sha" ]] || {
-    echo "$SITE/rewarden.apk is not the new APK" >&2
+    echo "$SITE/reins.apk is not the new APK" >&2
     exit 1
 }
 echo "Published $build"
 echo "  page: $SITE/app"
-echo "  apk:  $SITE/rewarden.apk"
+echo "  apk:  $SITE/reins.apk"

@@ -4,7 +4,7 @@
 #
 #   ios/scripts/live-onboarding.sh [simulator name or UDID] [dir]      (defaults "Reins e2e", /tmp/reins-onboarding)
 #
-# The host half (`cargo run -p rewarden-e2e --example ios_onboarding`) starts the server with no account, waits for the
+# The host half (`cargo run -p reins-e2e --example ios_onboarding`) starts the server with no account, waits for the
 # phone to have created it (<dir>/created), then plays the desktop app: it starts the device flow, prints the pairing
 # code and the number the computer shows, and makes an authenticated call once the phone approved. The phone half
 # (ReinsUITests/LiveOnboardingUITests) creates the account through "Use another server", allows notifications, opens
@@ -43,7 +43,7 @@ xcrun simctl spawn "$UDID" notifyutil -s com.apple.BiometricKit.enrollmentChange
 xcrun simctl spawn "$UDID" notifyutil -p com.apple.BiometricKit.enrollmentChanged
 
 echo "building the server and the host half"
-(cd "$ROOT" && cargo build -q --features sqlite --bin vaultwarden && cargo build -q -p rewarden-e2e --example ios_onboarding)
+(cd "$ROOT" && cargo build -q --features sqlite --bin vaultwarden && cargo build -q -p reins-e2e --example ios_onboarding)
 # Run the example binary itself: under `cargo run`, the server build it starts sees cargo's variables and rebuilds.
 (cd "$ROOT" && exec "${CARGO_TARGET_DIR:-$ROOT/target}/debug/examples/ios_onboarding" "$OUT") >"$OUT/host.log" 2>&1 &
 HOST=$!

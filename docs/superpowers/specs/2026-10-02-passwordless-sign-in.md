@@ -6,7 +6,7 @@ A new user never sets a password: "Continue" in the phone apps signs in through 
 GitHub, Microsoft, an email code; WorkOS verifies emails and keeps bots out), the phone makes the vault's keys itself,
 and WorkOS's user lifecycle follows into Reins.
 
-## Sign-in (server: `src/sso.rs`, `src/sso_workos.rs`; core: `crates/rewarden-core/src/sso.rs`, `account.rs`)
+## Sign-in (server: `src/sso.rs`, `src/sso_workos.rs`; core: `crates/reins-core/src/sso.rs`, `account.rs`)
 
 The fork's Vaultwarden SSO flow, with WorkOS spoken to through its User Management API (`SSO_PROVIDER=workos`, picked
 automatically for an `SSO_AUTHORITY` on `api.workos.com`). AuthKit's OpenID discovery document is unusable by a generic
@@ -58,17 +58,17 @@ and the apps show the master-password forms under "Use another server".
   dashes ignored) or, when the text is not a code, a master password (prelogin KDF, email salt), for accounts made
   with one.
 
-## Another phone (proto: `rewarden-proto/src/join.rs`; server: `src/api/rewarden/join.rs`; core: `join.rs`)
+## Another phone (proto: `reins-proto/src/join.rs`; server: `src/api/reins/join.rs`; core: `join.rs`)
 
 In memory on the server for 10 minutes (`ITEM_TTL`), at most 3 open per account, one per device.
 
 | Call | Who | Body / answer |
 |---|---|---|
-| `POST /rewarden/api/joins` | a signed-in device of the account that is not its approval device (409 when the account has none) | `NewJoin {v, device_name, public_key}` (X25519, base64url) → `JoinCreated {id, expires_at}`; push `{t: "join", id}` to the approval device |
-| `GET /rewarden/api/pending` | the approval device | `Pending.joins: [JoinRequest {v, id, device_name, public_key, created_at}]` |
-| `GET /rewarden/api/joins/<id>` | the asking device | `JoinState {status: waiting \| approved \| denied \| expired, sealed?}` |
-| `GET /rewarden/api/joins/<id>` | the approval device | `JoinRequest` while waiting |
-| `POST /rewarden/api/joins/<id>/response` | the approval device | `JoinAnswer {v, approve, sealed?}` → 204; 404 gone, 409 answered |
+| `POST /reins/api/joins` | a signed-in device of the account that is not its approval device (409 when the account has none) | `NewJoin {v, device_name, public_key}` (X25519, base64url) → `JoinCreated {id, expires_at}`; push `{t: "join", id}` to the approval device |
+| `GET /reins/api/pending` | the approval device | `Pending.joins: [JoinRequest {v, id, device_name, public_key, created_at}]` |
+| `GET /reins/api/joins/<id>` | the asking device | `JoinState {status: waiting \| approved \| denied \| expired, sealed?}` |
+| `GET /reins/api/joins/<id>` | the approval device | `JoinRequest` while waiting |
+| `POST /reins/api/joins/<id>/response` | the approval device | `JoinAnswer {v, approve, sealed?}` → 204; 404 gone, 409 answered |
 
 - Both phones show `join_code(public_key)`: six digits of `SHA-256("reins-join-key/1" || key)`, "482 193". The approval
   device computes it from the key the server relayed, so a swapped key shows a different code.
@@ -80,17 +80,17 @@ In memory on the server for 10 minutes (`ITEM_TTL`), at most 3 open per account,
 - After `Joined`, the new phone registers as the approval device; the approval is its proof (below), and the old phone
   gets `replaced`.
 
-## Taking the approval role (server: `src/api/rewarden/device_api.rs`; core: `engine.rs` `register_device`)
+## Taking the approval role (server: `src/api/reins/device_api.rs`; core: `engine.rs` `register_device`)
 
 Signing in proves only that someone controls the identity (WorkOS) or knows the password; it no longer makes a device
 the approval device by itself.
 
 - **Device key.** The core makes 32 random bytes once (store secret `reins.device-key`) and sends them, base64url,
   as `Reins-Device-Key` with every phone-API call (`PhoneApi`, `mcp/server_api.rs`; never to another host). The server
-  keeps `SHA-256` hex in `rewarden_devices.key_hash` (migration `2026-10-02-100000_rewarden_device_key`). The caller is
+  keeps `SHA-256` hex in `reins_devices.key_hash` (migration `2026-10-02-100000_reins_device_key`). The caller is
   the approval device when the Vaultwarden device id and the key both match (`is_caller`); a row without a key (from
   before) matches on the id and takes the key of its device's next registration.
-- **`PUT /rewarden/api/device`** (`DeviceRegistration {fcm_token, master_password_hash?}`): no proof when the account
+- **`PUT /reins/api/device`** (`DeviceRegistration {fcm_token, master_password_hash?}`): no proof when the account
   has no approval device or the caller is it. Otherwise one of:
   1. an approval of the caller's join request (`JoinHub::take_takeover`): status approved, within `TAKEOVER_TTL`
      (5 minutes) of the answer, asked with the caller's device key, spent by the first use;
@@ -98,9 +98,9 @@ the approval device by itself.
      (`AccountSecret::master_password_hash`) or of the master password (the login hash).
 
   Missing: `403 proof_required`; wrong: `403 wrong_proof`, counted per account (`limits::DEVICE_PROOFS`,
-  `REWARDEN_DEVICE_PROOF_MAX_FAILURES` = 5 in `REWARDEN_DEVICE_PROOF_WINDOW_SECONDS` = 900); at the limit every proof
+  `REINS_DEVICE_PROOF_MAX_FAILURES` = 5 in `REINS_DEVICE_PROOF_WINDOW_SECONDS` = 900); at the limit every proof
   gets `429 rate_limited` until the oldest failure ages out. Both 403s carry the message
-  `rewarden_proto::device::TAKEOVER_REFUSED`.
+  `reins_proto::device::TAKEOVER_REFUSED`.
 - **Core.** `register_device` first sends no proof; on a 403 above it computes one (the hash of the password this
   session signed in or unlocked with, kept in memory until the registration succeeds, else of the account secret in
   the store; PBKDF2 off the async threads) and tries once more. Without a proof, or refused again:
@@ -113,26 +113,26 @@ the approval device by itself.
   leads to the screen. Android: a flag kept in `DeviceStatusStore`, a **Not now** link back to the app, and
   `RegisterDeviceWorker` gives up on this error instead of retrying.
 
-## WorkOS lifecycle (server: `src/api/rewarden/workos_sync.rs`)
+## WorkOS lifecycle (server: `src/api/reins/workos_sync.rs`)
 
 A task polls `GET https://api.workos.com/events?events=user.updated,user.deleted,session.revoked&limit=100&after=<id>`
-every `REWARDEN_WORKOS_SYNC_SECS` (30; 0 disables) and on a signed webhook delivery (`POST /rewarden/workos/webhook`,
-`WorkOS-Signature: t=<ms>, v1=<hex HMAC-SHA256("<t>.<body>")>`, 5 minutes tolerance, `REWARDEN_WORKOS_WEBHOOK_SECRET`;
-the body is ignored). The cursor (`rewarden_settings` `workos.events.after`) moves after each applied event.
+every `REINS_WORKOS_SYNC_SECS` (30; 0 disables) and on a signed webhook delivery (`POST /reins/workos/webhook`,
+`WorkOS-Signature: t=<ms>, v1=<hex HMAC-SHA256("<t>.<body>")>`, 5 minutes tolerance, `REINS_WORKOS_WEBHOOK_SECRET`;
+the body is ignored). The cursor (`reins_settings` `workos.events.after`) moves after each applied event.
 
 - `user.updated` with `email_verified: true` and a new email: the account's email changes (refused and logged when
   another account has it); the name follows.
-- `user.deleted`: the Reins data (`rewarden_connections` and their refresh tokens, `rewarden_devices`,
-  `rewarden_sso_sessions`, `sso_users`) and the Vaultwarden account are deleted.
-- `session.revoked`: the device that signed in with that session (`rewarden_sso_sessions`) loses its Vaultwarden
+- `user.deleted`: the Reins data (`reins_connections` and their refresh tokens, `reins_devices`,
+  `reins_sso_sessions`, `sso_users`) and the Vaultwarden account are deleted.
+- `session.revoked`: the device that signed in with that session (`reins_sso_sessions`) loses its Vaultwarden
   device row, so its refresh token and access tokens stop working at once.
 
 ## Checks
 
-- `cargo test -p rewarden-e2e --test sso_workos`: the real server and phone cores against a fake WorkOS (sign-in,
+- `cargo test -p reins-e2e --test sso_workos`: the real server and phone cores against a fake WorkOS (sign-in,
   keys, recovery code, email change, revoked session, deleted user, another phone approved and denied, a phone that
   signed in to the identity refused the approval role until it has the recovery code or the approval).
-- `cargo test --features sqlite --test rewarden_server takeover`: the takeover rule against the real server (first
+- `cargo test --features sqlite --test reins_server takeover`: the takeover rule against the real server (first
   device, same device, another device without, with a right and with wrong proofs, the rate limit, a join approval
   spent once, a device id claimed without its key).
 - `scripts/workos-live.sh`: the same against a WorkOS staging environment, headless (Chrome on AuthKit's hosted page).

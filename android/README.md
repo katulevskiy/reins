@@ -1,6 +1,6 @@
 # Reins for Android
 
-A thin Kotlin + Jetpack Compose shell around the Rust `rewarden-core` library (`crates/rewarden-core`), which owns all
+A thin Kotlin + Jetpack Compose shell around the Rust `reins-core` library (`crates/reins-core`), which owns all
 logic, networking, grant evaluation and encrypted storage. Kotlin only does UI, the Android Keystore, Google's
 `AuthorizationClient` (Gmail tokens, on this phone only), FCM, WorkManager, notifications and `BiometricPrompt`.
 
@@ -14,7 +14,7 @@ export ANDROID_HOME=$HOME/Android/Sdk
 cd android
 ./gradlew assembleFullDebug                    # builds the Rust core (cargo-ndk) and generates the Kotlin bindings
 ./gradlew assembleFullRelease                  # fat-LTO Rust + R8; signed with the debug key for the MVP
-./gradlew assembleFullDebug -Prewarden.rustProfile=release-low   # faster Rust build while iterating
+./gradlew assembleFullDebug -Preins.rustProfile=release-low   # faster Rust build while iterating
 ```
 
 Gradle drives `cargo ndk` and `uniffi-bindgen` itself (`CargoNdkTask`, `UniffiBindgenTask` in `app/build.gradle.kts`).
@@ -22,7 +22,7 @@ Nothing generated is committed. Native libraries are linked with 16 KB page alig
 
 ### Firebase (optional)
 
-`google-services.json` is copied from `~/.config/rewarden/google-services.json` (or `-Prewarden.googleServicesJson=...`)
+`google-services.json` is copied from `~/.config/reins/google-services.json` (or `-Preins.googleServicesJson=...`)
 into `app/google-services.json` (git-ignored) when present. Without it the app builds and runs, gets no push
 notifications, and relies on the foreground long-poll.
 
@@ -41,13 +41,13 @@ deletes its grants and revokes the app's access.
 Activity → Integrations lists every service. Telegram (own account: phone number, code, optional password), GitHub
 (pasted token), Google Calendar / Contacts (like Gmail), the phone's own calendar, contacts and text messages (Android
 permissions) and the password vault (master password once) are each added from their own screen; see
-`docs/deployment.md` for what each needs. Telegram's credentials come from `rewarden.telegramApiId` /
-`rewarden.telegramApiHash` in `~/.gradle/gradle.properties`.
+`docs/deployment.md` for what each needs. Telegram's credentials come from `reins.telegramApiId` /
+`reins.telegramApiHash` in `~/.gradle/gradle.properties`.
 
 ### Onboarding, pairing codes and links
 
 Signed out, the app shows a welcome with one button, "Continue" (`ui/signin`). It calls the core's `ssoBegin` for
-`BuildConfig.DEFAULT_SERVER` (`rewarden.defaultServer`, default `https://app.reins2fa.com`) and opens the server's
+`BuildConfig.DEFAULT_SERVER` (`reins.defaultServer`, default `https://app.reins2fa.com`) and opens the server's
 sign-in page (Google, Apple, GitHub or an email code) in a Custom Tab. The page sends the browser to
 `com.reins2fa.app://sso-callback`, which `platform/SsoRedirectActivity` hands to `MainActivity` (closing the tab), and the
 sign-in screen finishes it with `ssoFinish`. `platform/SsoSignIn` keeps the server, `state` and PKCE verifier in the
@@ -88,7 +88,7 @@ library's own golden corpus (1000 names plus backdrops, by SHA-256 of the markup
 
 ```bash
 ./gradlew testFullDebugUnitTest      # JVM: policy/logic tests + Robolectric Compose flow tests (no device needed)
-./gradlew connectedFullDebugAndroidTest -Pandroid.testInstrumentationRunnerArguments.class=dev.rewarden.android.RealCoreTest
+./gradlew connectedFullDebugAndroidTest -Pandroid.testInstrumentationRunnerArguments.class=dev.reins.android.RealCoreTest
 scripts/device-smoke.sh          # real server + simulated AI on this machine, real core on the emulator
 ```
 
@@ -108,17 +108,17 @@ scripts/device-smoke.sh          # real server + simulated AI on this machine, r
 ## Design review screenshots
 
 ```bash
-./gradlew testFullDebugUnitTest --tests '*Screenshots*' -Drewarden.screenshots=/tmp/shots   # dark and light PNGs of every screen
+./gradlew testFullDebugUnitTest --tests '*Screenshots*' -Dreins.screenshots=/tmp/shots   # dark and light PNGs of every screen
 ```
 
 Rendered through Robolectric with frozen clocks, so they are reproducible. `FLAG_SECURE` (no screenshots of the
 screens that show secrets) is off in debug builds, which the tests use, and on in release builds;
-`-Prewarden.secureScreens=true|false` overrides it for either.
+`-Preins.secureScreens=true|false` overrides it for either.
 
 ## Layout
 
 ```
-app/src/main/java/dev/rewarden/android/
+app/src/main/java/dev/reins/android/
   ReinsApp, AppContainer, MainActivity
   core/       MainSafeCore (every core call on Dispatchers.IO), CoreProvider (test seam)
   platform/   KeystoreKeyWrapper, GmailAuthorizer (per account), Authenticator (BiometricPrompt), AppNotifier, GrantReminders

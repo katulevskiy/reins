@@ -11,7 +11,7 @@ enum GitHubToken {
     /// one its own number. Write access where the tools change something, read for the alert lists, metadata is
     /// always read.
     static let fineGrainedPage =
-        "https://github.com/settings/personal-access-tokens/new?name=Rewarden&description=Lets+my+AI+work+with+my+repositories+through+the+Rewarden+app&expires_in=180"
+        "https://github.com/settings/personal-access-tokens/new?name=Reins&description=Lets+my+AI+work+with+my+repositories+through+the+Reins+app&expires_in=180"
             + "&metadata=read&contents=write&issues=write&pull_requests=write&actions=write&workflows=write&administration=write"
             + "&repository_hooks=write&secrets=write&variables=write&environments=write&checks=write&statuses=write"
             + "&security_events=read&vulnerability_alerts=read&secret_scanning_alerts=read"
@@ -19,14 +19,14 @@ enum GitHubToken {
     /// The classic token page: one token for everything, including the account-level things fine-grained tokens
     /// cannot do.
     static let classicPage =
-        "https://github.com/settings/tokens/new?description=Rewarden&scopes=repo,workflow,gist,notifications,read:org,admin:repo_hook,delete_repo"
+        "https://github.com/settings/tokens/new?description=Reins&scopes=repo,workflow,gist,notifications,read:org,admin:repo_hook,delete_repo"
 
     static func fineGrainedURL(suffix: Int = Int.random(in: 100_000...999_999)) -> String {
-        fineGrainedPage.replacingOccurrences(of: "name=Rewarden&", with: "name=Rewarden-\(suffix)&")
+        fineGrainedPage.replacingOccurrences(of: "name=Reins&", with: "name=Reins-\(suffix)&")
     }
 
     static func classicURL(suffix: Int = Int.random(in: 100_000...999_999)) -> String {
-        classicPage.replacingOccurrences(of: "description=Rewarden&", with: "description=Rewarden-\(suffix)&")
+        classicPage.replacingOccurrences(of: "description=Reins&", with: "description=Reins-\(suffix)&")
     }
 
     /// A token is recognised by its prefix, so nothing else that happens to be on the clipboard is ever used.
@@ -69,7 +69,7 @@ enum GitHosts {
             service: "gitlab",
             name: "GitLab",
             // GitLab refuses nothing by name, but a fresh number tells the tokens apart in its list.
-            page: { "https://gitlab.com/-/user_settings/personal_access_tokens?name=Rewarden-\($0)&scopes=read_api,read_repository,write_repository" },
+            page: { "https://gitlab.com/-/user_settings/personal_access_tokens?name=Reins-\($0)&scopes=read_api,read_repository,write_repository" },
             shape: #/glpat-[A-Za-z0-9_.\-]{20,250}/#,
             steps: "GitLab opens with a new token already set up: read_api, read_repository and write_repository. Pick an expiry date, tap Create token, then copy it. Come back here and paste it.",
             placeholder: "Personal access token (glpat-…)",
@@ -80,7 +80,7 @@ enum GitHosts {
             name: "Codeberg",
             page: { _ in "https://codeberg.org/user/settings/applications" },
             shape: #/[0-9a-f]{40}/#,
-            steps: "Under Generate new token, name it Rewarden, choose Select permissions, and set repository to Read and write and user to Read (read:user, read:repository, write:repository). Tap Generate token and copy it. Come back here and paste it.",
+            steps: "Under Generate new token, name it Reins, choose Select permissions, and set repository to Read and write and user to Read (read:user, read:repository, write:repository). Tap Generate token and copy it. Come back here and paste it.",
             placeholder: "Access token",
             hint: "A Codeberg access token with read:user and read and write access to repositories. It is kept encrypted on this phone."
         ),
@@ -89,7 +89,7 @@ enum GitHosts {
             name: "Bitbucket",
             page: { _ in "https://id.atlassian.com/manage-profile/security/api-tokens" },
             shape: nil,
-            steps: "Tap Create API token with scopes, name it Rewarden, choose Bitbucket, and tick read:user:bitbucket, read:repository:bitbucket and write:repository:bitbucket. Copy the token. Bitbucket checks it together with your Atlassian account email, so paste both below as email:token, for example you@example.com:ATATT3xF… (app passwords no longer work).",
+            steps: "Tap Create API token with scopes, name it Reins, choose Bitbucket, and tick read:user:bitbucket, read:repository:bitbucket and write:repository:bitbucket. Copy the token. Bitbucket checks it together with your Atlassian account email, so paste both below as email:token, for example you@example.com:ATATT3xF… (app passwords no longer work).",
             placeholder: "email:token",
             hint: "Your Atlassian account email, a colon, then the API token. It is kept encrypted on this phone.",
             pasteFirst: true
@@ -220,10 +220,10 @@ enum ServiceCopy {
         case "telegram": "Sign in with your own Telegram account, the way you do in the Telegram app. It is not a bot."
         case "github": "Connect a GitHub access token so your AIs can work with your repositories: read code and issues, and, when you approve, change them."
         case "gitlab", "codeberg", "bitbucket":
-            "Connect a \(service.name) access token so git on your computer can clone, fetch and, when you approve each push, push through the Rewarden desktop app."
+            "Connect a \(service.name) access token so git on your computer can clone, fetch and, when you approve each push, push through the Reins desktop app."
         case "device_calendar": "Let your AIs see and add events in the calendars on this phone."
         case "device_contacts": "Let your AIs look up the contacts on this phone."
-        case "sms": "On Android, Rewarden lets your AIs read and send text messages. iPhone keeps them to the Messages app."
+        case "sms": "On Android, Reins lets your AIs read and send text messages. iPhone keeps them to the Messages app."
         case "vault": "Let your AIs ask for a login from your password vault, one field at a time."
         default: "Connect an account so your AIs can use it."
         }

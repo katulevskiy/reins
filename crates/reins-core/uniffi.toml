@@ -1,0 +1,8 @@
+[bindings.kotlin]
+package_name = "dev.reins.core"
+cdylib_name = "reins_core"
+
+[bindings.swift]
+module_name = "reins_core"
+ffi_module_name = "reins_coreFFI"
+ffi_module_filename = "reins_coreFFI"

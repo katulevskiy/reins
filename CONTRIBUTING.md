@@ -31,14 +31,14 @@ to [Vaultwarden](https://github.com/dani-garcia/vaultwarden) directly; we pick i
 
 | Path | What | License |
 | --- | --- | --- |
-| `src/`, `macros/`, `migrations/`, `tests/` | the server: Vaultwarden plus the AI permission relay (`src/api/rewarden/`) | AGPL-3.0-only |
-| `crates/rewarden-proto` | types on the wire between server, phone and desktop | Apache-2.0 |
-| `crates/rewarden-policy` | standing permissions: scopes and their evaluation | Apache-2.0 |
-| `crates/rewarden-core` | the phone's core (Rust, exposed to Kotlin through UniFFI): vault, connectors, approvals, Autopilot | Apache-2.0 |
-| `crates/rewarden-desktop` | the desktop app (`rewarden`): daemon, git/SSH/API proxies, harness hooks | Apache-2.0 |
-| `crates/rewarden-desktop-app` | the Reins app (GPUI): pairing window, setup, tray icon; installers via `scripts/package/` | Apache-2.0 |
-| `crates/rewarden-laya` | Autopilot's model on the desktop (ONNX Runtime) and `laya-try` | Apache-2.0 |
-| `crates/rewarden-e2e` | end-to-end tests: the real server, the real phone core, the desktop daemon | Apache-2.0 |
+| `src/`, `macros/`, `migrations/`, `tests/` | the server: Vaultwarden plus the AI permission relay (`src/api/reins/`) | AGPL-3.0-only |
+| `crates/reins-proto` | types on the wire between server, phone and desktop | Apache-2.0 |
+| `crates/reins-policy` | standing permissions: scopes and their evaluation | Apache-2.0 |
+| `crates/reins-core` | the phone's core (Rust, exposed to Kotlin through UniFFI): vault, connectors, approvals, Autopilot | Apache-2.0 |
+| `crates/reins-desktop` | the desktop app (`reins`): daemon, git/SSH/API proxies, harness hooks | Apache-2.0 |
+| `crates/reins-desktop-app` | the Reins app (GPUI): pairing window, setup, tray icon; installers via `scripts/package/` | Apache-2.0 |
+| `crates/reins-laya` | Autopilot's model on the desktop (ONNX Runtime) and `laya-try` | Apache-2.0 |
+| `crates/reins-e2e` | end-to-end tests: the real server, the real phone core, the desktop daemon | Apache-2.0 |
 | `android/` | the Android app (Kotlin, Jetpack Compose) | Apache-2.0 |
 | `tools/laya/` | training and export of the Autopilot model (Python) | Apache-2.0 |
 | `docs/` | deployment guide, design specs and plans | |
@@ -55,11 +55,11 @@ cargo build --features sqlite
 cargo test --features sqlite
 
 # Reins crates (fast, no database)
-cargo test -p rewarden-proto -p rewarden-policy -p rewarden-core -p rewarden-desktop -p rewarden-laya
+cargo test -p reins-proto -p reins-policy -p reins-core -p reins-desktop -p reins-laya
 
 # End to end: builds target/debug/vaultwarden and runs it against the phone core and the desktop daemon
 cargo build --features sqlite
-cargo test -p rewarden-e2e
+cargo test -p reins-e2e
 
 # Lints, as CI runs them
 cargo fmt --all -- --check
@@ -70,7 +70,7 @@ scripts/check-doc-links.py                      # relative links in README.md, t
 ```
 
 Some tests need tools on the machine (`git`, for the git proxy tests) or skip themselves when optional data is absent
-(the Laya model package: set `REWARDEN_LAYA_PKG`).
+(the Laya model package: set `REINS_LAYA_PKG`).
 
 `scripts/workos-live.sh` checks WorkOS sign-in against a real WorkOS **staging** environment (it makes and deletes a
 test user; needs Google Chrome and a free port 8765). Maintainers sign in with `infisical login` (the
@@ -79,8 +79,8 @@ project is set in `.infisical.json`) and run `infisical run --env=dev -- scripts
 
 The desktop app's Windows code: CI runs its clippy and tests on a Windows runner (`desktop-windows` in
 `.github/workflows/ci.yml`), including `tests/windows_service.rs`, which installs and removes the real background
-service and so runs only with `REWARDEN_TEST_WINDOWS_SERVICE=1`. From Linux or macOS, `rustup target add
-x86_64-pc-windows-gnu` and MinGW-w64 let you check it: `cargo clippy -p rewarden-desktop --all-targets --target
+service and so runs only with `REINS_TEST_WINDOWS_SERVICE=1`. From Linux or macOS, `rustup target add
+x86_64-pc-windows-gnu` and MinGW-w64 let you check it: `cargo clippy -p reins-desktop --all-targets --target
 x86_64-pc-windows-gnu -- -D warnings`. Code that only Windows runs lives behind `cfg(windows)`; what can be a plain
 function (paths, quoting, the PE header, `reg` output) lives in `src/win.rs` without one, so its tests run everywhere.
 
@@ -105,7 +105,7 @@ cd android
 
 * Rust: `rustfmt.toml` (120 columns) and the workspace lints in `Cargo.toml` (`[workspace.lints]`); clippy warnings
   are errors. Prefer small, typed functions over stringly-typed plumbing, return errors instead of panicking, and never
-  log secrets or message contents (`crates/rewarden-core/tests/no_secrets_in_logs.rs` checks the core).
+  log secrets or message contents (`crates/reins-core/tests/no_secrets_in_logs.rs` checks the core).
 * Kotlin: the existing code style of `android/` (Compose, view models, `MainSafeCore` for every core call). UI changes
   come with a Robolectric test; the screenshot test renders every screen.
 * Tests: new behaviour comes with tests, and a bug fix with a test that fails without it. Security-relevant code (the
@@ -180,11 +180,11 @@ The release workflow builds the Android APK only when these repository secrets e
 | `ANDROID_KEY_ALIAS` | the key's alias in it |
 | `ANDROID_KEY_PASSWORD` | the key's password (often the same as the keystore's) |
 
-Use the same key as the APKs already installed (`scripts/release-android.sh`, `REWARDEN_ANDROID_CERT_SHA1`): Android
+Use the same key as the APKs already installed (`scripts/release-android.sh`, `REINS_ANDROID_CERT_SHA1`): Android
 installs an update only when it is signed with the same certificate. The workflow prints the certificate digests in
 its summary; compare them before relying on it. Locally the same signing is
-`REWARDEN_RELEASE_KEYSTORE=... REWARDEN_RELEASE_KEYSTORE_PASSWORD=... REWARDEN_RELEASE_KEY_ALIAS=... ./gradlew
-assembleFullRelease` (or the `rewarden.releaseKeystore` Gradle properties; see `android/app/build.gradle.kts`).
+`REINS_RELEASE_KEYSTORE=... REINS_RELEASE_KEYSTORE_PASSWORD=... REINS_RELEASE_KEY_ALIAS=... ./gradlew
+assembleFullRelease` (or the `reins.releaseKeystore` Gradle properties; see `android/app/build.gradle.kts`).
 
 The server image is published to GitHub Packages as `ghcr.io/katulevskiy/reins-server` (public, linked to this
 repository), tagged with the version and `latest`.

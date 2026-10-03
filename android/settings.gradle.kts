@@ -14,5 +14,5 @@ dependencyResolutionManagement {
     }
 }
 
-rootProject.name = "rewarden-android"
+rootProject.name = "reins-android"
 include(":app")

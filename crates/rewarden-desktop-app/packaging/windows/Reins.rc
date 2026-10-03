@@ -1,2 +1,0 @@
-// Reins.exe's icon. GPUI's Windows platform loads the window and taskbar icon from resource ID 1.
-1 ICON "Reins.ico"

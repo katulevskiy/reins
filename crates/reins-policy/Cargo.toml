@@ -1,0 +1,22 @@
+[package]
+name = "reins-policy"
+version = "0.1.0"
+repository.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+# Apache-2.0 (LICENSE at the repository root). See LICENSING.md.
+license = "Apache-2.0"
+publish.workspace = true
+
+[dependencies]
+reins-proto = { path = "../reins-proto" }
+regex = "1.13.1"
+serde = { version = "1.0.229", features = ["derive"] }
+thiserror = "2.0.20"
+
+[dev-dependencies]
+proptest = "1"
+serde_json = "1.0.151"
+
+[lints]
+workspace = true

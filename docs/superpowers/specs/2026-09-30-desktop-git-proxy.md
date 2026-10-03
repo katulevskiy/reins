@@ -1,4 +1,4 @@
-# Rewarden desktop app: the git proxy
+# Reins desktop app: the git proxy
 
 Date: 2026-09-30. Status: approved direction, being implemented.
 
@@ -10,7 +10,7 @@ forever. The desktop app is a small daemon that sits between git and GitHub:
 
 - git talks plain HTTP to the daemon on loopback (`url.<proxy>.insteadOf` rules), the daemon talks HTTPS to GitHub;
 - the agent never sees a token: the daemon adds the credential to the upstream request and keeps it in memory only;
-- every read and every push is allowed first, by the **phone** (through the Rewarden server, the normal grant engine:
+- every read and every push is allowed first, by the **phone** (through the Reins server, the normal grant engine:
   per repository, per branch, for a time, read vs write, force pushes always asked) or, without a phone, by a **local
   policy** with desktop prompts;
 - the phone is shown exactly what is pushed (branch, fast-forward or force, commits, files, +/− lines), worked out by
@@ -26,20 +26,20 @@ token), confidential computing.
 
 | Piece | Where | Owner |
 |---|---|---|
-| Contract: tool specs, wire types, fingerprint, digest | `crates/rewarden-proto/src/desktop.rs`, `connector/github/git.rs`, `pairing.rs` | done (lead) |
-| Daemon skeleton: config, identity, HTTP client, pkt-lines, interfaces | `crates/rewarden-desktop/src/{lib,config,identity,http}.rs`, `git/pktline.rs`, `auth/mod.rs` | done (lead) |
-| D1 push analysis | `crates/rewarden-desktop/src/git/{object,pack,remote,analyze}.rs` (+ new files under `git/`) | worker |
+| Contract: tool specs, wire types, fingerprint, digest | `crates/reins-proto/src/desktop.rs`, `connector/github/git.rs`, `pairing.rs` | done (lead) |
+| Daemon skeleton: config, identity, HTTP client, pkt-lines, interfaces | `crates/reins-desktop/src/{lib,config,identity,http}.rs`, `git/pktline.rs`, `auth/mod.rs` | done (lead) |
+| D1 push analysis | `crates/reins-desktop/src/git/{object,pack,remote,analyze}.rs` (+ new files under `git/`) | worker |
 | D2 daemon runtime | `src/{main,daemon,control,setup,service,harden}.rs`, `src/proxy/*`, `src/auth/{local,policy,prompt}.rs`, `tests/` | worker |
-| D3 Rewarden link | `src/server/*`, `src/auth/rewarden.rs` | worker |
-| S server | `src/api/rewarden/*` (Vaultwarden fork) | worker |
-| P phone core | `crates/rewarden-core` | worker |
+| D3 Reins link | `src/server/*`, `src/auth/reins.rs` | worker |
+| S server | `src/api/reins/*` (Vaultwarden fork) | worker |
+| P phone core | `crates/reins-core` | worker |
 | A Android | `android/` | worker |
 
 Workers only edit their files. Shared files (`Cargo.toml`s, `lib.rs`, `git/mod.rs`) only to add a dependency or a
 module line, and say so in the report. Lints are the workspace's: pedantic clippy, `unsafe_code = "forbid"`,
 `warnings = "deny"`. Every piece is test-first.
 
-## Contract (implemented, in `rewarden-proto`)
+## Contract (implemented, in `reins-proto`)
 
 ### Tools (desktop only)
 
@@ -62,7 +62,7 @@ deletion, a moved tag, several branches, or a ref that is neither branch nor tag
 ### Keys, pairing, sealing
 
 - The daemon has an X25519 key (`identity.key`, 0600). Public key: base64url, no padding, 32 bytes.
-- `rewarden login` starts the server's OAuth authorize with an extra parameter `rewarden_client_key=<public key>`.
+- `reins login` starts the server's OAuth authorize with an extra parameter `reins_client_key=<public key>`.
   The server carries it into `PairingRequest.client_key`. The phone shows `key_fingerprint(client_key)` ("4821 9930")
   next to the pairing; the terminal shows the same; the user compares. On approval the phone pins the key to the new
   connection id (the pairing response returns it).
@@ -124,22 +124,22 @@ be worked out goes to `notes` (≤ 10, ≤ 200 chars each) and is left out; unkn
 
 ## D2: daemon runtime
 
-CLI (`clap`), binary `rewarden`:
+CLI (`clap`), binary `reins`:
 
 ```
-rewarden daemon                  run in the foreground (what the service runs)
-rewarden status                  daemon running? mode, who decides, listen address, logged-in server, fingerprint
-rewarden git setup [--repo DIR]  route github.com remotes through the proxy (global git config, or one repository)
-rewarden git unsetup [--repo DIR]
-rewarden pending                 local approvals waiting
-rewarden approve <id> | deny <id>
-rewarden login <server-url> [--no-browser]     (D3's server::oauth::login)
-rewarden logout
-rewarden service install | uninstall           systemd user unit / launchd agent
+reins daemon                  run in the foreground (what the service runs)
+reins status                  daemon running? mode, who decides, listen address, logged-in server, fingerprint
+reins git setup [--repo DIR]  route github.com remotes through the proxy (global git config, or one repository)
+reins git unsetup [--repo DIR]
+reins pending                 local approvals waiting
+reins approve <id> | deny <id>
+reins login <server-url> [--no-browser]     (D3's server::oauth::login)
+reins logout
+reins service install | uninstall           systemd user unit / launchd agent
 ```
 
 Daemon (`daemon.rs`): loads `Config` and `Paths`, `Identity::load_or_create`, picks the authorizer (`Mode::Auto`: the
-phone when `server::oauth::logged_in_server` is some, else local; `Mode::Rewarden` / `Mode::Local` force one), writes a
+phone when `server::oauth::logged_in_server` is some, else local; `Mode::Reins` / `Mode::Local` force one), writes a
 random control token to `control.token` (0600), hardens the process (`harden.rs`: Linux
 `rustix::process::set_dumpable_behavior(NotDumpable)`; elsewhere nothing), serves one hyper HTTP/1.1 listener on
 `config.listen` (loopback only).
@@ -147,7 +147,7 @@ random control token to `control.token` (0600), hardens the process (`harden.rs`
 Every request: the `Host` header must be `127.0.0.1:<port>`, `localhost:<port>` or `[::1]:<port>` (DNS rebinding);
 `OPTIONS` and anything with an `Origin` header is refused (browsers). Paths:
 
-- `/_rewarden/...` control API (`control.rs`), all need `X-Rewarden-Token: <control token>`:
+- `/_reins/...` control API (`control.rs`), all need `X-Reins-Token: <control token>`:
   `GET status`, `GET pending`, `POST pending/<id>/approve`, `POST pending/<id>/deny`. JSON.
 - `/<host>/<owner>/<repo>[.git]/info/refs?service=git-upload-pack|git-receive-pack`,
   `/<host>/<owner>/<repo>[.git]/git-upload-pack`, `/…/git-receive-pack`, `/…/info/lfs/<rest>`: the proxy. `<host>`
@@ -187,7 +187,7 @@ Local authorizer (`auth/local.rs`, `policy.rs`, `prompt.rs`):
   a part, `**` across parts.
 - Ask: add to the pending list (id, what, summary lines), show a desktop prompt — Linux `notify-send` with actions
   (`--action=approve=Approve --action=deny=Deny --wait`), macOS `osascript` `display dialog` with Approve/Deny buttons,
-  else nothing — and wait for the prompt, `rewarden approve/deny`, or `approval_timeout_secs` (→ `Refusal::Waiting`;
+  else nothing — and wait for the prompt, `reins approve/deny`, or `approval_timeout_secs` (→ `Refusal::Waiting`;
   a retry of the same push digest within 10 minutes finds the earlier answer). Prompts never block the listener.
 - Honest limits (in the README/docs): in local mode another process of the same user could approve through the control
   API or read the token source; the local mode protects against an agent's mistakes, the phone mode against a hostile
@@ -195,34 +195,34 @@ Local authorizer (`auth/local.rs`, `policy.rs`, `prompt.rs`):
 
 `setup.rs`: `git config [--global | -C DIR --local] --add url.<proxy_base>.insteadOf <x>` for `https://github.com/`,
 `git@github.com:`, `ssh://git@github.com/`; idempotent; `unsetup` removes exactly those. `service.rs`: systemd user unit
-`~/.config/systemd/user/rewarden.service` (`ExecStart=<current exe> daemon`, `Restart=on-failure`) + `systemctl --user
-enable --now`; macOS `~/Library/LaunchAgents/dev.rewarden.daemon.plist` + `launchctl load -w`.
+`~/.config/systemd/user/reins.service` (`ExecStart=<current exe> daemon`, `Restart=on-failure`) + `systemctl --user
+enable --now`; macOS `~/Library/LaunchAgents/dev.reins.daemon.plist` + `launchctl load -w`.
 
-Tests (`crates/rewarden-desktop/tests/`): an upstream made of `git http-backend` (CGI, `GIT_PROJECT_ROOT`,
+Tests (`crates/reins-desktop/tests/`): an upstream made of `git http-backend` (CGI, `GIT_PROJECT_ROOT`,
 `GIT_HTTP_EXPORT_ALL`, `http.receivepack=true`) behind a small hyper server in the test, plus a fake GitHub REST API
 answering from the same bare repository; a fake `Authorizer` (scripted answers) and the real local one. Real `git
 clone`, `fetch`, `push` through the daemon: public clone without asking, private (upstream requires a basic auth token)
 asks and passes the token, push approved goes through, push denied prints `remote rejected`, probe/large chunked push,
 gzip bodies, Host/Origin checks, control API token, setup/unsetup on a temp `HOME`.
 
-## D3: Rewarden link (`server/`, `auth/rewarden.rs`)
+## D3: Reins link (`server/`, `auth/reins.rs`)
 
 - `server::oauth::login(paths, identity, server_url, open_browser)`:
   1. `GET <server>/.well-known/oauth-authorization-server` (endpoints);
-  2. dynamic registration `POST registration_endpoint` `{"client_name": "Rewarden desktop app on <hostname>",
+  2. dynamic registration `POST registration_endpoint` `{"client_name": "Reins desktop app on <hostname>",
      "redirect_uris": ["http://127.0.0.1/callback"], "grant_types": ["authorization_code","refresh_token"],
      "response_types": ["code"], "token_endpoint_auth_method": "none"}` (loopback ports may differ, RFC 8252);
   3. listen on `127.0.0.1:0`, PKCE S256, random `state`, authorize URL with `response_type=code`, `client_id`,
      `redirect_uri=http://127.0.0.1:<port>/callback`, `code_challenge`, `code_challenge_method=S256`, `state`,
-     `resource=<server>/mcp`, `rewarden_client_key=<identity public key>`;
+     `resource=<server>/mcp`, `reins_client_key=<identity public key>`;
   4. print the URL and "Your phone will show the key 4821 9930. Approve only if it matches."; open the browser
      (`xdg-open` / `open` / `start`) unless `--no-browser`;
   5. accept the callback (check `state`, show a small "You can close this tab" page), exchange the code
      (`grant_type=authorization_code`, `code`, `redirect_uri`, `client_id`, `code_verifier`, `resource`);
   6. save `session.json` (0600): server, client id, access token + expiry, refresh token. Refresh when expired
      (`grant_type=refresh_token`, keep the new refresh token if one is returned); a refresh failure means logged out.
-- `server::client`: `POST <server>/rewarden/desktop/calls` and `GET <server>/rewarden/desktop/calls/<id>` (contract in S).
-- `RewardenAuthorizer` (`auth/rewarden.rs`):
+- `server::client`: `POST <server>/reins/desktop/calls` and `GET <server>/reins/desktop/calls/<id>` (contract in S).
+- `ReinsAuthorizer` (`auth/reins.rs`):
   - `read(repo)`: cached live read credential for the repo → use it. Else call `github_git_fetch {repo, client_key,
     nonce}` (+ `account` from config) and poll until answered or `approval_timeout_secs`; open `items[0].sealed`, check
     nonce, repo, `access == "read"`, not expired; cache until `expires_at`.
@@ -238,24 +238,24 @@ gzip bodies, Host/Origin checks, control API token, setup/unsetup on a temp `HOM
 
 ## S: server (Vaultwarden fork)
 
-- `authorize_get`: optional `rewarden_client_key`; must pass `desktop::decode_key`; stored in `PairingClient`
+- `authorize_get`: optional `reins_client_key`; must pass `desktop::decode_key`; stored in `PairingClient`
   (`client_key: Option<String>`) and sent in `PairingRequest.client_key` (decoys too). The email and wait pages show
   "Desktop app key 4821 9930" when present.
 - Desktop API, bearer = the same OAuth access token as MCP (same validation as `mcp_routes::authenticate`):
-  - `POST /rewarden/desktop/calls` body `{"tool": "<desktop tool>", "arguments": {...}, "account": null|"..."}`,
+  - `POST /reins/desktop/calls` body `{"tool": "<desktop tool>", "arguments": {...}, "account": null|"..."}`,
     ≤ 512 KiB. Only `desktop_only` specs (else 400 `{"error":"unknown_tool"}`); arguments validated with
     `ToolSpec::parse` (400 `{"error":"invalid_arguments","message":…}`). Submits to the relay like an MCP tool call
     (same FCM push), waits like MCP (`HUB.relay.wait`), and answers 200
     `{"request_id": "...", "status": "answered", "outcome": <RelayOutcome JSON>}` or `{"request_id","status":"pending"}`
     or `{"request_id","status":"offline"}`.
-  - `GET /rewarden/desktop/calls/<request_id>`: same answer shape after waiting again; 404 `{"error":"not_found"}`
+  - `GET /reins/desktop/calls/<request_id>`: same answer shape after waiting again; 404 `{"error":"not_found"}`
     for unknown, expired, or another connection's request.
   - 401 with `WWW-Authenticate` (as MCP) for a missing or bad token; rate limited like MCP.
-- Tests: unit tests for parsing; integration tests in `tests/rewarden_server` (desktop call relayed to a fake phone and
+- Tests: unit tests for parsing; integration tests in `tests/reins_server` (desktop call relayed to a fake phone and
   answered; MCP cannot list or call desktop tools; client key reaches the pairing request; bad keys refused).
 - `docs/deployment.md`: a short section on the desktop app.
 
-## P: phone core (`rewarden-core`)
+## P: phone core (`reins-core`)
 
 - Store: table `desktop_keys(connection_id TEXT PRIMARY KEY, public_key TEXT NOT NULL, pinned_at INTEGER NOT NULL)`
   (migration). `answer_pairing`: when approved and the server returned a connection id and the pairing had a valid
@@ -263,7 +263,7 @@ gzip bodies, Host/Origin checks, control API token, setup/unsetup on a temp `HOM
 - `PairingView.key_fingerprint: Option<String>` (from `client_key`); the pending item title for a desktop client stays
   generic. Pairings with an invalid `client_key` show no fingerprint and pin nothing.
 - Flow (`connector/flow.rs`): for a `desktop_only` spec, before anything else, the connection must have a pinned key
-  equal to `client_key`, else answer an error ("This must come from the Rewarden desktop app paired with this
+  equal to `client_key`, else answer an error ("This must come from the Reins desktop app paired with this
   phone."). Account choice for git: the one named, or the only one, or (several) the first whose token can see the
   repository (`GET /repos/{repo}`).
 - GitHub connector, new area `connector/github/git.rs`:
@@ -306,7 +306,7 @@ gzip bodies, Host/Origin checks, control API token, setup/unsetup on a temp `HOM
 
 ## Lead: integration
 
-After the workers merge: e2e scenario in `crates/rewarden-e2e` (real server + real phone core + daemon + `git
+After the workers merge: e2e scenario in `crates/reins-e2e` (real server + real phone core + daemon + `git
 http-backend` upstream + fake GitHub API): login with the phone approving the pairing, clone a private repo (phone
 approves read), push a branch (phone approves, grant remembered for the branch), force push asked every time, denied
-push rejected in git. Then deploy the server, build the APK, publish the `rewarden` binary next to the APK, push.
+push rejected in git. Then deploy the server, build the APK, publish the `reins` binary next to the APK, push.

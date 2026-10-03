@@ -63,7 +63,7 @@ action: write
 operation: Push to a branch
 class: push
 account: dkat
-target: dkat/rewarden
+target: dkat/reins
 target is new: no
 details: branch feature/laya (not the default branch); 3 commits; 7 files changed; no force
 ```
@@ -232,7 +232,7 @@ across seeds. The fresh-seed splits above are the cleanest evidence, but they re
 | `tokenizer.json` | 34,363,188 | `609d8f4c067cd3950f88594c5a802616cea245823836ef5848ee4fc40aab5b6f` |
 | `laya_config.json` | 989 | `0fa399a2b85ce30a2eb937c427adf3b187592f02af61973d7b9dbc39e6b30ce2` |
 
-These hashes and sizes are pinned in the Reins phone core (`crates/rewarden-core/src/autopilot/model.rs`,
+These hashes and sizes are pinned in the Reins phone core (`crates/reins-core/src/autopilot/model.rs`,
 `KNOWN_MODELS`). The app refuses any other file.
 
 `laya_config.json`: `{"id": "laya-approvals-ml-v1", "base": "jhu-clsp/mmBERT-base", "max_len": 512, "head_max_len":
@@ -244,16 +244,16 @@ These hashes and sizes are pinned in the Reins phone core (`crates/rewarden-core
 
 ```sh
 cd tools/laya
-python gen_data.py --out ~/.cache/rewarden-laya/data/v7 --n 60000
-python finetune.py --base ml --data ~/.cache/rewarden-laya/data/v7 --out ~/.cache/rewarden-laya/runs/ml-v7-s0 \
+python gen_data.py --out ~/.cache/reins-laya/data/v7 --n 60000
+python finetune.py --base ml --data ~/.cache/reins-laya/data/v7 --out ~/.cache/reins-laya/runs/ml-v7-s0 \
     --lr 1e-4 --epochs 1.5 --smooth 0 --seed 0 --device cuda:0
-python export_onnx.py --ckpt ~/.cache/rewarden-laya/runs/ml-v7-s0 --id laya-approvals-ml-v1 \
-    --parity-data ~/.cache/rewarden-laya/data/v7
-python eval.py --pkg ~/.cache/rewarden-laya/pkg/laya-approvals-ml-v1 --data ~/.cache/rewarden-laya/data/v7 \
+python export_onnx.py --ckpt ~/.cache/reins-laya/runs/ml-v7-s0 --id laya-approvals-ml-v1 \
+    --parity-data ~/.cache/reins-laya/data/v7
+python eval.py --pkg ~/.cache/reins-laya/pkg/laya-approvals-ml-v1 --data ~/.cache/reins-laya/data/v7 \
     --splits test_iid,test_ood,adv_test --latency --knn
 ```
 
-`--base ml` expects the Laya multilingual checkpoint under `~/.cache/rewarden-laya/laya/multilingual`. See
+`--base ml` expects the Laya multilingual checkpoint under `~/.cache/reins-laya/laya/multilingual`. See
 `tools/laya/README.md`.
 
 ## Credits and citation
@@ -263,7 +263,7 @@ python eval.py --pkg ~/.cache/rewarden-laya/pkg/laya-approvals-ml-v1 --data ~/.c
 - **mmBERT** by JHU CLSP: the encoder. <https://huggingface.co/jhu-clsp/mmBERT-base>
 
 ```bibtex
-@misc{rewarden_laya_approvals_2026,
+@misc{reins_laya_approvals_2026,
   title  = {laya-approvals-ml-v1: on-device approval decisions for AI agent requests},
   author = {{Reins contributors}},
   year   = {2026},

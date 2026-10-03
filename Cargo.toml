@@ -6,7 +6,7 @@ repository = "https://github.com/katulevskiy/reins"
 publish = false
 
 [workspace]
-members = ["macros", "crates/rewarden-proto", "crates/rewarden-policy", "crates/rewarden-core", "crates/rewarden-e2e", "crates/rewarden-desktop", "crates/rewarden-desktop-app", "crates/rewarden-laya"]
+members = ["macros", "crates/reins-proto", "crates/reins-policy", "crates/reins-core", "crates/reins-e2e", "crates/reins-desktop", "crates/reins-desktop-app", "crates/reins-laya"]
 
 [package]
 name = "vaultwarden"
@@ -275,8 +275,8 @@ http = { version = "1.5.0", optional = true }
 reqsign-aws-v4 = { version = "3.3.0", optional = true }
 reqsign-core = { version = "3.3.1", optional = true }
 
-# Rewarden wire types shared with the phone core
-rewarden-proto = { path = "crates/rewarden-proto" }
+# Reins wire types shared with the phone core
+reins-proto = { path = "crates/reins-proto" }
 
 [dev-dependencies]
 # Paused-clock relay timing tests and #[tokio::test]

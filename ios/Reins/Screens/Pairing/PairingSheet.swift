@@ -2,7 +2,7 @@ import Observation
 import SwiftUI
 
 /// Connecting a new AI or computer: tap the two-digit code it shows (one of three), name the connection, confirm with
-/// Face ID, Touch ID or the passcode. The Rewarden desktop app also shows its key to compare.
+/// Face ID, Touch ID or the passcode. The Reins desktop app also shows its key to compare.
 struct PairingSheet: View {
     var pairingId: String
     @Environment(AppModel.self) private var model
@@ -210,7 +210,7 @@ private struct PairingContent: View {
     }
 }
 
-/// The Rewarden desktop app's key, as eight digits the computer shows too. Matching them is what stops the server from
+/// The Reins desktop app's key, as eight digits the computer shows too. Matching them is what stops the server from
 /// slipping in a key of its own, so they come first, large, and set apart like a permission request.
 private struct DesktopKeyCard: View {
     var fingerprint: String

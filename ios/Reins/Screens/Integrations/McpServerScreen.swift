@@ -116,7 +116,7 @@ struct McpServerScreen: View {
             } header: {
                 GroupHeading("Tools (\(server.tools.count))")
             } footer: {
-                GroupFootnote("Your AIs can ask to use these tools. Tools that only read need a read permission; anything else is a change you approve. Large results go through your Rewarden server instead of this phone.")
+                GroupFootnote("Your AIs can ask to use these tools. Tools that only read need a read permission; anything else is a change you approve. Large results go through your Reins server instead of this phone.")
             }
             .listRowBackground(Palette.elevated)
 

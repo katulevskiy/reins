@@ -31,8 +31,8 @@ pub fn routes() -> Vec<Route> {
     let mut routes = routes![attachments, alive, alive_head, static_files];
     if CONFIG.web_vault_enabled() {
         routes.append(&mut routes![web_index, web_index_direct, web_index_head, app_id, web_files, vaultwarden_css]);
-        // With Rewarden enabled, its own document (with the same web credentials) is served at the root.
-        if !crate::api::rewarden::enabled() {
+        // With Reins enabled, its own document (with the same web credentials) is served at the root.
+        if !crate::api::reins::enabled() {
             routes.append(&mut routes![apple_app_site_association]);
         }
     }

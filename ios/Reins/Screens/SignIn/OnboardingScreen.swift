@@ -60,7 +60,7 @@ private struct ComputerStep: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
             StepHeader(number: 1, symbol: "desktopcomputer", tint: Palette.pair, title: "Next: connect your computer")
-            Text("Run `rewarden login` on your computer (or open the Reins desktop app) and scan the QR code it shows.")
+            Text("Run `reins login` on your computer (or open the Reins desktop app) and scan the QR code it shows.")
                 .font(RFont.sans(15.5))
                 .foregroundStyle(Palette.secondary)
                 .fixedSize(horizontal: false, vertical: true)

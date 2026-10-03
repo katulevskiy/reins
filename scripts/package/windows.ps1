@@ -1,4 +1,4 @@
-# Builds the Reins installer for Windows: a per-user .msi (WiX v4) with Reins.exe (the app) and rewarden.exe.
+# Builds the Reins installer for Windows: a per-user .msi (WiX v4) with reins-app.exe (the app) and reins.exe.
 #
 #   ./scripts/package/windows.ps1 [-Version X.Y.Z] [-Target x86_64-pc-windows-msvc]
 #
@@ -18,7 +18,7 @@ $root = Resolve-Path (Join-Path $PSScriptRoot '..\..')
 Set-Location $root
 
 if (-not $Version) {
-    $Version = (Select-String -Path 'crates\rewarden-desktop\Cargo.toml' -Pattern '^version = "([^"]+)"' |
+    $Version = (Select-String -Path 'crates\reins-desktop\Cargo.toml' -Pattern '^version = "([^"]+)"' |
         Select-Object -First 1).Matches[0].Groups[1].Value
 }
 if ($Version -notmatch '^\d+\.\d+\.\d+$') { throw "not a version: $Version" }
@@ -34,16 +34,16 @@ if (-not $env:GPUI_FXC_PATH) {
 }
 
 Write-Host "==> building Reins $Version for $Target"
-cargo build --locked --profile release-app -p rewarden-desktop-app --bin reins-app --target $Target
+cargo build --locked --profile release-app -p reins-desktop-app --bin reins-app --target $Target
 if ($LASTEXITCODE -ne 0) { throw 'building the app failed' }
-cargo build --locked --release -p rewarden-desktop --bin rewarden --target $Target
-if ($LASTEXITCODE -ne 0) { throw 'building rewarden failed' }
+cargo build --locked --release -p reins-desktop --bin reins --target $Target
+if ($LASTEXITCODE -ne 0) { throw 'building reins failed' }
 
 $stage = Join-Path $out 'windows'
 Remove-Item -Recurse -Force $stage -ErrorAction SilentlyContinue
 New-Item -ItemType Directory -Force -Path $stage | Out-Null
-Copy-Item (Join-Path $targetDir "$Target\release-app\reins-app.exe") (Join-Path $stage 'Reins.exe')
-Copy-Item (Join-Path $targetDir "$Target\release\rewarden.exe") (Join-Path $stage 'rewarden.exe')
+Copy-Item (Join-Path $targetDir "$Target\release-app\reins-app.exe") (Join-Path $stage 'reins-app.exe')
+Copy-Item (Join-Path $targetDir "$Target\release\reins.exe") (Join-Path $stage 'reins.exe')
 
 $pfx = $env:REINS_WINDOWS_CERT
 function Sign([string]$file) {
@@ -54,8 +54,8 @@ function Sign([string]$file) {
     if ($LASTEXITCODE -ne 0) { throw "signing $file failed" }
 }
 if (-not $pfx) { Write-Host '==> REINS_WINDOWS_CERT is not set: the installer is not signed' }
-Sign (Join-Path $stage 'Reins.exe')
-Sign (Join-Path $stage 'rewarden.exe')
+Sign (Join-Path $stage 'reins-app.exe')
+Sign (Join-Path $stage 'reins.exe')
 
 # WiX v4, as a .NET tool.
 $wixVersion = '4.0.6'
@@ -66,13 +66,13 @@ if (-not (Get-Command wix -ErrorAction SilentlyContinue)) {
 wix extension add -g "WixToolset.Util.wixext/$wixVersion"
 if ($LASTEXITCODE -ne 0) { throw 'cannot add the WiX Util extension' }
 
-$wxs = Join-Path $root 'crates\rewarden-desktop-app\packaging\windows\Reins.wxs'
+$wxs = Join-Path $root 'crates\reins-desktop-app\packaging\windows\Reins.wxs'
 $msi = Join-Path $out "Reins-$Version-Windows-$arch.msi"
 wix build -arch $arch -ext WixToolset.Util.wixext `
     -d "Version=$Version" `
-    -d "AppExe=$(Join-Path $stage 'Reins.exe')" `
-    -d "CliExe=$(Join-Path $stage 'rewarden.exe')" `
-    -d "IconFile=$(Join-Path $root 'crates\rewarden-desktop-app\packaging\windows\Reins.ico')" `
+    -d "AppExe=$(Join-Path $stage 'reins-app.exe')" `
+    -d "CliExe=$(Join-Path $stage 'reins.exe')" `
+    -d "IconFile=$(Join-Path $root 'crates\reins-desktop-app\packaging\windows\Reins.ico')" `
     -o $msi $wxs
 if ($LASTEXITCODE -ne 0) { throw 'wix build failed' }
 Sign $msi

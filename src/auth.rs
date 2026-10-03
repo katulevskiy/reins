@@ -2,8 +2,8 @@
 pub mod send;
 pub type SendTokens = send::SendTokens;
 pub type SendHeaders = send::SendHeaders;
-#[path = "auth/rewarden.rs"]
-pub mod rewarden;
+#[path = "auth/reins.rs"]
+pub mod reins;
 
 use std::{
     env,

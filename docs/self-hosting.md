@@ -57,20 +57,20 @@ The server reads its settings from the environment, or from a `.env` file in its
 documents every setting. The minimum for Reins:
 
 ```ini
-DOMAIN=https://rewarden.example.com
+DOMAIN=https://reins.example.com
 ROCKET_ADDRESS=127.0.0.1
 ROCKET_PORT=8000
-DATA_FOLDER=/var/lib/rewarden
+DATA_FOLDER=/var/lib/reins
 IP_HEADER=X-Real-IP              # whichever header your proxy sets with the client's address
 
-REWARDEN_ENABLED=true
-REWARDEN_FCM_SERVICE_ACCOUNT=/etc/rewarden/fcm-service-account.json   # empty: no push to Android
-# REWARDEN_APNS_KEY_FILE=/etc/rewarden/AuthKey_ABC123DEFG.p8           # empty: no push to iPhone
-# REWARDEN_APNS_KEY_ID=ABC123DEFG
-# REWARDEN_APNS_TEAM_ID=DEF123GHIJ
-# REWARDEN_RELAY_WAIT_SECS=45    # how long a tool call waits for the phone, 1..=55
-# REWARDEN_OFFLINE_SECS=10       # a request the phone has not fetched by then is reported as "device offline"
-# REWARDEN_PURGE_SCHEDULE="0 25 * * * *"   # cron: purge expired refresh tokens, files and memory entries
+REINS_ENABLED=true
+REINS_FCM_SERVICE_ACCOUNT=/etc/reins/fcm-service-account.json   # empty: no push to Android
+# REINS_APNS_KEY_FILE=/etc/reins/AuthKey_ABC123DEFG.p8           # empty: no push to iPhone
+# REINS_APNS_KEY_ID=ABC123DEFG
+# REINS_APNS_TEAM_ID=DEF123GHIJ
+# REINS_RELAY_WAIT_SECS=45    # how long a tool call waits for the phone, 1..=55
+# REINS_OFFLINE_SECS=10       # a request the phone has not fetched by then is reported as "device offline"
+# REINS_PURGE_SCHEDULE="0 25 * * * *"   # cron: purge expired refresh tokens, files and memory entries
 
 SIGNUPS_ALLOWED=true             # turn off once your accounts exist, or use invitations
 ```
@@ -78,15 +78,15 @@ SIGNUPS_ALLOWED=true             # turn off once your accounts exist, or use inv
 | Setting | Notes |
 |---|---|
 | `DOMAIN` | Required. Must be `https://` (plain `http://` only for `localhost`, `127.0.0.1`, `[::1]`). It becomes the OAuth issuer and the MCP resource `{DOMAIN}/mcp`. Serve Reins at the root of a host name: the `/.well-known/oauth-*` documents must be at the root. |
-| `REWARDEN_ENABLED` | Mounts `/mcp`, `/rewarden/oauth/*`, `/.well-known/oauth-*`, `/rewarden/api/*` (phone), `/rewarden/desktop/*` and `/rewarden/blob/*`. |
-| `REWARDEN_FCM_SERVICE_ACCOUNT` | Path to a Firebase service-account JSON key. Keep it out of the repository, mode 0600 or 0640. |
-| `REWARDEN_APNS_KEY_FILE`, `REWARDEN_APNS_KEY_ID`, `REWARDEN_APNS_TEAM_ID` | The APNs key (`.p8` file), its key id and your Apple team id, for push to the iOS app. Set all three or none; the server refuses to start with only some, or with a key it cannot read. Same file permissions as the Firebase key. |
-| `REWARDEN_APNS_TOPIC` | Bundle id of the iOS app. Default `com.reins2fa.app`; change it only for an app built under another bundle id. |
-| `REWARDEN_APPLE_TEAM_ID` | Apple team id of the iOS app, served in `/.well-known/apple-app-site-association` so that a computer's pairing QR code (`{DOMAIN}/pair?code=...`) opens in the app. Empty: `REWARDEN_APNS_TEAM_ID`; neither: no app links (the link opens a page that offers the app). |
-| `REWARDEN_ANDROID_CERT_SHA256` | SHA-256 fingerprints of the Android app's signing certificates (comma-separated, `AB:CD:...`), served in `/.well-known/assetlinks.json` for the same links. Empty: none. |
-| `REWARDEN_RELAY_WAIT_SECS` | ChatGPT aborts tool calls after 60 s; Claude allows longer. After this time the AI is told to call `rewarden_get_result` later. |
-| `REWARDEN_OFFLINE_SECS` | Must be at most `REWARDEN_RELAY_WAIT_SECS`. |
-| `REWARDEN_TEST_ALLOW_LOOPBACK` | For the test suite only. Never set it in production. |
+| `REINS_ENABLED` | Mounts `/mcp`, `/reins/oauth/*`, `/.well-known/oauth-*`, `/reins/api/*` (phone), `/reins/desktop/*` and `/reins/blob/*`. |
+| `REINS_FCM_SERVICE_ACCOUNT` | Path to a Firebase service-account JSON key. Keep it out of the repository, mode 0600 or 0640. |
+| `REINS_APNS_KEY_FILE`, `REINS_APNS_KEY_ID`, `REINS_APNS_TEAM_ID` | The APNs key (`.p8` file), its key id and your Apple team id, for push to the iOS app. Set all three or none; the server refuses to start with only some, or with a key it cannot read. Same file permissions as the Firebase key. |
+| `REINS_APNS_TOPIC` | Bundle id of the iOS app. Default `com.reins2fa.app`; change it only for an app built under another bundle id. |
+| `REINS_APPLE_TEAM_ID` | Apple team id of the iOS app, served in `/.well-known/apple-app-site-association` so that a computer's pairing QR code (`{DOMAIN}/pair?code=...`) opens in the app. Empty: `REINS_APNS_TEAM_ID`; neither: no app links (the link opens a page that offers the app). |
+| `REINS_ANDROID_CERT_SHA256` | SHA-256 fingerprints of the Android app's signing certificates (comma-separated, `AB:CD:...`), served in `/.well-known/assetlinks.json` for the same links. Empty: none. |
+| `REINS_RELAY_WAIT_SECS` | ChatGPT aborts tool calls after 60 s; Claude allows longer. After this time the AI is told to call `reins_get_result` later. |
+| `REINS_OFFLINE_SECS` | Must be at most `REINS_RELAY_WAIT_SECS`. |
+| `REINS_TEST_ALLOW_LOOPBACK` | For the test suite only. Never set it in production. |
 
 Everything else (database URL, SMTP, `ADMIN_TOKEN`, two-factor options) works as in Vaultwarden.
 
@@ -101,7 +101,7 @@ People need an account before the phone can sign in. There are four ways to crea
   with, `vaultwarden/web-vault` v2026.7.0), unpack it, and set `WEB_VAULT_FOLDER` to it (`WEB_VAULT_ENABLED=true` is
   the default). Visitors to `https://<domain>/` can then **Create account** while `SIGNUPS_ALLOWED=true`.
 - **Any Bitwarden client** set to your server's URL can register an account.
-- **From a script:** `REWARDEN_PASSWORD='...' cargo run -p rewarden-e2e --example register_account -- https://<domain>
+- **From a script:** `REINS_PASSWORD='...' cargo run -p reins-e2e --example register_account -- https://<domain>
   you@example.com`. The account it makes signs in to Reins but has a placeholder vault key, so it cannot be used as
   a real password vault.
 
@@ -123,8 +123,8 @@ SSO_AUTH_ONLY_NOT_SESSION=true      # WorkOS signs people in; the server keeps i
 SSO_SIGNUPS_MATCH_EMAIL=true        # an existing account with the same (WorkOS-verified) email is linked
 # SSO_ONLY=true                     # no password sign-in at all (the hosted server's setting)
 # SSO_AUTHORIZE_EXTRA_PARAMS="screen_hint=sign-up"   # extra AuthKit parameters
-# REWARDEN_WORKOS_SYNC_SECS=30
-# REWARDEN_WORKOS_WEBHOOK_SECRET=...
+# REINS_WORKOS_SYNC_SECS=30
+# REINS_WORKOS_WEBHOOK_SECRET=...
 ```
 
 In the WorkOS dashboard (or through its API), add `https://<domain>/identity/connect/oidc-signin` to the redirect
@@ -145,11 +145,11 @@ How it fits together:
 - `SSO_AUTH_ONLY_NOT_SESSION=true` keeps the server's own 30-day sessions, so approvals keep working when WorkOS is
   unreachable; WorkOS's revocations still reach the server through the sync. With `false`, every token refresh asks
   WorkOS (its access tokens live five minutes).
-- **The WorkOS sync.** Every `REWARDEN_WORKOS_SYNC_SECS` the server reads the WorkOS events after the last one it
+- **The WorkOS sync.** Every `REINS_WORKOS_SYNC_SECS` the server reads the WorkOS events after the last one it
   applied (the cursor survives restarts): a verified new email becomes the account's email, a deleted WorkOS user's
   account is deleted with its AI connections and devices, and a revoked WorkOS session signs out the device that
-  signed in with it. Point a WorkOS webhook at `https://<domain>/rewarden/workos/webhook` with
-  `REWARDEN_WORKOS_WEBHOOK_SECRET` set to make this immediate; the webhook only wakes the sync, which still reads the
+  signed in with it. Point a WorkOS webhook at `https://<domain>/reins/workos/webhook` with
+  `REINS_WORKOS_WEBHOOK_SECRET` set to make this immediate; the webhook only wakes the sync, which still reads the
   events API.
 - `SSO_ONLY=true` turns password sign-in off for everyone, including accounts made with a password before; they get
   in through AuthKit with the same email (`SSO_SIGNUPS_MATCH_EMAIL=true`) and open their vault with their master
@@ -164,16 +164,16 @@ Requirements:
 
 - Forward the client address (`X-Real-IP` or `X-Forwarded-For`) and set `IP_HEADER` to match. Rate limits key on the
   client address. If every request seems to come from the proxy, all clients share one limit.
-- **Read timeout of at least 75 s** on `/mcp`, `/rewarden/desktop/calls` and `/rewarden/api/pending`. These are long
+- **Read timeout of at least 75 s** on `/mcp`, `/reins/desktop/calls` and `/reins/api/pending`. These are long
   polls: up to 45 s of relay wait, and 25 s of phone polling.
 - Pass `/.well-known/oauth-authorization-server` and `/.well-known/oauth-protected-resource`, including the
   path-suffixed forms such as `/.well-known/oauth-protected-resource/mcp`.
-- Do not cache, buffer or rewrite `/mcp`, `/rewarden/*` or `/.well-known/*`.
+- Do not cache, buffer or rewrite `/mcp`, `/reins/*` or `/.well-known/*`.
 
 Caddy:
 
 ```caddyfile
-rewarden.example.com {
+reins.example.com {
     reverse_proxy 127.0.0.1:8000 {
         transport http {
             read_timeout 90s
@@ -201,14 +201,14 @@ If Cloudflare proxies the zone, its 100 s proxy timeout is above the long polls.
 ### Large files
 
 Files too large for a tool call pass through the server for one operation: uploads to GitHub or the vault, large
-downloads, big MCP results. They are written to `$DATA_FOLDER/rewarden-blobs/` (mode 0700, random names). Each file is
+downloads, big MCP results. They are written to `$DATA_FOLDER/reins-blobs/` (mode 0700, random names). Each file is
 deleted when its operation is done, and after at most an hour in any case. The directory is emptied at every start.
 Limits: 1 GiB per file, 20 files and 2 GiB per user, 8 GiB in total.
 
-Let bodies up to 1 GiB through on `/rewarden/blob/`, and stream them instead of buffering. nginx:
+Let bodies up to 1 GiB through on `/reins/blob/`, and stream them instead of buffering. nginx:
 
 ```nginx
-location /rewarden/blob/ {
+location /reins/blob/ {
     client_max_body_size 1g;
     proxy_request_buffering off;
     proxy_buffering off;
@@ -220,7 +220,7 @@ location /rewarden/blob/ {
 
 Caddy streams by default. If you configured a body limit, raise it with `request_body { max_size 1GB }`.
 
-The path after `/rewarden/blob/` is a capability: whoever has the URL may upload or download that one file. Reins
+The path after `/reins/blob/` is a capability: whoever has the URL may upload or download that one file. Reins
 never logs it. Turn your proxy's access log off for this location, or strip the path from it.
 
 The server also makes outgoing HTTPS requests to URLs the phone names: GitHub uploads, release assets, MCP servers.
@@ -229,18 +229,18 @@ refused.
 
 ## Push notifications (Firebase)
 
-Without push, the app receives requests only while it is open (it long-polls `/rewarden/api/pending`). With push, a
+Without push, the app receives requests only while it is open (it long-polls `/reins/api/pending`). With push, a
 data-only Firebase message carrying just a request id wakes the phone, and the phone then fetches the request from
 your server. No request content goes through Google.
 
 1. Create a Firebase project and add an Android app with the package `com.reins2fa.app`.
 2. Create a service account with the role *Firebase Cloud Messaging Admin* only, download its JSON key, and point
-   `REWARDEN_FCM_SERVICE_ACCOUNT` at it.
+   `REINS_FCM_SERVICE_ACCOUNT` at it.
 3. Build the Android app with that project's `google-services.json` (see `android/README.md`):
    ```sh
    cd android
-   ./gradlew assembleFullRelease -Prewarden.googleServicesJson=/path/to/google-services.json \
-       -Prewarden.defaultServer=https://rewarden.example.com
+   ./gradlew assembleFullRelease -Preins.googleServicesJson=/path/to/google-services.json \
+       -Preins.defaultServer=https://reins.example.com
    ```
 
 **The published APK belongs to the hosted service's Firebase project.** With your own server it signs in and works,
@@ -251,8 +251,8 @@ Google Cloud OAuth client registered for the APK's package and signing certifica
 your own APK, register an Android OAuth client for your signing key, and enable the Gmail, Calendar and People APIs
 with the scopes `gmail.readonly`, `gmail.send`, `calendar.events`, `calendar.readonly` and `contacts.readonly`. The
 Gmail scopes are *restricted*: beyond 100 users Google requires verification and a security assessment. Telegram needs
-an `api_id`/`api_hash` from <https://my.telegram.org>, compiled into the app (`rewarden.telegramApiId`,
-`rewarden.telegramApiHash` in `~/.gradle/gradle.properties`).
+an `api_id`/`api_hash` from <https://my.telegram.org>, compiled into the app (`reins.telegramApiId`,
+`reins.telegramApiHash` in `~/.gradle/gradle.properties`).
 
 ## Push notifications on iPhone (APNs)
 
@@ -263,8 +263,8 @@ shows it. No request content goes through Apple.
 1. In the Apple Developer account, under *Certificates, Identifiers & Profiles* → *Keys*, create a key with *Apple Push
    Notifications service (APNs)* enabled. Download the `.p8` file (Apple lets you download it once) and note its key
    id. Your team id is shown under *Membership*.
-2. Point `REWARDEN_APNS_KEY_FILE` at the `.p8` file and set `REWARDEN_APNS_KEY_ID` and `REWARDEN_APNS_TEAM_ID`.
-3. The key has to belong to the team that signs the iOS app, and `REWARDEN_APNS_TOPIC` has to be the app's bundle id.
+2. Point `REINS_APNS_KEY_FILE` at the `.p8` file and set `REINS_APNS_KEY_ID` and `REINS_APNS_TEAM_ID`.
+3. The key has to belong to the team that signs the iOS app, and `REINS_APNS_TOPIC` has to be the app's bundle id.
 
 One key serves both of Apple's environments. The app registers its token as `apns:<token>` (App Store and TestFlight
 builds) or `apns-sandbox:<token>` (development builds), and the server sends each to the matching Apple endpoint.
@@ -277,29 +277,29 @@ it gets no push unless your server has that team's key. Requests then reach the 
 ## Desktop app against your server
 
 ```sh
-rewarden login https://rewarden.example.com
+reins login https://reins.example.com
 ```
 
 It shows a QR code for the phone to scan. The published apps open pairing links of the hosted domain only, so with
 your own server scan the code in the app (**Settings → Connect a computer**) rather than with the camera, or type the
-code. Nothing else is needed on the server. Updates come from `releases` in `~/.config/rewarden/config.toml`, by default the
+code. Nothing else is needed on the server. Updates come from `releases` in `~/.config/reins/config.toml`, by default the
 hosted release site. The phone downloads the Autopilot model from the hosted site as well. Its files are checked
 against SHA-256 hashes built into the app, so where they come from does not change what is installed.
 
 ## Smoke test
 
 ```sh
-curl -s https://rewarden.example.com/.well-known/oauth-protected-resource/mcp
-# JSON whose "resource" is https://rewarden.example.com/mcp
-curl -si -X POST https://rewarden.example.com/mcp -d '{}'
+curl -s https://reins.example.com/.well-known/oauth-protected-resource/mcp
+# JSON whose "resource" is https://reins.example.com/mcp
+curl -si -X POST https://reins.example.com/mcp -d '{}'
 # 401 with a WWW-Authenticate header
 ```
 
 Then sign in on the phone, connect an AI, and ask it to search your mail or list your repositories. The apps come
 filled in with the hosted server: replace it with yours (on iPhone under **Use another server**), or build the Android
-app with `-Prewarden.defaultServer` as above. A notification should appear, and the AI gets the result only after you
+app with `-Preins.defaultServer` as above. A notification should appear, and the AI gets the result only after you
 approve. With the phone offline, the AI is told to open the
-app within `REWARDEN_OFFLINE_SECS`.
+app within `REINS_OFFLINE_SECS`.
 
 ## Operating
 

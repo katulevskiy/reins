@@ -1,7 +1,7 @@
 name: Release
 # Publishes a GitHub release for every push to main that passes CI. The version comes from the commits since the last
 # vX.Y.Z tag (scripts/next-version.sh; CONTRIBUTING.md, "Releases"); the tag is created on the exact commit CI tested.
-# Assets: the desktop app for Linux (static musl), macOS and Windows (a zip with rewarden.exe), the Reins app's
+# Assets: the desktop app for Linux (static musl), macOS and Windows (a zip with reins.exe), the Reins app's
 # installers (a .dmg, an .msi, an AppImage and its tarball), the server binary, the server image on GHCR, the Android
 # APK when the signing secrets are configured, and SHA256SUMS. The desktop archives and the installers come under a
 # versioned name and under a fixed one (reins-desktop-<target>.tar.gz, Reins-macOS.dmg, ...) for "latest" links.
@@ -152,8 +152,8 @@ jobs:
     env:
       TARGET: ${{ matrix.target }}
       VERSION: ${{ needs.plan.outputs.version }}
-      REWARDEN_BUILD: ${{ needs.plan.outputs.build }}
-      REWARDEN_BUILD_TIME: ${{ needs.plan.outputs.build-time }}
+      REINS_BUILD: ${{ needs.plan.outputs.build }}
+      REINS_BUILD_TIME: ${{ needs.plan.outputs.build-time }}
       MACOSX_DEPLOYMENT_TARGET: "11.0"
     steps:
       # Git on the Windows runners checks text files out with CRLF; the scripts below expect the files as committed.
@@ -181,32 +181,32 @@ jobs:
       - name: Build
         run: |
           if [[ "$TARGET" == *-linux-musl ]]; then
-            PATH="$RUNNER_TEMP/zig/bin:$PATH" cargo zigbuild --release --locked -p rewarden-desktop --bin rewarden --target "$TARGET"
+            PATH="$RUNNER_TEMP/zig/bin:$PATH" cargo zigbuild --release --locked -p reins-desktop --bin reins --target "$TARGET"
           else
-            # Windows: the C runtime linked in, so rewarden.exe needs no Visual C++ Redistributable. With --target,
+            # Windows: the C runtime linked in, so reins.exe needs no Visual C++ Redistributable. With --target,
             # RUSTFLAGS reach only the program, not build scripts.
             [[ "$TARGET" == *-windows-msvc ]] && export RUSTFLAGS="-C target-feature=+crt-static"
-            cargo build --release --locked -p rewarden-desktop --bin rewarden --target "$TARGET"
+            cargo build --release --locked -p reins-desktop --bin reins --target "$TARGET"
           fi
       - name: Smoke test
         if: matrix.native
         run: |
-          exe="target/$TARGET/release/rewarden"
+          exe="target/$TARGET/release/reins"
           [[ "$TARGET" == *-windows-* ]] && exe="$exe.exe"
           out="$("$exe" --version)"
           echo "$out"
-          [[ "$out" == *"$VERSION ($REWARDEN_BUILD)"* ]] || { echo "::error::unexpected version: $out"; exit 1; }
-      # A tar.gz with rewarden on Linux and macOS, a zip with rewarden.exe on Windows (what Windows opens, and what
+          [[ "$out" == *"$VERSION ($REINS_BUILD)"* ]] || { echo "::error::unexpected version: $out"; exit 1; }
+      # A tar.gz with reins on Linux and macOS, a zip with reins.exe on Windows (what Windows opens, and what
       # scripts/install.ps1 unpacks); the same layout inside.
       - name: Package
         run: |
           name="reins-desktop-$VERSION-$TARGET"
           mkdir -p "dist/$name"
           if [[ "$TARGET" == *-windows-* ]]; then
-            cp "target/$TARGET/release/rewarden.exe" LICENSE LICENSE-AGPL LICENSING.md NOTICE README.md "dist/$name/"
+            cp "target/$TARGET/release/reins.exe" LICENSE LICENSE-AGPL LICENSING.md NOTICE README.md "dist/$name/"
             (cd dist && 7z a -tzip -bso0 -bsp0 "$name.zip" "$name")
           else
-            cp "target/$TARGET/release/rewarden" LICENSE LICENSE-AGPL LICENSING.md NOTICE README.md "dist/$name/"
+            cp "target/$TARGET/release/reins" LICENSE LICENSE-AGPL LICENSING.md NOTICE README.md "dist/$name/"
             tar -C dist -czf "dist/$name.tar.gz" "$name"
           fi
           rm -rf "dist/${name:?}"
@@ -222,7 +222,7 @@ jobs:
           if-no-files-found: error
           retention-days: 7
 
-  # The Reins desktop app (crates/rewarden-desktop-app, GPUI) with rewarden inside, as installers: Reins-macOS.dmg
+  # The Reins desktop app (crates/reins-desktop-app, GPUI) with reins inside, as installers: Reins-macOS.dmg
   # (universal), Reins-Windows-x64.msi (per user, WiX v4), Reins-Linux-x86_64.AppImage and its plain tarball, each also
   # under a versioned name. scripts/package/ builds them; the names without a version are what the website's
   # /download/<platform> links point at (releases/latest/download/<name>).
@@ -249,8 +249,8 @@ jobs:
           - { platform: Linux-x86_64, os: ubuntu-22.04 }
     env:
       VERSION: ${{ needs.plan.outputs.version }}
-      REWARDEN_BUILD: ${{ needs.plan.outputs.build }}
-      REWARDEN_BUILD_TIME: ${{ needs.plan.outputs.build-time }}
+      REINS_BUILD: ${{ needs.plan.outputs.build }}
+      REINS_BUILD_TIME: ${{ needs.plan.outputs.build-time }}
       MACOSX_DEPLOYMENT_TARGET: "12.0"
     steps:
       - name: Check out without CRLF
@@ -467,7 +467,7 @@ jobs:
         run: cargo install --locked cargo-ndk@4.1.2
       - name: Install Android NDK
         run: |
-          ndk="$(grep -oP 'rewardenNdkVersion = "\K[^"]+' android/app/build.gradle.kts)"
+          ndk="$(grep -oP 'reinsNdkVersion = "\K[^"]+' android/app/build.gradle.kts)"
           echo "NDK ${ndk}"
           "${ANDROID_HOME}/cmdline-tools/latest/bin/sdkmanager" --install "ndk;${ndk}" > /dev/null
       - name: Keystore
@@ -476,25 +476,25 @@ jobs:
         run: |
           umask 077
           base64 -d <<<"$KEYSTORE" > "$RUNNER_TEMP/release.keystore"
-      # android/app/build.gradle.kts signs fullRelease with the REWARDEN_RELEASE_* key. versionCode is the build time in
+      # android/app/build.gradle.kts signs fullRelease with the REINS_RELEASE_* key. versionCode is the build time in
       # minutes, as in scripts/release-android.sh, so every release installs over the previous one.
       - name: Build the APK
         id: build
         working-directory: android
         env:
-          REWARDEN_RELEASE_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
-          REWARDEN_RELEASE_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
-          REWARDEN_RELEASE_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+          REINS_RELEASE_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          REINS_RELEASE_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+          REINS_RELEASE_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
         run: |
-          export REWARDEN_RELEASE_KEYSTORE="$RUNNER_TEMP/release.keystore"
+          export REINS_RELEASE_KEYSTORE="$RUNNER_TEMP/release.keystore"
           version_code="$(($(date -u +%s) / 60))"
           echo "version-code=$version_code" >> "$GITHUB_OUTPUT"
-          # The site and the sign-in screen's server are gradle.properties' rewarden.site / rewarden.defaultServer.
+          # The site and the sign-in screen's server are gradle.properties' reins.site / reins.defaultServer.
           ./gradlew --no-daemon --no-configuration-cache :app:assembleFullRelease \
-            -Prewarden.secureScreens=true \
-            "-Prewarden.versionCode=$version_code" \
-            "-Prewarden.versionName=$VERSION" \
-            "-Prewarden.build=$BUILD"
+            -Preins.secureScreens=true \
+            "-Preins.versionCode=$version_code" \
+            "-Preins.versionName=$VERSION" \
+            "-Preins.build=$BUILD"
       - name: Remove the keystore
         if: always()
         run: rm -f "$RUNNER_TEMP/release.keystore"

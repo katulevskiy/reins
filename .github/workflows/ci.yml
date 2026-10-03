@@ -47,7 +47,7 @@ jobs:
       - run: cargo fmt --all -- --check
 
   clippy:
-    name: Rust clippy (Rewarden crates)
+    name: Rust clippy (Reins crates)
     runs-on: ubuntu-24.04
     timeout-minutes: 30
     steps:
@@ -68,10 +68,10 @@ jobs:
           sudo apt-get install -y -qq libxkbcommon-dev libxkbcommon-x11-dev libwayland-dev libx11-dev libxcb1-dev \
             libx11-xcb-dev libfontconfig1-dev libfreetype-dev libvulkan-dev pkg-config
       - run: cargo clippy --locked --workspace --exclude vaultwarden --all-targets -- -D warnings
-      - run: cargo test --locked -p rewarden-desktop-app
+      - run: cargo test --locked -p reins-desktop-app
 
   test:
-    name: Rust tests (Rewarden crates)
+    name: Rust tests (Reins crates)
     runs-on: ubuntu-24.04
     timeout-minutes: 45
     steps:
@@ -83,12 +83,12 @@ jobs:
       - uses: Swatinem/rust-cache@v2
         with:
           save-if: ${{ github.ref == 'refs/heads/main' }}
-      # The desktop and e2e tests start the real server; crates/rewarden-e2e/src/server.rs builds it with exactly
+      # The desktop and e2e tests start the real server; crates/reins-e2e/src/server.rs builds it with exactly
       # these arguments, so building it up front makes that a no-op and shows compile errors on their own.
       - name: Build server (sqlite)
         run: cargo build --locked --features sqlite --bin vaultwarden
       - name: Test crates
-        run: cargo test --locked -p rewarden-proto -p rewarden-policy -p rewarden-core -p rewarden-desktop -p rewarden-laya
+        run: cargo test --locked -p reins-proto -p reins-policy -p reins-core -p reins-desktop -p reins-laya
 
   # Its own job: cargo runs test binaries one after another, and these take minutes, as do the crates' above.
   e2e:
@@ -108,7 +108,7 @@ jobs:
       - name: Build server (sqlite)
         run: cargo build --locked --features sqlite --bin vaultwarden
       - name: Test end to end
-        run: cargo test --locked -p rewarden-e2e
+        run: cargo test --locked -p reins-e2e
 
   desktop-macos:
     name: Desktop app on macOS (clippy + tests)
@@ -124,8 +124,8 @@ jobs:
       - uses: Swatinem/rust-cache@v2
         with:
           save-if: ${{ github.ref == 'refs/heads/main' }}
-      - run: cargo clippy --locked -p rewarden-desktop --all-targets -- -D warnings
-      - run: cargo test --locked --no-fail-fast -p rewarden-desktop
+      - run: cargo clippy --locked -p reins-desktop --all-targets -- -D warnings
+      - run: cargo test --locked --no-fail-fast -p reins-desktop
 
   desktop-windows:
     name: Desktop app on Windows (clippy + tests)
@@ -134,7 +134,7 @@ jobs:
     runs-on: windows-2025
     timeout-minutes: 60
     env:
-      REWARDEN_TEST_WINDOWS_SERVICE: "1"
+      REINS_TEST_WINDOWS_SERVICE: "1"
     steps:
       # Git on the Windows runners checks text files out with CRLF; the tests expect the files as committed.
       - name: Check out without CRLF
@@ -147,8 +147,8 @@ jobs:
       - uses: Swatinem/rust-cache@v2
         with:
           save-if: ${{ github.ref == 'refs/heads/main' }}
-      - run: cargo clippy --locked -p rewarden-desktop --all-targets -- -D warnings
-      - run: cargo test --locked --no-fail-fast -p rewarden-desktop
+      - run: cargo clippy --locked -p reins-desktop --all-targets -- -D warnings
+      - run: cargo test --locked --no-fail-fast -p reins-desktop
       # scripts/install.ps1 as `irm | iex` runs it, in Windows PowerShell 5.1, from a release made here of the test
       # build: install, then install over it, then the user PATH has it.
       - name: Install script
@@ -158,18 +158,18 @@ jobs:
           $rel = Join-Path $env:RUNNER_TEMP 'release'
           $name = 'reins-desktop-0.0.0-x86_64-pc-windows-msvc'
           New-Item -ItemType Directory -Force -Path "$rel\$name" | Out-Null
-          Copy-Item target\debug\rewarden.exe "$rel\$name\"
+          Copy-Item target\debug\reins.exe "$rel\$name\"
           Compress-Archive -Path "$rel\$name" -DestinationPath "$rel\$name.zip"
           $hash = (Get-FileHash -Algorithm SHA256 "$rel\$name.zip").Hash.ToLowerInvariant()
           Set-Content -Path "$rel\SHA256SUMS" -Value "$hash  $name.zip"
-          $env:REWARDEN_RELEASE_DIR = $rel
-          $env:REWARDEN_INSTALL_DIR = Join-Path $env:RUNNER_TEMP 'Reins'
+          $env:REINS_RELEASE_DIR = $rel
+          $env:REINS_INSTALL_DIR = Join-Path $env:RUNNER_TEMP 'Reins'
           Get-Content scripts\install.ps1 -Raw | Invoke-Expression
           Get-Content scripts\install.ps1 -Raw | Invoke-Expression
-          & "$env:REWARDEN_INSTALL_DIR\rewarden.exe" --version
-          if ($LASTEXITCODE -ne 0) { throw 'the installed rewarden.exe does not run' }
+          & "$env:REINS_INSTALL_DIR\reins.exe" --version
+          if ($LASTEXITCODE -ne 0) { throw 'the installed reins.exe does not run' }
           $userPath = (Get-Item 'HKCU:\Environment').GetValue('Path', '', 'DoNotExpandEnvironmentNames')
-          if (($userPath -split ';') -notcontains $env:REWARDEN_INSTALL_DIR) { throw "not on the user PATH: $userPath" }
+          if (($userPath -split ';') -notcontains $env:REINS_INSTALL_DIR) { throw "not on the user PATH: $userPath" }
           Set-Content -Path "$rel\SHA256SUMS" -Value "$('0' * 64)  $name.zip"
           $failed = $false
           try { Get-Content scripts\install.ps1 -Raw | Invoke-Expression } catch { $failed = $_.ToString() -match 'checksum' }
@@ -178,7 +178,7 @@ jobs:
       # shows early whether it compiles, without failing CI (and so holding releases back) when it does not.
       - name: Check aarch64-pc-windows-msvc
         continue-on-error: true
-        run: cargo check --locked -p rewarden-desktop --bin rewarden --target aarch64-pc-windows-msvc
+        run: cargo check --locked -p reins-desktop --bin reins --target aarch64-pc-windows-msvc
 
   release-scripts:
     name: Release scripts (versioning, notes)
@@ -212,7 +212,7 @@ jobs:
         with:
           save-if: ${{ github.ref == 'refs/heads/main' }}
       # Not --all-targets: upstream Vaultwarden's own test modules (src/api/admin.rs, src/http_client.rs) trip newer
-      # clippy lints, and upstream CI never linted test targets either. Rewarden's crates are linted with all targets.
+      # clippy lints, and upstream CI never linted test targets either. Reins's crates are linted with all targets.
       - run: cargo clippy --locked --features sqlite -- -D warnings
       - run: cargo test --locked --features sqlite
 
@@ -238,10 +238,10 @@ jobs:
           save-if: ${{ github.ref == 'refs/heads/main' }}
       - name: Install cargo-ndk
         run: cargo ndk --version || cargo install --locked cargo-ndk@4.1.2
-      # The NDK version is the one app/build.gradle.kts pins (rewardenNdkVersion); the build looks it up by path.
+      # The NDK version is the one app/build.gradle.kts pins (reinsNdkVersion); the build looks it up by path.
       - name: Install Android NDK
         run: |
-          ndk="$(grep -oP 'rewardenNdkVersion = "\K[^"]+' android/app/build.gradle.kts)"
+          ndk="$(grep -oP 'reinsNdkVersion = "\K[^"]+' android/app/build.gradle.kts)"
           echo "NDK ${ndk}"
           "${ANDROID_HOME}/cmdline-tools/latest/bin/sdkmanager" --install "ndk;${ndk}" > /dev/null
       - uses: gradle/actions/setup-gradle@v6
@@ -250,7 +250,7 @@ jobs:
       # No google-services.json in CI: the build skips the Firebase plugin (hasFirebase) and still assembles.
       - name: Unit tests and debug APK
         working-directory: android
-        run: ./gradlew --no-daemon :app:testFullDebugUnitTest :app:testPlayDebugUnitTest :app:assembleFullDebug -Prewarden.rustProfile=debug
+        run: ./gradlew --no-daemon :app:testFullDebugUnitTest :app:testPlayDebugUnitTest :app:assembleFullDebug -Preins.rustProfile=debug
       - name: Upload test reports
         if: failure()
         uses: actions/upload-artifact@v7

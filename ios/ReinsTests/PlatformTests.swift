@@ -116,7 +116,7 @@ final class PlatformTests: XCTestCase {
 
     private func item(_ kind: PendingKind = .request, action: String = "send", suggestion: String? = nil) -> PendingItem {
         PendingItem(
-            kind: kind, id: "r1", title: kind == .pairing ? "Connect Gemini to Rewarden?" : "Send email", subtitle: "me@gmail.com",
+            kind: kind, id: "r1", title: kind == .pairing ? "Connect Gemini to Reins?" : "Send email", subtitle: "me@gmail.com",
             createdAt: now, connectionId: "c1", connectionLabel: "Claude", action: action, count: 2, service: "gmail", account: "me@gmail.com",
             waitUntil: nil, op: "", opTitle: "", suggestion: suggestion
         )
@@ -135,7 +135,7 @@ final class PlatformTests: XCTestCase {
         XCTAssertEqual(c.userInfo[NotificationKey.link] as? String, "reins://item?kind=request&id=r1")
         XCTAssertEqual(NotificationText.title(item(action: "grant")), "Permission requested")
         XCTAssertEqual(NotificationText.title(item(.pairing)), "Connect an AI")
-        XCTAssertEqual(NotificationText.body(item(.pairing)), "Connect Gemini to Rewarden?\nme@gmail.com")
+        XCTAssertEqual(NotificationText.body(item(.pairing)), "Connect Gemini to Reins?\nme@gmail.com")
         XCTAssertEqual(NotificationText.title(item(.blob)), "File to check")
         XCTAssertEqual(NotificationContent.pending(item(.blob), settings: FeedbackSettings()).categoryIdentifier, "blob")
     }
@@ -160,7 +160,7 @@ final class PlatformTests: XCTestCase {
 
     private func decision(_ verdict: Verdict, by: String = "autopilot", activity: Int64? = 14) -> AutoDecisionView {
         AutoDecisionView(
-            requestId: "r9", kind: .request, connectionId: "c1", connectionLabel: "Claude Code", title: "Push to a branch · dkat/rewarden",
+            requestId: "r9", kind: .request, connectionId: "c1", connectionLabel: "Claude Code", title: "Push to a branch · dkat/reins",
             verdict: verdict, decidedBy: by, pApprove: 0.97, confidence: 0.97, activityId: activity
         )
     }
@@ -168,7 +168,7 @@ final class PlatformTests: XCTestCase {
     func testAnAutomaticApprovalIsQuietAndCanBeReported() {
         let c = NotificationContent.decision(decision(.approve), settings: FeedbackSettings())
         XCTAssertEqual(c.title, "Autopilot approved")
-        XCTAssertEqual(c.body, "Push to a branch · dkat/rewarden — Claude Code\n97% sure")
+        XCTAssertEqual(c.body, "Push to a branch · dkat/reins — Claude Code\n97% sure")
         XCTAssertEqual(c.subtitle, "")
         XCTAssertNil(c.sound)
         XCTAssertEqual(c.interruptionLevel, .passive)

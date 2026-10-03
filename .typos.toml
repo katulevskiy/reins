@@ -4,9 +4,9 @@ extend-exclude = [
     "playwright/",
     "*.js", # Ignore all JavaScript files
     "!admin*.js", # Except our own JavaScript files
-    # Rewarden test data: hash corpora, SSH keys and multilingual synthetic samples
+    # Reins test data: hash corpora, SSH keys and multilingual synthetic samples
     "android/app/src/test/resources/blobatar-gen2-hashes.tsv",
-    "crates/rewarden-core/tests/fixtures/",
+    "crates/reins-core/tests/fixtures/",
     # iOS: the blobatar hash corpus (as for Android) and Xcode's generated object ids
     "ios/ReinsTests/Fixtures/",
     "ios/Reins.xcodeproj/",
@@ -32,9 +32,9 @@ extend-ignore-re = [
     "AuthRequestResponseRecieved",
     # Ignore Punycode/IDN tests
     "xn--.+",
-    # Rewarden: plurals of acronyms (NDKs, PNGs)
+    # Reins: plurals of acronyms (NDKs, PNGs)
     "\\b[A-Z]{2,}s\\b",
-    # Rewarden test data: hex key ids, base64 file contents, fake tokens and escaped non-ASCII text
+    # Reins test data: hex key ids, base64 file contents, fake tokens and escaped non-ASCII text
     "\\b[0-9A-F]{16}\\b",
     "\"content\": \"[A-Za-z0-9+/=\\\\n]+\"",
     "5ecret",

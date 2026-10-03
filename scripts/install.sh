@@ -1,27 +1,27 @@
 #!/bin/sh
-# Installs the Rewarden desktop app:  curl -fsSL <site>/install.sh | sh
+# Installs the Reins desktop app:  curl -fsSL <site>/install.sh | sh
 #
 # Downloads the latest release for this computer, checks it against the published SHA-256, installs it to
-# ~/.local/bin (REWARDEN_INSTALL_DIR to change), and restarts the background service if it is installed.
-# Later updates: `rewarden update` (which also checks the release signature). Linux and macOS (Apple silicon and Intel);
+# ~/.local/bin (REINS_INSTALL_DIR to change), and restarts the background service if it is installed.
+# Later updates: `reins update` (which also checks the release signature). Linux and macOS (Apple silicon and Intel);
 # on macOS a download made with curl carries no quarantine flag, so Gatekeeper lets the (unsigned) program run.
 #
 # On a computer with a screen it then offers the Reins app (the menu bar / tray app that does the rest with a window;
 # REINS_APP=yes or no answers for you; on a Mac it goes to /Applications, or REINS_APP_DIR). Without the app it finishes the setup here: pairs with your phone (when not
 # paired yet), adds Reins to every AI harness it finds (Claude Code, Codex, Gemini CLI, Cursor) and starts the
-# background service with git going through it. REWARDEN_NO_SETUP=1 skips that; REWARDEN_SERVER pairs with another
+# background service with git going through it. REINS_NO_SETUP=1 skips that; REINS_SERVER pairs with another
 # server than the default one.
 set -eu
 
-# The site to install from (REWARDEN_RELEASES overrides the releases URL). scripts/release-desktop.sh rewrites this line
+# The site to install from (REINS_RELEASES overrides the releases URL). scripts/release-desktop.sh rewrites this line
 # to the site it publishes to, so the installer it serves always points back at that site.
 DEFAULT_SITE="https://reins2fa.com"
-RELEASES="${REWARDEN_RELEASES:-$DEFAULT_SITE/releases}"
-INSTALL_DIR="${REWARDEN_INSTALL_DIR:-$HOME/.local/bin}"
+RELEASES="${REINS_RELEASES:-$DEFAULT_SITE/releases}"
+INSTALL_DIR="${REINS_INSTALL_DIR:-$HOME/.local/bin}"
 
 say() { printf '%s\n' "$*"; }
 fail() {
-    printf 'rewarden install: %s\n' "$*" >&2
+    printf 'reins install: %s\n' "$*" >&2
     exit 1
 }
 
@@ -55,30 +55,30 @@ case "$file" in "" | .* | *[!A-Za-z0-9._-]*) fail "the release list is malformed
 case "$sha" in *[!0-9a-f]*) fail "the release list is malformed" ;; esac
 [ "${#sha}" -eq 64 ] || fail "the release list is malformed"
 
-say "Downloading rewarden $version ($build) for $platform..."
-fetch "$RELEASES/files/$file" "$tmp/rewarden" || fail "the download failed"
+say "Downloading reins $version ($build) for $platform..."
+fetch "$RELEASES/files/$file" "$tmp/reins" || fail "the download failed"
 if command -v sha256sum >/dev/null 2>&1; then
-    got="$(sha256sum "$tmp/rewarden" | cut -d' ' -f1)"
+    got="$(sha256sum "$tmp/reins" | cut -d' ' -f1)"
 elif command -v shasum >/dev/null 2>&1; then
-    got="$(shasum -a 256 "$tmp/rewarden" | cut -d' ' -f1)"
+    got="$(shasum -a 256 "$tmp/reins" | cut -d' ' -f1)"
 else
     fail "sha256sum or shasum is needed to check the download"
 fi
 [ "$got" = "$sha" ] || fail "the download does not match the published checksum; nothing was installed"
-chmod 755 "$tmp/rewarden"
-"$tmp/rewarden" --version >/dev/null 2>&1 || fail "the downloaded program does not run on this computer"
+chmod 755 "$tmp/reins"
+"$tmp/reins" --version >/dev/null 2>&1 || fail "the downloaded program does not run on this computer"
 
 was_installed=false
-[ -x "$INSTALL_DIR/rewarden" ] && was_installed=true
+[ -x "$INSTALL_DIR/reins" ] && was_installed=true
 mkdir -p "$INSTALL_DIR"
-cp "$tmp/rewarden" "$INSTALL_DIR/.rewarden.new"
-mv -f "$INSTALL_DIR/.rewarden.new" "$INSTALL_DIR/rewarden"
-say "Installed $("$INSTALL_DIR/rewarden" --version) at $INSTALL_DIR/rewarden"
+cp "$tmp/reins" "$INSTALL_DIR/.reins.new"
+mv -f "$INSTALL_DIR/.reins.new" "$INSTALL_DIR/reins"
+say "Installed $("$INSTALL_DIR/reins" --version) at $INSTALL_DIR/reins"
 
-if [ "$os" = linux ] && [ -f "$HOME/.config/systemd/user/rewarden.service" ]; then
-    systemctl --user try-restart rewarden.service 2>/dev/null && say "Restarted the background service."
-elif [ "$os" = macos ] && [ -f "$HOME/Library/LaunchAgents/dev.rewarden.daemon.plist" ]; then
-    launchctl kickstart -k "gui/$(id -u)/dev.rewarden.daemon" 2>/dev/null && say "Restarted the background service."
+if [ "$os" = linux ] && [ -f "$HOME/.config/systemd/user/reins.service" ]; then
+    systemctl --user try-restart reins.service 2>/dev/null && say "Restarted the background service."
+elif [ "$os" = macos ] && [ -f "$HOME/Library/LaunchAgents/dev.reins.daemon.plist" ]; then
+    launchctl kickstart -k "gui/$(id -u)/dev.reins.daemon" 2>/dev/null && say "Restarted the background service."
 fi
 
 case ":$PATH:" in
@@ -98,9 +98,9 @@ esac
 # The Reins app, and the first-time setup.
 
 # The server to pair with, and where the app comes from (the release's assets, under the names "latest" links use).
-PAIR_SERVER="${REWARDEN_SERVER:-https://app.reins2fa.com}"
+PAIR_SERVER="${REINS_SERVER:-https://app.reins2fa.com}"
 APP_RELEASES="${REINS_APP_RELEASES:-https://github.com/katulevskiy/reins/releases/latest/download}"
-rewarden="$INSTALL_DIR/rewarden"
+reins="$INSTALL_DIR/reins"
 
 # A terminal to ask in (the script itself arrives on stdin with `curl | sh`).
 interactive=false
@@ -197,27 +197,27 @@ esac
 if [ "$app_installed" = true ]; then
     say ""
     say "Reins is open: finish in its window (pair with your phone, then pick your AI tools)."
-elif [ "${REWARDEN_NO_SETUP:-}" = 1 ] || [ "$interactive" = false ]; then
+elif [ "${REINS_NO_SETUP:-}" = 1 ] || [ "$interactive" = false ]; then
     if [ "$was_installed" = false ]; then
         say ""
         say "Next:"
-        say "  rewarden login $PAIR_SERVER"
+        say "  reins login $PAIR_SERVER"
         say "      pair with your phone; it shows a key: approve only if it matches the one printed here"
-        say "  rewarden harness add --all"
+        say "  reins harness add --all"
         say "      add Reins to every AI harness on this computer"
-        say "  rewarden resume"
-        say "      start the background service and send GitHub git through it (rewarden pause undoes it)"
+        say "  reins resume"
+        say "      start the background service and send GitHub git through it (reins pause undoes it)"
     fi
 else
     say ""
-    if "$rewarden" status 2>/dev/null | grep -q '^Server: *not logged in'; then
+    if "$reins" status 2>/dev/null | grep -q '^Server: *not logged in'; then
         say "Pair this computer with your phone (open Reins on the phone and scan the code, or follow the link):"
-        "$rewarden" login "$PAIR_SERVER" </dev/tty || fail "not paired; run \`rewarden login $PAIR_SERVER\` to try again"
+        "$reins" login "$PAIR_SERVER" </dev/tty || fail "not paired; run \`reins login $PAIR_SERVER\` to try again"
     fi
     say ""
-    "$rewarden" harness add --all || say "Could not add Reins to every harness; see \`rewarden harness list\`."
+    "$reins" harness add --all || say "Could not add Reins to every harness; see \`reins harness list\`."
     say ""
-    "$rewarden" resume || fail "the background service did not start; see \`rewarden status\`"
+    "$reins" resume || fail "the background service did not start; see \`reins status\`"
     say ""
     say "Done. Restart your AI tools so they pick up Reins."
 fi

@@ -26,7 +26,7 @@ final class SettingsTextTests: XCTestCase {
 
     func testTheAutopilotRowNamesTheModeAndTheModel() async throws {
         XCTAssertEqual(SettingsText.autopilotSummary(nil), "Answers requests for you, on this phone")
-        let core = DemoRewardenCore(signedIn: true, modelInstalled: false, syncCap: 0.3)
+        let core = DemoReinsCore(signedIn: true, modelInstalled: false, syncCap: 0.3)
         var s = try await core.autopilotSettings()
         s.mode = .manual
         XCTAssertEqual(SettingsText.autopilotSummary(s), "Manual · no model yet")
@@ -75,7 +75,7 @@ final class SettingsTextTests: XCTestCase {
 
     @MainActor
     func testAnIconPickIsFoundByLabelOnlyWhenTheIdIsMissingAndUnambiguous() async {
-        let core = DemoRewardenCore(signedIn: true, modelInstalled: true, syncCap: 0.3)
+        let core = DemoReinsCore(signedIn: true, modelInstalled: true, syncCap: 0.3)
         let model = AppModel(core: core, feedback: NoFeedback.shared, authenticator: TrustingAuthenticator(), demo: true)
         await model.refreshConnections()
         XCTAssertEqual(model.iconPick(connectionId: "c1", label: "x"), "claude")

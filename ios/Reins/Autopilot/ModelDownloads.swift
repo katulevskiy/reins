@@ -66,7 +66,7 @@ final class ModelDownloads {
     /// Called after every download that ended, with the failure (nil when the model is installed).
     @ObservationIgnored var onFinished: ((String?) async -> Void)?
 
-    @ObservationIgnored private let core: any RewardenCoreProtocol
+    @ObservationIgnored private let core: any ReinsCoreProtocol
     @ObservationIgnored private let feedback: Feedback
     @ObservationIgnored private let watcher: NetworkWatching
     @ObservationIgnored private let surroundings: DownloadSurroundings
@@ -79,7 +79,7 @@ final class ModelDownloads {
     /// How often the bytes on screen and in the Live Activity are redrawn at most.
     static let redraw: TimeInterval = 0.25
 
-    init(core: any RewardenCoreProtocol, feedback: Feedback, network: NetworkWatching? = nil, surroundings: DownloadSurroundings? = nil) {
+    init(core: any ReinsCoreProtocol, feedback: Feedback, network: NetworkWatching? = nil, surroundings: DownloadSurroundings? = nil) {
         self.core = core
         self.feedback = feedback
         self.watcher = network ?? PathNetwork()

@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
-# Publishes the Rewarden desktop app to the site's release feed: builds static Linux binaries, signs the release
+# Publishes the Reins desktop app to the site's release feed: builds static Linux binaries, signs the release
 # manifest with the release key, uploads everything, then switches "latest" to it. Installs (install.sh) and
-# `rewarden update` pick it up at once. Run from anywhere in the repository:
+# `reins update` pick it up at once. Run from anywhere in the repository:
 #
 #   scripts/release-desktop.sh                       # Linux only, from the current commit; refuses uncommitted changes
 #   scripts/release-desktop.sh --dirty               # publish anyway (the build id says so)
@@ -25,36 +25,36 @@
 #   build id    X.Y.Z-<commit time, UTC, YYYYMMDDhhmm>-<first 8 hex digits of the commit>
 #   build time  the commit time (Unix seconds)
 # The macOS and Windows binaries already carry that build id and time (the workflow builds with them), and the Linux ones are
-# built with them here, so every binary in the feed reports the same `rewarden --version` as the GitHub release and
-# carries the same build time as the signed manifest. `rewarden update` offers a release only when the manifest's build
+# built with them here, so every binary in the feed reports the same `reins --version` as the GitHub release and
+# carries the same build time as the signed manifest. `reins update` offers a release only when the manifest's build
 # time is later than the running binary's, so a fresh install is up to date and the next release is offered once
 # published. Without --macos-from the build time is the time of publishing and the version comes from
-# crates/rewarden-desktop/Cargo.toml, as before; the manifest then names no macOS or Windows build (they keep the
-# latest-<platform>.txt of the last --macos-from release, and `rewarden update` there says there is no build for it).
+# crates/reins-desktop/Cargo.toml, as before; the manifest then names no macOS or Windows build (they keep the
+# latest-<platform>.txt of the last --macos-from release, and `reins update` there says there is no build for it).
 # The feed serves install.ps1 too (the Windows installer, which installs from the GitHub releases).
 # Either way the script refuses to publish a release older than the one the feed already serves, since installed apps
 # would never move to it.
 #
 # Settings, from the environment or scripts/release.env (see scripts/release.env.example):
-#   REWARDEN_SITE           the site that serves the releases and install.sh (required)
-#   REWARDEN_RELEASE_SSH    SSH destination to upload to (required)
-#   REWARDEN_RELEASE_DIR    directory on it that the site serves as /releases (required)
-#   REWARDEN_RELEASE_KEY    the release signing key (required)
-#   REWARDEN_RELEASE_URL    where the releases are served ($REWARDEN_SITE/releases)
-#   REWARDEN_RELEASE_KEEP   builds kept on the server per platform (10)
-#   REWARDEN_GITHUB_REPO    the GitHub repository --macos-from downloads from (katulevskiy/reins)
+#   REINS_SITE           the site that serves the releases and install.sh (required)
+#   REINS_RELEASE_SSH    SSH destination to upload to (required)
+#   REINS_RELEASE_DIR    directory on it that the site serves as /releases (required)
+#   REINS_RELEASE_KEY    the release signing key (required)
+#   REINS_RELEASE_URL    where the releases are served ($REINS_SITE/releases)
+#   REINS_RELEASE_KEEP   builds kept on the server per platform (10)
+#   REINS_GITHUB_REPO    the GitHub repository --macos-from downloads from (katulevskiy/reins)
 set -euo pipefail
 
 source "$(dirname "${BASH_SOURCE[0]}")/release-env.sh"
-require_settings REWARDEN_SITE REWARDEN_RELEASE_SSH REWARDEN_RELEASE_DIR REWARDEN_RELEASE_KEY
+require_settings REINS_SITE REINS_RELEASE_SSH REINS_RELEASE_DIR REINS_RELEASE_KEY
 
-SSH_TARGET="$REWARDEN_RELEASE_SSH"
-REMOTE_DIR="$REWARDEN_RELEASE_DIR"
-SITE="${REWARDEN_SITE%/}"
-URL="${REWARDEN_RELEASE_URL:-$SITE/releases}"
-KEY="$REWARDEN_RELEASE_KEY"
-KEEP="${REWARDEN_RELEASE_KEEP:-10}"
-GITHUB_REPO="${REWARDEN_GITHUB_REPO:-katulevskiy/reins}"
+SSH_TARGET="$REINS_RELEASE_SSH"
+REMOTE_DIR="$REINS_RELEASE_DIR"
+SITE="${REINS_SITE%/}"
+URL="${REINS_RELEASE_URL:-$SITE/releases}"
+KEY="$REINS_RELEASE_KEY"
+KEEP="${REINS_RELEASE_KEEP:-10}"
+GITHUB_REPO="${REINS_GITHUB_REPO:-katulevskiy/reins}"
 TARGETS=("linux-x86_64:x86_64-unknown-linux-musl" "linux-aarch64:aarch64-unknown-linux-musl")
 # platform:target triple:the processor as `file` names it
 MACOS_TARGETS=("macos-aarch64:aarch64-apple-darwin:arm64" "macos-x86_64:x86_64-apple-darwin:x86_64")
@@ -92,7 +92,7 @@ fi
 
 repo="$(git rev-parse --show-toplevel)"
 cd "$repo"
-[[ -f "$KEY" ]] || die "release key $KEY not found (make one with: cargo run -p rewarden-desktop --bin rewarden-release -- keygen $KEY)"
+[[ -f "$KEY" ]] || die "release key $KEY not found (make one with: cargo run -p reins-desktop --bin reins-release -- keygen $KEY)"
 export CARGO_TARGET_DIR="${CARGO_TARGET_DIR:-$repo/target}"
 
 stage="$(mktemp -d)"
@@ -135,12 +135,12 @@ else
         $dirty_ok || die "uncommitted changes; commit them or pass --dirty"
         sha="$sha.dirty"
     fi
-    version="$(sed -n 's/^version *= *"\(.*\)"/\1/p' crates/rewarden-desktop/Cargo.toml | head -1)"
+    version="$(sed -n 's/^version *= *"\(.*\)"/\1/p' crates/reins-desktop/Cargo.toml | head -1)"
     build_time="$(date -u +%s)"
     build="$version-$(date -u -d "@$build_time" +%Y%m%d%H%M)-$sha"
     echo "Release $build"
 fi
-export REWARDEN_BUILD="$build" REWARDEN_BUILD_TIME="$build_time"
+export REINS_BUILD="$build" REINS_BUILD_TIME="$build_time"
 
 # Never older than what the feed serves: installed apps only move to a later build time.
 current="$(curl -fsS "$URL/latest.json" 2>/dev/null || true)"
@@ -160,20 +160,20 @@ export PATH="$toolchain_bin:$PATH"
 for t in "${TARGETS[@]}"; do rustup target add --toolchain "$channel" "${t#*:}" >/dev/null; done
 
 # The key must be the one the apps pin, or every update would be refused.
-pinned="$(sed -n 's/^pub const RELEASE_KEY: &str = "\([0-9a-f]*\)";/\1/p' crates/rewarden-desktop/src/update.rs)"
-public="$(cargo run --release --locked -q -p rewarden-desktop --bin rewarden-release -- public "$KEY")"
+pinned="$(sed -n 's/^pub const RELEASE_KEY: &str = "\([0-9a-f]*\)";/\1/p' crates/reins-desktop/src/update.rs)"
+public="$(cargo run --release --locked -q -p reins-desktop --bin reins-release -- public "$KEY")"
 [[ -n "$pinned" && "$public" == "$pinned" ]] || die "$KEY is not the release key the apps pin (update::RELEASE_KEY)"
 
 assets=()
 for t in "${TARGETS[@]}"; do
     platform="${t%%:*}" triple="${t#*:}"
     echo "Building $platform ($triple)..."
-    (cd "$src" && cargo zigbuild --release --locked -q -p rewarden-desktop --target "$triple" --bin rewarden)
-    file="rewarden-$build-$platform"
-    cp "$CARGO_TARGET_DIR/$triple/release/rewarden" "$stage/files/$file"
+    (cd "$src" && cargo zigbuild --release --locked -q -p reins-desktop --target "$triple" --bin reins)
+    file="reins-$build-$platform"
+    cp "$CARGO_TARGET_DIR/$triple/release/reins" "$stage/files/$file"
     assets+=("$platform=$stage/files/$file")
 done
-host_bin="$stage/files/rewarden-$build-linux-x86_64"
+host_bin="$stage/files/reins-$build-linux-x86_64"
 "$host_bin" --version | grep -qF "$version ($build)" || die "the built binary does not report $version ($build)"
 
 if [[ -n "$macos_from" ]]; then
@@ -189,13 +189,13 @@ if [[ -n "$macos_from" ]]; then
         curl -fsSL "$gh/$archive" -o "$stage/gh/$archive" || die "could not download $archive"
         got="$(sha256sum "$stage/gh/$archive" | cut -d' ' -f1)"
         [[ "$got" == "$want" ]] || die "$archive does not match SHA256SUMS of $tag"
-        tar -xzf "$stage/gh/$archive" -C "$stage/gh" "reins-desktop-$version-$triple/rewarden" ||
-            die "$archive has no reins-desktop-$version-$triple/rewarden"
-        bin="$stage/gh/reins-desktop-$version-$triple/rewarden"
+        tar -xzf "$stage/gh/$archive" -C "$stage/gh" "reins-desktop-$version-$triple/reins" ||
+            die "$archive has no reins-desktop-$version-$triple/reins"
+        bin="$stage/gh/reins-desktop-$version-$triple/reins"
         kind="$(file -b "$bin")"
-        [[ "$kind" == "Mach-O 64-bit $cpu executable"* ]] || die "$archive: rewarden is not a macOS $cpu program ($kind)"
-        grep -qaF "$version ($build)" "$bin" || die "$archive: rewarden does not carry the build id $build"
-        file="rewarden-$build-$platform"
+        [[ "$kind" == "Mach-O 64-bit $cpu executable"* ]] || die "$archive: reins is not a macOS $cpu program ($kind)"
+        grep -qaF "$version ($build)" "$bin" || die "$archive: reins does not carry the build id $build"
+        file="reins-$build-$platform"
         cp "$bin" "$stage/files/$file"
         assets+=("$platform=$stage/files/$file")
     done
@@ -212,23 +212,23 @@ if [[ -n "$macos_from" ]]; then
         curl -fsSL "$gh/$archive" -o "$stage/gh/$archive" || die "could not download $archive"
         got="$(sha256sum "$stage/gh/$archive" | cut -d' ' -f1)"
         [[ "$got" == "$want" ]] || die "$archive does not match SHA256SUMS of $tag"
-        unzip -q -o "$stage/gh/$archive" "reins-desktop-$version-$triple/rewarden.exe" -d "$stage/gh" ||
-            die "$archive has no reins-desktop-$version-$triple/rewarden.exe"
-        bin="$stage/gh/reins-desktop-$version-$triple/rewarden.exe"
+        unzip -q -o "$stage/gh/$archive" "reins-desktop-$version-$triple/reins.exe" -d "$stage/gh" ||
+            die "$archive has no reins-desktop-$version-$triple/reins.exe"
+        bin="$stage/gh/reins-desktop-$version-$triple/reins.exe"
         kind="$(file -b "$bin")"
         # `file` words it "PE32+ executable (console) x86-64, for MS Windows" or, newer, "PE32+ executable for MS
         # Windows 6.00 (console), x86-64, 7 sections".
         [[ "$kind" == "PE32+ executable"*"(console)"* ]] && grep -qiE "$cpu" <<<"$kind" ||
-            die "$archive: rewarden.exe is not a Windows $cpu console program ($kind)"
-        grep -qaF "$version ($build)" "$bin" || die "$archive: rewarden.exe does not carry the build id $build"
-        # No .exe in the feed's file name: `rewarden update` writes it over the program it replaces.
-        file="rewarden-$build-$platform"
+            die "$archive: reins.exe is not a Windows $cpu console program ($kind)"
+        grep -qaF "$version ($build)" "$bin" || die "$archive: reins.exe does not carry the build id $build"
+        # No .exe in the feed's file name: `reins update` writes it over the program it replaces.
+        file="reins-$build-$platform"
         cp "$bin" "$stage/files/$file"
         assets+=("$platform=$stage/files/$file")
     done
 fi
 
-cargo run --release --locked -q -p rewarden-desktop --bin rewarden-release -- manifest \
+cargo run --release --locked -q -p reins-desktop --bin reins-release -- manifest \
     --key "$KEY" --version "$version" --build "$build" --time "$build_time" --out "$stage" "${assets[@]}"
 # The installer it serves (this checkout's) points at this site.
 sed "s|^DEFAULT_SITE=.*|DEFAULT_SITE=\"$SITE\"|" scripts/install.sh >"$stage/install.sh"
@@ -256,4 +256,4 @@ if [[ -z "$macos_from" ]] && curl -fsSo /dev/null "$URL/latest-macos-aarch64.txt
 fi
 echo "  install: curl -fsSL $SITE/install.sh | sh"
 echo "  Windows: irm $SITE/install.ps1 | iex"
-echo "  update:  rewarden update"
+echo "  update:  reins update"

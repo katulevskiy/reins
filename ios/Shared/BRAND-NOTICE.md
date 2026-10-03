@@ -11,4 +11,4 @@ Gmail's brand colour. Gmail is a trademark of Google LLC.
 `../services/telegram.svg`, `github.svg`, `gitlab.svg`, `codeberg.svg`, `bitbucket.svg`, `gcalendar.svg` (Google Calendar)
 and `vault.svg` (the Bitwarden mark, for the Vaultwarden password vault) are from Simple Icons (CC0 1.0), unmodified. The
 marks are trademarks of their owners and are shown only to identify the service. `gcontacts.svg`, `device_calendar.svg`,
-`device_contacts.svg`, `sms.svg` and `mcp.svg` (an MCP server the user added) are plain glyphs drawn for Rewarden.
+`device_contacts.svg`, `sms.svg` and `mcp.svg` (an MCP server the user added) are plain glyphs drawn for Reins.

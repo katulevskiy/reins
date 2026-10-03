@@ -220,7 +220,7 @@ private struct ConnectionsGroup: View {
                 .cardRow()
             }
             SettingsLinkRow(
-                title: "Connect a computer", subtitle: "Scan the QR code from rewarden login or the desktop app", symbol: "qrcode.viewfinder",
+                title: "Connect a computer", subtitle: "Scan the QR code from reins login or the desktop app", symbol: "qrcode.viewfinder",
                 tint: Palette.pair, id: "connectComputer"
             ) { model.openSheet(.connectComputer) }
         } header: {

@@ -12,7 +12,7 @@ final class IntegrationsFlowTests: XCTestCase {
     override func setUp() async throws {
         feedback = RecordingFeedback()
         platform = FakePlatform()
-        model = AppModel(core: DemoRewardenCore(syncCap: 0.3), feedback: feedback, authenticator: TrustingAuthenticator(), demo: true)
+        model = AppModel(core: DemoReinsCore(syncCap: 0.3), feedback: feedback, authenticator: TrustingAuthenticator(), demo: true)
         await model.refreshSession()
     }
 

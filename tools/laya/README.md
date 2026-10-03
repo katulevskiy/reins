@@ -8,7 +8,7 @@ The phone applies the section 3 rule to two passes, `S_facts` and `S_full`:
     deny     iff  max(p_facts, p_full)[deny]    >= 0.90
     else ask the user
 
-Weights, data, ONNX files and packages live under `~/.cache/rewarden-laya/`, never in git.
+Weights, data, ONNX files and packages live under `~/.cache/reins-laya/`, never in git.
 
 | file | what |
 |---|---|
@@ -22,13 +22,13 @@ Weights, data, ONNX files and packages live under `~/.cache/rewarden-laya/`, nev
 ## Reproduce
 
 ```sh
-source ~/.cache/rewarden-laya/.venv/bin/activate; export TORCHDYNAMO_DISABLE=1; cd tools/laya
-python gen_data.py --out ~/.cache/rewarden-laya/data/v7 --n 60000
-python finetune.py --base ml --data ~/.cache/rewarden-laya/data/v7 --out ~/.cache/rewarden-laya/runs/ml-v7-s0 \
+source ~/.cache/reins-laya/.venv/bin/activate; export TORCHDYNAMO_DISABLE=1; cd tools/laya
+python gen_data.py --out ~/.cache/reins-laya/data/v7 --n 60000
+python finetune.py --base ml --data ~/.cache/reins-laya/data/v7 --out ~/.cache/reins-laya/runs/ml-v7-s0 \
     --lr 1e-4 --epochs 1.5 --smooth 0 --seed 0 --device cuda:0                                   # ~25 min on a 3090
-python export_onnx.py --ckpt ~/.cache/rewarden-laya/runs/ml-v7-s0 --id laya-approvals-ml-v1 \
-    --parity-data ~/.cache/rewarden-laya/data/v7                                                 # CPU, ~25 min
-python eval.py --pkg ~/.cache/rewarden-laya/pkg/laya-approvals-ml-v1 --data ~/.cache/rewarden-laya/data/v7 \
+python export_onnx.py --ckpt ~/.cache/reins-laya/runs/ml-v7-s0 --id laya-approvals-ml-v1 \
+    --parity-data ~/.cache/reins-laya/data/v7                                                 # CPU, ~25 min
+python eval.py --pkg ~/.cache/reins-laya/pkg/laya-approvals-ml-v1 --data ~/.cache/reins-laya/data/v7 \
     --splits test_iid,test_ood,adv_test --latency --knn
 ```
 
@@ -146,7 +146,7 @@ What the history says:
   embedding table, int8); the tokenizer is 34 MB.
 - **Languages**: users write in many languages; the base was trained on 1800+.
 
-## Package `~/.cache/rewarden-laya/pkg/laya-approvals-ml-v1/`
+## Package `~/.cache/reins-laya/pkg/laya-approvals-ml-v1/`
 
 | file | MB | SHA-256 |
 |---|---|---|

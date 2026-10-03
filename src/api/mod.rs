@@ -4,7 +4,7 @@ mod icons;
 mod identity;
 mod notifications;
 mod push;
-pub mod rewarden;
+pub mod reins;
 mod web;
 
 use rocket::serde::json::Json;

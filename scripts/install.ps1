@@ -1,16 +1,16 @@
-# Installs the Reins desktop app (rewarden.exe) on Windows, from PowerShell:
+# Installs the Reins desktop app (reins.exe) on Windows, from PowerShell:
 #
 #   irm <site>/install.ps1 | iex
 #
 # Downloads the latest GitHub release's zip for this computer (x86_64 or Arm), checks it against the release's
-# SHA256SUMS, installs rewarden.exe to %LOCALAPPDATA%\Programs\Reins (REWARDEN_INSTALL_DIR to change), adds that folder
-# to your user PATH, and restarts the background service if it is installed. Later updates: `rewarden update` (which
+# SHA256SUMS, installs reins.exe to %LOCALAPPDATA%\Programs\Reins (REINS_INSTALL_DIR to change), adds that folder
+# to your user PATH, and restarts the background service if it is installed. Later updates: `reins update` (which
 # also checks the release signature) or this script again.
 #
 # Settings, from the environment:
-#   REWARDEN_VERSION       a release tag (v0.2.0) instead of the latest release
-#   REWARDEN_INSTALL_DIR   where rewarden.exe goes
-#   REWARDEN_RELEASE_DIR   a folder holding SHA256SUMS and the zip, instead of downloading them (tests, offline)
+#   REINS_VERSION       a release tag (v0.2.0) instead of the latest release
+#   REINS_INSTALL_DIR   where reins.exe goes
+#   REINS_RELEASE_DIR   a folder holding SHA256SUMS and the zip, instead of downloading them (tests, offline)
 #
 # Everything runs in a script block, so `irm | iex` leaves no variables behind and an error stops only the script, not
 # your PowerShell window.
@@ -22,7 +22,7 @@
     $Repo = 'katulevskiy/reins'
 
     function Fail([string] $Message) {
-        throw "rewarden install: $Message"
+        throw "reins install: $Message"
     }
 
     # The processor Windows runs on (a 32-bit PowerShell on 64-bit Windows sees x86 in PROCESSOR_ARCHITECTURE).
@@ -32,7 +32,7 @@
         'ARM64' { 'aarch64-pc-windows-msvc' }
         default { Fail "this processor ($cpu) is not supported yet" }
     }
-    $installDir = if ($env:REWARDEN_INSTALL_DIR) { $env:REWARDEN_INSTALL_DIR } else {
+    $installDir = if ($env:REINS_INSTALL_DIR) { $env:REINS_INSTALL_DIR } else {
         Join-Path $env:LOCALAPPDATA 'Programs\Reins'
     }
 
@@ -43,12 +43,12 @@
     New-Item -ItemType Directory -Path $tmp | Out-Null
     try {
         # Where SHA256SUMS and the zip come from.
-        if ($env:REWARDEN_RELEASE_DIR) {
-            $from = $env:REWARDEN_RELEASE_DIR
+        if ($env:REINS_RELEASE_DIR) {
+            $from = $env:REINS_RELEASE_DIR
             $fetch = { param($file, $to) Copy-Item -LiteralPath (Join-Path $from $file) -Destination $to }
             $tag = '(local)'
         } else {
-            $tag = $env:REWARDEN_VERSION
+            $tag = $env:REINS_VERSION
             if (-not $tag) {
                 try {
                     $tag = (Invoke-RestMethod -UseBasicParsing "https://api.github.com/repos/$Repo/releases/latest").tag_name
@@ -79,25 +79,25 @@
         if ($got -ne $want) { Fail "the download does not match the published checksum; nothing was installed" }
 
         Expand-Archive -LiteralPath $zipPath -DestinationPath $tmp
-        $new = Join-Path (Join-Path $tmp $name) 'rewarden.exe'
-        if (-not (Test-Path -LiteralPath $new)) { Fail "$zip has no $name\rewarden.exe" }
+        $new = Join-Path (Join-Path $tmp $name) 'reins.exe'
+        if (-not (Test-Path -LiteralPath $new)) { Fail "$zip has no $name\reins.exe" }
         $version = & $new --version
         if ($LASTEXITCODE -ne 0) { Fail "the downloaded program does not run on this computer" }
 
-        # In place, even while rewarden.exe runs (an MCP bridge of a harness): Windows lets a running program be renamed
-        # but not overwritten. The renamed copy goes at the next update (`rewarden update` removes rewarden.exe.*.old).
-        $exe = Join-Path $installDir 'rewarden.exe'
+        # In place, even while reins.exe runs (an MCP bridge of a harness): Windows lets a running program be renamed
+        # but not overwritten. The renamed copy goes at the next update (`reins update` removes reins.exe.*.old).
+        $exe = Join-Path $installDir 'reins.exe'
         $wasInstalled = Test-Path -LiteralPath $exe
         New-Item -ItemType Directory -Force -Path $installDir | Out-Null
-        Get-ChildItem -LiteralPath $installDir -Filter 'rewarden.exe.*.old' -ErrorAction SilentlyContinue |
+        Get-ChildItem -LiteralPath $installDir -Filter 'reins.exe.*.old' -ErrorAction SilentlyContinue |
             Remove-Item -Force -ErrorAction SilentlyContinue
         if ($wasInstalled) {
-            $aside = "rewarden.exe.$PID-$([Guid]::NewGuid().ToString('N')).old"
+            $aside = "reins.exe.$PID-$([Guid]::NewGuid().ToString('N')).old"
             Rename-Item -LiteralPath $exe -NewName $aside
             try {
                 Move-Item -LiteralPath $new -Destination $exe
             } catch {
-                Rename-Item -LiteralPath (Join-Path $installDir $aside) -NewName 'rewarden.exe'
+                Rename-Item -LiteralPath (Join-Path $installDir $aside) -NewName 'reins.exe'
                 Fail "cannot replace $exe ($($_.Exception.Message))"
             }
             Remove-Item -LiteralPath (Join-Path $installDir $aside) -Force -ErrorAction SilentlyContinue
@@ -115,8 +115,8 @@
         if (($dirs | ForEach-Object { $_.TrimEnd('\') }) -notcontains $installDir.TrimEnd('\')) {
             Set-ItemProperty -Path 'HKCU:\Environment' -Name 'Path' -Value ((@($dirs) + $installDir) -join ';') -Type $kind
             # Setting a variable through .NET tells running programs (Explorer) that the environment changed.
-            [Environment]::SetEnvironmentVariable('REWARDEN_INSTALL_REFRESH', '1', 'User')
-            [Environment]::SetEnvironmentVariable('REWARDEN_INSTALL_REFRESH', $null, 'User')
+            [Environment]::SetEnvironmentVariable('REINS_INSTALL_REFRESH', '1', 'User')
+            [Environment]::SetEnvironmentVariable('REINS_INSTALL_REFRESH', $null, 'User')
             Write-Host "Added $installDir to your PATH (open a new terminal for it to take effect)."
         }
         if (($env:Path -split ';' | ForEach-Object { $_.TrimEnd('\') }) -notcontains $installDir.TrimEnd('\')) {
@@ -134,10 +134,10 @@
         if (-not $wasInstalled) {
             Write-Host ""
             Write-Host "Next:"
-            Write-Host "  rewarden login"
+            Write-Host "  reins login"
             Write-Host "      sign in; your phone shows a key: approve only if it matches the one printed here"
-            Write-Host "  rewarden resume"
-            Write-Host "      start the background service and send GitHub git through it (rewarden pause undoes it)"
+            Write-Host "  reins resume"
+            Write-Host "      start the background service and send GitHub git through it (reins pause undoes it)"
         }
     } finally {
         Remove-Item -LiteralPath $tmp -Recurse -Force -ErrorAction SilentlyContinue

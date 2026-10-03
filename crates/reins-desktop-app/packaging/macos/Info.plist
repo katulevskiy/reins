@@ -1,0 +1,42 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!-- Reins.app/Contents/Info.plist; scripts/package/macos.sh replaces __VERSION__. The bundle id is the desktop app's
+     own: the phone apps are com.reins2fa.app, and an iPad app can run on an Apple silicon Mac next to this one. -->
+<plist version="1.0">
+<dict>
+  <key>CFBundleDevelopmentRegion</key>
+  <string>en</string>
+  <key>CFBundleDisplayName</key>
+  <string>Reins</string>
+  <key>CFBundleExecutable</key>
+  <string>reins-app</string>
+  <key>CFBundleIconFile</key>
+  <string>Reins.icns</string>
+  <key>CFBundleIdentifier</key>
+  <string>com.reins2fa.desktop</string>
+  <key>CFBundleInfoDictionaryVersion</key>
+  <string>6.0</string>
+  <key>CFBundleName</key>
+  <string>Reins</string>
+  <key>CFBundlePackageType</key>
+  <string>APPL</string>
+  <key>CFBundleShortVersionString</key>
+  <string>__VERSION__</string>
+  <key>CFBundleVersion</key>
+  <string>__VERSION__</string>
+  <key>LSApplicationCategoryType</key>
+  <string>public.app-category.developer-tools</string>
+  <key>LSMinimumSystemVersion</key>
+  <string>12.0</string>
+  <!-- A menu bar app: no Dock icon until the window opens (the app switches its activation policy then). -->
+  <key>LSUIElement</key>
+  <true/>
+  <key>NSHighResolutionCapable</key>
+  <true/>
+  <key>NSHumanReadableCopyright</key>
+  <string>Copyright the Reins contributors. Apache-2.0.</string>
+  <!-- GPUI renders with Metal. -->
+  <key>NSSupportsAutomaticGraphicsSwitching</key>
+  <true/>
+</dict>
+</plist>

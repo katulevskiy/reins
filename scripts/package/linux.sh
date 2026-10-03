@@ -5,7 +5,7 @@
 #
 # Writes to target/package/ (or $CARGO_TARGET_DIR/package/):
 #   Reins-<version>-Linux-<arch>.AppImage and Reins-Linux-<arch>.AppImage (the name "latest" download links use)
-#   Reins-<version>-Linux-<arch>.tar.gz and Reins-Linux-<arch>.tar.gz: reins-app, rewarden, reins.desktop, reins.png
+#   Reins-<version>-Linux-<arch>.tar.gz and Reins-Linux-<arch>.tar.gz: reins-app, reins, reins.desktop, reins.png
 #
 # Needs GPUI's build dependencies (Debian/Ubuntu: libxkbcommon-dev libxkbcommon-x11-dev libwayland-dev libx11-dev
 # libxcb1-dev libx11-xcb-dev libfontconfig1-dev libfreetype-dev libvulkan-dev pkg-config) and downloads linuxdeploy
@@ -31,27 +31,27 @@ esac
 triple="$arch-unknown-linux-gnu"
 target_dir="${CARGO_TARGET_DIR:-$root/target}"
 out="$target_dir/package"
-version="${REINS_VERSION:-$(perl -ne 'if (/^version = "([^"]+)"/) { print $1; exit }' crates/rewarden-desktop/Cargo.toml)}"
-assets="$root/crates/rewarden-desktop-app/assets/icons"
-desktop="$root/crates/rewarden-desktop-app/packaging/linux/reins.desktop"
+version="${REINS_VERSION:-$(perl -ne 'if (/^version = "([^"]+)"/) { print $1; exit }' crates/reins-desktop/Cargo.toml)}"
+assets="$root/crates/reins-desktop-app/assets/icons"
+desktop="$root/crates/reins-desktop-app/packaging/linux/reins.desktop"
 mkdir -p "$out"
 
 say() { printf '==> %s\n' "$*"; }
 
 if [ "${REINS_SKIP_BUILD:-}" != 1 ]; then
     say "building for $triple"
-    cargo build --locked --profile release-app -p rewarden-desktop-app --bin reins-app --target "$triple"
-    cargo build --locked --release -p rewarden-desktop --bin rewarden --target "$triple"
+    cargo build --locked --profile release-app -p reins-desktop-app --bin reins-app --target "$triple"
+    cargo build --locked --release -p reins-desktop --bin reins --target "$triple"
 fi
 app_bin="$target_dir/$triple/release-app/reins-app"
-cli_bin="$target_dir/$triple/release/rewarden"
+cli_bin="$target_dir/$triple/release/reins"
 
 # The tarball.
 name="Reins-$version-Linux-$arch"
 stage="$out/$name"
 rm -rf "$stage" && mkdir -p "$stage"
 install -m 755 "$app_bin" "$stage/reins-app"
-install -m 755 "$cli_bin" "$stage/rewarden"
+install -m 755 "$cli_bin" "$stage/reins"
 install -m 644 "$desktop" "$stage/reins.desktop"
 install -m 644 "$assets/app-256.png" "$stage/reins.png"
 cp LICENSE NOTICE "$stage/"
@@ -66,7 +66,7 @@ rm -rf "$appdir"
 mkdir -p "$appdir/usr/bin" "$appdir/usr/share/applications" "$appdir/usr/share/icons/hicolor/256x256/apps" \
     "$appdir/usr/share/licenses/reins"
 install -m 755 "$app_bin" "$appdir/usr/bin/reins-app"
-install -m 755 "$cli_bin" "$appdir/usr/bin/rewarden"
+install -m 755 "$cli_bin" "$appdir/usr/bin/reins"
 install -m 644 "$desktop" "$appdir/usr/share/applications/reins.desktop"
 install -m 644 "$assets/app-256.png" "$appdir/usr/share/icons/hicolor/256x256/apps/reins.png"
 cp LICENSE NOTICE ios/Shared/Fonts/FONTS-NOTICE.txt "$appdir/usr/share/licenses/reins/"
@@ -87,7 +87,7 @@ say "AppImage"
     cd "$out"
     APPIMAGE_EXTRACT_AND_RUN=1 ARCH="$arch" LDAI_OUTPUT="$appimage" OUTPUT="$appimage" \
         "$linuxdeploy" --appdir "$appdir" \
-        --executable "$appdir/usr/bin/reins-app" --executable "$appdir/usr/bin/rewarden" \
+        --executable "$appdir/usr/bin/reins-app" --executable "$appdir/usr/bin/reins" \
         --desktop-file "$appdir/usr/share/applications/reins.desktop" \
         --icon-file "$appdir/usr/share/icons/hicolor/256x256/apps/reins.png" \
         --output appimage
