@@ -61,7 +61,7 @@ cd android
   release > App integrity) and of the upload key to the Firebase project and as Android OAuth clients in Google Cloud.
   Without that, Gmail, Google Calendar and Google Contacts fail with "needs setup" in the Play build.
 - **Native code** is built with 16 KB page alignment (Play requires it for apps targeting Android 15+).
-- **Target API**: `targetSdk = 36` meets Play's requirement for new apps and updates in 2026.
+- **Target API**: `targetSdk = 36` and `compileSdk = 37`. Verify current Play publishing requirements before submission.
 
 ## Policy audit
 

@@ -22,7 +22,7 @@ Nothing generated is committed. Native libraries are linked with 16 KB page alig
 
 For signed releases, supply `REINS_RELEASE_KEYSTORE`, `REINS_RELEASE_KEYSTORE_PASSWORD`,
 `REINS_RELEASE_KEY_ALIAS`, and `REINS_RELEASE_KEY_PASSWORD` from private settings. The publishing script
-`../scripts/release-android.sh` also accepts the four `ANDROID_KEYSTORE_*` settings injected by Infisical and
+`../scripts/release-android.sh` also accepts the four Android signing settings injected by Infisical and
 checks the production certificate before building. Debug keys are used only for debug builds; they cannot be used
 for store publication. See [signing setup](../CONTRIBUTING.md#maintainers-signing-the-apk-in-releases) and
 [Google Play](PLAY_STORE.md).
