@@ -84,6 +84,10 @@ x86_64-pc-windows-gnu` and MinGW-w64 let you check it: `cargo clippy -p rewarden
 x86_64-pc-windows-gnu -- -D warnings`. Code that only Windows runs lives behind `cfg(windows)`; what can be a plain
 function (paths, quoting, the PE header, `reg` output) lives in `src/win.rs` without one, so its tests run everywhere.
 
+CI (`.github/workflows/ci.yml`, `lint.yml`) runs once per pull request update and on every push to `main`, not on pushes
+to other branches; `gh workflow run ci.yml --ref <branch>` runs it on a branch without a pull request. Pull requests that
+only touch the docs skip the Rust jobs. The Rust build caches are written by `main` only and read everywhere.
+
 Android (needs the Android SDK and NDK; see [android/README.md](android/README.md)):
 
 ```sh
