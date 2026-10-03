@@ -72,6 +72,11 @@ scripts/check-doc-links.py                      # relative links in README.md, t
 Some tests need tools on the machine (`git`, for the git proxy tests) or skip themselves when optional data is absent
 (the Laya model package: set `REWARDEN_LAYA_PKG`).
 
+`scripts/workos-live.sh` checks WorkOS sign-in against a real WorkOS **staging** environment (it makes and deletes a
+test user; needs Google Chrome and a free port 8765). Maintainers sign in with `infisical login` (the
+project is set in `.infisical.json`) and run `infisical run --env=dev -- scripts/workos-live.sh`. Anyone else sets `WORKOS_CLIENT_ID` and `WORKOS_API_KEY`
+(`sk_test_...`) in the environment, or puts them in a git-ignored `workos.env` at the repository root.
+
 The desktop app's Windows code: CI runs its clippy and tests on a Windows runner (`desktop-windows` in
 `.github/workflows/ci.yml`), including `tests/windows_service.rs`, which installs and removes the real background
 service and so runs only with `REWARDEN_TEST_WINDOWS_SERVICE=1`. From Linux or macOS, `rustup target add
