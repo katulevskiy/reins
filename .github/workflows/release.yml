@@ -515,14 +515,23 @@ jobs:
           identity-id: ${{ vars.INFISICAL_RELEASE_IDENTITY_ID }}
           environment: ${{ vars.INFISICAL_RELEASE_ENVIRONMENT || 'prod' }}
           secret-path: ${{ vars.INFISICAL_ANDROID_SIGNING_PATH || '/signing/android' }}
-      - name: Keystore
+      - name: Keystore and production certificate
         env:
           KEYSTORE: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+          KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
         run: |
           umask 077
           KEYSTORE="${KEYSTORE:-${ANDROID_KEYSTORE_BASE64:-}}"
           [[ -n "$KEYSTORE" ]] || { echo "::error::Android signing keystore is missing"; exit 1; }
           base64 -d <<<"$KEYSTORE" > "$RUNNER_TEMP/release.keystore"
+          export REINS_CI_STORE_PASSWORD="${KEYSTORE_PASSWORD:-${ANDROID_KEYSTORE_PASSWORD:-}}"
+          alias="${KEY_ALIAS:-${ANDROID_KEY_ALIAS:-}}"
+          keytool -exportcert -keystore "$RUNNER_TEMP/release.keystore" -alias "$alias" \
+            -storepass:env REINS_CI_STORE_PASSWORD > "$RUNNER_TEMP/release-certificate.der"
+          expected="$(cat android/release-signing.sha256)"
+          actual="$(sha256sum "$RUNNER_TEMP/release-certificate.der" | cut -d' ' -f1)"
+          [[ "$actual" == "$expected" ]] || { echo "::error::Keystore does not match production signing identity"; exit 1; }
       # android/app/build.gradle.kts signs fullRelease with the REINS_RELEASE_* key. versionCode is the build time in
       # minutes, as in scripts/release-android.sh, so every release installs over the previous one.
       - name: Build the APK
@@ -547,7 +556,7 @@ jobs:
             "-Preins.build=$BUILD"
       - name: Remove the keystore
         if: always()
-        run: rm -f "$RUNNER_TEMP/release.keystore"
+        run: rm -f "$RUNNER_TEMP/release.keystore" "$RUNNER_TEMP/release-certificate.der"
       - name: Verify and name the APK
         env:
           VERSION_CODE: ${{ steps.build.outputs.version-code }}

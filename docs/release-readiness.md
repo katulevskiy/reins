@@ -27,20 +27,24 @@ Review date: 2026-10-02. Source baseline: `97b9cd7` (Reins) and the merged downl
 - CI has one release gate, component-aware heavy jobs, shared native Android generation, parallel Rust test suites,
   and caches for release builds. Historical implementation recipes were removed; active specs, tests, licenses and
   production assets remain.
-- The existing Android signing certificate is preserved, tested with an actual APK, and pinned in `android/release-signing.sha256`.
-  The release workflow can fetch signing secrets from Infisical via GitHub OIDC.
+- Android production signing uses a newly generated non-debug RSA-4096 certificate pinned in
+  `android/release-signing.sha256`. The historical debug key is preserved separately for migration/recovery.
+  The release workflow can fetch the prepared production signing bundle from Infisical via GitHub OIDC.
+  Debug APK signing tests alone do not establish production-release readiness.
 
 ## Required before production rollout
 
 | Item | Missing or unverified |
 | --- | --- |
 | WorkOS passkeys | Enable passkeys on the production AuthKit custom domain and verify enrollment/sign-in on iOS and Android. WorkOS progressive enrollment is optional and skippable; existing social/email accounts need a tested migration path. The server refuses non-passkey sign-in rather than pretending enrollment occurred. |
+| Legacy vault migration | New WorkOS accounts use random keys and mandatory recovery recording. Existing password-encrypted accounts retain their password for key unlock. Require an authenticated rewrap/migration using the original decryption credential before claiming every existing account is passwordless. |
 | Existing sessions | Passkey enforcement applies to new sign-ins. Revoke existing non-passkey WorkOS/Reins sessions during the planned rollout so old authenticated sessions cannot bypass the new signup requirement. |
 | WorkOS recovery | The Reins recovery code recovers encrypted vault keys, not a lost WorkOS identity. Confirm the identity recovery journey in WorkOS and explain this distinction to users. |
 | Infisical access | The configured project returned HTTP 404 in both dev and prod. Signing secrets could not be imported or inspected. Sign in again, restore project access, import the prepared private signing bundle and configure the release machine identity. |
 | GitHub release identity | Set `INFISICAL_RELEASE_IDENTITY_ID` and bind the identity to this repository's release workflow on `main`, with access limited to `/signing/android`. There were no GitHub repository secrets or variables at review time. |
-| Historical Android package | The old local Rewarden APK uses `dev.rewarden.android`; the current app uses `com.reins2fa.app`. The earlier rename means it installs as a separate app even with the same certificate. Do not promise an in-place update from the old package. |
-| Android push/Google client | The local `google-services.json` has no client for `com.reins2fa.app`. Supply the correct Firebase/Google configuration and register the preserved signing certificate. Tests without Firebase do not verify push or Google integration. |
+| Historical Android package/certificate | Old Rewarden uses `dev.rewarden.android`; current Reins uses `com.reins2fa.app`, a separate installation. Current-package test/direct builds signed with the old debug certificate also cannot update to the new production key. Verify recovery before any reinstall and provide an authenticated migration path; never silently discard encrypted data. |
+| Android push/Google client | The local `google-services.json` has no client for `com.reins2fa.app`. Supply the correct Firebase/Google configuration and register the new production certificate and, for Play, the actual Google-held app signing certificate. Tests without Firebase do not verify push or Google integration. |
+| Play production signing | Configure the dedicated production key as the initial upload key, enroll in Play App Signing, and verify a signed `playRelease` AAB. Google-held app signing keys may differ from the upload/direct-APK key. Debug certificates are unsuitable for store publication. |
 | App Store and Play Store | No real App Store listing or configured Google Play listing is available. Add actual listing URLs in the website store configuration. Android currently falls back to the signed APK; iOS must show availability until its listing exists. |
 | Deployment | Merge and deploy the Reins and website changes. Code changes do not update the running server or website automatically in this working session. |
 | Native verification | iOS needs an Xcode build and device/simulator onboarding check; Android needs a physical-device passkey/push check. Linux-only source validation cannot establish those results. |

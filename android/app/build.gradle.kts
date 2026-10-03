@@ -90,25 +90,25 @@ android {
         val registered = file("${System.getProperty("user.home")}/.android/debug.keystore")
         if (registered.isFile) storeFile = registered
     }
-    // The Google Play upload key, when ~/.gradle/gradle.properties names it (reins.uploadKeystore,
-    // reins.uploadKeystorePassword, reins.uploadKeyAlias, reins.uploadKeyPassword): it signs `playRelease`
-    // (see below). Without it that bundle has the debug key, which is fine for checking it locally; Play refuses it.
-    providers.gradleProperty("reins.uploadKeystore").orNull?.let { keystore ->
+    fun releaseSetting(property: String, env: String) =
+        providers.gradleProperty(property).orElse(providers.environmentVariable(env)).orNull?.takeIf { it.isNotEmpty() }
+    // Explicit Google Play upload credentials. The same production key can be the initial upload key;
+    // Google Play's app signing certificate may differ. Never fall back to the debug certificate.
+    releaseSetting("reins.uploadKeystore", "REINS_UPLOAD_KEYSTORE")?.let { keystore ->
         signingConfigs.create("upload") {
             storeFile = file(keystore)
-            storePassword = providers.gradleProperty("reins.uploadKeystorePassword").get()
-            keyAlias = providers.gradleProperty("reins.uploadKeyAlias").get()
-            keyPassword = providers.gradleProperty("reins.uploadKeyPassword").get()
+            storePassword = releaseSetting("reins.uploadKeystorePassword", "REINS_UPLOAD_KEYSTORE_PASSWORD")
+                ?: error("reins.uploadKeystore is set, but not its password (REINS_UPLOAD_KEYSTORE_PASSWORD)")
+            keyAlias = releaseSetting("reins.uploadKeyAlias", "REINS_UPLOAD_KEY_ALIAS")
+                ?: error("reins.uploadKeystore is set, but not the key alias (REINS_UPLOAD_KEY_ALIAS)")
+            keyPassword = releaseSetting("reins.uploadKeyPassword", "REINS_UPLOAD_KEY_PASSWORD") ?: storePassword
         }
     }
     // The key of the published `full` APK, when a Gradle property or the environment names it (the GitHub release
     // workflow uses the environment): reins.releaseKeystore / REINS_RELEASE_KEYSTORE,
     // reins.releaseKeystorePassword / REINS_RELEASE_KEYSTORE_PASSWORD, reins.releaseKeyAlias /
     // REINS_RELEASE_KEY_ALIAS, reins.releaseKeyPassword / REINS_RELEASE_KEY_PASSWORD (default: the keystore
-    // password). It signs `fullRelease` (see below). Without it `fullRelease` has the debug key, and
-    // scripts/release-android.sh re-signs it with apksigner.
-    fun releaseSetting(property: String, env: String) =
-        providers.gradleProperty(property).orElse(providers.environmentVariable(env)).orNull?.takeIf { it.isNotEmpty() }
+    // password). It signs `fullRelease` (see below). Without explicit credentials, release builds are unsigned.
     releaseSetting("reins.releaseKeystore", "REINS_RELEASE_KEYSTORE")?.let { keystore ->
         val storePass = releaseSetting("reins.releaseKeystorePassword", "REINS_RELEASE_KEYSTORE_PASSWORD")
             ?: error("reins.releaseKeystore is set, but not its password (REINS_RELEASE_KEYSTORE_PASSWORD)")
@@ -136,9 +136,9 @@ android {
             isMinifyEnabled = true
             isShrinkResources = true
             proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro")
-            // MVP: only the debug keystore's SHA-1 is registered with Firebase / Google Cloud. scripts/release-android.sh
-            // re-signs `full` with the app's key; a `play` bundle is signed with the upload key (PLAY_STORE.md).
-            signingConfig = signingConfigs.getByName("debug")
+            // Require an explicit production identity for distribution. Debug signing is for debug builds only.
+            // The variant hooks below install the full-release or Play-upload signing config when supplied.
+            signingConfig = null
             testProguardFiles("proguard-test-rules.pro")
         }
     }
@@ -275,7 +275,7 @@ val sharedBindgen = tasks.register<UniffiBindgenTask>("uniffiBindgen") {
 }
 
 androidComponents {
-    // The release build type's debug key would otherwise win over a flavor's signing config.
+    // Assign the explicit signing identity to each distribution.
     onVariants(selector().withBuildType("release").withFlavor("distribution" to "play")) { variant ->
         android.signingConfigs.findByName("upload")?.let { variant.signingConfig.setConfig(it) }
     }

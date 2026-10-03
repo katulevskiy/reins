@@ -11,7 +11,7 @@ drafts that someone responsible for the app's legal commitments must check befor
 | Application id | `com.reins2fa.app` | `com.reins2fa.app` (the same) |
 | Text messages (READ_SMS, SEND_SMS) | yes | no: no permission, the core is not offered the integration, the Integrations screen does not list it |
 | Updates | in-app updater (REQUEST_INSTALL_PACKAGES, `latest.json`) | Google Play; no updater, no "App updates" channel, no background check |
-| Signed by | the app's key (the script re-signs; SHA-1 `0dda03e6…`) | the upload key; Play re-signs with the app signing key it holds (Play App Signing) |
+| Signed by | dedicated production key (`android/release-signing.sha256`) | the upload key; Play re-signs with the app signing key it holds (Play App Signing) |
 
 Both have the same application id. Only one of them can be installed on a phone, and because the signing keys differ,
 Android refuses to update one with the other: switching from the APK to Play (or back) means uninstalling first, which
@@ -19,6 +19,10 @@ deletes the phone's data (it is in no-backup storage and bound to the phone's Ke
 registers the phone again; grants, history and Autopilot's training stay on the old phone's data and are lost. A
 separate id (`com.reins2fa.app.play`) would let both coexist, but would need a second Firebase app, a second Android
 OAuth client and its own redirect scheme for no real benefit: one person needs one approval phone.
+
+The historical Rewarden APK used `dev.rewarden.android`. That package rename prevents an in-place update.
+Existing `com.reins2fa.app` test/direct builds signed with the old debug certificate also require an explicit
+migration/reinstall before using the new production key. Verify recovery first; uninstalling erases local phone data.
 
 What the flavors change is kept in one place each:
 
@@ -42,11 +46,14 @@ cd android
 ./gradlew testFullDebugUnitTest testPlayDebugUnitTest
 ```
 
-- **Upload key.** Without it the bundle is signed with the debug key, which is fine for checking it locally and which
-  Play rejects. Create an upload key (`keytool -genkeypair -v -keystore upload.jks -keyalg RSA -keysize 4096 -validity
-  10000 -alias upload`), keep it outside the repository, and name it in `~/.gradle/gradle.properties`:
+- **Upload key.** An explicit production upload key is required; without it the release bundle is unsigned.
+  Never upload a debug certificate. The dedicated production key (`reinsrelease`, RSA-4096) can be the initial
+  upload key. Keep it outside the repository and name it in `~/.gradle/gradle.properties`:
   `reins.uploadKeystore`, `reins.uploadKeystorePassword`, `reins.uploadKeyAlias`, `reins.uploadKeyPassword`.
-  Enrol in Play App Signing (the default for new apps) and let Google generate the app signing key.
+  CI/headless builds can instead set `REINS_UPLOAD_KEYSTORE`, `REINS_UPLOAD_KEYSTORE_PASSWORD`,
+  `REINS_UPLOAD_KEY_ALIAS`, `REINS_UPLOAD_KEY_PASSWORD` from Infisical. Enrol in Play App Signing and let Google
+  generate the app signing key; that distributed certificate may differ from the upload/direct-APK key.
+  [Android signing documentation](https://developer.android.com/studio/publish/app-signing).
 - **versionCode** must grow with every upload. The release script's scheme (minutes since 1970, about 29.8 million now)
   works for Play too, and keeps the two builds' numbers comparable.
 - **google-services.json** must be present when building (see `app/build.gradle.kts`), or the bundle has no push.
@@ -102,8 +109,8 @@ Other policy points:
   14 days before applying for production.
 - **Android developer verification** (enforced from 2026-09 in Brazil, Indonesia, Singapore and Thailand, later
   worldwide) also covers the `full` APK: register `com.reins2fa.app` and both signing certificates (the APK's key
-  and the Play app signing key) in the Android Developer Console, or the APK will stop installing there. Note that the
-  APK is currently signed with a debug keystore. **[owner action]**
+  and the Play app signing key) in the Android Developer Console, or the APK will stop installing there. The production build must use its dedicated
+  non-debug identity; the historical debug certificate is retained for migration only. **[owner action]**
 - **Android 15 `dataSync` limit**: a `dataSync` foreground service may run 6 hours a day. The model download is far
   shorter; a user-initiated data transfer job would avoid the declaration but is not needed.
 

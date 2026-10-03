@@ -180,7 +180,7 @@ only this repository's release workflow on `main`, then set the GitHub Actions v
 
 | Infisical secret | Value |
 | --- | --- |
-| `ANDROID_KEYSTORE_BASE64` | the existing APK signing keystore, base64-encoded |
+| `ANDROID_KEYSTORE_BASE64` | the dedicated production keystore, base64-encoded |
 | `ANDROID_KEYSTORE_PASSWORD` | its password |
 | `ANDROID_KEY_ALIAS` | the key alias |
 | `ANDROID_KEY_PASSWORD` | the key password |
@@ -190,13 +190,25 @@ Keep the keystore and import file outside the repository, with mode `0600`. Exis
 same names remain a fallback while migrating. With neither configured, the release explicitly reports that the APK
 was omitted.
 
-Preserve the signing key. `android/release-signing.sha256` pins the historical certificate, and release CI refuses to
-publish an APK with a different certificate. The old Rewarden APK used `dev.rewarden.android`; current Reins uses
-`com.reins2fa.app`. Android treats these as different apps, so preserving the certificate does not enable an in-place
-update from the old package. The existing APK identity is `androiddebugkey`, SHA-256
-`86177dbb7d7160f2d4ea332717adacdc234679d3f193eaa20e56b00a08ab5f83`. A new password-protected keystore can hold this
-same private key; generating a new key would break updates. Google Play uses its separate upload key and app-signing
-certificate (see `android/PLAY_STORE.md`).
+Production signing uses a dedicated non-debug RSA-4096 identity, alias `reinsrelease`. Its SHA-256 certificate is
+`61edfc4c65cbdfa1b7a07109a9df347de93500b52012c3380b38c7c4a4e3f1c8`, pinned in
+`android/release-signing.sha256`. Both the local release script and CI reject another certificate before compiling.
+Release variants without explicit signing credentials are unsigned; the local publishing script refuses missing
+credentials. The private keystore and prepared Infisical dotenv are outside the repository. Import that production
+bundle; the historical `androiddebugkey` is retained separately for recovery/testing and must not be uploaded to a
+store. Repackaging a debug key with a stronger password does not make its certificate suitable for publishing.
+See [Android's signing guide](https://developer.android.com/studio/publish/app-signing).
+
+The old Rewarden package was `dev.rewarden.android`; Reins is `com.reins2fa.app`, so it installs as a separate app.
+Any `com.reins2fa.app` test/direct APK signed with the historical debug certificate also cannot update to the new
+production certificate. Save and verify the vault recovery code before reinstalling; plan authenticated migration
+rather than discarding encrypted data. Later production updates must keep the new identity.
+
+For the initial Google Play upload, this production key can also be configured as the upload key through
+`reins.uploadKeystore`, `reins.uploadKeystorePassword`, `reins.uploadKeyAlias`, `reins.uploadKeyPassword` (or the
+corresponding `REINS_UPLOAD_*` environment settings). Google Play's app signing key may differ from the upload key;
+register the actual Play certificate with Firebase/Google. A separate upload key can be registered later. Building a
+signed debug APK is signing verification, not a production release (see `android/PLAY_STORE.md`).
 
 Locally the same signing is
 `REINS_RELEASE_KEYSTORE=... REINS_RELEASE_KEYSTORE_PASSWORD=... REINS_RELEASE_KEY_ALIAS=... ./gradlew
