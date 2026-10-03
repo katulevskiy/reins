@@ -23,6 +23,11 @@ fn repo_root() -> PathBuf {
 fn binary() -> &'static Path {
     static BIN: OnceLock<PathBuf> = OnceLock::new();
     BIN.get_or_init(|| {
+        if let Some(path) = std::env::var_os("REINS_TEST_SERVER_BINARY") {
+            let binary = PathBuf::from(path).canonicalize().expect("the prebuilt test server must exist");
+            assert!(binary.is_file(), "REINS_TEST_SERVER_BINARY must be a file");
+            return binary;
+        }
         let root = repo_root();
         let status = Command::new("cargo")
             .args(["build", "--features", "sqlite", "--bin", "vaultwarden"])
@@ -171,6 +176,11 @@ impl Server {
 
     pub fn log(&self) -> String {
         std::fs::read_to_string(self.dir.join("server.log")).unwrap_or_default()
+    }
+
+    /// The isolated test database, for fault injection and checking durable lifecycle state.
+    pub fn database_path(&self) -> PathBuf {
+        self.dir.join("db.sqlite3")
     }
 }
 

@@ -40,6 +40,19 @@ and re-run it; do not edit the project file by hand.
 Push notifications need APNs on the server: `REINS_APNS_KEY_FILE`, `_KEY_ID`, `_TEAM_ID`, `_TOPIC` (see
 [docs/self-hosting.md](../docs/self-hosting.md)). Without them requests still arrive while the app is open (long poll).
 
+## Sign-in and recovery
+
+Hosted sign-in uses WorkOS AuthKit in an authentication browser session, with a passkey instead of a Reins master
+password. Passkeys and a stable AuthKit custom domain must be configured in the WorkOS environment. Self-hosted
+servers retain their own SSO and password compatibility under “Use another server”.
+
+Passwordless accounts must write down their recovery code before the normal app screens appear. The user confirms
+that it is stored safely and types the final group from the written copy; copying the code does not complete the
+step. The gate resumes after an app restart. Only a fingerprint acknowledgement is saved outside the encrypted core,
+so WorkOS email changes do not repeat the step and a replaced recovery code does. The authenticated account id is
+cached by the core, allowing recovery-code access offline after subsequent restarts; an older installation may need
+one online token refresh. Settings shows the recovery code again after Face ID, Touch ID or the passcode.
+
 ## Targets
 
 | Target | Folders | What it is |

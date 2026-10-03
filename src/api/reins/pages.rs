@@ -118,10 +118,9 @@ pub fn error_page(title: &str, message: &str) -> String {
 pub const APP_ID: &str = "com.reins2fa.app";
 /// The custom scheme both apps register (`reins://pair?code=`), for when a link does not open the app by itself.
 pub const APP_SCHEME: &str = "reins";
-/// Where to get the Android app.
-pub const ANDROID_APP_URL: &str = concat!(reins_proto::official_site!(), "/app");
-/// The iOS app's App Store page. A placeholder until the app is listed: replace the id then.
-pub const APP_STORE_URL: &str = "https://apps.apple.com/app/reins/id0000000000";
+/// The phone download page handles platform-specific store links and release availability.
+/// Keep pairing links usable before the App Store and Play Store listings exist.
+pub const MOBILE_APP_URL: &str = concat!(reins_proto::default_server!(), "/get");
 
 /// Which link opens the app on the phone that opened the page, from its `User-Agent`.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -156,7 +155,7 @@ pub fn open_in_app_link(code: &str, platform: Platform) -> String {
     let query: String = url::form_urlencoded::Serializer::new(String::new()).append_pair("code", code).finish();
     match platform {
         Platform::Android => {
-            let fallback: String = url::form_urlencoded::byte_serialize(ANDROID_APP_URL.as_bytes()).collect();
+            let fallback: String = url::form_urlencoded::byte_serialize(MOBILE_APP_URL.as_bytes()).collect();
             format!(
                 "intent://pair?{query}#Intent;scheme={APP_SCHEME};package={APP_ID};S.browser_fallback_url={fallback};end"
             )
@@ -170,10 +169,10 @@ pub fn open_in_app_link(code: &str, platform: Platform) -> String {
 /// it. `code` is `None` when the link has no valid code.
 pub fn pair_page(code: Option<&str>, platform: Platform) -> String {
     let install = format!(
-        "<p class=\"muted\">No Reins app on this phone yet? Get it for \
-<a href=\"{android}\">Android</a> or <a href=\"{ios}\">iPhone and iPad</a>, sign in, then scan the code again.</p>",
-        android = escape_html(ANDROID_APP_URL),
-        ios = escape_html(APP_STORE_URL),
+        "<p class=\"muted\">No Reins app on this phone yet? \
+<a href=\"{phone}\">Get the phone app</a>, sign in, then scan the code again. \
+The download page shows availability for your phone.</p>",
+        phone = escape_html(MOBILE_APP_URL),
     );
     let body = match code {
         Some(code) => format!(
@@ -343,12 +342,13 @@ mod tests {
         let ios = pair_page(Some("BCDF-GHJK"), Platform::Other);
         assert!(ios.contains(">BCDF-GHJK<"), "{ios}");
         assert!(ios.contains("href=\"reins://pair?code=BCDF-GHJK\""), "{ios}");
-        assert!(ios.contains(ANDROID_APP_URL) && ios.contains(APP_STORE_URL));
+        assert!(ios.contains(MOBILE_APP_URL));
+        assert!(!ios.contains("id0000000000"), "never send a user to a fake App Store listing");
         let android = pair_page(Some("BCDF-GHJK"), Platform::Android);
         assert!(
             android.contains(
                 "href=\"intent://pair?code=BCDF-GHJK#Intent;scheme=reins;package=com.reins2fa.app;\
-S.browser_fallback_url=https%3A%2F%2Freins2fa.com%2Fapp;end\""
+S.browser_fallback_url=https%3A%2F%2Fapp.reins2fa.com%2Fget;end\""
             ),
             "{android}"
         );

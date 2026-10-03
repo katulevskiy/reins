@@ -96,6 +96,9 @@ class TakeoverFlowTest : FlowHarness() {
         awaitTag("recoveryCode")
         rule.onNodeWithTag("recoveryCode").performTextReplacement(FakeCore.RECOVERY_CODE)
         tap("unlockAccount")
+        tap("recoveryRecorded")
+        rule.onNodeWithTag("recoveryConfirmGroup").performTextReplacement(FakeCore.RECOVERY_CODE.substringAfterLast('-'))
+        tap("recoveryCodeDone")
         awaitTag("setupComputer")
         assertEquals(FakeCore.RECOVERY_CODE, core.unlockAttempts.single())
         awaitCore { container.state.approvalDevice.value }
@@ -112,6 +115,9 @@ class TakeoverFlowTest : FlowHarness() {
         awaitTag("joinCode")
         rule.onNodeWithTag("joinCode").assertTextEquals("482 193")
         repeat(3) { pollOnce() }
+        tap("recoveryRecorded")
+        rule.onNodeWithTag("recoveryConfirmGroup").performTextReplacement(FakeCore.RECOVERY_CODE.substringAfterLast('-'))
+        tap("recoveryCodeDone")
         awaitTag("setupComputer")
         awaitCore { core.registrations.size == 1 }
         assertTrue(container.state.approvalDevice.value)

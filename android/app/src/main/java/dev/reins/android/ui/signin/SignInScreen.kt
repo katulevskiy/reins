@@ -131,12 +131,19 @@ private fun WelcomePage(
             Spacer(Modifier.height(36.dp))
             ui.error?.let { Banner(it, kind = BannerKind.Error, tag = "signInError") }
             CapsuleButton(
-                "Continue",
+                if (passwordForms) "Continue" else "Continue with a passkey",
                 Modifier.fillMaxWidth().testTag("continue"),
                 style = ButtonStyle.Primary,
                 enabled = valid,
                 busy = ui.busy,
             ) { viewModel.continueWithSso(server) { Browser.open(context, it) } }
+            if (!passwordForms) {
+                RText(
+                    "Create or use a passkey on the secure sign-in page. Your phone protects it with your fingerprint or screen lock.",
+                    RType.sans(13.5f, lineHeight = 19f),
+                    c.tertiary,
+                )
+            }
             ServerChoice(server, onServer, custom, onCustom, enabled = !ui.busy)
             if (passwordForms) {
                 RText(

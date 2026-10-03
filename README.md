@@ -88,8 +88,8 @@ flowchart LR
 
 You need an Android phone or an iPhone and an account on a Reins server (the hosted one or [your own](docs/self-hosting.md)).
 
-1. **Phone.** Install the app from <https://reins2fa.com/app> and tap **Continue** (Google, Apple, GitHub or an email
-   code; no password). The phone becomes your approval device. Connect services under **Integrations**.
+1. **Phone.** Install the app from <https://reins2fa.com/app> and tap **Continue with passkey** through WorkOS. Write down your recovery code and confirm its final group before
+   continuing. The phone becomes your approval device. Connect services under **Integrations**.
 2. **Desktop app** (Linux or macOS; on Windows, in PowerShell: `irm https://reins2fa.com/install.ps1 | iex` instead of
    the first line):
    ```sh

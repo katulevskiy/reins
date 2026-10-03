@@ -24,6 +24,7 @@ pub struct User {
 struct State {
     /// The user the next authorize signs in (the person at the browser).
     signing_in: Option<User>,
+    authentication_method: Option<String>,
     /// code -> (user, code_challenge)
     codes: HashMap<String, (User, Option<String>)>,
     /// Session ids handed out, in order.
@@ -105,7 +106,7 @@ impl Respond for Authenticate {
             "organization_id": null,
             "access_token": unsigned_jwt(&json!({"sub": user.id, "sid": sid, "exp": exp})),
             "refresh_token": format!("refresh-{sid}"),
-            "authentication_method": "GoogleOAuth",
+            "authentication_method": st.authentication_method.as_deref().unwrap_or("Passkey"),
         }))
     }
 }
@@ -184,6 +185,11 @@ impl FakeWorkos {
     /// The person at the browser for the next sign-in.
     pub fn sign_in_as(&self, user: &User) {
         self.state.lock().expect("state").signing_in = Some(user.clone());
+    }
+
+    /// The method WorkOS reports for subsequent exchanges (the default is a passkey).
+    pub fn authenticate_with(&self, method: &str) {
+        self.state.lock().expect("state").authentication_method = Some(method.to_owned());
     }
 
     /// The WorkOS sessions handed out so far, oldest first.

@@ -101,6 +101,9 @@ pub struct DeviceRegistered {
 /// A2 `GET /pending` response. Items returned here are marked delivered.
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Pending {
+    /// Current verified WorkOS account email. Metadata only; never changes the identity of the authenticated caller.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub account_email: Option<String>,
     #[serde(default)]
     pub requests: Vec<RelayRequest>,
     #[serde(default)]
@@ -212,6 +215,7 @@ mod tests {
         assert!(empty.is_empty());
         assert_eq!(serde_json::to_value(&empty).unwrap(), json!({"requests": [], "pairings": []}));
         let p = Pending {
+            account_email: None,
             requests: vec![],
             pairings: vec![PairingRequest {
                 v: 1,

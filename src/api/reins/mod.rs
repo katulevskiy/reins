@@ -148,6 +148,7 @@ impl Hub {
         self.blobs.purge(now_unix());
         loop {
             let pending = Pending {
+                account_email: None,
                 requests: self.relay.take_undelivered(user),
                 pairings: self.pairings.take_undelivered(user),
                 blobs: self.blobs.take_undelivered(user, now_unix()),

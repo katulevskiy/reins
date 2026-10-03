@@ -148,7 +148,7 @@ impl Engine {
     /// Whether this phone can open the signed-in account's vault.
     pub async fn account_keys(&self) -> Result<AccountKeys, CoreError> {
         let session = self.session()?;
-        if self.store.secret_get(VAULT, &session.email)?.is_some() {
+        if self.store.secret_get(VAULT, &session.email())?.is_some() {
             return Ok(AccountKeys::Unlocked);
         }
         let (user_id, key) = self.account_profile(&session).await?;
@@ -157,7 +157,7 @@ impl Engine {
         };
         match tokio::task::spawn_blocking(move || secret.open_user_key(&wrapped)).await.map_err(interrupted)? {
             Ok(key) => {
-                self.keep_vault_key(&session.email, &key)?;
+                self.keep_vault_key(&session.email(), &key)?;
                 Ok(AccountKeys::Unlocked)
             }
             Err(_) => Ok(AccountKeys::Locked),
@@ -171,7 +171,7 @@ impl Engine {
         let session = self.session()?;
         let (user_id, wrapped) = self.account_profile(&session).await?;
         let wrapped = wrapped.ok_or_else(|| CoreError::invalid("This account has no keys yet. Sign in again."))?;
-        let email = session.email.clone();
+        let email = session.email();
         if let Some(secret) = AccountSecret::from_recovery_code(&code_or_password) {
             let raw = Zeroizing::new(secret.as_bytes().to_vec());
             let key =
@@ -201,8 +201,7 @@ impl Engine {
     /// The signed-in account's recovery code, when this phone keeps its secret (the app asks for biometrics first).
     pub async fn account_recovery_code(&self) -> Result<String, CoreError> {
         let session = self.session()?;
-        let token = session.access_token().await?;
-        let (user_id, _) = sso::access_claims(&token)?;
+        let user_id = session.account_user_id().await?;
         let secret = self.secret_of(&user_id)?.ok_or_else(|| {
             CoreError::invalid("This account has no recovery code: it was made with a master password.")
         })?;
@@ -213,8 +212,7 @@ impl Engine {
     /// with a master password).
     pub(crate) async fn signed_in_secret(&self) -> Result<Option<AccountSecret>, CoreError> {
         let session = self.session()?;
-        let token = session.access_token().await?;
-        let (user_id, _) = sso::access_claims(&token)?;
+        let user_id = session.account_user_id().await?;
         self.secret_of(&user_id)
     }
 
@@ -226,7 +224,7 @@ impl Engine {
         let raw = Zeroizing::new(secret.as_bytes().to_vec());
         let key = tokio::task::spawn_blocking(move || secret.open_user_key(&wrapped)).await.map_err(interrupted)??;
         self.store.secret_put(SECRET_SERVICE, &user_id, &raw)?;
-        self.keep_vault_key(&session.email, &key)?;
+        self.keep_vault_key(&session.email(), &key)?;
         Ok(())
     }
 }

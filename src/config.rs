@@ -601,6 +601,8 @@ make_config! {
         reins_outbound_max_concurrent: u32,  false,  def,    4;
         /// WorkOS sync interval (seconds) |> With WorkOS as the SSO provider: how often the server reads the WorkOS events (email changes, deleted users, revoked sessions) and applies them to the accounts. 0 disables the sync.
         reins_workos_sync_secs:      u64,    false,  def,    30;
+        /// Require WorkOS passkeys |> With Reins enabled and WorkOS as the SSO provider, accept only sign-ins authenticated with a passkey. Enable passkeys on the hosted AuthKit custom domain first. False is an explicit legacy/staging exception.
+        reins_workos_require_passkey: bool,  false,  def,    true;
         /// WorkOS API key |> The key the WorkOS sync reads events with. Empty uses SSO_CLIENT_SECRET (WorkOS takes the API key as the client secret).
         reins_workos_api_key:        Pass,   false,  option;
         /// WorkOS webhook secret |> The signing secret of a WorkOS webhook pointed at {DOMAIN}/reins/workos/webhook. A signed delivery makes the sync run at once; without it, the endpoint is off and the sync only polls.
@@ -1682,7 +1684,7 @@ impl Config {
         (!self.signups_allowed()
             && self.signups_domains_whitelist().is_empty()
             && (self.mail_enabled() || !self.invitations_allowed()))
-            || (self.sso_enabled() && self.sso_only())
+            || self.sso_required()
     }
 
     /// Tests whether the specified user is allowed to create an organization.
@@ -1812,6 +1814,14 @@ impl Config {
 
     pub fn sso_master_password_policy_value(&self) -> Option<serde_json::Value> {
         validate_sso_master_password_policy(self.sso_master_password_policy().as_ref()).ok().flatten()
+    }
+
+    /// Reins accounts managed by WorkOS always sign in through AuthKit, including token refresh and signup.
+    pub fn sso_required(&self) -> bool {
+        self.sso_enabled()
+            && (self.sso_only()
+                || (self.reins_enabled()
+                    && crate::sso_workos::provider_is_workos(&self.sso_provider(), &self.sso_authority())))
     }
 
     pub fn sso_scopes_vec(&self) -> Vec<String> {

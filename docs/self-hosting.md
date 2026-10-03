@@ -92,7 +92,12 @@ Everything else (database URL, SMTP, `ADMIN_TOKEN`, two-factor options) works as
 
 ## Accounts and the web vault
 
-People need an account before the phone can sign in. There are four ways to create one:
+For WorkOS deployments (`REINS_ENABLED=true`, `SSO_ENABLED=true`, `SSO_PROVIDER=workos`), the phone uses hosted AuthKit
+and the server requires passkey authentication by default (`REINS_WORKOS_REQUIRE_PASSKEY=true`). Configure AuthKit
+passkeys and a production custom domain before rollout. Local password signup and sign-in are disabled automatically.
+See [deployment.md](deployment.md#workos-passkeys-and-recovery-rollout).
+
+For self-hosted password deployments, people need an account before the phone can sign in. There are four ways to create one:
 
 - **The phone app.** **Create account** (with **Use another server** set to yours) registers the account with real
   vault keys, like a Bitwarden client, while `SIGNUPS_ALLOWED=true`. With `SIGNUPS_VERIFY=true` the app can sign in once the

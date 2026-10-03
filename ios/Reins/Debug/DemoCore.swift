@@ -14,6 +14,13 @@ enum DemoCore {
     static func make() -> (any ReinsCoreProtocol)? {
         let args = ProcessInfo.processInfo.arguments
         let otherPhone = args.contains("-demoOtherPhone")
+        // Existing seeded demo accounts already completed recovery setup. A fresh sign-in exercises the gate.
+        let recoveryKey = RecoveryRecord.key(server: DemoData.server, code: DemoData.recoveryCode)
+        if args.contains("-signedout") || args.contains("-demoRecoverySetup") {
+            AppGroup.defaults.removeObject(forKey: recoveryKey)
+        } else {
+            AppGroup.defaults.set(true, forKey: recoveryKey)
+        }
         // This phone never held the role: the refusal shows the Unlock screen, not the "replaced" banner.
         if otherPhone { DeviceStatus.clear() }
         return DemoReinsCore(
@@ -71,6 +78,7 @@ final class DemoReinsCore: ReinsCoreProtocol, @unchecked Sendable {
         var joins: [String: JoinView] = [:]
         /// Another phone approves for the account: `registerDevice` is refused until this one brings a proof.
         var approvalElsewhere = false
+        var hasAccountSecret = true
     }
 
     private let lock = NSLock()
@@ -138,7 +146,7 @@ final class DemoReinsCore: ReinsCoreProtocol, @unchecked Sendable {
             if code == "000000" { throw CoreError.InvalidCredentials }
         }
         let info = SessionInfo(serverUrl: serverUrl, email: email)
-        locked { $0.session = info }
+        locked { $0.session = info; $0.hasAccountSecret = false }
         return info
     }
 
@@ -150,7 +158,7 @@ final class DemoReinsCore: ReinsCoreProtocol, @unchecked Sendable {
         if email.lowercased().contains("taken") { throw CoreError.Invalid(reason: "An account with this email already exists.") }
         if password.count < 12 { throw CoreError.Invalid(reason: "The master password must be at least 12 characters long.") }
         let info = SessionInfo(serverUrl: serverUrl, email: email)
-        locked { $0.session = info }
+        locked { $0.session = info; $0.hasAccountSecret = false }
         return info
     }
 
@@ -173,6 +181,7 @@ final class DemoReinsCore: ReinsCoreProtocol, @unchecked Sendable {
         let info = SessionInfo(serverUrl: serverUrl, email: DemoData.email)
         let keys = locked { s -> AccountKeys in
             s.session = info
+            s.hasAccountSecret = true
             return s.keys
         }
         return SsoOutcome(session: info, keys: keys)
@@ -202,6 +211,7 @@ final class DemoReinsCore: ReinsCoreProtocol, @unchecked Sendable {
         try await latency(0.2)
         return try locked { s in
             guard s.session != nil else { throw CoreError.NotLoggedIn }
+            guard s.hasAccountSecret else { throw CoreError.Invalid(reason: "This account has no recovery code: it was made with a master password.") }
             guard s.keys != .locked else { throw CoreError.Invalid(reason: "This phone cannot open the account yet.") }
             return DemoData.recoveryCode
         }

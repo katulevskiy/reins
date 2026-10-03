@@ -36,6 +36,17 @@ final class OnboardingUITests: XCTestCase {
 
     private func tap(_ id: String) { wait(id).tap() }
 
+    private func recordRecovery() {
+        wait("recoveryRecorded", 10)
+        XCTAssertFalse(element("recoveryDone").isEnabled)
+        scrollTo("recoveryRecorded")
+        tap("recoveryRecorded")
+        XCTAssertFalse(element("recoveryDone").isEnabled)
+        typeInto("recoveryConfirmGroup", "ZE4B")
+        scrollTo("recoveryDone")
+        tap("recoveryDone")
+    }
+
     private func typeInto(_ id: String, _ text: String) {
         let field = wait(id)
         field.tap()
@@ -143,6 +154,7 @@ final class OnboardingUITests: XCTestCase {
         wait("continue", 15)
         XCTAssertFalse(element("password").exists, "no password on the hosted server")
         tap("continue")
+        recordRecovery()
         wait("scanQR", 10)
         shot("8-after-continue")
     }
@@ -165,6 +177,7 @@ final class OnboardingUITests: XCTestCase {
         tap("enterRecoveryCode")
         typeInto("recoveryCode", "tkrq 7hxm 2pla w4zd qe6n b3vy jf5c k8su rm2g xt7h napq d6wl ze4b")
         tap("unlock")
+        recordRecovery()
         wait("scanQR", 10)
     }
 

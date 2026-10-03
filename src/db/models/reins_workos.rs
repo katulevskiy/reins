@@ -24,12 +24,34 @@ pub struct ReinsSetting {
 }
 
 impl ReinsSetting {
-    pub async fn get(name: &str, conn: &DbConn) -> Option<String> {
-        conn.run(move |c| q_get_setting(c, name)).await
+    pub async fn get(name: &str, conn: &DbConn) -> Result<Option<String>, crate::Error> {
+        conn.run(move |c| q_get_setting(c, name)).await.map_res("Error reading WorkOS cursor")
     }
 
     pub async fn set(name: &str, value: &str, conn: &DbConn) -> EmptyResult {
         conn.run(move |c| q_set_setting(c, name, value)).await.map_res("Error saving Reins setting")
+    }
+
+    pub async fn pending_workos_deletions(after: &str, conn: &DbConn) -> Result<Vec<Self>, crate::Error> {
+        conn.run(move |c| {
+            reins_settings::table
+                .filter(reins_settings::name.like("workos.delete.%"))
+                .filter(reins_settings::name.gt(after))
+                .order(reins_settings::name.asc())
+                .limit(10)
+                .load::<Self>(c)
+                .map_res("Error reading pending WorkOS deletions")
+        })
+        .await
+    }
+
+    pub async fn remove(name: &str, conn: &DbConn) -> EmptyResult {
+        conn.run(move |c| {
+            diesel::delete(reins_settings::table.filter(reins_settings::name.eq(name)))
+                .execute(c)
+                .map_res("Error deleting Reins setting")
+        })
+        .await
     }
 }
 
@@ -50,16 +72,35 @@ impl ReinsSsoSession {
         conn.run(move |c| q_save_session(c, self)).await.map_res("Error saving SSO session")
     }
 
-    /// Forgets `session_id` and returns what it was for.
-    pub async fn take(session_id: &str, conn: &DbConn) -> Option<Self> {
-        conn.run(move |c| q_take_session(c, session_id)).await
+    /// Revoke the device and forget its session together. A database failure leaves the mapping for a retry.
+    pub async fn revoke(session_id: &str, conn: &DbConn) -> EmptyResult {
+        conn.run(move |c| q_revoke_session(c, session_id)).await.map_res("Error revoking WorkOS session")
     }
 }
 
-/// Signs one device out: its Vaultwarden device row goes, so its refresh token and access tokens stop working at once
-/// (the next sign-in makes the row again).
-pub async fn sign_out_device(user_uuid: &UserId, device_uuid: &DeviceId, conn: &DbConn) -> EmptyResult {
-    conn.run(move |c| q_sign_out_device(c, user_uuid, device_uuid)).await.map_res("Error signing the device out")
+/// Resolve the identity even if Vaultwarden deleted the user before Reins cleanup completed.
+pub async fn user_id_by_identifier(identifier: &str, conn: &DbConn) -> Result<Option<UserId>, crate::Error> {
+    conn.run(move |c| {
+        sso_users::table
+            .filter(sso_users::identifier.eq(identifier))
+            .select(sso_users::user_uuid)
+            .first::<UserId>(c)
+            .optional()
+            .map_res("Error finding WorkOS identity")
+    })
+    .await
+}
+
+/// A missing user and a database failure must remain distinguishable while applying lifecycle events.
+pub async fn user_by_id(uuid: &UserId, conn: &DbConn) -> Result<Option<super::User>, crate::Error> {
+    conn.run(move |c| {
+        crate::db::schema::users::table
+            .filter(crate::db::schema::users::uuid.eq(uuid))
+            .first::<super::User>(c)
+            .optional()
+            .map_res("Error reading WorkOS account")
+    })
+    .await
 }
 
 /// Deletes what Reins keeps for a user beyond Vaultwarden's own tables (which `User::delete` clears): the approval
@@ -69,8 +110,12 @@ pub async fn delete_reins_data(user_uuid: &UserId, conn: &DbConn) -> EmptyResult
     conn.run(move |c| q_delete_reins_data(c, user_uuid)).await.map_res("Error deleting the user's Reins data")
 }
 
-fn q_get_setting(c: &mut DbConnInner, name: &str) -> Option<String> {
-    reins_settings::table.filter(reins_settings::name.eq(name)).select(reins_settings::value).first::<String>(c).ok()
+fn q_get_setting(c: &mut DbConnInner, name: &str) -> QueryResult<Option<String>> {
+    reins_settings::table
+        .filter(reins_settings::name.eq(name))
+        .select(reins_settings::value)
+        .first::<String>(c)
+        .optional()
 }
 
 fn q_set_setting(c: &mut DbConnInner, name: &str, value: &str) -> QueryResult<()> {
@@ -99,19 +144,22 @@ fn q_save_session(c: &mut DbConnInner, row: &ReinsSsoSession) -> QueryResult<()>
     })
 }
 
-fn q_take_session(c: &mut DbConnInner, session_id: &str) -> Option<ReinsSsoSession> {
-    let row = reins_sso_sessions::table
-        .filter(reins_sso_sessions::session_id.eq(session_id))
-        .first::<ReinsSsoSession>(c)
-        .ok()?;
-    diesel::delete(reins_sso_sessions::table.filter(reins_sso_sessions::session_id.eq(session_id))).execute(c).ok()?;
-    Some(row)
-}
-
-fn q_sign_out_device(c: &mut DbConnInner, user_uuid: &UserId, device_uuid: &DeviceId) -> QueryResult<()> {
-    diesel::delete(devices::table.filter(devices::uuid.eq(device_uuid)).filter(devices::user_uuid.eq(user_uuid)))
-        .execute(c)
-        .map(|_| ())
+fn q_revoke_session(c: &mut DbConnInner, session_id: &str) -> QueryResult<()> {
+    c.transaction(|c| {
+        let row = reins_sso_sessions::table
+            .filter(reins_sso_sessions::session_id.eq(session_id))
+            .first::<ReinsSsoSession>(c)
+            .optional()?;
+        if let Some(row) = row {
+            diesel::delete(
+                devices::table.filter(devices::uuid.eq(row.device_uuid)).filter(devices::user_uuid.eq(row.user_uuid)),
+            )
+            .execute(c)?;
+            diesel::delete(reins_sso_sessions::table.filter(reins_sso_sessions::session_id.eq(session_id)))
+                .execute(c)?;
+        }
+        Ok(())
+    })
 }
 
 fn q_delete_reins_data(c: &mut DbConnInner, user_uuid: &UserId) -> QueryResult<()> {
@@ -142,14 +190,14 @@ mod tests {
     #[test]
     fn settings_are_replaced() {
         let mut c = test_db();
-        assert_eq!(q_get_setting(&mut c, "workos.cursor"), None);
+        assert_eq!(q_get_setting(&mut c, "workos.cursor").unwrap(), None);
         q_set_setting(&mut c, "workos.cursor", "event_1").unwrap();
         q_set_setting(&mut c, "workos.cursor", "event_2").unwrap();
-        assert_eq!(q_get_setting(&mut c, "workos.cursor").as_deref(), Some("event_2"));
+        assert_eq!(q_get_setting(&mut c, "workos.cursor").unwrap().as_deref(), Some("event_2"));
     }
 
     #[test]
-    fn a_session_is_taken_once_and_its_first_device_kept() {
+    fn a_session_is_revoked_idempotently_and_its_first_device_kept() {
         let mut c = test_db();
         let row = |dev: &str| ReinsSsoSession {
             session_id: "session_1".to_owned(),
@@ -159,9 +207,38 @@ mod tests {
         };
         q_save_session(&mut c, &row("d1")).unwrap();
         q_save_session(&mut c, &row("d2")).unwrap();
-        let taken = q_take_session(&mut c, "session_1").unwrap();
-        assert_eq!(taken.device_uuid, DeviceId::from("d1".to_owned()));
-        assert!(q_take_session(&mut c, "session_1").is_none());
+        let saved = reins_sso_sessions::table.first::<ReinsSsoSession>(&mut c).unwrap();
+        assert_eq!(saved.device_uuid, DeviceId::from("d1".to_owned()));
+        q_revoke_session(&mut c, "session_1").unwrap();
+        q_revoke_session(&mut c, "session_1").unwrap();
+        assert_eq!(reins_sso_sessions::table.count().get_result::<i64>(&mut c).unwrap(), 0);
+    }
+
+    #[test]
+    fn revocation_failure_keeps_both_device_and_session_for_retry() {
+        use super::super::Device;
+        let mut c = test_db();
+        let device = Device::new(DeviceId::from("d1".to_owned()), uid("u1"), "Phone".to_owned(), 0);
+        diesel::insert_into(devices::table).values(&device).execute(&mut c).unwrap();
+        q_save_session(
+            &mut c,
+            &ReinsSsoSession {
+                session_id: "session_1".to_owned(),
+                user_uuid: uid("u1"),
+                device_uuid: device.uuid.clone(),
+                created_at: 1,
+            },
+        )
+        .unwrap();
+        diesel::sql_query("CREATE TRIGGER fail_session_delete BEFORE DELETE ON reins_sso_sessions BEGIN SELECT RAISE(ABORT, 'database failure'); END")
+            .execute(&mut c).unwrap();
+        assert!(q_revoke_session(&mut c, "session_1").is_err());
+        assert_eq!(devices::table.count().get_result::<i64>(&mut c).unwrap(), 1);
+        assert_eq!(reins_sso_sessions::table.count().get_result::<i64>(&mut c).unwrap(), 1);
+        diesel::sql_query("DROP TRIGGER fail_session_delete").execute(&mut c).unwrap();
+        q_revoke_session(&mut c, "session_1").unwrap();
+        assert_eq!(devices::table.count().get_result::<i64>(&mut c).unwrap(), 0);
+        assert_eq!(reins_sso_sessions::table.count().get_result::<i64>(&mut c).unwrap(), 0);
     }
 
     #[test]
@@ -201,7 +278,8 @@ mod tests {
         assert_eq!(tokens, ["hash-u2"]);
         let users: Vec<String> = reins_connections::table.select(reins_connections::user_uuid).load(&mut c).unwrap();
         assert_eq!(users, ["u2"]);
-        assert!(q_take_session(&mut c, "session-u1").is_none());
-        assert!(q_take_session(&mut c, "session-u2").is_some());
+        let sessions: Vec<String> =
+            reins_sso_sessions::table.select(reins_sso_sessions::session_id).load(&mut c).unwrap();
+        assert_eq!(sessions, ["session-u2"]);
     }
 }

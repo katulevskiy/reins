@@ -175,7 +175,7 @@ impl Vault {
     /// this phone is signed in with).
     pub async fn unlock(&self, master_password: &str) -> Result<String, CoreError> {
         let session = self.session()?;
-        let email = session.email.clone();
+        let email = session.email();
         let kdf = VaultClient::new(&session.http, &session.server).prelogin(&email).await?;
         let (password, salt) = (Zeroizing::new(master_password.to_owned()), email.clone());
         let stretched =
@@ -241,7 +241,7 @@ impl Connector for Vault {
     }
 
     async fn status(&self, account: &str) -> GmailStatus {
-        let signed_in = self.session().is_ok_and(|s| s.email == account);
+        let signed_in = self.session().is_ok_and(|s| s.email() == account);
         if signed_in && self.store.secret_get(VAULT, account).ok().flatten().is_some() {
             GmailStatus::Ready
         } else {

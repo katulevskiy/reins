@@ -60,9 +60,12 @@ struct RecoveryCodeRow: View {
 
 struct RecoveryCodeSheet: View {
     var code: String
+    var required = false
     var onDone: () -> Void
     @Environment(\.feedback) private var feedback
     @State private var copied = false
+    @State private var recorded = false
+    @State private var lastGroup = ""
 
     /// The thirteen groups, in rows of three (the last row has four).
     static func rows(_ code: String) -> [String] {
@@ -78,6 +81,7 @@ struct RecoveryCodeSheet: View {
     }
 
     var body: some View {
+        ScrollView {
         VStack(alignment: .leading, spacing: 16) {
             Text("Recovery code")
                 .font(RFont.sans(26, .semibold))
@@ -111,11 +115,26 @@ struct RecoveryCodeSheet: View {
             }
             .buttonStyle(CapsuleButtonStyle(kind: .secondary))
             .accessibilityIdentifier("copyRecoveryCode")
-            Button("Done", action: onDone)
+            if required {
+                Toggle("I wrote this code down and stored it somewhere safe.", isOn: $recorded)
+                    .font(RFont.sans(15))
+                    .accessibilityIdentifier("recoveryRecorded")
+                TextField("Final group from written copy", text: $lastGroup)
+                    .textInputAutocapitalization(.characters)
+                    .autocorrectionDisabled()
+                    .font(RFont.mono(17))
+                    .fieldWell()
+                    .accessibilityIdentifier("recoveryConfirmGroup")
+            }
+            Button(required ? "Continue" : "Done", action: onDone)
                 .buttonStyle(CapsuleButtonStyle(kind: .primary))
+                .disabled(required && !(recorded && RecoveryRecord.matchesLastGroup(code: code, entered: lastGroup)))
                 .accessibilityIdentifier("recoveryDone")
         }
         .padding(24)
+        }
+        .scrollBounceBehavior(.basedOnSize)
+        .interactiveDismissDisabled(required)
         .presentationDetents([.large])
         .presentationDragIndicator(.visible)
         .pageBackground()

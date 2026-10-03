@@ -33,6 +33,89 @@ async fn eventually(what: &str, mut check: impl AsyncFnMut() -> bool) {
 }
 
 #[tokio::test(flavor = "multi_thread")]
+async fn workos_requires_passkeys_even_when_sso_only_is_unset() {
+    let workos = FakeWorkos::start().await;
+    let mut env = workos.server_env();
+    env.retain(|(key, _)| key != "SSO_ONLY");
+    let server = Server::start_with_env(5, 3, &env).await;
+    let user = User {
+        id: "user_PASSKEY".to_owned(),
+        email: "passkey@example.com".to_owned(),
+    };
+    workos.sign_in_as(&user);
+    let phone = Phone::signed_out(|_| {}).await;
+    for method in ["GoogleOAuth", "MagicAuth", "Password"] {
+        workos.authenticate_with(method);
+        let error = phone.sso_sign_in(&server.base).await.unwrap_err();
+        assert!(error.to_string().contains("passkey is required"), "{method}: {error}");
+    }
+    workos.authenticate_with("Passkey");
+    let outcome = phone.sso_sign_in(&server.base).await.expect("passkey sign-in");
+    assert_eq!(outcome.keys, AccountKeys::Created);
+    let error = phone.core.login(server.base.clone(), user.email, "password".to_owned(), None).await.unwrap_err();
+    assert!(error.to_string().contains("SSO sign-in is required"), "{error}");
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn failed_account_cleanup_retries_without_blocking_paginated_revocations() {
+    let workos = FakeWorkos::start().await;
+    let server = Server::start_with_env(5, 3, &workos.server_env()).await;
+    let deleted = User {
+        id: "user_DELETE".to_owned(),
+        email: "delete@example.com".to_owned(),
+    };
+    workos.sign_in_as(&deleted);
+    let first = Phone::signed_out(|_| {}).await;
+    first.sso_sign_in(&server.base).await.unwrap();
+    first.core.register_device(None).await.unwrap();
+    let other = User {
+        id: "user_OTHER".to_owned(),
+        email: "other@example.com".to_owned(),
+    };
+    workos.sign_in_as(&other);
+    let second = Phone::signed_out(|_| {}).await;
+    second.sso_sign_in(&server.base).await.unwrap();
+    second.core.register_device(None).await.unwrap();
+    let db = rusqlite::Connection::open(server.database_path()).unwrap();
+    db.busy_timeout(Duration::from_secs(5)).unwrap();
+    db.execute_batch("CREATE TRIGGER fail_account_delete BEFORE DELETE ON users BEGIN SELECT RAISE(ABORT, 'temporary deletion failure'); END").unwrap();
+    workos.emit("user.deleted", json!({"id": deleted.id}));
+    // More than one Events API page. An unrelated blocked deletion must not delay revocation on page two.
+    for i in 0..105 {
+        workos.emit("user.updated", json!({"id": format!("unknown_{i}"), "first_name": "Ignore"}));
+    }
+    workos.emit("session.revoked", json!({"id": workos.sessions()[1]}));
+    eventually("the first phone's invalidation", async || {
+        matches!(first.core.register_device(None).await, Err(CoreError::NotLoggedIn))
+    })
+    .await;
+    eventually("page-two session revocation", async || {
+        matches!(second.core.register_device(None).await, Err(CoreError::NotLoggedIn))
+    })
+    .await;
+    let pending: i64 = db
+        .query_row("SELECT COUNT(*) FROM reins_settings WHERE name LIKE 'workos.delete.%'", [], |row| row.get(0))
+        .unwrap();
+    assert_eq!(pending, 1, "failed cleanup is persisted for retry");
+    let enabled: bool =
+        db.query_row("SELECT enabled FROM users WHERE email='delete@example.com'", [], |row| row.get(0)).unwrap();
+    assert!(!enabled);
+    db.execute_batch("DROP TRIGGER fail_account_delete").unwrap();
+    eventually("deferred cleanup", async || {
+        db.query_row("SELECT COUNT(*) FROM users WHERE email='delete@example.com'", [], |row| row.get::<_, i64>(0))
+            .unwrap()
+            == 0
+            && db
+                .query_row("SELECT COUNT(*) FROM reins_settings WHERE name LIKE 'workos.delete.%'", [], |row| {
+                    row.get::<_, i64>(0)
+                })
+                .unwrap()
+                == 0
+    })
+    .await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
 async fn sso_sign_in_makes_a_keyless_vault_that_follows_workos() {
     let workos = FakeWorkos::start().await;
     let server = Server::start_with_env(5, 3, &workos.server_env()).await;
@@ -82,6 +165,13 @@ async fn sso_sign_in_makes_a_keyless_vault_that_follows_workos() {
     );
     eventually("the email change", async || prelogin_iterations(&server, "ada@lovelace.dev").await == 100_000).await;
     assert_eq!(prelogin_iterations(&server, "ada@example.com").await, 600_000);
+    // The already signed-in approval phone learns the change through its usual poll, before token expiry.
+    first.core.sync(0).await.expect("poll current WorkOS metadata");
+    assert_eq!(first.core.session().await.unwrap().email, "ada@lovelace.dev");
+    let accounts = first.core.accounts().await.unwrap();
+    assert!(accounts.iter().any(|a| a.service == "vault" && a.account == "ada@lovelace.dev"));
+    assert!(!accounts.iter().any(|a| a.service == "vault" && a.account == "ada@example.com"));
+    assert_eq!(first.core.account_recovery_code().await.unwrap(), code);
     // The vault still opens: its key does not depend on the email.
     let third = Phone::signed_out(|_| {}).await;
     workos.sign_in_as(&User {

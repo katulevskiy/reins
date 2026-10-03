@@ -29,6 +29,7 @@ import dev.reins.android.platform.update.Updater
 import dev.reins.android.state.AppState
 import dev.reins.android.state.DeviceStatusStore
 import dev.reins.android.state.OnboardingStore
+import dev.reins.android.state.RecoveryRecord
 import dev.reins.android.state.SessionState
 import dev.reins.android.ui.common.userMessage
 import dev.reins.core.AutopilotSettings
@@ -72,6 +73,7 @@ class AppContainer(private val context: Context) {
 
     /** Whether the setup after a fresh sign-in is still to be shown, per account. */
     val onboarding = OnboardingStore(context)
+    val recoveryRecord = RecoveryRecord(context)
     val phone = PhoneBridge(context)
 
     /**
@@ -125,6 +127,24 @@ class AppContainer(private val context: Context) {
             null
         }
         if (info != null) {
+            // Compute the gate before publishing SignedIn, including after a process restart. Password accounts
+            // have no account secret and keep their self-hosted onboarding.
+            var recoveryFailure: String? = null
+            val code = try {
+                core.accountRecoveryCode()
+            } catch (e: CoreException.Invalid) {
+                null
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                // An older install may need its first token refresh to learn the account id. Retry visibly rather
+                // than crashing startup or silently bypassing the mandatory recovery step while offline.
+                recoveryFailure = e.userMessage()
+                null
+            }
+            val needsRecording = code != null && withContext(Dispatchers.IO) { !recoveryRecord.confirmed(info.serverUrl, code) }
+            state.setRecoveryToRecord(if (needsRecording) code else null)
+            state.setRecoveryLoadError(recoveryFailure)
             withContext(Dispatchers.IO) {
                 state.setSeenActivityId(deviceStatus.seenActivityId())
                 state.setApprovalDevice(deviceStatus.isApprovalDevice() && !deviceStatus.isReplaced())
@@ -151,6 +171,10 @@ class AppContainer(private val context: Context) {
             state.setAccounts(core.accounts())
             state.setServices(core.services())
             state.setMcpServers(core.mcpServers())
+            val info = core.session()
+            if (info != null && state.session.value is SessionState.SignedIn) {
+                state.setSession(SessionState.SignedIn(info))
+            }
             refreshAutopilot()
             withContext(Dispatchers.IO) { GrantReminders.sync(context, grants) }
         } catch (e: CoreException) {
@@ -231,9 +255,20 @@ class AppContainer(private val context: Context) {
 
     /** The setup after signing in was finished or skipped: the main screen from now on. */
     suspend fun finishOnboarding() {
+        if (state.recoveryToRecord.value != null) return
         val info = (state.session.value as? SessionState.SignedIn)?.info
         if (info != null) withContext(Dispatchers.IO) { onboarding.finish(info) }
         state.setSetupPending(false)
+    }
+
+    /** Acknowledgement alone lives on disk; never copy the recovery code into preferences or saved UI state. */
+    suspend fun confirmRecoveryRecord() {
+        val info = (state.session.value as? SessionState.SignedIn)?.info ?: return
+        val code = state.recoveryToRecord.value ?: return
+        val saved = withContext(Dispatchers.IO) { recoveryRecord.confirm(info.serverUrl, code) }
+        if (saved && (state.session.value as? SessionState.SignedIn)?.info == info && state.recoveryToRecord.value == code) {
+            state.setRecoveryToRecord(null)
+        }
     }
 
     /** The AI connections (a network call; failures keep the last list). */

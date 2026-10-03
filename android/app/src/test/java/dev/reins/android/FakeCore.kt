@@ -264,6 +264,7 @@ class FakeCore : ReinsCoreInterface {
     @Volatile var recoveryCode: String? = null
     val unlockAttempts = CopyOnWriteArrayList<String>()
     val recoveryCodeReads = java.util.concurrent.atomic.AtomicInteger()
+    val syncStarts = java.util.concurrent.atomic.AtomicInteger()
 
     /** `joinPoll` answers `Waiting` this many times, then [joinAnswer]. */
     @Volatile var joinWaits = 2
@@ -288,6 +289,7 @@ class FakeCore : ReinsCoreInterface {
         recoveryCode = null
         unlockAttempts.clear()
         recoveryCodeReads.set(0)
+        syncStarts.set(0)
         joinWaits = 2
         joinAnswer = JoinProgress.JOINED
         joinBeginError = null
@@ -412,6 +414,7 @@ class FakeCore : ReinsCoreInterface {
 
     /** The foreground poll: returns quickly with what is pending. */
     override suspend fun sync(waitSecs: UInt): List<PendingItem> {
+        syncStarts.incrementAndGet()
         kotlinx.coroutines.delay(250)
         return pending
     }

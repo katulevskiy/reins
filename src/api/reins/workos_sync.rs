@@ -27,7 +27,7 @@ use crate::{
     CONFIG,
     db::{
         DbConn, DbPool,
-        models::{ReinsSetting, ReinsSsoSession, SsoUser, User, reins_workos},
+        models::{Device, ReinsSetting, ReinsSsoSession, SsoUser, User, reins_workos},
     },
     sso_workos,
 };
@@ -38,6 +38,8 @@ pub const EVENTS: &str = "user.updated,user.deleted,session.revoked";
 const PAGE: usize = 100;
 /// `reins_settings` name of the cursor.
 const CURSOR: &str = "workos.events.after";
+/// Round-robin position for bounded deferred cleanup, separate from the pending-marker prefix.
+const CLEANUP_CURSOR: &str = "workos.cleanup.after";
 /// A webhook delivery older (or newer) than this is refused.
 const WEBHOOK_TOLERANCE_MS: i64 = 5 * 60 * 1000;
 /// Largest webhook body read.
@@ -138,11 +140,13 @@ pub fn plan(event: &Event) -> Action {
     }
 }
 
-async fn fetch_page(after: Option<&str>) -> Result<EventsPage, String> {
+async fn fetch_page(client: &reqwest::Client, after: Option<&str>) -> Result<EventsPage, String> {
     let base = sso_workos::api_base().map_err(|e| e.to_string())?;
-    let client = sso_workos::http_client().map_err(|e| e.to_string())?;
     let mut url = url::Url::parse(&format!("{base}/events")).map_err(|e| format!("invalid WorkOS URL: {e}"))?;
-    url.query_pairs_mut().append_pair("events", EVENTS).append_pair("limit", &PAGE.to_string());
+    url.query_pairs_mut()
+        .append_pair("events", EVENTS)
+        .append_pair("limit", &PAGE.to_string())
+        .append_pair("order", "asc");
     if let Some(after) = after {
         url.query_pairs_mut().append_pair("after", after);
     }
@@ -167,10 +171,11 @@ async fn fetch_page(after: Option<&str>) -> Result<EventsPage, String> {
 /// Reads and applies every event after the cursor; returns how many there were. The cursor moves after each applied
 /// event, so a failure retries from the event that failed.
 pub async fn sync_once(conn: &DbConn) -> Result<usize, String> {
-    let mut cursor = ReinsSetting::get(CURSOR, conn).await;
+    let client = sso_workos::http_client().map_err(|e| e.to_string())?;
+    let mut cursor = ReinsSetting::get(CURSOR, conn).await.map_err(|e| e.to_string())?;
     let mut applied = 0;
     loop {
-        let page = fetch_page(cursor.as_deref()).await?;
+        let page = fetch_page(&client, cursor.as_deref()).await?;
         let full = page.data.len() >= PAGE;
         for event in page.data {
             apply(&plan(&event), conn).await.map_err(|e| format!("event {} ({}): {e}", event.id, event.event))?;
@@ -179,6 +184,19 @@ pub async fn sync_once(conn: &DbConn) -> Result<usize, String> {
             applied += 1;
         }
         if !full {
+            // Prioritize new revocations; at most ten deferred cleanups per tick, rotating past blocked accounts.
+            let after = ReinsSetting::get(CLEANUP_CURSOR, conn).await.map_err(|e| e.to_string())?.unwrap_or_default();
+            let pending = ReinsSetting::pending_workos_deletions(&after, conn).await.map_err(|e| e.to_string())?;
+            if pending.is_empty() {
+                ReinsSetting::remove(CLEANUP_CURSOR, conn).await.map_err(|e| e.to_string())?;
+            }
+            for pending in pending {
+                let uuid = crate::db::models::UserId::from(pending.value);
+                if let Err(e) = finish_deletion(&uuid, &pending.name, conn).await {
+                    warn!("WorkOS sync: account {uuid} cleanup deferred: {e}");
+                }
+                ReinsSetting::set(CLEANUP_CURSOR, &pending.name, conn).await.map_err(|e| e.to_string())?;
+            }
             return Ok(applied);
         }
     }
@@ -186,6 +204,15 @@ pub async fn sync_once(conn: &DbConn) -> Result<usize, String> {
 
 async fn reins_user(workos_user_id: &str, conn: &DbConn) -> Option<User> {
     SsoUser::find_by_identifier(&sso_workos::identifier(workos_user_id), conn).await.map(|(user, _)| user)
+}
+
+async fn finish_deletion(uuid: &crate::db::models::UserId, pending: &str, conn: &DbConn) -> Result<(), String> {
+    // Drop AI/desktop connections too, even when organization ownership prevents deleting the vault account.
+    reins_workos::delete_reins_data(uuid, conn).await.map_err(|e| e.to_string())?;
+    if let Some(user) = reins_workos::user_by_id(uuid, conn).await.map_err(|e| e.to_string())? {
+        user.delete(conn).await.map_err(|e| e.to_string())?;
+    }
+    ReinsSetting::remove(pending, conn).await.map_err(|e| e.to_string())
 }
 
 async fn apply(action: &Action, conn: &DbConn) -> Result<(), String> {
@@ -228,30 +255,32 @@ async fn apply(action: &Action, conn: &DbConn) -> Result<(), String> {
         Action::Delete {
             user_id,
         } => {
-            let Some(user) = reins_user(user_id, conn).await else {
+            let Some(uuid) = reins_workos::user_id_by_identifier(&sso_workos::identifier(user_id), conn)
+                .await
+                .map_err(|e| e.to_string())?
+            else {
                 return Ok(());
             };
-            info!("WorkOS sync: {user_id} was deleted; deleting account {}", user.uuid);
-            let uuid = user.uuid.clone();
-            reins_workos::delete_reins_data(&uuid, conn).await.map_err(|e| e.to_string())?;
-            if let Err(e) = user.delete(conn).await {
-                // The last owner of an organization: Vaultwarden refuses; the admin has to step in.
-                error!("WorkOS sync: could not delete account {uuid}: {e}");
+            info!("WorkOS sync: {user_id} was deleted; deleting account {uuid}");
+            if let Some(mut user) = reins_workos::user_by_id(&uuid, conn).await.map_err(|e| e.to_string())? {
+                // Deny sign-in and existing tokens even if deletion needs an admin (the last organization owner).
+                user.enabled = false;
+                user.save(conn).await.map_err(|e| e.to_string())?;
+                Device::delete_all_by_user(&uuid, conn).await.map_err(|e| e.to_string())?;
             }
+            // Persist the account id before advancing the cursor or removing its SSO identity. One blocked
+            // deletion cannot stall other users.
+            let pending = format!("workos.delete.{uuid}");
+            ReinsSetting::set(&pending, uuid.as_ref(), conn).await.map_err(|e| e.to_string())?;
             super::HUB.forget_user(uuid.as_ref());
+            if let Err(e) = finish_deletion(&uuid, &pending, conn).await {
+                warn!("WorkOS sync: account {uuid} cleanup deferred: {e}");
+            }
             Ok(())
         }
         Action::RevokeSession {
             session_id,
-        } => {
-            let Some(session) = ReinsSsoSession::take(session_id, conn).await else {
-                return Ok(());
-            };
-            info!("WorkOS sync: session {session_id} was revoked; signing out device {}", session.device_uuid);
-            reins_workos::sign_out_device(&session.user_uuid, &session.device_uuid, conn)
-                .await
-                .map_err(|e| e.to_string())
-        }
+        } => ReinsSsoSession::revoke(session_id, conn).await.map_err(|e| e.to_string()),
     }
 }
 
@@ -272,7 +301,7 @@ pub fn signature_ok(header: &str, body: &[u8], secret: &str, now_ms: i64) -> boo
     let Ok(at) = t.parse::<i64>() else {
         return false;
     };
-    if (now_ms - at).abs() > WEBHOOK_TOLERANCE_MS {
+    if now_ms.abs_diff(at) > WEBHOOK_TOLERANCE_MS as u64 {
         return false;
     }
     let Ok(sig) = data_encoding::HEXLOWER_PERMISSIVE.decode(v1.as_bytes()) else {
@@ -414,6 +443,9 @@ mod tests {
         assert!(signature_ok(&header, body.as_bytes(), "whsec", now));
         assert!(!signature_ok(&header, body.as_bytes(), "other", now));
         assert!(!signature_ok(&header, b"{}", "whsec", now));
+        // Extreme untrusted timestamps must be refused without overflowing.
+        assert!(!signature_ok(&sign("whsec", i64::MIN, body), body.as_bytes(), "whsec", now));
+        assert!(!signature_ok(&sign("whsec", i64::MAX, body), body.as_bytes(), "whsec", now));
         // Too old, or garbled.
         assert!(!signature_ok(&sign("whsec", now - 10 * 60 * 1000, body), body.as_bytes(), "whsec", now));
         assert!(!signature_ok("t=abc, v1=00", body.as_bytes(), "whsec", now));

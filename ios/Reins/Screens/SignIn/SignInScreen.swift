@@ -80,6 +80,9 @@ struct SignInScreen: View {
     }
 
     private var serverUrl: String { server.trimmingCharacters(in: .whitespaces) }
+    private var customServer: Bool {
+        otherServer && serverUrl.trimmingCharacters(in: CharacterSet(charactersIn: "/")).lowercased() != SignInState.defaultServer
+    }
 
     private var welcome: some View {
         VStack(alignment: .leading, spacing: 12) {
@@ -108,20 +111,20 @@ struct SignInScreen: View {
             } label: {
                 HStack(spacing: 10) {
                     if sso.busy { ProgressView().tint(Palette.background) }
-                    Text("Continue")
+                    Text(customServer ? "Continue" : "Continue with a passkey")
                 }
             }
             .buttonStyle(CapsuleButtonStyle(kind: .primary))
             .disabled(sso.busy || serverUrl.count <= "https://".count)
             .accessibilityIdentifier("continue")
-            Text("With Google, Apple, GitHub or a code sent to your email. There is no password to remember.")
+            Text(customServer ? "Continue through your server's sign-in page." : "Create or use a passkey on the secure sign-in page. Your phone protects it with Face ID, Touch ID or its screen lock.")
                 .font(RFont.sans(13.5))
                 .foregroundStyle(Palette.tertiary)
                 .fixedSize(horizontal: false, vertical: true)
             if let error = sso.error {
                 FormBanner(text: error).transition(.opacity)
             }
-            if otherServer {
+            if customServer {
                 // A server of your own may have no sign-in page: its accounts use a master password.
                 Button("Sign in with a master password") { mode = .signIn }
                     .buttonStyle(CapsuleButtonStyle(kind: .secondary))

@@ -95,6 +95,8 @@ async fn run(workos: &Workos, user_id: &str, email: &str, password: &str) {
     let server_env: Vec<(String, String)> = [
         ("SSO_ENABLED", "true"),
         ("SSO_ONLY", "true"),
+        // This headless staging harness exercises Magic Auth, not a platform authenticator.
+        ("REINS_WORKOS_REQUIRE_PASSKEY", "false"),
         ("SSO_CLIENT_ID", client_id.as_str()),
         ("SSO_CLIENT_SECRET", workos.key.as_str()),
         ("SSO_AUTH_ONLY_NOT_SESSION", "true"),
