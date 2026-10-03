@@ -53,12 +53,30 @@ impl Server {
 
     /// Like [`Server::start`], with these environment settings added (SSO, ...).
     pub async fn start_with_env(relay_wait: u64, offline: u64, env: &[(String, String)]) -> Self {
-        Self::start_at(&format!("http://127.0.0.1:{}", free_port()), relay_wait, offline, env).await
+        // Finish the potentially long build before selecting a port.
+        binary();
+        for _ in 0..5 {
+            let base = format!("http://127.0.0.1:{}", free_port());
+            match Self::try_start_at(&base, relay_wait, offline, env).await {
+                Ok(server) => return server,
+                Err(log) if log.contains("Address already in use") => {}
+                Err(log) => panic!("server did not start:\n{log}"),
+            }
+        }
+        panic!("server could not bind a free port after five attempts");
     }
 
     /// Like [`Server::start_with_env`] at `base` (`http://localhost:8765`: a fixed address an identity provider
     /// knows as a redirect URI).
     pub async fn start_at(base: &str, relay_wait: u64, offline: u64, env: &[(String, String)]) -> Self {
+        // An identity provider knows this fixed URL; retrying another port would
+        // invalidate its redirect URI, so surface a collision immediately.
+        Self::try_start_at(base, relay_wait, offline, env)
+            .await
+            .unwrap_or_else(|log| panic!("server did not start:\n{log}"))
+    }
+
+    async fn try_start_at(base: &str, relay_wait: u64, offline: u64, env: &[(String, String)]) -> Result<Self, String> {
         let bin = binary().to_owned();
         let port = url::Url::parse(base).ok().and_then(|u| u.port()).expect("a base with a port");
         let base = base.to_owned();
@@ -84,13 +102,13 @@ impl Server {
             .stdout(log.try_clone().expect("clone"))
             .stderr(log);
         let child = command.spawn().expect("spawn vaultwarden");
-        let server = Self {
+        let mut server = Self {
             base,
             child,
             dir,
         };
-        server.wait_alive().await;
-        server
+        server.wait_alive().await?;
+        Ok(server)
     }
 
     fn http() -> reqwest::Client {
@@ -98,18 +116,25 @@ impl Server {
         reqwest::Client::builder().redirect(reqwest::redirect::Policy::none()).build().expect("client")
     }
 
-    async fn wait_alive(&self) {
+    async fn wait_alive(&mut self) -> Result<(), String> {
         let deadline = Instant::now() + Duration::from_secs(60);
+        crate::init_tls();
+        let http = reqwest::Client::builder().timeout(Duration::from_secs(1)).build().expect("startup client");
+        let launched = format!("Rocket has launched from {}", self.base.replace("localhost", "127.0.0.1"));
         while Instant::now() < deadline {
-            if let Ok(r) = Self::http().get(self.url("/alive")).send().await
+            if self.child.try_wait().expect("server process status").is_some() {
+                return Err(self.log());
+            }
+            if self.log().contains(&launched)
+                && let Ok(r) = http.get(self.url("/alive")).send().await
                 && r.status().is_success()
+                && self.child.try_wait().expect("server process status").is_none()
             {
-                return;
+                return Ok(());
             }
             tokio::time::sleep(Duration::from_millis(100)).await;
         }
-        let log = std::fs::read_to_string(self.dir.join("server.log")).unwrap_or_default();
-        panic!("server did not start:\n{log}");
+        Err(format!("startup timed out:\n{}", self.log()))
     }
 
     pub fn url(&self, path: &str) -> String {
@@ -154,5 +179,25 @@ impl Drop for Server {
         self.child.kill().ok();
         self.child.wait().ok();
         std::fs::remove_dir_all(&self.dir).ok();
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use wiremock::{Mock, MockServer, ResponseTemplate, matchers::path};
+
+    #[tokio::test]
+    async fn startup_rejects_a_mock_answering_alive_on_the_reserved_port() {
+        binary();
+        let mock = MockServer::start().await;
+        Mock::given(path("/alive")).respond_with(ResponseTemplate::new(200)).mount(&mock).await;
+        let started = Instant::now();
+        let Err(error) = Server::try_start_at(&mock.uri(), 4, 2, &[]).await else {
+            panic!("accepted a mock as the child server");
+        };
+        assert!(error.contains("Address already in use"), "{error}");
+        assert!(started.elapsed() < Duration::from_secs(20), "did not notice the child exited");
+        assert!(mock.received_requests().await.expect("mock requests").is_empty(), "probed an unrelated server");
     }
 }

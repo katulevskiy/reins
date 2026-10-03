@@ -39,11 +39,15 @@ pub struct Server {
 }
 
 pub fn client() -> Client {
+    client_with_timeout(Duration::from_secs(90))
+}
+
+fn client_with_timeout(timeout: Duration) -> Client {
     if rustls::crypto::CryptoProvider::get_default().is_none() {
         // Another test thread may win the race; either way a provider is installed.
         rustls::crypto::ring::default_provider().install_default().ok();
     }
-    Client::builder().redirect(Policy::none()).timeout(Duration::from_secs(90)).build().expect("reqwest client")
+    Client::builder().redirect(Policy::none()).timeout(timeout).build().expect("reqwest client")
 }
 
 fn free_port() -> u16 {
@@ -56,7 +60,18 @@ impl Server {
     }
 
     pub async fn start_with(options: Options) -> Self {
-        let port = free_port();
+        // Another process can claim a released ephemeral port before Rocket binds it.
+        for _ in 0..5 {
+            match Self::try_start(free_port(), &options).await {
+                Ok(server) => return server,
+                Err(log) if log.contains("Address already in use") => {}
+                Err(log) => panic!("server did not start:\n{log}"),
+            }
+        }
+        panic!("server could not bind a free port after five attempts");
+    }
+
+    async fn try_start(port: u16, options: &Options) -> Result<Self, String> {
         let dir = std::env::temp_dir().join(format!("reins-it-{}", uuid::Uuid::new_v4()));
         std::fs::create_dir_all(&dir).expect("temp dir");
         let log = File::create(dir.join("server.log")).expect("log file");
@@ -79,27 +94,35 @@ impl Server {
         }
         command.envs(options.env.iter().map(|(k, v)| (*k, v.as_str())));
         let child = command.stdout(log.try_clone().expect("log clone")).stderr(log).spawn().expect("spawn vaultwarden");
-        let server = Self {
+        let mut server = Self {
             base,
             child,
             dir,
         };
-        server.wait_alive().await;
-        server
+        server.wait_alive().await?;
+        Ok(server)
     }
 
-    async fn wait_alive(&self) {
+    async fn wait_alive(&mut self) -> Result<(), String> {
         let deadline = Instant::now() + Duration::from_secs(60);
+        let http = client_with_timeout(Duration::from_secs(1));
+        let launched = format!("Rocket has launched from {}", self.base);
         while Instant::now() < deadline {
-            if let Ok(r) = client().get(self.url("/alive")).send().await
+            if self.child.try_wait().expect("server process status").is_some() {
+                return Err(self.log());
+            }
+            // A mock on the same port may also answer /alive with 200. Wait until
+            // our own child reports a successful bind before probing that port.
+            if self.log().contains(&launched)
+                && let Ok(r) = http.get(self.url("/alive")).send().await
                 && r.status() == StatusCode::OK
+                && self.child.try_wait().expect("server process status").is_none()
             {
-                return;
+                return Ok(());
             }
             tokio::time::sleep(Duration::from_millis(100)).await;
         }
-        let log = std::fs::read_to_string(self.dir.join("server.log")).unwrap_or_default();
-        panic!("server did not start:\n{log}");
+        Err(format!("startup timed out:\n{}", self.log()))
     }
 
     pub fn url(&self, path: &str) -> String {
@@ -172,6 +195,18 @@ impl Server {
             key,
         }
     }
+}
+
+#[tokio::test]
+async fn startup_rejects_a_mock_answering_alive_on_the_reserved_port() {
+    let mock = super::mock::MockServer::start(|_| super::mock::Reply::json(200, &json!("alive"))).await;
+    let started = Instant::now();
+    let Err(error) = Server::try_start(mock.port, &Options::default()).await else {
+        panic!("accepted a mock as the child server");
+    };
+    assert!(error.contains("Address already in use"), "{error}");
+    assert!(started.elapsed() < Duration::from_secs(20), "did not notice the child exited");
+    assert!(mock.requests().is_empty(), "probed a server the child never bound");
 }
 
 impl Drop for Server {
