@@ -43,7 +43,8 @@ jobs:
           BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.before }}
         run: |
           rust=false android=false docker=false
-          if [[ "$EVENT" == workflow_dispatch || -z "$BASE_SHA" || "$BASE_SHA" == 0000000000000000000000000000000000000000 ]]; then
+          if [[ "$EVENT" == workflow_dispatch || -z "$BASE_SHA" || "$BASE_SHA" == 0000000000000000000000000000000000000000 ]] ||
+             ! git cat-file -e "${BASE_SHA}^{commit}" 2>/dev/null; then
             rust=true android=true docker=true
           else
             while IFS= read -r -d '' path; do
@@ -74,6 +75,7 @@ jobs:
       - run: cargo fmt --all -- --check
       - uses: crate-ci/typos@v1.50.1
       - run: python3 scripts/check-doc-links.py
+      - run: python3 scripts/test-ci-routing.py
       - name: Conflict markers and shell syntax
         run: |
           status=0
