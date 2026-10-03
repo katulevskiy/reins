@@ -14,7 +14,7 @@
 //! and a new phone gets the secret from this one or from that code.
 //!
 //! The secret derives the master key with PBKDF2-SHA256 over a fixed salt ([`SECRET_SALT`], [`SECRET_KDF`]) instead
-//! of the email: WorkOS may change the account's email (`api::rewarden::workos_sync` on the server), and a salt that
+//! of the email: WorkOS may change the account's email (`api::reins::workos_sync` on the server), and a salt that
 //! follows the email would lock the vault. The secret has 256 bits of entropy, so the iterations only satisfy the
 //! server's floor. A Bitwarden client cannot open such a vault with the code; Reins can.
 

@@ -1,12 +1,12 @@
-package dev.rewarden.android
+package dev.reins.android
 
 import android.Manifest
 import android.app.NotificationManager
 import android.content.Intent
 import android.content.pm.PackageManager
 import androidx.test.ext.junit.runners.AndroidJUnit4
-import dev.rewarden.android.platform.PhoneBridge
-import dev.rewarden.android.platform.update.UpdateNotifier
+import dev.reins.android.platform.PhoneBridge
+import dev.reins.android.platform.update.UpdateNotifier
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
@@ -71,7 +71,7 @@ class DistributionTest : FlowHarness() {
         launch()
         tap("openSettings")
         awaitTag("appVersion")
-        awaitText("Google Play keeps Rewarden up to date.")
+        awaitText("Google Play keeps Reins up to date.")
         assertFalse(has("checkUpdates"))
         assertFalse(has("autoDownload"))
         assertFalse(showsText("UPDATES"))

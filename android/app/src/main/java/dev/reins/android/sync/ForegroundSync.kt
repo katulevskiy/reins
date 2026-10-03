@@ -1,8 +1,8 @@
-package dev.rewarden.android.sync
+package dev.reins.android.sync
 
-import dev.rewarden.android.AppContainer
-import dev.rewarden.android.state.SessionState
-import dev.rewarden.core.CoreException
+import dev.reins.android.AppContainer
+import dev.reins.android.state.SessionState
+import dev.reins.core.CoreException
 import kotlin.coroutines.cancellation.CancellationException
 import kotlinx.coroutines.delay
 

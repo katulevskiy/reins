@@ -1,9 +1,9 @@
-//! Git on the user's computer, through the Rewarden desktop app (see `connector::git` for what every host shares).
+//! Git on the user's computer, through the Reins desktop app (see `connector::git` for what every host shares).
 //! GitHub looks the repository up with the token and expects the token with the user name `x-access-token`.
 
+use reins_proto::connector::ConnectorCall;
+use reins_proto::desktop::GIT_FETCH_OP;
 use reqwest::Method;
-use rewarden_proto::connector::ConnectorCall;
-use rewarden_proto::desktop::GIT_FETCH_OP;
 use serde_json::Value;
 
 use super::{GitHub, Preview, repo_arg};

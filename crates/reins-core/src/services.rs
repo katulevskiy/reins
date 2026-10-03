@@ -73,7 +73,7 @@ impl Engine {
             Some("google") => connector.identify(hint).await?,
             Some("device") => {
                 if connector.status(PHONE_ACCOUNT).await != GmailStatus::Ready {
-                    return Err(CoreError::needs_attention("Allow Rewarden to use this on the phone first"));
+                    return Err(CoreError::needs_attention("Allow Reins to use this on the phone first"));
                 }
                 PHONE_ACCOUNT.to_owned()
             }
@@ -144,8 +144,8 @@ impl Engine {
                 self.respond(
                     session,
                     &row.id,
-                    rewarden_proto::relay::RelayOutcome::Error {
-                        message: format!("The user disconnected {account} from {} in Rewarden.", service_name(service)),
+                    reins_proto::relay::RelayOutcome::Error {
+                        message: format!("The user disconnected {account} from {} in Reins.", service_name(service)),
                     },
                 )
                 .await

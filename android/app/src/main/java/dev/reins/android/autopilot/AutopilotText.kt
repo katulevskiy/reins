@@ -1,17 +1,17 @@
-package dev.rewarden.android.autopilot
+package dev.reins.android.autopilot
 
-import dev.rewarden.android.feedback.Event
-import dev.rewarden.android.ui.common.untrusted
-import dev.rewarden.core.AutoDecisionView
-import dev.rewarden.core.AutopilotMode
-import dev.rewarden.core.AutopilotSettings
-import dev.rewarden.core.ClassView
-import dev.rewarden.core.ModelState
-import dev.rewarden.core.ModelStatus
-import dev.rewarden.core.Preset
-import dev.rewarden.core.ProfileView
-import dev.rewarden.core.SuggestionView
-import dev.rewarden.core.Verdict
+import dev.reins.android.feedback.Event
+import dev.reins.android.ui.common.untrusted
+import dev.reins.core.AutoDecisionView
+import dev.reins.core.AutopilotMode
+import dev.reins.core.AutopilotSettings
+import dev.reins.core.ClassView
+import dev.reins.core.ModelState
+import dev.reins.core.ModelStatus
+import dev.reins.core.Preset
+import dev.reins.core.ProfileView
+import dev.reins.core.SuggestionView
+import dev.reins.core.Verdict
 import kotlin.math.roundToInt
 
 /** Autopilot's words, kept apart from the screens so they can be tested on the JVM. */
@@ -113,7 +113,7 @@ object AutopilotText {
         }
     }
 
-    /** "Push to a branch · dkat/rewarden — Claude Code" (both parts come from outside, so they are cleaned). */
+    /** "Push to a branch · dkat/reins — Claude Code" (both parts come from outside, so they are cleaned). */
     fun decisionText(d: AutoDecisionView): String = "${untrusted(d.title)} — ${untrusted(d.connectionLabel)}"
 
     /** "97% sure" for Autopilot's own decisions; bypass and lockdown do not judge. */
@@ -229,7 +229,7 @@ object AutopilotText {
         return when {
             e.isEmpty() -> "The download stopped. Try again later."
             e.contains("sha", ignoreCase = true) || e.contains("hash", ignoreCase = true) || e.contains("verif", ignoreCase = true) ->
-                "The downloaded files did not match the ones this version of Rewarden trusts, so nothing was kept. An app update will fix this."
+                "The downloaded files did not match the ones this version of Reins trusts, so nothing was kept. An app update will fix this."
             else -> e.replaceFirstChar { it.uppercase() }.let { if (it.endsWith(".")) it else "$it." }
         }
     }
@@ -249,7 +249,7 @@ object AutopilotText {
             operation: Push to a branch
             class: push
             account: dkat
-            target: dkat/rewarden
+            target: dkat/reins
             target is new: no
             details: branch feature/laya (not the default branch); 3 commits; 7 files changed; no force
             --- written by the AI ---
@@ -283,7 +283,7 @@ object AutopilotText {
             action: ask
             operation: Run a command
             class: command
-            target: cargo test -p rewarden-core
+            target: cargo test -p reins-core
             target is new: no
             --- written by the AI ---
             content: Run the core's tests to check the fix?

@@ -17,7 +17,7 @@ pub const DEVICE_CONTACTS: &str = "device_contacts";
 pub const SMS: &str = "sms";
 pub const GITHUB: &str = "github";
 pub const VAULT: &str = "vault";
-/// The desktop app itself (`rewarden ask`).
+/// The desktop app itself (`reins ask`).
 pub const DESKTOP: &str = "desktop";
 pub const GITLAB: &str = "gitlab";
 pub const CODEBERG: &str = "codeberg";
@@ -177,7 +177,7 @@ pub struct ToolSpec {
     /// Asked for every time, whatever the user says: destructive or far-reaching changes (deleting a repository, making
     /// it public, adding a collaborator, deleting an item for good). A standing permission never covers it.
     pub once_only: bool,
-    /// Only the paired Rewarden desktop app may call it (its answer is a credential sealed to the app's key). Never
+    /// Only the paired Reins desktop app may call it (its answer is a credential sealed to the app's key). Never
     /// listed to an AI and never accepted over MCP; the phone checks the caller's key was pinned at pairing.
     pub desktop_only: bool,
 }

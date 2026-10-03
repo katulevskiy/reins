@@ -7,10 +7,10 @@ use std::collections::VecDeque;
 use std::sync::{Arc, Mutex};
 
 use proxy_support::{Home, Proxy, TOKEN, Upstream, config, logs, token_basic};
-use rewarden_desktop::auth::prompt::{PendingItem, Prompter};
-use rewarden_desktop::config::{Mode, PolicyConfig};
-use rewarden_desktop::control::Client;
-use rewarden_desktop::daemon::Options;
+use reins_desktop::auth::prompt::{PendingItem, Prompter};
+use reins_desktop::config::{Mode, PolicyConfig};
+use reins_desktop::control::Client;
+use reins_desktop::daemon::Options;
 
 /// Answers prompts from a script (`None`: the person does not answer) and records them.
 #[derive(Default)]
@@ -164,7 +164,7 @@ async fn an_unanswered_push_waits_and_a_later_approval_counts_for_the_retry() {
     let client = Client::new(&proxy.paths, proxy.addr()).unwrap();
     let pending = client.pending().await.unwrap();
     assert_eq!(pending.len(), 1);
-    assert!(run.stderr.contains(&format!("rewarden approve {}", pending[0].id)));
+    assert!(run.stderr.contains(&format!("reins approve {}", pending[0].id)));
     assert_eq!(client.status().await.unwrap().pending, 1);
     client.answer(&pending[0].id, true).await.unwrap();
     assert!(client.pending().await.unwrap().is_empty());

@@ -9,7 +9,7 @@ use gpui::{
     Image, ImageFormat, InteractiveElement as _, IntoElement, KeyDownEvent, ParentElement as _, Render, SharedString,
     StatefulInteractiveElement as _, Styled as _, Subscription, Window, div, img, pulsating_between, px,
 };
-use rewarden_desktop::harness::Harness;
+use reins_desktop::harness::Harness;
 
 use crate::backend::DaemonState;
 use crate::model::{Model, Pairing, Screen, Step};
@@ -890,7 +890,7 @@ impl Root {
                     caption(
                         format!(
                             "Reins {}. Quitting hides the shield; the background service keeps running.",
-                            rewarden_desktop::update::VERSION
+                            reins_desktop::update::VERSION
                         ),
                         pal,
                     )

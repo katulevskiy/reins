@@ -1,14 +1,14 @@
-package dev.rewarden.android.ui.upload
+package dev.reins.android.ui.upload
 
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
-import dev.rewarden.android.AppContainer
-import dev.rewarden.android.feedback.Event
-import dev.rewarden.android.feedback.play
-import dev.rewarden.android.platform.AuthResult
-import dev.rewarden.android.platform.Authenticator
-import dev.rewarden.android.ui.common.userMessage
-import dev.rewarden.core.BlobView
+import dev.reins.android.AppContainer
+import dev.reins.android.feedback.Event
+import dev.reins.android.feedback.play
+import dev.reins.android.platform.AuthResult
+import dev.reins.android.platform.Authenticator
+import dev.reins.android.ui.common.userMessage
+import dev.reins.core.BlobView
 import kotlin.coroutines.cancellation.CancellationException
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -24,7 +24,7 @@ data class UploadUi(
     val finished: Boolean = false,
 )
 
-/** A file an AI uploaded (`rewarden_upload`): approved, its download link works; denied, the server deletes it. */
+/** A file an AI uploaded (`reins_upload`): approved, its download link works; denied, the server deletes it. */
 class UploadViewModel(private val container: AppContainer, private val id: String) : ViewModel() {
     private val _ui = MutableStateFlow(UploadUi())
     val ui: StateFlow<UploadUi> = _ui.asStateFlow()

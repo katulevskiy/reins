@@ -444,7 +444,7 @@ mod tests {
 
     #[test]
     fn inserting_then_removing_gives_back_the_same_bytes() {
-        let v = json!({"command": "/bin/rewarden", "args": ["mcp", "--via", "X"]});
+        let v = json!({"command": "/bin/reins", "args": ["mcp", "--via", "X"]});
         for text in [
             "{\n  \"theme\": \"dark\",\n  \"mcpServers\": {\n    \"other\": {\"command\": \"o\"}\n  }\n}\n",
             "{\n\t\"mcpServers\": {}\n}",
@@ -459,14 +459,14 @@ mod tests {
                 &root,
                 servers,
                 &Entry {
-                    key: Some("rewarden"),
+                    key: Some("reins"),
                     value: &v,
                 },
             );
             let new_root = parse(&added).unwrap_or_else(|e| panic!("{e}\n{added}"));
             let servers = new_root.member("mcpServers").unwrap();
-            assert_eq!(servers.member("rewarden").unwrap().value(&added), v, "{added}");
-            let back = remove(&added, servers, member_index(servers, "rewarden"), interior.as_deref());
+            assert_eq!(servers.member("reins").unwrap().value(&added), v, "{added}");
+            let back = remove(&added, servers, member_index(servers, "reins"), interior.as_deref());
             assert_eq!(back, text, "{added}");
         }
     }

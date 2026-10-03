@@ -1,4 +1,4 @@
-package dev.rewarden.android.ui.pairing
+package dev.reins.android.ui.pairing
 
 import java.net.URI
 import java.net.URISyntaxException

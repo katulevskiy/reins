@@ -138,13 +138,13 @@ async fn both_protocol_eras_are_served() {
             "gmail_read",
             "gmail_search",
             "gmail_send",
-            "rewarden_request_access",
-            "rewarden_list_accounts",
-            "rewarden_get_result",
-            "rewarden_upload"
+            "reins_request_access",
+            "reins_list_accounts",
+            "reins_get_result",
+            "reins_upload"
         ]
         .into_iter()
-        .chain(rewarden_proto::connector::specs().iter().filter(|s| !s.desktop_only).map(|s| s.tool))
+        .chain(reins_proto::connector::specs().iter().filter(|s| !s.desktop_only).map(|s| s.tool))
         .collect::<Vec<_>>()
     );
 
@@ -194,11 +194,11 @@ async fn denials_and_device_errors_are_tool_errors() {
     let denied = json!({"v": 1, "outcome": "denied", "reason": null});
     let (result, _) = tokio::join!(ai, answer_next(&phone, denied));
     assert_eq!(result["isError"], true);
-    assert_eq!(text_of(&result), "Denied by the user on their Rewarden device.");
+    assert_eq!(text_of(&result), "Denied by the user on their Reins device.");
     let ai = tool(&server, &tokens.access, "gmail_read", json!({"message_ids": ["m1"]}));
     let failed = json!({"v": 1, "outcome": "error", "message": "Gmail needs consent"});
     let (result, _) = tokio::join!(ai, answer_next(&phone, failed));
-    assert_eq!(text_of(&result), "The Rewarden device could not complete the request: Gmail needs consent");
+    assert_eq!(text_of(&result), "The Reins device could not complete the request: Gmail needs consent");
 }
 
 #[tokio::test]
@@ -238,7 +238,7 @@ async fn an_absent_phone_is_reported_as_offline_after_the_short_threshold() {
     let elapsed = start.elapsed();
     assert_eq!(result["isError"], true);
     let text = text_of(&result);
-    assert!(text.starts_with("Rewarden: your approval device is offline. Ask the user to open the Rewarden app; the request is waiting there. Then call rewarden_get_result with request_id="), "{text}");
+    assert!(text.starts_with("Reins: your approval device is offline. Ask the user to open the Reins app; the request is waiting there. Then call reins_get_result with request_id="), "{text}");
     assert!(
         elapsed >= Duration::from_millis(1800) && elapsed < Duration::from_millis(3900),
         "offline after {elapsed:?}, not after the full wait"
@@ -255,25 +255,25 @@ async fn a_fetched_but_undecided_request_is_pending_then_delivered_late_exactly_
     let (status, request) = phone.get(&format!("/requests/{request_id}")).await;
     assert_eq!(status, StatusCode::OK, "{request}");
     let start = Instant::now();
-    let pending = tool(&server, &tokens.access, "rewarden_get_result", json!({"request_id": request_id})).await;
+    let pending = tool(&server, &tokens.access, "reins_get_result", json!({"request_id": request_id})).await;
     assert!(start.elapsed() >= Duration::from_millis(3800), "pending only after the relay wait");
     assert_eq!(
         text_of(&pending),
         format!(
-            "Waiting for the user to approve on their phone. When they confirm (the user can approve even after this message), call rewarden_get_result with request_id={request_id}, or repeat the same request: a one-time approval may already cover it."
+            "Waiting for the user to approve on their phone. When they confirm (the user can approve even after this message), call reins_get_result with request_id={request_id}, or repeat the same request: a one-time approval may already cover it."
         )
     );
     // The user approves after the AI gave up.
     let (status, _) = phone.post(&format!("/requests/{request_id}/response"), &search_result()).await;
     assert_eq!(status, StatusCode::NO_CONTENT);
-    let late = tool(&server, &tokens.access, "rewarden_get_result", json!({"request_id": request_id})).await;
+    let late = tool(&server, &tokens.access, "reins_get_result", json!({"request_id": request_id})).await;
     assert_eq!(late["isError"], false, "{late}");
     assert_eq!(late["structuredContent"]["messages"][0]["id"], "m1");
-    let again = tool(&server, &tokens.access, "rewarden_get_result", json!({"request_id": request_id})).await;
+    let again = tool(&server, &tokens.access, "reins_get_result", json!({"request_id": request_id})).await;
     assert_eq!(again["structuredContent"], late["structuredContent"], "readable until it expires");
     // Another AI connection of the same user cannot read it.
     let other = server.connect_ai(&phone, "mia@example.com", Some("ChatGPT")).await;
-    let stolen = tool(&server, &other.access, "rewarden_get_result", json!({"request_id": request_id})).await;
+    let stolen = tool(&server, &other.access, "reins_get_result", json!({"request_id": request_id})).await;
     assert_eq!(stolen["isError"], true);
     assert!(text_of(&stolen).contains("Unknown or expired request_id"), "{stolen}");
 }
@@ -337,7 +337,7 @@ async fn tools_of_integrations_without_an_account_are_not_listed_once_the_phone_
     let some = tool_names(&some);
     assert!(some.iter().any(|n| n == "github_list_repos"));
     assert!(!some.iter().any(|n| n.starts_with("gmail_") || n.starts_with("telegram_") || n.starts_with("vault_")));
-    for always in ["rewarden_get_result", "rewarden_list_accounts", "rewarden_request_access"] {
+    for always in ["reins_get_result", "reins_list_accounts", "reins_request_access"] {
         assert!(some.iter().any(|n| n == always), "{always}");
     }
 

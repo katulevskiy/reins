@@ -1,2 +1,2 @@
-DROP TABLE IF EXISTS rewarden_sso_sessions;
-DROP TABLE IF EXISTS rewarden_settings;
+DROP TABLE IF EXISTS reins_sso_sessions;
+DROP TABLE IF EXISTS reins_settings;

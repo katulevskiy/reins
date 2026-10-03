@@ -1,42 +1,42 @@
-package dev.rewarden.android
+package dev.reins.android
 
-import dev.rewarden.core.ActivityEntry
-import dev.rewarden.core.ActivityInfo
-import dev.rewarden.core.ActivityMessage
-import dev.rewarden.core.ApprovalKind
-import dev.rewarden.core.ApprovalView
-import dev.rewarden.core.AskView
-import dev.rewarden.core.AutoDecisionView
-import dev.rewarden.core.AutopilotMode
-import dev.rewarden.core.AutopilotNote
-import dev.rewarden.core.ClassView
-import dev.rewarden.core.ModelState
-import dev.rewarden.core.ModelStatus
-import dev.rewarden.core.NeighbourView
-import dev.rewarden.core.Preset
-import dev.rewarden.core.ProfileView
-import dev.rewarden.core.SuggestionView
-import dev.rewarden.core.Verdict
-import dev.rewarden.core.BlobView
-import dev.rewarden.core.ClassOption
-import dev.rewarden.core.ConnectionView
-import dev.rewarden.core.EmailView
-import dev.rewarden.core.GitCommitView
-import dev.rewarden.core.GitFileView
-import dev.rewarden.core.GitPushView
-import dev.rewarden.core.GitRefView
-import dev.rewarden.core.GrantRequestView
-import dev.rewarden.core.GrantView
-import dev.rewarden.core.McpCallView
-import dev.rewarden.core.McpServerView
-import dev.rewarden.core.McpToolView
-import dev.rewarden.core.MessageView
-import dev.rewarden.core.PairingView
-import dev.rewarden.core.PendingItem
-import dev.rewarden.core.PendingKind
-import dev.rewarden.core.ResourceView
-import dev.rewarden.core.SecretReleaseView
-import dev.rewarden.core.SshSignView
+import dev.reins.core.ActivityEntry
+import dev.reins.core.ActivityInfo
+import dev.reins.core.ActivityMessage
+import dev.reins.core.ApprovalKind
+import dev.reins.core.ApprovalView
+import dev.reins.core.AskView
+import dev.reins.core.AutoDecisionView
+import dev.reins.core.AutopilotMode
+import dev.reins.core.AutopilotNote
+import dev.reins.core.ClassView
+import dev.reins.core.ModelState
+import dev.reins.core.ModelStatus
+import dev.reins.core.NeighbourView
+import dev.reins.core.Preset
+import dev.reins.core.ProfileView
+import dev.reins.core.SuggestionView
+import dev.reins.core.Verdict
+import dev.reins.core.BlobView
+import dev.reins.core.ClassOption
+import dev.reins.core.ConnectionView
+import dev.reins.core.EmailView
+import dev.reins.core.GitCommitView
+import dev.reins.core.GitFileView
+import dev.reins.core.GitPushView
+import dev.reins.core.GitRefView
+import dev.reins.core.GrantRequestView
+import dev.reins.core.GrantView
+import dev.reins.core.McpCallView
+import dev.reins.core.McpServerView
+import dev.reins.core.McpToolView
+import dev.reins.core.MessageView
+import dev.reins.core.PairingView
+import dev.reins.core.PendingItem
+import dev.reins.core.PendingKind
+import dev.reins.core.ResourceView
+import dev.reins.core.SecretReleaseView
+import dev.reins.core.SshSignView
 
 /** Builders for the records the UI shows, with sensible defaults. */
 object TestData {
@@ -62,7 +62,7 @@ object TestData {
     )
 
     fun pairingItem(id: String = "pair1") = PendingItem(
-        PendingKind.PAIRING, id, "Connect Claude to Rewarden?", "claude.ai", 1_700_000_200, "", "Claude", "pair", 1u, "", null, null, "", "", null,
+        PendingKind.PAIRING, id, "Connect Claude to Reins?", "claude.ai", 1_700_000_200, "", "Claude", "pair", 1u, "", null, null, "", "", null,
     )
 
     /** Another phone asking this one for the account's keys, as the core parks it. */
@@ -72,9 +72,9 @@ object TestData {
     )
 
     fun joinView(id: String = "join1", device: String = "Pixel 9", code: String = "482 193") =
-        dev.rewarden.core.JoinView(id, device, code, 1_700_000_200)
+        dev.reins.core.JoinView(id, device, code, 1_700_000_200)
 
-    /** A pairing; the Rewarden desktop app's carries the eight digits of its key. */
+    /** A pairing; the Reins desktop app's carries the eight digits of its key. */
     fun pairingView(id: String = "pair1", name: String = "Claude", host: String = "claude.ai", keyFingerprint: String? = null) =
         PairingView(id, name, host, byteArrayOf(7, 42, 99), 1_700_000_200, keyFingerprint)
 
@@ -198,7 +198,7 @@ object TestData {
 
     /** The desktop app pushes with git: the core's preview lines are there too, but the git section replaces them. */
     fun gitPushView(git: GitPushView = gitPush(gitRef()), noStanding: Boolean = false, tags: Boolean = false) = repoWriteView().copy(
-        requestId = "req20", connectionLabel = "Rewarden desktop app on laptop", op = if (tags) "git_tag_push" else "git_push",
+        requestId = "req20", connectionLabel = "Reins desktop app on laptop", op = if (tags) "git_tag_push" else "git_push",
         preview = listOf("Push 9 commits to main", "Commit number 1", "+120 −14 in 12 files"),
         noStanding = noStanding, opTitle = if (tags) "Push tags with git" else "Push with git",
         `class` = if (tags) "releases" else "code", git = git,
@@ -206,7 +206,7 @@ object TestData {
 
     /** The desktop app asks to clone and fetch: an ordinary item list, no git section. */
     fun gitFetchView() = fetchView().copy(
-        requestId = "req21", connectionLabel = "Rewarden desktop app on laptop", service = "github", account = "octo-cat",
+        requestId = "req21", connectionLabel = "Reins desktop app on laptop", service = "github", account = "octo-cat",
         op = "git_fetch", count = 1u,
         messages = listOf(MessageView("octo/app", "octo/app (private)", "Clone and fetch octo/app", 0, "Git on your computer can read this repository for 1 hour.", false, false)),
         resources = listOf(ResourceView("octo/app", "octo/app (private)", false), ResourceView("octo", "Every repository of octo", true)),
@@ -255,7 +255,7 @@ object TestData {
         null,
     )
 
-    fun defaultScope(action: String, allMail: Boolean = false) = dev.rewarden.core.GrantScopeChoice(
+    fun defaultScope(action: String, allMail: Boolean = false) = dev.reins.core.GrantScopeChoice(
         allMail = allMail,
         selectedMessagesOnly = false,
         senderAddresses = emptyList(),
@@ -284,9 +284,9 @@ object TestData {
         leftSeconds: Long = 3_000,
         ageSeconds: Long = 600,
         allMail: Boolean = false,
-        editable: dev.rewarden.core.GrantScopeChoice? = defaultScope(action, allMail),
+        editable: dev.reins.core.GrantScopeChoice? = defaultScope(action, allMail),
     ): GrantView {
-        val now = (dev.rewarden.android.design.Timers.frozenNowMillis ?: System.currentTimeMillis()) / 1000
+        val now = (dev.reins.android.design.Timers.frozenNowMillis ?: System.currentTimeMillis()) / 1000
         return GrantView(
             id, "c1", "Claude", action, if (action == "send") "Send emails to @corp.example" else "Read emails from @bank.com",
             if (active) now + leftSeconds else now - 86_400 * 2, maxUses, uses, if (active) now - ageSeconds else now - 86_400 * 3, now - 500,
@@ -393,14 +393,14 @@ object TestData {
     // ---- the desktop app --------------------------------------------------------------------------------------
 
     fun askView(detail: String? = "git push --force origin main", topic: String? = "command:git push --force") = writeView().copy(
-        requestId = "req40", connectionLabel = "Rewarden desktop app on laptop", service = "desktop", account = null, op = "ask",
+        requestId = "req40", connectionLabel = "Reins desktop app on laptop", service = "desktop", account = null, op = "ask",
         resources = listOf(ResourceView(topic ?: "ask", topic ?: "Questions without a topic", false)),
         preview = listOf("Force-push main?"), opTitle = "Ask you on your phone", action = "write", `class` = "", classes = emptyList(),
         ask = AskView("Force-push main?", detail, topic),
     )
 
     fun secretsView(lease: ULong = 1_800u) = writeView().copy(
-        requestId = "req41", connectionLabel = "Rewarden desktop app on laptop", service = "vault", account = "me@example.com",
+        requestId = "req41", connectionLabel = "Reins desktop app on laptop", service = "vault", account = "me@example.com",
         op = "secret_release", resources = listOf(ResourceView("secrets", "These secrets", false)),
         preview = listOf("npm run deploy"), noStanding = false, opTitle = "Use secrets on the computer", action = "write",
         `class` = "secrets", classes = emptyList(),
@@ -408,7 +408,7 @@ object TestData {
     )
 
     fun sshView(host: String? = "build.example.com", hostKey: String? = "SHA256:Ql3mV1hd2bS9WgS0aVq2Jv0Rr2q8Zb0yRrj2uMm3n0E") = writeView().copy(
-        requestId = "req42", connectionLabel = "Rewarden desktop app on laptop", service = "vault", account = "me@example.com",
+        requestId = "req42", connectionLabel = "Reins desktop app on laptop", service = "vault", account = "me@example.com",
         op = "ssh_sign", resources = listOf(ResourceView("SHA256:abc@build.example.com", "Deploy key on build.example.com", false)),
         preview = listOf("Sign in to build.example.com"), opTitle = "Sign in to a server with SSH", action = "write",
         `class` = "ssh", classes = emptyList(),
@@ -463,9 +463,9 @@ object TestData {
     )
 
     fun neighbours() = listOf(
-        NeighbourView("Push to a branch · dkat/rewarden", Verdict.APPROVE, 0.97f, 1_700_000_000),
+        NeighbourView("Push to a branch · dkat/reins", Verdict.APPROVE, 0.97f, 1_700_000_000),
         NeighbourView("Push to a branch · dkat/laya", Verdict.APPROVE, 0.91f, 1_699_990_000),
-        NeighbourView("Force push · dkat/rewarden", Verdict.DENY, 0.74f, 1_699_900_000),
+        NeighbourView("Force push · dkat/reins", Verdict.DENY, 0.74f, 1_699_900_000),
     )
 
     fun suggestion(
@@ -478,7 +478,7 @@ object TestData {
         novel: Boolean = false,
         judged: Boolean = true,
         mode: AutopilotMode = AutopilotMode.ASSISTED,
-        reason: String = "Like 4 times you approved: Push to a branch · dkat/rewarden",
+        reason: String = "Like 4 times you approved: Push to a branch · dkat/reins",
         neighbours: List<NeighbourView> = neighbours(),
     ) = SuggestionView(id, verdict, mode, pApprove, pDeny, confidence, reason, neighbours, "personal", "Personal", "github/write/push", novel, floor, judged)
 
@@ -489,8 +489,8 @@ object TestData {
         correctable: Boolean = true,
     ) = AutopilotNote(
         mode, suggested, pApprove, 1f - pApprove, 0.93f, "personal", "Personal",
-        listOf("approved: Push to a branch · dkat/rewarden", "approved: Push to a branch · dkat/laya"),
-        "Like 4 times you approved: Push to a branch · dkat/rewarden", correctable,
+        listOf("approved: Push to a branch · dkat/reins", "approved: Push to a branch · dkat/laya"),
+        "Like 4 times you approved: Push to a branch · dkat/reins", correctable,
     )
 
     fun autoDecision(
@@ -498,5 +498,5 @@ object TestData {
         verdict: Verdict = Verdict.APPROVE,
         decidedBy: String = "autopilot",
         activityId: Long? = 42,
-    ) = AutoDecisionView(id, PendingKind.REQUEST, "c1", "Claude Code", "Push to a branch · dkat/rewarden", verdict, decidedBy, 0.97f, 0.91f, activityId)
+    ) = AutoDecisionView(id, PendingKind.REQUEST, "c1", "Claude Code", "Push to a branch · dkat/reins", verdict, decidedBy, 0.97f, 0.91f, activityId)
 }

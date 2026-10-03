@@ -16,7 +16,7 @@ needed, to the smallest value with no unsafe automatic approve on val (`--safe-t
 Laya's layout is written (rl_agent_config.json, encoder/, tokenizer/, model.safetensors), loadable by laya.Agent
 and by export_onnx.py.
 
-    python finetune.py --base ml --data ~/.cache/rewarden-laya/data/v3 --out ~/.cache/rewarden-laya/runs/ml-v3
+    python finetune.py --base ml --data ~/.cache/reins-laya/data/v3 --out ~/.cache/reins-laya/runs/ml-v3
 """
 import argparse
 import json

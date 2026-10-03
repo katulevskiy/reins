@@ -1,5 +1,5 @@
 //! The real Telegram backend, on grammers (Telegram's own protocol, spoken directly from this phone). The session of a
-//! signed-in account is kept sealed in the local store; nothing about it ever reaches the Rewarden server.
+//! signed-in account is kept sealed in the local store; nothing about it ever reaches the Reins server.
 
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
@@ -286,7 +286,7 @@ impl Grammers {
             return Ok(Arc::clone(existing));
         }
         if !self.configured() {
-            return Err(CoreError::service("Telegram is not set up in this build of Rewarden"));
+            return Err(CoreError::service("Telegram is not set up in this build of Reins"));
         }
         let raw = self
             .store
@@ -486,7 +486,7 @@ impl TelegramBackend for Grammers {
 
     async fn request_code(&self, phone: &str) -> Result<(), CoreError> {
         if !self.configured() {
-            return Err(CoreError::service("Telegram is not set up in this build of Rewarden"));
+            return Err(CoreError::service("Telegram is not set up in this build of Reins"));
         }
         let account = phone_account(phone)?;
         let live = self.connect(SessionData::default());

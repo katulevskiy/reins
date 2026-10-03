@@ -7,11 +7,11 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use common::FakeKeys;
-use rewarden_core::CoreError;
-use rewarden_core::connector::github::GitHub;
-use rewarden_core::connector::{Connector, Item, Preview};
-use rewarden_core::store::Store;
-use rewarden_proto::connector::{ConnectorCall, Effect, spec_for_tool};
+use reins_core::CoreError;
+use reins_core::connector::github::GitHub;
+use reins_core::connector::{Connector, Item, Preview};
+use reins_core::store::Store;
+use reins_proto::connector::{ConnectorCall, Effect, spec_for_tool};
 use serde_json::{Value, json};
 use wiremock::matchers::{body_json, method, path, query_param};
 use wiremock::{Mock, MockServer, ResponseTemplate};
@@ -41,7 +41,7 @@ async fn env() -> Env {
         .await;
     let dir = tempfile::tempdir().unwrap();
     let store = Arc::new(Store::open(dir.path(), &FakeKeys).unwrap());
-    let gh = GitHub::new(rewarden_core::http::client().unwrap(), &server.uri(), store, Duration::from_millis(1));
+    let gh = GitHub::new(reins_core::http::client().unwrap(), &server.uri(), store, Duration::from_millis(1));
     assert_eq!(gh.sign_in("ghp_secret").await.unwrap(), ME);
     Env {
         server,
@@ -1456,8 +1456,8 @@ fn every_tool_is_registered_with_its_effect_class_and_once_only_flag() {
 }
 
 /// A value for a required parameter, so that a call parses.
-fn filler(p: &rewarden_proto::connector::Param) -> Value {
-    use rewarden_proto::connector::Kind;
+fn filler(p: &reins_proto::connector::Param) -> Value {
+    use reins_proto::connector::Kind;
     match p.kind {
         Kind::Choice(options) => json!(options[0]),
         Kind::Int {

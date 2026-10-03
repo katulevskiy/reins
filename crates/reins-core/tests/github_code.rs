@@ -8,10 +8,10 @@ use std::time::Duration;
 
 use common::FakeKeys;
 use data_encoding::BASE64;
-use rewarden_core::CoreError;
-use rewarden_core::connector::github::GitHub;
-use rewarden_core::connector::{Connector, Item, Preview};
-use rewarden_proto::connector::{ConnectorCall, spec_for_tool};
+use reins_core::CoreError;
+use reins_core::connector::github::GitHub;
+use reins_core::connector::{Connector, Item, Preview};
+use reins_proto::connector::{ConnectorCall, spec_for_tool};
 use serde_json::{Value, json};
 use wiremock::matchers::{body_bytes, body_json, header, method, path, query_param};
 use wiremock::{Mock, MockServer, ResponseTemplate};
@@ -35,8 +35,8 @@ async fn env() -> Env {
         .mount(&server)
         .await;
     let dir = tempfile::tempdir().unwrap();
-    let store = Arc::new(rewarden_core::store::Store::open(dir.path(), &FakeKeys).unwrap());
-    let client = rewarden_core::http::client().unwrap();
+    let store = Arc::new(reins_core::store::Store::open(dir.path(), &FakeKeys).unwrap());
+    let client = reins_core::http::client().unwrap();
     let gh = GitHub::new(client, &server.uri(), store, Duration::from_millis(1)).with_upload_base(&uploads.uri());
     assert_eq!(gh.sign_in("ghp_secret").await.unwrap(), ACCOUNT);
     Env {
@@ -1779,7 +1779,7 @@ async fn every_operation_of_the_area_is_dispatched_and_writes_carry_their_class(
         "release_asset_delete",
     ];
     let specs: Vec<_> =
-        rewarden_proto::connector::specs().iter().filter(|s| s.service == "github" && mine.contains(&s.op)).collect();
+        reins_proto::connector::specs().iter().filter(|s| s.service == "github" && mine.contains(&s.op)).collect();
     assert_eq!(specs.len(), mine.len(), "every tool is registered");
     for s in specs {
         let empty = ConnectorCall {
@@ -1788,7 +1788,7 @@ async fn every_operation_of_the_area_is_dispatched_and_writes_carry_their_class(
             args: serde_json::Map::new(),
         };
         let err = match s.effect {
-            rewarden_proto::connector::Effect::Write => {
+            reins_proto::connector::Effect::Write => {
                 assert!(matches!(s.class, "code" | "releases"), "{}", s.tool);
                 assert_eq!(
                     s.class == "code",

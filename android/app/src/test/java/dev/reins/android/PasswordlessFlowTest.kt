@@ -1,4 +1,4 @@
-package dev.rewarden.android
+package dev.reins.android
 
 import android.content.ClipboardManager
 import android.content.Intent
@@ -12,13 +12,13 @@ import androidx.compose.ui.test.assertTextEquals
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.performTextReplacement
 import androidx.test.ext.junit.runners.AndroidJUnit4
-import dev.rewarden.android.platform.AuthResult
-import dev.rewarden.android.platform.Foreground
-import dev.rewarden.android.platform.SsoRedirectActivity
-import dev.rewarden.android.ui.signin.AccountRules
-import dev.rewarden.core.AccountKeys
-import dev.rewarden.core.CoreException
-import dev.rewarden.core.JoinProgress
+import dev.reins.android.platform.AuthResult
+import dev.reins.android.platform.Foreground
+import dev.reins.android.platform.SsoRedirectActivity
+import dev.reins.android.ui.signin.AccountRules
+import dev.reins.core.AccountKeys
+import dev.reins.core.CoreException
+import dev.reins.core.JoinProgress
 import java.time.Duration
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -297,7 +297,7 @@ class PasswordlessFlowTest : FlowHarness() {
     // ---- the approval device: another phone asks -------------------------------------------------------------------
 
     private fun openJoin() {
-        core.session = dev.rewarden.core.SessionInfo("http://127.0.0.1:8000", "me@example.com")
+        core.session = dev.reins.core.SessionInfo("http://127.0.0.1:8000", "me@example.com")
         core.pending = listOf(TestData.joinItem())
         core.joins["join1"] = TestData.joinView()
         launch(link("join", "join1"))
@@ -306,7 +306,7 @@ class PasswordlessFlowTest : FlowHarness() {
 
     @Test
     fun aWaitingPhoneIsListedLikeAPairing() {
-        core.session = dev.rewarden.core.SessionInfo("http://127.0.0.1:8000", "me@example.com")
+        core.session = dev.reins.core.SessionInfo("http://127.0.0.1:8000", "me@example.com")
         core.pending = listOf(TestData.joinItem())
         Foreground.autoPopup = false
         launch()
@@ -350,7 +350,7 @@ class PasswordlessFlowTest : FlowHarness() {
 
     @Test
     fun anAccountWithAMasterPasswordHasNoRecoveryCodeRow() {
-        core.session = dev.rewarden.core.SessionInfo("http://127.0.0.1:8000", "me@example.com")
+        core.session = dev.reins.core.SessionInfo("http://127.0.0.1:8000", "me@example.com")
         launch()
         tap("openSettings")
         awaitText("To add another phone, sign in on it; this phone asks you to approve it.")
@@ -360,7 +360,7 @@ class PasswordlessFlowTest : FlowHarness() {
 
     @Test
     fun theRecoveryCodeIsShownAfterBiometricsAndCanBeCopied() {
-        core.session = dev.rewarden.core.SessionInfo("http://127.0.0.1:8000", "me@example.com")
+        core.session = dev.reins.core.SessionInfo("http://127.0.0.1:8000", "me@example.com")
         core.recoveryCode = FakeCore.RECOVERY_CODE
         launch()
         tap("openSettings")

@@ -7,12 +7,12 @@ use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use common::{FakeGoogle, FakeKeys, RecordingNotifier};
-use rewarden_core::connector::{Connector, Item, Preview};
-use rewarden_core::{
+use reins_core::connector::{Connector, Item, Preview};
+use reins_core::{
     ApprovalChoice, ApprovalKind, CoreConfig, CoreError, GmailStatus, GoogleTokenProvider, GrantScopeChoice, Notifier,
-    RewardenCore, StandingGrant,
+    ReinsCore, StandingGrant,
 };
-use rewarden_proto::connector::ConnectorCall;
+use reins_proto::connector::ConnectorCall;
 use serde_json::{Value, json};
 use wiremock::matchers::{method, path, path_regex};
 use wiremock::{Mock, MockServer, ResponseTemplate};
@@ -82,7 +82,7 @@ impl Connector for FakeGitHub {
 
 struct Env {
     server: MockServer,
-    core: Arc<RewardenCore>,
+    core: Arc<ReinsCore>,
     github: Arc<FakeGitHub>,
     _dir: tempfile::TempDir,
 }
@@ -104,7 +104,7 @@ async fn env() -> Env {
     let github = Arc::new(FakeGitHub::default());
     let google: Arc<dyn GoogleTokenProvider> = Arc::new(FakeGoogle::new());
     let notifier: Arc<dyn Notifier> = Arc::new(RecordingNotifier::default());
-    let core = RewardenCore::with_connectors(
+    let core = ReinsCore::with_connectors(
         dir.path().to_str().unwrap(),
         &FakeKeys,
         google,
@@ -133,19 +133,19 @@ fn request(id: &str, op: &str, args: &Value) -> Value {
 
 async fn serve(env: &Env, requests: &[Value]) {
     Mock::given(method("GET"))
-        .and(path("/rewarden/api/pending"))
+        .and(path("/reins/api/pending"))
         .respond_with(ResponseTemplate::new(200).set_body_json(json!({"requests": requests, "pairings": []})))
         .up_to_n_times(1)
         .with_priority(1)
         .mount(&env.server)
         .await;
     Mock::given(method("GET"))
-        .and(path("/rewarden/api/pending"))
+        .and(path("/reins/api/pending"))
         .respond_with(ResponseTemplate::new(200).set_body_json(json!({"requests": [], "pairings": []})))
         .mount(&env.server)
         .await;
     Mock::given(method("POST"))
-        .and(path_regex(r"^/rewarden/api/(requests|pairings)/[^/]+/response$"))
+        .and(path_regex(r"^/reins/api/(requests|pairings)/[^/]+/response$"))
         .respond_with(ResponseTemplate::new(204))
         .mount(&env.server)
         .await;

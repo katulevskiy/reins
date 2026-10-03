@@ -1,16 +1,16 @@
-//! The background service on Windows: `rewarden service install` (and `resume`) puts a windowless copy of this program
-//! in the state directory (`%LOCALAPPDATA%\rewarden\rewarden-daemon.exe`), adds it to the user's `Run` key
+//! The background service on Windows: `reins service install` (and `resume`) puts a windowless copy of this program
+//! in the state directory (`%LOCALAPPDATA%\reins\reins-daemon.exe`), adds it to the user's `Run` key
 //! (`HKCU\Software\Microsoft\Windows\CurrentVersion\Run`, value `Reins`) so it runs `daemon` at every logon, and starts
-//! it at once. It logs to `daemon.log` next to it. Stopping it (`service uninstall`, the restart after `rewarden update`)
+//! it at once. It logs to `daemon.log` next to it. Stopping it (`service uninstall`, the restart after `reins update`)
 //! goes through the daemon's control API (`POST shutdown`), since Windows has no signal to send it.
 //!
 //! Why this and not a scheduled task or a Windows service: a Windows service needs an administrator and runs outside
 //! the user's desktop session (no approval dialogs); creating a logon-triggered scheduled task is refused to standard
 //! users by some Windows versions and policies. Every user may write their own `Run` key, it runs in the desktop
 //! session where the approval dialogs appear, and it shows (and can be switched off) in Task Manager's Startup apps.
-//! What `Run` lacks is systemd's restart on failure; `rewarden resume` starts the daemon again when it is not running.
+//! What `Run` lacks is systemd's restart on failure; `reins resume` starts the daemon again when it is not running.
 //!
-//! Why a copy: `rewarden.exe` is a console program, and Windows gives a console program started at logon a console
+//! Why a copy: `reins.exe` is a console program, and Windows gives a console program started at logon a console
 //! window. The copy differs only in the PE header's subsystem field ([`crate::win::gui_copy`]), so Windows starts it
 //! without a window, the way `pythonw.exe` relates to `python.exe`. It is made again from the running program at every
 //! install and after every update.
@@ -24,7 +24,7 @@ pub const RUN_KEY: &str = r"HKCU\Software\Microsoft\Windows\CurrentVersion\Run";
 /// The value in it (what Task Manager's Startup apps lists).
 pub const RUN_VALUE: &str = "Reins";
 /// The windowless copy, in the state directory.
-pub const DAEMON_EXE: &str = "rewarden-daemon.exe";
+pub const DAEMON_EXE: &str = "reins-daemon.exe";
 pub const LOG_FILE: &str = "daemon.log";
 
 /// The windowless copy that runs the daemon.
@@ -39,7 +39,7 @@ pub fn log_file(paths: &Paths) -> PathBuf {
     paths.state_dir.join(LOG_FILE)
 }
 
-/// The command line in the `Run` value: `"…\rewarden-daemon.exe" daemon --log-file "…\daemon.log"`.
+/// The command line in the `Run` value: `"…\reins-daemon.exe" daemon --log-file "…\daemon.log"`.
 #[must_use]
 pub fn run_command(daemon: &Path, log: &Path) -> String {
     let arg = |p: &Path| crate::win::command_line_arg(&p.to_string_lossy());
@@ -58,20 +58,20 @@ pub fn starts_our_daemon(value: &str, paths: &Paths) -> bool {
     value.to_ascii_lowercase().contains(&daemon_exe(paths).to_string_lossy().to_ascii_lowercase())
 }
 
-/// The line `rewarden status` shows for the service, from the `Run` value (`None`: not there).
+/// The line `reins status` shows for the service, from the `Run` value (`None`: not there).
 #[must_use]
 pub fn describe(value: Option<&str>, paths: &Paths) -> String {
     match value {
         Some(v) if starts_our_daemon(v, paths) => format!("starts at logon ({})", shown()),
-        Some(v) => format!("{} starts another program: {v} (`rewarden service install` replaces it)", shown()),
-        None => "not installed (`rewarden resume` or `rewarden service install`)".to_owned(),
+        Some(v) => format!("{} starts another program: {v} (`reins service install` replaces it)", shown()),
+        None => "not installed (`reins resume` or `reins service install`)".to_owned(),
     }
 }
 
 /// What starts the daemon: `Start-Process` goes through the Windows shell, which starts it without this process's
 /// handles. The program, its arguments and its directory come from the environment, never from the script.
-pub const START_SCRIPT: &str = "Start-Process -FilePath $env:REWARDEN_START_PROGRAM -ArgumentList \
-     $env:REWARDEN_START_ARGS -WorkingDirectory $env:REWARDEN_START_DIR";
+pub const START_SCRIPT: &str = "Start-Process -FilePath $env:REINS_START_PROGRAM -ArgumentList \
+     $env:REINS_START_ARGS -WorkingDirectory $env:REINS_START_DIR";
 
 #[cfg(windows)]
 pub use self::imp::{install, installed, restart_if_installed, uninstall};
@@ -126,7 +126,7 @@ mod imp {
 
     /// Starts the daemon copy on its own, through the shell (`Start-Process`). Not as a child of this process: Rust
     /// starts children with every inheritable handle of this process, and when this command's output is captured (an
-    /// agent running `rewarden resume`) the daemon would keep the capturing pipe open and whoever reads it would wait
+    /// agent running `reins resume`) the daemon would keep the capturing pipe open and whoever reads it would wait
     /// forever. The shell starts programs without inheriting handles. Should PowerShell fail, the daemon is started
     /// directly ([`start_child`]).
     fn start(paths: &Paths) -> Result<(), String> {
@@ -137,9 +137,9 @@ mod imp {
             "-Command",
             START_SCRIPT,
         ]))
-        .env("REWARDEN_START_PROGRAM", daemon_exe(paths))
-        .env("REWARDEN_START_ARGS", args)
-        .env("REWARDEN_START_DIR", &paths.state_dir)
+        .env("REINS_START_PROGRAM", daemon_exe(paths))
+        .env("REINS_START_ARGS", args)
+        .env("REINS_START_DIR", &paths.state_dir)
         .stdin(Stdio::null())
         .stdout(Stdio::null())
         .stderr(Stdio::null())
@@ -197,7 +197,7 @@ mod imp {
         Ok(format!("{} ({})", shown(), daemon.display()))
     }
 
-    /// After `rewarden update` replaced `exe`: when the service is installed, makes its copy again from the new
+    /// After `reins update` replaced `exe`: when the service is installed, makes its copy again from the new
     /// program and, when the daemon was running, restarts it. `None` when no service is installed.
     pub async fn restart_if_installed(paths: &Paths, config: &Config, exe: &Path) -> Result<Option<String>, String> {
         if !installed()?.is_some_and(|v| starts_our_daemon(&v, paths)) {
@@ -248,16 +248,13 @@ mod tests {
     #[test]
     fn the_run_value_starts_the_windowless_copy_with_its_log() {
         let paths = Paths {
-            config_dir: PathBuf::from(r"C:\Users\Jo Doe\AppData\Roaming\rewarden"),
-            state_dir: PathBuf::from(r"C:\Users\Jo Doe\AppData\Local\rewarden"),
+            config_dir: PathBuf::from(r"C:\Users\Jo Doe\AppData\Roaming\reins"),
+            state_dir: PathBuf::from(r"C:\Users\Jo Doe\AppData\Local\reins"),
         };
         let command = run_command(&daemon_exe(&paths), &log_file(&paths));
-        let state = r"C:\Users\Jo Doe\AppData\Local\rewarden";
+        let state = r"C:\Users\Jo Doe\AppData\Local\reins";
         let sep = std::path::MAIN_SEPARATOR;
-        assert_eq!(
-            command,
-            format!("\"{state}{sep}rewarden-daemon.exe\" daemon --log-file \"{state}{sep}daemon.log\"")
-        );
+        assert_eq!(command, format!("\"{state}{sep}reins-daemon.exe\" daemon --log-file \"{state}{sep}daemon.log\""));
         assert!(starts_our_daemon(&command, &paths));
         assert!(starts_our_daemon(&command.to_ascii_uppercase(), &paths), "paths compare ignoring case");
         assert!(describe(Some(&command), &paths).starts_with("starts at logon"));
@@ -268,7 +265,7 @@ mod tests {
 
     #[test]
     fn the_start_script_takes_everything_from_the_environment() {
-        for var in ["$env:REWARDEN_START_PROGRAM", "$env:REWARDEN_START_ARGS", "$env:REWARDEN_START_DIR"] {
+        for var in ["$env:REINS_START_PROGRAM", "$env:REINS_START_ARGS", "$env:REINS_START_DIR"] {
             assert!(START_SCRIPT.contains(var), "{var}");
         }
         assert!(!START_SCRIPT.contains("-NoNewWindow"), "that would start it as a child, with this process's handles");

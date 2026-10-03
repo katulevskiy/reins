@@ -8276,6 +8276,167 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "d6f6ff9a378485b298a5286656da665ba74413d36db0979633275d2e708145d4"
 
 [[package]]
+name = "reins-core"
+version = "0.1.0"
+dependencies = [
+ "aes 0.8.4",
+ "argon2",
+ "async-trait",
+ "cbc",
+ "crypto_box",
+ "data-encoding",
+ "encoding_rs",
+ "futures",
+ "grammers-client",
+ "grammers-mtsender",
+ "grammers-session",
+ "log",
+ "mail-parser",
+ "reins-policy",
+ "reins-proto",
+ "reqwest",
+ "ring",
+ "rsa",
+ "rusqlite",
+ "rustls 0.23.44",
+ "serde",
+ "serde_json",
+ "signature",
+ "ssh-key",
+ "tempfile",
+ "thiserror 2.0.20",
+ "tokenizers",
+ "tokio",
+ "uniffi",
+ "url",
+ "uuid",
+ "webpki-roots",
+ "wiremock",
+ "zeroize",
+]
+
+[[package]]
+name = "reins-desktop"
+version = "0.1.0"
+dependencies = [
+ "async-trait",
+ "bytes",
+ "clap",
+ "crypto_box",
+ "data-encoding",
+ "flate2",
+ "futures-util",
+ "hostname",
+ "http-body-util",
+ "hyper 1.11.1",
+ "hyper-util",
+ "log",
+ "qrcode",
+ "reins-proto",
+ "reqwest",
+ "ring",
+ "rustix 1.1.4",
+ "rustls 0.23.44",
+ "serde",
+ "serde_json",
+ "sha1 0.10.7",
+ "sha2 0.10.9",
+ "similar",
+ "tempfile",
+ "thiserror 2.0.20",
+ "tokio",
+ "toml 0.8.23",
+ "url",
+ "webpki-roots",
+ "wiremock",
+ "zeroize",
+]
+
+[[package]]
+name = "reins-desktop-app"
+version = "0.1.0"
+dependencies = [
+ "async-trait",
+ "embed-resource",
+ "futures",
+ "gpui",
+ "gpui_platform",
+ "gpui_tokio",
+ "ksni",
+ "log",
+ "objc2 0.6.4",
+ "objc2-app-kit 0.3.2",
+ "png 0.18.1",
+ "qrcode",
+ "reins-desktop",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "tokio",
+ "tray-icon",
+ "winreg 0.56.0",
+]
+
+[[package]]
+name = "reins-e2e"
+version = "0.1.0"
+dependencies = [
+ "async-trait",
+ "bytes",
+ "data-encoding",
+ "http-body-util",
+ "hyper 1.11.1",
+ "hyper-util",
+ "log",
+ "reins-core",
+ "reins-desktop",
+ "reins-proto",
+ "reqwest",
+ "ring",
+ "rustls 0.23.44",
+ "serde_json",
+ "tempfile",
+ "tokio",
+ "url",
+ "uuid",
+ "wiremock",
+ "zeroize",
+]
+
+[[package]]
+name = "reins-laya"
+version = "0.1.0"
+dependencies = [
+ "ort",
+ "reins-core",
+ "serde_json",
+ "tempfile",
+]
+
+[[package]]
+name = "reins-policy"
+version = "0.1.0"
+dependencies = [
+ "proptest",
+ "regex",
+ "reins-proto",
+ "serde",
+ "serde_json",
+ "thiserror 2.0.20",
+]
+
+[[package]]
+name = "reins-proto"
+version = "0.1.0"
+dependencies = [
+ "data-encoding",
+ "serde",
+ "serde_json",
+ "sha2 0.10.9",
+ "thiserror 2.0.20",
+]
+
+[[package]]
 name = "renderdoc-sys"
 version = "1.1.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -8428,167 +8589,6 @@ dependencies = [
  "tiny-skia",
  "usvg",
  "zune-jpeg",
-]
-
-[[package]]
-name = "rewarden-core"
-version = "0.1.0"
-dependencies = [
- "aes 0.8.4",
- "argon2",
- "async-trait",
- "cbc",
- "crypto_box",
- "data-encoding",
- "encoding_rs",
- "futures",
- "grammers-client",
- "grammers-mtsender",
- "grammers-session",
- "log",
- "mail-parser",
- "reqwest",
- "rewarden-policy",
- "rewarden-proto",
- "ring",
- "rsa",
- "rusqlite",
- "rustls 0.23.44",
- "serde",
- "serde_json",
- "signature",
- "ssh-key",
- "tempfile",
- "thiserror 2.0.20",
- "tokenizers",
- "tokio",
- "uniffi",
- "url",
- "uuid",
- "webpki-roots",
- "wiremock",
- "zeroize",
-]
-
-[[package]]
-name = "rewarden-desktop"
-version = "0.1.0"
-dependencies = [
- "async-trait",
- "bytes",
- "clap",
- "crypto_box",
- "data-encoding",
- "flate2",
- "futures-util",
- "hostname",
- "http-body-util",
- "hyper 1.11.1",
- "hyper-util",
- "log",
- "qrcode",
- "reqwest",
- "rewarden-proto",
- "ring",
- "rustix 1.1.4",
- "rustls 0.23.44",
- "serde",
- "serde_json",
- "sha1 0.10.7",
- "sha2 0.10.9",
- "similar",
- "tempfile",
- "thiserror 2.0.20",
- "tokio",
- "toml 0.8.23",
- "url",
- "webpki-roots",
- "wiremock",
- "zeroize",
-]
-
-[[package]]
-name = "rewarden-desktop-app"
-version = "0.1.0"
-dependencies = [
- "async-trait",
- "embed-resource",
- "futures",
- "gpui",
- "gpui_platform",
- "gpui_tokio",
- "ksni",
- "log",
- "objc2 0.6.4",
- "objc2-app-kit 0.3.2",
- "png 0.18.1",
- "qrcode",
- "rewarden-desktop",
- "serde",
- "serde_json",
- "tempfile",
- "tokio",
- "tray-icon",
- "winreg 0.56.0",
-]
-
-[[package]]
-name = "rewarden-e2e"
-version = "0.1.0"
-dependencies = [
- "async-trait",
- "bytes",
- "data-encoding",
- "http-body-util",
- "hyper 1.11.1",
- "hyper-util",
- "log",
- "reqwest",
- "rewarden-core",
- "rewarden-desktop",
- "rewarden-proto",
- "ring",
- "rustls 0.23.44",
- "serde_json",
- "tempfile",
- "tokio",
- "url",
- "uuid",
- "wiremock",
- "zeroize",
-]
-
-[[package]]
-name = "rewarden-laya"
-version = "0.1.0"
-dependencies = [
- "ort",
- "rewarden-core",
- "serde_json",
- "tempfile",
-]
-
-[[package]]
-name = "rewarden-policy"
-version = "0.1.0"
-dependencies = [
- "proptest",
- "regex",
- "rewarden-proto",
- "serde",
- "serde_json",
- "thiserror 2.0.20",
-]
-
-[[package]]
-name = "rewarden-proto"
-version = "0.1.0"
-dependencies = [
- "data-encoding",
- "serde",
- "serde_json",
- "sha2 0.10.9",
- "thiserror 2.0.20",
 ]
 
 [[package]]
@@ -11301,10 +11301,10 @@ dependencies = [
  "pico-args",
  "rand 0.10.2",
  "regex",
+ "reins-proto",
  "reqsign-aws-v4",
  "reqsign-core",
  "reqwest",
- "rewarden-proto",
  "ring",
  "rmpv",
  "rocket",

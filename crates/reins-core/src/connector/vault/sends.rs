@@ -12,9 +12,9 @@ use std::num::NonZeroU32;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use data_encoding::{BASE64, BASE64_NOPAD, BASE64URL_NOPAD};
+use reins_proto::connector::ConnectorCall;
 use reqwest::Method;
 use reqwest::multipart::{Form, Part};
-use rewarden_proto::connector::ConnectorCall;
 use ring::rand::{SecureRandom, SystemRandom};
 use ring::{hkdf, pbkdf2};
 use serde_json::{Map, Value, json};
@@ -724,9 +724,9 @@ async fn create(vault: &Vault, account: &str, call: &ConnectorCall) -> Result<Va
 
 /// Where the file goes, from the server's answer to the first step; only a direct upload to the same server.
 fn upload_path(created: &Value, sent: &Value) -> Result<String, CoreError> {
-    let wrong = || CoreError::service("The vault answered in a way Rewarden cannot upload files to.");
+    let wrong = || CoreError::service("The vault answered in a way Reins cannot upload files to.");
     if created["fileUploadType"].as_i64().unwrap_or(0) != 0 {
-        return Err(CoreError::service("This vault keeps Send files somewhere else, which Rewarden cannot upload to."));
+        return Err(CoreError::service("This vault keeps Send files somewhere else, which Reins cannot upload to."));
     }
     let send_id = sent["id"].as_str().filter(|id| id_ok(id)).ok_or_else(wrong)?;
     let url = created["url"].as_str().ok_or_else(wrong)?;

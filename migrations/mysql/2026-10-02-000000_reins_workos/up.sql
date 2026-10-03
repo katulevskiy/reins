@@ -1,11 +1,11 @@
 -- Small server state that outlives a restart: the WorkOS events cursor.
-CREATE TABLE rewarden_settings (
+CREATE TABLE reins_settings (
     name  VARCHAR(64) NOT NULL PRIMARY KEY,
     value TEXT        NOT NULL
 );
 
 -- The SSO provider's session each device signed in with, so that a revoked session signs that device out.
-CREATE TABLE rewarden_sso_sessions (
+CREATE TABLE reins_sso_sessions (
     session_id  VARCHAR(128) NOT NULL PRIMARY KEY,
     user_uuid   CHAR(36)     NOT NULL,
     device_uuid CHAR(36)     NOT NULL,
@@ -13,4 +13,4 @@ CREATE TABLE rewarden_sso_sessions (
     FOREIGN KEY (user_uuid) REFERENCES users (uuid) ON DELETE CASCADE
 );
 
-CREATE INDEX idx_rewarden_sso_sessions_user ON rewarden_sso_sessions (user_uuid);
+CREATE INDEX idx_reins_sso_sessions_user ON reins_sso_sessions (user_uuid);

@@ -6,7 +6,7 @@ use std::path::Path;
 use crypto_box::SecretKey;
 use crypto_box::aead::OsRng;
 use data_encoding::BASE64URL_NOPAD;
-use rewarden_proto::desktop::{CredentialGrant, encode_key, key_fingerprint};
+use reins_proto::desktop::{CredentialGrant, encode_key, key_fingerprint};
 use zeroize::Zeroizing;
 
 #[derive(Debug, thiserror::Error)]
@@ -101,7 +101,7 @@ impl Identity {
 
 /// Seals `plaintext` to a public key the way the phone does (tests and fakes).
 pub fn seal_to(public_key: &str, plaintext: &[u8]) -> Option<String> {
-    let raw = rewarden_proto::desktop::decode_key(public_key)?;
+    let raw = reins_proto::desktop::decode_key(public_key)?;
     let public = crypto_box::PublicKey::from(raw);
     public.seal(&mut OsRng, plaintext).ok().map(|b| BASE64URL_NOPAD.encode(&b))
 }

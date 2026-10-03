@@ -1,4 +1,4 @@
-package dev.rewarden.android.feedback
+package dev.reins.android.feedback
 
 import android.os.VibrationEffect
 import android.os.VibrationEffect.Composition as C

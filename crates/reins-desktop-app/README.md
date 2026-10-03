@@ -6,14 +6,14 @@ in the menu bar (macOS) or tray (Windows, Linux) with Pause for 1 hour, Resume, 
 [GPUI](https://gpui.rs) through Zeron's fork ([zui](https://github.com/katulevskiy/zui)), in the phone apps' look: Geist,
 cool neutrals, one violet accent.
 
-It does its work through the `rewarden_desktop` library in its own process and through the running daemon's control
-API; it never runs `rewarden` for that. The `rewarden` program ships next to it (inside `Reins.app`, in the install
+It does its work through the `reins_desktop` library in its own process and through the running daemon's control
+API; it never runs `reins` for that. The `reins` program ships next to it (inside `Reins.app`, in the install
 directory on Windows, inside the AppImage): it is what the harnesses and the background service run, and the status
 window's "Install command line tool" links it to `~/.local/bin`.
 
 | Module | What |
 | --- | --- |
-| `pairing` | the device flow (`rewarden_desktop::server::device`, feature `device-flow`), the browser sign-in, `--demo` |
+| `pairing` | the device flow (`reins_desktop::server::device`, feature `device-flow`), the browser sign-in, `--demo` |
 | `backend` | harness detection and setup, the service (or the daemon inside the app), pause and resume, updates |
 | `model`, `ui` | the screens: onboarding, first-time setup, status |
 | `tray` | `tray-icon` on macOS and Windows, `ksni` (StatusNotifierItem) on Linux |
@@ -22,13 +22,13 @@ window's "Install command line tool" links it to `~/.local/bin`.
 ## Run it
 
 ```sh
-cargo build -p rewarden-desktop -p rewarden-desktop-app     # rewarden next to reins-app, as in the bundle
+cargo build -p reins-desktop -p reins-desktop-app     # reins next to reins-app, as in the bundle
 target/debug/reins-app --demo                                # a pretend pairing; nothing is sent
 ```
 
 `REINS_HOME=/tmp/somewhere` makes the app treat that directory as the home directory (harness settings, git's global
 config, login items, its own settings and state), to try it without touching the real ones. `REINS_DAEMON=in-app` runs
-the daemon inside the app instead of installing the background service. `REWARDEN_SERVER` pairs with another server.
+the daemon inside the app instead of installing the background service. `REINS_SERVER` pairs with another server.
 
 ## Installers
 

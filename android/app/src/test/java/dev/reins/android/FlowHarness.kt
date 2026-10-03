@@ -1,4 +1,4 @@
-package dev.rewarden.android
+package dev.reins.android
 
 import android.content.Context
 import android.content.Intent
@@ -10,21 +10,21 @@ import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performScrollTo
 import androidx.test.core.app.ActivityScenario
 import androidx.test.core.app.ApplicationProvider
-import dev.rewarden.android.core.CoreFactory
-import dev.rewarden.android.core.CoreProvider
-import dev.rewarden.android.design.Timers
-import dev.rewarden.android.platform.AppNotifier
-import dev.rewarden.android.platform.AuthResult
-import dev.rewarden.android.platform.Authenticator
-import dev.rewarden.android.platform.AuthenticatorProvider
-import dev.rewarden.android.platform.Foreground
-import dev.rewarden.android.platform.update.FakeInstaller
-import dev.rewarden.android.platform.update.FakeUpdateServer
-import dev.rewarden.android.platform.update.UpdateProvider
-import dev.rewarden.android.state.SessionState
-import dev.rewarden.core.AccountView
-import dev.rewarden.core.GmailStatus
-import dev.rewarden.core.SessionInfo
+import dev.reins.android.core.CoreFactory
+import dev.reins.android.core.CoreProvider
+import dev.reins.android.design.Timers
+import dev.reins.android.platform.AppNotifier
+import dev.reins.android.platform.AuthResult
+import dev.reins.android.platform.Authenticator
+import dev.reins.android.platform.AuthenticatorProvider
+import dev.reins.android.platform.Foreground
+import dev.reins.android.platform.update.FakeInstaller
+import dev.reins.android.platform.update.FakeUpdateServer
+import dev.reins.android.platform.update.UpdateProvider
+import dev.reins.android.state.SessionState
+import dev.reins.core.AccountView
+import dev.reins.core.GmailStatus
+import dev.reins.core.SessionInfo
 import org.junit.After
 import org.junit.Before
 import org.junit.BeforeClass
@@ -37,7 +37,7 @@ abstract class FlowHarness {
 
     protected val core = FakeCore.shared
     protected val context: Context get() = ApplicationProvider.getApplicationContext()
-    protected val container: AppContainer get() = (context.applicationContext as RewardenApp).container
+    protected val container: AppContainer get() = (context.applicationContext as ReinsApp).container
     protected var scenario: ActivityScenario<MainActivity>? = null
 
     @Volatile protected var authResult: AuthResult = AuthResult.Success
@@ -168,7 +168,7 @@ abstract class FlowHarness {
         .putExtra(AppNotifier.EXTRA_ID, id)
 
     /** Opens the approval sheet of a waiting request (it may already have popped up by itself). */
-    protected fun openRequest(view: dev.rewarden.core.ApprovalView) {
+    protected fun openRequest(view: dev.reins.core.ApprovalView) {
         core.pending = listOf(
             TestData.pending(
                 view.requestId, view.action, 1u, label = view.connectionLabel, service = view.service, account = view.account,

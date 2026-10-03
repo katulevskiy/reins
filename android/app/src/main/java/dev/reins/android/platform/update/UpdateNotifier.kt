@@ -1,4 +1,4 @@
-package dev.rewarden.android.platform.update
+package dev.reins.android.platform.update
 
 import android.app.Notification
 import android.app.NotificationChannel
@@ -6,10 +6,10 @@ import android.app.NotificationManager
 import android.app.PendingIntent
 import android.content.Context
 import android.content.Intent
-import dev.rewarden.android.MainActivity
-import dev.rewarden.android.R
+import dev.reins.android.MainActivity
+import dev.reins.android.R
 
-/** "Rewarden 0.2.0 is ready to install": one notification per new version, on the "App updates" channel. */
+/** "Reins 0.2.0 is ready to install": one notification per new version, on the "App updates" channel. */
 class UpdateNotifier(context: Context) : ReleaseNotifier {
     private val context = context.applicationContext
     private val manager = this.context.getSystemService(NotificationManager::class.java)
@@ -18,7 +18,7 @@ class UpdateNotifier(context: Context) : ReleaseNotifier {
         if (!manager.areNotificationsEnabled()) return
         val notification = Notification.Builder(context, CHANNEL)
             .setSmallIcon(R.drawable.ic_notification)
-            .setContentTitle(if (ready) "Rewarden ${release.versionName} is ready to install" else "Rewarden ${release.versionName} is available")
+            .setContentTitle(if (ready) "Reins ${release.versionName} is ready to install" else "Reins ${release.versionName} is available")
             .setContentText("Tap to update.")
             .setCategory(Notification.CATEGORY_STATUS)
             .setAutoCancel(true)
@@ -38,13 +38,13 @@ class UpdateNotifier(context: Context) : ReleaseNotifier {
 
     companion object {
         const val CHANNEL = "updates"
-        const val ACTION_OPEN_UPDATE = "dev.rewarden.android.OPEN_UPDATE"
+        const val ACTION_OPEN_UPDATE = "dev.reins.android.OPEN_UPDATE"
         private const val NOTIFICATION_ID = 2
 
         fun createChannel(manager: NotificationManager) {
             manager.createNotificationChannel(
                 NotificationChannel(CHANNEL, "App updates", NotificationManager.IMPORTANCE_DEFAULT).apply {
-                    description = "A new version of Rewarden is ready to install"
+                    description = "A new version of Reins is ready to install"
                 },
             )
         }

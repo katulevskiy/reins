@@ -1,17 +1,17 @@
-package dev.rewarden.android.platform
+package dev.reins.android.platform
 
 import android.app.Notification
 import android.app.NotificationManager
 import android.content.Context
 import androidx.test.core.app.ApplicationProvider
 import androidx.test.ext.junit.runners.AndroidJUnit4
-import dev.rewarden.android.RecordingFeedback
-import dev.rewarden.android.TestData
-import dev.rewarden.android.autopilot.AutopilotText
-import dev.rewarden.android.feedback.Event
-import dev.rewarden.android.feedback.FeedbackSettings
-import dev.rewarden.core.AutopilotEvent
-import dev.rewarden.core.Verdict
+import dev.reins.android.RecordingFeedback
+import dev.reins.android.TestData
+import dev.reins.android.autopilot.AutopilotText
+import dev.reins.android.feedback.Event
+import dev.reins.android.feedback.FeedbackSettings
+import dev.reins.core.AutopilotEvent
+import dev.reins.core.Verdict
 import java.util.concurrent.CopyOnWriteArrayList
 import org.junit.After
 import org.junit.Assert.assertEquals
@@ -55,7 +55,7 @@ class AutopilotNotificationsTest {
         assertNull("never heard", channel.sound)
         assertEquals(AppNotifier.GROUP_AUTOPILOT, channel.group)
         assertEquals("Autopilot approved", n.extras.getCharSequence(Notification.EXTRA_TITLE).toString())
-        assertEquals("Push to a branch · dkat/rewarden — Claude Code", n.extras.getCharSequence(Notification.EXTRA_TEXT).toString())
+        assertEquals("Push to a branch · dkat/reins — Claude Code", n.extras.getCharSequence(Notification.EXTRA_TEXT).toString())
         assertEquals(AppNotifier.GROUP_AUTOPILOT, n.group)
         assertEquals(Notification.VISIBILITY_PRIVATE, n.visibility)
         assertEquals("Report", n.actions.single().title.toString())

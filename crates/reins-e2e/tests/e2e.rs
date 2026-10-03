@@ -2,9 +2,9 @@
 
 use std::time::Duration;
 
+use reins_core::{ApprovalChoice, ApprovalKind, GrantScopeChoice, StandingGrant};
+use reins_e2e::{AiClient, Phone, Server};
 use reqwest::StatusCode;
-use rewarden_core::{ApprovalChoice, ApprovalKind, GrantScopeChoice, StandingGrant};
-use rewarden_e2e::{AiClient, Phone, Server};
 use serde_json::json;
 
 const EMAIL: &str = "user@example.com";
@@ -41,7 +41,7 @@ async fn connected(relay_wait: u64, offline: u64) -> (Server, Phone, AiClient) {
     let code = ai.browser_code(&wait_url).await;
     // The user opens the app: the connection request is waiting; they pick the number shown in the browser.
     let item = phone.wait_for_item(Duration::from_secs(20)).await;
-    assert_eq!(item.title, "Connect Claude to Rewarden?");
+    assert_eq!(item.title, "Connect Claude to Reins?");
     let view = phone.core.pairing_view(item.id.clone()).await.unwrap();
     assert!(view.choices.contains(&code));
     phone.core.answer_pairing(item.id, true, Some(code), Some("My Claude".to_owned())).await.unwrap();
@@ -109,7 +109,7 @@ async fn sending_denial_and_offline_behaviour() {
     };
     let (result, ()) = tokio::join!(call, user);
     assert_eq!(result["isError"], true);
-    assert_eq!(result["content"][0]["text"], "Denied by the user on their Rewarden device.");
+    assert_eq!(result["content"][0]["text"], "Denied by the user on their Reins device.");
 
     // The user approves a send.
     let call = ai.tool("gmail_send", &args);
@@ -132,7 +132,7 @@ async fn sending_denial_and_offline_behaviour() {
     phone.stock_gmail(&[("m9", "Someone <s@x.com>")]).await;
     let item = phone.wait_for_item(Duration::from_secs(20)).await;
     phone.core.approve(item.id, pick(&["m9"], None)).await.unwrap();
-    let late = ai.tool("rewarden_get_result", &json!({"request_id": request_id})).await;
+    let late = ai.tool("reins_get_result", &json!({"request_id": request_id})).await;
     assert_eq!(late["isError"], false, "{late}");
     assert_eq!(late["structuredContent"]["messages"][0]["id"], "m9");
 }
@@ -159,7 +159,7 @@ async fn an_ai_asks_for_a_narrow_permission_and_then_reads_without_prompts() {
         "action": "read", "duration_seconds": 1800, "reason": "Summarise this week's bank statements",
         "from": ["@bank.com"]
     });
-    let request = ai.tool("rewarden_request_access", &ask);
+    let request = ai.tool("reins_request_access", &ask);
     let user = async {
         let item = phone.wait_for_item(Duration::from_secs(20)).await;
         assert_eq!(item.action, "grant");
@@ -183,7 +183,7 @@ async fn an_ai_asks_for_a_narrow_permission_and_then_reads_without_prompts() {
 
     // Asking for something unreasonable is refused before the user is ever bothered.
     let greedy = ai
-        .rpc(&json!({"jsonrpc": "2.0", "id": 9, "method": "tools/call", "params": {"name": "rewarden_request_access",
+        .rpc(&json!({"jsonrpc": "2.0", "id": 9, "method": "tools/call", "params": {"name": "reins_request_access",
             "arguments": {"action": "send", "duration_seconds": 600, "reason": "x", "any": true}}}))
         .await
         .1;
@@ -198,38 +198,38 @@ async fn an_ai_sees_the_integrations_and_gets_their_accounts_only_when_the_user_
 
     // The integrations need no approval and show no accounts.
     let none = json!({});
-    let listing = ai.tool("rewarden_list_accounts", &none);
+    let listing = ai.tool("reins_list_accounts", &none);
     let app_open = async { phone.core.sync(10).await.unwrap() };
     let (listing, waiting) = tokio::join!(listing, app_open);
     assert!(waiting.is_empty(), "nothing needed the user");
     assert_eq!(listing["isError"], false, "{listing}");
     assert_eq!(listing["structuredContent"]["integrations"], json!([{"service": "gmail", "name": "Gmail"}]));
-    assert!(!listing.to_string().contains(rewarden_e2e::phone::GMAIL_ACCOUNT), "{listing}");
+    assert!(!listing.to_string().contains(reins_e2e::phone::GMAIL_ACCOUNT), "{listing}");
 
     // The accounts wait for the user, who allows them for a month.
     let gmail = json!({"service": "gmail"});
-    let accounts = ai.tool("rewarden_list_accounts", &gmail);
+    let accounts = ai.tool("reins_list_accounts", &gmail);
     let user = async {
         let item = phone.wait_for_item(Duration::from_secs(20)).await;
         assert_eq!((item.action.as_str(), item.count), ("accounts", 1));
         let view = phone.core.approval_view(item.id.clone()).await.unwrap();
-        assert_eq!(view.accounts, [rewarden_e2e::phone::GMAIL_ACCOUNT]);
+        assert_eq!(view.accounts, [reins_e2e::phone::GMAIL_ACCOUNT]);
         let month = StandingGrant {
             duration_secs: Some(30 * 86_400),
             max_uses: None,
             scope: scope(),
         };
-        phone.core.approve(item.id, pick(&[rewarden_e2e::phone::GMAIL_ACCOUNT], Some(month))).await.unwrap();
+        phone.core.approve(item.id, pick(&[reins_e2e::phone::GMAIL_ACCOUNT], Some(month))).await.unwrap();
     };
     let (accounts, ()) = tokio::join!(accounts, user);
     assert_eq!(accounts["isError"], false, "{accounts}");
     assert_eq!(
         accounts["structuredContent"]["accounts"],
-        json!([{"service": "gmail", "account": rewarden_e2e::phone::GMAIL_ACCOUNT}])
+        json!([{"service": "gmail", "account": reins_e2e::phone::GMAIL_ACCOUNT}])
     );
 
     // The month-long grant answers the next request by itself.
-    let again = ai.tool("rewarden_list_accounts", &gmail);
+    let again = ai.tool("reins_list_accounts", &gmail);
     let app_open = async { phone.core.sync(10).await.unwrap() };
     let (again, waiting) = tokio::join!(again, app_open);
     assert!(waiting.is_empty());
@@ -242,6 +242,6 @@ async fn an_ai_sees_the_integrations_and_gets_their_accounts_only_when_the_user_
     let (wrong, _) = tokio::join!(wrong, app_open);
     assert_eq!(wrong["isError"], true);
     let text = wrong["content"][0]["text"].as_str().unwrap();
-    assert!(text.contains("not connected") && !text.contains(rewarden_e2e::phone::GMAIL_ACCOUNT), "{wrong}");
+    assert!(text.contains("not connected") && !text.contains(reins_e2e::phone::GMAIL_ACCOUNT), "{wrong}");
     assert!(!server.log().contains("panicked"), "server log: {}", server.log());
 }

@@ -1,4 +1,4 @@
-package dev.rewarden.android.ui.upload
+package dev.reins.android.ui.upload
 
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
@@ -24,22 +24,22 @@ import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
-import dev.rewarden.android.design.ActionKind
-import dev.rewarden.android.design.ActionTile
-import dev.rewarden.android.design.Banner
-import dev.rewarden.android.design.BannerKind
-import dev.rewarden.android.design.ButtonStyle
-import dev.rewarden.android.design.CapsuleButton
-import dev.rewarden.android.design.ConnectionAvatar
-import dev.rewarden.android.design.ConnectorTags
-import dev.rewarden.android.design.LocalColors
-import dev.rewarden.android.design.RText
-import dev.rewarden.android.design.RType
-import dev.rewarden.android.design.Spinner
-import dev.rewarden.android.platform.Authenticator
-import dev.rewarden.android.ui.common.FileCard
-import dev.rewarden.android.ui.common.formatTime
-import dev.rewarden.android.ui.common.untrusted
+import dev.reins.android.design.ActionKind
+import dev.reins.android.design.ActionTile
+import dev.reins.android.design.Banner
+import dev.reins.android.design.BannerKind
+import dev.reins.android.design.ButtonStyle
+import dev.reins.android.design.CapsuleButton
+import dev.reins.android.design.ConnectionAvatar
+import dev.reins.android.design.ConnectorTags
+import dev.reins.android.design.LocalColors
+import dev.reins.android.design.RText
+import dev.reins.android.design.RType
+import dev.reins.android.design.Spinner
+import dev.reins.android.platform.Authenticator
+import dev.reins.android.ui.common.FileCard
+import dev.reins.android.ui.common.formatTime
+import dev.reins.android.ui.common.untrusted
 
 /** A file an AI uploaded through the server: who, what, why, and a preview, then approve or deny. */
 @Composable
@@ -93,7 +93,7 @@ fun UploadSheet(viewModel: UploadViewModel, authenticator: Authenticator, onDone
             }
             FileCard(view, Modifier.padding(horizontal = 16.dp, vertical = 8.dp))
             RText(
-                "$who uploaded this file to your Rewarden server. If you approve, its download link works and $who can hand " +
+                "$who uploaded this file to your Reins server. If you approve, its download link works and $who can hand " +
                     "it to another tool. If you deny, the server deletes it. Either way it is gone at ${formatTime(view.expiresAt)}.",
                 RType.sans(13.5f, lineHeight = 19f),
                 c.secondary,

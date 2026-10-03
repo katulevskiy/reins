@@ -5,9 +5,9 @@
 //! Use with `#[serde(with = "crate::mcp::wire::parked_request")]` on a `RelayRequest` field.
 
 pub mod parked_request {
-    use rewarden_proto::gmail::ToolCall;
-    use rewarden_proto::relay::RelayRequest;
-    use rewarden_proto::remote_mcp::McpCall;
+    use reins_proto::gmail::ToolCall;
+    use reins_proto::relay::RelayRequest;
+    use reins_proto::remote_mcp::McpCall;
     use serde::de::Error as _;
     use serde::ser::Error as _;
     use serde::{Deserialize, Deserializer, Serialize, Serializer};
@@ -42,9 +42,9 @@ pub mod parked_request {
 
 #[cfg(test)]
 mod tests {
-    use rewarden_proto::gmail::ToolCall;
-    use rewarden_proto::relay::RelayRequest;
-    use rewarden_proto::remote_mcp::McpCall;
+    use reins_proto::gmail::ToolCall;
+    use reins_proto::relay::RelayRequest;
+    use reins_proto::remote_mcp::McpCall;
     use serde::{Deserialize, Serialize};
     use serde_json::json;
 

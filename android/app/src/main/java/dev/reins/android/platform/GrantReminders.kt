@@ -1,4 +1,4 @@
-package dev.rewarden.android.platform
+package dev.reins.android.platform
 
 import android.app.AlarmManager
 import android.app.Notification
@@ -7,19 +7,19 @@ import android.app.PendingIntent
 import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
-import dev.rewarden.android.MainActivity
-import dev.rewarden.android.R
-import dev.rewarden.android.design.compactDuration
-import dev.rewarden.android.design.reminderAt
-import dev.rewarden.android.feedback.FeedbackStore
-import dev.rewarden.android.ui.common.untrusted
-import dev.rewarden.core.GrantView
+import dev.reins.android.MainActivity
+import dev.reins.android.R
+import dev.reins.android.design.compactDuration
+import dev.reins.android.design.reminderAt
+import dev.reins.android.feedback.FeedbackStore
+import dev.reins.android.ui.common.untrusted
+import dev.reins.core.GrantView
 import org.json.JSONArray
 import org.json.JSONObject
 
 /**
  * "This grant is about to end" reminders. One alarm per running grant that ends by itself, due shortly before it does
- * (see [dev.rewarden.android.design.expiryLeadSeconds]). The plan is kept in preferences so alarms survive a reboot,
+ * (see [dev.reins.android.design.expiryLeadSeconds]). The plan is kept in preferences so alarms survive a reboot,
  * and is rebuilt whenever the grants are read, so resumed, deleted or used-up grants never remind.
  *
  * The alarm is inexact and needs no permission; a reminder may arrive a few minutes late, never early.
@@ -28,8 +28,8 @@ object GrantReminders {
     private const val PREFS = "grant_reminders"
     private const val PLAN = "plan"
     private const val DONE = "done"
-    private const val ACTION_DUE = "dev.rewarden.android.GRANT_REMINDER_DUE"
-    const val ACTION_OPEN_GRANT = "dev.rewarden.android.OPEN_GRANT"
+    private const val ACTION_DUE = "dev.reins.android.GRANT_REMINDER_DUE"
+    const val ACTION_OPEN_GRANT = "dev.reins.android.OPEN_GRANT"
     const val EXTRA_GRANT_ID = "grant_id"
 
     /** What one reminder needs to be shown without asking the core (which may not be open). */
@@ -81,7 +81,7 @@ object GrantReminders {
         val channel = AppNotifier.channel(context, AppNotifier.Kind.Grants, FeedbackStore(context).current)
         val public = Notification.Builder(context, channel)
             .setSmallIcon(R.drawable.ic_notification)
-            .setContentTitle("Rewarden")
+            .setContentTitle("Reins")
             .setContentText("A grant ends soon")
             .build()
         val notification = Notification.Builder(context, channel)

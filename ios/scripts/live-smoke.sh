@@ -3,7 +3,7 @@
 #
 #   ios/scripts/live-smoke.sh [simulator name or UDID]      (default "Reins e2e")
 #
-# The host half (`cargo run -p rewarden-e2e --example ios_smoke`) starts the server with an account and a small MCP
+# The host half (`cargo run -p reins-e2e --example ios_smoke`) starts the server with an account and a small MCP
 # server, then plays the AI: it pairs once the phone registered, and calls the MCP tools once the phone added it.
 # The phone half (ReinsUITests/LiveServerUITests) signs in, picks the pairing code, adds the MCP server, approves one
 # call once and allows the next for a while, then looks at Activity, Grants and Settings. Face ID is enrolled on the
@@ -41,7 +41,7 @@ xcrun simctl spawn "$UDID" notifyutil -s com.apple.BiometricKit.enrollmentChange
 xcrun simctl spawn "$UDID" notifyutil -p com.apple.BiometricKit.enrollmentChanged
 
 echo "building the server and the host half"
-(cd "$ROOT" && cargo build -q --features sqlite --bin vaultwarden && cargo build -q -p rewarden-e2e --example ios_smoke)
+(cd "$ROOT" && cargo build -q --features sqlite --bin vaultwarden && cargo build -q -p reins-e2e --example ios_smoke)
 # Run the example binary itself: under `cargo run`, the server build it starts sees cargo's variables and rebuilds.
 (cd "$ROOT" && exec "${CARGO_TARGET_DIR:-$ROOT/target}/debug/examples/ios_smoke" "$OUT") >"$OUT/host.log" 2>&1 &
 HOST=$!

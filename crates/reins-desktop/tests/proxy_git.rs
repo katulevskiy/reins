@@ -5,9 +5,9 @@ mod proxy_support;
 use std::io::Write as _;
 
 use proxy_support::{Answer, Home, Proxy, Scripted, TOKEN, Upstream, logs, raw_http, token_basic};
-use rewarden_desktop::control::Client;
-use rewarden_desktop::git::pktline::{FLUSH, Pkt, Reader, encode};
-use rewarden_proto::desktop::push_digest;
+use reins_desktop::control::Client;
+use reins_desktop::git::pktline::{FLUSH, Pkt, Reader, encode};
+use reins_proto::desktop::push_digest;
 use sha2::{Digest as _, Sha256};
 
 fn assert_no_secret(text: &str) {
@@ -207,7 +207,7 @@ async fn a_gzip_push_body_is_read_for_approval_and_forwarded_as_sent() {
     let mut gz = flate2::write::GzEncoder::new(Vec::new(), flate2::Compression::default());
     gz.write_all(&body).unwrap();
     let zipped = gz.finish().unwrap();
-    let resp = rewarden_desktop::http::client(None)
+    let resp = reins_desktop::http::client(None)
         .unwrap()
         .post(format!("http://{}/github.com/me/priv.git/git-receive-pack", proxy.addr()))
         .header("content-type", "application/x-git-receive-pack-request")
@@ -269,7 +269,7 @@ async fn lfs_requests_carry_the_read_credential() {
     up.create("me/priv", true);
     let auth = Scripted::new(Answer::Allow, Answer::Allow);
     let proxy = Proxy::scripted(&up, &auth).await;
-    let resp = rewarden_desktop::http::client(None)
+    let resp = reins_desktop::http::client(None)
         .unwrap()
         .post(format!("http://{}/github.com/me/priv.git/info/lfs/objects/batch", proxy.addr()))
         .header("accept", "application/vnd.git-lfs+json")
@@ -309,7 +309,7 @@ async fn foreign_hosts_browsers_and_unknown_paths_are_refused() {
         ),
         format!("OPTIONS {path} HTTP/1.1\r\nHost: 127.0.0.1:{}\r\nConnection: close\r\n\r\n", addr.port()),
         format!(
-            "GET /_rewarden/status HTTP/1.1\r\nHost: 127.0.0.1:{}\r\nOrigin: null\r\nConnection: close\r\n\r\n",
+            "GET /_reins/status HTTP/1.1\r\nHost: 127.0.0.1:{}\r\nOrigin: null\r\nConnection: close\r\n\r\n",
             addr.port()
         ),
     ] {
@@ -339,13 +339,16 @@ async fn the_control_api_needs_the_token() {
     let addr = proxy.addr();
     let without = raw_http(
         addr,
-        &format!("GET /_rewarden/status HTTP/1.1\r\nHost: 127.0.0.1:{}\r\nConnection: close\r\n\r\n", addr.port()),
+        &format!("GET /_reins/status HTTP/1.1\r\nHost: 127.0.0.1:{}\r\nConnection: close\r\n\r\n", addr.port()),
     )
     .await;
     assert!(without.starts_with("HTTP/1.1 401"), "{without}");
     let wrong = raw_http(
         addr,
-        &format!("GET /_rewarden/pending HTTP/1.1\r\nHost: 127.0.0.1:{}\r\nX-Rewarden-Token: nope\r\nConnection: close\r\n\r\n", addr.port()),
+        &format!(
+            "GET /_reins/pending HTTP/1.1\r\nHost: 127.0.0.1:{}\r\nX-Reins-Token: nope\r\nConnection: close\r\n\r\n",
+            addr.port()
+        ),
     )
     .await;
     assert!(wrong.starts_with("HTTP/1.1 401"), "{wrong}");
@@ -378,8 +381,8 @@ async fn git_is_told_while_an_approval_is_awaited() {
     let clone = home.git_ok("", &["clone", "-q", "https://github.com/me/priv", "priv"]).await;
     // The daemon tells the client through /proc (Linux only; elsewhere it says nothing, see notice.rs).
     if cfg!(target_os = "linux") {
-        assert!(clone.stderr.contains("rewarden: waiting for approval: read github.com/me/priv…"), "{}", clone.all());
-        assert!(clone.stderr.contains("rewarden: approved."), "{}", clone.all());
+        assert!(clone.stderr.contains("reins: waiting for approval: read github.com/me/priv…"), "{}", clone.all());
+        assert!(clone.stderr.contains("reins: approved."), "{}", clone.all());
     }
     home.commit("priv", "a.txt", b"hello\n", "Add a").await;
     let push = home.git_ok("priv", &["push", "origin", "main"]).await;
@@ -387,5 +390,5 @@ async fn git_is_told_while_an_approval_is_awaited() {
     // A quick answer (the read is cached by nobody here, but no delay) says nothing.
     *auth.delay.lock().unwrap() = std::time::Duration::ZERO;
     let fetch = home.git_ok("priv", &["fetch", "origin"]).await;
-    assert!(!fetch.stderr.contains("rewarden:"), "{}", fetch.all());
+    assert!(!fetch.stderr.contains("reins:"), "{}", fetch.all());
 }

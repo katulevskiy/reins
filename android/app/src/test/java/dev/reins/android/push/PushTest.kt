@@ -1,6 +1,6 @@
-package dev.rewarden.android.push
+package dev.reins.android.push
 
-import dev.rewarden.android.sync.ForegroundSync
+import dev.reins.android.sync.ForegroundSync
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
 import org.junit.Test

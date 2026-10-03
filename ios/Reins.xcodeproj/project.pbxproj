@@ -701,7 +701,7 @@
 				"LIBRARY_SEARCH_PATHS[sdk=iphoneos*]" = "$(SRCROOT)/../target/ios-core/iphoneos";
 				"LIBRARY_SEARCH_PATHS[sdk=iphonesimulator*]" = "$(SRCROOT)/../target/ios-core/iphonesimulator";
 				OTHER_LDFLAGS = (
-					"-lrewarden_core",
+					"-lreins_core",
 					"-lc++",
 					"-framework",
 					Security,
@@ -759,7 +759,7 @@
 				"LIBRARY_SEARCH_PATHS[sdk=iphoneos*]" = "$(SRCROOT)/../target/ios-core/iphoneos";
 				"LIBRARY_SEARCH_PATHS[sdk=iphonesimulator*]" = "$(SRCROOT)/../target/ios-core/iphonesimulator";
 				OTHER_LDFLAGS = (
-					"-lrewarden_core",
+					"-lreins_core",
 					"-lc++",
 					"-framework",
 					Security,
@@ -789,7 +789,7 @@
 				"LIBRARY_SEARCH_PATHS[sdk=iphoneos*]" = "$(SRCROOT)/../target/ios-core/iphoneos";
 				"LIBRARY_SEARCH_PATHS[sdk=iphonesimulator*]" = "$(SRCROOT)/../target/ios-core/iphonesimulator";
 				OTHER_LDFLAGS = (
-					"-lrewarden_core",
+					"-lreins_core",
 					"-lc++",
 					"-framework",
 					Security,
@@ -820,7 +820,7 @@
 				"LIBRARY_SEARCH_PATHS[sdk=iphoneos*]" = "$(SRCROOT)/../target/ios-core/iphoneos";
 				"LIBRARY_SEARCH_PATHS[sdk=iphonesimulator*]" = "$(SRCROOT)/../target/ios-core/iphonesimulator";
 				OTHER_LDFLAGS = (
-					"-lrewarden_core",
+					"-lreins_core",
 					"-lc++",
 					"-framework",
 					Security,

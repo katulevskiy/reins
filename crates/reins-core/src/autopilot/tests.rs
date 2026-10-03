@@ -1,11 +1,11 @@
-//! Autopilot inside the core, end to end: a fake Rewarden server and Gmail (wiremock), the real engine and store, and
+//! Autopilot inside the core, end to end: a fake Reins server and Gmail (wiremock), the real engine and store, and
 //! the deterministic fake model of [`super::testing`].
 
 use std::sync::atomic::Ordering;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
-use rewarden_proto::relay::RelayRequest;
+use reins_proto::relay::RelayRequest;
 use serde_json::{Value, json};
 use wiremock::matchers::{method, path, path_regex};
 use wiremock::{Mock, MockServer, ResponseTemplate};
@@ -14,7 +14,7 @@ use super::memory::Source;
 use super::testing::{self, FakeRuntime, logits};
 use super::types::{AutoDecisionView, AutopilotEvent, AutopilotMode, ModelState, Preset, SuggestionView, Verdict};
 use super::{ModelRuntime, gates};
-use crate::api::RewardenCore;
+use crate::api::ReinsCore;
 use crate::engine::CoreConfig;
 use crate::store::tests::FakeKeys;
 use crate::store::{Store, unix_now};
@@ -61,7 +61,7 @@ impl Notifier for Notes {
 struct Env {
     server: MockServer,
     gmail: MockServer,
-    core: Arc<RewardenCore>,
+    core: Arc<ReinsCore>,
     notes: Arc<Notes>,
     model: Arc<FakeRuntime>,
     dir: tempfile::TempDir,
@@ -97,18 +97,18 @@ async fn env(with_model: bool) -> Env {
     mount(
         &server,
         "GET",
-        "/rewarden/api/connections",
+        "/reins/api/connections",
         200,
         json!({"connections": [conn(OLD, now - 30 * 86_400), conn(OTHER, now - 30 * 86_400), conn(NEW, now - 5)]}),
     )
     .await;
     Mock::given(method("POST"))
-        .and(path_regex(r"^/rewarden/api/(requests|pairings|blobs)/[^/]+/(response|decision)$"))
+        .and(path_regex(r"^/reins/api/(requests|pairings|blobs)/[^/]+/(response|decision)$"))
         .respond_with(ResponseTemplate::new(204))
         .mount(&server)
         .await;
     Mock::given(method("GET"))
-        .and(path("/rewarden/api/pending"))
+        .and(path("/reins/api/pending"))
         .respond_with(ResponseTemplate::new(200).set_body_json(json!({"requests": [], "pairings": []})))
         .with_priority(5)
         .mount(&server)
@@ -129,7 +129,7 @@ async fn env(with_model: bool) -> Env {
     let notes = Arc::new(Notes::default());
     let notifier: Arc<dyn Notifier> = Arc::<Notes>::clone(&notes);
     let core =
-        RewardenCore::with_config(dir.path().to_str().unwrap(), &FakeKeys::default(), Arc::new(Google), notifier, cfg)
+        ReinsCore::with_config(dir.path().to_str().unwrap(), &FakeKeys::default(), Arc::new(Google), notifier, cfg)
             .unwrap();
     core.login(server.uri(), "me@example.com".to_owned(), "pw".to_owned(), None).await.unwrap();
     core.add_account(GMAIL.to_owned()).await.unwrap();
@@ -187,7 +187,7 @@ impl Env {
     /// The server lists this once; the app syncs.
     async fn deliver(&self, pending: Value) {
         Mock::given(method("GET"))
-            .and(path("/rewarden/api/pending"))
+            .and(path("/reins/api/pending"))
             .respond_with(ResponseTemplate::new(200).set_body_json(pending))
             .up_to_n_times(1)
             .with_priority(1)
@@ -223,7 +223,7 @@ impl Env {
     /// What the phone answered the server for a request.
     async fn answer(&self, id: &str) -> Option<Value> {
         self.server.received_requests().await.unwrap().iter().rev().find_map(|r| {
-            (r.method.as_str() == "POST" && r.url.path() == format!("/rewarden/api/requests/{id}/response"))
+            (r.method.as_str() == "POST" && r.url.path() == format!("/reins/api/requests/{id}/response"))
                 .then(|| serde_json::from_slice(&r.body).unwrap())
         })
     }
@@ -292,7 +292,7 @@ async fn a_push_parked_without_the_model_is_judged_by_the_next_pass() {
     env.unlock("gmail/send").await;
     env.model.set_default(logits(0.999, 0.0005, 0.0005));
     let relayed = serde_json::to_value(request("r1", OLD, email("friend@x.com", "hi"))).unwrap();
-    mount(&env.server, "GET", "/rewarden/api/requests/r1", 200, relayed).await;
+    mount(&env.server, "GET", "/reins/api/requests/r1", 200, relayed).await;
 
     // The notification extension parks it: listed, not judged, nothing sent.
     env.core.handle_push_deferring_autopilot("req".to_owned(), "r1".to_owned()).await.unwrap();
@@ -682,12 +682,12 @@ async fn the_adapter_trains_every_five_decisions_and_separates_what_the_user_wan
 #[tokio::test]
 async fn the_playground_judges_a_typed_situation_without_keeping_it() {
     let env = env(true).await;
-    env.model.rule("dkat/rewarden", logits(0.9, 0.05, 0.05));
+    env.model.rule("dkat/reins", logits(0.9, 0.05, 0.05));
     let s = env
         .core
         .autopilot_evaluate(
             None,
-            "connection: Claude\nservice: github\naction: write\nclass: push\ntarget: dkat/rewarden\ntarget is new: no"
+            "connection: Claude\nservice: github\naction: write\nclass: push\ntarget: dkat/reins\ntarget is new: no"
                 .to_owned(),
         )
         .await
@@ -741,10 +741,8 @@ async fn everything_learned_is_sealed() {
     assert!(!env.memory(&env.profile_id().await).is_empty());
     drop(env.core);
     let dir = env.dir.path();
-    let bytes: Vec<u8> = ["rewarden.db", "rewarden.db-wal"]
-        .iter()
-        .flat_map(|f| std::fs::read(dir.join(f)).unwrap_or_default())
-        .collect();
+    let bytes: Vec<u8> =
+        ["reins.db", "reins.db-wal"].iter().flat_map(|f| std::fs::read(dir.join(f)).unwrap_or_default()).collect();
     for needle in
         ["zebra-friend", "ZEBRA-BODY", "ZebraProfileName", "connection history", "Send an email", "written by"]
     {

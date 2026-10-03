@@ -1,7 +1,7 @@
-package dev.rewarden.android.ui
+package dev.reins.android.ui
 
-import dev.rewarden.android.ui.signin.AccountRules
-import dev.rewarden.android.ui.signin.Strength
+import dev.reins.android.ui.signin.AccountRules
+import dev.reins.android.ui.signin.Strength
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull

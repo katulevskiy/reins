@@ -2,7 +2,7 @@ import XCTest
 @testable import Reins
 
 /// The model runtime (the Android app's `ModelRuntimeTest`): the tensors it builds and reads, how it holds its
-/// session, and ONNX Runtime itself on the few-kilobyte model of `crates/rewarden-laya/testdata` (its numbers mean
+/// session, and ONNX Runtime itself on the few-kilobyte model of `crates/reins-laya/testdata` (its numbers mean
 /// nothing; its inputs, outputs, shapes and types are the real model's).
 final class ModelRuntimeTests: XCTestCase {
     private func input(batch: Int = 2, seqLen: Int = 4, k: Int = 3) -> ModelInput {
@@ -182,7 +182,7 @@ final class ModelRuntimeTests: XCTestCase {
     private var tinyDir: URL {
         URL(fileURLWithPath: #filePath)
             .deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
-            .appendingPathComponent("crates/rewarden-laya/testdata")
+            .appendingPathComponent("crates/reins-laya/testdata")
     }
 
     private struct Expected: Decodable {

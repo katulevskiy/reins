@@ -1,4 +1,4 @@
-package dev.rewarden.android.platform
+package dev.reins.android.platform
 
 import android.content.Context
 import com.google.mlkit.vision.barcode.common.Barcode

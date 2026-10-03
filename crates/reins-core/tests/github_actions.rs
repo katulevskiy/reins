@@ -11,11 +11,11 @@ use std::time::Duration;
 use common::FakeKeys;
 use crypto_box::aead::OsRng;
 use data_encoding::BASE64;
-use rewarden_core::connector::github::GitHub;
-use rewarden_core::connector::{Connector, Item};
-use rewarden_core::store::Store;
-use rewarden_core::{CoreError, GmailStatus};
-use rewarden_proto::connector::{ConnectorCall, spec_for_tool};
+use reins_core::connector::github::GitHub;
+use reins_core::connector::{Connector, Item};
+use reins_core::store::Store;
+use reins_core::{CoreError, GmailStatus};
+use reins_proto::connector::{ConnectorCall, spec_for_tool};
 use serde_json::{Value, json};
 use wiremock::matchers::{body_json, header, method, path, query_param};
 use wiremock::{Mock, MockServer, ResponseTemplate};
@@ -39,7 +39,7 @@ async fn github(server: &MockServer) -> (GitHub, tempfile::TempDir) {
         .await;
     let dir = tempfile::tempdir().unwrap();
     let store = Arc::new(Store::open(dir.path(), &FakeKeys).unwrap());
-    let github = GitHub::new(rewarden_core::http::client().unwrap(), &server.uri(), store, Duration::from_millis(1));
+    let github = GitHub::new(reins_core::http::client().unwrap(), &server.uri(), store, Duration::from_millis(1));
     assert_eq!(github.sign_in(" ghp_secret ").await.unwrap(), ME);
     (github, dir)
 }

@@ -116,26 +116,26 @@ cat <<EOF
 
 New to Reins? Start with the [quick start]($repo/blob/$tag/docs/quick-start.md).
 
-**Desktop app** (\`rewarden\`): pick the archive for your computer: \`x86_64-unknown-linux-musl\` or
+**Desktop app** (\`reins\`): pick the archive for your computer: \`x86_64-unknown-linux-musl\` or
 \`aarch64-unknown-linux-musl\` (Linux, static), \`aarch64-apple-darwin\` (Apple silicon Mac),
-\`x86_64-apple-darwin\` (Intel Mac), or the \`.zip\` with \`rewarden.exe\` for Windows: \`x86_64-pc-windows-msvc\`
+\`x86_64-apple-darwin\` (Intel Mac), or the \`.zip\` with \`reins.exe\` for Windows: \`x86_64-pc-windows-msvc\`
 (\`aarch64-pc-windows-msvc\` for Arm, when it is listed).
 
 \`\`\`sh
 curl -fsSLO $base/$desktop.tar.gz
 tar xzf $desktop.tar.gz
-install -m 755 $desktop/rewarden ~/.local/bin/rewarden
-rewarden --version
+install -m 755 $desktop/reins ~/.local/bin/reins
+reins --version
 \`\`\`
 
 On macOS, a binary downloaded with a browser is quarantined; \`curl\` downloads are not (or run
-\`xattr -d com.apple.quarantine rewarden\`).
+\`xattr -d com.apple.quarantine reins\`).
 
 On Windows (PowerShell), the install script downloads this release's zip, checks it against \`SHA256SUMS\` and puts
-\`rewarden.exe\` on your \`PATH\`:
+\`reins.exe\` on your \`PATH\`:
 
 \`\`\`powershell
-\$env:REWARDEN_VERSION = "$tag"; irm $raw/$tag/scripts/install.ps1 | iex
+\$env:REINS_VERSION = "$tag"; irm $raw/$tag/scripts/install.ps1 | iex
 \`\`\`
 
 **Server** ([self-hosting guide]($repo/blob/$tag/docs/self-hosting.md)): the Docker image (linux/amd64 and

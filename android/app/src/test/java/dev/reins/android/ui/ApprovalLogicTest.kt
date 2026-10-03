@@ -1,21 +1,21 @@
-package dev.rewarden.android.ui
+package dev.reins.android.ui
 
-import dev.rewarden.android.ui.approval.ApprovalDraft
-import dev.rewarden.android.ui.approval.BuildResult
-import dev.rewarden.android.ui.approval.LifetimeKind
-import dev.rewarden.android.ui.approval.PublicMailDomains
-import dev.rewarden.android.ui.approval.addressOf
-import dev.rewarden.android.ui.approval.defaultClasses
-import dev.rewarden.android.ui.approval.defaultResources
-import dev.rewarden.android.ui.approval.resourceCovers
-import dev.rewarden.android.ui.approval.toggleClass
-import dev.rewarden.android.ui.approval.toggleResource
-import dev.rewarden.android.ui.approval.buildChoice
-import dev.rewarden.android.ui.approval.publicDomainWarnings
-import dev.rewarden.core.ApprovalKind
-import dev.rewarden.core.ApprovalView
-import dev.rewarden.core.EmailView
-import dev.rewarden.core.MessageView
+import dev.reins.android.ui.approval.ApprovalDraft
+import dev.reins.android.ui.approval.BuildResult
+import dev.reins.android.ui.approval.LifetimeKind
+import dev.reins.android.ui.approval.PublicMailDomains
+import dev.reins.android.ui.approval.addressOf
+import dev.reins.android.ui.approval.defaultClasses
+import dev.reins.android.ui.approval.defaultResources
+import dev.reins.android.ui.approval.resourceCovers
+import dev.reins.android.ui.approval.toggleClass
+import dev.reins.android.ui.approval.toggleResource
+import dev.reins.android.ui.approval.buildChoice
+import dev.reins.android.ui.approval.publicDomainWarnings
+import dev.reins.core.ApprovalKind
+import dev.reins.core.ApprovalView
+import dev.reins.core.EmailView
+import dev.reins.core.MessageView
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
@@ -51,7 +51,7 @@ class ApprovalLogicTest {
 
     @Test
     fun `showing accounts is once or for a period, never open ended`() {
-        val view = dev.rewarden.android.TestData.accountsView()
+        val view = dev.reins.android.TestData.accountsView()
         val all = view.accounts.toSet()
         val month = ok(buildChoice(view, ApprovalDraft(selected = all, lifetime = LifetimeKind.MONTH)))
         assertEquals(2_592_000uL, month.standing!!.durationSecs)
@@ -62,11 +62,11 @@ class ApprovalLogicTest {
         assertTrue(buildChoice(view, ApprovalDraft(selected = all, lifetime = LifetimeKind.USES)) is BuildResult.Invalid)
         assertTrue("nothing ticked", buildChoice(view, ApprovalDraft(lifetime = LifetimeKind.MONTH)) is BuildResult.Invalid)
         assertEquals(listOf("me@gmail.com"), ok(buildChoice(view, ApprovalDraft(selected = setOf("me@gmail.com", "stranger@x.com"), lifetime = LifetimeKind.MONTH))).selectedMessageIds)
-        val more = dev.rewarden.android.TestData.accountsView(shared = listOf("me@gmail.com"))
+        val more = dev.reins.android.TestData.accountsView(shared = listOf("me@gmail.com"))
         assertEquals("already shared ones are not picks", listOf("work@corp.example"), ok(buildChoice(more, ApprovalDraft(selected = all, lifetime = LifetimeKind.MONTH))).selectedMessageIds)
     }
 
-    private val grantView = dev.rewarden.android.TestData.grantView(duration = 3600u)
+    private val grantView = dev.reins.android.TestData.grantView(duration = 3600u)
 
     @Test
     fun `a permission request is allowed as asked or made shorter, never longer`() {
@@ -207,7 +207,7 @@ class ApprovalLogicTest {
 
     @Test
     fun `a fetch releases the ticked items and the ones a grant already covers`() {
-        val view = dev.rewarden.android.TestData.fetchView()
+        val view = dev.reins.android.TestData.fetchView()
         val once = ok(buildChoice(view, ApprovalDraft(selected = setOf("100:2"))))
         assertEquals(listOf("100:2"), once.selectedMessageIds)
         assertNull(once.standing)
@@ -216,7 +216,7 @@ class ApprovalLogicTest {
 
     @Test
     fun `a fetch can be remembered for the chats named, or for everything for a short time`() {
-        val view = dev.rewarden.android.TestData.fetchView()
+        val view = dev.reins.android.TestData.fetchView()
         val named = ok(buildChoice(view, ApprovalDraft(selected = setOf("100:2"), lifetime = LifetimeKind.DAY, resources = setOf("100"))))
         assertEquals(listOf("100"), named.standing!!.scope.resources)
         assertEquals(86_400uL, named.standing!!.durationSecs)
@@ -233,7 +233,7 @@ class ApprovalLogicTest {
 
     @Test
     fun `a password is never remembered whatever the draft says`() {
-        val view = dev.rewarden.android.TestData.vaultView()
+        val view = dev.reins.android.TestData.vaultView()
         val choice = ok(buildChoice(view, ApprovalDraft(selected = setOf("git:password"), lifetime = LifetimeKind.WEEK, resources = setOf("git"))))
         assertNull(choice.standing)
         assertEquals(listOf("git:password"), choice.selectedMessageIds)
@@ -241,7 +241,7 @@ class ApprovalLogicTest {
 
     @Test
     fun `a change is approved as shown and can be remembered for its chat but not everywhere`() {
-        val view = dev.rewarden.android.TestData.writeView()
+        val view = dev.reins.android.TestData.writeView()
         val once = ok(buildChoice(view, ApprovalDraft()))
         assertTrue(once.selectedMessageIds.isEmpty())
         assertNull(once.standing)
@@ -255,17 +255,17 @@ class ApprovalLogicTest {
 
     @Test
     fun `the kind of the request starts ticked and the last kind cannot be unticked`() {
-        val view = dev.rewarden.android.TestData.repoWriteView()
+        val view = dev.reins.android.TestData.repoWriteView()
         assertEquals(setOf("code"), defaultClasses(view))
         assertEquals(setOf("code"), toggleClass(setOf("code"), "code", false))
         assertEquals(setOf("code", "issues"), toggleClass(setOf("code"), "issues", true))
         assertEquals(setOf("issues"), toggleClass(setOf("code", "issues"), "code", false))
-        assertTrue(defaultClasses(dev.rewarden.android.TestData.fetchView()).isEmpty())
+        assertTrue(defaultClasses(dev.reins.android.TestData.fetchView()).isEmpty())
     }
 
     @Test
     fun `the kinds ticked travel with the permission, in the order they are offered`() {
-        val view = dev.rewarden.android.TestData.repoWriteView()
+        val view = dev.reins.android.TestData.repoWriteView()
         val choice = ok(
             buildChoice(
                 view,
@@ -277,7 +277,7 @@ class ApprovalLogicTest {
         // Without a permission nothing about kinds is sent.
         assertNull(ok(buildChoice(view, ApprovalDraft(classes = setOf("code")))).standing)
         // Reads have no kinds.
-        val read = ok(buildChoice(dev.rewarden.android.TestData.repoReadView(), ApprovalDraft(selected = setOf("README.md"), lifetime = LifetimeKind.HOUR, resources = setOf("octo/app"), classes = setOf("code"))))
+        val read = ok(buildChoice(dev.reins.android.TestData.repoReadView(), ApprovalDraft(selected = setOf("README.md"), lifetime = LifetimeKind.HOUR, resources = setOf("octo/app"), classes = setOf("code"))))
         assertTrue(read.standing!!.scope.classes.isEmpty())
     }
 
@@ -294,8 +294,8 @@ class ApprovalLogicTest {
 
     @Test
     fun `only what the request touches starts ticked, the wider things are not`() {
-        assertEquals(setOf("octo/app@main"), defaultResources(dev.rewarden.android.TestData.repoWriteView()))
-        assertEquals(setOf("100"), defaultResources(dev.rewarden.android.TestData.fetchView()))
+        assertEquals(setOf("octo/app@main"), defaultResources(dev.reins.android.TestData.repoWriteView()))
+        assertEquals(setOf("100"), defaultResources(dev.reins.android.TestData.fetchView()))
     }
 
     @Test
@@ -309,7 +309,7 @@ class ApprovalLogicTest {
 
     @Test
     fun `a wider permission is sent alone even if a narrower one is still in the draft`() {
-        val view = dev.rewarden.android.TestData.repoWriteView()
+        val view = dev.reins.android.TestData.repoWriteView()
         val choice = ok(buildChoice(view, ApprovalDraft(lifetime = LifetimeKind.HOUR, resources = setOf("octo/app@main", "octo/app"))))
         assertEquals(listOf("octo/app"), choice.standing!!.scope.resources)
         assertTrue(buildChoice(view, ApprovalDraft(lifetime = LifetimeKind.HOUR, resources = setOf("elsewhere/repo"))) is BuildResult.Invalid)
@@ -317,7 +317,7 @@ class ApprovalLogicTest {
 
     @Test
     fun `a change that is asked for every time is never remembered`() {
-        val view = dev.rewarden.android.TestData.onceOnlyWriteView()
+        val view = dev.reins.android.TestData.onceOnlyWriteView()
         val choice = ok(buildChoice(view, ApprovalDraft(lifetime = LifetimeKind.WEEK, resources = setOf("octo"), classes = setOf("settings"))))
         assertNull(choice.standing)
         assertTrue(choice.selectedMessageIds.isEmpty())

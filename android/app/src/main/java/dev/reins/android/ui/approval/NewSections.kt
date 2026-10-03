@@ -1,4 +1,4 @@
-package dev.rewarden.android.ui.approval
+package dev.reins.android.ui.approval
 
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
@@ -16,25 +16,25 @@ import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
-import dev.rewarden.android.design.Banner
-import dev.rewarden.android.design.BannerKind
-import dev.rewarden.android.design.Card
-import dev.rewarden.android.design.Glyph
-import dev.rewarden.android.design.GlyphIcon
-import dev.rewarden.android.design.Hairline
-import dev.rewarden.android.design.LocalColors
-import dev.rewarden.android.design.RText
-import dev.rewarden.android.design.RType
-import dev.rewarden.android.design.ServiceAvatar
-import dev.rewarden.android.design.Tag
-import dev.rewarden.android.ui.common.FileCard
-import dev.rewarden.android.ui.common.untrusted
-import dev.rewarden.android.ui.mcp.mcpHost
-import dev.rewarden.core.AskView
-import dev.rewarden.core.BlobView
-import dev.rewarden.core.McpCallView
-import dev.rewarden.core.SecretReleaseView
-import dev.rewarden.core.SshSignView
+import dev.reins.android.design.Banner
+import dev.reins.android.design.BannerKind
+import dev.reins.android.design.Card
+import dev.reins.android.design.Glyph
+import dev.reins.android.design.GlyphIcon
+import dev.reins.android.design.Hairline
+import dev.reins.android.design.LocalColors
+import dev.reins.android.design.RText
+import dev.reins.android.design.RType
+import dev.reins.android.design.ServiceAvatar
+import dev.reins.android.design.Tag
+import dev.reins.android.ui.common.FileCard
+import dev.reins.android.ui.common.untrusted
+import dev.reins.android.ui.mcp.mcpHost
+import dev.reins.core.AskView
+import dev.reins.core.BlobView
+import dev.reins.core.McpCallView
+import dev.reins.core.SecretReleaseView
+import dev.reins.core.SshSignView
 
 /** "for 30 minutes", "for 1 hour", "for 1 h 30 min": how long the desktop app may keep secrets. */
 fun leaseLabel(secs: ULong): String {

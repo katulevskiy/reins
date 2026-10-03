@@ -1,14 +1,14 @@
-package dev.rewarden.android.push
+package dev.reins.android.push
 
-import dev.rewarden.core.CoreException
-import dev.rewarden.core.RewardenCoreInterface
+import dev.reins.core.CoreException
+import dev.reins.core.ReinsCoreInterface
 import kotlin.coroutines.cancellation.CancellationException
 
 enum class PushOutcome { DONE, RETRY }
 
 /** What a push does, independent of WorkManager so it can be tested on the JVM. */
 class PushHandler(
-    private val core: RewardenCoreInterface,
+    private val core: ReinsCoreInterface,
     private val onReplaced: suspend () -> Unit,
 ) {
     suspend fun handle(payload: PushPayload): PushOutcome {

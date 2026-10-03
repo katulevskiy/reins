@@ -2,27 +2,27 @@
 //! account itself (Bitwarden-compatible vault keys), and the desktop app pairs by a QR code the phone scans (OAuth
 //! device authorization, RFC 8628) with its key pinned exactly as after the browser login.
 //!
-//! It lives here rather than in `rewarden-desktop` so the desktop crate (Apache-2.0) has no dependency on the AGPL-3.0
+//! It lives here rather than in `reins-desktop` so the desktop crate (Apache-2.0) has no dependency on the AGPL-3.0
 //! crates. See LICENSING.md.
 
 use std::time::Duration;
 
 use data_encoding::BASE64;
-use rewarden_core::crypto::{Kdf, VaultKey, master_key};
-use rewarden_core::http::ServerUrl;
-use rewarden_core::vault::VaultClient;
-use rewarden_core::{ApprovalChoice, CoreError};
-use rewarden_desktop::config::Paths;
-use rewarden_desktop::identity::Identity;
-use rewarden_desktop::server::device::{DevicePairing, DeviceStatus};
-use rewarden_e2e::{AiClient, PASSWORD, Phone, Server};
+use reins_core::crypto::{Kdf, VaultKey, master_key};
+use reins_core::http::ServerUrl;
+use reins_core::vault::VaultClient;
+use reins_core::{ApprovalChoice, CoreError};
+use reins_desktop::config::Paths;
+use reins_desktop::identity::Identity;
+use reins_desktop::server::device::{DevicePairing, DeviceStatus};
+use reins_e2e::{AiClient, PASSWORD, Phone, Server};
 use serde_json::{Value, json};
 use zeroize::Zeroizing;
 
 const EMAIL: &str = "new@example.com";
 
 fn http() -> reqwest::Client {
-    rewarden_e2e::init_tls();
+    reins_e2e::init_tls();
     reqwest::Client::builder().redirect(reqwest::redirect::Policy::none()).build().unwrap()
 }
 
@@ -136,7 +136,7 @@ async fn the_desktop_app_pairs_by_a_qr_code_the_phone_scans() {
     paths.ensure().unwrap();
     let identity = Identity::load_or_create(&paths.identity_file()).unwrap();
 
-    // `rewarden login`: the QR code links to the server's pairing page with the code.
+    // `reins login`: the QR code links to the server's pairing page with the code.
     let mut pairing = DevicePairing::start(&identity, &server.base).await.expect("a QR code");
     assert_eq!(pairing.qr_url, format!("{}/pair?code={}", server.base, pairing.user_code));
     assert_eq!(pairing.verification_uri, format!("{}/pair", server.base));
@@ -158,12 +158,12 @@ async fn the_desktop_app_pairs_by_a_qr_code_the_phone_scans() {
     let logged_in = tokio::time::timeout(Duration::from_secs(30), pairing.wait(&paths)).await.unwrap();
     assert_eq!(logged_in.unwrap(), server.base);
     assert!(phone.core.connections().await.unwrap().iter().any(|c| c.label == "Laptop"));
-    let question = rewarden_desktop::ask::Question {
+    let question = reins_desktop::ask::Question {
         question: "Deploy to prod?".to_owned(),
         detail: None,
         topic: None,
     };
-    let asked = rewarden_desktop::ask::ask_phone(&paths, &identity, &question, Duration::from_secs(60));
+    let asked = reins_desktop::ask::ask_phone(&paths, &identity, &question, Duration::from_secs(60));
     let user = async {
         let item = phone.wait_for_item(Duration::from_secs(30)).await;
         let choice = ApprovalChoice {
@@ -173,7 +173,7 @@ async fn the_desktop_app_pairs_by_a_qr_code_the_phone_scans() {
         phone.core.approve(item.id, choice).await.unwrap();
     };
     let (answer, ()) = tokio::join!(asked, user);
-    assert_eq!(answer, rewarden_desktop::ask::Answer::Yes);
+    assert_eq!(answer, reins_desktop::ask::Answer::Yes);
 
     // A used code is gone; a denied pairing ends the login with a clear message.
     let spent = phone.core.pairing_by_code(pairing.user_code.clone()).await;

@@ -1,13 +1,13 @@
-//! "Add another phone" ([`rewarden_proto::join`]): a phone of the account that cannot open its keys asks the approval
+//! "Add another phone" ([`reins_proto::join`]): a phone of the account that cannot open its keys asks the approval
 //! device for the account secret; the server holds the request and relays the sealed answer, which it cannot open.
 //!
-//! - `POST /rewarden/api/joins` (any signed-in device of the account but the approval device): parks the request and
+//! - `POST /reins/api/joins` (any signed-in device of the account but the approval device): parks the request and
 //!   wakes the approval device (push `join`). One open request per device (a new one replaces it), a few per account.
-//! - `GET /rewarden/api/joins/<id>`: the asking device gets its [`JoinState`]; the approval device the
+//! - `GET /reins/api/joins/<id>`: the asking device gets its [`JoinState`]; the approval device the
 //!   [`JoinRequest`].
-//! - `POST /rewarden/api/joins/<id>/response` (the approval device): approves with the sealed secret, or denies.
+//! - `POST /reins/api/joins/<id>/response` (the approval device): approves with the sealed secret, or denies.
 //!
-//! An approval also lets the asking device take the approval role (`PUT /rewarden/api/device`) without another proof:
+//! An approval also lets the asking device take the approval role (`PUT /reins/api/device`) without another proof:
 //! once, within [`TAKEOVER_TTL`], and only with the device key it asked with ([`JoinHub::take_takeover`]).
 //!
 //! Everything is in memory for [`ITEM_TTL`] like pairings.
@@ -17,7 +17,7 @@ use std::{
     sync::{Arc, Mutex, MutexGuard, PoisonError},
 };
 
-use rewarden_proto::{
+use reins_proto::{
     PROTOCOL_VERSION,
     device::codes,
     join::{
@@ -40,7 +40,7 @@ use super::{
 };
 use crate::{
     auth::Headers,
-    db::{DbConn, DbPool, models::RewardenDevice},
+    db::{DbConn, DbPool, models::ReinsDevice},
     util::get_uuid,
 };
 
@@ -88,7 +88,7 @@ pub struct JoinHub {
     signal: Arc<ItemSignal>,
 }
 
-/// What `GET /rewarden/api/joins/<id>` shows the caller.
+/// What `GET /reins/api/joins/<id>` shows the caller.
 #[derive(Debug, PartialEq, Eq)]
 pub enum View {
     Requester(JoinState),
@@ -119,7 +119,7 @@ impl JoinHub {
         new: &NewJoin,
         now: i64,
     ) -> Result<JoinCreated, JoinError> {
-        if rewarden_proto::desktop::decode_key(&new.public_key).is_none() {
+        if reins_proto::desktop::decode_key(&new.public_key).is_none() {
             return Err(JoinError::Invalid("public_key must be 32 bytes, base64url".to_owned()));
         }
         let mut name = sanitize_display(&new.device_name, MAX_DEVICE_NAME_CHARS);
@@ -247,7 +247,7 @@ impl JoinHub {
 }
 
 /// Step 1: a phone of the account asks for the secret.
-#[post("/rewarden/api/joins", data = "<data>")]
+#[post("/reins/api/joins", data = "<data>")]
 async fn post_join(
     data: Data<'_>,
     headers: Headers,
@@ -255,7 +255,7 @@ async fn post_join(
     conn: DbConn,
     pool: &State<DbPool>,
 ) -> PhoneResult<Json<JoinCreated>> {
-    let approval = RewardenDevice::find_by_user(&headers.user.uuid, &conn).await;
+    let approval = ReinsDevice::find_by_user(&headers.user.uuid, &conn).await;
     let Some(approval) = approval else {
         return Err(api_err(
             Status::Conflict,
@@ -286,7 +286,7 @@ async fn post_join(
     Ok(Json(created))
 }
 
-#[get("/rewarden/api/joins/<id>")]
+#[get("/reins/api/joins/<id>")]
 async fn get_join(id: &str, headers: Headers, key: DeviceKey, conn: DbConn) -> PhoneResult<Json<serde_json::Value>> {
     let view =
         HUB.joins.view(&user_key(&headers), &headers.device.uuid.to_string(), id, now_unix()).ok_or_else(not_found)?;
@@ -299,7 +299,7 @@ async fn get_join(id: &str, headers: Headers, key: DeviceKey, conn: DbConn) -> P
     }
 }
 
-#[post("/rewarden/api/joins/<id>/response", data = "<data>")]
+#[post("/reins/api/joins/<id>/response", data = "<data>")]
 async fn post_join_response(
     id: &str,
     data: Data<'_>,
@@ -333,7 +333,7 @@ mod tests {
         NewJoin {
             v: 1,
             device_name: name.to_owned(),
-            public_key: rewarden_proto::desktop::encode_key(&[9u8; 32]),
+            public_key: reins_proto::desktop::encode_key(&[9u8; 32]),
         }
     }
 

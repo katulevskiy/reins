@@ -4,7 +4,7 @@
 //! relay and HTTP live in `mcp_routes.rs`.
 
 use data_encoding::BASE64;
-use rewarden_proto::remote_mcp::McpServerReport;
+use reins_proto::remote_mcp::McpServerReport;
 use serde_json::{Map, Value, json};
 
 use super::tools;
@@ -13,10 +13,10 @@ pub const MODERN_VERSION: &str = "2026-07-28";
 pub const LEGACY_VERSION: &str = "2025-11-25";
 /// Legacy revisions we answer `initialize` for.
 pub const LEGACY_VERSIONS: [&str; 3] = ["2025-11-25", "2025-06-18", "2025-03-26"];
-pub const SERVER_NAME: &str = "rewarden";
-pub const INSTRUCTIONS: &str = "Rewarden gives you access to the user's Gmail through their phone. Every request may need \
-the user's approval in the Rewarden app: if a result says the request is waiting or the device is offline, tell the user \
-and call rewarden_get_result with the given request_id after they confirm.";
+pub const SERVER_NAME: &str = "reins";
+pub const INSTRUCTIONS: &str = "Reins gives you access to the user's Gmail through their phone. Every request may need \
+the user's approval in the Reins app: if a result says the request is waiting or the device is offline, tell the user \
+and call reins_get_result with the given request_id after they confirm.";
 
 const META_VERSION: &str = "io.modelcontextprotocol/protocolVersion";
 const META_SERVER_INFO: &str = "io.modelcontextprotocol/serverInfo";
@@ -302,7 +302,7 @@ mod tests {
         assert_eq!(status, 200);
         assert_eq!(body["id"], 1);
         assert_eq!(body["result"]["protocolVersion"], "2025-11-25");
-        assert_eq!(body["result"]["serverInfo"]["name"], "rewarden");
+        assert_eq!(body["result"]["serverInfo"]["name"], "reins");
         assert!(body["result"]["capabilities"]["tools"].is_object());
         assert!(body["result"].get("resultType").is_none(), "legacy results stay legacy-shaped");
         let (_, older) = reply(call(&h, rpc(2, "initialize", json!({"protocolVersion": "2025-03-26"}))));
@@ -323,7 +323,7 @@ mod tests {
         assert_eq!(status, 200);
         assert_eq!(body["result"]["supportedVersions"], json!([MODERN_VERSION, LEGACY_VERSION]));
         assert_eq!(body["result"]["resultType"], "complete");
-        assert_eq!(body["result"]["_meta"][META_SERVER_INFO]["name"], "rewarden");
+        assert_eq!(body["result"]["_meta"][META_SERVER_INFO]["name"], "reins");
         // server/discover without any version information is still treated as modern.
         let (_, bare) = reply(call(&McpHeaders::default(), rpc(2, "server/discover", json!({}))));
         assert_eq!(bare["result"]["resultType"], "complete");
@@ -340,13 +340,13 @@ mod tests {
                 "gmail_read",
                 "gmail_search",
                 "gmail_send",
-                "rewarden_request_access",
-                "rewarden_list_accounts",
-                "rewarden_get_result",
-                "rewarden_upload"
+                "reins_request_access",
+                "reins_list_accounts",
+                "reins_get_result",
+                "reins_upload"
             ]
             .into_iter()
-            .chain(rewarden_proto::connector::specs().iter().filter(|s| !s.desktop_only).map(|s| s.tool))
+            .chain(reins_proto::connector::specs().iter().filter(|s| !s.desktop_only).map(|s| s.tool))
             .collect::<Vec<_>>()
         );
         assert!(legacy["result"].get("ttlMs").is_none());

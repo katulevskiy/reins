@@ -28,9 +28,9 @@ pub const MODEL_FILE: &str = "model.onnx";
 pub const TOKENIZER_FILE: &str = "tokenizer.json";
 pub const CONFIG_FILE: &str = "laya_config.json";
 const MARKER_FILE: &str = "installed.json";
-/// Where packages are downloaded from (`<base>/<id>/<file>`), under the official site (`rewarden_proto::official_site!`);
+/// Where packages are downloaded from (`<base>/<id>/<file>`), under the official site (`reins_proto::official_site!`);
 /// `CoreConfig::models_base` overrides it in tests.
-pub const DEFAULT_MODELS_BASE: &str = concat!(rewarden_proto::official_site!(), "/models");
+pub const DEFAULT_MODELS_BASE: &str = concat!(reins_proto::official_site!(), "/models");
 /// The largest file accepted when its size is not pinned.
 const MAX_FILE_BYTES: u64 = 2 * 1024 * 1024 * 1024;
 const DOWNLOAD_TIMEOUT: Duration = Duration::from_mins(30);
@@ -401,7 +401,7 @@ impl Laya {
     }
 
     /// Opens a package directory as it is, without checking it against the pins: for desktop tools and tests
-    /// (`rewarden-laya`). The phone only ever opens verified packages with [`Laya::open`].
+    /// (`reins-laya`). The phone only ever opens verified packages with [`Laya::open`].
     pub fn open_unverified(dir: &Path) -> Result<Self, CoreError> {
         let id = dir.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
         Self::from_dir(dir, &id)

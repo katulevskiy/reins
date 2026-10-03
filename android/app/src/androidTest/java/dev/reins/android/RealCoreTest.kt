@@ -1,16 +1,16 @@
-package dev.rewarden.android
+package dev.reins.android
 
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
 import com.google.firebase.FirebaseApp
-import dev.rewarden.android.core.MainSafeCore
-import dev.rewarden.android.platform.KeystoreKeyWrapper
-import dev.rewarden.core.CoreException
-import dev.rewarden.core.ForeignException
-import dev.rewarden.core.GoogleTokenProvider
-import dev.rewarden.core.Notifier
-import dev.rewarden.core.PendingItem
-import dev.rewarden.core.RewardenCore
+import dev.reins.android.core.MainSafeCore
+import dev.reins.android.platform.KeystoreKeyWrapper
+import dev.reins.core.CoreException
+import dev.reins.core.ForeignException
+import dev.reins.core.GoogleTokenProvider
+import dev.reins.core.Notifier
+import dev.reins.core.PendingItem
+import dev.reins.core.ReinsCore
 import java.io.File
 import java.util.UUID
 import kotlinx.coroutines.Dispatchers
@@ -38,13 +38,13 @@ class RealCoreTest {
     private object NoNotifications : Notifier {
         override fun itemPending(item: PendingItem) = Unit
         override fun itemResolved(id: String) = Unit
-        override fun autoDecided(decision: dev.rewarden.core.AutoDecisionView) = Unit
-        override fun autopilotChanged(event: dev.rewarden.core.AutopilotEvent) = Unit
+        override fun autoDecided(decision: dev.reins.core.AutoDecisionView) = Unit
+        override fun autopilotChanged(event: dev.reins.core.AutopilotEvent) = Unit
     }
 
-    private fun newCore(): RewardenCore {
+    private fun newCore(): ReinsCore {
         val dir = File(context.cacheDir, "core-${UUID.randomUUID()}").also { dirs += it; it.mkdirs() }
-        return RewardenCore(dir.absolutePath, KeystoreKeyWrapper("rewarden_test_${UUID.randomUUID()}"), NoGoogle, NoNotifications)
+        return ReinsCore(dir.absolutePath, KeystoreKeyWrapper("reins_test_${UUID.randomUUID()}"), NoGoogle, NoNotifications)
     }
 
     @After
@@ -64,9 +64,9 @@ class RealCoreTest {
     @Test
     fun theStoreSurvivesReopeningWithTheSameKeystoreKey() = runBlocking {
         val dir = File(context.cacheDir, "core-${UUID.randomUUID()}").also { dirs += it; it.mkdirs() }
-        val alias = "rewarden_test_${UUID.randomUUID()}"
-        RewardenCore(dir.absolutePath, KeystoreKeyWrapper(alias), NoGoogle, NoNotifications).close()
-        val reopened = RewardenCore(dir.absolutePath, KeystoreKeyWrapper(alias), NoGoogle, NoNotifications)
+        val alias = "reins_test_${UUID.randomUUID()}"
+        ReinsCore(dir.absolutePath, KeystoreKeyWrapper(alias), NoGoogle, NoNotifications).close()
+        val reopened = ReinsCore(dir.absolutePath, KeystoreKeyWrapper(alias), NoGoogle, NoNotifications)
         assertNull(reopened.session())
     }
 
@@ -103,7 +103,7 @@ class RealCoreTest {
 
     @Test
     fun theKeystoreWrapperRoundTripsAndDetectsTampering() {
-        val wrapper = KeystoreKeyWrapper("rewarden_test_${UUID.randomUUID()}")
+        val wrapper = KeystoreKeyWrapper("reins_test_${UUID.randomUUID()}")
         val secret = ByteArray(32) { it.toByte() }
         val wrapped = wrapper.wrap(secret)
         assertTrue(wrapped.size > secret.size)

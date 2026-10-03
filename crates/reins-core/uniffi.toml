@@ -1,8 +1,8 @@
 [bindings.kotlin]
-package_name = "dev.rewarden.core"
-cdylib_name = "rewarden_core"
+package_name = "dev.reins.core"
+cdylib_name = "reins_core"
 
 [bindings.swift]
-module_name = "rewarden_core"
-ffi_module_name = "rewarden_coreFFI"
-ffi_module_filename = "rewarden_coreFFI"
+module_name = "reins_core"
+ffi_module_name = "reins_coreFFI"
+ffi_module_filename = "reins_coreFFI"

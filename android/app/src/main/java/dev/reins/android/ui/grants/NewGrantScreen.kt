@@ -1,4 +1,4 @@
-package dev.rewarden.android.ui.grants
+package dev.reins.android.ui.grants
 
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
@@ -21,19 +21,19 @@ import androidx.compose.ui.text.input.KeyboardCapitalization
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
-import dev.rewarden.android.design.Banner
-import dev.rewarden.android.design.BannerKind
-import dev.rewarden.android.design.ButtonStyle
-import dev.rewarden.android.design.CapsuleButton
-import dev.rewarden.android.design.LocalColors
-import dev.rewarden.android.design.RText
-import dev.rewarden.android.design.RTextField
-import dev.rewarden.android.design.RType
-import dev.rewarden.android.design.Screen
-import dev.rewarden.android.design.SelectChip
-import dev.rewarden.android.platform.Authenticator
-import dev.rewarden.android.state.AppState
-import dev.rewarden.android.ui.common.untrusted
+import dev.reins.android.design.Banner
+import dev.reins.android.design.BannerKind
+import dev.reins.android.design.ButtonStyle
+import dev.reins.android.design.CapsuleButton
+import dev.reins.android.design.LocalColors
+import dev.reins.android.design.RText
+import dev.reins.android.design.RTextField
+import dev.reins.android.design.RType
+import dev.reins.android.design.Screen
+import dev.reins.android.design.SelectChip
+import dev.reins.android.platform.Authenticator
+import dev.reins.android.state.AppState
+import dev.reins.android.ui.common.untrusted
 
 /** Give an AI a permission before it asks. Rare, so it lives one tap away in Grants, not in the way. */
 @OptIn(ExperimentalLayoutApi::class)

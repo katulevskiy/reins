@@ -1,14 +1,14 @@
-package dev.rewarden.android.platform
+package dev.reins.android.platform
 
 import android.app.NotificationChannel
 import android.app.NotificationManager
 import android.content.Context
 import androidx.test.core.app.ApplicationProvider
 import androidx.test.ext.junit.runners.AndroidJUnit4
-import dev.rewarden.android.RecordingFeedback
-import dev.rewarden.android.TestData
-import dev.rewarden.android.feedback.Event
-import dev.rewarden.android.feedback.FeedbackSettings
+import dev.reins.android.RecordingFeedback
+import dev.reins.android.TestData
+import dev.reins.android.feedback.Event
+import dev.reins.android.feedback.FeedbackSettings
 import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse

@@ -1,5 +1,5 @@
-//! Tools only the paired Rewarden desktop app may call, that belong to no other integration: asking the user anything
-//! (`rewarden ask`, harness hooks), and git through the desktop app for hosts besides GitHub.
+//! Tools only the paired Reins desktop app may call, that belong to no other integration: asking the user anything
+//! (`reins ask`, harness hooks), and git through the desktop app for hosts besides GitHub.
 
 use crate::connector::{
     BITBUCKET, CODEBERG, ClassInfo, DESKTOP, Effect, GITLAB, Param, ToolSpec, json_p, str_p, text_p, tool,
@@ -72,7 +72,7 @@ pub(super) fn tools() -> Vec<ToolSpec> {
             "ask",
             Effect::Write,
             "Ask you on your phone",
-            "A yes-or-no question from the desktop app (`rewarden ask`, or a harness hook before a command).",
+            "A yes-or-no question from the desktop app (`reins ask`, or a harness hook before a command).",
             vec![
                 str_p("question", 300, true, "The question, one line."),
                 text_p("detail", 8_000, false, "What exactly would happen (the command, the files)."),

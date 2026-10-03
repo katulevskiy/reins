@@ -11,7 +11,7 @@ import torch.nn as nn
 
 import sequence as sq
 
-CACHE = os.path.expanduser(os.environ.get("REWARDEN_LAYA_CACHE", "~/.cache/rewarden-laya"))
+CACHE = os.path.expanduser(os.environ.get("REINS_LAYA_CACHE", "~/.cache/reins-laya"))
 LAYA = os.path.join(CACHE, "laya")
 BASES = {  # name -> checkpoint dir (laya layout: rl_agent_config.json, encoder/, tokenizer/, model.safetensors)
     "en": os.path.join(LAYA),

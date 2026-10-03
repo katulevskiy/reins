@@ -1,6 +1,6 @@
-package dev.rewarden.android.platform
+package dev.reins.android.platform
 
-/** Whether Rewarden is on screen and focused. Notifications add nothing then, so they are skipped. */
+/** Whether Reins is on screen and focused. Notifications add nothing then, so they are skipped. */
 object Foreground {
     @Volatile
     var focused: Boolean = false

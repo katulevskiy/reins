@@ -16,10 +16,10 @@ use http_body_util::{BodyExt as _, Full};
 use hyper::service::service_fn;
 use hyper::{Request, Response, StatusCode};
 use hyper_util::rt::TokioIo;
-use rewarden_desktop::auth::{Authorizer, Credential, Refusal, Repo};
-use rewarden_desktop::config::{Config, Mode, Paths};
-use rewarden_desktop::daemon::{Daemon, Options, Running};
-use rewarden_proto::desktop::PushSummary;
+use reins_desktop::auth::{Authorizer, Credential, Refusal, Repo};
+use reins_desktop::config::{Config, Mode, Paths};
+use reins_desktop::daemon::{Daemon, Options, Running};
+use reins_proto::desktop::PushSummary;
 use tokio::io::AsyncWriteExt as _;
 
 /// The upstream's token for private repositories.
@@ -420,7 +420,7 @@ impl Scripted {
             Answer::Allow => Ok(Credential {
                 username: "x-access-token".to_owned(),
                 token: zeroize::Zeroizing::new(TOKEN.to_owned()),
-                expires_at: rewarden_desktop::now_unix() + 600,
+                expires_at: reins_desktop::now_unix() + 600,
             }),
             Answer::Deny(m) => Err(Refusal::Denied((*m).to_owned())),
             Answer::Wait(m) => Err(Refusal::Waiting((*m).to_owned())),
@@ -517,7 +517,7 @@ impl Proxy {
             config(upstream),
             Options {
                 authorizer: Some(Arc::<Scripted>::clone(auth)),
-                prompter: Arc::new(rewarden_desktop::auth::prompt::NoPrompter),
+                prompter: Arc::new(reins_desktop::auth::prompt::NoPrompter),
                 harden: false,
             },
         )

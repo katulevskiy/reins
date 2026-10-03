@@ -42,7 +42,7 @@ impl Saved {
         std::fs::create_dir_all(state_dir).map_err(|e| format!("{}: {e}", state_dir.display()))?;
         let file = Self::file(state_dir);
         let json = serde_json::to_vec_pretty(self).map_err(|e| e.to_string())?;
-        rewarden_desktop::config::write_private(&file, &json).map_err(|e| format!("{}: {e}", file.display()))
+        reins_desktop::config::write_private(&file, &json).map_err(|e| format!("{}: {e}", file.display()))
     }
 }
 

@@ -1,4 +1,4 @@
-package dev.rewarden.android.ui.main
+package dev.reins.android.ui.main
 
 import androidx.compose.animation.animateColorAsState
 import androidx.compose.foundation.background
@@ -29,13 +29,13 @@ import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
-import dev.rewarden.android.design.CountPill
-import dev.rewarden.android.design.LocalColors
-import dev.rewarden.android.design.RText
-import dev.rewarden.android.design.RType
-import dev.rewarden.android.design.glass
-import dev.rewarden.android.design.pressable
-import dev.rewarden.android.ui.nav.Tab
+import dev.reins.android.design.CountPill
+import dev.reins.android.design.LocalColors
+import dev.reins.android.design.RText
+import dev.reins.android.design.RType
+import dev.reins.android.design.glass
+import dev.reins.android.design.pressable
+import dev.reins.android.ui.nav.Tab
 
 /** The bottom bar: a floating capsule with the two tabs, and a separate round button for settings. */
 @Composable

@@ -1,14 +1,14 @@
-package dev.rewarden.android.ui.signin
+package dev.reins.android.ui.signin
 
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
-import dev.rewarden.android.AppContainer
-import dev.rewarden.android.feedback.Event
-import dev.rewarden.android.feedback.play
-import dev.rewarden.android.state.SessionState
-import dev.rewarden.android.ui.common.userMessage
-import dev.rewarden.core.CoreException
-import dev.rewarden.core.JoinProgress
+import dev.reins.android.AppContainer
+import dev.reins.android.feedback.Event
+import dev.reins.android.feedback.play
+import dev.reins.android.state.SessionState
+import dev.reins.android.ui.common.userMessage
+import dev.reins.core.CoreException
+import dev.reins.core.JoinProgress
 import kotlin.coroutines.cancellation.CancellationException
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
@@ -58,7 +58,7 @@ suspend fun awaitJoin(poll: suspend () -> JoinProgress, pause: suspend () -> Uni
  * shows ("Add Pixel 9?").
  *
  * The same two ways let this phone take the approval role over when the server refused it because another phone
- * approves for the account ([dev.rewarden.android.state.AppState.approvalTakeover]): the other phone's yes, or the
+ * approves for the account ([dev.reins.android.state.AppState.approvalTakeover]): the other phone's yes, or the
  * recovery code, is the proof the next registration brings.
  */
 class UnlockViewModel(

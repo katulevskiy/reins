@@ -1,4 +1,4 @@
-package dev.rewarden.android
+package dev.reins.android
 
 import android.content.Context
 import android.content.Intent
@@ -7,10 +7,10 @@ import androidx.compose.ui.test.assertIsOn
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.performClick
 import androidx.test.ext.junit.runners.AndroidJUnit4
-import dev.rewarden.android.platform.update.FakeInstaller
-import dev.rewarden.android.platform.update.FakeUpdateServer
-import dev.rewarden.android.platform.update.UpdateNotifier
-import dev.rewarden.android.platform.update.UpdateProvider
+import dev.reins.android.platform.update.FakeInstaller
+import dev.reins.android.platform.update.FakeUpdateServer
+import dev.reins.android.platform.update.UpdateNotifier
+import dev.reins.android.platform.update.UpdateProvider
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
@@ -58,7 +58,7 @@ class UpdatesFlowTest : FlowHarness() {
         awaitTag("appVersion")
         awaitTextSub("${BuildConfig.VERSION_NAME} (dev)")
         tap("checkUpdates")
-        awaitText("Rewarden is up to date.")
+        awaitText("Reins is up to date.")
         rule.onNodeWithTag("autoDownload").assertIsOn()
     }
 
@@ -86,7 +86,7 @@ class UpdatesFlowTest : FlowHarness() {
         tap("checkUpdates")
         try {
             awaitTag("updateProgress")
-            awaitTextSub("Downloading Rewarden 0.2.0")
+            awaitTextSub("Downloading Reins 0.2.0")
             awaitTextSub("50%")
         } finally {
             gate.countDown()
@@ -103,7 +103,7 @@ class UpdatesFlowTest : FlowHarness() {
         awaitCore { !updatePrefs.getBoolean("auto_download", true) }
         updates.publish(5, versionName = "0.2.0")
         tap("checkUpdates")
-        awaitText("Rewarden 0.2.0 is available.")
+        awaitText("Reins 0.2.0 is available.")
         assertEquals(0, updates.apkCalls)
         tap("installUpdate")
         awaitCore { installer.installed.size == 1 }
@@ -119,7 +119,7 @@ class UpdatesFlowTest : FlowHarness() {
         awaitTextSub("Couldn't reach the update server")
         updates.failure = null
         tap("retryUpdate")
-        awaitText("Rewarden is up to date.")
+        awaitText("Reins is up to date.")
     }
 
     @Test
@@ -127,7 +127,7 @@ class UpdatesFlowTest : FlowHarness() {
         updates.publish(5, versionName = "0.2.0")
         launch()
         awaitTag("updatePrompt")
-        awaitText("Rewarden 0.2.0 is ready to install.")
+        awaitText("Reins 0.2.0 is ready to install.")
         tap("updatePromptLater")
         awaitGone("updatePrompt")
         awaitCore { updatePrefs.getLong("snoozed_version", 0) == 5L }

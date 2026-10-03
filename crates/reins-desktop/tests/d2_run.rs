@@ -1,4 +1,4 @@
-//! `rewarden run` (the binary) against a mock Rewarden server whose phone seals a `SecretGrant`: the variables reach
+//! `reins run` (the binary) against a mock Reins server whose phone seals a `SecretGrant`: the variables reach
 //! the command, its output and exit code pass through, and answers that do not fit the request are refused before
 //! anything runs.
 
@@ -13,14 +13,14 @@ fn command(app: &App, config: &str, args: &[&str]) -> tokio::process::Command {
     std::fs::write(app.paths.config_file(), config).unwrap();
     let home = app.dir.path().join("home");
     std::fs::create_dir_all(&home).unwrap();
-    let mut c = tokio::process::Command::new(env!("CARGO_BIN_EXE_rewarden"));
+    let mut c = tokio::process::Command::new(env!("CARGO_BIN_EXE_reins"));
     c.arg("run")
         .args(args)
         .env("HOME", &home)
         .env("USERPROFILE", &home)
-        .env("REWARDEN_CONFIG_DIR", &app.paths.config_dir)
-        .env("REWARDEN_STATE_DIR", &app.paths.state_dir)
-        .env_remove("REWARDEN_LOG")
+        .env("REINS_CONFIG_DIR", &app.paths.config_dir)
+        .env("REINS_STATE_DIR", &app.paths.state_dir)
+        .env_remove("REINS_LOG")
         .current_dir(app.dir.path());
     c
 }
@@ -170,7 +170,7 @@ async fn local_mode_and_a_missing_login_say_where_secrets_live() {
     std::fs::remove_file(app.paths.session_file()).unwrap();
     let out = run(&app, "", &["-e", "A=vault:Deploy/password", "--", "true"]).await;
     assert_eq!(out.status.code(), Some(125));
-    assert!(stderr(&out).contains("rewarden login"), "{}", stderr(&out));
+    assert!(stderr(&out).contains("reins login"), "{}", stderr(&out));
     assert!(mock.calls().is_empty());
 }
 
@@ -178,7 +178,7 @@ async fn local_mode_and_a_missing_login_say_where_secrets_live() {
 async fn a_missing_command_is_127() {
     let mock = Mock::start().await;
     let app = logged_in(&mock);
-    let out = run(&app, "", &["-e", "A=vault:Deploy/password", "--", "/nonexistent/rewarden-test-cmd"]).await;
+    let out = run(&app, "", &["-e", "A=vault:Deploy/password", "--", "/nonexistent/reins-test-cmd"]).await;
     assert_eq!(out.status.code(), Some(127), "{}", stderr(&out));
 }
 
@@ -193,6 +193,6 @@ async fn a_slow_phone_is_announced_on_stderr() {
     let out = run(&app, "", &args).await;
     assert!(out.status.success(), "{}", stderr(&out));
     let err = stderr(&out);
-    assert!(err.contains(&format!("waiting for approval in your Rewarden app: secrets for `{shown}`")), "{err}");
-    assert!(err.contains("rewarden: approved."), "{err}");
+    assert!(err.contains(&format!("waiting for approval in your Reins app: secrets for `{shown}`")), "{err}");
+    assert!(err.contains("reins: approved."), "{err}");
 }

@@ -1,4 +1,4 @@
-package dev.rewarden.android.design
+package dev.reins.android.design
 
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.ExperimentalLayoutApi
@@ -6,7 +6,7 @@ import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
-import dev.rewarden.core.McpServerView
+import dev.reins.core.McpServerView
 
 /** Which connector and account an operation concerns, as small tags. [name] overrides the service's name. */
 @OptIn(ExperimentalLayoutApi::class)

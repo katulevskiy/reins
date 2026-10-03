@@ -11,17 +11,17 @@ use crate::store::{AuditMessage, AuditRecord, unix_now};
 use crate::types::{ApprovalChoice, StandingGrant};
 use crate::views::{self, ParkedConnector, ParkedRequest};
 use crate::{CoreError, text};
-use rewarden_policy::{Grant, Scope, ServiceScope};
-use rewarden_proto::connector::{ConnectorCall, Effect, normalize_account_name};
-use rewarden_proto::desktop;
-use rewarden_proto::ids::{ConnectionId, GrantId};
-use rewarden_proto::relay::{RelayOutcome, RelayRequest, ToolResult};
+use reins_policy::{Grant, Scope, ServiceScope};
+use reins_proto::connector::{ConnectorCall, Effect, normalize_account_name};
+use reins_proto::desktop;
+use reins_proto::ids::{ConnectionId, GrantId};
+use reins_proto::relay::{RelayOutcome, RelayRequest, ToolResult};
 
 /// How long a one-time pass lasts after the user approved a request the AI had already stopped waiting for.
 const RETRY_PASS_SECS: i64 = 15 * 60;
 
 /// The answer to a desktop-only call from anything but the desktop app paired with this connection.
-const DESKTOP_ONLY: &str = "This must come from the Rewarden desktop app paired with this phone.";
+const DESKTOP_ONLY: &str = "This must come from the Reins desktop app paired with this phone.";
 
 /// What the AI is told when an integration fails (never a token or a URL).
 fn ai_message(service: &str, e: &CoreError) -> String {
@@ -32,12 +32,12 @@ fn ai_message(service: &str, e: &CoreError) -> String {
         } => reason.clone(),
         CoreError::ServiceNeedsAttention {
             ..
-        } => format!("{name} needs the user to sign in again. Ask them to open the Rewarden app and connect {name}."),
+        } => format!("{name} needs the user to sign in again. Ask them to open the Reins app and connect {name}."),
         CoreError::Network {
             ..
         } => format!("The phone could not reach {name}. Try again in a moment."),
         CoreError::GmailNeedsConsent => {
-            format!("{name} needs the user's permission again. Ask them to open the Rewarden app and connect it.")
+            format!("{name} needs the user's permission again. Ask them to open the Reins app and connect it.")
         }
         other => format!("{name} could not complete the request: {other}"),
     }
@@ -52,11 +52,11 @@ impl Engine {
         match (named, accounts.as_slice()) {
             (_, []) => Err(format!("{name} is not connected on the user's phone. Ask them to add it under Integrations.")),
             (Some(wanted), _) => accounts.iter().find(|a| a.eq_ignore_ascii_case(wanted)).cloned().ok_or_else(|| {
-                format!("That {name} account is not connected. Call rewarden_list_accounts with service=\"{service}\" to ask the user to share their accounts, and pick one of those.")
+                format!("That {name} account is not connected. Call reins_list_accounts with service=\"{service}\" to ask the user to share their accounts, and pick one of those.")
             }),
             (None, [only]) => Ok(only.clone()),
             (None, _) => Err(format!(
-                "Several {name} accounts are connected. Call rewarden_list_accounts with service=\"{service}\" (the user has to allow it) and pass the one you want as `account`."
+                "Several {name} accounts are connected. Call reins_list_accounts with service=\"{service}\" (the user has to allow it) and pass the one you want as `account`."
             )),
         }
     }
@@ -170,9 +170,7 @@ impl Engine {
         let resolved = match chosen {
             Some(account) => Ok(account),
             // The desktop app's own questions: the paired app is the account (its key was checked above).
-            None if call.service == rewarden_proto::connector::DESKTOP => {
-                Ok(super::desktop::DESKTOP_ACCOUNT.to_owned())
-            }
+            None if call.service == reins_proto::connector::DESKTOP => Ok(super::desktop::DESKTOP_ACCOUNT.to_owned()),
             None => self.resolve_service_account(&call.service, named.as_deref()),
         };
         request.account = match resolved {
@@ -555,7 +553,7 @@ impl Engine {
     }
 }
 
-use rewarden_proto::gmail::ToolCall;
+use reins_proto::gmail::ToolCall;
 
 /// What the activity log calls the action: "list", "read", "search", "send" or "write".
 pub(crate) fn action_of(call: &ConnectorCall) -> &'static str {
@@ -644,7 +642,7 @@ pub fn build_service_grant(
         }
         // A permission to change things allows the kinds of change the user named; none named means the kind of this
         // request, never every kind.
-        let known_classes = rewarden_proto::connector::classes(service);
+        let known_classes = reins_proto::connector::classes(service);
         let mut classes: Vec<String> = Vec::new();
         if access == "write" {
             for c in &s.classes {

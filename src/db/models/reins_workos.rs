@@ -5,8 +5,8 @@ use crate::{
     db::{
         DbConn, DbConnInner,
         schema::{
-            devices, rewarden_connections, rewarden_devices, rewarden_refresh_tokens, rewarden_settings,
-            rewarden_sso_sessions, sso_users,
+            devices, reins_connections, reins_devices, reins_refresh_tokens, reins_settings, reins_sso_sessions,
+            sso_users,
         },
     },
     error::MapResult,
@@ -16,35 +16,35 @@ use super::{DeviceId, UserId};
 
 /// One named value of server state that outlives a restart (the WorkOS events cursor).
 #[derive(Clone, Debug, Identifiable, Queryable, Insertable)]
-#[diesel(table_name = rewarden_settings)]
+#[diesel(table_name = reins_settings)]
 #[diesel(primary_key(name))]
-pub struct RewardenSetting {
+pub struct ReinsSetting {
     pub name: String,
     pub value: String,
 }
 
-impl RewardenSetting {
+impl ReinsSetting {
     pub async fn get(name: &str, conn: &DbConn) -> Option<String> {
         conn.run(move |c| q_get_setting(c, name)).await
     }
 
     pub async fn set(name: &str, value: &str, conn: &DbConn) -> EmptyResult {
-        conn.run(move |c| q_set_setting(c, name, value)).await.map_res("Error saving Rewarden setting")
+        conn.run(move |c| q_set_setting(c, name, value)).await.map_res("Error saving Reins setting")
     }
 }
 
 /// The SSO provider session a device signed in with (WorkOS: the access token's `sid`).
 #[derive(Clone, Debug, Identifiable, Queryable, Insertable)]
-#[diesel(table_name = rewarden_sso_sessions)]
+#[diesel(table_name = reins_sso_sessions)]
 #[diesel(primary_key(session_id))]
-pub struct RewardenSsoSession {
+pub struct ReinsSsoSession {
     pub session_id: String,
     pub user_uuid: UserId,
     pub device_uuid: DeviceId,
     pub created_at: i64,
 }
 
-impl RewardenSsoSession {
+impl ReinsSsoSession {
     /// Remembers the session of a sign-in; the same session signing in again (a second device) keeps the first row.
     pub async fn save(&self, conn: &DbConn) -> EmptyResult {
         conn.run(move |c| q_save_session(c, self)).await.map_res("Error saving SSO session")
@@ -70,18 +70,14 @@ pub async fn delete_reins_data(user_uuid: &UserId, conn: &DbConn) -> EmptyResult
 }
 
 fn q_get_setting(c: &mut DbConnInner, name: &str) -> Option<String> {
-    rewarden_settings::table
-        .filter(rewarden_settings::name.eq(name))
-        .select(rewarden_settings::value)
-        .first::<String>(c)
-        .ok()
+    reins_settings::table.filter(reins_settings::name.eq(name)).select(reins_settings::value).first::<String>(c).ok()
 }
 
 fn q_set_setting(c: &mut DbConnInner, name: &str, value: &str) -> QueryResult<()> {
     c.transaction(|c| {
-        diesel::delete(rewarden_settings::table.filter(rewarden_settings::name.eq(name))).execute(c)?;
-        diesel::insert_into(rewarden_settings::table)
-            .values(RewardenSetting {
+        diesel::delete(reins_settings::table.filter(reins_settings::name.eq(name))).execute(c)?;
+        diesel::insert_into(reins_settings::table)
+            .values(ReinsSetting {
                 name: name.to_owned(),
                 value: value.to_owned(),
             })
@@ -90,27 +86,25 @@ fn q_set_setting(c: &mut DbConnInner, name: &str, value: &str) -> QueryResult<()
     })
 }
 
-fn q_save_session(c: &mut DbConnInner, row: &RewardenSsoSession) -> QueryResult<()> {
+fn q_save_session(c: &mut DbConnInner, row: &ReinsSsoSession) -> QueryResult<()> {
     c.transaction(|c| {
-        let known = rewarden_sso_sessions::table
-            .filter(rewarden_sso_sessions::session_id.eq(&row.session_id))
+        let known = reins_sso_sessions::table
+            .filter(reins_sso_sessions::session_id.eq(&row.session_id))
             .count()
             .get_result::<i64>(c)?;
         if known == 0 {
-            diesel::insert_into(rewarden_sso_sessions::table).values(row).execute(c)?;
+            diesel::insert_into(reins_sso_sessions::table).values(row).execute(c)?;
         }
         Ok(())
     })
 }
 
-fn q_take_session(c: &mut DbConnInner, session_id: &str) -> Option<RewardenSsoSession> {
-    let row = rewarden_sso_sessions::table
-        .filter(rewarden_sso_sessions::session_id.eq(session_id))
-        .first::<RewardenSsoSession>(c)
+fn q_take_session(c: &mut DbConnInner, session_id: &str) -> Option<ReinsSsoSession> {
+    let row = reins_sso_sessions::table
+        .filter(reins_sso_sessions::session_id.eq(session_id))
+        .first::<ReinsSsoSession>(c)
         .ok()?;
-    diesel::delete(rewarden_sso_sessions::table.filter(rewarden_sso_sessions::session_id.eq(session_id)))
-        .execute(c)
-        .ok()?;
+    diesel::delete(reins_sso_sessions::table.filter(reins_sso_sessions::session_id.eq(session_id))).execute(c).ok()?;
     Some(row)
 }
 
@@ -122,18 +116,15 @@ fn q_sign_out_device(c: &mut DbConnInner, user_uuid: &UserId, device_uuid: &Devi
 
 fn q_delete_reins_data(c: &mut DbConnInner, user_uuid: &UserId) -> QueryResult<()> {
     c.transaction(|c| {
-        let connections = rewarden_connections::table
-            .filter(rewarden_connections::user_uuid.eq(user_uuid))
-            .select(rewarden_connections::uuid)
+        let connections = reins_connections::table
+            .filter(reins_connections::user_uuid.eq(user_uuid))
+            .select(reins_connections::uuid)
             .load::<String>(c)?;
-        diesel::delete(
-            rewarden_refresh_tokens::table.filter(rewarden_refresh_tokens::connection_uuid.eq_any(&connections)),
-        )
-        .execute(c)?;
-        diesel::delete(rewarden_connections::table.filter(rewarden_connections::user_uuid.eq(user_uuid))).execute(c)?;
-        diesel::delete(rewarden_devices::table.filter(rewarden_devices::user_uuid.eq(user_uuid))).execute(c)?;
-        diesel::delete(rewarden_sso_sessions::table.filter(rewarden_sso_sessions::user_uuid.eq(user_uuid)))
+        diesel::delete(reins_refresh_tokens::table.filter(reins_refresh_tokens::connection_uuid.eq_any(&connections)))
             .execute(c)?;
+        diesel::delete(reins_connections::table.filter(reins_connections::user_uuid.eq(user_uuid))).execute(c)?;
+        diesel::delete(reins_devices::table.filter(reins_devices::user_uuid.eq(user_uuid))).execute(c)?;
+        diesel::delete(reins_sso_sessions::table.filter(reins_sso_sessions::user_uuid.eq(user_uuid))).execute(c)?;
         diesel::delete(sso_users::table.filter(sso_users::user_uuid.eq(user_uuid))).execute(c)?;
         Ok(())
     })
@@ -141,7 +132,7 @@ fn q_delete_reins_data(c: &mut DbConnInner, user_uuid: &UserId) -> QueryResult<(
 
 #[cfg(all(test, sqlite))]
 mod tests {
-    use super::super::rewarden_device::test_db;
+    use super::super::reins_device::test_db;
     use super::*;
 
     fn uid(s: &str) -> UserId {
@@ -160,7 +151,7 @@ mod tests {
     #[test]
     fn a_session_is_taken_once_and_its_first_device_kept() {
         let mut c = test_db();
-        let row = |dev: &str| RewardenSsoSession {
+        let row = |dev: &str| ReinsSsoSession {
             session_id: "session_1".to_owned(),
             user_uuid: uid("u1"),
             device_uuid: DeviceId::from(dev.to_owned()),
@@ -175,10 +166,10 @@ mod tests {
 
     #[test]
     fn deleting_reins_data_keeps_other_users() {
-        use crate::db::models::{RewardenConnection, RewardenRefreshToken};
+        use crate::db::models::{ReinsConnection, ReinsRefreshToken};
         let mut c = test_db();
         for user in ["u1", "u2"] {
-            let conn = RewardenConnection::new(
+            let conn = ReinsConnection::new(
                 uid(user),
                 "client".to_owned(),
                 "Claude".to_owned(),
@@ -186,16 +177,16 @@ mod tests {
                 "Claude".to_owned(),
                 1,
             );
-            diesel::insert_into(rewarden_connections::table).values(&conn).execute(&mut c).unwrap();
-            let token = RewardenRefreshToken {
+            diesel::insert_into(reins_connections::table).values(&conn).execute(&mut c).unwrap();
+            let token = ReinsRefreshToken {
                 token_hash: format!("hash-{user}"),
                 connection_uuid: conn.uuid.clone(),
                 expires_at: 99,
             };
-            diesel::insert_into(rewarden_refresh_tokens::table).values(&token).execute(&mut c).unwrap();
+            diesel::insert_into(reins_refresh_tokens::table).values(&token).execute(&mut c).unwrap();
             q_save_session(
                 &mut c,
-                &RewardenSsoSession {
+                &ReinsSsoSession {
                     session_id: format!("session-{user}"),
                     user_uuid: uid(user),
                     device_uuid: DeviceId::from("d".to_owned()),
@@ -206,10 +197,9 @@ mod tests {
         }
         q_delete_reins_data(&mut c, &uid("u1")).unwrap();
         let tokens: Vec<String> =
-            rewarden_refresh_tokens::table.select(rewarden_refresh_tokens::token_hash).load(&mut c).unwrap();
+            reins_refresh_tokens::table.select(reins_refresh_tokens::token_hash).load(&mut c).unwrap();
         assert_eq!(tokens, ["hash-u2"]);
-        let users: Vec<String> =
-            rewarden_connections::table.select(rewarden_connections::user_uuid).load(&mut c).unwrap();
+        let users: Vec<String> = reins_connections::table.select(reins_connections::user_uuid).load(&mut c).unwrap();
         assert_eq!(users, ["u2"]);
         assert!(q_take_session(&mut c, "session-u1").is_none());
         assert!(q_take_session(&mut c, "session-u2").is_some());

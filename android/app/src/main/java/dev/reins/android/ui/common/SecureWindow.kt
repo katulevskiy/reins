@@ -1,4 +1,4 @@
-package dev.rewarden.android.ui.common
+package dev.reins.android.ui.common
 
 import android.app.Activity
 import android.content.Context
@@ -35,7 +35,7 @@ object SecureFlag {
 @Composable
 fun SecureWindow() {
     val activity = LocalContext.current.findActivity() ?: return
-    if (!dev.rewarden.android.BuildConfig.SECURE_SCREENS) return
+    if (!dev.reins.android.BuildConfig.SECURE_SCREENS) return
     DisposableEffect(activity) {
         SecureFlag.acquire(activity)
         onDispose { SecureFlag.release(activity) }

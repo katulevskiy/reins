@@ -11,10 +11,10 @@ use bytes::Bytes;
 use http_body_util::Full;
 use hyper::body::Incoming;
 use hyper::{Request, Response, StatusCode};
-use rewarden_desktop::auth::Credential;
-use rewarden_desktop::git::object::{ObjectKind, hash_object};
-use rewarden_desktop::git::remote::{CommitMeta, RemoteError};
-use rewarden_desktop::git::{GitHubRemote, Remote, analyze_push};
+use reins_desktop::auth::Credential;
+use reins_desktop::git::object::{ObjectKind, hash_object};
+use reins_desktop::git::remote::{CommitMeta, RemoteError};
+use reins_desktop::git::{GitHubRemote, Remote, analyze_push};
 use serde_json::json;
 
 #[derive(Default)]
@@ -162,7 +162,7 @@ fn credential() -> Credential {
 }
 
 fn github(base: &str) -> GitHubRemote {
-    GitHubRemote::new(rewarden_desktop::http::client(None).unwrap(), base, "o/r", Some(&credential()))
+    GitHubRemote::new(reins_desktop::http::client(None).unwrap(), base, "o/r", Some(&credential()))
 }
 
 /// Server at `base` with a big file; the work tree one commit ahead with that file edited (a thin delta).
@@ -196,7 +196,7 @@ async fn a_thin_push_is_described_from_the_github_api() {
     assert!(!seen.is_empty());
     for r in &seen {
         assert_eq!(r.version, "2022-11-28");
-        assert!(r.agent.starts_with("rewarden-desktop/"), "{r:?}");
+        assert!(r.agent.starts_with("reins-desktop/"), "{r:?}");
         assert!(r.authorization.starts_with("Basic "), "{r:?}");
         let expected = if r.path.contains("/git/blobs/") {
             "application/vnd.github.raw"

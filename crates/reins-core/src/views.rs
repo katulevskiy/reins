@@ -4,12 +4,12 @@
 
 use std::collections::BTreeMap;
 
-use rewarden_policy::{AddrRule, ReadScope, Scope, SendScope, ServiceScope};
-use rewarden_proto::connector::{ConnectorCall, Effect};
-use rewarden_proto::desktop::{self, FileStatus, RefChange};
-use rewarden_proto::gmail::{GrantAction, GrantRequest, MessageSummary, ToolCall};
-use rewarden_proto::pairing::PairingRequest;
-use rewarden_proto::relay::RelayRequest;
+use reins_policy::{AddrRule, ReadScope, Scope, SendScope, ServiceScope};
+use reins_proto::connector::{ConnectorCall, Effect};
+use reins_proto::desktop::{self, FileStatus, RefChange};
+use reins_proto::gmail::{GrantAction, GrantRequest, MessageSummary, ToolCall};
+use reins_proto::pairing::PairingRequest;
+use reins_proto::relay::RelayRequest;
 use serde::{Deserialize, Serialize};
 
 use crate::connector::{Item, Preview};
@@ -296,7 +296,7 @@ pub fn request_item(parked: &ParkedRequest) -> PendingItem {
 
 /// The name of an operation of another integration, else empty.
 pub fn op_title(service: &str, op: &str) -> String {
-    rewarden_proto::connector::specs()
+    reins_proto::connector::specs()
         .iter()
         .find(|s| s.service == service && s.op == op)
         .map(|s| s.title.to_owned())
@@ -359,7 +359,7 @@ pub fn pairing_item(p: &PairingRequest) -> PendingItem {
     PendingItem {
         kind: PendingKind::Pairing,
         id: p.id.0.clone(),
-        title: format!("Connect {} to Rewarden?", p.client_name),
+        title: format!("Connect {} to Reins?", p.client_name),
         subtitle: p.client_host.clone(),
         created_at: p.created_at,
         connection_id: String::new(),
@@ -588,7 +588,7 @@ pub fn approval_view(parked: &ParkedRequest) -> ApprovalView {
             .or_else(|| spec.map(|s| s.class.to_owned()))
             .unwrap_or_default(),
         classes: if write {
-            rewarden_proto::connector::classes(&parked.service())
+            reins_proto::connector::classes(&parked.service())
                 .iter()
                 .map(|c| ClassOption {
                     id: c.id.to_owned(),
@@ -818,10 +818,7 @@ fn service_summary(s: &ServiceScope) -> String {
             .classes
             .iter()
             .map(|c| {
-                rewarden_proto::connector::classes(&s.service)
-                    .iter()
-                    .find(|k| k.id == c)
-                    .map_or(c.as_str(), |k| k.label)
+                reins_proto::connector::classes(&s.service).iter().find(|k| k.id == c).map_or(c.as_str(), |k| k.label)
             })
             .collect();
         format!(" ({})", names.join(", "))
@@ -883,7 +880,7 @@ pub fn scope_lines(scope: &Scope) -> Vec<String> {
                 _ => "May read there".to_owned(),
             });
             for c in &s.classes {
-                if let Some(k) = rewarden_proto::connector::classes(&s.service).iter().find(|k| k.id == c) {
+                if let Some(k) = reins_proto::connector::classes(&s.service).iter().find(|k| k.id == c) {
                     lines.push(format!("Only: {}", k.label));
                 }
             }
@@ -1054,8 +1051,8 @@ pub fn activity_entry(r: &AuditRecord) -> ActivityEntry {
 mod tests {
     use std::collections::BTreeSet;
 
-    use rewarden_policy::{Grant, Pattern};
-    use rewarden_proto::gmail::OutgoingEmail;
+    use reins_policy::{Grant, Pattern};
+    use reins_proto::gmail::OutgoingEmail;
 
     use super::*;
 
@@ -1186,7 +1183,7 @@ mod tests {
             client_key: None,
         });
         assert_eq!(p.client_name, "Claude");
-        assert_eq!(pairing_item(&p).title, "Connect Claude to Rewarden?");
+        assert_eq!(pairing_item(&p).title, "Connect Claude to Reins?");
         let v = pairing_view(&p);
         assert_eq!((v.choices.clone(), v.client_host.as_str()), (vec![12, 47, 83], "claude.ai"));
         assert_eq!(v.key_fingerprint, None);

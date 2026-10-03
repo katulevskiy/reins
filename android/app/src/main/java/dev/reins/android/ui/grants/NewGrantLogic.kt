@@ -1,8 +1,8 @@
-package dev.rewarden.android.ui.grants
+package dev.reins.android.ui.grants
 
-import dev.rewarden.core.ApprovalKind
-import dev.rewarden.core.GrantScopeChoice
-import dev.rewarden.core.StandingGrant
+import dev.reins.core.ApprovalKind
+import dev.reins.core.GrantScopeChoice
+import dev.reins.core.StandingGrant
 
 enum class NewGrantLifetime(val label: String, val seconds: Long?) {
     ONE_TIME("One time", null),

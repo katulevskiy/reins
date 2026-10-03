@@ -173,7 +173,7 @@ impl FakeWorkos {
             ("SSO_CLIENT_SECRET", API_KEY),
             ("SSO_AUTH_ONLY_NOT_SESSION", "true"),
             ("SSO_SIGNUPS_MATCH_EMAIL", "true"),
-            ("REWARDEN_WORKOS_SYNC_SECS", "1"),
+            ("REINS_WORKOS_SYNC_SECS", "1"),
         ]
         .into_iter()
         .map(|(k, v)| (k.to_owned(), v.to_owned()))

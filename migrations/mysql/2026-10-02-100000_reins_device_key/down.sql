@@ -1,1 +1,1 @@
-ALTER TABLE rewarden_devices DROP COLUMN key_hash;
+ALTER TABLE reins_devices DROP COLUMN key_hash;

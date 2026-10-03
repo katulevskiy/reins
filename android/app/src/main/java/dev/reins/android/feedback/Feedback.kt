@@ -1,4 +1,4 @@
-package dev.rewarden.android.feedback
+package dev.reins.android.feedback
 
 import androidx.compose.runtime.staticCompositionLocalOf
 
@@ -103,7 +103,7 @@ enum class Cue {
 }
 
 /**
- * Rewarden's moments, each a haptic and a sound designed as a pair (either may be absent). This is what screens and
+ * Reins's moments, each a haptic and a sound designed as a pair (either may be absent). This is what screens and
  * view models play: `feedback.play(Event.Approved)`.
  */
 enum class Event(val haptic: Haptic?, val cue: Cue?) {

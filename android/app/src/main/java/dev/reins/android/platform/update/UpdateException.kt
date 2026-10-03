@@ -1,4 +1,4 @@
-package dev.rewarden.android.platform.update
+package dev.reins.android.platform.update
 
 /** Why an update check or download failed. [message] is written for the user. */
 sealed class UpdateException(message: String, cause: Throwable? = null) : Exception(message, cause) {

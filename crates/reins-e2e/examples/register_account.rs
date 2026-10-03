@@ -1,26 +1,26 @@
-//! Creates a Rewarden login on a server that has `SIGNUPS_ALLOWED=true`.
+//! Creates a Reins login on a server that has `SIGNUPS_ALLOWED=true`.
 //!
 //! ```text
-//! REWARDEN_PASSWORD='...' cargo run -p rewarden-e2e --example register_account -- https://rewarden.example.com you@example.com
+//! REINS_PASSWORD='...' cargo run -p reins-e2e --example register_account -- https://reins.example.com you@example.com
 //! ```
 //!
-//! The account carries a placeholder vault key: it signs in to Rewarden (which never touches the vault), but it is not
+//! The account carries a placeholder vault key: it signs in to Reins (which never touches the vault), but it is not
 //! meant to be used as a real Bitwarden vault.
 
-use rewarden_core::crypto::{Kdf, master_key, master_password_hash};
+use reins_core::crypto::{Kdf, master_key, master_password_hash};
 use serde_json::json;
 
 const KDF_ITERATIONS: u32 = 600_000;
 
 #[tokio::main]
 async fn main() {
-    rewarden_e2e::init_tls();
+    reins_e2e::init_tls();
     let mut args = std::env::args().skip(1);
     let (Some(server), Some(email)) = (args.next(), args.next()) else {
-        eprintln!("usage: register_account <server-url> <email>   (password in REWARDEN_PASSWORD)");
+        eprintln!("usage: register_account <server-url> <email>   (password in REINS_PASSWORD)");
         std::process::exit(2);
     };
-    let password = std::env::var("REWARDEN_PASSWORD").expect("set REWARDEN_PASSWORD");
+    let password = std::env::var("REINS_PASSWORD").expect("set REINS_PASSWORD");
     let email = email.trim().to_lowercase();
 
     let hash = {
@@ -40,7 +40,7 @@ async fn main() {
         .expect("hash task")
     };
     let body = json!({
-        "email": email, "name": "Rewarden", "masterPasswordHash": hash, "masterPasswordHint": null,
+        "email": email, "name": "Reins", "masterPasswordHash": hash, "masterPasswordHint": null,
         "key": "2.AAAAAAAAAAAAAAAAAAAAAA==|AAAAAAAAAAAAAAAAAAAAAA==|AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=",
         "kdf": 0, "kdfIterations": KDF_ITERATIONS
     });

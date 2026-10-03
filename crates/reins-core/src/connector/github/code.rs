@@ -10,8 +10,8 @@ use std::collections::BTreeMap;
 use std::fmt::Write as _;
 
 use data_encoding::{BASE64, HEXLOWER};
+use reins_proto::connector::ConnectorCall;
 use reqwest::Method;
-use rewarden_proto::connector::ConnectorCall;
 use serde_json::{Map, Value, json};
 
 use super::{GitHub, Options, Preview, explain, parents, ref_arg, ref_ok, repo_arg, resource, resource_label};
@@ -228,7 +228,7 @@ fn file_source(call: &ConnectorCall) -> Result<Source, CoreError> {
 }
 
 /// What the server answered for a file it sent on to GitHub ([`blob::send`]), as GitHub's JSON.
-fn sent(result: &rewarden_proto::blob::BlobSendResult) -> Result<Value, CoreError> {
+fn sent(result: &reins_proto::blob::BlobSendResult) -> Result<Value, CoreError> {
     if (200..300).contains(&result.status) {
         return Ok(serde_json::from_str(&result.body).unwrap_or(Value::Null));
     }
@@ -402,7 +402,7 @@ async fn redirect_location(gh: &GitHub, token: &str, path: &str, accept: &str) -
         .bearer_auth(token)
         .header("Accept", accept)
         .header("X-GitHub-Api-Version", "2022-11-28")
-        .header("User-Agent", "rewarden")
+        .header("User-Agent", "reins")
         .send()
         .await?;
     let status = resp.status();
@@ -430,7 +430,7 @@ async fn redirect_location(gh: &GitHub, token: &str, path: &str, accept: &str) -
 
 /// Downloads `url` (no token is sent), at most `MAX_BINARY` bytes.
 async fn download(gh: &GitHub, url: &str) -> Result<Vec<u8>, CoreError> {
-    let mut resp = gh.http.get(url).header("User-Agent", "rewarden").send().await?;
+    let mut resp = gh.http.get(url).header("User-Agent", "reins").send().await?;
     if !resp.status().is_success() {
         return Err(bad(format!("The download failed (status {}).", resp.status().as_u16())));
     }
@@ -1276,12 +1276,12 @@ async fn perform_file_put(gh: &GitHub, token: &str, call: &ConnectorCall) -> Res
         }
         // The server puts the file, base64, into `content` of this body on its way to GitHub.
         Source::Blob(id) => {
-            let send = rewarden_proto::blob::BlobSend {
-                v: rewarden_proto::PROTOCOL_VERSION,
+            let send = reins_proto::blob::BlobSend {
+                v: reins_proto::PROTOCOL_VERSION,
                 method: "PUT".to_owned(),
                 url: format!("{}{api}", gh.base),
                 headers: GitHub::headers(token, "application/vnd.github+json"),
-                body: rewarden_proto::blob::SendBody::JsonBase64 {
+                body: reins_proto::blob::SendBody::JsonBase64 {
                     json: body.as_object().cloned().unwrap_or_default(),
                     field: "content".to_owned(),
                 },
@@ -2132,12 +2132,12 @@ async fn perform_asset_upload(gh: &GitHub, token: &str, call: &ConnectorCall) ->
             }
             let mut headers = GitHub::headers(token, "application/vnd.github+json");
             headers.push(("Content-Type".to_owned(), up.content_type.clone()));
-            let send = rewarden_proto::blob::BlobSend {
-                v: rewarden_proto::PROTOCOL_VERSION,
+            let send = reins_proto::blob::BlobSend {
+                v: reins_proto::PROTOCOL_VERSION,
                 method: "POST".to_owned(),
                 url: url.into(),
                 headers,
-                body: rewarden_proto::blob::SendBody::Raw,
+                body: reins_proto::blob::SendBody::Raw,
             };
             sent(&blob::send(&blob_id, &send).await?)?
         }

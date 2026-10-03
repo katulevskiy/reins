@@ -1,12 +1,12 @@
-//! Large files, moved through the Rewarden server for one operation while the phone stays in control (see
-//! [`rewarden_proto::blob`]).
+//! Large files, moved through the Reins server for one operation while the phone stays in control (see
+//! [`reins_proto::blob`]).
 //!
 //! - **Inputs.** A tool that takes a file (`github_release_asset_upload`, `github_file_put`, `vault_attachment_add`,
 //!   `vault_send_create`) called without its content gets [`UploadInstructions`] back: the phone opened a slot for that
 //!   tool. Called again with `blob=<id>`, the file is checked (this connection's, uploaded, unexpired, for this tool),
 //!   shown with the preview, and used when the write runs: GitHub gets it from the server ([`send`]), the vault
 //!   encrypts it on the phone ([`read`]). It is deleted once used.
-//! - **Uploads.** `rewarden_upload` opens a slot of its own and answers at once; when the file arrives the user
+//! - **Uploads.** `reins_upload` opens a slot of its own and answers at once; when the file arrives the user
 //!   decides on it ([`crate::types::PendingKind::Blob`]), and only then can it be downloaded.
 //! - **Large results.** Connectors mark an item whose content is too large to hand over inline (a marker in its
 //!   `extra`, see [`fetch_marker`] and [`output_marker`]); when the item is released — never before — the server
@@ -20,15 +20,15 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use data_encoding::BASE64;
-use reqwest::{Method, StatusCode};
-use rewarden_proto::PROTOCOL_VERSION;
-use rewarden_proto::blob::{
+use reins_proto::PROTOCOL_VERSION;
+use reins_proto::blob::{
     BlobDecision, BlobDownload, BlobFetch, BlobInfo, BlobPreview, BlobPurpose, BlobSend, BlobSendResult, BlobSlot,
     BlobSlotRequest, BlobState, DEFAULT_BLOB_TTL_SECS, INLINE_LIMIT, MAX_BLOB_BYTES, UploadInstructions, is_blob_id,
 };
-use rewarden_proto::connector::ConnectorCall;
-use rewarden_proto::ids::ConnectionId;
-use rewarden_proto::relay::{RelayOutcome, RelayRequest, ToolResult};
+use reins_proto::connector::ConnectorCall;
+use reins_proto::ids::ConnectionId;
+use reins_proto::relay::{RelayOutcome, RelayRequest, ToolResult};
+use reqwest::{Method, StatusCode};
 use serde_json::{Map, Value, json};
 use zeroize::Zeroizing;
 
@@ -42,14 +42,14 @@ use crate::types::{BlobView, PendingItem, PendingKind};
 use crate::views::ParkedRequest;
 use crate::{CoreError, text};
 
-/// The activity's service for uploads (`rewarden_upload`).
+/// The activity's service for uploads (`reins_upload`).
 pub const SERVICE_FILES: &str = "files";
 /// The most a file the phone reads itself may be (to encrypt it for the vault).
 pub const MAX_READ_BYTES: u64 = 100 * 1024 * 1024;
 /// The largest file GitHub's contents API takes.
 const MAX_CONTENTS_BYTES: u64 = 100 * 1024 * 1024;
 /// Key of the marker in `Item::extra` that asks for an item's content to be handed over as a link.
-pub const DELIVER_KEY: &str = "_rewarden_deliver";
+pub const DELIVER_KEY: &str = "_reins_deliver";
 /// Moving a large file takes longer than an API call.
 const TRANSFER_TIMEOUT: Duration = Duration::from_mins(15);
 /// How much of a text file the write preview shows.
@@ -77,7 +77,7 @@ fn check_blob(id: &str) -> Result<(), ApiFailure> {
     }
 }
 
-/// The blob endpoints of the phone API (`/rewarden/api/blobs…`).
+/// The blob endpoints of the phone API (`/reins/api/blobs…`).
 impl PhoneApi<'_> {
     /// `POST /blobs`: opens a slot.
     pub async fn blob_slot(&self, request: &BlobSlotRequest) -> Result<BlobSlot, ApiFailure> {
@@ -430,7 +430,7 @@ pub(crate) fn blob_item(info: &BlobInfo) -> PendingItem {
     }
 }
 
-/// An upload the user may decide on: an uploaded `rewarden_upload` file that has not expired.
+/// An upload the user may decide on: an uploaded `reins_upload` file that has not expired.
 fn awaits_decision(info: &BlobInfo, now: i64) -> bool {
     matches!(info.purpose, BlobPurpose::Upload { .. })
         && info.state == BlobState::Uploaded
@@ -553,7 +553,7 @@ impl Engine {
             Ok(slot) => slot,
             Err(e) => {
                 log::warn!("could not open an upload slot: {}", e.into_core());
-                let message = "The phone could not prepare an upload link on the Rewarden server. Try again later.";
+                let message = "The phone could not prepare an upload link on the Reins server. Try again later.";
                 return self.refuse_file(session, request, call, message).await;
             }
         };
@@ -708,15 +708,15 @@ impl Engine {
         Ok(items)
     }
 
-    // ---- rewarden_upload --------------------------------------------------------------------------------------------
+    // ---- reins_upload --------------------------------------------------------------------------------------------
 
-    /// `rewarden_upload`: opens a slot and answers at once; the user decides when the file arrives.
+    /// `reins_upload`: opens a slot and answers at once; the user decides when the file arrives.
     pub(crate) async fn handle_request_upload(
         &self,
         session: &Session,
         request: &RelayRequest,
     ) -> Result<(), CoreError> {
-        let rewarden_proto::gmail::ToolCall::RequestUpload {
+        let reins_proto::gmail::ToolCall::RequestUpload {
             name,
             size,
             content_type,
@@ -767,7 +767,7 @@ impl Engine {
             }
             Err(e) => {
                 log::warn!("could not open an upload slot: {}", e.into_core());
-                let message = "The phone could not prepare an upload link on the Rewarden server. Try again later.";
+                let message = "The phone could not prepare an upload link on the Reins server. Try again later.";
                 "error".clone_into(&mut audit.outcome);
                 message.clone_into(&mut audit.detail);
                 RelayOutcome::Error {
@@ -939,7 +939,7 @@ mod tests {
     fn only_uploaded_unexpired_uploads_await_a_decision() {
         let info = BlobInfo {
             v: 1,
-            id: rewarden_proto::blob::BlobId("blob-0123456789abcdef".into()),
+            id: reins_proto::blob::BlobId("blob-0123456789abcdef".into()),
             connection_id: "c1".into(),
             connection_label: "Claude".into(),
             request_id: None,
@@ -973,7 +973,7 @@ mod tests {
         ));
         assert!(!awaits_decision(
             &BlobInfo {
-                id: rewarden_proto::blob::BlobId("../x".into()),
+                id: reins_proto::blob::BlobId("../x".into()),
                 ..info
             },
             50

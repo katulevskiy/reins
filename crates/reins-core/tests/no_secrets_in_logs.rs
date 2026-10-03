@@ -7,9 +7,9 @@ use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use common::{FakeGoogle, FakeKeys, RecordingNotifier};
-use rewarden_core::http::{ServerUrl, client};
-use rewarden_core::vault::VaultClient;
-use rewarden_core::{ApprovalChoice, CoreConfig, RewardenCore};
+use reins_core::http::{ServerUrl, client};
+use reins_core::vault::VaultClient;
+use reins_core::{ApprovalChoice, CoreConfig, ReinsCore};
 use serde_json::{Value, json};
 use wiremock::matchers::{body_string_contains, method, path, path_regex};
 use wiremock::{Mock, MockServer, ResponseTemplate};
@@ -141,13 +141,13 @@ async fn files_through_the_server() -> String {
         ),
         (
             "POST",
-            "/rewarden/api/blobs",
+            "/reins/api/blobs",
             json!({"id": "slot-0123456789abcdef",
-            "upload_url": "https://rw.example/rewarden/blob/UP-CAPABILITY", "expires_at": 4_000_000_000_i64}),
+            "upload_url": "https://rw.example/reins/blob/UP-CAPABILITY", "expires_at": 4_000_000_000_i64}),
         ),
         (
             "GET",
-            "/rewarden/api/blobs/blob-for-asset-000001",
+            "/reins/api/blobs/blob-for-asset-000001",
             json!({"v": 1, "id": "blob-for-asset-000001",
             "connection_id": "c1", "connection_label": "Claude", "name": "app.zip",
             "purpose": {"kind": "tool_input", "tool": "github_release_asset_upload"}, "state": "uploaded",
@@ -156,27 +156,27 @@ async fn files_through_the_server() -> String {
         ),
         (
             "POST",
-            "/rewarden/api/blobs/blob-for-asset-000001/send",
+            "/reins/api/blobs/blob-for-asset-000001/send",
             json!({"status": 401,
             "headers": [], "body": "{\"message\": \"Bad credentials\"}", "truncated": false}),
         ),
         (
             "POST",
-            "/rewarden/api/blobs/fetch",
+            "/reins/api/blobs/fetch",
             json!({"id": "blob-fetched-0000001",
-            "download_url": "https://rw.example/rewarden/blob/DOWN-CAPABILITY", "name": "big.iso", "size": 5_000_000,
+            "download_url": "https://rw.example/reins/blob/DOWN-CAPABILITY", "name": "big.iso", "size": 5_000_000,
             "sha256": "cd", "content_type": "application/octet-stream", "expires_at": 4_000_000_000_i64}),
         ),
     ] {
         Mock::given(method(verb)).and(path(p)).respond_with(ok(body)).mount(&server).await;
     }
     Mock::given(method("POST"))
-        .and(path_regex(r"^/rewarden/api/requests/[^/]+/response$"))
+        .and(path_regex(r"^/reins/api/requests/[^/]+/response$"))
         .respond_with(ResponseTemplate::new(204))
         .mount(&server)
         .await;
     Mock::given(method("DELETE"))
-        .and(path_regex(r"^/rewarden/api/blobs/[^/]+$"))
+        .and(path_regex(r"^/reins/api/blobs/[^/]+$"))
         .respond_with(ResponseTemplate::new(204))
         .mount(&server)
         .await;
@@ -188,7 +188,7 @@ async fn files_through_the_server() -> String {
         Mock::given(method("GET")).and(path(p)).respond_with(ok(body)).mount(&github).await;
     }
     let dir = tempfile::tempdir().unwrap();
-    let core = RewardenCore::with_connectors(
+    let core = ReinsCore::with_connectors(
         dir.path().to_str().unwrap(),
         &FakeKeys,
         Arc::new(FakeGoogle::new()),
@@ -216,7 +216,7 @@ async fn files_through_the_server() -> String {
         request("f3", "release_asset_download", json!({"repo": "me/app", "asset_id": 3})),
     ];
     Mock::given(method("GET"))
-        .and(path("/rewarden/api/pending"))
+        .and(path("/reins/api/pending"))
         .respond_with(ok(json!({"requests": requests, "pairings": []})))
         .up_to_n_times(1)
         .mount(&server)
@@ -269,12 +269,12 @@ async fn git_through_the_desktop_app() -> String {
         .mount(&server)
         .await;
     Mock::given(method("POST"))
-        .and(path_regex(r"^/rewarden/api/requests/[^/]+/response$"))
+        .and(path_regex(r"^/reins/api/requests/[^/]+/response$"))
         .respond_with(ResponseTemplate::new(204))
         .mount(&server)
         .await;
     Mock::given(method("POST"))
-        .and(path("/rewarden/api/pairings/p1/response"))
+        .and(path("/reins/api/pairings/p1/response"))
         .respond_with(ResponseTemplate::new(200).set_body_json(json!({"connection_id": "desk"})))
         .mount(&server)
         .await;
@@ -289,7 +289,7 @@ async fn git_through_the_desktop_app() -> String {
         .mount(&github)
         .await;
     let dir = tempfile::tempdir().unwrap();
-    let core = RewardenCore::with_connectors(
+    let core = ReinsCore::with_connectors(
         dir.path().to_str().unwrap(),
         &FakeKeys,
         Arc::new(FakeGoogle::new()),
@@ -304,7 +304,7 @@ async fn git_through_the_desktop_app() -> String {
     .unwrap();
     core.login(server.uri(), "me@example.com".to_owned(), "pw".to_owned(), None).await.unwrap();
     core.add_token_account("github".to_owned(), GITHUB_TOKEN.to_owned()).await.unwrap();
-    let key = rewarden_proto::desktop::encode_key(&[9u8; 32]);
+    let key = reins_proto::desktop::encode_key(&[9u8; 32]);
     let a = "a".repeat(40);
     let b = "b".repeat(40);
     let summary = json!({"updates": [{"name": "refs/heads/main", "change": "update", "old": a, "new": b,
@@ -319,15 +319,15 @@ async fn git_through_the_desktop_app() -> String {
         v["call"]["args"] = json!({"repo": "me/app", "client_key": key, "nonce": "n"});
         v
     };
-    let pairing = json!({"v": 1, "id": "p1", "client_name": "Rewarden desktop app", "client_host": "127.0.0.1",
+    let pairing = json!({"v": 1, "id": "p1", "client_name": "Reins desktop app", "client_host": "127.0.0.1",
         "choices": [1, 2, 3], "created_at": 1, "client_key": key});
-    let wrong = rewarden_proto::desktop::encode_key(&[8u8; 32]);
+    let wrong = reins_proto::desktop::encode_key(&[8u8; 32]);
     for (requests, pairings) in [
         (vec![fetch("r0", &key)], vec![pairing]),
         (vec![fetch("r1", &key), call("r2", "git_push", &key), call("r3", "git_push", &wrong)], vec![]),
     ] {
         Mock::given(method("GET"))
-            .and(path("/rewarden/api/pending"))
+            .and(path("/reins/api/pending"))
             .respond_with(ResponseTemplate::new(200).set_body_json(json!({"requests": requests, "pairings": pairings})))
             .up_to_n_times(1)
             .with_priority(1)
@@ -366,15 +366,15 @@ async fn git_through_the_desktop_app() -> String {
 /// Secrets released to the desktop app, an SSH sign-in, and a GitLab fetch, each approved, plus a few refused: the
 /// values and tokens only ever leave sealed. Returns everything the app can show and everything that was sent.
 async fn desktop_secrets_ssh_and_git_hosts() -> String {
-    use common::desktop::{DESK, call, choice, desk_with, mount_rewarden};
+    use common::desktop::{DESK, call, choice, desk_with, mount_reins};
     use data_encoding::BASE64;
-    use rewarden_core::crypto::{Kdf, VaultKey, master_key};
+    use reins_core::crypto::{Kdf, VaultKey, master_key};
     use wiremock::matchers::header;
 
     const EMAIL: &str = "me@example.com";
     const MASTER: &str = "vault master pw";
     let server = MockServer::start().await;
-    mount_rewarden(&server).await;
+    mount_reins(&server).await;
     let gitlab = MockServer::start().await;
     for at in ["/user", "/projects/me%2Fapp"] {
         Mock::given(method("GET"))
@@ -493,8 +493,8 @@ fn approve_once() -> ApprovalChoice {
 /// refreshed, a refresh refused. Returns everything the app can show and everything reported or answered to the server
 /// (except the proxied call, which carries the token by design).
 async fn mcp_through_the_phone() -> String {
-    use common::mcp_mock::{McpState, mcp_request, mount_auth, mount_mcp, mount_rewarden};
-    use rewarden_core::McpAddStep;
+    use common::mcp_mock::{McpState, mcp_request, mount_auth, mount_mcp, mount_reins};
+    use reins_core::McpAddStep;
 
     let (rw, mcp, auth, other) =
         (MockServer::start().await, MockServer::start().await, MockServer::start().await, MockServer::start().await);
@@ -506,12 +506,12 @@ async fn mcp_through_the_phone() -> String {
         valid_token: Some(MCP_STATIC_TOKEN.to_owned()),
         ..McpState::default()
     }));
-    mount_rewarden(&rw).await;
+    mount_reins(&rw).await;
     mount_mcp(&mcp, &auth, &state).await;
     mount_mcp(&other, &auth, &static_state).await;
     mount_auth(&auth, &MCP_TOKENS).await;
     let dir = tempfile::tempdir().unwrap();
-    let core = RewardenCore::with_connectors(
+    let core = ReinsCore::with_connectors(
         dir.path().to_str().unwrap(),
         &FakeKeys,
         Arc::new(FakeGoogle::new()),
@@ -578,7 +578,7 @@ async fn mcp_through_the_phone() -> String {
         .await
         .unwrap()
         .iter()
-        .filter(|r| r.url.path() != "/rewarden/api/mcp/call")
+        .filter(|r| r.url.path() != "/reins/api/mcp/call")
         .map(|r| String::from_utf8_lossy(&r.body).into_owned())
         .collect();
     assert!(sent.contains("created ISS-2"), "the answers were sent");

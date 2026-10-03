@@ -1,4 +1,4 @@
-package dev.rewarden.android.platform.update
+package dev.reins.android.platform.update
 
 import android.app.Activity
 import android.app.PendingIntent
@@ -10,15 +10,15 @@ import android.content.pm.PackageManager
 import android.net.Uri
 import android.provider.Settings
 import android.util.Log
-import dev.rewarden.android.RewardenApp
+import dev.reins.android.ReinsApp
 import java.io.File
 
 /** Installs a downloaded, verified APK over the running app. */
 interface AppInstaller {
-    /** Whether the user allows Rewarden to install apps ("install unknown apps"). */
+    /** Whether the user allows Reins to install apps ("install unknown apps"). */
     fun canInstall(): Boolean
 
-    /** Opens Android's "install unknown apps" setting for Rewarden. */
+    /** Opens Android's "install unknown apps" setting for Reins. */
     fun openPermissionSettings(context: Context)
 
     /** Hands [file] to the system installer; the outcome arrives at [InstallResultReceiver]. */
@@ -92,12 +92,12 @@ class InstallResultReceiver : BroadcastReceiver() {
                 context.startActivity(confirm.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
             }
         } else if (status != PackageInstaller.STATUS_SUCCESS) {
-            Log.w("RewardenUpdate", "install failed: $status $message")
+            Log.w("ReinsUpdate", "install failed: $status $message")
         }
-        (context.applicationContext as RewardenApp).container.updates?.onInstallResult(status, message)
+        (context.applicationContext as ReinsApp).container.updates?.onInstallResult(status, message)
     }
 
     companion object {
-        const val ACTION = "dev.rewarden.android.INSTALL_STATUS"
+        const val ACTION = "dev.reins.android.INSTALL_STATUS"
     }
 }

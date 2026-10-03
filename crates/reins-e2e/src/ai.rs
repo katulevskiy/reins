@@ -44,7 +44,7 @@ impl AiClient {
     pub async fn register_client(&mut self) {
         let body = json!({"client_name": "Claude", "redirect_uris": [REDIRECT], "token_endpoint_auth_method": "none",
             "grant_types": ["authorization_code", "refresh_token"], "response_types": ["code"]});
-        let r = self.http.post(self.url("/rewarden/oauth/register")).json(&body).send().await.expect("register client");
+        let r = self.http.post(self.url("/reins/oauth/register")).json(&body).send().await.expect("register client");
         assert_eq!(r.status(), StatusCode::CREATED);
         let doc: Value = r.json().await.expect("json");
         self.client_id = doc["client_id"].as_str().expect("client_id").to_owned();
@@ -52,7 +52,7 @@ impl AiClient {
 
     /// Opens the authorize page and submits the email; returns the "wait" page URL.
     pub async fn start_authorization(&self, email: &str) -> String {
-        let mut url = url::Url::parse(&self.url("/rewarden/oauth/authorize")).expect("url");
+        let mut url = url::Url::parse(&self.url("/reins/oauth/authorize")).expect("url");
         url.query_pairs_mut()
             .append_pair("client_id", &self.client_id)
             .append_pair("redirect_uri", REDIRECT)
@@ -67,7 +67,7 @@ impl AiClient {
         let session = between(&html, "name=\"session\" value=\"", "\"").to_owned();
         let r = self
             .http
-            .post(self.url("/rewarden/oauth/authorize"))
+            .post(self.url("/reins/oauth/authorize"))
             .form(&[("session", session.as_str()), ("email", email)])
             .send()
             .await
@@ -115,7 +115,7 @@ impl AiClient {
         let mcp = self.url("/mcp");
         let r = self
             .http
-            .post(self.url("/rewarden/oauth/token"))
+            .post(self.url("/reins/oauth/token"))
             .form(&[
                 ("grant_type", "authorization_code"),
                 ("code", code.as_str()),

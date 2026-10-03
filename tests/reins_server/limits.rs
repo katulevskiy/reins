@@ -57,8 +57,7 @@ fn assert_retry_hint(text: &str) {
 
 #[tokio::test]
 async fn mcp_requests_are_limited_per_connection_and_relayed_calls_per_account() {
-    let options =
-        with_env(&[("REWARDEN_CONNECTION_REQUESTS_PER_MINUTE", "4"), ("REWARDEN_ACCOUNT_CALLS_PER_MINUTE", "2")]);
+    let options = with_env(&[("REINS_CONNECTION_REQUESTS_PER_MINUTE", "4"), ("REINS_ACCOUNT_CALLS_PER_MINUTE", "2")]);
     let (server, phone, a) = connected(options, "quota@example.com").await;
     let b = server.connect_ai(&phone, "quota@example.com", Some("Other")).await;
 
@@ -99,7 +98,7 @@ async fn mcp_requests_are_limited_per_connection_and_relayed_calls_per_account()
 
 #[tokio::test]
 async fn calls_waiting_for_the_phone_are_bounded_per_connection() {
-    let options = with_env(&[("REWARDEN_CONNECTION_MAX_WAITING", "1")]);
+    let options = with_env(&[("REINS_CONNECTION_MAX_WAITING", "1")]);
     let (server, _phone, a) = connected(options, "wait@example.com").await;
     let (one, two) = (search(1), search(2));
     let waiting = mcp(&server, &a.access, &one);
@@ -118,7 +117,7 @@ async fn calls_waiting_for_the_phone_are_bounded_per_connection() {
 
 #[tokio::test]
 async fn an_account_queues_a_bounded_number_of_unanswered_calls() {
-    let options = with_env(&[("REWARDEN_ACCOUNT_MAX_QUEUED", "1")]);
+    let options = with_env(&[("REINS_ACCOUNT_MAX_QUEUED", "1")]);
     let (server, phone, a) = connected(options, "queue@example.com").await;
     assert!(tool_error(&mcp(&server, &a.access, &search(1)).await.2).contains("offline"));
     let text = tool_error(&mcp(&server, &a.access, &search(2)).await.2);
@@ -133,7 +132,7 @@ async fn an_account_queues_a_bounded_number_of_unanswered_calls() {
 
 #[tokio::test]
 async fn a_device_holds_a_bounded_number_of_long_polls() {
-    let server = Server::start_with(with_env(&[("REWARDEN_DEVICE_MAX_POLLS", "1")])).await;
+    let server = Server::start_with(with_env(&[("REINS_DEVICE_MAX_POLLS", "1")])).await;
     let phone = server.phone("polls@example.com").await;
     phone.register_device().await;
     let open = phone.get("/pending?wait=3");
@@ -152,7 +151,7 @@ async fn submit_email(server: &Server, client_id: &str, email: &str) -> (StatusC
     let page = client().get(server.authorize_url(client_id)).send().await.unwrap().text().await.unwrap();
     let session = between(&page, "name=\"session\" value=\"", "\"").to_owned();
     let r = client()
-        .post(server.url("/rewarden/oauth/authorize"))
+        .post(server.url("/reins/oauth/authorize"))
         .form(&[("session", session.as_str()), ("email", email)])
         .send()
         .await
@@ -162,8 +161,7 @@ async fn submit_email(server: &Server, client_id: &str, email: &str) -> (StatusC
 
 #[tokio::test]
 async fn connection_requests_are_limited_per_email_whether_it_has_an_account_or_not() {
-    let options =
-        with_env(&[("REWARDEN_PAIRING_RATELIMIT_SECONDS", "60"), ("REWARDEN_PAIRING_RATELIMIT_MAX_BURST", "2")]);
+    let options = with_env(&[("REINS_PAIRING_RATELIMIT_SECONDS", "60"), ("REINS_PAIRING_RATELIMIT_MAX_BURST", "2")]);
     let server = Server::start_with(options).await;
     let phone = server.phone("pair@example.com").await;
     phone.register_device().await;
@@ -185,13 +183,12 @@ async fn connection_requests_are_limited_per_email_whether_it_has_an_account_or_
 
 #[tokio::test]
 async fn dynamic_client_registration_is_limited_per_address() {
-    let options =
-        with_env(&[("REWARDEN_REGISTER_RATELIMIT_SECONDS", "600"), ("REWARDEN_REGISTER_RATELIMIT_MAX_BURST", "2")]);
+    let options = with_env(&[("REINS_REGISTER_RATELIMIT_SECONDS", "600"), ("REINS_REGISTER_RATELIMIT_MAX_BURST", "2")]);
     let server = Server::start_with(options).await;
     server.register_client().await;
     server.register_client().await;
     let body = json!({"client_name": "Spam", "redirect_uris": ["https://claude.ai/api/mcp/auth_callback"]});
-    let r = client().post(server.url("/rewarden/oauth/register")).json(&body).send().await.unwrap();
+    let r = client().post(server.url("/reins/oauth/register")).json(&body).send().await.unwrap();
     assert_eq!(r.status(), StatusCode::TOO_MANY_REQUESTS);
     let answer: Value = r.json().await.unwrap();
     assert_eq!(answer["error"], "slow_down");
@@ -202,7 +199,7 @@ async fn dynamic_client_registration_is_limited_per_address() {
 
 #[tokio::test]
 async fn outbound_requests_are_limited_per_account() {
-    let mut options = with_env(&[("REWARDEN_OUTBOUND_REQUESTS_PER_MINUTE", "1")]);
+    let mut options = with_env(&[("REINS_OUTBOUND_REQUESTS_PER_MINUTE", "1")]);
     options.allow_loopback = true;
     let (_server, phone, tokens) = connected(options, "out@example.com").await;
     let host = MockServer::start(|_| Reply::new(200, "text/plain", "data")).await;
@@ -224,9 +221,9 @@ async fn put(url: &str, size: usize) -> (StatusCode, Value) {
 #[tokio::test]
 async fn file_quotas_cap_sizes_count_files_and_bound_the_daily_transfer() {
     let options = with_env(&[
-        ("REWARDEN_BLOB_MAX_BYTES", "100"),
-        ("REWARDEN_BLOB_ACCOUNT_FILES", "2"),
-        ("REWARDEN_BLOB_ACCOUNT_DAILY_BYTES", "250"),
+        ("REINS_BLOB_MAX_BYTES", "100"),
+        ("REINS_BLOB_ACCOUNT_FILES", "2"),
+        ("REINS_BLOB_ACCOUNT_DAILY_BYTES", "250"),
     ]);
     let (server, phone, tokens) = connected(options, "files@example.com").await;
     let purpose = json!({"kind": "upload", "reason": "share"});
@@ -282,19 +279,19 @@ async fn file_quotas_cap_sizes_count_files_and_bound_the_daily_transfer() {
 #[tokio::test]
 async fn bad_limit_settings_stop_the_server() {
     use std::process::Command;
-    let dir = std::env::temp_dir().join(format!("rewarden-bad-limits-{}", uuid::Uuid::new_v4()));
+    let dir = std::env::temp_dir().join(format!("reins-bad-limits-{}", uuid::Uuid::new_v4()));
     std::fs::create_dir_all(&dir).unwrap();
     let output = Command::new(env!("CARGO_BIN_EXE_vaultwarden"))
         .current_dir(&dir)
         .env_clear()
         .env("DATA_FOLDER", &dir)
         .env("DOMAIN", "http://127.0.0.1:9")
-        .env("REWARDEN_ENABLED", "true")
-        .env("REWARDEN_BLOB_MAX_BYTES", "2000000000")
+        .env("REINS_ENABLED", "true")
+        .env("REINS_BLOB_MAX_BYTES", "2000000000")
         .output()
         .unwrap();
     std::fs::remove_dir_all(&dir).ok();
     assert!(!output.status.success());
     let text = format!("{}{}", String::from_utf8_lossy(&output.stdout), String::from_utf8_lossy(&output.stderr));
-    assert!(text.contains("REWARDEN_BLOB_MAX_BYTES"), "{text}");
+    assert!(text.contains("REINS_BLOB_MAX_BYTES"), "{text}");
 }

@@ -8,7 +8,7 @@ use crate::harness::{PASSWORD_HASH, Server, client};
 #[tokio::test]
 async fn unauthenticated_calls_get_json_401() {
     let server = Server::start().await;
-    let r = client().get(server.url("/rewarden/api/pending")).send().await.unwrap();
+    let r = client().get(server.url("/reins/api/pending")).send().await.unwrap();
     assert_eq!(r.status(), StatusCode::UNAUTHORIZED);
     let body: serde_json::Value = r.json().await.unwrap();
     assert_eq!(body["error"], "unauthorized");

@@ -6,14 +6,14 @@ mod common;
 use std::sync::{Arc, Mutex};
 
 use common::{FakeGoogle, FakeKeys, RecordingNotifier};
-use rewarden_core::ForeignError;
-use rewarden_core::connector::device::{DeviceCalendar, DeviceContacts, Sms};
-use rewarden_core::connector::{Connector, LoginProgress};
-use rewarden_core::{
+use reins_core::ForeignError;
+use reins_core::connector::device::{DeviceCalendar, DeviceContacts, Sms};
+use reins_core::connector::{Connector, LoginProgress};
+use reins_core::{
     CoreConfig, CoreError, DeviceBridge, DeviceContact, DeviceEvent, GmailStatus, GoogleTokenProvider, KeyWrapper,
-    NewDeviceEvent, Notifier, RewardenCore, SmsMessage, SmsThread,
+    NewDeviceEvent, Notifier, ReinsCore, SmsMessage, SmsThread,
 };
-use rewarden_proto::connector::{ConnectorCall, spec_for_tool};
+use reins_proto::connector::{ConnectorCall, spec_for_tool};
 use serde_json::{Value, json};
 
 fn call(tool: &str, args: &Value) -> ConnectorCall {
@@ -182,7 +182,7 @@ fn bridge(phone: &Arc<Phone>) -> Arc<dyn DeviceBridge> {
     Arc::<Phone>::clone(phone)
 }
 
-fn core(device: Option<Arc<Phone>>) -> (Arc<RewardenCore>, Arc<SignIn>, tempfile::TempDir) {
+fn core(device: Option<Arc<Phone>>) -> (Arc<ReinsCore>, Arc<SignIn>, tempfile::TempDir) {
     let dir = tempfile::tempdir().unwrap();
     let sign_in = Arc::new(SignIn::default());
     let google: Arc<dyn GoogleTokenProvider> = Arc::new(FakeGoogle::new());
@@ -194,7 +194,7 @@ fn core(device: Option<Arc<Phone>>) -> (Arc<RewardenCore>, Arc<SignIn>, tempfile
         extra.push(Arc::new(DeviceContacts::new(Arc::clone(&bridge))));
         extra.push(Arc::new(Sms::new(bridge)));
     }
-    let core = RewardenCore::with_connectors(
+    let core = ReinsCore::with_connectors(
         dir.path().to_str().unwrap(),
         &FakeKeys,
         google,
@@ -234,11 +234,11 @@ async fn the_catalogue_lists_every_integration_and_what_this_build_lacks() {
 }
 
 /// The core as the app builds it, over this phone.
-fn app_core(phone: Phone) -> (Arc<RewardenCore>, tempfile::TempDir) {
+fn app_core(phone: Phone) -> (Arc<ReinsCore>, tempfile::TempDir) {
     let dir = tempfile::tempdir().unwrap();
     let keys: Arc<dyn KeyWrapper> = Arc::new(FakeKeys);
     let device: Arc<dyn DeviceBridge> = Arc::new(phone);
-    let core = RewardenCore::new(
+    let core = ReinsCore::new(
         dir.path().to_str().unwrap().to_owned(),
         keys,
         Arc::new(FakeGoogle::new()),
@@ -252,7 +252,7 @@ fn app_core(phone: Phone) -> (Arc<RewardenCore>, tempfile::TempDir) {
 }
 
 /// Whether the phone's calendar, contacts and text messages can be used.
-async fn on_phone(core: &RewardenCore) -> (bool, bool, bool) {
+async fn on_phone(core: &ReinsCore) -> (bool, bool, bool) {
     let services = core.services().await.unwrap();
     let available = |id: &str| services.iter().find(|s| s.service == id).unwrap().available;
     (available("device_calendar"), available("device_contacts"), available("sms"))

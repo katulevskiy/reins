@@ -9,9 +9,6 @@
 
 **Give your AI agents real power without handing them control of your life.**
 
-> Reins was called Rewarden while it was being built. The commands, crates and the Android package still carry the
-> `rewarden` name for now; they will be renamed in a later release.
-
 ## Why Reins
 
 AI agents are finally useful. They write code, push it, answer email, book meetings and run commands for you. To do
@@ -37,7 +34,7 @@ Reins puts you back in charge. Your agents keep their power, but you hold the re
 | Part | What it does |
 | --- | --- |
 | **Phone app** (Android, iPhone and iPad) | Your remote control. Shows each request, approves or denies it, keeps your passwords and tokens, and does the actual work: sends the email, calls GitHub, reads the calendar. |
-| **Desktop app** (`rewarden`) | Sits between the AI agents on your computer and the outside world: it stops risky commands until you approve them, and lets `git push` reach GitHub without the agent ever seeing your token. Works with Claude Code, Codex, Cursor and Gemini CLI. |
+| **Desktop app** (`reins`) | Sits between the AI agents on your computer and the outside world: it stops risky commands until you approve them, and lets `git push` reach GitHub without the agent ever seeing your token. Works with Claude Code, Codex, Cursor and Gemini CLI. |
 | **Server** | A small relay that carries requests from agents (including Claude.ai and ChatGPT in the browser) to your phone and the answers back. It never stores your credentials. Use the hosted one or [run your own](docs/self-hosting.md). |
 | **Autopilot** (optional) | An AI model that runs entirely on your phone and learns your decisions. It approves what you'd clearly approve, blocks what you'd clearly block, and asks you about everything else. Risky things (passwords, deletions, new connections) always wait for you. |
 
@@ -62,7 +59,7 @@ agent never sees.
 flowchart LR
     subgraph computer["Your computer"]
         agent["AI agent<br/>(Claude Code, Codex, Cursor, Gemini CLI)"]
-        daemon["rewarden<br/>desktop app"]
+        daemon["reins<br/>desktop app"]
     end
     cloud["Cloud AI<br/>(Claude.ai, ChatGPT)"]
     server["Reins server<br/>relay, MCP endpoint, OAuth"]
@@ -97,12 +94,12 @@ You need an Android phone or an iPhone and an account on a Reins server (the hos
    the first line):
    ```sh
    curl -fsSL https://reins2fa.com/install.sh | sh
-   rewarden login     # scan the QR code with the phone; compare the key shown here with the one on the phone
-   rewarden resume    # start the background service; send GitHub git through it
+   reins login     # scan the QR code with the phone; compare the key shown here with the one on the phone
+   reins resume    # start the background service; send GitHub git through it
    ```
 3. **Connect your agent:**
    ```sh
-   rewarden harness add claude-code    # or codex, gemini, cursor
+   reins harness add claude-code    # or codex, gemini, cursor
    ```
    Restart the harness. It now has Reins's tools, and risky commands wait for your phone.
 
@@ -128,15 +125,15 @@ or ChatGPT. The full walkthrough is in [docs/quick-start.md](docs/quick-start.md
 - Any remote MCP server you add on the phone. The phone is the MCP client, so its tokens stay on the phone.
 - Large files go through one-time upload and download links that the phone controls.
 
-**Desktop app** (`rewarden`)
+**Desktop app** (`reins`)
 - Git proxy for GitHub (and GitLab, Codeberg, Bitbucket when enabled). The agent never holds a git token. Each push
   is analysed from the bytes git sends, and the approval is bound to that exact push.
 - Harness hooks that send risky commands and secret files to your phone (force pushes, `rm -r`, `terraform apply`,
   `.env`, private keys, ...).
-- `rewarden ask`: a yes/no question to your phone from any script.
-- `rewarden run`: start a program with API keys released from your vault for that run.
+- `reins ask`: a yes/no question to your phone from any script.
+- `reins run`: start a program with API keys released from your vault for that run.
 - Local API proxy that adds a vault key to requests. SSH agent whose private keys stay on the phone.
-- `rewarden mcp`: a stdio MCP bridge for local harnesses. `pause`/`resume`, signed self-update.
+- `reins mcp`: a stdio MCP bridge for local harnesses. `pause`/`resume`, signed self-update.
 - Without a phone, a local policy with desktop prompts decides about git instead.
 
 **Autopilot** (optional, on the phone)
@@ -149,10 +146,10 @@ or ChatGPT. The full walkthrough is in [docs/quick-start.md](docs/quick-start.md
 
 | Harness | MCP server | Hook | Set up with |
 |---|---|---|---|
-| Claude Code | `~/.claude.json` | `PreToolUse` on Bash, Edit, Write, MultiEdit, NotebookEdit, Read | `rewarden harness add claude-code` |
-| Codex | `~/.codex/config.toml` | `PreToolUse` on Bash, apply_patch | `rewarden harness add codex` |
-| Gemini CLI | `~/.gemini/settings.json` | `BeforeTool` on shell, file write/replace/read | `rewarden harness add gemini` |
-| Cursor | `~/.cursor/mcp.json` | `beforeShellExecution`, `beforeReadFile`, `preToolUse` (Write, Delete) | `rewarden harness add cursor` |
+| Claude Code | `~/.claude.json` | `PreToolUse` on Bash, Edit, Write, MultiEdit, NotebookEdit, Read | `reins harness add claude-code` |
+| Codex | `~/.codex/config.toml` | `PreToolUse` on Bash, apply_patch | `reins harness add codex` |
+| Gemini CLI | `~/.gemini/settings.json` | `BeforeTool` on shell, file write/replace/read | `reins harness add gemini` |
+| Cursor | `~/.cursor/mcp.json` | `beforeShellExecution`, `beforeReadFile`, `preToolUse` (Write, Delete) | `reins harness add cursor` |
 | Claude.ai, ChatGPT | custom connector `https://<server>/mcp` | none | in the app's connector settings |
 
 Details, the guard rules and how to undo everything: [docs/harnesses.md](docs/harnesses.md).
@@ -180,7 +177,7 @@ Full threat model: [docs/security-model.md](docs/security-model.md). Report vuln
 ## Self-hosting
 
 The server is a single Rust binary (a fork of Vaultwarden) with SQLite, MySQL or PostgreSQL. Set
-`REWARDEN_ENABLED=true` and a public `DOMAIN`, and add a Firebase service account for push. One instance per
+`REINS_ENABLED=true` and a public `DOMAIN`, and add a Firebase service account for push. One instance per
 deployment, because relay state is in memory. See [docs/self-hosting.md](docs/self-hosting.md).
 
 ## Autopilot: what it can and cannot do
@@ -199,8 +196,8 @@ and only after it has agreed with you often enough. Model card: [tools/laya/MODE
   [`ios/`](ios/README.md), no App Store release yet). iOS has no text messages integration: apps cannot read SMS there.
 - Desktop app: Linux (x86_64, aarch64), macOS (Apple silicon, Intel) and Windows (x86_64, and Arm when it builds)
   builds are published with every release. macOS and Windows are alpha: built and tested on GitHub's runners, not yet
-  field-tested end to end ([macOS](crates/rewarden-desktop/README.md#macos-alpha),
-  [Windows](crates/rewarden-desktop/README.md#windows-alpha)).
+  field-tested end to end ([macOS](crates/reins-desktop/README.md#macos-alpha),
+  [Windows](crates/reins-desktop/README.md#windows-alpha)).
 - Gmail and Google Calendar/Contacts use Google scopes that need Google's app verification before the general public
   can use them.
 - Push notifications need an app build that matches the server's Firebase project. With a self-hosted server and the
@@ -212,12 +209,12 @@ and only after it has agreed with you often enough. Model card: [tools/laya/MODE
 git clone https://github.com/katulevskiy/reins
 cd reins
 cargo build --release --features sqlite --bin vaultwarden   # the server
-cargo build --release -p rewarden-desktop                   # the desktop app (target/release/rewarden)
+cargo build --release -p reins-desktop                   # the desktop app (target/release/reins)
 ```
 
 The desktop app also builds on Windows, with the Rust MSVC toolchain (Visual Studio's C++ build tools), as
-`target\release\rewarden.exe`; the release links the C runtime in with `RUSTFLAGS="-C target-feature=+crt-static"`.
-Linux and macOS can check the Windows code with `cargo clippy -p rewarden-desktop --target x86_64-pc-windows-gnu`
+`target\release\reins.exe`; the release links the C runtime in with `RUSTFLAGS="-C target-feature=+crt-static"`.
+Linux and macOS can check the Windows code with `cargo clippy -p reins-desktop --target x86_64-pc-windows-gnu`
 (rustup's target and MinGW-w64).
 
 The Android app builds with Gradle from `android/`; the iOS app with Xcode from `ios/` ([ios/README.md](ios/README.md)). [CONTRIBUTING.md](CONTRIBUTING.md) has the full build and test

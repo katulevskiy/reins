@@ -1,4 +1,4 @@
-//! Phone API bodies (`{domain}/rewarden/api/*`, contracts §A), shared by the
+//! Phone API bodies (`{domain}/reins/api/*`, contracts §A), shared by the
 //! server and the phone core.
 
 use serde::{Deserialize, Serialize};

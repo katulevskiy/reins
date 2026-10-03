@@ -1,4 +1,4 @@
-package dev.rewarden.android.ui.settings
+package dev.reins.android.ui.settings
 
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -11,23 +11,23 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.unit.dp
-import dev.rewarden.android.BuildConfig
-import dev.rewarden.android.design.Banner
-import dev.rewarden.android.design.BannerKind
-import dev.rewarden.android.design.ButtonStyle
-import dev.rewarden.android.design.CapsuleButton
-import dev.rewarden.android.design.Glyph
-import dev.rewarden.android.design.GlyphIcon
-import dev.rewarden.android.design.Group
-import dev.rewarden.android.design.Hairline
-import dev.rewarden.android.design.ListRow
-import dev.rewarden.android.design.LocalColors
-import dev.rewarden.android.design.RText
-import dev.rewarden.android.design.RType
-import dev.rewarden.android.design.SwitchRow
-import dev.rewarden.android.platform.update.UpdateState
-import dev.rewarden.android.platform.update.UpdateStatus
-import dev.rewarden.android.ui.update.UpdateProgressBar
+import dev.reins.android.BuildConfig
+import dev.reins.android.design.Banner
+import dev.reins.android.design.BannerKind
+import dev.reins.android.design.ButtonStyle
+import dev.reins.android.design.CapsuleButton
+import dev.reins.android.design.Glyph
+import dev.reins.android.design.GlyphIcon
+import dev.reins.android.design.Group
+import dev.reins.android.design.Hairline
+import dev.reins.android.design.ListRow
+import dev.reins.android.design.LocalColors
+import dev.reins.android.design.RText
+import dev.reins.android.design.RType
+import dev.reins.android.design.SwitchRow
+import dev.reins.android.platform.update.UpdateState
+import dev.reins.android.platform.update.UpdateStatus
+import dev.reins.android.ui.update.UpdateProgressBar
 
 /** Settings > Updates: the running version, "Check for updates" and its outcome, and automatic downloads. */
 @Composable
@@ -54,10 +54,10 @@ fun UpdatesSection(
         Column(Modifier.padding(16.dp)) {
             val status = state.status
             when (status) {
-                UpdateStatus.UpToDate -> StatusLine("Rewarden is up to date.", Glyph.Check, c.success)
-                is UpdateStatus.Available -> StatusLine("Rewarden ${status.release.versionName} is available.", Glyph.Download, c.accent)
+                UpdateStatus.UpToDate -> StatusLine("Reins is up to date.", Glyph.Check, c.success)
+                is UpdateStatus.Available -> StatusLine("Reins ${status.release.versionName} is available.", Glyph.Download, c.accent)
                 is UpdateStatus.Downloading -> {
-                    StatusLine("Downloading Rewarden ${status.release.versionName}… ${status.percent}%", Glyph.Download, c.accent)
+                    StatusLine("Downloading Reins ${status.release.versionName}… ${status.percent}%", Glyph.Download, c.accent)
                     UpdateProgressBar(status.percent, Modifier.padding(bottom = 14.dp).testTag("updateProgress"))
                 }
                 is UpdateStatus.Installing -> StatusLine("Confirm in Android's installer to finish.", Glyph.Info, c.secondary)
@@ -110,7 +110,7 @@ fun UpdatesSection(
 /** Settings > Version, when Google Play updates the app (the `play` build has no updater). */
 @Composable
 fun VersionSection() {
-    Group(header = "Version", footer = "Google Play keeps Rewarden up to date.") {
+    Group(header = "Version", footer = "Google Play keeps Reins up to date.") {
         VersionRow()
     }
 }

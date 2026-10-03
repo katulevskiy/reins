@@ -1,6 +1,6 @@
-//! `rewarden mcp [--via NAME]`: a stdio MCP server for harnesses that start local servers, bridging each JSON-RPC
-//! message to the Rewarden server's MCP endpoint (`<server>/mcp`, Streamable HTTP) with this app's session. The access
-//! token is renewed when it expires or is refused (401) and never leaves this process; `X-Rewarden-Via` names the
+//! `reins mcp [--via NAME]`: a stdio MCP server for harnesses that start local servers, bridging each JSON-RPC
+//! message to the Reins server's MCP endpoint (`<server>/mcp`, Streamable HTTP) with this app's session. The access
+//! token is renewed when it expires or is refused (401) and never leaves this process; `X-Reins-Via` names the
 //! harness so the phone shows who asks ("Laptop · Claude Code").
 //!
 //! Messages are newline-delimited JSON on stdin and stdout. Requests run concurrently (a tool call waiting for the
@@ -57,7 +57,7 @@ impl From<LinkError> for Failure {
     fn from(e: LinkError) -> Self {
         match e {
             LinkError::LoggedOut(m) => Self::LoggedOut(m),
-            LinkError::NotFound => Self::Other("the Rewarden server does not know this request".to_owned()),
+            LinkError::NotFound => Self::Other("the Reins server does not know this request".to_owned()),
             LinkError::Failed(m) => Self::Other(m),
         }
     }
@@ -89,7 +89,7 @@ impl Bridge {
             .header(reqwest::header::ACCEPT, "application/json, text/event-stream")
             .json(body);
         if let Some(v) = &self.via {
-            req = req.header("X-Rewarden-Via", v);
+            req = req.header("X-Reins-Via", v);
         }
         if let Some(s) = lock(&self.session).clone() {
             req = req.header("Mcp-Session-Id", s);
@@ -109,12 +109,12 @@ impl Bridge {
         let access = self.tokens.access().await?;
         let mut resp = self.post(&access, body).await?;
         if resp.status() == reqwest::StatusCode::UNAUTHORIZED {
-            log::info!("the Rewarden server refused the access token; renewing it");
+            log::info!("the Reins server refused the access token; renewing it");
             let renewed = self.tokens.after_rejection(&access.token).await?;
             resp = self.post(&renewed, body).await?;
             if resp.status() == reqwest::StatusCode::UNAUTHORIZED {
                 return Err(Failure::LoggedOut(format!(
-                    "{} does not accept this app's session; run `rewarden login {}` again",
+                    "{} does not accept this app's session; run `reins login {}` again",
                     renewed.server, renewed.server
                 )));
             }
@@ -126,7 +126,7 @@ impl Bridge {
         if !status.is_success() {
             let body = crate::server::read_limited(resp, 64 * 1024).await.unwrap_or_default();
             return Err(Failure::Other(format!(
-                "the Rewarden server answered {}",
+                "the Reins server answered {}",
                 crate::server::error_text(status, &body)
             )));
         }
@@ -200,7 +200,7 @@ impl Bridge {
                 return Ok(responses);
             }
             let v: Value = serde_json::from_slice(&body)
-                .map_err(|_| Failure::Other("the Rewarden server's answer is not JSON".to_owned()))?;
+                .map_err(|_| Failure::Other("the Reins server's answer is not JSON".to_owned()))?;
             emit(v);
         }
         Ok(responses)
@@ -210,7 +210,7 @@ impl Bridge {
     async fn reinitialize(&self) -> Result<(), Failure> {
         *lock(&self.session) = None;
         let Some(init) = lock(&self.initialize).clone() else {
-            return Err(Failure::Other("the Rewarden server ended the MCP session".to_owned()));
+            return Err(Failure::Other("the Reins server ended the MCP session".to_owned()));
         };
         let resp = self.send(&init).await?;
         drop(resp);
@@ -229,7 +229,7 @@ impl Bridge {
         }
         let mut result = self.send(&msg).await;
         if matches!(result, Err(Failure::SessionGone)) {
-            log::info!("the Rewarden server forgot the MCP session; starting a new one");
+            log::info!("the Reins server forgot the MCP session; starting a new one");
             result = match self.reinitialize().await {
                 Ok(()) => self.send(&msg).await,
                 Err(e) => Err(e),
@@ -250,14 +250,14 @@ impl Bridge {
             }
             Err(e) => {
                 let message = match e {
-                    Failure::LoggedOut(m) => format!("Rewarden: {m} (in a terminal)."),
+                    Failure::LoggedOut(m) => format!("Reins: {m} (in a terminal)."),
                     Failure::SessionGone => {
-                        "Rewarden: the server ended the MCP session; restart this MCP server.".to_owned()
+                        "Reins: the server ended the MCP session; restart this MCP server.".to_owned()
                     }
-                    Failure::Other(m) => format!("Rewarden: {m}"),
+                    Failure::Other(m) => format!("Reins: {m}"),
                 };
                 if ids.is_empty() {
-                    eprintln!("rewarden mcp: {message}");
+                    eprintln!("reins mcp: {message}");
                 }
                 for id in ids {
                     let _closed = out.send(error_for(&id, &message));
@@ -282,7 +282,7 @@ impl Bridge {
     }
 }
 
-/// Bridges `input` (the harness's messages) to the Rewarden server and its answers to `output`, until `input` ends.
+/// Bridges `input` (the harness's messages) to the Reins server and its answers to `output`, until `input` ends.
 pub async fn run<R, W>(paths: &Paths, via: Option<&str>, input: R, output: W) -> Result<(), String>
 where
     R: AsyncBufRead + Unpin,
@@ -290,7 +290,7 @@ where
 {
     let http = crate::http::client(None)?;
     if crate::server::oauth::logged_in_server(paths).is_none() {
-        eprintln!("rewarden mcp: not logged in to a Rewarden server; run `rewarden login` in a terminal.");
+        eprintln!("reins mcp: not logged in to a Reins server; run `reins login` in a terminal.");
     }
     let bridge = Arc::new(Bridge {
         tokens: SessionTokens::new(paths, http.clone()),
@@ -318,7 +318,7 @@ where
             Ok(Some(l)) => l,
             Ok(None) => break,
             Err(e) => {
-                eprintln!("rewarden mcp: reading stdin: {e}");
+                eprintln!("reins mcp: reading stdin: {e}");
                 break;
             }
         };

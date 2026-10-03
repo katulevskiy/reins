@@ -6,11 +6,11 @@
 
 use std::collections::BTreeSet;
 
-use rewarden_policy::{
+use reins_policy::{
     Grant, MessageFacts, ReadDecision, SendDecision, evaluate_read, evaluate_send, needs_body, record_uses,
 };
-use rewarden_proto::gmail::OutgoingEmail;
-use rewarden_proto::ids::{ConnectionId, GrantId};
+use reins_proto::gmail::OutgoingEmail;
+use reins_proto::ids::{ConnectionId, GrantId};
 use rusqlite::{Connection, OptionalExtension, TransactionBehavior, params};
 
 use super::Store;
@@ -261,7 +261,7 @@ impl Store {
         let mut covered = std::collections::BTreeMap::new();
         for resource in resources {
             if let Some(id) =
-                rewarden_policy::service_allows(&grants, connection, account, service, access, class, resource, now)
+                reins_policy::service_allows(&grants, connection, account, service, access, class, resource, now)
             {
                 covered.insert(resource.clone(), id);
             }
@@ -284,10 +284,10 @@ impl Store {
         connection: &ConnectionId,
         service: &str,
         now: i64,
-    ) -> Result<rewarden_policy::AccountCoverage, CoreError> {
+    ) -> Result<reins_policy::AccountCoverage, CoreError> {
         let conn = self.lock();
         let grants = all_connection_grants(&conn, connection)?;
-        Ok(rewarden_policy::account_coverage(&grants, connection, service, now))
+        Ok(reins_policy::account_coverage(&grants, connection, service, now))
     }
 
     /// Evaluates a send; when allowed, one use of the grant is reserved.
@@ -349,7 +349,7 @@ pub(crate) mod tests {
     use std::sync::Arc;
     use std::sync::atomic::{AtomicUsize, Ordering};
 
-    use rewarden_policy::{AddrRule, ReadScope, Scope, SendScope};
+    use reins_policy::{AddrRule, ReadScope, Scope, SendScope};
 
     use super::*;
     use crate::store::tests::open;

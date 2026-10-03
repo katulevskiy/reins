@@ -1,4 +1,4 @@
-package dev.rewarden.android.design.blobatar
+package dev.reins.android.design.blobatar
 
 import java.text.Normalizer
 import java.util.Locale

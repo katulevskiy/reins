@@ -3,8 +3,8 @@
 use std::sync::Arc;
 use std::time::Duration;
 
+use reins_proto::connector::{ConnectorCall, GCALENDAR, GCONTACTS};
 use reqwest::Method;
-use rewarden_proto::connector::{ConnectorCall, GCALENDAR, GCONTACTS};
 use serde::Deserialize;
 use serde_json::{Map, Value, json};
 
@@ -198,7 +198,7 @@ impl GoogleCalendar {
         if !attendees.is_empty() {
             let checked: Result<Vec<Value>, _> = attendees
                 .iter()
-                .map(|a| rewarden_proto::normalize_address(a).map(|email| json!({"email": email})))
+                .map(|a| reins_proto::normalize_address(a).map(|email| json!({"email": email})))
                 .collect();
             body["attendees"] = json!(checked.map_err(|e| CoreError::service(e.to_string()))?);
         }

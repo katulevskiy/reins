@@ -1,7 +1,7 @@
-package dev.rewarden.android.platform.update
+package dev.reins.android.platform.update
 
 import androidx.test.ext.junit.runners.AndroidJUnit4
-import dev.rewarden.android.platform.update.FakeUpdateServer.Companion.manifestJson
+import dev.reins.android.platform.update.FakeUpdateServer.Companion.manifestJson
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertThrows
@@ -24,13 +24,13 @@ class ReleaseTest {
     fun `the manifest the release script writes is read in full`() {
         val r = Release.parse(
             """{"versionCode": 29834567, "versionName": "0.1.0", "build": "0.1.0-202610010115-a9643bcb",
-             "file": "rewarden-0.1.0-202610010115-a9643bcb.apk", "sha256": "$sha", "size": 34236184,
+             "file": "reins-0.1.0-202610010115-a9643bcb.apk", "sha256": "$sha", "size": 34236184,
              "published_at": 1790745300}""",
         )
         assertEquals(29834567L, r.versionCode)
         assertEquals("0.1.0", r.versionName)
         assertEquals("0.1.0-202610010115-a9643bcb", r.build)
-        assertEquals("rewarden-0.1.0-202610010115-a9643bcb.apk", r.file)
+        assertEquals("reins-0.1.0-202610010115-a9643bcb.apk", r.file)
         assertEquals(sha, r.sha256)
         assertEquals(34236184L, r.size)
         assertEquals(1790745300L, r.publishedAt)
@@ -38,7 +38,7 @@ class ReleaseTest {
 
     @Test
     fun `a stored release reads back the same`() {
-        val r = Release.parse(manifestJson(42, "0.2.0", "rewarden-0.2.0.apk", sha, 1000))
+        val r = Release.parse(manifestJson(42, "0.2.0", "reins-0.2.0.apk", sha, 1000))
         assertEquals(r, Release.parse(r.toJson()))
     }
 
@@ -68,7 +68,7 @@ class ReleaseTest {
         for (name in listOf("../evil.apk", "files/r.apk", ".hidden.apk", ".apk", "r.zip", "r.apk.zip", "r apk", "r .apk", "%2e%2e.apk", "r\\\\x.apk", "r\\u002fx.apk", "")) {
             bad(manifestJson(2, "0.1.0", name, sha, 10))
         }
-        Release.parse(manifestJson(2, "0.1.0", "rewarden-0.1.0_b.1.apk", sha, 10))
+        Release.parse(manifestJson(2, "0.1.0", "reins-0.1.0_b.1.apk", sha, 10))
     }
 
     @Test

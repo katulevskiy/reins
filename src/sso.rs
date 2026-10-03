@@ -367,9 +367,9 @@ pub async fn redeem(
         user_sso.save(conn).await?;
     }
 
-    // Remembered so that the provider revoking this session signs the device out (api::rewarden::workos_sync).
+    // Remembered so that the provider revoking this session signs the device out (api::reins::workos_sync).
     if let Some(session_id) = auth_user.session_id.clone() {
-        crate::db::models::RewardenSsoSession {
+        crate::db::models::ReinsSsoSession {
             session_id,
             user_uuid: user.uuid.clone(),
             device_uuid: device.uuid.clone(),

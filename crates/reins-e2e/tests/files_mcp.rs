@@ -3,8 +3,8 @@
 
 use std::time::Duration;
 
-use rewarden_core::{ApprovalChoice, PendingKind};
-use rewarden_e2e::{AiClient, Phone, Server};
+use reins_core::{ApprovalChoice, PendingKind};
+use reins_e2e::{AiClient, Phone, Server};
 use serde_json::{Value, json};
 use wiremock::matchers::{body_partial_json, header, method, path};
 use wiremock::{Mock, MockServer, ResponseTemplate};
@@ -53,13 +53,13 @@ fn http() -> reqwest::Client {
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn an_ai_uploads_a_file_the_user_approves_it_and_the_link_works() {
-    rewarden_e2e::init_tls();
+    reins_e2e::init_tls();
     let (server, phone, ai) = connected(None).await;
     let content = "quarterly numbers\n".repeat(20_000).into_bytes();
 
     // The AI asks to share a file: the phone answers at once with where to upload it.
     let args = json!({"name": "report.txt", "size": content.len(), "reason": "attach the report to the issue"});
-    let ready = with_app_open(&phone, ai.tool("rewarden_upload", &args)).await;
+    let ready = with_app_open(&phone, ai.tool("reins_upload", &args)).await;
     assert_eq!(ready["isError"], false, "{ready}");
     let data = &ready["structuredContent"];
     assert_eq!(data["status"], "upload_ready", "{ready}");
@@ -88,7 +88,7 @@ async fn an_ai_uploads_a_file_the_user_approves_it_and_the_link_works() {
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn a_large_file_reaches_github_through_the_server_after_the_user_approves() {
-    rewarden_e2e::init_tls();
+    reins_e2e::init_tls();
     let github = MockServer::start().await;
     for (at, body) in [
         ("/user", json!({"login": "me", "id": 1})),
@@ -194,7 +194,7 @@ async fn fake_mcp() -> MockServer {
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn an_mcp_server_added_on_the_phone_is_offered_to_the_ai_and_runs_after_approval() {
-    rewarden_e2e::init_tls();
+    reins_e2e::init_tls();
     let mcp = fake_mcp().await;
     let (_server, phone, ai) = connected(None).await;
     let added = phone
@@ -208,7 +208,7 @@ async fn an_mcp_server_added_on_the_phone_is_offered_to_the_ai_and_runs_after_ap
     let (_, listed) = ai.rpc(&json!({"jsonrpc": "2.0", "id": 1, "method": "tools/list", "params": {}})).await;
     let names: Vec<String> =
         listed["result"]["tools"].as_array().unwrap().iter().map(|t| t["name"].as_str().unwrap().to_owned()).collect();
-    let add_note = rewarden_core_name(&added.id, "add_note");
+    let add_note = reins_core_name(&added.id, "add_note");
     assert!(names.contains(&add_note), "{names:?}");
 
     let note = json!({"text": "buy milk"});
@@ -225,6 +225,6 @@ async fn an_mcp_server_added_on_the_phone_is_offered_to_the_ai_and_runs_after_ap
     assert_eq!(result["content"][0]["text"], "Saved note 7.", "the server's result passes through: {result}");
 }
 
-fn rewarden_core_name(server: &str, tool: &str) -> String {
+fn reins_core_name(server: &str, tool: &str) -> String {
     format!("{server}__{tool}")
 }

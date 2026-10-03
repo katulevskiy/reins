@@ -1,4 +1,4 @@
-//! `rewarden ask`: one yes-or-no question to the user. With the phone (logged in) it goes through the server's desktop
+//! `reins ask`: one yes-or-no question to the user. With the phone (logged in) it goes through the server's desktop
 //! API as `desktop_ask`; the phone seals its decision ([`AskAnswer`]) to this app's key, echoing this question's random
 //! nonce, so neither the server nor an old answer can say yes in the user's place. Without the phone the person at the
 //! computer answers: in the terminal when there is one, else in a desktop notification or dialog.
@@ -7,8 +7,8 @@ use std::fmt::Write as _;
 use std::io::{BufRead, Write};
 use std::time::{Duration, Instant};
 
-use rewarden_proto::desktop::{AskAnswer, SEALED_FIELD};
-use rewarden_proto::relay::{RelayOutcome, ToolResult};
+use reins_proto::desktop::{AskAnswer, SEALED_FIELD};
+use reins_proto::relay::{RelayOutcome, ToolResult};
 use serde_json::{Value, json};
 
 use crate::auth::prompt::{PendingItem, Prompter};
@@ -88,7 +88,7 @@ pub enum Answer {
 }
 
 impl Answer {
-    /// `rewarden ask`'s exit code: 0 yes, 1 no, 2 no answer.
+    /// `reins ask`'s exit code: 0 yes, 1 no, 2 no answer.
     #[must_use]
     pub fn exit_code(&self) -> u8 {
         match self {
@@ -111,9 +111,7 @@ pub fn decider(paths: &Paths, config: &Config) -> Result<Decider, String> {
     match (config.mode, logged_in) {
         (Mode::Local, _) | (Mode::Auto, false) => Ok(Decider::Local),
         (_, true) => Ok(Decider::Phone),
-        (Mode::Rewarden, false) => {
-            Err("not logged in to a Rewarden server (mode = \"rewarden\"); run `rewarden login`".to_owned())
-        }
+        (Mode::Reins, false) => Err("not logged in to a Reins server (mode = \"reins\"); run `reins login`".to_owned()),
     }
 }
 
@@ -140,7 +138,7 @@ pub async fn ask(
     }
 }
 
-/// Asks the phone through the Rewarden server and waits up to `timeout` for its sealed answer.
+/// Asks the phone through the Reins server and waits up to `timeout` for its sealed answer.
 pub async fn ask_phone(paths: &Paths, identity: &Identity, q: &Question, timeout: Duration) -> Answer {
     let client = match DesktopClient::new(paths) {
         Ok(c) => c,
@@ -185,7 +183,7 @@ pub async fn ask_phone(paths: &Paths, identity: &Identity, q: &Question, timeout
 fn link_failure(e: LinkError) -> Answer {
     match e {
         LinkError::LoggedOut(m) => Answer::Unanswered(m),
-        LinkError::NotFound => Answer::Unanswered("The Rewarden server no longer has this question.".to_owned()),
+        LinkError::NotFound => Answer::Unanswered("The Reins server no longer has this question.".to_owned()),
         LinkError::Failed(m) => Answer::Unanswered(format!("Cannot ask your phone: {m}")),
     }
 }
@@ -222,7 +220,7 @@ fn open(identity: &Identity, nonce: &str, outcome: RelayOutcome) -> Answer {
         Ok(p) => p,
         Err(IdentityError::Unseal) => {
             return refused(
-                "The phone's answer is not sealed to this app's key; refused. Pair again with `rewarden login`.",
+                "The phone's answer is not sealed to this app's key; refused. Pair again with `reins login`.",
             );
         }
         Err(_) => return refused("The phone's answer is malformed; refused."),
@@ -295,7 +293,7 @@ pub async fn ask_desktop(prompter: &dyn Prompter, q: &Question, timeout: Duratio
         Ok(Some(false)) => Answer::No("Denied on the desktop.".to_owned()),
         Ok(None) => Answer::Unanswered(
             "No answer: the desktop prompt was dismissed or is not available (notify-send on Linux, osascript on \
-             macOS, PowerShell on Windows). Run `rewarden ask` in a terminal, or log in to decide on your phone."
+             macOS, PowerShell on Windows). Run `reins ask` in a terminal, or log in to decide on your phone."
                 .to_owned(),
         ),
         Err(_) => Answer::Unanswered(format!("No answer within {} s.", timeout.as_secs())),
@@ -328,21 +326,21 @@ impl Prompter for DesktopAsk {
                 "display dialog (item 2 of argv) with title (item 1 of argv) buttons {\"Deny\", \"Allow\"} default button \"Deny\"",
                 "-e",
                 "end run",
-                &format!("Rewarden: {}", item.what),
+                &format!("Reins: {}", item.what),
                 &body,
             ]);
             c
         } else if cfg!(windows) {
-            crate::win::message_box(&format!("Rewarden: {}", item.what), &format!("{body}\n\nAllow?"))?
+            crate::win::message_box(&format!("Reins: {}", item.what), &format!("{body}\n\nAllow?"))?
         } else if cfg!(unix) {
             let mut c = tokio::process::Command::new("notify-send");
             c.args([
-                "--app-name=Rewarden",
+                "--app-name=Reins",
                 "--urgency=critical",
                 "--action=allow=Allow",
                 "--action=deny=Deny",
                 "--wait",
-                &format!("Rewarden: {}", escape_markup(&item.what)),
+                &format!("Reins: {}", escape_markup(&item.what)),
                 &escape_markup(&body),
             ]);
             c
@@ -430,8 +428,8 @@ mod tests {
         let paths = Paths::under(dir.path());
         let mut c = Config::default();
         assert_eq!(decider(&paths, &c), Ok(Decider::Local));
-        c.mode = Mode::Rewarden;
-        assert!(decider(&paths, &c).unwrap_err().contains("rewarden login"));
+        c.mode = Mode::Reins;
+        assert!(decider(&paths, &c).unwrap_err().contains("reins login"));
         paths.ensure().unwrap();
         std::fs::write(
             paths.session_file(),

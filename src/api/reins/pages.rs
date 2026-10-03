@@ -74,27 +74,27 @@ pub fn email_form_page(
         error.map(|e| format!("<p class=\"error\" role=\"alert\">{}</p>", escape_html(e))).unwrap_or_default();
     let key_html = key_line(key_fingerprint);
     let body = format!(
-        "<h1>Connect {name} to Rewarden</h1>\
-<p><strong>{name}</strong> ({host}) wants to use the tools you connect in Rewarden. \
+        "<h1>Connect {name} to Reins</h1>\
+<p><strong>{name}</strong> ({host}) wants to use the tools you connect in Reins. \
 Nothing is shared until you approve it on your phone.</p>{key_html}{error_html}\
 <form method=\"post\" action=\"authorize\">\
 <input type=\"hidden\" name=\"session\" value=\"{session}\">\
 <label for=\"email\">Your account email</label>\
 <input id=\"email\" name=\"email\" type=\"email\" autocomplete=\"email\" required autofocus>\
 <button type=\"submit\">Continue</button></form>\
-<p class=\"muted\">You will get a request in the Rewarden app on your phone.</p>",
+<p class=\"muted\">You will get a request in the Reins app on your phone.</p>",
         name = escape_html(client_name),
         host = escape_html(client_host),
         session = escape_html(session),
     );
-    layout("Connect to Rewarden", "", &body)
+    layout("Connect to Reins", "", &body)
 }
 
 /// Step 2: show the code to pick on the phone; reloads itself until the phone has answered.
 pub fn wait_page(client_name: &str, code: u8, key_fingerprint: Option<&str>) -> String {
     let body = format!(
         "<h1>Approve on your phone</h1>\
-<p>Open the Rewarden app and tap this number to connect <strong>{name}</strong>:</p>\
+<p>Open the Reins app and tap this number to connect <strong>{name}</strong>:</p>\
 <div class=\"code\" aria-label=\"code\">{code}</div>{key_html}\
 <p class=\"muted\">This page continues automatically. If the number is not offered on your phone, \
 deny the request there.</p>",
@@ -119,7 +119,7 @@ pub const APP_ID: &str = "com.reins2fa.app";
 /// The custom scheme both apps register (`reins://pair?code=`), for when a link does not open the app by itself.
 pub const APP_SCHEME: &str = "reins";
 /// Where to get the Android app.
-pub const ANDROID_APP_URL: &str = concat!(rewarden_proto::official_site!(), "/app");
+pub const ANDROID_APP_URL: &str = concat!(reins_proto::official_site!(), "/app");
 /// The iOS app's App Store page. A placeholder until the app is listed: replace the id then.
 pub const APP_STORE_URL: &str = "https://apps.apple.com/app/reins/id0000000000";
 
@@ -216,7 +216,7 @@ pub fn apple_app_site_association(team_id: &str, domain_path: &str, bitwarden_cr
     doc
 }
 
-/// The certificate fingerprints of `REWARDEN_ANDROID_CERT_SHA256`: comma-separated, with or without colons, as
+/// The certificate fingerprints of `REINS_ANDROID_CERT_SHA256`: comma-separated, with or without colons, as
 /// `AB:CD:...` (upper case). Anything that is not 32 bytes of hex is dropped (and named in the log at launch).
 pub fn android_cert_fingerprints(raw: &str) -> (Vec<String>, Vec<String>) {
     let (mut good, mut bad) = (Vec::new(), Vec::new());
@@ -252,31 +252,31 @@ pub fn routes() -> Vec<rocket::Route> {
 
 /// Routes mounted at the server root `/`, where the phones look for them.
 pub fn app_link_routes() -> Vec<rocket::Route> {
-    let (_, bad) = android_cert_fingerprints(&crate::CONFIG.rewarden_android_cert_sha256());
+    let (_, bad) = android_cert_fingerprints(&crate::CONFIG.reins_android_cert_sha256());
     for item in bad {
-        warn!("`REWARDEN_ANDROID_CERT_SHA256`: `{item}` is not a SHA-256 fingerprint (32 bytes of hex); ignored");
+        warn!("`REINS_ANDROID_CERT_SHA256`: `{item}` is not a SHA-256 fingerprint (32 bytes of hex); ignored");
     }
     routes![apple_app_site_association_doc, asset_links_doc]
 }
 
 #[get("/pair?<code>")]
 fn pair(code: Option<&str>, platform: Platform) -> rocket::response::content::RawHtml<String> {
-    let code = code.and_then(rewarden_proto::pairing::normalize_user_code);
+    let code = code.and_then(reins_proto::pairing::normalize_user_code);
     rocket::response::content::RawHtml(pair_page(code.as_deref(), platform))
 }
 
 #[get("/.well-known/apple-app-site-association")]
 fn apple_app_site_association_doc() -> (rocket::http::ContentType, String) {
-    let team = Some(crate::CONFIG.rewarden_apple_team_id())
+    let team = Some(crate::CONFIG.reins_apple_team_id())
         .filter(|t| !t.trim().is_empty())
-        .unwrap_or_else(|| crate::CONFIG.rewarden_apns_team_id());
+        .unwrap_or_else(|| crate::CONFIG.reins_apns_team_id());
     let doc = apple_app_site_association(&team, &crate::CONFIG.domain_path(), crate::CONFIG.web_vault_enabled());
     (rocket::http::ContentType::JSON, doc.to_string())
 }
 
 #[get("/.well-known/assetlinks.json")]
 fn asset_links_doc() -> (rocket::http::ContentType, String) {
-    let (fingerprints, _) = android_cert_fingerprints(&crate::CONFIG.rewarden_android_cert_sha256());
+    let (fingerprints, _) = android_cert_fingerprints(&crate::CONFIG.reins_android_cert_sha256());
     (rocket::http::ContentType::JSON, asset_links(&fingerprints).to_string())
 }
 
@@ -388,8 +388,8 @@ S.browser_fallback_url=https%3A%2F%2Freins2fa.com%2Fapp;end\""
     #[test]
     fn the_desktop_key_fingerprint_is_shown_only_when_there_is_one() {
         let line = "Desktop app key: <strong class=\"key\">4821 9930</strong>";
-        assert!(email_form_page("Rewarden desktop", "127.0.0.1", "s", None, Some("4821 9930")).contains(line));
-        assert!(wait_page("Rewarden desktop", 47, Some("4821 9930")).contains(line));
+        assert!(email_form_page("Reins desktop", "127.0.0.1", "s", None, Some("4821 9930")).contains(line));
+        assert!(wait_page("Reins desktop", 47, Some("4821 9930")).contains(line));
         for page in [email_form_page("Claude", "claude.ai", "s", None, None), wait_page("Claude", 47, None)] {
             assert!(!page.contains("Desktop app key"), "{page}");
         }

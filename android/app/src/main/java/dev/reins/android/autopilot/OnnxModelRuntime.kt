@@ -1,9 +1,9 @@
-package dev.rewarden.android.autopilot
+package dev.reins.android.autopilot
 
-import dev.rewarden.core.ForeignException
-import dev.rewarden.core.ModelInput
-import dev.rewarden.core.ModelOutput
-import dev.rewarden.core.ModelRuntime
+import dev.reins.core.ForeignException
+import dev.reins.core.ModelInput
+import dev.reins.core.ModelOutput
+import dev.reins.core.ModelRuntime
 import java.util.concurrent.locks.ReentrantReadWriteLock
 import kotlin.concurrent.read
 import kotlin.concurrent.write

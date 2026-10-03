@@ -1,6 +1,6 @@
 //! Which harnesses are on this computer: their settings directory under the home directory, their program on the
 //! `PATH` or in the usual install places (an app started from the desktop gets a short `PATH`), or, for Cursor, the
-//! installed app. `rewarden harness add --all` and the Reins app add Reins to exactly these.
+//! installed app. `reins harness add --all` and the Reins app add Reins to exactly these.
 
 use std::path::{Path, PathBuf};
 

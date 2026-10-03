@@ -1,11 +1,11 @@
-package dev.rewarden.android.core
+package dev.reins.android.core
 
-import dev.rewarden.android.AppContainer
-import dev.rewarden.core.RewardenCoreInterface
+import dev.reins.android.AppContainer
+import dev.reins.core.ReinsCoreInterface
 
 /** Lets instrumented tests swap in a fake core before the Application is created. Production returns null. */
 fun interface CoreFactory {
-    fun create(container: AppContainer): RewardenCoreInterface?
+    fun create(container: AppContainer): ReinsCoreInterface?
 }
 
 object CoreProvider {

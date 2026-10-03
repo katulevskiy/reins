@@ -1,7 +1,7 @@
 //! The blob store over HTTP (files spec, S1).
 //!
-//! - Phone API under `/rewarden/api/blobs` (approval device only, owner checked on every call).
-//! - Public capability URLs `/rewarden/blob/<secret>`: `PUT`/`POST` uploads into a slot, `GET` downloads a released
+//! - Phone API under `/reins/api/blobs` (approval device only, owner checked on every call).
+//! - Public capability URLs `/reins/blob/<secret>`: `PUT`/`POST` uploads into a slot, `GET` downloads a released
 //!   file. The URL is the only credential, so it is never logged (see [`super::loggable_path`]).
 //!
 //! Bodies stream between the network and disk; a 1 GiB upload never sits in memory. Nothing here logs a header, a
@@ -9,7 +9,7 @@
 
 use std::io::SeekFrom;
 
-use rewarden_proto::{
+use reins_proto::{
     blob::{
         BlobDecision, BlobDownload, BlobFetch, BlobInfo, BlobPurpose, BlobSend, BlobSendResult, BlobSlot,
         BlobSlotRequest, MAX_SEND_RESPONSE, SendBody,
@@ -48,12 +48,12 @@ use crate::{
     auth::Headers,
     db::{
         DbConn, DbPool,
-        models::{RewardenConnection, RewardenDevice, UserId},
+        models::{ReinsConnection, ReinsDevice, UserId},
     },
 };
 
 /// Path prefix of the public capability URLs.
-pub const PUBLIC_PREFIX: &str = "/rewarden/blob/";
+pub const PUBLIC_PREFIX: &str = "/reins/blob/";
 /// JSON bodies of the phone's blob calls (a `JsonBase64` template is the largest).
 const MAX_JSON_BODY: u64 = 2 * 1024 * 1024;
 /// Capability secrets are 43 characters; ids 22.
@@ -93,7 +93,7 @@ pub fn blob_err(e: BlobError) -> Custom<Json<ApiError>> {
         BlobError::Conflict(m) => api_err(Status::Conflict, codes::BAD_REQUEST, m),
         BlobError::AlreadyDecided => already_answered(),
         BlobError::Storage(e) => {
-            error!("Rewarden blob store: {e}");
+            error!("Reins blob store: {e}");
             api_err(Status::InternalServerError, codes::INTERNAL, "Server error, please retry")
         }
     }
@@ -136,9 +136,8 @@ pub async fn owner_of(
     if request_id.as_ref().is_some_and(|r| r.0.len() > MAX_TOKEN_LEN) {
         return Err(bad_request("`request_id` is not valid"));
     }
-    let connection = RewardenConnection::find_by_uuid_and_user(&connection_id.0, &headers.user.uuid, conn)
-        .await
-        .ok_or_else(unknown)?;
+    let connection =
+        ReinsConnection::find_by_uuid_and_user(&connection_id.0, &headers.user.uuid, conn).await.ok_or_else(unknown)?;
     Ok(Owner {
         user: user_key(headers),
         connection_id: connection_id.clone(),
@@ -185,7 +184,7 @@ fn finish_output(ticket: WriteTicket, written: Result<Received, WriteError>) -> 
             return Err(match e {
                 WriteError::TooLarge => too_large(ticket.limit),
                 WriteError::Io(m) => {
-                    warn!("Rewarden output blob not stored: {m}");
+                    warn!("Reins output blob not stored: {m}");
                     api_err(Status::BadGateway, codes::BAD_REQUEST, "The file could not be stored.")
                 }
             });
@@ -263,7 +262,7 @@ async fn open_file(path: &std::path::Path) -> Option<tokio::fs::File> {
 // ---------------------------------------------------------------------------------------
 
 /// Opens a slot the AI uploads into.
-#[post("/rewarden/api/blobs", data = "<data>")]
+#[post("/reins/api/blobs", data = "<data>")]
 async fn open_slot(data: Data<'_>, headers: Headers, key: DeviceKey, conn: DbConn) -> PhoneResult<Json<BlobSlot>> {
     require_approval_device(&headers, &key, &conn).await?;
     let request: BlobSlotRequest = parse_versioned(&read_body_limited(data, MAX_JSON_BODY).await?)?;
@@ -277,14 +276,14 @@ async fn open_slot(data: Data<'_>, headers: Headers, key: DeviceKey, conn: DbCon
     }))
 }
 
-#[get("/rewarden/api/blobs/<id>")]
+#[get("/reins/api/blobs/<id>")]
 async fn get_info(id: &str, headers: Headers, key: DeviceKey, conn: DbConn) -> PhoneResult<Json<BlobInfo>> {
     require_approval_device(&headers, &key, &conn).await?;
     HUB.blobs.info(&user_key(&headers), id, now_unix()).map(Json).ok_or_else(not_found)
 }
 
-/// The user's answer for an upload made with `rewarden_upload`.
-#[post("/rewarden/api/blobs/<id>/decision", data = "<data>")]
+/// The user's answer for an upload made with `reins_upload`.
+#[post("/reins/api/blobs/<id>/decision", data = "<data>")]
 async fn post_decision(
     id: &str,
     data: Data<'_>,
@@ -298,7 +297,7 @@ async fn post_decision(
 }
 
 /// The bytes, for the phone to transform them itself (vault encryption); `Range` optional.
-#[get("/rewarden/api/blobs/<id>/content")]
+#[get("/reins/api/blobs/<id>/content")]
 async fn get_content(
     id: &str,
     range: RangeHeader,
@@ -329,7 +328,7 @@ async fn get_content(
 }
 
 /// A result the phone made itself (a decrypted vault attachment) becomes a download for the AI.
-#[put("/rewarden/api/blobs/output?<connection_id>&<name>&<ttl_secs>&<request_id>", data = "<data>")]
+#[put("/reins/api/blobs/output?<connection_id>&<name>&<ttl_secs>&<request_id>", data = "<data>")]
 #[expect(clippy::too_many_arguments, reason = "Rocket hands the query fields and guards over as arguments")]
 async fn put_output(
     connection_id: Option<&str>,
@@ -353,7 +352,7 @@ async fn put_output(
 }
 
 /// Streams a blob to the URL the phone names, with the phone's headers for this one request.
-#[post("/rewarden/api/blobs/<id>/send", data = "<data>")]
+#[post("/reins/api/blobs/<id>/send", data = "<data>")]
 async fn post_send(
     id: &str,
     data: Data<'_>,
@@ -419,7 +418,7 @@ async fn post_send(
 }
 
 /// Downloads a large result into a new blob the AI may fetch.
-#[post("/rewarden/api/blobs/fetch", data = "<data>")]
+#[post("/reins/api/blobs/fetch", data = "<data>")]
 async fn post_fetch(data: Data<'_>, headers: Headers, key: DeviceKey, conn: DbConn) -> PhoneResult<Json<BlobDownload>> {
     require_approval_device(&headers, &key, &conn).await?;
     let fetch: BlobFetch = parse_versioned(&read_body_limited(data, MAX_JSON_BODY).await?)?;
@@ -461,7 +460,7 @@ async fn write_response(mut response: reqwest::Response, ticket: &WriteTicket) -
     writer.finish().await
 }
 
-#[delete("/rewarden/api/blobs/<id>")]
+#[delete("/reins/api/blobs/<id>")]
 async fn delete_blob(id: &str, headers: Headers, key: DeviceKey, conn: DbConn) -> PhoneResult<Status> {
     require_approval_device(&headers, &key, &conn).await?;
     HUB.blobs.remove(&user_key(&headers), id).map_err(blob_err)?;
@@ -523,7 +522,7 @@ async fn upload(secret: &str, data: Data<'_>, pool: &DbPool) -> Public {
                     &format!("The file is larger than the {} bytes this link accepts.", ticket.limit),
                 ),
                 WriteError::Io(m) => {
-                    warn!("Rewarden upload not stored: {m}");
+                    warn!("Reins upload not stored: {m}");
                     public_error(Status::BadRequest, "upload_failed", "The upload broke off; send the file again.")
                 }
             };
@@ -544,11 +543,11 @@ async fn upload(secret: &str, data: Data<'_>, pool: &DbPool) -> Public {
 /// Tells the approval device that an upload waits for the user.
 async fn wake_phone(pool: &DbPool, user: String, blob_id: &str) {
     let Ok(conn) = pool.get().await else {
-        warn!("No DB connection to wake the Rewarden device for an upload; it must poll");
+        warn!("No DB connection to wake the Reins device for an upload; it must poll");
         return;
     };
     let user_uuid = UserId::from(user);
-    if let Some(device) = RewardenDevice::find_by_user(&user_uuid, &conn).await {
+    if let Some(device) = ReinsDevice::find_by_user(&user_uuid, &conn).await {
         push::spawn_push(
             pool.clone(),
             user_uuid,
@@ -562,19 +561,19 @@ async fn wake_phone(pool: &DbPool, user: String, blob_id: &str) {
 }
 
 /// `curl -T file URL`: the AI uploads into a slot. The URL is the credential; no other authentication.
-#[put("/rewarden/blob/<secret>", data = "<data>")]
+#[put("/reins/blob/<secret>", data = "<data>")]
 async fn put_upload(secret: &str, data: Data<'_>, pool: &State<DbPool>) -> Public {
     upload(secret, data, pool.inner()).await
 }
 
 /// The same upload as a raw `POST` body, for clients that cannot `PUT`.
-#[post("/rewarden/blob/<secret>", data = "<data>")]
+#[post("/reins/blob/<secret>", data = "<data>")]
 async fn post_upload(secret: &str, data: Data<'_>, pool: &State<DbPool>) -> Public {
     upload(secret, data, pool.inner()).await
 }
 
 /// Downloads an output or an approved upload, always as an attachment.
-#[get("/rewarden/blob/<secret>")]
+#[get("/reins/blob/<secret>")]
 async fn get_download(secret: &str) -> Result<FileResponse, Public> {
     if secret.len() > MAX_TOKEN_LEN {
         return Err(unknown_link());
@@ -595,7 +594,7 @@ async fn get_download(secret: &str) -> Result<FileResponse, Public> {
 
 #[cfg(test)]
 mod tests {
-    use rewarden_proto::blob::{BlobId, BlobPreview, BlobState};
+    use reins_proto::blob::{BlobId, BlobPreview, BlobState};
 
     use super::*;
 

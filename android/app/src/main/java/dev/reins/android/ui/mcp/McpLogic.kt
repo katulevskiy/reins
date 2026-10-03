@@ -1,6 +1,6 @@
-package dev.rewarden.android.ui.mcp
+package dev.reins.android.ui.mcp
 
-import dev.rewarden.core.McpToolView
+import dev.reins.core.McpToolView
 import java.net.URI
 
 /** Where an MCP server's sign-in page sends the browser back to (the core registers it with the server). */

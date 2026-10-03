@@ -17,7 +17,7 @@ pub mod vault;
 use std::collections::BTreeMap;
 use std::sync::Arc;
 
-use rewarden_proto::connector::{ConnectorCall, Effect};
+use reins_proto::connector::{ConnectorCall, Effect};
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value, json};
 
@@ -92,7 +92,7 @@ pub struct Preview {
     pub class: Option<String>,
     /// The uploaded file the write uses (`blob=<id>`), as the server described it; shown with the preview.
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub blob: Option<rewarden_proto::blob::BlobInfo>,
+    pub blob: Option<reins_proto::blob::BlobInfo>,
 }
 
 #[async_trait::async_trait]

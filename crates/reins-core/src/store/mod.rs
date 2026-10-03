@@ -1,4 +1,4 @@
-//! Encrypted local store (contracts §E): SQLite at `<data_dir>/rewarden.db`,
+//! Encrypted local store (contracts §E): SQLite at `<data_dir>/reins.db`,
 //! secrets sealed with a data key kept in `<data_dir>/dek.bin`, wrapped by
 //! the Android Keystore through [`KeyWrapper`].
 //!
@@ -35,11 +35,11 @@ pub use pending::{HANDLED_RETENTION_SECS, PENDING_TTL_SECS, PendingRow};
 use crate::crypto::Dek;
 use crate::{CoreError, ForeignError, KeyWrapper};
 
-const DB_FILE: &str = "rewarden.db";
+const DB_FILE: &str = "reins.db";
 const DEK_FILE: &str = "dek.bin";
 const LOST_DEK_FILE: &str = "dek.bin.lost";
 const DEK_CHECK_AAD: &str = "meta.dek_check";
-const DEK_CHECK_PLAINTEXT: &[u8] = b"rewarden-dek-check";
+const DEK_CHECK_PLAINTEXT: &[u8] = b"reins-dek-check";
 
 const SCHEMA: &str = "
 PRAGMA journal_mode = WAL;
@@ -116,7 +116,7 @@ CREATE TABLE secrets (
 );
 ALTER TABLE audit ADD COLUMN op TEXT NOT NULL DEFAULT '';
 ",
-    // The Rewarden desktop app: its public key, pinned to its connection when the user approved the pairing.
+    // The Reins desktop app: its public key, pinned to its connection when the user approved the pairing.
     "
 CREATE TABLE desktop_keys (
     connection_id TEXT PRIMARY KEY,
@@ -602,7 +602,7 @@ pub(crate) mod tests {
         assert_eq!(store.load_session().unwrap(), Some(session()));
         drop(store);
         let raw = fs::read(dir.path().join(DB_FILE)).unwrap();
-        let wal = fs::read(dir.path().join("rewarden.db-wal")).unwrap_or_default();
+        let wal = fs::read(dir.path().join("reins.db-wal")).unwrap_or_default();
         for bytes in [raw, wal] {
             assert!(!bytes.windows(20).any(|w| w == b"REFRESH-TOKEN-SECRET"), "token stored in clear");
         }

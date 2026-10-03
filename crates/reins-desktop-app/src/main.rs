@@ -1,9 +1,9 @@
 //! Reins: the desktop app for people who never open a terminal. It pairs this computer with the phone (a QR code the
-//! phone scans), adds Reins to every AI harness it finds, keeps the background service (`rewarden daemon`) running
+//! phone scans), adds Reins to every AI harness it finds, keeps the background service (`reins daemon`) running
 //! and sends git through it, and sits in the tray or menu bar afterwards.
 //!
-//! Everything goes through the `rewarden_desktop` library in this process, or through the running daemon's control API
-//! (`rewarden_desktop::control`); the app never runs the `rewarden` command for its normal work. The bundled `rewarden`
+//! Everything goes through the `reins_desktop` library in this process, or through the running daemon's control API
+//! (`reins_desktop::control`); the app never runs the `reins` command for its normal work. The bundled `reins`
 //! program is what the harnesses and the background service run.
 #![cfg_attr(windows, windows_subsystem = "windows")]
 
@@ -64,13 +64,13 @@ impl Args {
                 // The Windows installer starts the app with it; a normal start.
                 "--installed" => {}
                 "--version" | "-V" => {
-                    println!("Reins {}", rewarden_desktop::update::LONG_VERSION);
+                    println!("Reins {}", reins_desktop::update::LONG_VERSION);
                     std::process::exit(0);
                 }
                 "--help" | "-h" => {
                     println!(
                         "Reins {}\n\nUsage: reins-app [--background] [--demo]\n\n  --background  started at login: stay in the tray unless something needs you\n  --demo        pretend pairing, for trying the app (nothing is sent)",
-                        rewarden_desktop::update::LONG_VERSION
+                        reins_desktop::update::LONG_VERSION
                     );
                     std::process::exit(0);
                 }
@@ -103,7 +103,7 @@ fn main() {
     if let Err(e) = backend.paths().ensure() {
         eprintln!("reins-app: {e}");
     }
-    rewarden_desktop::daemon::init_logging(Some(&backend.paths().state_dir.join("app.log")));
+    reins_desktop::daemon::init_logging(Some(&backend.paths().state_dir.join("app.log")));
     // One Reins per user: a second start asks the first one to show its window, then ends.
     let Some(instance) = single::Instance::acquire(&backend.paths().state_dir) else {
         log::info!("Reins is already running; asked it to show its window");

@@ -1,4 +1,4 @@
-package dev.rewarden.android.design
+package dev.reins.android.design
 
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.layout.size

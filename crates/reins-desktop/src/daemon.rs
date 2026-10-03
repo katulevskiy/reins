@@ -12,12 +12,12 @@ use hyper::server::conn::http1;
 use hyper::service::service_fn;
 use hyper::{Method, Request, Response, StatusCode, header};
 use hyper_util::rt::{TokioIo, TokioTimer};
-use rewarden_proto::desktop::PushSummary;
+use reins_proto::desktop::PushSummary;
 use tokio::net::TcpListener;
 
 use crate::auth::local::LocalAuthorizer;
 use crate::auth::prompt::{DesktopPrompter, Pending, Prompter};
-use crate::auth::rewarden::RewardenAuthorizer;
+use crate::auth::reins::ReinsAuthorizer;
 use crate::auth::{Authorizer, Credential, Refusal, Repo};
 use crate::config::{Config, Mode, Paths};
 use crate::control::{self, Control, Status};
@@ -48,7 +48,7 @@ struct ModeAuthorizer {
     identity: Arc<Identity>,
     config: Config,
     local: Arc<LocalAuthorizer>,
-    phone: Mutex<Option<(String, Arc<RewardenAuthorizer>)>>,
+    phone: Mutex<Option<(String, Arc<ReinsAuthorizer>)>>,
 }
 
 impl ModeAuthorizer {
@@ -59,17 +59,17 @@ impl ModeAuthorizer {
         let Some(server) = crate::server::oauth::logged_in_server(&self.paths) else {
             return match self.mode {
                 Mode::Auto => Ok(Arc::<LocalAuthorizer>::clone(&self.local)),
-                _ => Err(Refusal::Unavailable("Not logged in to a Rewarden server: run `rewarden login`.".to_owned())),
+                _ => Err(Refusal::Unavailable("Not logged in to a Reins server: run `reins login`.".to_owned())),
             };
         };
         let mut phone = self.phone.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
         if let Some((s, a)) = phone.as_ref()
             && *s == server
         {
-            return Ok(Arc::<RewardenAuthorizer>::clone(a));
+            return Ok(Arc::<ReinsAuthorizer>::clone(a));
         }
         let a = Arc::new(
-            RewardenAuthorizer::new(&self.paths, Arc::clone(&self.identity), &self.config)
+            ReinsAuthorizer::new(&self.paths, Arc::clone(&self.identity), &self.config)
                 .map_err(Refusal::Unavailable)?,
         );
         *phone = Some((server, Arc::clone(&a)));
@@ -363,7 +363,7 @@ async fn shutdown_signal() {
 const MAX_LOG: u64 = 4 << 20;
 
 /// Logs to stderr (the service manager keeps it), and with `file` (the Windows background service, which has no
-/// stderr) appended to that file as well. `REWARDEN_LOG`: `error`, `warn`, `info` (default), `debug`.
+/// stderr) appended to that file as well. `REINS_LOG`: `error`, `warn`, `info` (default), `debug`.
 pub fn init_logging(file: Option<&std::path::Path>) {
     struct Logger {
         level: log::LevelFilter,
@@ -372,7 +372,7 @@ pub fn init_logging(file: Option<&std::path::Path>) {
     impl log::Log for Logger {
         fn enabled(&self, m: &log::Metadata<'_>) -> bool {
             // This crate's modules, and the desktop app's (`reins_app`).
-            m.level() <= self.level && (m.target().starts_with("rewarden") || m.target().starts_with("reins"))
+            m.level() <= self.level && m.target().starts_with("reins")
         }
         fn log(&self, r: &log::Record<'_>) {
             if self.enabled(r.metadata()) {
@@ -386,7 +386,7 @@ pub fn init_logging(file: Option<&std::path::Path>) {
         }
         fn flush(&self) {}
     }
-    let level = std::env::var("REWARDEN_LOG").ok().and_then(|l| l.parse().ok()).unwrap_or(log::LevelFilter::Info);
+    let level = std::env::var("REINS_LOG").ok().and_then(|l| l.parse().ok()).unwrap_or(log::LevelFilter::Info);
     let file = file.and_then(|path| {
         if std::fs::metadata(path).is_ok_and(|m| m.len() > MAX_LOG) {
             let mut old = path.as_os_str().to_owned();
@@ -396,7 +396,7 @@ pub fn init_logging(file: Option<&std::path::Path>) {
         match std::fs::OpenOptions::new().create(true).append(true).open(path) {
             Ok(f) => Some(Mutex::new(f)),
             Err(e) => {
-                eprintln!("rewarden: {}: {e}", path.display());
+                eprintln!("reins: {}: {e}", path.display());
                 None
             }
         }

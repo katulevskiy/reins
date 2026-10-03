@@ -1,7 +1,7 @@
 """Writes `tiny.onnx`: a few-kilobyte model with Laya's ONNX inputs and outputs (spec section 6.2), for testing the
 `ort` runtime without the real package. Its numbers mean nothing; its shapes and names are the real ones.
 
-    ~/.cache/rewarden-laya/.venv/bin/python crates/rewarden-laya/testdata/make_tiny.py
+    ~/.cache/reins-laya/.venv/bin/python crates/reins-laya/testdata/make_tiny.py
 """
 import os
 

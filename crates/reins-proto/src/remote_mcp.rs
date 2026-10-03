@@ -63,7 +63,7 @@ pub struct McpCall {
     pub arguments: serde_json::Map<String, Value>,
 }
 
-/// `POST /rewarden/api/mcp/call`: the server makes one MCP request for the phone (a heavy tool).
+/// `POST /reins/api/mcp/call`: the server makes one MCP request for the phone (a heavy tool).
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct ProxyCall {
     pub v: u32,

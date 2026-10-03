@@ -9,7 +9,7 @@
 //!   (plus `code_challenge` with PKCE, and `SSO_AUTHORIZE_EXTRA_PARAMS`, such as `screen_hint=sign-up`).
 //! - code: `POST {base}/user_management/authenticate {grant_type: authorization_code, client_id, client_secret, code,
 //!   code_verifier}`; the answer carries `user {id, email, email_verified}` and an access token whose `sid` names the
-//!   WorkOS session (kept so that a revoked session signs the device out, see `api::rewarden::workos_sync`).
+//!   WorkOS session (kept so that a revoked session signs the device out, see `api::reins::workos_sync`).
 //! - refresh: the same endpoint with `grant_type: refresh_token` (only used with `SSO_AUTH_ONLY_NOT_SESSION=false`).
 //!
 //! The answer comes straight from WorkOS over TLS, authenticated with the client secret, so its `user` is the
@@ -62,10 +62,10 @@ pub fn api_base() -> ApiResult<String> {
     Ok(base)
 }
 
-/// The key the User Management and Events APIs take: `REWARDEN_WORKOS_API_KEY`, else `SSO_CLIENT_SECRET` (WorkOS
+/// The key the User Management and Events APIs take: `REINS_WORKOS_API_KEY`, else `SSO_CLIENT_SECRET` (WorkOS
 /// uses the API key as the client secret).
 pub fn api_key() -> String {
-    CONFIG.rewarden_workos_api_key().filter(|k| !k.is_empty()).unwrap_or_else(|| CONFIG.sso_client_secret())
+    CONFIG.reins_workos_api_key().filter(|k| !k.is_empty()).unwrap_or_else(|| CONFIG.sso_client_secret())
 }
 
 pub fn http_client() -> ApiResult<reqwest::Client> {

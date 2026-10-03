@@ -1,15 +1,15 @@
-package dev.rewarden.android.ui.join
+package dev.reins.android.ui.join
 
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
-import dev.rewarden.android.AppContainer
-import dev.rewarden.android.feedback.Event
-import dev.rewarden.android.feedback.play
-import dev.rewarden.android.platform.AuthResult
-import dev.rewarden.android.platform.Authenticator
-import dev.rewarden.android.ui.common.untrusted
-import dev.rewarden.android.ui.common.userMessage
-import dev.rewarden.core.JoinView
+import dev.reins.android.AppContainer
+import dev.reins.android.feedback.Event
+import dev.reins.android.feedback.play
+import dev.reins.android.platform.AuthResult
+import dev.reins.android.platform.Authenticator
+import dev.reins.android.ui.common.untrusted
+import dev.reins.android.ui.common.userMessage
+import dev.reins.core.JoinView
 import kotlin.coroutines.cancellation.CancellationException
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow

@@ -1,36 +1,36 @@
-# Rewarden Plan 2: Server (Vaultwarden fork) — Implementation Plan
+# Reins Plan 2: Server (Vaultwarden fork) — Implementation Plan
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Turn the Vaultwarden 1.37.3 fork into the Rewarden server: an OAuth 2.1 authorization server for AI clients with phone pairing, a dual-era MCP endpoint that relays tool calls to the user's approval device, the phone-facing API (contracts §A), an FCM wake-up sender, and four new tables on all three database backends.
+**Goal:** Turn the Vaultwarden 1.37.3 fork into the Reins server: an OAuth 2.1 authorization server for AI clients with phone pairing, a dual-era MCP endpoint that relays tool calls to the user's approval device, the phone-facing API (contracts §A), an FCM wake-up sender, and four new tables on all three database backends.
 
-**Architecture:** All Rewarden server code lives in `src/api/rewarden/` (plus `src/auth/rewarden.rs` for the MCP JWT and `src/db/models/rewarden_*.rs`); upstream files are touched only at registration points. Protocol logic (JSON-RPC dispatch, OAuth validation, relay timing, HTML rendering, FCM message building) is written as pure functions and plain structs with `#[cfg(test)]` unit tests; Rocket handlers are thin adapters. HTTP behaviour is verified by an integration test crate target (`tests/rewarden_server/`) that spawns the real `vaultwarden` binary with a temporary SQLite database and drives it over HTTP.
+**Architecture:** All Reins server code lives in `src/api/reins/` (plus `src/auth/reins.rs` for the MCP JWT and `src/db/models/reins_*.rs`); upstream files are touched only at registration points. Protocol logic (JSON-RPC dispatch, OAuth validation, relay timing, HTML rendering, FCM message building) is written as pure functions and plain structs with `#[cfg(test)]` unit tests; Rocket handlers are thin adapters. HTTP behaviour is verified by an integration test crate target (`tests/reins_server/`) that spawns the real `vaultwarden` binary with a temporary SQLite database and drives it over HTTP.
 
-**Tech Stack:** Rust 1.98.1 (edition 2024), Rocket 0.5.1, tokio 1.53.1 (`sync`, `time`; dev: `test-util`, `macros`), diesel 2.3.13 (sqlite/mysql/postgresql), jsonwebtoken 11.0.0 (RS256), ring 0.17.14 / data-encoding 2.11.1, reqwest 0.13.5 via `crate::http_client`, moka 0.12.16 (CIMD cache), url 2.5.8, chrono 0.4.45, `rewarden-proto` (Plan 1).
+**Tech Stack:** Rust 1.98.1 (edition 2024), Rocket 0.5.1, tokio 1.53.1 (`sync`, `time`; dev: `test-util`, `macros`), diesel 2.3.13 (sqlite/mysql/postgresql), jsonwebtoken 11.0.0 (RS256), ring 0.17.14 / data-encoding 2.11.1, reqwest 0.13.5 via `crate::http_client`, moka 0.12.16 (CIMD cache), url 2.5.8, chrono 0.4.45, `reins-proto` (Plan 1).
 
-**Spec:** `docs/superpowers/specs/2026-09-28-rewarden-mvp-design.md` (§2, §4, §7, §8). **Binding contracts:** `docs/superpowers/specs/2026-09-29-rewarden-contracts.md` sections A and C (this plan implements them exactly) and "Proto invariants consumers must honor". Background notes: `docs/superpowers/notes/vaultwarden-extension-points.md`, `docs/superpowers/notes/platform-research-2026-09.md`. Style reference: `docs/superpowers/plans/2026-09-29-rewarden-1-proto-policy.md`.
+**Spec:** `docs/superpowers/specs/2026-09-28-reins-mvp-design.md` (§2, §4, §7, §8). **Binding contracts:** `docs/superpowers/specs/2026-09-29-reins-contracts.md` sections A and C (this plan implements them exactly) and "Proto invariants consumers must honor". Background notes: `docs/superpowers/notes/vaultwarden-extension-points.md`, `docs/superpowers/notes/platform-research-2026-09.md`. Style reference: `docs/superpowers/plans/2026-09-29-reins-1-proto-policy.md`.
 
 ## Global Constraints
 
-- Repo root `<repo>`, branch `rewarden-mvp`. Before any cargo command: `export PATH="$HOME/.cargo/bin:$PATH"`.
+- Repo root `<repo>`, branch `reins-mvp`. Before any cargo command: `export PATH="$HOME/.cargo/bin:$PATH"`.
 - Test command: `cargo test --features sqlite <filter>`. Lint gate (all must pass before each commit): `cargo fmt --check`, `cargo clippy --features sqlite --all-targets -- -D warnings`, and `cargo clippy --features sqlite,mysql,postgresql -- -D warnings` (native `libpq` and `libmysqlclient`/`mysql_config` are installed on this machine; verified with `cargo check --features sqlite,mysql,postgresql`).
 - Workspace lints apply to the `vaultwarden` crate: `warnings = deny`, `unsafe_code = forbid`, `non_ascii_idents = forbid`, clippy `pedantic`; deny `str_to_string` (use `to_owned()`), `redundant_clone`, `clone_on_ref_ptr`, `unused_qualifications`, `single_use_lifetimes`, `trivial_casts`, `variant_size_differences`. rustfmt: `max_width = 120`, `use_small_heuristics = "Off"`.
-- Upstream files are modified only at registration points: `Cargo.toml` (`rewarden-proto` in `[dependencies]`, new `[dev-dependencies]`), `src/main.rs` (mounts, job), `src/api/mod.rs` (`mod` + re-exports), `src/auth.rs` (`mod` line), `src/config.rs` (config group + one validation call), `src/db/schema.rs`, `src/db/models/mod.rs`, `src/util.rs` (`LOGGED_ROUTES`), `.env.template`. Never change existing behaviour of upstream routes.
+- Upstream files are modified only at registration points: `Cargo.toml` (`reins-proto` in `[dependencies]`, new `[dev-dependencies]`), `src/main.rs` (mounts, job), `src/api/mod.rs` (`mod` + re-exports), `src/auth.rs` (`mod` line), `src/config.rs` (config group + one validation call), `src/db/schema.rs`, `src/db/models/mod.rs`, `src/util.rs` (`LOGGED_ROUTES`), `.env.template`. Never change existing behaviour of upstream routes.
 - Email content and tool arguments are never written to disk (spec §4.1): relay requests, results, pairings, OAuth sessions and codes live only in memory.
-- Relay timing (spec §4.3, contracts C): wait **45 s** (`REWARDEN_RELAY_WAIT_SECS`), offline threshold **10 s** (`REWARDEN_OFFLINE_SECS`), pending requests/pairings/late results retained **600 s**.
-- AI-visible texts, verbatim (spec §4.3): `Denied by the user on their Rewarden device.` · `Rewarden: your approval device is offline. Ask the user to open the Rewarden app; the request is waiting there. Then call rewarden_get_result with request_id=<id>.` · `Waiting for the user to approve on their phone. Call rewarden_get_result with request_id=<id> after they confirm.`
-- MCP versions: modern `2026-07-28`; legacy `2025-11-25` (also accept `2025-06-18`, `2025-03-26`). Errors: header mismatch `-32020` (HTTP 400), unsupported version `-32022` with `data.supported` (HTTP 400), unknown method `-32601` (HTTP 404). Never answer 422 on `/mcp` or `/rewarden/oauth/token`.
+- Relay timing (spec §4.3, contracts C): wait **45 s** (`REINS_RELAY_WAIT_SECS`), offline threshold **10 s** (`REINS_OFFLINE_SECS`), pending requests/pairings/late results retained **600 s**.
+- AI-visible texts, verbatim (spec §4.3): `Denied by the user on their Reins device.` · `Reins: your approval device is offline. Ask the user to open the Reins app; the request is waiting there. Then call reins_get_result with request_id=<id>.` · `Waiting for the user to approve on their phone. Call reins_get_result with request_id=<id> after they confirm.`
+- MCP versions: modern `2026-07-28`; legacy `2025-11-25` (also accept `2025-06-18`, `2025-03-26`). Errors: header mismatch `-32020` (HTTP 400), unsupported version `-32022` with `data.supported` (HTTP 400), unknown method `-32601` (HTTP 404). Never answer 422 on `/mcp` or `/reins/oauth/token`.
 - OAuth: PKCE `S256` only; authorization codes single-use, **60 s**; authorization sessions **300 s**; access token RS256 JWT, `iss = "{DOMAIN origin}|mcp"`, `aud` = canonical MCP URL, lifetime **3600 s**; refresh tokens opaque, stored as SHA-256 hex, rotating, **30 days**; dead refresh token → `invalid_grant`; CIMD documents cached **1 h**.
 - Phone API errors: HTTP status + `{"error": "<code>", "message": "<text>"}`; codes `not_approval_device` (403), `not_found` (404), `already_answered` (409), `wrong_code` (409), `bad_version` (400), `bad_request` (400), `unauthorized` (401, from the catcher), `internal_error` (500). `wait` for A2 is clamped to `0..=25`.
-- FCM: HTTP v1 `https://fcm.googleapis.com/v1/projects/{project_id}/messages:send`, data-only, `android.priority = "HIGH"`, data `{t, id}`; service-account token cached for half its lifetime. Dev key path: `~/.config/rewarden/fcm-service-account.json`.
+- FCM: HTTP v1 `https://fcm.googleapis.com/v1/projects/{project_id}/messages:send`, data-only, `android.priority = "HIGH"`, data `{t, id}`; service-account token cached for half its lifetime. Dev key path: `~/.config/reins/fcm-service-account.json`.
 
 ## Review Focus
 
 - **A phone that answers a pairing with the wrong code, twice, or for someone else's pairing** must never create a connection: wrong code → 409 `wrong_code` and the browser gets `access_denied`; second answer → 409 `already_answered`; other user → 404. Pinned in Task 5 (hub) and Task 11 (HTTP flow).
-- **Authorization-code replay and PKCE/redirect/resource substitution** at `/rewarden/oauth/token` (reused code, wrong `code_verifier`, different `redirect_uri`, `resource` of another server, code older than 60 s) must all yield `invalid_grant`/`invalid_target` and never a token. Pinned in Task 9 (pure) and Task 11 (HTTP).
+- **Authorization-code replay and PKCE/redirect/resource substitution** at `/reins/oauth/token` (reused code, wrong `code_verifier`, different `redirect_uri`, `resource` of another server, code older than 60 s) must all yield `invalid_grant`/`invalid_target` and never a token. Pinned in Task 9 (pure) and Task 11 (HTTP).
 - **A revoked connection keeps using its still-valid access token or its refresh token**: after A8 the next `/mcp` call must be 401 and the refresh token `invalid_grant`. Pinned in Task 14.
 - **Hostile display strings from AI clients** (`client_name` with bidi overrides, control characters, HTML such as `<script>`, 10 KB names) must be stripped/escaped before reaching the phone or the HTML page. Pinned in Task 5 (sanitize) and Task 10 (HTML escaping).
-- **The phone never fetches a request (offline) or fetches it but never decides**: the AI must get the exact offline text after the offline threshold (not after the full wait), the exact pending text after the wait, and `rewarden_get_result` must deliver a late result exactly once per connection and never to another connection. Pinned in Task 4 (paused-time tests) and Task 14 (HTTP).
+- **The phone never fetches a request (offline) or fetches it but never decides**: the AI must get the exact offline text after the offline threshold (not after the full wait), the exact pending text after the wait, and `reins_get_result` must deliver a late result exactly once per connection and never to another connection. Pinned in Task 4 (paused-time tests) and Task 14 (HTTP).
 
 ---
 
@@ -39,35 +39,35 @@
 Made autonomously while planning (the human was unavailable); each is binding for the executor.
 
 1. **Timestamps in the new tables are `BIGINT` unix seconds**, not `DATETIME/TIMESTAMP`, because every contract DTO uses `i64` seconds; no chrono conversion code is needed.
-2. **Foreign keys:** `rewarden_devices.user_uuid` and `rewarden_connections.user_uuid` reference `users(uuid) ON DELETE CASCADE`; `rewarden_refresh_tokens.connection_uuid` references `rewarden_connections(uuid) ON DELETE CASCADE`. No FK to `devices` (its PK is composite and device rows are rewritten by upstream code). Vaultwarden never enables `PRAGMA foreign_keys` on SQLite, so `RewardenConnection::delete` deletes the refresh tokens explicitly.
-3. **Connections store `client_name` and `client_host` denormalized** (needed by `ConnectionInfo`), because CIMD clients are never persisted: only DCR clients go into `rewarden_clients`; CIMD documents live in a 1 h in-memory moka cache.
+2. **Foreign keys:** `reins_devices.user_uuid` and `reins_connections.user_uuid` reference `users(uuid) ON DELETE CASCADE`; `reins_refresh_tokens.connection_uuid` references `reins_connections(uuid) ON DELETE CASCADE`. No FK to `devices` (its PK is composite and device rows are rewritten by upstream code). Vaultwarden never enables `PRAGMA foreign_keys` on SQLite, so `ReinsConnection::delete` deletes the refresh tokens explicitly.
+3. **Connections store `client_name` and `client_host` denormalized** (needed by `ConnectionInfo`), because CIMD clients are never persisted: only DCR clients go into `reins_clients`; CIMD documents live in a 1 h in-memory moka cache.
 4. **In-memory state uses a small `TtlMap` on `tokio::time::Instant` instead of moka** for relay requests, pairings, OAuth sessions and codes. Reason: the timing rules (10 s / 45 s / 60 s / 600 s) must be unit-tested with `tokio::time::pause()`, and moka's clock cannot be paused. moka is still used for the CIMD cache (no timing tests needed). The spec's "moka caches with TTL" intent (bounded, expiring, in memory) is preserved: every map has a TTL and a capacity cap.
-5. **Waiting uses `tokio::sync::watch`** (per relay request / pairing: state channel; global: a "new item" counter for A2 long-polls) instead of `oneshot`/`Notify`: a watch receiver never misses an update made between "check state" and "start waiting", and several waiters (the MCP call and a later `rewarden_get_result`) can observe the same result.
+5. **Waiting uses `tokio::sync::watch`** (per relay request / pairing: state channel; global: a "new item" counter for A2 long-polls) instead of `oneshot`/`Notify`: a watch receiver never misses an update made between "check state" and "start waiting", and several waiters (the MCP call and a later `reins_get_result`) can observe the same result.
 6. **A2 (`GET /pending`) returns only items not yet delivered.** Returning every unanswered item would make the long-poll return instantly whenever the user leaves a request undecided (busy loop). The phone keeps delivered items locally (Plan 3 `pending()`); A3/A5 re-fetch any unanswered item by id. (Reported as a contract clarification.)
-7. **Late results stay readable** by `rewarden_get_result` (same connection only) until the 600 s TTL expires, i.e. repeated calls return the same result; the phone's answer is accepted once (`already_answered` afterwards).
-8. **`rewarden_get_result` applies the same two rules as the first wait**, measured from the moment it is called: offline text if the request is still undelivered after the offline threshold, pending text after the wait.
+7. **Late results stay readable** by `reins_get_result` (same connection only) until the 600 s TTL expires, i.e. repeated calls return the same result; the phone's answer is accepted once (`already_answered` afterwards).
+8. **`reins_get_result` applies the same two rules as the first wait**, measured from the moment it is called: offline text if the request is still undelivered after the offline threshold, pending text after the wait.
 9. **Structured results use RFC 3339 dates in both `structuredContent` and the text block**, so the text block is exactly `serde_json::to_string(&structuredContent)`. `structuredContent` is always an object: `{"messages": [...]}` for search/read, `{"id", "thread_id"}` for send. No `outputSchema` is advertised (clients would validate against it; not worth the risk in the MVP).
-10. **Phone-reported errors** (`RelayOutcome::Error`) reach the AI as `isError` text `The Rewarden device could not complete the request: <message>`; a `Denied` reason is not shown (the spec text is fixed).
+10. **Phone-reported errors** (`RelayOutcome::Error`) reach the AI as `isError` text `The Reins device could not complete the request: <message>`; a `Denied` reason is not shown (the spec text is fixed).
 11. **Every `/mcp` method requires a valid bearer token**, including `initialize`, `server/discover`, `ping` and notifications, because Claude only starts OAuth on a 401. Origin check (403) runs before auth.
 12. **Allowed `Origin` values for `/mcp`:** the server's own `DOMAIN` origin, `https://claude.ai`, `https://claude.com`, `https://chatgpt.com`, `https://chat.openai.com`. Requests without `Origin` (server-to-server, as both vendors do) are allowed. No CORS preflight support for browser-hosted MCP clients (out of MVP scope; the upstream `Cors` fairing already answers `OPTIONS` with 200).
 13. **Header validation is lenient about absence, strict about mismatch:** `MCP-Protocol-Version`, `Mcp-Method`, `Mcp-Name` are compared with the body only when present (values in `=?base64?…?=` form are decoded first). A request is "modern" when its `params._meta["io.modelcontextprotocol/protocolVersion"]` is present, when the `MCP-Protocol-Version` header is `2026-07-28`, or when the method is `server/discover`; otherwise it is legacy. `ping` is answered in both eras.
 14. **JSON-RPC errors on `/mcp` use HTTP 400 except unknown method (404) and auth (401)**; malformed JSON → `-32700`, batch arrays and non-2.0 envelopes → `-32600`, unknown tool name → `-32602`. Invalid tool *arguments* (unknown property, wrong type, failed `ToolCall::normalized()`) are an `isError: true` tool result, as contracts C require.
-15. **Request bodies are read as raw `Data`** (never Rocket `Json<T>`/`Form<T>` guards, which answer 422 on parse failure) on `/mcp`, `/rewarden/oauth/*` and `/rewarden/api/*`.
+15. **Request bodies are read as raw `Data`** (never Rocket `Json<T>`/`Form<T>` guards, which answer 422 on parse failure) on `/mcp`, `/reins/oauth/*` and `/reins/api/*`.
 16. **OAuth issuer = `CONFIG.domain()`** (the full DOMAIN, path included, no trailing slash); JWT `iss` = `"{domain_origin}|mcp"` like every other Vaultwarden issuer; MCP URL = `"{domain}/mcp"` canonicalized (lower-case scheme/host, no trailing slash). `/.well-known/*` is mounted at the server root (outside the DOMAIN path) and also answers the RFC 8414/9728 path-inserted variants (`/.well-known/oauth-authorization-server{domain_path}`, `/.well-known/oauth-protected-resource{domain_path}/mcp`).
 17. **`resource` is optional** on authorize and token (some clients omit it); when present it must equal the canonical MCP URL, else `invalid_target`.
-18. **Authorize page flow (zero JavaScript):** `GET /rewarden/oauth/authorize` validates the request and renders an email form; `POST /rewarden/oauth/authorize` (per-IP `check_limit_login`) starts the pairing and answers `303` to `GET /rewarden/oauth/authorize/wait?session=…`, which renders the code with `<meta http-equiv="refresh" content="2">` until the pairing resolves and then answers `303` to the client's `redirect_uri`. The off-site redirect therefore always follows a GET navigation, never a form POST, so upstream `AppHeaders`' CSP `form-action 'self'` cannot block it. Inline `<style>` is allowed by the upstream CSP (`style-src 'self' 'unsafe-inline'`). Pages are rendered by Rust functions with HTML escaping (`pages.rs`), not handlebars templates, so no upstream template registration changes.
+18. **Authorize page flow (zero JavaScript):** `GET /reins/oauth/authorize` validates the request and renders an email form; `POST /reins/oauth/authorize` (per-IP `check_limit_login`) starts the pairing and answers `303` to `GET /reins/oauth/authorize/wait?session=…`, which renders the code with `<meta http-equiv="refresh" content="2">` until the pairing resolves and then answers `303` to the client's `redirect_uri`. The off-site redirect therefore always follows a GET navigation, never a form POST, so upstream `AppHeaders`' CSP `form-action 'self'` cannot block it. Inline `<style>` is allowed by the upstream CSP (`style-src 'self' 'unsafe-inline'`). Pages are rendered by Rust functions with HTML escaping (`pages.rs`), not handlebars templates, so no upstream template registration changes.
 19. **Unknown email, disabled user, or user without an approval device** get the identical wait page with a random code backed by a decoy pairing that nobody can answer; it expires like a real one.
 20. **`client_host`** shown on the phone is the host of the validated `redirect_uri` (server-verified), e.g. `chatgpt.com`, `claude.ai`, `localhost`.
 21. **Pairing choices:** three distinct values in `10..=99`, one equal to the browser code, in random order. **`client_name`/label sanitizing:** remove Unicode control characters, bidi controls (U+061C, U+200E, U+200F, U+202A–U+202E, U+2066–U+2069) and zero-width characters (U+200B–U+200D, U+2060, U+FEFF), collapse whitespace, truncate to 64 characters; empty → `"Unknown client"` (name) / the sanitized client name (label).
 22. **`PairingResponse` validation:** `approved: true` requires `chosen_code`, which must be one of the three choices (else 400 `bad_request`, pairing untouched); a valid choice that is not the browser code → 409 `wrong_code` and the pairing fails; `approved: false` → denied (`connection_id: null`).
-23. **Rate limits (per client IP, upstream limiters):** email submission on the authorize page uses `crate::ratelimit::check_limit_login` (default burst 10 per 60 s); `POST /rewarden/oauth/register` uses `crate::ratelimit::check_limit_unauthenticated` (default burst 50 per 60 s), as upstream does for other unauthenticated endpoints. The page answers 429 with an HTML error page; `/register` answers 429 with an RFC 6749-style JSON error.
+23. **Rate limits (per client IP, upstream limiters):** email submission on the authorize page uses `crate::ratelimit::check_limit_login` (default burst 10 per 60 s); `POST /reins/oauth/register` uses `crate::ratelimit::check_limit_unauthenticated` (default burst 50 per 60 s), as upstream does for other unauthenticated endpoints. The page answers 429 with an HTML error page; `/register` answers 429 with an RFC 6749-style JSON error.
 24. **DCR accepts only public clients** (`token_endpoint_auth_method` absent or `"none"`), requires `redirect_uris` (1..=10, each `https://…` or loopback `http://localhost|127.0.0.1|[::1]`), `grant_types` ⊆ {`authorization_code`,`refresh_token`}, `response_types` ⊆ {`code`}; `application_type` is accepted but not required (MCP says clients MUST send it, but rejecting a client that forgets it gains nothing).
 25. **CIMD:** a `client_id` starting with `https://` is a metadata document URL. It is fetched with `crate::http_client::make_http_request` (SSRF guard, 10 s timeout), must answer 200 JSON ≤ 64 KiB from the same URL (redirects rejected by comparing the final URL), and its `client_id` field must equal the URL. Fetch failures are not cached.
 26. **Redirect-URI matching:** exact string match against the registered list, except loopback redirect URIs (`http` + host `localhost`, `127.0.0.1` or `[::1]`), which match when scheme, host, path and query are equal and only the port differs (RFC 8252 §7.3).
-27. **HTTP-level tests run against the real binary.** `rocket::local::asynchronous::Client` tests were evaluated and rejected: the `DbConn` guard needs a managed `DbPool`, which only `DbPool::from_config()` builds (reads the global `CONFIG`), and `CONFIG` is a process-global `LazyLock` that reads the environment once, cannot be reconfigured per test (`std::env::set_var` is `unsafe` in edition 2024 and the workspace forbids `unsafe_code`), exits the process (`exit(12)`) when validation fails, and is also read by the `AppHeaders` fairing. Instead `tests/rewarden_server/` (a Cargo integration-test target) spawns `env!("CARGO_BIN_EXE_vaultwarden")` per test with its own temp `DATA_FOLDER`, free port, `DOMAIN=http://127.0.0.1:<port>`, `REWARDEN_ENABLED=true` and short relay timings, and talks HTTP with reqwest. A "phone" in these tests is a Vaultwarden login with `deviceType=0` (register via `/identity/accounts/register` with an arbitrary `masterPasswordHash` string, log in with the same string). Plan 3's `rewarden-e2e` harness remains the full end-to-end test with `rewarden-core`.
-28. **Purge job:** a scheduled job (`REWARDEN_PURGE_SCHEDULE`, default hourly `"0 25 * * * *"`) deletes expired refresh tokens and sweeps expired in-memory entries. In-memory maps also purge lazily on every insert.
-29. **Disabled mode:** when `REWARDEN_ENABLED=false` (default) the route vectors are empty, nothing is mounted, no job is scheduled; migrations still run (tables exist but stay empty).
-30. **Config validation** (only when enabled): `DOMAIN` must be set explicitly; `DOMAIN` must be `https://` unless its host is loopback; `1 <= REWARDEN_OFFLINE_SECS <= REWARDEN_RELAY_WAIT_SECS <= 55`; `REWARDEN_FCM_SERVICE_ACCOUNT` empty or an existing file that parses as a Google service-account JSON.
+27. **HTTP-level tests run against the real binary.** `rocket::local::asynchronous::Client` tests were evaluated and rejected: the `DbConn` guard needs a managed `DbPool`, which only `DbPool::from_config()` builds (reads the global `CONFIG`), and `CONFIG` is a process-global `LazyLock` that reads the environment once, cannot be reconfigured per test (`std::env::set_var` is `unsafe` in edition 2024 and the workspace forbids `unsafe_code`), exits the process (`exit(12)`) when validation fails, and is also read by the `AppHeaders` fairing. Instead `tests/reins_server/` (a Cargo integration-test target) spawns `env!("CARGO_BIN_EXE_vaultwarden")` per test with its own temp `DATA_FOLDER`, free port, `DOMAIN=http://127.0.0.1:<port>`, `REINS_ENABLED=true` and short relay timings, and talks HTTP with reqwest. A "phone" in these tests is a Vaultwarden login with `deviceType=0` (register via `/identity/accounts/register` with an arbitrary `masterPasswordHash` string, log in with the same string). Plan 3's `reins-e2e` harness remains the full end-to-end test with `reins-core`.
+28. **Purge job:** a scheduled job (`REINS_PURGE_SCHEDULE`, default hourly `"0 25 * * * *"`) deletes expired refresh tokens and sweeps expired in-memory entries. In-memory maps also purge lazily on every insert.
+29. **Disabled mode:** when `REINS_ENABLED=false` (default) the route vectors are empty, nothing is mounted, no job is scheduled; migrations still run (tables exist but stay empty).
+30. **Config validation** (only when enabled): `DOMAIN` must be set explicitly; `DOMAIN` must be `https://` unless its host is loopback; `1 <= REINS_OFFLINE_SECS <= REINS_RELAY_WAIT_SECS <= 55`; `REINS_FCM_SERVICE_ACCOUNT` empty or an existing file that parses as a Google service-account JSON.
 31. **FCM failures never fail a relay**: the push is spawned after the request is stored and errors are logged (`warn!`), because the phone can still pick the request up by long-polling. An FCM `404 UNREGISTERED`/`NOT_FOUND` clears the stored `fcm_token`.
 32. **Approval-device registration (A1) sanitizes `fcm_token`**: trimmed, empty → `None`, longer than 4096 bytes or containing control characters → 400 `bad_request`.
 
@@ -75,52 +75,52 @@ Made autonomously while planning (the human was unavailable); each is binding fo
 
 ```
 Cargo.toml                                        modify: [dev-dependencies] tokio (macros, test-util)
-.env.template                                     modify: REWARDEN_* documentation block
-migrations/sqlite/2026-09-28-000000_rewarden/{up,down}.sql      create
-migrations/mysql/2026-09-28-000000_rewarden/{up,down}.sql       create
-migrations/postgresql/2026-09-28-000000_rewarden/{up,down}.sql  create
-crates/rewarden-proto/src/lib.rs                  modify: pub mod device
-crates/rewarden-proto/src/device.rs               create: phone API DTOs + ApiError (contracts §A)
-src/main.rs                                       modify: mount rewarden routes/catchers, purge job
-src/config.rs                                     modify: `rewarden` config group + validate call
-src/util.rs                                       modify: LOGGED_ROUTES += /rewarden, /mcp, /.well-known
-src/auth.rs                                       modify: `#[path = "auth/rewarden.rs"] pub mod rewarden;`
-src/auth/rewarden.rs                              create: MCP access-token claims, encode/decode with audience
+.env.template                                     modify: REINS_* documentation block
+migrations/sqlite/2026-09-28-000000_reins/{up,down}.sql      create
+migrations/mysql/2026-09-28-000000_reins/{up,down}.sql       create
+migrations/postgresql/2026-09-28-000000_reins/{up,down}.sql  create
+crates/reins-proto/src/lib.rs                  modify: pub mod device
+crates/reins-proto/src/device.rs               create: phone API DTOs + ApiError (contracts §A)
+src/main.rs                                       modify: mount reins routes/catchers, purge job
+src/config.rs                                     modify: `reins` config group + validate call
+src/util.rs                                       modify: LOGGED_ROUTES += /reins, /mcp, /.well-known
+src/auth.rs                                       modify: `#[path = "auth/reins.rs"] pub mod reins;`
+src/auth/reins.rs                              create: MCP access-token claims, encode/decode with audience
 src/db/schema.rs                                  modify: 4 tables + joinable + allow_tables
 src/db/models/mod.rs                              modify: register 3 model files
-src/db/models/rewarden_device.rs                  create: RewardenDevice
-src/db/models/rewarden_client.rs                  create: RewardenClient (DCR)
-src/db/models/rewarden_connection.rs              create: RewardenConnection, RewardenRefreshToken
-src/api/mod.rs                                    modify: `pub mod rewarden;` + re-exports
-src/api/rewarden/mod.rs                           create: wiring, settings, routes(), well_known_routes(), catchers(), purge job
-src/api/rewarden/ttl.rs                           create: TtlMap (tokio-time TTL map with capacity)
-src/api/rewarden/relay.rs                         create: RelayHub — requests, results, delivery, long-poll
-src/api/rewarden/pairing.rs                       create: pairing invariants (choices, sanitize, validate) + PairingHub
-src/api/rewarden/fcm.rs                           create: FCM HTTP v1 sender, service-account JWT, token cache
-src/api/rewarden/device_api.rs                    create: A1–A8 handlers, ApiErr responder, 401 catcher
-src/api/rewarden/oauth.rs                         create: pure OAuth: metadata, PKCE, redirect matching, client metadata, token requests
-src/api/rewarden/pages.rs                         create: server-rendered HTML (escape, email form, wait, error)
-src/api/rewarden/oauth_routes.rs                  create: well-known, register, CIMD, authorize/wait, token handlers
-src/api/rewarden/mcp.rs                           create: pure JSON-RPC/MCP dual-era dispatch
-src/api/rewarden/tools.rs                         create: tool schemas, argument mapping, result rendering
-src/api/rewarden/mcp_routes.rs                    create: POST/GET/DELETE /mcp handler, bearer auth, relay wiring
-tests/rewarden_server/main.rs                     create: integration test target (spawns the real binary)
-tests/rewarden_server/harness.rs                  create: server process, accounts, phone + OAuth helpers
-tests/rewarden_server/phone_api.rs                create: A1–A8 HTTP tests
-tests/rewarden_server/oauth.rs                    create: metadata, DCR, authorize, token HTTP tests
-tests/rewarden_server/mcp.rs                      create: MCP HTTP tests incl. relay timing
+src/db/models/reins_device.rs                  create: ReinsDevice
+src/db/models/reins_client.rs                  create: ReinsClient (DCR)
+src/db/models/reins_connection.rs              create: ReinsConnection, ReinsRefreshToken
+src/api/mod.rs                                    modify: `pub mod reins;` + re-exports
+src/api/reins/mod.rs                           create: wiring, settings, routes(), well_known_routes(), catchers(), purge job
+src/api/reins/ttl.rs                           create: TtlMap (tokio-time TTL map with capacity)
+src/api/reins/relay.rs                         create: RelayHub — requests, results, delivery, long-poll
+src/api/reins/pairing.rs                       create: pairing invariants (choices, sanitize, validate) + PairingHub
+src/api/reins/fcm.rs                           create: FCM HTTP v1 sender, service-account JWT, token cache
+src/api/reins/device_api.rs                    create: A1–A8 handlers, ApiErr responder, 401 catcher
+src/api/reins/oauth.rs                         create: pure OAuth: metadata, PKCE, redirect matching, client metadata, token requests
+src/api/reins/pages.rs                         create: server-rendered HTML (escape, email form, wait, error)
+src/api/reins/oauth_routes.rs                  create: well-known, register, CIMD, authorize/wait, token handlers
+src/api/reins/mcp.rs                           create: pure JSON-RPC/MCP dual-era dispatch
+src/api/reins/tools.rs                         create: tool schemas, argument mapping, result rendering
+src/api/reins/mcp_routes.rs                    create: POST/GET/DELETE /mcp handler, bearer auth, relay wiring
+tests/reins_server/main.rs                     create: integration test target (spawns the real binary)
+tests/reins_server/harness.rs                  create: server process, accounts, phone + OAuth helpers
+tests/reins_server/phone_api.rs                create: A1–A8 HTTP tests
+tests/reins_server/oauth.rs                    create: metadata, DCR, authorize, token HTTP tests
+tests/reins_server/mcp.rs                      create: MCP HTTP tests incl. relay timing
 ```
 
 ---
-### Task 1: `rewarden-proto::device` — phone API DTOs
+### Task 1: `reins-proto::device` — phone API DTOs
 
 **Files:**
-- Create: `crates/rewarden-proto/src/device.rs`
-- Modify: `crates/rewarden-proto/src/lib.rs` (add `pub mod device;` after `pub mod gmail;`)
+- Create: `crates/reins-proto/src/device.rs`
+- Modify: `crates/reins-proto/src/lib.rs` (add `pub mod device;` after `pub mod gmail;`)
 
 **Interfaces:**
-- Consumes: `rewarden_proto::ids::ConnectionId`, `rewarden_proto::relay::RelayRequest`, `rewarden_proto::pairing::PairingRequest` (Plan 1).
-- Produces (module `rewarden_proto::device`, all `Clone + Debug + PartialEq + Eq + Serialize + Deserialize`):
+- Consumes: `reins_proto::ids::ConnectionId`, `reins_proto::relay::RelayRequest`, `reins_proto::pairing::PairingRequest` (Plan 1).
+- Produces (module `reins_proto::device`, all `Clone + Debug + PartialEq + Eq + Serialize + Deserialize`):
   - `pub const MAX_PENDING_WAIT_SECS: u32 = 25;`
   - `pub mod codes { NOT_APPROVAL_DEVICE, NOT_FOUND, ALREADY_ANSWERED, WRONG_CODE, BAD_VERSION, BAD_REQUEST, UNAUTHORIZED, INTERNAL: &str }`
   - `DeviceRegistration { fcm_token: Option<String> }` (A1 body; field defaults to `None`)
@@ -132,7 +132,7 @@ tests/rewarden_server/mcp.rs                      create: MCP HTTP tests incl. r
 
 - [ ] **Step 1: Write the failing tests**
 
-Create `crates/rewarden-proto/src/device.rs` with only the test module (the types come in Step 3):
+Create `crates/reins-proto/src/device.rs` with only the test module (the types come in Step 3):
 
 ```rust
 #[cfg(test)]
@@ -225,7 +225,7 @@ mod tests {
 }
 ```
 
-Add `pub mod device;` to `crates/rewarden-proto/src/lib.rs` so the module list reads:
+Add `pub mod device;` to `crates/reins-proto/src/lib.rs` so the module list reads:
 
 ```rust
 pub mod device;
@@ -238,15 +238,15 @@ mod validate;
 
 - [ ] **Step 2: Run the tests to verify they fail**
 
-Run: `cargo test -p rewarden-proto device`
+Run: `cargo test -p reins-proto device`
 Expected: FAIL to compile — `cannot find type DeviceRegistration in this scope` (and the other types).
 
 - [ ] **Step 3: Implement the DTOs**
 
-Insert above the test module in `crates/rewarden-proto/src/device.rs`:
+Insert above the test module in `crates/reins-proto/src/device.rs`:
 
 ```rust
-//! Phone API bodies (`{domain}/rewarden/api/*`, contracts §A), shared by the
+//! Phone API bodies (`{domain}/reins/api/*`, contracts §A), shared by the
 //! server and the phone core.
 
 use serde::{Deserialize, Serialize};
@@ -356,53 +356,53 @@ impl ApiError {
 
 - [ ] **Step 4: Run the tests and lints**
 
-Run: `cargo test -p rewarden-proto && cargo clippy -p rewarden-proto --all-targets -- -D warnings && cargo fmt -p rewarden-proto --check`
+Run: `cargo test -p reins-proto && cargo clippy -p reins-proto --all-targets -- -D warnings && cargo fmt -p reins-proto --check`
 Expected: all tests pass (5 new in `device::tests`), no clippy findings, fmt clean.
 
 - [ ] **Step 5: Commit**
 
 ```bash
-git add crates/rewarden-proto/src/device.rs crates/rewarden-proto/src/lib.rs
+git add crates/reins-proto/src/device.rs crates/reins-proto/src/lib.rs
 git commit -m "feat(proto): phone API device DTOs and ApiError"
 ```
 
 ---
 
-### Task 2: `rewarden` config group, module skeleton and wiring
+### Task 2: `reins` config group, module skeleton and wiring
 
 **Files:**
 - Modify: `Cargo.toml` (new `[dev-dependencies]` table just before the `# Strip debuginfo from the release builds` comment / `[profile.release]`)
 - Modify: `src/config.rs` (new group after the `push { … },` group ending at line 538; one validation call after the `if cfg.push_enabled { … }` block ending at line 1063)
-- Modify: `src/api/mod.rs` (line 6: add `pub mod rewarden;` after `mod push;`)
+- Modify: `src/api/mod.rs` (line 6: add `pub mod reins;` after `mod push;`)
 - Modify: `src/main.rs:582-598` (mounts inside `launch_rocket`)
 - Modify: `src/util.rs:300` (`LOGGED_ROUTES`)
 - Modify: `.env.template` (new block between the push section, line 130, and `### Schedule jobs ###`)
-- Create: `src/api/rewarden/mod.rs`
+- Create: `src/api/reins/mod.rs`
 
 **Interfaces:**
-- Consumes: `crate::CONFIG` getters generated by this task: `rewarden_enabled() -> bool`, `rewarden_fcm_service_account() -> String`, `rewarden_relay_wait_secs() -> u64`, `rewarden_offline_secs() -> u64`, `rewarden_purge_schedule() -> String`.
-- Produces (`crate::api::rewarden`):
+- Consumes: `crate::CONFIG` getters generated by this task: `reins_enabled() -> bool`, `reins_fcm_service_account() -> String`, `reins_relay_wait_secs() -> u64`, `reins_offline_secs() -> u64`, `reins_purge_schedule() -> String`.
+- Produces (`crate::api::reins`):
   - constants `ITEM_TTL: Duration` (600 s), `SESSION_TTL` (300 s), `CODE_TTL` (60 s), `CIMD_TTL` (3600 s), `ACCESS_TOKEN_SECS: i64 = 3600`, `REFRESH_TOKEN_SECS: i64 = 2_592_000`, `MAX_RELAY_WAIT_SECS: u64 = 55`
   - `struct Timing { relay_wait: Duration, offline: Duration }` + `Timing::from_config() -> Timing`
   - `fn enabled() -> bool`
-  - `fn routes() -> Vec<Route>` (mounted at `{domain_path}/`; later tasks append their routes), `fn well_known_routes() -> Vec<Route>` (mounted at `/`), `fn catchers() -> Vec<Catcher>` (registered at `{domain_path}/rewarden/api`) — all empty when disabled
+  - `fn routes() -> Vec<Route>` (mounted at `{domain_path}/`; later tasks append their routes), `fn well_known_routes() -> Vec<Route>` (mounted at `/`), `fn catchers() -> Vec<Catcher>` (registered at `{domain_path}/reins/api`) — all empty when disabled
   - `fn validate_settings(domain: &str, domain_set: bool, wait_secs: u64, offline_secs: u64, fcm_path: &str) -> Result<(), String>`
 
 - [ ] **Step 1: Write the failing tests**
 
-Create `src/api/rewarden/mod.rs` with the module doc, the temporary lint allowance and the tests:
+Create `src/api/reins/mod.rs` with the module doc, the temporary lint allowance and the tests:
 
 ```rust
-//! Rewarden server: MCP endpoint, OAuth 2.1 authorization server for AI clients,
+//! Reins server: MCP endpoint, OAuth 2.1 authorization server for AI clients,
 //! phone API and in-memory relay (spec §4, contracts §A and §C).
 // Modules are wired into routes incrementally by Plan 2; Task 14 removes this allowance.
-#![allow(dead_code, reason = "Rewarden modules are wired incrementally; removed in Plan 2 Task 14")]
+#![allow(dead_code, reason = "Reins modules are wired incrementally; removed in Plan 2 Task 14")]
 
 #[cfg(test)]
 mod tests {
     use super::*;
 
-    const OK_DOMAIN: &str = "https://rewarden.example.com";
+    const OK_DOMAIN: &str = "https://reins.example.com";
 
     #[test]
     fn accepts_defaults() {
@@ -415,23 +415,23 @@ mod tests {
     #[test]
     fn requires_explicit_https_domain() {
         assert!(validate_settings(OK_DOMAIN, false, 45, 10, "").unwrap_err().contains("DOMAIN"));
-        assert!(validate_settings("http://rewarden.example.com", true, 45, 10, "").unwrap_err().contains("https"));
+        assert!(validate_settings("http://reins.example.com", true, 45, 10, "").unwrap_err().contains("https"));
         assert!(validate_settings("not a url", true, 45, 10, "").is_err());
     }
 
     #[test]
     fn timing_bounds() {
-        assert!(validate_settings(OK_DOMAIN, true, 0, 0, "").unwrap_err().contains("REWARDEN_RELAY_WAIT_SECS"));
-        assert!(validate_settings(OK_DOMAIN, true, 56, 10, "").unwrap_err().contains("REWARDEN_RELAY_WAIT_SECS"));
-        assert!(validate_settings(OK_DOMAIN, true, 45, 0, "").unwrap_err().contains("REWARDEN_OFFLINE_SECS"));
-        assert!(validate_settings(OK_DOMAIN, true, 10, 11, "").unwrap_err().contains("REWARDEN_OFFLINE_SECS"));
+        assert!(validate_settings(OK_DOMAIN, true, 0, 0, "").unwrap_err().contains("REINS_RELAY_WAIT_SECS"));
+        assert!(validate_settings(OK_DOMAIN, true, 56, 10, "").unwrap_err().contains("REINS_RELAY_WAIT_SECS"));
+        assert!(validate_settings(OK_DOMAIN, true, 45, 0, "").unwrap_err().contains("REINS_OFFLINE_SECS"));
+        assert!(validate_settings(OK_DOMAIN, true, 10, 11, "").unwrap_err().contains("REINS_OFFLINE_SECS"));
     }
 
     #[test]
     fn fcm_path_must_exist_when_set() {
-        let missing = std::env::temp_dir().join("rewarden-missing-service-account.json");
+        let missing = std::env::temp_dir().join("reins-missing-service-account.json");
         let err = validate_settings(OK_DOMAIN, true, 45, 10, missing.to_str().unwrap()).unwrap_err();
-        assert!(err.contains("REWARDEN_FCM_SERVICE_ACCOUNT"), "{err}");
+        assert!(err.contains("REINS_FCM_SERVICE_ACCOUNT"), "{err}");
     }
 
     #[test]
@@ -455,7 +455,7 @@ mod icons;
 mod identity;
 mod notifications;
 mod push;
-pub mod rewarden;
+pub mod reins;
 mod web;
 ```
 
@@ -470,7 +470,7 @@ tokio = { version = "1.53.1", features = ["macros", "test-util"] }
 
 - [ ] **Step 2: Run the tests to verify they fail**
 
-Run: `cargo test --features sqlite api::rewarden`
+Run: `cargo test --features sqlite api::reins`
 Expected: FAIL to compile — `cannot find function validate_settings`, `cannot find value ITEM_TTL`.
 
 - [ ] **Step 3: Add the config group**
@@ -478,31 +478,31 @@ Expected: FAIL to compile — `cannot find function validate_settings`, `cannot 
 In `src/config.rs`, directly after the `push { … },` group (after line 538 `    },`) insert:
 
 ```rust
-    /// Rewarden AI permission relay
-    rewarden {
-        /// Enable Rewarden |> Mounts the MCP endpoint ({DOMAIN}/mcp), the OAuth server for AI clients and the phone API
-        rewarden_enabled:               bool,   false,  def,    false;
+    /// Reins AI permission relay
+    reins {
+        /// Enable Reins |> Mounts the MCP endpoint ({DOMAIN}/mcp), the OAuth server for AI clients and the phone API
+        reins_enabled:               bool,   false,  def,    false;
         /// FCM service account |> Path to the Firebase service-account JSON used to wake the approval device. Empty disables push.
-        rewarden_fcm_service_account:   String, false,  def,    String::new();
+        reins_fcm_service_account:   String, false,  def,    String::new();
         /// Relay wait (seconds) |> How long an MCP tool call waits for the phone. Must be below ChatGPT's 60 s tool timeout (max 55).
-        rewarden_relay_wait_secs:       u64,    false,  def,    45;
+        reins_relay_wait_secs:       u64,    false,  def,    45;
         /// Offline threshold (seconds) |> A request not fetched by the phone within this time is reported as "device offline".
-        rewarden_offline_secs:          u64,    false,  def,    10;
-        /// Purge schedule |> Cron schedule of the job deleting expired Rewarden refresh tokens and in-memory entries. Blank disables it.
-        rewarden_purge_schedule:        String, false,  def,    "0 25 * * * *".to_owned();
+        reins_offline_secs:          u64,    false,  def,    10;
+        /// Purge schedule |> Cron schedule of the job deleting expired Reins refresh tokens and in-memory entries. Blank disables it.
+        reins_purge_schedule:        String, false,  def,    "0 25 * * * *".to_owned();
     },
 ```
 
 In `validate_config`, directly after the closing `}` of the `if cfg.push_enabled { … }` block (line 1063, before `let invalid_flags = …`) insert:
 
 ```rust
-    if cfg.rewarden_enabled
-        && let Err(e) = crate::api::rewarden::validate_settings(
+    if cfg.reins_enabled
+        && let Err(e) = crate::api::reins::validate_settings(
             &cfg.domain,
             cfg.domain_set,
-            cfg.rewarden_relay_wait_secs,
-            cfg.rewarden_offline_secs,
-            &cfg.rewarden_fcm_service_account,
+            cfg.reins_relay_wait_secs,
+            cfg.reins_offline_secs,
+            &cfg.reins_fcm_service_account,
         )
     {
         err!(e)
@@ -511,7 +511,7 @@ In `validate_config`, directly after the closing `}` of the `if cfg.push_enabled
 
 - [ ] **Step 4: Implement the module skeleton**
 
-In `src/api/rewarden/mod.rs`, between the `#![allow…]` line and the test module, insert:
+In `src/api/reins/mod.rs`, between the `#![allow…]` line and the test module, insert:
 
 ```rust
 
@@ -533,7 +533,7 @@ pub const CIMD_TTL: Duration = Duration::from_secs(3600);
 pub const ACCESS_TOKEN_SECS: i64 = 3600;
 /// MCP refresh token lifetime (seconds): 30 days.
 pub const REFRESH_TOKEN_SECS: i64 = 30 * 24 * 3600;
-/// Upper bound for `REWARDEN_RELAY_WAIT_SECS` (ChatGPT's hard tool timeout is 60 s).
+/// Upper bound for `REINS_RELAY_WAIT_SECS` (ChatGPT's hard tool timeout is 60 s).
 pub const MAX_RELAY_WAIT_SECS: u64 = 55;
 
 /// Relay timing (spec §4.3). Tests construct it directly.
@@ -548,17 +548,17 @@ pub struct Timing {
 impl Timing {
     pub fn from_config() -> Self {
         Self {
-            relay_wait: Duration::from_secs(CONFIG.rewarden_relay_wait_secs()),
-            offline: Duration::from_secs(CONFIG.rewarden_offline_secs()),
+            relay_wait: Duration::from_secs(CONFIG.reins_relay_wait_secs()),
+            offline: Duration::from_secs(CONFIG.reins_offline_secs()),
         }
     }
 }
 
 pub fn enabled() -> bool {
-    CONFIG.rewarden_enabled()
+    CONFIG.reins_enabled()
 }
 
-/// Routes mounted at `{domain_path}/` (they carry their full paths: `/mcp`, `/rewarden/...`).
+/// Routes mounted at `{domain_path}/` (they carry their full paths: `/mcp`, `/reins/...`).
 pub fn routes() -> Vec<Route> {
     if !enabled() {
         return Vec::new();
@@ -574,7 +574,7 @@ pub fn well_known_routes() -> Vec<Route> {
     Vec::new()
 }
 
-/// Catchers registered at `{domain_path}/rewarden/api`.
+/// Catchers registered at `{domain_path}/reins/api`.
 pub fn catchers() -> Vec<Catcher> {
     if !enabled() {
         return Vec::new();
@@ -582,7 +582,7 @@ pub fn catchers() -> Vec<Catcher> {
     Vec::new()
 }
 
-/// Cross-field checks for the `rewarden` config group; only called when Rewarden is enabled.
+/// Cross-field checks for the `reins` config group; only called when Reins is enabled.
 pub fn validate_settings(
     domain: &str,
     domain_set: bool,
@@ -591,7 +591,7 @@ pub fn validate_settings(
     fcm_path: &str,
 ) -> Result<(), String> {
     if !domain_set {
-        return Err("`REWARDEN_ENABLED` requires `DOMAIN` to be set to the public URL of this server".to_owned());
+        return Err("`REINS_ENABLED` requires `DOMAIN` to be set to the public URL of this server".to_owned());
     }
     let url = url::Url::parse(domain).map_err(|e| format!("`DOMAIN` is not a valid URL: {e}"))?;
     let loopback = match url.host() {
@@ -601,19 +601,19 @@ pub fn validate_settings(
         None => false,
     };
     if url.scheme() != "https" && !(url.scheme() == "http" && loopback) {
-        return Err("`REWARDEN_ENABLED` requires an https:// `DOMAIN` (http is only allowed for localhost, 127.0.0.1 and [::1])"
+        return Err("`REINS_ENABLED` requires an https:// `DOMAIN` (http is only allowed for localhost, 127.0.0.1 and [::1])"
             .to_owned());
     }
     if !(1..=MAX_RELAY_WAIT_SECS).contains(&wait_secs) {
         return Err(format!(
-            "`REWARDEN_RELAY_WAIT_SECS` must be between 1 and {MAX_RELAY_WAIT_SECS} (ChatGPT aborts tool calls after 60 s)"
+            "`REINS_RELAY_WAIT_SECS` must be between 1 and {MAX_RELAY_WAIT_SECS} (ChatGPT aborts tool calls after 60 s)"
         ));
     }
     if offline_secs == 0 || offline_secs > wait_secs {
-        return Err("`REWARDEN_OFFLINE_SECS` must be at least 1 and at most `REWARDEN_RELAY_WAIT_SECS`".to_owned());
+        return Err("`REINS_OFFLINE_SECS` must be at least 1 and at most `REINS_RELAY_WAIT_SECS`".to_owned());
     }
     if !fcm_path.is_empty() && !Path::new(fcm_path).is_file() {
-        return Err(format!("`REWARDEN_FCM_SERVICE_ACCOUNT` file `{fcm_path}` does not exist"));
+        return Err(format!("`REINS_FCM_SERVICE_ACCOUNT` file `{fcm_path}` does not exist"));
     }
     Ok(())
 }
@@ -626,14 +626,14 @@ pub fn validate_settings(
 In `src/main.rs` `launch_rocket`, after `.mount([basepath, "/notifications"].concat(), api::notifications_routes())` (line 589) insert:
 
 ```rust
-        .mount([basepath, "/"].concat(), api::rewarden::routes())
-        .mount("/", api::rewarden::well_known_routes())
+        .mount([basepath, "/"].concat(), api::reins::routes())
+        .mount("/", api::reins::well_known_routes())
 ```
 
 and after `.register([basepath, "/admin"].concat(), api::admin_catchers())` (line 592) insert:
 
 ```rust
-        .register([basepath, "/rewarden/api"].concat(), api::rewarden::catchers())
+        .register([basepath, "/reins/api"].concat(), api::reins::catchers())
 ```
 
 In `src/util.rs` replace line 300:
@@ -653,7 +653,7 @@ const LOGGED_ROUTES: [&str; 10] = [
     "/attachments",
     "/events",
     "/notifications",
-    "/rewarden",
+    "/reins",
     "/mcp",
     "/.well-known",
 ];
@@ -665,34 +665,34 @@ In `.env.template`, after the line `# PUSH_IDENTITY_URI=https://identity.bitward
 
 ```ini
 ################
-### Rewarden ###
+### Reins ###
 ################
 
-## Enables the Rewarden AI permission relay: the MCP endpoint ({DOMAIN}/mcp), the OAuth
-## authorization server for AI clients (/rewarden/oauth/*, /.well-known/oauth-*) and the
-## phone API (/rewarden/api/*). Requires DOMAIN (https://, or http:// on localhost/127.0.0.1).
-# REWARDEN_ENABLED=false
+## Enables the Reins AI permission relay: the MCP endpoint ({DOMAIN}/mcp), the OAuth
+## authorization server for AI clients (/reins/oauth/*, /.well-known/oauth-*) and the
+## phone API (/reins/api/*). Requires DOMAIN (https://, or http:// on localhost/127.0.0.1).
+# REINS_ENABLED=false
 
 ## Firebase service-account JSON used to wake the approval device through FCM HTTP v1.
-## Leave empty to disable push; the Rewarden app then only receives requests while it is open.
-# REWARDEN_FCM_SERVICE_ACCOUNT=/path/to/fcm-service-account.json
+## Leave empty to disable push; the Reins app then only receives requests while it is open.
+# REINS_FCM_SERVICE_ACCOUNT=/path/to/fcm-service-account.json
 
 ## Seconds an MCP tool call waits for the phone before telling the AI to call
-## rewarden_get_result later. Must be 1..=55 (ChatGPT aborts tool calls after 60 s).
-# REWARDEN_RELAY_WAIT_SECS=45
+## reins_get_result later. Must be 1..=55 (ChatGPT aborts tool calls after 60 s).
+# REINS_RELAY_WAIT_SECS=45
 
 ## Seconds after which a request the phone has not fetched is reported to the AI as "device offline".
-## Must be 1..=REWARDEN_RELAY_WAIT_SECS.
-# REWARDEN_OFFLINE_SECS=10
+## Must be 1..=REINS_RELAY_WAIT_SECS.
+# REINS_OFFLINE_SECS=10
 
-## Cron schedule of the job that deletes expired Rewarden refresh tokens and in-memory entries.
-# REWARDEN_PURGE_SCHEDULE="0 25 * * * *"
+## Cron schedule of the job that deletes expired Reins refresh tokens and in-memory entries.
+# REINS_PURGE_SCHEDULE="0 25 * * * *"
 
 ```
 
 - [ ] **Step 7: Run the tests, lints and a startup check**
 
-Run: `cargo test --features sqlite api::rewarden`
+Run: `cargo test --features sqlite api::reins`
 Expected: 5 passed.
 
 Run: `cargo fmt --check && cargo clippy --features sqlite --all-targets -- -D warnings && cargo clippy --features sqlite,mysql,postgresql -- -D warnings`
@@ -703,16 +703,16 @@ Run (startup rejects a bad config):
 ```bash
 cargo build --features sqlite
 D=$(mktemp -d) && (cd "$D" && DATA_FOLDER="$D" WEB_VAULT_ENABLED=false DOMAIN=http://127.0.0.1:18080 ROCKET_PORT=18080 \
-  REWARDEN_ENABLED=true REWARDEN_RELAY_WAIT_SECS=90 <repo>/target/debug/vaultwarden; echo "exit=$?")
+  REINS_ENABLED=true REINS_RELAY_WAIT_SECS=90 <repo>/target/debug/vaultwarden; echo "exit=$?")
 ```
 
-Expected: output contains ``REWARDEN_RELAY_WAIT_SECS` must be between 1 and 55`` and `exit=12`.
+Expected: output contains ``REINS_RELAY_WAIT_SECS` must be between 1 and 55`` and `exit=12`.
 
 - [ ] **Step 8: Commit**
 
 ```bash
-git add Cargo.toml Cargo.lock src/config.rs src/api/mod.rs src/api/rewarden/mod.rs src/main.rs src/util.rs .env.template
-git commit -m "feat(rewarden): config group, module skeleton and route mounts"
+git add Cargo.toml Cargo.lock src/config.rs src/api/mod.rs src/api/reins/mod.rs src/main.rs src/util.rs .env.template
+git commit -m "feat(reins): config group, module skeleton and route mounts"
 ```
 
 ---
@@ -720,52 +720,52 @@ git commit -m "feat(rewarden): config group, module skeleton and route mounts"
 ### Task 3: Database tables, schema and models (sqlite, mysql, postgresql)
 
 **Files:**
-- Create: `migrations/sqlite/2026-09-28-000000_rewarden/up.sql`, `.../down.sql`
-- Create: `migrations/mysql/2026-09-28-000000_rewarden/up.sql`, `.../down.sql`
-- Create: `migrations/postgresql/2026-09-28-000000_rewarden/up.sql`, `.../down.sql`
+- Create: `migrations/sqlite/2026-09-28-000000_reins/up.sql`, `.../down.sql`
+- Create: `migrations/mysql/2026-09-28-000000_reins/up.sql`, `.../down.sql`
+- Create: `migrations/postgresql/2026-09-28-000000_reins/up.sql`, `.../down.sql`
 - Modify: `src/db/schema.rs` (append four `table!` blocks after the `archives` table, before the first `joinable!`, line ~352)
-- Create: `src/db/models/rewarden_device.rs`, `src/db/models/rewarden_client.rs`, `src/db/models/rewarden_connection.rs`
+- Create: `src/db/models/reins_device.rs`, `src/db/models/reins_client.rs`, `src/db/models/reins_connection.rs`
 - Modify: `src/db/models/mod.rs` (register the three files)
-- Modify: `Cargo.toml` (`[dependencies]`: add `rewarden-proto` after `macros = { path = "./macros" }`)
+- Modify: `Cargo.toml` (`[dependencies]`: add `reins-proto` after `macros = { path = "./macros" }`)
 
 **Interfaces:**
-- Consumes: `crate::db::{DbConn, DbConnInner}`, `crate::db::models::{UserId, DeviceId}`, `crate::api::EmptyResult`, `crate::error::MapResult`, `crate::util::get_uuid`, `rewarden_proto::device::ConnectionInfo`, `rewarden_proto::ids::ConnectionId`.
+- Consumes: `crate::db::{DbConn, DbConnInner}`, `crate::db::models::{UserId, DeviceId}`, `crate::api::EmptyResult`, `crate::error::MapResult`, `crate::util::get_uuid`, `reins_proto::device::ConnectionInfo`, `reins_proto::ids::ConnectionId`.
 - Produces (`crate::db::models::*`):
-  - `RewardenDevice { user_uuid: UserId, device_uuid: DeviceId, fcm_token: Option<String>, updated_at: i64 }`
-    - `async fn find_by_user(user_uuid: &UserId, conn: &DbConn) -> Option<RewardenDevice>`
-    - `async fn replace(&self, conn: &DbConn) -> Result<Option<RewardenDevice>, crate::Error>` (returns the previous row)
+  - `ReinsDevice { user_uuid: UserId, device_uuid: DeviceId, fcm_token: Option<String>, updated_at: i64 }`
+    - `async fn find_by_user(user_uuid: &UserId, conn: &DbConn) -> Option<ReinsDevice>`
+    - `async fn replace(&self, conn: &DbConn) -> Result<Option<ReinsDevice>, crate::Error>` (returns the previous row)
     - `async fn clear_fcm_token(user_uuid: &UserId, fcm_token: &str, conn: &DbConn) -> EmptyResult` (only if the stored token still equals `fcm_token`)
-  - `RewardenClient { client_id: String, client_name: String, redirect_uris: String /* JSON array */, created_at: i64 }`
-    - `fn new(client_name: String, redirect_uris: &[String], now: i64) -> RewardenClient` (fresh uuid `client_id`)
+  - `ReinsClient { client_id: String, client_name: String, redirect_uris: String /* JSON array */, created_at: i64 }`
+    - `fn new(client_name: String, redirect_uris: &[String], now: i64) -> ReinsClient` (fresh uuid `client_id`)
     - `fn redirect_uri_list(&self) -> Vec<String>`
-    - `async fn save(&self, conn: &DbConn) -> EmptyResult`, `async fn find(client_id: &str, conn: &DbConn) -> Option<RewardenClient>`
-  - `RewardenConnection { uuid: String, user_uuid: UserId, client_id: String, client_name: String, client_host: String, label: String, created_at: i64, last_used_at: Option<i64> }`
-    - `fn new(user_uuid: UserId, client_id: String, client_name: String, client_host: String, label: String, now: i64) -> RewardenConnection`
-    - `fn to_info(&self) -> rewarden_proto::device::ConnectionInfo`
+    - `async fn save(&self, conn: &DbConn) -> EmptyResult`, `async fn find(client_id: &str, conn: &DbConn) -> Option<ReinsClient>`
+  - `ReinsConnection { uuid: String, user_uuid: UserId, client_id: String, client_name: String, client_host: String, label: String, created_at: i64, last_used_at: Option<i64> }`
+    - `fn new(user_uuid: UserId, client_id: String, client_name: String, client_host: String, label: String, now: i64) -> ReinsConnection`
+    - `fn to_info(&self) -> reins_proto::device::ConnectionInfo`
     - `async fn save(&self, conn) -> EmptyResult`, `async fn find_by_uuid_and_user(uuid: &str, user_uuid: &UserId, conn) -> Option<Self>`, `async fn find_by_user(user_uuid: &UserId, conn) -> Vec<Self>` (oldest first), `async fn touch(uuid: &str, now: i64, conn) -> EmptyResult` (sets `last_used_at` at most once per 60 s), `async fn delete(&self, conn) -> EmptyResult` (also deletes its refresh tokens)
-  - `RewardenRefreshToken { token_hash: String, connection_uuid: String, expires_at: i64 }`
+  - `ReinsRefreshToken { token_hash: String, connection_uuid: String, expires_at: i64 }`
     - `async fn save(&self, conn) -> EmptyResult`, `async fn take(token_hash: &str, now: i64, conn) -> Option<Self>` (single use: deletes the row; `None` if unknown or expired), `async fn delete_expired(now: i64, conn) -> EmptyResult`
 
 - [ ] **Step 1: Write the migrations**
 
-`migrations/sqlite/2026-09-28-000000_rewarden/up.sql`:
+`migrations/sqlite/2026-09-28-000000_reins/up.sql`:
 
 ```sql
-CREATE TABLE rewarden_devices (
+CREATE TABLE reins_devices (
     user_uuid   CHAR(36) NOT NULL PRIMARY KEY REFERENCES users (uuid) ON DELETE CASCADE,
     device_uuid CHAR(36) NOT NULL,
     fcm_token   TEXT,
     updated_at  BIGINT   NOT NULL
 );
 
-CREATE TABLE rewarden_clients (
+CREATE TABLE reins_clients (
     client_id     VARCHAR(64) NOT NULL PRIMARY KEY,
     client_name   TEXT        NOT NULL,
     redirect_uris TEXT        NOT NULL,
     created_at    BIGINT      NOT NULL
 );
 
-CREATE TABLE rewarden_connections (
+CREATE TABLE reins_connections (
     uuid         CHAR(36) NOT NULL PRIMARY KEY,
     user_uuid    CHAR(36) NOT NULL REFERENCES users (uuid) ON DELETE CASCADE,
     client_id    TEXT     NOT NULL,
@@ -776,23 +776,23 @@ CREATE TABLE rewarden_connections (
     last_used_at BIGINT
 );
 
-CREATE INDEX idx_rewarden_connections_user ON rewarden_connections (user_uuid);
+CREATE INDEX idx_reins_connections_user ON reins_connections (user_uuid);
 
-CREATE TABLE rewarden_refresh_tokens (
+CREATE TABLE reins_refresh_tokens (
     token_hash      CHAR(64) NOT NULL PRIMARY KEY,
-    connection_uuid CHAR(36) NOT NULL REFERENCES rewarden_connections (uuid) ON DELETE CASCADE,
+    connection_uuid CHAR(36) NOT NULL REFERENCES reins_connections (uuid) ON DELETE CASCADE,
     expires_at      BIGINT   NOT NULL
 );
 
-CREATE INDEX idx_rewarden_refresh_tokens_connection ON rewarden_refresh_tokens (connection_uuid);
+CREATE INDEX idx_reins_refresh_tokens_connection ON reins_refresh_tokens (connection_uuid);
 ```
 
-`migrations/postgresql/2026-09-28-000000_rewarden/up.sql`: identical text to the SQLite file above (the same DDL is valid PostgreSQL).
+`migrations/postgresql/2026-09-28-000000_reins/up.sql`: identical text to the SQLite file above (the same DDL is valid PostgreSQL).
 
-`migrations/mysql/2026-09-28-000000_rewarden/up.sql`:
+`migrations/mysql/2026-09-28-000000_reins/up.sql`:
 
 ```sql
-CREATE TABLE rewarden_devices (
+CREATE TABLE reins_devices (
     user_uuid   CHAR(36) NOT NULL PRIMARY KEY,
     device_uuid CHAR(36) NOT NULL,
     fcm_token   TEXT,
@@ -800,14 +800,14 @@ CREATE TABLE rewarden_devices (
     FOREIGN KEY (user_uuid) REFERENCES users (uuid) ON DELETE CASCADE
 );
 
-CREATE TABLE rewarden_clients (
+CREATE TABLE reins_clients (
     client_id     VARCHAR(64) NOT NULL PRIMARY KEY,
     client_name   TEXT        NOT NULL,
     redirect_uris TEXT        NOT NULL,
     created_at    BIGINT      NOT NULL
 );
 
-CREATE TABLE rewarden_connections (
+CREATE TABLE reins_connections (
     uuid         CHAR(36) NOT NULL PRIMARY KEY,
     user_uuid    CHAR(36) NOT NULL,
     client_id    TEXT     NOT NULL,
@@ -819,25 +819,25 @@ CREATE TABLE rewarden_connections (
     FOREIGN KEY (user_uuid) REFERENCES users (uuid) ON DELETE CASCADE
 );
 
-CREATE INDEX idx_rewarden_connections_user ON rewarden_connections (user_uuid);
+CREATE INDEX idx_reins_connections_user ON reins_connections (user_uuid);
 
-CREATE TABLE rewarden_refresh_tokens (
+CREATE TABLE reins_refresh_tokens (
     token_hash      CHAR(64) NOT NULL PRIMARY KEY,
     connection_uuid CHAR(36) NOT NULL,
     expires_at      BIGINT   NOT NULL,
-    FOREIGN KEY (connection_uuid) REFERENCES rewarden_connections (uuid) ON DELETE CASCADE
+    FOREIGN KEY (connection_uuid) REFERENCES reins_connections (uuid) ON DELETE CASCADE
 );
 
-CREATE INDEX idx_rewarden_refresh_tokens_connection ON rewarden_refresh_tokens (connection_uuid);
+CREATE INDEX idx_reins_refresh_tokens_connection ON reins_refresh_tokens (connection_uuid);
 ```
 
 `down.sql` for all three backends (identical):
 
 ```sql
-DROP TABLE IF EXISTS rewarden_refresh_tokens;
-DROP TABLE IF EXISTS rewarden_connections;
-DROP TABLE IF EXISTS rewarden_clients;
-DROP TABLE IF EXISTS rewarden_devices;
+DROP TABLE IF EXISTS reins_refresh_tokens;
+DROP TABLE IF EXISTS reins_connections;
+DROP TABLE IF EXISTS reins_clients;
+DROP TABLE IF EXISTS reins_devices;
 ```
 
 - [ ] **Step 2: Add the schema**
@@ -846,7 +846,7 @@ In `src/db/schema.rs`, after the `archives` `table! { … }` block and before `j
 
 ```rust
 table! {
-    rewarden_devices (user_uuid) {
+    reins_devices (user_uuid) {
         user_uuid -> Text,
         device_uuid -> Text,
         fcm_token -> Nullable<Text>,
@@ -855,7 +855,7 @@ table! {
 }
 
 table! {
-    rewarden_clients (client_id) {
+    reins_clients (client_id) {
         client_id -> Text,
         client_name -> Text,
         redirect_uris -> Text,
@@ -864,7 +864,7 @@ table! {
 }
 
 table! {
-    rewarden_connections (uuid) {
+    reins_connections (uuid) {
         uuid -> Text,
         user_uuid -> Text,
         client_id -> Text,
@@ -877,7 +877,7 @@ table! {
 }
 
 table! {
-    rewarden_refresh_tokens (token_hash) {
+    reins_refresh_tokens (token_hash) {
         token_hash -> Text,
         connection_uuid -> Text,
         expires_at -> BigInt,
@@ -888,14 +888,14 @@ table! {
 Add the proto crate to the root `Cargo.toml` `[dependencies]`, directly after `macros = { path = "./macros" }`:
 
 ```toml
-rewarden-proto = { path = "crates/rewarden-proto" }
+reins-proto = { path = "crates/reins-proto" }
 ```
 
 - [ ] **Step 3: Write the failing model tests**
 
 Each model file starts with its test module; the tests use an in-memory SQLite database migrated with the real embedded migrations (`crate::db::sqlite_migrations::MIGRATIONS` is private to `crate::db`, and these files are descendants of it, so they may use it). Query logic lives in synchronous `fn q_*(c: &mut DbConnInner, …)` functions that the async `DbConn` wrappers call, so tests call the `q_*` functions directly.
 
-`src/db/models/rewarden_device.rs` (test part):
+`src/db/models/reins_device.rs` (test part):
 
 ```rust
 #[cfg(all(test, sqlite))]
@@ -911,8 +911,8 @@ pub(super) fn test_db() -> DbConnInner {
 mod tests {
     use super::*;
 
-    fn device(user: &str, dev: &str, token: Option<&str>) -> RewardenDevice {
-        RewardenDevice {
+    fn device(user: &str, dev: &str, token: Option<&str>) -> ReinsDevice {
+        ReinsDevice {
             user_uuid: UserId::from(user.to_owned()),
             device_uuid: DeviceId::from(dev.to_owned()),
             fcm_token: token.map(str::to_owned),
@@ -947,19 +947,19 @@ mod tests {
 }
 ```
 
-`src/db/models/rewarden_client.rs` (test part):
+`src/db/models/reins_client.rs` (test part):
 
 ```rust
 #[cfg(all(test, sqlite))]
 mod tests {
-    use super::super::rewarden_device::test_db;
+    use super::super::reins_device::test_db;
     use super::*;
 
     #[test]
     fn client_round_trips_redirect_uris() {
         let mut c = test_db();
         let uris = vec!["https://claude.ai/api/mcp/auth_callback".to_owned(), "http://localhost/callback".to_owned()];
-        let client = RewardenClient::new("Claude".to_owned(), &uris, 7);
+        let client = ReinsClient::new("Claude".to_owned(), &uris, 7);
         assert_eq!(client.client_id.len(), 36);
         q_save(&mut c, &client).unwrap();
         let found = q_find(&mut c, &client.client_id).unwrap();
@@ -970,7 +970,7 @@ mod tests {
 
     #[test]
     fn corrupt_redirect_uris_yield_empty_list() {
-        let client = RewardenClient {
+        let client = ReinsClient {
             client_id: "x".to_owned(),
             client_name: "x".to_owned(),
             redirect_uris: "not json".to_owned(),
@@ -981,16 +981,16 @@ mod tests {
 }
 ```
 
-`src/db/models/rewarden_connection.rs` (test part):
+`src/db/models/reins_connection.rs` (test part):
 
 ```rust
 #[cfg(all(test, sqlite))]
 mod tests {
-    use super::super::rewarden_device::test_db;
+    use super::super::reins_device::test_db;
     use super::*;
 
-    fn conn_for(user: &str, now: i64) -> RewardenConnection {
-        RewardenConnection::new(
+    fn conn_for(user: &str, now: i64) -> ReinsConnection {
+        ReinsConnection::new(
             UserId::from(user.to_owned()),
             "https://chatgpt.com/oauth/client.json".to_owned(),
             "ChatGPT".to_owned(),
@@ -1000,8 +1000,8 @@ mod tests {
         )
     }
 
-    fn token(hash: &str, conn: &RewardenConnection, expires_at: i64) -> RewardenRefreshToken {
-        RewardenRefreshToken {
+    fn token(hash: &str, conn: &ReinsConnection, expires_at: i64) -> ReinsRefreshToken {
+        ReinsRefreshToken {
             token_hash: hash.to_owned(),
             connection_uuid: conn.uuid.clone(),
             expires_at,
@@ -1092,40 +1092,40 @@ mod tests {
 Register the files in `src/db/models/mod.rs`: after `mod org_policy;`/`mod organization;` keep alphabetical order and add
 
 ```rust
-#[allow(dead_code, reason = "used by the Rewarden API as Plan 2 wires it; removed in Task 14")]
-mod rewarden_client;
-#[allow(dead_code, reason = "used by the Rewarden API as Plan 2 wires it; removed in Task 14")]
-mod rewarden_connection;
-#[allow(dead_code, reason = "used by the Rewarden API as Plan 2 wires it; removed in Task 14")]
-mod rewarden_device;
+#[allow(dead_code, reason = "used by the Reins API as Plan 2 wires it; removed in Task 14")]
+mod reins_client;
+#[allow(dead_code, reason = "used by the Reins API as Plan 2 wires it; removed in Task 14")]
+mod reins_connection;
+#[allow(dead_code, reason = "used by the Reins API as Plan 2 wires it; removed in Task 14")]
+mod reins_device;
 ```
 
 between `mod organization;` and `mod send;`, and after `pub use self::org_policy::{…};`/`pub use self::organization::{…};` add
 
 ```rust
-#[allow(unused_imports, reason = "used by the Rewarden API as Plan 2 wires it; removed in Task 14")]
-pub use self::rewarden_client::RewardenClient;
-#[allow(unused_imports, reason = "used by the Rewarden API as Plan 2 wires it; removed in Task 14")]
-pub use self::rewarden_connection::{RewardenConnection, RewardenRefreshToken};
-#[allow(unused_imports, reason = "used by the Rewarden API as Plan 2 wires it; removed in Task 14")]
-pub use self::rewarden_device::RewardenDevice;
+#[allow(unused_imports, reason = "used by the Reins API as Plan 2 wires it; removed in Task 14")]
+pub use self::reins_client::ReinsClient;
+#[allow(unused_imports, reason = "used by the Reins API as Plan 2 wires it; removed in Task 14")]
+pub use self::reins_connection::{ReinsConnection, ReinsRefreshToken};
+#[allow(unused_imports, reason = "used by the Reins API as Plan 2 wires it; removed in Task 14")]
+pub use self::reins_device::ReinsDevice;
 ```
 
 - [ ] **Step 4: Run the tests to verify they fail**
 
-Run: `cargo test --features sqlite db::models::rewarden`
-Expected: FAIL to compile — `cannot find type RewardenDevice`, `cannot find function q_replace`, etc.
+Run: `cargo test --features sqlite db::models::reins`
+Expected: FAIL to compile — `cannot find type ReinsDevice`, `cannot find function q_replace`, etc.
 
 - [ ] **Step 5: Implement the models**
 
-Top of `src/db/models/rewarden_device.rs` (above the test code):
+Top of `src/db/models/reins_device.rs` (above the test code):
 
 ```rust
 use diesel::prelude::*;
 
 use crate::{
     api::EmptyResult,
-    db::{DbConn, DbConnInner, schema::rewarden_devices},
+    db::{DbConn, DbConnInner, schema::reins_devices},
     error::MapResult,
 };
 
@@ -1133,9 +1133,9 @@ use super::{DeviceId, UserId};
 
 /// The user's approval device: exactly one per user (spec §4.1, contracts A1).
 #[derive(Clone, Debug, Identifiable, Queryable, Insertable)]
-#[diesel(table_name = rewarden_devices)]
+#[diesel(table_name = reins_devices)]
 #[diesel(primary_key(user_uuid))]
-pub struct RewardenDevice {
+pub struct ReinsDevice {
     pub user_uuid: UserId,
     pub device_uuid: DeviceId,
     pub fcm_token: Option<String>,
@@ -1143,67 +1143,67 @@ pub struct RewardenDevice {
     pub updated_at: i64,
 }
 
-impl RewardenDevice {
+impl ReinsDevice {
     pub async fn find_by_user(user_uuid: &UserId, conn: &DbConn) -> Option<Self> {
         conn.run(move |c| q_find_by_user(c, user_uuid)).await
     }
 
     /// Makes `self` the user's approval device and returns the device it replaced.
     pub async fn replace(&self, conn: &DbConn) -> Result<Option<Self>, crate::Error> {
-        conn.run(move |c| q_replace(c, self)).await.map_res("Error saving Rewarden device")
+        conn.run(move |c| q_replace(c, self)).await.map_res("Error saving Reins device")
     }
 
     /// Forgets `fcm_token` if it is still the stored token (FCM reported it unregistered).
     pub async fn clear_fcm_token(user_uuid: &UserId, fcm_token: &str, conn: &DbConn) -> EmptyResult {
-        conn.run(move |c| q_clear_fcm_token(c, user_uuid, fcm_token)).await.map_res("Error clearing Rewarden FCM token")
+        conn.run(move |c| q_clear_fcm_token(c, user_uuid, fcm_token)).await.map_res("Error clearing Reins FCM token")
     }
 }
 
-fn q_find_by_user(c: &mut DbConnInner, user_uuid: &UserId) -> Option<RewardenDevice> {
-    rewarden_devices::table.filter(rewarden_devices::user_uuid.eq(user_uuid)).first::<RewardenDevice>(c).ok()
+fn q_find_by_user(c: &mut DbConnInner, user_uuid: &UserId) -> Option<ReinsDevice> {
+    reins_devices::table.filter(reins_devices::user_uuid.eq(user_uuid)).first::<ReinsDevice>(c).ok()
 }
 
-fn q_replace(c: &mut DbConnInner, row: &RewardenDevice) -> QueryResult<Option<RewardenDevice>> {
+fn q_replace(c: &mut DbConnInner, row: &ReinsDevice) -> QueryResult<Option<ReinsDevice>> {
     c.transaction(|c| {
-        let previous = rewarden_devices::table
-            .filter(rewarden_devices::user_uuid.eq(&row.user_uuid))
-            .first::<RewardenDevice>(c)
+        let previous = reins_devices::table
+            .filter(reins_devices::user_uuid.eq(&row.user_uuid))
+            .first::<ReinsDevice>(c)
             .optional()?;
-        diesel::delete(rewarden_devices::table.filter(rewarden_devices::user_uuid.eq(&row.user_uuid))).execute(c)?;
-        diesel::insert_into(rewarden_devices::table).values(row).execute(c)?;
+        diesel::delete(reins_devices::table.filter(reins_devices::user_uuid.eq(&row.user_uuid))).execute(c)?;
+        diesel::insert_into(reins_devices::table).values(row).execute(c)?;
         Ok(previous)
     })
 }
 
 fn q_clear_fcm_token(c: &mut DbConnInner, user_uuid: &UserId, fcm_token: &str) -> QueryResult<()> {
     diesel::update(
-        rewarden_devices::table
-            .filter(rewarden_devices::user_uuid.eq(user_uuid))
-            .filter(rewarden_devices::fcm_token.eq(fcm_token)),
+        reins_devices::table
+            .filter(reins_devices::user_uuid.eq(user_uuid))
+            .filter(reins_devices::fcm_token.eq(fcm_token)),
     )
-    .set(rewarden_devices::fcm_token.eq(None::<String>))
+    .set(reins_devices::fcm_token.eq(None::<String>))
     .execute(c)
     .map(|_| ())
 }
 ```
 
-Top of `src/db/models/rewarden_client.rs`:
+Top of `src/db/models/reins_client.rs`:
 
 ```rust
 use diesel::prelude::*;
 
 use crate::{
     api::EmptyResult,
-    db::{DbConn, DbConnInner, schema::rewarden_clients},
+    db::{DbConn, DbConnInner, schema::reins_clients},
     error::MapResult,
     util::get_uuid,
 };
 
 /// An MCP client registered through Dynamic Client Registration (public client).
 #[derive(Clone, Debug, Identifiable, Queryable, Insertable)]
-#[diesel(table_name = rewarden_clients)]
+#[diesel(table_name = reins_clients)]
 #[diesel(primary_key(client_id))]
-pub struct RewardenClient {
+pub struct ReinsClient {
     pub client_id: String,
     pub client_name: String,
     /// JSON array of exact redirect URIs.
@@ -1212,7 +1212,7 @@ pub struct RewardenClient {
     pub created_at: i64,
 }
 
-impl RewardenClient {
+impl ReinsClient {
     pub fn new(client_name: String, redirect_uris: &[String], now: i64) -> Self {
         Self {
             client_id: get_uuid(),
@@ -1228,7 +1228,7 @@ impl RewardenClient {
     }
 
     pub async fn save(&self, conn: &DbConn) -> EmptyResult {
-        conn.run(move |c| q_save(c, self)).await.map_res("Error saving Rewarden client")
+        conn.run(move |c| q_save(c, self)).await.map_res("Error saving Reins client")
     }
 
     pub async fn find(client_id: &str, conn: &DbConn) -> Option<Self> {
@@ -1236,26 +1236,26 @@ impl RewardenClient {
     }
 }
 
-fn q_save(c: &mut DbConnInner, row: &RewardenClient) -> QueryResult<()> {
-    diesel::insert_into(rewarden_clients::table).values(row).execute(c).map(|_| ())
+fn q_save(c: &mut DbConnInner, row: &ReinsClient) -> QueryResult<()> {
+    diesel::insert_into(reins_clients::table).values(row).execute(c).map(|_| ())
 }
 
-fn q_find(c: &mut DbConnInner, client_id: &str) -> Option<RewardenClient> {
-    rewarden_clients::table.filter(rewarden_clients::client_id.eq(client_id)).first::<RewardenClient>(c).ok()
+fn q_find(c: &mut DbConnInner, client_id: &str) -> Option<ReinsClient> {
+    reins_clients::table.filter(reins_clients::client_id.eq(client_id)).first::<ReinsClient>(c).ok()
 }
 ```
 
-Top of `src/db/models/rewarden_connection.rs`:
+Top of `src/db/models/reins_connection.rs`:
 
 ```rust
 use diesel::prelude::*;
-use rewarden_proto::{device::ConnectionInfo, ids::ConnectionId};
+use reins_proto::{device::ConnectionInfo, ids::ConnectionId};
 
 use crate::{
     api::EmptyResult,
     db::{
         DbConn, DbConnInner,
-        schema::{rewarden_connections, rewarden_refresh_tokens},
+        schema::{reins_connections, reins_refresh_tokens},
     },
     error::MapResult,
     util::get_uuid,
@@ -1268,9 +1268,9 @@ const TOUCH_INTERVAL_SECS: i64 = 60;
 
 /// An AI client authorized by a user (one per completed OAuth pairing).
 #[derive(Clone, Debug, Identifiable, Queryable, Insertable)]
-#[diesel(table_name = rewarden_connections)]
+#[diesel(table_name = reins_connections)]
 #[diesel(primary_key(uuid))]
-pub struct RewardenConnection {
+pub struct ReinsConnection {
     pub uuid: String,
     pub user_uuid: UserId,
     pub client_id: String,
@@ -1283,16 +1283,16 @@ pub struct RewardenConnection {
 
 /// An MCP refresh token, stored only as its SHA-256 hex digest.
 #[derive(Clone, Debug, Identifiable, Queryable, Insertable)]
-#[diesel(table_name = rewarden_refresh_tokens)]
+#[diesel(table_name = reins_refresh_tokens)]
 #[diesel(primary_key(token_hash))]
-pub struct RewardenRefreshToken {
+pub struct ReinsRefreshToken {
     pub token_hash: String,
     pub connection_uuid: String,
     /// Unix seconds; the token is dead at `now >= expires_at`.
     pub expires_at: i64,
 }
 
-impl RewardenConnection {
+impl ReinsConnection {
     pub fn new(
         user_uuid: UserId,
         client_id: String,
@@ -1325,7 +1325,7 @@ impl RewardenConnection {
     }
 
     pub async fn save(&self, conn: &DbConn) -> EmptyResult {
-        conn.run(move |c| q_save(c, self)).await.map_res("Error saving Rewarden connection")
+        conn.run(move |c| q_save(c, self)).await.map_res("Error saving Reins connection")
     }
 
     pub async fn find_by_uuid_and_user(uuid: &str, user_uuid: &UserId, conn: &DbConn) -> Option<Self> {
@@ -1337,18 +1337,18 @@ impl RewardenConnection {
     }
 
     pub async fn touch(uuid: &str, now: i64, conn: &DbConn) -> EmptyResult {
-        conn.run(move |c| q_touch(c, uuid, now)).await.map_res("Error updating Rewarden connection")
+        conn.run(move |c| q_touch(c, uuid, now)).await.map_res("Error updating Reins connection")
     }
 
     /// Deletes the connection and its refresh tokens (SQLite does not enforce the FK cascade).
     pub async fn delete(&self, conn: &DbConn) -> EmptyResult {
-        conn.run(move |c| q_delete(c, &self.uuid)).await.map_res("Error deleting Rewarden connection")
+        conn.run(move |c| q_delete(c, &self.uuid)).await.map_res("Error deleting Reins connection")
     }
 }
 
-impl RewardenRefreshToken {
+impl ReinsRefreshToken {
     pub async fn save(&self, conn: &DbConn) -> EmptyResult {
-        conn.run(move |c| q_save_token(c, self)).await.map_res("Error saving Rewarden refresh token")
+        conn.run(move |c| q_save_token(c, self)).await.map_res("Error saving Reins refresh token")
     }
 
     /// Consumes the token: deletes it and returns it only if it existed and was still valid.
@@ -1357,70 +1357,70 @@ impl RewardenRefreshToken {
     }
 
     pub async fn delete_expired(now: i64, conn: &DbConn) -> EmptyResult {
-        conn.run(move |c| q_delete_expired_tokens(c, now)).await.map_res("Error purging Rewarden refresh tokens")
+        conn.run(move |c| q_delete_expired_tokens(c, now)).await.map_res("Error purging Reins refresh tokens")
     }
 }
 
-fn q_save(c: &mut DbConnInner, row: &RewardenConnection) -> QueryResult<()> {
-    diesel::insert_into(rewarden_connections::table).values(row).execute(c).map(|_| ())
+fn q_save(c: &mut DbConnInner, row: &ReinsConnection) -> QueryResult<()> {
+    diesel::insert_into(reins_connections::table).values(row).execute(c).map(|_| ())
 }
 
-fn q_find_by_uuid_and_user(c: &mut DbConnInner, uuid: &str, user_uuid: &UserId) -> Option<RewardenConnection> {
-    rewarden_connections::table
-        .filter(rewarden_connections::uuid.eq(uuid))
-        .filter(rewarden_connections::user_uuid.eq(user_uuid))
-        .first::<RewardenConnection>(c)
+fn q_find_by_uuid_and_user(c: &mut DbConnInner, uuid: &str, user_uuid: &UserId) -> Option<ReinsConnection> {
+    reins_connections::table
+        .filter(reins_connections::uuid.eq(uuid))
+        .filter(reins_connections::user_uuid.eq(user_uuid))
+        .first::<ReinsConnection>(c)
         .ok()
 }
 
-fn q_find_by_user(c: &mut DbConnInner, user_uuid: &UserId) -> Vec<RewardenConnection> {
-    rewarden_connections::table
-        .filter(rewarden_connections::user_uuid.eq(user_uuid))
-        .order((rewarden_connections::created_at.asc(), rewarden_connections::uuid.asc()))
-        .load::<RewardenConnection>(c)
+fn q_find_by_user(c: &mut DbConnInner, user_uuid: &UserId) -> Vec<ReinsConnection> {
+    reins_connections::table
+        .filter(reins_connections::user_uuid.eq(user_uuid))
+        .order((reins_connections::created_at.asc(), reins_connections::uuid.asc()))
+        .load::<ReinsConnection>(c)
         .unwrap_or_default()
 }
 
 fn q_touch(c: &mut DbConnInner, uuid: &str, now: i64) -> QueryResult<()> {
     diesel::update(
-        rewarden_connections::table.filter(rewarden_connections::uuid.eq(uuid)).filter(
-            rewarden_connections::last_used_at
+        reins_connections::table.filter(reins_connections::uuid.eq(uuid)).filter(
+            reins_connections::last_used_at
                 .is_null()
-                .or(rewarden_connections::last_used_at.lt(now - TOUCH_INTERVAL_SECS)),
+                .or(reins_connections::last_used_at.lt(now - TOUCH_INTERVAL_SECS)),
         ),
     )
-    .set(rewarden_connections::last_used_at.eq(Some(now)))
+    .set(reins_connections::last_used_at.eq(Some(now)))
     .execute(c)
     .map(|_| ())
 }
 
 fn q_delete(c: &mut DbConnInner, uuid: &str) -> QueryResult<()> {
     c.transaction(|c| {
-        diesel::delete(rewarden_refresh_tokens::table.filter(rewarden_refresh_tokens::connection_uuid.eq(uuid)))
+        diesel::delete(reins_refresh_tokens::table.filter(reins_refresh_tokens::connection_uuid.eq(uuid)))
             .execute(c)?;
-        diesel::delete(rewarden_connections::table.filter(rewarden_connections::uuid.eq(uuid))).execute(c)?;
+        diesel::delete(reins_connections::table.filter(reins_connections::uuid.eq(uuid))).execute(c)?;
         Ok(())
     })
 }
 
-fn q_save_token(c: &mut DbConnInner, row: &RewardenRefreshToken) -> QueryResult<()> {
-    diesel::insert_into(rewarden_refresh_tokens::table).values(row).execute(c).map(|_| ())
+fn q_save_token(c: &mut DbConnInner, row: &ReinsRefreshToken) -> QueryResult<()> {
+    diesel::insert_into(reins_refresh_tokens::table).values(row).execute(c).map(|_| ())
 }
 
-fn q_take_token(c: &mut DbConnInner, token_hash: &str, now: i64) -> Option<RewardenRefreshToken> {
-    let row = rewarden_refresh_tokens::table
-        .filter(rewarden_refresh_tokens::token_hash.eq(token_hash))
-        .first::<RewardenRefreshToken>(c)
+fn q_take_token(c: &mut DbConnInner, token_hash: &str, now: i64) -> Option<ReinsRefreshToken> {
+    let row = reins_refresh_tokens::table
+        .filter(reins_refresh_tokens::token_hash.eq(token_hash))
+        .first::<ReinsRefreshToken>(c)
         .ok()?;
     // Only the caller whose DELETE removed the row may use it (concurrent refreshes race here).
-    let deleted = diesel::delete(rewarden_refresh_tokens::table.filter(rewarden_refresh_tokens::token_hash.eq(token_hash)))
+    let deleted = diesel::delete(reins_refresh_tokens::table.filter(reins_refresh_tokens::token_hash.eq(token_hash)))
         .execute(c)
         .ok()?;
     (deleted == 1 && now < row.expires_at).then_some(row)
 }
 
 fn q_delete_expired_tokens(c: &mut DbConnInner, now: i64) -> QueryResult<()> {
-    diesel::delete(rewarden_refresh_tokens::table.filter(rewarden_refresh_tokens::expires_at.le(now)))
+    diesel::delete(reins_refresh_tokens::table.filter(reins_refresh_tokens::expires_at.le(now)))
         .execute(c)
         .map(|_| ())
 }
@@ -1430,7 +1430,7 @@ If the compiler rejects `.eq(user_uuid)` on a `&UserId` inside a `move` closure 
 
 - [ ] **Step 6: Run the tests and lints**
 
-Run: `cargo test --features sqlite db::models::rewarden`
+Run: `cargo test --features sqlite db::models::reins`
 Expected: 10 passed.
 
 Run: `cargo fmt --check && cargo clippy --features sqlite --all-targets -- -D warnings && cargo clippy --features sqlite,mysql,postgresql -- -D warnings`
@@ -1442,19 +1442,19 @@ Run (migration applies on a real server start, SQLite):
 cargo build --features sqlite
 D=$(mktemp -d) && (cd "$D" && DATA_FOLDER="$D" WEB_VAULT_ENABLED=false ROCKET_PORT=18081 \
   timeout 8 <repo>/target/debug/vaultwarden >/dev/null 2>&1; \
-  sqlite3 "$D/db.sqlite3" ".tables" | tr -s ' ' '\n' | grep rewarden_)
+  sqlite3 "$D/db.sqlite3" ".tables" | tr -s ' ' '\n' | grep reins_)
 ```
 
-Expected: `rewarden_clients`, `rewarden_connections`, `rewarden_devices`, `rewarden_refresh_tokens` listed.
+Expected: `reins_clients`, `reins_connections`, `reins_devices`, `reins_refresh_tokens` listed.
 
 - [ ] **Step 7: Commit**
 
 ```bash
-git add migrations/sqlite/2026-09-28-000000_rewarden migrations/mysql/2026-09-28-000000_rewarden \
-  migrations/postgresql/2026-09-28-000000_rewarden src/db/schema.rs src/db/models/mod.rs \
-  src/db/models/rewarden_device.rs src/db/models/rewarden_client.rs src/db/models/rewarden_connection.rs \
+git add migrations/sqlite/2026-09-28-000000_reins migrations/mysql/2026-09-28-000000_reins \
+  migrations/postgresql/2026-09-28-000000_reins src/db/schema.rs src/db/models/mod.rs \
+  src/db/models/reins_device.rs src/db/models/reins_client.rs src/db/models/reins_connection.rs \
   Cargo.toml Cargo.lock
-git commit -m "feat(rewarden): database tables and models for devices, clients, connections, refresh tokens"
+git commit -m "feat(reins): database tables and models for devices, clients, connections, refresh tokens"
 ```
 
 ---
@@ -1462,12 +1462,12 @@ git commit -m "feat(rewarden): database tables and models for devices, clients, 
 ### Task 4: `TtlMap` and the relay hub (requests, delivery, results, timing)
 
 **Files:**
-- Create: `src/api/rewarden/ttl.rs`
-- Create: `src/api/rewarden/relay.rs`
-- Modify: `src/api/rewarden/mod.rs` (add `pub mod relay;` and `pub mod ttl;` below the `#![allow…]` line)
+- Create: `src/api/reins/ttl.rs`
+- Create: `src/api/reins/relay.rs`
+- Modify: `src/api/reins/mod.rs` (add `pub mod relay;` and `pub mod ttl;` below the `#![allow…]` line)
 
 **Interfaces:**
-- Consumes: `super::{Timing, ITEM_TTL}` (Task 2), `crate::util::get_uuid() -> String`, `rewarden_proto::{PROTOCOL_VERSION, gmail::ToolCall, ids::{ConnectionId, RequestId}, relay::{RelayOutcome, RelayRequest}}`.
+- Consumes: `super::{Timing, ITEM_TTL}` (Task 2), `crate::util::get_uuid() -> String`, `reins_proto::{PROTOCOL_VERSION, gmail::ToolCall, ids::{ConnectionId, RequestId}, relay::{RelayOutcome, RelayRequest}}`.
 - Produces:
   - `ttl::TtlMap<K: Eq + Hash, V>`: `new(ttl: Duration, capacity: usize)`, `insert(&mut self, K, V) -> Result<(), ttl::Full>`, `get(&self, &K) -> Option<&V>`, `get_mut(&mut self, &K) -> Option<&mut V>`, `remove(&mut self, &K) -> Option<V>`, `values(&self) -> impl Iterator<Item = &V>`, `purge(&mut self)`, `len(&self) -> usize`, `is_empty(&self) -> bool`; `ttl::Full` (unit struct)
   - `relay::ItemSignal`: `new() -> ItemSignal`, `notify(&self)`, `subscribe(&self) -> tokio::sync::watch::Receiver<u64>`
@@ -1481,7 +1481,7 @@ git commit -m "feat(rewarden): database tables and models for devices, clients, 
 
 - [ ] **Step 1: Write the failing tests**
 
-`src/api/rewarden/ttl.rs` — tests first:
+`src/api/reins/ttl.rs` — tests first:
 
 ```rust
 #[cfg(test)]
@@ -1530,14 +1530,14 @@ mod tests {
 }
 ```
 
-`src/api/rewarden/relay.rs` — tests first:
+`src/api/reins/relay.rs` — tests first:
 
 ```rust
 #[cfg(test)]
 mod tests {
     use std::time::Duration;
 
-    use rewarden_proto::relay::ToolResult;
+    use reins_proto::relay::ToolResult;
     use tokio::time::{Instant, sleep};
 
     use super::*;
@@ -1695,7 +1695,7 @@ mod tests {
         let req = h.submit(USER, &conn(), "ChatGPT", search(), 0).unwrap();
         assert!(rx.has_changed().unwrap());
         rx.mark_unchanged();
-        assert_eq!(req.v, rewarden_proto::PROTOCOL_VERSION);
+        assert_eq!(req.v, reins_proto::PROTOCOL_VERSION);
         assert_eq!(req.connection_label, "ChatGPT");
         assert!(h.submit(USER, &conn(), "ChatGPT", search(), 0).is_err());
         assert!(!rx.has_changed().unwrap(), "a rejected submit does not wake anyone");
@@ -1703,7 +1703,7 @@ mod tests {
 }
 ```
 
-Register the modules in `src/api/rewarden/mod.rs`, directly below the `#![allow(…)]` line:
+Register the modules in `src/api/reins/mod.rs`, directly below the `#![allow(…)]` line:
 
 ```rust
 
@@ -1713,12 +1713,12 @@ pub mod ttl;
 
 - [ ] **Step 2: Run the tests to verify they fail**
 
-Run: `cargo test --features sqlite api::rewarden::`
+Run: `cargo test --features sqlite api::reins::`
 Expected: FAIL to compile — `cannot find type TtlMap`, `cannot find type RelayHub`.
 
 - [ ] **Step 3: Implement `TtlMap`**
 
-Top of `src/api/rewarden/ttl.rs`:
+Top of `src/api/reins/ttl.rs`:
 
 ```rust
 //! Expiring map on tokio's clock, so timing is testable with a paused clock (plan Decision 4).
@@ -1797,7 +1797,7 @@ impl<K: Eq + Hash, V> TtlMap<K, V> {
 
 - [ ] **Step 4: Implement the relay hub**
 
-Top of `src/api/rewarden/relay.rs`:
+Top of `src/api/reins/relay.rs`:
 
 ```rust
 //! In-memory relay between MCP tool calls and the approval device (spec §4.3).
@@ -1806,7 +1806,7 @@ Top of `src/api/rewarden/relay.rs`:
 
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 
-use rewarden_proto::{
+use reins_proto::{
     PROTOCOL_VERSION,
     gmail::ToolCall,
     ids::{ConnectionId, RequestId},
@@ -2033,7 +2033,7 @@ impl RelayHub {
 
 - [ ] **Step 5: Run the tests and lints**
 
-Run: `cargo test --features sqlite api::rewarden::`
+Run: `cargo test --features sqlite api::reins::`
 Expected: all `ttl::tests` (3) and `relay::tests` (9) pass, plus Task 2's tests.
 
 Run: `cargo fmt --check && cargo clippy --features sqlite --all-targets -- -D warnings`
@@ -2042,8 +2042,8 @@ Expected: clean. (If clippy reports `equatable_if_let` on `if let Ok(Err(_)) = �
 - [ ] **Step 6: Commit**
 
 ```bash
-git add src/api/rewarden/mod.rs src/api/rewarden/ttl.rs src/api/rewarden/relay.rs
-git commit -m "feat(rewarden): in-memory relay hub with offline/pending timing"
+git add src/api/reins/mod.rs src/api/reins/ttl.rs src/api/reins/relay.rs
+git commit -m "feat(reins): in-memory relay hub with offline/pending timing"
 ```
 
 ---
@@ -2051,12 +2051,12 @@ git commit -m "feat(rewarden): in-memory relay hub with offline/pending timing"
 ### Task 5: Pairing invariants, pairing hub and the combined `Hub` (A2 long-poll core)
 
 **Files:**
-- Create: `src/api/rewarden/pairing.rs`
-- Modify: `src/api/rewarden/mod.rs` (add `pub mod pairing;`, the `Hub` struct, `HUB` static and a `hub_tests` module)
+- Create: `src/api/reins/pairing.rs`
+- Modify: `src/api/reins/mod.rs` (add `pub mod pairing;`, the `Hub` struct, `HUB` static and a `hub_tests` module)
 
 **Interfaces:**
-- Consumes: `relay::{ItemSignal, RelayHub}`, `ttl::{Full, TtlMap}` (Task 4); `ITEM_TTL`, `Timing` (Task 2); `crate::util::get_uuid`; `rand::RngExt` (as in `src/crypto.rs`); `rewarden_proto::{PROTOCOL_VERSION, ids::{ConnectionId, PairingId}, pairing::{PairingRequest, PairingResponse}, device::Pending}`.
-- Produces (`crate::api::rewarden::pairing`):
+- Consumes: `relay::{ItemSignal, RelayHub}`, `ttl::{Full, TtlMap}` (Task 4); `ITEM_TTL`, `Timing` (Task 2); `crate::util::get_uuid`; `rand::RngExt` (as in `src/crypto.rs`); `reins_proto::{PROTOCOL_VERSION, ids::{ConnectionId, PairingId}, pairing::{PairingRequest, PairingResponse}, device::Pending}`.
+- Produces (`crate::api::reins::pairing`):
   - `const CODE_MIN: u8 = 10`, `CODE_MAX: u8 = 99`, `MAX_NAME_CHARS: usize = 64`, `MAX_PAIRINGS: usize = 1_000`, `UNKNOWN_CLIENT: &str = "Unknown client"`
   - `fn generate_choices() -> (u8, [u8; 3])` — (browser code, choices)
   - `fn sanitize_display(raw: &str, max_chars: usize) -> String`, `fn sanitize_client_name(raw: &str) -> String`
@@ -2064,11 +2064,11 @@ git commit -m "feat(rewarden): in-memory relay hub with offline/pending timing"
   - `enum PairingStatus { Waiting, Approved { connection_id: ConnectionId }, Rejected }`
   - `enum PairingAnswer { Approved { client: PairingClient, label: String }, Denied, WrongCode }`, `enum PairingAnswerError { NotFound, AlreadyAnswered, Invalid(String) }`
   - `struct PairingHub`: `new(signal: Arc<ItemSignal>)`, `with_capacity(signal, capacity)`, `start(&self, user: &str, client: PairingClient, now_unix: i64) -> Result<(PairingRequest, u8), Full>`, `start_decoy(&self, client: PairingClient, now_unix: i64) -> Result<(PairingRequest, u8), Full>`, `take_undelivered(&self, user: &str) -> Vec<PairingRequest>`, `fetch(&self, user: &str, id: &PairingId) -> Option<PairingRequest>`, `answer(&self, user: &str, id: &PairingId, response: &PairingResponse) -> Result<PairingAnswer, PairingAnswerError>`, `complete(&self, id: &PairingId, connection_id: ConnectionId)`, `fail(&self, id: &PairingId)`, `status(&self, id: &PairingId) -> Option<PairingStatus>`, `purge(&self)`
-- Produces (`crate::api::rewarden`): `struct Hub { signal: Arc<ItemSignal>, relay: RelayHub, pairings: PairingHub }`, `Hub::new(timing: Timing) -> Hub`, `async Hub::pending(&self, user: &str, wait: Duration) -> Pending`, `Hub::purge(&self)`, `static HUB: LazyLock<Hub>` (built from `Timing::from_config()`).
+- Produces (`crate::api::reins`): `struct Hub { signal: Arc<ItemSignal>, relay: RelayHub, pairings: PairingHub }`, `Hub::new(timing: Timing) -> Hub`, `async Hub::pending(&self, user: &str, wait: Duration) -> Pending`, `Hub::purge(&self)`, `static HUB: LazyLock<Hub>` (built from `Timing::from_config()`).
 
 - [ ] **Step 1: Write the failing tests**
 
-`src/api/rewarden/pairing.rs` — tests first:
+`src/api/reins/pairing.rs` — tests first:
 
 ```rust
 #[cfg(test)]
@@ -2261,12 +2261,12 @@ mod tests {
 }
 ```
 
-Append to `src/api/rewarden/mod.rs` (after the existing `mod tests`):
+Append to `src/api/reins/mod.rs` (after the existing `mod tests`):
 
 ```rust
 #[cfg(test)]
 mod hub_tests {
-    use rewarden_proto::gmail::ToolCall;
+    use reins_proto::gmail::ToolCall;
     use tokio::time::{Instant, sleep};
 
     use super::*;
@@ -2329,7 +2329,7 @@ mod hub_tests {
 }
 ```
 
-Register the module: in `src/api/rewarden/mod.rs` the module list becomes
+Register the module: in `src/api/reins/mod.rs` the module list becomes
 
 ```rust
 pub mod pairing;
@@ -2339,12 +2339,12 @@ pub mod ttl;
 
 - [ ] **Step 2: Run the tests to verify they fail**
 
-Run: `cargo test --features sqlite api::rewarden::`
+Run: `cargo test --features sqlite api::reins::`
 Expected: FAIL to compile — `cannot find type PairingHub`, `cannot find struct Hub`.
 
 - [ ] **Step 3: Implement the pairing module**
 
-Top of `src/api/rewarden/pairing.rs`:
+Top of `src/api/reins/pairing.rs`:
 
 ```rust
 //! AI-connection pairing (spec §4.5 step 2-3, contracts A5/A6): the browser shows a
@@ -2353,7 +2353,7 @@ Top of `src/api/rewarden/pairing.rs`:
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 
 use rand::RngExt;
-use rewarden_proto::{
+use reins_proto::{
     PROTOCOL_VERSION,
     ids::{ConnectionId, PairingId},
     pairing::{PairingRequest, PairingResponse},
@@ -2660,7 +2660,7 @@ impl PairingHub {
 
 - [ ] **Step 4: Implement `Hub`**
 
-In `src/api/rewarden/mod.rs`, extend the `use` block and add the hub after `Timing`'s `impl`:
+In `src/api/reins/mod.rs`, extend the `use` block and add the hub after `Timing`'s `impl`:
 
 ```rust
 use std::{
@@ -2669,7 +2669,7 @@ use std::{
     time::Duration,
 };
 
-use rewarden_proto::device::Pending;
+use reins_proto::device::Pending;
 use rocket::{Catcher, Route};
 
 use self::{
@@ -2728,7 +2728,7 @@ pub static HUB: LazyLock<Hub> = LazyLock::new(|| Hub::new(Timing::from_config())
 
 - [ ] **Step 5: Run the tests and lints**
 
-Run: `cargo test --features sqlite api::rewarden::`
+Run: `cargo test --features sqlite api::reins::`
 Expected: all pass (pairing: 12, hub_tests: 3, plus Tasks 2 and 4).
 
 Run: `cargo fmt --check && cargo clippy --features sqlite --all-targets -- -D warnings`
@@ -2737,8 +2737,8 @@ Expected: clean.
 - [ ] **Step 6: Commit**
 
 ```bash
-git add src/api/rewarden/mod.rs src/api/rewarden/pairing.rs
-git commit -m "feat(rewarden): pairing codes, sanitizing, pairing hub and A2 long-poll core"
+git add src/api/reins/mod.rs src/api/reins/pairing.rs
+git commit -m "feat(reins): pairing codes, sanitizing, pairing hub and A2 long-poll core"
 ```
 
 ---
@@ -2746,12 +2746,12 @@ git commit -m "feat(rewarden): pairing codes, sanitizing, pairing hub and A2 lon
 ### Task 6: FCM HTTP v1 sender
 
 **Files:**
-- Create: `src/api/rewarden/fcm.rs`
-- Modify: `src/api/rewarden/mod.rs` (add `pub mod fcm;`; make `validate_settings` parse the service-account file)
+- Create: `src/api/reins/fcm.rs`
+- Modify: `src/api/reins/mod.rs` (add `pub mod fcm;`; make `validate_settings` parse the service-account file)
 
 **Interfaces:**
-- Consumes: `crate::http_client::make_http_request(reqwest::Method, &str) -> Result<reqwest::RequestBuilder, crate::Error>`, `crate::db::{DbPool, models::{RewardenDevice, UserId}}`, `RewardenDevice::clear_fcm_token(&UserId, &str, &DbConn)` (Task 3), `rewarden_proto::pairing::{PushKind, PushMessage}`, `CONFIG.rewarden_fcm_service_account()`.
-- Produces (`crate::api::rewarden::fcm`):
+- Consumes: `crate::http_client::make_http_request(reqwest::Method, &str) -> Result<reqwest::RequestBuilder, crate::Error>`, `crate::db::{DbPool, models::{ReinsDevice, UserId}}`, `ReinsDevice::clear_fcm_token(&UserId, &str, &DbConn)` (Task 3), `reins_proto::pairing::{PushKind, PushMessage}`, `CONFIG.reins_fcm_service_account()`.
+- Produces (`crate::api::reins::fcm`):
   - `struct ServiceAccount { project_id, client_email, private_key, token_uri: String }`, `ServiceAccount::from_json(&str) -> Result<ServiceAccount, String>`, `ServiceAccount::from_file(&str) -> Result<ServiceAccount, String>`
   - `const FCM_SCOPE: &str = "https://www.googleapis.com/auth/firebase.messaging"`
   - `fn sign_assertion(account: &ServiceAccount, now: i64) -> Result<String, String>` (RS256 JWT-bearer assertion, 1 h)
@@ -2762,14 +2762,14 @@ git commit -m "feat(rewarden): pairing codes, sanitizing, pairing hub and A2 lon
 
 - [ ] **Step 1: Write the failing tests**
 
-`src/api/rewarden/fcm.rs` — tests first:
+`src/api/reins/fcm.rs` — tests first:
 
 ```rust
 #[cfg(test)]
 mod tests {
     use jsonwebtoken::{Algorithm, DecodingKey, Validation};
     use openssl::{pkey::PKey, rsa::Rsa};
-    use rewarden_proto::pairing::PushKind;
+    use reins_proto::pairing::PushKind;
     use serde_json::Value;
 
     use super::*;
@@ -2781,10 +2781,10 @@ mod tests {
         let public_pem = String::from_utf8(pkey.public_key_to_pem().unwrap()).unwrap();
         let json = json!({
             "type": "service_account",
-            "project_id": "rewarden-test",
+            "project_id": "reins-test",
             "private_key_id": "abc",
             "private_key": private_pem,
-            "client_email": "fcm@rewarden-test.iam.gserviceaccount.com",
+            "client_email": "fcm@reins-test.iam.gserviceaccount.com",
             "token_uri": "https://oauth2.googleapis.com/token"
         });
         (ServiceAccount::from_json(&json.to_string()).unwrap(), public_pem)
@@ -2793,7 +2793,7 @@ mod tests {
     #[test]
     fn parses_and_validates_service_accounts() {
         let (sa, _) = account();
-        assert_eq!(sa.project_id, "rewarden-test");
+        assert_eq!(sa.project_id, "reins-test");
         assert_eq!(sa.token_uri, "https://oauth2.googleapis.com/token");
         assert!(ServiceAccount::from_json("{}").is_err());
         assert!(ServiceAccount::from_json("not json").is_err());
@@ -2803,7 +2803,7 @@ mod tests {
         assert!(ServiceAccount::from_json(&http_uri.to_string()).is_err());
         let empty_project = json!({"project_id": "", "client_email": "e@x", "private_key": "k"});
         assert!(ServiceAccount::from_json(&empty_project.to_string()).is_err());
-        assert!(ServiceAccount::from_file("/nonexistent/rewarden-sa.json").unwrap_err().contains("/nonexistent"));
+        assert!(ServiceAccount::from_file("/nonexistent/reins-sa.json").unwrap_err().contains("/nonexistent"));
     }
 
     #[test]
@@ -2816,7 +2816,7 @@ mod tests {
         let data =
             jsonwebtoken::decode::<Value>(&jwt, &DecodingKey::from_rsa_pem(public_pem.as_bytes()).unwrap(), &validation)
                 .unwrap();
-        assert_eq!(data.claims["iss"], "fcm@rewarden-test.iam.gserviceaccount.com");
+        assert_eq!(data.claims["iss"], "fcm@reins-test.iam.gserviceaccount.com");
         assert_eq!(data.claims["scope"], FCM_SCOPE);
         assert_eq!(data.claims["iat"], 1_700_000_000);
         assert_eq!(data.claims["exp"], 1_700_003_600);
@@ -2865,16 +2865,16 @@ mod tests {
 }
 ```
 
-In `src/api/rewarden/mod.rs` add `pub mod fcm;` to the module list (alphabetical: `fcm`, `pairing`, `relay`, `ttl`).
+In `src/api/reins/mod.rs` add `pub mod fcm;` to the module list (alphabetical: `fcm`, `pairing`, `relay`, `ttl`).
 
 - [ ] **Step 2: Run the tests to verify they fail**
 
-Run: `cargo test --features sqlite api::rewarden::fcm`
+Run: `cargo test --features sqlite api::reins::fcm`
 Expected: FAIL to compile — `cannot find type ServiceAccount`.
 
 - [ ] **Step 3: Implement the sender**
 
-Top of `src/api/rewarden/fcm.rs`:
+Top of `src/api/reins/fcm.rs`:
 
 ```rust
 //! FCM HTTP v1 sender (spec §4.6). Pushes carry only `{t, id}`; no request content
@@ -2886,14 +2886,14 @@ use std::{
 };
 
 use jsonwebtoken::{Algorithm, EncodingKey, Header};
-use rewarden_proto::pairing::PushMessage;
+use reins_proto::pairing::PushMessage;
 use serde_json::Value;
 
 use crate::{
     CONFIG,
     db::{
         DbPool,
-        models::{RewardenDevice, UserId},
+        models::{ReinsDevice, UserId},
     },
     http_client::make_http_request,
 };
@@ -3070,14 +3070,14 @@ impl FcmSender {
 }
 
 static SENDER: LazyLock<Option<FcmSender>> = LazyLock::new(|| {
-    let path = CONFIG.rewarden_fcm_service_account();
+    let path = CONFIG.reins_fcm_service_account();
     if path.is_empty() {
         return None;
     }
     match ServiceAccount::from_file(&path) {
         Ok(account) => Some(FcmSender::new(account)),
         Err(e) => {
-            error!("Rewarden push disabled: {e}");
+            error!("Reins push disabled: {e}");
             None
         }
     }
@@ -3086,25 +3086,25 @@ static SENDER: LazyLock<Option<FcmSender>> = LazyLock::new(|| {
 /// Wakes the approval device without blocking the caller (Decision 31).
 pub fn spawn_push(pool: DbPool, user_uuid: UserId, fcm_token: Option<String>, push: PushMessage) {
     let Some(sender) = SENDER.as_ref() else {
-        debug!("Rewarden push not configured; the phone must poll for {:?} {}", push.t, push.id);
+        debug!("Reins push not configured; the phone must poll for {:?} {}", push.t, push.id);
         return;
     };
     let Some(fcm_token) = fcm_token else {
-        debug!("Rewarden approval device of {user_uuid} has no FCM token; it must poll");
+        debug!("Reins approval device of {user_uuid} has no FCM token; it must poll");
         return;
     };
     tokio::spawn(async move {
         match sender.send(&fcm_token, &push).await {
-            Ok(SendOutcome::Sent) => debug!("Rewarden push {:?} {} sent", push.t, push.id),
+            Ok(SendOutcome::Sent) => debug!("Reins push {:?} {} sent", push.t, push.id),
             Ok(SendOutcome::Unregistered) => {
-                warn!("FCM token of the Rewarden device of {user_uuid} is unregistered; clearing it");
+                warn!("FCM token of the Reins device of {user_uuid} is unregistered; clearing it");
                 if let Ok(conn) = pool.get().await
-                    && let Err(e) = RewardenDevice::clear_fcm_token(&user_uuid, &fcm_token, &conn).await
+                    && let Err(e) = ReinsDevice::clear_fcm_token(&user_uuid, &fcm_token, &conn).await
                 {
-                    warn!("Could not clear the Rewarden FCM token: {e:?}");
+                    warn!("Could not clear the Reins FCM token: {e:?}");
                 }
             }
-            Err(e) => warn!("Rewarden push failed: {e}"),
+            Err(e) => warn!("Reins push failed: {e}"),
         }
     });
 }
@@ -3112,11 +3112,11 @@ pub fn spawn_push(pool: DbPool, user_uuid: UserId, fcm_token: Option<String>, pu
 
 - [ ] **Step 4: Validate the key file at startup**
 
-In `src/api/rewarden/mod.rs` `validate_settings`, replace the last check
+In `src/api/reins/mod.rs` `validate_settings`, replace the last check
 
 ```rust
     if !fcm_path.is_empty() && !Path::new(fcm_path).is_file() {
-        return Err(format!("`REWARDEN_FCM_SERVICE_ACCOUNT` file `{fcm_path}` does not exist"));
+        return Err(format!("`REINS_FCM_SERVICE_ACCOUNT` file `{fcm_path}` does not exist"));
     }
 ```
 
@@ -3124,7 +3124,7 @@ with
 
 ```rust
     if !fcm_path.is_empty() {
-        fcm::ServiceAccount::from_file(fcm_path).map_err(|e| format!("`REWARDEN_FCM_SERVICE_ACCOUNT`: {e}"))?;
+        fcm::ServiceAccount::from_file(fcm_path).map_err(|e| format!("`REINS_FCM_SERVICE_ACCOUNT`: {e}"))?;
     }
 ```
 
@@ -3132,7 +3132,7 @@ and drop `path::Path` from the `use std::{…}` list at the top of `mod.rs` (now
 
 - [ ] **Step 5: Run the tests, lints and a startup check with the dev key**
 
-Run: `cargo test --features sqlite api::rewarden::`
+Run: `cargo test --features sqlite api::reins::`
 Expected: all pass (5 new `fcm::tests`; Task 2's `fcm_path_must_exist_when_set` still passes because the error names the variable).
 
 Run: `cargo fmt --check && cargo clippy --features sqlite --all-targets -- -D warnings`
@@ -3143,17 +3143,17 @@ Run (the real dev key parses; the server starts):
 ```bash
 cargo build --features sqlite
 D=$(mktemp -d) && (cd "$D" && DATA_FOLDER="$D" WEB_VAULT_ENABLED=false DOMAIN=http://127.0.0.1:18082 ROCKET_PORT=18082 \
-  REWARDEN_ENABLED=true REWARDEN_FCM_SERVICE_ACCOUNT=~/.config/rewarden/fcm-service-account.json \
-  timeout 8 <repo>/target/debug/vaultwarden 2>&1 | grep -E "Rocket has launched|REWARDEN")
+  REINS_ENABLED=true REINS_FCM_SERVICE_ACCOUNT=~/.config/reins/fcm-service-account.json \
+  timeout 8 <repo>/target/debug/vaultwarden 2>&1 | grep -E "Rocket has launched|REINS")
 ```
 
-Expected: `Rocket has launched from http://…:18082` and no `REWARDEN_FCM_SERVICE_ACCOUNT` error.
+Expected: `Rocket has launched from http://…:18082` and no `REINS_FCM_SERVICE_ACCOUNT` error.
 
 - [ ] **Step 6: Commit**
 
 ```bash
-git add src/api/rewarden/mod.rs src/api/rewarden/fcm.rs
-git commit -m "feat(rewarden): FCM HTTP v1 sender with cached service-account token"
+git add src/api/reins/mod.rs src/api/reins/fcm.rs
+git commit -m "feat(reins): FCM HTTP v1 sender with cached service-account token"
 ```
 
 ---
@@ -3161,27 +3161,27 @@ git commit -m "feat(rewarden): FCM HTTP v1 sender with cached service-account to
 ### Task 7: Phone API A1–A8 and the HTTP integration-test harness
 
 **Files:**
-- Create: `src/api/rewarden/device_api.rs`
-- Modify: `src/api/rewarden/mod.rs` (`pub mod device_api;`, `now_unix()`, `routes()`/`catchers()` bodies)
-- Create: `tests/rewarden_server/main.rs`, `tests/rewarden_server/harness.rs`, `tests/rewarden_server/phone_api.rs`
+- Create: `src/api/reins/device_api.rs`
+- Modify: `src/api/reins/mod.rs` (`pub mod device_api;`, `now_unix()`, `routes()`/`catchers()` bodies)
+- Create: `tests/reins_server/main.rs`, `tests/reins_server/harness.rs`, `tests/reins_server/phone_api.rs`
 
 **Interfaces:**
-- Consumes: `crate::auth::Headers { user: User, device: Device, .. }` (`user.uuid: UserId`, `device.uuid: DeviceId`), `crate::db::{DbConn, DbPool}`, models from Task 3, `HUB` (Task 5), `fcm::spawn_push` (Task 6), `rewarden_proto::{check_version, device::*, ids::*, pairing::*, relay::*}`.
+- Consumes: `crate::auth::Headers { user: User, device: Device, .. }` (`user.uuid: UserId`, `device.uuid: DeviceId`), `crate::db::{DbConn, DbPool}`, models from Task 3, `HUB` (Task 5), `fcm::spawn_push` (Task 6), `reins_proto::{check_version, device::*, ids::*, pairing::*, relay::*}`.
 - Produces:
-  - `crate::api::rewarden::now_unix() -> i64`
-  - `device_api::routes() -> Vec<Route>` (A1–A8 at `/rewarden/api/...`), `device_api::catchers() -> Vec<Catcher>` (JSON 401/404)
+  - `crate::api::reins::now_unix() -> i64`
+  - `device_api::routes() -> Vec<Route>` (A1–A8 at `/reins/api/...`), `device_api::catchers() -> Vec<Catcher>` (JSON 401/404)
   - `device_api::PhoneResult<T> = Result<T, Custom<Json<ApiError>>>`, `device_api::api_err(Status, &str, impl Into<String>) -> Custom<Json<ApiError>>`
   - pure helpers `clamp_wait(Option<&str>) -> u32`, `normalize_fcm_token(Option<String>) -> Result<Option<String>, String>`, `parse_versioned<T: DeserializeOwned>(&[u8]) -> PhoneResult<T>`
-  - Test harness (`tests/rewarden_server/harness.rs`): `Server::start().await`, `Server::start_with(Options { relay_wait_secs, offline_secs }).await`, `Server::url(&self, path) -> String`, `Server::phone(&self, email) -> Phone` (register + Android login), `Server::login(&self, email, device_id) -> String`; `Phone { base, token }` with `get/put/post/delete(path, Option<&Value>) -> (StatusCode, Value)` for paths under `/rewarden/api`; `client() -> reqwest::Client` (no redirects).
+  - Test harness (`tests/reins_server/harness.rs`): `Server::start().await`, `Server::start_with(Options { relay_wait_secs, offline_secs }).await`, `Server::url(&self, path) -> String`, `Server::phone(&self, email) -> Phone` (register + Android login), `Server::login(&self, email, device_id) -> String`; `Phone { base, token }` with `get/put/post/delete(path, Option<&Value>) -> (StatusCode, Value)` for paths under `/reins/api`; `client() -> reqwest::Client` (no redirects).
 
 - [ ] **Step 1: Write the failing unit tests**
 
-`src/api/rewarden/device_api.rs` — tests first:
+`src/api/reins/device_api.rs` — tests first:
 
 ```rust
 #[cfg(test)]
 mod tests {
-    use rewarden_proto::relay::{RelayOutcome, RelayResponse};
+    use reins_proto::relay::{RelayOutcome, RelayResponse};
 
     use super::*;
 
@@ -3225,26 +3225,26 @@ mod tests {
 }
 ```
 
-Register the module in `src/api/rewarden/mod.rs` (list: `device_api`, `fcm`, `pairing`, `relay`, `ttl`).
+Register the module in `src/api/reins/mod.rs` (list: `device_api`, `fcm`, `pairing`, `relay`, `ttl`).
 
 - [ ] **Step 2: Run the unit tests to verify they fail**
 
-Run: `cargo test --features sqlite api::rewarden::device_api`
+Run: `cargo test --features sqlite api::reins::device_api`
 Expected: FAIL to compile — `cannot find function clamp_wait`.
 
 - [ ] **Step 3: Implement the phone API**
 
-Top of `src/api/rewarden/device_api.rs`:
+Top of `src/api/reins/device_api.rs`:
 
 ```rust
-//! Phone-facing API (contracts §A) under `{domain_path}/rewarden/api`.
+//! Phone-facing API (contracts §A) under `{domain_path}/reins/api`.
 //!
 //! Auth is the normal Vaultwarden login (`Headers`); every endpoint but A1 also requires the
 //! caller to be the user's registered approval device.
 
 use std::time::Duration;
 
-use rewarden_proto::{
+use reins_proto::{
     check_version,
     device::{
         ApiError, Connections, DeviceRegistered, DeviceRegistration, MAX_PENDING_WAIT_SECS, PairingResult, Pending,
@@ -3273,7 +3273,7 @@ use crate::{
     auth::Headers,
     db::{
         DbConn, DbPool,
-        models::{RewardenConnection, RewardenDevice},
+        models::{ReinsConnection, ReinsDevice},
     },
 };
 
@@ -3316,7 +3316,7 @@ fn already_answered() -> Custom<Json<ApiError>> {
 }
 
 fn internal(e: &crate::Error) -> Custom<Json<ApiError>> {
-    error!("Rewarden phone API: {e:?}");
+    error!("Reins phone API: {e:?}");
     api_err(Status::InternalServerError, codes::INTERNAL, "Server error, please retry")
 }
 
@@ -3359,12 +3359,12 @@ fn user_key(headers: &Headers) -> String {
 }
 
 async fn require_approval_device(headers: &Headers, conn: &DbConn) -> PhoneResult<()> {
-    match RewardenDevice::find_by_user(&headers.user.uuid, conn).await {
+    match ReinsDevice::find_by_user(&headers.user.uuid, conn).await {
         Some(device) if device.device_uuid == headers.device.uuid => Ok(()),
         _ => Err(api_err(
             Status::Forbidden,
             codes::NOT_APPROVAL_DEVICE,
-            "This device is not the Rewarden approval device; register it with PUT /rewarden/api/device",
+            "This device is not the Reins approval device; register it with PUT /reins/api/device",
         )),
     }
 }
@@ -3377,7 +3377,7 @@ fn answer_error(e: &AnswerError) -> Custom<Json<ApiError>> {
 }
 
 /// A1: makes the calling device the approval device; tells the replaced one via push.
-#[put("/rewarden/api/device", data = "<data>")]
+#[put("/reins/api/device", data = "<data>")]
 async fn put_device(
     data: Data<'_>,
     headers: Headers,
@@ -3391,7 +3391,7 @@ async fn put_device(
         serde_json::from_slice(&body).map_err(|e| bad_request(format!("invalid body: {e}")))?
     };
     let fcm_token = normalize_fcm_token(registration.fcm_token).map_err(bad_request)?;
-    let row = RewardenDevice {
+    let row = ReinsDevice {
         user_uuid: headers.user.uuid.clone(),
         device_uuid: headers.device.uuid.clone(),
         fcm_token,
@@ -3416,7 +3416,7 @@ async fn put_device(
 }
 
 /// A2: undelivered requests and pairings; long-polls up to `wait` seconds when empty.
-#[get("/rewarden/api/pending?<wait>")]
+#[get("/reins/api/pending?<wait>")]
 async fn get_pending(wait: Option<String>, headers: Headers, conn: DbConn) -> PhoneResult<Json<Pending>> {
     require_approval_device(&headers, &conn).await?;
     // Never hold a pooled DB connection during a long-poll.
@@ -3426,14 +3426,14 @@ async fn get_pending(wait: Option<String>, headers: Headers, conn: DbConn) -> Ph
 }
 
 /// A3
-#[get("/rewarden/api/requests/<id>")]
+#[get("/reins/api/requests/<id>")]
 async fn get_request(id: &str, headers: Headers, conn: DbConn) -> PhoneResult<Json<RelayRequest>> {
     require_approval_device(&headers, &conn).await?;
     HUB.relay.fetch(&user_key(&headers), &RequestId::from(id)).map(Json).ok_or_else(not_found)
 }
 
 /// A4
-#[post("/rewarden/api/requests/<id>/response", data = "<data>")]
+#[post("/reins/api/requests/<id>/response", data = "<data>")]
 async fn post_request_response(id: &str, data: Data<'_>, headers: Headers, conn: DbConn) -> PhoneResult<Status> {
     require_approval_device(&headers, &conn).await?;
     let response: RelayResponse = parse_versioned(&read_body(data).await?)?;
@@ -3442,14 +3442,14 @@ async fn post_request_response(id: &str, data: Data<'_>, headers: Headers, conn:
 }
 
 /// A5
-#[get("/rewarden/api/pairings/<id>")]
+#[get("/reins/api/pairings/<id>")]
 async fn get_pairing(id: &str, headers: Headers, conn: DbConn) -> PhoneResult<Json<PairingRequest>> {
     require_approval_device(&headers, &conn).await?;
     HUB.pairings.fetch(&user_key(&headers), &PairingId::from(id)).map(Json).ok_or_else(not_found)
 }
 
 /// A6: creates the connection when the right code was chosen.
-#[post("/rewarden/api/pairings/<id>/response", data = "<data>")]
+#[post("/reins/api/pairings/<id>/response", data = "<data>")]
 async fn post_pairing_response(
     id: &str,
     data: Data<'_>,
@@ -3472,7 +3472,7 @@ async fn post_pairing_response(
             client,
             label,
         }) => {
-            let connection = RewardenConnection::new(
+            let connection = ReinsConnection::new(
                 headers.user.uuid.clone(),
                 client.client_id,
                 client.client_name,
@@ -3497,20 +3497,20 @@ async fn post_pairing_response(
 }
 
 /// A7
-#[get("/rewarden/api/connections")]
+#[get("/reins/api/connections")]
 async fn get_connections(headers: Headers, conn: DbConn) -> PhoneResult<Json<Connections>> {
     require_approval_device(&headers, &conn).await?;
-    let connections = RewardenConnection::find_by_user(&headers.user.uuid, &conn).await;
+    let connections = ReinsConnection::find_by_user(&headers.user.uuid, &conn).await;
     Ok(Json(Connections {
-        connections: connections.iter().map(RewardenConnection::to_info).collect(),
+        connections: connections.iter().map(ReinsConnection::to_info).collect(),
     }))
 }
 
 /// A8: access tokens die at once because every MCP call re-checks the connection.
-#[delete("/rewarden/api/connections/<id>")]
+#[delete("/reins/api/connections/<id>")]
 async fn delete_connection(id: &str, headers: Headers, conn: DbConn) -> PhoneResult<Status> {
     require_approval_device(&headers, &conn).await?;
-    let Some(connection) = RewardenConnection::find_by_uuid_and_user(id, &headers.user.uuid, &conn).await else {
+    let Some(connection) = ReinsConnection::find_by_uuid_and_user(id, &headers.user.uuid, &conn).await else {
         return Err(not_found());
     };
     connection.delete(&conn).await.map_err(|e| internal(&e))?;
@@ -3524,14 +3524,14 @@ fn unauthorized() -> Json<ApiError> {
 
 #[catch(404)]
 fn not_found_catcher() -> Json<ApiError> {
-    Json(ApiError::new(codes::NOT_FOUND, "No such Rewarden API endpoint"))
+    Json(ApiError::new(codes::NOT_FOUND, "No such Reins API endpoint"))
 }
 ```
 
-In `src/api/rewarden/mod.rs` add, after `enabled()`:
+In `src/api/reins/mod.rs` add, after `enabled()`:
 
 ```rust
-/// Current time as unix seconds (the unit of every Rewarden timestamp).
+/// Current time as unix seconds (the unit of every Reins timestamp).
 pub fn now_unix() -> i64 {
     chrono::Utc::now().timestamp()
 }
@@ -3559,15 +3559,15 @@ pub fn catchers() -> Vec<Catcher> {
 
 - [ ] **Step 4: Run the unit tests**
 
-Run: `cargo test --features sqlite api::rewarden::device_api`
+Run: `cargo test --features sqlite api::reins::device_api`
 Expected: 3 passed.
 
 - [ ] **Step 5: Write the integration harness and failing HTTP tests**
 
-`tests/rewarden_server/main.rs`:
+`tests/reins_server/main.rs`:
 
 ```rust
-//! HTTP tests against the real `vaultwarden` binary with Rewarden enabled
+//! HTTP tests against the real `vaultwarden` binary with Reins enabled
 //! (plan Decision 27). Each test starts its own server on a free port with a
 //! temporary SQLite database.
 
@@ -3575,7 +3575,7 @@ mod harness;
 mod phone_api;
 ```
 
-`tests/rewarden_server/harness.rs`:
+`tests/reins_server/harness.rs`:
 
 ```rust
 use std::{
@@ -3590,7 +3590,7 @@ use reqwest::{Client, StatusCode, redirect::Policy};
 use serde_json::{Value, json};
 
 /// Any string works: the server stores a salted PBKDF2 of whatever the client sends.
-pub const PASSWORD_HASH: &str = "rewarden-test-master-password-hash";
+pub const PASSWORD_HASH: &str = "reins-test-master-password-hash";
 
 pub struct Options {
     pub relay_wait_secs: u64,
@@ -3631,7 +3631,7 @@ impl Server {
 
     pub async fn start_with(options: Options) -> Self {
         let port = free_port();
-        let dir = std::env::temp_dir().join(format!("rewarden-it-{}", uuid::Uuid::new_v4()));
+        let dir = std::env::temp_dir().join(format!("reins-it-{}", uuid::Uuid::new_v4()));
         std::fs::create_dir_all(&dir).expect("temp dir");
         let log = File::create(dir.join("server.log")).expect("log file");
         let base = format!("http://127.0.0.1:{port}");
@@ -3644,9 +3644,9 @@ impl Server {
             .env("ROCKET_PORT", port.to_string())
             .env("WEB_VAULT_ENABLED", "false")
             .env("LOG_LEVEL", "info")
-            .env("REWARDEN_ENABLED", "true")
-            .env("REWARDEN_RELAY_WAIT_SECS", options.relay_wait_secs.to_string())
-            .env("REWARDEN_OFFLINE_SECS", options.offline_secs.to_string())
+            .env("REINS_ENABLED", "true")
+            .env("REINS_RELAY_WAIT_SECS", options.relay_wait_secs.to_string())
+            .env("REINS_OFFLINE_SECS", options.offline_secs.to_string())
             .stdout(log.try_clone().expect("log clone"))
             .stderr(log)
             .spawn()
@@ -3681,7 +3681,7 @@ impl Server {
     pub async fn register(&self, email: &str) {
         let body = json!({
             "email": email,
-            "name": "Rewarden Test",
+            "name": "Reins Test",
             "masterPasswordHash": PASSWORD_HASH,
             "masterPasswordHint": null,
             "key": "2.AAAAAAAAAAAAAAAAAAAAAA==|AAAAAAAAAAAAAAAAAAAAAA==|AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=",
@@ -3703,7 +3703,7 @@ impl Server {
             ("client_id", "mobile"),
             ("deviceType", "0"),
             ("deviceIdentifier", device_id),
-            ("deviceName", "Rewarden"),
+            ("deviceName", "Reins"),
         ];
         let r = client().post(self.url("/identity/connect/token")).form(&form).send().await.expect("login");
         let status = r.status();
@@ -3722,7 +3722,7 @@ impl Server {
     pub async fn second_device(&self, email: &str) -> Phone {
         let token = self.login(email, &uuid::Uuid::new_v4().to_string()).await;
         Phone {
-            base: self.url("/rewarden/api"),
+            base: self.url("/reins/api"),
             token,
         }
     }
@@ -3778,7 +3778,7 @@ impl Phone {
 }
 ```
 
-`tests/rewarden_server/phone_api.rs`:
+`tests/reins_server/phone_api.rs`:
 
 ```rust
 use std::time::{Duration, Instant};
@@ -3791,7 +3791,7 @@ use crate::harness::{Server, client};
 #[tokio::test]
 async fn unauthenticated_calls_get_json_401() {
     let server = Server::start().await;
-    let r = client().get(server.url("/rewarden/api/pending")).send().await.unwrap();
+    let r = client().get(server.url("/reins/api/pending")).send().await.unwrap();
     assert_eq!(r.status(), StatusCode::UNAUTHORIZED);
     let body: serde_json::Value = r.json().await.unwrap();
     assert_eq!(body["error"], "unauthorized");
@@ -3871,7 +3871,7 @@ async fn connections_start_empty_and_fcm_tokens_are_validated() {
 
 - [ ] **Step 6: Run the integration tests**
 
-Run: `cargo test --features sqlite --test rewarden_server`
+Run: `cargo test --features sqlite --test reins_server`
 Expected: 5 passed (`phone_api::*`). If a test fails at startup, the panic message contains the server log. If registration fails with a KDF/`key` validation error, adjust only the harness `register` body to what `src/api/core/accounts.rs` `RegisterData` requires (no server change).
 
 - [ ] **Step 7: Lints and commit**
@@ -3880,21 +3880,21 @@ Run: `cargo fmt --check && cargo clippy --features sqlite --all-targets -- -D wa
 Expected: clean.
 
 ```bash
-git add src/api/rewarden/mod.rs src/api/rewarden/device_api.rs tests/rewarden_server
-git commit -m "feat(rewarden): phone API A1-A8 with approval-device check and HTTP test harness"
+git add src/api/reins/mod.rs src/api/reins/device_api.rs tests/reins_server
+git commit -m "feat(reins): phone API A1-A8 with approval-device check and HTTP test harness"
 ```
 
 ---
 
-### Task 8: MCP token primitives (`src/auth/rewarden.rs`)
+### Task 8: MCP token primitives (`src/auth/reins.rs`)
 
 **Files:**
-- Create: `src/auth/rewarden.rs`
+- Create: `src/auth/reins.rs`
 - Modify: `src/auth.rs:1-4` (declare the module next to `send`)
 
 **Interfaces:**
-- Consumes: private items of `crate::auth` visible to its child module: `JWT_ALGORITHM`, `JWT_HEADER`, `PRIVATE_RSA_KEY`, `PUBLIC_RSA_KEY` (auth.rs lines 40-68); `CONFIG.domain_origin()`; `crate::crypto::{encode_random_bytes, sha256_hex}`; `crate::api::rewarden::ACCESS_TOKEN_SECS`.
-- Produces (`crate::auth::rewarden`):
+- Consumes: private items of `crate::auth` visible to its child module: `JWT_ALGORITHM`, `JWT_HEADER`, `PRIVATE_RSA_KEY`, `PUBLIC_RSA_KEY` (auth.rs lines 40-68); `CONFIG.domain_origin()`; `crate::crypto::{encode_random_bytes, sha256_hex}`; `crate::api::reins::ACCESS_TOKEN_SECS`.
+- Produces (`crate::auth::reins`):
   - `static JWT_MCP_ISSUER: LazyLock<String>` = `"{domain_origin}|mcp"`
   - `struct McpClaims { nbf: i64, exp: i64, iss: String, aud: String, sub: String /* user uuid */, cid: String /* connection uuid */, client_id: String, scope: String /* "mcp" */ }`
   - `fn mcp_claims(issuer: &str, audience: &str, user_uuid: &str, connection_uuid: &str, client_id: &str, now: i64) -> McpClaims` (lifetime `ACCESS_TOKEN_SECS`)
@@ -3904,7 +3904,7 @@ git commit -m "feat(rewarden): phone API A1-A8 with approval-device check and HT
 
 - [ ] **Step 1: Write the failing tests**
 
-`src/auth/rewarden.rs` — tests first:
+`src/auth/reins.rs` — tests first:
 
 ```rust
 #[cfg(test)]
@@ -3980,22 +3980,22 @@ Declare the module at the top of `src/auth.rs` (lines 1-4 become):
 pub mod send;
 pub type SendTokens = send::SendTokens;
 pub type SendHeaders = send::SendHeaders;
-#[path = "auth/rewarden.rs"]
-#[allow(dead_code, reason = "used by the Rewarden API as Plan 2 wires it; removed in Task 14")]
-pub mod rewarden;
+#[path = "auth/reins.rs"]
+#[allow(dead_code, reason = "used by the Reins API as Plan 2 wires it; removed in Task 14")]
+pub mod reins;
 ```
 
 - [ ] **Step 2: Run the tests to verify they fail**
 
-Run: `cargo test --features sqlite auth::rewarden`
+Run: `cargo test --features sqlite auth::reins`
 Expected: FAIL to compile — `cannot find function mcp_claims`.
 
 - [ ] **Step 3: Implement**
 
-Top of `src/auth/rewarden.rs`:
+Top of `src/auth/reins.rs`:
 
 ```rust
-//! Rewarden MCP tokens (spec §4.5): RS256 access JWTs signed with Vaultwarden's RSA key,
+//! Reins MCP tokens (spec §4.5): RS256 access JWTs signed with Vaultwarden's RSA key,
 //! issuer `{domain_origin}|mcp`, audience = canonical MCP URL; opaque refresh tokens that
 //! are stored only as SHA-256 hex.
 
@@ -4007,7 +4007,7 @@ use jsonwebtoken::{DecodingKey, EncodingKey, Validation};
 use super::{JWT_ALGORITHM, JWT_HEADER, PRIVATE_RSA_KEY, PUBLIC_RSA_KEY};
 use crate::{
     CONFIG,
-    api::rewarden::ACCESS_TOKEN_SECS,
+    api::reins::ACCESS_TOKEN_SECS,
     crypto::{encode_random_bytes, sha256_hex},
 };
 
@@ -4090,7 +4090,7 @@ pub fn hash_token(token: &str) -> String {
 
 - [ ] **Step 4: Run the tests and lints**
 
-Run: `cargo test --features sqlite auth::rewarden`
+Run: `cargo test --features sqlite auth::reins`
 Expected: 4 passed.
 
 Run: `cargo fmt --check && cargo clippy --features sqlite --all-targets -- -D warnings`
@@ -4099,8 +4099,8 @@ Expected: clean.
 - [ ] **Step 5: Commit**
 
 ```bash
-git add src/auth.rs src/auth/rewarden.rs
-git commit -m "feat(rewarden): MCP access-token JWTs with audience check and opaque token helpers"
+git add src/auth.rs src/auth/reins.rs
+git commit -m "feat(reins): MCP access-token JWTs with audience check and opaque token helpers"
 ```
 
 ---

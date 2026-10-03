@@ -1,4 +1,4 @@
-DROP TABLE IF EXISTS rewarden_refresh_tokens;
-DROP TABLE IF EXISTS rewarden_connections;
-DROP TABLE IF EXISTS rewarden_clients;
-DROP TABLE IF EXISTS rewarden_devices;
+DROP TABLE IF EXISTS reins_refresh_tokens;
+DROP TABLE IF EXISTS reins_connections;
+DROP TABLE IF EXISTS reins_clients;
+DROP TABLE IF EXISTS reins_devices;

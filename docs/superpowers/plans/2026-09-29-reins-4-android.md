@@ -1,29 +1,29 @@
-# Rewarden Plan 4: Android App — Implementation Plan
+# Reins Plan 4: Android App — Implementation Plan
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Build the Rewarden Android app in `android/`: a thin Kotlin + Jetpack Compose shell (screens, Keystore, Google authorization, FCM, biometrics, notifications) around the Rust `rewarden-core` library, which owns all logic, networking and storage.
+**Goal:** Build the Reins Android app in `android/`: a thin Kotlin + Jetpack Compose shell (screens, Keystore, Google authorization, FCM, biometrics, notifications) around the Rust `reins-core` library, which owns all logic, networking and storage.
 
-**Architecture:** One Gradle app module, package `dev.rewarden.android`. Every screen talks to a small Kotlin `CoreApi` interface (app-owned mirror of contracts §D); a `FakeCoreApi` backs Compose previews and instrumented UI tests, and `UniffiCoreApi` (last tasks, after Plan 3 merges) adapts the UniFFI-generated `dev.rewarden.core.RewardenCore`. A `MainSafeCoreApi` decorator moves every core call onto `Dispatchers.IO`, so no Rust code — even the synchronous prefix of an `async fn` — ever runs on the main thread. Navigation is a hand-rolled back stack of a sealed `Route` type; state is `StateFlow` in per-screen `ViewModel`s.
+**Architecture:** One Gradle app module, package `dev.reins.android`. Every screen talks to a small Kotlin `CoreApi` interface (app-owned mirror of contracts §D); a `FakeCoreApi` backs Compose previews and instrumented UI tests, and `UniffiCoreApi` (last tasks, after Plan 3 merges) adapts the UniFFI-generated `dev.reins.core.ReinsCore`. A `MainSafeCoreApi` decorator moves every core call onto `Dispatchers.IO`, so no Rust code — even the synchronous prefix of an `async fn` — ever runs on the main thread. Navigation is a hand-rolled back stack of a sealed `Route` type; state is `StateFlow` in per-screen `ViewModel`s.
 
 **Tech Stack:** Gradle 9.8.0 (wrapper), AGP 9.4.1 (built-in Kotlin), Kotlin 2.4.20 (Compose compiler plugin), JDK 21, Compose BOM 2026.06.01 (Compose 1.11.4, Material 3 1.4.0), activity-compose 1.13.0, lifecycle 2.10.0, biometric 1.1.0, work-runtime-ktx 2.12.0, firebase-messaging 25.1.3, play-services-auth 22.0.0, kotlinx-coroutines 1.11.0, JNA 5.19.1 (`@aar`), google-services plugin 4.5.0; Rust side: cargo-ndk 4.1.2, NDK 27.2.12479018, UniFFI 0.32.2 bindgen.
 
-**Spec:** `docs/superpowers/specs/2026-09-28-rewarden-mvp-design.md` (§2 trust model, §6 Android, §7 errors, §10 risks). **Binding interface:** `docs/superpowers/specs/2026-09-29-rewarden-contracts.md` §A (push kinds), §D (UniFFI surface — Plan 3 produces, this plan consumes). Roadmap: `docs/superpowers/plans/2026-09-29-rewarden-roadmap.md`.
+**Spec:** `docs/superpowers/specs/2026-09-28-reins-mvp-design.md` (§2 trust model, §6 Android, §7 errors, §10 risks). **Binding interface:** `docs/superpowers/specs/2026-09-29-reins-contracts.md` §A (push kinds), §D (UniFFI surface — Plan 3 produces, this plan consumes). Roadmap: `docs/superpowers/plans/2026-09-29-reins-roadmap.md`.
 
 ## Global Constraints
 
-- Repo root `<repo>`, branch `rewarden-mvp`. Android project root `android/`. This plan creates and modifies files only under `android/`; it never touches upstream Vaultwarden files or any crate (it only *builds* `crates/rewarden-core`).
-- Package / applicationId `dev.rewarden.android`; `minSdk 31`, `compileSdk 36`, `targetSdk 36`; Kotlin + Jetpack Compose only. NEVER Flutter, no XML layouts (only the manifest, `res/values*` and `res/xml`).
+- Repo root `<repo>`, branch `reins-mvp`. Android project root `android/`. This plan creates and modifies files only under `android/`; it never touches upstream Vaultwarden files or any crate (it only *builds* `crates/reins-core`).
+- Package / applicationId `dev.reins.android`; `minSdk 31`, `compileSdk 36`, `targetSdk 36`; Kotlin + Jetpack Compose only. NEVER Flutter, no XML layouts (only the manifest, `res/values*` and `res/xml`).
 - Dependencies limited to (spec §6): Compose (BOM, material3), `activity-compose`, `lifecycle-viewmodel-compose` (+ `lifecycle-runtime-compose`), `androidx.biometric`, `work-runtime-ktx`, `firebase-messaging`, `play-services-auth` (AuthorizationClient), `kotlinx-coroutines-android`, JNA (`net.java.dev.jna:jna:5.19.1@aar`). Test-only: JUnit 4, kotlinx-coroutines-test, androidx.test (runner, ext-junit), compose ui-test-junit4. No DI framework, no Room/Retrofit/OkHttp, no navigation library, no `kotlinx-coroutines-play-services` (a 15-line `Task.await()` is hand-written).
-- All logic, networking and storage live in Rust (`rewarden-core`). Kotlin only: UI, Android Keystore, Google `AuthorizationClient`, FCM, WorkManager, notifications, `BiometricPrompt`.
-- Nothing on the main thread: every `CoreApi` call goes through `MainSafeCoreApi` (`withContext(Dispatchers.IO)`); `RewardenCore` is constructed on `Dispatchers.IO`; debug builds enable `StrictMode` thread policy (`detectDiskReads`, `detectDiskWrites`, `detectNetwork`, `penaltyLog`).
+- All logic, networking and storage live in Rust (`reins-core`). Kotlin only: UI, Android Keystore, Google `AuthorizationClient`, FCM, WorkManager, notifications, `BiometricPrompt`.
+- Nothing on the main thread: every `CoreApi` call goes through `MainSafeCoreApi` (`withContext(Dispatchers.IO)`); `ReinsCore` is constructed on `Dispatchers.IO`; debug builds enable `StrictMode` thread policy (`detectDiskReads`, `detectDiskWrites`, `detectNetwork`, `penaltyLog`).
 - Toolchain paths (verbatim): Android SDK `$HOME/Android/Sdk` (the environment's `ANDROID_HOME=/opt/android-sdk` is stale — always `export ANDROID_HOME=$HOME/Android/Sdk`), NDK `$HOME/Android/Sdk/ndk/27.2.12479018`, JDK 21, Rust via `export PATH="$HOME/.cargo/bin:$PATH"` (rustc 1.98.1, targets `aarch64-linux-android`, `x86_64-linux-android`), `cargo-ndk 4.1.2`. Gradle distribution unpacked at `~/.local/share/gradle-dist/gradle-9.8.0`.
 - Emulator: instrumented tests and the smoke run target `emulator-5554` (API 36, x86_64, Play services); always `export ANDROID_SERIAL=emulator-5554` (other emulators may be attached and `connectedDebugAndroidTest` would otherwise run on all of them). If `adb devices` does not list it, start one: `ANDROID_AVD_HOME=~/.config/.android/avd $HOME/Android/Sdk/emulator/emulator -avd zeron36 -read-only -port 5554 -no-window -no-audio -no-boot-anim -no-snapshot &` then `adb -s emulator-5554 wait-for-device` and wait until `adb -s emulator-5554 shell getprop sys.boot_completed` prints `1`. A one-off `system_server` hiccup on this emulator can fail a UI test; rerun once before debugging.
 - Every Gradle command runs in `android/` with `export ANDROID_HOME=$HOME/Android/Sdk` (shown as `$ENV` below: `export ANDROID_HOME=$HOME/Android/Sdk ANDROID_SERIAL=emulator-5554 PATH="$HOME/.cargo/bin:$PATH"`).
 - ABIs: `arm64-v8a` and `x86_64` only. 16 KB pages: Rust links with `-C link-arg=-Wl,-z,max-page-size=16384` (NDK 27.2 < r28).
 - Gmail scopes (verbatim): `https://www.googleapis.com/auth/gmail.readonly`, `https://www.googleapis.com/auth/gmail.send`.
 - FCM data payload: `{t: "req" | "pair" | "replaced", id}` → passed unchanged to `core.handlePush(t, id)` (contracts §A). Push is a hint only; only high-priority messages get expedited work.
-- `google-services.json` source: `~/.config/rewarden/google-services.json` (override with Gradle property `rewarden.googleServicesJson`); copied to `android/app/google-services.json` (gitignored) when present. The app MUST build and run without it (no FCM; foreground long-poll via `core.sync(25)` only).
+- `google-services.json` source: `~/.config/reins/google-services.json` (override with Gradle property `reins.googleServicesJson`); copied to `android/app/google-services.json` (gitignored) when present. The app MUST build and run without it (no FCM; foreground long-poll via `core.sync(25)` only).
 - The build must not need an OAuth client: with no Android OAuth client in the Google Cloud project, the app shows "Gmail needs setup" (from `GmailStatus.Unavailable`) and everything else works.
 - Lifetime choices (verbatim, spec §6): Once · 1 h · 24 h · 7 days · until revoked · N uses. Once creates no grant (`standing = null`).
 - `GrantScopeChoice.subjectPattern` is literal "subject contains" text, never a regex; the UI labels it "Subject contains".
@@ -31,7 +31,7 @@
 - Untrusted text (sender, recipients, subject, snippet, body, labels, client names) is shown with bidi controls stripped; addresses are always laid out LTR.
 - `FLAG_SECURE` on Approval, Pairing, Grants and Activity screens.
 - Approve (requests and pairings) requires `BiometricPrompt` with `BIOMETRIC_STRONG or DEVICE_CREDENTIAL`; Deny is one tap and needs no authentication.
-- Exported components: only `MainActivity` (launcher). `RewardenMessagingService` is `exported="false"`. Notification `PendingIntent`s are `FLAG_IMMUTABLE` with an explicit component.
+- Exported components: only `MainActivity` (launcher). `ReinsMessagingService` is `exported="false"`. Notification `PendingIntent`s are `FLAG_IMMUTABLE` with an explicit component.
 - Commits: one per task, message prefix `feat(android):` / `test(android):` / `build(android):`; never commit `android/app/google-services.json`, `local.properties`, build outputs, generated bindings or `.so` files.
 
 ## Review Focus
@@ -52,11 +52,11 @@ Every open question is decided here; nothing is left for the executor to choose.
 2. **compileSdk 36 pins Compose to BOM 2026.06.01 and lifecycle to 2.10.0.** BOM 2026.08.00+ (Compose 1.12) and lifecycle 2.11.0 fail `checkDebugAarMetadata` with "requires compileSdk 37"; only platforms 34–36 are installed and the spec fixes 36. Upgrade both together with compileSdk 37 later.
 3. **Espresso 3.7.0 is pinned in `androidTestImplementation`.** The version pulled in transitively by Compose ui-test calls `InputManager.getInstance()`, removed on API 36 → every UI test fails with `NoSuchMethodException`. Compose tests use the non-deprecated `androidx.compose.ui.test.junit4.v2.*` rules.
 4. **UniFFI 0.32.2 Kotlin cannot compile an error variant with a field named `message`** (verified: "Conflicting declarations … 'message' hides member of supertype 'Throwable'"). Contracts §D uses `message` in `CoreError::{Network, Server, Gmail, Invalid, Storage}` and `ForeignError::Failed`. This plan's adapter code (Task 12) assumes those fields are renamed to **`reason`** (see "Contract changes" at the end); `GmailStatus::Unavailable { message }` is a plain enum and is fine.
-5. **Generated-type facts (verified with a crate mirroring §D):** `Vec<u8>` → `ByteArray` (so `PairingView.choices` is a *signed* `ByteArray`: read codes with `it.toInt() and 0xFF`); `Option<u8>` → `UByte?`; `u16`/`u32`/`u64` → `UShort`/`UInt`/`ULong`; enums → `PendingKind.REQUEST`; errors → `CoreException.X` / `ForeignException.X`; the async foreign trait method is `suspend fun accessToken(): String`; the constructor is a *synchronous* `RewardenCore(dataDir, keys, google, notifier)`.
-6. **App-owned model mirror + adapter.** The UI never imports `dev.rewarden.core.*`. `core/Models.kt` mirrors §D with Kotlin-friendly types (`Int`/`Long`, no unsigned) and `core/CoreFailure.kt` mirrors `CoreError`. Only `core/UniffiCoreApi.kt` and `core/FfiMappers.kt` (Task 12) touch generated code. This lets Tasks 1–11 build, run and test with no Rust at all while Plan 3 is in progress.
+5. **Generated-type facts (verified with a crate mirroring §D):** `Vec<u8>` → `ByteArray` (so `PairingView.choices` is a *signed* `ByteArray`: read codes with `it.toInt() and 0xFF`); `Option<u8>` → `UByte?`; `u16`/`u32`/`u64` → `UShort`/`UInt`/`ULong`; enums → `PendingKind.REQUEST`; errors → `CoreException.X` / `ForeignException.X`; the async foreign trait method is `suspend fun accessToken(): String`; the constructor is a *synchronous* `ReinsCore(dataDir, keys, google, notifier)`.
+6. **App-owned model mirror + adapter.** The UI never imports `dev.reins.core.*`. `core/Models.kt` mirrors §D with Kotlin-friendly types (`Int`/`Long`, no unsigned) and `core/CoreFailure.kt` mirrors `CoreError`. Only `core/UniffiCoreApi.kt` and `core/FfiMappers.kt` (Task 12) touch generated code. This lets Tasks 1–11 build, run and test with no Rust at all while Plan 3 is in progress.
 7. **Main-thread safety is structural.** UniFFI polls a Rust future on the calling thread, so the synchronous prefix of an `async fn` (e.g. Argon2 in `login`) would run on the main thread if called from `viewModelScope`. `MainSafeCoreApi` wraps every call in `withContext(Dispatchers.IO)` and constructs the delegate lazily on that dispatcher. The container hands out only the wrapped instance.
 8. **No navigation library.** `Navigator` is a `mutableStateListOf<Route>` back stack in an activity-scoped `AppViewModel`; `BackHandler` pops. ViewModels are activity-scoped and keyed per route (`"approval:<id>"`); no per-destination stores (the app has 7 screens).
-9. **Test injection without DI:** `CoreProvider.factory` (a `fun interface CoreFactory`) is read once in `RewardenApp.onCreate`. The instrumented runner `RewardenTestRunner` sets it to return a shared `FakeCoreApi` *before* `Application.onCreate` runs. `FakeCoreApi` lives in `main` (used by previews and, until Task 12, as the default core); R8 strips it from release once Task 12 switches the default.
+9. **Test injection without DI:** `CoreProvider.factory` (a `fun interface CoreFactory`) is read once in `ReinsApp.onCreate`. The instrumented runner `ReinsTestRunner` sets it to return a shared `FakeCoreApi` *before* `Application.onCreate` runs. `FakeCoreApi` lives in `main` (used by previews and, until Task 12, as the default core); R8 strips it from release once Task 12 switches the default.
 10. **Deep links are validated against local state, not trusted.** `MainActivity` must be exported (launcher), so any app can send it `ACTION_OPEN_ITEM`. The id must match `[A-Za-z0-9_-]{1,128}`, the kind must be `request|pairing`, and the item must be in `core.pending()`; otherwise the app shows Home with "That request is no longer waiting." Even a valid spoof only opens a screen the user must still approve with biometrics.
 11. **FLAG_SECURE is reference-counted per window** (`SecureFlag`), so a transition between two secure screens never clears it in between; applied by the `SecureWindow()` composable in each secure screen.
 12. **Biometric gate lives in the ViewModel call path.** `approve(authenticate)` / `answer(authenticate)` call `core.approve` / `core.answerPairing(approve = true)` only after `AuthResult.Success`. `BiometricAuthenticator` returns `Unavailable` when `canAuthenticate(BIOMETRIC_STRONG or DEVICE_CREDENTIAL) != BIOMETRIC_SUCCESS` (no screen lock) — fail closed with "Set a screen lock to approve". No CryptoObject: approval is not key-bound in the MVP (spec §2 accepts that the phone is the trust root).
@@ -66,9 +66,9 @@ Every open question is decided here; nothing is left for the executor to choose.
 16. **Poller:** runs while `MainActivity` is STARTED and the user is signed in; errors back off 1 s, 2 s, 4 s … capped at 30 s; `CoreFailure.NotLoggedIn` signs the UI out; `CoreFailure.Server(403, …)` marks the device "replaced" and stops polling until re-registration.
 17. **Device replacement notice:** the worker passes `replaced` to `core.handlePush` unchanged and then posts a local "This phone is no longer your approval device" notification and sets `AppState.device = Replaced`.
 18. **Firebase optional:** the google-services plugin is applied only when `app/google-services.json` exists after the copy step; `BuildConfig.HAS_FIREBASE` records it and `FirebaseSupport.available()` also checks `FirebaseApp.getApps()`. Without it: no FCM token (`registerDevice(null)`), foreground long-poll only.
-19. **Gmail consent:** `GmailAuthorizer` uses `Identity.getAuthorizationClient(context).authorize(...)`; `hasResolution()` → `NeedsUserInteraction` for the core and a `PendingIntent` for the Connect button (`StartIntentSenderForResult`). `ApiException` status 10 (DEVELOPER_ERROR — no Android OAuth client for this package+SHA-1, today's state) → "Gmail needs setup: register this app's package and signing SHA-1 as an Android OAuth client in Google Cloud (project rewarden-main)". Disconnect = `clearToken` + `revokeAccess` for the account from a silent authorize.
+19. **Gmail consent:** `GmailAuthorizer` uses `Identity.getAuthorizationClient(context).authorize(...)`; `hasResolution()` → `NeedsUserInteraction` for the core and a `PendingIntent` for the Connect button (`StartIntentSenderForResult`). `ApiException` status 10 (DEVELOPER_ERROR — no Android OAuth client for this package+SHA-1, today's state) → "Gmail needs setup: register this app's package and signing SHA-1 as an Android OAuth client in Google Cloud (project reins-main)". Disconnect = `clearToken` + `revokeAccess` for the account from a silent authorize.
 20. **Rust build via the Variant API**, not `preBuild.dependsOn`: `CargoNdkTask` and `UniffiBindgenTask` are registered with `variant.sources.jniLibs.addGeneratedSourceDirectory` / `variant.sources.kotlin.addGeneratedSourceDirectory`, so AGP wires them before merge/compile automatically for every variant. Outputs go to `app/build/rustJniLibs` and `app/build/generated/uniffi/kotlin` (never under `src/`). `CargoNdkTask` is never up-to-date (cargo is incremental, a no-op run takes ~1 s); downstream tasks stay up-to-date because outputs are content-hashed.
-21. **Rust profile:** default `release` (the workspace profile: fat LTO, `strip = "debuginfo"` — symbols stay, which UniFFI library-mode bindgen needs). `-Prewarden.rustProfile=release-low` for faster local iteration. Never `release-micro` (strips symbols → bindgen fails).
+21. **Rust profile:** default `release` (the workspace profile: fat LTO, `strip = "debuginfo"` — symbols stay, which UniFFI library-mode bindgen needs). `-Preins.rustProfile=release-low` for faster local iteration. Never `release-micro` (strips symbols → bindgen fails).
 22. **Storage location:** core `dataDir` = `noBackupFilesDir/core`; `android:allowBackup="false"` (Keystore-wrapped keys cannot be restored on another device anyway).
 23. **Release build** is minified (R8) and, for the MVP, signed with the debug keystore (only the debug SHA-1 is registered in Firebase/Google Cloud). JNA and generated bindings are kept by `proguard-rules.pro`.
 24. **Notifications:** platform `Notification.Builder` (minSdk 31, no compat library); channels `approvals` (high) and `status` (default); `VISIBILITY_PRIVATE` with a content-free public version; posted only if notifications are enabled; `POST_NOTIFICATIONS` is requested from Home on API 33+.
@@ -91,8 +91,8 @@ android/app/src/main/res/values/strings.xml          app name
 android/app/src/main/res/values/themes.xml           window theme for edge-to-edge
 android/app/src/main/res/drawable/ic_notification.xml, ic_launcher_foreground.xml
 android/app/src/main/res/mipmap-anydpi/ic_launcher.xml
-android/app/src/main/java/dev/rewarden/android/
-  RewardenApp.kt                  Application: builds AppContainer, channels, StrictMode (debug)
+android/app/src/main/java/dev/reins/android/
+  ReinsApp.kt                  Application: builds AppContainer, channels, StrictMode (debug)
   AppContainer.kt                 process singletons: core, AppState, stores, platform services
   MainActivity.kt                 FragmentActivity host: Compose root, deep links, poller lifecycle
   core/CoreApi.kt                 the seam: suspend interface mirroring contracts §D
@@ -101,7 +101,7 @@ android/app/src/main/java/dev/rewarden/android/
   core/MainSafeCoreApi.kt         every call on Dispatchers.IO; lazy construction
   core/CoreProvider.kt            CoreFactory + default factory (fake until Task 12)
   core/FakeCoreApi.kt             in-memory core for previews and UI tests
-  core/UniffiCoreApi.kt           (Task 12) adapter over dev.rewarden.core.RewardenCore
+  core/UniffiCoreApi.kt           (Task 12) adapter over dev.reins.core.ReinsCore
   core/FfiMappers.kt              (Task 12) generated <-> app model mapping
   core/ForeignAdapters.kt         (Task 12) KeyWrapper/GoogleTokenProvider/Notifier implementations
   state/AppState.kt               session + device status flows
@@ -117,7 +117,7 @@ android/app/src/main/java/dev/rewarden/android/
   push/PushHandler.kt             pure push handling (tested on JVM)
   push/PushWorker.kt              expedited CoroutineWorker → PushHandler
   push/RegisterDeviceWorker.kt    token refresh → DeviceRegistrar
-  push/RewardenMessagingService.kt FirebaseMessagingService (not exported)
+  push/ReinsMessagingService.kt FirebaseMessagingService (not exported)
   sync/ForegroundSync.kt          lifecycle-bound long-poll loop + backoff
   ui/theme/Theme.kt               Material 3 dynamic light/dark
   ui/common/Untrusted.kt          bidi/control stripping for untrusted text
@@ -128,7 +128,7 @@ android/app/src/main/java/dev/rewarden/android/
   ui/nav/Navigator.kt             back stack
   ui/nav/DeepLink.kt              intent → validated target
   ui/AppViewModel.kt              session-driven navigation, deep-link resolution
-  ui/RewardenRoot.kt              route → screen switch
+  ui/ReinsRoot.kt              route → screen switch
   ui/signin/SignInViewModel.kt, SignInScreen.kt
   ui/home/HomeViewModel.kt, HomeScreen.kt
   ui/gmail/GmailViewModel.kt, GmailSection.kt   shared by Home and Settings
@@ -138,8 +138,8 @@ android/app/src/main/java/dev/rewarden/android/
   ui/grants/GrantsViewModel.kt, GrantsScreen.kt
   ui/activity/ActivityViewModel.kt, ActivityScreen.kt
   ui/settings/SettingsViewModel.kt, SettingsScreen.kt
-android/app/src/test/java/dev/rewarden/android/        JVM unit tests (per task)
-android/app/src/androidTest/java/dev/rewarden/android/ instrumented tests + RewardenTestRunner + TestEnv
+android/app/src/test/java/dev/reins/android/        JVM unit tests (per task)
+android/app/src/androidTest/java/dev/reins/android/ instrumented tests + ReinsTestRunner + TestEnv
 ```
 
 ---
@@ -148,12 +148,12 @@ android/app/src/androidTest/java/dev/rewarden/android/ instrumented tests + Rewa
 
 **Files:**
 - Create: `android/.gitignore`, `android/settings.gradle.kts`, `android/build.gradle.kts`, `android/gradle.properties`, `android/gradle/libs.versions.toml`, `android/gradle/wrapper/gradle-wrapper.properties`, `android/gradle/wrapper/gradle-wrapper.jar`, `android/gradlew`, `android/gradlew.bat` (the last four generated), `android/local.properties` (not committed)
-- Create: `android/app/build.gradle.kts`, `android/app/proguard-rules.pro`, `android/app/src/main/AndroidManifest.xml`, `android/app/src/main/res/values/strings.xml`, `android/app/src/main/res/values/themes.xml`, `android/app/src/main/res/drawable/ic_notification.xml`, `android/app/src/main/res/drawable/ic_launcher_foreground.xml`, `android/app/src/main/res/mipmap-anydpi/ic_launcher.xml`, `android/app/src/main/java/dev/rewarden/android/MainActivity.kt`
-- Test: `android/app/src/androidTest/java/dev/rewarden/android/LaunchTest.kt`
+- Create: `android/app/build.gradle.kts`, `android/app/proguard-rules.pro`, `android/app/src/main/AndroidManifest.xml`, `android/app/src/main/res/values/strings.xml`, `android/app/src/main/res/values/themes.xml`, `android/app/src/main/res/drawable/ic_notification.xml`, `android/app/src/main/res/drawable/ic_launcher_foreground.xml`, `android/app/src/main/res/mipmap-anydpi/ic_launcher.xml`, `android/app/src/main/java/dev/reins/android/MainActivity.kt`
+- Test: `android/app/src/androidTest/java/dev/reins/android/LaunchTest.kt`
 
 **Interfaces:**
 - Consumes: nothing.
-- Produces: a buildable module `:app` (namespace `dev.rewarden.android`), `BuildConfig.HAS_FIREBASE: Boolean`, version catalog aliases used by every later task (`libs.*`), `MainActivity : FragmentActivity` (content replaced in Task 5).
+- Produces: a buildable module `:app` (namespace `dev.reins.android`), `BuildConfig.HAS_FIREBASE: Boolean`, version catalog aliases used by every later task (`libs.*`), `MainActivity : FragmentActivity` (content replaced in Task 5).
 
 - [ ] **Step 1: Create the root build files**
 
@@ -190,7 +190,7 @@ dependencyResolutionManagement {
     }
 }
 
-rootProject.name = "rewarden-android"
+rootProject.name = "reins-android"
 include(":app")
 ```
 
@@ -279,8 +279,8 @@ plugins {
 // google-services.json is optional (plan Decision 18). Copy it in from outside the repo when
 // available; apply the plugin only when the file is present so the app builds without Firebase.
 val googleServicesSource = file(
-    providers.gradleProperty("rewarden.googleServicesJson")
-        .getOrElse("${System.getProperty("user.home")}/.config/rewarden/google-services.json"),
+    providers.gradleProperty("reins.googleServicesJson")
+        .getOrElse("${System.getProperty("user.home")}/.config/reins/google-services.json"),
 )
 val googleServicesTarget = file("google-services.json")
 if (!googleServicesTarget.exists() && googleServicesSource.isFile) {
@@ -292,12 +292,12 @@ if (hasFirebase) {
 }
 
 android {
-    namespace = "dev.rewarden.android"
+    namespace = "dev.reins.android"
     compileSdk = 36
     ndkVersion = "27.2.12479018"
 
     defaultConfig {
-        applicationId = "dev.rewarden.android"
+        applicationId = "dev.reins.android"
         minSdk = 31
         targetSdk = 36
         versionCode = 1
@@ -372,7 +372,7 @@ dependencies {
 -keepclassmembers class * extends com.sun.jna.** { public *; }
 -dontwarn java.awt.**
 # UniFFI-generated bindings (Structure fields and callbacks are looked up by name).
--keep class dev.rewarden.core.** { *; }
+-keep class dev.reins.core.** { *; }
 ```
 
 `android/app/src/main/AndroidManifest.xml`:
@@ -389,7 +389,7 @@ dependencies {
         android:icon="@mipmap/ic_launcher"
         android:label="@string/app_name"
         android:supportsRtl="true"
-        android:theme="@style/Theme.Rewarden">
+        android:theme="@style/Theme.Reins">
 
         <activity
             android:name=".MainActivity"
@@ -410,7 +410,7 @@ dependencies {
 ```xml
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <string name="app_name">Rewarden</string>
+    <string name="app_name">Reins</string>
 </resources>
 ```
 
@@ -420,7 +420,7 @@ dependencies {
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
     <!-- Window-level theme only (follows system light/dark); all UI colors come from Compose Material 3. -->
-    <style name="Theme.Rewarden" parent="android:Theme.DeviceDefault.DayNight">
+    <style name="Theme.Reins" parent="android:Theme.DeviceDefault.DayNight">
         <item name="android:windowActionBar">false</item>
         <item name="android:windowNoTitle">true</item>
     </style>
@@ -474,10 +474,10 @@ dependencies {
 </adaptive-icon>
 ```
 
-`android/app/src/main/java/dev/rewarden/android/MainActivity.kt`:
+`android/app/src/main/java/dev/reins/android/MainActivity.kt`:
 
 ```kotlin
-package dev.rewarden.android
+package dev.reins.android
 
 import android.os.Bundle
 import androidx.activity.compose.setContent
@@ -499,7 +499,7 @@ class MainActivity : FragmentActivity() {
         setContent {
             MaterialTheme {
                 Surface(Modifier.fillMaxSize()) {
-                    Box(contentAlignment = Alignment.Center) { Text("Rewarden") }
+                    Box(contentAlignment = Alignment.Center) { Text("Reins") }
                 }
             }
         }
@@ -523,10 +523,10 @@ Expected: `Gradle 9.8.0`; files `gradlew`, `gradlew.bat`, `gradle/wrapper/gradle
 
 - [ ] **Step 4: Write the launch test**
 
-`android/app/src/androidTest/java/dev/rewarden/android/LaunchTest.kt`:
+`android/app/src/androidTest/java/dev/reins/android/LaunchTest.kt`:
 
 ```kotlin
-package dev.rewarden.android
+package dev.reins.android
 
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.junit4.v2.createAndroidComposeRule
@@ -542,7 +542,7 @@ class LaunchTest {
 
     @Test
     fun launchesWithOrWithoutFirebase() {
-        rule.onNodeWithText("Rewarden").assertIsDisplayed()
+        rule.onNodeWithText("Reins").assertIsDisplayed()
         val context = InstrumentationRegistry.getInstrumentation().targetContext
         // Firebase is initialized exactly when the build had google-services.json.
         assertEquals(BuildConfig.HAS_FIREBASE, FirebaseApp.getApps(context).isNotEmpty())
@@ -556,7 +556,7 @@ class LaunchTest {
 cd <repo>/android
 export ANDROID_HOME=$HOME/Android/Sdk ANDROID_SERIAL=emulator-5554
 rm -f app/google-services.json
-./gradlew connectedDebugAndroidTest -Prewarden.googleServicesJson=/nonexistent
+./gradlew connectedDebugAndroidTest -Preins.googleServicesJson=/nonexistent
 ls app/google-services.json 2>&1 | grep -c 'No such file'
 ```
 
@@ -583,15 +583,15 @@ git commit -m "build(android): Gradle 9.8 / AGP 9.4 Compose project with optiona
 ### Task 2: Core seam — models, failures, `CoreApi`, `FakeCoreApi`
 
 **Files:**
-- Create: `android/app/src/main/java/dev/rewarden/android/core/Models.kt`
-- Create: `android/app/src/main/java/dev/rewarden/android/core/CoreFailure.kt`
-- Create: `android/app/src/main/java/dev/rewarden/android/core/CoreApi.kt`
-- Create: `android/app/src/main/java/dev/rewarden/android/core/FakeCoreApi.kt`
-- Test: `android/app/src/test/java/dev/rewarden/android/core/FakeCoreApiTest.kt`
+- Create: `android/app/src/main/java/dev/reins/android/core/Models.kt`
+- Create: `android/app/src/main/java/dev/reins/android/core/CoreFailure.kt`
+- Create: `android/app/src/main/java/dev/reins/android/core/CoreApi.kt`
+- Create: `android/app/src/main/java/dev/reins/android/core/FakeCoreApi.kt`
+- Test: `android/app/src/test/java/dev/reins/android/core/FakeCoreApiTest.kt`
 
 **Interfaces:**
 - Consumes: nothing.
-- Produces (package `dev.rewarden.android.core`):
+- Produces (package `dev.reins.android.core`):
   - Records: `SessionInfo(serverUrl, email)`, `PendingKind { Request, Pairing }`, `PendingItem(kind, id, title, subtitle, createdAt: Long)`, `ApprovalKind { Search, Read, Send }`, `MessageView(id, from, subject, date: Long, snippet, coveredByGrant)`, `EmailView(to, cc, subject, body)`, `ApprovalView(requestId, connectionLabel, kind, query: String?, messages, email: EmailView?, createdAt)`, `ApprovalChoice(selectedMessageIds: List<String>, standing: StandingGrant?)`, `StandingGrant(durationSecs: Long?, maxUses: Int?, scope: GrantScopeChoice)`, `GrantScopeChoice(selectedMessagesOnly, senderAddresses, senderDomains, subjectPattern: String?, recipientAddresses, recipientDomains)` (all defaulted), `PairingView(id, clientName, clientHost, choices: List<Int>, createdAt)`, `GrantView(id, connectionLabel, action, summary, expiresAt: Long?, maxUses: Int?, uses: Int)`, `ConnectionView(id, label, clientHost, createdAt, lastUsedAt: Long?)`, `ActivityEntry(at, connectionLabel, action, outcome, detail, grantId: String?)`, `sealed interface GmailStatus { Ready; NeedsConsent; Unavailable(message) }`.
   - `sealed class CoreFailure : Exception` with `NotLoggedIn()`, `TwoFactorRequired()`, `UnsupportedTwoFactor()`, `InvalidCredentials()`, `Network(reason)`, `Server(status: Int, reason)`, `GmailNeedsConsent()`, `Gmail(reason)`, `NotFound()`, `Invalid(reason)`, `Storage(reason)`.
   - `interface CoreApi` — 18 `suspend` methods named exactly as contracts §D in camelCase (`sync(waitSecs: Int)`, `activity(limit: Int)`, `answerPairing(pairingId, approve, chosenCode: Int?, label: String?)`).
@@ -599,10 +599,10 @@ git commit -m "build(android): Gradle 9.8 / AGP 9.4 Compose project with optiona
 
 - [ ] **Step 1: Write the failing test**
 
-`android/app/src/test/java/dev/rewarden/android/core/FakeCoreApiTest.kt`:
+`android/app/src/test/java/dev/reins/android/core/FakeCoreApiTest.kt`:
 
 ```kotlin
-package dev.rewarden.android.core
+package dev.reins.android.core
 
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.async
@@ -675,15 +675,15 @@ class FakeCoreApiTest {
 
 - [ ] **Step 2: Run it to verify it fails**
 
-Run: `cd android && ./gradlew testDebugUnitTest --tests 'dev.rewarden.android.core.FakeCoreApiTest'`
+Run: `cd android && ./gradlew testDebugUnitTest --tests 'dev.reins.android.core.FakeCoreApiTest'`
 Expected: FAIL — compilation errors `Unresolved reference 'FakeCoreApi'`.
 
 - [ ] **Step 3: Write the models, failures and interface**
 
-`android/app/src/main/java/dev/rewarden/android/core/Models.kt`:
+`android/app/src/main/java/dev/reins/android/core/Models.kt`:
 
 ```kotlin
-package dev.rewarden.android.core
+package dev.reins.android.core
 
 // App-owned mirror of contracts §D records/enums (plan Decision 6). Unsigned Rust integers are
 // plain Int/Long here; only core/FfiMappers.kt (Task 12) converts to and from generated types.
@@ -780,10 +780,10 @@ sealed interface GmailStatus {
 }
 ```
 
-`android/app/src/main/java/dev/rewarden/android/core/CoreFailure.kt`:
+`android/app/src/main/java/dev/reins/android/core/CoreFailure.kt`:
 
 ```kotlin
-package dev.rewarden.android.core
+package dev.reins.android.core
 
 /** App-owned mirror of contracts §D `CoreError`. Every CoreApi method throws only these. */
 sealed class CoreFailure(message: String) : Exception(message) {
@@ -801,13 +801,13 @@ sealed class CoreFailure(message: String) : Exception(message) {
 }
 ```
 
-`android/app/src/main/java/dev/rewarden/android/core/CoreApi.kt`:
+`android/app/src/main/java/dev/reins/android/core/CoreApi.kt`:
 
 ```kotlin
-package dev.rewarden.android.core
+package dev.reins.android.core
 
 /**
- * The seam between the Kotlin shell and rewarden-core (contracts §D, same method names).
+ * The seam between the Kotlin shell and reins-core (contracts §D, same method names).
  * Implementations: [FakeCoreApi] (previews/tests), UniffiCoreApi (Task 12). The app only ever
  * holds a [MainSafeCoreApi] wrapper, so callers may use it from any dispatcher.
  * Every method throws only [CoreFailure].
@@ -843,10 +843,10 @@ interface CoreApi {
 
 The sample deliberately contains a U+202E (RIGHT-TO-LEFT OVERRIDE) in a subject and an activity detail, so screens exercise untrusted-text handling in previews and UI tests.
 
-`android/app/src/main/java/dev/rewarden/android/core/FakeCoreApi.kt`:
+`android/app/src/main/java/dev/reins/android/core/FakeCoreApi.kt`:
 
 ```kotlin
-package dev.rewarden.android.core
+package dev.reins.android.core
 
 import java.util.concurrent.CopyOnWriteArrayList
 import kotlinx.coroutines.delay
@@ -921,7 +921,7 @@ class FakeCoreApi(private val now: () -> Long = { System.currentTimeMillis() / 1
     fun loadSample(): FakeCoreApi {
         reset()
         val t = now()
-        currentSession = SessionInfo("https://rewarden.example", "me@example.com")
+        currentSession = SessionInfo("https://reins.example", "me@example.com")
         gmail = GmailStatus.Ready
         approvals[SEARCH_ID] = ApprovalView(
             requestId = SEARCH_ID,
@@ -1120,30 +1120,30 @@ class FakeCoreApi(private val now: () -> Long = { System.currentTimeMillis() / 1
 
 - [ ] **Step 5: Run the test to verify it passes**
 
-Run: `cd android && ./gradlew testDebugUnitTest --tests 'dev.rewarden.android.core.FakeCoreApiTest'`
+Run: `cd android && ./gradlew testDebugUnitTest --tests 'dev.reins.android.core.FakeCoreApiTest'`
 Expected: PASS, 6 tests.
 
 - [ ] **Step 6: Commit**
 
 ```bash
-git add android/app/src/main/java/dev/rewarden/android/core android/app/src/test/java/dev/rewarden/android/core
+git add android/app/src/main/java/dev/reins/android/core android/app/src/test/java/dev/reins/android/core
 git commit -m "feat(android): CoreApi seam mirroring the UniFFI contract, with an in-memory fake"
 ```
 
 ### Task 3: Main-safe core wrapper, app container, state
 
 **Files:**
-- Create: `android/app/src/main/java/dev/rewarden/android/core/MainSafeCoreApi.kt`
-- Create: `android/app/src/main/java/dev/rewarden/android/core/CoreProvider.kt`
-- Create: `android/app/src/main/java/dev/rewarden/android/state/AppState.kt`
-- Create: `android/app/src/main/java/dev/rewarden/android/state/PendingStore.kt`
-- Create: `android/app/src/main/java/dev/rewarden/android/state/DeviceRegistrar.kt`
-- Create: `android/app/src/main/java/dev/rewarden/android/platform/TaskAwait.kt`
-- Create: `android/app/src/main/java/dev/rewarden/android/platform/FirebaseSupport.kt`
-- Create: `android/app/src/main/java/dev/rewarden/android/AppContainer.kt`
-- Create: `android/app/src/main/java/dev/rewarden/android/RewardenApp.kt`
-- Modify: `android/app/src/main/AndroidManifest.xml` (add `android:name=".RewardenApp"` to `<application>`)
-- Test: `android/app/src/test/java/dev/rewarden/android/core/MainSafeCoreApiTest.kt`, `android/app/src/test/java/dev/rewarden/android/state/DeviceRegistrarTest.kt`
+- Create: `android/app/src/main/java/dev/reins/android/core/MainSafeCoreApi.kt`
+- Create: `android/app/src/main/java/dev/reins/android/core/CoreProvider.kt`
+- Create: `android/app/src/main/java/dev/reins/android/state/AppState.kt`
+- Create: `android/app/src/main/java/dev/reins/android/state/PendingStore.kt`
+- Create: `android/app/src/main/java/dev/reins/android/state/DeviceRegistrar.kt`
+- Create: `android/app/src/main/java/dev/reins/android/platform/TaskAwait.kt`
+- Create: `android/app/src/main/java/dev/reins/android/platform/FirebaseSupport.kt`
+- Create: `android/app/src/main/java/dev/reins/android/AppContainer.kt`
+- Create: `android/app/src/main/java/dev/reins/android/ReinsApp.kt`
+- Modify: `android/app/src/main/AndroidManifest.xml` (add `android:name=".ReinsApp"` to `<application>`)
+- Test: `android/app/src/test/java/dev/reins/android/core/MainSafeCoreApiTest.kt`, `android/app/src/test/java/dev/reins/android/state/DeviceRegistrarTest.kt`
 
 **Interfaces:**
 - Consumes: Task 2 `CoreApi`, `CoreFailure`, `FakeCoreApi`, `SessionInfo`, `PendingItem`.
@@ -1153,18 +1153,18 @@ git commit -m "feat(android): CoreApi seam mirroring the UniFFI contract, with a
   - `sealed interface SessionState { Loading; SignedOut; SignedIn(info); Broken(failure) }`, `sealed interface DeviceStatus { Unknown; Registered; Failed(failure); Replaced }`, `class AppState` with `session: StateFlow<SessionState>`, `device: StateFlow<DeviceStatus>`, `signedIn(info)`, `signedOut()`, `broken(failure)`, `setDevice(status)`.
   - `class PendingStore` with `items: StateFlow<List<PendingItem>>` (newest first), `replace(list)`, `upsert(item)`, `remove(id)`.
   - `fun interface PushTokenSource { suspend fun token(): String? }`; `class DeviceRegistrar(core, tokens, state)` with `suspend fun register(token: String? = null): Boolean`.
-  - `suspend fun <T> Task<T>.await(): T` (package `dev.rewarden.android.platform`); `object FirebaseSupport { fun available(context): Boolean; suspend fun token(context): String? }`.
+  - `suspend fun <T> Task<T>.await(): T` (package `dev.reins.android.platform`); `object FirebaseSupport { fun available(context): Boolean; suspend fun token(context): String? }`.
   - `class AppContainer(context, factory)` with `appScope`, `core: MainSafeCoreApi`, `state: AppState`, `pending: PendingStore`, `pushTokens`, `registrar`, `fun start()`, `suspend fun reload()`.
-  - `class RewardenApp : Application` with `container`; extension `val Context.container: AppContainer`.
+  - `class ReinsApp : Application` with `container`; extension `val Context.container: AppContainer`.
 
 - [ ] **Step 1: Write the failing tests**
 
 This pins Review Focus "main-thread blocking": the test fails if any `CoreApi` method (checked by reflection against the interface) or the delegate's construction runs on the calling thread, or if a 300 ms synchronous prefix stalls the caller.
 
-`android/app/src/test/java/dev/rewarden/android/core/MainSafeCoreApiTest.kt`:
+`android/app/src/test/java/dev/reins/android/core/MainSafeCoreApiTest.kt`:
 
 ```kotlin
-package dev.rewarden.android.core
+package dev.reins.android.core
 
 import java.util.concurrent.CopyOnWriteArrayList
 import java.util.concurrent.Executors
@@ -1298,16 +1298,16 @@ class MainSafeCoreApiTest {
 }
 ```
 
-`android/app/src/test/java/dev/rewarden/android/state/DeviceRegistrarTest.kt`:
+`android/app/src/test/java/dev/reins/android/state/DeviceRegistrarTest.kt`:
 
 ```kotlin
-package dev.rewarden.android.state
+package dev.reins.android.state
 
-import dev.rewarden.android.core.CoreFailure
-import dev.rewarden.android.core.FakeCoreApi
-import dev.rewarden.android.core.PendingItem
-import dev.rewarden.android.core.PendingKind
-import dev.rewarden.android.core.SessionInfo
+import dev.reins.android.core.CoreFailure
+import dev.reins.android.core.FakeCoreApi
+import dev.reins.android.core.PendingItem
+import dev.reins.android.core.PendingKind
+import dev.reins.android.core.SessionInfo
 import kotlinx.coroutines.test.runTest
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -1364,10 +1364,10 @@ Expected: FAIL — `Unresolved reference 'MainSafeCoreApi'`, `'AppState'`, `'Dev
 
 - [ ] **Step 3: Write the wrapper and provider**
 
-`android/app/src/main/java/dev/rewarden/android/core/MainSafeCoreApi.kt`:
+`android/app/src/main/java/dev/reins/android/core/MainSafeCoreApi.kt`:
 
 ```kotlin
-package dev.rewarden.android.core
+package dev.reins.android.core
 
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.withContext
@@ -1413,12 +1413,12 @@ class MainSafeCoreApi(
 }
 ```
 
-`android/app/src/main/java/dev/rewarden/android/core/CoreProvider.kt`:
+`android/app/src/main/java/dev/reins/android/core/CoreProvider.kt`:
 
 ```kotlin
-package dev.rewarden.android.core
+package dev.reins.android.core
 
-import dev.rewarden.android.AppContainer
+import dev.reins.android.AppContainer
 
 /** Builds the real core. Called once, lazily, on Dispatchers.IO (inside [MainSafeCoreApi]). */
 fun interface CoreFactory {
@@ -1426,11 +1426,11 @@ fun interface CoreFactory {
 }
 
 /**
- * Process-wide factory, read once in RewardenApp.onCreate. Instrumented tests replace it in
- * RewardenTestRunner before the Application is created (plan Decision 9).
+ * Process-wide factory, read once in ReinsApp.onCreate. Instrumented tests replace it in
+ * ReinsTestRunner before the Application is created (plan Decision 9).
  */
 object CoreProvider {
-    /** Until Task 12 wires rewarden-core, the app runs on a signed-out in-memory core. */
+    /** Until Task 12 wires reins-core, the app runs on a signed-out in-memory core. */
     @Volatile
     var factory: CoreFactory = CoreFactory { FakeCoreApi() }
 }
@@ -1438,13 +1438,13 @@ object CoreProvider {
 
 - [ ] **Step 4: Write state holders and the registrar**
 
-`android/app/src/main/java/dev/rewarden/android/state/AppState.kt`:
+`android/app/src/main/java/dev/reins/android/state/AppState.kt`:
 
 ```kotlin
-package dev.rewarden.android.state
+package dev.reins.android.state
 
-import dev.rewarden.android.core.CoreFailure
-import dev.rewarden.android.core.SessionInfo
+import dev.reins.android.core.CoreFailure
+import dev.reins.android.core.SessionInfo
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -1492,12 +1492,12 @@ class AppState {
 }
 ```
 
-`android/app/src/main/java/dev/rewarden/android/state/PendingStore.kt`:
+`android/app/src/main/java/dev/reins/android/state/PendingStore.kt`:
 
 ```kotlin
-package dev.rewarden.android.state
+package dev.reins.android.state
 
-import dev.rewarden.android.core.PendingItem
+import dev.reins.android.core.PendingItem
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -1522,13 +1522,13 @@ class PendingStore {
 }
 ```
 
-`android/app/src/main/java/dev/rewarden/android/state/DeviceRegistrar.kt`:
+`android/app/src/main/java/dev/reins/android/state/DeviceRegistrar.kt`:
 
 ```kotlin
-package dev.rewarden.android.state
+package dev.reins.android.state
 
-import dev.rewarden.android.core.CoreApi
-import dev.rewarden.android.core.CoreFailure
+import dev.reins.android.core.CoreApi
+import dev.reins.android.core.CoreFailure
 
 /** Source of the FCM token; returns null when Firebase is not configured. */
 fun interface PushTokenSource {
@@ -1558,10 +1558,10 @@ class DeviceRegistrar(
 
 - [ ] **Step 5: Write the Play services / Firebase helpers**
 
-`android/app/src/main/java/dev/rewarden/android/platform/TaskAwait.kt`:
+`android/app/src/main/java/dev/reins/android/platform/TaskAwait.kt`:
 
 ```kotlin
-package dev.rewarden.android.platform
+package dev.reins.android.platform
 
 import com.google.android.gms.tasks.Task
 import kotlin.coroutines.resume
@@ -1580,16 +1580,16 @@ suspend fun <T> Task<T>.await(): T = suspendCancellableCoroutine { cont ->
 }
 ```
 
-`android/app/src/main/java/dev/rewarden/android/platform/FirebaseSupport.kt`:
+`android/app/src/main/java/dev/reins/android/platform/FirebaseSupport.kt`:
 
 ```kotlin
-package dev.rewarden.android.platform
+package dev.reins.android.platform
 
 import android.content.Context
 import android.util.Log
 import com.google.firebase.FirebaseApp
 import com.google.firebase.messaging.FirebaseMessaging
-import dev.rewarden.android.BuildConfig
+import dev.reins.android.BuildConfig
 import kotlinx.coroutines.CancellationException
 
 /** Firebase is optional (plan Decision 18): every entry point checks [available] first. */
@@ -1606,7 +1606,7 @@ object FirebaseSupport {
         } catch (e: CancellationException) {
             throw e
         } catch (e: Exception) {
-            Log.w("Rewarden", "FCM token unavailable", e)
+            Log.w("Reins", "FCM token unavailable", e)
             null
         }
     }
@@ -1615,26 +1615,26 @@ object FirebaseSupport {
 
 - [ ] **Step 6: Write the container and Application, register it in the manifest**
 
-`android/app/src/main/java/dev/rewarden/android/AppContainer.kt`:
+`android/app/src/main/java/dev/reins/android/AppContainer.kt`:
 
 ```kotlin
-package dev.rewarden.android
+package dev.reins.android
 
 import android.content.Context
-import dev.rewarden.android.core.CoreFactory
-import dev.rewarden.android.core.CoreFailure
-import dev.rewarden.android.core.MainSafeCoreApi
-import dev.rewarden.android.platform.FirebaseSupport
-import dev.rewarden.android.state.AppState
-import dev.rewarden.android.state.DeviceRegistrar
-import dev.rewarden.android.state.PendingStore
-import dev.rewarden.android.state.PushTokenSource
+import dev.reins.android.core.CoreFactory
+import dev.reins.android.core.CoreFailure
+import dev.reins.android.core.MainSafeCoreApi
+import dev.reins.android.platform.FirebaseSupport
+import dev.reins.android.state.AppState
+import dev.reins.android.state.DeviceRegistrar
+import dev.reins.android.state.PendingStore
+import dev.reins.android.state.PushTokenSource
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.launch
 
-/** Process singletons. Built in RewardenApp.onCreate; no DI framework (spec §6). */
+/** Process singletons. Built in ReinsApp.onCreate; no DI framework (spec §6). */
 class AppContainer(val context: Context, factory: CoreFactory) {
     val appScope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
     val core = MainSafeCoreApi(Dispatchers.IO) { factory.create(this) }
@@ -1671,17 +1671,17 @@ class AppContainer(val context: Context, factory: CoreFactory) {
 }
 ```
 
-`android/app/src/main/java/dev/rewarden/android/RewardenApp.kt`:
+`android/app/src/main/java/dev/reins/android/ReinsApp.kt`:
 
 ```kotlin
-package dev.rewarden.android
+package dev.reins.android
 
 import android.app.Application
 import android.content.Context
 import android.os.StrictMode
-import dev.rewarden.android.core.CoreProvider
+import dev.reins.android.core.CoreProvider
 
-class RewardenApp : Application() {
+class ReinsApp : Application() {
     lateinit var container: AppContainer
         private set
 
@@ -1703,14 +1703,14 @@ class RewardenApp : Application() {
 }
 
 val Context.container: AppContainer
-    get() = (applicationContext as RewardenApp).container
+    get() = (applicationContext as ReinsApp).container
 ```
 
 In `android/app/src/main/AndroidManifest.xml`, the `<application` start tag becomes:
 
 ```xml
     <application
-        android:name=".RewardenApp"
+        android:name=".ReinsApp"
         android:allowBackup="false"
 ```
 

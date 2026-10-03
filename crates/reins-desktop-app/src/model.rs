@@ -11,7 +11,7 @@ use gpui::{
     WindowKind, WindowOptions, point, px, size,
 };
 use gpui_tokio::Tokio;
-use rewarden_desktop::harness::Harness;
+use reins_desktop::harness::Harness;
 
 use crate::backend::{Backend, DaemonState, Snapshot};
 use crate::pairing::{self, Approved, DemoFlow, DeviceCode, DeviceFlow, Poll, ServerFlow};
@@ -279,11 +279,11 @@ impl Model {
     fn set_snapshot(&mut self, snapshot: Snapshot, cx: &mut Context<'_, Self>) {
         // A pause runs out: git goes through Reins again.
         if let Some(until) = self.saved.paused_until
-            && rewarden_desktop::now_unix() >= until
+            && reins_desktop::now_unix() >= until
         {
             self.resume(cx);
         }
-        // Signed out elsewhere (`rewarden logout`, or the phone removed the connection).
+        // Signed out elsewhere (`reins logout`, or the phone removed the connection).
         if snapshot.server.is_none() && !self.demo_paired && self.screen != Screen::Onboarding {
             self.screen = Screen::Onboarding;
             self.start_pairing(cx);
@@ -314,7 +314,7 @@ impl Model {
     /// Minutes left of a pause.
     #[must_use]
     pub fn paused_minutes(&self) -> Option<i64> {
-        let left = self.saved.paused_until? - rewarden_desktop::now_unix();
+        let left = self.saved.paused_until? - reins_desktop::now_unix();
         (left > 0).then(|| (left + 59) / 60)
     }
 
@@ -538,7 +538,7 @@ impl Model {
         if typed.is_empty() {
             self.saved.server = None;
         } else {
-            match rewarden_desktop::server::server_base(typed) {
+            match reins_desktop::server::server_base(typed) {
                 Ok(base) => {
                     self.server_input.clone_from(&base);
                     self.saved.server = Some(base);
@@ -638,7 +638,7 @@ impl Model {
                         let label = format!("Add Reins to {}", h.label());
                         step(&this, cx, label.clone(), Step::Running);
                         let state = match backend.set_harness(h, true) {
-                            Ok(()) => Step::Done(rewarden_desktop::harness::after_add_note(h).to_owned()),
+                            Ok(()) => Step::Done(reins_desktop::harness::after_add_note(h).to_owned()),
                             Err(e) => Step::Failed(e),
                         };
                         step(&this, cx, label, state);
@@ -740,7 +740,7 @@ impl Model {
     }
 
     pub fn pause_hour(&mut self, cx: &mut Context<'_, Self>) {
-        self.saved.paused_until = Some(rewarden_desktop::now_unix() + PAUSE_SECS);
+        self.saved.paused_until = Some(reins_desktop::now_unix() + PAUSE_SECS);
         self.persist();
         let backend = Arc::clone(&self.backend);
         self.act(async move { backend.pause() }, cx);
@@ -771,7 +771,7 @@ impl Model {
 
     pub fn install_cli(&mut self, cx: &mut Context<'_, Self>) {
         self.notice = Some(match self.backend.install_cli() {
-            Ok(p) => format!("Installed `rewarden` at {}.", p.display()),
+            Ok(p) => format!("Installed `reins` at {}.", p.display()),
             Err(e) => e,
         });
         cx.notify();

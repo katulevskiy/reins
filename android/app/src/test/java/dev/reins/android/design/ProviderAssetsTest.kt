@@ -1,4 +1,4 @@
-package dev.rewarden.android.design
+package dev.reins.android.design
 
 import android.graphics.Color
 import androidx.test.core.app.ApplicationProvider

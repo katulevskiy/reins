@@ -1,10 +1,10 @@
-//! The two Rewarden server endpoints universal MCP needs for large results: `PUT /rewarden/api/blobs/output` (a file
-//! made on the phone, answered with a download link) and `POST /rewarden/api/mcp/call` (the server makes one MCP call
+//! The two Reins server endpoints universal MCP needs for large results: `PUT /reins/api/blobs/output` (a file
+//! made on the phone, answered with a download link) and `POST /reins/api/mcp/call` (the server makes one MCP call
 //! for a heavy tool). Authenticated like the rest of the phone API, with one retry after a 401.
 
+use reins_proto::blob::{BlobDownload, DEFAULT_BLOB_TTL_SECS};
+use reins_proto::remote_mcp::{ProxyCall, ProxyCallResult};
 use reqwest::{Method, RequestBuilder};
-use rewarden_proto::blob::{BlobDownload, DEFAULT_BLOB_TTL_SECS};
-use rewarden_proto::remote_mcp::{ProxyCall, ProxyCallResult};
 use serde::de::DeserializeOwned;
 
 use crate::CoreError;
@@ -47,7 +47,7 @@ async fn authorized<T: DeserializeOwned>(
 
 fn request(session: &Session, method: Method, path: &str, token: &str) -> RequestBuilder {
     crate::phone_api::with_device_key(
-        session.http.request(method, session.server.join(&format!("/rewarden/api{path}"))).bearer_auth(token),
+        session.http.request(method, session.server.join(&format!("/reins/api{path}"))).bearer_auth(token),
         session.device_key(),
     )
 }

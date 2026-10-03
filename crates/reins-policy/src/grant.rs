@@ -1,6 +1,6 @@
 use std::collections::BTreeSet;
 
-use rewarden_proto::ids::{ConnectionId, GrantId};
+use reins_proto::ids::{ConnectionId, GrantId};
 use serde::{Deserialize, Serialize};
 
 use crate::{PolicyError, Scope};

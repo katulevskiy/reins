@@ -1,4 +1,4 @@
-package dev.rewarden.android
+package dev.reins.android
 
 import android.content.Intent
 import android.net.Uri
@@ -12,12 +12,12 @@ import androidx.work.WorkInfo
 import androidx.work.WorkManager
 import androidx.work.testing.TestListenableWorkerBuilder
 import androidx.work.testing.WorkManagerTestInitHelper
-import dev.rewarden.android.platform.SsoRedirectActivity
-import dev.rewarden.android.push.RegisterDeviceWorker
-import dev.rewarden.android.ui.common.OTHER_APPROVAL_DEVICE
-import dev.rewarden.android.ui.common.userMessage
-import dev.rewarden.core.AccountKeys
-import dev.rewarden.core.CoreException
+import dev.reins.android.platform.SsoRedirectActivity
+import dev.reins.android.push.RegisterDeviceWorker
+import dev.reins.android.ui.common.OTHER_APPROVAL_DEVICE
+import dev.reins.android.ui.common.userMessage
+import dev.reins.core.AccountKeys
+import dev.reins.core.CoreException
 import java.time.Duration
 import kotlinx.coroutines.runBlocking
 import org.junit.Assert.assertEquals

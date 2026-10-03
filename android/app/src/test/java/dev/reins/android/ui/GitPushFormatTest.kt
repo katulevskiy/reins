@@ -1,13 +1,13 @@
-package dev.rewarden.android.ui
+package dev.reins.android.ui
 
-import dev.rewarden.android.TestData
-import dev.rewarden.android.ui.approval.GitHistory
-import dev.rewarden.android.ui.approval.gitChipLabel
-import dev.rewarden.android.ui.approval.gitFileCounts
-import dev.rewarden.android.ui.approval.gitFileLetter
-import dev.rewarden.android.ui.approval.gitHistory
-import dev.rewarden.android.ui.approval.gitTotalsLabel
-import dev.rewarden.android.ui.approval.packSizeLabel
+import dev.reins.android.TestData
+import dev.reins.android.ui.approval.GitHistory
+import dev.reins.android.ui.approval.gitChipLabel
+import dev.reins.android.ui.approval.gitFileCounts
+import dev.reins.android.ui.approval.gitFileLetter
+import dev.reins.android.ui.approval.gitHistory
+import dev.reins.android.ui.approval.gitTotalsLabel
+import dev.reins.android.ui.approval.packSizeLabel
 import org.junit.Assert.assertEquals
 import org.junit.Test
 

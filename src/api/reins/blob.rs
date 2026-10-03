@@ -1,11 +1,11 @@
 //! The blob store (files spec, S1): large files held for one operation, under the phone's control.
 //!
-//! Bytes live in files under `$DATA_FOLDER/rewarden-blobs/` (0700, random names, wiped when the store is first used
+//! Bytes live in files under `$DATA_FOLDER/reins-blobs/` (0700, random names, wiped when the store is first used
 //! after a start); everything else lives in memory and dies with the process, which is fine: every blob is short-lived.
 //! Capabilities (upload and download URLs) are random 32-byte secrets; only their SHA-256 is kept and looked up, so
 //! neither a memory dump nor a timing difference gives them away.
 //!
-//! Quotas ([`BlobLimits`], the `REWARDEN_BLOB_*` settings) keep a public server from becoming free file hosting: files
+//! Quotas ([`BlobLimits`], the `REINS_BLOB_*` settings) keep a public server from becoming free file hosting: files
 //! and bytes held per account and in total, a per-file size, downloads per link, and the bytes each account moves in a
 //! rolling day (stored by uploads, fetches and outputs; read by downloads, sends and the phone).
 
@@ -16,7 +16,7 @@ use std::{
 };
 
 use data_encoding::{BASE64URL_NOPAD, HEXLOWER};
-use rewarden_proto::{
+use reins_proto::{
     PROTOCOL_VERSION,
     blob::{
         BlobId, BlobInfo, BlobPreview, BlobPurpose, BlobSlotRequest, BlobState, DEFAULT_BLOB_TTL_SECS, MAX_BLOB_BYTES,
@@ -39,7 +39,7 @@ pub const DEFAULT_TOTAL_BYTES: u64 = 8 << 30;
 /// Default for downloads per link.
 pub const DEFAULT_MAX_DOWNLOADS: u32 = 20;
 /// Directory under `DATA_FOLDER`.
-pub const DIR_NAME: &str = "rewarden-blobs";
+pub const DIR_NAME: &str = "reins-blobs";
 
 const HOUR: i64 = 3_600;
 const DAY: i64 = 24 * HOUR;
@@ -75,16 +75,16 @@ impl Default for BlobLimits {
 }
 
 impl BlobLimits {
-    /// The `REWARDEN_BLOB_*` settings.
+    /// The `REINS_BLOB_*` settings.
     pub fn from_config() -> Self {
         let config = &crate::CONFIG;
         Self {
-            max_blob_bytes: config.rewarden_blob_max_bytes().clamp(1, MAX_BLOB_BYTES),
-            account_files: usize::try_from(config.rewarden_blob_account_files()).unwrap_or(usize::MAX).max(1),
-            account_bytes: config.rewarden_blob_account_bytes(),
-            account_daily_bytes: config.rewarden_blob_account_daily_bytes(),
-            total_bytes: config.rewarden_blob_total_bytes(),
-            max_downloads: config.rewarden_blob_max_downloads().max(1),
+            max_blob_bytes: config.reins_blob_max_bytes().clamp(1, MAX_BLOB_BYTES),
+            account_files: usize::try_from(config.reins_blob_account_files()).unwrap_or(usize::MAX).max(1),
+            account_bytes: config.reins_blob_account_bytes(),
+            account_daily_bytes: config.reins_blob_account_daily_bytes(),
+            total_bytes: config.reins_blob_total_bytes(),
+            max_downloads: config.reins_blob_max_downloads().max(1),
         }
     }
 }
@@ -301,7 +301,7 @@ impl State {
 
     fn daily_limit_error(&self, limits: &BlobLimits, owner: &str, now: i64) -> BlobError {
         BlobError::UserLimit(format!(
-            "This account moved its daily limit of {} through Rewarden files in the last 24 hours; try again in {} s.",
+            "This account moved its daily limit of {} through Reins files in the last 24 hours; try again in {} s.",
             human_bytes(limits.account_daily_bytes),
             self.ledger.retry_after(owner, now)
         ))
@@ -391,7 +391,7 @@ pub struct Readable {
 pub struct BlobHub {
     signal: Arc<ItemSignal>,
     limits: BlobLimits,
-    /// `None`: `$DATA_FOLDER/rewarden-blobs`, resolved on first use.
+    /// `None`: `$DATA_FOLDER/reins-blobs`, resolved on first use.
     base: Option<PathBuf>,
     dir: OnceLock<Result<PathBuf, String>>,
     state: Mutex<State>,
@@ -402,7 +402,7 @@ fn delete_files(files: Vec<PathBuf>) {
         if let Err(e) = std::fs::remove_file(&file)
             && e.kind() != std::io::ErrorKind::NotFound
         {
-            warn!("Could not delete a Rewarden blob file: {e}");
+            warn!("Could not delete a Reins blob file: {e}");
         }
     }
 }
@@ -753,7 +753,7 @@ impl BlobHub {
                 state.blobs.get_mut(id).filter(|e| e.user == user && !e.expired(now)).ok_or(BlobError::NotFound)?;
             if !matches!(entry.info.purpose, BlobPurpose::Upload { .. }) {
                 return Err(BlobError::Invalid(
-                    "Only uploads made with rewarden_upload are decided on their own.".to_owned(),
+                    "Only uploads made with reins_upload are decided on their own.".to_owned(),
                 ));
             }
             match entry.info.state {
@@ -878,7 +878,7 @@ impl BlobHub {
 
 #[cfg(test)]
 mod tests {
-    use rewarden_proto::blob::BlobSlotRequest;
+    use reins_proto::blob::BlobSlotRequest;
 
     use super::*;
 
@@ -889,7 +889,7 @@ mod tests {
     }
 
     fn hub_with(limits: BlobLimits) -> (BlobHub, PathBuf) {
-        let dir = std::env::temp_dir().join(format!("rewarden-blob-unit-{}", crate::util::get_uuid()));
+        let dir = std::env::temp_dir().join(format!("reins-blob-unit-{}", crate::util::get_uuid()));
         (BlobHub::with_dir(Arc::new(ItemSignal::new()), dir.clone(), limits), dir)
     }
 
@@ -1097,7 +1097,7 @@ mod tests {
 
     #[test]
     fn the_directory_is_wiped_on_first_use() {
-        let dir = std::env::temp_dir().join(format!("rewarden-blob-wipe-{}", crate::util::get_uuid()));
+        let dir = std::env::temp_dir().join(format!("reins-blob-wipe-{}", crate::util::get_uuid()));
         std::fs::create_dir_all(&dir).unwrap();
         std::fs::write(dir.join("left-over"), b"old").unwrap();
         let h = BlobHub::with_dir(Arc::new(ItemSignal::new()), dir.clone(), BlobLimits::default());

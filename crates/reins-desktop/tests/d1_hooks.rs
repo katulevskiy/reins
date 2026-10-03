@@ -1,4 +1,4 @@
-//! `rewarden hook <harness>`: each harness's hook input (fixtures in its documented format), the question the phone
+//! `reins hook <harness>`: each harness's hook input (fixtures in its documented format), the question the phone
 //! gets, and the answer in that harness's exact output format.
 
 mod d1_mock;
@@ -6,11 +6,11 @@ mod d1_mock;
 use std::io::Write as _;
 
 use d1_mock::{Mock, Step, logged_in};
-use rewarden_desktop::auth::prompt::NoPrompter;
-use rewarden_desktop::config::Config;
-use rewarden_desktop::guard::OnNoAnswer;
-use rewarden_desktop::harness::Harness;
-use rewarden_desktop::hooks;
+use reins_desktop::auth::prompt::NoPrompter;
+use reins_desktop::config::Config;
+use reins_desktop::guard::OnNoAnswer;
+use reins_desktop::harness::Harness;
+use reins_desktop::hooks;
 use serde_json::{Value, json};
 
 const CLAUDE_BASH: &str = r#"{
@@ -230,10 +230,10 @@ async fn gemini_before_tool() {
 fn the_command_line_reads_stdin_and_answers() {
     let dir = tempfile::tempdir().unwrap();
     let run = |harness: &str, input: &str| {
-        let mut child = std::process::Command::new(env!("CARGO_BIN_EXE_rewarden"))
+        let mut child = std::process::Command::new(env!("CARGO_BIN_EXE_reins"))
             .args(["hook", harness])
-            .env("REWARDEN_CONFIG_DIR", dir.path().join("config"))
-            .env("REWARDEN_STATE_DIR", dir.path().join("state"))
+            .env("REINS_CONFIG_DIR", dir.path().join("config"))
+            .env("REINS_STATE_DIR", dir.path().join("state"))
             .stdin(std::process::Stdio::piped())
             .stdout(std::process::Stdio::piped())
             .stderr(std::process::Stdio::piped())

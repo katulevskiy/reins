@@ -12,7 +12,7 @@ use crate::CoreError;
 /// A one-time code from what the vault keeps: a bare base32 secret, or an `otpauth://` address. Returns the code
 /// and how many seconds it stays valid.
 pub fn totp_code(stored: &str, now: u64) -> Result<(String, u64), CoreError> {
-    let unsupported = || CoreError::service("That login's one-time code is of a kind Rewarden cannot make.");
+    let unsupported = || CoreError::service("That login's one-time code is of a kind Reins cannot make.");
     let (secret, digits, period, algorithm) = if stored.trim().to_lowercase().starts_with("otpauth://") {
         let url = Url::parse(stored.trim()).map_err(|_| unsupported())?;
         let get =

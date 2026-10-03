@@ -1,6 +1,6 @@
-package dev.rewarden.android.ui
+package dev.reins.android.ui
 
-import dev.rewarden.android.ui.common.untrusted
+import dev.reins.android.ui.common.untrusted
 import org.junit.Assert.assertEquals
 import org.junit.Test
 

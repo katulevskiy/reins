@@ -1,4 +1,4 @@
-package dev.rewarden.android.feedback
+package dev.reins.android.feedback
 
 /**
  * Anything pressable answers with a default tap, unless the moment already has its own feedback. The default is

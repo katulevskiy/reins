@@ -12,7 +12,7 @@ carries them out.
 | **You, through your phone** | every decision; every credential | |
 | **AI agent** (Claude Code, Codex, Cursor, Gemini CLI, Claude.ai, ChatGPT) | the results of actions you allowed | credentials; deciding anything |
 | **Reins server** | relaying requests and answers; your account | your service credentials; deciding anything |
-| **Desktop app** (`rewarden`, on your computer) | short-lived, single-purpose credentials sealed to its key | long-lived tokens; deciding anything in phone mode |
+| **Desktop app** (`reins`, on your computer) | short-lived, single-purpose credentials sealed to its key | long-lived tokens; deciding anything in phone mode |
 | **Google Firebase** | waking your phone (a request id only) | request contents |
 
 ## What the agent can and cannot do
@@ -21,7 +21,7 @@ The agent **can**:
 
 - call the tools of the services you connected. Each call waits for your phone unless a standing permission you gave
   covers it;
-- ask for a standing permission (`rewarden_request_access`). The phone shows it highlighted, and you can grant less
+- ask for a standing permission (`reins_request_access`). The phone shows it highlighted, and you can grant less
   than was asked for, or nothing;
 - run git through the desktop app. Reads and pushes need your approval or a standing permission for that repository;
 - run commands on your computer as far as its harness allows. Hooks send the risky ones to your phone.
@@ -33,7 +33,7 @@ The agent **cannot**:
   to disk or logs;
 - push something other than what you approved. A push approval is bound to a digest of the exact bytes git sent;
 - reuse an approval. Sealed answers carry a fresh random nonce from the desktop app and an expiry;
-- see which accounts you connected, unless you allow it. `rewarden_list_accounts` lists integrations only. Addresses
+- see which accounts you connected, unless you allow it. `reins_list_accounts` lists integrations only. Addresses
   need your approval, and errors never reveal them;
 - talk Autopilot into approving. AI-written text can only lower its approval score ([below](#autopilot)).
 
@@ -45,14 +45,14 @@ The agent **cannot**:
 | GitHub, GitLab, Codeberg, Bitbucket tokens; Telegram session; MCP server tokens; vault key | phone, encrypted store | AES-256-GCM, with a data key wrapped by the Android Keystore. |
 | Vault items | server (encrypted), phone (decrypts on request) | Bitwarden's end-to-end encryption. The phone unlocks the vault key once with your master password and keeps it sealed. It does not keep the password. |
 | Grants, activity log, Autopilot memory | phone, encrypted store | as above. Never sent to the server. |
-| Desktop app key (X25519) | `~/.local/state/rewarden/identity.key`, 0600 | readable by your OS user. |
-| Desktop app session (OAuth tokens for the server) | `~/.local/state/rewarden/session.json`, 0600 | readable by your OS user. |
-| Released git credentials, API keys, `rewarden run` secrets | desktop app memory | until the lease ends (git fetch 1 h, push 10 min, API proxy as configured). `rewarden run` wipes the values once the command starts. |
+| Desktop app key (X25519) | `~/.local/state/reins/identity.key`, 0600 | readable by your OS user. |
+| Desktop app session (OAuth tokens for the server) | `~/.local/state/reins/session.json`, 0600 | readable by your OS user. |
+| Released git credentials, API keys, `reins run` secrets | desktop app memory | until the lease ends (git fetch 1 h, push 10 min, API proxy as configured). `reins run` wipes the values once the command starts. |
 | SSH private keys | phone (vault) | signatures are made on the phone. The key never leaves it. |
 
 Vault secrets an AI asks to see (passwords, one-time codes, notes, card numbers, SSH private keys) are asked for
 every time. They can never be covered by a standing permission, and their values are not written to the activity log.
-Secrets released to the desktop app (`rewarden run`, the API proxy) and SSH signatures can be covered by a standing
+Secrets released to the desktop app (`reins run`, the API proxy) and SSH signatures can be covered by a standing
 permission for one item, or for one key on one server, if you choose to give one. Autopilot never releases them on its
 own.
 
@@ -86,7 +86,7 @@ change only once WorkOS has verified the new address.
 ## Which device approves
 
 One device per account approves: it gets the AIs' requests and new connections. The server decides which
-(`PUT /rewarden/api/device`):
+(`PUT /reins/api/device`):
 
 - **The account's first approval device** needs nothing.
 - **The approval device registering again** (a new push token, a restart, a new sign-in on the same phone) needs
@@ -98,7 +98,7 @@ One device per account approves: it gets the AIs' requests and new connections. 
 - **Any other device** takes the role only with a proof:
   - the master password hash of the account secret (the phone has the secret after the recovery code or another
     phone's approval), or, for accounts made with one, of the master password; the server checks it like a password
-    sign-in. Wrong hashes count against the account: after 5 within 15 minutes (`REWARDEN_DEVICE_PROOF_*`) every
+    sign-in. Wrong hashes count against the account: after 5 within 15 minutes (`REINS_DEVICE_PROOF_*`) every
     attempt waits;
   - or the approval device's yes to that device's "add another phone" request: the server keeps it for 5 minutes,
     for one takeover, and only for the device key that asked.
@@ -133,7 +133,7 @@ tools.
 
 ## Sealed answers
 
-Whatever the phone sends to the desktop app (a git credential, a yes to `rewarden ask`, released secrets, an SSH
+Whatever the phone sends to the desktop app (a git credential, a yes to `reins ask`, released secrets, an SSH
 signature) is a sealed box: X25519 with XSalsa20-Poly1305, encrypted to the pinned key. The server relays it but
 cannot open it. The desktop app accepts an answer only if:
 
@@ -189,16 +189,16 @@ Push notifications through Firebase carry only a request id. The phone then fetc
 - It listens on loopback only (`127.0.0.1:7457` by default). Requests must carry a loopback `Host` header, which
   blocks DNS rebinding. Requests with an `Origin` header and `OPTIONS` requests are refused, so web pages cannot reach
   it.
-- Its control API (`rewarden pending`, `approve`, `deny`, `status`) needs a random token stored in a 0600 file.
+- Its control API (`reins pending`, `approve`, `deny`, `status`) needs a random token stored in a 0600 file.
 - On Linux the daemon marks itself non-dumpable, so other processes of the same user cannot attach to it or read its
   memory through `/proc`. macOS and Windows have no such protection here.
-- On Windows the state files (`%LOCALAPPDATA%\rewarden\`) get an access list for your user alone instead of mode 0600,
+- On Windows the state files (`%LOCALAPPDATA%\reins\`) get an access list for your user alone instead of mode 0600,
   the SSH agent's named pipe can be written only by your user (and the administrators), and the background service is
   a copy of the program in that same folder, so another user cannot replace what runs at your logon.
-- Release updates (`rewarden update`) install only builds signed with the release key built into the binary, and
+- Release updates (`reins update`) install only builds signed with the release key built into the binary, and
   never an older build. The install script checks the published SHA-256.
 
-**Same-user limits.** An agent running as your OS user can read the files in `~/.local/state/rewarden/`, including
+**Same-user limits.** An agent running as your OS user can read the files in `~/.local/state/reins/`, including
 the app's key and session. With them it could act as the desktop app: call the server, receive sealed answers, and
 open them. It still cannot get anything you do not approve on the phone. It does benefit from standing permissions
 you gave the desktop connection, and it could approve local-mode prompts through the control API. For full

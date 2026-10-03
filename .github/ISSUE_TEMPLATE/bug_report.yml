@@ -20,7 +20,7 @@ body:
       options:
         - Server
         - Android app
-        - Desktop app (rewarden)
+        - Desktop app (reins)
         - AI harness / MCP integration
         - Bitwarden-compatible vault client
         - Other
@@ -30,7 +30,7 @@ body:
     type: input
     attributes:
       label: Versions
-      description: Server, app and desktop versions (Settings shows the app's build; `rewarden --version` the desktop's).
+      description: Server, app and desktop versions (Settings shows the app's build; `reins --version` the desktop's).
       placeholder: ex. Android 0.1.0-202610010115-a9643bcb, desktop 0.1.0, server built from 3b9e07c1
     validations:
       required: true

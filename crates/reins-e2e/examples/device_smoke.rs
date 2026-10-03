@@ -2,20 +2,20 @@
 //! (the Android emulator, via `adb reverse`) approves the connection.
 //!
 //! ```text
-//! cargo run -p rewarden-e2e --example device_smoke
+//! cargo run -p reins-e2e --example device_smoke
 //! # prints SERVER <url>, EMAIL, PASSWORD and CODE; then run the instrumented LiveServerTest with those.
 //! ```
 
 use std::time::Duration;
 
-use rewarden_e2e::{AiClient, PASSWORD, Server};
+use reins_e2e::{AiClient, PASSWORD, Server};
 use serde_json::json;
 
 const EMAIL: &str = "phone@example.com";
 
 #[tokio::main]
 async fn main() {
-    rewarden_e2e::init_tls();
+    reins_e2e::init_tls();
     let server = Server::start(45, 10).await;
     server.register(EMAIL).await;
     println!("SERVER {}", server.base);
@@ -23,7 +23,7 @@ async fn main() {
     println!("PASSWORD {PASSWORD}");
 
     // The AI connects after the phone registered as the approval device: wait for the go-ahead file.
-    let go = std::path::Path::new("/tmp/rewarden-smoke-go");
+    let go = std::path::Path::new("/tmp/reins-smoke-go");
     while !go.exists() {
         tokio::time::sleep(Duration::from_millis(200)).await;
     }
@@ -41,7 +41,7 @@ async fn main() {
     println!("TOOL_RESULT {result}");
 
     // Keep the server up until the phone side has finished its own assertions.
-    let done = std::path::Path::new("/tmp/rewarden-smoke-done");
+    let done = std::path::Path::new("/tmp/reins-smoke-done");
     while !done.exists() {
         tokio::time::sleep(Duration::from_millis(200)).await;
     }

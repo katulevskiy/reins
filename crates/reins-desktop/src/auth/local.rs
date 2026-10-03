@@ -9,7 +9,7 @@ use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
-use rewarden_proto::desktop::{PushSummary, RefChange};
+use reins_proto::desktop::{PushSummary, RefChange};
 use zeroize::Zeroizing;
 
 use super::policy::{decide_push, decide_read, is_risky};
@@ -234,7 +234,7 @@ impl LocalAuthorizer {
                 (id, answer)
             }
         };
-        log::info!("asking on this computer: {what} (rewarden approve {id})");
+        log::info!("asking on this computer: {what} (reins approve {id})");
         let wait = async {
             loop {
                 if let Some(approved) = *answer.borrow_and_update() {
@@ -249,7 +249,7 @@ impl LocalAuthorizer {
             Ok(Some(true)) => Ok(()),
             Ok(Some(false)) => Err(Refusal::Denied(format!("{what}: denied on this computer."))),
             Ok(None) | Err(_) => Err(Refusal::Waiting(format!(
-                "Waiting for approval on this computer: {what}. Approve it (the desktop prompt, or `rewarden approve {id}`), then run git again."
+                "Waiting for approval on this computer: {what}. Approve it (the desktop prompt, or `reins approve {id}`), then run git again."
             ))),
         }
     }
@@ -291,7 +291,7 @@ impl Authorizer for LocalAuthorizer {
     }
 
     fn waiting_hint(&self) -> String {
-        "waiting for approval on this computer (the notification, or `rewarden pending` and `rewarden approve <id>`)"
+        "waiting for approval on this computer (the notification, or `reins pending` and `reins approve <id>`)"
             .to_owned()
     }
 
@@ -302,7 +302,7 @@ impl Authorizer for LocalAuthorizer {
 
 #[cfg(test)]
 mod tests {
-    use rewarden_proto::desktop::{CommitInfo, RefUpdate, ZERO_OID};
+    use reins_proto::desktop::{CommitInfo, RefUpdate, ZERO_OID};
 
     use super::*;
     use crate::auth::prompt::{NoPrompter, PendingItem};
@@ -466,7 +466,7 @@ mod tests {
         };
         let items = pending.list();
         assert_eq!(items.len(), 1);
-        assert!(message.contains(&format!("rewarden approve {}", items[0].id)));
+        assert!(message.contains(&format!("reins approve {}", items[0].id)));
         assert_eq!(items[0].lines[0], "Push 2 commits to main");
         assert!(pending.answer(&items[0].id, true));
         auth.push(&repo(), &s, "d1").await.unwrap();

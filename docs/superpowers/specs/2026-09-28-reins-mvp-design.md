@@ -1,18 +1,18 @@
-# Rewarden MVP — Design Spec
+# Reins MVP — Design Spec
 
 Date: 2026-09-28 · Status: draft for review · Base: Vaultwarden 1.37.3 (AGPL-3.0)
 
 ## 1. Goal
 
-Rewarden turns a Vaultwarden account into a **permission platform for AI agents**. A user
+Reins turns a Vaultwarden account into a **permission platform for AI agents**. A user
 connects services (Gmail in the MVP) on their phone, connects AI clients (Claude, ChatGPT)
-to Rewarden over MCP, and every action an AI takes is checked against **fine-grained,
+to Reins over MCP, and every action an AI takes is checked against **fine-grained,
 phone-held grants**. Anything not covered by a grant is shown on the phone for approval,
 Duo-style.
 
 **MVP success criteria**
 
-1. A user adds Rewarden as a custom connector in Claude.ai and in ChatGPT, authorizing it
+1. A user adds Reins as a custom connector in Claude.ai and in ChatGPT, authorizing it
    by approving a matching code on their phone.
 2. The AI sees `gmail_search`, `gmail_read` and `gmail_send` tools.
 3. A call not covered by a grant produces a phone notification. The approval screen shows exactly
@@ -32,15 +32,15 @@ MCP Tasks extension, SSE progress streaming, formal protocol proof.
 ## 2. Architecture
 
 ```
- Claude / ChatGPT ──MCP (HTTPS, OAuth 2.1)──►  Rewarden server (Vaultwarden fork)
+ Claude / ChatGPT ──MCP (HTTPS, OAuth 2.1)──►  Reins server (Vaultwarden fork)
                                                │  • MCP endpoint + OAuth AS
                                                │  • in-memory relay (no Gmail creds)
                                                │  • FCM sender
                                 FCM wake (id only)│  ▲ HTTPS fetch/respond (Bitwarden login token)
                                                ▼  │
-                                         Rewarden Android app
+                                         Reins Android app
                                          Kotlin shell + Compose UI
-                                         └─ rewarden-core (Rust, UniFFI)
+                                         └─ reins-core (Rust, UniFFI)
                                               • policy engine  • Gmail connector
                                               • local store    • Vaultwarden API client
                                                │
@@ -69,21 +69,21 @@ approve new AI connections, which then have nothing to execute against.
 ## 3. Repository layout
 
 The repo *is* the Vaultwarden fork (upstream remote `upstream`, base tag `1.37.3`), so
-upstream merges stay trivial. Rewarden code is isolated in new directories; upstream files
+upstream merges stay trivial. Reins code is isolated in new directories; upstream files
 are touched only at registration points (route mounts, `mod` lines, config group, schema,
 migrations, workspace members).
 
 ```
 Cargo.toml                 workspace: + crates/*
-src/api/rewarden/          server feature (new)
+src/api/reins/          server feature (new)
   mod.rs  mcp.rs  oauth.rs  relay.rs  device_api.rs  fcm.rs  pages/ (HTML templates)
-src/db/models/rewarden_*.rs
-migrations/{sqlite,mysql,postgresql}/2026-09-28-000000_rewarden/
+src/db/models/reins_*.rs
+migrations/{sqlite,mysql,postgresql}/2026-09-28-000000_reins/
 crates/
-  rewarden-proto/          serde types shared by server and phone (no IO)
-  rewarden-policy/         grant model + matcher (pure, no IO, heavily tested)
-  rewarden-core/           phone logic, UniFFI exports (tokio, reqwest+rustls, rusqlite)
-  rewarden-e2e/            test harness: real server + core with fake Gmail/Keystore/push
+  reins-proto/          serde types shared by server and phone (no IO)
+  reins-policy/         grant model + matcher (pure, no IO, heavily tested)
+  reins-core/           phone logic, UniFFI exports (tokio, reqwest+rustls, rusqlite)
+  reins-e2e/            test harness: real server + core with fake Gmail/Keystore/push
 android/                   Gradle project (Kotlin, Compose)
 docs/superpowers/          specs and plans
 ```
@@ -94,10 +94,10 @@ docs/superpowers/          specs and plans
 
 | Table | Purpose | Key columns |
 |---|---|---|
-| `rewarden_devices` | the user's approval device (one per user) | `user_uuid` PK, `device_uuid`, `fcm_token`, `updated_at` |
-| `rewarden_clients` | DCR-registered MCP clients | `client_id` PK, `client_name`, `redirect_uris` (JSON), `created_at` |
-| `rewarden_connections` | an AI client authorized by a user | `uuid` PK, `user_uuid`, `client_id`, `label`, `created_at`, `last_used_at` |
-| `rewarden_refresh_tokens` | MCP refresh tokens (SHA-256 hashed) | `token_hash` PK, `connection_uuid`, `expires_at` |
+| `reins_devices` | the user's approval device (one per user) | `user_uuid` PK, `device_uuid`, `fcm_token`, `updated_at` |
+| `reins_clients` | DCR-registered MCP clients | `client_id` PK, `client_name`, `redirect_uris` (JSON), `created_at` |
+| `reins_connections` | an AI client authorized by a user | `uuid` PK, `user_uuid`, `client_id`, `label`, `created_at`, `last_used_at` |
+| `reins_refresh_tokens` | MCP refresh tokens (SHA-256 hashed) | `token_hash` PK, `connection_uuid`, `expires_at` |
 
 Deleting a connection cascades to its refresh tokens; access tokens die because every MCP
 request checks that the connection still exists.
@@ -133,7 +133,7 @@ Responses are always `application/json` (no SSE, no session IDs; `GET`/`DELETE` 
 | `gmail_search` | `query: string` (Gmail syntax), `max_results?: 1..50` (default 10) | list of `{id, thread_id, from, to, subject, date, snippet}` |
 | `gmail_read` | `message_ids: string[]` (1..20) | list of `{id, thread_id, from, to, cc, subject, date, body_text}` |
 | `gmail_send` | `to: string[]`, `cc?: string[]`, `subject: string`, `body: string`, `reply_to_message_id?: string` | `{id, thread_id}` |
-| `rewarden_get_result` | `request_id: string` | the delayed result of an earlier call |
+| `reins_get_result` | `request_id: string` | the delayed result of an earlier call |
 
 Results are `structuredContent` plus the same JSON in a `text` block. Policy outcomes
 (denied, offline, pending) are `isError: true` results with human-readable text, so the
@@ -148,28 +148,28 @@ to **45 s** (ChatGPT's hard tool timeout is 60 s):
 | Situation | AI receives |
 |---|---|
 | Phone responds with result within 45 s | the result |
-| Phone denies | `Denied by the user on their Rewarden device.` |
-| Phone did not fetch the request within 10 s | `Rewarden: your approval device is offline. Ask the user to open the Rewarden app; the request is waiting there. Then call rewarden_get_result with request_id=<id>.` |
-| Fetched but no decision within 45 s | `Waiting for the user to approve on their phone. Call rewarden_get_result with request_id=<id> after they confirm.` |
+| Phone denies | `Denied by the user on their Reins device.` |
+| Phone did not fetch the request within 10 s | `Reins: your approval device is offline. Ask the user to open the Reins app; the request is waiting there. Then call reins_get_result with request_id=<id>.` |
+| Fetched but no decision within 45 s | `Waiting for the user to approve on their phone. Call reins_get_result with request_id=<id> after they confirm.` |
 
 Pending requests stay retrievable by the phone for 10 minutes (so opening the app later
-shows them). A late result is stored in memory until fetched via `rewarden_get_result` or
-expired. `rewarden_get_result` itself waits up to 45 s on the same oneshot/notify, and only
+shows them). A late result is stored in memory until fetched via `reins_get_result` or
+expired. `reins_get_result` itself waits up to 45 s on the same oneshot/notify, and only
 the connection that created a request can read its result.
 
-### 4.4 Phone-facing API — `/rewarden/api/*`
+### 4.4 Phone-facing API — `/reins/api/*`
 
 Authenticated with Vaultwarden's existing `Headers` guard (normal Bitwarden login token)
 **and** the caller must be the user's registered approval device.
 
 | Method, path | Purpose |
 |---|---|
-| `PUT /rewarden/api/device` | register this device as approval device (`fcm_token?`); notifies the previous device |
-| `GET /rewarden/api/requests/pending?wait=25` | pending relay requests; long-polls up to 25 s when empty (foreground channel, works without FCM) |
-| `GET /rewarden/api/requests/{id}` | fetch one request (marks it delivered) |
-| `POST /rewarden/api/requests/{id}/response` | `{outcome: result \| denied \| error, payload}` |
-| `GET /rewarden/api/pairings/{id}` / `POST …/response` | AI-connection pairing (§4.5) |
-| `GET /rewarden/api/connections`, `DELETE …/{id}` | list/revoke AI connections |
+| `PUT /reins/api/device` | register this device as approval device (`fcm_token?`); notifies the previous device |
+| `GET /reins/api/requests/pending?wait=25` | pending relay requests; long-polls up to 25 s when empty (foreground channel, works without FCM) |
+| `GET /reins/api/requests/{id}` | fetch one request (marks it delivered) |
+| `POST /reins/api/requests/{id}/response` | `{outcome: result \| denied \| error, payload}` |
+| `GET /reins/api/pairings/{id}` / `POST …/response` | AI-connection pairing (§4.5) |
+| `GET /reins/api/connections`, `DELETE …/{id}` | list/revoke AI connections |
 
 ### 4.5 OAuth 2.1 authorization server for AI clients
 
@@ -178,7 +178,7 @@ Mounted at root (outside the domain base path where required):
 - `/.well-known/oauth-protected-resource` and `/.well-known/oauth-protected-resource/mcp`
   → `{resource: "{domain}/mcp", authorization_servers: [issuer], scopes_supported: ["mcp"]}`.
 - `/.well-known/oauth-authorization-server` → issuer `{domain}`; endpoints
-  `/rewarden/oauth/{authorize,token,register}`; `code_challenge_methods_supported: ["S256"]`;
+  `/reins/oauth/{authorize,token,register}`; `code_challenge_methods_supported: ["S256"]`;
   `token_endpoint_auth_methods_supported: ["none"]`; `grant_types_supported:
   ["authorization_code","refresh_token"]`; `client_id_metadata_document_supported: true`;
   `authorization_response_iss_parameter_supported: true`.
@@ -192,7 +192,7 @@ Mounted at root (outside the domain base path where required):
      state, two-digit match code}` and pushes it to the approval device. The page shows the
      match code and long-polls. Unknown emails get the identical page (no enumeration),
      and requests are rate-limited per IP.
-  3. Phone shows: *"Connect **ChatGPT** (chatgpt.com) to Rewarden? Code **47**"*. The user
+  3. Phone shows: *"Connect **ChatGPT** (chatgpt.com) to Reins? Code **47**"*. The user
      picks the matching code from three options, can rename the label, and approves with biometrics.
   4. Page redirects to `redirect_uri?code=…&state=…&iss={issuer}`.
 - **Token endpoint** (`application/x-www-form-urlencoded`): verifies PKCE S256, `resource`
@@ -209,18 +209,18 @@ Mounted at root (outside the domain base path where required):
 the existing `jsonwebtoken` crate), token cached for half its lifetime. Data-only message,
 `priority: high`, payload `{t: "req"|"pair", id}`. No request content ever transits Google.
 
-New config group `rewarden`: `rewarden_enabled`, `rewarden_fcm_service_account` (path),
-`rewarden_relay_wait_secs` (45), `rewarden_offline_secs` (10).
+New config group `reins`: `reins_enabled`, `reins_fcm_service_account` (path),
+`reins_relay_wait_secs` (45), `reins_offline_secs` (10).
 
 ## 5. Rust crates
 
-### 5.1 `rewarden-proto`
+### 5.1 `reins-proto`
 Serde types used on both sides: `ToolCall` (`GmailSearch{query,max_results}`,
 `GmailRead{message_ids}`, `GmailSend{to,cc,subject,body,reply_to_message_id}`),
 `RelayRequest`, `RelayResponse`, `Pairing`, result DTOs (`MessageSummary`, `MessageFull`,
 `SentMessage`). Versioned with a `v: 1` field.
 
-### 5.2 `rewarden-policy` (pure)
+### 5.2 `reins-policy` (pure)
 
 ```text
 Grant {
@@ -257,7 +257,7 @@ AddrRule = Exact(addr) | Domain(domain) | Regex(re)
 - Property tests (proptest): an allowed item always satisfies some unexpired, unrevoked
   grant for the same connection and action; revocation and expiry are always honored.
 
-### 5.3 `rewarden-core` (phone)
+### 5.3 `reins-core` (phone)
 
 - **Runtime:** one process-wide multi-thread tokio runtime (`OnceLock`); UniFFI exports are
   `async fn` → Kotlin `suspend fun`. Nothing runs on the Android main thread. Gmail
@@ -286,14 +286,14 @@ AddrRule = Exact(addr) | Domain(domain) | Regex(re)
 
 ## 6. Android app (`android/`)
 
-Package `dev.rewarden.android`; minSdk 31, targetSdk 36; Kotlin + Jetpack Compose only.
+Package `dev.reins.android`; minSdk 31, targetSdk 36; Kotlin + Jetpack Compose only.
 Dependencies limited to: Compose (BOM), `activity-compose`, `lifecycle-viewmodel-compose`,
 `androidx.biometric`, `work-runtime-ktx`, `firebase-messaging`, `play-services-auth`
 (AuthorizationClient), `kotlinx-coroutines`, JNA (`@aar`, for UniFFI). No DI framework,
 no Room/Retrofit/OkHttp (Rust owns storage and networking).
 
 Build: Gradle `Exec` task runs `cargo ndk -t arm64-v8a -t x86_64 -o src/main/jniLibs build
---release -p rewarden-core` and `uniffi-bindgen generate --language kotlin`; NDK r28+
+--release -p reins-core` and `uniffi-bindgen generate --language kotlin`; NDK r28+
 (16 KB pages).
 
 **Screens**
@@ -318,7 +318,7 @@ the foreground it also long-polls `/requests/pending`.
 
 ## 7. Error handling
 
-- Every core API returns a typed `RewardenError` (network, auth, gmail, policy, storage,
+- Every core API returns a typed `ReinsError` (network, auth, gmail, policy, storage,
   needs_user_interaction) mapped to Kotlin exceptions; UI shows actionable messages.
 - Gmail 401 → refresh token via Play Services once, then `NeedsUserInteraction`.
 - Gmail 429/5xx → bounded exponential backoff within the relay budget.
@@ -329,14 +329,14 @@ the foreground it also long-polls `/requests/pending`.
 
 ## 8. Testing
 
-- `rewarden-policy`: unit + property tests (the security core).
-- `rewarden-core`: Gmail connector against `wiremock`; MIME parsing fixtures; store
+- `reins-policy`: unit + property tests (the security core).
+- `reins-core`: Gmail connector against `wiremock`; MIME parsing fixtures; store
   encryption round-trips; KDF test vectors against Bitwarden's documented values.
 - Server: unit tests for PKCE, redirect matching, CIMD/DCR, JWT audience, MCP dual-era
   handling (fixtures of real Claude `initialize` and ChatGPT `server/discover` requests),
   relay timing (offline / pending / late result).
-- `rewarden-e2e`: starts the real server (SQLite, temp dir) and a headless "phone" built on
-  `rewarden-core` with fake Gmail, fake Keystore and an in-process push hook; drives a full
+- `reins-e2e`: starts the real server (SQLite, temp dir) and a headless "phone" built on
+  `reins-core` with fake Gmail, fake Keystore and an in-process push hook; drives a full
   OAuth + MCP session: authorize → pair → search → approve → read → send → revoke.
 - Android: build + install on emulator; instrumented smoke test of sign-in and approval
   screens against a local server.

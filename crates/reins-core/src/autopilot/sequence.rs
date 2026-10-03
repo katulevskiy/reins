@@ -135,10 +135,10 @@ mod tests {
 
     use super::*;
 
-    /// Laya's tokenizers, when they are on this machine (`~/.cache/rewarden-laya`).
+    /// Laya's tokenizers, when they are on this machine (`~/.cache/reins-laya`).
     fn tokenizer_dir() -> Option<PathBuf> {
         let home = std::env::var_os("HOME")?;
-        let dir = PathBuf::from(home).join(".cache/rewarden-laya/laya");
+        let dir = PathBuf::from(home).join(".cache/reins-laya/laya");
         dir.join("tokenizer/tokenizer.json").exists().then_some(dir)
     }
 
@@ -159,9 +159,7 @@ mod tests {
     #[test]
     fn token_ids_equal_layas_own() {
         let Some(dir) = tokenizer_dir() else {
-            eprintln!(
-                "skipped: Laya's tokenizers are not in ~/.cache/rewarden-laya (the golden ids cannot be checked)"
-            );
+            eprintln!("skipped: Laya's tokenizers are not in ~/.cache/reins-laya (the golden ids cannot be checked)");
             return;
         };
         let g = golden();
@@ -296,9 +294,7 @@ mod tests {
     #[test]
     fn token_ids_equal_the_reference_sequence_builders() {
         let Some(dir) = tokenizer_dir() else {
-            eprintln!(
-                "skipped: Laya's tokenizers are not in ~/.cache/rewarden-laya (the golden ids cannot be checked)"
-            );
+            eprintln!("skipped: Laya's tokenizers are not in ~/.cache/reins-laya (the golden ids cannot be checked)");
             return;
         };
         let g = reference_golden();

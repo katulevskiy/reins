@@ -1,10 +1,10 @@
-package dev.rewarden.android
+package dev.reins.android
 
 import androidx.compose.ui.test.assertTextContains
 import androidx.compose.ui.test.assertTextEquals
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.test.ext.junit.runners.AndroidJUnit4
-import dev.rewarden.android.platform.AuthResult
+import dev.reins.android.platform.AuthResult
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
@@ -146,7 +146,7 @@ class NewApprovalsFlowTest : FlowHarness() {
 
     // ---- uploads ------------------------------------------------------------------------------------------------------
 
-    private fun upload(view: dev.rewarden.core.BlobView = TestData.blob()) {
+    private fun upload(view: dev.reins.core.BlobView = TestData.blob()) {
         core.blobs[view.id] = view
         core.pending = listOf(TestData.blobItem(view))
     }

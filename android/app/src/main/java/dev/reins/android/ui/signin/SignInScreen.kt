@@ -1,4 +1,4 @@
-package dev.rewarden.android.ui.signin
+package dev.reins.android.ui.signin
 
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.background
@@ -31,25 +31,25 @@ import androidx.compose.ui.text.input.KeyboardCapitalization
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
-import dev.rewarden.android.BuildConfig
-import dev.rewarden.android.design.Banner
-import dev.rewarden.android.design.BannerKind
-import dev.rewarden.android.design.ButtonStyle
-import dev.rewarden.android.design.CapsuleButton
-import dev.rewarden.android.design.CheckRow
-import dev.rewarden.android.design.Glyph
-import dev.rewarden.android.design.GlyphIcon
-import dev.rewarden.android.design.LocalColors
-import dev.rewarden.android.design.RText
-import dev.rewarden.android.design.RTextField
-import dev.rewarden.android.design.RType
-import dev.rewarden.android.design.Screen
-import dev.rewarden.android.design.pressable
-import dev.rewarden.android.feedback.Cue
-import dev.rewarden.android.feedback.LocalFeedback
-import dev.rewarden.android.feedback.cueUnlessRecent
-import dev.rewarden.android.platform.Browser
-import dev.rewarden.android.ui.common.ReinsLinks
+import dev.reins.android.BuildConfig
+import dev.reins.android.design.Banner
+import dev.reins.android.design.BannerKind
+import dev.reins.android.design.ButtonStyle
+import dev.reins.android.design.CapsuleButton
+import dev.reins.android.design.CheckRow
+import dev.reins.android.design.Glyph
+import dev.reins.android.design.GlyphIcon
+import dev.reins.android.design.LocalColors
+import dev.reins.android.design.RText
+import dev.reins.android.design.RTextField
+import dev.reins.android.design.RType
+import dev.reins.android.design.Screen
+import dev.reins.android.design.pressable
+import dev.reins.android.feedback.Cue
+import dev.reins.android.feedback.LocalFeedback
+import dev.reins.android.feedback.cueUnlessRecent
+import dev.reins.android.platform.Browser
+import dev.reins.android.ui.common.ReinsLinks
 
 /** The pages of the signed-out app. */
 enum class OnboardingPage { Welcome, Create, SignIn }

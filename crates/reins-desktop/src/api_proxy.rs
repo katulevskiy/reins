@@ -152,7 +152,7 @@ fn refusal(r: &Refusal) -> Response<Body> {
         Refusal::Waiting(_) => (StatusCode::SERVICE_UNAVAILABLE, "Waiting"),
         Refusal::Unavailable(_) => (StatusCode::SERVICE_UNAVAILABLE, "Unavailable"),
     };
-    let mut resp = text(status, &format!("Rewarden: {prefix}: {}", r.message()));
+    let mut resp = text(status, &format!("Reins: {prefix}: {}", r.message()));
     if matches!(r, Refusal::Waiting(_)) {
         resp.headers_mut().insert(header::RETRY_AFTER, HeaderValue::from_static("10"));
     }
@@ -216,7 +216,7 @@ impl ApiProxy {
         }
         let phone = self.phone.phone()?;
         let command = format!("API {}", api.name);
-        let purpose = format!("Requests to {} through the Rewarden proxy", api.base.host_str().unwrap_or("the API"));
+        let purpose = format!("Requests to {} through the Reins proxy", api.base.host_str().unwrap_or("the API"));
         let refs = [api.secret.clone()];
         let request = secrets::Request {
             secrets: &refs,

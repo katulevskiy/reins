@@ -39,7 +39,7 @@ impl Store {
         Ok(())
     }
 
-    /// This phone's device key ([`rewarden_proto::device::DEVICE_KEY_HEADER`]), base64url: 32 random bytes made the
+    /// This phone's device key ([`reins_proto::device::DEVICE_KEY_HEADER`]), base64url: 32 random bytes made the
     /// first time and kept sealed. Lost with the data key, it is made again, and the server then wants a proof from
     /// this phone before it approves again, as from any other.
     pub fn device_key(&self) -> Result<String, CoreError> {
@@ -89,7 +89,7 @@ mod tests {
     fn the_device_key_is_made_once_and_kept() {
         let dir = tempfile::tempdir().unwrap();
         let key = open(dir.path()).device_key().unwrap();
-        assert!(rewarden_proto::device::device_key_hash(&key).is_some(), "32 bytes, base64url");
+        assert!(reins_proto::device::device_key_hash(&key).is_some(), "32 bytes, base64url");
         assert_eq!(open(dir.path()).device_key().unwrap(), key, "the same after a restart");
         let other = tempfile::tempdir().unwrap();
         assert_ne!(open(other.path()).device_key().unwrap(), key);

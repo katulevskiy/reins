@@ -1,10 +1,10 @@
-package dev.rewarden.android.platform
+package dev.reins.android.platform
 
 import android.security.keystore.KeyGenParameterSpec
 import android.security.keystore.KeyProperties
 import android.security.keystore.StrongBoxUnavailableException
-import dev.rewarden.core.ForeignException
-import dev.rewarden.core.KeyWrapper
+import dev.reins.core.ForeignException
+import dev.reins.core.KeyWrapper
 import java.security.KeyStore
 import javax.crypto.Cipher
 import javax.crypto.SecretKey
@@ -69,7 +69,7 @@ class KeystoreKeyWrapper(private val alias: String = DEFAULT_ALIAS) : KeyWrapper
 
     private companion object {
         const val PROVIDER = "AndroidKeyStore"
-        const val DEFAULT_ALIAS = "rewarden_dek_wrap_v1"
+        const val DEFAULT_ALIAS = "reins_dek_wrap_v1"
         const val TRANSFORMATION = "AES/GCM/NoPadding"
         const val IV_BYTES = 12
         const val TAG_BYTES = 16

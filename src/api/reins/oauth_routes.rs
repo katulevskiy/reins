@@ -9,7 +9,7 @@ use std::{
     time::Duration,
 };
 
-use rewarden_proto::{
+use reins_proto::{
     desktop,
     pairing::{PushKind, PushMessage},
 };
@@ -41,11 +41,11 @@ use crate::{
     CONFIG,
     auth::{
         ClientIp,
-        rewarden::{hash_token, issue_access_token, random_token},
+        reins::{hash_token, issue_access_token, random_token},
     },
     db::{
         DbConn, DbPool,
-        models::{RewardenClient, RewardenConnection, RewardenDevice, RewardenRefreshToken, User, UserId},
+        models::{ReinsClient, ReinsConnection, ReinsDevice, ReinsRefreshToken, User, UserId},
     },
     ratelimit,
 };
@@ -54,7 +54,7 @@ const MAX_FORM_BYTES: u64 = 16 * 1024;
 const CIMD_TIMEOUT: Duration = Duration::from_secs(10);
 const MAX_EMAIL_BYTES: usize = 254;
 /// Authorize parameter carrying the desktop app's public key (spec: desktop git proxy, keys and pairing).
-pub const CLIENT_KEY_PARAM: &str = "rewarden_client_key";
+pub const CLIENT_KEY_PARAM: &str = "reins_client_key";
 
 pub fn routes() -> Vec<Route> {
     routes![authorize_get, authorize_post, authorize_wait, token, register, device_authorization]
@@ -190,7 +190,7 @@ async fn resolve_client(client_id: &str, conn: &DbConn) -> Result<ClientInfo, St
         OAUTH.cache_client(client.clone());
         return Ok(client);
     }
-    let client = RewardenClient::find(client_id, conn).await.ok_or_else(|| "unknown client_id".to_owned())?;
+    let client = ReinsClient::find(client_id, conn).await.ok_or_else(|| "unknown client_id".to_owned())?;
     Ok(ClientInfo {
         redirect_uris: client.redirect_uri_list(),
         client_id: client.client_id,
@@ -199,7 +199,7 @@ async fn resolve_client(client_id: &str, conn: &DbConn) -> Result<ClientInfo, St
 }
 
 /// RFC 7591 dynamic registration (public clients only).
-#[post("/rewarden/oauth/register", data = "<data>")]
+#[post("/reins/oauth/register", data = "<data>")]
 async fn register(data: Data<'_>, ip: ClientIp, conn: DbConn) -> JsonResponse {
     if ratelimit::check_limit_unauthenticated(&ip.ip).is_err() {
         return JsonResponse(Status::TooManyRequests, json!({"error": "slow_down"}));
@@ -217,9 +217,9 @@ async fn register(data: Data<'_>, ip: ClientIp, conn: DbConn) -> JsonResponse {
         Err(e) => return oauth_error(&e),
     };
     let client =
-        RewardenClient::new(sanitize_client_name(&registration.client_name), &registration.redirect_uris, now_unix());
+        ReinsClient::new(sanitize_client_name(&registration.client_name), &registration.redirect_uris, now_unix());
     if let Err(e) = client.save(&conn).await {
-        error!("Rewarden client registration failed: {e:?}");
+        error!("Reins client registration failed: {e:?}");
         return JsonResponse(Status::InternalServerError, json!({"error": "server_error"}));
     }
     JsonResponse(
@@ -237,10 +237,10 @@ fn mcp_url() -> String {
 }
 
 fn wait_location(session: &str) -> String {
-    format!("{}/rewarden/oauth/authorize/wait?session={session}", CONFIG.domain_path())
+    format!("{}/reins/oauth/authorize/wait?session={session}", CONFIG.domain_path())
 }
 
-/// The optional `rewarden_client_key` the desktop app adds to the authorize URL. Present means it must be a valid key:
+/// The optional `reins_client_key` the desktop app adds to the authorize URL. Present means it must be a valid key:
 /// a malformed one is refused rather than dropped, so the phone never pairs the app without the key it expects.
 fn desktop_client_key(params: &HashMap<String, String>) -> Result<Option<String>, ()> {
     match params.get(CLIENT_KEY_PARAM) {
@@ -255,7 +255,7 @@ fn key_fingerprint_of(client: &PairingClient) -> Option<String> {
 }
 
 /// Step 1: validate the request and ask for the account email.
-#[get("/rewarden/oauth/authorize?<params..>")]
+#[get("/reins/oauth/authorize?<params..>")]
 async fn authorize_get(params: HashMap<String, String>, ip: ClientIp, conn: DbConn) -> Flow {
     if ratelimit::check_limit_unauthenticated(&ip.ip).is_err() {
         return error_flow(Status::TooManyRequests, "Too many requests", "Please wait a moment and try again.");
@@ -310,14 +310,14 @@ async fn authorize_get(params: HashMap<String, String>, ip: ClientIp, conn: DbCo
 }
 
 /// The user (and approval device) an email address stands for, if a real pairing is possible.
-async fn pairing_target(email: &str, conn: &DbConn) -> Option<(UserId, RewardenDevice)> {
+async fn pairing_target(email: &str, conn: &DbConn) -> Option<(UserId, ReinsDevice)> {
     let user = User::find_by_mail(email, conn).await.filter(|u| u.enabled)?;
-    let device = RewardenDevice::find_by_user(&user.uuid, conn).await?;
+    let device = ReinsDevice::find_by_user(&user.uuid, conn).await?;
     Some((user.uuid, device))
 }
 
 /// Step 2: start the pairing for the submitted email. Unknown emails get an identical decoy.
-#[post("/rewarden/oauth/authorize", data = "<data>")]
+#[post("/reins/oauth/authorize", data = "<data>")]
 async fn authorize_post(data: Data<'_>, ip: ClientIp, conn: DbConn, pool: &State<DbPool>) -> Flow {
     let Some(body) = read_limited(data, MAX_FORM_BYTES).await else {
         return error_flow(Status::PayloadTooLarge, "Request too large", "Please try again.");
@@ -390,7 +390,7 @@ async fn authorize_post(data: Data<'_>, ip: ClientIp, conn: DbConn, pool: &State
 }
 
 /// Step 3: show the code; once the phone has answered, hand the result back to the client.
-#[get("/rewarden/oauth/authorize/wait?<session>")]
+#[get("/reins/oauth/authorize/wait?<session>")]
 fn authorize_wait(session: &str) -> Flow {
     let expired = || error_flow(Status::BadRequest, "Link expired", "Start the connection again from your AI app.");
     let Some(current) = OAUTH.session(session) else {
@@ -464,7 +464,7 @@ fn authorize_wait(session: &str) -> Flow {
 
 /// RFC 8628 §3.1-3.2: a grant for the desktop app (or any public client), which the phone of an account claims by
 /// scanning its code (`device_api`, A6b). Answers with the codes to show and how often to poll the token endpoint.
-#[post("/rewarden/oauth/device_authorization", data = "<data>")]
+#[post("/reins/oauth/device_authorization", data = "<data>")]
 async fn device_authorization(data: Data<'_>, ip: ClientIp, conn: DbConn) -> JsonResponse {
     if ratelimit::check_limit_unauthenticated(&ip.ip).is_err() {
         return JsonResponse(Status::TooManyRequests, json!({"error": "slow_down"}));
@@ -527,7 +527,7 @@ async fn poll_device_code(device_code: &str, client_id: &str, conn: &DbConn) -> 
             connection,
         } => {
             let user = UserId::from(user);
-            let connection = RewardenConnection::find_by_uuid_and_user(&connection.0, &user, conn)
+            let connection = ReinsConnection::find_by_uuid_and_user(&connection.0, &user, conn)
                 .await
                 .ok_or_else(|| OAuthError::invalid_grant("the connection no longer exists"))?;
             issue_tokens(&connection, conn).await
@@ -540,15 +540,15 @@ async fn poll_device_code(device_code: &str, client_id: &str, conn: &DbConn) -> 
 // ---------------------------------------------------------------------------------------
 
 /// Issues a rotated access/refresh pair for `connection`.
-async fn issue_tokens(connection: &RewardenConnection, conn: &DbConn) -> Result<Value, OAuthError> {
+async fn issue_tokens(connection: &ReinsConnection, conn: &DbConn) -> Result<Value, OAuthError> {
     let refresh = random_token();
-    let row = RewardenRefreshToken {
+    let row = ReinsRefreshToken {
         token_hash: hash_token(&refresh),
         connection_uuid: connection.uuid.clone(),
         expires_at: now_unix() + REFRESH_TOKEN_SECS,
     };
     if let Err(e) = row.save(conn).await {
-        error!("Rewarden refresh token could not be stored: {e:?}");
+        error!("Reins refresh token could not be stored: {e:?}");
         return Err(OAuthError::new(500, "server_error", "could not store the refresh token"));
     }
     let access =
@@ -568,7 +568,7 @@ async fn exchange(grant: TokenGrant, conn: &DbConn) -> Result<Value, OAuthError>
                 OAUTH.redeem_code(&code).ok_or_else(|| OAuthError::invalid_grant("unknown, used or expired code"))?;
             check_code_redemption(&issued, &client_id, &redirect_uri, &code_verifier)?;
             let user = UserId::from(issued.user_uuid.clone());
-            let connection = RewardenConnection::find_by_uuid_and_user(&issued.connection_uuid, &user, conn)
+            let connection = ReinsConnection::find_by_uuid_and_user(&issued.connection_uuid, &user, conn)
                 .await
                 .ok_or_else(|| OAuthError::invalid_grant("the connection no longer exists"))?;
             issue_tokens(&connection, conn).await
@@ -577,10 +577,10 @@ async fn exchange(grant: TokenGrant, conn: &DbConn) -> Result<Value, OAuthError>
             refresh_token,
             client_id,
         } => {
-            let row = RewardenRefreshToken::take(&hash_token(&refresh_token), now_unix(), conn)
+            let row = ReinsRefreshToken::take(&hash_token(&refresh_token), now_unix(), conn)
                 .await
                 .ok_or_else(|| OAuthError::invalid_grant("the refresh token is invalid or expired"))?;
-            let connection = RewardenConnection::find_by_uuid(&row.connection_uuid, conn)
+            let connection = ReinsConnection::find_by_uuid(&row.connection_uuid, conn)
                 .await
                 .ok_or_else(|| OAuthError::invalid_grant("the connection no longer exists"))?;
             if client_id.is_some_and(|c| c != connection.client_id) {
@@ -596,7 +596,7 @@ async fn exchange(grant: TokenGrant, conn: &DbConn) -> Result<Value, OAuthError>
 }
 
 /// RFC 6749 token endpoint (form-encoded, public clients, PKCE).
-#[post("/rewarden/oauth/token", data = "<data>")]
+#[post("/reins/oauth/token", data = "<data>")]
 async fn token(data: Data<'_>, ip: ClientIp, conn: DbConn) -> JsonResponse {
     if ratelimit::check_limit_unauthenticated(&ip.ip).is_err() {
         return JsonResponse(Status::TooManyRequests, json!({"error": "slow_down"}));
@@ -656,6 +656,6 @@ mod tests {
     #[test]
     fn wait_location_keeps_the_domain_path() {
         let loc = wait_location("abc");
-        assert!(loc.ends_with("/rewarden/oauth/authorize/wait?session=abc"), "{loc}");
+        assert!(loc.ends_with("/reins/oauth/authorize/wait?session=abc"), "{loc}");
     }
 }

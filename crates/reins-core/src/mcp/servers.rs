@@ -3,8 +3,8 @@
 
 use std::collections::HashMap;
 
-use rewarden_proto::ids::ConnectionId;
-use rewarden_proto::remote_mcp::{MAX_SERVERS, McpServerReport, ProxyCall};
+use reins_proto::ids::ConnectionId;
+use reins_proto::remote_mcp::{MAX_SERVERS, McpServerReport, ProxyCall};
 use serde_json::{Map, Value, json};
 use url::Url;
 use zeroize::Zeroizing;
@@ -33,7 +33,7 @@ pub enum Op<'a> {
         tool: &'a str,
         arguments: &'a Map<String, Value>,
     },
-    /// A call the Rewarden server makes for the phone (a heavy tool).
+    /// A call the Reins server makes for the phone (a heavy tool).
     Proxy {
         tool: &'a str,
         arguments: &'a Map<String, Value>,
@@ -203,7 +203,7 @@ impl Engine {
             } => {
                 let (_, request) = endpoint.request("tools/call", &json!({"name": tool, "arguments": arguments}));
                 let call = ProxyCall {
-                    v: rewarden_proto::PROTOCOL_VERSION,
+                    v: reins_proto::PROTOCOL_VERSION,
                     connection_id: (*connection_id).clone(),
                     endpoint: server.url.clone(),
                     headers: endpoint.headers(Some(&conn)),
@@ -288,7 +288,7 @@ impl Engine {
 
     // ---- what the report and the app see -----------------------------------------------------------------------
 
-    /// The servers and tools to report to the Rewarden server.
+    /// The servers and tools to report to the Reins server.
     pub(crate) fn mcp_reports(&self) -> Vec<McpServerReport> {
         match self.store.mcp_servers() {
             Ok(servers) => super::reports(&servers),
@@ -344,7 +344,7 @@ impl Engine {
         Ok((parsed, server))
     }
 
-    /// Saves a server that just answered with its tools, and tells the Rewarden server.
+    /// Saves a server that just answered with its tools, and tells the Reins server.
     async fn mcp_save_connected(
         &self,
         mut server: StoredMcpServer,
@@ -593,14 +593,14 @@ impl Engine {
             let Ok(parked) = serde_json::from_slice::<ParkedRequest>(&row.payload) else {
                 continue;
             };
-            let about = matches!(&parked.request.call, rewarden_proto::gmail::ToolCall::Mcp(c) if c.server == id);
+            let about = matches!(&parked.request.call, reins_proto::gmail::ToolCall::Mcp(c) if c.server == id);
             if !about || !self.store.remove_pending(&row.id)? {
                 continue;
             }
             self.notifier.item_resolved(row.id.clone());
             if let Some(session) = &session {
-                let outcome = rewarden_proto::relay::RelayOutcome::Error {
-                    message: "The user removed that MCP server from Rewarden.".to_owned(),
+                let outcome = reins_proto::relay::RelayOutcome::Error {
+                    message: "The user removed that MCP server from Reins.".to_owned(),
                 };
                 self.respond(session, &row.id, outcome).await.ok();
             }
@@ -609,7 +609,7 @@ impl Engine {
         Ok(())
     }
 
-    /// Sends a tool's results through the Rewarden server (heavy) or not.
+    /// Sends a tool's results through the Reins server (heavy) or not.
     pub fn mcp_set_heavy(&self, id: &str, tool: &str, heavy: bool) -> Result<(), CoreError> {
         if self.store.mcp_set_heavy(id, tool, heavy)? {
             Ok(())

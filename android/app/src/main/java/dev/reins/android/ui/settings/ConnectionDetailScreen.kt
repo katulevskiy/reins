@@ -1,4 +1,4 @@
-package dev.rewarden.android.ui.settings
+package dev.reins.android.ui.settings
 
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -23,25 +23,25 @@ import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
-import dev.rewarden.android.design.ButtonStyle
-import dev.rewarden.android.design.CapsuleButton
-import dev.rewarden.android.design.ConfirmDialog
-import dev.rewarden.android.design.ConnectionAvatar
-import dev.rewarden.android.design.EmptyState
-import dev.rewarden.android.design.Glyph
-import dev.rewarden.android.design.Group
-import dev.rewarden.android.design.Hairline
-import dev.rewarden.android.design.ListRow
-import dev.rewarden.android.design.LocalColors
-import dev.rewarden.android.design.Providers
-import dev.rewarden.android.design.RText
-import dev.rewarden.android.design.RType
-import dev.rewarden.android.design.Screen
-import dev.rewarden.android.design.pressable
-import dev.rewarden.android.state.AppState
-import dev.rewarden.android.ui.common.formatFull
-import dev.rewarden.android.ui.common.relativeTime
-import dev.rewarden.android.ui.common.untrusted
+import dev.reins.android.design.ButtonStyle
+import dev.reins.android.design.CapsuleButton
+import dev.reins.android.design.ConfirmDialog
+import dev.reins.android.design.ConnectionAvatar
+import dev.reins.android.design.EmptyState
+import dev.reins.android.design.Glyph
+import dev.reins.android.design.Group
+import dev.reins.android.design.Hairline
+import dev.reins.android.design.ListRow
+import dev.reins.android.design.LocalColors
+import dev.reins.android.design.Providers
+import dev.reins.android.design.RText
+import dev.reins.android.design.RType
+import dev.reins.android.design.Screen
+import dev.reins.android.design.pressable
+import dev.reins.android.state.AppState
+import dev.reins.android.ui.common.formatFull
+import dev.reins.android.ui.common.relativeTime
+import dev.reins.android.ui.common.untrusted
 
 /** One AI connection: its icon (a provider's or one generated from the name), its Autopilot mode and profile, history, disconnect. */
 @OptIn(ExperimentalLayoutApi::class)
@@ -50,7 +50,7 @@ fun ConnectionDetailScreen(
     connectionId: String,
     state: AppState,
     viewModel: SettingsViewModel,
-    autopilot: dev.rewarden.android.ui.autopilot.AutopilotViewModel? = null,
+    autopilot: dev.reins.android.ui.autopilot.AutopilotViewModel? = null,
     onBack: () -> Unit,
 ) {
     val c = LocalColors.current
@@ -70,7 +70,7 @@ fun ConnectionDetailScreen(
             RText(untrusted(connection.clientHost), RType.mono(13f), c.secondary, ltr = true)
         }
 
-        autopilot?.let { dev.rewarden.android.ui.autopilot.ConnectionAutopilotSection(connection.id, connection.label, it) }
+        autopilot?.let { dev.reins.android.ui.autopilot.ConnectionAutopilotSection(connection.id, connection.label, it) }
 
         RText("ICON", RType.sans(12.5f, FontWeight.Medium), c.secondary, Modifier.padding(start = 32.dp, top = 16.dp, bottom = 8.dp))
         FlowRow(

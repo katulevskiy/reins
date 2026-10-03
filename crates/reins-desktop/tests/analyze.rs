@@ -5,10 +5,10 @@ mod analyze_util;
 use std::path::Path;
 
 use analyze_util::{Fixture, ZERO, cmd, git, git_bytes, lines, oid};
-use rewarden_desktop::git::object::hash_object;
-use rewarden_desktop::git::pack::Pack;
-use rewarden_desktop::git::{Command, NoRemote, Remote, analyze_push};
-use rewarden_proto::desktop::{FileChange, FileStatus, PushSummary, RefChange, RefUpdate};
+use reins_desktop::git::object::hash_object;
+use reins_desktop::git::pack::Pack;
+use reins_desktop::git::{Command, NoRemote, Remote, analyze_push};
+use reins_proto::desktop::{FileChange, FileStatus, PushSummary, RefChange, RefUpdate};
 
 async fn analyze(commands: &[Command], pack: Option<&Path>, remote: &dyn Remote) -> PushSummary {
     let s = analyze_push("o/r", commands, &[], pack, remote).await;
@@ -153,7 +153,7 @@ async fn tags_point_at_their_commit() {
     assert_eq!(u.new, tag);
     assert_eq!((u.commit_count, u.files_changed), (1, 1));
     assert_eq!(subjects(u), ["Release 1.0"]);
-    assert_eq!(s.tool(), rewarden_proto::desktop::GIT_TAG_PUSH_TOOL);
+    assert_eq!(s.tool(), reins_proto::desktop::GIT_TAG_PUSH_TOOL);
     assert!(!s.once_only());
 
     // A lightweight tag and a branch together.

@@ -1,23 +1,23 @@
-//! The whole chain with the phone deciding: the real Rewarden server binary, the real phone core (GitHub token on the
+//! The whole chain with the phone deciding: the real Reins server binary, the real phone core (GitHub token on the
 //! phone, a fake GitHub REST API), this app logged in through the server's OAuth with the phone pinning its key, and
 //! real git cloning and pushing through the daemon to a `git http-backend` upstream.
 //!
-//! It lives here rather than in `rewarden-desktop` so the desktop crate (Apache-2.0) has no dependency, not even a
-//! dev-dependency, on the AGPL-3.0 crates (`rewarden-core`, `rewarden-e2e`). See LICENSING.md.
+//! It lives here rather than in `reins-desktop` so the desktop crate (Apache-2.0) has no dependency, not even a
+//! dev-dependency, on the AGPL-3.0 crates (`reins-core`, `reins-e2e`). See LICENSING.md.
 
-#[path = "../../rewarden-desktop/tests/proxy_support/mod.rs"]
+#[path = "../../reins-desktop/tests/proxy_support/mod.rs"]
 mod proxy_support;
 
 use std::sync::Arc;
 use std::time::Duration;
 
 use proxy_support::{Home, TOKEN, Upstream, run_git};
-use rewarden_core::{ApprovalChoice, GrantScopeChoice, PendingItem, StandingGrant};
-use rewarden_desktop::auth::prompt::NoPrompter;
-use rewarden_desktop::config::{Config, Mode, Paths};
-use rewarden_desktop::daemon::{Daemon, Options};
-use rewarden_desktop::identity::Identity;
-use rewarden_e2e::{Phone, Server};
+use reins_core::{ApprovalChoice, GrantScopeChoice, PendingItem, StandingGrant};
+use reins_desktop::auth::prompt::NoPrompter;
+use reins_desktop::config::{Config, Mode, Paths};
+use reins_desktop::daemon::{Daemon, Options};
+use reins_desktop::identity::Identity;
+use reins_e2e::{Phone, Server};
 use serde_json::json;
 use wiremock::matchers::{method, path};
 use wiremock::{Mock, MockServer, ResponseTemplate};
@@ -73,7 +73,7 @@ async fn fake_github_api() -> MockServer {
     api
 }
 
-/// Plays the browser of `rewarden login`: the email form, the code the phone must pick, the redirect to the app.
+/// Plays the browser of `reins login`: the email form, the code the phone must pick, the redirect to the app.
 async fn browse(authorize: String, code_out: tokio::sync::oneshot::Sender<u8>) {
     let http = reqwest::Client::builder().redirect(reqwest::redirect::Policy::none()).build().unwrap();
     let page = http.get(&authorize).send().await.unwrap().text().await.unwrap();
@@ -83,7 +83,7 @@ async fn browse(authorize: String, code_out: tokio::sync::oneshot::Sender<u8>) {
         format!("{}://{}", u.scheme(), u.host_str().unwrap()) + &u.port().map(|p| format!(":{p}")).unwrap_or_default()
     };
     let posted = http
-        .post(format!("{origin}/rewarden/oauth/authorize"))
+        .post(format!("{origin}/reins/oauth/authorize"))
         .form(&[("session", session.as_str()), ("email", EMAIL)])
         .send()
         .await
@@ -115,7 +115,7 @@ async fn next_item(phone: &Phone) -> PendingItem {
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 6)]
 async fn the_phone_approves_git_reads_and_pushes_and_refuses_a_force_push() {
-    rewarden_e2e::init_tls();
+    reins_e2e::init_tls();
     let server = Server::start(20, 10).await;
     server.register(EMAIL).await;
     let api = fake_github_api().await;
@@ -125,7 +125,7 @@ async fn the_phone_approves_git_reads_and_pushes_and_refuses_a_force_push() {
     let upstream = Upstream::start().await;
     upstream.create(REPO, true);
 
-    // ---- rewarden login: the phone shows this app's key fingerprint and pins the key ----
+    // ---- reins login: the phone shows this app's key fingerprint and pins the key ----
     let state = tempfile::tempdir().unwrap();
     let paths = Paths::under(state.path());
     paths.ensure().unwrap();
@@ -133,12 +133,12 @@ async fn the_phone_approves_git_reads_and_pushes_and_refuses_a_force_push() {
     let fingerprint = identity.fingerprint();
     let (url_tx, url_rx) = tokio::sync::oneshot::channel::<String>();
     let (code_tx, code_rx) = tokio::sync::oneshot::channel::<u8>();
-    let login = rewarden_desktop::server::oauth::login_with_browser(&paths, &identity, &server.base, move |url| {
+    let login = reins_desktop::server::oauth::login_with_browser(&paths, &identity, &server.base, move |url| {
         url_tx.send(url.to_owned()).unwrap();
     });
     let browser = async {
         let authorize = url_rx.await.unwrap();
-        assert!(authorize.contains("rewarden_client_key="), "{authorize}");
+        assert!(authorize.contains("reins_client_key="), "{authorize}");
         browse(authorize, code_tx).await;
     };
     let user = async {
@@ -154,7 +154,7 @@ async fn the_phone_approves_git_reads_and_pushes_and_refuses_a_force_push() {
     // ---- the daemon, deciding with the phone ----
     let mut config = Config {
         listen: "127.0.0.1:0".parse().unwrap(),
-        mode: Mode::Rewarden,
+        mode: Mode::Reins,
         approval_timeout_secs: 60,
         ..Config::default()
     };
@@ -272,8 +272,8 @@ async fn the_phone_approves_git_reads_and_pushes_and_refuses_a_force_push() {
     assert!(fetch.ok, "{}", fetch.all());
     assert!(phone.core.pending().await.unwrap().is_empty());
 
-    // ---- rewarden ask: a yes from the phone, then a no ----
-    let question = |q: &str| rewarden_desktop::ask::Question {
+    // ---- reins ask: a yes from the phone, then a no ----
+    let question = |q: &str| reins_desktop::ask::Question {
         question: q.to_owned(),
         detail: Some("terraform apply -auto-approve".to_owned()),
         topic: Some("command:terraform apply".to_owned()),
@@ -284,7 +284,7 @@ async fn the_phone_approves_git_reads_and_pushes_and_refuses_a_force_push() {
         } else {
             "Drop the staging database?"
         });
-        let asked = rewarden_desktop::ask::ask_phone(&paths, &identity, &q, Duration::from_secs(60));
+        let asked = reins_desktop::ask::ask_phone(&paths, &identity, &q, Duration::from_secs(60));
         let user = async {
             let item = next_item(&phone).await;
             let view = phone.core.approval_view(item.id.clone()).await.unwrap();
@@ -308,7 +308,7 @@ async fn the_phone_approves_git_reads_and_pushes_and_refuses_a_force_push() {
         };
         let (answer, ()) = tokio::join!(asked, user);
         match (approve, answer) {
-            (true, rewarden_desktop::ask::Answer::Yes) | (false, rewarden_desktop::ask::Answer::No(_)) => {}
+            (true, reins_desktop::ask::Answer::Yes) | (false, reins_desktop::ask::Answer::No(_)) => {}
             (_, other) => panic!("approve={approve} answered {other:?}"),
         }
     }

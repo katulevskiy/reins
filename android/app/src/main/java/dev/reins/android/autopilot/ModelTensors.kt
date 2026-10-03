@@ -1,7 +1,7 @@
-package dev.rewarden.android.autopilot
+package dev.reins.android.autopilot
 
-import dev.rewarden.core.ModelInput
-import dev.rewarden.core.ModelOutput
+import dev.reins.core.ModelInput
+import dev.reins.core.ModelOutput
 
 /** One batch for the model as flat arrays, checked against the shapes of spec §6.2 (row-major). */
 class PackedInput(

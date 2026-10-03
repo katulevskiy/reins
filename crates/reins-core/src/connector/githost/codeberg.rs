@@ -2,7 +2,7 @@
 //! `read:repository` / `write:repository` (fetch, push). The API takes it as `Authorization: token …`; git over HTTPS
 //! takes it as the password of the account name.
 
-use rewarden_proto::connector::CODEBERG;
+use reins_proto::connector::CODEBERG;
 use serde_json::Value;
 
 use super::{Auth, Credentials, Forge, GitHost, plain_token};

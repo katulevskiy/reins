@@ -1,15 +1,15 @@
-//! The MCP servers screens' operations, exported on `RewardenCore` (run on the core runtime like the rest).
+//! The MCP servers screens' operations, exported on `ReinsCore` (run on the core runtime like the rest).
 
 use std::sync::Arc;
 
 use zeroize::Zeroizing;
 
 use super::{McpAddStep, McpServerView};
-use crate::api::RewardenCore;
+use crate::api::ReinsCore;
 use crate::{CoreError, rt};
 
 #[uniffi::export]
-impl RewardenCore {
+impl ReinsCore {
     /// The added MCP servers with their tools, oldest first.
     pub async fn mcp_servers(&self) -> Result<Vec<McpServerView>, CoreError> {
         let engine = Arc::clone(self.engine());
@@ -57,7 +57,7 @@ impl RewardenCore {
         rt::run(async move { engine.mcp_remove(&id).await }).await
     }
 
-    /// Sends a tool's results through the Rewarden server (for large results) or not.
+    /// Sends a tool's results through the Reins server (for large results) or not.
     pub async fn mcp_set_heavy(&self, id: String, tool: String, heavy: bool) -> Result<(), CoreError> {
         let engine = Arc::clone(self.engine());
         rt::run(async move { engine.mcp_set_heavy(&id, &tool, heavy) }).await

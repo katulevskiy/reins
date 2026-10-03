@@ -1,4 +1,4 @@
-//! Rewarden desktop app. A small daemon that brings the user's connections to any AI harness on this computer. Its
+//! Reins desktop app. A small daemon that brings the user's connections to any AI harness on this computer. Its
 //! first part is a git proxy: git talks plain HTTP to the daemon on loopback, and the daemon forwards to GitHub with a
 //! credential the agent never sees, after the phone (or, without a phone, the local policy) allowed exactly that read
 //! or that push.

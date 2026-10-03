@@ -1,10 +1,10 @@
-package dev.rewarden.android.platform
+package dev.reins.android.platform
 
 import android.app.Activity
 import android.content.Intent
 import android.os.Bundle
-import dev.rewarden.android.MainActivity
-import dev.rewarden.android.ui.mcp.isMcpRedirect
+import dev.reins.android.MainActivity
+import dev.reins.android.ui.mcp.isMcpRedirect
 
 /**
  * Receives `com.reins2fa.app://mcp-oauth?…`, where an MCP server's sign-in page sends the browser back to, and hands
@@ -28,6 +28,6 @@ class McpRedirectActivity : Activity() {
 
     companion object {
         /** The action [MainActivity] receives the redirect with. */
-        const val ACTION_SIGNED_IN = "dev.rewarden.android.MCP_SIGNED_IN"
+        const val ACTION_SIGNED_IN = "dev.reins.android.MCP_SIGNED_IN"
     }
 }

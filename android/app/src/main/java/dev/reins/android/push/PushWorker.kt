@@ -1,4 +1,4 @@
-package dev.rewarden.android.push
+package dev.reins.android.push
 
 import android.content.Context
 import androidx.work.CoroutineWorker
@@ -10,7 +10,7 @@ import androidx.work.OutOfQuotaPolicy
 import androidx.work.WorkManager
 import androidx.work.WorkerParameters
 import androidx.work.Constraints
-import dev.rewarden.android.RewardenApp
+import dev.reins.android.ReinsApp
 
 /** Fetches what the push announced and lets the core process it (parks it, notifies the user). */
 class PushWorker(context: Context, params: WorkerParameters) : CoroutineWorker(context, params) {
@@ -18,7 +18,7 @@ class PushWorker(context: Context, params: WorkerParameters) : CoroutineWorker(c
         val payload = PushPayload.parse(
             mapOf("t" to (inputData.getString(KEY_KIND) ?: ""), "id" to (inputData.getString(KEY_ID) ?: "")),
         ) ?: return Result.failure()
-        val container = (applicationContext as RewardenApp).container
+        val container = (applicationContext as ReinsApp).container
         val handler = PushHandler(container.core) {
             container.markReplaced()
             container.notifier.deviceReplaced()

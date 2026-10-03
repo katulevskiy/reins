@@ -1,14 +1,14 @@
-package dev.rewarden.android.ui.services
+package dev.reins.android.ui.services
 
 import android.app.PendingIntent
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
-import dev.rewarden.android.AppContainer
-import dev.rewarden.android.feedback.Event
-import dev.rewarden.android.feedback.play
-import dev.rewarden.android.ui.common.userMessage
-import dev.rewarden.core.GmailStatus
-import dev.rewarden.core.LoginProgress
+import dev.reins.android.AppContainer
+import dev.reins.android.feedback.Event
+import dev.reins.android.feedback.play
+import dev.reins.android.ui.common.userMessage
+import dev.reins.core.GmailStatus
+import dev.reins.core.LoginProgress
 import kotlin.coroutines.cancellation.CancellationException
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -183,7 +183,7 @@ class ServiceViewModel(private val container: AppContainer, val service: String)
 
     // ---- removing --------------------------------------------------------------------------------------------
 
-    /** Disconnects [account]: Rewarden forgets it (signing it out where that applies) and Google is told to revoke. */
+    /** Disconnects [account]: Reins forgets it (signing it out where that applies) and Google is told to revoke. */
     fun remove(account: String, google: Boolean) = operation {
         container.feedback.play(Event.Revoked)
         container.core.removeServiceAccount(service, account)

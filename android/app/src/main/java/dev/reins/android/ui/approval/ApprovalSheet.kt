@@ -1,9 +1,9 @@
-package dev.rewarden.android.ui.approval
+package dev.reins.android.ui.approval
 
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.core.tween
 import androidx.compose.ui.graphics.graphicsLayer
-import dev.rewarden.android.design.StrikeText
+import dev.reins.android.design.StrikeText
 import androidx.compose.animation.animateContentSize
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.foundation.background
@@ -39,46 +39,46 @@ import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
-import dev.rewarden.android.design.ActionKind
-import dev.rewarden.android.design.ActionTile
-import dev.rewarden.android.design.Banner
-import dev.rewarden.android.design.BannerKind
-import dev.rewarden.android.design.ButtonStyle
-import dev.rewarden.android.design.CapsuleButton
-import dev.rewarden.android.design.BlobAvatar
-import dev.rewarden.android.design.Card
-import dev.rewarden.android.design.serviceName
-import dev.rewarden.android.design.CheckRow
-import dev.rewarden.android.design.ConnectorTags
-import dev.rewarden.android.design.Glyph
-import dev.rewarden.android.design.GlyphIcon
-import dev.rewarden.android.design.Group
-import dev.rewarden.android.design.Hairline
-import dev.rewarden.android.design.LocalColors
-import dev.rewarden.android.design.RText
-import dev.rewarden.android.design.RTextField
-import dev.rewarden.android.design.RType
-import dev.rewarden.android.design.SelectChip
-import dev.rewarden.android.design.Spinner
-import dev.rewarden.android.design.Tag
-import dev.rewarden.android.design.Toggle
-import dev.rewarden.android.design.pressable
-import dev.rewarden.android.design.rememberNowMillis
-import dev.rewarden.android.design.urgency
-import dev.rewarden.android.feedback.Event
-import dev.rewarden.android.feedback.detentAction
-import dev.rewarden.android.feedback.feedbackAction
-import dev.rewarden.android.platform.Authenticator
-import dev.rewarden.android.ui.common.ConnectionIcon
-import dev.rewarden.android.ui.common.formatTime
-import dev.rewarden.android.ui.common.operationTitle
-import dev.rewarden.android.ui.common.untrusted
-import dev.rewarden.core.ApprovalKind
-import dev.rewarden.core.ApprovalView
-import dev.rewarden.core.EmailView
-import dev.rewarden.core.GrantRequestView
-import dev.rewarden.core.MessageView
-import dev.rewarden.core.ResourceView
+import dev.reins.android.design.ActionKind
+import dev.reins.android.design.ActionTile
+import dev.reins.android.design.Banner
+import dev.reins.android.design.BannerKind
+import dev.reins.android.design.ButtonStyle
+import dev.reins.android.design.CapsuleButton
+import dev.reins.android.design.BlobAvatar
+import dev.reins.android.design.Card
+import dev.reins.android.design.serviceName
+import dev.reins.android.design.CheckRow
+import dev.reins.android.design.ConnectorTags
+import dev.reins.android.design.Glyph
+import dev.reins.android.design.GlyphIcon
+import dev.reins.android.design.Group
+import dev.reins.android.design.Hairline
+import dev.reins.android.design.LocalColors
+import dev.reins.android.design.RText
+import dev.reins.android.design.RTextField
+import dev.reins.android.design.RType
+import dev.reins.android.design.SelectChip
+import dev.reins.android.design.Spinner
+import dev.reins.android.design.Tag
+import dev.reins.android.design.Toggle
+import dev.reins.android.design.pressable
+import dev.reins.android.design.rememberNowMillis
+import dev.reins.android.design.urgency
+import dev.reins.android.feedback.Event
+import dev.reins.android.feedback.detentAction
+import dev.reins.android.feedback.feedbackAction
+import dev.reins.android.platform.Authenticator
+import dev.reins.android.ui.common.ConnectionIcon
+import dev.reins.android.ui.common.formatTime
+import dev.reins.android.ui.common.operationTitle
+import dev.reins.android.ui.common.untrusted
+import dev.reins.core.ApprovalKind
+import dev.reins.core.ApprovalView
+import dev.reins.core.EmailView
+import dev.reins.core.GrantRequestView
+import dev.reins.core.MessageView
+import dev.reins.core.ResourceView
 
 /** The content of the approval sheet: what is asked, one tap to decide, and everything else under "More". */
 @OptIn(ExperimentalLayoutApi::class)
@@ -115,7 +115,7 @@ fun ApprovalSheet(viewModel: ApprovalViewModel, authenticator: Authenticator, on
     Column(Modifier.fillMaxWidth()) {
         Column(Modifier.weight(1f).verticalScroll(scroll)) {
             RequestHeader(view)
-            ui.suggestion?.let { dev.rewarden.android.ui.autopilot.SuggestionStrip(it, Modifier.padding(horizontal = 16.dp, vertical = 6.dp)) }
+            ui.suggestion?.let { dev.reins.android.ui.autopilot.SuggestionStrip(it, Modifier.padding(horizontal = 16.dp, vertical = 6.dp)) }
             when {
                 isGrant -> view.grant?.let { GrantRequestCard(it, view.connectionLabel) }
                 isAccounts -> AccountsCard(view, ui, viewModel)

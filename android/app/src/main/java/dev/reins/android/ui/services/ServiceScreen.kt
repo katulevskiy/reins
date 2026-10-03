@@ -1,4 +1,4 @@
-package dev.rewarden.android.ui.services
+package dev.reins.android.ui.services
 
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.IntentSenderRequest
@@ -25,30 +25,30 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
-import dev.rewarden.android.design.Banner
-import dev.rewarden.android.design.BannerKind
-import dev.rewarden.android.design.BlobAvatar
-import dev.rewarden.android.design.ButtonStyle
-import dev.rewarden.android.design.CapsuleButton
-import dev.rewarden.android.design.ConfirmDialog
-import dev.rewarden.android.design.Glyph
-import dev.rewarden.android.design.GlyphIcon
-import dev.rewarden.android.design.Group
-import dev.rewarden.android.design.Hairline
-import dev.rewarden.android.design.LocalColors
-import dev.rewarden.android.design.RText
-import dev.rewarden.android.design.RTextField
-import dev.rewarden.android.design.RType
-import dev.rewarden.android.design.Screen
-import dev.rewarden.android.design.ServiceAvatar
-import dev.rewarden.android.design.pressable
-import dev.rewarden.android.platform.GoogleAuthorizer
-import dev.rewarden.android.platform.PhoneBridge
-import dev.rewarden.android.state.AppState
-import dev.rewarden.android.ui.common.untrusted
-import dev.rewarden.core.AccountView
-import dev.rewarden.core.GmailStatus
-import dev.rewarden.core.ServiceView
+import dev.reins.android.design.Banner
+import dev.reins.android.design.BannerKind
+import dev.reins.android.design.BlobAvatar
+import dev.reins.android.design.ButtonStyle
+import dev.reins.android.design.CapsuleButton
+import dev.reins.android.design.ConfirmDialog
+import dev.reins.android.design.Glyph
+import dev.reins.android.design.GlyphIcon
+import dev.reins.android.design.Group
+import dev.reins.android.design.Hairline
+import dev.reins.android.design.LocalColors
+import dev.reins.android.design.RText
+import dev.reins.android.design.RTextField
+import dev.reins.android.design.RType
+import dev.reins.android.design.Screen
+import dev.reins.android.design.ServiceAvatar
+import dev.reins.android.design.pressable
+import dev.reins.android.platform.GoogleAuthorizer
+import dev.reins.android.platform.PhoneBridge
+import dev.reins.android.state.AppState
+import dev.reins.android.ui.common.untrusted
+import dev.reins.core.AccountView
+import dev.reins.core.GmailStatus
+import dev.reins.core.ServiceView
 
 /** The accounts of one integration and the way to add another, which depends on the kind of service. */
 @Composable
@@ -74,7 +74,7 @@ fun ServiceScreen(viewModel: ServiceViewModel, state: AppState, onBack: () -> Un
         }
     }
     val permissions = rememberLauncherForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) { granted ->
-        if (granted.values.all { it }) viewModel.addDevice() else viewModel.fail("Android did not allow it. You can allow it in the phone's settings for Rewarden.")
+        if (granted.values.all { it }) viewModel.addDevice() else viewModel.fail("Android did not allow it. You can allow it in the phone's settings for Reins.")
     }
 
     Screen(title = service.name, subtitle = "Integration", onBack = onBack) {
@@ -141,7 +141,7 @@ private fun intro(service: ServiceView): String = when (service.service) {
     "telegram" -> "Sign in with your own Telegram account, the way you do in the Telegram app. It is not a bot."
     "github" -> "Connect a GitHub access token so your AIs can work with your repositories: read code and issues, and, when you approve, change them."
     "gitlab", "codeberg", "bitbucket" ->
-        "Connect a ${service.name} access token so git on your computer can clone, fetch and, when you approve each push, push through the Rewarden desktop app."
+        "Connect a ${service.name} access token so git on your computer can clone, fetch and, when you approve each push, push through the Reins desktop app."
     "device_calendar" -> "Let your AIs see and add events in the calendars on this phone."
     "device_contacts" -> "Let your AIs look up the contacts on this phone."
     "sms" -> "Let your AIs read and send text messages from this phone."
@@ -157,14 +157,14 @@ private fun accountsFooter(service: ServiceView): String = when (service.kind) {
 
 private fun fineprint(service: ServiceView): String = when (service.service) {
     "telegram" ->
-        "Rewarden signs in as you on this phone only; the session is kept encrypted here and never sent to the server. Telegram may limit accounts that are used by automation, so Rewarden only acts when you approve."
+        "Reins signs in as you on this phone only; the session is kept encrypted here and never sent to the server. Telegram may limit accounts that are used by automation, so Reins only acts when you approve."
     "github" -> "The token is kept encrypted on this phone. Every change is shown to you first, and dangerous ones are asked for every time."
     "gitlab", "codeberg", "bitbucket" ->
         "The token is kept encrypted on this phone and never leaves it. Each push is shown to you branch by branch before it goes to ${service.name}."
     "sms" -> "Messages that look like login codes are hidden from lists and are never shared unless you tick them one by one."
     "vault" -> "Your master password is used once to unlock the vault key, which is then kept encrypted on this phone. The password itself is not kept."
     "device_calendar", "device_contacts" -> "Android asks you to allow this. You can take the permission back in the phone's settings at any time."
-    else -> "Rewarden asks Google for access on this phone only. Nothing is stored on the server."
+    else -> "Reins asks Google for access on this phone only. Nothing is stored on the server."
 }
 
 @Composable
@@ -207,24 +207,24 @@ fun looksLikeGithubToken(text: String?): Boolean {
     return t.length in 30..255 && Regex("^(github_pat_|ghp_|gho_|ghu_|ghs_)[A-Za-z0-9_]+$").matches(t)
 }
 
-/** GitHub's own page for a new fine-grained token, filled in with what Rewarden needs. */
-fun githubTokenUrl(suffix: Int = (100_000..999_999).random()): String = GITHUB_TOKEN_URL.replace("name=Rewarden&", "name=Rewarden-$suffix&")
+/** GitHub's own page for a new fine-grained token, filled in with what Reins needs. */
+fun githubTokenUrl(suffix: Int = (100_000..999_999).random()): String = GITHUB_TOKEN_URL.replace("name=Reins&", "name=Reins-$suffix&")
 
 /**
  * The fine-grained token page. GitHub refuses a second token with the same name, so [githubTokenUrl] gives each one its
  * own number. Write access where the tools change something, read for the alert lists, metadata is always read.
  */
 const val GITHUB_TOKEN_URL =
-    "https://github.com/settings/personal-access-tokens/new?name=Rewarden&description=Lets+my+AI+work+with+my+repositories+through+the+Rewarden+app&expires_in=180" +
+    "https://github.com/settings/personal-access-tokens/new?name=Reins&description=Lets+my+AI+work+with+my+repositories+through+the+Reins+app&expires_in=180" +
         "&metadata=read&contents=write&issues=write&pull_requests=write&actions=write&workflows=write&administration=write" +
         "&repository_hooks=write&secrets=write&variables=write&environments=write&checks=write&statuses=write" +
         "&security_events=read&vulnerability_alerts=read&secret_scanning_alerts=read"
 
 /** The classic token page: one token for everything, including the account-level things fine-grained tokens cannot do. */
-fun githubClassicTokenUrl(suffix: Int = (100_000..999_999).random()): String = GITHUB_CLASSIC_TOKEN_URL.replace("description=Rewarden&", "description=Rewarden-$suffix&")
+fun githubClassicTokenUrl(suffix: Int = (100_000..999_999).random()): String = GITHUB_CLASSIC_TOKEN_URL.replace("description=Reins&", "description=Reins-$suffix&")
 
 const val GITHUB_CLASSIC_TOKEN_URL =
-    "https://github.com/settings/tokens/new?description=Rewarden&scopes=repo,workflow,gist,notifications,read:org,admin:repo_hook,delete_repo"
+    "https://github.com/settings/tokens/new?description=Reins&scopes=repo,workflow,gist,notifications,read:org,admin:repo_hook,delete_repo"
 
 internal fun clipboardText(context: android.content.Context): String? = try {
     val manager = context.getSystemService(android.content.ClipboardManager::class.java)

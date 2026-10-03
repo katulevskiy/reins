@@ -158,7 +158,7 @@ final class LiveOnboardingUITests: XCTestCase {
         scrollTo("connectComputer")
         let desktop = app.descendants(matching: .any).matching(NSPredicate(format: "identifier BEGINSWITH 'connection:'")).firstMatch
         XCTAssertTrue(desktop.waitForExistence(timeout: 10), "no AI connection in Settings")
-        XCTAssertTrue(desktop.label.contains("Rewarden desktop app"), "the connection is the computer: \(desktop.label)")
+        XCTAssertTrue(desktop.label.contains("Reins desktop app"), "the connection is the computer: \(desktop.label)")
         shot("08-settings-connections")
     }
 }

@@ -1,4 +1,4 @@
-package dev.rewarden.android.ui.mcp
+package dev.reins.android.ui.mcp
 
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
@@ -29,30 +29,30 @@ import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
-import dev.rewarden.android.design.Banner
-import dev.rewarden.android.design.BannerKind
-import dev.rewarden.android.design.ButtonStyle
-import dev.rewarden.android.design.CapsuleButton
-import dev.rewarden.android.design.ConfirmDialog
-import dev.rewarden.android.design.Glyph
-import dev.rewarden.android.design.GlyphIcon
-import dev.rewarden.android.design.Group
-import dev.rewarden.android.design.Hairline
-import dev.rewarden.android.design.LocalColors
-import dev.rewarden.android.design.RColors
-import dev.rewarden.android.design.RText
-import dev.rewarden.android.design.RTextField
-import dev.rewarden.android.design.RType
-import dev.rewarden.android.design.Screen
-import dev.rewarden.android.design.ServiceAvatar
-import dev.rewarden.android.design.Tag
-import dev.rewarden.android.design.Toggle
-import dev.rewarden.android.design.pressable
-import dev.rewarden.android.platform.Browser
-import dev.rewarden.android.state.AppState
-import dev.rewarden.android.ui.common.untrusted
-import dev.rewarden.core.McpServerView
-import dev.rewarden.core.McpToolView
+import dev.reins.android.design.Banner
+import dev.reins.android.design.BannerKind
+import dev.reins.android.design.ButtonStyle
+import dev.reins.android.design.CapsuleButton
+import dev.reins.android.design.ConfirmDialog
+import dev.reins.android.design.Glyph
+import dev.reins.android.design.GlyphIcon
+import dev.reins.android.design.Group
+import dev.reins.android.design.Hairline
+import dev.reins.android.design.LocalColors
+import dev.reins.android.design.RColors
+import dev.reins.android.design.RText
+import dev.reins.android.design.RTextField
+import dev.reins.android.design.RType
+import dev.reins.android.design.Screen
+import dev.reins.android.design.ServiceAvatar
+import dev.reins.android.design.Tag
+import dev.reins.android.design.Toggle
+import dev.reins.android.design.pressable
+import dev.reins.android.platform.Browser
+import dev.reins.android.state.AppState
+import dev.reins.android.ui.common.untrusted
+import dev.reins.core.McpServerView
+import dev.reins.core.McpToolView
 
 private fun statusTint(status: String, c: RColors): Color = when (status) {
     "ok" -> c.success
@@ -79,7 +79,7 @@ fun McpServersSection(servers: List<McpServerView>, onOpen: (String) -> Unit, on
     val c = LocalColors.current
     Group(
         header = "MCP servers",
-        footer = "Tools of the MCP servers you add here are offered to your AIs through Rewarden. You approve each call, the way you approve everything else.",
+        footer = "Tools of the MCP servers you add here are offered to your AIs through Reins. You approve each call, the way you approve everything else.",
     ) {
         if (servers.isEmpty()) {
             Column(Modifier.padding(16.dp).testTag("noMcp")) {
@@ -155,7 +155,7 @@ fun McpAddScreen(viewModel: McpViewModel, onBack: () -> Unit, onAdded: (String) 
     Screen(title = "Add MCP server", subtitle = "Integrations", onBack = onBack) {
         Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
             RText(
-                "Paste the address the service gives for its MCP server. Rewarden connects from this phone; if the server wants you to sign in, its page opens here.",
+                "Paste the address the service gives for its MCP server. Reins connects from this phone; if the server wants you to sign in, its page opens here.",
                 RType.sans(14f, lineHeight = 20f),
                 c.secondary,
                 Modifier.padding(horizontal = 4.dp, vertical = 4.dp),
@@ -187,7 +187,7 @@ fun McpAddScreen(viewModel: McpViewModel, onBack: () -> Unit, onAdded: (String) 
             }
             if (signingIn != null) {
                 Banner(
-                    "Sign in on the page that opened. When you are done there, Rewarden comes back by itself.",
+                    "Sign in on the page that opened. When you are done there, Reins comes back by itself.",
                     Modifier.padding(top = 6.dp),
                     tag = "mcpSigningIn",
                 )
@@ -252,7 +252,7 @@ fun McpServerScreen(viewModel: McpViewModel, state: AppState, id: String, onBack
         }
         if (signingIn == id) {
             Banner(
-                "Sign in on the page that opened. When you are done there, Rewarden comes back by itself.",
+                "Sign in on the page that opened. When you are done there, Reins comes back by itself.",
                 Modifier.padding(start = 16.dp, end = 16.dp, top = 12.dp),
                 tag = "mcpSigningIn",
             )
@@ -260,7 +260,7 @@ fun McpServerScreen(viewModel: McpViewModel, state: AppState, id: String, onBack
         error?.let { Banner(untrusted(it), Modifier.padding(start = 16.dp, end = 16.dp, top = 12.dp), BannerKind.Error, tag = "mcpError") }
         Group(
             header = "Tools (${server.tools.size})",
-            footer = "Your AIs can ask to use these tools. Tools that only read need a read permission; anything else is a change you approve. Large results go through your Rewarden server instead of this phone.",
+            footer = "Your AIs can ask to use these tools. Tools that only read need a read permission; anything else is a change you approve. Large results go through your Reins server instead of this phone.",
         ) {
             if (server.tools.isEmpty()) {
                 RText(

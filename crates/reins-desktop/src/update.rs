@@ -1,8 +1,8 @@
-//! Releases and `rewarden update`.
+//! Releases and `reins update`.
 //!
 //! A release is published (by `scripts/release-desktop.sh`) as `<releases>/latest.json`: a manifest naming one static
 //! binary per platform with its SHA-256, signed with the release key whose public half is built into this binary. So
-//! `rewarden update` installs only what the release key signed, never an older build than the running one, and never a
+//! `reins update` installs only what the release key signed, never an older build than the running one, and never a
 //! file whose hash differs, even if the server that hosts the files were taken over.
 
 use std::collections::BTreeMap;
@@ -13,28 +13,28 @@ use data_encoding::{BASE64URL_NOPAD, HEXLOWER_PERMISSIVE};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
-/// Where releases are published (under the official site, `rewarden_proto::official_site!`).
-pub const DEFAULT_RELEASES: &str = concat!(rewarden_proto::official_site!(), "/releases");
+/// Where releases are published (under the official site, `reins_proto::official_site!`).
+pub const DEFAULT_RELEASES: &str = concat!(reins_proto::official_site!(), "/releases");
 
 /// The release key (Ed25519, hex). Its private half signs every published manifest.
 pub const RELEASE_KEY: &str = "dec78a718eb46f7f3b676ddc692d1844fbd169a945b88a02d7b87e98e9f107ab";
 
 /// Prefixed to the manifest before signing, so the key signs nothing else by accident.
-pub const SIGNING_CONTEXT: &[u8] = b"rewarden-release/1\n";
+pub const SIGNING_CONTEXT: &[u8] = b"reins-release/1\n";
 
-/// Largest binary `rewarden update` downloads.
+/// Largest binary `reins update` downloads.
 const MAX_BINARY: u64 = 64 << 20;
 
 /// This binary's version, release id and release time (0 for a local build).
 pub const VERSION: &str = env!("CARGO_PKG_VERSION");
-pub const BUILD: &str = env!("REWARDEN_BUILD");
+pub const BUILD: &str = env!("REINS_BUILD");
 #[must_use]
 pub fn build_time() -> i64 {
-    env!("REWARDEN_BUILD_TIME").parse().unwrap_or(0)
+    env!("REINS_BUILD_TIME").parse().unwrap_or(0)
 }
 
 /// `0.1.0 (0.1.0-202609301800-b20e06b5)`, for `--version`.
-pub const LONG_VERSION: &str = concat!(env!("CARGO_PKG_VERSION"), " (", env!("REWARDEN_BUILD"), ")");
+pub const LONG_VERSION: &str = concat!(env!("CARGO_PKG_VERSION"), " (", env!("REINS_BUILD"), ")");
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Asset {
@@ -92,7 +92,7 @@ pub fn open(signed_json: &[u8], public_key: &[u8]) -> Result<Manifest, String> {
     message.extend_from_slice(signed.manifest.as_bytes());
     ring::signature::UnparsedPublicKey::new(&ring::signature::ED25519, public_key)
         .verify(&message, &signature)
-        .map_err(|_| "the release is not signed with the Rewarden release key; refusing it".to_owned())?;
+        .map_err(|_| "the release is not signed with the Reins release key; refusing it".to_owned())?;
     let manifest: Manifest =
         serde_json::from_str(&signed.manifest).map_err(|_| "the release manifest is malformed".to_owned())?;
     for asset in manifest.assets.values() {
@@ -193,7 +193,7 @@ pub fn replace_executable(exe: &Path, bytes: &[u8]) -> Result<(), String> {
         return replace_moving_aside(exe, bytes);
     }
     let dir = exe.parent().ok_or("the executable has no directory")?;
-    let mut tmp = tempfile::Builder::new().prefix(".rewarden-update-").tempfile_in(dir).map_err(|e| {
+    let mut tmp = tempfile::Builder::new().prefix(".reins-update-").tempfile_in(dir).map_err(|e| {
         format!(
             "cannot write next to {}: {e} (reinstall with the install script, or run with permission to write there)",
             exe.display()
@@ -210,7 +210,7 @@ pub fn replace_executable(exe: &Path, bytes: &[u8]) -> Result<(), String> {
     Ok(())
 }
 
-/// The name an executable that is moved aside gets: `rewarden.exe.<pid>-<nanoseconds>.old`, next to it.
+/// The name an executable that is moved aside gets: `reins.exe.<pid>-<nanoseconds>.old`, next to it.
 fn aside_name(file_name: &str) -> String {
     let nanos = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.subsec_nanos());
     format!("{file_name}.{}-{nanos}.old", std::process::id())
@@ -224,7 +224,7 @@ pub fn replace_moving_aside(exe: &Path, bytes: &[u8]) -> Result<(), String> {
     let dir = exe.parent().ok_or("the executable has no directory")?;
     let name = exe.file_name().and_then(|n| n.to_str()).ok_or("the executable has no file name")?;
     remove_set_aside(exe);
-    let mut tmp = tempfile::Builder::new().prefix(".rewarden-update-").tempfile_in(dir).map_err(|e| {
+    let mut tmp = tempfile::Builder::new().prefix(".reins-update-").tempfile_in(dir).map_err(|e| {
         format!(
             "cannot write next to {}: {e} (reinstall with the install script, or run with permission to write there)",
             exe.display()
@@ -280,12 +280,12 @@ pub fn current_executable() -> Result<PathBuf, String> {
     })
 }
 
-/// Where the Reins app (which brings its own `rewarden`) is downloaded.
-pub const APP_DOWNLOADS: &str = concat!(rewarden_proto::official_site!(), "/download");
+/// Where the Reins app (which brings its own `reins`) is downloaded.
+pub const APP_DOWNLOADS: &str = concat!(reins_proto::official_site!(), "/download");
 
-/// The Reins desktop app's executable names, next to the `rewarden` it ships (the macOS bundle's `Contents/MacOS`,
+/// The Reins desktop app's executable names, next to the `reins` it ships (the macOS bundle's `Contents/MacOS`,
 /// the Windows install directory, the AppImage's `usr/bin`).
-const APP_EXECUTABLES: [&str; 3] = ["Reins", "Reins.exe", "reins-app"];
+const APP_EXECUTABLES: [&str; 2] = ["reins-app", "reins-app.exe"];
 
 /// Whether `exe` came with the Reins app. The app updates it (a new app brings a new one); replacing it in place
 /// would break the macOS bundle's signature and be undone by the Windows installer.
@@ -299,12 +299,12 @@ mod tests {
     use ring::signature::KeyPair as _;
 
     #[test]
-    fn a_rewarden_next_to_the_app_is_the_apps() {
+    fn a_reins_next_to_the_app_is_the_apps() {
         let dir = tempfile::tempdir().unwrap();
-        let exe = dir.path().join("rewarden");
+        let exe = dir.path().join("reins");
         std::fs::write(&exe, b"").unwrap();
         assert!(!installed_with_app(&exe));
-        std::fs::write(dir.path().join("Reins"), b"").unwrap();
+        std::fs::write(dir.path().join("reins-app"), b"").unwrap();
         assert!(installed_with_app(&exe));
     }
 
@@ -335,7 +335,7 @@ mod tests {
             assets: BTreeMap::from([(
                 "linux-x86_64".to_owned(),
                 Asset {
-                    file: "rewarden-0.1.0-1-abc-linux-x86_64".into(),
+                    file: "reins-0.1.0-1-abc-linux-x86_64".into(),
                     sha256: "a".repeat(64),
                     size: 3,
                 },
@@ -367,7 +367,7 @@ mod tests {
     #[test]
     fn the_executable_is_replaced_whole_and_kept_executable() {
         let dir = tempfile::tempdir().unwrap();
-        let exe = dir.path().join("rewarden");
+        let exe = dir.path().join("reins");
         std::fs::write(&exe, b"old").unwrap();
         replace_executable(&exe, b"new binary").unwrap();
         assert_eq!(std::fs::read(&exe).unwrap(), b"new binary");
@@ -389,10 +389,10 @@ mod tests {
     #[test]
     fn a_program_is_replaced_by_moving_the_old_one_aside() {
         let dir = tempfile::tempdir().unwrap();
-        let exe = dir.path().join("rewarden.exe");
+        let exe = dir.path().join("reins.exe");
         std::fs::write(&exe, b"old").unwrap();
         // What an earlier update left next to it, and someone else's file.
-        std::fs::write(dir.path().join("rewarden.exe.1-2.old"), b"older").unwrap();
+        std::fs::write(dir.path().join("reins.exe.1-2.old"), b"older").unwrap();
         std::fs::write(dir.path().join("notes.old"), b"keep").unwrap();
         replace_moving_aside(&exe, b"new binary").unwrap();
         assert_eq!(std::fs::read(&exe).unwrap(), b"new binary");
@@ -401,12 +401,12 @@ mod tests {
             .map(|e| e.unwrap().file_name().to_string_lossy().into_owned())
             .collect();
         left.sort();
-        assert_eq!(left, ["notes.old", "rewarden.exe"], "the old copies are gone, nothing else");
+        assert_eq!(left, ["notes.old", "reins.exe"], "the old copies are gone, nothing else");
         // A first install: nothing to move aside.
-        let fresh = dir.path().join("rewarden-daemon.exe");
+        let fresh = dir.path().join("reins-daemon.exe");
         replace_moving_aside(&fresh, b"gui").unwrap();
         assert_eq!(std::fs::read(&fresh).unwrap(), b"gui");
-        let aside = aside_name("rewarden.exe");
-        assert!(aside.starts_with("rewarden.exe.") && Path::new(&aside).extension().is_some_and(|e| e == "old"));
+        let aside = aside_name("reins.exe");
+        assert!(aside.starts_with("reins.exe.") && Path::new(&aside).extension().is_some_and(|e| e == "old"));
     }
 }

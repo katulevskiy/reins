@@ -1,4 +1,4 @@
-//! Universal MCP against a fake MCP server, a fake OAuth authorization server and a fake Rewarden server: adding a
+//! Universal MCP against a fake MCP server, a fake OAuth authorization server and a fake Reins server: adding a
 //! server (OAuth or a token), the tools in the services report, calls covered by a grant, parked and approved, asked
 //! every time, refused, large results and heavy tools, refreshing tokens and removing a server.
 
@@ -8,11 +8,11 @@ use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
-use common::mcp_mock::{AuthTokens, McpState, bodies, mcp_request, mount_auth, mount_mcp, mount_rewarden};
+use common::mcp_mock::{AuthTokens, McpState, bodies, mcp_request, mount_auth, mount_mcp, mount_reins};
 use common::{FakeGoogle, FakeKeys, RecordingNotifier};
 use data_encoding::BASE64URL_NOPAD;
-use rewarden_core::{
-    ApprovalChoice, ApprovalKind, CoreConfig, CoreError, GrantScopeChoice, McpAddStep, McpServerView, RewardenCore,
+use reins_core::{
+    ApprovalChoice, ApprovalKind, CoreConfig, CoreError, GrantScopeChoice, McpAddStep, McpServerView, ReinsCore,
     StandingGrant,
 };
 use serde_json::{Value, json};
@@ -30,7 +30,7 @@ struct World {
     mcp: MockServer,
     auth: MockServer,
     state: Arc<Mutex<McpState>>,
-    core: Arc<RewardenCore>,
+    core: Arc<ReinsCore>,
     _dir: tempfile::TempDir,
 }
 
@@ -39,11 +39,11 @@ impl World {
         let (rw, mcp, auth) = (MockServer::start().await, MockServer::start().await, MockServer::start().await);
         let state = Arc::new(Mutex::new(McpState::default()));
         configure(&mut state.lock().unwrap());
-        mount_rewarden(&rw).await;
+        mount_reins(&rw).await;
         mount_mcp(&mcp, &auth, &state).await;
         mount_auth(&auth, &TOKENS).await;
         let dir = tempfile::tempdir().unwrap();
-        let core = RewardenCore::with_connectors(
+        let core = ReinsCore::with_connectors(
             dir.path().to_str().unwrap(),
             &FakeKeys,
             Arc::new(FakeGoogle::new()),
@@ -112,16 +112,16 @@ impl World {
 
     /// The phone's answer to request `id`.
     async fn answer(&self, id: &str) -> Value {
-        bodies(&self.rw, "POST", &format!("/rewarden/api/requests/{id}/response")).await.pop().expect("answered")
+        bodies(&self.rw, "POST", &format!("/reins/api/requests/{id}/response")).await.pop().expect("answered")
     }
 
     async fn answered(&self, id: &str) -> bool {
-        !bodies(&self.rw, "POST", &format!("/rewarden/api/requests/{id}/response")).await.is_empty()
+        !bodies(&self.rw, "POST", &format!("/reins/api/requests/{id}/response")).await.is_empty()
     }
 
     /// The last services report.
     async fn report(&self) -> Value {
-        bodies(&self.rw, "PUT", "/rewarden/api/services").await.pop().expect("reported")
+        bodies(&self.rw, "PUT", "/reins/api/services").await.pop().expect("reported")
     }
 
     async fn is_pending(&self, id: &str) -> bool {
@@ -191,7 +191,7 @@ async fn a_server_is_added_with_an_oauth_sign_in_and_its_tools_are_reported() {
     let waiting = w.core.mcp_servers().await.unwrap();
     assert_eq!((waiting[0].status.as_str(), waiting[0].tools.len()), ("needs_sign_in", 0));
     assert!(
-        bodies(&w.rw, "PUT", "/rewarden/api/services").await.iter().all(|r| r.get("mcp").is_none()),
+        bodies(&w.rw, "PUT", "/reins/api/services").await.iter().all(|r| r.get("mcp").is_none()),
         "nothing to report yet"
     );
 
@@ -435,7 +435,7 @@ async fn a_large_result_marks_the_tool_heavy_and_becomes_a_download_link() {
     let result = w.answer("r1").await["result"]["result"].clone();
     let link = &result["content"][0];
     assert_eq!(link["type"], "resource_link");
-    assert_eq!(link["uri"], "https://rw.example/rewarden/blob/dl-export-1.txt");
+    assert_eq!(link["uri"], "https://rw.example/reins/blob/dl-export-1.txt");
     assert_eq!(
         (link["mimeType"].as_str(), link["size"].as_u64()),
         (Some("text/plain; charset=utf-8"), Some(1_200_000))
@@ -446,7 +446,7 @@ async fn a_large_result_marks_the_tool_heavy_and_becomes_a_download_link() {
             .await
             .unwrap()
             .into_iter()
-            .find(|r| r.url.path() == "/rewarden/api/blobs/output")
+            .find(|r| r.url.path() == "/reins/api/blobs/output")
             .unwrap();
     let q: HashMap<String, String> = upload.url.query_pairs().into_owned().collect();
     assert_eq!(
@@ -459,19 +459,16 @@ async fn a_large_result_marks_the_tool_heavy_and_becomes_a_download_link() {
 }
 
 #[tokio::test]
-async fn a_heavy_tool_is_called_through_the_rewarden_server() {
+async fn a_heavy_tool_is_called_through_the_reins_server() {
     let w = World::new(|s| s.valid_token = Some("STATIC-TOKEN".to_owned())).await;
     w.core.mcp_add_with_token(w.url(), "STATIC-TOKEN".to_owned(), Some("Tracker".to_owned())).await.unwrap();
     assert!(w.core.mcp_set_heavy("tracker".to_owned(), "nope".to_owned(), true).await.is_err());
     w.core.mcp_set_heavy("tracker".to_owned(), "export".to_owned(), true).await.unwrap();
     w.relay("r1", "export", &json!({"format": "csv"})).await;
     w.core.approve("r1".to_owned(), once()).await.unwrap();
-    assert_eq!(
-        w.answer("r1").await["result"]["result"]["content"][0]["uri"],
-        "https://rw.example/rewarden/blob/proxied"
-    );
+    assert_eq!(w.answer("r1").await["result"]["result"]["content"][0]["uri"], "https://rw.example/reins/blob/proxied");
     assert!(w.state.lock().unwrap().calls.is_empty(), "the phone did not call it itself");
-    let proxied = bodies(&w.rw, "POST", "/rewarden/api/mcp/call").await.pop().unwrap();
+    let proxied = bodies(&w.rw, "POST", "/reins/api/mcp/call").await.pop().unwrap();
     assert_eq!(proxied["endpoint"], w.url());
     assert_eq!(proxied["connection_id"], "c1");
     assert_eq!(proxied["request"]["method"], "tools/call");

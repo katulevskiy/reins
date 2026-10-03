@@ -1,4 +1,4 @@
-package dev.rewarden.android.platform.update
+package dev.reins.android.platform.update
 
 import java.io.File
 import java.io.IOException

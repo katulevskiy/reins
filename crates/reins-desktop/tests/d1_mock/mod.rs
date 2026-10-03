@@ -1,4 +1,4 @@
-//! A mock Rewarden server for the D1 tests (`ask`, hooks, `mcp`): the token endpoint (refresh with rotation), the
+//! A mock Reins server for the D1 tests (`ask`, hooks, `mcp`): the token endpoint (refresh with rotation), the
 //! desktop calls API whose "phone" answers `desktop_ask` from a script with a sealed `AskAnswer`, and a Streamable HTTP
 //! `/mcp` endpoint. An app is "logged in" by writing its session file directly.
 
@@ -10,9 +10,9 @@ use std::sync::{Arc, Mutex};
 
 use http_body_util::{BodyExt as _, Full};
 use hyper::body::Bytes;
-use rewarden_desktop::config::{Paths, write_private};
-use rewarden_desktop::identity::{Identity, seal_to};
-use rewarden_proto::desktop::AskAnswer;
+use reins_desktop::config::{Paths, write_private};
+use reins_desktop::identity::{Identity, seal_to};
+use reins_proto::desktop::AskAnswer;
 use serde_json::{Value, json};
 
 /// What the phone does with one question: the first step answers the call, each poll the next (the last repeats).
@@ -147,9 +147,9 @@ pub fn logged_in(mock: &Mock, expires_in: i64) -> App {
     let session = json!({
         "server": mock.base,
         "client_id": "client-1",
-        "token_endpoint": format!("{}/rewarden/oauth/token", mock.base),
+        "token_endpoint": format!("{}/reins/oauth/token", mock.base),
         "access_token": access,
-        "access_expires_at": rewarden_desktop::now_unix() + expires_in,
+        "access_expires_at": reins_desktop::now_unix() + expires_in,
         "refresh_token": refresh,
     });
     write_private(&paths.session_file(), session.to_string().as_bytes()).unwrap();
@@ -200,13 +200,13 @@ async fn handle(state: &Mutex<State>, req: hyper::Request<hyper::body::Incoming>
     let method = req.method().as_str().to_owned();
     let path = req.uri().path().to_owned();
     let auth = header(&req, "authorization");
-    let via = header(&req, "x-rewarden-via");
+    let via = header(&req, "x-reins-via");
     let session = header(&req, "mcp-session-id");
     let protocol = header(&req, "mcp-protocol-version");
     let accept = header(&req, "accept");
     let body = req.into_body().collect().await.map(http_body_util::Collected::to_bytes).unwrap_or_default();
     let mut s = state.lock().unwrap();
-    if path == "/rewarden/oauth/token" {
+    if path == "/reins/oauth/token" {
         return token(&mut s, &body);
     }
     let ok = auth.as_deref().and_then(|a| a.strip_prefix("Bearer ")).is_some_and(|t| s.access.contains(t));
@@ -218,9 +218,9 @@ async fn handle(state: &Mutex<State>, req: hyper::Request<hyper::body::Incoming>
         return unauthorized();
     }
     match (method.as_str(), path.as_str()) {
-        ("POST", "/rewarden/desktop/calls") => submit(&mut s, &body),
-        ("GET", p) if p.starts_with("/rewarden/desktop/calls/") => {
-            let id = p["/rewarden/desktop/calls/".len()..].to_owned();
+        ("POST", "/reins/desktop/calls") => submit(&mut s, &body),
+        ("GET", p) if p.starts_with("/reins/desktop/calls/") => {
+            let id = p["/reins/desktop/calls/".len()..].to_owned();
             s.polls.push(id.clone());
             if s.requests.contains_key(&id) {
                 answer(&mut s, &id)
@@ -273,7 +273,7 @@ fn token(s: &mut State, body: &[u8]) -> Resp {
 fn submit(s: &mut State, body: &[u8]) -> Resp {
     let doc: Value = serde_json::from_slice(body).unwrap_or_default();
     let tool = doc["tool"].as_str().unwrap_or_default();
-    let Some(spec) = rewarden_proto::connector::spec_for_tool(tool).filter(|s| s.desktop_only) else {
+    let Some(spec) = reins_proto::connector::spec_for_tool(tool).filter(|s| s.desktop_only) else {
         return json_resp(400, &json!({"error": "unknown_tool"}));
     };
     if tool != "desktop_ask" {
@@ -335,7 +335,7 @@ fn mcp(s: &mut State, session: Option<&str>, doc: &Value) -> Resp {
         let body = json!({"jsonrpc": "2.0", "id": id, "result": {
             "protocolVersion": "2025-06-18",
             "capabilities": {"tools": {}},
-            "serverInfo": {"name": "rewarden", "version": "test"},
+            "serverInfo": {"name": "reins", "version": "test"},
         }});
         return hyper::Response::builder()
             .status(200)

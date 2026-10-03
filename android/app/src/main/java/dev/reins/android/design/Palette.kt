@@ -1,11 +1,11 @@
-package dev.rewarden.android.design
+package dev.reins.android.design
 
 import androidx.compose.runtime.Immutable
 import androidx.compose.runtime.staticCompositionLocalOf
 import androidx.compose.ui.graphics.Color
 
 /**
- * Rewarden Light / Rewarden Dark: cool neutrals and one violet accent (the same family as the other apps by this
+ * Reins Light / Reins Dark: cool neutrals and one violet accent (the same family as the other apps by this
  * author). Colour only; nothing here affects layout.
  */
 @Immutable

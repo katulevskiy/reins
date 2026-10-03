@@ -1,4 +1,4 @@
-//! `rewarden ssh setup|unsetup|status`: a marked `Host *` block with `IdentityAgent` at the end of `~/.ssh/config`,
+//! `reins ssh setup|unsetup|status`: a marked `Host *` block with `IdentityAgent` at the end of `~/.ssh/config`,
 //! so ssh asks this app's agent for keys (more specific settings earlier in the file still win). Setting up twice
 //! changes nothing, a moved socket updates the block, and `unsetup` removes exactly the block and nothing else.
 
@@ -6,8 +6,8 @@ use std::path::{Path, PathBuf};
 
 use crate::config::{Config, Paths};
 
-pub const BEGIN: &str = "# >>> rewarden ssh agent: keys on your phone (`rewarden ssh unsetup` removes this block) >>>";
-pub const END: &str = "# <<< rewarden ssh agent <<<";
+pub const BEGIN: &str = "# >>> reins ssh agent: keys on your phone (`reins ssh unsetup` removes this block) >>>";
+pub const END: &str = "# <<< reins ssh agent <<<";
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Change {
@@ -18,7 +18,7 @@ pub enum Change {
 
 #[derive(Clone, Debug, clap::Subcommand)]
 pub enum SshCmd {
-    /// Make ssh use Rewarden's agent (an `IdentityAgent` block in ~/.ssh/config).
+    /// Make ssh use Reins's agent (an `IdentityAgent` block in ~/.ssh/config).
     Setup,
     /// Remove exactly the block `setup` added.
     Unsetup,
@@ -181,7 +181,7 @@ pub fn effective_agent(file: &Path) -> Option<String> {
         .arg("-G")
         .arg("-F")
         .arg(file)
-        .arg("rewarden-check.invalid")
+        .arg("reins-check.invalid")
         .stdin(std::process::Stdio::null())
         .stderr(std::process::Stdio::null())
         .output()
@@ -214,7 +214,7 @@ fn running(_socket: &Path) -> bool {
     false
 }
 
-/// Runs `rewarden ssh …`; the lines to print.
+/// Runs `reins ssh …`; the lines to print.
 pub fn run(cmd: &SshCmd, paths: &Paths, config: &Config, home: &Path) -> Result<Vec<String>, String> {
     let socket = super::socket_path(paths, &config.ssh);
     let file = config_file(home);
@@ -223,9 +223,9 @@ pub fn run(cmd: &SshCmd, paths: &Paths, config: &Config, home: &Path) -> Result<
     match cmd {
         SshCmd::Setup => {
             let line = match setup(&file, &socket)? {
-                Change::Added => format!("{shown}: ssh now asks Rewarden's agent for keys ({}).", socket.display()),
-                Change::Updated => format!("{shown}: updated to Rewarden's agent at {}.", socket.display()),
-                Change::Unchanged => format!("{shown} already points ssh at Rewarden's agent."),
+                Change::Added => format!("{shown}: ssh now asks Reins's agent for keys ({}).", socket.display()),
+                Change::Updated => format!("{shown}: updated to Reins's agent at {}.", socket.display()),
+                Change::Unchanged => format!("{shown} already points ssh at Reins's agent."),
             };
             out.push(line);
             out.extend(warnings(&file, &socket, config));
@@ -237,13 +237,13 @@ pub fn run(cmd: &SshCmd, paths: &Paths, config: &Config, home: &Path) -> Result<
                     socket.display()
                 ));
             }
-            out.push("Your phone lists the keys and signs each login. `rewarden ssh unsetup` undoes this.".to_owned());
+            out.push("Your phone lists the keys and signs each login. `reins ssh unsetup` undoes this.".to_owned());
         }
         SshCmd::Unsetup => {
             out.push(if unsetup(&file)? {
-                format!("{shown}: removed Rewarden's agent; ssh uses its usual keys again.")
+                format!("{shown}: removed Reins's agent; ssh uses its usual keys again.")
             } else {
-                format!("{shown} has no Rewarden block.")
+                format!("{shown} has no Reins block.")
             });
         }
         SshCmd::Status => {
@@ -252,12 +252,12 @@ pub fn run(cmd: &SshCmd, paths: &Paths, config: &Config, home: &Path) -> Result<
             } else if running(&socket) {
                 "running"
             } else {
-                "not running (start the daemon: `rewarden resume`)"
+                "not running (start the daemon: `reins resume`)"
             };
             out.push(format!("Agent:      {} ({state})", socket.display()));
             out.push(match current(&file)? {
                 Some(s) => format!("ssh config: {shown} uses {s}"),
-                None => "ssh config: not set up (`rewarden ssh setup`)".to_owned(),
+                None => "ssh config: not set up (`reins ssh setup`)".to_owned(),
             });
             out.extend(warnings(&file, &socket, config));
         }
@@ -275,7 +275,7 @@ fn warnings(file: &Path, socket: &Path, config: &Config) -> Vec<String> {
         && !same_agent(&effective, socket)
     {
         out.push(format!(
-            "Note: an earlier `IdentityAgent` in {} wins ({effective}); remove it for ssh to use Rewarden's agent.",
+            "Note: an earlier `IdentityAgent` in {} wins ({effective}); remove it for ssh to use Reins's agent.",
             file.display()
         ));
     }
@@ -290,7 +290,7 @@ mod tests {
     fn setup_appends_a_block_and_unsetup_restores_the_file() {
         let dir = tempfile::tempdir().unwrap();
         let file = dir.path().join(".ssh/config");
-        let socket = Path::new("/run/user/1000/rewarden/ssh-agent.sock");
+        let socket = Path::new("/run/user/1000/reins/ssh-agent.sock");
         assert_eq!(setup(&file, socket).unwrap(), Change::Added);
         assert_eq!(std::fs::read_to_string(&file).unwrap(), block(socket).unwrap());
         #[cfg(unix)]
@@ -308,7 +308,7 @@ mod tests {
         assert_eq!(setup(&file, socket).unwrap(), Change::Unchanged);
         let text = std::fs::read_to_string(&file).unwrap();
         assert!(text.starts_with(user) && text.ends_with(&block(socket).unwrap()), "{text}");
-        assert_eq!(current(&file).unwrap().as_deref(), Some("/run/user/1000/rewarden/ssh-agent.sock"));
+        assert_eq!(current(&file).unwrap().as_deref(), Some("/run/user/1000/reins/ssh-agent.sock"));
 
         let moved = Path::new("/tmp/100%/agent.sock");
         assert_eq!(setup(&file, moved).unwrap(), Change::Updated);

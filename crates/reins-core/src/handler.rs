@@ -4,11 +4,11 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 
-use rewarden_policy::{MessageFacts, SendDecision};
-use rewarden_proto::gmail::{MessageSummary, OutgoingEmail, ToolCall, normalize_account};
-use rewarden_proto::pairing::PairingRequest;
-use rewarden_proto::relay::{AccountInfo, IntegrationInfo, RelayOutcome, RelayRequest, RelayResponse, ToolResult};
-use rewarden_proto::{PROTOCOL_VERSION, check_version};
+use reins_policy::{MessageFacts, SendDecision};
+use reins_proto::gmail::{MessageSummary, OutgoingEmail, ToolCall, normalize_account};
+use reins_proto::pairing::PairingRequest;
+use reins_proto::relay::{AccountInfo, IntegrationInfo, RelayOutcome, RelayRequest, RelayResponse, ToolResult};
+use reins_proto::{PROTOCOL_VERSION, check_version};
 
 use crate::connector::flow;
 use crate::engine::Engine;
@@ -24,7 +24,7 @@ use crate::{CoreError, text};
 pub(crate) fn ai_message(e: &CoreError) -> String {
     match e {
         CoreError::GmailNeedsConsent => {
-            "Gmail is not connected on the phone. Ask the user to open the Rewarden app and connect Gmail.".to_owned()
+            "Gmail is not connected on the phone. Ask the user to open the Reins app and connect Gmail.".to_owned()
         }
         CoreError::Network {
             ..
@@ -49,7 +49,7 @@ impl Engine {
         mut request: RelayRequest,
     ) -> Result<(), CoreError> {
         if check_version(request.v).is_err() {
-            return self.reject(session, &request, "This version of the Rewarden app is too old for the server.").await;
+            return self.reject(session, &request, "This version of the Reins app is too old for the server.").await;
         }
         // Defense in depth: the server normalizes too, but a call is never trusted as received.
         let Ok(call) = request.call.clone().normalized() else {
@@ -281,7 +281,7 @@ impl Engine {
         action: &str,
         detail: &str,
         parsed: Vec<ParsedMessage>,
-        build: impl FnOnce(Vec<MessageSummary>, Vec<rewarden_proto::gmail::MessageFull>) -> ToolResult,
+        build: impl FnOnce(Vec<MessageSummary>, Vec<reins_proto::gmail::MessageFull>) -> ToolResult,
     ) -> Result<(), CoreError> {
         let facts: Vec<MessageFacts> = parsed.iter().map(|p| p.facts.clone()).collect();
         let decision = self.store.evaluate_read_and_reserve(
@@ -547,7 +547,7 @@ fn plural(n: usize, one: &str, many: &str) -> String {
 }
 
 /// The grant to credit an answer to: the first one that named a shared account (or all of them).
-fn used_first(coverage: &rewarden_policy::AccountCoverage, shared: &[String]) -> Option<String> {
+fn used_first(coverage: &reins_policy::AccountCoverage, shared: &[String]) -> Option<String> {
     coverage
         .grants
         .iter()

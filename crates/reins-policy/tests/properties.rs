@@ -4,12 +4,12 @@ use proptest::collection::{btree_set, vec};
 use proptest::option;
 use proptest::prelude::*;
 use proptest::sample::select;
-use rewarden_policy::{
+use reins_policy::{
     AddrRule, Grant, MessageFacts, Pattern, ReadScope, Scope, SendDecision, SendScope, evaluate_read, evaluate_send,
 };
-use rewarden_proto::gmail::OutgoingEmail;
-use rewarden_proto::ids::{ConnectionId, GrantId};
-use rewarden_proto::normalize_address;
+use reins_proto::gmail::OutgoingEmail;
+use reins_proto::ids::{ConnectionId, GrantId};
+use reins_proto::normalize_address;
 
 const LOCALS: [&str; 3] = ["alice", "bob", "eve"];
 const DOMAINS: [&str; 4] = ["bank.com", "evil.com", "sub.bank.com", "bank.com.evil.com"];

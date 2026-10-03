@@ -1,10 +1,10 @@
-package dev.rewarden.android.platform
+package dev.reins.android.platform
 
 import android.app.NotificationManager
 import android.content.Context
 import androidx.test.core.app.ApplicationProvider
 import androidx.test.ext.junit.runners.AndroidJUnit4
-import dev.rewarden.android.TestData
+import dev.reins.android.TestData
 import java.util.concurrent.atomic.AtomicInteger
 import org.junit.After
 import org.junit.Assert.assertEquals

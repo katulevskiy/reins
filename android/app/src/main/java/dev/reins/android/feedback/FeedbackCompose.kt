@@ -1,4 +1,4 @@
-package dev.rewarden.android.feedback
+package dev.reins.android.feedback
 
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider

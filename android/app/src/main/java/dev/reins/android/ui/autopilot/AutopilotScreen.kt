@@ -1,4 +1,4 @@
-package dev.rewarden.android.ui.autopilot
+package dev.reins.android.ui.autopilot
 
 import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.core.animateFloat
@@ -40,37 +40,37 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
-import dev.rewarden.android.autopilot.AutopilotText
-import dev.rewarden.android.autopilot.DownloadJob
-import dev.rewarden.android.design.Banner
-import dev.rewarden.android.design.BannerKind
-import dev.rewarden.android.design.ButtonStyle
-import dev.rewarden.android.design.CapsuleButton
-import dev.rewarden.android.design.ConfirmDialog
-import dev.rewarden.android.design.Glyph
-import dev.rewarden.android.design.GlyphIcon
-import dev.rewarden.android.design.Group
-import dev.rewarden.android.design.Hairline
-import dev.rewarden.android.design.ListRow
-import dev.rewarden.android.design.LocalColors
-import dev.rewarden.android.design.RText
-import dev.rewarden.android.design.RTextField
-import dev.rewarden.android.design.RType
-import dev.rewarden.android.design.Screen
-import dev.rewarden.android.design.SectionLabel
-import dev.rewarden.android.design.SelectChip
-import dev.rewarden.android.design.SwitchRow
-import dev.rewarden.android.design.Tag
-import dev.rewarden.android.design.glass
-import dev.rewarden.android.design.pressable
-import dev.rewarden.android.design.rememberNowMillis
-import dev.rewarden.android.feedback.DialogFeedback
-import dev.rewarden.android.ui.common.untrusted
-import dev.rewarden.core.AutopilotMode
-import dev.rewarden.core.AutopilotSettings
-import dev.rewarden.core.ModelState
-import dev.rewarden.core.ModelStatus
-import dev.rewarden.core.ProfileView
+import dev.reins.android.autopilot.AutopilotText
+import dev.reins.android.autopilot.DownloadJob
+import dev.reins.android.design.Banner
+import dev.reins.android.design.BannerKind
+import dev.reins.android.design.ButtonStyle
+import dev.reins.android.design.CapsuleButton
+import dev.reins.android.design.ConfirmDialog
+import dev.reins.android.design.Glyph
+import dev.reins.android.design.GlyphIcon
+import dev.reins.android.design.Group
+import dev.reins.android.design.Hairline
+import dev.reins.android.design.ListRow
+import dev.reins.android.design.LocalColors
+import dev.reins.android.design.RText
+import dev.reins.android.design.RTextField
+import dev.reins.android.design.RType
+import dev.reins.android.design.Screen
+import dev.reins.android.design.SectionLabel
+import dev.reins.android.design.SelectChip
+import dev.reins.android.design.SwitchRow
+import dev.reins.android.design.Tag
+import dev.reins.android.design.glass
+import dev.reins.android.design.pressable
+import dev.reins.android.design.rememberNowMillis
+import dev.reins.android.feedback.DialogFeedback
+import dev.reins.android.ui.common.untrusted
+import dev.reins.core.AutopilotMode
+import dev.reins.core.AutopilotSettings
+import dev.reins.core.ModelState
+import dev.reins.core.ModelStatus
+import dev.reins.core.ProfileView
 
 /**
  * Settings > Autopilot: the global mode, the model that runs on this phone, and the profiles that learn from the
@@ -375,7 +375,7 @@ private fun ModelCard(
 @Composable
 private fun IndeterminateBar(modifier: Modifier = Modifier) {
     val c = LocalColors.current
-    val live = dev.rewarden.android.design.LocalLiveTimers.current
+    val live = dev.reins.android.design.LocalLiveTimers.current
     val phase = if (live) {
         androidx.compose.animation.core.rememberInfiniteTransition(label = "sweep").animateFloat(
             0f,

@@ -8,14 +8,14 @@ use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use common::{FakeGoogle, FakeKeys, RecordingNotifier};
-use rewarden_core::connector::github::GitHub;
-use rewarden_core::connector::github::api::target;
-use rewarden_core::connector::{Connector, Preview};
-use rewarden_core::{
-    ApprovalChoice, CoreConfig, CoreError, GmailStatus, GoogleTokenProvider, GrantScopeChoice, Notifier, RewardenCore,
+use reins_core::connector::github::GitHub;
+use reins_core::connector::github::api::target;
+use reins_core::connector::{Connector, Preview};
+use reins_core::{
+    ApprovalChoice, CoreConfig, CoreError, GmailStatus, GoogleTokenProvider, GrantScopeChoice, Notifier, ReinsCore,
     StandingGrant,
 };
-use rewarden_proto::connector::ConnectorCall;
+use reins_proto::connector::ConnectorCall;
 use serde_json::{Value, json};
 use wiremock::matchers::{body_json, method, path, path_regex, query_param};
 use wiremock::{Mock, MockServer, Request, ResponseTemplate};
@@ -25,7 +25,7 @@ const GH_TOKEN: &str = "ghp_API-TEST-TOKEN";
 struct Env {
     server: MockServer,
     github: MockServer,
-    core: Arc<RewardenCore>,
+    core: Arc<ReinsCore>,
     counter: AtomicU32,
     _dir: tempfile::TempDir,
 }
@@ -45,14 +45,14 @@ async fn env() -> Env {
         .mount(&server)
         .await;
     Mock::given(method("POST"))
-        .and(path_regex(r"^/rewarden/api/requests/[^/]+/response$"))
+        .and(path_regex(r"^/reins/api/requests/[^/]+/response$"))
         .respond_with(ResponseTemplate::new(204))
         .mount(&server)
         .await;
     Mock::given(method("POST"))
-        .and(path("/rewarden/api/blobs/fetch"))
+        .and(path("/reins/api/blobs/fetch"))
         .respond_with(ResponseTemplate::new(200).set_body_json(json!({"id": "blob-archive-0000001",
-            "download_url": "https://rw.example/rewarden/blob/DL", "name": "main", "size": 12_345,
+            "download_url": "https://rw.example/reins/blob/DL", "name": "main", "size": 12_345,
             "sha256": "ef".repeat(32), "content_type": "application/zip", "expires_at": 4_000_000_000_i64})))
         .mount(&server)
         .await;
@@ -71,7 +71,7 @@ async fn env() -> Env {
         backoff_base: Duration::from_millis(1),
         ..CoreConfig::default()
     };
-    let core = RewardenCore::with_config(dir.path().to_str().unwrap(), &FakeKeys, google, notifier, cfg).unwrap();
+    let core = ReinsCore::with_config(dir.path().to_str().unwrap(), &FakeKeys, google, notifier, cfg).unwrap();
     core.login(server.uri(), "me@example.com".to_owned(), "pw".to_owned(), None).await.unwrap();
     core.add_token_account("github".into(), GH_TOKEN.into()).await.unwrap();
     Env {
@@ -89,14 +89,14 @@ impl Env {
         let request = json!({"v": 1, "id": id, "connection_id": "c1", "connection_label": "Claude",
             "created_at": 100, "call": {"tool": "connector", "service": "github", "op": op, "args": args}});
         Mock::given(method("GET"))
-            .and(path("/rewarden/api/pending"))
+            .and(path("/reins/api/pending"))
             .respond_with(ResponseTemplate::new(200).set_body_json(json!({"requests": [request], "pairings": []})))
             .up_to_n_times(1)
             .with_priority(1)
             .mount(&self.server)
             .await;
         Mock::given(method("GET"))
-            .and(path("/rewarden/api/pending"))
+            .and(path("/reins/api/pending"))
             .respond_with(ResponseTemplate::new(200).set_body_json(json!({"requests": [], "pairings": []})))
             .mount(&self.server)
             .await;
@@ -295,8 +295,8 @@ async fn refused_paths_never_reach_github() {
 /// The GitHub connector on its own, signed in against the fake GitHub.
 async fn direct(env: &Env) -> (GitHub, tempfile::TempDir) {
     let dir = tempfile::tempdir().unwrap();
-    let store = Arc::new(rewarden_core::store::Store::open(dir.path(), &FakeKeys).unwrap());
-    let gh = GitHub::new(rewarden_core::http::client().unwrap(), &env.github.uri(), store, Duration::from_millis(1));
+    let store = Arc::new(reins_core::store::Store::open(dir.path(), &FakeKeys).unwrap());
+    let gh = GitHub::new(reins_core::http::client().unwrap(), &env.github.uri(), store, Duration::from_millis(1));
     gh.sign_in(GH_TOKEN).await.unwrap();
     (gh, dir)
 }
@@ -408,7 +408,7 @@ async fn the_kind_of_change_a_preview_names_is_what_permissions_are_checked_agai
             .await;
     }
     Mock::given(method("POST"))
-        .and(path_regex(r"^/rewarden/api/requests/[^/]+/response$"))
+        .and(path_regex(r"^/reins/api/requests/[^/]+/response$"))
         .respond_with(ResponseTemplate::new(204))
         .mount(&server)
         .await;
@@ -416,7 +416,7 @@ async fn the_kind_of_change_a_preview_names_is_what_permissions_are_checked_agai
     let fake = Arc::new(ClassFromPreview::default());
     let google: Arc<dyn GoogleTokenProvider> = Arc::new(FakeGoogle::new());
     let notifier: Arc<dyn Notifier> = Arc::new(RecordingNotifier::default());
-    let core = RewardenCore::with_connectors(
+    let core = ReinsCore::with_connectors(
         dir.path().to_str().unwrap(),
         &FakeKeys,
         google,
@@ -510,7 +510,7 @@ async fn reads_return_githubs_json_cut_when_large_and_files_as_links() {
             .await
             .unwrap()
             .into_iter()
-            .filter(|r| r.url.path() == "/rewarden/api/blobs/fetch")
+            .filter(|r| r.url.path() == "/reins/api/blobs/fetch")
             .count()
     };
     assert_eq!(fetches().await, 0);
@@ -521,7 +521,7 @@ async fn reads_return_githubs_json_cut_when_large_and_files_as_links() {
     let item = env.told().await["result"]["data"]["items"][0].clone();
     assert_eq!(
         (item["download_url"].as_str(), item["encoding"].as_str()),
-        (Some("https://rw.example/rewarden/blob/DL"), Some("link"))
+        (Some("https://rw.example/reins/blob/DL"), Some("link"))
     );
 }
 

@@ -25,7 +25,7 @@ async fn discovery_documents_describe_this_server() {
     let meta: Value =
         client().get(server.url("/.well-known/oauth-authorization-server")).send().await.unwrap().json().await.unwrap();
     assert_eq!(meta["issuer"], server.base);
-    assert_eq!(meta["token_endpoint"], server.url("/rewarden/oauth/token"));
+    assert_eq!(meta["token_endpoint"], server.url("/reins/oauth/token"));
     assert_eq!(meta["code_challenge_methods_supported"], json!(["S256"]));
     assert_eq!(meta["authorization_response_iss_parameter_supported"], json!(true));
 }
@@ -35,12 +35,12 @@ async fn registration_accepts_public_clients_only() {
     let server = Server::start().await;
     assert!(!server.register_client().await.is_empty());
     let bad = json!({"redirect_uris": ["http://evil.example/cb"]});
-    let r = client().post(server.url("/rewarden/oauth/register")).json(&bad).send().await.unwrap();
+    let r = client().post(server.url("/reins/oauth/register")).json(&bad).send().await.unwrap();
     assert_eq!(r.status(), StatusCode::BAD_REQUEST);
     let body: Value = r.json().await.unwrap();
     assert_eq!(body["error"], "invalid_redirect_uri");
     let secret = json!({"redirect_uris": [REDIRECT], "token_endpoint_auth_method": "client_secret_basic"});
-    let r = client().post(server.url("/rewarden/oauth/register")).json(&secret).send().await.unwrap();
+    let r = client().post(server.url("/reins/oauth/register")).json(&secret).send().await.unwrap();
     assert_eq!(r.status(), StatusCode::BAD_REQUEST);
 }
 

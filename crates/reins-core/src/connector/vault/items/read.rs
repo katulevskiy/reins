@@ -3,7 +3,7 @@
 use std::collections::BTreeMap;
 
 use data_encoding::BASE64;
-use rewarden_proto::connector::ConnectorCall;
+use reins_proto::connector::ConnectorCall;
 use serde_json::{Map, Value, json};
 use url::Url;
 use zeroize::Zeroizing;

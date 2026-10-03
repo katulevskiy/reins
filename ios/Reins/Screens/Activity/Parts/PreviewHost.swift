@@ -4,7 +4,7 @@ import SwiftUI
 /// Wraps a preview in a signed-in model over the `-demo` core, so screens show the sample data.
 struct PreviewHost<Content: View>: View {
     @ViewBuilder var content: Content
-    @State private var model = AppModel(core: DemoRewardenCore(), feedback: NoFeedback.shared, authenticator: TrustingAuthenticator(), demo: true)
+    @State private var model = AppModel(core: DemoReinsCore(), feedback: NoFeedback.shared, authenticator: TrustingAuthenticator(), demo: true)
 
     var body: some View {
         content

@@ -1,8 +1,8 @@
-package dev.rewarden.android.ui.grants
+package dev.reins.android.ui.grants
 
-import dev.rewarden.core.GrantScopeChoice
-import dev.rewarden.core.GrantView
-import dev.rewarden.core.StandingGrant
+import dev.reins.core.GrantScopeChoice
+import dev.reins.core.GrantView
+import dev.reins.core.StandingGrant
 
 /** For how long an ended grant can be started again. */
 enum class ResumePeriod(val label: String, val seconds: Long) {

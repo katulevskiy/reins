@@ -15,7 +15,7 @@ pub struct PairingRequest {
     pub choices: [u8; 3],
     /// Unix seconds.
     pub created_at: i64,
-    /// The Rewarden desktop app's public key (base64url, 32 bytes), when the client is that app. The phone shows its
+    /// The Reins desktop app's public key (base64url, 32 bytes), when the client is that app. The phone shows its
     /// [`crate::desktop::key_fingerprint`] for the user to compare and pins it to the new connection.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub client_key: Option<String>,

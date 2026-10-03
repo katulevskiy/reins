@@ -24,13 +24,13 @@ final class IntegrationsLogicTests: XCTestCase {
             XCTAssertTrue(GitHubToken.fineGrainedPage.contains("&\(permission)"), permission)
         }
         XCTAssertFalse(GitHubToken.fineGrainedPage.contains("gist") || GitHubToken.fineGrainedPage.contains("notifications"))
-        XCTAssertTrue(GitHubToken.fineGrainedPage.hasPrefix("https://github.com/settings/personal-access-tokens/new?name=Rewarden&"))
+        XCTAssertTrue(GitHubToken.fineGrainedPage.hasPrefix("https://github.com/settings/personal-access-tokens/new?name=Reins&"))
     }
 
     func testTheClassicPageAsksForEveryScopeTheToolsUse() {
         XCTAssertEqual(
             GitHubToken.classicPage,
-            "https://github.com/settings/tokens/new?description=Rewarden&scopes=repo,workflow,gist,notifications,read:org,admin:repo_hook,delete_repo"
+            "https://github.com/settings/tokens/new?description=Reins&scopes=repo,workflow,gist,notifications,read:org,admin:repo_hook,delete_repo"
         )
     }
 
@@ -43,18 +43,18 @@ final class IntegrationsLogicTests: XCTestCase {
     }
 
     func testEveryTokenPageGetsItsOwnNameSoASecondTokenNeverClashes() {
-        XCTAssertTrue(GitHubToken.fineGrainedURL(suffix: 123_456).contains("name=Rewarden-123456&"))
+        XCTAssertTrue(GitHubToken.fineGrainedURL(suffix: 123_456).contains("name=Reins-123456&"))
         let fine = names({ GitHubToken.fineGrainedURL() }, after: "name=")
         XCTAssertGreaterThan(fine.count, 1)
-        XCTAssertTrue(fine.allSatisfy { $0.wholeMatch(of: #/Rewarden-\d{6}/#) != nil })
+        XCTAssertTrue(fine.allSatisfy { $0.wholeMatch(of: #/Reins-\d{6}/#) != nil })
 
         XCTAssertEqual(
             GitHubToken.classicURL(suffix: 123_456),
-            "https://github.com/settings/tokens/new?description=Rewarden-123456&scopes=repo,workflow,gist,notifications,read:org,admin:repo_hook,delete_repo"
+            "https://github.com/settings/tokens/new?description=Reins-123456&scopes=repo,workflow,gist,notifications,read:org,admin:repo_hook,delete_repo"
         )
         let classic = names({ GitHubToken.classicURL() }, after: "description=")
         XCTAssertGreaterThan(classic.count, 1)
-        XCTAssertTrue(classic.allSatisfy { $0.wholeMatch(of: #/Rewarden-\d{6}/#) != nil })
+        XCTAssertTrue(classic.allSatisfy { $0.wholeMatch(of: #/Reins-\d{6}/#) != nil })
     }
 
     // MARK: Other git hosts
@@ -63,7 +63,7 @@ final class IntegrationsLogicTests: XCTestCase {
         let gitlab = try XCTUnwrap(GitHosts.of("gitlab"))
         XCTAssertEqual(
             gitlab.tokenURL(suffix: 123_456),
-            "https://gitlab.com/-/user_settings/personal_access_tokens?name=Rewarden-123456&scopes=read_api,read_repository,write_repository"
+            "https://gitlab.com/-/user_settings/personal_access_tokens?name=Reins-123456&scopes=read_api,read_repository,write_repository"
         )
         XCTAssertGreaterThan(names({ gitlab.tokenURL() }, after: "name=").count, 1)
     }

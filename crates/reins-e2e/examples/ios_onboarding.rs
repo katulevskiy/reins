@@ -3,7 +3,7 @@
 //! code.
 //!
 //! ```text
-//! cargo run -p rewarden-e2e --example ios_onboarding -- /tmp/reins-onboarding
+//! cargo run -p reins-e2e --example ios_onboarding -- /tmp/reins-onboarding
 //! # prints SERVER, EMAIL (no account yet) and PASSWORD; once <dir>/created exists, USER_CODE and CONFIRM (what the
 //! # computer shows); once the phone approved, PAIRED, then an MCP call with the new session and ALL_DONE.
 //! ```
@@ -11,10 +11,10 @@
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
-use rewarden_desktop::config::Paths;
-use rewarden_desktop::identity::Identity;
-use rewarden_desktop::server::device::DevicePairing;
-use rewarden_e2e::{PASSWORD, Server};
+use reins_desktop::config::Paths;
+use reins_desktop::identity::Identity;
+use reins_desktop::server::device::DevicePairing;
+use reins_e2e::{PASSWORD, Server};
 use serde_json::{Value, json};
 
 const EMAIL: &str = "onboarding@example.com";
@@ -32,7 +32,7 @@ fn fail(why: &str) -> ! {
 
 #[tokio::main]
 async fn main() {
-    rewarden_e2e::init_tls();
+    reins_e2e::init_tls();
     let dir = PathBuf::from(std::env::args().nth(1).unwrap_or_else(|| "/tmp/reins-onboarding".to_owned()));
     std::fs::create_dir_all(&dir).expect("coordination dir");
     let server = Server::start(45, 10).await;
@@ -42,12 +42,12 @@ async fn main() {
 
     // The phone created the account and registered as the approval device; the app shows "connect your computer".
     wait_file(&dir.join("created")).await;
-    if !server.log().contains("PUT /rewarden/api/device") {
+    if !server.log().contains("PUT /reins/api/device") {
         fail("the phone never registered as the approval device");
     }
     println!("REGISTERED");
 
-    // `rewarden login`, as a library: the QR code's link, its code and the number to tap.
+    // `reins login`, as a library: the QR code's link, its code and the number to tap.
     let state = tempfile::tempdir().expect("desktop state");
     let paths = Paths::under(state.path());
     paths.ensure().expect("desktop dirs");

@@ -2,8 +2,8 @@
 //! GitLab only, and strict refusals.
 
 use hyper::Method;
-use rewarden_desktop::config::{Config, GitHost};
-use rewarden_desktop::proxy::route::{Kind, Route, Service, parse, repo_path};
+use reins_desktop::config::{Config, GitHost};
+use reins_desktop::proxy::route::{Kind, Route, Service, parse, repo_path};
 
 fn hosts() -> Vec<GitHost> {
     let c: Config = toml::from_str(

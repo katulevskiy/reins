@@ -1,14 +1,14 @@
-//! Who allows a git read or push, and where the credential comes from. Two authorizers: the phone through the Rewarden
-//! server ([`rewarden::RewardenAuthorizer`]) and, without a phone, the local policy with a local token for the host
+//! Who allows a git read or push, and where the credential comes from. Two authorizers: the phone through the Reins
+//! server ([`reins::ReinsAuthorizer`]) and, without a phone, the local policy with a local token for the host
 //! ([`local::LocalAuthorizer`]). The proxy only sees this trait.
 
 pub mod local;
 pub mod policy;
 pub mod prompt;
-pub mod rewarden;
+pub mod reins;
 
 use data_encoding::BASE64;
-use rewarden_proto::desktop::PushSummary;
+use reins_proto::desktop::PushSummary;
 use zeroize::Zeroizing;
 
 /// A repository on a git host, as named in the proxy path (`/github.com/owner/name.git/...`,
@@ -114,11 +114,11 @@ pub trait Authorizer: Send + Sync {
     /// before a push. Implementations cache the credential until it expires.
     async fn read(&self, repo: &Repo) -> Result<Credential, Refusal>;
 
-    /// Approval for exactly this push (`digest` from [`rewarden_proto::desktop::push_digest`]); the credential is used
+    /// Approval for exactly this push (`digest` from [`reins_proto::desktop::push_digest`]); the credential is used
     /// for this push only.
     async fn push(&self, repo: &Repo, summary: &PushSummary, digest: &str) -> Result<Credential, Refusal>;
 
-    /// Who decides, for `rewarden status` ("your phone via rewarden.example.com", "the local policy").
+    /// Who decides, for `reins status` ("your phone via reins.example.com", "the local policy").
     fn describe(&self) -> String;
 
     /// Where the person running git should look while an answer is awaited.

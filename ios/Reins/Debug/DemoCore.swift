@@ -11,12 +11,12 @@ import Foundation
 /// `-demoOtherPhone`: another phone approves for the account, and registering this one is refused
 /// (`CoreError.OtherApprovalDevice`) until the recovery code or the other phone's approval gives it a proof.
 enum DemoCore {
-    static func make() -> (any RewardenCoreProtocol)? {
+    static func make() -> (any ReinsCoreProtocol)? {
         let args = ProcessInfo.processInfo.arguments
         let otherPhone = args.contains("-demoOtherPhone")
         // This phone never held the role: the refusal shows the Unlock screen, not the "replaced" banner.
         if otherPhone { DeviceStatus.clear() }
-        return DemoRewardenCore(
+        return DemoReinsCore(
             signedIn: !args.contains("-signedout"),
             arriveAfter: args.contains("-demoArrive") ? 6 : nil,
             modelInstalled: !args.contains("-demoNoModel"),
@@ -30,7 +30,7 @@ enum DemoCore {
 /// A port of Android's test `FakeCore`, seeded with `DemoData`: it keeps state and behaves enough like the real core
 /// for every UI flow (approving removes the item and logs it, a standing choice makes a grant, and so on).
 /// All state sits behind one lock; nothing is held across a suspension point.
-final class DemoRewardenCore: RewardenCoreProtocol, @unchecked Sendable {
+final class DemoReinsCore: ReinsCoreProtocol, @unchecked Sendable {
     /// A connection's own Autopilot row, as the core stores it.
     struct ApRow: Equatable {
         var mode: AutopilotMode?

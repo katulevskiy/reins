@@ -1,4 +1,4 @@
-# Vaultwarden 1.37.3 — extension points for Rewarden
+# Vaultwarden 1.37.3 — extension points for Reins
 
 Line numbers are for tag `1.37.3` (commit eb212e23). Verify before editing; upstream files may shift.
 
@@ -20,7 +20,7 @@ Line numbers are for tag `1.37.3` (commit eb212e23). Verify before editing; upst
 - New base paths should be added to `LOGGED_ROUTES` in `src/util.rs:300`.
 - Crate-level `#[macro_use]` for rocket, serde, serde_json, log, diesel; `err!`/`db_run!` usable everywhere.
 - `src/api/mod.rs`: submodules 1-7, re-exports like `notifications::routes as notifications_routes` (25). Result aliases 44-46: `ApiResult<T> = Result<T, crate::error::Error>`, `JsonResult`, `EmptyResult`.
-- `core::catchers()` is a JSON 404; no 401 catcher exists. `.well-known` only has apple-app-site-association (web.rs:207, only when web vault enabled) → Rewarden needs its own `/.well-known` mount.
+- `core::catchers()` is a JSON 404; no 401 catcher exists. `.well-known` only has apple-app-site-association (web.rs:207, only when web vault enabled) → Reins needs its own `/.well-known` mount.
 - `util::AppHeaders` (28-148) sets CSP, X-Frame-Options, `Cache-Control: no-cache, no-store` unless set. `util::Cors` (150-208) allows only domain origin etc. and answers every OPTIONS with 200.
 - Rocket 0.5.1 has `rocket::response::stream::EventStream`; `rocket_ws` available.
 
@@ -29,7 +29,7 @@ Line numbers are for tag `1.37.3` (commit eb212e23). Verify before editing; upst
 - To add `|mcp`: static issuer LazyLock, claims struct (nbf, exp, iss, sub, …), `generate_*`, `decode_*` wrapper, `FromRequest` guard. Worked example: `src/auth/send.rs` (wired as `#[path = "auth/send.rs"] pub mod send;` at auth.rs:1-4).
 - `LoginJwtClaims` (179-219): nbf, exp, iss, sub: UserId, premium, name, email, email_verified, sstamp, device: DeviceId, devicetype, client_id, scope, amr. Access 2 h; refresh 30 d (90 d mobile).
 - Guards: `Headers { host, device: Device, user: User, ip: ClientIp }` (619-706) — decodes `Authorization: Bearer`, loads Device by (claims.device, claims.sub), User, checks security stamp; failures → 401 via `err_handler!`. `ClientHeaders { device_type, ip }` (592-617, unauthenticated). `ClientIp` (1059-1126). `Host` (551-590).
-- `src/api/identity.rs`: `POST /identity/connect/token` (59-150) grant types refresh_token, password, client_credentials, authorization_code(SSO), send_access; form struct `ConnectData` (1150-1211). **`GET /identity/connect/authorize` (1335-1369) is the SSO endpoint — do not reuse; Rewarden OAuth lives under `/rewarden/oauth/*`.** PKCE helper used for SSO: `openidconnect::PkceCodeChallenge::from_code_verifier_sha256` (sso_client.rs:241).
+- `src/api/identity.rs`: `POST /identity/connect/token` (59-150) grant types refresh_token, password, client_credentials, authorization_code(SSO), send_access; form struct `ConnectData` (1150-1211). **`GET /identity/connect/authorize` (1335-1369) is the SSO endpoint — do not reuse; Reins OAuth lives under `/reins/oauth/*`.** PKCE helper used for SSO: `openidconnect::PkceCodeChallenge::from_code_verifier_sha256` (sso_client.rs:241).
 - Device model `src/db/models/device.rs`: PK (uuid, user_uuid); fields name, atype, push_uuid, push_token, refresh_token, twofactor_remember. `DeviceType` Android = 0 (290-346). Finders `find_by_uuid_and_user` (183) etc. `DeviceId(String)` newtype (384).
 
 ## Database
@@ -41,8 +41,8 @@ Line numbers are for tag `1.37.3` (commit eb212e23). Verify before editing; upst
 - Migrations: `migrations/{sqlite,mysql,postgresql}/YYYY-MM-DD-HHMMSS_name/{up,down}.sql`, same folder name in all three. Dialects (from `2026-03-09-005927_add_archives`): sqlite `CHAR(36) … REFERENCES users (uuid) ON DELETE CASCADE`, `DATETIME`; mysql separate `FOREIGN KEY` clauses, `TIMESTAMP`; postgresql inline REFERENCES, `TIMESTAMP`.
 - Build needs a DB feature: `cargo build --features sqlite`. CI tests `--features sqlite,mysql,postgresql`.
 
-## Notifications / push (not reusable for Rewarden)
-- `WS_USERS` keyed by user id only; cannot target a device; client→server frames ignored. Bitwarden push relay (`src/api/push.rs`) only reaches official Bitwarden apps; `send_to_push_relay` is private. → Rewarden uses its own FCM sender and HTTPS long-poll.
+## Notifications / push (not reusable for Reins)
+- `WS_USERS` keyed by user id only; cannot target a device; client→server frames ignored. Bitwarden push relay (`src/api/push.rs`) only reaches official Bitwarden apps; `send_to_push_relay` is private. → Reins uses its own FCM sender and HTTPS long-poll.
 - Closest analog flow: login-with-device `auth_requests` (accounts.rs 1593-1828): DB row + notify + polling; purge job every 30 s deletes rows > 15 min (`purge_auth_requests`, main.rs 716-720). No in-memory waiters exist anywhere (no oneshot/Notify).
 
 ## Config — `src/config.rs`

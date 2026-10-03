@@ -1,4 +1,4 @@
-package dev.rewarden.android
+package dev.reins.android
 
 import android.content.Context
 import android.content.Intent
@@ -24,26 +24,26 @@ import androidx.compose.ui.test.performTextReplacement
 import androidx.test.core.app.ActivityScenario
 import androidx.test.core.app.ApplicationProvider
 import androidx.test.ext.junit.runners.AndroidJUnit4
-import dev.rewarden.android.core.CoreFactory
-import dev.rewarden.android.core.CoreProvider
-import dev.rewarden.android.design.Timers
-import dev.rewarden.android.platform.AppNotifier
-import dev.rewarden.android.platform.AuthResult
-import dev.rewarden.android.platform.Authenticator
-import dev.rewarden.android.platform.AuthenticatorProvider
-import dev.rewarden.android.platform.Foreground
-import dev.rewarden.android.platform.update.FakeInstaller
-import dev.rewarden.android.platform.update.FakeUpdateServer
-import dev.rewarden.android.platform.update.UpdateProvider
-import dev.rewarden.android.state.SessionState
-import dev.rewarden.core.AccountView
-import dev.rewarden.core.ActivityInfo
-import dev.rewarden.core.ApprovalKind
-import dev.rewarden.core.CoreException
-import dev.rewarden.core.EmailView
-import dev.rewarden.core.GmailStatus
-import dev.rewarden.core.PairingView
-import dev.rewarden.core.SessionInfo
+import dev.reins.android.core.CoreFactory
+import dev.reins.android.core.CoreProvider
+import dev.reins.android.design.Timers
+import dev.reins.android.platform.AppNotifier
+import dev.reins.android.platform.AuthResult
+import dev.reins.android.platform.Authenticator
+import dev.reins.android.platform.AuthenticatorProvider
+import dev.reins.android.platform.Foreground
+import dev.reins.android.platform.update.FakeInstaller
+import dev.reins.android.platform.update.FakeUpdateServer
+import dev.reins.android.platform.update.UpdateProvider
+import dev.reins.android.state.SessionState
+import dev.reins.core.AccountView
+import dev.reins.core.ActivityInfo
+import dev.reins.core.ApprovalKind
+import dev.reins.core.CoreException
+import dev.reins.core.EmailView
+import dev.reins.core.GmailStatus
+import dev.reins.core.PairingView
+import dev.reins.core.SessionInfo
 import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -129,7 +129,7 @@ class AppFlowTest {
                 authResult
             }
         }
-        val container = (context.applicationContext as RewardenApp).container
+        val container = (context.applicationContext as ReinsApp).container
         container.state.setSession(SessionState.Loading)
         container.state.setRegistrationError(null)
     }
@@ -252,7 +252,7 @@ class AppFlowTest {
         skipSetup()
         awaitTag("noActivity")
         assertEquals(listOf("https://s.example.com", "me@example.com", "hunter2", null), core.logins.single())
-        val state = (context.applicationContext as RewardenApp).container.state
+        val state = (context.applicationContext as ReinsApp).container.state
         awaitCore { state.approvalDevice.value }
         assertEquals(1, core.registrations.size)
     }
@@ -320,7 +320,7 @@ class AppFlowTest {
     fun theNavBarCountsUnseenActivityAndActiveGrants() {
         core.grants = listOf(TestData.grant("g1"), TestData.grant("g2"), TestData.grant("g3", active = false))
         core.activity = (60L downTo 1L).map { TestData.entry(it) }
-        (context.applicationContext as RewardenApp).container.state.setSeenActivityId(0)
+        (context.applicationContext as ReinsApp).container.state.setSeenActivityId(0)
         launch()
         awaitTag("tabGrants")
         rule.waitUntil(10_000) { navCount("tabGrants") == 2 }
@@ -428,7 +428,7 @@ class AppFlowTest {
 
     @Test
     fun anEmailInAnEntryOpensInFullFromGmail() {
-        core.emails["m0"] = dev.rewarden.core.EmailContent(
+        core.emails["m0"] = dev.reins.core.EmailContent(
             "m0", "Bank <alerts@bank.com>", listOf("me@gmail.com"), emptyList(), "Your March statement is ready", 1_700_000_000,
             "Dear customer,\nyour statement is attached.\nRegards",
         )
@@ -454,7 +454,7 @@ class AppFlowTest {
         tap("detailMessage:0")
         awaitTag("emailError")
         rule.onNodeWithText("Old news").assertExists()
-        core.emails["m0"] = dev.rewarden.core.EmailContent("m0", "a@b.com", emptyList(), emptyList(), "Old news", 1_700_000_000, "Back again")
+        core.emails["m0"] = dev.reins.core.EmailContent("m0", "a@b.com", emptyList(), emptyList(), "Old news", 1_700_000_000, "Back again")
         tap("emailRetry")
         awaitTag("emailBody")
         rule.onNodeWithText("Back again").assertExists()
@@ -699,7 +699,7 @@ class AppFlowTest {
         awaitTag("noActivity")
         Foreground.focused = true
         core.pending = listOf(TestData.pending())
-        val container = (context.applicationContext as RewardenApp).container
+        val container = (context.applicationContext as ReinsApp).container
         rule.runOnUiThread { kotlinx.coroutines.runBlocking { container.refreshPending() } }
         awaitTag("approve")
         tap("closeSheet")
@@ -737,7 +737,7 @@ class AppFlowTest {
     @Test
     fun theDesktopAppsKeyIsShownToCompareBeforeConnecting() {
         core.pending = listOf(TestData.pairingItem("pair1"))
-        core.pairing = TestData.pairingView(name = "Rewarden desktop app on laptop", host = "laptop", keyFingerprint = "4821 9930")
+        core.pairing = TestData.pairingView(name = "Reins desktop app on laptop", host = "laptop", keyFingerprint = "4821 9930")
         launch()
         openPairing("pair1")
         awaitTag("keyFingerprint")
@@ -771,7 +771,7 @@ class AppFlowTest {
 
     // ---- git through the desktop app -------------------------------------------------------------------------------
 
-    private fun openGitPush(view: dev.rewarden.core.ApprovalView) {
+    private fun openGitPush(view: dev.reins.core.ApprovalView) {
         core.pending = listOf(
             TestData.pending(view.requestId, "write", 1u, label = view.connectionLabel, service = "github", account = "octo-cat", op = view.op, opTitle = view.opTitle),
         )
@@ -896,15 +896,15 @@ class AppFlowTest {
 
     @Test
     fun gitOperationsAreNamedInTheListAndTheActivity() {
-        core.pending = listOf(TestData.pending("req21", "read", 1u, label = "Rewarden desktop app on laptop", service = "github", account = "octo-cat", op = "git_fetch", opTitle = "Clone and fetch with git"))
+        core.pending = listOf(TestData.pending("req21", "read", 1u, label = "Reins desktop app on laptop", service = "github", account = "octo-cat", op = "git_fetch", opTitle = "Clone and fetch with git"))
         core.activity = listOf(
             TestData.entry(7, "write", "sent", count = 1u, opTitle = "Push with git")
-                .copy(connectionLabel = "Rewarden desktop app on laptop", service = "github", account = "octo-cat", op = "git_push"),
+                .copy(connectionLabel = "Reins desktop app on laptop", service = "github", account = "octo-cat", op = "git_push"),
         )
         Foreground.autoPopup = false
         launch()
-        awaitTextContaining("Rewarden desktop app on laptop: Clone and fetch with git")
-        awaitTextContaining("Rewarden desktop app on laptop: Push with git")
+        awaitTextContaining("Reins desktop app on laptop: Clone and fetch with git")
+        awaitTextContaining("Reins desktop app on laptop: Push with git")
         tap("entry:7")
         awaitTag("detailTitle")
         rule.onNodeWithTag("detailTitle").assertTextContains("Push with git")
@@ -1156,7 +1156,7 @@ class AppFlowTest {
         rule.onNodeWithText("No active grants").assertExists()
         awaitTag("expiredHeader")
         core.grants = emptyList()
-        val container = (context.applicationContext as RewardenApp).container
+        val container = (context.applicationContext as ReinsApp).container
         kotlinx.coroutines.runBlocking { container.refreshPending() }
         awaitGone("expiredHeader")
         rule.onNodeWithText("No grants").assertExists()
@@ -1355,8 +1355,8 @@ class AppFlowTest {
         tap("integrations")
         tap("service:gmail")
         awaitTag("addAccount")
-        val container = (context.applicationContext as RewardenApp).container
-        kotlinx.coroutines.runBlocking { dev.rewarden.android.ui.gmail.GmailViewModel(container).connect("Work@Gmail.com") }
+        val container = (context.applicationContext as ReinsApp).container
+        kotlinx.coroutines.runBlocking { dev.reins.android.ui.gmail.GmailViewModel(container).connect("Work@Gmail.com") }
         assertEquals(listOf("Work@Gmail.com"), core.addedAccounts.toList())
         awaitTag("account:work@gmail.com")
     }
@@ -1465,8 +1465,8 @@ class AppFlowTest {
         tap("integrations")
         tap("service:device_contacts")
         awaitTag("allowDevice")
-        val container = (context.applicationContext as RewardenApp).container
-        kotlinx.coroutines.runBlocking { dev.rewarden.android.ui.services.ServiceViewModel(container, "device_contacts").addDevice() }
+        val container = (context.applicationContext as ReinsApp).container
+        kotlinx.coroutines.runBlocking { dev.reins.android.ui.services.ServiceViewModel(container, "device_contacts").addDevice() }
         awaitCore { core.serviceAdded.isNotEmpty() }
         assertEquals(listOf("device_contacts" to ""), core.serviceAdded.toList())
         awaitTag("account:this phone")
@@ -1568,7 +1568,7 @@ class AppFlowTest {
         assertTrue(core.approvals.single().second.selectedMessageIds.isEmpty())
     }
 
-    private fun openRepoWrite(view: dev.rewarden.core.ApprovalView = TestData.repoWriteView()) {
+    private fun openRepoWrite(view: dev.reins.core.ApprovalView = TestData.repoWriteView()) {
         core.pending = listOf(TestData.pending(view.requestId, "write", 1u, service = "github", account = "octo-cat", op = view.op, opTitle = view.opTitle))
         core.approval = view
         launch()
@@ -1721,7 +1721,7 @@ class AppFlowTest {
     fun onceThisPhoneIsTheApprovalDeviceTheButtonIsGrayAndSaysSo() {
         launch()
         awaitTag("noActivity")
-        (context.applicationContext as RewardenApp).container.state.setApprovalDevice(true)
+        (context.applicationContext as ReinsApp).container.state.setApprovalDevice(true)
         tap("openSettings")
         awaitTag("registerPhone")
         rule.onNodeWithText("This phone is used for approvals").assertExists()
@@ -1782,7 +1782,7 @@ class AppFlowTest {
 
     @Test
     fun approvalScreenIsSecureExactlyWhenTheBuildSaysSo() {
-        // Off in debug builds (these tests, unless -Prewarden.secureScreens=true), on in release builds.
+        // Off in debug builds (these tests, unless -Preins.secureScreens=true), on in release builds.
         searchRequest()
         launch()
         openItem("req1")

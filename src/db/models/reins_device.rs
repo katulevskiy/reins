@@ -2,7 +2,7 @@ use diesel::prelude::*;
 
 use crate::{
     api::EmptyResult,
-    db::{DbConn, DbConnInner, schema::rewarden_devices},
+    db::{DbConn, DbConnInner, schema::reins_devices},
     error::MapResult,
 };
 
@@ -10,58 +10,58 @@ use super::{DeviceId, UserId};
 
 /// The user's approval device: exactly one per user (spec §4.1, contracts A1).
 #[derive(Clone, Debug, Identifiable, Queryable, Insertable)]
-#[diesel(table_name = rewarden_devices)]
+#[diesel(table_name = reins_devices)]
 #[diesel(primary_key(user_uuid))]
-pub struct RewardenDevice {
+pub struct ReinsDevice {
     pub user_uuid: UserId,
     pub device_uuid: DeviceId,
     pub fcm_token: Option<String>,
     /// Unix seconds.
     pub updated_at: i64,
-    /// SHA-256 (hex) of the device's device key (`rewarden_proto::device::DEVICE_KEY_HEADER`); `None` for a row
+    /// SHA-256 (hex) of the device's device key (`reins_proto::device::DEVICE_KEY_HEADER`); `None` for a row
     /// from before device keys, or a client that sent none.
     pub key_hash: Option<String>,
 }
 
-impl RewardenDevice {
+impl ReinsDevice {
     pub async fn find_by_user(user_uuid: &UserId, conn: &DbConn) -> Option<Self> {
         conn.run(move |c| q_find_by_user(c, user_uuid)).await
     }
 
     /// Makes `self` the user's approval device and returns the device it replaced.
     pub async fn replace(&self, conn: &DbConn) -> Result<Option<Self>, crate::Error> {
-        conn.run(move |c| q_replace(c, self)).await.map_res("Error saving Rewarden device")
+        conn.run(move |c| q_replace(c, self)).await.map_res("Error saving Reins device")
     }
 
     /// Forgets `fcm_token` if it is still the stored token (FCM reported it unregistered).
     pub async fn clear_fcm_token(user_uuid: &UserId, fcm_token: &str, conn: &DbConn) -> EmptyResult {
-        conn.run(move |c| q_clear_fcm_token(c, user_uuid, fcm_token)).await.map_res("Error clearing Rewarden FCM token")
+        conn.run(move |c| q_clear_fcm_token(c, user_uuid, fcm_token)).await.map_res("Error clearing Reins FCM token")
     }
 }
 
-fn q_find_by_user(c: &mut DbConnInner, user_uuid: &UserId) -> Option<RewardenDevice> {
-    rewarden_devices::table.filter(rewarden_devices::user_uuid.eq(user_uuid)).first::<RewardenDevice>(c).ok()
+fn q_find_by_user(c: &mut DbConnInner, user_uuid: &UserId) -> Option<ReinsDevice> {
+    reins_devices::table.filter(reins_devices::user_uuid.eq(user_uuid)).first::<ReinsDevice>(c).ok()
 }
 
-fn q_replace(c: &mut DbConnInner, row: &RewardenDevice) -> QueryResult<Option<RewardenDevice>> {
+fn q_replace(c: &mut DbConnInner, row: &ReinsDevice) -> QueryResult<Option<ReinsDevice>> {
     c.transaction(|c| {
-        let previous = rewarden_devices::table
-            .filter(rewarden_devices::user_uuid.eq(&row.user_uuid))
-            .first::<RewardenDevice>(c)
+        let previous = reins_devices::table
+            .filter(reins_devices::user_uuid.eq(&row.user_uuid))
+            .first::<ReinsDevice>(c)
             .optional()?;
-        diesel::delete(rewarden_devices::table.filter(rewarden_devices::user_uuid.eq(&row.user_uuid))).execute(c)?;
-        diesel::insert_into(rewarden_devices::table).values(row).execute(c)?;
+        diesel::delete(reins_devices::table.filter(reins_devices::user_uuid.eq(&row.user_uuid))).execute(c)?;
+        diesel::insert_into(reins_devices::table).values(row).execute(c)?;
         Ok(previous)
     })
 }
 
 fn q_clear_fcm_token(c: &mut DbConnInner, user_uuid: &UserId, fcm_token: &str) -> QueryResult<()> {
     diesel::update(
-        rewarden_devices::table
-            .filter(rewarden_devices::user_uuid.eq(user_uuid))
-            .filter(rewarden_devices::fcm_token.eq(fcm_token)),
+        reins_devices::table
+            .filter(reins_devices::user_uuid.eq(user_uuid))
+            .filter(reins_devices::fcm_token.eq(fcm_token)),
     )
-    .set(rewarden_devices::fcm_token.eq(None::<String>))
+    .set(reins_devices::fcm_token.eq(None::<String>))
     .execute(c)
     .map(|_| ())
 }
@@ -81,8 +81,8 @@ pub(super) fn test_db() -> DbConnInner {
 mod tests {
     use super::*;
 
-    fn device(user: &str, dev: &str, token: Option<&str>) -> RewardenDevice {
-        RewardenDevice {
+    fn device(user: &str, dev: &str, token: Option<&str>) -> ReinsDevice {
+        ReinsDevice {
             user_uuid: UserId::from(user.to_owned()),
             device_uuid: DeviceId::from(dev.to_owned()),
             fcm_token: token.map(str::to_owned),

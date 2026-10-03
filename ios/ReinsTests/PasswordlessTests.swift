@@ -17,7 +17,7 @@ final class PasswordlessTests: XCTestCase {
         super.tearDown()
     }
 
-    private func model(_ core: DemoRewardenCore, demo: Bool = true) -> AppModel {
+    private func model(_ core: DemoReinsCore, demo: Bool = true) -> AppModel {
         AppModel(core: core, feedback: NoFeedback.shared, authenticator: TrustingAuthenticator(), demo: demo)
     }
 
@@ -29,7 +29,7 @@ final class PasswordlessTests: XCTestCase {
     }
 
     func testContinueWithANewAccountGoesOnLikeASignIn() async {
-        let core = DemoRewardenCore(signedIn: false, syncCap: 0.3)
+        let core = DemoReinsCore(signedIn: false, syncCap: 0.3)
         let app = model(core)
         await app.refreshSession()
         XCTAssertEqual(app.session, .signedOut)
@@ -44,7 +44,7 @@ final class PasswordlessTests: XCTestCase {
     }
 
     func testLockedKeysWaitOnTheUnlockScreenWithoutTakingTheApprovalRole() async {
-        let core = DemoRewardenCore(signedIn: false, syncCap: 0.3, keysLocked: true)
+        let core = DemoReinsCore(signedIn: false, syncCap: 0.3, keysLocked: true)
         let app = model(core, demo: false)
         await app.refreshSession()
         await signInLikeTheRealApp(app)
@@ -74,7 +74,7 @@ final class PasswordlessTests: XCTestCase {
     }
 
     func testAskingTheOtherPhoneShowsTheCodeAndOpensTheAccountWhenItApproves() async {
-        let core = DemoRewardenCore(signedIn: false, syncCap: 0.3, keysLocked: true)
+        let core = DemoReinsCore(signedIn: false, syncCap: 0.3, keysLocked: true)
         let app = model(core)
         await SsoSignIn().run(app, feedback: NoFeedback.shared, server: DemoData.server)
         let unlock = UnlockModel()
@@ -91,7 +91,7 @@ final class PasswordlessTests: XCTestCase {
     }
 
     func testSigningOutForgetsTheLock() async {
-        let core = DemoRewardenCore(signedIn: false, syncCap: 0.3, keysLocked: true)
+        let core = DemoReinsCore(signedIn: false, syncCap: 0.3, keysLocked: true)
         let app = model(core, demo: false)
         await signInLikeTheRealApp(app)
         guard case let .keysLocked(info) = app.session else { return XCTFail("locked") }
@@ -101,7 +101,7 @@ final class PasswordlessTests: XCTestCase {
     }
 
     func testAClosedSignInPageIsNoError() async {
-        let core = DemoRewardenCore(signedIn: false, syncCap: 0.3)
+        let core = DemoReinsCore(signedIn: false, syncCap: 0.3)
         let app = AppModel(core: core, feedback: NoFeedback.shared, authenticator: TrustingAuthenticator(), demo: false)
         let sso = SsoSignIn()
         sso.browse = { _, _ in throw WebAuth.Failure.cancelled }
@@ -120,7 +120,7 @@ final class PasswordlessTests: XCTestCase {
             CoreError.OtherApprovalDevice.userMessage,
             "This account already has a phone for approvals. Approve this phone from it, or enter your recovery code."
         )
-        let core = DemoRewardenCore(syncCap: 0.3, approvalElsewhere: true)
+        let core = DemoReinsCore(syncCap: 0.3, approvalElsewhere: true)
         let app = model(core, demo: false)
         await app.refreshSession()
         let info = SessionInfo(serverUrl: DemoData.server, email: DemoData.email)
@@ -151,7 +151,7 @@ final class PasswordlessTests: XCTestCase {
     }
 
     func testTheOtherPhonesApprovalLetsThisOneTakeTheRole() async {
-        let core = DemoRewardenCore(syncCap: 0.3, approvalElsewhere: true)
+        let core = DemoReinsCore(syncCap: 0.3, approvalElsewhere: true)
         let app = model(core)
         await app.refreshSession()
         guard case .otherApprovalDevice = app.session else { return XCTFail("refused: \(app.session)") }
@@ -169,7 +169,7 @@ final class PasswordlessTests: XCTestCase {
     }
 
     func testASignInThatIsRefusedTheRoleGoesThroughTheOnboardingStepsOnceItHasIt() async throws {
-        let core = DemoRewardenCore(signedIn: false, syncCap: 0.3, approvalElsewhere: true)
+        let core = DemoReinsCore(signedIn: false, syncCap: 0.3, approvalElsewhere: true)
         let app = model(core, demo: false)
         await app.refreshSession()
         let info = try await core.login(serverUrl: DemoData.server, email: "takeover-\(UUID().uuidString)@example.com", password: "pw", totp: nil)
@@ -189,7 +189,7 @@ final class PasswordlessTests: XCTestCase {
 
     func testAPhoneThatHeldTheRoleShowsAsReplacedUntilItAsksForTheRoleAgain() async {
         DeviceStatus.approvalDevice = true
-        let core = DemoRewardenCore(syncCap: 0.3, approvalElsewhere: true)
+        let core = DemoReinsCore(syncCap: 0.3, approvalElsewhere: true)
         let app = model(core)
         await app.refreshSession()
         guard case .signedIn = app.session else { return XCTFail("signed in: \(app.session)") }
@@ -218,7 +218,7 @@ final class PasswordlessTests: XCTestCase {
     // MARK: The approval side
 
     func testAnotherPhoneAsksAndTheApprovalDeviceAddsIt() async throws {
-        let core = DemoRewardenCore(syncCap: 0.3, joinWaiting: true)
+        let core = DemoReinsCore(syncCap: 0.3, joinWaiting: true)
         let app = model(core)
         await app.refreshSession()
         let item = try XCTUnwrap(app.pending.first { $0.kind == .join })

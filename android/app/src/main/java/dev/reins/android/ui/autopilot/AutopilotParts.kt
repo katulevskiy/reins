@@ -1,4 +1,4 @@
-package dev.rewarden.android.ui.autopilot
+package dev.reins.android.ui.autopilot
 
 import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.animateContentSize
@@ -55,24 +55,24 @@ import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
-import dev.rewarden.android.autopilot.AutopilotText
-import dev.rewarden.android.design.Glyph
-import dev.rewarden.android.design.GlyphIcon
-import dev.rewarden.android.design.LocalColors
-import dev.rewarden.android.design.LocalLiveTimers
-import dev.rewarden.android.design.RColors
-import dev.rewarden.android.design.RText
-import dev.rewarden.android.design.RType
-import dev.rewarden.android.design.pressable
-import dev.rewarden.android.design.rememberNowMillis
-import dev.rewarden.android.feedback.Event
-import dev.rewarden.android.feedback.LocalFeedback
-import dev.rewarden.android.feedback.play
-import dev.rewarden.core.AutopilotMode
-import dev.rewarden.core.AutopilotSettings
-import dev.rewarden.core.NeighbourView
-import dev.rewarden.core.SuggestionView
-import dev.rewarden.core.Verdict
+import dev.reins.android.autopilot.AutopilotText
+import dev.reins.android.design.Glyph
+import dev.reins.android.design.GlyphIcon
+import dev.reins.android.design.LocalColors
+import dev.reins.android.design.LocalLiveTimers
+import dev.reins.android.design.RColors
+import dev.reins.android.design.RText
+import dev.reins.android.design.RType
+import dev.reins.android.design.pressable
+import dev.reins.android.design.rememberNowMillis
+import dev.reins.android.feedback.Event
+import dev.reins.android.feedback.LocalFeedback
+import dev.reins.android.feedback.play
+import dev.reins.core.AutopilotMode
+import dev.reins.core.AutopilotSettings
+import dev.reins.core.NeighbourView
+import dev.reins.core.SuggestionView
+import dev.reins.core.Verdict
 
 /** Each mode's colour: neutral for Manual, blue for Assisted, the accent for Auto, red for Bypass, amber for Lockdown. */
 fun modeTint(mode: AutopilotMode, c: RColors): Color = when (mode) {
@@ -174,9 +174,9 @@ fun NeighbourRow(n: NeighbourView, modifier: Modifier = Modifier) {
         }
         Spacer(Modifier.width(10.dp))
         Column(Modifier.weight(1f)) {
-            RText(dev.rewarden.android.ui.common.untrusted(n.label), RType.sans(14f, FontWeight.Medium), c.text, maxLines = 2)
+            RText(dev.reins.android.ui.common.untrusted(n.label), RType.sans(14f, FontWeight.Medium), c.text, maxLines = 2)
             RText(
-                "${AutopilotText.pastVerdict(n.verdict)} · ${dev.rewarden.android.ui.common.relativeTime(n.at)}",
+                "${AutopilotText.pastVerdict(n.verdict)} · ${dev.reins.android.ui.common.relativeTime(n.at)}",
                 RType.sans(12f),
                 c.tertiary,
                 maxLines = 1,
@@ -326,7 +326,7 @@ fun RadioDot(selected: Boolean, tint: Color) {
 }
 
 /**
- * A row of capsules with one sliding indicator (Zeron's segmented control in Rewarden's colours). The choice is
+ * A row of capsules with one sliding indicator (Zeron's segmented control in Reins's colours). The choice is
  * felt as a selection.
  */
 @Composable
@@ -426,7 +426,7 @@ fun SuggestionStrip(s: SuggestionView, modifier: Modifier = Modifier) {
             Column(Modifier.weight(1f)) {
                 RText(AutopilotText.suggestionHeadline(s), RType.sans(15f, FontWeight.SemiBold), c.text, Modifier.testTag("suggestionHeadline"), maxLines = 2)
                 if (!open && s.judged && s.reason.isNotBlank()) {
-                    RText(dev.rewarden.android.ui.common.untrusted(s.reason), RType.sans(12.5f), c.secondary, Modifier.padding(top = 2.dp), maxLines = 1)
+                    RText(dev.reins.android.ui.common.untrusted(s.reason), RType.sans(12.5f), c.secondary, Modifier.padding(top = 2.dp), maxLines = 1)
                 }
             }
             Spacer(Modifier.width(8.dp))
@@ -441,7 +441,7 @@ fun SuggestionStrip(s: SuggestionView, modifier: Modifier = Modifier) {
                     Spacer(Modifier.height(8.dp))
                     ProbabilityRow("Confidence", s.confidence, c.accent)
                     if (s.reason.isNotBlank()) {
-                        RText(dev.rewarden.android.ui.common.untrusted(s.reason), RType.sans(14f, lineHeight = 19f), c.text, Modifier.padding(top = 12.dp))
+                        RText(dev.reins.android.ui.common.untrusted(s.reason), RType.sans(14f, lineHeight = 19f), c.text, Modifier.padding(top = 12.dp))
                     }
                 }
                 if (s.neighbours.isNotEmpty()) {
@@ -456,7 +456,7 @@ fun SuggestionStrip(s: SuggestionView, modifier: Modifier = Modifier) {
                     }
                 }
                 RText(
-                    "Profile ${dev.rewarden.android.ui.common.untrusted(s.profileName)} · decided on this phone",
+                    "Profile ${dev.reins.android.ui.common.untrusted(s.profileName)} · decided on this phone",
                     RType.sans(12f),
                     c.tertiary,
                     Modifier.padding(top = 12.dp),

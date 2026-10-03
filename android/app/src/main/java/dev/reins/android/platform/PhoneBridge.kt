@@ -1,4 +1,4 @@
-package dev.rewarden.android.platform
+package dev.reins.android.platform
 
 import android.Manifest
 import android.content.ContentUris
@@ -13,14 +13,14 @@ import android.provider.Telephony
 import android.telephony.SmsManager
 import android.text.format.DateUtils
 import androidx.core.content.ContextCompat
-import dev.rewarden.android.BuildConfig
-import dev.rewarden.core.DeviceBridge
-import dev.rewarden.core.DeviceContact
-import dev.rewarden.core.DeviceEvent
-import dev.rewarden.core.ForeignException
-import dev.rewarden.core.NewDeviceEvent
-import dev.rewarden.core.SmsMessage
-import dev.rewarden.core.SmsThread
+import dev.reins.android.BuildConfig
+import dev.reins.core.DeviceBridge
+import dev.reins.core.DeviceContact
+import dev.reins.core.DeviceEvent
+import dev.reins.core.ForeignException
+import dev.reins.core.NewDeviceEvent
+import dev.reins.core.SmsMessage
+import dev.reins.core.SmsThread
 import java.util.TimeZone
 
 /**

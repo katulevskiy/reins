@@ -2,10 +2,10 @@
 //!
 //! WorkOS owns the identity: the email, whether the user still exists, which sessions are live. A background task
 //! reads the WorkOS Events API (`GET /events?events=user.updated,user.deleted,session.revoked&after=<cursor>`) every
-//! `REWARDEN_WORKOS_SYNC_SECS`, and at once when a signed webhook delivery arrives (`POST
-//! /rewarden/workos/webhook`, `REWARDEN_WORKOS_WEBHOOK_SECRET`). The webhook only wakes the task: its body is not
+//! `REINS_WORKOS_SYNC_SECS`, and at once when a signed webhook delivery arrives (`POST
+//! /reins/workos/webhook`, `REINS_WORKOS_WEBHOOK_SECRET`). The webhook only wakes the task: its body is not
 //! trusted, the events read from the API are. The cursor (the id of the last applied event) is kept in
-//! `rewarden_settings`, so a restart continues where it stopped.
+//! `reins_settings`, so a restart continues where it stopped.
 //!
 //! What each event does to the account the WorkOS user signed in to (found through `sso_users`):
 //!
@@ -27,7 +27,7 @@ use crate::{
     CONFIG,
     db::{
         DbConn, DbPool,
-        models::{RewardenSetting, RewardenSsoSession, SsoUser, User, rewarden_workos},
+        models::{ReinsSetting, ReinsSsoSession, SsoUser, User, reins_workos},
     },
     sso_workos,
 };
@@ -36,7 +36,7 @@ use crate::{
 pub const EVENTS: &str = "user.updated,user.deleted,session.revoked";
 /// Events per page (the Events API's largest page).
 const PAGE: usize = 100;
-/// `rewarden_settings` name of the cursor.
+/// `reins_settings` name of the cursor.
 const CURSOR: &str = "workos.events.after";
 /// A webhook delivery older (or newer) than this is refused.
 const WEBHOOK_TOLERANCE_MS: i64 = 5 * 60 * 1000;
@@ -48,7 +48,7 @@ static NUDGE: LazyLock<Notify> = LazyLock::new(Notify::new);
 
 /// Whether the sync runs: SSO through WorkOS and a non-zero interval.
 pub fn enabled() -> bool {
-    CONFIG.sso_enabled() && sso_workos::enabled() && CONFIG.rewarden_workos_sync_secs() > 0
+    CONFIG.sso_enabled() && sso_workos::enabled() && CONFIG.reins_workos_sync_secs() > 0
 }
 
 /// Starts the background task (call once, inside the runtime).
@@ -56,7 +56,7 @@ pub fn spawn(pool: DbPool) {
     if !enabled() {
         return;
     }
-    let every = Duration::from_secs(CONFIG.rewarden_workos_sync_secs());
+    let every = Duration::from_secs(CONFIG.reins_workos_sync_secs());
     info!("WorkOS sync: reading events every {}s", every.as_secs());
     tokio::spawn(async move {
         loop {
@@ -167,14 +167,14 @@ async fn fetch_page(after: Option<&str>) -> Result<EventsPage, String> {
 /// Reads and applies every event after the cursor; returns how many there were. The cursor moves after each applied
 /// event, so a failure retries from the event that failed.
 pub async fn sync_once(conn: &DbConn) -> Result<usize, String> {
-    let mut cursor = RewardenSetting::get(CURSOR, conn).await;
+    let mut cursor = ReinsSetting::get(CURSOR, conn).await;
     let mut applied = 0;
     loop {
         let page = fetch_page(cursor.as_deref()).await?;
         let full = page.data.len() >= PAGE;
         for event in page.data {
             apply(&plan(&event), conn).await.map_err(|e| format!("event {} ({}): {e}", event.id, event.event))?;
-            RewardenSetting::set(CURSOR, &event.id, conn).await.map_err(|e| e.to_string())?;
+            ReinsSetting::set(CURSOR, &event.id, conn).await.map_err(|e| e.to_string())?;
             cursor = Some(event.id);
             applied += 1;
         }
@@ -233,7 +233,7 @@ async fn apply(action: &Action, conn: &DbConn) -> Result<(), String> {
             };
             info!("WorkOS sync: {user_id} was deleted; deleting account {}", user.uuid);
             let uuid = user.uuid.clone();
-            rewarden_workos::delete_reins_data(&uuid, conn).await.map_err(|e| e.to_string())?;
+            reins_workos::delete_reins_data(&uuid, conn).await.map_err(|e| e.to_string())?;
             if let Err(e) = user.delete(conn).await {
                 // The last owner of an organization: Vaultwarden refuses; the admin has to step in.
                 error!("WorkOS sync: could not delete account {uuid}: {e}");
@@ -244,11 +244,11 @@ async fn apply(action: &Action, conn: &DbConn) -> Result<(), String> {
         Action::RevokeSession {
             session_id,
         } => {
-            let Some(session) = RewardenSsoSession::take(session_id, conn).await else {
+            let Some(session) = ReinsSsoSession::take(session_id, conn).await else {
                 return Ok(());
             };
             info!("WorkOS sync: session {session_id} was revoked; signing out device {}", session.device_uuid);
-            rewarden_workos::sign_out_device(&session.user_uuid, &session.device_uuid, conn)
+            reins_workos::sign_out_device(&session.user_uuid, &session.device_uuid, conn)
                 .await
                 .map_err(|e| e.to_string())
         }
@@ -301,9 +301,9 @@ impl<'r> rocket::request::FromRequest<'r> for Signature {
 }
 
 /// A WorkOS webhook delivery: when its signature holds, the sync runs now.
-#[post("/rewarden/workos/webhook", data = "<body>")]
+#[post("/reins/workos/webhook", data = "<body>")]
 async fn webhook(signature: Signature, body: rocket::Data<'_>) -> Status {
-    let Some(secret) = CONFIG.rewarden_workos_webhook_secret().filter(|s| !s.is_empty()) else {
+    let Some(secret) = CONFIG.reins_workos_webhook_secret().filter(|s| !s.is_empty()) else {
         return Status::NotFound;
     };
     let Ok(bytes) = body.open(WEBHOOK_MAX_BYTES.bytes()).into_bytes().await else {

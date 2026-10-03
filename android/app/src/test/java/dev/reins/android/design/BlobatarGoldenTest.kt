@@ -1,6 +1,6 @@
-package dev.rewarden.android.design
+package dev.reins.android.design
 
-import dev.rewarden.android.design.blobatar.Blobatar
+import dev.reins.android.design.blobatar.Blobatar
 import java.security.MessageDigest
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue

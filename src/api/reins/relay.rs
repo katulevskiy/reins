@@ -4,7 +4,7 @@
 
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 
-use rewarden_proto::{
+use reins_proto::{
     PROTOCOL_VERSION,
     gmail::ToolCall,
     ids::{ConnectionId, RequestId},
@@ -20,7 +20,7 @@ use crate::util::get_uuid;
 
 /// Upper bound on relay requests held in memory at once.
 pub const MAX_REQUESTS: usize = 10_000;
-/// Default for the unanswered requests one account may have queued for its phone (`REWARDEN_ACCOUNT_MAX_QUEUED`).
+/// Default for the unanswered requests one account may have queued for its phone (`REINS_ACCOUNT_MAX_QUEUED`).
 pub const DEFAULT_MAX_QUEUED: usize = 100;
 
 /// Why a request was not queued.
@@ -275,7 +275,7 @@ impl RelayHub {
 mod tests {
     use std::time::Duration;
 
-    use rewarden_proto::relay::ToolResult;
+    use reins_proto::relay::ToolResult;
     use tokio::time::{Instant, sleep};
 
     use super::*;

@@ -1,4 +1,4 @@
-package dev.rewarden.android
+package dev.reins.android
 
 import android.content.Context
 import android.content.Intent
@@ -13,19 +13,19 @@ import androidx.compose.ui.test.performTextReplacement
 import androidx.test.core.app.ActivityScenario
 import androidx.test.core.app.ApplicationProvider
 import androidx.test.ext.junit.runners.AndroidJUnit4
-import dev.rewarden.android.core.CoreFactory
-import dev.rewarden.android.core.CoreProvider
-import dev.rewarden.android.design.Timers
-import dev.rewarden.android.platform.AppNotifier
-import dev.rewarden.android.platform.Foreground
-import dev.rewarden.android.platform.update.FakeInstaller
-import dev.rewarden.android.platform.update.FakeUpdateServer
-import dev.rewarden.android.platform.update.UpdateProvider
-import dev.rewarden.core.ActivityInfo
-import dev.rewarden.core.EmailView
-import dev.rewarden.core.GmailStatus
-import dev.rewarden.core.PairingView
-import dev.rewarden.core.SessionInfo
+import dev.reins.android.core.CoreFactory
+import dev.reins.android.core.CoreProvider
+import dev.reins.android.design.Timers
+import dev.reins.android.platform.AppNotifier
+import dev.reins.android.platform.Foreground
+import dev.reins.android.platform.update.FakeInstaller
+import dev.reins.android.platform.update.FakeUpdateServer
+import dev.reins.android.platform.update.UpdateProvider
+import dev.reins.core.ActivityInfo
+import dev.reins.core.EmailView
+import dev.reins.core.GmailStatus
+import dev.reins.core.PairingView
+import dev.reins.core.SessionInfo
 import java.io.File
 import org.junit.After
 import org.junit.Assume.assumeTrue
@@ -39,7 +39,7 @@ import org.robolectric.annotation.Config
 import org.robolectric.annotation.GraphicsMode
 
 /**
- * Renders the main screens to PNG files for design review (`-Drewarden.screenshots=/some/dir`). Skipped otherwise, so
+ * Renders the main screens to PNG files for design review (`-Dreins.screenshots=/some/dir`). Skipped otherwise, so
  * it costs nothing in a normal test run. Clocks are frozen so every frame is reproducible.
  */
 @RunWith(AndroidJUnit4::class)
@@ -54,7 +54,7 @@ abstract class ScreenshotsBase(private val suffix: String) {
 
     @Before
     fun setUp() {
-        assumeTrue(System.getProperty("rewarden.screenshots") != null)
+        assumeTrue(System.getProperty("reins.screenshots") != null)
         shadowOf(context as android.app.Application).grantPermissions(android.Manifest.permission.POST_NOTIFICATIONS)
         Timers.live = false
         Timers.frozenNowMillis = now * 1000
@@ -77,7 +77,7 @@ abstract class ScreenshotsBase(private val suffix: String) {
         UpdateProvider.fetcher = updates
         UpdateProvider.installer = FakeInstaller()
         androidx.work.testing.WorkManagerTestInitHelper.initializeTestWorkManager(context)
-        (context.applicationContext as RewardenApp).container.state.setSession(dev.rewarden.android.state.SessionState.Loading)
+        (context.applicationContext as ReinsApp).container.state.setSession(dev.reins.android.state.SessionState.Loading)
     }
 
     @After
@@ -121,7 +121,7 @@ abstract class ScreenshotsBase(private val suffix: String) {
 
     /** [dialogs]: also draws dialog windows (each over its dim), which live outside the activity's window. */
     private fun shoot(name: String, dialogs: Boolean = false) {
-        val dir = System.getProperty("rewarden.screenshots")
+        val dir = System.getProperty("reins.screenshots")
         rule.waitForIdle()
         repeat(3) { settle() }
         var bitmap: android.graphics.Bitmap? = null
@@ -161,8 +161,8 @@ abstract class ScreenshotsBase(private val suffix: String) {
             TestData.entry(1, "search", "error", 0u, at = now - 86_400 * 3),
         )
         core.accounts = listOf(
-            dev.rewarden.core.AccountView("gmail", "me@gmail.com", now - 86_400 * 30),
-            dev.rewarden.core.AccountView("gmail", "work@corp.example", now - 86_400 * 4),
+            dev.reins.core.AccountView("gmail", "me@gmail.com", now - 86_400 * 30),
+            dev.reins.core.AccountView("gmail", "work@corp.example", now - 86_400 * 4),
         )
         core.accountStatuses = mapOf("work@corp.example" to GmailStatus.NeedsConsent)
         core.grants = listOf(
@@ -323,9 +323,9 @@ abstract class ScreenshotsBase(private val suffix: String) {
     fun serviceList() {
         history()
         core.accounts = core.accounts + listOf(
-            dev.rewarden.core.AccountView("telegram", "+15550100", now - 86_400),
-            dev.rewarden.core.AccountView("github", "octo-cat", now - 86_400),
-            dev.rewarden.core.AccountView("sms", "this phone", now - 3_600),
+            dev.reins.core.AccountView("telegram", "+15550100", now - 86_400),
+            dev.reins.core.AccountView("github", "octo-cat", now - 86_400),
+            dev.reins.core.AccountView("sms", "this phone", now - 3_600),
         )
         launch()
         await("entry:6")
@@ -417,13 +417,13 @@ abstract class ScreenshotsBase(private val suffix: String) {
     fun desktopPairing() {
         history()
         core.pending = listOf(TestData.pairingItem("p1"))
-        core.pairing = TestData.pairingView("p1", "Rewarden desktop app on laptop", "laptop", keyFingerprint = "4821 9930")
+        core.pairing = TestData.pairingView("p1", "Reins desktop app on laptop", "laptop", keyFingerprint = "4821 9930")
         launch(link("pairing", "p1"))
         await("keyFingerprint")
         shoot("27-desktop-pairing")
     }
 
-    private fun openGit(view: dev.rewarden.core.ApprovalView) {
+    private fun openGit(view: dev.reins.core.ApprovalView) {
         history()
         core.pending = listOf(
             TestData.pending(view.requestId, "write", 1u, waitUntil = now + 40, label = view.connectionLabel, service = "github", account = "octo-cat", op = view.op, opTitle = view.opTitle),
@@ -436,7 +436,7 @@ abstract class ScreenshotsBase(private val suffix: String) {
     private fun realisticFiles() = listOf(
         TestData.gitFile("src/auth/session.rs", "modified", 42u, 7u),
         TestData.gitFile("src/auth/login.rs", "added", 88u, 0u),
-        TestData.gitFile("crates/rewarden-core/src/connector/github/very/deeply/nested/module/path/git.rs", "modified", 12u, 3u),
+        TestData.gitFile("crates/reins-core/src/connector/github/very/deeply/nested/module/path/git.rs", "modified", 12u, 3u),
         TestData.gitFile("assets/logo.png", "added", null, null, binary = true),
         TestData.gitFile("src/old_login.rs", "deleted", 0u, 64u),
         TestData.gitFile("scripts/run.sh", "type_changed", 0u, 0u),
@@ -447,12 +447,12 @@ abstract class ScreenshotsBase(private val suffix: String) {
     )
 
     private fun realisticCommits() = listOf(
-        dev.rewarden.core.GitCommitView("9f3c2a1", "Log in with a passkey when the browser offers one", "Ada Lovelace <ada@example.com>"),
-        dev.rewarden.core.GitCommitView("4be81d0", "Remove the old login form", "Ada Lovelace <ada@example.com>"),
-        dev.rewarden.core.GitCommitView("c07a9e3", "Keep the session for 30 days", "Grace Hopper <grace@example.com>"),
-        dev.rewarden.core.GitCommitView("17d0f5b", "Document the login flow", "Ada Lovelace <ada@example.com>"),
-        dev.rewarden.core.GitCommitView("e2a4c66", "Bump dependencies", "dependabot[bot] <support@github.com>"),
-        dev.rewarden.core.GitCommitView("88b13f2", "Fix a typo", "Grace Hopper <grace@example.com>"),
+        dev.reins.core.GitCommitView("9f3c2a1", "Log in with a passkey when the browser offers one", "Ada Lovelace <ada@example.com>"),
+        dev.reins.core.GitCommitView("4be81d0", "Remove the old login form", "Ada Lovelace <ada@example.com>"),
+        dev.reins.core.GitCommitView("c07a9e3", "Keep the session for 30 days", "Grace Hopper <grace@example.com>"),
+        dev.reins.core.GitCommitView("17d0f5b", "Document the login flow", "Ada Lovelace <ada@example.com>"),
+        dev.reins.core.GitCommitView("e2a4c66", "Bump dependencies", "dependabot[bot] <support@github.com>"),
+        dev.reins.core.GitCommitView("88b13f2", "Fix a typo", "Grace Hopper <grace@example.com>"),
     )
 
     @Test
@@ -546,7 +546,7 @@ abstract class ScreenshotsBase(private val suffix: String) {
         shoot("42-mcp-add")
     }
 
-    private fun openView(view: dev.rewarden.core.ApprovalView) {
+    private fun openView(view: dev.reins.core.ApprovalView) {
         history()
         core.pending = listOf(
             TestData.pending(
@@ -700,14 +700,14 @@ abstract class ScreenshotsBase(private val suffix: String) {
 
     // ---- Autopilot ------------------------------------------------------------------------------------------------
 
-    private val installed = TestData.modelStatus(dev.rewarden.core.ModelState.INSTALLED, size = 412_000_000u)
+    private val installed = TestData.modelStatus(dev.reins.core.ModelState.INSTALLED, size = 412_000_000u)
 
     /** History with what Autopilot, a bypass and Lockdown decided. */
     private fun automaticHistory() {
         history()
         val auto = listOf(
-            TestData.entry(9, "write", "released", 1u, at = now - 60, opTitle = "Push to a branch", decidedBy = "autopilot", autopilot = TestData.note()).copy(service = "github", account = "dkat", detail = "feature/laya → dkat/rewarden · 3 commits"),
-            TestData.entry(8, "send", "denied", 1u, at = now - 300, decidedBy = "autopilot", autopilot = TestData.note(suggested = dev.rewarden.core.Verdict.DENY, pApprove = 0.04f)).copy(connectionLabel = "notes-bot", connectionId = "c4", detail = "To backup-svc@protonmail.example"),
+            TestData.entry(9, "write", "released", 1u, at = now - 60, opTitle = "Push to a branch", decidedBy = "autopilot", autopilot = TestData.note()).copy(service = "github", account = "dkat", detail = "feature/laya → dkat/reins · 3 commits"),
+            TestData.entry(8, "send", "denied", 1u, at = now - 300, decidedBy = "autopilot", autopilot = TestData.note(suggested = dev.reins.core.Verdict.DENY, pApprove = 0.04f)).copy(connectionLabel = "notes-bot", connectionId = "c4", detail = "To backup-svc@protonmail.example"),
             TestData.entry(7, "read", "released", 2u, at = now - 600, decidedBy = "bypass").copy(connectionLabel = "My ChatGPT", connectionId = "c2"),
         )
         core.activity = auto + core.activity
@@ -762,7 +762,7 @@ abstract class ScreenshotsBase(private val suffix: String) {
         top()
         await("modePill")
         shoot("66-home-bypass-pill")
-        core.apGlobal = FakeCore.ApRow(mode = dev.rewarden.core.AutopilotMode.LOCKDOWN)
+        core.apGlobal = FakeCore.ApRow(mode = dev.reins.core.AutopilotMode.LOCKDOWN)
         tap("openSettings")
         tap("openAutopilot")
         await("endLockdown")
@@ -796,7 +796,7 @@ abstract class ScreenshotsBase(private val suffix: String) {
         openAutopilot()
         rule.onNodeWithTag("modelCard").performScrollTo()
         shoot("67-autopilot-no-model")
-        core.model = TestData.modelStatus(dev.rewarden.core.ModelState.DOWNLOADING, downloaded = 151_000_000u, size = 412_000_000u)
+        core.model = TestData.modelStatus(dev.reins.core.ModelState.DOWNLOADING, downloaded = 151_000_000u, size = 412_000_000u)
         core.downloadFailure = null
         tap("wifiOnly")
         await("modelProgress")
@@ -807,7 +807,7 @@ abstract class ScreenshotsBase(private val suffix: String) {
 
     @Test
     fun autopilotModelFailed() {
-        core.model = TestData.modelStatus(dev.rewarden.core.ModelState.FAILED, error = "sha-256 of model.onnx does not match the pinned hash")
+        core.model = TestData.modelStatus(dev.reins.core.ModelState.FAILED, error = "sha-256 of model.onnx does not match the pinned hash")
         openAutopilot()
         await("modelError")
         rule.onNodeWithTag("modelCard").performScrollTo()
@@ -845,7 +845,7 @@ abstract class ScreenshotsBase(private val suffix: String) {
         repeat(30) { rule.mainClock.advanceTimeBy(50) }
         shoot("73-try-it-verdict")
         rule.onNodeWithTag("situation").performScrollTo()
-        rule.onNodeWithTag("situation").performTextReplacement(dev.rewarden.android.autopilot.AutopilotText.examples.last().situation)
+        rule.onNodeWithTag("situation").performTextReplacement(dev.reins.android.autopilot.AutopilotText.examples.last().situation)
         tap("evaluate")
         await("verdictReason")
         rule.onNodeWithTag("verdict").performScrollTo()
@@ -921,7 +921,7 @@ abstract class ScreenshotsBase(private val suffix: String) {
     fun connectionAutopilot() {
         history()
         core.model = installed
-        core.apConnections["c1"] = FakeCore.ApRow(mode = dev.rewarden.core.AutopilotMode.AUTO, profileId = "work")
+        core.apConnections["c1"] = FakeCore.ApRow(mode = dev.reins.core.AutopilotMode.AUTO, profileId = "work")
         launch()
         tap("openSettings")
         tap("connection:c1")
@@ -955,14 +955,14 @@ abstract class ScreenshotsBase(private val suffix: String) {
     @Test
     fun unlock() {
         core.session = null
-        core.ssoKeys = dev.rewarden.core.AccountKeys.LOCKED
+        core.ssoKeys = dev.reins.core.AccountKeys.LOCKED
         launch()
         tap("continue")
         rule.waitUntil(10_000) { container().ssoSignIn.pending() != null }
         scenario?.close()
         launch(
             Intent(context, MainActivity::class.java)
-                .setAction(dev.rewarden.android.platform.SsoRedirectActivity.ACTION_SIGNED_IN)
+                .setAction(dev.reins.android.platform.SsoRedirectActivity.ACTION_SIGNED_IN)
                 .setData(android.net.Uri.parse("com.reins2fa.app://sso-callback?code=c0de&state=${FakeCore.SSO_STATE}")),
         )
         await("unlock")
@@ -989,9 +989,9 @@ abstract class ScreenshotsBase(private val suffix: String) {
     @Test
     fun recoveryCode() {
         core.recoveryCode = FakeCore.RECOVERY_CODE
-        val biometrics = dev.rewarden.android.platform.AuthenticatorProvider.factory
-        dev.rewarden.android.platform.AuthenticatorProvider.factory = {
-            dev.rewarden.android.platform.Authenticator { _, _ -> dev.rewarden.android.platform.AuthResult.Success }
+        val biometrics = dev.reins.android.platform.AuthenticatorProvider.factory
+        dev.reins.android.platform.AuthenticatorProvider.factory = {
+            dev.reins.android.platform.Authenticator { _, _ -> dev.reins.android.platform.AuthResult.Success }
         }
         try {
             launch()
@@ -1000,11 +1000,11 @@ abstract class ScreenshotsBase(private val suffix: String) {
             await("recoveryCodeSheet")
             shoot("50b-recovery-code", dialogs = true)
         } finally {
-            dev.rewarden.android.platform.AuthenticatorProvider.factory = biometrics
+            dev.reins.android.platform.AuthenticatorProvider.factory = biometrics
         }
     }
 
-    private fun container() = (context.applicationContext as RewardenApp).container
+    private fun container() = (context.applicationContext as ReinsApp).container
 
     @Test
     fun createAccount() {

@@ -1,4 +1,4 @@
-//! `rewarden-release`: the release key and signed release manifests, for `scripts/release-desktop.sh`. Not shipped.
+//! `reins-release`: the release key and signed release manifests, for `scripts/release-desktop.sh`. Not shipped.
 
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
@@ -6,12 +6,12 @@ use std::process::ExitCode;
 
 use clap::Parser;
 use data_encoding::{BASE64URL_NOPAD, HEXLOWER};
-use rewarden_desktop::update::{Asset, Manifest, SIGNING_CONTEXT, Signed};
+use reins_desktop::update::{Asset, Manifest, SIGNING_CONTEXT, Signed};
 use ring::signature::{Ed25519KeyPair, KeyPair as _};
 use sha2::{Digest, Sha256};
 
 #[derive(Parser)]
-#[command(name = "rewarden-release", about = "Release key and signed manifests for the Rewarden desktop app")]
+#[command(name = "reins-release", about = "Release key and signed manifests for the Reins desktop app")]
 enum Cli {
     /// Makes a new release key (PKCS#8, 0600) and prints its public half (hex) for `update::RELEASE_KEY`.
     Keygen {
@@ -53,7 +53,7 @@ fn keygen(key: &Path) -> Result<(), String> {
     }
     let pkcs8 =
         Ed25519KeyPair::generate_pkcs8(&ring::rand::SystemRandom::new()).map_err(|_| "key generation failed")?;
-    rewarden_desktop::config::write_private(key, pkcs8.as_ref()).map_err(|e| e.to_string())?;
+    reins_desktop::config::write_private(key, pkcs8.as_ref()).map_err(|e| e.to_string())?;
     println!("{}", HEXLOWER.encode(load(key)?.public_key().as_ref()));
     Ok(())
 }
@@ -95,8 +95,8 @@ fn manifest(
         manifest: text,
     };
     let json = serde_json::to_vec_pretty(&signed).map_err(|e| e.to_string())?;
-    // Check it the way `rewarden update` will before anything is published.
-    rewarden_desktop::update::open(&json, pair.public_key().as_ref())?;
+    // Check it the way `reins update` will before anything is published.
+    reins_desktop::update::open(&json, pair.public_key().as_ref())?;
     std::fs::create_dir_all(out).map_err(|e| e.to_string())?;
     std::fs::write(out.join("latest.json"), json).map_err(|e| e.to_string())?;
     for (platform, asset) in &m.assets {
@@ -126,7 +126,7 @@ fn main() -> ExitCode {
     match result {
         Ok(()) => ExitCode::SUCCESS,
         Err(e) => {
-            eprintln!("rewarden-release: {e}");
+            eprintln!("reins-release: {e}");
             ExitCode::FAILURE
         }
     }

@@ -1,13 +1,13 @@
-package dev.rewarden.android.ui.gmail
+package dev.reins.android.ui.gmail
 
 import android.app.PendingIntent
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
-import dev.rewarden.android.AppContainer
-import dev.rewarden.android.feedback.Event
-import dev.rewarden.android.feedback.play
-import dev.rewarden.android.ui.common.userMessage
-import dev.rewarden.core.GmailStatus
+import dev.reins.android.AppContainer
+import dev.reins.android.feedback.Event
+import dev.reins.android.feedback.play
+import dev.reins.android.ui.common.userMessage
+import dev.reins.core.GmailStatus
 import kotlin.coroutines.cancellation.CancellationException
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -107,7 +107,7 @@ class GmailViewModel(private val container: AppContainer) : ViewModel() {
         refresh()
     }
 
-    /** Disconnects [account]: Rewarden forgets it and Google is told to revoke the app's access. */
+    /** Disconnects [account]: Reins forgets it and Google is told to revoke the app's access. */
     fun remove(account: String) {
         if (_busy.value) return
         _busy.value = true

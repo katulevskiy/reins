@@ -1,8 +1,8 @@
-//! Secrets from the phone's vault, for `rewarden run` and the API proxy: references (`vault:Item/field`), the
+//! Secrets from the phone's vault, for `reins run` and the API proxy: references (`vault:Item/field`), the
 //! `vault_secret_release` question, and the checks on the sealed [`SecretGrant`] (this request's nonce, every requested
 //! secret in order, not expired). Values are held in [`Zeroizing`] strings and never logged.
 
-use rewarden_proto::desktop::SecretGrant;
+use reins_proto::desktop::SecretGrant;
 use serde_json::json;
 use zeroize::{Zeroize as _, Zeroizing};
 

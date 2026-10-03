@@ -3,10 +3,10 @@
 //! The main way is a device flow: the app asks the server for a short code and a link, shows the link as a QR code,
 //! and the phone (its camera, or the Reins app's scanner) opens it; the user approves on the phone and the app's
 //! polling sees it. [`DeviceFlow`] is the app's side of it. [`ServerFlow`] goes to the server through the
-//! `rewarden_desktop` library (`server::device`, behind the `device-flow` feature until that module is on this
-//! branch), which keeps the session exactly like `rewarden login` does; [`DemoFlow`] pretends, for `--demo`.
+//! `reins_desktop` library (`server::device`, behind the `device-flow` feature until that module is on this
+//! branch), which keeps the session exactly like `reins login` does; [`DemoFlow`] pretends, for `--demo`.
 //!
-//! The other way is the browser sign-in `rewarden login` uses (`Backend::sign_in_with_browser`).
+//! The other way is the browser sign-in `reins login` uses (`Backend::sign_in_with_browser`).
 
 use std::sync::Arc;
 use std::time::{Duration, Instant};
@@ -60,13 +60,13 @@ pub trait DeviceFlow: Send + Sync {
 /// sign-in, which works with every server.
 pub const UNAVAILABLE: &str = "This server cannot pair by QR code. Sign in with the browser instead.";
 
-/// The real pairing: `rewarden_desktop::server::device`, the same device flow `rewarden login` uses.
+/// The real pairing: `reins_desktop::server::device`, the same device flow `reins login` uses.
 #[cfg_attr(not(feature = "device-flow"), allow(dead_code))]
 pub struct ServerFlow {
     pub backend: Arc<Backend>,
     pub server: String,
     #[cfg(feature = "device-flow")]
-    pairing: tokio::sync::Mutex<Option<rewarden_desktop::server::device::DevicePairing>>,
+    pairing: tokio::sync::Mutex<Option<reins_desktop::server::device::DevicePairing>>,
 }
 
 impl ServerFlow {
@@ -84,13 +84,13 @@ impl ServerFlow {
 #[async_trait]
 impl DeviceFlow for ServerFlow {
     async fn start(&self) -> Result<DeviceCode, String> {
-        use rewarden_desktop::server::device::{DevicePairing, StartError};
+        use reins_desktop::server::device::{DevicePairing, StartError};
         let identity = self.backend.identity()?;
         let pairing = DevicePairing::start(&identity, &self.server).await.map_err(|e| match e {
             StartError::Unsupported => UNAVAILABLE.to_owned(),
             StartError::Failed(m) => m,
         })?;
-        let left = u64::try_from(pairing.expires_at - rewarden_desktop::now_unix()).unwrap_or(0);
+        let left = u64::try_from(pairing.expires_at - reins_desktop::now_unix()).unwrap_or(0);
         let code = DeviceCode {
             qr_url: pairing.qr_url.clone(),
             user_code: pairing.user_code.clone(),
@@ -103,7 +103,7 @@ impl DeviceFlow for ServerFlow {
     }
 
     async fn poll(&self) -> Result<Poll, String> {
-        use rewarden_desktop::server::device::DeviceStatus;
+        use reins_desktop::server::device::DeviceStatus;
         let mut guard = self.pairing.lock().await;
         let pairing = guard.as_mut().ok_or("no pairing was started")?;
         match pairing.poll(self.backend.paths()).await {

@@ -1,9 +1,9 @@
-//! The MCP tools Rewarden exposes (spec §4.2): schemas, strict argument parsing and result
+//! The MCP tools Reins exposes (spec §4.2): schemas, strict argument parsing and result
 //! rendering (Decisions 9, 10, 14). Unknown properties are rejected, never dropped, so an
 //! approved action is exactly what the AI asked for.
 
 use chrono::{DateTime, SecondsFormat};
-use rewarden_proto::{
+use reins_proto::{
     blob::MAX_BLOB_BYTES,
     connector,
     gmail::{
@@ -21,21 +21,21 @@ use super::{mcp_tools, relay::WaitResult};
 /// Applied by the server when the AI omits `max_results` (contracts C).
 pub const DEFAULT_MAX_RESULTS: u32 = 10;
 /// Always listed: hands the AI an upload link for a file it wants to pass on (files spec, S3).
-pub const UPLOAD_TOOL: &str = "rewarden_upload";
+pub const UPLOAD_TOOL: &str = "reins_upload";
 
-pub const DENIED_TEXT: &str = "Denied by the user on their Rewarden device.";
+pub const DENIED_TEXT: &str = "Denied by the user on their Reins device.";
 
 pub fn offline_text(id: &RequestId) -> String {
     format!(
-        "Rewarden: your approval device is offline. Ask the user to open the Rewarden app; the request is waiting \
-there. Then call rewarden_get_result with request_id={id}."
+        "Reins: your approval device is offline. Ask the user to open the Reins app; the request is waiting \
+there. Then call reins_get_result with request_id={id}."
     )
 }
 
 pub fn pending_text(id: &RequestId) -> String {
     format!(
         "Waiting for the user to approve on their phone. When they confirm (the user can approve even after this \
-message), call rewarden_get_result with request_id={id}, or repeat the same request: a one-time approval may \
+message), call reins_get_result with request_id={id}, or repeat the same request: a one-time approval may \
 already cover it."
     )
 }
@@ -43,7 +43,7 @@ already cover it."
 fn account_property() -> Value {
     json!({
         "type": "string",
-        "description": "Which connected account to use: an address from rewarden_list_accounts. Optional when only \
+        "description": "Which connected account to use: an address from reins_list_accounts. Optional when only \
         one account is connected."
     })
 }
@@ -55,7 +55,7 @@ pub fn tool_definitions() -> Vec<Value> {
 }
 
 /// The tools for a user whose phone reported these integrations (`None`: not reported, so every tool). Gmail and
-/// the connector tools are listed only for integrations that have an account; the `rewarden_*` tools always.
+/// the connector tools are listed only for integrations that have an account; the `reins_*` tools always.
 pub fn tool_definitions_for(services: Option<&[String]>) -> Vec<Value> {
     let mut tools = vec![
         json!({
@@ -127,7 +127,7 @@ pub fn tool_definitions_for(services: Option<&[String]>) -> Vec<Value> {
             "annotations": {"readOnlyHint": false, "destructiveHint": false, "openWorldHint": true}
         }),
         json!({
-            "name": "rewarden_request_access",
+            "name": "reins_request_access",
             "title": "Ask for a standing permission",
             "description": "Asks the user, on their phone, for a time-limited permission so that later gmail_* calls \
         need no approval. Ask for the NARROWEST permission that completes your task: name the exact senders \
@@ -163,12 +163,12 @@ pub fn tool_definitions_for(services: Option<&[String]>) -> Vec<Value> {
             "annotations": {"readOnlyHint": false, "destructiveHint": false, "openWorldHint": false}
         }),
         json!({
-            "name": "rewarden_list_accounts",
+            "name": "reins_list_accounts",
             "title": "List integrations and their accounts",
             "description": "Without `service`: lists the integrations the user has connected (for example gmail); \
         needs no approval and shows no accounts. With `service`: asks the user, on their phone, to let you see that \
         integration's accounts (for example the Gmail addresses). Once they agree (usually for a month) you can \
-        pass the address you want as `account` to gmail_search, gmail_read, gmail_send or rewarden_request_access. \
+        pass the address you want as `account` to gmail_search, gmail_read, gmail_send or reins_request_access. \
         Only ask for the accounts when you need to choose between several.",
             "inputSchema": {
                 "type": "object",
@@ -185,8 +185,8 @@ pub fn tool_definitions_for(services: Option<&[String]>) -> Vec<Value> {
             "annotations": {"readOnlyHint": true, "openWorldHint": false}
         }),
         json!({
-            "name": "rewarden_get_result",
-            "title": "Get a pending Rewarden result",
+            "name": "reins_get_result",
+            "title": "Get a pending Reins result",
             "description": "Returns the result of an earlier request that was still waiting for the user's approval \
         (use the request_id from that answer). Waits a while if it is still pending.",
             "inputSchema": {
@@ -203,7 +203,7 @@ pub fn tool_definitions_for(services: Option<&[String]>) -> Vec<Value> {
             "description": "For passing a file to another tool as a link (for example a large file another tool should \
         download). The phone answers with an upload link: upload the file there (`curl -T <file> '<upload_url>'`). The \
         user approves it on their phone when it arrives; then the download link from the same answer works. For files \
-        a Rewarden tool takes directly (release assets, repository files, attachments) call that tool instead: it \
+        a Reins tool takes directly (release assets, repository files, attachments) call that tool instead: it \
         answers with its own upload link when it needs one.",
             "inputSchema": {
                 "type": "object",
@@ -222,7 +222,7 @@ pub fn tool_definitions_for(services: Option<&[String]>) -> Vec<Value> {
             "annotations": {"readOnlyHint": false, "destructiveHint": false, "openWorldHint": false}
         }),
     ];
-    // The other integrations describe their tools as data (rewarden-proto).
+    // The other integrations describe their tools as data (reins-proto).
     // Desktop-only tools answer with credentials for the paired desktop app: never offered to an AI.
     tools.extend(connector::specs().iter().filter(|s| !s.desktop_only).map(|s| {
         json!({
@@ -247,7 +247,7 @@ pub fn tool_definitions_for(services: Option<&[String]>) -> Vec<Value> {
     tools
 }
 
-/// [`tool_definitions_for`] plus the tools of the MCP servers the user added on the phone, after Rewarden's own.
+/// [`tool_definitions_for`] plus the tools of the MCP servers the user added on the phone, after Reins's own.
 pub fn tool_definitions_with(services: Option<&[String]>, mcp: &[McpServerReport]) -> Vec<Value> {
     let mut tools = tool_definitions_for(services);
     tools.extend(mcp_tools::tool_definitions(mcp));
@@ -281,7 +281,7 @@ fn reject_unknown(args: &Map<String, Value>, allowed: &[&str]) -> Result<(), Too
     for key in args.keys() {
         if !allowed.contains(&key.as_str()) {
             let hint = if key == "bcc" {
-                " Rewarden cannot send Bcc."
+                " Reins cannot send Bcc."
             } else {
                 ""
             };
@@ -404,7 +404,7 @@ pub fn parse_invocation_with(
                 args,
             )
         }
-        "rewarden_request_access" => {
+        "reins_request_access" => {
             let args = object(arguments)?;
             reject_unknown(
                 args,
@@ -460,7 +460,7 @@ pub fn parse_invocation_with(
                 args,
             )
         }
-        "rewarden_list_accounts" => {
+        "reins_list_accounts" => {
             let args = object(arguments)?;
             reject_unknown(args, &["service", "ask_for_more"])?;
             let ask_for_more = match args.get("ask_for_more") {
@@ -476,7 +476,7 @@ pub fn parse_invocation_with(
                 args,
             )
         }
-        "rewarden_get_result" => {
+        "reins_get_result" => {
             let args = object(arguments)?;
             reject_unknown(args, &["request_id"])?;
             let id = required_string(args, "request_id")?;
@@ -568,7 +568,7 @@ fn structured(result: &ToolResult) -> Value {
             integrations,
         } => json!({
             "integrations": integrations.iter().map(|i| json!({"service": i.service, "name": i.name})).collect::<Vec<_>>(),
-            "note": "Accounts are not shown. Call rewarden_list_accounts with a service to ask the user to share them."
+            "note": "Accounts are not shown. Call reins_list_accounts with a service to ask the user to share them."
         }),
         ToolResult::Accounts {
             accounts,
@@ -581,7 +581,7 @@ fn structured(result: &ToolResult) -> Value {
                 out["withheld"] = json!(withheld);
                 out["note"] = json!(format!(
                     "The user shared {} account(s) and keeps {withheld} more private. If the task needs another one, \
-                     call rewarden_list_accounts again with ask_for_more=true and the user will be asked.",
+                     call reins_list_accounts again with ask_for_more=true and the user will be asked.",
                     accounts.len()
                 ));
             }
@@ -611,7 +611,7 @@ pub fn render_outcome(outcome: &RelayOutcome) -> Value {
         } => failure(DENIED_TEXT),
         RelayOutcome::Error {
             message,
-        } => failure(&format!("The Rewarden device could not complete the request: {message}")),
+        } => failure(&format!("The Reins device could not complete the request: {message}")),
     }
 }
 
@@ -627,7 +627,7 @@ pub fn render_wait(wait: &WaitResult, id: &RequestId) -> Value {
 
 #[cfg(test)]
 mod tests {
-    use rewarden_proto::gmail::{MessageFull, SentMessage};
+    use reins_proto::gmail::{MessageFull, SentMessage};
 
     use super::*;
 
@@ -716,7 +716,7 @@ mod tests {
     #[test]
     fn access_requests_are_parsed_and_bounded() {
         let ok = parse_invocation(
-            "rewarden_request_access",
+            "reins_request_access",
             &json!({"action": "read", "duration_seconds": 3600, "reason": "Summarise the bank statements",
                 "from": ["Alerts@Bank.com"], "subject_contains": "statement", "max_uses": 3}),
         )
@@ -733,7 +733,7 @@ mod tests {
         assert_eq!((grant.action, grant.duration_secs, grant.max_uses), (GrantAction::Read, 3600, Some(3)));
         assert_eq!(grant.from, ["alerts@bank.com"]);
 
-        let bad = |args: Value| invalid_msg("rewarden_request_access", &args);
+        let bad = |args: Value| invalid_msg("reins_request_access", &args);
         assert!(
             bad(json!({"action": "read", "duration_seconds": 30, "reason": "x", "from": ["a@b.com"]}))
                 .contains("duration_secs")
@@ -767,7 +767,7 @@ mod tests {
     #[test]
     fn listing_accounts_takes_no_arguments() {
         assert_eq!(
-            parse_invocation("rewarden_list_accounts", &json!({})).unwrap(),
+            parse_invocation("reins_list_accounts", &json!({})).unwrap(),
             ToolInvocation::Relay(
                 ToolCall::ListAccounts {
                     service: None,
@@ -777,7 +777,7 @@ mod tests {
             )
         );
         assert_eq!(
-            parse_invocation("rewarden_list_accounts", &json!({"service": " Gmail "})).unwrap(),
+            parse_invocation("reins_list_accounts", &json!({"service": " Gmail "})).unwrap(),
             ToolInvocation::Relay(
                 ToolCall::ListAccounts {
                     service: Some("gmail".into()),
@@ -787,7 +787,7 @@ mod tests {
             )
         );
         assert_eq!(
-            parse_invocation("rewarden_list_accounts", &json!({"service": "gmail", "ask_for_more": true})).unwrap(),
+            parse_invocation("reins_list_accounts", &json!({"service": "gmail", "ask_for_more": true})).unwrap(),
             ToolInvocation::Relay(
                 ToolCall::ListAccounts {
                     service: Some("gmail".into()),
@@ -796,12 +796,12 @@ mod tests {
                 None
             )
         );
-        assert!(invalid_msg("rewarden_list_accounts", &json!({"ask_for_more": "yes"})).contains("true or false"));
-        assert!(invalid_msg("rewarden_list_accounts", &json!({"service": "not an integration"})).contains("service"));
-        assert!(invalid_msg("rewarden_list_accounts", &json!({"account": "a@b.com"})).contains("Unknown property"));
+        assert!(invalid_msg("reins_list_accounts", &json!({"ask_for_more": "yes"})).contains("true or false"));
+        assert!(invalid_msg("reins_list_accounts", &json!({"service": "not an integration"})).contains("service"));
+        assert!(invalid_msg("reins_list_accounts", &json!({"account": "a@b.com"})).contains("Unknown property"));
         let listed = render_outcome(&RelayOutcome::Result {
             result: ToolResult::Integrations {
-                integrations: vec![rewarden_proto::relay::IntegrationInfo {
+                integrations: vec![reins_proto::relay::IntegrationInfo {
                     service: "gmail".into(),
                     name: "Gmail".into(),
                 }],
@@ -810,7 +810,7 @@ mod tests {
         assert_eq!(listed["structuredContent"]["integrations"], json!([{"service": "gmail", "name": "Gmail"}]));
         let out = render_outcome(&RelayOutcome::Result {
             result: ToolResult::Accounts {
-                accounts: vec![rewarden_proto::relay::AccountInfo {
+                accounts: vec![reins_proto::relay::AccountInfo {
                     service: "gmail".into(),
                     account: "me@gmail.com".into(),
                 }],
@@ -820,7 +820,7 @@ mod tests {
         assert_eq!(out["structuredContent"], json!({"accounts": [{"service": "gmail", "account": "me@gmail.com"}]}));
         let partial = render_outcome(&RelayOutcome::Result {
             result: ToolResult::Accounts {
-                accounts: vec![rewarden_proto::relay::AccountInfo {
+                accounts: vec![reins_proto::relay::AccountInfo {
                     service: "gmail".into(),
                     account: "me@gmail.com".into(),
                 }],
@@ -896,11 +896,11 @@ mod tests {
     #[test]
     fn get_result_and_unknown_tools() {
         assert_eq!(
-            parse_invocation("rewarden_get_result", &json!({"request_id": "r-1"})).unwrap(),
+            parse_invocation("reins_get_result", &json!({"request_id": "r-1"})).unwrap(),
             ToolInvocation::GetResult(RequestId("r-1".into()))
         );
-        assert!(invalid_msg("rewarden_get_result", &json!({"request_id": ""})).contains("request_id"));
-        assert!(invalid_msg("rewarden_get_result", &json!({"request_id": "x".repeat(65)})).contains("request_id"));
+        assert!(invalid_msg("reins_get_result", &json!({"request_id": ""})).contains("request_id"));
+        assert!(invalid_msg("reins_get_result", &json!({"request_id": "x".repeat(65)})).contains("request_id"));
         assert_eq!(
             parse_invocation("delete_everything", &json!({})),
             Err(ToolArgError::UnknownTool("delete_everything".into()))
@@ -910,14 +910,14 @@ mod tests {
     #[test]
     fn spec_texts_are_verbatim() {
         let id = RequestId("req-9".into());
-        assert_eq!(DENIED_TEXT, "Denied by the user on their Rewarden device.");
+        assert_eq!(DENIED_TEXT, "Denied by the user on their Reins device.");
         assert_eq!(
             offline_text(&id),
-            "Rewarden: your approval device is offline. Ask the user to open the Rewarden app; the request is waiting there. Then call rewarden_get_result with request_id=req-9."
+            "Reins: your approval device is offline. Ask the user to open the Reins app; the request is waiting there. Then call reins_get_result with request_id=req-9."
         );
         assert_eq!(
             pending_text(&id),
-            "Waiting for the user to approve on their phone. When they confirm (the user can approve even after this message), call rewarden_get_result with request_id=req-9, or repeat the same request: a one-time approval may already cover it."
+            "Waiting for the user to approve on their phone. When they confirm (the user can approve even after this message), call reins_get_result with request_id=req-9, or repeat the same request: a one-time approval may already cover it."
         );
         for wait in [WaitResult::Offline, WaitResult::Pending, WaitResult::NotFound] {
             assert_eq!(render_wait(&wait, &id)["isError"], true);
@@ -980,10 +980,7 @@ mod tests {
         let err = render_outcome(&RelayOutcome::Error {
             message: "Gmail needs consent".into(),
         });
-        assert_eq!(
-            err["content"][0]["text"],
-            "The Rewarden device could not complete the request: Gmail needs consent"
-        );
+        assert_eq!(err["content"][0]["text"], "The Reins device could not complete the request: Gmail needs consent");
         assert!(err.get("structuredContent").is_none());
     }
 
@@ -1037,7 +1034,7 @@ mod tests {
         let report = McpServerReport {
             id: "linear".into(),
             name: "Linear".into(),
-            tools: vec![rewarden_proto::remote_mcp::McpToolReport {
+            tools: vec![reins_proto::remote_mcp::McpToolReport {
                 name: "search issues".into(),
                 title: None,
                 description: "Finds issues".into(),

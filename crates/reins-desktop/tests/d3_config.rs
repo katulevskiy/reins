@@ -1,6 +1,6 @@
 //! `[[git.hosts]]`: the built-in hosts, overriding them, adding one, and old configs with only `[github]`.
 
-use rewarden_desktop::config::{Config, GitHost, Paths};
+use reins_desktop::config::{Config, GitHost, Paths};
 
 fn load(text: &str) -> Result<Config, String> {
     let dir = tempfile::tempdir().unwrap();

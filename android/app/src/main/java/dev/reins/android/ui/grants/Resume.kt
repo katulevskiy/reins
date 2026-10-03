@@ -1,4 +1,4 @@
-package dev.rewarden.android.ui.grants
+package dev.reins.android.ui.grants
 
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.animateContentSize
@@ -12,17 +12,17 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.draw.rotate
 import androidx.compose.ui.text.input.KeyboardType
-import dev.rewarden.android.feedback.DialogFeedback
-import dev.rewarden.android.feedback.Event
-import dev.rewarden.android.feedback.feedbackAction
-import dev.rewarden.android.feedback.play
-import dev.rewarden.android.design.Banner
-import dev.rewarden.android.design.BannerKind
-import dev.rewarden.android.design.Glyph
-import dev.rewarden.android.design.GlyphIcon
-import dev.rewarden.android.design.RTextField
-import dev.rewarden.android.design.pressable
-import dev.rewarden.core.StandingGrant
+import dev.reins.android.feedback.DialogFeedback
+import dev.reins.android.feedback.Event
+import dev.reins.android.feedback.feedbackAction
+import dev.reins.android.feedback.play
+import dev.reins.android.design.Banner
+import dev.reins.android.design.BannerKind
+import dev.reins.android.design.Glyph
+import dev.reins.android.design.GlyphIcon
+import dev.reins.android.design.RTextField
+import dev.reins.android.design.pressable
+import dev.reins.core.StandingGrant
 import androidx.compose.foundation.layout.ExperimentalLayoutApi
 import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.Row
@@ -43,19 +43,19 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
 import androidx.compose.foundation.layout.Column
-import dev.rewarden.android.AppContainer
-import dev.rewarden.android.design.ButtonStyle
-import dev.rewarden.android.design.CapsuleButton
-import dev.rewarden.android.design.LocalColors
-import dev.rewarden.android.design.RText
-import dev.rewarden.android.design.RType
-import dev.rewarden.android.design.SelectChip
-import dev.rewarden.android.design.glass
-import dev.rewarden.android.platform.AuthResult
-import dev.rewarden.android.platform.Authenticator
-import dev.rewarden.android.ui.common.untrusted
-import dev.rewarden.android.ui.common.userMessage
-import dev.rewarden.core.GrantView
+import dev.reins.android.AppContainer
+import dev.reins.android.design.ButtonStyle
+import dev.reins.android.design.CapsuleButton
+import dev.reins.android.design.LocalColors
+import dev.reins.android.design.RText
+import dev.reins.android.design.RType
+import dev.reins.android.design.SelectChip
+import dev.reins.android.design.glass
+import dev.reins.android.platform.AuthResult
+import dev.reins.android.platform.Authenticator
+import dev.reins.android.ui.common.untrusted
+import dev.reins.android.ui.common.userMessage
+import dev.reins.core.GrantView
 import kotlin.coroutines.cancellation.CancellationException
 
 /**

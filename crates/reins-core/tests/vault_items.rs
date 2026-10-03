@@ -11,11 +11,11 @@ use cbc::cipher::block_padding::Pkcs7;
 use cbc::cipher::{BlockDecryptMut, BlockEncryptMut, KeyIvInit};
 use common::{FakeGoogle, FakeKeys, RecordingNotifier};
 use data_encoding::BASE64;
-use rewarden_core::crypto::{Kdf, VaultKey, master_key};
-use rewarden_core::{
-    ApprovalChoice, ApprovalKind, ApprovalView, CoreConfig, GoogleTokenProvider, Notifier, RewardenCore, StandingGrant,
+use reins_core::crypto::{Kdf, VaultKey, master_key};
+use reins_core::{
+    ApprovalChoice, ApprovalKind, ApprovalView, CoreConfig, GoogleTokenProvider, Notifier, ReinsCore, StandingGrant,
 };
-use rewarden_proto::connector::{ConnectorCall, Effect};
+use reins_proto::connector::{ConnectorCall, Effect};
 use ring::hmac;
 use serde_json::{Map, Value, json};
 use wiremock::matchers::{header_exists, method, path, path_regex};
@@ -41,15 +41,14 @@ const SECRETS: &[&str] = &[
     "seed phrase words",
 ];
 
-const PUBLIC_KEY: &str =
-    "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIHj2DRUTdkNas40IazQKs/dKxpKmBL2To4E+7OtctO45 test@rewarden";
+const PUBLIC_KEY: &str = "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIHj2DRUTdkNas40IazQKs/dKxpKmBL2To4E+7OtctO45 test@reins";
 const FINGERPRINT: &str = "SHA256:LEmZRdeu5A7eN2mINUqQkbgDak8Mr5bWYY1PXxCWkNc";
 const PRIVATE_KEY: &str =
     "-----BEGIN OPENSSH PRIVATE KEY-----\nFAKEPRIVATEKEYMATERIAL\n-----END OPENSSH PRIVATE KEY-----";
 
 struct Env {
     server: MockServer,
-    core: Arc<RewardenCore>,
+    core: Arc<ReinsCore>,
     user: VaultKey,
     own: VaultKey,
     att_key: Vec<u8>,
@@ -266,7 +265,7 @@ async fn env() -> Env {
     let dir = tempfile::tempdir().unwrap();
     let google: Arc<dyn GoogleTokenProvider> = Arc::new(FakeGoogle::new());
     let notifier: Arc<dyn Notifier> = Arc::new(RecordingNotifier::default());
-    let core = RewardenCore::with_connectors(
+    let core = ReinsCore::with_connectors(
         dir.path().to_str().unwrap(),
         &FakeKeys,
         google,
@@ -295,19 +294,19 @@ fn request(id: &str, op: &str, args: &Value) -> Value {
 
 async fn serve_pending(env: &Env, requests: &[Value]) {
     Mock::given(method("GET"))
-        .and(path("/rewarden/api/pending"))
+        .and(path("/reins/api/pending"))
         .respond_with(ResponseTemplate::new(200).set_body_json(json!({"requests": requests, "pairings": []})))
         .up_to_n_times(1)
         .with_priority(1)
         .mount(&env.server)
         .await;
     Mock::given(method("GET"))
-        .and(path("/rewarden/api/pending"))
+        .and(path("/reins/api/pending"))
         .respond_with(ResponseTemplate::new(200).set_body_json(json!({"requests": [], "pairings": []})))
         .mount(&env.server)
         .await;
     Mock::given(method("POST"))
-        .and(path_regex(r"^/rewarden/api/(requests|pairings)/[^/]+/response$"))
+        .and(path_regex(r"^/reins/api/(requests|pairings)/[^/]+/response$"))
         .respond_with(ResponseTemplate::new(204))
         .mount(&env.server)
         .await;
@@ -1019,7 +1018,7 @@ async fn an_update_keeps_the_archive_the_websites_rules_the_history_and_can_remo
     write(
         &env,
         "item_update",
-        json!({"item": "ssh", "fields": {"public_key": PUBLIC_KEY.replace("test@rewarden", "renamed")}}),
+        json!({"item": "ssh", "fields": {"public_key": PUBLIC_KEY.replace("test@reins", "renamed")}}),
     )
     .await;
     let body = &sent(&env, "PUT", "/api/ciphers/ssh").await[0];
@@ -1326,7 +1325,7 @@ async fn deleting_for_good_and_emptying_the_trash_are_asked_every_time() {
     let standing = StandingGrant {
         duration_secs: Some(3_600),
         max_uses: None,
-        scope: rewarden_core::GrantScopeChoice {
+        scope: reins_core::GrantScopeChoice {
             all_mail: false,
             selected_messages_only: false,
             sender_addresses: vec![],
@@ -1481,7 +1480,7 @@ async fn a_standing_permission_for_a_folder_covers_that_folder_and_that_kind_of_
     let standing = StandingGrant {
         duration_secs: Some(3_600),
         max_uses: None,
-        scope: rewarden_core::GrantScopeChoice {
+        scope: reins_core::GrantScopeChoice {
             all_mail: false,
             selected_messages_only: false,
             sender_addresses: vec![],

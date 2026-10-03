@@ -17,7 +17,7 @@ use http_body_util::{BodyExt as _, Full};
 use hyper::body::Incoming;
 use hyper::header::{self, HeaderMap, HeaderName, HeaderValue};
 use hyper::{Method, Request, Response, StatusCode};
-use rewarden_proto::desktop::push_digest;
+use reins_proto::desktop::push_digest;
 
 use self::body::{BodyError, MAX_PUSH, Spool, parse_push, read_body};
 use self::route::{Kind, Route, Service};
@@ -69,14 +69,14 @@ pub fn text(status: StatusCode, message: &str) -> Response<Body> {
 const NOTICE_AFTER: Duration = Duration::from_millis(800);
 
 /// "push to github.com/me/app: main (3 commits), v1.2", for the waiting line.
-fn push_what(repo: &Repo, summary: &rewarden_proto::desktop::PushSummary) -> String {
+fn push_what(repo: &Repo, summary: &reins_proto::desktop::PushSummary) -> String {
     let refs: Vec<String> = summary
         .updates
         .iter()
         .map(|u| {
             let name = u.branch().or_else(|| u.tag()).unwrap_or(&u.name);
             match (u.change, u.commit_count) {
-                (rewarden_proto::desktop::RefChange::Delete, _) => format!("delete {name}"),
+                (reins_proto::desktop::RefChange::Delete, _) => format!("delete {name}"),
                 (_, 0) => name.to_owned(),
                 (_, 1) => format!("{name} (1 commit)"),
                 (_, n) => format!("{name} ({n} commits)"),
@@ -347,12 +347,12 @@ impl Proxy {
         let Some(peer) = peer else {
             return decision.await;
         };
-        let line = format!("rewarden: {}: {what}…", self.authorizer.waiting_hint());
+        let line = format!("reins: {}: {what}…", self.authorizer.waiting_hint());
         let told = tokio::task::spawn_blocking(move || notice::tell(peer, &line));
         let r = decision.await;
         told.await.ok();
         if r.is_ok() {
-            tokio::task::spawn_blocking(move || notice::tell(peer, "rewarden: approved.")).await.ok();
+            tokio::task::spawn_blocking(move || notice::tell(peer, "reins: approved.")).await.ok();
         }
         r
     }
@@ -523,7 +523,7 @@ impl Proxy {
         )
         .await;
         drop(push.pack);
-        let fits = summary.fit(rewarden_proto::desktop::MAX_SUMMARY_BYTES);
+        let fits = summary.fit(reins_proto::desktop::MAX_SUMMARY_BYTES);
         if let Err(e) = summary.validate().and(if fits {
             Ok(())
         } else {

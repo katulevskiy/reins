@@ -5,8 +5,8 @@
 use std::fmt::Write as _;
 
 use data_encoding::BASE64;
+use reins_proto::connector::ConnectorCall;
 use reqwest::Method;
-use rewarden_proto::connector::ConnectorCall;
 use serde_json::{Map, Value, json};
 
 use super::{GitHub, Options, Preview, owner_ok, parents, ref_ok, repo_arg, repo_ok};
@@ -297,7 +297,7 @@ async fn download_start(gh: &GitHub, token: &str, path: &str) -> Res<Result<reqw
         .bearer_auth(token)
         .header("Accept", "application/vnd.github+json")
         .header("X-GitHub-Api-Version", "2022-11-28")
-        .header("User-Agent", "rewarden")
+        .header("User-Agent", "reins")
         .send()
         .await?;
     let status = resp.status();
@@ -330,7 +330,7 @@ async fn download_text(gh: &GitHub, token: &str, path: &str) -> Res<(String, boo
     let mut resp = match download_start(gh, token, path).await? {
         Ok(resp) => resp,
         Err(location) => {
-            let resp = gh.http.get(location).header("User-Agent", "rewarden").send().await?;
+            let resp = gh.http.get(location).header("User-Agent", "reins").send().await?;
             if !resp.status().is_success() {
                 return Err(CoreError::service(format!(
                     "The log is no longer available (the download answered {}); GitHub keeps logs for a limited time.",

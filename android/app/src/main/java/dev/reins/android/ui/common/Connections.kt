@@ -1,12 +1,12 @@
-package dev.rewarden.android.ui.common
+package dev.reins.android.ui.common
 
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.compositionLocalOf
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
-import dev.rewarden.android.design.ConnectionAvatar
-import dev.rewarden.core.ConnectionView
+import dev.reins.android.design.ConnectionAvatar
+import dev.reins.core.ConnectionView
 
 /** The AI connections, so any screen can show a connection's chosen icon. */
 val LocalConnections = compositionLocalOf<List<ConnectionView>> { emptyList() }

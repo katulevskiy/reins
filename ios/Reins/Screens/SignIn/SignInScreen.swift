@@ -8,7 +8,7 @@ struct SignInState: Equatable {
     var error: String?
 
     /// The hosted Reins server: the sign-in starts with it, and the server field stays hidden behind "Use another
-    /// server" (`rewarden_proto::default_server!`).
+    /// server" (`reins_proto::default_server!`).
     static let defaultServer = "https://app.reins2fa.com"
 
     /// Sign in is possible once a server address, an email and a password are there.

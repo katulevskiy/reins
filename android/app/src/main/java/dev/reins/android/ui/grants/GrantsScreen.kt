@@ -1,4 +1,4 @@
-package dev.rewarden.android.ui.grants
+package dev.reins.android.ui.grants
 
 import androidx.compose.animation.core.FastOutSlowInEasing
 import androidx.compose.animation.core.animateFloatAsState
@@ -38,28 +38,28 @@ import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
-import dev.rewarden.android.design.Banner
-import dev.rewarden.android.design.BannerKind
-import dev.rewarden.android.design.CapsuleButton
-import dev.rewarden.android.design.ConfirmDialog
-import dev.rewarden.android.design.EmptyState
-import dev.rewarden.android.design.Glyph
-import dev.rewarden.android.design.GlyphIcon
-import dev.rewarden.android.design.Hairline
-import dev.rewarden.android.design.LargeTitle
-import dev.rewarden.android.design.LocalColors
-import dev.rewarden.android.design.RText
-import dev.rewarden.android.design.RType
-import dev.rewarden.android.design.glass
-import dev.rewarden.android.design.pressable
-import dev.rewarden.android.feedback.Event
-import dev.rewarden.android.feedback.feedbackAction
-import dev.rewarden.android.state.AppState
-import dev.rewarden.android.ui.common.EndedGrantRow
-import dev.rewarden.android.ui.common.GrantTile
-import dev.rewarden.android.ui.common.untrusted
-import dev.rewarden.core.GrantView
-import dev.rewarden.core.StandingGrant
+import dev.reins.android.design.Banner
+import dev.reins.android.design.BannerKind
+import dev.reins.android.design.CapsuleButton
+import dev.reins.android.design.ConfirmDialog
+import dev.reins.android.design.EmptyState
+import dev.reins.android.design.Glyph
+import dev.reins.android.design.GlyphIcon
+import dev.reins.android.design.Hairline
+import dev.reins.android.design.LargeTitle
+import dev.reins.android.design.LocalColors
+import dev.reins.android.design.RText
+import dev.reins.android.design.RType
+import dev.reins.android.design.glass
+import dev.reins.android.design.pressable
+import dev.reins.android.feedback.Event
+import dev.reins.android.feedback.feedbackAction
+import dev.reins.android.state.AppState
+import dev.reins.android.ui.common.EndedGrantRow
+import dev.reins.android.ui.common.GrantTile
+import dev.reins.android.ui.common.untrusted
+import dev.reins.core.GrantView
+import dev.reins.core.StandingGrant
 import kotlinx.coroutines.launch
 
 /** Space the floating navigation bar takes at the bottom of the screen. */

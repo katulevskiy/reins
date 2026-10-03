@@ -7,7 +7,7 @@ use std::process::{Child, Command};
 use std::sync::OnceLock;
 use std::time::{Duration, Instant};
 
-use rewarden_core::crypto::{Kdf, master_key, master_password_hash};
+use reins_core::crypto::{Kdf, master_key, master_password_hash};
 use serde_json::json;
 
 use crate::PASSWORD;
@@ -62,7 +62,7 @@ impl Server {
         let bin = binary().to_owned();
         let port = url::Url::parse(base).ok().and_then(|u| u.port()).expect("a base with a port");
         let base = base.to_owned();
-        let dir = std::env::temp_dir().join(format!("rewarden-e2e-{}", uuid::Uuid::new_v4()));
+        let dir = std::env::temp_dir().join(format!("reins-e2e-{}", uuid::Uuid::new_v4()));
         std::fs::create_dir_all(&dir).expect("temp dir");
         let log = File::create(dir.join("server.log")).expect("log");
         let mut command = Command::new(bin);
@@ -75,11 +75,11 @@ impl Server {
             .env("ROCKET_PORT", port.to_string())
             .env("WEB_VAULT_ENABLED", "false")
             .env("LOG_LEVEL", "info")
-            .env("REWARDEN_ENABLED", "true")
-            .env("REWARDEN_RELAY_WAIT_SECS", relay_wait.to_string())
-            .env("REWARDEN_OFFLINE_SECS", offline.to_string())
+            .env("REINS_ENABLED", "true")
+            .env("REINS_RELAY_WAIT_SECS", relay_wait.to_string())
+            .env("REINS_OFFLINE_SECS", offline.to_string())
             // The tests' fake GitHub and MCP servers listen on loopback over http.
-            .env("REWARDEN_TEST_ALLOW_LOOPBACK", "1")
+            .env("REINS_TEST_ALLOW_LOOPBACK", "1")
             .envs(env.iter().map(|(k, v)| (k.as_str(), v.as_str())))
             .stdout(log.try_clone().expect("clone"))
             .stderr(log);

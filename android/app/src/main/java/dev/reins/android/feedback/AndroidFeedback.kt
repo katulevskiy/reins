@@ -1,4 +1,4 @@
-package dev.rewarden.android.feedback
+package dev.reins.android.feedback
 
 import android.content.BroadcastReceiver
 import android.content.Context
@@ -70,11 +70,11 @@ class SystemEnvironment(private val context: Context, vibrator: Vibrator?, clock
 
 /**
  * Haptics and sound for the whole app. [FeedbackGate] decides when something plays, [HapticPlanner] how a haptic is
- * felt on this hardware, [CueTable] which sound and how loud, and [Event] what each of Rewarden's moments is made of.
+ * felt on this hardware, [CueTable] which sound and how loud, and [Event] what each of Reins's moments is made of.
  * Nothing plays while the app is in the background: the events that matter there arrive as notifications, whose
  * channels sound the same chimes (`AppNotifier`).
  *
- * Debug builds log one line per request to the `RewardenFeedback` tag: what played (and as what) or why it did not.
+ * Debug builds log one line per request to the `ReinsFeedback` tag: what played (and as what) or why it did not.
  */
 class AndroidFeedback(
     context: Context,
@@ -268,7 +268,7 @@ class AndroidFeedback(
     }
 
     companion object {
-        const val TAG = "RewardenFeedback"
+        const val TAG = "ReinsFeedback"
         private val ALL_PRIMITIVES = intArrayOf(
             VibrationEffect.Composition.PRIMITIVE_CLICK,
             VibrationEffect.Composition.PRIMITIVE_TICK,

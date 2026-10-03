@@ -1,4 +1,4 @@
-//! `rewarden login` / `logout` and the session: a full OAuth login against a mock Rewarden server, driven by a scripted
+//! `reins login` / `logout` and the session: a full OAuth login against a mock Reins server, driven by a scripted
 //! browser, then token refresh with rotation and logging out.
 
 mod link_mock;
@@ -6,11 +6,11 @@ mod link_mock;
 use std::sync::Arc;
 
 use link_mock::{Mock, browse, config, logged_in, repo};
-use rewarden_desktop::auth::rewarden::RewardenAuthorizer;
-use rewarden_desktop::auth::{Authorizer as _, Refusal};
-use rewarden_desktop::config::Paths;
-use rewarden_desktop::identity::Identity;
-use rewarden_desktop::server::oauth::{logged_in_server, login, login_with_browser, logout};
+use reins_desktop::auth::reins::ReinsAuthorizer;
+use reins_desktop::auth::{Authorizer as _, Refusal};
+use reins_desktop::config::Paths;
+use reins_desktop::identity::Identity;
+use reins_desktop::server::oauth::{logged_in_server, login, login_with_browser, logout};
 
 fn session(paths: &Paths) -> serde_json::Value {
     serde_json::from_slice(&std::fs::read(paths.session_file()).unwrap()).unwrap()
@@ -25,10 +25,10 @@ async fn login_pairs_the_key_and_saves_a_private_session() {
     let s = session(&app.paths);
     assert_eq!(s["server"], mock.base);
     assert_eq!(s["client_id"], "client-1");
-    assert_eq!(s["token_endpoint"], format!("{}/rewarden/oauth/token", mock.base));
+    assert_eq!(s["token_endpoint"], format!("{}/reins/oauth/token", mock.base));
     assert!(s["access_token"].as_str().unwrap().starts_with("at-"));
     assert!(s["refresh_token"].as_str().unwrap().starts_with("rt-"));
-    assert!(s["access_expires_at"].as_i64().unwrap() > rewarden_desktop::now_unix() + 3000);
+    assert!(s["access_expires_at"].as_i64().unwrap() > reins_desktop::now_unix() + 3000);
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt as _;
@@ -37,7 +37,7 @@ async fn login_pairs_the_key_and_saves_a_private_session() {
     }
 
     let params = mock.with(|s| s.authorize_params.clone()).unwrap();
-    assert_eq!(params["rewarden_client_key"], app.identity.public_key(), "the phone pins this app's key");
+    assert_eq!(params["reins_client_key"], app.identity.public_key(), "the phone pins this app's key");
     assert_eq!(mock.with(|s| s.pinned_key.clone()), Some(app.identity.public_key()));
     assert_eq!(params["resource"], format!("{}/mcp", mock.base));
     assert!(params["redirect_uri"].starts_with("http://127.0.0.1:"));
@@ -45,12 +45,12 @@ async fn login_pairs_the_key_and_saves_a_private_session() {
     assert_ne!(params["redirect_uri"], "http://127.0.0.1/callback", "a real port, not the registered one");
     let names = mock.with(|s| s.client_names.clone());
     assert_eq!(names.len(), 1);
-    assert!(names[0].starts_with("Rewarden desktop app on "));
+    assert!(names[0].starts_with("Reins desktop app on "));
 
     assert_eq!(logout(&app.paths), Ok(true));
     assert_eq!(logged_in_server(&app.paths), None);
     assert_eq!(logout(&app.paths), Ok(false));
-    assert!(RewardenAuthorizer::new(&app.paths, Arc::clone(&app.identity), &config(5)).is_err());
+    assert!(ReinsAuthorizer::new(&app.paths, Arc::clone(&app.identity), &config(5)).is_err());
 }
 
 #[tokio::test]
@@ -85,7 +85,7 @@ async fn a_callback_with_another_state_is_ignored_and_a_refusal_ends_the_login()
         let callback = q["redirect_uri"].clone();
         let state = q["state"].clone();
         tokio::spawn(async move {
-            let http = rewarden_desktop::http::client(None).unwrap();
+            let http = reins_desktop::http::client(None).unwrap();
             let forged = http.get(format!("{callback}?code=evil&state=forged")).send().await.unwrap();
             assert_eq!(forged.status(), 400);
             let denied = http
@@ -107,7 +107,7 @@ async fn only_https_or_local_servers_are_accepted() {
     let dir = tempfile::tempdir().unwrap();
     let paths = Paths::under(dir.path());
     let identity = Identity::generate();
-    for bad in ["http://rewarden.example.com", "ftp://rewarden.example.com", "https://u:p@rewarden.example.com"] {
+    for bad in ["http://reins.example.com", "ftp://reins.example.com", "https://u:p@reins.example.com"] {
         let err = login(&paths, &identity, bad, false).await.unwrap_err();
         assert!(err.contains("https") || err.contains("user name"), "{bad}: {err}");
     }
@@ -121,7 +121,7 @@ async fn an_expired_access_token_is_refreshed_and_the_refresh_token_rotates() {
     let app = logged_in(&mock).await;
     let before = session(&app.paths);
 
-    let auth = RewardenAuthorizer::new(&app.paths, Arc::clone(&app.identity), &config(5)).unwrap();
+    let auth = ReinsAuthorizer::new(&app.paths, Arc::clone(&app.identity), &config(5)).unwrap();
     auth.read(&repo("octo/hello")).await.unwrap();
     assert_eq!(mock.with(|s| s.refreshes), 1);
     let after = session(&app.paths);
@@ -140,11 +140,11 @@ async fn a_refused_refresh_logs_the_app_out() {
     let app = logged_in(&mock).await;
     mock.with(|s| s.refuse_refresh = true);
 
-    let auth = RewardenAuthorizer::new(&app.paths, Arc::clone(&app.identity), &config(5)).unwrap();
+    let auth = ReinsAuthorizer::new(&app.paths, Arc::clone(&app.identity), &config(5)).unwrap();
     let Err(Refusal::Unavailable(m)) = auth.read(&repo("octo/hello")).await else {
         panic!("expected a refusal")
     };
-    assert!(m.contains("rewarden login"), "{m}");
+    assert!(m.contains("reins login"), "{m}");
     assert_eq!(logged_in_server(&app.paths), None);
     assert!(mock.with(|s| s.calls.is_empty()), "nothing reached the phone");
 }
@@ -156,7 +156,7 @@ async fn a_rejected_token_is_refreshed_and_the_call_retried_once() {
     let before = session(&app.paths);
     mock.with(|s| s.reject_bearer_once = true);
 
-    let auth = RewardenAuthorizer::new(&app.paths, Arc::clone(&app.identity), &config(5)).unwrap();
+    let auth = ReinsAuthorizer::new(&app.paths, Arc::clone(&app.identity), &config(5)).unwrap();
     let c = auth.read(&repo("octo/hello")).await.unwrap();
     assert!(c.token.starts_with("ghs-"));
     assert_eq!(mock.with(|s| s.refreshes), 1);

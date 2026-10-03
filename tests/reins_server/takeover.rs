@@ -1,4 +1,4 @@
-//! Who may become an account's approval device (`PUT /rewarden/api/device`): the first device freely, the approval
+//! Who may become an account's approval device (`PUT /reins/api/device`): the first device freely, the approval
 //! device again freely, any other device only with the master password hash or after the approval device approved its
 //! "add another phone" request; a device id without the device key it registered with is another device.
 
@@ -52,7 +52,7 @@ async fn another_device_needs_a_proof_and_the_master_password_hash_is_one() {
 #[tokio::test]
 async fn wrong_proofs_are_refused_then_rate_limited_per_account() {
     let options = Options {
-        env: vec![("REWARDEN_DEVICE_PROOF_MAX_FAILURES", "2".to_owned())],
+        env: vec![("REINS_DEVICE_PROOF_MAX_FAILURES", "2".to_owned())],
         ..Options::default()
     };
     let server = Server::start_with(options).await;

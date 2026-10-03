@@ -2,16 +2,16 @@
 //! the grants of service `mcp_<id>` (resource = the tool's name; read when the server says the tool only reads, else
 //! write) answer it at once, or it is parked for the user; a destructive tool is asked every time. The result is the
 //! server's own `CallToolResult`, passed through (`ToolResult::Mcp`). A result over `HEAVY_RESULT_BYTES` marks the tool
-//! heavy and its large items become download links; a heavy tool's calls go through the Rewarden server.
+//! heavy and its large items become download links; a heavy tool's calls go through the Reins server.
 
 use std::collections::{BTreeMap, BTreeSet};
 
 use data_encoding::{BASE64, BASE64_NOPAD};
-use rewarden_proto::blob::INLINE_LIMIT;
-use rewarden_proto::gmail::ToolCall;
-use rewarden_proto::ids::ConnectionId;
-use rewarden_proto::relay::{RelayOutcome, RelayRequest, ToolResult};
-use rewarden_proto::remote_mcp::{HEAVY_RESULT_BYTES, McpCall};
+use reins_proto::blob::INLINE_LIMIT;
+use reins_proto::gmail::ToolCall;
+use reins_proto::ids::ConnectionId;
+use reins_proto::relay::{RelayOutcome, RelayRequest, ToolResult};
+use reins_proto::remote_mcp::{HEAVY_RESULT_BYTES, McpCall};
 use serde_json::{Map, Value, json};
 
 use super::client::McpError;
@@ -68,7 +68,7 @@ fn ai_message(server_name: &str, f: &Failure) -> String {
         Failure::NeedsSignIn {
             ..
         } => format!(
-            "{name} needs the user to sign in again. Ask them to open the Rewarden app and sign in to {name} under MCP servers."
+            "{name} needs the user to sign in again. Ask them to open the Reins app and sign in to {name} under MCP servers."
         ),
         Failure::Mcp(McpError::Rpc {
             message,
@@ -78,7 +78,7 @@ fn ai_message(server_name: &str, f: &Failure) -> String {
             ..
         })) => format!("The phone could not reach {name}. Try again in a moment."),
         Failure::Mcp(McpError::TooLarge) => format!(
-            "The result from {name} was too large for the phone. The tool now goes through the Rewarden server; if it \
+            "The result from {name} was too large for the phone. The tool now goes through the Reins server; if it \
              changes things, check whether it already did before calling it again."
         ),
         Failure::Mcp(e) => format!("{name} could not complete the request: {}", e.describe()),
@@ -178,7 +178,7 @@ fn item_bytes(item: &Value) -> (Vec<u8>, String) {
     }
 }
 
-fn link(download: &rewarden_proto::blob::BlobDownload, mime: &str) -> Value {
+fn link(download: &reins_proto::blob::BlobDownload, mime: &str) -> Value {
     json!({
         "type": "resource_link",
         "uri": download.download_url,
@@ -193,7 +193,7 @@ fn link(download: &rewarden_proto::blob::BlobDownload, mime: &str) -> Value {
 }
 
 /// Replaces every content item (and a `structuredContent`) larger than `INLINE_LIMIT` by a link to a download the
-/// Rewarden server keeps for the AI.
+/// Reins server keeps for the AI.
 async fn shrink(session: &Session, connection: &ConnectionId, tool: &str, result: &mut Value) -> Result<(), CoreError> {
     let limit = usize::try_from(INLINE_LIMIT).unwrap_or(usize::MAX);
     let size = |v: &Value| serde_json::to_vec(v).map_or(usize::MAX, |b| b.len());
@@ -238,7 +238,7 @@ impl Engine {
         result
     }
 
-    /// Calls the tool: through the Rewarden server when it is heavy; on the phone otherwise, marking it heavy (and
+    /// Calls the tool: through the Reins server when it is heavy; on the phone otherwise, marking it heavy (and
     /// linking its large items) when its result is too large.
     async fn mcp_perform(
         &self,
@@ -328,7 +328,7 @@ impl Engine {
         .await
     }
 
-    /// Handles a call to a tool of an added MCP server received from the Rewarden server.
+    /// Handles a call to a tool of an added MCP server received from the Reins server.
     pub(crate) async fn handle_mcp(
         &self,
         session: &Session,
@@ -342,7 +342,7 @@ impl Engine {
         request.account = Some(server.id.clone());
         let Some(tool) = server.tools.iter().find(|t| t.name == call.tool).cloned() else {
             let message = format!(
-                "{} has no tool named {}. Ask the user to refresh the server in the Rewarden app if it is new.",
+                "{} has no tool named {}. Ask the user to refresh the server in the Reins app if it is new.",
                 text::one_line(&server.name),
                 text::truncate_chars(&text::one_line(&call.tool), 128)
             );
@@ -407,7 +407,7 @@ impl Engine {
             server_name: server.name.clone(),
             server_url: display_url(&server.url),
             title,
-            description: text::truncate_chars(&tool.description, rewarden_proto::remote_mcp::MAX_DESCRIPTION),
+            description: text::truncate_chars(&tool.description, reins_proto::remote_mcp::MAX_DESCRIPTION),
             read_only: tool.read_only,
             destructive: tool.destructive,
         };

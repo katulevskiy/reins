@@ -1,18 +1,18 @@
-# Rewarden Plan 1: Wire Types and Grant Policy Engine — Implementation Plan
+# Reins Plan 1: Wire Types and Grant Policy Engine — Implementation Plan
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Add two pure Rust crates to the Vaultwarden workspace: `rewarden-proto` (wire types shared by server and phone, with input validation) and `rewarden-policy` (the grant model and matcher that decides what an AI may see or send).
+**Goal:** Add two pure Rust crates to the Vaultwarden workspace: `reins-proto` (wire types shared by server and phone, with input validation) and `reins-policy` (the grant model and matcher that decides what an AI may see or send).
 
-**Architecture:** Both crates are IO-free libraries in `crates/`, members of the existing Vaultwarden Cargo workspace and subject to its strict lints. `rewarden-policy` depends on `rewarden-proto`. The policy engine matches grants against *facts about real messages* (never against the AI's query), fails closed on malformed data, and is covered by unit tests plus property tests.
+**Architecture:** Both crates are IO-free libraries in `crates/`, members of the existing Vaultwarden Cargo workspace and subject to its strict lints. `reins-policy` depends on `reins-proto`. The policy engine matches grants against *facts about real messages* (never against the AI's query), fails closed on malformed data, and is covered by unit tests plus property tests.
 
 **Tech Stack:** Rust 1.98.1 (edition 2024), serde 1.0.229, thiserror 2.0.20, regex 1.13.1, proptest 1 (dev), serde_json 1.0.151 (dev).
 
-**Spec:** `docs/superpowers/specs/2026-09-28-rewarden-mvp-design.md` (§5.1, §5.2). Roadmap: `docs/superpowers/plans/2026-09-29-rewarden-roadmap.md`.
+**Spec:** `docs/superpowers/specs/2026-09-28-reins-mvp-design.md` (§5.1, §5.2). Roadmap: `docs/superpowers/plans/2026-09-29-reins-roadmap.md`.
 
 ## Global Constraints
 
-- Repo root: `<repo>`, branch `rewarden-mvp`. Use rustup's toolchain: `export PATH="$HOME/.cargo/bin:$PATH"` before any cargo command.
+- Repo root: `<repo>`, branch `reins-mvp`. Use rustup's toolchain: `export PATH="$HOME/.cargo/bin:$PATH"` before any cargo command.
 - New crates set `[lints] workspace = true`; code must pass `cargo clippy -p <crate> --all-targets -- -D warnings` (workspace denies all warnings, clippy `pedantic` included) and `cargo fmt --check`.
 - Workspace forbids `unsafe_code`; denies `single_use_lifetimes`, `unused_qualifications`, `variant_size_differences`, `trivial_casts`, clippy `str_to_string` (use `to_owned()`), `redundant_clone`.
 - No IO, no async, no global state in either crate.
@@ -37,36 +37,36 @@
 
 ```
 Cargo.toml                                  modify: workspace members
-crates/rewarden-proto/Cargo.toml            create
-crates/rewarden-proto/src/lib.rs            create: module wiring, PROTOCOL_VERSION
-crates/rewarden-proto/src/ids.rs            create: RequestId, ConnectionId, PairingId, GrantId
-crates/rewarden-proto/src/validate.rs       create: ValidationError, normalize_address, invalid()
-crates/rewarden-proto/src/gmail.rs          create: ToolCall, OutgoingEmail, MessageSummary, MessageFull, SentMessage
-crates/rewarden-proto/src/relay.rs          create: RelayRequest, RelayResponse, RelayOutcome, ToolResult
-crates/rewarden-proto/src/pairing.rs        create: PairingRequest, PairingResponse, PushMessage, PushKind
-crates/rewarden-policy/Cargo.toml           create
-crates/rewarden-policy/src/lib.rs           create: module wiring, PolicyError
-crates/rewarden-policy/src/pattern.rs       create: Pattern, AddrRule
-crates/rewarden-policy/src/scope.rs         create: MessageFacts, ReadScope, SendScope, Scope
-crates/rewarden-policy/src/grant.rs         create: Grant, record_uses
-crates/rewarden-policy/src/evaluate.rs      create: evaluate_read, evaluate_send, needs_body, decisions
-crates/rewarden-policy/tests/properties.rs  create: proptest soundness/completeness
+crates/reins-proto/Cargo.toml            create
+crates/reins-proto/src/lib.rs            create: module wiring, PROTOCOL_VERSION
+crates/reins-proto/src/ids.rs            create: RequestId, ConnectionId, PairingId, GrantId
+crates/reins-proto/src/validate.rs       create: ValidationError, normalize_address, invalid()
+crates/reins-proto/src/gmail.rs          create: ToolCall, OutgoingEmail, MessageSummary, MessageFull, SentMessage
+crates/reins-proto/src/relay.rs          create: RelayRequest, RelayResponse, RelayOutcome, ToolResult
+crates/reins-proto/src/pairing.rs        create: PairingRequest, PairingResponse, PushMessage, PushKind
+crates/reins-policy/Cargo.toml           create
+crates/reins-policy/src/lib.rs           create: module wiring, PolicyError
+crates/reins-policy/src/pattern.rs       create: Pattern, AddrRule
+crates/reins-policy/src/scope.rs         create: MessageFacts, ReadScope, SendScope, Scope
+crates/reins-policy/src/grant.rs         create: Grant, record_uses
+crates/reins-policy/src/evaluate.rs      create: evaluate_read, evaluate_send, needs_body, decisions
+crates/reins-policy/tests/properties.rs  create: proptest soundness/completeness
 ```
 
 ---
 
-### Task 1: Workspace wiring + `rewarden-proto` ids, validation, Gmail types
+### Task 1: Workspace wiring + `reins-proto` ids, validation, Gmail types
 
 **Files:**
 - Modify: `Cargo.toml` (the `[workspace]` table, currently `members = ["macros"]`)
-- Create: `crates/rewarden-proto/Cargo.toml`, `src/lib.rs`, `src/ids.rs`, `src/validate.rs`, `src/gmail.rs`
+- Create: `crates/reins-proto/Cargo.toml`, `src/lib.rs`, `src/ids.rs`, `src/validate.rs`, `src/gmail.rs`
 
 **Interfaces:**
 - Produces:
-  - `rewarden_proto::PROTOCOL_VERSION: u32 = 1`
-  - `rewarden_proto::ids::{RequestId, ConnectionId, PairingId, GrantId}`: `pub struct X(pub String)`, serde-transparent, `Display`, `From<&str>`, `Clone + Debug + Eq + Ord + Hash`
-  - `rewarden_proto::{ValidationError, normalize_address}`: `fn normalize_address(raw: &str) -> Result<String, ValidationError>`
-  - `rewarden_proto::gmail::{ToolCall, OutgoingEmail, MessageSummary, MessageFull, SentMessage}` and constants `MAX_SEARCH_RESULTS: u32 = 50`, `MAX_READ_IDS: usize = 20`, `MAX_QUERY_LEN: usize = 1024`, `MAX_RECIPIENTS: usize = 50`, `MAX_SUBJECT_LEN: usize = 998`, `MAX_BODY_LEN: usize = 1 << 20`
+  - `reins_proto::PROTOCOL_VERSION: u32 = 1`
+  - `reins_proto::ids::{RequestId, ConnectionId, PairingId, GrantId}`: `pub struct X(pub String)`, serde-transparent, `Display`, `From<&str>`, `Clone + Debug + Eq + Ord + Hash`
+  - `reins_proto::{ValidationError, normalize_address}`: `fn normalize_address(raw: &str) -> Result<String, ValidationError>`
+  - `reins_proto::gmail::{ToolCall, OutgoingEmail, MessageSummary, MessageFull, SentMessage}` and constants `MAX_SEARCH_RESULTS: u32 = 50`, `MAX_READ_IDS: usize = 20`, `MAX_QUERY_LEN: usize = 1024`, `MAX_RECIPIENTS: usize = 50`, `MAX_SUBJECT_LEN: usize = 998`, `MAX_BODY_LEN: usize = 1 << 20`
   - `ToolCall::normalized(self) -> Result<ToolCall, ValidationError>`; `OutgoingEmail::normalized(self) -> Result<OutgoingEmail, ValidationError>`; `OutgoingEmail::recipients(&self) -> impl Iterator<Item = &str>`
 
 - [ ] **Step 1: Register the crates in the workspace**
@@ -82,18 +82,18 @@ to:
 
 ```toml
 [workspace]
-members = ["macros", "crates/rewarden-proto", "crates/rewarden-policy"]
+members = ["macros", "crates/reins-proto", "crates/reins-policy"]
 ```
 
-(`rewarden-policy` is created in Task 3; until then create a placeholder so the workspace loads — Step 2 below.)
+(`reins-policy` is created in Task 3; until then create a placeholder so the workspace loads — Step 2 below.)
 
 - [ ] **Step 2: Create both crate manifests and skeletons**
 
-`crates/rewarden-proto/Cargo.toml`:
+`crates/reins-proto/Cargo.toml`:
 
 ```toml
 [package]
-name = "rewarden-proto"
+name = "reins-proto"
 version = "0.1.0"
 repository.workspace = true
 edition.workspace = true
@@ -112,11 +112,11 @@ serde_json = "1.0.151"
 workspace = true
 ```
 
-`crates/rewarden-policy/Cargo.toml`:
+`crates/reins-policy/Cargo.toml`:
 
 ```toml
 [package]
-name = "rewarden-policy"
+name = "reins-policy"
 version = "0.1.0"
 repository.workspace = true
 edition.workspace = true
@@ -125,7 +125,7 @@ license.workspace = true
 publish.workspace = true
 
 [dependencies]
-rewarden-proto = { path = "../rewarden-proto" }
+reins-proto = { path = "../reins-proto" }
 regex = "1.13.1"
 serde = { version = "1.0.229", features = ["derive"] }
 thiserror = "2.0.20"
@@ -138,16 +138,16 @@ serde_json = "1.0.151"
 workspace = true
 ```
 
-`crates/rewarden-policy/src/lib.rs` (placeholder, replaced in Task 3):
+`crates/reins-policy/src/lib.rs` (placeholder, replaced in Task 3):
 
 ```rust
-//! Rewarden grant model and policy engine.
+//! Reins grant model and policy engine.
 ```
 
-`crates/rewarden-proto/src/lib.rs`:
+`crates/reins-proto/src/lib.rs`:
 
 ```rust
-//! Wire types shared by the Rewarden server and the Rewarden phone core.
+//! Wire types shared by the Reins server and the Reins phone core.
 //!
 //! Pure data and validation: no IO, no async.
 
@@ -161,7 +161,7 @@ pub use validate::{ValidationError, normalize_address};
 pub const PROTOCOL_VERSION: u32 = 1;
 ```
 
-`crates/rewarden-proto/src/ids.rs`:
+`crates/reins-proto/src/ids.rs`:
 
 ```rust
 use std::fmt;
@@ -203,7 +203,7 @@ id_type!(
 
 - [ ] **Step 3: Write failing tests for address validation**
 
-`crates/rewarden-proto/src/validate.rs`:
+`crates/reins-proto/src/validate.rs`:
 
 ```rust
 use thiserror::Error;
@@ -267,7 +267,7 @@ mod tests {
 
 - [ ] **Step 4: Run to verify failure**
 
-Run: `cargo test -p rewarden-proto validate`
+Run: `cargo test -p reins-proto validate`
 Expected: FAIL — tests panic with `not yet implemented`.
 
 - [ ] **Step 5: Implement `normalize_address`**
@@ -304,12 +304,12 @@ pub fn normalize_address(raw: &str) -> Result<String, ValidationError> {
 
 - [ ] **Step 6: Run to verify pass**
 
-Run: `cargo test -p rewarden-proto validate`
+Run: `cargo test -p reins-proto validate`
 Expected: 3 passed.
 
 - [ ] **Step 7: Write failing tests for Gmail types**
 
-`crates/rewarden-proto/src/gmail.rs`:
+`crates/reins-proto/src/gmail.rs`:
 
 ```rust
 use std::collections::BTreeSet;
@@ -495,7 +495,7 @@ Add `pub mod gmail;` is already in `lib.rs`.
 
 - [ ] **Step 8: Run to verify failure**
 
-Run: `cargo test -p rewarden-proto gmail`
+Run: `cargo test -p reins-proto gmail`
 Expected: FAIL — `not yet implemented` panics (`wire_format` and `recipients_chains_to_and_cc` pass).
 
 - [ ] **Step 9: Implement normalization**
@@ -579,23 +579,23 @@ fn normalize_ids(ids: Vec<String>) -> Result<Vec<String>, ValidationError> {
 
 - [ ] **Step 10: Run tests, clippy, fmt**
 
-Run: `cargo test -p rewarden-proto && cargo clippy -p rewarden-proto --all-targets -- -D warnings && cargo fmt -p rewarden-proto --check`
+Run: `cargo test -p reins-proto && cargo clippy -p reins-proto --all-targets -- -D warnings && cargo fmt -p reins-proto --check`
 Expected: all tests pass; no clippy findings; fmt clean. Fix any pedantic finding clippy reports (typically adding `#[must_use]`) without changing behavior.
 
 - [ ] **Step 11: Commit**
 
 ```bash
-git add Cargo.toml Cargo.lock crates/rewarden-proto crates/rewarden-policy
+git add Cargo.toml Cargo.lock crates/reins-proto crates/reins-policy
 git commit -m "feat(proto): ids, address validation and Gmail tool types"
 ```
 
 ---
 
-### Task 2: `rewarden-proto` relay and pairing messages
+### Task 2: `reins-proto` relay and pairing messages
 
 **Files:**
-- Create: `crates/rewarden-proto/src/relay.rs`, `crates/rewarden-proto/src/pairing.rs`
-- Modify: `crates/rewarden-proto/src/lib.rs` (add `pub mod pairing; pub mod relay;`)
+- Create: `crates/reins-proto/src/relay.rs`, `crates/reins-proto/src/pairing.rs`
+- Modify: `crates/reins-proto/src/lib.rs` (add `pub mod pairing; pub mod relay;`)
 
 **Interfaces:**
 - Consumes: `ids::{RequestId, ConnectionId, PairingId}`, `gmail::{ToolCall, MessageSummary, MessageFull, SentMessage}` (Task 1)
@@ -610,7 +610,7 @@ git commit -m "feat(proto): ids, address validation and Gmail tool types"
 
 - [ ] **Step 1: Write the types with wire-format tests**
 
-`crates/rewarden-proto/src/relay.rs`:
+`crates/reins-proto/src/relay.rs`:
 
 ```rust
 use serde::{Deserialize, Serialize};
@@ -719,7 +719,7 @@ mod tests {
 }
 ```
 
-`crates/rewarden-proto/src/pairing.rs`:
+`crates/reins-proto/src/pairing.rs`:
 
 ```rust
 use serde::{Deserialize, Serialize};
@@ -794,7 +794,7 @@ mod tests {
 }
 ```
 
-In `crates/rewarden-proto/src/lib.rs` replace the module list with:
+In `crates/reins-proto/src/lib.rs` replace the module list with:
 
 ```rust
 pub mod gmail;
@@ -806,40 +806,40 @@ mod validate;
 
 - [ ] **Step 2: Run tests**
 
-Run: `cargo test -p rewarden-proto`
+Run: `cargo test -p reins-proto`
 Expected: all pass (these are data types; serde derives are the implementation).
 
 - [ ] **Step 3: Clippy, fmt, commit**
 
-Run: `cargo clippy -p rewarden-proto --all-targets -- -D warnings && cargo fmt -p rewarden-proto --check`
+Run: `cargo clippy -p reins-proto --all-targets -- -D warnings && cargo fmt -p reins-proto --check`
 
 ```bash
-git add crates/rewarden-proto
+git add crates/reins-proto
 git commit -m "feat(proto): relay and pairing messages"
 ```
 
 ---
 
-### Task 3: `rewarden-policy` patterns and address rules
+### Task 3: `reins-policy` patterns and address rules
 
 **Files:**
-- Modify: `crates/rewarden-policy/src/lib.rs`
-- Create: `crates/rewarden-policy/src/pattern.rs`
+- Modify: `crates/reins-policy/src/lib.rs`
+- Create: `crates/reins-policy/src/pattern.rs`
 
 **Interfaces:**
-- Consumes: `rewarden_proto::{normalize_address, ValidationError}`
+- Consumes: `reins_proto::{normalize_address, ValidationError}`
 - Produces:
-  - `rewarden_policy::PolicyError` = `InvalidPattern { pattern: String, reason: String } | InvalidAddress(ValidationError) | InvalidScope(String) | InvalidGrant(String)`
-  - `rewarden_policy::Pattern`: `find(&str) -> Result<Pattern, PolicyError>` (search), `full(&str) -> Result<Pattern, PolicyError>` (whole-input), `source(&self) -> &str`, `is_match(&self, &str) -> bool`; serde as a plain string using `find` semantics; `PartialEq`/`Eq` by source.
-  - `rewarden_policy::AddrRule` = `Exact(String) | Domain(String) | Regex(Pattern)` with constructors `exact(&str)`, `domain(&str)`, `regex(&str)` (full-match), `matches(&self, addr: &str) -> bool`; serde `{"kind": "exact"|"domain"|"regex", "value": "<string>"}`.
+  - `reins_policy::PolicyError` = `InvalidPattern { pattern: String, reason: String } | InvalidAddress(ValidationError) | InvalidScope(String) | InvalidGrant(String)`
+  - `reins_policy::Pattern`: `find(&str) -> Result<Pattern, PolicyError>` (search), `full(&str) -> Result<Pattern, PolicyError>` (whole-input), `source(&self) -> &str`, `is_match(&self, &str) -> bool`; serde as a plain string using `find` semantics; `PartialEq`/`Eq` by source.
+  - `reins_policy::AddrRule` = `Exact(String) | Domain(String) | Regex(Pattern)` with constructors `exact(&str)`, `domain(&str)`, `regex(&str)` (full-match), `matches(&self, addr: &str) -> bool`; serde `{"kind": "exact"|"domain"|"regex", "value": "<string>"}`.
   - `MAX_PATTERN_LEN: usize = 512`
 
 - [ ] **Step 1: Write `lib.rs` and failing pattern tests**
 
-`crates/rewarden-policy/src/lib.rs`:
+`crates/reins-policy/src/lib.rs`:
 
 ```rust
-//! Rewarden grant model and policy engine.
+//! Reins grant model and policy engine.
 //!
 //! Decides which messages an AI connection may receive and which emails it may
 //! send, from grants the user created on their phone. Pure and IO-free.
@@ -847,7 +847,7 @@ git commit -m "feat(proto): relay and pairing messages"
 
 mod pattern;
 
-use rewarden_proto::ValidationError;
+use reins_proto::ValidationError;
 use thiserror::Error;
 
 pub use pattern::{AddrRule, MAX_PATTERN_LEN, Pattern};
@@ -865,13 +865,13 @@ pub enum PolicyError {
 }
 ```
 
-`crates/rewarden-policy/src/pattern.rs`:
+`crates/reins-policy/src/pattern.rs`:
 
 ```rust
 use std::fmt;
 
 use regex::{Regex, RegexBuilder};
-use rewarden_proto::normalize_address;
+use reins_proto::normalize_address;
 use serde::de::Error as _;
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 
@@ -977,7 +977,7 @@ impl AddrRule {
         Ok(Self::Regex(Pattern::full(source)?))
     }
 
-    /// `addr` must already be normalized (see `rewarden_proto::normalize_address`).
+    /// `addr` must already be normalized (see `reins_proto::normalize_address`).
     #[must_use]
     pub fn matches(&self, addr: &str) -> bool {
         match self {
@@ -1107,7 +1107,7 @@ mod tests {
 
 - [ ] **Step 2: Run to verify failure**
 
-Run: `cargo test -p rewarden-policy pattern`
+Run: `cargo test -p reins-policy pattern`
 Expected: FAIL — `not yet implemented`.
 
 - [ ] **Step 3: Implement `find`/`full`**
@@ -1149,13 +1149,13 @@ Replace the two `todo!` bodies and add `build`:
 
 - [ ] **Step 4: Run tests, clippy, fmt**
 
-Run: `cargo test -p rewarden-policy && cargo clippy -p rewarden-policy --all-targets -- -D warnings && cargo fmt -p rewarden-policy --check`
+Run: `cargo test -p reins-policy && cargo clippy -p reins-policy --all-targets -- -D warnings && cargo fmt -p reins-policy --check`
 Expected: all pass, clean.
 
 - [ ] **Step 5: Commit**
 
 ```bash
-git add crates/rewarden-policy
+git add crates/reins-policy
 git commit -m "feat(policy): validated patterns and address rules"
 ```
 
@@ -1164,11 +1164,11 @@ git commit -m "feat(policy): validated patterns and address rules"
 ### Task 4: Scopes and message facts
 
 **Files:**
-- Create: `crates/rewarden-policy/src/scope.rs`
-- Modify: `crates/rewarden-policy/src/lib.rs` (add `mod scope;` and `pub use scope::{MessageFacts, ReadScope, Scope, SendScope};`)
+- Create: `crates/reins-policy/src/scope.rs`
+- Modify: `crates/reins-policy/src/lib.rs` (add `mod scope;` and `pub use scope::{MessageFacts, ReadScope, Scope, SendScope};`)
 
 **Interfaces:**
-- Consumes: `Pattern`, `AddrRule`, `PolicyError` (Task 3); `rewarden_proto::gmail::OutgoingEmail` (Task 1)
+- Consumes: `Pattern`, `AddrRule`, `PolicyError` (Task 3); `reins_proto::gmail::OutgoingEmail` (Task 1)
 - Produces:
   - `MessageFacts { id: String, from: String, to: Vec<String>, subject: String, body: Option<String>, labels: Vec<String>, date: i64 }` — addresses normalized; `to` holds To+Cc; `body` is `None` when not fetched.
   - `ReadScope { message_ids: Option<BTreeSet<String>>, from: Vec<AddrRule>, to: Vec<AddrRule>, subject: Option<Pattern>, body: Option<Pattern>, labels: Vec<String>, after: Option<i64>, before: Option<i64> }` (derives `Default`) with `validate(&self) -> Result<(), PolicyError>`, `matches(&self, &MessageFacts) -> bool`, `needs_body(&self) -> bool`
@@ -1177,12 +1177,12 @@ git commit -m "feat(policy): validated patterns and address rules"
 
 - [ ] **Step 1: Write types and failing tests**
 
-`crates/rewarden-policy/src/scope.rs`:
+`crates/reins-policy/src/scope.rs`:
 
 ```rust
 use std::collections::BTreeSet;
 
-use rewarden_proto::gmail::OutgoingEmail;
+use reins_proto::gmail::OutgoingEmail;
 use serde::{Deserialize, Serialize};
 
 use crate::{AddrRule, Pattern, PolicyError};
@@ -1458,7 +1458,7 @@ pub use scope::{MessageFacts, ReadScope, Scope, SendScope};
 
 - [ ] **Step 2: Run to verify failure**
 
-Run: `cargo test -p rewarden-policy scope`
+Run: `cargo test -p reins-policy scope`
 Expected: FAIL — `not yet implemented` (only `scope_wire_format` passes).
 
 - [ ] **Step 3: Implement validation and matching**
@@ -1520,13 +1520,13 @@ Replace the four `todo!` bodies:
 
 - [ ] **Step 4: Run tests, clippy, fmt**
 
-Run: `cargo test -p rewarden-policy && cargo clippy -p rewarden-policy --all-targets -- -D warnings && cargo fmt -p rewarden-policy --check`
+Run: `cargo test -p reins-policy && cargo clippy -p reins-policy --all-targets -- -D warnings && cargo fmt -p reins-policy --check`
 Expected: all pass, clean.
 
 - [ ] **Step 5: Commit**
 
 ```bash
-git add crates/rewarden-policy
+git add crates/reins-policy
 git commit -m "feat(policy): read/send scopes over real message facts"
 ```
 
@@ -1535,11 +1535,11 @@ git commit -m "feat(policy): read/send scopes over real message facts"
 ### Task 5: Grants and evaluation
 
 **Files:**
-- Create: `crates/rewarden-policy/src/grant.rs`, `crates/rewarden-policy/src/evaluate.rs`
-- Modify: `crates/rewarden-policy/src/lib.rs`
+- Create: `crates/reins-policy/src/grant.rs`, `crates/reins-policy/src/evaluate.rs`
+- Modify: `crates/reins-policy/src/lib.rs`
 
 **Interfaces:**
-- Consumes: `Scope`, `ReadScope`, `SendScope`, `MessageFacts` (Task 4); `rewarden_proto::ids::{GrantId, ConnectionId}`, `rewarden_proto::gmail::OutgoingEmail`
+- Consumes: `Scope`, `ReadScope`, `SendScope`, `MessageFacts` (Task 4); `reins_proto::ids::{GrantId, ConnectionId}`, `reins_proto::gmail::OutgoingEmail`
 - Produces:
   - `Grant { id: GrantId, connection_id: ConnectionId, scope: Scope, created_at: i64, expires_at: Option<i64>, max_uses: Option<u32>, uses: u32, revoked: bool }` (serde)
   - `Grant::new(id, connection_id, scope, created_at: i64, expires_at: Option<i64>, max_uses: Option<u32>) -> Result<Grant, PolicyError>`
@@ -1553,12 +1553,12 @@ git commit -m "feat(policy): read/send scopes over real message facts"
 
 - [ ] **Step 1: Write grant module with failing tests**
 
-`crates/rewarden-policy/src/grant.rs`:
+`crates/reins-policy/src/grant.rs`:
 
 ```rust
 use std::collections::BTreeSet;
 
-use rewarden_proto::ids::{ConnectionId, GrantId};
+use reins_proto::ids::{ConnectionId, GrantId};
 use serde::{Deserialize, Serialize};
 
 use crate::{PolicyError, Scope};
@@ -1678,7 +1678,7 @@ mod tests {
 
 In `lib.rs` add `mod grant;` and `pub use grant::{Grant, record_uses};`.
 
-Run: `cargo test -p rewarden-policy grant`
+Run: `cargo test -p reins-policy grant`
 Expected: FAIL — `not yet implemented`.
 
 - [ ] **Step 3: Implement `Grant::new` and `is_active`**
@@ -1718,17 +1718,17 @@ Expected: FAIL — `not yet implemented`.
     }
 ```
 
-Run: `cargo test -p rewarden-policy grant` → PASS.
+Run: `cargo test -p reins-policy grant` → PASS.
 
 - [ ] **Step 4: Write evaluate module with failing tests**
 
-`crates/rewarden-policy/src/evaluate.rs`:
+`crates/reins-policy/src/evaluate.rs`:
 
 ```rust
 use std::collections::BTreeSet;
 
-use rewarden_proto::gmail::OutgoingEmail;
-use rewarden_proto::ids::{ConnectionId, GrantId};
+use reins_proto::gmail::OutgoingEmail;
+use reins_proto::ids::{ConnectionId, GrantId};
 
 use crate::{Grant, MessageFacts, Scope};
 
@@ -1911,7 +1911,7 @@ mod tests {
 
 In `lib.rs` add `mod evaluate;` and `pub use evaluate::{ReadDecision, SendDecision, evaluate_read, evaluate_send, needs_body};`.
 
-Run: `cargo test -p rewarden-policy evaluate`
+Run: `cargo test -p reins-policy evaluate`
 Expected: FAIL — `not yet implemented` (only `needs_body_only_for_active_body_grants` passes).
 
 - [ ] **Step 5: Implement evaluation**
@@ -1952,13 +1952,13 @@ pub fn evaluate_send(grants: &[Grant], connection: &ConnectionId, email: &Outgoi
 
 - [ ] **Step 6: Run tests, clippy, fmt**
 
-Run: `cargo test -p rewarden-policy && cargo clippy -p rewarden-policy --all-targets -- -D warnings && cargo fmt -p rewarden-policy --check`
+Run: `cargo test -p reins-policy && cargo clippy -p reins-policy --all-targets -- -D warnings && cargo fmt -p reins-policy --check`
 Expected: all pass, clean.
 
 - [ ] **Step 7: Commit**
 
 ```bash
-git add crates/rewarden-policy
+git add crates/reins-policy
 git commit -m "feat(policy): grants and read/send evaluation"
 ```
 
@@ -1967,14 +1967,14 @@ git commit -m "feat(policy): grants and read/send evaluation"
 ### Task 6: Property tests for soundness and completeness
 
 **Files:**
-- Create: `crates/rewarden-policy/tests/properties.rs`
+- Create: `crates/reins-policy/tests/properties.rs`
 
 **Interfaces:**
-- Consumes: the public API of `rewarden-policy` and `rewarden-proto` (Tasks 1–5). Nothing new is produced.
+- Consumes: the public API of `reins-policy` and `reins-proto` (Tasks 1–5). Nothing new is produced.
 
 - [ ] **Step 1: Write the property tests**
 
-`crates/rewarden-policy/tests/properties.rs`:
+`crates/reins-policy/tests/properties.rs`:
 
 ```rust
 //! Randomized checks of the security properties the phone relies on.
@@ -1983,11 +1983,11 @@ use proptest::collection::{btree_set, vec};
 use proptest::option;
 use proptest::prelude::*;
 use proptest::sample::select;
-use rewarden_policy::{
+use reins_policy::{
     AddrRule, Grant, MessageFacts, Pattern, ReadScope, Scope, SendDecision, SendScope, evaluate_read, evaluate_send,
 };
-use rewarden_proto::gmail::OutgoingEmail;
-use rewarden_proto::ids::{ConnectionId, GrantId};
+use reins_proto::gmail::OutgoingEmail;
+use reins_proto::ids::{ConnectionId, GrantId};
 
 const LOCALS: [&str; 3] = ["alice", "bob", "eve"];
 const DOMAINS: [&str; 4] = ["bank.com", "evil.com", "sub.bank.com", "bank.com.evil.com"];
@@ -2157,16 +2157,16 @@ proptest! {
 
 - [ ] **Step 2: Run the property tests**
 
-Run: `cargo test -p rewarden-policy --test properties`
+Run: `cargo test -p reins-policy --test properties`
 Expected: 3 passed. A failure prints a minimized counterexample — treat it as a real policy bug: fix the engine, never loosen the property.
 
 - [ ] **Step 3: Full gate for both crates**
 
 Run:
 ```bash
-cargo test -p rewarden-proto -p rewarden-policy
-cargo clippy -p rewarden-proto -p rewarden-policy --all-targets -- -D warnings
-cargo fmt -p rewarden-proto -p rewarden-policy --check
+cargo test -p reins-proto -p reins-policy
+cargo clippy -p reins-proto -p reins-policy --all-targets -- -D warnings
+cargo fmt -p reins-proto -p reins-policy --check
 ```
 Expected: all pass, no findings.
 
@@ -2178,6 +2178,6 @@ Expected: Vaultwarden itself still compiles (only `Cargo.toml` members and `Carg
 - [ ] **Step 5: Commit**
 
 ```bash
-git add crates/rewarden-policy/tests
+git add crates/reins-policy/tests
 git commit -m "test(policy): property tests for grant soundness and completeness"
 ```

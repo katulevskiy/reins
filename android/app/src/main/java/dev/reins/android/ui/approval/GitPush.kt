@@ -1,7 +1,7 @@
-package dev.rewarden.android.ui.approval
+package dev.reins.android.ui.approval
 
-import dev.rewarden.core.GitFileView
-import dev.rewarden.core.GitRefView
+import dev.reins.core.GitFileView
+import dev.reins.core.GitRefView
 import java.util.Locale
 
 /** Commits shown before "and N more". */

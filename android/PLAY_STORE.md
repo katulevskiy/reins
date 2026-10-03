@@ -37,15 +37,15 @@ What the flavors change is kept in one place each:
 cd android
 ./gradlew assembleFullRelease          # the direct APK (scripts/release-android.sh does this and publishes it)
 ./gradlew bundlePlayRelease \
-    -Prewarden.versionCode=N -Prewarden.versionName=0.1.0 -Prewarden.build=0.1.0-N
-# → app/build/outputs/bundle/playRelease/app-play-release.aab (signs in to rewarden.defaultServer, gradle.properties)
+    -Preins.versionCode=N -Preins.versionName=0.1.0 -Preins.build=0.1.0-N
+# → app/build/outputs/bundle/playRelease/app-play-release.aab (signs in to reins.defaultServer, gradle.properties)
 ./gradlew testFullDebugUnitTest testPlayDebugUnitTest
 ```
 
 - **Upload key.** Without it the bundle is signed with the debug key, which is fine for checking it locally and which
   Play rejects. Create an upload key (`keytool -genkeypair -v -keystore upload.jks -keyalg RSA -keysize 4096 -validity
   10000 -alias upload`), keep it outside the repository, and name it in `~/.gradle/gradle.properties`:
-  `rewarden.uploadKeystore`, `rewarden.uploadKeystorePassword`, `rewarden.uploadKeyAlias`, `rewarden.uploadKeyPassword`.
+  `reins.uploadKeystore`, `reins.uploadKeystorePassword`, `reins.uploadKeyAlias`, `reins.uploadKeyPassword`.
   Enrol in Play App Signing (the default for new apps) and let Google generate the app signing key.
 - **versionCode** must grow with every upload. The release script's scheme (minutes since 1970, about 29.8 million now)
   works for Play too, and keeps the two builds' numbers comparable.
@@ -109,7 +109,7 @@ Other policy points:
 
 ## Data safety form
 
-Derived from the code (`crates/rewarden-core`, `android/app`). "Collected" in Play's sense means sent off the device by
+Derived from the code (`crates/reins-core`, `android/app`). "Collected" in Play's sense means sent off the device by
 the app, to the developer or anyone else; data sent to a self-hosted server still counts, so the answers assume the
 worst case (the user uses app.reins2fa.com). **[legal review]** for the whole section.
 
@@ -161,7 +161,7 @@ to the Keystore, excluded from backups); the activity history; Autopilot's model
   - app icon 512 × 512 PNG (32-bit, ≤ 1 MB);
   - feature graphic 1024 × 500 PNG/JPEG;
   - 2–8 phone screenshots (9:16, 1080 × 1920 or larger; `./gradlew testPlayDebugUnitTest --tests '*Screenshots*'
-    -Drewarden.screenshots=/tmp/shots` renders the screens; do not show text messages or the updater);
+    -Dreins.screenshots=/tmp/shots` renders the screens; do not show text messages or the updater);
   - optional 7" and 10" tablet screenshots;
   - short description (≤ 80 characters), full description (≤ 4000);
   - privacy policy URL, support email, website (https://reins2fa.com).

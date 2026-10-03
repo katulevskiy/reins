@@ -9,7 +9,7 @@ use std::{
 
 use jsonwebtoken::{Algorithm, EncodingKey, Header};
 use openssl::{nid::Nid, pkey::PKey};
-use rewarden_proto::pairing::{PushKind, PushMessage};
+use reins_proto::pairing::{PushKind, PushMessage};
 use serde_json::Value;
 
 use super::fcm::SendOutcome;
@@ -244,10 +244,10 @@ pub struct Settings {
 impl Settings {
     fn from_config() -> Self {
         Self {
-            key_file: CONFIG.rewarden_apns_key_file(),
-            key_id: CONFIG.rewarden_apns_key_id(),
-            team_id: CONFIG.rewarden_apns_team_id(),
-            topic: CONFIG.rewarden_apns_topic(),
+            key_file: CONFIG.reins_apns_key_file(),
+            key_id: CONFIG.reins_apns_key_id(),
+            team_id: CONFIG.reins_apns_team_id(),
+            topic: CONFIG.reins_apns_topic(),
         }
     }
 
@@ -259,18 +259,17 @@ impl Settings {
         }
         if set < 3 {
             return Err(
-                "`REWARDEN_APNS_KEY_FILE`, `REWARDEN_APNS_KEY_ID` and `REWARDEN_APNS_TEAM_ID` must be set together"
-                    .to_owned(),
+                "`REINS_APNS_KEY_FILE`, `REINS_APNS_KEY_ID` and `REINS_APNS_TEAM_ID` must be set together".to_owned()
             );
         }
         let topic = self.topic.trim();
         if topic.is_empty() || topic.chars().any(|c| c.is_whitespace() || c.is_control()) {
-            return Err("`REWARDEN_APNS_TOPIC` must be the iOS app's bundle id".to_owned());
+            return Err("`REINS_APNS_TOPIC` must be the iOS app's bundle id".to_owned());
         }
         let pem = std::fs::read(&self.key_file)
-            .map_err(|e| format!("`REWARDEN_APNS_KEY_FILE`: cannot read `{}`: {e}", self.key_file))?;
+            .map_err(|e| format!("`REINS_APNS_KEY_FILE`: cannot read `{}`: {e}", self.key_file))?;
         let key = ProviderKey::from_pem(&pem, self.key_id.trim(), self.team_id.trim())
-            .map_err(|e| format!("`REWARDEN_APNS_KEY_FILE`: {e}"))?;
+            .map_err(|e| format!("`REINS_APNS_KEY_FILE`: {e}"))?;
         Ok(Some(ApnsSender::new(key, topic.to_owned())))
     }
 }
@@ -358,12 +357,12 @@ impl ApnsSender {
 static SENDER: LazyLock<Option<ApnsSender>> = LazyLock::new(|| match Settings::from_config().load() {
     Ok(sender) => sender,
     Err(e) => {
-        error!("Rewarden APNs push disabled: {e}");
+        error!("Reins APNs push disabled: {e}");
         None
     }
 });
 
-/// The APNs sender, when `REWARDEN_APNS_*` is configured.
+/// The APNs sender, when `REINS_APNS_*` is configured.
 pub fn sender() -> Option<&'static ApnsSender> {
     SENDER.as_ref()
 }
@@ -551,7 +550,7 @@ mod tests {
     fn settings_are_all_or_nothing_and_the_key_must_parse() {
         assert!(Settings::default().load().unwrap().is_none());
         let (private_pem, _) = key_pair();
-        let path = std::env::temp_dir().join(format!("rewarden-apns-test-{}.p8", std::process::id()));
+        let path = std::env::temp_dir().join(format!("reins-apns-test-{}.p8", std::process::id()));
         std::fs::write(&path, private_pem).unwrap();
         let full = Settings {
             key_file: path.to_str().unwrap().to_owned(),
@@ -569,14 +568,14 @@ mod tests {
             topic: " ".to_owned(),
             ..full.clone()
         };
-        assert!(no_topic.load().err().unwrap().contains("REWARDEN_APNS_TOPIC"));
+        assert!(no_topic.load().err().unwrap().contains("REINS_APNS_TOPIC"));
         let missing = Settings {
             key_file: "/nonexistent/AuthKey.p8".to_owned(),
             ..full.clone()
         };
         assert!(missing.load().err().unwrap().contains("/nonexistent/AuthKey.p8"));
         std::fs::write(&path, "not a key").unwrap();
-        assert!(full.load().err().unwrap().contains("REWARDEN_APNS_KEY_FILE"));
+        assert!(full.load().err().unwrap().contains("REINS_APNS_KEY_FILE"));
         std::fs::remove_file(&path).ok();
     }
 
@@ -677,11 +676,11 @@ mod tests {
         assert!(sender.send("fcm-token", &push(PushKind::Req, "r-2")).await.is_err());
     }
 
-    /// Opt-in check against Apple's sandbox (`REWARDEN_LIVE_APNS=1`): the server's shared HTTP client reaches APNs
+    /// Opt-in check against Apple's sandbox (`REINS_LIVE_APNS=1`): the server's shared HTTP client reaches APNs
     /// over HTTP/2 (Apple refuses HTTP/1.1) and gets Apple's JSON verdict on a provider token from an unknown key.
     #[tokio::test]
     async fn live_apns_speaks_http2_with_the_shared_client() {
-        if std::env::var("REWARDEN_LIVE_APNS").is_err() {
+        if std::env::var("REINS_LIVE_APNS").is_err() {
             return;
         }
         // main() installs the process-wide TLS provider; a test process has to do it itself.

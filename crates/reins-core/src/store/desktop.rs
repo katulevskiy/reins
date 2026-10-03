@@ -1,4 +1,4 @@
-//! The public keys of the paired Rewarden desktop apps, per connection. A key is not secret; what matters is that it
+//! The public keys of the paired Reins desktop apps, per connection. A key is not secret; what matters is that it
 //! is the one the user compared when pairing, so it is pinned then and only ever replaced by another pairing.
 
 use rusqlite::{OptionalExtension, params};

@@ -98,7 +98,7 @@ final class OnboardingUITests: XCTestCase {
 
         // Step 2: the /mcp address for Claude.ai or ChatGPT, copied.
         tap("onboardingNext")
-        XCTAssertEqual(wait("mcpAddress").label, "https://rewarden.example.com/mcp")
+        XCTAssertEqual(wait("mcpAddress").label, "https://reins.example.com/mcp")
         tap("copyMcp")
         XCTAssertTrue(app.buttons["Copied"].waitForExistence(timeout: 2))
         shot("5-connect-ai")

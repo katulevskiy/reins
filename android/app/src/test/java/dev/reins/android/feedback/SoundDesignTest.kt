@@ -1,6 +1,6 @@
-package dev.rewarden.android.feedback
+package dev.reins.android.feedback
 
-import dev.rewarden.android.platform.AppNotifier
+import dev.reins.android.platform.AppNotifier
 import java.io.File
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNotNull

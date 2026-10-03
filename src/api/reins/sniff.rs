@@ -3,7 +3,7 @@
 
 use data_encoding::BASE64;
 use percent_encoding::{AsciiSet, NON_ALPHANUMERIC, utf8_percent_encode};
-use rewarden_proto::blob::{BlobPreview, MAX_PREVIEW_IMAGE, MAX_PREVIEW_TEXT};
+use reins_proto::blob::{BlobPreview, MAX_PREVIEW_IMAGE, MAX_PREVIEW_TEXT};
 
 /// The start of the file kept for the preview: a whole small image, or enough bytes for the text head.
 const HEAD_LIMIT: usize = MAX_PREVIEW_IMAGE + 1;

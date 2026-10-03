@@ -7,7 +7,7 @@ use std::{
 };
 
 use jsonwebtoken::{Algorithm, EncodingKey, Header};
-use rewarden_proto::pairing::PushMessage;
+use reins_proto::pairing::PushMessage;
 use serde_json::Value;
 
 use crate::{CONFIG, http_client::make_http_request};
@@ -187,20 +187,20 @@ impl FcmSender {
 }
 
 static SENDER: LazyLock<Option<FcmSender>> = LazyLock::new(|| {
-    let path = CONFIG.rewarden_fcm_service_account();
+    let path = CONFIG.reins_fcm_service_account();
     if path.is_empty() {
         return None;
     }
     match ServiceAccount::from_file(&path) {
         Ok(account) => Some(FcmSender::new(account)),
         Err(e) => {
-            error!("Rewarden push disabled: {e}");
+            error!("Reins push disabled: {e}");
             None
         }
     }
 });
 
-/// The FCM sender, when `REWARDEN_FCM_SERVICE_ACCOUNT` is configured.
+/// The FCM sender, when `REINS_FCM_SERVICE_ACCOUNT` is configured.
 pub fn sender() -> Option<&'static FcmSender> {
     SENDER.as_ref()
 }
@@ -209,7 +209,7 @@ pub fn sender() -> Option<&'static FcmSender> {
 mod tests {
     use jsonwebtoken::{Algorithm, DecodingKey, Validation};
     use openssl::{pkey::PKey, rsa::Rsa};
-    use rewarden_proto::pairing::PushKind;
+    use reins_proto::pairing::PushKind;
     use serde_json::Value;
 
     use super::*;
@@ -221,10 +221,10 @@ mod tests {
         let public_pem = String::from_utf8(pkey.public_key_to_pem().unwrap()).unwrap();
         let json = json!({
             "type": "service_account",
-            "project_id": "rewarden-test",
+            "project_id": "reins-test",
             "private_key_id": "abc",
             "private_key": private_pem,
-            "client_email": "fcm@rewarden-test.iam.gserviceaccount.com",
+            "client_email": "fcm@reins-test.iam.gserviceaccount.com",
             "token_uri": "https://oauth2.googleapis.com/token"
         });
         (ServiceAccount::from_json(&json.to_string()).unwrap(), public_pem)
@@ -233,7 +233,7 @@ mod tests {
     #[test]
     fn parses_and_validates_service_accounts() {
         let (sa, _) = account();
-        assert_eq!(sa.project_id, "rewarden-test");
+        assert_eq!(sa.project_id, "reins-test");
         assert_eq!(sa.token_uri, "https://oauth2.googleapis.com/token");
         assert!(ServiceAccount::from_json("{}").is_err());
         assert!(ServiceAccount::from_json("not json").is_err());
@@ -244,7 +244,7 @@ mod tests {
         assert!(ServiceAccount::from_json(&http_uri.to_string()).is_err());
         let empty_project = json!({"project_id": "", "client_email": "e@x", "private_key": "k"});
         assert!(ServiceAccount::from_json(&empty_project.to_string()).is_err());
-        assert!(ServiceAccount::from_file("/nonexistent/rewarden-sa.json").unwrap_err().contains("/nonexistent"));
+        assert!(ServiceAccount::from_file("/nonexistent/reins-sa.json").unwrap_err().contains("/nonexistent"));
     }
 
     #[test]
@@ -260,7 +260,7 @@ mod tests {
             &validation,
         )
         .unwrap();
-        assert_eq!(data.claims["iss"], "fcm@rewarden-test.iam.gserviceaccount.com");
+        assert_eq!(data.claims["iss"], "fcm@reins-test.iam.gserviceaccount.com");
         assert_eq!(data.claims["scope"], FCM_SCOPE);
         assert_eq!(data.claims["iat"], 1_700_000_000);
         assert_eq!(data.claims["exp"], 1_700_003_600);
@@ -308,11 +308,11 @@ mod tests {
         assert_eq!(refresh_at(now, -5), now);
     }
 
-    /// Opt-in check against the real FCM service (`REWARDEN_LIVE_FCM=/path/to/service-account.json`): a bogus device
+    /// Opt-in check against the real FCM service (`REINS_LIVE_FCM=/path/to/service-account.json`): a bogus device
     /// token must be rejected as an invalid *argument*, which only happens after Google accepted our credentials.
     #[tokio::test]
     async fn live_fcm_accepts_our_credentials_and_rejects_a_bogus_token() {
-        let Ok(path) = std::env::var("REWARDEN_LIVE_FCM") else {
+        let Ok(path) = std::env::var("REINS_LIVE_FCM") else {
             return;
         };
         // main() installs the process-wide TLS provider; a test process has to do it itself.

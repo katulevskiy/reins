@@ -346,7 +346,7 @@ mod tests {
             assert_eq!(Oid::from_hex(bad), None, "{bad}");
         }
         assert!(Oid::ZERO.is_zero());
-        assert_eq!(Oid::ZERO.to_hex(), rewarden_proto::desktop::ZERO_OID);
+        assert_eq!(Oid::ZERO.to_hex(), reins_proto::desktop::ZERO_OID);
     }
 
     #[test]

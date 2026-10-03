@@ -1,4 +1,4 @@
-package dev.rewarden.android.push
+package dev.reins.android.push
 
 /** A validated FCM data message (contracts §A): `t` is `req`, `pair`, `blob`, `join` or `replaced`, `id` a server-issued id. */
 data class PushPayload(val kind: String, val id: String) {

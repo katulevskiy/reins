@@ -1,4 +1,4 @@
-package dev.rewarden.android.ui.settings
+package dev.reins.android.ui.settings
 
 import android.content.ClipData
 import android.content.ClipDescription
@@ -25,15 +25,15 @@ import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
 import androidx.compose.ui.window.SecureFlagPolicy
-import dev.rewarden.android.BuildConfig
-import dev.rewarden.android.design.ButtonStyle
-import dev.rewarden.android.design.CapsuleButton
-import dev.rewarden.android.design.Glyph
-import dev.rewarden.android.design.LocalColors
-import dev.rewarden.android.design.RText
-import dev.rewarden.android.design.RType
-import dev.rewarden.android.design.glass
-import dev.rewarden.android.feedback.DialogFeedback
+import dev.reins.android.BuildConfig
+import dev.reins.android.design.ButtonStyle
+import dev.reins.android.design.CapsuleButton
+import dev.reins.android.design.Glyph
+import dev.reins.android.design.LocalColors
+import dev.reins.android.design.RText
+import dev.reins.android.design.RType
+import dev.reins.android.design.glass
+import dev.reins.android.feedback.DialogFeedback
 
 /** The recovery code in lines of four groups ("ABCD EFGH IJKL MNOP"), easier to copy out by hand than one long line. */
 fun recoveryCodeLines(code: String): List<String> =

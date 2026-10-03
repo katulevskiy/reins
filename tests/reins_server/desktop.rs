@@ -1,9 +1,9 @@
-//! The desktop app's API (`/rewarden/desktop/calls`) and its pairing key, against the real server.
+//! The desktop app's API (`/reins/desktop/calls`) and its pairing key, against the real server.
 
 use std::time::{Duration, Instant};
 
+use reins_proto::desktop::{GIT_FETCH_TOOL, encode_key, key_fingerprint};
 use reqwest::StatusCode;
-use rewarden_proto::desktop::{GIT_FETCH_TOOL, encode_key, key_fingerprint};
 use serde_json::{Value, json};
 
 use crate::harness::{Phone, Server, Tokens, client};
@@ -19,7 +19,7 @@ async fn read(response: reqwest::Response) -> Answer {
 }
 
 async fn post_call(server: &Server, token: Option<&str>, body: &Value) -> Answer {
-    let mut request = client().post(server.url("/rewarden/desktop/calls")).json(body);
+    let mut request = client().post(server.url("/reins/desktop/calls")).json(body);
     if let Some(token) = token {
         request = request.bearer_auth(token);
     }
@@ -27,7 +27,7 @@ async fn post_call(server: &Server, token: Option<&str>, body: &Value) -> Answer
 }
 
 async fn get_call(server: &Server, token: Option<&str>, id: &str) -> Answer {
-    let mut request = client().get(server.url(&format!("/rewarden/desktop/calls/{id}")));
+    let mut request = client().get(server.url(&format!("/reins/desktop/calls/{id}")));
     if let Some(token) = token {
         request = request.bearer_auth(token);
     }
@@ -67,7 +67,7 @@ async fn paired() -> (Server, Phone, Tokens) {
     phone.register_device().await;
     let key = app_key();
     let (tokens, _, _) =
-        server.connect_with(&phone, "dev@example.com", Some("Laptop"), &[("rewarden_client_key", key.as_str())]).await;
+        server.connect_with(&phone, "dev@example.com", Some("Laptop"), &[("reins_client_key", key.as_str())]).await;
     (server, phone, tokens)
 }
 
@@ -80,13 +80,12 @@ async fn the_app_key_reaches_the_phone_and_its_fingerprint_both_pages() {
     let shown = format!("Desktop app key: <strong class=\"key\">{}</strong>", key_fingerprint(&key).unwrap());
 
     let client_id = server.register_client().await;
-    let authorize =
-        server.authorize_url_with(&client_id, &server.url("/mcp"), &[("rewarden_client_key", key.as_str())]);
+    let authorize = server.authorize_url_with(&client_id, &server.url("/mcp"), &[("reins_client_key", key.as_str())]);
     let page = client().get(&authorize).send().await.unwrap().text().await.unwrap();
     assert!(page.contains(&shown), "{page}");
 
     let (_, pairing, wait_page) =
-        server.connect_with(&phone, "kai@example.com", None, &[("rewarden_client_key", key.as_str())]).await;
+        server.connect_with(&phone, "kai@example.com", None, &[("reins_client_key", key.as_str())]).await;
     assert_eq!(pairing["client_key"], key);
     assert!(wait_page.contains(&shown), "{wait_page}");
 
@@ -103,7 +102,7 @@ async fn an_invalid_app_key_is_refused_before_any_pairing() {
     phone.register_device().await;
     let client_id = server.register_client().await;
     for bad in ["", "not-a-key", &encode_key(&[1u8; 32])[..20]] {
-        let url = server.authorize_url_with(&client_id, &server.url("/mcp"), &[("rewarden_client_key", bad)]);
+        let url = server.authorize_url_with(&client_id, &server.url("/mcp"), &[("reins_client_key", bad)]);
         let r = client().get(&url).send().await.unwrap();
         assert_eq!(r.status(), StatusCode::BAD_REQUEST, "{bad:?}");
         assert!(r.text().await.unwrap().contains("The desktop app key is not valid."), "{bad:?}");
@@ -202,7 +201,7 @@ async fn only_desktop_tools_with_valid_arguments_are_relayed() {
     assert_eq!(post_call(&server, token, &extra).await.2["error"], "invalid_arguments");
 
     let r = client()
-        .post(server.url("/rewarden/desktop/calls"))
+        .post(server.url("/reins/desktop/calls"))
         .bearer_auth(&tokens.access)
         .body("not json")
         .send()
@@ -266,7 +265,7 @@ async fn bad_bearers_get_the_mcp_challenge_and_browsers_are_refused() {
 
     let other = server.connect_ai(&phone, "dev@example.com", None).await;
     let r = client()
-        .post(server.url("/rewarden/desktop/calls"))
+        .post(server.url("/reins/desktop/calls"))
         .bearer_auth(&other.access)
         .header("Origin", "https://evil.example")
         .json(&fetch("o/r"))

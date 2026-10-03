@@ -1,10 +1,10 @@
-//! `rewarden mcp`: stdio JSON-RPC to the Rewarden server's `/mcp` with the app's session, against a mock server.
+//! `reins mcp`: stdio JSON-RPC to the Reins server's `/mcp` with the app's session, against a mock server.
 
 mod d1_mock;
 
 use d1_mock::{Mock, logged_in, logged_out};
-use rewarden_desktop::config::Paths;
-use rewarden_desktop::mcp_bridge;
+use reins_desktop::config::Paths;
+use reins_desktop::mcp_bridge;
 use serde_json::{Value, json};
 use tokio::io::{AsyncBufReadExt as _, AsyncReadExt as _, AsyncWriteExt as _};
 
@@ -127,7 +127,7 @@ async fn without_a_session_every_request_gets_a_clear_error() {
     for id in [1, 2] {
         let e = &by_id(&out, id)["error"];
         assert_eq!(e["code"], -32000);
-        assert!(e["message"].as_str().unwrap().contains("rewarden login"), "{e}");
+        assert!(e["message"].as_str().unwrap().contains("reins login"), "{e}");
     }
 }
 
@@ -141,7 +141,7 @@ async fn a_session_the_server_ended_says_log_in_again() {
     });
     let out = bridge(&app.paths, None, &lines(&[init(7)])).await;
     let message = by_id(&out, 7)["error"]["message"].as_str().unwrap().to_owned();
-    assert!(message.contains("ended this app's session") && message.contains("rewarden login"), "{message}");
+    assert!(message.contains("ended this app's session") && message.contains("reins login"), "{message}");
     assert!(!app.paths.session_file().exists(), "logged out");
 }
 
@@ -189,10 +189,10 @@ async fn lines_that_are_not_json_get_a_parse_error() {
 fn the_command_line_bridges_stdin_and_stdout() {
     use std::io::Write as _;
     let app = logged_out();
-    let mut child = std::process::Command::new(env!("CARGO_BIN_EXE_rewarden"))
+    let mut child = std::process::Command::new(env!("CARGO_BIN_EXE_reins"))
         .args(["mcp", "--via", "Gemini CLI"])
-        .env("REWARDEN_CONFIG_DIR", &app.paths.config_dir)
-        .env("REWARDEN_STATE_DIR", &app.paths.state_dir)
+        .env("REINS_CONFIG_DIR", &app.paths.config_dir)
+        .env("REINS_STATE_DIR", &app.paths.state_dir)
         .stdin(std::process::Stdio::piped())
         .stdout(std::process::Stdio::piped())
         .stderr(std::process::Stdio::piped())
@@ -203,6 +203,6 @@ fn the_command_line_bridges_stdin_and_stdout() {
     assert!(out.status.success());
     let answer: Value = serde_json::from_slice(&out.stdout).unwrap();
     assert_eq!(answer["id"], 1);
-    assert!(answer["error"]["message"].as_str().unwrap().contains("rewarden login"));
+    assert!(answer["error"]["message"].as_str().unwrap().contains("reins login"));
     assert!(String::from_utf8_lossy(&out.stderr).contains("not logged in"));
 }

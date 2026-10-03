@@ -307,7 +307,7 @@ pub async fn register(
 
     // RFC 7591.
     let mut body = json!({
-        "client_name": "Rewarden",
+        "client_name": "Reins",
         "redirect_uris": [REDIRECT_URI],
         "grant_types": ["authorization_code", "refresh_token"],
         "response_types": ["code"],
@@ -319,7 +319,7 @@ pub async fn register(
     let resp = http.post(registration.as_str()).header("Accept", "application/json").json(&body).send().await?;
     if !resp.status().is_success() {
         return Err(sign_in_error(format!(
-            "The sign-in server refused to register Rewarden (HTTP {}). Add the server with an access token instead.",
+            "The sign-in server refused to register Reins (HTTP {}). Add the server with an access token instead.",
             resp.status().as_u16()
         )));
     }

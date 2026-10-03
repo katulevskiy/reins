@@ -1,4 +1,4 @@
-package dev.rewarden.android.platform.update
+package dev.reins.android.platform.update
 
 import java.io.ByteArrayInputStream
 import java.io.File
@@ -8,7 +8,7 @@ import java.security.MessageDigest
 
 /** An update server in memory: one manifest and the APKs it may point at. */
 class FakeUpdateServer : UpdateFetcher {
-    @Volatile var manifest: String = manifestJson(1, "0.1.0", "rewarden-0.1.0-1.apk", sha(byteArrayOf(1)), 1)
+    @Volatile var manifest: String = manifestJson(1, "0.1.0", "reins-0.1.0-1.apk", sha(byteArrayOf(1)), 1)
     val files = java.util.concurrent.ConcurrentHashMap<String, ByteArray>()
     @Volatile var failure: Exception? = null
     @Volatile var manifestCalls = 0
@@ -19,7 +19,7 @@ class FakeUpdateServer : UpdateFetcher {
 
     /** Publishes [bytes] as release [versionCode] and returns what the manifest says about it. */
     fun publish(versionCode: Long, bytes: ByteArray = apkBytes(versionCode), versionName: String = "0.2.$versionCode"): Release {
-        val file = "rewarden-$versionName-$versionCode.apk"
+        val file = "reins-$versionName-$versionCode.apk"
         files[file] = bytes
         manifest = manifestJson(versionCode, versionName, file, sha(bytes), bytes.size.toLong())
         return Release.parse(manifest)

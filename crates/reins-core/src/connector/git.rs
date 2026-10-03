@@ -1,4 +1,4 @@
-//! Git on the user's computer through the Rewarden desktop app, for every git host (GitHub, GitLab, Codeberg,
+//! Git on the user's computer through the Reins desktop app, for every git host (GitHub, GitLab, Codeberg,
 //! Bitbucket). The app asks for a fetch (read) or a push (write); the answer is the account's token as a
 //! [`CredentialGrant`] sealed to the app's key (pinned when it was paired, checked by the flow before this runs),
 //! together with the request's nonce and, for a push, the digest of exactly what is pushed. What differs per host (how
@@ -9,8 +9,8 @@
 //! repository (see `PushSummary::resource`), asked every time when it rewrites or drops history. A repository is in
 //! its owner (GitLab: in each group above it), so a permission can be given for those too.
 
-use rewarden_proto::connector::ConnectorCall;
-use rewarden_proto::desktop::{
+use reins_proto::connector::ConnectorCall;
+use reins_proto::desktop::{
     CredentialGrant, FETCH_LEASE_SECS, GIT_PUSH_OP, GIT_TAG_PUSH_OP, PUSH_LEASE_SECS, PushSummary, RefChange,
     RefUpdate, SEALED_FIELD,
 };
@@ -133,7 +133,7 @@ pub(crate) fn checked_summary(call: &ConnectorCall) -> Result<PushSummary, CoreE
     }
     for u in &summary.updates {
         let Some(short) = u.branch().or_else(|| u.tag()) else {
-            return Err(bad(format!("Only branches and tags can be pushed through Rewarden, not {}.", u.name)));
+            return Err(bad(format!("Only branches and tags can be pushed through Reins, not {}.", u.name)));
         };
         if !ref_ok(short) {
             return Err(bad(format!("{} is not a valid branch or tag name.", u.name)));
@@ -297,7 +297,7 @@ pub(crate) fn perform_push(call: &ConnectorCall, repo: &str, username: &str, tok
 
 #[cfg(test)]
 mod tests {
-    use rewarden_proto::desktop::{ZERO_OID, encode_key};
+    use reins_proto::desktop::{ZERO_OID, encode_key};
 
     use super::*;
 

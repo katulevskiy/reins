@@ -1,5 +1,5 @@
 [package]
-name = "rewarden-policy"
+name = "reins-policy"
 version = "0.1.0"
 repository.workspace = true
 edition.workspace = true
@@ -9,7 +9,7 @@ license = "Apache-2.0"
 publish.workspace = true
 
 [dependencies]
-rewarden-proto = { path = "../rewarden-proto" }
+reins-proto = { path = "../reins-proto" }
 regex = "1.13.1"
 serde = { version = "1.0.229", features = ["derive"] }
 thiserror = "2.0.20"

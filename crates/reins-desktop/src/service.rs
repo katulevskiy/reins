@@ -1,4 +1,4 @@
-//! `rewarden service install`: a systemd user unit (Linux) or a launchd agent (macOS) that runs `rewarden daemon` at
+//! `reins service install`: a systemd user unit (Linux) or a launchd agent (macOS) that runs `reins daemon` at
 //! login and restarts it when it fails. On Windows, see [`windows`]: an entry in the user's `Run` key that starts a
 //! windowless copy of the program at logon, started at once as well.
 
@@ -7,8 +7,8 @@ pub mod windows;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
-pub const SYSTEMD_UNIT: &str = "rewarden.service";
-pub const LAUNCHD_LABEL: &str = "dev.rewarden.daemon";
+pub const SYSTEMD_UNIT: &str = "reins.service";
+pub const LAUNCHD_LABEL: &str = "dev.reins.daemon";
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Manager {
@@ -24,7 +24,7 @@ impl Manager {
         } else if cfg!(target_os = "linux") {
             Ok(Self::Systemd)
         } else {
-            Err("installing a service is supported on Linux (systemd), macOS (launchd) and Windows; run `rewarden daemon` instead".to_owned())
+            Err("installing a service is supported on Linux (systemd), macOS (launchd) and Windows; run `reins daemon` instead".to_owned())
         }
     }
 
@@ -41,7 +41,7 @@ impl Manager {
     pub fn contents(self, exe: &Path, home: &Path) -> String {
         match self {
             Self::Systemd => systemd_unit(exe),
-            Self::Launchd => launchd_plist(exe, &home.join("Library/Logs/rewarden.log")),
+            Self::Launchd => launchd_plist(exe, &home.join("Library/Logs/reins.log")),
         }
     }
 }
@@ -55,7 +55,7 @@ fn systemd_word(s: &str) -> String {
 #[must_use]
 pub fn systemd_unit(exe: &Path) -> String {
     format!(
-        "[Unit]\nDescription=Rewarden desktop app (git proxy)\n\n[Service]\nExecStart={} daemon\nRestart=on-failure\nRestartSec=2\n\n[Install]\nWantedBy=default.target\n",
+        "[Unit]\nDescription=Reins desktop app (git proxy)\n\n[Service]\nExecStart={} daemon\nRestart=on-failure\nRestartSec=2\n\n[Install]\nWantedBy=default.target\n",
         systemd_word(&exe.display().to_string())
     )
 }
@@ -161,26 +161,26 @@ mod tests {
 
     #[test]
     fn the_systemd_unit_runs_the_daemon_and_quotes_the_path() {
-        let unit = systemd_unit(Path::new("/opt/my apps/rewarden%1$x"));
-        assert!(unit.contains("ExecStart=\"/opt/my apps/rewarden%%1$$x\" daemon\n"), "{unit}");
+        let unit = systemd_unit(Path::new("/opt/my apps/reins%1$x"));
+        assert!(unit.contains("ExecStart=\"/opt/my apps/reins%%1$$x\" daemon\n"), "{unit}");
         assert!(unit.contains("Restart=on-failure"));
         assert!(unit.contains("WantedBy=default.target"));
     }
 
     #[test]
     fn the_launchd_agent_runs_the_daemon_and_escapes_the_path() {
-        let plist = launchd_plist(Path::new("/Apps/R&D/rewarden"), Path::new("/Users/me/Library/Logs/rewarden.log"));
-        assert!(plist.contains("<string>/Apps/R&amp;D/rewarden</string><string>daemon</string>"), "{plist}");
-        assert!(plist.contains("<string>dev.rewarden.daemon</string>"));
+        let plist = launchd_plist(Path::new("/Apps/R&D/reins"), Path::new("/Users/me/Library/Logs/reins.log"));
+        assert!(plist.contains("<string>/Apps/R&amp;D/reins</string><string>daemon</string>"), "{plist}");
+        assert!(plist.contains("<string>dev.reins.daemon</string>"));
     }
 
     #[test]
     fn install_writes_and_uninstall_removes_the_file_without_touching_the_system() {
         let home = tempfile::tempdir().unwrap();
         for manager in [Manager::Systemd, Manager::Launchd] {
-            let file = install(manager, home.path(), Path::new("/usr/bin/rewarden"), false).unwrap();
+            let file = install(manager, home.path(), Path::new("/usr/bin/reins"), false).unwrap();
             assert_eq!(file, manager.file(home.path()));
-            assert!(std::fs::read_to_string(&file).unwrap().contains("/usr/bin/rewarden"));
+            assert!(std::fs::read_to_string(&file).unwrap().contains("/usr/bin/reins"));
             assert!(uninstall(manager, home.path(), false).unwrap());
             assert!(!file.exists());
             assert!(!uninstall(manager, home.path(), false).unwrap());

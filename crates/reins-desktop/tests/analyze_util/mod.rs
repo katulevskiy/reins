@@ -9,9 +9,9 @@ use std::path::{Path, PathBuf};
 use std::process::{Command as Process, Stdio};
 use std::sync::atomic::{AtomicU64, Ordering};
 
-use rewarden_desktop::git::Command;
-use rewarden_desktop::git::object::{ObjectKind, Oid};
-use rewarden_desktop::git::remote::{Remote, RemoteError};
+use reins_desktop::git::Command;
+use reins_desktop::git::object::{ObjectKind, Oid};
+use reins_desktop::git::remote::{Remote, RemoteError};
 
 pub const ZERO: &str = "0000000000000000000000000000000000000000";
 

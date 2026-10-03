@@ -1,4 +1,4 @@
-package dev.rewarden.android.ui.signin
+package dev.reins.android.ui.signin
 
 /** How hard a master password looks to guess: a hint only; the server's one rule is the length. */
 enum class Strength { Weak, Fair, Strong }

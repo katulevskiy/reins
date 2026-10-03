@@ -1,7 +1,7 @@
-package dev.rewarden.android.ui.common
+package dev.reins.android.ui.common
 
-import dev.rewarden.core.CoreException
-import dev.rewarden.core.ForeignException
+import dev.reins.core.CoreException
+import dev.reins.core.ForeignException
 
 /** Why this phone may not become the approval device yet, and the two ways on (the Unlock screen offers both). */
 const val OTHER_APPROVAL_DEVICE =

@@ -1,4 +1,4 @@
-package dev.rewarden.android.ui.common
+package dev.reins.android.ui.common
 
 import java.util.Locale
 

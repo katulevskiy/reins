@@ -1,20 +1,20 @@
-# Rewarden MVP — Component Contracts
+# Reins MVP — Component Contracts
 
-Companion to `2026-09-28-rewarden-mvp-design.md`. Plans 2 (server), 3 (phone core) and
+Companion to `2026-09-28-reins-mvp-design.md`. Plans 2 (server), 3 (phone core) and
 4 (Android) are written and implemented in parallel; this document is the **binding
 interface between them**. Any change here must be made here first and propagated to every
 plan that consumes it.
 
 All JSON is snake_case. All timestamps are unix seconds (`i64`). Wire types marked
-`proto::X` live in `crates/rewarden-proto` (Plan 1); types marked **new in Plan 2** are
-added by Plan 2 to `crates/rewarden-proto/src/device.rs` (module `device`), so the phone
+`proto::X` live in `crates/reins-proto` (Plan 1); types marked **new in Plan 2** are
+added by Plan 2 to `crates/reins-proto/src/device.rs` (module `device`), so the phone
 core can use the same structs.
 
 ---
 
-## A. Phone API — server ↔ `rewarden-core`
+## A. Phone API — server ↔ `reins-core`
 
-Base: `{domain}/rewarden/api`. Auth: `Authorization: Bearer <Vaultwarden access token>`
+Base: `{domain}/reins/api`. Auth: `Authorization: Bearer <Vaultwarden access token>`
 obtained from `/identity/connect/token` (existing Vaultwarden login, validated with the
 existing `Headers` guard). Errors: HTTP status + body `{"error": "<code>", "message": "<text>"}`
 (`proto::device::ApiError`, new in Plan 2). Missing/invalid token → 401 (Vaultwarden's own
@@ -28,7 +28,7 @@ Every endpoint except `PUT /device` additionally requires that the caller's devi
 
 | # | Method, path | Request body | Success | Errors |
 |---|---|---|---|---|
-| A1 | `PUT /device` | `DeviceRegistration { fcm_token: Option<String>, master_password_hash: Option<String> }` | 200 `DeviceRegistered { replaced_previous: bool }` | 403 `proof_required` / `wrong_proof` when another device approves for the account and this one brings no valid proof (the hash, or an approved join); 429 after too many wrong proofs ([passwordless spec](2026-10-02-passwordless-sign-in.md#taking-the-approval-role-server-srcapirewardendevice_apirs-core-enginers-register_device)) |
+| A1 | `PUT /device` | `DeviceRegistration { fcm_token: Option<String>, master_password_hash: Option<String> }` | 200 `DeviceRegistered { replaced_previous: bool }` | 403 `proof_required` / `wrong_proof` when another device approves for the account and this one brings no valid proof (the hash, or an approved join); 429 after too many wrong proofs ([passwordless spec](2026-10-02-passwordless-sign-in.md#taking-the-approval-role-server-srcapireinsdevice_apirs-core-enginers-register_device)) |
 | A2 | `GET /pending?wait=<0..=25>` | — | 200 `Pending { requests: Vec<proto::relay::RelayRequest>, pairings: Vec<proto::pairing::PairingRequest> }`; when both lists are empty and `wait > 0`, the server holds the response up to `wait` s and returns as soon as an item appears. Values > 25 are clamped. Returning items **marks them delivered**. | 403 |
 | A3 | `GET /requests/{id}` | — | 200 `proto::relay::RelayRequest` (marks delivered) | 404 `not_found` (unknown, expired, other user) |
 | A4 | `POST /requests/{id}/response` | `proto::relay::RelayResponse` | 204 | 404 `not_found`; 409 `already_answered`; 400 `bad_version` if `v != 1` |
@@ -42,7 +42,7 @@ Every endpoint except `PUT /device` additionally requires that the caller's devi
 
 Request lifetime on the server: pending requests and pairings are retrievable for **600 s**;
 a request answered after the AI stopped waiting keeps its result for 600 s for
-`rewarden_get_result`. Registering a new approval device (A1 from a different device than
+`reins_get_result`. Registering a new approval device (A1 from a different device than
 the current one) sends the old device a push `{t: "replaced", id: ""}`; the server forgets
 nothing else.
 
@@ -52,22 +52,22 @@ the push as a hint only: it always fetches via A3/A5 (or A2) over HTTPS. `replac
 phone it is no longer the approval device (show a notice; A2 will return 403).
 
 The iOS app registers `fcm_token` as `apns:<hex>` (production) or `apns-sandbox:<hex>` (development), 64 to 200 hex digits (APNs tokens vary in length: 32 bytes on a phone, 80 on a simulator); the
-server sends those through APNs instead of FCM (`src/api/rewarden/apns.rs`). The APNs payload is
+server sends those through APNs instead of FCM (`src/api/reins/apns.rs`). The APNs payload is
 `{"aps": {...fixed alert, category "request" | "pairing" | "blob"...}, "t", "id"}` (alert push, priority 10), and
 `{"aps": {"content-available": 1}, "t": "replaced", "id": ""}` (background push, priority 5) for `replaced`.
 
 ### Proto invariants consumers must honor (from Plan 1 final review)
 - Every `RelayRequest`/`RelayResponse`/`PairingRequest`/`PairingResponse` receiver checks
-  `rewarden_proto::check_version(msg.v)?`.
+  `reins_proto::check_version(msg.v)?`.
 - The server calls `ToolCall::normalized()` before relaying; the phone calls it again on
   every received `RelayRequest.call` before evaluating (defense in depth).
 - `MessageSummary { id, thread_id, from, from_name: Option<String>, to, cc, subject, date, snippet }`
   — `to` = To only, `cc` = Cc only, all bare normalized addresses; `date` = Gmail
-  `internalDate / 1000` (unix **seconds**). `rewarden_policy::MessageFacts.to` is To **and** Cc.
+  `internalDate / 1000` (unix **seconds**). `reins_policy::MessageFacts.to` is To **and** Cc.
 - `OutgoingEmail` and `Grant` reject unknown fields; the MCP `gmail_send` input is flat
   (`to, cc, subject, body, reply_to_message_id`) and the server maps it into
   `ToolCall::GmailSend { email: Box<OutgoingEmail> }` (wire tag `{"tool":"gmail_send","email":{…}}`).
-- `rewarden_policy::Pattern::literal(text)` exists for "contains this text" UI inputs;
+- `reins_policy::Pattern::literal(text)` exists for "contains this text" UI inputs;
   `GrantScopeChoice.subject_pattern` is treated as literal text by the core (use
   `Pattern::literal`), not as a regex.
 
@@ -79,7 +79,7 @@ server sends those through APNs instead of FCM (`src/api/rewarden/apns.rs`). The
 3. Master password hash: `base64(PBKDF2-SHA256(key = master_key, salt = password, 1 iteration, 32 bytes))`.
 4. `POST {domain}/identity/connect/token` form: `grant_type=password`, `username=<email>`,
    `password=<hash>`, `scope=api offline_access`, `client_id=mobile`, `deviceType=0`,
-   `deviceIdentifier=<stable uuid>`, `deviceName=Rewarden`. When the response is 400 with
+   `deviceIdentifier=<stable uuid>`, `deviceName=Reins`. When the response is 400 with
    `TwoFactorProviders` containing `0`, retry with `twoFactorToken=<totp>`,
    `twoFactorProvider=0`, `twoFactorRemember=0`. Other providers → "not supported".
    Plan 3 must verify header requirements (e.g. `Auth-Email`) against `src/api/identity.rs`.
@@ -88,24 +88,24 @@ server sends those through APNs instead of FCM (`src/api/rewarden/apns.rs`). The
 ## C. MCP and OAuth — AI client ↔ server
 
 Defined by spec §4.2–4.5; Plan 2 owns the details. Fixed points other plans rely on:
-- MCP endpoint `{domain}/mcp`; tools `gmail_search`, `gmail_read`, `gmail_send`, `rewarden_get_result` (spec §4.2 table).
+- MCP endpoint `{domain}/mcp`; tools `gmail_search`, `gmail_read`, `gmail_send`, `reins_get_result` (spec §4.2 table).
 - Relay timing (spec §4.3): offline threshold 10 s (request not delivered via A2/A3), wait 45 s.
 - Default `max_results` for `gmail_search` is 10, applied by the server before relaying.
 - The server calls `ToolCall::normalized()` before relaying; a validation error returns an
   `isError: true` tool result describing the problem.
 
-## D. `rewarden-core` UniFFI surface — core ↔ Kotlin (Plan 3 produces, Plan 4 consumes)
+## D. `reins-core` UniFFI surface — core ↔ Kotlin (Plan 3 produces, Plan 4 consumes)
 
-Crate `crates/rewarden-core`, UniFFI 0.32 proc-macros, Kotlin package
-`dev.rewarden.core` (via `uniffi.toml`: `[bindings.kotlin] package_name = "dev.rewarden.core"`,
-`cdylib_name = "rewarden_core"`). All `async` methods are Kotlin `suspend` functions
+Crate `crates/reins-core`, UniFFI 0.32 proc-macros, Kotlin package
+`dev.reins.core` (via `uniffi.toml`: `[bindings.kotlin] package_name = "dev.reins.core"`,
+`cdylib_name = "reins_core"`). All `async` methods are Kotlin `suspend` functions
 and never block the calling thread.
 
 ```rust
-#[derive(uniffi::Object)] pub struct RewardenCore;
+#[derive(uniffi::Object)] pub struct ReinsCore;
 
 #[uniffi::export(async_runtime = "tokio")]
-impl RewardenCore {
+impl ReinsCore {
     #[uniffi::constructor]
     pub fn new(data_dir: String, keys: Arc<dyn KeyWrapper>, google: Arc<dyn GoogleTokenProvider>,
                notifier: Arc<dyn Notifier>) -> Result<Arc<Self>, CoreError>;
@@ -223,6 +223,6 @@ Kotlin side names follow UniFFI defaults (camelCase methods, e.g. `core.handlePu
 
 ## E. Local store (phone, Plan 3 internal)
 
-SQLite at `<data_dir>/rewarden.db`. Secrets (Vaultwarden refresh token, audit `detail`) are
+SQLite at `<data_dir>/reins.db`. Secrets (Vaultwarden refresh token, audit `detail`) are
 AES-256-GCM encrypted with a random 32-byte data key stored at `<data_dir>/dek.bin`
 wrapped by `KeyWrapper`. Grants stored as `proto`/`policy` JSON.

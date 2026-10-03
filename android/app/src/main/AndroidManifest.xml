@@ -15,14 +15,14 @@
     <uses-permission android:name="android.permission.READ_CONTACTS" />
 
     <application
-        android:name=".RewardenApp"
+        android:name=".ReinsApp"
         android:allowBackup="false"
         android:dataExtractionRules="@xml/data_extraction_rules"
         android:fullBackupContent="false"
         android:icon="@mipmap/ic_launcher"
         android:label="@string/app_name"
         android:supportsRtl="true"
-        android:theme="@style/Theme.Rewarden">
+        android:theme="@style/Theme.Reins">
 
         <activity
             android:name=".MainActivity"
@@ -111,7 +111,7 @@
             tools:node="remove" />
 
         <service
-            android:name=".push.RewardenMessagingService"
+            android:name=".push.ReinsMessagingService"
             android:exported="false">
             <intent-filter>
                 <action android:name="com.google.firebase.MESSAGING_EVENT" />

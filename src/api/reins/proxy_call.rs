@@ -1,10 +1,10 @@
-//! `POST /rewarden/api/mcp/call` (files spec, S4): one MCP request made by the server for the phone, for a tool whose
+//! `POST /reins/api/mcp/call` (files spec, S4): one MCP request made by the server for the phone, for a tool whose
 //! results are too large to pass through the phone. The server sends the JSON-RPC request with the phone's headers
 //! (same SSRF rules as every outbound request), reads a JSON or SSE answer, and keeps every large content item as an
 //! output blob, replaced by a `resource_link` to its download, so the phone gets back a small result.
 
 use data_encoding::BASE64;
-use rewarden_proto::{
+use reins_proto::{
     blob::{BlobDownload, INLINE_LIMIT},
     remote_mcp::{ProxyCall, ProxyCallResult},
 };
@@ -219,7 +219,7 @@ async fn read_sse(mut response: reqwest::Response, id: &Value) -> Result<Option<
     Ok(parser.finish().and_then(|event| matching_response(&event, id)))
 }
 
-#[post("/rewarden/api/mcp/call", data = "<data>")]
+#[post("/reins/api/mcp/call", data = "<data>")]
 async fn post_call(
     data: Data<'_>,
     headers: Headers,
@@ -256,7 +256,7 @@ async fn post_call(
         .get(reqwest::header::CONTENT_TYPE)
         .and_then(|v| v.to_str().ok())
         .is_some_and(|ct| ct.trim_start().to_ascii_lowercase().starts_with("text/event-stream"));
-    let gateway = |m: &str| api_err(Status::BadGateway, rewarden_proto::device::codes::BAD_REQUEST, m);
+    let gateway = |m: &str| api_err(Status::BadGateway, reins_proto::device::codes::BAD_REQUEST, m);
     let mut answer = if sse {
         read_sse(response, &id).await.map_err(|m| gateway(&m))?
     } else {
@@ -284,7 +284,7 @@ async fn post_call(
 
 #[cfg(test)]
 mod tests {
-    use rewarden_proto::blob::BlobId;
+    use reins_proto::blob::BlobId;
 
     use super::*;
 
@@ -352,7 +352,7 @@ mod tests {
         );
         let download = BlobDownload {
             id: BlobId("b".repeat(22)),
-            download_url: "https://rw.example/rewarden/blob/s".into(),
+            download_url: "https://rw.example/reins/blob/s".into(),
             name: "image-2.png".into(),
             size: 10,
             sha256: String::new(),
@@ -362,7 +362,7 @@ mod tests {
         replace_with_link(&mut response, &plan[0], &download);
         assert_eq!(
             response["result"]["content"][1],
-            json!({"type": "resource_link", "uri": "https://rw.example/rewarden/blob/s", "name": "image-2.png",
+            json!({"type": "resource_link", "uri": "https://rw.example/reins/blob/s", "name": "image-2.png",
                 "mimeType": "image/png", "size": 10})
         );
         assert_eq!(response["result"]["content"][0]["text"], "small");

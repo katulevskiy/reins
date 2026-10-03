@@ -1,8 +1,8 @@
-package dev.rewarden.android.platform
+package dev.reins.android.platform
 
 import android.content.Context
-import dev.rewarden.android.ui.signin.AccountRules
-import dev.rewarden.core.SsoStart
+import dev.reins.android.ui.signin.AccountRules
+import dev.reins.core.SsoStart
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow

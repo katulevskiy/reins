@@ -1,4 +1,4 @@
-package dev.rewarden.android.ui.pairing
+package dev.reins.android.ui.pairing
 
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
@@ -27,23 +27,23 @@ import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
-import dev.rewarden.android.design.Banner
-import dev.rewarden.android.design.BannerKind
-import dev.rewarden.android.design.ButtonStyle
-import dev.rewarden.android.design.CapsuleButton
-import dev.rewarden.android.design.Fonts
-import dev.rewarden.android.design.Glyph
-import dev.rewarden.android.design.Group
-import dev.rewarden.android.design.ListRow
-import dev.rewarden.android.design.LocalColors
-import dev.rewarden.android.design.RTextField
-import dev.rewarden.android.design.RType
-import dev.rewarden.android.design.Screen
-import dev.rewarden.android.platform.Browser
-import dev.rewarden.android.platform.QrScannerProvider
-import dev.rewarden.android.platform.ScanResult
-import dev.rewarden.android.ui.AppViewModel
-import dev.rewarden.android.ui.common.ReinsLinks
+import dev.reins.android.design.Banner
+import dev.reins.android.design.BannerKind
+import dev.reins.android.design.ButtonStyle
+import dev.reins.android.design.CapsuleButton
+import dev.reins.android.design.Fonts
+import dev.reins.android.design.Glyph
+import dev.reins.android.design.Group
+import dev.reins.android.design.ListRow
+import dev.reins.android.design.LocalColors
+import dev.reins.android.design.RTextField
+import dev.reins.android.design.RType
+import dev.reins.android.design.Screen
+import dev.reins.android.platform.Browser
+import dev.reins.android.platform.QrScannerProvider
+import dev.reins.android.platform.ScanResult
+import dev.reins.android.ui.AppViewModel
+import dev.reins.android.ui.common.ReinsLinks
 import kotlinx.coroutines.launch
 
 /** Settings > AI connections > Connect a computer. */
@@ -66,7 +66,7 @@ fun ComputerHowTo(modifier: Modifier = Modifier) {
     val text = buildAnnotatedString {
         append("Run ")
         withStyle(SpanStyle(fontFamily = Fonts.mono, fontWeight = FontWeight.Medium, color = c.text, background = c.controlFill)) {
-            append(" rewarden login ")
+            append(" reins login ")
         }
         append(" on your computer (or open the Reins desktop app) and scan the QR code it shows.")
     }

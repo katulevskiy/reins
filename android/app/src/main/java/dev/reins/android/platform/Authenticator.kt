@@ -1,4 +1,4 @@
-package dev.rewarden.android.platform
+package dev.reins.android.platform
 
 import androidx.biometric.BiometricManager
 import androidx.biometric.BiometricManager.Authenticators.BIOMETRIC_STRONG

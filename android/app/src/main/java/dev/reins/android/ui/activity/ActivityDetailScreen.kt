@@ -1,4 +1,4 @@
-package dev.rewarden.android.ui.activity
+package dev.reins.android.ui.activity
 
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
@@ -16,29 +16,29 @@ import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
-import dev.rewarden.android.design.ActionKind
-import dev.rewarden.android.design.ActionTile
-import dev.rewarden.android.design.BlobAvatar
-import dev.rewarden.android.design.GlyphIcon
-import dev.rewarden.android.design.pressable
-import dev.rewarden.android.design.ConnectorTags
-import dev.rewarden.android.design.EmptyState
-import dev.rewarden.android.design.Glyph
-import dev.rewarden.android.design.Group
-import dev.rewarden.android.design.Hairline
-import dev.rewarden.android.design.ListRow
-import dev.rewarden.android.design.LocalColors
-import dev.rewarden.android.design.RText
-import dev.rewarden.android.design.RType
-import dev.rewarden.android.design.Screen
-import dev.rewarden.android.state.AppState
-import dev.rewarden.android.ui.common.ConnectionIcon
-import dev.rewarden.android.ui.common.OutcomeTag
-import dev.rewarden.android.ui.common.formatFull
-import dev.rewarden.android.ui.common.entryTitle
-import dev.rewarden.android.ui.common.formatTime
-import dev.rewarden.android.ui.common.operationTitle
-import dev.rewarden.android.ui.common.untrusted
+import dev.reins.android.design.ActionKind
+import dev.reins.android.design.ActionTile
+import dev.reins.android.design.BlobAvatar
+import dev.reins.android.design.GlyphIcon
+import dev.reins.android.design.pressable
+import dev.reins.android.design.ConnectorTags
+import dev.reins.android.design.EmptyState
+import dev.reins.android.design.Glyph
+import dev.reins.android.design.Group
+import dev.reins.android.design.Hairline
+import dev.reins.android.design.ListRow
+import dev.reins.android.design.LocalColors
+import dev.reins.android.design.RText
+import dev.reins.android.design.RType
+import dev.reins.android.design.Screen
+import dev.reins.android.state.AppState
+import dev.reins.android.ui.common.ConnectionIcon
+import dev.reins.android.ui.common.OutcomeTag
+import dev.reins.android.ui.common.formatFull
+import dev.reins.android.ui.common.entryTitle
+import dev.reins.android.ui.common.formatTime
+import dev.reins.android.ui.common.operationTitle
+import dev.reins.android.ui.common.untrusted
 
 /** One operation, opened: who asked, what exactly, what was released or sent and to whom. */
 @Composable
@@ -49,7 +49,7 @@ fun ActivityDetailScreen(
     onOpenGrant: (String) -> Unit,
     onOpenEmail: (entryId: Long, index: Int) -> Unit = { _, _ -> },
     /** "This was wrong": records what should have happened; returns an error to show, or null. */
-    onCorrect: suspend (Long, dev.rewarden.core.Verdict) -> String? = { _, _ -> null },
+    onCorrect: suspend (Long, dev.reins.core.Verdict) -> String? = { _, _ -> null },
 ) {
     val c = LocalColors.current
     val entries by state.activity.collectAsStateWithLifecycle()
@@ -88,7 +88,7 @@ fun ActivityDetailScreen(
             RText(untrusted(entry.detail), RType.sans(15.5f, lineHeight = 21f), c.secondary, Modifier.padding(top = 12.dp).testTag("detailSummary"))
         }
 
-        dev.rewarden.android.ui.autopilot.ActivityAutopilotSection(entry, onCorrect)
+        dev.reins.android.ui.autopilot.ActivityAutopilotSection(entry, onCorrect)
 
         info.query?.let { query ->
             Group(header = "Search") { ListRow(query, ltrSubtitle = true, modifier = Modifier.testTag("detailQuery")) }

@@ -1,4 +1,4 @@
-//! Asking the person at the computer: the pending list the CLI answers (`rewarden pending`, `approve`, `deny`) and a
+//! Asking the person at the computer: the pending list the CLI answers (`reins pending`, `approve`, `deny`) and a
 //! desktop notification or dialog. A question is keyed by what it is about (a repository read, a push digest), so git
 //! run again finds the question still open, or the answer given while git was not waiting any more.
 
@@ -94,7 +94,7 @@ impl Pending {
             });
         }
         if inner.open.len() >= MAX_OPEN {
-            return Err("Too many approvals are waiting; answer them with `rewarden pending`.".to_owned());
+            return Err("Too many approvals are waiting; answer them with `reins pending`.".to_owned());
         }
         let id = loop {
             let id = new_id();
@@ -192,7 +192,7 @@ fn escape_markup(s: &str) -> String {
 impl DesktopPrompter {
     fn command(item: &PendingItem) -> Option<tokio::process::Command> {
         let body = format!(
-            "{}\n\nOr answer with `rewarden approve {}` / `rewarden deny {}`.",
+            "{}\n\nOr answer with `reins approve {}` / `reins deny {}`.",
             item.lines.join("\n"),
             item.id,
             item.id
@@ -207,25 +207,25 @@ impl DesktopPrompter {
                 "display dialog (item 2 of argv) with title (item 1 of argv) buttons {\"Deny\", \"Approve\"} default button \"Deny\" giving up after 600",
                 "-e",
                 "end run",
-                &format!("Rewarden: {}", item.what),
+                &format!("Reins: {}", item.what),
                 &body,
             ]);
             Some(c)
         } else if cfg!(windows) {
             // Yes/No buttons; no timeout of its own: the prompt is dropped (and the box killed) after `REMEMBER`.
             crate::win::message_box(
-                &format!("Rewarden: {}", item.what),
+                &format!("Reins: {}", item.what),
                 &format!("{body}\n\nApprove? (Yes approves, No denies.)"),
             )
         } else if cfg!(unix) {
             let mut c = tokio::process::Command::new("notify-send");
             c.args([
-                "--app-name=Rewarden",
+                "--app-name=Reins",
                 "--urgency=critical",
                 "--action=approve=Approve",
                 "--action=deny=Deny",
                 "--wait",
-                &format!("Rewarden: {}", escape_markup(&item.what)),
+                &format!("Reins: {}", escape_markup(&item.what)),
                 &escape_markup(&body),
             ]);
             Some(c)

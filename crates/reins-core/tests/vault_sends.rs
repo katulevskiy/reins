@@ -9,10 +9,10 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use common::{FakeGoogle, FakeKeys, RecordingNotifier};
 use data_encoding::{BASE64, BASE64URL_NOPAD};
-use rewarden_core::crypto::{Kdf, VaultKey, master_key};
-use rewarden_core::text::parse_when;
-use rewarden_core::{
-    ApprovalChoice, CoreConfig, GoogleTokenProvider, GrantScopeChoice, Notifier, RewardenCore, StandingGrant,
+use reins_core::crypto::{Kdf, VaultKey, master_key};
+use reins_core::text::parse_when;
+use reins_core::{
+    ApprovalChoice, CoreConfig, GoogleTokenProvider, GrantScopeChoice, Notifier, ReinsCore, StandingGrant,
 };
 use ring::{hkdf, pbkdf2};
 use serde_json::{Value, json};
@@ -28,7 +28,7 @@ const NEW_ID: &str = "cccccccc-cccc-4ccc-8ccc-cccccccccccc";
 
 struct Env {
     server: MockServer,
-    core: Arc<RewardenCore>,
+    core: Arc<ReinsCore>,
     _dir: tempfile::TempDir,
 }
 
@@ -134,7 +134,7 @@ async fn env(sends: Vec<Value>) -> Env {
     let dir = tempfile::tempdir().unwrap();
     let google: Arc<dyn GoogleTokenProvider> = Arc::new(FakeGoogle::new());
     let notifier: Arc<dyn Notifier> = Arc::new(RecordingNotifier::default());
-    let core = RewardenCore::with_connectors(
+    let core = ReinsCore::with_connectors(
         dir.path().to_str().unwrap(),
         &FakeKeys,
         google,
@@ -159,19 +159,19 @@ fn request(id: &str, op: &str, args: &Value) -> Value {
 
 async fn serve_pending(env: &Env, requests: &[Value]) {
     Mock::given(method("GET"))
-        .and(path("/rewarden/api/pending"))
+        .and(path("/reins/api/pending"))
         .respond_with(ResponseTemplate::new(200).set_body_json(json!({"requests": requests, "pairings": []})))
         .up_to_n_times(1)
         .with_priority(1)
         .mount(&env.server)
         .await;
     Mock::given(method("GET"))
-        .and(path("/rewarden/api/pending"))
+        .and(path("/reins/api/pending"))
         .respond_with(ResponseTemplate::new(200).set_body_json(json!({"requests": [], "pairings": []})))
         .mount(&env.server)
         .await;
     Mock::given(method("POST"))
-        .and(path_regex(r"^/rewarden/api/(requests|pairings)/[^/]+/response$"))
+        .and(path_regex(r"^/reins/api/(requests|pairings)/[^/]+/response$"))
         .respond_with(ResponseTemplate::new(204))
         .mount(&env.server)
         .await;
@@ -580,9 +580,9 @@ async fn bad_arguments_are_explained_before_the_user_is_asked() {
     );
     // A file Send without its content is told where to upload the file (see tests/blobs.rs), not refused.
     Mock::given(method("POST"))
-        .and(path("/rewarden/api/blobs"))
+        .and(path("/reins/api/blobs"))
         .respond_with(ResponseTemplate::new(200).set_body_json(json!({"id": "blob-for-a-send-0001",
-            "upload_url": "https://rw.example/rewarden/blob/up", "expires_at": 4_000_000_000_i64})))
+            "upload_url": "https://rw.example/reins/blob/up", "expires_at": 4_000_000_000_i64})))
         .mount(&env.server)
         .await;
     let args = json!({"type": "file", "name": "N", "file_name": "a"});

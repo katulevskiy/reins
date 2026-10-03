@@ -1,4 +1,4 @@
-//! Rewarden grant model and policy engine.
+//! Reins grant model and policy engine.
 //!
 //! Decides which messages an AI connection may receive and which emails it may
 //! send, from grants the user created on their phone. Pure and IO-free.
@@ -9,7 +9,7 @@ mod grant;
 mod pattern;
 mod scope;
 
-use rewarden_proto::ValidationError;
+use reins_proto::ValidationError;
 use thiserror::Error;
 
 pub use evaluate::{

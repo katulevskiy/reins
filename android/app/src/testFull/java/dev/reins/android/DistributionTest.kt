@@ -1,11 +1,11 @@
-package dev.rewarden.android
+package dev.reins.android
 
 import android.Manifest
 import android.app.NotificationManager
 import android.content.pm.PackageManager
 import androidx.test.ext.junit.runners.AndroidJUnit4
-import dev.rewarden.android.platform.PhoneBridge
-import dev.rewarden.android.platform.update.UpdateNotifier
+import dev.reins.android.platform.PhoneBridge
+import dev.reins.android.platform.update.UpdateNotifier
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertTrue
@@ -47,7 +47,7 @@ class DistributionTest : FlowHarness() {
         tap("integrations")
         tap("service:sms")
         awaitTag("allowDevice")
-        kotlinx.coroutines.runBlocking { dev.rewarden.android.ui.services.ServiceViewModel(container, "sms").addDevice() }
+        kotlinx.coroutines.runBlocking { dev.reins.android.ui.services.ServiceViewModel(container, "sms").addDevice() }
         awaitCore { core.serviceAdded.isNotEmpty() }
         assertEquals(listOf("sms" to ""), core.serviceAdded.toList())
         awaitTag("account:this phone")

@@ -6,7 +6,7 @@ use std::io::Read;
 use std::path::Path;
 use std::process::ExitCode;
 
-use rewarden_laya::Judge;
+use reins_laya::Judge;
 
 fn pct(p: f32) -> String {
     format!("{:5.1}%", p * 100.0)

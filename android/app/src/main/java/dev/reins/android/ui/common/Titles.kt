@@ -1,9 +1,9 @@
-package dev.rewarden.android.ui.common
+package dev.reins.android.ui.common
 
-import dev.rewarden.android.design.ActionKind
-import dev.rewarden.android.design.MCP_PREFIX
-import dev.rewarden.android.design.McpNames
-import dev.rewarden.android.design.serviceName
+import dev.reins.android.design.ActionKind
+import dev.reins.android.design.MCP_PREFIX
+import dev.reins.android.design.McpNames
+import dev.reins.android.design.serviceName
 
 /**
  * "Search Gmail", "Read 3 emails", "Send email to 2": what an operation is, in a few words. [title] is the name the

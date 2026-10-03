@@ -64,7 +64,7 @@ action: write
 operation: Push to a branch
 class: push
 account: dkat
-target: dkat/rewarden
+target: dkat/reins
 target is new: no
 details: branch feature/laya (not the default branch); 3 commits; 7 files changed; no force
 ```
@@ -113,7 +113,7 @@ Final probability: weighted blend `p = w_b·p_base + w_k·p_knn + w_a·p_adapter
 ## 6. Model on the phone
 
 ### 6.1 Package
-Not in the APK. Downloaded on demand (Wi-Fi by default) from the official site, `<site>/models/<id>/` (`rewarden_proto::official_site!`), and verified against SHA-256 pinned **in the core binary** (`autopilot::model::KNOWN_MODELS`). Files: `model.onnx` (int8), `tokenizer.json`, `laya_config.json` (`{id, max_len, head_max_len, temperature, temperature_by_options, hidden, mask/cls/sep/pad ids}`). Stored under `<data_dir>/models/<id>/`. A model that fails verification is deleted and never loaded.
+Not in the APK. Downloaded on demand (Wi-Fi by default) from the official site, `<site>/models/<id>/` (`reins_proto::official_site!`), and verified against SHA-256 pinned **in the core binary** (`autopilot::model::KNOWN_MODELS`). Files: `model.onnx` (int8), `tokenizer.json`, `laya_config.json` (`{id, max_len, head_max_len, temperature, temperature_by_options, hidden, mask/cls/sep/pad ids}`). Stored under `<data_dir>/models/<id>/`. A model that fails verification is deleted and never loaded.
 
 ### 6.2 ONNX I/O
 Inputs: `input_ids` int64 [B,L], `attention_mask` int64 [B,L], `marker_pos` int64 [B,K], `marker_mask` bool [B,K], `qtype` int64 [B].
@@ -149,9 +149,9 @@ Bypass: a foreground-service-free persistent notification (ongoing, low importan
 
 `AuditRecord`/`ActivityEntry` gain `decided_by: String` ("" = user, "autopilot", "bypass", "lockdown") and `autopilot: Option<AutopilotNote>` = `{mode, p_approve, p_deny, confidence, profile_id, profile_name, neighbours: Vec<String> (short labels), reason: String}`. Activity gets an "Automatic" filter chip; entries show a small "Autopilot" badge; tapping shows the confidence, the neighbours and **"This was wrong"** (correction → memory, class re-locked).
 
-## 9. Core API (UniFFI, on `RewardenCore`)
+## 9. Core API (UniFFI, on `ReinsCore`)
 
-As built (`crates/rewarden-core/src/api.rs`, records in `autopilot/types.rs`). All async methods run on the core's runtime.
+As built (`crates/reins-core/src/api.rs`, records in `autopilot/types.rs`). All async methods run on the core's runtime.
 
 ```rust
 fn set_model_runtime(runtime: Arc<dyn ModelRuntime>)            // replaces (and unloads) an earlier one
@@ -196,7 +196,7 @@ Records:
 - `AutoDecisionView { request_id: String, kind: PendingKind, connection_id, connection_label, title: String, verdict: Verdict, decided_by: String, p_approve, confidence: f32, activity_id: Option<i64> }`
 - `ModelInput { batch, seq_len, k: u32, input_ids, attention_mask, marker_pos: Vec<i64>, marker_mask: Vec<u8>, qtype: Vec<i64> }`, `ModelOutput { logits, act, pooled: Vec<f32>, hidden: u32 }`
 
-`RewardenCore::new` is unchanged: the runtime is given with `set_model_runtime` (the app may create it after the core). The download base URL (`CoreConfig::models_base`) and the trusted models (`CoreConfig::models`) are overridable only in Rust (tests); the app always gets `DEFAULT_MODELS_BASE` and `KNOWN_MODELS`.
+`ReinsCore::new` is unchanged: the runtime is given with `set_model_runtime` (the app may create it after the core). The download base URL (`CoreConfig::models_base`) and the trusted models (`CoreConfig::models`) are overridable only in Rust (tests); the app always gets `DEFAULT_MODELS_BASE` and `KNOWN_MODELS`.
 
 Store: migration 7 (`PRAGMA user_version` 8) adds `autopilot_settings`, `autopilot_profiles` (sealed), `autopilot_memory` (sealed, AAD `autopilot.memory:<profile>:<request>`), `autopilot_suggestions` (sealed), `autopilot_rate` and `autopilot_targets` (keyed hashes of approved targets, for `target is new`).
 

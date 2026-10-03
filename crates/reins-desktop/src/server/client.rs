@@ -1,10 +1,10 @@
-//! The server's desktop API: `POST /rewarden/desktop/calls` submits a desktop tool call to the phone, `GET
-//! /rewarden/desktop/calls/<id>` waits for its answer again. Both wait on the server side (like MCP calls) and answer
+//! The server's desktop API: `POST /reins/desktop/calls` submits a desktop tool call to the phone, `GET
+//! /reins/desktop/calls/<id>` waits for its answer again. Both wait on the server side (like MCP calls) and answer
 //! `answered` with the phone's outcome, or `pending` / `offline` to be polled again.
 
 use std::time::Duration;
 
-use rewarden_proto::relay::RelayOutcome;
+use reins_proto::relay::RelayOutcome;
 use serde::Deserialize;
 use serde_json::Value;
 
@@ -50,13 +50,13 @@ impl DesktopClient {
     /// Asks the phone: `tool` (a desktop-only tool) with `arguments`, for `account` when the phone has several.
     pub async fn call(&self, tool: &str, arguments: &Value, account: Option<&str>) -> Result<CallAnswer, LinkError> {
         let body = serde_json::json!({"tool": tool, "arguments": arguments, "account": account});
-        self.send(|server| self.http.post(format!("{server}/rewarden/desktop/calls")).json(&body)).await
+        self.send(|server| self.http.post(format!("{server}/reins/desktop/calls")).json(&body)).await
     }
 
     /// Waits for the answer to an earlier call again.
     pub async fn poll(&self, request_id: &str) -> Result<CallAnswer, LinkError> {
         let id: String = url::form_urlencoded::byte_serialize(request_id.as_bytes()).collect();
-        self.send(|server| self.http.get(format!("{server}/rewarden/desktop/calls/{id}"))).await
+        self.send(|server| self.http.get(format!("{server}/reins/desktop/calls/{id}"))).await
     }
 
     /// Sends with the access token; on 401 renews the token and tries once more.
@@ -64,12 +64,12 @@ impl DesktopClient {
         let access = self.tokens.access().await?;
         let resp = Self::attempt(&build, &access).await?;
         let resp = if resp.status() == reqwest::StatusCode::UNAUTHORIZED {
-            log::info!("the Rewarden server refused the access token; renewing it");
+            log::info!("the Reins server refused the access token; renewing it");
             let renewed = self.tokens.after_rejection(&access.token).await?;
             let again = Self::attempt(&build, &renewed).await?;
             if again.status() == reqwest::StatusCode::UNAUTHORIZED {
                 return Err(LinkError::LoggedOut(format!(
-                    "{} does not accept this app's session; run `rewarden login {}` again",
+                    "{} does not accept this app's session; run `reins login {}` again",
                     renewed.server, renewed.server
                 )));
             }
@@ -83,10 +83,7 @@ impl DesktopClient {
             return Err(LinkError::NotFound);
         }
         if !status.is_success() {
-            return Err(LinkError::Failed(format!(
-                "the Rewarden server answered {}",
-                super::error_text(status, &body)
-            )));
+            return Err(LinkError::Failed(format!("the Reins server answered {}", super::error_text(status, &body))));
         }
         parse_answer(&body)
     }
@@ -111,7 +108,7 @@ fn parse_answer(body: &[u8]) -> Result<CallAnswer, LinkError> {
         #[serde(default)]
         outcome: Option<Value>,
     }
-    let bad = |why: String| LinkError::Failed(format!("unexpected answer from the Rewarden server: {why}"));
+    let bad = |why: String| LinkError::Failed(format!("unexpected answer from the Reins server: {why}"));
     let w: Wire = serde_json::from_slice(body).map_err(|e| bad(e.to_string()))?;
     if w.request_id.is_empty() {
         return Err(bad("no request id".to_owned()));
@@ -132,7 +129,7 @@ fn parse_answer(body: &[u8]) -> Result<CallAnswer, LinkError> {
 
 #[cfg(test)]
 mod tests {
-    use rewarden_proto::relay::ToolResult;
+    use reins_proto::relay::ToolResult;
 
     use super::*;
 

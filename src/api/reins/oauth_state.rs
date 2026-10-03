@@ -4,7 +4,7 @@
 
 use std::sync::{LazyLock, Mutex, MutexGuard, PoisonError};
 
-use rewarden_proto::ids::PairingId;
+use reins_proto::ids::PairingId;
 
 use super::{
     CIMD_TTL, CODE_TTL, SESSION_TTL,
@@ -12,7 +12,7 @@ use super::{
     pairing::PairingClient,
     ttl::{Full, TtlMap},
 };
-use crate::auth::rewarden::{hash_token, random_token};
+use crate::auth::reins::{hash_token, random_token};
 
 pub const MAX_SESSIONS: usize = 5_000;
 pub const MAX_CODES: usize = 5_000;

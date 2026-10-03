@@ -1,4 +1,4 @@
-//! End-to-end behaviour of the core against fake Rewarden and Gmail servers.
+//! End-to-end behaviour of the core against fake Reins and Gmail servers.
 
 mod common;
 
@@ -8,9 +8,9 @@ use std::task::{Context, Waker};
 use std::time::Duration;
 
 use common::{FakeGoogle, FakeKeys, RecordingNotifier, TOKEN_NEEDS_CONSENT, gmail_message};
-use rewarden_core::{
+use reins_core::{
     ApprovalChoice, ApprovalKind, CoreConfig, CoreError, GmailStatus, GoogleTokenProvider, GrantScopeChoice, Notifier,
-    RewardenCore, StandingGrant,
+    ReinsCore, StandingGrant,
 };
 use serde_json::{Value, json};
 use wiremock::matchers::{method, path, path_regex, query_param};
@@ -22,7 +22,7 @@ const GMAIL: &str = "me@gmail.com";
 struct Env {
     server: MockServer,
     gmail: MockServer,
-    core: Arc<RewardenCore>,
+    core: Arc<ReinsCore>,
     google: Arc<FakeGoogle>,
     notifier: Arc<RecordingNotifier>,
     dir: tempfile::TempDir,
@@ -54,7 +54,7 @@ fn open_core(
     gmail: &MockServer,
     google: &Arc<FakeGoogle>,
     notifier: &Arc<RecordingNotifier>,
-) -> Arc<RewardenCore> {
+) -> Arc<ReinsCore> {
     let cfg = CoreConfig {
         gmail_base: gmail.uri(),
         backoff_base: Duration::from_millis(1),
@@ -62,7 +62,7 @@ fn open_core(
     };
     let google: Arc<dyn GoogleTokenProvider> = Arc::<FakeGoogle>::clone(google);
     let notifier: Arc<dyn Notifier> = Arc::<RecordingNotifier>::clone(notifier);
-    RewardenCore::with_config(dir.to_str().unwrap(), &FakeKeys, google, notifier, cfg).unwrap()
+    ReinsCore::with_config(dir.to_str().unwrap(), &FakeKeys, google, notifier, cfg).unwrap()
 }
 
 async fn mount_identity(server: &MockServer) {
@@ -124,19 +124,19 @@ fn send_request(id: &str, conn: &str, to: &str) -> Value {
 /// The server hands out `requests` on the next long-poll (and accepts their answers).
 async fn serve_pending(env: &Env, requests: &[Value], pairings: &[Value]) {
     Mock::given(method("GET"))
-        .and(path("/rewarden/api/pending"))
+        .and(path("/reins/api/pending"))
         .respond_with(ResponseTemplate::new(200).set_body_json(json!({"requests": requests, "pairings": pairings})))
         .up_to_n_times(1)
         .with_priority(1)
         .mount(&env.server)
         .await;
     Mock::given(method("GET"))
-        .and(path("/rewarden/api/pending"))
+        .and(path("/reins/api/pending"))
         .respond_with(ResponseTemplate::new(200).set_body_json(json!({"requests": [], "pairings": []})))
         .mount(&env.server)
         .await;
     Mock::given(method("POST"))
-        .and(path_regex(r"^/rewarden/api/(requests|pairings)/[^/]+/response$"))
+        .and(path_regex(r"^/reins/api/(requests|pairings)/[^/]+/response$"))
         .respond_with(ResponseTemplate::new(204))
         .mount(&env.server)
         .await;
@@ -299,7 +299,7 @@ fn bank_ask(duration: u64) -> Value {
 
 async fn serve_connections(env: &Env) {
     Mock::given(method("GET"))
-        .and(path("/rewarden/api/connections"))
+        .and(path("/reins/api/connections"))
         .respond_with(ResponseTemplate::new(200).set_body_json(json!({"connections": [
             {"id": "c1", "label": "Claude", "client_name": "Claude", "client_host": "claude.ai",
              "created_at": 1, "last_used_at": null}]})))
@@ -573,7 +573,7 @@ async fn the_same_request_by_push_and_by_poll_is_processed_once() {
     serve_gmail_search(&env, &[("m1", "a@bank.com")]).await;
     let request = search_request("dup1", "c1", "AI", "x");
     Mock::given(method("GET"))
-        .and(path("/rewarden/api/requests/dup1"))
+        .and(path("/reins/api/requests/dup1"))
         .respond_with(ResponseTemplate::new(200).set_body_json(request.clone()))
         .mount(&env.server)
         .await;
@@ -708,7 +708,7 @@ async fn pairing_requests_are_cleaned_and_answered() {
         "choices": [12, 47, 83], "created_at": 50});
     serve_pending(&env, &[], &[pairing]).await;
     let items = env.core.sync(0).await.unwrap();
-    assert_eq!(items[0].title, "Connect Claude to Rewarden?");
+    assert_eq!(items[0].title, "Connect Claude to Reins?");
     let view = env.core.pairing_view("p1".to_owned()).await.unwrap();
     assert_eq!((view.client_name.as_str(), view.choices.clone()), ("Claude", vec![12, 47, 83]));
     // Not answerable with a number that was not offered, or without a number.
@@ -717,7 +717,7 @@ async fn pairing_requests_are_cleaned_and_answered() {
     assert!(env.core.answer_pairing("p1".to_owned(), true, None, None).await.is_err());
 
     Mock::given(method("POST"))
-        .and(path("/rewarden/api/pairings/p1/response"))
+        .and(path("/reins/api/pairings/p1/response"))
         .respond_with(ResponseTemplate::new(200).set_body_json(json!({"connection_id": "c9"})))
         .with_priority(1)
         .mount(&env.server)
@@ -729,7 +729,7 @@ async fn pairing_requests_are_cleaned_and_answered() {
         .await
         .unwrap()
         .iter()
-        .filter(|r| r.url.path() == "/rewarden/api/pairings/p1/response")
+        .filter(|r| r.url.path() == "/reins/api/pairings/p1/response")
         .map(|r| serde_json::from_slice(&r.body).unwrap())
         .collect();
     assert_eq!(posted[0], json!({"v": 1, "approved": true, "chosen_code": 47, "label": "Work Claude"}));
@@ -744,7 +744,7 @@ async fn a_wrong_number_cancels_the_pairing_and_reports_it() {
     serve_pending(&env, &[], &[pairing]).await;
     env.core.sync(0).await.unwrap();
     Mock::given(method("POST"))
-        .and(path("/rewarden/api/pairings/p2/response"))
+        .and(path("/reins/api/pairings/p2/response"))
         .respond_with(ResponseTemplate::new(409).set_body_json(json!({"error": "wrong_code", "message": "m"})))
         .with_priority(1)
         .mount(&env.server)
@@ -763,7 +763,7 @@ async fn a_wrong_number_cancels_the_pairing_and_reports_it() {
     serve_pending(&env, &[], &[again]).await;
     env.core.sync(0).await.unwrap();
     Mock::given(method("POST"))
-        .and(path("/rewarden/api/pairings/p3/response"))
+        .and(path("/reins/api/pairings/p3/response"))
         .respond_with(ResponseTemplate::new(200).set_body_json(json!({"connection_id": null})))
         .with_priority(1)
         .mount(&env.server)
@@ -783,7 +783,7 @@ async fn revoking_a_connection_revokes_its_grants_and_drops_its_parked_requests(
     env.core.sync(0).await.unwrap();
     assert_eq!(env.core.pending().await.unwrap().len(), 1);
     Mock::given(method("GET"))
-        .and(path("/rewarden/api/connections"))
+        .and(path("/reins/api/connections"))
         .respond_with(ResponseTemplate::new(200).set_body_json(json!({"connections": [
             {"id": "c1", "label": "Claude", "client_name": "Claude", "client_host": "claude.ai", "created_at": 1, "last_used_at": 5}]})))
         .mount(&env.server)
@@ -794,7 +794,7 @@ async fn revoking_a_connection_revokes_its_grants_and_drops_its_parked_requests(
         ("c1", "claude.ai", Some(5))
     );
     Mock::given(method("DELETE"))
-        .and(path("/rewarden/api/connections/c1"))
+        .and(path("/reins/api/connections/c1"))
         .respond_with(ResponseTemplate::new(204))
         .expect(1)
         .mount(&env.server)
@@ -803,7 +803,7 @@ async fn revoking_a_connection_revokes_its_grants_and_drops_its_parked_requests(
     assert!(env.core.grants().await.unwrap().is_empty(), "nothing is left to resume for a disconnected AI");
     assert_eq!(env.core.pending().await.unwrap().len(), 1, "another connection's request stays");
     Mock::given(method("DELETE"))
-        .and(path("/rewarden/api/connections/other"))
+        .and(path("/reins/api/connections/other"))
         .respond_with(ResponseTemplate::new(404))
         .mount(&env.server)
         .await;
@@ -884,7 +884,7 @@ async fn nothing_works_signed_out_and_state_survives_a_restart() {
 async fn register_device_sends_the_fcm_token_and_reports_server_refusals() {
     let env = env().await;
     Mock::given(method("PUT"))
-        .and(path("/rewarden/api/device"))
+        .and(path("/reins/api/device"))
         .respond_with(ResponseTemplate::new(200).set_body_json(json!({"replaced_previous": false})))
         .mount(&env.server)
         .await;
@@ -892,7 +892,7 @@ async fn register_device_sends_the_fcm_token_and_reports_server_refusals() {
     let put = env.server.received_requests().await.unwrap().into_iter().find(|r| r.method.as_str() == "PUT").unwrap();
     assert_eq!(serde_json::from_slice::<Value>(&put.body).unwrap(), json!({"fcm_token": "fcm-token-1"}));
     Mock::given(method("GET"))
-        .and(path("/rewarden/api/pending"))
+        .and(path("/reins/api/pending"))
         .and(query_param("wait", "25"))
         .respond_with(ResponseTemplate::new(403).set_body_json(json!({"error": "not_approval_device", "message": "m"})))
         .mount(&env.server)
@@ -984,7 +984,7 @@ async fn the_ai_must_name_an_account_but_is_not_told_which_ones_exist() {
     assert_eq!(told[0].1["outcome"], "error");
     let message = told[0].1["message"].as_str().unwrap();
     assert!(
-        message.contains("rewarden_list_accounts") && !message.contains(WORK) && !message.contains(GMAIL),
+        message.contains("reins_list_accounts") && !message.contains(WORK) && !message.contains(GMAIL),
         "{message}"
     );
     let entry = &env.core.activity(1).await.unwrap()[0];

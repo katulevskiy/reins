@@ -1,4 +1,4 @@
-package dev.rewarden.android.ui.common
+package dev.reins.android.ui.common
 
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
@@ -18,26 +18,26 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
-import dev.rewarden.android.design.ActionKind
-import dev.rewarden.android.design.ActionTile
-import dev.rewarden.android.design.ButtonStyle
-import dev.rewarden.android.design.CapsuleButton
-import dev.rewarden.android.design.ExpiryPie
-import dev.rewarden.android.design.Glyph
-import dev.rewarden.android.design.GlyphIcon
-import dev.rewarden.android.design.TimeBarFrame
-import dev.rewarden.android.design.UsesMeter
-import dev.rewarden.android.design.clockColor
-import dev.rewarden.android.design.grantClock
-import dev.rewarden.android.design.rememberNowMillis
-import dev.rewarden.android.design.ConnectorTags
-import dev.rewarden.android.design.LocalColors
-import dev.rewarden.android.design.RText
-import dev.rewarden.android.design.RType
-import dev.rewarden.android.design.Tag
-import dev.rewarden.android.design.pressable
-import dev.rewarden.core.ActivityEntry
-import dev.rewarden.core.GrantView
+import dev.reins.android.design.ActionKind
+import dev.reins.android.design.ActionTile
+import dev.reins.android.design.ButtonStyle
+import dev.reins.android.design.CapsuleButton
+import dev.reins.android.design.ExpiryPie
+import dev.reins.android.design.Glyph
+import dev.reins.android.design.GlyphIcon
+import dev.reins.android.design.TimeBarFrame
+import dev.reins.android.design.UsesMeter
+import dev.reins.android.design.clockColor
+import dev.reins.android.design.grantClock
+import dev.reins.android.design.rememberNowMillis
+import dev.reins.android.design.ConnectorTags
+import dev.reins.android.design.LocalColors
+import dev.reins.android.design.RText
+import dev.reins.android.design.RType
+import dev.reins.android.design.Tag
+import dev.reins.android.design.pressable
+import dev.reins.core.ActivityEntry
+import dev.reins.core.GrantView
 
 /** One operation in a list: what it was, who asked, which account, when, and how it ended. */
 @Composable
@@ -72,7 +72,7 @@ fun ActivityRow(entry: ActivityEntry, modifier: Modifier = Modifier, onClick: ()
         Column(horizontalAlignment = Alignment.End, verticalArrangement = Arrangement.spacedBy(6.dp)) {
             RText(relativeTime(entry.at), RType.sans(12.5f), c.tertiary, maxLines = 1)
             OutcomeTag(entry.outcome)
-            if (entry.decidedBy.isNotEmpty()) dev.rewarden.android.ui.autopilot.AutopilotBadge(entry.decidedBy)
+            if (entry.decidedBy.isNotEmpty()) dev.reins.android.ui.autopilot.AutopilotBadge(entry.decidedBy)
         }
     }
 }

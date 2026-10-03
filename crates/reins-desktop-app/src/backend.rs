@@ -1,7 +1,7 @@
-//! Everything the app does to the computer, through the `rewarden_desktop` library: the session, the harnesses'
+//! Everything the app does to the computer, through the `reins_desktop` library: the session, the harnesses'
 //! settings, the background service, git's routing, the daemon's control API and the update feed.
 //!
-//! The service runs the `rewarden` program that ships with the app (next to it in the bundle or install directory).
+//! The service runs the `reins` program that ships with the app (next to it in the bundle or install directory).
 //! Where no service manager is available, or with `REINS_DAEMON=in-app`, the daemon runs inside the app instead, for
 //! as long as the app runs.
 
@@ -9,23 +9,23 @@ use std::path::{Path, PathBuf};
 
 use std::time::{Duration, Instant};
 
-use rewarden_desktop::config::{Config, Paths};
-use rewarden_desktop::control::{Client, ClientError};
-use rewarden_desktop::daemon::{Daemon, Options};
-use rewarden_desktop::harness::{self, Harness, detect};
-use rewarden_desktop::identity::Identity;
-use rewarden_desktop::server::oauth;
-use rewarden_desktop::service;
-use rewarden_desktop::setup::{Git, Scope};
-use rewarden_desktop::update::{self, Check};
+use reins_desktop::config::{Config, Paths};
+use reins_desktop::control::{Client, ClientError};
+use reins_desktop::daemon::{Daemon, Options};
+use reins_desktop::harness::{self, Harness, detect};
+use reins_desktop::identity::Identity;
+use reins_desktop::server::oauth;
+use reins_desktop::service;
+use reins_desktop::setup::{Git, Scope};
+use reins_desktop::update::{self, Check};
 
 use crate::state::Saved;
 
-/// The `rewarden` program's file name.
+/// The `reins` program's file name.
 const CLI_NAME: &str = if cfg!(windows) {
-    "rewarden.exe"
+    "reins.exe"
 } else {
-    "rewarden"
+    "reins"
 };
 
 /// How long starting the service may take before the app says it did not start.
@@ -91,8 +91,8 @@ impl Backend {
         if let Some(home) = std::env::var_os("REINS_HOME").filter(|h| !h.is_empty()).map(PathBuf::from) {
             return Ok(Self {
                 paths: Paths {
-                    config_dir: home.join(".config").join("rewarden"),
-                    state_dir: home.join(".local").join("state").join("rewarden"),
+                    config_dir: home.join(".config").join("reins"),
+                    state_dir: home.join(".local").join("state").join("reins"),
                 },
                 git: Git::default().env("HOME", &home).env("XDG_CONFIG_HOME", home.join(".config")),
                 home,
@@ -101,7 +101,7 @@ impl Backend {
         }
         Ok(Self {
             paths: Paths::from_env().map_err(|e| e.to_string())?,
-            home: rewarden_desktop::config::home_dir()?,
+            home: reins_desktop::config::home_dir()?,
             git: Git::default(),
             in_app: tokio::sync::Mutex::new(None),
         })
@@ -130,10 +130,10 @@ impl Backend {
         Config::load(&self.paths).map_err(|e| e.to_string())
     }
 
-    /// The server to pair with: `REWARDEN_SERVER`, else the one picked in the app, else the default.
+    /// The server to pair with: `REINS_SERVER`, else the one picked in the app, else the default.
     #[must_use]
     pub fn server(saved: &Saved) -> String {
-        std::env::var("REWARDEN_SERVER")
+        std::env::var("REINS_SERVER")
             .ok()
             .filter(|s| !s.trim().is_empty())
             .or_else(|| saved.server.clone())
@@ -171,7 +171,7 @@ impl Backend {
         })
     }
 
-    /// The `rewarden` program the harnesses and the service run: `REINS_CLI`, the one next to the app, the installed
+    /// The `reins` program the harnesses and the service run: `REINS_CLI`, the one next to the app, the installed
     /// command line tool, or one on the `PATH`.
     pub fn cli(&self) -> Result<PathBuf, String> {
         if let Some(cli) = std::env::var_os("REINS_CLI").filter(|c| !c.is_empty()) {
@@ -191,14 +191,14 @@ impl Backend {
             .ok_or_else(|| format!("cannot find the `{CLI_NAME}` program that comes with Reins; reinstall Reins"))
     }
 
-    /// The `rewarden` program shipped next to this app.
+    /// The `reins` program shipped next to this app.
     fn bundled_cli() -> Option<PathBuf> {
         let exe = update::current_executable().ok()?;
         let bundled = exe.parent()?.join(CLI_NAME);
         bundled.is_file().then_some(bundled)
     }
 
-    /// "Install command line tool": `~/.local/bin/rewarden`, a link to the program in the app (a copy where the
+    /// "Install command line tool": `~/.local/bin/reins`, a link to the program in the app (a copy where the
     /// app's own path changes, as with an AppImage). Returns where it is.
     pub fn install_cli(&self) -> Result<PathBuf, String> {
         let bundled = Self::bundled_cli().ok_or("this copy of Reins has no command line tool next to it")?;
@@ -302,7 +302,7 @@ impl Backend {
             || (!cfg!(windows) && service::Manager::current().is_err())
     }
 
-    /// Installs the background service for the bundled `rewarden` and starts it (the `Run` key's windowless copy on
+    /// Installs the background service for the bundled `reins` and starts it (the `Run` key's windowless copy on
     /// Windows, launchd or systemd elsewhere).
     // Only Windows waits (for the daemon's control API).
     #[cfg_attr(not(windows), allow(clippy::unused_async, clippy::unused_async_trait_impl))]
@@ -344,8 +344,7 @@ impl Backend {
                 } => return Ok(how.to_owned()),
                 _ if Instant::now() > deadline => {
                     return Err(
-                        "the background service did not start (run `rewarden daemon` in a terminal to see why)"
-                            .to_owned(),
+                        "the background service did not start (run `reins daemon` in a terminal to see why)".to_owned()
                     );
                 }
                 _ => tokio::time::sleep(Duration::from_millis(250)).await,
@@ -409,7 +408,7 @@ impl Backend {
         }
     }
 
-    /// Signs in through the browser (`rewarden login`'s way). Returns the server.
+    /// Signs in through the browser (`reins login`'s way). Returns the server.
     pub async fn sign_in_with_browser(&self, server: &str) -> Result<String, String> {
         let identity = self.identity()?;
         oauth::login(&self.paths, &identity, server, true).await
@@ -427,11 +426,11 @@ mod tests {
 
     #[test]
     fn transient_locations() {
-        assert!(is_transient(Path::new("/Volumes/Reins/Reins.app/Contents/MacOS/Reins")));
+        assert!(is_transient(Path::new("/Volumes/Reins/Reins.app/Contents/MacOS/reins-app")));
         assert!(is_transient(Path::new(
-            "/private/var/folders/x/AppTranslocation/1234/d/Reins.app/Contents/MacOS/rewarden"
+            "/private/var/folders/x/AppTranslocation/1234/d/Reins.app/Contents/MacOS/reins"
         )));
-        assert!(!is_transient(Path::new("/Applications/Reins.app/Contents/MacOS/rewarden")));
+        assert!(!is_transient(Path::new("/Applications/Reins.app/Contents/MacOS/reins")));
     }
 
     #[test]
@@ -448,7 +447,7 @@ mod tests {
     #[test]
     fn the_server_defaults_to_the_hosted_one() {
         let saved = Saved::default();
-        if std::env::var_os("REWARDEN_SERVER").is_none() {
+        if std::env::var_os("REINS_SERVER").is_none() {
             assert_eq!(Backend::server(&saved), crate::links::SERVER);
             let own = Saved {
                 server: Some("https://reins.example.org".to_owned()),

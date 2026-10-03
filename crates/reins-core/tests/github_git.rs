@@ -1,5 +1,5 @@
-//! Git through the Rewarden desktop app: the phone pins the app's key when it is paired, answers git fetches and
-//! pushes only for that app, shows what a push does, and seals the GitHub token to the app's key. A fake Rewarden
+//! Git through the Reins desktop app: the phone pins the app's key when it is paired, answers git fetches and
+//! pushes only for that app, shows what a push does, and seals the GitHub token to the app's key. A fake Reins
 //! server relays the calls and a fake GitHub answers for the repositories.
 
 mod common;
@@ -11,12 +11,12 @@ use common::{FakeGoogle, FakeKeys, RecordingNotifier};
 use crypto_box::SecretKey;
 use crypto_box::aead::OsRng;
 use data_encoding::BASE64URL_NOPAD;
-use rewarden_core::store::unix_now;
-use rewarden_core::{
-    ApprovalChoice, ApprovalKind, CoreConfig, CoreError, GoogleTokenProvider, GrantScopeChoice, Notifier, RewardenCore,
+use reins_core::store::unix_now;
+use reins_core::{
+    ApprovalChoice, ApprovalKind, CoreConfig, CoreError, GoogleTokenProvider, GrantScopeChoice, Notifier, ReinsCore,
     StandingGrant,
 };
-use rewarden_proto::desktop::{
+use reins_proto::desktop::{
     CommitInfo, CredentialGrant, FETCH_LEASE_SECS, FileChange, FileStatus, PUSH_LEASE_SECS, PushSummary, RefChange,
     RefUpdate, ZERO_OID, encode_key, key_fingerprint,
 };
@@ -28,7 +28,7 @@ const TOKEN: &str = "ghp_gitSECRETone111";
 const TOKEN2: &str = "ghp_gitSECRETtwo222";
 const DESK: &str = "desk1";
 const DIGEST: &str = "d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1";
-const REFUSED: &str = "This must come from the Rewarden desktop app paired with this phone.";
+const REFUSED: &str = "This must come from the Reins desktop app paired with this phone.";
 
 fn oid(c: char) -> String {
     c.to_string().repeat(40)
@@ -37,7 +37,7 @@ fn oid(c: char) -> String {
 struct Env {
     server: MockServer,
     github: MockServer,
-    core: Arc<RewardenCore>,
+    core: Arc<ReinsCore>,
     key: SecretKey,
     _dir: tempfile::TempDir,
 }
@@ -63,7 +63,7 @@ async fn env() -> Env {
         .mount(&server)
         .await;
     Mock::given(method("POST"))
-        .and(path_regex(r"^/rewarden/api/(requests|pairings)/[^/]+/response$"))
+        .and(path_regex(r"^/reins/api/(requests|pairings)/[^/]+/response$"))
         .respond_with(ResponseTemplate::new(204))
         .mount(&server)
         .await;
@@ -98,7 +98,7 @@ async fn env() -> Env {
     let dir = tempfile::tempdir().unwrap();
     let google: Arc<dyn GoogleTokenProvider> = Arc::new(FakeGoogle::new());
     let notifier: Arc<dyn Notifier> = Arc::new(RecordingNotifier::default());
-    let core = RewardenCore::with_connectors(
+    let core = ReinsCore::with_connectors(
         dir.path().to_str().unwrap(),
         &FakeKeys,
         google,
@@ -124,14 +124,14 @@ async fn env() -> Env {
 
 async fn serve(env: &Env, requests: &[Value], pairings: &[Value]) {
     Mock::given(method("GET"))
-        .and(path("/rewarden/api/pending"))
+        .and(path("/reins/api/pending"))
         .respond_with(ResponseTemplate::new(200).set_body_json(json!({"requests": requests, "pairings": pairings})))
         .up_to_n_times(1)
         .with_priority(1)
         .mount(&env.server)
         .await;
     Mock::given(method("GET"))
-        .and(path("/rewarden/api/pending"))
+        .and(path("/reins/api/pending"))
         .respond_with(ResponseTemplate::new(200).set_body_json(json!({"requests": [], "pairings": []})))
         .mount(&env.server)
         .await;
@@ -139,7 +139,7 @@ async fn serve(env: &Env, requests: &[Value], pairings: &[Value]) {
 
 /// The desktop app asks to be paired with `key`; the user approves (the server answers with `connection`) or denies.
 async fn pair(env: &Env, id: &str, key: Option<&str>, connection: Option<&str>, approve: bool) {
-    let mut pairing = json!({"v": 1, "id": id, "client_name": "Rewarden desktop app", "client_host": "127.0.0.1",
+    let mut pairing = json!({"v": 1, "id": id, "client_name": "Reins desktop app", "client_host": "127.0.0.1",
         "choices": [12, 47, 83], "created_at": 50});
     if let Some(key) = key {
         pairing["client_key"] = json!(key);
@@ -147,7 +147,7 @@ async fn pair(env: &Env, id: &str, key: Option<&str>, connection: Option<&str>, 
     serve(env, &[], &[pairing]).await;
     env.core.sync(0).await.unwrap();
     Mock::given(method("POST"))
-        .and(path(format!("/rewarden/api/pairings/{id}/response")))
+        .and(path(format!("/reins/api/pairings/{id}/response")))
         .respond_with(ResponseTemplate::new(200).set_body_json(json!({"connection_id": connection})))
         .with_priority(1)
         .mount(&env.server)
@@ -157,7 +157,7 @@ async fn pair(env: &Env, id: &str, key: Option<&str>, connection: Option<&str>, 
 }
 
 fn call(id: &str, connection: &str, op: &str, args: &Value) -> Value {
-    json!({"v": 1, "id": id, "connection_id": connection, "connection_label": "Rewarden desktop app",
+    json!({"v": 1, "id": id, "connection_id": connection, "connection_label": "Reins desktop app",
            "created_at": 100, "call": {"tool": "connector", "service": "github", "op": op, "args": args}})
 }
 
@@ -252,7 +252,7 @@ async fn answer(env: &Env, id: &str) -> Option<Value> {
         .unwrap()
         .iter()
         .rev()
-        .find(|r| r.method.as_str() == "POST" && r.url.path() == format!("/rewarden/api/requests/{id}/response"))
+        .find(|r| r.method.as_str() == "POST" && r.url.path() == format!("/reins/api/requests/{id}/response"))
         .map(|r| serde_json::from_slice(&r.body).unwrap())
 }
 
@@ -306,17 +306,17 @@ fn assert_refused(answer: Option<Value>) {
 async fn a_desktop_pairing_shows_the_key_fingerprint_and_approving_it_pins_the_key() {
     let env = env().await;
     let key = env.public();
-    let pairing = json!({"v": 1, "id": "p1", "client_name": "Rewarden desktop app", "client_host": "127.0.0.1",
+    let pairing = json!({"v": 1, "id": "p1", "client_name": "Reins desktop app", "client_host": "127.0.0.1",
         "choices": [12, 47, 83], "created_at": 50, "client_key": key});
     serve(&env, &[], &[pairing]).await;
     let items = env.core.sync(0).await.unwrap();
-    assert_eq!(items[0].title, "Connect Rewarden desktop app to Rewarden?", "the title stays generic");
+    assert_eq!(items[0].title, "Connect Reins desktop app to Reins?", "the title stays generic");
     let view = env.core.pairing_view("p1".to_owned()).await.unwrap();
     assert_eq!(view.key_fingerprint, key_fingerprint(&key));
     assert!(view.key_fingerprint.is_some());
 
     Mock::given(method("POST"))
-        .and(path("/rewarden/api/pairings/p1/response"))
+        .and(path("/reins/api/pairings/p1/response"))
         .respond_with(ResponseTemplate::new(200).set_body_json(json!({"connection_id": DESK})))
         .with_priority(1)
         .mount(&env.server)
@@ -340,7 +340,7 @@ async fn a_denied_pairing_or_an_unusable_key_pins_nothing() {
     env.core.sync(0).await.unwrap();
     assert_eq!(env.core.pairing_view("p2".to_owned()).await.unwrap().key_fingerprint, None);
     Mock::given(method("POST"))
-        .and(path("/rewarden/api/pairings/p2/response"))
+        .and(path("/reins/api/pairings/p2/response"))
         .respond_with(ResponseTemplate::new(200).set_body_json(json!({"connection_id": "desk2"})))
         .with_priority(1)
         .mount(&env.server)
@@ -397,7 +397,7 @@ async fn removing_the_connection_or_logging_out_drops_the_key() {
     let key = env.public();
     pair(&env, "p1", Some(&key), Some(DESK), true).await;
     Mock::given(method("DELETE"))
-        .and(path(format!("/rewarden/api/connections/{DESK}")))
+        .and(path(format!("/reins/api/connections/{DESK}")))
         .respond_with(ResponseTemplate::new(204))
         .mount(&env.server)
         .await;

@@ -1,14 +1,14 @@
 //! "Add another phone": a phone signed in to an account whose keys it cannot open asks the account's approval device
-//! for the account secret (see `rewarden-core`'s `sso` module), and the server relays the answer without being able to
+//! for the account secret (see `reins-core`'s `sso` module), and the server relays the answer without being able to
 //! read it.
 //!
-//! 1. The new phone makes an X25519 key pair and posts [`NewJoin`] (`POST /rewarden/api/joins`): its name and public
+//! 1. The new phone makes an X25519 key pair and posts [`NewJoin`] (`POST /reins/api/joins`): its name and public
 //!    key. It shows [`join_code`] of its key.
 //! 2. The server parks a [`JoinRequest`] for the account and wakes the approval device (push `join`).
 //! 3. The approval device shows "Add <device name>?" with the same [`join_code`], computed from the key it received.
 //!    The user compares the codes and approves with biometrics; the phone seals a [`SealedSecret`] to the new
 //!    phone's key (crypto_box sealed box) and posts [`JoinAnswer`].
-//! 4. The new phone polls [`JoinState`] (`GET /rewarden/api/joins/<id>`), opens the sealed box and checks that it
+//! 4. The new phone polls [`JoinState`] (`GET /reins/api/joins/<id>`), opens the sealed box and checks that it
 //!    names this join and that the secret opens the account's keys.
 //!
 //! A server that swapped the key would show a different code on the approval device, and the user would deny. The

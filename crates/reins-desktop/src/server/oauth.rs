@@ -1,4 +1,4 @@
-//! `rewarden login`: OAuth 2.1 with PKCE and a loopback redirect; the phone approves the pairing and pins this app's key.
+//! `reins login`: OAuth 2.1 with PKCE and a loopback redirect; the phone approves the pairing and pins this app's key.
 //!
 //! The session (`session.json`, 0600) keeps the server, the client id, the token endpoint, the access token with its
 //! expiry, and the refresh token. Refresh tokens rotate; a refused refresh means the user (or the server) ended the
@@ -20,7 +20,7 @@ use super::{LinkError, check_url, error_text, random_token, read_limited, server
 use crate::config::{Paths, write_private};
 use crate::identity::Identity;
 
-/// How long `rewarden login` waits for the browser to come back (the phone has to approve in between).
+/// How long `reins login` waits for the browser to come back (the phone has to approve in between).
 const CALLBACK_WAIT: Duration = Duration::from_mins(15);
 /// An access token is refreshed this long before it expires, so it does not expire in flight.
 const EXPIRY_MARGIN_SECS: i64 = 60;
@@ -62,7 +62,7 @@ fn load_session(paths: &Paths) -> Result<Option<Session>, String> {
             let bytes = Zeroizing::new(bytes);
             serde_json::from_slice(&bytes)
                 .map(Some)
-                .map_err(|_| format!("{} is damaged; run `rewarden login` again", path.display()))
+                .map_err(|_| format!("{} is damaged; run `reins login` again", path.display()))
         }
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(None),
         Err(e) => Err(format!("{}: {e}", path.display())),
@@ -90,7 +90,7 @@ pub fn logged_in_server(paths: &Paths) -> Option<String> {
     load_session(paths).ok().flatten().map(|s| s.server)
 }
 
-/// Logs in to the Rewarden server at `server_url`: registers this app, opens the browser (when `open_browser`) at the
+/// Logs in to the Reins server at `server_url`: registers this app, opens the browser (when `open_browser`) at the
 /// server's sign-in page, prints the link and the key fingerprint the phone will show, waits for the approval and saves
 /// the session. Returns the server's base URL.
 pub async fn login(paths: &Paths, identity: &Identity, server_url: &str, open_browser: bool) -> Result<String, String> {
@@ -131,7 +131,7 @@ pub async fn login_with_browser(
         .append_pair("code_challenge_method", "S256")
         .append_pair("state", &state)
         .append_pair("resource", &resource)
-        .append_pair("rewarden_client_key", &identity.public_key());
+        .append_pair("reins_client_key", &identity.public_key());
 
     println!("Open this link to log in to {server}:\n\n  {authorize}\n");
     println!("Your phone will show the key {}. Approve only if it matches.", identity.fingerprint());
@@ -264,7 +264,7 @@ pub(super) async fn discover(http: &reqwest::Client, server: &str) -> Result<Met
             return Ok(meta);
         }
     }
-    Err(format!("{server} is not a Rewarden server (no OAuth metadata)"))
+    Err(format!("{server} is not a Reins server (no OAuth metadata)"))
 }
 
 fn client_name() -> String {
@@ -272,7 +272,7 @@ fn client_name() -> String {
     let host: String = host.chars().filter(|c| !c.is_control()).take(64).collect();
     let host = host.trim();
     format!(
-        "Rewarden desktop app on {}",
+        "Reins desktop app on {}",
         if host.is_empty() {
             "this computer"
         } else {
@@ -357,7 +357,7 @@ fn read_callback(path: &str, query: Option<&str>, state: &str) -> Result<Callbac
 
 fn page(title: &str, message: &str) -> String {
     format!(
-        "<!doctype html><html><head><meta charset=\"utf-8\"><title>Rewarden</title></head>\
+        "<!doctype html><html><head><meta charset=\"utf-8\"><title>Reins</title></head>\
          <body style=\"font-family:sans-serif;max-width:32em;margin:4em auto\"><h1>{title}</h1><p>{message}</p></body></html>"
     )
 }
@@ -369,7 +369,7 @@ async fn wait_for_callback(listener: TcpListener, state: &str, wait: Duration) -
     loop {
         tokio::select! {
             got = rx.recv() => return got.ok_or_else(|| "the login was interrupted".to_owned()),
-            () = &mut deadline => return Err("timed out waiting for the sign-in to finish; run `rewarden login` again".to_owned()),
+            () = &mut deadline => return Err("timed out waiting for the sign-in to finish; run `reins login` again".to_owned()),
             accepted = listener.accept() => {
                 let Ok((stream, _)) = accepted else { continue };
                 let tx = tx.clone();
@@ -379,13 +379,13 @@ async fn wait_for_callback(listener: TcpListener, state: &str, wait: Duration) -
                         let answer = match read_callback(req.uri().path(), req.uri().query(), &state) {
                             Ok(cb) => {
                                 let shown = match &cb {
-                                    Callback::Code { .. } => (200, page("Logged in", "The Rewarden desktop app is connected. You can close this tab.")),
+                                    Callback::Code { .. } => (200, page("Logged in", "The Reins desktop app is connected. You can close this tab.")),
                                     Callback::Refused { .. } => (200, page("Not logged in", "The login was not completed. You can close this tab; your terminal says why.")),
                                 };
                                 let _sent = tx.try_send(cb);
                                 shown
                             }
-                            Err((status, message)) => (status, page("Rewarden", message)),
+                            Err((status, message)) => (status, page("Reins", message)),
                         };
                         let resp = hyper::Response::builder()
                             .status(answer.0)
@@ -453,7 +453,7 @@ async fn token_request(http: &reqwest::Client, endpoint: &str, form: &[(&str, &s
 }
 
 /// The session as the desktop API client uses it: the access token, refreshed when it expires or is rejected. The
-/// file is read on every use, so `rewarden login` / `logout` take effect in a running daemon.
+/// file is read on every use, so `reins login` / `logout` take effect in a running daemon.
 pub(crate) struct SessionTokens {
     paths: Paths,
     http: reqwest::Client,
@@ -468,7 +468,7 @@ pub(crate) struct Access {
 }
 
 fn not_logged_in() -> LinkError {
-    LinkError::LoggedOut("not logged in to a Rewarden server; run `rewarden login`".to_owned())
+    LinkError::LoggedOut("not logged in to a Reins server; run `reins login`".to_owned())
 }
 
 impl SessionTokens {
@@ -514,7 +514,7 @@ impl SessionTokens {
         let Some(refresh) = session.refresh_token.clone() else {
             self.drop_session(&session);
             return Err(LinkError::LoggedOut(format!(
-                "the session with {} has expired; run `rewarden login {}` again",
+                "the session with {} has expired; run `reins login {}` again",
                 session.server, session.server
             )));
         };
@@ -541,10 +541,10 @@ impl SessionTokens {
                 })
             }
             Err(TokenFailure::Refused(why)) => {
-                log::warn!("the Rewarden server ended the session: {why}");
+                log::warn!("the Reins server ended the session: {why}");
                 self.drop_session(&session);
                 Err(LinkError::LoggedOut(format!(
-                    "{} ended this app's session ({why}); run `rewarden login {}` again",
+                    "{} ended this app's session ({why}); run `reins login {}` again",
                     session.server, session.server
                 )))
             }
@@ -623,6 +623,6 @@ mod tests {
 
     #[test]
     fn the_app_names_itself_after_this_computer() {
-        assert!(client_name().starts_with("Rewarden desktop app on "));
+        assert!(client_name().starts_with("Reins desktop app on "));
     }
 }

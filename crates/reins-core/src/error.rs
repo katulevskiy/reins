@@ -50,7 +50,7 @@ pub enum CoreError {
     /// `register_device`: another phone approves for this account, and this one may not take over yet. The app offers
     /// the two ways: the other phone's approval ("add another phone", `join_begin`) or the recovery code (or the
     /// master password) with `unlock_account`; then `register_device` again.
-    #[error("{}", rewarden_proto::device::TAKEOVER_REFUSED)]
+    #[error("{}", reins_proto::device::TAKEOVER_REFUSED)]
     OtherApprovalDevice,
 }
 

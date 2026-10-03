@@ -1,9 +1,9 @@
-//! Answers for the paired Rewarden desktop app, sealed to its key: the key and nonce arguments every desktop-only tool
+//! Answers for the paired Reins desktop app, sealed to its key: the key and nonce arguments every desktop-only tool
 //! carries, and the sealed box itself. The flow has already checked that the key is the one pinned at pairing.
 
 use data_encoding::BASE64URL_NOPAD;
-use rewarden_proto::connector::ConnectorCall;
-use rewarden_proto::desktop;
+use reins_proto::connector::ConnectorCall;
+use reins_proto::desktop;
 use serde::Serialize;
 use zeroize::Zeroizing;
 
@@ -39,7 +39,7 @@ pub(crate) fn seal<T: Serialize>(key: [u8; 32], value: &T) -> Result<String, Cor
 
 #[cfg(test)]
 mod tests {
-    use rewarden_proto::desktop::AskAnswer;
+    use reins_proto::desktop::AskAnswer;
     use serde_json::json;
 
     use super::*;

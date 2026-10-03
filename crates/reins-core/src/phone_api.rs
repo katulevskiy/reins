@@ -1,14 +1,14 @@
 //! Client for the phone-facing server API (contracts §A), base
-//! `{server}/rewarden/api`, authenticated with the Vaultwarden access token.
+//! `{server}/reins/api`, authenticated with the Vaultwarden access token.
 
 use std::time::Duration;
 
-use reqwest::{Method, RequestBuilder, StatusCode};
-use rewarden_proto::device::{
+use reins_proto::device::{
     Connections, DEVICE_KEY_HEADER, DeviceRegistered, DeviceRegistration, PairingResult, Pending,
 };
-use rewarden_proto::pairing::{PairingClaim, PairingRequest, PairingResponse};
-use rewarden_proto::relay::{RelayRequest, RelayResponse};
+use reins_proto::pairing::{PairingClaim, PairingRequest, PairingResponse};
+use reins_proto::relay::{RelayRequest, RelayResponse};
+use reqwest::{Method, RequestBuilder, StatusCode};
 use serde::de::DeserializeOwned;
 
 use crate::CoreError;
@@ -118,7 +118,7 @@ impl<'a> PhoneApi<'a> {
 
     pub(crate) fn request(&self, method: Method, path: &str) -> RequestBuilder {
         with_device_key(
-            self.http.request(method, self.server.join(&format!("/rewarden/api{path}"))).bearer_auth(self.token),
+            self.http.request(method, self.server.join(&format!("/reins/api{path}"))).bearer_auth(self.token),
             self.device_key,
         )
     }
@@ -156,7 +156,7 @@ impl<'a> PhoneApi<'a> {
     }
 
     /// `PUT /services`: which integrations have an account on this phone.
-    pub async fn put_services(&self, report: &rewarden_proto::device::ServicesReport) -> Result<(), ApiFailure> {
+    pub async fn put_services(&self, report: &reins_proto::device::ServicesReport) -> Result<(), ApiFailure> {
         Self::send(self.request(Method::PUT, "/services").json(report)).await.map(drop)
     }
 
@@ -205,7 +205,7 @@ impl<'a> PhoneApi<'a> {
     /// A6b `POST /pairings/claim`: the pairing a computer's code (already normalized) stands for.
     pub async fn claim_pairing(&self, user_code: &str) -> Result<PairingRequest, ApiFailure> {
         let claim = PairingClaim {
-            v: rewarden_proto::PROTOCOL_VERSION,
+            v: reins_proto::PROTOCOL_VERSION,
             user_code: user_code.to_owned(),
         };
         let pairing: PairingRequest = Self::json(self.request(Method::POST, "/pairings/claim").json(&claim)).await?;
@@ -227,8 +227,8 @@ impl<'a> PhoneApi<'a> {
 
 #[cfg(test)]
 mod tests {
-    use rewarden_proto::gmail::ToolCall;
-    use rewarden_proto::relay::RelayOutcome;
+    use reins_proto::gmail::ToolCall;
+    use reins_proto::relay::RelayOutcome;
     use serde_json::json;
     use wiremock::matchers::{body_json, header, method, path, query_param};
     use wiremock::{Mock, MockServer, ResponseTemplate};
@@ -249,7 +249,7 @@ mod tests {
     async fn register_device_and_connections() {
         let server = MockServer::start().await;
         Mock::given(method("PUT"))
-            .and(path("/rewarden/api/device"))
+            .and(path("/reins/api/device"))
             .and(header("authorization", "Bearer TOKEN"))
             .and(header(DEVICE_KEY_HEADER, "KEY-1"))
             .and(body_json(json!({"fcm_token": "fcm-1"})))
@@ -258,7 +258,7 @@ mod tests {
             .mount(&server)
             .await;
         Mock::given(method("GET"))
-            .and(path("/rewarden/api/connections"))
+            .and(path("/reins/api/connections"))
             .and(header(DEVICE_KEY_HEADER, "KEY-1"))
             .respond_with(ResponseTemplate::new(200).set_body_json(json!({"connections": [
                 {"id": "c1", "label": "ChatGPT", "client_name": "ChatGPT", "client_host": "chatgpt.com",
@@ -266,7 +266,7 @@ mod tests {
             .mount(&server)
             .await;
         Mock::given(method("DELETE"))
-            .and(path("/rewarden/api/connections/c1"))
+            .and(path("/reins/api/connections/c1"))
             .respond_with(ResponseTemplate::new(204))
             .expect(1)
             .mount(&server)
@@ -286,7 +286,7 @@ mod tests {
     async fn pending_clamps_wait() {
         let server = MockServer::start().await;
         Mock::given(method("GET"))
-            .and(path("/rewarden/api/pending"))
+            .and(path("/reins/api/pending"))
             .and(query_param("wait", "25"))
             .respond_with(ResponseTemplate::new(200).set_body_json(json!({
                 "requests": [request_json("r1")],
@@ -307,24 +307,24 @@ mod tests {
     async fn status_mapping() {
         let server = MockServer::start().await;
         Mock::given(method("GET"))
-            .and(path("/rewarden/api/requests/gone"))
+            .and(path("/reins/api/requests/gone"))
             .respond_with(ResponseTemplate::new(404).set_body_json(json!({"error": "not_found", "message": "x"})))
             .mount(&server)
             .await;
         Mock::given(method("GET"))
-            .and(path("/rewarden/api/requests/r401"))
+            .and(path("/reins/api/requests/r401"))
             .respond_with(ResponseTemplate::new(401))
             .mount(&server)
             .await;
         Mock::given(method("GET"))
-            .and(path("/rewarden/api/pending"))
+            .and(path("/reins/api/pending"))
             .respond_with(
                 ResponseTemplate::new(403).set_body_json(json!({"error": "not_approval_device", "message": "m"})),
             )
             .mount(&server)
             .await;
         Mock::given(method("GET"))
-            .and(path("/rewarden/api/requests/other"))
+            .and(path("/reins/api/requests/other"))
             .respond_with(ResponseTemplate::new(200).set_body_json(request_json("r1")))
             .mount(&server)
             .await;
@@ -352,27 +352,27 @@ mod tests {
             },
         };
         Mock::given(method("POST"))
-            .and(path("/rewarden/api/requests/r1/response"))
+            .and(path("/reins/api/requests/r1/response"))
             .and(body_json(serde_json::to_value(&denied).unwrap()))
             .respond_with(ResponseTemplate::new(204))
             .up_to_n_times(1)
             .mount(&server)
             .await;
         Mock::given(method("POST"))
-            .and(path("/rewarden/api/requests/r1/response"))
+            .and(path("/reins/api/requests/r1/response"))
             .respond_with(
                 ResponseTemplate::new(409).set_body_json(json!({"error": "already_answered", "message": "m"})),
             )
             .mount(&server)
             .await;
         Mock::given(method("POST"))
-            .and(path("/rewarden/api/pairings/p1/response"))
+            .and(path("/reins/api/pairings/p1/response"))
             .and(body_json(json!({"v": 1, "approved": true, "chosen_code": 47, "label": "Work Claude"})))
             .respond_with(ResponseTemplate::new(200).set_body_json(json!({"connection_id": "c9"})))
             .mount(&server)
             .await;
         Mock::given(method("POST"))
-            .and(path("/rewarden/api/pairings/p2/response"))
+            .and(path("/reins/api/pairings/p2/response"))
             .respond_with(ResponseTemplate::new(409).set_body_json(json!({"error": "wrong_code", "message": "m"})))
             .mount(&server)
             .await;
@@ -396,7 +396,7 @@ mod tests {
     async fn claiming_a_code_returns_its_pairing() {
         let server = MockServer::start().await;
         Mock::given(method("POST"))
-            .and(path("/rewarden/api/pairings/claim"))
+            .and(path("/reins/api/pairings/claim"))
             .and(body_json(json!({"v": 1, "user_code": "BCDF-GHJK"})))
             .respond_with(ResponseTemplate::new(200).set_body_json(json!({"v": 1, "id": "p1",
                 "client_name": "Reins desktop app on mac", "client_host": "127.0.0.1", "choices": [12, 47, 83],
@@ -404,7 +404,7 @@ mod tests {
             .mount(&server)
             .await;
         Mock::given(method("POST"))
-            .and(path("/rewarden/api/pairings/claim"))
+            .and(path("/reins/api/pairings/claim"))
             .respond_with(ResponseTemplate::new(404).set_body_json(json!({"error": "not_found", "message": "m"})))
             .mount(&server)
             .await;

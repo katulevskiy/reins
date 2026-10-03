@@ -1,18 +1,18 @@
-//! `rewarden`: the Rewarden desktop app's command line and daemon.
+//! `reins`: the Reins desktop app's command line and daemon.
 
 use std::path::PathBuf;
 use std::process::ExitCode;
 
 use clap::{Parser, Subcommand};
-use rewarden_desktop::config::{Config, Paths};
-use rewarden_desktop::control::{Client, ClientError};
-use rewarden_desktop::daemon::{Daemon, Options, init_logging};
-use rewarden_desktop::identity::Identity;
-use rewarden_desktop::setup::{Git, Scope};
-use rewarden_desktop::update::{self, Check};
-use rewarden_desktop::{server, service};
+use reins_desktop::config::{Config, Paths};
+use reins_desktop::control::{Client, ClientError};
+use reins_desktop::daemon::{Daemon, Options, init_logging};
+use reins_desktop::identity::Identity;
+use reins_desktop::setup::{Git, Scope};
+use reins_desktop::update::{self, Check};
+use reins_desktop::{server, service};
 
-/// `println!` that ends the program quietly when stdout is gone (`rewarden status | head -3`) instead of panicking.
+/// `println!` that ends the program quietly when stdout is gone (`reins status | head -3`) instead of panicking.
 macro_rules! out {
     ($($arg:tt)*) => {{
         use std::io::Write as _;
@@ -23,7 +23,7 @@ macro_rules! out {
 }
 
 #[derive(Parser)]
-#[command(name = "rewarden", version = update::LONG_VERSION, about = "Rewarden desktop app: git for AI agents, allowed from your phone")]
+#[command(name = "reins", version = update::LONG_VERSION, about = "Reins desktop app: git for AI agents, allowed from your phone")]
 struct Cli {
     #[command(subcommand)]
     command: Cmd,
@@ -57,7 +57,7 @@ enum Cmd {
     /// Pair with your phone: scan the QR code shown here with the Reins app. Your phone decides from then on.
     Login {
         /// The server your phone signed in to; a self-hosted one needs its address here.
-        #[arg(default_value = rewarden_proto::DEFAULT_SERVER)]
+        #[arg(default_value = reins_proto::DEFAULT_SERVER)]
         server_url: String,
         /// Sign in in the browser (enter your email there) instead of scanning a QR code.
         #[arg(long)]
@@ -66,34 +66,34 @@ enum Cmd {
         #[arg(long)]
         no_browser: bool,
     },
-    /// Forget the Rewarden server session.
+    /// Forget the Reins server session.
     Logout,
     /// Run the daemon at login (systemd user unit, launchd agent, or on Windows the user's Run key).
     Service {
         #[command(subcommand)]
         action: ServiceCmd,
     },
-    /// Stop sending git through Rewarden: git talks to the git hosts directly again (undo with `rewarden resume`).
+    /// Stop sending git through Reins: git talks to the git hosts directly again (undo with `reins resume`).
     #[command(alias = "disable")]
     Pause,
-    /// Send git through Rewarden: starts the background service if needed, then routes the enabled hosts' remotes
+    /// Send git through Reins: starts the background service if needed, then routes the enabled hosts' remotes
     /// through it.
     #[command(alias = "enable")]
     Resume,
-    /// Install the latest release (signed by the Rewarden release key) and restart the service.
+    /// Install the latest release (signed by the Reins release key) and restart the service.
     Update {
         /// Only say whether a newer release exists.
         #[arg(long)]
         check: bool,
     },
     #[command(flatten)]
-    Agents(rewarden_desktop::agents_cli::Command),
+    Agents(reins_desktop::agents_cli::Command),
     /// Run a command with secrets from the vault on your phone as environment variables.
-    Run(rewarden_desktop::run::RunArgs),
+    Run(reins_desktop::run::RunArgs),
     /// The SSH agent whose keys stay on your phone.
     Ssh {
         #[command(subcommand)]
-        action: rewarden_desktop::ssh_agent::setup::SshCmd,
+        action: reins_desktop::ssh_agent::setup::SshCmd,
     },
 }
 
@@ -117,7 +117,7 @@ enum ServiceCmd {
     Uninstall,
 }
 
-/// What `rewarden login` shows while the phone has to scan: the QR code, the code to type instead, the number to tap
+/// What `reins login` shows while the phone has to scan: the QR code, the code to type instead, the number to tap
 /// and the key to compare.
 fn show_pairing(pairing: &server::device::DevicePairing) {
     use std::io::IsTerminal as _;
@@ -131,12 +131,12 @@ fn show_pairing(pairing: &server::device::DevicePairing) {
         out!("Then tap {number} on your phone.");
     }
     out!("Your phone shows this computer's key {}. Approve only if it matches.\n", pairing.key_fingerprint);
-    let minutes = (pairing.expires_at - rewarden_desktop::now_unix()).max(60) / 60;
+    let minutes = (pairing.expires_at - reins_desktop::now_unix()).max(60) / 60;
     out!("Waiting for your phone (the code works for {minutes} minutes)...");
 }
 
 fn home() -> Result<PathBuf, String> {
-    rewarden_desktop::config::home_dir()
+    reins_desktop::config::home_dir()
 }
 
 /// Installs the background service for `exe` and starts it; what was installed, for the message.
@@ -155,7 +155,7 @@ async fn install_service(paths: &Paths, config: &Config, exe: &std::path::Path) 
     }
 }
 
-/// `rewarden status`'s service line (Windows only: elsewhere the service manager shows it).
+/// `reins status`'s service line (Windows only: elsewhere the service manager shows it).
 fn service_status(paths: &Paths) -> Option<String> {
     #[cfg(windows)]
     {
@@ -195,7 +195,7 @@ async fn status(paths: &Paths, config: &Config) -> Result<(), String> {
         Err(e) => return Err(e.to_string()),
     }
     out!("Version:       {}", update::LONG_VERSION);
-    out!("Daemon:        not running (rewarden daemon, or rewarden service install)");
+    out!("Daemon:        not running (reins daemon, or reins service install)");
     out!("Mode:          {}", format!("{:?}", config.mode).to_ascii_lowercase());
     out!("Server:        {}", server::oauth::logged_in_server(paths).as_deref().unwrap_or("not logged in"));
     if paths.identity_file().exists() {
@@ -213,14 +213,14 @@ async fn status(paths: &Paths, config: &Config) -> Result<(), String> {
 fn git_mode(config: &Config) -> String {
     match Git::default().hosts_set_up(&Scope::Global, config) {
         Ok(hosts) if !hosts.is_empty() => {
-            format!("{} through Rewarden (http://{}/); `rewarden pause` to go direct", hosts.join(", "), config.listen)
+            format!("{} through Reins (http://{}/); `reins pause` to go direct", hosts.join(", "), config.listen)
         }
-        Ok(_) => "direct to the git hosts; `rewarden resume` to go through Rewarden".to_owned(),
+        Ok(_) => "direct to the git hosts; `reins resume` to go through Reins".to_owned(),
         Err(e) => format!("unknown ({e})"),
     }
 }
 
-/// `github.com, gitlab.com`: the hosts git is sent through Rewarden for.
+/// `github.com, gitlab.com`: the hosts git is sent through Reins for.
 fn enabled_hosts(config: &Config) -> Result<String, String> {
     Ok(config.enabled_hosts()?.into_iter().map(|h| h.host).collect::<Vec<_>>().join(", "))
 }
@@ -375,13 +375,13 @@ async fn run(cmd: Cmd) -> Result<(), String> {
         Cmd::Resume => resume(&paths, &config).await,
         Cmd::Agents(_) => unreachable!("handled in main"),
         Cmd::Run(args) => {
-            let code = rewarden_desktop::run::main(&paths, &config, &args).await;
+            let code = reins_desktop::run::main(&paths, &config, &args).await;
             std::process::exit(i32::from(code));
         }
         Cmd::Ssh {
             action,
         } => {
-            for line in rewarden_desktop::ssh_agent::setup::run(&action, &paths, &config, &home()?)? {
+            for line in reins_desktop::ssh_agent::setup::run(&action, &paths, &config, &home()?)? {
                 out!("{line}");
             }
             Ok(())
@@ -401,7 +401,7 @@ fn pause(config: &Config) -> Result<(), String> {
     if removed == 0 {
         out!("git already talks to the git hosts directly.");
     } else {
-        out!("Paused: git talks to the git hosts directly again. `rewarden resume` switches back.");
+        out!("Paused: git talks to the git hosts directly again. `reins resume` switches back.");
     }
     Ok(())
 }
@@ -414,20 +414,18 @@ async fn resume(paths: &Paths, config: &Config) -> Result<(), String> {
         let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
         while !daemon_running(paths, config).await {
             if std::time::Instant::now() > deadline {
-                return Err(
-                    "the background service did not start; see `rewarden daemon` for why. git was left as it was"
-                        .to_owned(),
-                );
+                return Err("the background service did not start; see `reins daemon` for why. git was left as it was"
+                    .to_owned());
             }
             tokio::time::sleep(std::time::Duration::from_millis(200)).await;
         }
     }
     Git::default().setup_hosts(&Scope::Global, config)?;
-    out!("git sends {} through Rewarden (http://{}/).", enabled_hosts(config)?, config.listen);
+    out!("git sends {} through Reins (http://{}/).", enabled_hosts(config)?, config.listen);
     if server::oauth::logged_in_server(paths).is_none() {
-        out!("Not logged in: the local policy decides. `rewarden login` to decide on your phone.");
+        out!("Not logged in: the local policy decides. `reins login` to decide on your phone.");
     }
-    out!("`rewarden pause` switches back to talking to the git hosts directly.");
+    out!("`reins pause` switches back to talking to the git hosts directly.");
     Ok(())
 }
 
@@ -437,19 +435,19 @@ async fn self_update(paths: &Paths, config: &Config, check_only: bool) -> Result
     let updater = update::Updater::for_this_binary(&config.releases)?;
     match updater.check().await? {
         Check::UpToDate(latest) => {
-            out!("rewarden {} is up to date (latest release: {}).", update::LONG_VERSION, latest.build);
+            out!("reins {} is up to date (latest release: {}).", update::LONG_VERSION, latest.build);
         }
         Check::NoBuild(latest) => {
             out!("Release {} has no build for this computer yet.", latest.build);
         }
         Check::Available(latest, _) if check_only => {
-            out!("Update available: {} → {}. Run `rewarden update`.", update::BUILD, latest.build);
+            out!("Update available: {} → {}. Run `reins update`.", update::BUILD, latest.build);
         }
         Check::Available(latest, asset) => {
             let exe = update::current_executable()?;
             if update::installed_with_app(&exe) {
                 out!(
-                    "Update available: {} → {}. This rewarden came with the Reins app: update the app ({}).",
+                    "Update available: {} → {}. This reins came with the Reins app: update the app ({}).",
                     update::BUILD,
                     latest.build,
                     update::APP_DOWNLOADS
@@ -478,12 +476,12 @@ async fn self_update(paths: &Paths, config: &Config, check_only: bool) -> Result
 async fn main() -> ExitCode {
     let cli = Cli::parse();
     if let Cmd::Agents(cmd) = cli.command {
-        return rewarden_desktop::agents_cli::run(cmd).await;
+        return reins_desktop::agents_cli::run(cmd).await;
     }
     match run(cli.command).await {
         Ok(()) => ExitCode::SUCCESS,
         Err(e) => {
-            eprintln!("rewarden: {e}");
+            eprintln!("reins: {e}");
             ExitCode::FAILURE
         }
     }

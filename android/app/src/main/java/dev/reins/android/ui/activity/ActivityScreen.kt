@@ -1,4 +1,4 @@
-package dev.rewarden.android.ui.activity
+package dev.reins.android.ui.activity
 
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
@@ -37,34 +37,34 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
-import dev.rewarden.android.AppContainer
-import dev.rewarden.android.design.ActionKind
-import dev.rewarden.android.design.ActionTile
-import dev.rewarden.android.design.Banner
-import dev.rewarden.android.design.BannerKind
-import dev.rewarden.android.design.ButtonStyle
-import dev.rewarden.android.design.CapsuleButton
-import dev.rewarden.android.design.CountdownFrame
-import dev.rewarden.android.design.EmptyState
-import dev.rewarden.android.design.Glyph
-import dev.rewarden.android.design.Hairline
-import dev.rewarden.android.design.LargeTitle
-import dev.rewarden.android.design.LocalColors
-import dev.rewarden.android.design.RText
-import dev.rewarden.android.design.RType
-import dev.rewarden.android.design.ConnectorTags
-import dev.rewarden.android.design.glass
-import dev.rewarden.android.design.pressable
-import dev.rewarden.android.design.rememberNowMillis
-import dev.rewarden.android.design.urgency
-import dev.rewarden.android.state.AppState
-import dev.rewarden.android.ui.common.ActivityRow
-import dev.rewarden.android.ui.common.ConnectionIcon
-import dev.rewarden.android.ui.common.fullTitle
-import dev.rewarden.android.ui.common.relativeTime
-import dev.rewarden.android.ui.common.untrusted
-import dev.rewarden.core.PendingItem
-import dev.rewarden.core.PendingKind
+import dev.reins.android.AppContainer
+import dev.reins.android.design.ActionKind
+import dev.reins.android.design.ActionTile
+import dev.reins.android.design.Banner
+import dev.reins.android.design.BannerKind
+import dev.reins.android.design.ButtonStyle
+import dev.reins.android.design.CapsuleButton
+import dev.reins.android.design.CountdownFrame
+import dev.reins.android.design.EmptyState
+import dev.reins.android.design.Glyph
+import dev.reins.android.design.Hairline
+import dev.reins.android.design.LargeTitle
+import dev.reins.android.design.LocalColors
+import dev.reins.android.design.RText
+import dev.reins.android.design.RType
+import dev.reins.android.design.ConnectorTags
+import dev.reins.android.design.glass
+import dev.reins.android.design.pressable
+import dev.reins.android.design.rememberNowMillis
+import dev.reins.android.design.urgency
+import dev.reins.android.state.AppState
+import dev.reins.android.ui.common.ActivityRow
+import dev.reins.android.ui.common.ConnectionIcon
+import dev.reins.android.ui.common.fullTitle
+import dev.reins.android.ui.common.relativeTime
+import dev.reins.android.ui.common.untrusted
+import dev.reins.core.PendingItem
+import dev.reins.core.PendingKind
 import kotlinx.coroutines.launch
 
 /** The first tab: what waits for you, then everything your AIs did, newest first. */
@@ -130,7 +130,7 @@ fun ActivityScreen(
         ) {
             item(key = "title") {
                 LargeTitle("Activity") {
-                    if (autopilot != null) dev.rewarden.android.ui.autopilot.ModePill(autopilot, Modifier.testTag("modePill"), onClick = onAutopilot)
+                    if (autopilot != null) dev.reins.android.ui.autopilot.ModePill(autopilot, Modifier.testTag("modePill"), onClick = onAutopilot)
                     CapsuleButton("Integrations", Modifier.testTag("integrations"), compact = true, glyph = Glyph.Apps, onClick = onIntegrations)
                 }
             }
@@ -165,8 +165,8 @@ fun ActivityScreen(
             if (showFilters) {
                 item(key = "filters") {
                     Row(Modifier.padding(start = 16.dp, end = 16.dp, top = 14.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                        dev.rewarden.android.design.SelectChip("All", !automaticOnly, Modifier.testTag("filter:all")) { automaticOnly = false }
-                        dev.rewarden.android.design.SelectChip("Automatic · $automaticCount", automaticOnly, Modifier.testTag("filter:automatic")) { automaticOnly = true }
+                        dev.reins.android.design.SelectChip("All", !automaticOnly, Modifier.testTag("filter:all")) { automaticOnly = false }
+                        dev.reins.android.design.SelectChip("Automatic · $automaticCount", automaticOnly, Modifier.testTag("filter:automatic")) { automaticOnly = true }
                     }
                 }
             }
@@ -290,7 +290,7 @@ private fun PendingCard(item: PendingItem, modifier: Modifier = Modifier, onClic
                 if (fromAi) ConnectorTags(item.service, item.account)
                 item.suggestion?.let { line ->
                     Row(Modifier.testTag("pendingSuggestion:${item.id}"), verticalAlignment = Alignment.CenterVertically) {
-                        dev.rewarden.android.design.GlyphIcon(Glyph.Sparkle, c.accent, size = 13.dp, weight = 1.9f)
+                        dev.reins.android.design.GlyphIcon(Glyph.Sparkle, c.accent, size = 13.dp, weight = 1.9f)
                         Spacer(Modifier.width(5.dp))
                         RText(line, RType.sans(12.5f, FontWeight.Medium), c.accent, maxLines = 1)
                     }

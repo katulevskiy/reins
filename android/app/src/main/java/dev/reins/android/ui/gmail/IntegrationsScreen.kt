@@ -1,4 +1,4 @@
-package dev.rewarden.android.ui.gmail
+package dev.reins.android.ui.gmail
 
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -16,21 +16,21 @@ import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
-import dev.rewarden.android.design.Glyph
-import dev.rewarden.android.design.GlyphIcon
-import dev.rewarden.android.design.Group
-import dev.rewarden.android.design.Hairline
-import dev.rewarden.android.design.LocalColors
-import dev.rewarden.android.design.RText
-import dev.rewarden.android.design.RType
-import dev.rewarden.android.design.Screen
-import dev.rewarden.android.design.ServiceAvatar
-import dev.rewarden.android.design.pressable
-import dev.rewarden.android.state.AppState
-import dev.rewarden.android.ui.mcp.McpServersSection
-import dev.rewarden.core.ServiceView
+import dev.reins.android.design.Glyph
+import dev.reins.android.design.GlyphIcon
+import dev.reins.android.design.Group
+import dev.reins.android.design.Hairline
+import dev.reins.android.design.LocalColors
+import dev.reins.android.design.RText
+import dev.reins.android.design.RType
+import dev.reins.android.design.Screen
+import dev.reins.android.design.ServiceAvatar
+import dev.reins.android.design.pressable
+import dev.reins.android.state.AppState
+import dev.reins.android.ui.mcp.McpServersSection
+import dev.reins.core.ServiceView
 
-/** Every service Rewarden can connect, with how many accounts each one has, and the MCP servers the user added. */
+/** Every service Reins can connect, with how many accounts each one has, and the MCP servers the user added. */
 @Composable
 fun IntegrationsScreen(
     state: AppState,

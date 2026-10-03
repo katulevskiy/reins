@@ -1,4 +1,4 @@
-//! Git hosts besides GitHub — GitLab, Codeberg and Bitbucket — for git on the user's computer through the Rewarden
+//! Git hosts besides GitHub — GitLab, Codeberg and Bitbucket — for git on the user's computer through the Reins
 //! desktop app. Each is added with a pasted token that is checked against the host's API (who it belongs to) and kept
 //! sealed in the local store, per account. A fetch looks the repository up with the token first; a push is previewed
 //! from the summary the app sent. The token reaches the app only sealed to its key (see `connector::git`), with the
@@ -11,9 +11,9 @@ use std::marker::PhantomData;
 use std::sync::Arc;
 use std::time::Duration;
 
+use reins_proto::connector::ConnectorCall;
+use reins_proto::desktop::GIT_FETCH_OP;
 use reqwest::StatusCode;
-use rewarden_proto::connector::ConnectorCall;
-use rewarden_proto::desktop::GIT_FETCH_OP;
 use serde_json::{Value, json};
 use zeroize::Zeroizing;
 
@@ -179,7 +179,7 @@ impl<F: Forge> GitHost<F> {
                 .http
                 .get(format!("{}{path}", self.base))
                 .header("Accept", "application/json")
-                .header("User-Agent", "rewarden");
+                .header("User-Agent", "reins");
             let req = match F::auth(creds) {
                 Auth::Bearer(t) => req.bearer_auth(t),
                 Auth::Token(t) => req.header("Authorization", format!("token {t}")),
@@ -214,7 +214,7 @@ impl<F: Forge> GitHost<F> {
         let me = self.get(&creds, "/user", &[]).await?;
         let login = F::login(&me.json)
             .map(|l| text::one_line(&l))
-            .filter(|l| !l.is_empty() && l.len() <= rewarden_proto::connector::MAX_ACCOUNT_LEN)
+            .filter(|l| !l.is_empty() && l.len() <= reins_proto::connector::MAX_ACCOUNT_LEN)
             .ok_or_else(|| CoreError::service(format!("{} did not say who that is", F::NAME)))?;
         creds.login.clone_from(&login);
         let account = login.to_lowercase();

@@ -1,4 +1,4 @@
-package dev.rewarden.android.push
+package dev.reins.android.push
 
 import android.content.Context
 import androidx.work.Constraints
@@ -8,15 +8,15 @@ import androidx.work.NetworkType
 import androidx.work.OneTimeWorkRequestBuilder
 import androidx.work.WorkManager
 import androidx.work.WorkerParameters
-import dev.rewarden.android.RewardenApp
-import dev.rewarden.android.ui.common.userMessage
-import dev.rewarden.core.CoreException
+import dev.reins.android.ReinsApp
+import dev.reins.android.ui.common.userMessage
+import dev.reins.core.CoreException
 import kotlin.coroutines.cancellation.CancellationException
 
 /** Re-registers the device after Firebase issued a new token, so pushes keep arriving. */
 class RegisterDeviceWorker(context: Context, params: WorkerParameters) : CoroutineWorker(context, params) {
     override suspend fun doWork(): Result {
-        val container = (applicationContext as RewardenApp).container
+        val container = (applicationContext as ReinsApp).container
         return try {
             if (container.core.session() == null) return Result.success()
             container.registerDevice(force = false)

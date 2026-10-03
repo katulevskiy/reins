@@ -177,7 +177,7 @@ pub struct ClassView {
 /// One remembered decision similar to a request.
 #[derive(Clone, Debug, PartialEq, uniffi::Record)]
 pub struct NeighbourView {
-    /// Short label ("Push to a branch · dkat/rewarden").
+    /// Short label ("Push to a branch · dkat/reins").
     pub label: String,
     /// What the user decided then (`Approve` or `Deny`).
     pub verdict: Verdict,
@@ -198,7 +198,7 @@ pub struct SuggestionView {
     pub p_deny: f32,
     /// 1 − normalised entropy of (approve, deny, ask).
     pub confidence: f32,
-    /// One line, e.g. "Like 4 times you approved: Push to a branch · dkat/rewarden".
+    /// One line, e.g. "Like 4 times you approved: Push to a branch · dkat/reins".
     pub reason: String,
     pub neighbours: Vec<NeighbourView>,
     pub profile_id: String,
@@ -238,7 +238,7 @@ pub struct AutoDecisionView {
     pub kind: PendingKind,
     pub connection_id: String,
     pub connection_label: String,
-    /// What it was, in a few words ("Push to a branch · dkat/rewarden").
+    /// What it was, in a few words ("Push to a branch · dkat/reins").
     pub title: String,
     /// `Approve` or `Deny`.
     pub verdict: Verdict,

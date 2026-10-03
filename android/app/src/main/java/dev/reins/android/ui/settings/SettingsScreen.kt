@@ -1,4 +1,4 @@
-package dev.rewarden.android.ui.settings
+package dev.reins.android.ui.settings
 
 import android.content.ClipData
 import android.content.ClipboardManager
@@ -25,33 +25,33 @@ import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
-import dev.rewarden.android.design.ActionKind
-import dev.rewarden.android.design.Banner
-import dev.rewarden.android.design.BannerKind
-import dev.rewarden.android.design.ButtonStyle
-import dev.rewarden.android.design.CapsuleButton
-import dev.rewarden.android.design.ConfirmDialog
-import dev.rewarden.android.design.Glyph
-import dev.rewarden.android.design.GlyphIcon
-import dev.rewarden.android.design.Group
-import dev.rewarden.android.design.Hairline
-import dev.rewarden.android.design.ListRow
-import dev.rewarden.android.design.LocalColors
-import dev.rewarden.android.design.RText
-import dev.rewarden.android.design.RType
-import dev.rewarden.android.design.Screen
-import dev.rewarden.android.design.pressable
-import dev.rewarden.android.feedback.Event
-import dev.rewarden.android.feedback.FeedbackSettings
-import dev.rewarden.android.feedback.LocalFeedback
-import dev.rewarden.android.feedback.play
-import dev.rewarden.android.platform.Authenticator
-import dev.rewarden.android.platform.FirebaseSupport
-import dev.rewarden.android.state.AppState
-import dev.rewarden.android.state.SessionState
-import dev.rewarden.android.ui.common.ConnectionIcon
-import dev.rewarden.android.ui.common.relativeTime
-import dev.rewarden.android.ui.common.untrusted
+import dev.reins.android.design.ActionKind
+import dev.reins.android.design.Banner
+import dev.reins.android.design.BannerKind
+import dev.reins.android.design.ButtonStyle
+import dev.reins.android.design.CapsuleButton
+import dev.reins.android.design.ConfirmDialog
+import dev.reins.android.design.Glyph
+import dev.reins.android.design.GlyphIcon
+import dev.reins.android.design.Group
+import dev.reins.android.design.Hairline
+import dev.reins.android.design.ListRow
+import dev.reins.android.design.LocalColors
+import dev.reins.android.design.RText
+import dev.reins.android.design.RType
+import dev.reins.android.design.Screen
+import dev.reins.android.design.pressable
+import dev.reins.android.feedback.Event
+import dev.reins.android.feedback.FeedbackSettings
+import dev.reins.android.feedback.LocalFeedback
+import dev.reins.android.feedback.play
+import dev.reins.android.platform.Authenticator
+import dev.reins.android.platform.FirebaseSupport
+import dev.reins.android.state.AppState
+import dev.reins.android.state.SessionState
+import dev.reins.android.ui.common.ConnectionIcon
+import dev.reins.android.ui.common.relativeTime
+import dev.reins.android.ui.common.untrusted
 
 @Composable
 fun SettingsScreen(
@@ -94,7 +94,7 @@ fun SettingsScreen(
                     ltrSubtitle = true,
                     trailing = { GlyphIcon(Glyph.Copy, c.tertiary, size = 17.dp) },
                 ) {
-                    copyText(context, "Rewarden server", it.info.serverUrl)
+                    copyText(context, "Reins server", it.info.serverUrl)
                     feedback.play(Event.Copied)
                     // Android 13 and later confirm a copy themselves.
                     if (Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU) viewModel.notice("Server address copied.")
@@ -146,12 +146,12 @@ fun SettingsScreen(
         }
 
         Group(header = "Autopilot") {
-            val mode = autopilot?.mode ?: dev.rewarden.core.AutopilotMode.MANUAL
+            val mode = autopilot?.mode ?: dev.reins.core.AutopilotMode.MANUAL
             ListRow(
                 "Autopilot",
                 subtitle = autopilotSummary(autopilot),
-                glyph = dev.rewarden.android.ui.autopilot.modeGlyph(mode),
-                tint = dev.rewarden.android.ui.autopilot.modeTint(mode, c),
+                glyph = dev.reins.android.ui.autopilot.modeGlyph(mode),
+                tint = dev.reins.android.ui.autopilot.modeTint(mode, c),
                 chevron = true,
                 modifier = Modifier.testTag("openAutopilot"),
                 onClick = onAutopilot,
@@ -160,7 +160,7 @@ fun SettingsScreen(
 
         Group(header = "AI connections") {
             if (connections.isEmpty()) {
-                ListRow("No AI is connected yet", subtitle = "Add Rewarden to Claude or ChatGPT with your server's /mcp address.")
+                ListRow("No AI is connected yet", subtitle = "Add Reins to Claude or ChatGPT with your server's /mcp address.")
             }
             connections.forEachIndexed { i, connection ->
                 if (i > 0) Hairline(inset = 68.dp)
@@ -191,7 +191,7 @@ fun SettingsScreen(
             ListRow(
                 "Connect a computer",
                 Modifier.testTag("connectComputer"),
-                subtitle = "Scan the QR code the desktop app or rewarden login shows",
+                subtitle = "Scan the QR code the desktop app or reins login shows",
                 glyph = Glyph.Qr,
                 tint = c.accent,
                 chevron = true,
@@ -282,12 +282,12 @@ fun SettingsScreen(
 }
 
 /** What the Autopilot row says: the mode, and whether the model is here. */
-internal fun autopilotSummary(s: dev.rewarden.core.AutopilotSettings?): String {
+internal fun autopilotSummary(s: dev.reins.core.AutopilotSettings?): String {
     if (s == null) return "Answers requests for you, on this phone"
-    val mode = dev.rewarden.android.autopilot.AutopilotText.name(s.mode)
+    val mode = dev.reins.android.autopilot.AutopilotText.name(s.mode)
     val model = when (s.model.state) {
-        dev.rewarden.core.ModelState.INSTALLED -> "model on this phone"
-        dev.rewarden.core.ModelState.DOWNLOADING -> "downloading the model"
+        dev.reins.core.ModelState.INSTALLED -> "model on this phone"
+        dev.reins.core.ModelState.DOWNLOADING -> "downloading the model"
         else -> "no model yet"
     }
     return "$mode · $model"

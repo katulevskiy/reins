@@ -1,46 +1,46 @@
-package dev.rewarden.android
+package dev.reins.android
 
-import dev.rewarden.core.AccountKeys
-import dev.rewarden.core.AccountView
-import dev.rewarden.core.AutopilotMode
-import dev.rewarden.core.AutopilotSettings
-import dev.rewarden.core.ConnectionAutopilot
-import dev.rewarden.core.DownloadProgress
-import dev.rewarden.core.ModelRuntime
-import dev.rewarden.core.ModelState
-import dev.rewarden.core.ModelStatus
-import dev.rewarden.core.Preset
-import dev.rewarden.core.ProfileView
-import dev.rewarden.core.SuggestionView
-import dev.rewarden.core.Verdict
-import dev.rewarden.core.ActivityEntry
-import dev.rewarden.core.ApprovalChoice
-import dev.rewarden.core.ApprovalKind
-import dev.rewarden.core.StandingGrant
-import dev.rewarden.core.ApprovalView
-import dev.rewarden.core.BlobView
-import dev.rewarden.core.ConnectionView
-import dev.rewarden.core.CoreException
-import dev.rewarden.core.EmailContent
-import dev.rewarden.core.GmailStatus
-import dev.rewarden.core.GrantView
-import dev.rewarden.core.JoinProgress
-import dev.rewarden.core.JoinStart
-import dev.rewarden.core.JoinView
-import dev.rewarden.core.LoginProgress
-import dev.rewarden.core.McpAddStep
-import dev.rewarden.core.McpServerView
-import dev.rewarden.core.ServiceView
-import dev.rewarden.core.PairingView
-import dev.rewarden.core.PendingItem
-import dev.rewarden.core.RewardenCoreInterface
-import dev.rewarden.core.SessionInfo
-import dev.rewarden.core.SsoOutcome
-import dev.rewarden.core.SsoStart
+import dev.reins.core.AccountKeys
+import dev.reins.core.AccountView
+import dev.reins.core.AutopilotMode
+import dev.reins.core.AutopilotSettings
+import dev.reins.core.ConnectionAutopilot
+import dev.reins.core.DownloadProgress
+import dev.reins.core.ModelRuntime
+import dev.reins.core.ModelState
+import dev.reins.core.ModelStatus
+import dev.reins.core.Preset
+import dev.reins.core.ProfileView
+import dev.reins.core.SuggestionView
+import dev.reins.core.Verdict
+import dev.reins.core.ActivityEntry
+import dev.reins.core.ApprovalChoice
+import dev.reins.core.ApprovalKind
+import dev.reins.core.StandingGrant
+import dev.reins.core.ApprovalView
+import dev.reins.core.BlobView
+import dev.reins.core.ConnectionView
+import dev.reins.core.CoreException
+import dev.reins.core.EmailContent
+import dev.reins.core.GmailStatus
+import dev.reins.core.GrantView
+import dev.reins.core.JoinProgress
+import dev.reins.core.JoinStart
+import dev.reins.core.JoinView
+import dev.reins.core.LoginProgress
+import dev.reins.core.McpAddStep
+import dev.reins.core.McpServerView
+import dev.reins.core.ServiceView
+import dev.reins.core.PairingView
+import dev.reins.core.PendingItem
+import dev.reins.core.ReinsCoreInterface
+import dev.reins.core.SessionInfo
+import dev.reins.core.SsoOutcome
+import dev.reins.core.SsoStart
 import java.util.concurrent.CopyOnWriteArrayList
 
 /** In-memory core for UI tests: holds state, records the calls that matter. */
-class FakeCore : RewardenCoreInterface {
+class FakeCore : ReinsCoreInterface {
     @Volatile var session: SessionInfo? = null
     @Volatile var loginError: CoreException? = null
     @Volatile var pending: List<PendingItem> = emptyList()
@@ -525,7 +525,7 @@ class FakeCore : RewardenCoreInterface {
     val downloads = java.util.concurrent.atomic.AtomicInteger()
 
     /** The clock the screens use: frozen in tests. */
-    private fun now(): Long = (dev.rewarden.android.design.Timers.frozenNowMillis ?: System.currentTimeMillis()) / 1000
+    private fun now(): Long = (dev.reins.android.design.Timers.frozenNowMillis ?: System.currentTimeMillis()) / 1000
 
     fun resetAutopilot() {
         apGlobal = ApRow()
@@ -682,8 +682,8 @@ class FakeCore : RewardenCoreInterface {
             TestData.suggestion(
                 "", Verdict.DENY, 0.03f, 0.95f, 0.88f, novel = true, reason = "Like 2 times you denied: Send an email · unknown recipient",
                 neighbours = listOf(
-                    dev.rewarden.core.NeighbourView("Send an email · unknown recipient", Verdict.DENY, 0.89f, 1_699_990_000),
-                    dev.rewarden.core.NeighbourView("Forward emails · outside address", Verdict.DENY, 0.81f, 1_699_900_000),
+                    dev.reins.core.NeighbourView("Send an email · unknown recipient", Verdict.DENY, 0.89f, 1_699_990_000),
+                    dev.reins.core.NeighbourView("Forward emails · outside address", Verdict.DENY, 0.81f, 1_699_900_000),
                 ),
             )
         } else {

@@ -7,7 +7,7 @@
 //! set, must match every ref the push changes (a tag or another ref never matches a branch pattern, and a read never
 //! matches a rule with a branch).
 
-use rewarden_proto::desktop::{PushSummary, RefUpdate};
+use reins_proto::desktop::{PushSummary, RefUpdate};
 
 use crate::config::{PolicyConfig, PolicyRule, Rule};
 
@@ -121,7 +121,7 @@ pub fn decide_push(policy: &PolicyConfig, host: &str, repo: &str, summary: &Push
 
 #[cfg(test)]
 mod tests {
-    use rewarden_proto::desktop::{RefChange, ZERO_OID};
+    use reins_proto::desktop::{RefChange, ZERO_OID};
 
     use super::*;
 

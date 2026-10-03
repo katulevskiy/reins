@@ -1,15 +1,15 @@
-package dev.rewarden.android
+package dev.reins.android
 
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
-import dev.rewarden.android.platform.KeystoreKeyWrapper
-import dev.rewarden.core.CoreException
-import dev.rewarden.core.ForeignException
-import dev.rewarden.core.GoogleTokenProvider
-import dev.rewarden.core.Notifier
-import dev.rewarden.core.PendingItem
-import dev.rewarden.core.PendingKind
-import dev.rewarden.core.RewardenCore
+import dev.reins.android.platform.KeystoreKeyWrapper
+import dev.reins.core.CoreException
+import dev.reins.core.ForeignException
+import dev.reins.core.GoogleTokenProvider
+import dev.reins.core.Notifier
+import dev.reins.core.PendingItem
+import dev.reins.core.PendingKind
+import dev.reins.core.ReinsCore
 import java.io.File
 import java.util.UUID
 import kotlinx.coroutines.runBlocking
@@ -21,7 +21,7 @@ import org.junit.Test
 import org.junit.runner.RunWith
 
 /**
- * The phone half of `cargo run -p rewarden-e2e --example device_smoke`: the real core on a real Android runtime
+ * The phone half of `cargo run -p reins-e2e --example device_smoke`: the real core on a real Android runtime
  * signs in to a real server and approves an AI client's connection. Skipped unless the host passes its details:
  * `-Pandroid.testInstrumentationRunnerArguments.live.server=... live.email=...`
  * (and `adb reverse tcp:PORT tcp:PORT` so the emulator reaches the host's loopback).
@@ -37,8 +37,8 @@ class LiveServerTest {
     private object Quiet : Notifier {
         override fun itemPending(item: PendingItem) = Unit
         override fun itemResolved(id: String) = Unit
-        override fun autoDecided(decision: dev.rewarden.core.AutoDecisionView) = Unit
-        override fun autopilotChanged(event: dev.rewarden.core.AutopilotEvent) = Unit
+        override fun autoDecided(decision: dev.reins.core.AutoDecisionView) = Unit
+        override fun autopilotChanged(event: dev.reins.core.AutopilotEvent) = Unit
     }
 
     @Test
@@ -51,7 +51,7 @@ class LiveServerTest {
         val context = InstrumentationRegistry.getInstrumentation().targetContext
         val dir = File(context.cacheDir, "live-${UUID.randomUUID()}").also { it.mkdirs() }
         try {
-            val core = RewardenCore(dir.absolutePath, KeystoreKeyWrapper("rewarden_live_${UUID.randomUUID()}"), NoGoogle, Quiet)
+            val core = ReinsCore(dir.absolutePath, KeystoreKeyWrapper("reins_live_${UUID.randomUUID()}"), NoGoogle, Quiet)
             val session = core.login(server!!, email!!, password!!, null)
             assertEquals(email, session.email)
             core.registerDevice(null)

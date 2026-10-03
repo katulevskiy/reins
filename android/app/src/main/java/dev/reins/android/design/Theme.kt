@@ -1,4 +1,4 @@
-package dev.rewarden.android.design
+package dev.reins.android.design
 
 import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.text.selection.LocalTextSelectionColors
@@ -16,7 +16,7 @@ import androidx.compose.ui.graphics.Color
 val LocalLiveTimers = compositionLocalOf { true }
 
 @Composable
-fun RewardenTheme(content: @Composable () -> Unit) {
+fun ReinsTheme(content: @Composable () -> Unit) {
     val colors = if (isSystemInDarkTheme()) RColors.Dark else RColors.Light
     val selection = remember(colors) { TextSelectionColors(colors.accent, colors.accent.copy(alpha = 0.3f)) }
     // The few Material 3 pieces we use (loaders, sliders, shapes) take their colours from the same palette.

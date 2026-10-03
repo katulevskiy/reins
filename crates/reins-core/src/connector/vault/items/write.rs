@@ -4,8 +4,8 @@
 use std::sync::Arc;
 
 use data_encoding::{BASE64, BASE64_NOPAD};
+use reins_proto::connector::ConnectorCall;
 use reqwest::Method;
-use rewarden_proto::connector::ConnectorCall;
 use ring::digest;
 use serde_json::{Map, Value, json};
 

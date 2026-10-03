@@ -1,4 +1,4 @@
-package dev.rewarden.android.design
+package dev.reins.android.design
 
 import android.content.Context
 import androidx.compose.ui.text.font.Font

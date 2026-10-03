@@ -51,7 +51,7 @@ enum NotificationSamples {
                     kind: .request,
                     connectionId: item.connectionId,
                     connectionLabel: item.connectionLabel,
-                    title: "Push to a branch · dkat/rewarden",
+                    title: "Push to a branch · dkat/reins",
                     verdict: .approve,
                     decidedBy: "autopilot",
                     pApprove: 0.97,

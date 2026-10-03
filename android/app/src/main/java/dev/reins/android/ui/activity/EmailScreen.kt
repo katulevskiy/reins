@@ -1,4 +1,4 @@
-package dev.rewarden.android.ui.activity
+package dev.reins.android.ui.activity
 
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -20,23 +20,23 @@ import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
-import dev.rewarden.android.design.Banner
-import dev.rewarden.android.design.BannerKind
-import dev.rewarden.android.design.ButtonStyle
-import dev.rewarden.android.design.CapsuleButton
-import dev.rewarden.android.design.ConnectorTags
-import dev.rewarden.android.design.EmptyState
-import dev.rewarden.android.design.Glyph
-import dev.rewarden.android.design.LocalColors
-import dev.rewarden.android.design.RText
-import dev.rewarden.android.design.RType
-import dev.rewarden.android.design.Screen
-import dev.rewarden.android.design.Spinner
-import dev.rewarden.android.state.AppState
-import dev.rewarden.android.ui.common.formatFull
-import dev.rewarden.android.ui.common.untrusted
-import dev.rewarden.android.ui.common.userMessage
-import dev.rewarden.core.EmailContent
+import dev.reins.android.design.Banner
+import dev.reins.android.design.BannerKind
+import dev.reins.android.design.ButtonStyle
+import dev.reins.android.design.CapsuleButton
+import dev.reins.android.design.ConnectorTags
+import dev.reins.android.design.EmptyState
+import dev.reins.android.design.Glyph
+import dev.reins.android.design.LocalColors
+import dev.reins.android.design.RText
+import dev.reins.android.design.RType
+import dev.reins.android.design.Screen
+import dev.reins.android.design.Spinner
+import dev.reins.android.state.AppState
+import dev.reins.android.ui.common.formatFull
+import dev.reins.android.ui.common.untrusted
+import dev.reins.android.ui.common.userMessage
+import dev.reins.core.EmailContent
 import kotlin.coroutines.cancellation.CancellationException
 
 /** What opening an email came to. */

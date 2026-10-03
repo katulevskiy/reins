@@ -87,7 +87,7 @@ final class OnboardingTests: XCTestCase {
     // MARK: The demo core
 
     func testTheDemoCoreCreatesAnAccountLikeTheServer() async throws {
-        let core = DemoRewardenCore(signedIn: false, syncCap: 0.3)
+        let core = DemoReinsCore(signedIn: false, syncCap: 0.3)
         do {
             _ = try await core.createAccount(serverUrl: DemoData.server, email: "new@example.com", password: "short")
             XCTFail("a short password is refused")
@@ -107,7 +107,7 @@ final class OnboardingTests: XCTestCase {
     }
 
     func testADemoPairingCodeParksADesktopPairingToAnswer() async throws {
-        let core = DemoRewardenCore(syncCap: 0.3)
+        let core = DemoReinsCore(syncCap: 0.3)
         let view = try await core.pairingByCode(userCode: "bcdf ghjk")
         XCTAssertNotNil(view.keyFingerprint)
         XCTAssertEqual(view.choices.count, 3)
@@ -126,7 +126,7 @@ final class OnboardingTests: XCTestCase {
     }
 
     func testAnExpiredCodeSaysToShowANewOne() async {
-        let core = DemoRewardenCore(syncCap: 0.3)
+        let core = DemoReinsCore(syncCap: 0.3)
         do {
             _ = try await core.pairingByCode(userCode: "BBBB-CDFG")
             XCTFail("expired")
@@ -138,7 +138,7 @@ final class OnboardingTests: XCTestCase {
     // MARK: The app model
 
     func testAPairLinkOpenedWhileSignedOutWaitsForTheSignInAndThenOpensThePairing() async throws {
-        let core = DemoRewardenCore(signedIn: false, syncCap: 0.3)
+        let core = DemoReinsCore(signedIn: false, syncCap: 0.3)
         let model = AppModel(core: core, feedback: NoFeedback.shared, authenticator: TrustingAuthenticator(), demo: true)
         await model.refreshSession()
         await model.handle(.pair(code: "BCDF-GHJK"))

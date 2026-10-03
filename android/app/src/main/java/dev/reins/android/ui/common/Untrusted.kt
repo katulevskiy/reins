@@ -1,4 +1,4 @@
-package dev.rewarden.android.ui.common
+package dev.reins.android.ui.common
 
 /**
  * Text that came from outside the app (senders, subjects, snippets, client names). Bidirectional controls are

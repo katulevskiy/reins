@@ -7,7 +7,7 @@
 //! authenticated sender.
 
 use data_encoding::{BASE64, BASE64URL};
-use rewarden_proto::gmail::OutgoingEmail;
+use reins_proto::gmail::OutgoingEmail;
 
 use crate::CoreError;
 

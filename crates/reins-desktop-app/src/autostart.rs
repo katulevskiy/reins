@@ -6,7 +6,7 @@
 //! | Windows | `HKCU\Software\Microsoft\Windows\CurrentVersion\Run`, value `Reins app`               |
 //! | Linux   | an XDG autostart entry, `~/.config/autostart/reins.desktop`                           |
 //!
-//! This is the app. The daemon starts at login on its own, as the background service (`rewarden service`); on Windows
+//! This is the app. The daemon starts at login on its own, as the background service (`reins service`); on Windows
 //! that is the `Reins` value in the same `Run` key, which this one does not touch.
 
 use std::path::{Path, PathBuf};
@@ -23,7 +23,7 @@ fn program() -> Result<PathBuf, String> {
     if let Some(appimage) = std::env::var_os("APPIMAGE").filter(|a| !a.is_empty()) {
         return Ok(PathBuf::from(appimage));
     }
-    rewarden_desktop::update::current_executable()
+    reins_desktop::update::current_executable()
 }
 
 #[cfg_attr(windows, allow(dead_code))]
@@ -116,7 +116,7 @@ pub fn set(home: &Path, on: bool) -> Result<(), String> {
         let _ = home;
         if on {
             let exe = program()?;
-            imp::put(&format!("{} --background", rewarden_desktop::win::command_line_arg(&exe.to_string_lossy())))
+            imp::put(&format!("{} --background", reins_desktop::win::command_line_arg(&exe.to_string_lossy())))
         } else {
             imp::delete()
         }
@@ -180,10 +180,10 @@ mod tests {
 
     #[test]
     fn the_launch_agent_starts_the_app_in_the_background() {
-        let plist = launch_agent(Path::new("/Applications/R&D/Reins.app/Contents/MacOS/Reins"));
+        let plist = launch_agent(Path::new("/Applications/R&D/Reins.app/Contents/MacOS/reins-app"));
         assert!(
             plist.contains(
-                "<string>/Applications/R&amp;D/Reins.app/Contents/MacOS/Reins</string><string>--background</string>"
+                "<string>/Applications/R&amp;D/Reins.app/Contents/MacOS/reins-app</string><string>--background</string>"
             ),
             "{plist}"
         );

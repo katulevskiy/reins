@@ -1,11 +1,11 @@
-package dev.rewarden.android.platform
+package dev.reins.android.platform
 
 import android.content.Context
-import dev.rewarden.android.state.AppState
-import dev.rewarden.android.ui.common.userMessage
-import dev.rewarden.android.ui.mcp.isMcpRedirect
-import dev.rewarden.core.McpServerView
-import dev.rewarden.core.RewardenCoreInterface
+import dev.reins.android.state.AppState
+import dev.reins.android.ui.common.userMessage
+import dev.reins.android.ui.mcp.isMcpRedirect
+import dev.reins.core.McpServerView
+import dev.reins.core.ReinsCoreInterface
 import kotlin.coroutines.cancellation.CancellationException
 
 /** How a sign-in to an MCP server ended. */
@@ -25,7 +25,7 @@ sealed interface McpSignInResult {
  */
 class McpSignIn(
     context: Context,
-    private val core: () -> RewardenCoreInterface,
+    private val core: () -> ReinsCoreInterface,
     private val state: AppState,
     private val now: () -> Long = System::currentTimeMillis,
 ) {

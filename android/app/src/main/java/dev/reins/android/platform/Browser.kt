@@ -1,4 +1,4 @@
-package dev.rewarden.android.platform
+package dev.reins.android.platform
 
 import android.app.Activity
 import android.content.ActivityNotFoundException

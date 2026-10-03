@@ -1,15 +1,15 @@
-package dev.rewarden.android.ui.signin
+package dev.reins.android.ui.signin
 
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
-import dev.rewarden.android.AppContainer
-import dev.rewarden.android.feedback.Event
-import dev.rewarden.android.feedback.play
-import dev.rewarden.android.ui.common.userMessage
-import dev.rewarden.android.ui.mcp.webPage
-import dev.rewarden.core.AccountKeys
-import dev.rewarden.core.CoreException
-import dev.rewarden.core.SessionInfo
+import dev.reins.android.AppContainer
+import dev.reins.android.feedback.Event
+import dev.reins.android.feedback.play
+import dev.reins.android.ui.common.userMessage
+import dev.reins.android.ui.mcp.webPage
+import dev.reins.core.AccountKeys
+import dev.reins.core.CoreException
+import dev.reins.core.SessionInfo
 import kotlin.coroutines.cancellation.CancellationException
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow

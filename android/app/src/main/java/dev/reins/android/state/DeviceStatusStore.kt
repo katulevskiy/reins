@@ -1,4 +1,4 @@
-package dev.rewarden.android.state
+package dev.reins.android.state
 
 import android.content.Context
 import androidx.core.content.edit

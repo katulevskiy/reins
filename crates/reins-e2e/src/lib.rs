@@ -1,4 +1,4 @@
-//! End-to-end harness: the real `vaultwarden` binary (Rewarden enabled), the real
+//! End-to-end harness: the real `vaultwarden` binary (Reins enabled), the real
 //! phone core, and a simulated AI client. Only Gmail is faked (wiremock).
 
 #![allow(

@@ -21,7 +21,7 @@ CORE_LINK = {
     "LIBRARY_SEARCH_PATHS[sdk=iphonesimulator*]": "$(SRCROOT)/../target/ios-core/iphonesimulator",
     "SWIFT_INCLUDE_PATHS[sdk=iphoneos*]": "$(SRCROOT)/../target/ios-core/iphoneos/include",
     "SWIFT_INCLUDE_PATHS[sdk=iphonesimulator*]": "$(SRCROOT)/../target/ios-core/iphonesimulator/include",
-    "OTHER_LDFLAGS": ["-lrewarden_core", "-lc++", "-framework", "Security", "-framework", "SystemConfiguration"],
+    "OTHER_LDFLAGS": ["-lreins_core", "-lc++", "-framework", "Security", "-framework", "SystemConfiguration"],
 }
 
 # Swift packages: name -> (url, requirement dict, [products]).

@@ -1,10 +1,10 @@
-//! The HTTP client for GitHub and the Rewarden server: rustls with ring and the webpki roots, no redirects (a token is
+//! The HTTP client for GitHub and the Reins server: rustls with ring and the webpki roots, no redirects (a token is
 //! never sent to a place it was not meant for; callers follow same-host redirects themselves when they need to).
 
 use std::sync::Arc;
 use std::time::Duration;
 
-pub const USER_AGENT: &str = concat!("rewarden-desktop/", env!("CARGO_PKG_VERSION"));
+pub const USER_AGENT: &str = concat!("reins-desktop/", env!("CARGO_PKG_VERSION"));
 
 /// `timeout`: whole-request limit; `None` for streams of unknown length (git packs).
 pub fn client(timeout: Option<Duration>) -> Result<reqwest::Client, String> {

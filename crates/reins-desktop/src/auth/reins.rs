@@ -1,4 +1,4 @@
-//! The phone decides, through the Rewarden server: git access requests go to the server's desktop API, and the
+//! The phone decides, through the Reins server: git access requests go to the server's desktop API, and the
 //! phone's answer is a credential sealed to this app's key.
 //!
 //! The server only relays: it cannot open the sealed credential, and an answer is accepted only when it echoes this
@@ -9,8 +9,8 @@ use std::collections::HashMap;
 use std::sync::{Arc, Mutex, PoisonError};
 use std::time::{Duration, Instant};
 
-use rewarden_proto::desktop::{CredentialGrant, PushSummary, SEALED_FIELD, fetch_tool_for};
-use rewarden_proto::relay::{RelayOutcome, ToolResult};
+use reins_proto::desktop::{CredentialGrant, PushSummary, SEALED_FIELD, fetch_tool_for};
+use reins_proto::relay::{RelayOutcome, ToolResult};
 use serde_json::{Value, json};
 use zeroize::Zeroizing;
 
@@ -44,7 +44,7 @@ struct InFlight {
     asked_at: Instant,
 }
 
-pub struct RewardenAuthorizer {
+pub struct ReinsAuthorizer {
     server: String,
     identity: Arc<Identity>,
     client: DesktopClient,
@@ -57,11 +57,11 @@ pub struct RewardenAuthorizer {
     asking: Mutex<HashMap<Question, Arc<tokio::sync::Mutex<()>>>>,
 }
 
-impl RewardenAuthorizer {
-    /// Fails when the app is not logged in to a Rewarden server.
+impl ReinsAuthorizer {
+    /// Fails when the app is not logged in to a Reins server.
     pub fn new(paths: &Paths, identity: Arc<Identity>, config: &Config) -> Result<Self, String> {
         let server = crate::server::oauth::logged_in_server(paths)
-            .ok_or_else(|| "not logged in to a Rewarden server; run `rewarden login`".to_owned())?;
+            .ok_or_else(|| "not logged in to a Reins server; run `reins login`".to_owned())?;
         Ok(Self {
             server,
             identity,
@@ -156,7 +156,7 @@ impl RewardenAuthorizer {
                         Ok(Ok(a)) => answer = a,
                         Ok(Err(LinkError::NotFound)) => {
                             return Err(Refusal::Unavailable(
-                                "The Rewarden server no longer has this request. Run git again.".to_owned(),
+                                "The Reins server no longer has this request. Run git again.".to_owned(),
                             ));
                         }
                         Ok(Err(e)) => {
@@ -204,7 +204,7 @@ impl RewardenAuthorizer {
             sealed.and_then(Value::as_str).ok_or_else(|| unavailable("The phone's answer has no credential."))?;
         let grant = self.identity.open_grant(sealed).map_err(|e| match e {
             IdentityError::Unseal => unavailable(
-                "The phone's answer is not sealed to this app's key; refused. Pair again with `rewarden login`.",
+                "The phone's answer is not sealed to this app's key; refused. Pair again with `reins login`.",
             ),
             _ => unavailable("The phone's answer is malformed; refused."),
         })?;
@@ -250,7 +250,7 @@ fn unavailable(message: &str) -> Refusal {
 fn link_refusal(e: LinkError) -> Refusal {
     match e {
         LinkError::LoggedOut(m) => Refusal::Unavailable(m),
-        LinkError::NotFound => unavailable("The Rewarden server no longer has this request. Run git again."),
+        LinkError::NotFound => unavailable("The Reins server no longer has this request. Run git again."),
         LinkError::Failed(m) => Refusal::Unavailable(format!("Cannot ask your phone: {m}")),
     }
 }
@@ -264,7 +264,7 @@ fn credential(grant: CredentialGrant) -> Credential {
 }
 
 #[async_trait::async_trait]
-impl Authorizer for RewardenAuthorizer {
+impl Authorizer for ReinsAuthorizer {
     async fn read(&self, repo: &Repo) -> Result<Credential, Refusal> {
         let name = repo.full_name();
         let cache_key = repo.label();
@@ -321,7 +321,7 @@ impl Authorizer for RewardenAuthorizer {
     }
 
     fn waiting_hint(&self) -> String {
-        "waiting for approval in your Rewarden app".to_owned()
+        "waiting for approval in your Reins app".to_owned()
     }
 
     fn describe(&self) -> String {

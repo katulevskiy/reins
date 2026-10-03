@@ -1,4 +1,4 @@
-//! Git over HTTPS through the Rewarden desktop app. These are not AI tools: the desktop app's git proxy asks for them
+//! Git over HTTPS through the Reins desktop app. These are not AI tools: the desktop app's git proxy asks for them
 //! when a git client fetches or pushes, and the phone answers with the GitHub credential sealed to the app's key.
 
 use crate::connector::{Effect, GITHUB, Param, ToolSpec, json_p, str_p, tool};

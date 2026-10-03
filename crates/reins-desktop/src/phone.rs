@@ -1,14 +1,14 @@
-//! Asking the phone for things other than git credentials (secrets for `rewarden run` and the API proxy, SSH keys and
-//! signatures): one desktop tool call through the Rewarden server, polled until the phone answers or the approval
-//! timeout, with the same rules as git access ([`crate::auth::rewarden`]): a random nonce per question that the sealed
+//! Asking the phone for things other than git credentials (secrets for `reins run` and the API proxy, SSH keys and
+//! signatures): one desktop tool call through the Reins server, polled until the phone answers or the approval
+//! timeout, with the same rules as git access ([`crate::auth::reins`]): a random nonce per question that the sealed
 //! answer must echo, and a retry of an unanswered question polls the earlier request instead of asking again.
 
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex, PoisonError};
 use std::time::{Duration, Instant};
 
-use rewarden_proto::desktop::SEALED_FIELD;
-use rewarden_proto::relay::{RelayOutcome, ToolResult};
+use reins_proto::desktop::SEALED_FIELD;
+use reins_proto::relay::{RelayOutcome, ToolResult};
 use serde::de::DeserializeOwned;
 use serde_json::Value;
 use zeroize::Zeroizing;
@@ -39,7 +39,7 @@ struct InFlight {
     asked_at: Instant,
 }
 
-/// The phone, through the Rewarden server the app is logged in to.
+/// The phone, through the Reins server the app is logged in to.
 pub struct Phone {
     server: String,
     identity: Arc<Identity>,
@@ -49,10 +49,10 @@ pub struct Phone {
 }
 
 impl Phone {
-    /// Fails when the app is not logged in to a Rewarden server.
+    /// Fails when the app is not logged in to a Reins server.
     pub fn new(paths: &Paths, identity: Arc<Identity>, timeout: Duration) -> Result<Self, String> {
         let server = crate::server::oauth::logged_in_server(paths)
-            .ok_or_else(|| "not logged in to a Rewarden server; run `rewarden login`".to_owned())?;
+            .ok_or_else(|| "not logged in to a Reins server; run `reins login`".to_owned())?;
         Ok(Self {
             server,
             identity,
@@ -149,7 +149,7 @@ impl Phone {
                     match tokio::time::timeout(remaining, self.client.poll(&asked.request_id)).await {
                         Ok(Ok(a)) => answer = a,
                         Ok(Err(LinkError::NotFound)) => {
-                            return Err(unavailable("The Rewarden server no longer has this request. Try again."));
+                            return Err(unavailable("The Reins server no longer has this request. Try again."));
                         }
                         Ok(Err(e)) => {
                             self.keep_in_flight(reuse, asked);
@@ -173,7 +173,7 @@ impl Phone {
             .ok_or_else(|| unavailable("The phone's answer has nothing sealed for this app."))?;
         let plain: Zeroizing<Vec<u8>> = self.identity.unseal(sealed).map_err(|e| match e {
             IdentityError::Unseal => unavailable(
-                "The phone's answer is not sealed to this app's key; refused. Pair again with `rewarden login`.",
+                "The phone's answer is not sealed to this app's key; refused. Pair again with `reins login`.",
             ),
             _ => unavailable("The phone's answer is malformed; refused."),
         })?;
@@ -209,7 +209,7 @@ pub(crate) fn unavailable(message: &str) -> Refusal {
 fn link_refusal(e: LinkError) -> Refusal {
     match e {
         LinkError::LoggedOut(m) => Refusal::Unavailable(m),
-        LinkError::NotFound => unavailable("The Rewarden server no longer has this request. Try again."),
+        LinkError::NotFound => unavailable("The Reins server no longer has this request. Try again."),
         LinkError::Failed(m) => Refusal::Unavailable(format!("Cannot ask your phone: {m}")),
     }
 }
@@ -241,12 +241,12 @@ impl PhoneLink {
         if self.mode == Mode::Local {
             return Err(unavailable(
                 "Secrets and SSH keys live on your phone, and this app is in local mode (`mode = \"local\"`). Set \
-                 `mode = \"auto\"` and run `rewarden login`.",
+                 `mode = \"auto\"` and run `reins login`.",
             ));
         }
         let Some(server) = crate::server::oauth::logged_in_server(&self.paths) else {
             return Err(unavailable(
-                "Secrets and SSH keys live on your phone: run `rewarden login` to pair this app with it.",
+                "Secrets and SSH keys live on your phone: run `reins login` to pair this app with it.",
             ));
         };
         let mut current = self.current.lock().unwrap_or_else(PoisonError::into_inner);
@@ -285,13 +285,13 @@ pub async fn awaiting<T>(
     let Some(tell) = tell else {
         return decision.await;
     };
-    let line = format!("rewarden: waiting for approval in your Rewarden app: {what}…");
+    let line = format!("reins: waiting for approval in your Reins app: {what}…");
     let t = Arc::clone(&tell);
     let told = tokio::task::spawn_blocking(move || t(&line));
     let r = decision.await;
     told.await.ok();
     if r.is_ok() {
-        tokio::task::spawn_blocking(move || tell("rewarden: approved.")).await.ok();
+        tokio::task::spawn_blocking(move || tell("reins: approved.")).await.ok();
     }
     r
 }

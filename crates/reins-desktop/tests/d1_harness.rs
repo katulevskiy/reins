@@ -1,14 +1,14 @@
-//! `rewarden harness add|remove|list` on temporary home directories: what `add` writes in each harness's format, and
+//! `reins harness add|remove|list` on temporary home directories: what `add` writes in each harness's format, and
 //! that `remove` gives back every file that existed byte for byte and deletes the ones `add` created.
 
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
-use rewarden_desktop::config::Paths;
-use rewarden_desktop::harness::{self, Harness, Setup};
+use reins_desktop::config::Paths;
+use reins_desktop::harness::{self, Harness, Setup};
 use serde_json::{Value, json};
 
-const EXE: &str = "/opt/rewarden/bin/rewarden";
+const EXE: &str = "/opt/reins/bin/reins";
 
 struct Env {
     home: tempfile::TempDir,
@@ -94,7 +94,7 @@ fn on_a_fresh_home_add_writes_each_format_and_remove_leaves_nothing() {
     let claude = env.json(".claude.json");
     assert_eq!(
         claude,
-        json!({"mcpServers": {"rewarden": {"type": "stdio", "command": EXE, "args": args("Claude Code"), "env": {}}}})
+        json!({"mcpServers": {"reins": {"type": "stdio", "command": EXE, "args": args("Claude Code"), "env": {}}}})
     );
     let settings = env.json(".claude/settings.json");
     let pre = &settings["hooks"]["PreToolUse"][0];
@@ -102,9 +102,9 @@ fn on_a_fresh_home_add_writes_each_format_and_remove_leaves_nothing() {
     assert_eq!(pre["hooks"], json!([{"type": "command", "command": hook_cmd("claude-code"), "timeout": 150}]));
 
     let codex: toml::Table = toml::from_str(&std::fs::read_to_string(env.file(".codex/config.toml")).unwrap()).unwrap();
-    assert_eq!(codex["mcp_servers"]["rewarden"]["command"].as_str(), Some(EXE));
+    assert_eq!(codex["mcp_servers"]["reins"]["command"].as_str(), Some(EXE));
     assert_eq!(
-        codex["mcp_servers"]["rewarden"]["args"]
+        codex["mcp_servers"]["reins"]["args"]
             .as_array()
             .unwrap()
             .iter()
@@ -117,7 +117,7 @@ fn on_a_fresh_home_add_writes_each_format_and_remove_leaves_nothing() {
     assert_eq!(codex_hooks["hooks"]["PreToolUse"][0]["hooks"][0]["command"], hook_cmd("codex"));
 
     let gemini = env.json(".gemini/settings.json");
-    assert_eq!(gemini["mcpServers"]["rewarden"], json!({"command": EXE, "args": args("Gemini CLI")}));
+    assert_eq!(gemini["mcpServers"]["reins"], json!({"command": EXE, "args": args("Gemini CLI")}));
     let before = &gemini["hooks"]["BeforeTool"][0];
     assert_eq!(before["matcher"], "^(run_shell_command|write_file|replace|read_file)$");
     assert_eq!(before["hooks"][0]["timeout"], 150_000, "Gemini counts milliseconds");
@@ -125,7 +125,7 @@ fn on_a_fresh_home_add_writes_each_format_and_remove_leaves_nothing() {
 
     assert_eq!(
         env.json(".cursor/mcp.json"),
-        json!({"mcpServers": {"rewarden": {"type": "stdio", "command": EXE, "args": args("Cursor")}}})
+        json!({"mcpServers": {"reins": {"type": "stdio", "command": EXE, "args": args("Cursor")}}})
     );
     let cursor = env.json(".cursor/hooks.json");
     assert_eq!(cursor["version"], 1);
@@ -218,16 +218,16 @@ fn files_that_existed_are_byte_for_byte_the_same_after_remove() {
     // The user's settings are all still there, next to the new entries.
     let claude = env.json(".claude.json");
     assert_eq!(claude["mcpServers"]["github"]["type"], "http");
-    assert_eq!(claude["mcpServers"]["rewarden"]["command"], EXE);
+    assert_eq!(claude["mcpServers"]["reins"]["command"], EXE);
     assert_eq!(claude["userID"], "ü-1");
     let settings = env.json(".claude/settings.json");
     assert_eq!(settings["hooks"]["PreToolUse"].as_array().unwrap().len(), 2);
     assert_eq!(settings["hooks"]["PreToolUse"][0]["matcher"], "Write");
     let codex = std::fs::read_to_string(env.file(".codex/config.toml")).unwrap();
-    assert!(codex.starts_with(CODEX_TOML) && codex.contains("[mcp_servers.rewarden]"), "{codex}");
+    assert!(codex.starts_with(CODEX_TOML) && codex.contains("[mcp_servers.reins]"), "{codex}");
     let gemini = std::fs::read_to_string(env.file(".gemini/settings.json")).unwrap();
     assert!(gemini.contains("// My Gemini settings") && gemini.contains("/* keep */"), "{gemini}");
-    assert!(gemini.contains("\n        \"rewarden\": {\n            \""), "4-space style kept: {gemini}");
+    assert!(gemini.contains("\n        \"reins\": {\n            \""), "4-space style kept: {gemini}");
     assert!(env.file(".codex/hooks.json").exists());
     #[cfg(unix)]
     {
@@ -264,7 +264,7 @@ fn remove_keeps_what_the_harness_or_the_user_added_since() {
 
     env.remove(Harness::ClaudeCode);
     let v = env.json(".claude.json");
-    assert!(v["mcpServers"].get("rewarden").is_none());
+    assert!(v["mcpServers"].get("reins").is_none());
     assert_eq!(v["mcpServers"]["later"]["command"], "x");
     assert_eq!(v["numStartups"], 43);
     let s = env.json(".claude/settings.json");
@@ -274,10 +274,10 @@ fn remove_keeps_what_the_harness_or_the_user_added_since() {
 #[test]
 fn a_different_entry_of_the_same_name_is_not_overwritten() {
     let env = Env::new();
-    let mine = "{\n  \"mcpServers\": {\n    \"rewarden\": {\"type\": \"http\", \"url\": \"https://rw.example.com/mcp\"}\n  }\n}\n";
+    let mine = "{\n  \"mcpServers\": {\n    \"reins\": {\"type\": \"http\", \"url\": \"https://rw.example.com/mcp\"}\n  }\n}\n";
     env.write(".cursor/mcp.json", mine);
     let e = harness::add(&env.paths(), &env.setup(), Harness::Cursor).unwrap_err();
-    assert!(e.contains("already has a different `rewarden`"), "{e}");
+    assert!(e.contains("already has a different `reins`"), "{e}");
     assert_eq!(std::fs::read_to_string(env.file(".cursor/mcp.json")).unwrap(), mine);
     assert!(!env.file(".cursor/hooks.json").exists());
     assert!(env.remove(Harness::Cursor).is_empty());
@@ -297,7 +297,7 @@ fn without_the_record_remove_still_takes_out_this_apps_entries() {
     assert!(!env.remove(Harness::Gemini).is_empty());
     let v = env.json(".gemini/settings.json");
     assert_eq!(v["theme"], "x");
-    assert!(v["mcpServers"].get("rewarden").is_none());
+    assert!(v["mcpServers"].get("reins").is_none());
     assert_eq!(v["hooks"]["BeforeTool"], json!([]));
 }
 
@@ -311,7 +311,7 @@ fn a_symlinked_settings_file_is_edited_where_it_lives() {
     std::os::unix::fs::symlink(dotfiles.join("claude.json"), env.file(".claude.json")).unwrap();
     env.add(Harness::ClaudeCode);
     assert!(std::fs::symlink_metadata(env.file(".claude.json")).unwrap().file_type().is_symlink());
-    assert!(std::fs::read_to_string(dotfiles.join("claude.json")).unwrap().contains("rewarden"));
+    assert!(std::fs::read_to_string(dotfiles.join("claude.json")).unwrap().contains("reins"));
     env.remove(Harness::ClaudeCode);
     assert_eq!(std::fs::read_to_string(dotfiles.join("claude.json")).unwrap(), "{}\n");
 }
@@ -320,12 +320,12 @@ fn a_symlinked_settings_file_is_edited_where_it_lives() {
 fn the_command_line_uses_home_and_this_program() {
     let env = Env::new();
     let run = |args: &[&str]| {
-        let out = std::process::Command::new(env!("CARGO_BIN_EXE_rewarden"))
+        let out = std::process::Command::new(env!("CARGO_BIN_EXE_reins"))
             .args(args)
             .env("HOME", env.home.path())
             .env("USERPROFILE", env.home.path())
-            .env("REWARDEN_CONFIG_DIR", env.state.path().join("config"))
-            .env("REWARDEN_STATE_DIR", env.state.path().join("state"))
+            .env("REINS_CONFIG_DIR", env.state.path().join("config"))
+            .env("REINS_STATE_DIR", env.state.path().join("state"))
             .output()
             .unwrap();
         assert!(out.status.success(), "{args:?}: {}", String::from_utf8_lossy(&out.stderr));
@@ -333,8 +333,8 @@ fn the_command_line_uses_home_and_this_program() {
     };
     let said = run(&["harness", "add", "cursor"]);
     assert!(said.contains("~/.cursor/mcp.json") && said.contains("Restart Cursor"), "{said}");
-    let exe = rewarden_desktop::win::strip_verbatim(&std::fs::canonicalize(env!("CARGO_BIN_EXE_rewarden")).unwrap());
-    assert_eq!(env.json(".cursor/mcp.json")["mcpServers"]["rewarden"]["command"], exe.display().to_string());
+    let exe = reins_desktop::win::strip_verbatim(&std::fs::canonicalize(env!("CARGO_BIN_EXE_reins")).unwrap());
+    assert_eq!(env.json(".cursor/mcp.json")["mcpServers"]["reins"]["command"], exe.display().to_string());
     let listed = run(&["harness", "list"]);
     assert!(listed.contains("cursor") && listed.contains("MCP server: yes (~/.cursor/mcp.json)"), "{listed}");
     assert!(listed.contains("claude-code"), "{listed}");

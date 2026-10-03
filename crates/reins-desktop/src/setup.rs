@@ -1,4 +1,4 @@
-//! `rewarden git setup`: points git at the proxy with `url.<proxy>.insteadOf` rules for each enabled git host's URL
+//! `reins git setup`: points git at the proxy with `url.<proxy>.insteadOf` rules for each enabled git host's URL
 //! forms (`https://gitlab.com/`, `git@gitlab.com:`, `ssh://git@gitlab.com/`), in the global git config or one
 //! repository's. Setting up twice changes nothing; `unsetup` removes exactly those rules (for any loopback proxy
 //! address, so a changed port does not leave old rules behind) and nothing else.

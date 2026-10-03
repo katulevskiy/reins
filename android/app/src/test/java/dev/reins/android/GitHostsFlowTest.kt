@@ -1,4 +1,4 @@
-package dev.rewarden.android
+package dev.reins.android
 
 import android.content.ClipData
 import android.content.ClipboardManager
@@ -48,7 +48,7 @@ class GitHostsFlowTest : FlowHarness() {
         openService("gitlab")
         tap("openTokenPage")
         val url = opened().dataString!!
-        assertTrue(url, Regex("https://gitlab\\.com/-/user_settings/personal_access_tokens\\?name=Rewarden-\\d{6}&scopes=read_api,read_repository,write_repository").matches(url))
+        assertTrue(url, Regex("https://gitlab\\.com/-/user_settings/personal_access_tokens\\?name=Reins-\\d{6}&scopes=read_api,read_repository,write_repository").matches(url))
         tap("pasteManually")
         rule.onNodeWithTag("connectSecret").assertIsNotEnabled()
         rule.onNodeWithTag("secret").performTextReplacement("glpat-abcdefghijklmnopqrst")

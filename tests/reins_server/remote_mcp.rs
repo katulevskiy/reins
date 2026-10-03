@@ -1,5 +1,5 @@
 //! Universal MCP against the real server: tools from the phone's report, calls relayed as `ToolCall::Mcp` with results
-//! passed through, `rewarden_upload`, the `X-Rewarden-Via` label, and `POST /rewarden/api/mcp/call`.
+//! passed through, `reins_upload`, the `X-Reins-Via` label, and `POST /reins/api/mcp/call`.
 
 use data_encoding::BASE64;
 use reqwest::StatusCode;
@@ -75,7 +75,7 @@ async fn tools_of_the_phones_mcp_servers_are_listed_relayed_and_answered_as_they
     let listed = names(&list);
     let mcp: Vec<&String> = listed.iter().filter(|n| n.contains("__")).collect();
     assert_eq!(mcp, ["linear__search_issues", "linear__delete_issue"], "invalid servers are dropped");
-    assert!(listed.iter().any(|n| n == "rewarden_upload") && listed.iter().any(|n| n == "github_list_repos"));
+    assert!(listed.iter().any(|n| n == "reins_upload") && listed.iter().any(|n| n == "github_list_repos"));
     let search =
         list["result"]["tools"].as_array().unwrap().iter().find(|t| t["name"] == "linear__search_issues").unwrap();
     assert_eq!(
@@ -94,7 +94,7 @@ async fn tools_of_the_phones_mcp_servers_are_listed_relayed_and_answered_as_they
     let ai = rpc(
         &server,
         &tokens.access,
-        &[("X-Rewarden-Via", "  Claude\tCode  ")],
+        &[("X-Reins-Via", "  Claude\tCode  ")],
         "tools/call",
         json!({"name": "linear__search_issues", "arguments": {"q": "bug"}}),
     );
@@ -131,17 +131,17 @@ async fn tools_of_the_phones_mcp_servers_are_listed_relayed_and_answered_as_they
 }
 
 #[tokio::test]
-async fn rewarden_upload_asks_the_phone_for_an_upload_link() {
+async fn reins_upload_asks_the_phone_for_an_upload_link() {
     let (server, phone, tokens) = connected(false).await;
     let ai = rpc(
         &server,
         &tokens.access,
         &[],
         "tools/call",
-        json!({"name": "rewarden_upload", "arguments": {"name": "build.zip", "size": 5_000_000, "reason": "Attach the build"}}),
+        json!({"name": "reins_upload", "arguments": {"name": "build.zip", "size": 5_000_000, "reason": "Attach the build"}}),
     );
     let ready = json!({"v": 1, "outcome": "result", "result": {"kind": "connector", "data": {"status": "upload_ready",
-        "upload_url": "https://rw.example/rewarden/blob/x"}}});
+        "upload_url": "https://rw.example/reins/blob/x"}}});
     let (reply, request) = tokio::join!(ai, answer_next(&phone, ready));
     assert_eq!(
         request["call"],
@@ -149,7 +149,7 @@ async fn rewarden_upload_asks_the_phone_for_an_upload_link() {
     );
     assert_eq!(reply["result"]["structuredContent"]["status"], "upload_ready");
     let invalid =
-        rpc(&server, &tokens.access, &[], "tools/call", json!({"name": "rewarden_upload", "arguments": {"name": "x"}}))
+        rpc(&server, &tokens.access, &[], "tools/call", json!({"name": "reins_upload", "arguments": {"name": "x"}}))
             .await;
     assert_eq!(invalid["result"]["isError"], true);
 }

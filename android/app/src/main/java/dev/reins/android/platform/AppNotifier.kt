@@ -1,4 +1,4 @@
-package dev.rewarden.android.platform
+package dev.reins.android.platform
 
 import android.app.Notification
 import android.app.NotificationChannel
@@ -8,24 +8,24 @@ import android.content.Context
 import android.content.Intent
 import android.media.AudioAttributes
 import android.net.Uri
-import dev.rewarden.android.MainActivity
-import dev.rewarden.android.BuildConfig
-import dev.rewarden.android.R
-import dev.rewarden.android.feedback.CueCategory
-import dev.rewarden.android.feedback.Event
-import dev.rewarden.android.feedback.Feedback
-import dev.rewarden.android.feedback.FeedbackSettings
-import dev.rewarden.android.feedback.NoFeedback
-import dev.rewarden.android.feedback.play
-import dev.rewarden.android.autopilot.AutopilotText
-import dev.rewarden.android.ui.common.fullTitle
-import dev.rewarden.android.ui.common.untrusted
-import dev.rewarden.core.AutoDecisionView
-import dev.rewarden.core.AutopilotEvent
-import dev.rewarden.core.Notifier
-import dev.rewarden.core.PendingItem
-import dev.rewarden.core.PendingKind
-import dev.rewarden.core.Verdict
+import dev.reins.android.MainActivity
+import dev.reins.android.BuildConfig
+import dev.reins.android.R
+import dev.reins.android.feedback.CueCategory
+import dev.reins.android.feedback.Event
+import dev.reins.android.feedback.Feedback
+import dev.reins.android.feedback.FeedbackSettings
+import dev.reins.android.feedback.NoFeedback
+import dev.reins.android.feedback.play
+import dev.reins.android.autopilot.AutopilotText
+import dev.reins.android.ui.common.fullTitle
+import dev.reins.android.ui.common.untrusted
+import dev.reins.core.AutoDecisionView
+import dev.reins.core.AutopilotEvent
+import dev.reins.core.Notifier
+import dev.reins.core.PendingItem
+import dev.reins.core.PendingKind
+import dev.reins.core.Verdict
 
 /**
  * Local notifications for items that wait for the user. The core calls this from its own threads, so everything
@@ -102,7 +102,7 @@ class AppNotifier(
     fun createChannels() {
         migrateChannels(manager)
         Kind.entries.forEach { channel(it) }
-        if (BuildConfig.SELF_UPDATE) dev.rewarden.android.platform.update.UpdateNotifier.createChannel(manager)
+        if (BuildConfig.SELF_UPDATE) dev.reins.android.platform.update.UpdateNotifier.createChannel(manager)
     }
 
     /** The channel for [kind] as the in-app switches stand now; [silent] forces the quiet one. */
@@ -126,7 +126,7 @@ class AppNotifier(
         }
         val public = Notification.Builder(context, channel)
             .setSmallIcon(R.drawable.ic_notification)
-            .setContentTitle("Rewarden")
+            .setContentTitle("Reins")
             .setContentText("Something is waiting for you")
             .build()
         val notification = Notification.Builder(context, channel)
@@ -172,7 +172,7 @@ class AppNotifier(
         val public = Notification.Builder(context, channel)
             .setSmallIcon(R.drawable.ic_notification)
             .setContentTitle(title)
-            .setContentText("Open Rewarden to see what it was")
+            .setContentText("Open Reins to see what it was")
             .build()
         val open = decision.activityId?.let { openActivity(it) } ?: openApp()
         val builder = Notification.Builder(context, channel)
@@ -327,7 +327,7 @@ class AppNotifier(
         val notification = Notification.Builder(context, channel(Kind.Status, silent = inFront))
             .setSmallIcon(R.drawable.ic_notification)
             .setContentTitle("This phone is no longer your approval device")
-            .setContentText("Another phone took over. Open Rewarden to register this one again.")
+            .setContentText("Another phone took over. Open Reins to register this one again.")
             .setAutoCancel(true)
             .setContentIntent(openApp())
             .build()
@@ -392,16 +392,16 @@ class AppNotifier(
         /** The unversioned channels of builds without chimes. */
         private val LEGACY_CHANNELS = setOf("approvals", "grants", "status")
 
-        const val ACTION_OPEN_ITEM = "dev.rewarden.android.OPEN_ITEM"
+        const val ACTION_OPEN_ITEM = "dev.reins.android.OPEN_ITEM"
         const val EXTRA_KIND = "kind"
         const val EXTRA_ID = "id"
         const val KIND_REQUEST = "request"
         const val KIND_PAIRING = "pairing"
         const val KIND_BLOB = "blob"
         const val KIND_JOIN = "join"
-        const val ACTION_OPEN_ACTIVITY = "dev.rewarden.android.OPEN_ACTIVITY"
+        const val ACTION_OPEN_ACTIVITY = "dev.reins.android.OPEN_ACTIVITY"
         const val EXTRA_ACTIVITY_ID = "activity"
-        const val ACTION_OPEN_AUTOPILOT = "dev.rewarden.android.OPEN_AUTOPILOT"
+        const val ACTION_OPEN_AUTOPILOT = "dev.reins.android.OPEN_AUTOPILOT"
         private const val REPLACED_ID = 1
         const val AUTOPILOT_SUMMARY_ID = 2
         const val BYPASS_ID = 3
@@ -412,7 +412,7 @@ class AppNotifier(
         /** The settings group of Autopilot's channels, and the group its notifications fold into. */
         const val GROUP_AUTOPILOT = "autopilot"
 
-        /** The bypass notification's accent: Rewarden's danger red. */
+        /** The bypass notification's accent: Reins's danger red. */
         private const val BYPASS_RED = 0xFFDC2626.toInt()
 
         /** A channel id, e.g. `approvals-v2-sv` (sound and vibration), `-s`, `-v` or `-q` (quiet). */

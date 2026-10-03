@@ -14,7 +14,7 @@ use crate::CoreError;
 const PLAIN_HTTP_HOSTS: [&str; 4] = ["localhost", "127.0.0.1", "10.0.2.2", "[::1]"];
 const MAX_ERROR_TEXT: usize = 200;
 
-/// A validated Rewarden server base URL, without a trailing slash.
+/// A validated Reins server base URL, without a trailing slash.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ServerUrl(String);
 
@@ -66,7 +66,7 @@ pub fn client() -> Result<reqwest::Client, CoreError> {
         .redirect(reqwest::redirect::Policy::none())
         .connect_timeout(Duration::from_secs(10))
         .timeout(Duration::from_secs(60))
-        .user_agent(concat!("rewarden-core/", env!("CARGO_PKG_VERSION")))
+        .user_agent(concat!("reins-core/", env!("CARGO_PKG_VERSION")))
         .build()
         .map_err(|e| CoreError::storage(format!("HTTP client setup: {}", e.without_url())))
 }
@@ -104,7 +104,7 @@ struct ErrorBody {
     error_description: Option<String>,
 }
 
-/// `(error code, human message)` from a Vaultwarden or Rewarden error body.
+/// `(error code, human message)` from a Vaultwarden or Reins error body.
 pub fn error_text(status: reqwest::StatusCode, body: &str) -> (String, String) {
     let parsed: Option<ErrorBody> = serde_json::from_str(body).ok();
     let code = parsed.as_ref().and_then(|b| b.error.clone()).unwrap_or_default();

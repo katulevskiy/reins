@@ -7,9 +7,9 @@
 
 use data_encoding::BASE64URL_NOPAD;
 use mail_parser::MessageParser;
-use rewarden_policy::MessageFacts;
-use rewarden_proto::gmail::{MessageFull, MessageSummary};
-use rewarden_proto::normalize_address;
+use reins_policy::MessageFacts;
+use reins_proto::gmail::{MessageFull, MessageSummary};
+use reins_proto::normalize_address;
 
 use super::model::{GmailMessage, Header, Part};
 use crate::text;

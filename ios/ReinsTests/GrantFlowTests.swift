@@ -24,7 +24,7 @@ final class GrantFlowTests: XCTestCase {
     private let feedback = RecordingFeedback()
 
     private func model() async -> AppModel {
-        let core = DemoRewardenCore(signedIn: true, modelInstalled: true, syncCap: 0.3)
+        let core = DemoReinsCore(signedIn: true, modelInstalled: true, syncCap: 0.3)
         let m = AppModel(core: core, feedback: feedback, authenticator: auth, demo: true)
         m.autoPopup = false
         await m.refreshPending()

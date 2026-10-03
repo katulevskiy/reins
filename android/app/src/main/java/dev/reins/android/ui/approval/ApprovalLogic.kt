@@ -1,10 +1,10 @@
-package dev.rewarden.android.ui.approval
+package dev.reins.android.ui.approval
 
-import dev.rewarden.core.ApprovalChoice
-import dev.rewarden.core.ApprovalKind
-import dev.rewarden.core.ApprovalView
-import dev.rewarden.core.GrantScopeChoice
-import dev.rewarden.core.StandingGrant
+import dev.reins.core.ApprovalChoice
+import dev.reins.core.ApprovalKind
+import dev.reins.core.ApprovalView
+import dev.reins.core.GrantScopeChoice
+import dev.reins.core.StandingGrant
 
 /** Lifetime choices of the approval screen: Once · 1 h · 24 h · 7 days · until revoked · N uses. */
 enum class LifetimeKind(val label: String, val seconds: Long?) {

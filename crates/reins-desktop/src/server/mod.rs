@@ -1,4 +1,4 @@
-//! The Rewarden server: logging in (OAuth with the phone's approval, the app's key pinned on the phone) and the desktop
+//! The Reins server: logging in (OAuth with the phone's approval, the app's key pinned on the phone) and the desktop
 //! API git access requests go through.
 
 pub mod client;
@@ -9,10 +9,10 @@ use crypto_box::aead::OsRng;
 use crypto_box::aead::rand_core::RngCore as _;
 use data_encoding::BASE64URL_NOPAD;
 
-/// Why talking to the Rewarden server did not work.
+/// Why talking to the Reins server did not work.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum LinkError {
-    /// No session, or the server ended it (the refresh token was refused): `rewarden login` again.
+    /// No session, or the server ended it (the refresh token was refused): `reins login` again.
     LoggedOut(String),
     /// The server does not know the request (unknown, expired, or another connection's).
     NotFound,
@@ -24,12 +24,12 @@ impl std::fmt::Display for LinkError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             Self::LoggedOut(m) | Self::Failed(m) => f.write_str(m),
-            Self::NotFound => f.write_str("the Rewarden server does not know this request"),
+            Self::NotFound => f.write_str("the Reins server does not know this request"),
         }
     }
 }
 
-/// The base URL of a Rewarden server as the user typed it: https, or http only on this computer (localhost,
+/// The base URL of a Reins server as the user typed it: https, or http only on this computer (localhost,
 /// 127.0.0.1, [::1]); no credentials, query or fragment. A bare host name means https. No trailing slash.
 pub fn server_base(raw: &str) -> Result<String, String> {
     let raw = raw.trim();
@@ -105,7 +105,7 @@ mod tests {
     fn server_addresses_are_https_or_local_http() {
         assert_eq!(server_base("https://rw.example.com/").unwrap(), "https://rw.example.com");
         assert_eq!(server_base("rw.example.com").unwrap(), "https://rw.example.com");
-        assert_eq!(server_base("https://example.com/rewarden/").unwrap(), "https://example.com/rewarden");
+        assert_eq!(server_base("https://example.com/reins/").unwrap(), "https://example.com/reins");
         assert_eq!(server_base("http://127.0.0.1:8080").unwrap(), "http://127.0.0.1:8080");
         assert_eq!(server_base("http://localhost:8080/").unwrap(), "http://localhost:8080");
         assert_eq!(server_base("http://[::1]:8080").unwrap(), "http://[::1]:8080");

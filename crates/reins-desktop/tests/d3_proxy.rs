@@ -7,12 +7,12 @@ use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use proxy_support::{Home, Proxy, TOKEN, Upstream, config, raw_http, token_basic};
-use rewarden_desktop::auth::prompt::NoPrompter;
-use rewarden_desktop::auth::{Authorizer, Credential, Refusal, Repo};
-use rewarden_desktop::config::{Config, HostEntry};
-use rewarden_desktop::daemon::Options;
-use rewarden_desktop::setup::{Git, Scope};
-use rewarden_proto::desktop::{PushSummary, fetch_tool_for};
+use reins_desktop::auth::prompt::NoPrompter;
+use reins_desktop::auth::{Authorizer, Credential, Refusal, Repo};
+use reins_desktop::config::{Config, HostEntry};
+use reins_desktop::daemon::Options;
+use reins_desktop::setup::{Git, Scope};
+use reins_proto::desktop::{PushSummary, fetch_tool_for};
 
 /// One question as the phone would get it.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -55,7 +55,7 @@ fn credential() -> Credential {
     Credential {
         username: "x-access-token".to_owned(),
         token: zeroize::Zeroizing::new(TOKEN.to_owned()),
-        expires_at: rewarden_desktop::now_unix() + 600,
+        expires_at: reins_desktop::now_unix() + 600,
     }
 }
 
@@ -229,7 +229,7 @@ async fn the_waiting_notice_names_the_host() {
     // The daemon tells the client through /proc (Linux only; elsewhere it says nothing, see notice.rs).
     if cfg!(target_os = "linux") {
         assert!(
-            clone.stderr.contains("rewarden: waiting for approval: read gitlab.com/group/sub/app…"),
+            clone.stderr.contains("reins: waiting for approval: read gitlab.com/group/sub/app…"),
             "{}",
             clone.all()
         );

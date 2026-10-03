@@ -11,10 +11,10 @@ mod folder;
 mod group;
 mod org_policy;
 mod organization;
-mod rewarden_client;
-mod rewarden_connection;
-mod rewarden_device;
-pub mod rewarden_workos;
+mod reins_client;
+mod reins_connection;
+mod reins_device;
+pub mod reins_workos;
 mod send;
 mod sso_auth;
 mod two_factor;
@@ -38,10 +38,10 @@ pub use self::organization::{
     Membership, MembershipId, MembershipStatus, MembershipType, OrgApiKeyId, Organization, OrganizationApiKey,
     OrganizationId,
 };
-pub use self::rewarden_client::RewardenClient;
-pub use self::rewarden_connection::{RewardenConnection, RewardenRefreshToken};
-pub use self::rewarden_device::RewardenDevice;
-pub use self::rewarden_workos::{RewardenSetting, RewardenSsoSession};
+pub use self::reins_client::ReinsClient;
+pub use self::reins_connection::{ReinsConnection, ReinsRefreshToken};
+pub use self::reins_device::ReinsDevice;
+pub use self::reins_workos::{ReinsSetting, ReinsSsoSession};
 pub use self::send::{Send, SendFileId, SendId, SendType};
 pub use self::sso_auth::{OIDCAuthenticatedUser, OIDCCodeResponseError, SsoAuth};
 pub use self::two_factor::{TwoFactor, TwoFactorType};

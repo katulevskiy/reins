@@ -10,7 +10,7 @@ final class AutopilotFlowTests: XCTestCase {
     private var owner: AnswerAuthenticator!
     private var network: FakeNetwork!
     private var surroundings: FakeSurroundings!
-    private var core: DemoRewardenCore!
+    private var core: DemoReinsCore!
     private var model: AppModel!
     private var ap: AutopilotModel!
 
@@ -19,7 +19,7 @@ final class AutopilotFlowTests: XCTestCase {
         owner = AnswerAuthenticator()
         network = FakeNetwork()
         surroundings = FakeSurroundings()
-        core = DemoRewardenCore(modelInstalled: modelInstalled, syncCap: 0.3)
+        core = DemoReinsCore(modelInstalled: modelInstalled, syncCap: 0.3)
         let downloads = ModelDownloads(core: core, feedback: feedback, network: network, surroundings: surroundings)
         model = AppModel(core: core, feedback: feedback, authenticator: owner, demo: true, modelDownloads: downloads)
         await model.refreshSession()

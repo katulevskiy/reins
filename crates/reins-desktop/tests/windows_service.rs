@@ -1,30 +1,30 @@
-//! Windows only: the windowless copy of the real `rewarden.exe` runs, and the background service (the user's `Run` key,
-//! the copy, the daemon started at once, its log) comes and goes with `rewarden resume` and `rewarden service
+//! Windows only: the windowless copy of the real `reins.exe` runs, and the background service (the user's `Run` key,
+//! the copy, the daemon started at once, its log) comes and goes with `reins resume` and `reins service
 //! uninstall`. The service test writes the real `HKCU\…\Run\Reins` value, so it only runs when
-//! `REWARDEN_TEST_WINDOWS_SERVICE=1` (the CI job sets it; a developer's own installation would be replaced).
+//! `REINS_TEST_WINDOWS_SERVICE=1` (the CI job sets it; a developer's own installation would be replaced).
 #![cfg(windows)]
 
 use std::path::Path;
 use std::process::{Command, Output};
 use std::time::{Duration, Instant};
 
-use rewarden_desktop::win;
+use reins_desktop::win;
 
-const EXE: &str = env!("CARGO_BIN_EXE_rewarden");
+const EXE: &str = env!("CARGO_BIN_EXE_reins");
 
 #[test]
-fn the_windowless_copy_of_rewarden_still_runs() {
+fn the_windowless_copy_of_reins_still_runs() {
     let bytes = std::fs::read(EXE).unwrap();
     assert_eq!(win::pe_subsystem(&bytes), Some(win::SUBSYSTEM_CONSOLE));
     let gui = win::gui_copy(&bytes).unwrap();
     assert_eq!(win::pe_subsystem(&gui), Some(win::SUBSYSTEM_GUI));
     let dir = tempfile::tempdir().unwrap();
-    let copy = dir.path().join("rewarden-daemon.exe");
+    let copy = dir.path().join("reins-daemon.exe");
     std::fs::write(&copy, gui).unwrap();
     // A GUI program has no console, but writes to the pipes it is given.
     let out = Command::new(&copy).arg("--version").output().unwrap();
     assert!(out.status.success(), "{out:?}");
-    assert!(String::from_utf8_lossy(&out.stdout).starts_with("rewarden "), "{out:?}");
+    assert!(String::from_utf8_lossy(&out.stdout).starts_with("reins "), "{out:?}");
 }
 
 fn text(o: &Output) -> String {
@@ -33,8 +33,8 @@ fn text(o: &Output) -> String {
 
 #[test]
 fn the_background_service_starts_at_once_and_goes_away_again() {
-    if std::env::var_os("REWARDEN_TEST_WINDOWS_SERVICE").is_none() {
-        eprintln!("skipped: set REWARDEN_TEST_WINDOWS_SERVICE=1 (writes HKCU\\...\\Run\\Reins)");
+    if std::env::var_os("REINS_TEST_WINDOWS_SERVICE").is_none() {
+        eprintln!("skipped: set REINS_TEST_WINDOWS_SERVICE=1 (writes HKCU\\...\\Run\\Reins)");
         return;
     }
     let dir = tempfile::tempdir().unwrap();
@@ -52,8 +52,8 @@ fn the_background_service_starts_at_once_and_goes_away_again() {
             .env("USERPROFILE", &home)
             .env("GIT_CONFIG_GLOBAL", home.join(".gitconfig"))
             .env("GIT_CONFIG_NOSYSTEM", "1")
-            .env("REWARDEN_CONFIG_DIR", &config)
-            .env("REWARDEN_STATE_DIR", &state)
+            .env("REINS_CONFIG_DIR", &config)
+            .env("REINS_STATE_DIR", &state)
             .output()
             .unwrap()
     };
@@ -64,7 +64,7 @@ fn the_background_service_starts_at_once_and_goes_away_again() {
         panic!("resume: {}", text(&resumed));
     }
     assert!(text(&resumed).contains("Started the background service"), "{}", text(&resumed));
-    assert!(text(&resumed).contains("through Rewarden"), "{}", text(&resumed));
+    assert!(text(&resumed).contains("through Reins"), "{}", text(&resumed));
 
     let deadline = Instant::now() + Duration::from_secs(20);
     let status = loop {
@@ -74,7 +74,7 @@ fn the_background_service_starts_at_once_and_goes_away_again() {
         }
         std::thread::sleep(Duration::from_millis(200));
     };
-    let daemon = state.join("rewarden-daemon.exe");
+    let daemon = state.join("reins-daemon.exe");
     let checks = || {
         assert!(status.contains("running on 127.0.0.1:"), "{status}");
         assert!(status.contains("Service:       starts at logon"), "{status}");

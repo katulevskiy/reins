@@ -216,7 +216,7 @@ impl Endpoint<'_> {
             let params = json!({
                 "protocolVersion": version,
                 "capabilities": {},
-                "clientInfo": {"name": "Rewarden", "version": env!("CARGO_PKG_VERSION")},
+                "clientInfo": {"name": "Reins", "version": env!("CARGO_PKG_VERSION")},
             });
             let (result, session_id) = match self.call(None, "initialize", params).await {
                 Ok(answer) => answer,

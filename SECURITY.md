@@ -7,16 +7,16 @@ possible. We take reports seriously and are grateful to everyone who helps keep 
 
 In scope: the current release and the default branch of everything in this repository.
 
-* **Server and relay** (`src/`, in particular `src/api/rewarden/`): the MCP endpoint and OAuth for AI connections,
+* **Server and relay** (`src/`, in particular `src/api/reins/`): the MCP endpoint and OAuth for AI connections,
   the relay between AIs, phones and desktops, pairing, blob storage, push notifications, and the vault server.
-* **Phone app** (`android/`) and its **core** (`crates/rewarden-core`): sealed storage of connector tokens and vault
+* **Phone app** (`android/`) and its **core** (`crates/reins-core`): sealed storage of connector tokens and vault
   keys, approval and standing-permission logic, the connectors (Gmail, GitHub and other git hosts, Telegram, calendar,
   contacts, SMS, the vault, MCP servers), and the in-app updater.
-* **Desktop app and daemon** (`crates/rewarden-desktop`): login and key pinning, the git, SSH-agent and API proxies,
-  `rewarden ask`/`run`, harness hooks, the local MCP server, release signing and `rewarden update`, `scripts/install.sh`, `scripts/install.ps1`.
-* **Protocol and policy** (`crates/rewarden-proto`, `crates/rewarden-policy`): anything that lets a request do more
+* **Desktop app and daemon** (`crates/reins-desktop`): login and key pinning, the git, SSH-agent and API proxies,
+  `reins ask`/`run`, harness hooks, the local MCP server, release signing and `reins update`, `scripts/install.sh`, `scripts/install.ps1`.
+* **Protocol and policy** (`crates/reins-proto`, `crates/reins-policy`): anything that lets a request do more
   than the user approved.
-* **Autopilot** (`crates/rewarden-core/src/autopilot`, `crates/rewarden-laya`, `tools/laya`): ways to make the
+* **Autopilot** (`crates/reins-core/src/autopilot`, `crates/reins-laya`, `tools/laya`): ways to make the
   model approve what it should not (prompt injection through AI-written text, crafted targets or content), to bypass
   the hard floor, the modes or the rate limits, to tamper with the downloaded model (its pinned hashes), or to poison
   what it learns from the user's decisions.

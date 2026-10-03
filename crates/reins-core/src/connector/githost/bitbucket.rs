@@ -1,10 +1,10 @@
-//! Bitbucket (bitbucket.org). App passwords are retired; Rewarden uses an Atlassian API token for Bitbucket with the
+//! Bitbucket (bitbucket.org). App passwords are retired; Reins uses an Atlassian API token for Bitbucket with the
 //! scopes `read:user:bitbucket` (who it is), `read:repository:bitbucket` (fetch) and `write:repository:bitbucket`
 //! (push). The REST API takes it with HTTP basic auth and the Atlassian account email, so it is pasted as
 //! `email:token`. Git over HTTPS takes it with the fixed user name `x-bitbucket-api-token-auth` (Bitbucket's own user
 //! names are case sensitive there; the fixed one is not a guess).
 
-use rewarden_proto::connector::BITBUCKET;
+use reins_proto::connector::BITBUCKET;
 use serde_json::Value;
 use zeroize::Zeroizing;
 

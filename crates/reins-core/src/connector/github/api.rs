@@ -6,8 +6,8 @@
 //! The path is checked before anything else: it is a plain absolute path on the API host (no scheme, host, `//`, `..`
 //! or `.` segment, no encoded slash or dot, no query or fragment, no control or non-ASCII character).
 
+use reins_proto::connector::ConnectorCall;
 use reqwest::Method;
-use rewarden_proto::connector::ConnectorCall;
 use serde_json::{Map, Value, json};
 
 use super::{GitHub, Options, Preview, owner_ok, parents, ref_ok, repo_ok, resource, resource_label};

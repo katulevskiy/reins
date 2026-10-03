@@ -1,4 +1,4 @@
-package dev.rewarden.android.design
+package dev.reins.android.design
 
 import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.core.animateFloatAsState
@@ -60,11 +60,11 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
-import dev.rewarden.android.feedback.DialogFeedback
-import dev.rewarden.android.feedback.Event
-import dev.rewarden.android.feedback.LocalFeedback
-import dev.rewarden.android.feedback.defaultTap
-import dev.rewarden.android.feedback.play
+import dev.reins.android.feedback.DialogFeedback
+import dev.reins.android.feedback.Event
+import dev.reins.android.feedback.LocalFeedback
+import dev.reins.android.feedback.defaultTap
+import dev.reins.android.feedback.play
 
 /**
  * Press feedback without Material ripples: the element dims (or a fill appears behind it) while the finger is down, and

@@ -1,4 +1,4 @@
-//! On Windows, puts the Reins icon into `Reins.exe` (resource ID 1, which GPUI uses for the window and taskbar).
+//! On Windows, puts the Reins icon into `reins-app.exe` (resource ID 1, which GPUI uses for the window and taskbar).
 
 fn main() {
     println!("cargo:rerun-if-changed=packaging/windows/Reins.rc");

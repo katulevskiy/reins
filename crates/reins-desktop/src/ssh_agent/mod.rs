@@ -1,11 +1,11 @@
 //! An SSH agent whose keys stay on the phone. ssh (via `IdentityAgent` in `~/.ssh/config`, see [`setup`]) asks this
-//! agent on a unix socket (`$XDG_RUNTIME_DIR/rewarden/ssh-agent.sock`, 0600, this user only) for identities, which come
+//! agent on a unix socket (`$XDG_RUNTIME_DIR/reins/ssh-agent.sock`, 0600, this user only) for identities, which come
 //! from `vault_ssh_keys` (kept a few minutes), and for signatures, which the phone makes after the user approved them
 //! (`vault_ssh_sign`, sealed to this app). ssh's `session-bind@openssh.com` tells the agent which server it is
 //! talking to (its host key, checked against the key exchange signature), and `~/.ssh/known_hosts` its name when the
 //! entry is not hashed; the phone shows both. While the phone decides, the ssh process is told so on its stderr.
 //!
-//! On Windows the agent listens on a named pipe instead (`\\.\pipe\rewarden-ssh-agent-<id>`, as Windows' own OpenSSH
+//! On Windows the agent listens on a named pipe instead (`\\.\pipe\reins-ssh-agent-<id>`, as Windows' own OpenSSH
 //! agent does on `\\.\pipe\openssh-ssh-agent`). It is created as the first instance of its name (no other program can
 //! have taken the name before), refuses remote clients, and keeps Windows' default access list for pipes: only this
 //! user, the administrators and SYSTEM may write to it, so no other user can send it a request.
@@ -19,7 +19,7 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use data_encoding::{BASE64, BASE64URL_NOPAD};
-use rewarden_proto::desktop::SshSignature;
+use reins_proto::desktop::SshSignature;
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 
@@ -55,7 +55,7 @@ const SESSION_BIND: &str = "session-bind@openssh.com";
 pub struct SshConfig {
     /// Whether the daemon runs the SSH agent.
     pub enabled: bool,
-    /// The agent's socket; by default `$XDG_RUNTIME_DIR/rewarden/ssh-agent.sock`, else in the state directory. On
+    /// The agent's socket; by default `$XDG_RUNTIME_DIR/reins/ssh-agent.sock`, else in the state directory. On
     /// Windows a named pipe, `\\.\pipe\…`.
     pub socket: Option<PathBuf>,
     /// Where server names are looked up; by default `~/.ssh/known_hosts` and `~/.ssh/known_hosts2`.
@@ -100,8 +100,8 @@ impl SshConfig {
     }
 }
 
-/// Where the agent listens: `ssh.socket`; else, for the app's usual state directory, `$XDG_RUNTIME_DIR/rewarden/`;
-/// else (`REWARDEN_STATE_DIR` or another state directory, as in tests, or no runtime directory) the state directory,
+/// Where the agent listens: `ssh.socket`; else, for the app's usual state directory, `$XDG_RUNTIME_DIR/reins/`;
+/// else (`REINS_STATE_DIR` or another state directory, as in tests, or no runtime directory) the state directory,
 /// so a second instance never takes over the usual socket. On Windows the named pipe of the state directory
 /// ([`crate::win::ssh_pipe`]).
 #[must_use]
@@ -112,10 +112,10 @@ pub fn socket_path(paths: &Paths, config: &SshConfig) -> PathBuf {
     if cfg!(windows) {
         return crate::win::ssh_pipe(&paths.state_dir);
     }
-    let usual = std::env::var_os("REWARDEN_STATE_DIR").is_none_or(|d| d.is_empty())
+    let usual = std::env::var_os("REINS_STATE_DIR").is_none_or(|d| d.is_empty())
         && Paths::from_env().is_ok_and(|p| p.state_dir == paths.state_dir);
     match std::env::var_os("XDG_RUNTIME_DIR").filter(|d| !d.is_empty()) {
-        Some(run) if usual => PathBuf::from(run).join("rewarden").join(SOCKET_NAME),
+        Some(run) if usual => PathBuf::from(run).join("reins").join(SOCKET_NAME),
         _ => paths.state_dir.join(SOCKET_NAME),
     }
 }
@@ -263,7 +263,7 @@ impl Agent {
                 Err(r) => {
                     log::info!("ssh agent: signature refused: {}", r.message());
                     if let Some(tell) = Self::tell(session) {
-                        let line = format!("rewarden: {}", r.message());
+                        let line = format!("reins: {}", r.message());
                         tokio::task::spawn_blocking(move || tell(&line)).await.ok();
                     }
                     failure()
@@ -282,7 +282,7 @@ impl Agent {
                 if !matches!(r, Refusal::Unavailable(_))
                     && let Some(tell) = Self::tell(session)
                 {
-                    let line = format!("rewarden: no SSH keys from your phone: {}", r.message());
+                    let line = format!("reins: no SSH keys from your phone: {}", r.message());
                     tokio::task::spawn_blocking(move || tell(&line)).await.ok();
                 }
                 Vec::new()

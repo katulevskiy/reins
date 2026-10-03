@@ -1,4 +1,4 @@
-//! `rewarden ask` with the phone: the question goes out as `desktop_ask`, and only a decision sealed to this app's key
+//! `reins ask` with the phone: the question goes out as `desktop_ask`, and only a decision sealed to this app's key
 //! that echoes the question's nonce counts.
 
 mod d1_mock;
@@ -6,9 +6,9 @@ mod d1_mock;
 use std::time::Duration;
 
 use d1_mock::{Mock, Step, logged_in, logged_out};
-use rewarden_desktop::ask::{Answer, Question, ask, ask_phone};
-use rewarden_desktop::auth::prompt::NoPrompter;
-use rewarden_desktop::config::{Config, Mode};
+use reins_desktop::ask::{Answer, Question, ask, ask_phone};
+use reins_desktop::auth::prompt::NoPrompter;
+use reins_desktop::config::{Config, Mode};
 
 fn q() -> Question {
     Question::new("Deploy to production?", Some("make deploy\nenv=prod"), Some("command:make deploy")).unwrap()
@@ -94,7 +94,7 @@ async fn an_expired_or_refused_token_is_renewed_once() {
         s.refuse_refresh = true;
     });
     let a = ask_phone(&app.paths, &app.identity, &q(), T).await;
-    assert!(matches!(&a, Answer::Unanswered(why) if why.contains("rewarden login")), "{a:?}");
+    assert!(matches!(&a, Answer::Unanswered(why) if why.contains("reins login")), "{a:?}");
 }
 
 #[tokio::test]
@@ -111,9 +111,9 @@ async fn the_mode_decides_who_is_asked() {
     assert_eq!(mock.with(|s| s.calls.len()), 1);
     // Phone only, not logged in: no answer, and says why.
     let out = logged_out();
-    config.mode = Mode::Rewarden;
+    config.mode = Mode::Reins;
     let a = ask(&out.paths, &config, &q(), T, false, &NoPrompter).await;
-    assert!(matches!(&a, Answer::Unanswered(why) if why.contains("rewarden login")), "{a:?}");
+    assert!(matches!(&a, Answer::Unanswered(why) if why.contains("reins login")), "{a:?}");
 }
 
 /// The binary's exit codes: 0 yes, 1 no, 2 no answer.
@@ -123,11 +123,11 @@ async fn the_command_line_exits_0_1_or_2() {
     let app = logged_in(&mock, 3600);
     let paths = app.paths.clone();
     let run = move |args: &[&str]| {
-        let out = std::process::Command::new(env!("CARGO_BIN_EXE_rewarden"))
+        let out = std::process::Command::new(env!("CARGO_BIN_EXE_reins"))
             .arg("ask")
             .args(args)
-            .env("REWARDEN_CONFIG_DIR", &paths.config_dir)
-            .env("REWARDEN_STATE_DIR", &paths.state_dir)
+            .env("REINS_CONFIG_DIR", &paths.config_dir)
+            .env("REINS_STATE_DIR", &paths.state_dir)
             .stdin(std::process::Stdio::null())
             .output()
             .unwrap();

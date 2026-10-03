@@ -15,9 +15,9 @@ wrong_deny = records auto-denied whose label_full is approve.
 Extras: --latency (onnxruntime CPU, batch of 2 at ~200 tokens, 1 and 4 threads) and --knn (nearest neighbours
 of the `pooled` embedding: leave-one-out kNN label accuracy, class-key purity, a few printed examples).
 
-    python eval.py --ckpt ~/.cache/rewarden-laya/runs/ml-lora-v1 --out results/ml.json
-    python eval.py --pkg ~/.cache/rewarden-laya/pkg/laya-approvals-ml-v1 --latency --knn
-    python eval.py --ckpt ~/.cache/rewarden-laya/runs/ml-v3a --calibrate   # re-fit the temperature on val, write it
+    python eval.py --ckpt ~/.cache/reins-laya/runs/ml-lora-v1 --out results/ml.json
+    python eval.py --pkg ~/.cache/reins-laya/pkg/laya-approvals-ml-v1 --latency --knn
+    python eval.py --ckpt ~/.cache/reins-laya/runs/ml-v3a --calibrate   # re-fit the temperature on val, write it
 
 --calibrate (checkpoint only): fit a scalar temperature on the val split (NLL over S_facts and S_full items, val
 includes held-out families and phrasings), raise it to the smallest value with no unsafe automatic approve on val,

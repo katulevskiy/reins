@@ -1,6 +1,6 @@
-//! What only the paired Rewarden desktop app may ask of the vault (the flow has checked its pinned key):
+//! What only the paired Reins desktop app may ask of the vault (the flow has checked its pinned key):
 //!
-//! - `secret_release`: secrets for one command or API route (`rewarden run`, the API proxy), named `item/field`. The
+//! - `secret_release`: secrets for one command or API route (`reins run`, the API proxy), named `item/field`. The
 //!   user sees the command, the purpose, the items' names and the fields' names, never a value; the values go to the
 //!   app as a [`SecretGrant`] sealed to its key, to be forgotten when the lease ends. Permissions: the item, or
 //!   `secrets` when several items are named.
@@ -11,8 +11,8 @@
 //!   `<fingerprint>`; a sign-in to a server nobody named is asked for every time.
 
 use data_encoding::{BASE64, BASE64_NOPAD};
-use rewarden_proto::connector::{ConnectorCall, VAULT};
-use rewarden_proto::desktop::{SEALED_FIELD, SecretGrant, SshSignature};
+use reins_proto::connector::{ConnectorCall, VAULT};
+use reins_proto::desktop::{SEALED_FIELD, SecretGrant, SshSignature};
 use serde_json::{Map, Value, json};
 use signature::{RandomizedSigner as _, SignatureEncoding as _, Signer as _};
 use ssh_key::private::KeypairData;

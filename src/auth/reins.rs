@@ -1,4 +1,4 @@
-//! Rewarden MCP tokens (spec §4.5): RS256 access JWTs signed with Vaultwarden's RSA key,
+//! Reins MCP tokens (spec §4.5): RS256 access JWTs signed with Vaultwarden's RSA key,
 //! issuer `{domain_origin}|mcp`, audience = canonical MCP URL; opaque refresh tokens that
 //! are stored only as SHA-256 hex.
 
@@ -10,7 +10,7 @@ use jsonwebtoken::{DecodingKey, EncodingKey, Validation};
 use super::{JWT_ALGORITHM, JWT_HEADER, PRIVATE_RSA_KEY, PUBLIC_RSA_KEY};
 use crate::{
     CONFIG,
-    api::rewarden::ACCESS_TOKEN_SECS,
+    api::reins::ACCESS_TOKEN_SECS,
     crypto::{encode_random_bytes, sha256_hex},
 };
 

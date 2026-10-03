@@ -1,6 +1,6 @@
 use std::collections::BTreeSet;
 
-use rewarden_proto::gmail::OutgoingEmail;
+use reins_proto::gmail::OutgoingEmail;
 use serde::{Deserialize, Serialize};
 
 use crate::{AddrRule, Pattern, PolicyError};

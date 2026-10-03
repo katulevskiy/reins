@@ -7,7 +7,7 @@
 
 use std::collections::HashSet;
 
-use rewarden_proto::{
+use reins_proto::{
     gmail::ToolCall,
     remote_mcp::{MAX_SERVERS, McpCall, McpServerReport, McpToolReport, exposed_name},
 };
@@ -100,7 +100,7 @@ pub fn passthrough(result: &Value) -> Value {
 
 #[cfg(test)]
 mod tests {
-    use rewarden_proto::remote_mcp::MAX_DESCRIPTION;
+    use reins_proto::remote_mcp::MAX_DESCRIPTION;
 
     use super::*;
 
@@ -172,14 +172,14 @@ mod tests {
         let empty = parse_call(&reports, "linear__create_issue", &Value::Null).unwrap().unwrap();
         assert!(matches!(empty, ToolCall::Mcp(McpCall { arguments, .. }) if arguments.is_empty()));
         assert!(parse_call(&reports, "linear__create_issue", &json!([1])).unwrap().is_err());
-        let huge = json!({"x": "y".repeat(rewarden_proto::gmail::MAX_MCP_ARGUMENTS)});
+        let huge = json!({"x": "y".repeat(reins_proto::gmail::MAX_MCP_ARGUMENTS)});
         assert!(parse_call(&reports, "linear__create_issue", &huge).unwrap().is_err());
         assert!(parse_call(&reports, "linear__nope", &json!({})).is_none());
         assert!(parse_call(&reports, "gmail_search", &json!({})).is_none());
     }
 
     /// `ToolCall` is tagged by `tool` and `McpCall` has a `tool` field of its own, so the relayed JSON carries `tool`
-    /// twice and the phone cannot read it back. The fix belongs in `rewarden-proto` (frozen for this batch).
+    /// twice and the phone cannot read it back. The fix belongs in `reins-proto` (frozen for this batch).
     #[test]
     fn an_mcp_call_survives_the_relay_wire_form() {
         let call = ToolCall::Mcp(McpCall {

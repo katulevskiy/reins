@@ -1,12 +1,12 @@
-package dev.rewarden.android.platform.update
+package dev.reins.android.platform.update
 
 import android.app.NotificationManager
 import android.content.Context
 import android.content.pm.PackageInstaller
 import androidx.test.core.app.ApplicationProvider
 import androidx.test.ext.junit.runners.AndroidJUnit4
-import dev.rewarden.android.platform.AppNotifier
-import dev.rewarden.android.platform.Foreground
+import dev.reins.android.platform.AppNotifier
+import dev.reins.android.platform.Foreground
 import java.io.File
 import java.io.IOException
 import java.nio.file.Files
@@ -75,7 +75,7 @@ class UpdateControllerTest {
         val c = controller()
         c.backgroundCheck()
         assertEquals(UpdateStatus.Ready(r), c.state.value.status)
-        assertEquals(listOf("Rewarden 0.2.0 is ready to install"), posted().map(::text))
+        assertEquals(listOf("Reins 0.2.0 is ready to install"), posted().map(::text))
         c.backgroundCheck()
         controller().backgroundCheck()
         assertEquals(1, posted().size)
@@ -89,7 +89,7 @@ class UpdateControllerTest {
         manager.cancelAll()
         server.publish(12, versionName = "0.3.0")
         controller().backgroundCheck()
-        assertEquals(listOf("Rewarden 0.3.0 is ready to install"), posted().map(::text))
+        assertEquals(listOf("Reins 0.3.0 is ready to install"), posted().map(::text))
     }
 
     @Test
@@ -100,7 +100,7 @@ class UpdateControllerTest {
         c.backgroundCheck()
         assertEquals(UpdateStatus.Available(r), c.state.value.status)
         assertEquals(0, server.apkCalls)
-        assertEquals(listOf("Rewarden 0.2.0 is available"), posted().map(::text))
+        assertEquals(listOf("Reins 0.2.0 is available"), posted().map(::text))
         assertEquals(emptyList<String>(), dir.list().orEmpty().toList())
     }
 

@@ -1,4 +1,4 @@
-package dev.rewarden.android
+package dev.reins.android
 
 import androidx.compose.ui.test.assertTextContains
 import androidx.compose.ui.test.onNodeWithTag
@@ -9,14 +9,14 @@ import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.work.NetworkType
 import androidx.work.WorkManager
 import androidx.work.testing.WorkManagerTestInitHelper
-import dev.rewarden.android.autopilot.WorkModelDownloads
-import dev.rewarden.android.feedback.Event
-import dev.rewarden.android.feedback.FeedbackProvider
-import dev.rewarden.core.AutopilotMode
-import dev.rewarden.core.CoreException
-import dev.rewarden.core.ModelState
-import dev.rewarden.core.Preset
-import dev.rewarden.core.Verdict
+import dev.reins.android.autopilot.WorkModelDownloads
+import dev.reins.android.feedback.Event
+import dev.reins.android.feedback.FeedbackProvider
+import dev.reins.core.AutopilotMode
+import dev.reins.core.CoreException
+import dev.reins.core.ModelState
+import dev.reins.core.Preset
+import dev.reins.core.Verdict
 import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -369,7 +369,7 @@ class AutopilotFlowTest : FlowHarness() {
     @Test
     fun aWaitingRequestCarriesTheSuggestionLine() {
         core.pending = listOf(TestData.pending("req1", suggestion = "Autopilot would deny · 92%"))
-        dev.rewarden.android.platform.Foreground.autoPopup = false
+        dev.reins.android.platform.Foreground.autoPopup = false
         launch()
         awaitTag("pending:req1")
         awaitText("Autopilot would deny · 92%")
@@ -438,8 +438,8 @@ class AutopilotFlowTest : FlowHarness() {
         automaticEntries()
         launch(
             android.content.Intent(context, MainActivity::class.java)
-                .setAction(dev.rewarden.android.platform.AppNotifier.ACTION_OPEN_ACTIVITY)
-                .putExtra(dev.rewarden.android.platform.AppNotifier.EXTRA_ACTIVITY_ID, 3L),
+                .setAction(dev.reins.android.platform.AppNotifier.ACTION_OPEN_ACTIVITY)
+                .putExtra(dev.reins.android.platform.AppNotifier.EXTRA_ACTIVITY_ID, 3L),
         )
         awaitTag("entryAutopilot")
     }

@@ -1,4 +1,4 @@
-//! The command line of the parts for AI harnesses: `rewarden ask`, `rewarden hook`, `rewarden harness` and `rewarden
+//! The command line of the parts for AI harnesses: `reins ask`, `reins hook`, `reins harness` and `reins
 //! mcp` (flattened into the main command line).
 
 use std::io::{IsTerminal as _, Read as _, Write as _};
@@ -29,18 +29,18 @@ pub enum Command {
         #[arg(long, value_name = "SECONDS")]
         timeout: Option<u64>,
     },
-    /// A harness's pre-command hook (`rewarden harness add` sets it up): reads the hook's JSON on stdin, asks about
+    /// A harness's pre-command hook (`reins harness add` sets it up): reads the hook's JSON on stdin, asks about
     /// risky commands and secret files (`[guard]` in the config), answers in the harness's format.
     Hook {
         /// claude-code, codex, gemini or cursor.
         harness: Harness,
     },
-    /// Add Rewarden to an AI harness (its MCP server and, where the harness has them, its hook), remove it, or list.
+    /// Add Reins to an AI harness (its MCP server and, where the harness has them, its hook), remove it, or list.
     Harness {
         #[command(subcommand)]
         action: HarnessCmd,
     },
-    /// A stdio MCP server that passes everything to your Rewarden server with this app's session.
+    /// A stdio MCP server that passes everything to your Reins server with this app's session.
     Mcp {
         /// Who asks, shown on your phone ("Claude Code").
         #[arg(long, value_name = "NAME")]
@@ -50,7 +50,7 @@ pub enum Command {
 
 #[derive(Clone, Copy, Subcommand)]
 pub enum HarnessCmd {
-    /// Register `rewarden mcp` and the hook in the harness's settings.
+    /// Register `reins mcp` and the hook in the harness's settings.
     Add {
         /// claude-code, codex, gemini or cursor.
         #[arg(required_unless_present = "all", conflicts_with = "all")]
@@ -77,7 +77,7 @@ fn say(line: &str) {
 }
 
 fn fail(e: &str) -> ExitCode {
-    eprintln!("rewarden: {e}");
+    eprintln!("reins: {e}");
     ExitCode::FAILURE
 }
 
@@ -100,7 +100,7 @@ pub async fn run(cmd: Command) -> ExitCode {
         Err(e) => {
             // A hook must still answer in its harness's terms: refuse, with the reason.
             if matches!(cmd, Command::Ask { .. } | Command::Hook { .. }) {
-                eprintln!("rewarden: {e}");
+                eprintln!("reins: {e}");
                 return ExitCode::from(2);
             }
             return fail(&e.to_string());
@@ -147,7 +147,7 @@ async fn ask(
     let detail = if from_stdin {
         let mut text = String::new();
         if let Err(e) = std::io::stdin().take(64 * 1024).read_to_string(&mut text) {
-            eprintln!("rewarden: reading the detail from stdin: {e}");
+            eprintln!("reins: reading the detail from stdin: {e}");
             return ExitCode::from(2);
         }
         Some(text)
@@ -157,7 +157,7 @@ async fn ask(
     let q = match Question::new(question, detail.as_deref(), topic) {
         Ok(q) => q,
         Err(e) => {
-            eprintln!("rewarden: {e}");
+            eprintln!("reins: {e}");
             return ExitCode::from(2);
         }
     };
@@ -180,7 +180,7 @@ async fn ask(
 async fn hook(paths: &Paths, config: &Config, harness: Harness) -> ExitCode {
     let mut input = Vec::new();
     if let Err(e) = std::io::stdin().take(MAX_HOOK_INPUT).read_to_end(&mut input) {
-        eprintln!("rewarden hook: reading stdin: {e}; not allowed.");
+        eprintln!("reins hook: reading stdin: {e}; not allowed.");
         return ExitCode::from(2);
     }
     let (out, code, err) = crate::hooks::run(harness, &input, paths, config, &DesktopAsk).await;
@@ -217,7 +217,7 @@ fn harness_cmd(paths: &Paths, config: &Config, action: HarnessCmd) -> Result<(),
                 say(harness::after_add_note(h));
             }
             if crate::server::oauth::logged_in_server(paths).is_none() {
-                say("Not logged in yet: `rewarden login` so the MCP server and the hook reach your phone.");
+                say("Not logged in yet: `reins login` so the MCP server and the hook reach your phone.");
             }
         }
         HarnessCmd::Remove {
@@ -225,7 +225,7 @@ fn harness_cmd(paths: &Paths, config: &Config, action: HarnessCmd) -> Result<(),
         } => {
             let lines = harness::remove(paths, &s, harness)?;
             if lines.is_empty() {
-                say(&format!("Nothing of Rewarden's was in {}'s settings.", harness.label()));
+                say(&format!("Nothing of Reins's was in {}'s settings.", harness.label()));
             }
             for line in lines {
                 say(&line);

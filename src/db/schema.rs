@@ -352,7 +352,7 @@ table! {
 }
 
 table! {
-    rewarden_devices (user_uuid) {
+    reins_devices (user_uuid) {
         user_uuid -> Text,
         device_uuid -> Text,
         fcm_token -> Nullable<Text>,
@@ -362,7 +362,7 @@ table! {
 }
 
 table! {
-    rewarden_clients (client_id) {
+    reins_clients (client_id) {
         client_id -> Text,
         client_name -> Text,
         redirect_uris -> Text,
@@ -371,7 +371,7 @@ table! {
 }
 
 table! {
-    rewarden_connections (uuid) {
+    reins_connections (uuid) {
         uuid -> Text,
         user_uuid -> Text,
         client_id -> Text,
@@ -384,7 +384,7 @@ table! {
 }
 
 table! {
-    rewarden_refresh_tokens (token_hash) {
+    reins_refresh_tokens (token_hash) {
         token_hash -> Text,
         connection_uuid -> Text,
         expires_at -> BigInt,
@@ -392,14 +392,14 @@ table! {
 }
 
 table! {
-    rewarden_settings (name) {
+    reins_settings (name) {
         name -> Text,
         value -> Text,
     }
 }
 
 table! {
-    rewarden_sso_sessions (session_id) {
+    reins_sso_sessions (session_id) {
         session_id -> Text,
         user_uuid -> Text,
         device_uuid -> Text,

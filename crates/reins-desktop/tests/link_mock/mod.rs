@@ -1,4 +1,4 @@
-//! A mock Rewarden server for the Rewarden link tests: OAuth discovery, dynamic registration, authorize (redirecting a
+//! A mock Reins server for the Reins link tests: OAuth discovery, dynamic registration, authorize (redirecting a
 //! scripted browser to the app's loopback callback), token (code with PKCE, refresh with rotation), and the desktop
 //! calls API, whose "phone" answers from a script and seals grants with `identity::seal_to`.
 
@@ -11,9 +11,9 @@ use std::sync::{Arc, Mutex};
 use data_encoding::BASE64URL_NOPAD;
 use http_body_util::{BodyExt as _, Full};
 use hyper::body::Bytes;
-use rewarden_desktop::config::{Config, Paths};
-use rewarden_desktop::identity::{Identity, seal_to};
-use rewarden_proto::desktop::{
+use reins_desktop::config::{Config, Paths};
+use reins_desktop::identity::{Identity, seal_to};
+use reins_proto::desktop::{
     CredentialGrant, FETCH_LEASE_SECS, GIT_FETCH_OP, PUSH_LEASE_SECS, PushSummary, RefChange, RefUpdate,
 };
 use serde_json::{Value, json};
@@ -63,7 +63,7 @@ pub struct State {
     pub refuse_refresh: bool,
     /// The next desktop API request gets a 401 even with a good token.
     pub reject_bearer_once: bool,
-    /// The key the phone pinned at pairing (from `rewarden_client_key`).
+    /// The key the phone pinned at pairing (from `reins_client_key`).
     pub pinned_key: Option<String>,
     pub client_names: Vec<String>,
     pub authorize_params: Option<HashMap<String, String>>,
@@ -163,23 +163,23 @@ async fn handle(state: &Mutex<State>, req: hyper::Request<hyper::body::Incoming>
             200,
             &json!({
                 "issuer": base,
-                "authorization_endpoint": format!("{base}/rewarden/oauth/authorize"),
-                "token_endpoint": format!("{base}/rewarden/oauth/token"),
-                "registration_endpoint": format!("{base}/rewarden/oauth/register"),
+                "authorization_endpoint": format!("{base}/reins/oauth/authorize"),
+                "token_endpoint": format!("{base}/reins/oauth/token"),
+                "registration_endpoint": format!("{base}/reins/oauth/register"),
                 "response_types_supported": ["code"],
                 "code_challenge_methods_supported": ["S256"],
             }),
         ),
-        ("POST", "/rewarden/oauth/register") => register(&mut s, &body),
-        ("GET", "/rewarden/oauth/authorize") => authorize(&mut s, &form(query.as_bytes())),
-        ("POST", "/rewarden/oauth/token") => token(&mut s, &form(&body)),
-        ("POST", "/rewarden/desktop/calls") => match bearer(&mut s, auth.as_deref()) {
+        ("POST", "/reins/oauth/register") => register(&mut s, &body),
+        ("GET", "/reins/oauth/authorize") => authorize(&mut s, &form(query.as_bytes())),
+        ("POST", "/reins/oauth/token") => token(&mut s, &form(&body)),
+        ("POST", "/reins/desktop/calls") => match bearer(&mut s, auth.as_deref()) {
             Some(denied) => denied,
             None => submit(&mut s, &body),
         },
-        ("GET", p) if p.starts_with("/rewarden/desktop/calls/") => match bearer(&mut s, auth.as_deref()) {
+        ("GET", p) if p.starts_with("/reins/desktop/calls/") => match bearer(&mut s, auth.as_deref()) {
             Some(denied) => denied,
-            None => poll(&mut s, &p["/rewarden/desktop/calls/".len()..]),
+            None => poll(&mut s, &p["/reins/desktop/calls/".len()..]),
         },
         _ => json_resp(404, &json!({"error": "not_found"})),
     }
@@ -192,7 +192,7 @@ fn register(s: &mut State, body: &[u8]) -> Resp {
         || doc["token_endpoint_auth_method"] != "none"
         || doc["grant_types"]
             != json!(["authorization_code", "refresh_token", "urn:ietf:params:oauth:grant-type:device_code"])
-        || !name.starts_with("Rewarden desktop app on ")
+        || !name.starts_with("Reins desktop app on ")
     {
         return json_resp(400, &json!({"error": "invalid_client_metadata", "error_description": doc.to_string()}));
     }
@@ -227,13 +227,13 @@ fn authorize(s: &mut State, p: &HashMap<String, String>) -> Resp {
         ("code_challenge", get("code_challenge").len() == 43),
         ("state", get("state").len() >= 16),
         ("resource", get("resource") == format!("{}/mcp", s.base)),
-        ("rewarden_client_key", rewarden_proto::desktop::decode_key(get("rewarden_client_key")).is_some()),
+        ("reins_client_key", reins_proto::desktop::decode_key(get("reins_client_key")).is_some()),
     ];
     if let Some((bad, _)) = checks.iter().find(|(_, ok)| !ok) {
         return respond(400, "text/plain", format!("bad {bad}"));
     }
     // The phone approves the pairing and pins the key.
-    s.pinned_key = Some(get("rewarden_client_key").to_owned());
+    s.pinned_key = Some(get("reins_client_key").to_owned());
     s.counter += 1;
     let code = format!("code-{}", s.counter);
     s.codes.insert(
@@ -316,7 +316,7 @@ fn bearer(s: &mut State, auth: Option<&str>) -> Option<Resp> {
 fn submit(s: &mut State, body: &[u8]) -> Resp {
     let doc: Value = serde_json::from_slice(body).unwrap_or_default();
     let tool = doc["tool"].as_str().unwrap_or_default().to_owned();
-    let Some(spec) = rewarden_proto::connector::spec_for_tool(&tool).filter(|s| s.desktop_only) else {
+    let Some(spec) = reins_proto::connector::spec_for_tool(&tool).filter(|s| s.desktop_only) else {
         return json_resp(400, &json!({"error": "unknown_tool"}));
     };
     if let Err(message) = spec.parse(&doc["arguments"]) {
@@ -361,7 +361,7 @@ fn answer(s: &mut State, id: &str) -> Resp {
     let key = r.arguments["client_key"].as_str().unwrap_or_default();
     if pinned.as_deref() != Some(key) {
         return answered(
-            json!({"outcome": "error", "message": "This must come from the Rewarden desktop app paired with this phone."}),
+            json!({"outcome": "error", "message": "This must come from the Reins desktop app paired with this phone."}),
         );
     }
     let fetch = r.tool.ends_with(&format!("_{GIT_FETCH_OP}"));
@@ -379,7 +379,7 @@ fn answer(s: &mut State, id: &str) -> Resp {
         .to_owned(),
         username: "x-access-token".to_owned(),
         token: format!("ghs-{id}"),
-        expires_at: rewarden_desktop::now_unix()
+        expires_at: reins_desktop::now_unix()
             + if fetch {
                 FETCH_LEASE_SECS
             } else {
@@ -410,7 +410,7 @@ fn answer(s: &mut State, id: &str) -> Resp {
 
 /// Follows the sign-in link like a browser: the server redirects to the app's loopback callback, which shows a page.
 pub async fn browse(link: String) -> (u16, String) {
-    let http = rewarden_desktop::http::client(Some(std::time::Duration::from_secs(10))).unwrap();
+    let http = reins_desktop::http::client(Some(std::time::Duration::from_secs(10))).unwrap();
     let first = http.get(&link).send().await.unwrap();
     assert_eq!(first.status(), 302, "authorize: {}", first.text().await.unwrap());
     let to = first.headers()["location"].to_str().unwrap().to_owned();
@@ -430,7 +430,7 @@ pub async fn logged_in(mock: &Mock) -> App {
     let dir = tempfile::tempdir().unwrap();
     let paths = Paths::under(dir.path());
     let identity = Arc::new(Identity::generate());
-    let server = rewarden_desktop::server::oauth::login_with_browser(&paths, &identity, &mock.base, |link| {
+    let server = reins_desktop::server::oauth::login_with_browser(&paths, &identity, &mock.base, |link| {
         tokio::spawn(browse(link.to_owned()));
     })
     .await
@@ -452,8 +452,8 @@ pub fn config(timeout_secs: u64) -> Config {
     c
 }
 
-pub fn repo(name: &str) -> rewarden_desktop::auth::Repo {
-    rewarden_desktop::auth::Repo::new("github.com", "github", name)
+pub fn repo(name: &str) -> reins_desktop::auth::Repo {
+    reins_desktop::auth::Repo::new("github.com", "github", name)
 }
 
 pub const A: &str = "1111111111111111111111111111111111111111";
@@ -483,7 +483,7 @@ pub fn tag_push() -> PushSummary {
     let mut s = push_to("x");
     "refs/tags/v1".clone_into(&mut s.updates[0].name);
     s.updates[0].change = RefChange::Create;
-    rewarden_proto::desktop::ZERO_OID.clone_into(&mut s.updates[0].old);
+    reins_proto::desktop::ZERO_OID.clone_into(&mut s.updates[0].old);
     s.updates[0].fast_forward = None;
     s
 }

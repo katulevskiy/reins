@@ -1,8 +1,8 @@
-//! `rewarden run [--env NAME=vault:Item/field]... [--profile P] -- <command>`: the phone releases the secrets (sealed to
-//! this app), the command runs with them as environment variables, and `rewarden` exits with the command's code. The
+//! `reins run [--env NAME=vault:Item/field]... [--profile P] -- <command>`: the phone releases the secrets (sealed to
+//! this app), the command runs with them as environment variables, and `reins` exits with the command's code. The
 //! values are only in this process's memory until the command starts, then wiped; they are never printed or logged.
 //!
-//! Exit codes of `rewarden` itself: 125 when the secrets are not released (or anything else on its side fails), 126
+//! Exit codes of `reins` itself: 125 when the secrets are not released (or anything else on its side fails), 126
 //! when the command cannot be run, 127 when it is not found; else the command's own code (128 + N after signal N).
 
 use std::collections::BTreeMap;
@@ -19,7 +19,7 @@ use crate::identity::Identity;
 use crate::phone::{Phone, awaiting, teller};
 use crate::secrets::{self, MAX_SECRETS, SecretRef};
 
-/// `rewarden run` failed before the command ran.
+/// `reins run` failed before the command ran.
 pub const EXIT_FAILED: u8 = 125;
 pub const EXIT_CANNOT_RUN: u8 = 126;
 pub const EXIT_NOT_FOUND: u8 = 127;
@@ -124,7 +124,7 @@ impl Plan {
             return Err(format!("at most {MAX_SECRETS} secrets per command"));
         }
         if args.command.is_empty() {
-            return Err("no command: `rewarden run --env … -- <command>`".to_owned());
+            return Err("no command: `reins run --env … -- <command>`".to_owned());
         }
         if args.purpose.is_some() {
             purpose.clone_from(&args.purpose);
@@ -221,7 +221,7 @@ pub async fn execute(command: &[OsString], vars: Vec<(String, Zeroizing<String>)
     let mut child = match spawned {
         Ok(c) => c,
         Err(e) => {
-            eprintln!("rewarden: cannot run {}: {e}", program.to_string_lossy());
+            eprintln!("reins: cannot run {}: {e}", program.to_string_lossy());
             return if e.kind() == std::io::ErrorKind::NotFound {
                 EXIT_NOT_FOUND
             } else {
@@ -233,7 +233,7 @@ pub async fn execute(command: &[OsString], vars: Vec<(String, Zeroizing<String>)
     match status {
         Ok(s) => exit_code(s),
         Err(e) => {
-            eprintln!("rewarden: waiting for the command: {e}");
+            eprintln!("reins: waiting for the command: {e}");
             EXIT_FAILED
         }
     }
@@ -253,7 +253,7 @@ async fn wait(child: &mut tokio::process::Child) -> std::io::Result<std::process
             s = child.wait() => return s,
             _ = term.recv() => rustix::process::Signal::TERM,
             _ = hup.recv() => rustix::process::Signal::HUP,
-            // The terminal sends Ctrl-C to the command as well; rewarden only keeps waiting for it.
+            // The terminal sends Ctrl-C to the command as well; reins only keeps waiting for it.
             _ = int.recv() => continue,
         };
         if let Some(pid) = pid {
@@ -263,7 +263,7 @@ async fn wait(child: &mut tokio::process::Child) -> std::io::Result<std::process
 }
 
 /// Windows has no signals to pass on. Ctrl-C and Ctrl-Break reach every program in the console, the command too, so
-/// rewarden only keeps waiting for it to finish (instead of quitting and leaving it behind).
+/// reins only keeps waiting for it to finish (instead of quitting and leaving it behind).
 #[cfg(windows)]
 async fn wait(child: &mut tokio::process::Child) -> std::io::Result<std::process::ExitStatus> {
     use tokio::signal::windows::{ctrl_break, ctrl_c};
@@ -284,7 +284,7 @@ async fn wait(child: &mut tokio::process::Child) -> std::io::Result<std::process
     child.wait().await
 }
 
-/// A Windows exit code as `rewarden`'s own: 0 to 255 as they are, anything else (an `NTSTATUS` such as
+/// A Windows exit code as `reins`'s own: 0 to 255 as they are, anything else (an `NTSTATUS` such as
 /// `0xC000013A` after Ctrl-C) 1.
 fn windows_exit_code(code: i32) -> u8 {
     u8::try_from(code).unwrap_or(1)
@@ -310,7 +310,7 @@ fn exit_code(status: std::process::ExitStatus) -> u8 {
 /// The whole command: plan, ask, run; the exit code. Messages go to stderr; the command's own output is untouched.
 pub async fn main(paths: &Paths, config: &Config, args: &RunArgs) -> u8 {
     let fail = |e: &str| {
-        eprintln!("rewarden: {e}");
+        eprintln!("reins: {e}");
         EXIT_FAILED
     };
     let plan = match Plan::new(args, config) {
@@ -320,11 +320,11 @@ pub async fn main(paths: &Paths, config: &Config, args: &RunArgs) -> u8 {
     if config.mode == Mode::Local {
         return fail(
             "secrets live in the vault on your phone, and this app is in local mode (`mode = \"local\"` in \
-             config.toml); set `mode = \"auto\"` and run `rewarden login`",
+             config.toml); set `mode = \"auto\"` and run `reins login`",
         );
     }
     if crate::server::oauth::logged_in_server(paths).is_none() {
-        return fail("secrets live in the vault on your phone: run `rewarden login` to pair this app with it");
+        return fail("secrets live in the vault on your phone: run `reins login` to pair this app with it");
     }
     let identity = match Identity::load_or_create(&paths.identity_file()) {
         Ok(i) => Arc::new(i),

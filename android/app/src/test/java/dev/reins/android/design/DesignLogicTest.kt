@@ -1,24 +1,24 @@
-package dev.rewarden.android.design
+package dev.reins.android.design
 
-import dev.rewarden.android.TestData
-import dev.rewarden.android.ui.common.endedLine
-import dev.rewarden.android.ui.common.findConnection
-import dev.rewarden.android.ui.common.entryTitle
-import dev.rewarden.android.ui.common.inactiveWord
-import dev.rewarden.android.ui.grants.CustomUnit
-import dev.rewarden.android.ui.grants.ResumePeriod
-import dev.rewarden.android.ui.grants.ResumeResult
-import dev.rewarden.android.ui.grants.buildResume
-import dev.rewarden.android.ui.grants.initialResumeDraft
-import dev.rewarden.android.ui.grants.resumePeriods
-import dev.rewarden.android.ui.common.operationTitle
-import dev.rewarden.android.ui.common.relativeTime
-import dev.rewarden.android.ui.grants.NewGrantDraft
-import dev.rewarden.android.ui.grants.NewGrantLifetime
-import dev.rewarden.android.ui.grants.NewGrantResult
-import dev.rewarden.android.ui.grants.buildNewGrant
-import dev.rewarden.android.ui.grants.parseParties
-import dev.rewarden.core.ApprovalKind
+import dev.reins.android.TestData
+import dev.reins.android.ui.common.endedLine
+import dev.reins.android.ui.common.findConnection
+import dev.reins.android.ui.common.entryTitle
+import dev.reins.android.ui.common.inactiveWord
+import dev.reins.android.ui.grants.CustomUnit
+import dev.reins.android.ui.grants.ResumePeriod
+import dev.reins.android.ui.grants.ResumeResult
+import dev.reins.android.ui.grants.buildResume
+import dev.reins.android.ui.grants.initialResumeDraft
+import dev.reins.android.ui.grants.resumePeriods
+import dev.reins.android.ui.common.operationTitle
+import dev.reins.android.ui.common.relativeTime
+import dev.reins.android.ui.grants.NewGrantDraft
+import dev.reins.android.ui.grants.NewGrantLifetime
+import dev.reins.android.ui.grants.NewGrantResult
+import dev.reins.android.ui.grants.buildNewGrant
+import dev.reins.android.ui.grants.parseParties
+import dev.reins.core.ApprovalKind
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotNull
@@ -37,14 +37,14 @@ class DesignLogicTest {
         assertEquals("Read 5 emails", operationTitle("read", 5, "gmail"))
         assertEquals("Send email", operationTitle("send", 1, "gmail"))
         assertEquals("Send email to 3", operationTitle("send", 3, "gmail"))
-        assertEquals("Claude: Search Gmail", dev.rewarden.android.ui.common.fullTitle("Claude", "search", 2, "gmail"))
+        assertEquals("Claude: Search Gmail", dev.reins.android.ui.common.fullTitle("Claude", "search", 2, "gmail"))
     }
 
     @Test
     fun `an operation of another integration is named by the core, with a generic name as fallback`() {
         assertEquals("Read Telegram messages", operationTitle("read", 3, "telegram", "Read Telegram messages"))
         assertEquals("Commit a file to GitHub", operationTitle("write", 1, "github", "Commit a file to GitHub"))
-        assertEquals("Claude: Delete a GitHub repository", dev.rewarden.android.ui.common.fullTitle("Claude", "write", 1, "github", "Delete a GitHub repository"))
+        assertEquals("Claude: Delete a GitHub repository", dev.reins.android.ui.common.fullTitle("Claude", "write", 1, "github", "Delete a GitHub repository"))
         assertEquals("Hermes: Send a text message", entryTitle("Hermes", "send", 1, "sms", "sent", "Send a text message"))
         assertEquals("Read GitHub", operationTitle("read", 3, "github"))
         assertEquals("Change GitHub", operationTitle("write", 1, "github", ""))
@@ -215,7 +215,7 @@ class DesignLogicTest {
 
     // ---- resuming with changes ----------------------------------------------------------------------------------
 
-    private fun ended(action: String = "read", allMail: Boolean = false, maxUses: UInt? = null, editable: dev.rewarden.core.GrantScopeChoice? = TestData.defaultScope(action)) =
+    private fun ended(action: String = "read", allMail: Boolean = false, maxUses: UInt? = null, editable: dev.reins.core.GrantScopeChoice? = TestData.defaultScope(action)) =
         TestData.grant("old", active = false, action = action, allMail = allMail, maxUses = maxUses, editable = editable)
 
     private fun ok(result: ResumeResult) = result as ResumeResult.Ok

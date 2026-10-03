@@ -7,13 +7,13 @@
 //!   next. The AI sends the bytes there (`PUT`, no other authentication: the URL is the capability). The server keeps
 //!   them, works out a [`BlobPreview`] and tells the phone. A slot opened for a tool ([`BlobPurpose::ToolInput`]) is
 //!   approved together with the tool call that names it (`blob=<id>`), with the preview shown; a slot opened by
-//!   `rewarden_upload` ([`BlobPurpose::Upload`]) is approved on its own when the upload arrives, and only then can it
+//!   `reins_upload` ([`BlobPurpose::Upload`]) is approved on its own when the upload arrives, and only then can it
 //!   be downloaded or used.
 //! - **Use**: the phone has the server send the bytes onward ([`BlobSend`]: the server streams them to the URL the
 //!   phone names, with the headers the phone gives for this one request), or reads them itself
-//!   (`GET /rewarden/api/blobs/<id>/content`) when it must transform them (vault encryption).
+//!   (`GET /reins/api/blobs/<id>/content`) when it must transform them (vault encryption).
 //! - **Download**: the phone has the server fetch a large result ([`BlobFetch`]), or uploads one it made itself
-//!   (`PUT /rewarden/api/blobs/<id>/content`), and answers the AI with a short-lived `download_url`.
+//!   (`PUT /reins/api/blobs/<id>/content`), and answers the AI with a short-lived `download_url`.
 //!
 //! Every file is deleted when its operation is done, and in any case when it expires ([`MAX_BLOB_TTL_SECS`]).
 
@@ -48,7 +48,7 @@ pub enum BlobPurpose {
     ToolInput {
         tool: String,
     },
-    /// `rewarden_upload`: a file the AI wants to pass on as a link; approved when it arrives.
+    /// `reins_upload`: a file the AI wants to pass on as a link; approved when it arrives.
     Upload {
         /// What the AI said it is for, shown to the user.
         reason: String,
@@ -57,7 +57,7 @@ pub enum BlobPurpose {
     Output,
 }
 
-/// `POST /rewarden/api/blobs`: the phone opens a slot.
+/// `POST /reins/api/blobs`: the phone opens a slot.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct BlobSlotRequest {
     pub v: u32,
@@ -124,7 +124,7 @@ pub enum BlobPreview {
     None,
 }
 
-/// `GET /rewarden/api/blobs/<id>` and what the pending list carries for uploads awaiting a decision.
+/// `GET /reins/api/blobs/<id>` and what the pending list carries for uploads awaiting a decision.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct BlobInfo {
     pub v: u32,
@@ -149,14 +149,14 @@ pub struct BlobInfo {
     pub expires_at: i64,
 }
 
-/// `POST /rewarden/api/blobs/<id>/decision`: the user's answer for a [`BlobPurpose::Upload`].
+/// `POST /reins/api/blobs/<id>/decision`: the user's answer for a [`BlobPurpose::Upload`].
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct BlobDecision {
     pub v: u32,
     pub approved: bool,
 }
 
-/// `POST /rewarden/api/blobs/<id>/send`: the server streams the blob to `url` (https only) with these headers, for
+/// `POST /reins/api/blobs/<id>/send`: the server streams the blob to `url` (https only) with these headers, for
 /// this one request, and forgets them. The phone deletes the blob afterwards (or it expires).
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct BlobSend {
@@ -195,7 +195,7 @@ pub struct BlobSendResult {
     pub truncated: bool,
 }
 
-/// `POST /rewarden/api/blobs/fetch`: the server downloads `url` (https only, redirects to other hosts followed
+/// `POST /reins/api/blobs/fetch`: the server downloads `url` (https only, redirects to other hosts followed
 /// without the headers) into a new blob the AI may download.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct BlobFetch {
@@ -211,7 +211,7 @@ pub struct BlobFetch {
     pub ttl_secs: u32,
 }
 
-/// `PUT /rewarden/api/blobs/output`'s query and `POST /rewarden/api/blobs/fetch`'s answer: a blob ready to download.
+/// `PUT /reins/api/blobs/output`'s query and `POST /reins/api/blobs/fetch`'s answer: a blob ready to download.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct BlobDownload {
     pub id: BlobId,

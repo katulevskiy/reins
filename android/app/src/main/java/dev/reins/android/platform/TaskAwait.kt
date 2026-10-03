@@ -1,4 +1,4 @@
-package dev.rewarden.android.platform
+package dev.reins.android.platform
 
 import com.google.android.gms.tasks.CancellationTokenSource
 import com.google.android.gms.tasks.Task

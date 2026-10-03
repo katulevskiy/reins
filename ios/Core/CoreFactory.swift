@@ -14,11 +14,11 @@ enum CoreFactory {
         notifier: Notifier,
         google: GoogleTokenProvider = GoogleTokens.shared,
         keys: KeyWrapper = KeychainKeyWrapper()
-    ) throws -> RewardenCore {
+    ) throws -> ReinsCore {
         let info = Bundle.main.infoDictionary ?? [:]
         let apiId = Int32((info["ReinsTelegramApiId"] as? String) ?? "") ?? 0
         let apiHash = (info["ReinsTelegramApiHash"] as? String) ?? ""
-        return try RewardenCore(
+        return try ReinsCore(
             dataDir: dataDir.path,
             keys: keys,
             google: google,

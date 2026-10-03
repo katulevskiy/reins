@@ -1,5 +1,5 @@
 //! Universal MCP: MCP servers the user adds on the phone. The phone is their MCP client (Streamable HTTP, signed in
-//! with OAuth or a token), reports their tools to the Rewarden server, which lists them to the AIs, and runs every call
+//! with OAuth or a token), reports their tools to the Reins server, which lists them to the AIs, and runs every call
 //! after the usual grants and approvals. Tokens stay on the phone: never in a log, a view, the activity or a report.
 //!
 //! - [`client`]: the MCP client (initialize, tools/list, tools/call; JSON and SSE answers; sessions).
@@ -19,7 +19,7 @@ use std::collections::{BTreeSet, HashMap};
 use std::fmt;
 use std::sync::atomic::AtomicU64;
 
-use rewarden_proto::remote_mcp::{
+use reins_proto::remote_mcp::{
     MAX_DESCRIPTION, MAX_SCHEMA_BYTES, MAX_SERVERS, MAX_TOOLS, McpServerReport, McpToolReport, exposed_name,
     server_id_ok,
 };
@@ -202,7 +202,7 @@ pub struct McpToolView {
     pub read_only: bool,
     /// The server says it may destroy things: asked every time, never remembered.
     pub destructive: bool,
-    /// Its results go through the Rewarden server (they were too large for the phone once).
+    /// Its results go through the Reins server (they were too large for the phone once).
     pub heavy: bool,
 }
 
@@ -271,7 +271,7 @@ pub fn server_view(s: &StoredMcpServer) -> McpServerView {
     }
 }
 
-/// The servers as reported to the Rewarden server: only those connected at least once, only tools that pass the
+/// The servers as reported to the Reins server: only those connected at least once, only tools that pass the
 /// contract's bounds (descriptions cut to size, duplicates of a name AI clients see dropped), at most
 /// [`MAX_SERVERS`]. Each report passes [`McpServerReport::validate`].
 pub fn reports(servers: &[StoredMcpServer]) -> Vec<McpServerReport> {

@@ -1,4 +1,4 @@
-package dev.rewarden.android.autopilot
+package dev.reins.android.autopilot
 
 import ai.onnxruntime.OnnxJavaType
 import ai.onnxruntime.OnnxTensor

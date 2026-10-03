@@ -5,9 +5,9 @@ Read this fully before writing code. It is the contract between the parallel wor
 ## 1. How a call travels (what already exists — do not change it)
 
 * An AI calls an MCP tool (`github_issue_create`). The server validates the arguments against the **tool registry**
-  (`crates/rewarden-proto/src/connector.rs` + `connector/github/*.rs`, `connector/vault/*.rs`) and relays a
+  (`crates/reins-proto/src/connector.rs` + `connector/github/*.rs`, `connector/vault/*.rs`) and relays a
   `ConnectorCall {service, op, args}` to the phone.
-* On the phone (`crates/rewarden-core/src/connector/flow.rs`, do not edit) a **read** (`Effect::List|Read|Search`) calls
+* On the phone (`crates/reins-core/src/connector/flow.rs`, do not edit) a **read** (`Effect::List|Read|Search`) calls
   the connector's `fetch()` → `Vec<Item>`; the user ticks items (or a standing grant covers them) and the ticked
   items are returned to the AI as JSON (`items_json`). A **write** (`Effect::Write`) calls `preview()` → `Preview` (what
   will happen, shown to the user), then, after approval (or a covering standing grant), `perform()` → `Value` (the answer
@@ -31,7 +31,7 @@ Read this fully before writing code. It is the contract between the parallel wor
 
 ## 3. Registry model (proto)
 
-In `rewarden-proto` `connector/<service>/<area>.rs` expose `pub(super) fn tools() -> Vec<ToolSpec>` using the helpers
+In `reins-proto` `connector/<service>/<area>.rs` expose `pub(super) fn tools() -> Vec<ToolSpec>` using the helpers
 from `crate::connector`: `tool(...)`, `str_p` (short trimmed text), `text_p` (free text kept exactly: bodies, file
 contents), `int_p`, `bool_p`, `list_p`, `choice_p`, `map_p` (string→string), `json_p` (arbitrary JSON you validate yourself,
 bounded), `LIMIT`. Builder methods on a `ToolSpec`: `.in_class("code")` (the kind of change; **required for every
@@ -51,7 +51,7 @@ the thing (`Some("repo")`); it is only used for labelling.
 
 A **standing permission** (grant) is bound to one AI connection, one account, a time window, a use count, and:
 * an **access** — `list`, `read` or `write` (never mixed);
-* **resources** — what it covers, matched hierarchically (`rewarden_policy::resource_covers`): `A` covers `A`, `A@x`, `A/x`;
+* **resources** — what it covers, matched hierarchically (`reins_policy::resource_covers`): `A` covers `A`, `A@x`, `A/x`;
   a name that is a prefix but not a whole part covers nothing;
 * for writes, **classes** — the kinds of change it allows (`ToolSpec.class`).
 
@@ -115,13 +115,13 @@ the `body` is a secret that must never be shown in the approval or kept in the a
   with `seal`, `chrono`-free date helpers in `crate::text` (`parse_when`, `iso_utc`)). If you truly need one, stop and report.
 * Comments: like the surrounding code — short doc comments on public items and non-obvious decisions, no narration.
 * Lints are strict (`-D warnings`, pedantic clippy). `cargo fmt --all`, then
-  `cargo clippy -p rewarden-proto -p rewarden-core --all-targets` must be clean, `cargo test -p rewarden-proto -p rewarden-core` green.
+  `cargo clippy -p reins-proto -p reins-core --all-targets` must be clean, `cargo test -p reins-proto -p reins-core` green.
 
 ## 6. Areas
 
 ### GitHub
 
-**`repos`** — files: `crates/rewarden-proto/src/connector/github/repos.rs`, `crates/rewarden-core/src/connector/github/repos.rs`, tests `crates/rewarden-core/tests/github_repos.rs`.
+**`repos`** — files: `crates/reins-proto/src/connector/github/repos.rs`, `crates/reins-core/src/connector/github/repos.rs`, tests `crates/reins-core/tests/github_repos.rs`.
 Repositories, branches, and repository administration:
 * repos: list (existing `list_repos`, add optional `owner`/`org` filter and `visibility`), get (details: description, topics, default branch, visibility, size, languages,
   counts, license, parent), create (user or org; name, description, private, auto_init, gitignore, license; class `settings`), update settings
@@ -132,7 +132,7 @@ Repositories, branches, and repository administration:
 * access & integrations (all once-only writes, reads normal): collaborators list/add(permission)/remove, invitations list/cancel, repo teams list/add/remove, webhooks list/get/create/update/delete/ping, deploy keys list/add/delete.
 * Traffic/stats: clones/views (Read), commit activity (Read) — optional.
 
-**`code`** — files: `crates/rewarden-proto/src/connector/github/code.rs`, `crates/rewarden-core/src/connector/github/code.rs`, tests `crates/rewarden-core/tests/github_code.rs`.
+**`code`** — files: `crates/reins-proto/src/connector/github/code.rs`, `crates/reins-core/src/connector/github/code.rs`, tests `crates/reins-core/tests/github_code.rs`.
 Files, commits, tags, releases:
 * contents: get file (text; base64 for binary ≤ 2 MB; `ref` optional; resource `owner/repo@ref` when the ref is a branch) , list directory, tree (recursive, truncated), raw blob, download archive link (return the URL only), search code in a repo is in `issues` area (search) — not yours.
 * commits: list (path/author/since/until/branch filters), get (message, stats, files with patch snippets ≤ 60k chars), compare two refs (ahead/behind, files, commits), get commit statuses/check runs summary for a ref (Read; belongs to you).
@@ -141,14 +141,14 @@ Files, commits, tags, releases:
 * tags: list, create lightweight or annotated (class `releases`, resource `owner/repo`), delete tag (class `releases`), get tag.
 * releases: list, get, latest, get by tag, create (tag_name, target_commitish, name, body, draft, prerelease, generate_release_notes, make_latest; class `releases`), update (class `releases`), delete (class `releases`), generate release notes (Read-like: it calls POST generate-notes but changes nothing → Effect::Read), list assets, upload asset (`content_base64`, `name`, `label`, `content_type`; class `releases`; uses the upload host), update asset name/label, delete asset, download asset (Read; text or base64 ≤ 2 MB else metadata only).
 
-**`issues`** — files: `crates/rewarden-proto/src/connector/github/issues.rs`, `crates/rewarden-core/src/connector/github/issues.rs`, tests `crates/rewarden-core/tests/github_issues.rs`. (Its file already holds the six legacy tools.)
+**`issues`** — files: `crates/reins-proto/src/connector/github/issues.rs`, `crates/reins-core/src/connector/github/issues.rs`, tests `crates/reins-core/tests/github_issues.rs`. (Its file already holds the six legacy tools.)
 Issues, pull requests, reviews, search:
 * issues: list (assignee/label/milestone/creator/sort filters; legacy `list_issues` gets these as optional params), get (legacy `get_issue`), create (labels, assignees, milestone; legacy `create_issue` gets these optional params), update (title, body, state open/closed with reason, labels replace, assignees replace, milestone; class `issues`), lock/unlock, comments list/edit/delete (legacy `comment` creates), reactions add/list, timeline/events (Read), labels: list, create, update, delete, add to issue, remove from issue; milestones: list, create, update, delete; assignees: list assignable, add, remove; transfer issue (once-only).
 * pull requests: list, get (with mergeability, checks summary), create (head, base, title, body, draft, maintainer_can_modify; class `pulls`; resource `owner/repo` — the *base* branch matters only for merging), update (title/body/base/state; class `pulls`), files changed (list with patch ≤ 60k), diff (text), commits, review list, review create (approve/request_changes/comment + inline comments; class `pulls`), review dismiss, review comments list/create/edit/delete, request/remove reviewers, mark ready for review (REST `POST /pulls/{n}/ready_for_review` does not exist — use GraphQL `markPullRequestReadyForReview` via `POST /graphql`; convert to draft the same), update branch (class `code`), **merge** (`merge_method` merge|squash|rebase, commit title/message, sha guard; class `code`, resource `owner/repo@<base branch>` with `parents`, preview shows title, head→base, checks state, mergeable state; if the base is the repo's default branch say so), close/reopen via update. Auto-merge enable/disable via GraphQL is optional.
 * search: `github_search` (legacy: issues & PRs), plus `search_code`, `search_repos`, `search_commits`, `search_users`, `search_topics`, `search_labels` (Read/Search; results are items; code-search results carry path/repo/snippet, resource `owner/repo`).
 * discussions (GraphQL read): list, get — optional.
 
-**`actions`** — files: `crates/rewarden-proto/src/connector/github/actions.rs`, `crates/rewarden-core/src/connector/github/actions.rs`, tests `crates/rewarden-core/tests/github_actions.rs`.
+**`actions`** — files: `crates/reins-proto/src/connector/github/actions.rs`, `crates/reins-core/src/connector/github/actions.rs`, tests `crates/reins-core/tests/github_actions.rs`.
 Workflows, runs, variables, secrets, security, and the user's own account:
 * workflows: list, get, dispatch (`workflow_dispatch` with `ref` and `inputs` map; class `actions`), enable, disable (class `actions`), usage/timing (Read), **workflow file editing is done through the `code` area's `file_put`** (mention that in the descriptions).
 * runs: list (filters: workflow, branch, event, status, actor), get, rerun (whole run, with `enable_debug_logging`), rerun failed jobs, rerun a single job, cancel, force-cancel (once), delete run (class `actions`), approve a run from a fork PR, list jobs of a run, get job, **job logs** (text ≤ 60k chars, tail-biased; follows the redirect), run logs download (return the tail of each job's log, no zip), list artifacts, delete artifact, artifact download URL, list run attempts, pending deployments review (approve/reject; once-only).
@@ -160,7 +160,7 @@ Workflows, runs, variables, secrets, security, and the user's own account:
 
 ### Vault
 
-**`items`** — files: `crates/rewarden-proto/src/connector/vault/items.rs`, `crates/rewarden-core/src/connector/vault/items.rs` (+ you may edit `vault/totp.rs`), tests `crates/rewarden-core/tests/vault_items.rs` (the existing `tests/vault.rs` must keep passing; you may extend its mock helpers by copying them into your test file).
+**`items`** — files: `crates/reins-proto/src/connector/vault/items.rs`, `crates/reins-core/src/connector/vault/items.rs` (+ you may edit `vault/totp.rs`), tests `crates/reins-core/tests/vault_items.rs` (the existing `tests/vault.rs` must keep passing; you may extend its mock helpers by copying them into your test file).
 Everything about items, folders and their states:
 * Types (Bitwarden cipher `type`): 1 login, 2 secure note, 3 card, 4 identity, 5 SSH key. Handle per-item keys (`cipher.key`) when reading and writing (new items: write with the user key directly is fine; **editing an item that has its own key must keep using that key**). Skip organization items (`organizationId != null`) in listings, say so in the count note.
 * `vault_search` (legacy; keep behaviour; add optional `type`, `folder`, `state` = active|trash|archived|all (default active), `favorite`; results Items with the §4 resource path, title = name, from = username/holder/identity name, snippet = first host or type label; never any secret), `vault_folders_list` (List: folder id, name, item counts by type), `vault_item_view` (Read: non-secret overview of one item: type, name, folder, favorite, state, dates, URIs, username, notes length only, card brand + last 4 + expiry month/year, identity name/email/company/city/country (no ID numbers), SSH public key + fingerprint, custom field **names** and types, attachment names/sizes, password-history count; **sensitive false**), `vault_get` (legacy; extend `field` with: `notes`, `uri`, `card_number`, `card_code`, `card_holder`, `card_expiry`, `identity` (all identity fields as one text block), `identity_ssn`, `identity_passport`, `identity_license`, `ssh_private_key`, `ssh_public_key`, `ssh_fingerprint`, `custom` (with new optional param `custom_field` naming the field), `password_history`; Items are `sensitive` + `secret` except `uri`, `ssh_public_key`, `ssh_fingerprint`, `card_holder`, `card_expiry` which are ordinary reads with the item's resource), `vault_attachment_get` (Read; sensitive + secret; base64 ≤ 2 MB, else metadata + "too large").
@@ -168,7 +168,7 @@ Everything about items, folders and their states:
 * Bulk: `vault_item_trash`/`restore`/`favorite`/`move` accept one `item`; do not add bulk tools.
 * Never put a secret into `Preview.lines`, `Item.snippet`, `Item.title`, error messages, or logs. Secrets appear only in `Item.body` (with `secret: true`).
 
-**`sends`** — files: `crates/rewarden-proto/src/connector/vault/sends.rs`, `crates/rewarden-core/src/connector/vault/sends.rs`, tests `crates/rewarden-core/tests/vault_sends.rs`.
+**`sends`** — files: `crates/reins-proto/src/connector/vault/sends.rs`, `crates/reins-core/src/connector/vault/sends.rs`, tests `crates/reins-core/tests/vault_sends.rs`.
 Sends and the generator:
 * Sends: `vault_send_list` (List: name, type, access count / max, expiration, deletion date, disabled, has-password, hide-email; no links, no content), `vault_send_get` (Read; sensitive + secret: text content or file metadata and the **link** `https://<server>/#/send/<accessId>/<urlsafe-base64 key>`), `vault_send_create` (class `sends`; `type` text|file; `name`, `notes`, `text` (+ `hidden`) or `file_name` + `content_base64` (≤ 2 MB), `password`, `max_access_count`, `expires_in_hours`/`expiration_date`, `delete_in_days` (1–31) / `deletion_date`, `disabled`, `hide_email`; encrypt per the Bitwarden Send format: a random 16-byte send key, `HKDF-SHA256(key, salt = "bitwarden-send", info = "send", 64 bytes)` → enc/mac keys; name/notes/text/fileName encrypted with the derived key; the `key` field = the send key encrypted with the user key; password = `base64(PBKDF2-HMAC-SHA256(password, salt = send key, 100_000 iterations, 32))`; files: encrypted with the derived key as an EncArrayBuffer (`0x02 ‖ iv ‖ mac ‖ ciphertext`), upload with the v2 flow — `POST /api/sends/file/v2` then `POST /api/sends/{id}/file/{fileId}` multipart whose `data` part filename equals the encrypted fileName EncString; the API returns the accessId; return the link once — and the preview never prints the password or the text beyond ~300 chars), `vault_send_update` (class `sends`; name, notes, text, max count, dates, disabled, hide-email, new password; the type and file cannot change), `vault_send_remove_password` (class `sends`), `vault_send_delete` (class `sends`). Vaultwarden limits: deletion date < 31 days ahead.
-* Generator (Effect::Read, resource `generator`, label "Generator", `sensitive: false`, `secret: true` so the value is not kept in the log; no network): `vault_generate_password` (length 5–128, `uppercase`/`lowercase`/`numbers`/`symbols` booleans, `min_uppercase` etc., `avoid_ambiguous`, `exclude` characters; uses `ring::rand` with rejection sampling — no modulo bias — and guarantees the minimums), `vault_generate_passphrase` (words 3–20, separator, capitalize, include_number; the EFF large wordlist (7776 words) embedded with `include_str!` in a new file `crates/rewarden-core/src/connector/vault/eff_large_wordlist.txt`, fetched from https://www.eff.org/files/2016/07/18/eff_large_wordlist.txt and verified: 7776 lines, `dice<TAB>word`), `vault_generate_username` (`type`: random_word|plus_addressed_email|catch_all_email; word from the same list, capitalize, include_number; email/domain arguments), and `vault_generate_check_password` (Read: strength estimate — length, character classes, entropy bits, common-password check against a tiny embedded list — **without ever sending the password anywhere**; no HIBP call).
+* Generator (Effect::Read, resource `generator`, label "Generator", `sensitive: false`, `secret: true` so the value is not kept in the log; no network): `vault_generate_password` (length 5–128, `uppercase`/`lowercase`/`numbers`/`symbols` booleans, `min_uppercase` etc., `avoid_ambiguous`, `exclude` characters; uses `ring::rand` with rejection sampling — no modulo bias — and guarantees the minimums), `vault_generate_passphrase` (words 3–20, separator, capitalize, include_number; the EFF large wordlist (7776 words) embedded with `include_str!` in a new file `crates/reins-core/src/connector/vault/eff_large_wordlist.txt`, fetched from https://www.eff.org/files/2016/07/18/eff_large_wordlist.txt and verified: 7776 lines, `dice<TAB>word`), `vault_generate_username` (`type`: random_word|plus_addressed_email|catch_all_email; word from the same list, capitalize, include_number; email/domain arguments), and `vault_generate_check_password` (Read: strength estimate — length, character classes, entropy bits, common-password check against a tiny embedded list — **without ever sending the password anywhere**; no HIBP call).

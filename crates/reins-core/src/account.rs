@@ -3,7 +3,7 @@
 
 use std::sync::Arc;
 
-use rewarden_proto::connector::VAULT;
+use reins_proto::connector::VAULT;
 use serde_json::Value;
 use zeroize::Zeroizing;
 

@@ -22,11 +22,11 @@ use crate::types::{
 use crate::{CoreError, GoogleTokenProvider, KeyWrapper, Notifier, rt};
 
 #[derive(uniffi::Object)]
-pub struct RewardenCore {
+pub struct ReinsCore {
     engine: Arc<Engine>,
 }
 
-impl RewardenCore {
+impl ReinsCore {
     /// The integrations that live on this phone, when it can run them and this build of the app offers them.
     fn device_connectors(device: Option<Arc<dyn DeviceBridge>>) -> Vec<Arc<dyn Connector>> {
         let Some(bridge) = device else {
@@ -53,7 +53,7 @@ impl RewardenCore {
         }))
     }
 
-    /// Like [`RewardenCore::with_config`], with these integrations added (tests bring their own).
+    /// Like [`ReinsCore::with_config`], with these integrations added (tests bring their own).
     pub fn with_connectors(
         data_dir: &str,
         keys: &dyn KeyWrapper,
@@ -75,7 +75,7 @@ impl RewardenCore {
 }
 
 #[uniffi::export]
-impl RewardenCore {
+impl ReinsCore {
     #[uniffi::constructor]
     #[expect(clippy::needless_pass_by_value, reason = "UniFFI hands constructor arguments over by value")]
     pub fn new(

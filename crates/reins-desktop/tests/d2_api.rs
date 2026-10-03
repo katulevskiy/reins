@@ -11,10 +11,10 @@ use std::sync::{Arc, Mutex};
 use bytes::Bytes;
 use d2_support::{App, Mock, Step, capture_logs, logged_in, logs};
 use http_body_util::{BodyExt as _, Full};
-use rewarden_desktop::api_proxy::ApiConfig;
-use rewarden_desktop::auth::prompt::NoPrompter;
-use rewarden_desktop::config::{Config, Mode};
-use rewarden_desktop::daemon::{Daemon, Options, Running};
+use reins_desktop::api_proxy::ApiConfig;
+use reins_desktop::auth::prompt::NoPrompter;
+use reins_desktop::config::{Config, Mode};
+use reins_desktop::daemon::{Daemon, Options, Running};
 
 const SECRET: &str = "sk-live-5ecret-0penai";
 
@@ -142,7 +142,7 @@ impl Setup {
             _app: app,
             upstream,
             running: daemon.spawn(),
-            http: rewarden_desktop::http::client(Some(std::time::Duration::from_secs(60))).unwrap(),
+            http: reins_desktop::http::client(Some(std::time::Duration::from_secs(60))).unwrap(),
         }
     }
 
@@ -157,7 +157,7 @@ impl Setup {
 
 #[tokio::test]
 async fn the_key_is_added_leased_and_never_logged() {
-    let s = Setup::start(Mode::Rewarden, 10).await;
+    let s = Setup::start(Mode::Reins, 10).await;
     let resp = s
         .http
         .get(s.url("/api/openai/models?limit=2"))
@@ -202,7 +202,7 @@ async fn the_key_is_added_leased_and_never_logged() {
 
 #[tokio::test]
 async fn bodies_stream_both_ways() {
-    let s = Setup::start(Mode::Rewarden, 10).await;
+    let s = Setup::start(Mode::Reins, 10).await;
     let big: Vec<u8> = (0..3_000_000u32).map(|i| u8::try_from(i % 251).unwrap()).collect();
     let chunks: Vec<Result<Bytes, std::io::Error>> =
         big.chunks(65_536).map(|c| Ok(Bytes::copy_from_slice(c))).collect();
@@ -221,7 +221,7 @@ async fn bodies_stream_both_ways() {
 
 #[tokio::test]
 async fn a_refusal_reaches_the_agent_and_nothing_goes_upstream() {
-    let s = Setup::start(Mode::Rewarden, 10).await;
+    let s = Setup::start(Mode::Reins, 10).await;
     s.mock.plan(&[Step::Denied("Not this API")]);
     let resp = s.http.get(s.url("/api/openai/models")).send().await.unwrap();
     assert_eq!(resp.status(), 403);
@@ -233,7 +233,7 @@ async fn a_refusal_reaches_the_agent_and_nothing_goes_upstream() {
     assert_eq!(s.mock.calls().len(), 2);
 
     // A forged answer is refused the same way.
-    let s = Setup::start(Mode::Rewarden, 10).await;
+    let s = Setup::start(Mode::Reins, 10).await;
     s.mock.plan(&[Step::ForgedNonce]);
     let resp = s.http.get(s.url("/api/openai/models")).send().await.unwrap();
     assert_eq!(resp.status(), 503);
@@ -243,7 +243,7 @@ async fn a_refusal_reaches_the_agent_and_nothing_goes_upstream() {
 
 #[tokio::test]
 async fn a_401_from_the_api_drops_the_lease() {
-    let s = Setup::start(Mode::Rewarden, 10).await;
+    let s = Setup::start(Mode::Reins, 10).await;
     assert_eq!(s.http.get(s.url("/api/openai/expired")).send().await.unwrap().status(), 401);
     assert_eq!(s.http.get(s.url("/api/openai/models")).send().await.unwrap().status(), 200);
     assert_eq!(s.mock.calls().len(), 2, "asked again after the 401");
@@ -251,7 +251,7 @@ async fn a_401_from_the_api_drops_the_lease() {
 
 #[tokio::test]
 async fn an_unanswered_request_is_polled_again_on_retry() {
-    let s = Setup::start(Mode::Rewarden, 5).await;
+    let s = Setup::start(Mode::Reins, 5).await;
     s.mock.plan(&[Step::Pending]);
     let resp = s.http.get(s.url("/api/openai/models")).send().await.unwrap();
     assert_eq!(resp.status(), 503);
@@ -267,7 +267,7 @@ async fn an_unanswered_request_is_polled_again_on_retry() {
 
 #[tokio::test]
 async fn browsers_paths_out_of_the_api_and_unknown_apis_are_refused() {
-    let s = Setup::start(Mode::Rewarden, 10).await;
+    let s = Setup::start(Mode::Reins, 10).await;
     let origin = s.http.get(s.url("/api/openai/models")).header("Origin", "https://evil.example").send().await.unwrap();
     assert_eq!(origin.status(), 403);
     let raw =

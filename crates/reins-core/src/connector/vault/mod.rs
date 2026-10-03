@@ -1,4 +1,4 @@
-//! The user's own Vaultwarden vault, the one Rewarden is signed in to. What an AI can do with it is decided by the
+//! The user's own Vaultwarden vault, the one Reins is signed in to. What an AI can do with it is decided by the
 //! phone: names, usernames and addresses are listed; every secret (a password, a one-time code, a note, a card number,
 //! a private key) is handed over one field at a time and asked for each time; changes (new items, edits, the trash,
 //! folders, Sends) are previewed and approved. The vault key is kept sealed on the phone after the master password was
@@ -10,8 +10,8 @@
 
 use std::sync::{Arc, Mutex, PoisonError};
 
+use reins_proto::connector::{ConnectorCall, VAULT};
 use reqwest::Method;
-use rewarden_proto::connector::{ConnectorCall, VAULT};
 use serde_json::Value;
 use zeroize::Zeroizing;
 
@@ -30,7 +30,7 @@ mod totp;
 pub use items::desktop::{secret_release_view, ssh_sign_view};
 pub use totp::totp_code;
 
-/// The signed-in Rewarden session, shared with the engine.
+/// The signed-in Reins session, shared with the engine.
 pub type SessionSlot = Arc<Mutex<Option<Arc<Session>>>>;
 
 /// The resource of things that are not in a folder: `RESOURCE` alone, and every item's path starts with it.

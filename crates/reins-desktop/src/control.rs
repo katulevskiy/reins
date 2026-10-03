@@ -1,6 +1,6 @@
-//! The daemon's control API under `/_rewarden/`, used by the CLI: `GET status`, `GET pending`,
+//! The daemon's control API under `/_reins/`, used by the CLI: `GET status`, `GET pending`,
 //! `POST pending/<id>/approve`, `POST pending/<id>/deny`, and `POST shutdown` (how the Windows background service is
-//! stopped: there is no service manager there to send it a signal). Every call needs `X-Rewarden-Token` with the secret the
+//! stopped: there is no service manager there to send it a signal). Every call needs `X-Reins-Token` with the secret the
 //! daemon wrote to `control.token` (0600), so only the user (and what runs as the user) can approve.
 
 use std::sync::Arc;
@@ -14,10 +14,10 @@ use crate::auth::prompt::{Pending, PendingItem};
 use crate::config::Paths;
 use crate::proxy::{Body, full, text};
 
-pub const TOKEN_HEADER: &str = "x-rewarden-token";
-pub const PREFIX: &str = "/_rewarden/";
+pub const TOKEN_HEADER: &str = "x-reins-token";
+pub const PREFIX: &str = "/_reins/";
 
-/// `GET /_rewarden/status`.
+/// `GET /_reins/status`.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Status {
     pub version: String,
@@ -25,7 +25,7 @@ pub struct Status {
     /// Who decides ("the local policy on this computer", "your phone, through …").
     pub decides: String,
     pub listen: String,
-    /// What `rewarden git setup` points git at.
+    /// What `reins git setup` points git at.
     pub proxy_base: String,
     pub server: Option<String>,
     pub fingerprint: String,
@@ -80,7 +80,7 @@ impl Control {
     pub fn handle(&self, method: &Method, path: &str, headers: &HeaderMap) -> Response<Body> {
         let given = headers.get(TOKEN_HEADER).map_or(&b""[..], |v| v.as_bytes());
         if !same(given, self.token.as_bytes()) {
-            return text(StatusCode::UNAUTHORIZED, "The control API needs the X-Rewarden-Token header.");
+            return text(StatusCode::UNAUTHORIZED, "The control API needs the X-Reins-Token header.");
         }
         let rest = path.strip_prefix(PREFIX).unwrap_or("");
         let parts: Vec<&str> = rest.split('/').collect();
@@ -107,7 +107,7 @@ impl Control {
 
 #[derive(Debug, thiserror::Error)]
 pub enum ClientError {
-    #[error("the Rewarden daemon is not running (start it with `rewarden daemon` or `rewarden service install`)")]
+    #[error("the Reins daemon is not running (start it with `reins daemon` or `reins service install`)")]
     NotRunning,
     #[error("{0}")]
     Other(String),
@@ -221,10 +221,10 @@ mod tests {
         );
         let stop = control.stop_handle();
         let mut headers = HeaderMap::new();
-        assert_eq!(control.handle(&Method::POST, "/_rewarden/shutdown", &headers).status(), StatusCode::UNAUTHORIZED);
+        assert_eq!(control.handle(&Method::POST, "/_reins/shutdown", &headers).status(), StatusCode::UNAUTHORIZED);
         headers.insert(TOKEN_HEADER, "t".parse().unwrap());
-        assert_eq!(control.handle(&Method::GET, "/_rewarden/shutdown", &headers).status(), StatusCode::NOT_FOUND);
-        assert_eq!(control.handle(&Method::POST, "/_rewarden/shutdown", &headers).status(), StatusCode::OK);
+        assert_eq!(control.handle(&Method::GET, "/_reins/shutdown", &headers).status(), StatusCode::NOT_FOUND);
+        assert_eq!(control.handle(&Method::POST, "/_reins/shutdown", &headers).status(), StatusCode::OK);
         tokio::time::timeout(Duration::from_secs(1), stop.notified()).await.expect("the daemon is told to stop");
     }
 }

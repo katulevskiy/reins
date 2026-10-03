@@ -1,9 +1,9 @@
-package dev.rewarden.android.platform
+package dev.reins.android.platform
 
 import android.content.Context
 import com.google.firebase.FirebaseApp
 import com.google.firebase.messaging.FirebaseMessaging
-import dev.rewarden.android.BuildConfig
+import dev.reins.android.BuildConfig
 
 /** Firebase is optional: without `google-services.json` the app runs on the foreground long-poll alone. */
 object FirebaseSupport {

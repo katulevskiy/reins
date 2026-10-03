@@ -5,7 +5,7 @@ use std::path::Path;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-use rewarden_proto::desktop::{
+use reins_proto::desktop::{
     CommitInfo, FileChange, FileStatus, MAX_COMMITS, MAX_FILES, MAX_NOTES, MAX_PUSH_OPTIONS, PushSummary, RefChange,
     RefUpdate,
 };

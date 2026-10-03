@@ -128,7 +128,7 @@ private struct UploadContent: View {
                         .accessibilityIdentifier("uploadReason")
                 }
                 FileCard(blob: view).padding(.horizontal, 16).padding(.vertical, 8)
-                Text("\(who) uploaded this file to your Rewarden server. If you approve, its download link works and \(who) can hand it to another tool. If you deny, the server deletes it. Either way it is gone at \(TimeText.dateTime(view.expiresAt)).")
+                Text("\(who) uploaded this file to your Reins server. If you approve, its download link works and \(who) can hand it to another tool. If you deny, the server deletes it. Either way it is gone at \(TimeText.dateTime(view.expiresAt)).")
                     .font(RFont.sans(13.5))
                     .foregroundStyle(Palette.secondary)
                     .padding(.horizontal, 20)

@@ -210,7 +210,7 @@ pub struct Described {
     pub ai: AiPart,
     /// `service/action[/class]` (spec §5.4).
     pub class_key: String,
-    /// "Push to a branch · dkat/rewarden": shown for neighbours and in notifications.
+    /// "Push to a branch · dkat/reins": shown for neighbours and in notifications.
     pub label: String,
 }
 
@@ -501,7 +501,7 @@ mod tests {
             operation: "Push to a branch".to_owned(),
             class: "push".to_owned(),
             account: "dkat".to_owned(),
-            target: "dkat/rewarden".to_owned(),
+            target: "dkat/reins".to_owned(),
             target_is_new: Some(false),
             count: 1,
             details: vec![
@@ -520,7 +520,7 @@ mod tests {
             facts,
             "connection: Claude Code (laptop)\nconnection age: 12 days\nconnection history: 140 approved, 3 denied\n\
              service: github\naction: write\noperation: Push to a branch\nclass: push\naccount: dkat\n\
-             target: dkat/rewarden\ntarget is new: no\ndetails: branch feature/laya (not the default branch); \
+             target: dkat/reins\ntarget is new: no\ndetails: branch feature/laya (not the default branch); \
              3 commits; 7 files changed; no force"
         );
         assert_eq!(full, format!("{facts}\n--- written by the AI ---\nreason: fix flaky test"));

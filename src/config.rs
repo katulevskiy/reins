@@ -536,75 +536,75 @@ make_config! {
         /// Installation key |> The installation key from https://bitwarden.com/host
         push_installation_key:  Pass,   false,  def,    String::new();
     },
-    rewarden {
-        /// Enable Rewarden |> Mounts the MCP endpoint ({DOMAIN}/mcp), the OAuth server for AI clients and the phone API
-        rewarden_enabled:               bool,   false,  def,    false;
+    reins {
+        /// Enable Reins |> Mounts the MCP endpoint ({DOMAIN}/mcp), the OAuth server for AI clients and the phone API
+        reins_enabled:               bool,   false,  def,    false;
         /// FCM service account |> Path to the Firebase service-account JSON used to wake the approval device. Empty disables push.
-        rewarden_fcm_service_account:   String, false,  def,    String::new();
+        reins_fcm_service_account:   String, false,  def,    String::new();
         /// APNs key file |> Path to the APNs signing key (.p8) used to wake the iOS app. Empty disables APNs; set it together with the key id and team id.
-        rewarden_apns_key_file:         String, false,  def,    String::new();
+        reins_apns_key_file:         String, false,  def,    String::new();
         /// APNs key id |> The 10-character id of the APNs key, shown next to it in the Apple Developer account.
-        rewarden_apns_key_id:           String, false,  def,    String::new();
+        reins_apns_key_id:           String, false,  def,    String::new();
         /// APNs team id |> The Apple Developer team id that owns the APNs key.
-        rewarden_apns_team_id:          String, false,  def,    String::new();
+        reins_apns_team_id:          String, false,  def,    String::new();
         /// APNs topic |> The bundle id of the iOS app the pushes are for.
-        rewarden_apns_topic:            String, false,  def,    crate::api::rewarden::apns::DEFAULT_TOPIC.to_owned();
+        reins_apns_topic:            String, false,  def,    crate::api::reins::apns::DEFAULT_TOPIC.to_owned();
         /// Relay wait (seconds) |> How long an MCP tool call waits for the phone. Must be below ChatGPT's 60 s tool timeout (max 55).
-        rewarden_relay_wait_secs:       u64,    false,  def,    45;
+        reins_relay_wait_secs:       u64,    false,  def,    45;
         /// Offline threshold (seconds) |> A request not fetched by the phone within this time is reported as "device offline".
-        rewarden_offline_secs:          u64,    false,  def,    10;
-        /// Purge schedule |> Cron schedule of the job deleting expired Rewarden refresh tokens and in-memory entries. Blank disables it.
-        rewarden_purge_schedule:        String, false,  def,    "0 25 * * * *".to_owned();
-        /// File purge schedule |> Cron schedule of the job deleting expired Rewarden files (blobs) from disk. Blank disables it (expired files are then deleted at the next upload or phone poll).
-        rewarden_blob_purge_schedule:   String, false,  def,    "15 * * * * *".to_owned();
+        reins_offline_secs:          u64,    false,  def,    10;
+        /// Purge schedule |> Cron schedule of the job deleting expired Reins refresh tokens and in-memory entries. Blank disables it.
+        reins_purge_schedule:        String, false,  def,    "0 25 * * * *".to_owned();
+        /// File purge schedule |> Cron schedule of the job deleting expired Reins files (blobs) from disk. Blank disables it (expired files are then deleted at the next upload or phone poll).
+        reins_blob_purge_schedule:   String, false,  def,    "15 * * * * *".to_owned();
         /// Max file size (bytes) |> Largest single file an upload link, fetch or output may hold; larger requests are capped to it. 1 to 1073741824 (1 GiB).
-        rewarden_blob_max_bytes:        u64,    false,  def,    1_073_741_824;
+        reins_blob_max_bytes:        u64,    false,  def,    1_073_741_824;
         /// Files per account |> Most files (stored, or upload links still waiting) one account holds at once.
-        rewarden_blob_account_files:    u32,    false,  def,    20;
+        reins_blob_account_files:    u32,    false,  def,    20;
         /// Bytes held per account |> Most bytes one account's files hold, or reserve for uploads in progress, at once.
-        rewarden_blob_account_bytes:    u64,    false,  def,    2_147_483_648;
+        reins_blob_account_bytes:    u64,    false,  def,    2_147_483_648;
         /// Daily transfer per account (bytes) |> Most bytes one account moves through the file store in a rolling 24 hours: uploads, fetches and outputs stored, downloads and sends. 0 disables the limit.
-        rewarden_blob_account_daily_bytes: u64, false,  def,    21_474_836_480;
+        reins_blob_account_daily_bytes: u64, false,  def,    21_474_836_480;
         /// Bytes held by the server |> Most bytes the files of all accounts hold together.
-        rewarden_blob_total_bytes:      u64,    false,  def,    8_589_934_592;
+        reins_blob_total_bytes:      u64,    false,  def,    8_589_934_592;
         /// Downloads per link |> How many times one download link works before it is used up.
-        rewarden_blob_max_downloads:    u32,    false,  def,    20;
+        reins_blob_max_downloads:    u32,    false,  def,    20;
         /// Requests per AI connection (per minute) |> Requests one AI connection may make to /mcp and the desktop API per minute; a minute's worth may come at once. 0 disables the limit.
-        rewarden_connection_requests_per_minute: u32, false, def, 60;
+        reins_connection_requests_per_minute: u32, false, def, 60;
         /// Waiting calls per AI connection |> Tool calls of one AI connection that may wait for the phone at the same time. 0 disables the limit.
-        rewarden_connection_max_waiting: u32,   false,  def,    20;
+        reins_connection_max_waiting: u32,   false,  def,    20;
         /// Relayed calls per account (per minute) |> Tool calls sent to one account's phone per minute over all its AI connections; each may wake the phone with a push. 0 disables the limit.
-        rewarden_account_calls_per_minute: u32, false,  def,    120;
+        reins_account_calls_per_minute: u32, false,  def,    120;
         /// Queued calls per account |> Tool calls of one account that may wait unanswered for its phone at once (the relay holds 10000 in all). 0 disables the limit.
-        rewarden_account_max_queued:    u32,    false,  def,    100;
+        reins_account_max_queued:    u32,    false,  def,    100;
         /// Connection request rate (seconds) |> Average seconds between connection requests (pairings, each a push to the phone) for one account email. 0 disables the limit.
-        rewarden_pairing_ratelimit_seconds: u64, false, def,    60;
+        reins_pairing_ratelimit_seconds: u64, false, def,    60;
         /// Connection request burst |> Connection requests for one account email allowed at once, while keeping the average above.
-        rewarden_pairing_ratelimit_max_burst: u32, false, def,  5;
+        reins_pairing_ratelimit_max_burst: u32, false, def,  5;
         /// Client registration rate (seconds) |> Average seconds between OAuth dynamic client registrations from one IP address. 0 disables the limit.
-        rewarden_register_ratelimit_seconds: u64, false, def,   60;
+        reins_register_ratelimit_seconds: u64, false, def,   60;
         /// Client registration burst |> Dynamic client registrations from one IP address allowed at once, while keeping the average above.
-        rewarden_register_ratelimit_max_burst: u32, false, def, 10;
-        /// Long-polls per device |> Concurrent GET /rewarden/api/pending long-polls of one approval device. 0 disables the limit.
-        rewarden_device_max_polls:      u32,    false,  def,    4;
-        /// Wrong takeover proofs per account |> Wrong proofs (master password hashes) one account's other devices may send with PUT /rewarden/api/device to become its approval device, within the window below; then every attempt is refused until the oldest ages out. 0 disables the limit.
-        rewarden_device_proof_max_failures: u32, false, def,    5;
+        reins_register_ratelimit_max_burst: u32, false, def, 10;
+        /// Long-polls per device |> Concurrent GET /reins/api/pending long-polls of one approval device. 0 disables the limit.
+        reins_device_max_polls:      u32,    false,  def,    4;
+        /// Wrong takeover proofs per account |> Wrong proofs (master password hashes) one account's other devices may send with PUT /reins/api/device to become its approval device, within the window below; then every attempt is refused until the oldest ages out. 0 disables the limit.
+        reins_device_proof_max_failures: u32, false, def,    5;
         /// Wrong takeover proofs window (seconds) |> The window the limit above counts wrong proofs in.
-        rewarden_device_proof_window_seconds: u64, false, def,  900;
+        reins_device_proof_window_seconds: u64, false, def,  900;
         /// Apple team id (app links) |> The Apple Developer team id of the Reins iOS app, so that pairing links (`{DOMAIN}/pair`) open the app (`/.well-known/apple-app-site-association`). Empty: the APNs team id, if set.
-        rewarden_apple_team_id:         String, false,  def,    String::new();
+        reins_apple_team_id:         String, false,  def,    String::new();
         /// Android signing certificates (app links) |> SHA-256 fingerprints (`AB:CD:...`, comma-separated) of the certificates the Reins Android app is signed with, so that pairing links open the app (`/.well-known/assetlinks.json`). Empty: links open the page.
-        rewarden_android_cert_sha256:   String, false,  def,    String::new();
+        reins_android_cert_sha256:   String, false,  def,    String::new();
         /// Outbound requests per account (per minute) |> Requests the server makes for one account's phone (file sends and fetches, proxied MCP calls) per minute. 0 disables the limit.
-        rewarden_outbound_requests_per_minute: u32, false, def, 60;
+        reins_outbound_requests_per_minute: u32, false, def, 60;
         /// Concurrent outbound requests per account |> Requests the server makes for one account's phone at the same time. 0 disables the limit.
-        rewarden_outbound_max_concurrent: u32,  false,  def,    4;
+        reins_outbound_max_concurrent: u32,  false,  def,    4;
         /// WorkOS sync interval (seconds) |> With WorkOS as the SSO provider: how often the server reads the WorkOS events (email changes, deleted users, revoked sessions) and applies them to the accounts. 0 disables the sync.
-        rewarden_workos_sync_secs:      u64,    false,  def,    30;
+        reins_workos_sync_secs:      u64,    false,  def,    30;
         /// WorkOS API key |> The key the WorkOS sync reads events with. Empty uses SSO_CLIENT_SECRET (WorkOS takes the API key as the client secret).
-        rewarden_workos_api_key:        Pass,   false,  option;
-        /// WorkOS webhook secret |> The signing secret of a WorkOS webhook pointed at {DOMAIN}/rewarden/workos/webhook. A signed delivery makes the sync run at once; without it, the endpoint is off and the sync only polls.
-        rewarden_workos_webhook_secret: Pass,   false,  option;
+        reins_workos_api_key:        Pass,   false,  option;
+        /// WorkOS webhook secret |> The signing secret of a WorkOS webhook pointed at {DOMAIN}/reins/workos/webhook. A signed delivery makes the sync run at once; without it, the endpoint is off and the sync only polls.
+        reins_workos_webhook_secret: Pass,   false,  option;
     },
     jobs {
         /// Job scheduler poll interval |> How often the job scheduler thread checks for jobs to run.
@@ -1134,29 +1134,29 @@ fn validate_config(cfg: &ConfigItems, on_update: bool) -> Result<(), Error> {
         }
     }
 
-    if cfg.rewarden_enabled
-        && let Err(e) = crate::api::rewarden::validate_settings(
+    if cfg.reins_enabled
+        && let Err(e) = crate::api::reins::validate_settings(
             &cfg.domain,
             cfg.domain_set,
-            cfg.rewarden_relay_wait_secs,
-            cfg.rewarden_offline_secs,
-            &cfg.rewarden_fcm_service_account,
-            &crate::api::rewarden::apns::Settings {
-                key_file: cfg.rewarden_apns_key_file.clone(),
-                key_id: cfg.rewarden_apns_key_id.clone(),
-                team_id: cfg.rewarden_apns_team_id.clone(),
-                topic: cfg.rewarden_apns_topic.clone(),
+            cfg.reins_relay_wait_secs,
+            cfg.reins_offline_secs,
+            &cfg.reins_fcm_service_account,
+            &crate::api::reins::apns::Settings {
+                key_file: cfg.reins_apns_key_file.clone(),
+                key_id: cfg.reins_apns_key_id.clone(),
+                team_id: cfg.reins_apns_team_id.clone(),
+                topic: cfg.reins_apns_topic.clone(),
             },
         )
     {
         err!(e)
     }
 
-    if cfg.rewarden_enabled
-        && let Err(e) = crate::api::rewarden::limits::validate_settings(
-            cfg.rewarden_blob_max_bytes,
-            cfg.rewarden_blob_account_files,
-            cfg.rewarden_blob_max_downloads,
+    if cfg.reins_enabled
+        && let Err(e) = crate::api::reins::limits::validate_settings(
+            cfg.reins_blob_max_bytes,
+            cfg.reins_blob_account_files,
+            cfg.reins_blob_max_downloads,
         )
     {
         err!(e)
@@ -1378,12 +1378,12 @@ fn validate_config(cfg: &ConfigItems, on_update: bool) -> Result<(), Error> {
         err!("`AUTH_REQUEST_PURGE_SCHEDULE` is not a valid cron expression")
     }
 
-    if !cfg.rewarden_purge_schedule.is_empty() && cfg.rewarden_purge_schedule.parse::<Schedule>().is_err() {
-        err!("`REWARDEN_PURGE_SCHEDULE` is not a valid cron expression")
+    if !cfg.reins_purge_schedule.is_empty() && cfg.reins_purge_schedule.parse::<Schedule>().is_err() {
+        err!("`REINS_PURGE_SCHEDULE` is not a valid cron expression")
     }
 
-    if !cfg.rewarden_blob_purge_schedule.is_empty() && cfg.rewarden_blob_purge_schedule.parse::<Schedule>().is_err() {
-        err!("`REWARDEN_BLOB_PURGE_SCHEDULE` is not a valid cron expression")
+    if !cfg.reins_blob_purge_schedule.is_empty() && cfg.reins_blob_purge_schedule.parse::<Schedule>().is_err() {
+        err!("`REINS_BLOB_PURGE_SCHEDULE` is not a valid cron expression")
     }
 
     if !cfg.disable_admin_token {

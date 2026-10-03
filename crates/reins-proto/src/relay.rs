@@ -14,7 +14,7 @@ pub struct RelayRequest {
     /// Unix seconds.
     pub created_at: i64,
     /// Unix seconds until which the AI is still waiting for an answer. After that the user can still approve;
-    /// the answer is kept for `rewarden_get_result` and, for reads, a one-time retry pass is created.
+    /// the answer is kept for `reins_get_result` and, for reads, a one-time retry pass is created.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub wait_until: Option<i64>,
     /// The connected account the call is about (e.g. a Gmail address); absent when the AI did not say.

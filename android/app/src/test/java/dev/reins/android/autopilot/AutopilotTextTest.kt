@@ -1,12 +1,12 @@
-package dev.rewarden.android.autopilot
+package dev.reins.android.autopilot
 
-import dev.rewarden.android.TestData
-import dev.rewarden.android.feedback.Event
-import dev.rewarden.core.AutopilotMode
-import dev.rewarden.core.AutopilotSettings
-import dev.rewarden.core.ConnectionAutopilot
-import dev.rewarden.core.ModelState
-import dev.rewarden.core.Verdict
+import dev.reins.android.TestData
+import dev.reins.android.feedback.Event
+import dev.reins.core.AutopilotMode
+import dev.reins.core.AutopilotSettings
+import dev.reins.core.ConnectionAutopilot
+import dev.reins.core.ModelState
+import dev.reins.core.Verdict
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue

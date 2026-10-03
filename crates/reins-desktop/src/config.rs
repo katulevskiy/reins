@@ -1,9 +1,9 @@
 //! Where the app keeps things, and its settings (`config.toml`).
 //!
-//! Config (settings the user edits) lives in `$REWARDEN_CONFIG_DIR`, else `$XDG_CONFIG_HOME/rewarden`, else
-//! `~/.config/rewarden` (on Windows `%APPDATA%\rewarden`). State (the identity key, the server session, the control
-//! token) lives in `$REWARDEN_STATE_DIR`, else `$XDG_STATE_HOME/rewarden`, else `~/.local/state/rewarden` (on Windows
-//! `%LOCALAPPDATA%\rewarden`). Both are created 0700 and every secret file 0600; on Windows a new directory and every
+//! Config (settings the user edits) lives in `$REINS_CONFIG_DIR`, else `$XDG_CONFIG_HOME/reins`, else
+//! `~/.config/reins` (on Windows `%APPDATA%\reins`). State (the identity key, the server session, the control
+//! token) lives in `$REINS_STATE_DIR`, else `$XDG_STATE_HOME/reins`, else `~/.local/state/reins` (on Windows
+//! `%LOCALAPPDATA%\reins`). Both are created 0700 and every secret file 0600; on Windows a new directory and every
 //! secret file get an access list that leaves them to the user alone instead (see `win::make_private`).
 
 use std::net::SocketAddr;
@@ -15,7 +15,7 @@ pub const DEFAULT_PORT: u16 = 7457;
 
 #[derive(Debug, thiserror::Error)]
 pub enum ConfigError {
-    #[error("cannot find the home directory; set REWARDEN_CONFIG_DIR and REWARDEN_STATE_DIR")]
+    #[error("cannot find the home directory; set REINS_CONFIG_DIR and REINS_STATE_DIR")]
     NoHome,
     #[error("{path}: {source}")]
     Io {
@@ -77,13 +77,13 @@ impl Paths {
             let home = env("HOME").or_else(|| env("USERPROFILE"));
             (home.as_ref().map(|h| h.join(".config")), home.as_ref().map(|h| h.join(".local").join("state")))
         };
-        let config_dir = env("REWARDEN_CONFIG_DIR")
-            .or_else(|| env("XDG_CONFIG_HOME").map(|d| d.join("rewarden")))
-            .or_else(|| config_base.map(|d| d.join("rewarden")))
+        let config_dir = env("REINS_CONFIG_DIR")
+            .or_else(|| env("XDG_CONFIG_HOME").map(|d| d.join("reins")))
+            .or_else(|| config_base.map(|d| d.join("reins")))
             .ok_or(ConfigError::NoHome)?;
-        let state_dir = env("REWARDEN_STATE_DIR")
-            .or_else(|| env("XDG_STATE_HOME").map(|d| d.join("rewarden")))
-            .or_else(|| state_base.map(|d| d.join("rewarden")))
+        let state_dir = env("REINS_STATE_DIR")
+            .or_else(|| env("XDG_STATE_HOME").map(|d| d.join("reins")))
+            .or_else(|| state_base.map(|d| d.join("reins")))
             .ok_or(ConfigError::NoHome)?;
         Ok(Self {
             config_dir,
@@ -111,7 +111,7 @@ impl Paths {
         self.state_dir.join("identity.key")
     }
 
-    /// The Rewarden server session (see [`crate::server`]).
+    /// The Reins server session (see [`crate::server`]).
     #[must_use]
     pub fn session_file(&self) -> PathBuf {
         self.state_dir.join("session.json")
@@ -175,13 +175,13 @@ pub fn write_private(path: &Path, bytes: &[u8]) -> std::io::Result<()> {
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum Mode {
-    /// The phone when the app is logged in to a Rewarden server, else the local policy.
+    /// The phone when the app is logged in to a Reins server, else the local policy.
     #[default]
     Auto,
     /// The local policy and a local GitHub token.
     Local,
-    /// The phone, through the Rewarden server; nothing works while logged out.
-    Rewarden,
+    /// The phone, through the Reins server; nothing works while logged out.
+    Reins,
 }
 
 /// What the local policy does with a kind of request.
@@ -202,7 +202,7 @@ pub struct GithubConfig {
     pub git_base: String,
     /// The REST API, used to describe pushes.
     pub api_base: String,
-    /// Rewarden mode: which of the phone's GitHub accounts to use (optional with one).
+    /// Reins mode: which of the phone's GitHub accounts to use (optional with one).
     pub account: Option<String>,
     /// Local mode: where the token comes from. `gh` (the GitHub CLI's `gh auth token`), `env:NAME`, or `file:PATH`.
     pub token: String,
@@ -251,10 +251,10 @@ pub struct HostEntry {
     /// The host's API (only GitHub's is used, to describe pushes).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub api_base: Option<String>,
-    /// Whether git is sent through Rewarden for this host. Built in: github.com yes, the others no; another host: yes.
+    /// Whether git is sent through Reins for this host. Built in: github.com yes, the others no; another host: yes.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub enabled: Option<bool>,
-    /// Rewarden mode: which of the phone's accounts for this service to use (optional with one).
+    /// Reins mode: which of the phone's accounts for this service to use (optional with one).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub account: Option<String>,
     /// Local mode: where the token comes from (`env:NAME`, `file:PATH`; `gh` for GitHub).
@@ -404,11 +404,11 @@ pub struct Config {
     pub github: GithubConfig,
     pub git: GitConfig,
     pub policy: PolicyConfig,
-    /// Where `rewarden update` looks for releases.
+    /// Where `reins update` looks for releases.
     pub releases: String,
-    /// What harness hooks ask about (`rewarden hook`).
+    /// What harness hooks ask about (`reins hook`).
     pub guard: crate::guard::GuardConfig,
-    /// `rewarden run --profile` sets (`[run.profiles.<name>]`).
+    /// `reins run --profile` sets (`[run.profiles.<name>]`).
     pub run: crate::run::RunConfig,
     /// APIs the daemon calls with a key from the phone (`[[api]]`).
     pub api: Vec<crate::api_proxy::ApiConfig>,
@@ -548,7 +548,7 @@ impl Config {
         Ok(hosts)
     }
 
-    /// The hosts git is sent through Rewarden for.
+    /// The hosts git is sent through Reins for.
     pub fn enabled_hosts(&self) -> Result<Vec<GitHost>, String> {
         Ok(self.git_hosts()?.into_iter().filter(|h| h.enabled).collect())
     }
@@ -624,22 +624,22 @@ mod tests {
     #[test]
     fn directories_follow_each_platforms_conventions() {
         let unix = Paths::from_vars(vars(&[("HOME", "/home/me")]), false).unwrap();
-        assert_eq!(unix.config_dir, Path::new("/home/me/.config/rewarden"));
-        assert_eq!(unix.state_dir, Path::new("/home/me/.local/state/rewarden"));
+        assert_eq!(unix.config_dir, Path::new("/home/me/.config/reins"));
+        assert_eq!(unix.state_dir, Path::new("/home/me/.local/state/reins"));
         let windows = [
             ("USERPROFILE", r"C:\Users\me"),
             ("APPDATA", r"C:\Users\me\AppData\Roaming"),
             ("LOCALAPPDATA", r"C:\Users\me\AppData\Local"),
         ];
         let w = Paths::from_vars(vars(&windows), true).unwrap();
-        assert_eq!(w.config_dir, Path::new(r"C:\Users\me\AppData\Roaming").join("rewarden"));
-        assert_eq!(w.state_dir, Path::new(r"C:\Users\me\AppData\Local").join("rewarden"));
+        assert_eq!(w.config_dir, Path::new(r"C:\Users\me\AppData\Roaming").join("reins"));
+        assert_eq!(w.state_dir, Path::new(r"C:\Users\me\AppData\Local").join("reins"));
         let profile_only = Paths::from_vars(vars(&[("USERPROFILE", "/p")]), true).unwrap();
-        assert_eq!(profile_only.config_dir, Path::new("/p").join("AppData").join("Roaming").join("rewarden"));
-        assert_eq!(profile_only.state_dir, Path::new("/p").join("AppData").join("Local").join("rewarden"));
-        let set = Paths::from_vars(vars(&[("REWARDEN_CONFIG_DIR", "/c"), ("XDG_STATE_HOME", "/s"), windows[0]]), true)
-            .unwrap();
-        assert_eq!((set.config_dir, set.state_dir), (PathBuf::from("/c"), Path::new("/s").join("rewarden")));
+        assert_eq!(profile_only.config_dir, Path::new("/p").join("AppData").join("Roaming").join("reins"));
+        assert_eq!(profile_only.state_dir, Path::new("/p").join("AppData").join("Local").join("reins"));
+        let set =
+            Paths::from_vars(vars(&[("REINS_CONFIG_DIR", "/c"), ("XDG_STATE_HOME", "/s"), windows[0]]), true).unwrap();
+        assert_eq!((set.config_dir, set.state_dir), (PathBuf::from("/c"), Path::new("/s").join("reins")));
         assert!(matches!(Paths::from_vars(vars(&[]), true), Err(ConfigError::NoHome)));
     }
 

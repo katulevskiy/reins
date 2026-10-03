@@ -12,7 +12,7 @@ use crate::http::{ServerUrl, error_text};
 
 /// Bitwarden device type "Android".
 pub const DEVICE_TYPE_ANDROID: &str = "0";
-pub const DEVICE_NAME: &str = "Rewarden";
+pub const DEVICE_NAME: &str = "Reins";
 const CLIENT_ID: &str = "mobile";
 const SCOPE: &str = "api offline_access";
 /// Two-factor provider id of authenticator apps (TOTP).
@@ -394,7 +394,7 @@ mod tests {
             .and(body_string_contains("client_id=mobile"))
             .and(body_string_contains("deviceType=0"))
             .and(body_string_contains("deviceIdentifier=dev-1"))
-            .and(body_string_contains("deviceName=Rewarden"))
+            .and(body_string_contains("deviceName=Reins"))
             .respond_with(tokens())
             .expect(1)
             .mount(&server)

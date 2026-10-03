@@ -1,4 +1,4 @@
-//! The Rewarden desktop app and the phone: which git access the app asks for, what a push does (built by the app from
+//! The Reins desktop app and the phone: which git access the app asks for, what a push does (built by the app from
 //! the exact bytes git sends, shown on the phone), and the credential the phone seals to the app.
 //!
 //! Trust: the app's public key is pinned on the phone when the app is paired (the user compares [`key_fingerprint`] on
@@ -385,7 +385,7 @@ pub fn push_digest(
     options: &[String],
 ) -> String {
     let mut h = Sha256::new();
-    h.update(b"rewarden-git-push/1\n");
+    h.update(b"reins-git-push/1\n");
     h.update(format!("repo {repo}\n").as_bytes());
     for (old, new, name) in commands {
         h.update(format!("update {old} {new} {name}\n").as_bytes());
@@ -422,7 +422,7 @@ pub fn encode_key(key: &[u8; 32]) -> String {
 pub fn key_fingerprint(key: &str) -> Option<String> {
     let raw = decode_key(key)?;
     let mut h = Sha256::new();
-    h.update(b"rewarden-desktop-key/1");
+    h.update(b"reins-desktop-key/1");
     h.update(raw);
     let d = h.finalize();
     let n = u64::from_be_bytes([0, 0, 0, d[0], d[1], d[2], d[3], d[4]]) % 100_000_000;

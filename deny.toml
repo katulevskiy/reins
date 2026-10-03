@@ -45,7 +45,7 @@ ignore = true
 multiple-versions = "allow"
 wildcards = "allow"
 # The server's macros are AGPL-3.0-only: only the server may depend on them. (cargo-deny cannot ban the root crate
-# `vaultwarden` itself; keep it out of the Apache-2.0 crates' manifests by review. rewarden-e2e runs the server as a
+# `vaultwarden` itself; keep it out of the Apache-2.0 crates' manifests by review. reins-e2e runs the server as a
 # separate program and does not link it.)
 deny = [
     { crate = "macros", wrappers = ["vaultwarden"], reason = "AGPL-3.0-only (the server's macros)" },

@@ -1,4 +1,4 @@
-//! A phone paired with a fake Rewarden desktop app: a fake Rewarden server that relays calls, the app's key pair, and
+//! A phone paired with a fake Reins desktop app: a fake Reins server that relays calls, the app's key pair, and
 //! helpers to pair, send calls, read the phone's answers and open what it sealed.
 
 use std::fmt::Write as _;
@@ -8,8 +8,8 @@ use std::time::Duration;
 use crypto_box::SecretKey;
 use crypto_box::aead::OsRng;
 use data_encoding::BASE64URL_NOPAD;
-use rewarden_core::{ApprovalChoice, CoreConfig, GrantScopeChoice, RewardenCore, StandingGrant};
-use rewarden_proto::desktop::encode_key;
+use reins_core::{ApprovalChoice, CoreConfig, GrantScopeChoice, ReinsCore, StandingGrant};
+use reins_proto::desktop::encode_key;
 use serde::de::DeserializeOwned;
 use serde_json::{Value, json};
 use wiremock::matchers::{method, path, path_regex};
@@ -20,17 +20,17 @@ use super::{FakeGoogle, FakeKeys, RecordingNotifier};
 /// The connection of the paired desktop app.
 pub const DESK: &str = "desk1";
 /// What the phone answers a desktop-only call from anything but the paired app.
-pub const REFUSED: &str = "This must come from the Rewarden desktop app paired with this phone.";
+pub const REFUSED: &str = "This must come from the Reins desktop app paired with this phone.";
 
 pub struct Desk {
     pub server: MockServer,
-    pub core: Arc<RewardenCore>,
+    pub core: Arc<ReinsCore>,
     pub key: SecretKey,
     pub dir: tempfile::TempDir,
 }
 
-/// The fake Rewarden server (sign-in, answers), mounted on `server`.
-pub async fn mount_rewarden(server: &MockServer) {
+/// The fake Reins server (sign-in, answers), mounted on `server`.
+pub async fn mount_reins(server: &MockServer) {
     Mock::given(method("POST"))
         .and(path("/identity/accounts/prelogin"))
         .respond_with(ResponseTemplate::new(200).set_body_json(json!({"kdf": 0, "kdfIterations": 5000})))
@@ -43,7 +43,7 @@ pub async fn mount_rewarden(server: &MockServer) {
         .mount(server)
         .await;
     Mock::given(method("POST"))
-        .and(path_regex(r"^/rewarden/api/(requests|pairings)/[^/]+/response$"))
+        .and(path_regex(r"^/reins/api/(requests|pairings)/[^/]+/response$"))
         .respond_with(ResponseTemplate::new(204))
         .mount(server)
         .await;
@@ -52,7 +52,7 @@ pub async fn mount_rewarden(server: &MockServer) {
 /// A signed-in phone (as `email` with `password`) whose server is `server`, configured by `cfg`.
 pub async fn desk_with(server: MockServer, email: &str, password: &str, cfg: CoreConfig) -> Desk {
     let dir = tempfile::tempdir().unwrap();
-    let core = RewardenCore::with_connectors(
+    let core = ReinsCore::with_connectors(
         dir.path().to_str().unwrap(),
         &FakeKeys,
         Arc::new(FakeGoogle::new()),
@@ -82,14 +82,14 @@ impl Desk {
     /// The server hands the phone these requests and pairings once.
     pub async fn serve(&self, requests: &[Value], pairings: &[Value]) {
         Mock::given(method("GET"))
-            .and(path("/rewarden/api/pending"))
+            .and(path("/reins/api/pending"))
             .respond_with(ResponseTemplate::new(200).set_body_json(json!({"requests": requests, "pairings": pairings})))
             .up_to_n_times(1)
             .with_priority(1)
             .mount(&self.server)
             .await;
         Mock::given(method("GET"))
-            .and(path("/rewarden/api/pending"))
+            .and(path("/reins/api/pending"))
             .respond_with(ResponseTemplate::new(200).set_body_json(json!({"requests": [], "pairings": []})))
             .mount(&self.server)
             .await;
@@ -103,12 +103,12 @@ impl Desk {
 
     /// The desktop app is paired with its key on connection [`DESK`].
     pub async fn pair(&self) {
-        let pairing = json!({"v": 1, "id": "p1", "client_name": "Rewarden desktop app", "client_host": "127.0.0.1",
+        let pairing = json!({"v": 1, "id": "p1", "client_name": "Reins desktop app", "client_host": "127.0.0.1",
             "choices": [12, 47, 83], "created_at": 50, "client_key": self.public()});
         self.serve(&[], &[pairing]).await;
         self.core.sync(0).await.unwrap();
         Mock::given(method("POST"))
-            .and(path("/rewarden/api/pairings/p1/response"))
+            .and(path("/reins/api/pairings/p1/response"))
             .respond_with(ResponseTemplate::new(200).set_body_json(json!({"connection_id": DESK})))
             .with_priority(1)
             .mount(&self.server)
@@ -124,7 +124,7 @@ impl Desk {
             .unwrap()
             .iter()
             .rev()
-            .find(|r| r.method.as_str() == "POST" && r.url.path() == format!("/rewarden/api/requests/{id}/response"))
+            .find(|r| r.method.as_str() == "POST" && r.url.path() == format!("/reins/api/requests/{id}/response"))
             .map(|r| serde_json::from_slice(&r.body).unwrap())
     }
 
@@ -175,7 +175,7 @@ impl Desk {
 
 /// A desktop-only call from connection `connection`.
 pub fn call(id: &str, connection: &str, service: &str, op: &str, args: &Value) -> Value {
-    json!({"v": 1, "id": id, "connection_id": connection, "connection_label": "Rewarden desktop app",
+    json!({"v": 1, "id": id, "connection_id": connection, "connection_label": "Reins desktop app",
            "created_at": 100, "call": {"tool": "connector", "service": service, "op": op, "args": args}})
 }
 

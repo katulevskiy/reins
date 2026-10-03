@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Builds the Reins desktop app for macOS: Reins.app (the app, with the `rewarden` command line program inside it)
+# Builds the Reins desktop app for macOS: Reins.app (the app, with the `reins` command line program inside it)
 # in a disk image with the drag-to-Applications window.
 #
 #   scripts/package/macos.sh                      # this Mac's architecture
@@ -14,7 +14,7 @@
 #   REINS_DEVELOPER_ID      "Developer ID Application: Name (TEAMID)", a signing identity in the keychain
 #   REINS_NOTARY_PROFILE    a notarytool keychain profile (xcrun notarytool store-credentials), or instead
 #   REINS_NOTARY_KEY, REINS_NOTARY_KEY_ID, REINS_NOTARY_ISSUER   an App Store Connect API key (.p8 path, key id, issuer)
-# Other knobs: REINS_VERSION (default: crates/rewarden-desktop's version), REINS_SKIP_BUILD=1 (package what is built).
+# Other knobs: REINS_VERSION (default: crates/reins-desktop's version), REINS_SKIP_BUILD=1 (package what is built).
 set -euo pipefail
 
 root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
@@ -25,12 +25,12 @@ cd "$root"
 }
 target_dir="${CARGO_TARGET_DIR:-$root/target}"
 out="$target_dir/package"
-version="${REINS_VERSION:-$(perl -ne 'if (/^version = "([^"]+)"/) { print $1; exit }' crates/rewarden-desktop/Cargo.toml)}"
+version="${REINS_VERSION:-$(perl -ne 'if (/^version = "([^"]+)"/) { print $1; exit }' crates/reins-desktop/Cargo.toml)}"
 host_arch="$(uname -m)"
 [ "$host_arch" = arm64 ] && host_arch=aarch64
 read -r -a archs <<<"${ARCHS:-$host_arch}"
-assets="$root/crates/rewarden-desktop-app/assets/icons"
-packaging="$root/crates/rewarden-desktop-app/packaging/macos"
+assets="$root/crates/reins-desktop-app/assets/icons"
+packaging="$root/crates/reins-desktop-app/packaging/macos"
 
 say() { printf '==> %s\n' "$*"; }
 
@@ -40,11 +40,11 @@ for arch in "${archs[@]}"; do
     triple="$arch-apple-darwin"
     if [ "${REINS_SKIP_BUILD:-}" != 1 ]; then
         say "building for $triple"
-        cargo build --locked --profile release-app -p rewarden-desktop-app --bin reins-app --target "$triple"
-        cargo build --locked --release -p rewarden-desktop --bin rewarden --target "$triple"
+        cargo build --locked --profile release-app -p reins-desktop-app --bin reins-app --target "$triple"
+        cargo build --locked --release -p reins-desktop --bin reins --target "$triple"
     fi
     bins_app+=("$target_dir/$triple/release-app/reins-app")
-    bins_cli+=("$target_dir/$triple/release/rewarden")
+    bins_cli+=("$target_dir/$triple/release/reins")
 done
 
 # 2. The bundle.
@@ -52,11 +52,11 @@ app="$out/Reins.app"
 rm -rf "$app"
 mkdir -p "$app/Contents/MacOS" "$app/Contents/Resources/licenses"
 if [ "${#archs[@]}" -gt 1 ]; then
-    lipo -create -output "$app/Contents/MacOS/Reins" "${bins_app[@]}"
-    lipo -create -output "$app/Contents/MacOS/rewarden" "${bins_cli[@]}"
+    lipo -create -output "$app/Contents/MacOS/reins-app" "${bins_app[@]}"
+    lipo -create -output "$app/Contents/MacOS/reins" "${bins_cli[@]}"
 else
-    install -m 755 "${bins_app[0]}" "$app/Contents/MacOS/Reins"
-    install -m 755 "${bins_cli[0]}" "$app/Contents/MacOS/rewarden"
+    install -m 755 "${bins_app[0]}" "$app/Contents/MacOS/reins-app"
+    install -m 755 "${bins_cli[0]}" "$app/Contents/MacOS/reins"
 fi
 sed "s/__VERSION__/$version/g" "$packaging/Info.plist" >"$app/Contents/Info.plist"
 plutil -lint "$app/Contents/Info.plist" >/dev/null
@@ -86,8 +86,8 @@ if [ -n "${REINS_DEVELOPER_ID:-}" ]; then
 else
     say "REINS_DEVELOPER_ID is not set: signing ad hoc (not notarized; Gatekeeper asks once)"
 fi
-sign "$app/Contents/MacOS/rewarden"
-sign "$app/Contents/MacOS/Reins"
+sign "$app/Contents/MacOS/reins"
+sign "$app/Contents/MacOS/reins-app"
 sign "$app"
 codesign --verify --strict --verbose=1 "$app"
 

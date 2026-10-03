@@ -1,4 +1,4 @@
-package dev.rewarden.android
+package dev.reins.android
 
 import android.content.Intent
 import android.os.Bundle
@@ -12,28 +12,28 @@ import androidx.lifecycle.lifecycleScope
 import androidx.lifecycle.repeatOnLifecycle
 import androidx.lifecycle.viewmodel.viewModelFactory
 import androidx.lifecycle.viewmodel.initializer
-import dev.rewarden.android.platform.AppNotifier
-import dev.rewarden.android.platform.Foreground
-import dev.rewarden.android.platform.GrantReminders
-import dev.rewarden.android.platform.McpRedirectActivity
-import dev.rewarden.android.platform.SsoRedirectActivity
-import dev.rewarden.android.ui.mcp.isMcpRedirect
-import dev.rewarden.android.platform.AuthenticatorProvider
-import dev.rewarden.android.platform.update.UpdateNotifier
-import dev.rewarden.android.platform.update.UpdateWorker
-import dev.rewarden.android.state.SessionState
-import dev.rewarden.android.sync.ForegroundSync
-import dev.rewarden.android.ui.AppViewModel
-import dev.rewarden.android.ui.RewardenRoot
-import dev.rewarden.android.ui.nav.DeepLink
-import dev.rewarden.android.ui.pairing.PairingCode
+import dev.reins.android.platform.AppNotifier
+import dev.reins.android.platform.Foreground
+import dev.reins.android.platform.GrantReminders
+import dev.reins.android.platform.McpRedirectActivity
+import dev.reins.android.platform.SsoRedirectActivity
+import dev.reins.android.ui.mcp.isMcpRedirect
+import dev.reins.android.platform.AuthenticatorProvider
+import dev.reins.android.platform.update.UpdateNotifier
+import dev.reins.android.platform.update.UpdateWorker
+import dev.reins.android.state.SessionState
+import dev.reins.android.sync.ForegroundSync
+import dev.reins.android.ui.AppViewModel
+import dev.reins.android.ui.ReinsRoot
+import dev.reins.android.ui.nav.DeepLink
+import dev.reins.android.ui.pairing.PairingCode
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 
 /** The only exported component. FragmentActivity because BiometricPrompt needs one. */
 class MainActivity : FragmentActivity() {
-    private val container get() = (application as RewardenApp).container
+    private val container get() = (application as ReinsApp).container
     private val app: AppViewModel by viewModels { viewModelFactory { initializer { AppViewModel(container) } } }
 
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -41,7 +41,7 @@ class MainActivity : FragmentActivity() {
         super.onCreate(savedInstanceState)
         val authenticator = AuthenticatorProvider.factory(this)
         setContent {
-            RewardenRoot(container, app, authenticator)
+            ReinsRoot(container, app, authenticator)
         }
         if (savedInstanceState == null) handleIntent(intent)
         if (container.updates != null) UpdateWorker.schedule(applicationContext)

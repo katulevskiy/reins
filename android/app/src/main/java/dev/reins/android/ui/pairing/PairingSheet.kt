@@ -1,4 +1,4 @@
-package dev.rewarden.android.ui.pairing
+package dev.reins.android.ui.pairing
 
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -26,24 +26,24 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
-import dev.rewarden.android.design.ActionKind
-import dev.rewarden.android.design.ActionTile
-import dev.rewarden.android.design.Banner
-import dev.rewarden.android.design.BannerKind
-import dev.rewarden.android.design.ButtonStyle
-import dev.rewarden.android.design.CapsuleButton
-import dev.rewarden.android.feedback.Event
-import dev.rewarden.android.feedback.feedbackAction
-import dev.rewarden.android.design.ConnectionAvatar
-import dev.rewarden.android.design.Glyph
-import dev.rewarden.android.design.GlyphIcon
-import dev.rewarden.android.design.LocalColors
-import dev.rewarden.android.design.RText
-import dev.rewarden.android.design.RTextField
-import dev.rewarden.android.design.RType
-import dev.rewarden.android.design.Spinner
-import dev.rewarden.android.platform.Authenticator
-import dev.rewarden.android.ui.common.untrusted
+import dev.reins.android.design.ActionKind
+import dev.reins.android.design.ActionTile
+import dev.reins.android.design.Banner
+import dev.reins.android.design.BannerKind
+import dev.reins.android.design.ButtonStyle
+import dev.reins.android.design.CapsuleButton
+import dev.reins.android.feedback.Event
+import dev.reins.android.feedback.feedbackAction
+import dev.reins.android.design.ConnectionAvatar
+import dev.reins.android.design.Glyph
+import dev.reins.android.design.GlyphIcon
+import dev.reins.android.design.LocalColors
+import dev.reins.android.design.RText
+import dev.reins.android.design.RTextField
+import dev.reins.android.design.RType
+import dev.reins.android.design.Spinner
+import dev.reins.android.platform.Authenticator
+import dev.reins.android.ui.common.untrusted
 
 /** Connecting a new AI or computer: confirm the two-digit code it shows (in the browser or the desktop app), name it, approve. */
 @Composable
@@ -115,7 +115,7 @@ fun PairingSheet(viewModel: PairingViewModel, authenticator: Authenticator, onDo
 }
 
 /**
- * The Rewarden desktop app's key, as eight digits the computer shows too. Matching them is what stops the server from
+ * The Reins desktop app's key, as eight digits the computer shows too. Matching them is what stops the server from
  * slipping in a key of its own, so they come first, large, and set apart like a permission request.
  */
 @Composable

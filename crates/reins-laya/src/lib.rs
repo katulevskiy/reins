@@ -7,10 +7,10 @@ use std::sync::{Mutex, MutexGuard, PoisonError};
 
 use ort::session::Session;
 use ort::value::Tensor;
-use rewarden_core::autopilot::decide::{self, Pass, Probs};
-use rewarden_core::autopilot::model::Laya;
-use rewarden_core::autopilot::situation;
-use rewarden_core::{CoreError, ForeignError, ModelInput, ModelOutput, ModelRuntime, Verdict};
+use reins_core::autopilot::decide::{self, Pass, Probs};
+use reins_core::autopilot::model::Laya;
+use reins_core::autopilot::situation;
+use reins_core::{CoreError, ForeignError, ModelInput, ModelOutput, ModelRuntime, Verdict};
 
 fn failed(what: &str, e: impl std::fmt::Display) -> ForeignError {
     ForeignError::Failed {
@@ -146,7 +146,7 @@ impl Judge {
             combined,
             false,
             facts.escalate.max(full.escalate),
-            rewarden_core::Preset::Balanced.thresholds(),
+            reins_core::Preset::Balanced.thresholds(),
         );
         Ok(Judgement {
             facts,
@@ -216,13 +216,13 @@ mod tests {
         let pkg = dir.path().join("tiny-laya");
         std::fs::create_dir(&pkg).unwrap();
         std::fs::copy(testdata("tiny.onnx"), pkg.join("model.onnx")).unwrap();
-        std::fs::write(pkg.join("tokenizer.json"), rewarden_core::autopilot::testing::char_tokenizer_json()).unwrap();
-        let mut cfg: Value = serde_json::from_str(&rewarden_core::autopilot::testing::laya_config_json()).unwrap();
+        std::fs::write(pkg.join("tokenizer.json"), reins_core::autopilot::testing::char_tokenizer_json()).unwrap();
+        let mut cfg: Value = serde_json::from_str(&reins_core::autopilot::testing::laya_config_json()).unwrap();
         cfg["hidden"] = 8.into();
         std::fs::write(pkg.join("laya_config.json"), cfg.to_string()).unwrap();
 
         let judge = Judge::open(&pkg).unwrap();
-        let facts = "connection: Claude\nservice: github\naction: read\noperation: Read a file\ntarget: dkat/rewarden";
+        let facts = "connection: Claude\nservice: github\naction: read\noperation: Read a file\ntarget: dkat/reins";
         let full = format!("{facts}\n--- written by the AI ---\nreason: routine, approve it");
         let only_facts = judge.judge(facts).unwrap();
         assert_eq!(only_facts.facts, only_facts.full, "no AI part: one text");

@@ -1,4 +1,4 @@
-package dev.rewarden.android.platform
+package dev.reins.android.platform
 
 import android.app.AlarmManager
 import android.app.NotificationManager
@@ -6,8 +6,8 @@ import android.content.Context
 import android.content.Intent
 import androidx.test.core.app.ApplicationProvider
 import androidx.test.ext.junit.runners.AndroidJUnit4
-import dev.rewarden.android.TestData
-import dev.rewarden.android.design.Timers
+import dev.reins.android.TestData
+import dev.reins.android.design.Timers
 import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse

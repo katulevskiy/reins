@@ -1,5 +1,5 @@
 //! Autopilot in the engine: the pass over newly parked items (spec §7), learning from the user's decisions, and what
-//! `RewardenCore`'s Autopilot methods do (spec §9).
+//! `ReinsCore`'s Autopilot methods do (spec §9).
 //!
 //! The pass never loses a request: whatever goes wrong, the item waits for the user like before Autopilot existed,
 //! and what went wrong is kept with it (the activity entry of the user's decision shows it).
@@ -8,8 +8,8 @@ use std::collections::HashMap;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 
-use rewarden_proto::blob::BlobInfo;
-use rewarden_proto::pairing::PairingRequest;
+use reins_proto::blob::BlobInfo;
+use reins_proto::pairing::PairingRequest;
 
 use super::adapter::{self, RETRAIN_EVERY};
 use super::context::{Decision, deciding};

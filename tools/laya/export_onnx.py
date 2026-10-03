@@ -11,7 +11,7 @@ Steps: fp32 export (legacy TorchScript exporter, dynamic batch/seq/k) -> int8 dy
 (MatMul, optionally Gather for the embedding table) -> parity check against PyTorch -> package
 `<pkg_root>/<id>/{model.onnx, tokenizer.json, laya_config.json}` + SHA256SUMS.
 
-    python export_onnx.py --ckpt ~/.cache/rewarden-laya/runs/ml-v1 --id laya-approvals-ml-v1
+    python export_onnx.py --ckpt ~/.cache/reins-laya/runs/ml-v1 --id laya-approvals-ml-v1
 """
 import argparse
 import hashlib

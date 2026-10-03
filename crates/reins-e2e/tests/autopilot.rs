@@ -5,9 +5,9 @@
 use std::sync::Arc;
 use std::time::Duration;
 
-use rewarden_core::autopilot::testing::{self, FakeRuntime, logits};
-use rewarden_core::{ApprovalChoice, AutopilotMode, DownloadProgress, ModelRuntime, ModelState, PendingKind, Verdict};
-use rewarden_e2e::{AiClient, Phone, Server};
+use reins_core::autopilot::testing::{self, FakeRuntime, logits};
+use reins_core::{ApprovalChoice, AutopilotMode, DownloadProgress, ModelRuntime, ModelState, PendingKind, Verdict};
+use reins_e2e::{AiClient, Phone, Server};
 use serde_json::{Value, json};
 use wiremock::matchers::{body_partial_json, method, path};
 use wiremock::{Mock, MockServer, ResponseTemplate};
@@ -74,7 +74,7 @@ struct Setup {
 
 /// A phone with the fake model downloaded and an AI paired (the 10-minute rule shortened to nothing) and an MCP server.
 async fn setup(email: &str) -> Setup {
-    rewarden_e2e::init_tls();
+    reins_e2e::init_tls();
     let mcp = fake_mcp().await;
     let models = MockServer::start().await;
     let files = testing::package();

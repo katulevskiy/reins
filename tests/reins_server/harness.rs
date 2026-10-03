@@ -10,7 +10,7 @@ use reqwest::{Client, StatusCode, redirect::Policy};
 use serde_json::{Value, json};
 
 /// Any string works: the server stores a salted PBKDF2 of whatever the client sends.
-pub const PASSWORD_HASH: &str = "rewarden-test-master-password-hash";
+pub const PASSWORD_HASH: &str = "reins-test-master-password-hash";
 
 pub struct Options {
     pub relay_wait_secs: u64,
@@ -57,7 +57,7 @@ impl Server {
 
     pub async fn start_with(options: Options) -> Self {
         let port = free_port();
-        let dir = std::env::temp_dir().join(format!("rewarden-it-{}", uuid::Uuid::new_v4()));
+        let dir = std::env::temp_dir().join(format!("reins-it-{}", uuid::Uuid::new_v4()));
         std::fs::create_dir_all(&dir).expect("temp dir");
         let log = File::create(dir.join("server.log")).expect("log file");
         let base = format!("http://127.0.0.1:{port}");
@@ -71,11 +71,11 @@ impl Server {
             .env("ROCKET_PORT", port.to_string())
             .env("WEB_VAULT_ENABLED", "false")
             .env("LOG_LEVEL", "info")
-            .env("REWARDEN_ENABLED", "true")
-            .env("REWARDEN_RELAY_WAIT_SECS", options.relay_wait_secs.to_string())
-            .env("REWARDEN_OFFLINE_SECS", options.offline_secs.to_string());
+            .env("REINS_ENABLED", "true")
+            .env("REINS_RELAY_WAIT_SECS", options.relay_wait_secs.to_string())
+            .env("REINS_OFFLINE_SECS", options.offline_secs.to_string());
         if options.allow_loopback {
-            command.env("REWARDEN_TEST_ALLOW_LOOPBACK", "true");
+            command.env("REINS_TEST_ALLOW_LOOPBACK", "true");
         }
         command.envs(options.env.iter().map(|(k, v)| (*k, v.as_str())));
         let child = command.stdout(log.try_clone().expect("log clone")).stderr(log).spawn().expect("spawn vaultwarden");
@@ -119,7 +119,7 @@ impl Server {
     pub async fn register(&self, email: &str) {
         let body = json!({
             "email": email,
-            "name": "Rewarden Test",
+            "name": "Reins Test",
             "masterPasswordHash": PASSWORD_HASH,
             "masterPasswordHint": null,
             "key": "2.AAAAAAAAAAAAAAAAAAAAAA==|AAAAAAAAAAAAAAAAAAAAAA==|AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=",
@@ -141,7 +141,7 @@ impl Server {
             ("client_id", "mobile"),
             ("deviceType", "0"),
             ("deviceIdentifier", device_id),
-            ("deviceName", "Rewarden"),
+            ("deviceName", "Reins"),
         ];
         let r = client().post(self.url("/identity/connect/token")).form(&form).send().await.expect("login");
         let status = r.status();
@@ -166,7 +166,7 @@ impl Server {
     pub async fn device_with_id(&self, email: &str, device_id: &str, key: Option<String>) -> Phone {
         let token = self.login(email, device_id).await;
         Phone {
-            base: self.url("/rewarden/api"),
+            base: self.url("/reins/api"),
             token,
             device_id: device_id.to_owned(),
             key,
@@ -187,7 +187,7 @@ pub fn new_device_key() -> String {
     let mut key = [0u8; 32];
     key[..16].copy_from_slice(uuid::Uuid::new_v4().as_bytes());
     key[16..].copy_from_slice(uuid::Uuid::new_v4().as_bytes());
-    rewarden_proto::desktop::encode_key(&key)
+    reins_proto::desktop::encode_key(&key)
 }
 
 /// A logged-in device talking to the phone API.
@@ -232,7 +232,7 @@ impl Phone {
     pub fn raw(&self, method: reqwest::Method, path: &str) -> reqwest::RequestBuilder {
         let request = client().request(method, format!("{}{path}", self.base)).bearer_auth(&self.token);
         match &self.key {
-            Some(key) => request.header(rewarden_proto::device::DEVICE_KEY_HEADER, key),
+            Some(key) => request.header(reins_proto::device::DEVICE_KEY_HEADER, key),
             None => request,
         }
     }
@@ -274,7 +274,7 @@ impl Server {
     pub async fn register_client(&self) -> String {
         let body = json!({"client_name": "Claude", "redirect_uris": [REDIRECT], "token_endpoint_auth_method": "none",
             "grant_types": ["authorization_code", "refresh_token"], "response_types": ["code"]});
-        let r = client().post(self.url("/rewarden/oauth/register")).json(&body).send().await.expect("register client");
+        let r = client().post(self.url("/reins/oauth/register")).json(&body).send().await.expect("register client");
         assert_eq!(r.status(), StatusCode::CREATED);
         let doc: Value = r.json().await.expect("registration json");
         doc["client_id"].as_str().expect("client_id").to_owned()
@@ -288,9 +288,9 @@ impl Server {
         self.authorize_url_with(client_id, resource, &[])
     }
 
-    /// The authorize URL with extra query parameters (the desktop app adds `rewarden_client_key`).
+    /// The authorize URL with extra query parameters (the desktop app adds `reins_client_key`).
     pub fn authorize_url_with(&self, client_id: &str, resource: &str, extra: &[(&str, &str)]) -> String {
-        let mut url = url::Url::parse(&self.url("/rewarden/oauth/authorize")).expect("url");
+        let mut url = url::Url::parse(&self.url("/reins/oauth/authorize")).expect("url");
         url.query_pairs_mut()
             .append_pair("client_id", client_id)
             .append_pair("redirect_uri", REDIRECT)
@@ -315,7 +315,7 @@ impl Server {
         let html = page.text().await.expect("authorize html");
         let session = between(&html, "name=\"session\" value=\"", "\"").to_owned();
         let r = client()
-            .post(self.url("/rewarden/oauth/authorize"))
+            .post(self.url("/reins/oauth/authorize"))
             .form(&[("session", session.as_str()), ("email", email)])
             .send()
             .await
@@ -327,7 +327,7 @@ impl Server {
 
     /// POST /token with a form; returns status and JSON body.
     pub async fn token(&self, form: &[(&str, &str)]) -> (StatusCode, Value) {
-        let r = client().post(self.url("/rewarden/oauth/token")).form(form).send().await.expect("token");
+        let r = client().post(self.url("/reins/oauth/token")).form(form).send().await.expect("token");
         let status = r.status();
         (status, r.json().await.unwrap_or(Value::Null))
     }

@@ -10,10 +10,10 @@ fn runtime() -> &'static Runtime {
     RUNTIME.get_or_init(|| {
         Builder::new_multi_thread()
             .worker_threads(4)
-            .thread_name("rewarden-core")
+            .thread_name("reins-core")
             .enable_all()
             .build()
-            .expect("failed to start the rewarden-core runtime")
+            .expect("failed to start the reins-core runtime")
     })
 }
 
@@ -32,7 +32,7 @@ where
         Err(e) => {
             let payload: Box<dyn Any + Send> = match e.try_into_panic() {
                 Ok(payload) => payload,
-                Err(e) => Box::new(format!("rewarden-core task failed: {e}")),
+                Err(e) => Box::new(format!("reins-core task failed: {e}")),
             };
             std::panic::resume_unwind(payload)
         }

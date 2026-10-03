@@ -2,7 +2,7 @@
 //! phone adds, and plays the AI client, while the real iOS app on a simulator signs in, pairs and approves.
 //!
 //! ```text
-//! cargo run -p rewarden-e2e --example ios_smoke -- /tmp/reins-live
+//! cargo run -p reins-e2e --example ios_smoke -- /tmp/reins-live
 //! # prints SERVER, EMAIL, PASSWORD and MCP; once the phone registered as the approval device, CODE;
 //! # once the phone added the MCP server: one call approved once, one allowed for a while, one the grant answers.
 //! ```
@@ -13,7 +13,7 @@
 use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 
-use rewarden_e2e::{AiClient, PASSWORD, Server};
+use reins_e2e::{AiClient, PASSWORD, Server};
 use serde_json::{Value, json};
 use wiremock::matchers::{body_partial_json, method};
 use wiremock::{Mock, MockServer, ResponseTemplate};
@@ -97,7 +97,7 @@ async fn call(ai: &AiClient, step: &str, name: &str, args: &Value) -> Value {
 
 #[tokio::main]
 async fn main() {
-    rewarden_e2e::init_tls();
+    reins_e2e::init_tls();
     let dir = PathBuf::from(std::env::args().nth(1).unwrap_or_else(|| "/tmp/reins-live".to_owned()));
     std::fs::create_dir_all(&dir).expect("coordination dir");
     let mcp = fake_mcp().await;
@@ -109,7 +109,7 @@ async fn main() {
     println!("MCP {}/mcp", mcp.uri());
 
     // The AI connects after the phone registered as the approval device.
-    while !server.log().contains("PUT /rewarden/api/device") {
+    while !server.log().contains("PUT /reins/api/device") {
         tokio::time::sleep(Duration::from_millis(200)).await;
     }
     println!("REGISTERED");

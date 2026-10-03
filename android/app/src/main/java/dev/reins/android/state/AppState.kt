@@ -1,15 +1,15 @@
-package dev.rewarden.android.state
+package dev.reins.android.state
 
-import dev.rewarden.android.platform.PhoneBridge
-import dev.rewarden.core.AccountView
-import dev.rewarden.core.AutopilotSettings
-import dev.rewarden.core.ServiceView
-import dev.rewarden.core.ActivityEntry
-import dev.rewarden.core.ConnectionView
-import dev.rewarden.core.GrantView
-import dev.rewarden.core.McpServerView
-import dev.rewarden.core.PendingItem
-import dev.rewarden.core.SessionInfo
+import dev.reins.android.platform.PhoneBridge
+import dev.reins.core.AccountView
+import dev.reins.core.AutopilotSettings
+import dev.reins.core.ServiceView
+import dev.reins.core.ActivityEntry
+import dev.reins.core.ConnectionView
+import dev.reins.core.GrantView
+import dev.reins.core.McpServerView
+import dev.reins.core.PendingItem
+import dev.reins.core.SessionInfo
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -54,7 +54,7 @@ class AppState {
 
     fun setMcpServers(items: List<McpServerView>) {
         _mcpServers.value = items
-        dev.rewarden.android.design.McpNames.update(items)
+        dev.reins.android.design.McpNames.update(items)
     }
 
     fun setMcpNotice(notice: McpNotice?) {

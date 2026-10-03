@@ -1,4 +1,4 @@
-package dev.rewarden.android
+package dev.reins.android
 
 import android.content.ClipboardManager
 import android.content.Intent
@@ -12,12 +12,12 @@ import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performTextReplacement
 import androidx.test.ext.junit.runners.AndroidJUnit4
-import dev.rewarden.android.platform.GmsQrScanner
-import dev.rewarden.android.platform.QrScanner
-import dev.rewarden.android.platform.QrScannerProvider
-import dev.rewarden.android.platform.ScanResult
-import dev.rewarden.android.ui.signin.AccountRules
-import dev.rewarden.core.CoreException
+import dev.reins.android.platform.GmsQrScanner
+import dev.reins.android.platform.QrScanner
+import dev.reins.android.platform.QrScannerProvider
+import dev.reins.android.platform.ScanResult
+import dev.reins.android.ui.signin.AccountRules
+import dev.reins.core.CoreException
 import java.util.concurrent.atomic.AtomicInteger
 import org.junit.After
 import org.junit.Assert.assertEquals
@@ -195,7 +195,7 @@ class OnboardingFlowTest : FlowHarness() {
         tap("create")
         awaitTag("setupComputer")
         rule.onNodeWithTag("setupStep").assertTextEquals("STEP 1 OF 2")
-        rule.onNodeWithTag("computerHowTo").assertTextContains("rewarden login", substring = true)
+        rule.onNodeWithTag("computerHowTo").assertTextContains("reins login", substring = true)
         assertTrue(has("desktopDownload"))
         tap("setupNext")
         awaitTag("setupAi")

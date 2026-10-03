@@ -1,4 +1,4 @@
-//! `rewarden hook <harness>`: a harness's pre-tool hook. Reads the hook's JSON on stdin, and when the command or file
+//! `reins hook <harness>`: a harness's pre-tool hook. Reads the hook's JSON on stdin, and when the command or file
 //! matches the guard rules (`[guard]`) asks the phone (or the person at the computer) and answers in that harness's
 //! format; anything else gets no decision, so the harness's own permission settings apply.
 //!
@@ -15,7 +15,7 @@
 //!   (`tool_name` `Write`/`Delete`, `tool_input.file_path`), which know `allow`/`deny` only. `allow` lets the action
 //!   run without Cursor's own approval (that is what `ask` is for), so it is only said for an approved request. No
 //!   output is no decision: Cursor counts it as a failed hook, which fails open (unless the hook sets `failClosed`,
-//!   which `rewarden harness add` does not) and leaves the action to Cursor's own settings. The exception is
+//!   which `reins harness add` does not) and leaves the action to Cursor's own settings. The exception is
 //!   `beforeReadFile`: Cursor never asks before reading, so an explicit `allow` takes nothing from the user there.
 //! - Gemini CLI `BeforeTool` (<https://geminicli.com/docs/hooks/reference/>): `run_shell_command`
 //!   (`tool_input.command`), `write_file`/`replace`/`read_file` (`tool_input.file_path`); answer `{"decision":
@@ -249,13 +249,13 @@ pub fn question(call: &HookCall, guard: &GuardConfig) -> Option<(Match, Question
 #[must_use]
 pub fn verdict(answer: Answer, on_no_answer: OnNoAnswer) -> Verdict {
     match answer {
-        Answer::Yes => Verdict::Allow("Approved through Rewarden.".to_owned()),
-        Answer::No(why) => Verdict::Deny(format!("Rewarden: {why} Do not try another way around this.")),
+        Answer::Yes => Verdict::Allow("Approved through Reins.".to_owned()),
+        Answer::No(why) => Verdict::Deny(format!("Reins: {why} Do not try another way around this.")),
         Answer::Unanswered(why) => match on_no_answer {
             OnNoAnswer::Deny => Verdict::Deny(format!(
-                "Rewarden: not allowed, nobody answered ({why}). Ask the user to approve it, then try again."
+                "Reins: not allowed, nobody answered ({why}). Ask the user to approve it, then try again."
             )),
-            OnNoAnswer::Ask => Verdict::Ask(format!("Rewarden got no answer ({why}).")),
+            OnNoAnswer::Ask => Verdict::Ask(format!("Reins got no answer ({why}).")),
         },
     }
 }
@@ -311,7 +311,7 @@ pub async fn run(
 ) -> (Option<String>, u8, Option<String>) {
     let call = match parse(harness, input) {
         Ok(c) => c,
-        Err(e) => return (None, 2, Some(format!("rewarden hook: {e}; not allowed."))),
+        Err(e) => return (None, 2, Some(format!("reins hook: {e}; not allowed."))),
     };
     let Some((m, q)) = question(&call, &config.guard) else {
         let (out, code) = render(&call, &Verdict::Unmatched);

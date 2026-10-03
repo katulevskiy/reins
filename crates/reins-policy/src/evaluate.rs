@@ -1,7 +1,7 @@
 use std::collections::BTreeSet;
 
-use rewarden_proto::gmail::OutgoingEmail;
-use rewarden_proto::ids::{ConnectionId, GrantId};
+use reins_proto::gmail::OutgoingEmail;
+use reins_proto::ids::{ConnectionId, GrantId};
 
 use crate::{Grant, MessageFacts, ReadScope, Scope};
 

@@ -1,4 +1,4 @@
-package dev.rewarden.android.ui.join
+package dev.reins.android.ui.join
 
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -25,18 +25,18 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
-import dev.rewarden.android.design.ActionKind
-import dev.rewarden.android.design.ActionTile
-import dev.rewarden.android.design.Banner
-import dev.rewarden.android.design.BannerKind
-import dev.rewarden.android.design.ButtonStyle
-import dev.rewarden.android.design.CapsuleButton
-import dev.rewarden.android.design.LocalColors
-import dev.rewarden.android.design.RText
-import dev.rewarden.android.design.RType
-import dev.rewarden.android.design.Spinner
-import dev.rewarden.android.platform.Authenticator
-import dev.rewarden.android.ui.common.untrusted
+import dev.reins.android.design.ActionKind
+import dev.reins.android.design.ActionTile
+import dev.reins.android.design.Banner
+import dev.reins.android.design.BannerKind
+import dev.reins.android.design.ButtonStyle
+import dev.reins.android.design.CapsuleButton
+import dev.reins.android.design.LocalColors
+import dev.reins.android.design.RText
+import dev.reins.android.design.RType
+import dev.reins.android.design.Spinner
+import dev.reins.android.platform.Authenticator
+import dev.reins.android.ui.common.untrusted
 
 /**
  * "Add another phone", on the approval device: the code the new phone shows, large, then Deny or Approve. [onDone]

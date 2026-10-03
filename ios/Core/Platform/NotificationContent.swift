@@ -126,7 +126,7 @@ enum NotificationText {
         }
     }
 
-    /// "Push to a branch · dkat/rewarden — Claude Code".
+    /// "Push to a branch · dkat/reins — Claude Code".
     static func decisionText(_ d: AutoDecisionView) -> String { "\(untrusted(d.title)) — \(untrusted(d.connectionLabel))" }
 
     /// "97% sure" for Autopilot's own decisions; bypass and lockdown do not judge.

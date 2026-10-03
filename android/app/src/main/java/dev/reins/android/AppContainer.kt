@@ -1,41 +1,41 @@
-package dev.rewarden.android
+package dev.reins.android
 
 import android.content.Context
-import dev.rewarden.android.autopilot.AutopilotText
-import dev.rewarden.android.autopilot.ModelDownloads
-import dev.rewarden.android.autopilot.OnnxModelRuntime
-import dev.rewarden.android.autopilot.WorkModelDownloads
-import dev.rewarden.android.core.CoreProvider
-import dev.rewarden.android.core.MainSafeCore
-import dev.rewarden.android.feedback.AndroidFeedback
-import dev.rewarden.android.feedback.FeedbackStore
-import dev.rewarden.android.platform.AppNotifier
-import dev.rewarden.android.platform.BypassEndWorker
-import dev.rewarden.android.platform.GrantReminders
-import dev.rewarden.android.platform.FirebaseSupport
-import dev.rewarden.android.platform.GoogleAuthorizer
-import dev.rewarden.android.platform.KeystoreKeyWrapper
-import dev.rewarden.android.platform.McpSignIn
-import dev.rewarden.android.platform.PhoneBridge
-import dev.rewarden.android.platform.SsoSignIn
-import dev.rewarden.android.platform.Foreground
-import dev.rewarden.android.platform.update.HttpUpdateFetcher
-import dev.rewarden.android.platform.update.PlatformInstaller
-import dev.rewarden.android.platform.update.PrefsUpdateStore
-import dev.rewarden.android.platform.update.UpdateController
-import dev.rewarden.android.platform.update.UpdateNotifier
-import dev.rewarden.android.platform.update.UpdateProvider
-import dev.rewarden.android.platform.update.Updater
-import dev.rewarden.android.state.AppState
-import dev.rewarden.android.state.DeviceStatusStore
-import dev.rewarden.android.state.OnboardingStore
-import dev.rewarden.android.state.SessionState
-import dev.rewarden.android.ui.common.userMessage
-import dev.rewarden.core.AutopilotSettings
-import dev.rewarden.core.CoreException
-import dev.rewarden.core.RewardenCore
-import dev.rewarden.core.RewardenCoreInterface
-import dev.rewarden.core.SessionInfo
+import dev.reins.android.autopilot.AutopilotText
+import dev.reins.android.autopilot.ModelDownloads
+import dev.reins.android.autopilot.OnnxModelRuntime
+import dev.reins.android.autopilot.WorkModelDownloads
+import dev.reins.android.core.CoreProvider
+import dev.reins.android.core.MainSafeCore
+import dev.reins.android.feedback.AndroidFeedback
+import dev.reins.android.feedback.FeedbackStore
+import dev.reins.android.platform.AppNotifier
+import dev.reins.android.platform.BypassEndWorker
+import dev.reins.android.platform.GrantReminders
+import dev.reins.android.platform.FirebaseSupport
+import dev.reins.android.platform.GoogleAuthorizer
+import dev.reins.android.platform.KeystoreKeyWrapper
+import dev.reins.android.platform.McpSignIn
+import dev.reins.android.platform.PhoneBridge
+import dev.reins.android.platform.SsoSignIn
+import dev.reins.android.platform.Foreground
+import dev.reins.android.platform.update.HttpUpdateFetcher
+import dev.reins.android.platform.update.PlatformInstaller
+import dev.reins.android.platform.update.PrefsUpdateStore
+import dev.reins.android.platform.update.UpdateController
+import dev.reins.android.platform.update.UpdateNotifier
+import dev.reins.android.platform.update.UpdateProvider
+import dev.reins.android.platform.update.Updater
+import dev.reins.android.state.AppState
+import dev.reins.android.state.DeviceStatusStore
+import dev.reins.android.state.OnboardingStore
+import dev.reins.android.state.SessionState
+import dev.reins.android.ui.common.userMessage
+import dev.reins.core.AutopilotSettings
+import dev.reins.core.CoreException
+import dev.reins.core.ReinsCore
+import dev.reins.core.ReinsCoreInterface
+import dev.reins.core.SessionInfo
 import kotlin.coroutines.cancellation.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -97,7 +97,7 @@ class AppContainer(private val context: Context) {
     }
 
     /** Every call runs on `Dispatchers.IO`; the Rust core is built there too. */
-    val core: RewardenCoreInterface = CoreProvider.factory.create(this) ?: MainSafeCore { createRealCore() }
+    val core: ReinsCoreInterface = CoreProvider.factory.create(this) ?: MainSafeCore { createRealCore() }
 
     /** The MCP server sign-in that waits for its browser page to come back. */
     val mcpSignIn = McpSignIn(context, { core }, state)
@@ -105,9 +105,9 @@ class AppContainer(private val context: Context) {
     /** The sign-in through the server's SSO ("Continue") that waits for its browser page to come back. */
     val ssoSignIn = SsoSignIn(context)
 
-    private fun createRealCore(): RewardenCoreInterface {
+    private fun createRealCore(): ReinsCoreInterface {
         val dataDir = java.io.File(context.noBackupFilesDir, "core").apply { mkdirs() }
-        return RewardenCore(
+        return ReinsCore(
             dataDir.absolutePath,
             KeystoreKeyWrapper(),
             google,

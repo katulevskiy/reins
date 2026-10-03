@@ -3,7 +3,7 @@
 
 use std::{convert::Infallible, io::Cursor, time::Duration};
 
-use rewarden_proto::{
+use reins_proto::{
     gmail::ToolCall,
     ids::{ConnectionId, RequestId},
     pairing::{PushKind, PushMessage},
@@ -30,10 +30,10 @@ use super::{
 };
 use crate::{
     CONFIG,
-    auth::rewarden::decode_access_token,
+    auth::reins::decode_access_token,
     db::{
         DbConn, DbPool,
-        models::{RewardenConnection, RewardenDevice, User, UserId},
+        models::{ReinsConnection, ReinsDevice, User, UserId},
     },
 };
 
@@ -55,7 +55,7 @@ pub struct McpRequest {
     pub authorization: Option<String>,
     pub origin: Option<String>,
     pub headers: McpHeaders,
-    /// `X-Rewarden-Via`, sanitized: which app on the connection's machine is asking ("Claude Code").
+    /// `X-Reins-Via`, sanitized: which app on the connection's machine is asking ("Claude Code").
     pub via: Option<String>,
 }
 
@@ -78,12 +78,12 @@ impl<'r> FromRequest<'r> for McpRequest {
     }
 }
 
-/// Header naming the app behind a shared connection (the desktop app's `rewarden mcp --via`).
-pub const VIA_HEADER: &str = "X-Rewarden-Via";
-/// Longest `X-Rewarden-Via` kept.
+/// Header naming the app behind a shared connection (the desktop app's `reins mcp --via`).
+pub const VIA_HEADER: &str = "X-Reins-Via";
+/// Longest `X-Reins-Via` kept.
 pub const MAX_VIA_CHARS: usize = 40;
 
-/// The `X-Rewarden-Via` value as shown on the phone: one line, single spaces, at most [`MAX_VIA_CHARS`] characters;
+/// The `X-Reins-Via` value as shown on the phone: one line, single spaces, at most [`MAX_VIA_CHARS`] characters;
 /// `None` when nothing is left. It is untrusted (any client can send it) and only ever shown next to the label.
 pub fn sanitize_via(raw: &str) -> Option<String> {
     let words: Vec<&str> = raw.split(|c: char| c.is_whitespace() || c.is_control()).filter(|w| !w.is_empty()).collect();
@@ -206,7 +206,7 @@ fn mcp_url() -> String {
 
 /// Validates the bearer token and that its connection (and user) still exist. Also guards the desktop API, which uses
 /// the same access tokens.
-pub async fn authenticate(authorization: Option<&str>, conn: &DbConn) -> Result<RewardenConnection, Unauthorized> {
+pub async fn authenticate(authorization: Option<&str>, conn: &DbConn) -> Result<ReinsConnection, Unauthorized> {
     let Some(token) = bearer_token(authorization) else {
         return Err(Unauthorized {
             invalid_token: false,
@@ -221,7 +221,7 @@ pub async fn authenticate(authorization: Option<&str>, conn: &DbConn) -> Result<
     let user_uuid = UserId::from(claims.sub);
     let user_ok = User::find_by_uuid(&user_uuid, conn).await.is_some_and(|u| u.enabled);
     let connection = if user_ok {
-        RewardenConnection::find_by_uuid_and_user(&claims.cid, &user_uuid, conn).await
+        ReinsConnection::find_by_uuid_and_user(&claims.cid, &user_uuid, conn).await
     } else {
         None
     };
@@ -241,7 +241,7 @@ pub enum SubmitError {
 
 /// What a caller is told when the account's phone has too many unanswered requests.
 pub const QUEUED_TEXT: &str = "Rate limited: too many requests are waiting for the user's phone. Ask the user to open \
-the Rewarden app and answer them, then try again.";
+the Reins app and answer them, then try again.";
 /// What a caller over the account's call rate is told.
 pub const ACCOUNT_CALLS_LIMITED: &str = "too many calls to this account's phone";
 /// What a caller over the connection's request rate is told.
@@ -250,22 +250,22 @@ pub const CONNECTION_REQUESTS_LIMITED: &str = "too many requests on this connect
 pub const CONNECTION_WAITING_LIMITED: &str = "too many calls of this connection are waiting for the phone";
 
 /// Counts one request of `connection` against its rate (`/mcp` and the desktop API share it).
-pub fn check_connection_rate(connection: &RewardenConnection) -> Result<(), Duration> {
+pub fn check_connection_rate(connection: &ReinsConnection) -> Result<(), Duration> {
     limits::CONNECTION_REQUESTS.check(&connection.uuid)
 }
 
 /// A place among the calls of `connection` waiting for the phone; `Err` with how long the oldest may still wait.
-pub fn enter_waiting(connection: &RewardenConnection) -> Result<Admitted<String>, Duration> {
+pub fn enter_waiting(connection: &ReinsConnection) -> Result<Admitted<String>, Duration> {
     limits::CONNECTION_WAITING
         .try_enter(&connection.uuid)
-        .ok_or_else(|| Duration::from_secs(CONFIG.rewarden_relay_wait_secs()))
+        .ok_or_else(|| Duration::from_secs(CONFIG.reins_relay_wait_secs()))
 }
 
 /// Queues a validated call for the user's approval device and wakes it with a push. Shared with the desktop API so
-/// both relay exactly the same way, under the same per-account rate. `via`: the sanitized `X-Rewarden-Via`, appended
+/// both relay exactly the same way, under the same per-account rate. `via`: the sanitized `X-Reins-Via`, appended
 /// to the label.
 pub async fn submit_to_phone(
-    connection: &RewardenConnection,
+    connection: &ReinsConnection,
     via: Option<&str>,
     call: ToolCall,
     account: Option<String>,
@@ -288,7 +288,7 @@ pub async fn submit_to_phone(
             QueueFull::Server => SubmitError::Busy,
             QueueFull::Account => SubmitError::Queued,
         })?;
-    if let Some(device) = RewardenDevice::find_by_user(&connection.user_uuid, conn).await {
+    if let Some(device) = ReinsDevice::find_by_user(&connection.user_uuid, conn).await {
         push::spawn_push(
             pool.clone(),
             connection.user_uuid.clone(),
@@ -314,7 +314,7 @@ struct ToolRun {
 async fn run_tool(
     run: ToolRun,
     mcp_servers: &[McpServerReport],
-    connection: RewardenConnection,
+    connection: ReinsConnection,
     conn: DbConn,
     pool: &State<DbPool>,
 ) -> McpResponse {
@@ -347,7 +347,7 @@ async fn run_tool(
             match submit_to_phone(&connection, via.as_deref(), call, account, &conn, pool.inner()).await {
                 Ok(request_id) => request_id,
                 Err(SubmitError::Busy) => {
-                    return ok(tools::failure("Rewarden is busy right now. Try again in a minute."));
+                    return ok(tools::failure("Reins is busy right now. Try again in a minute."));
                 }
                 Err(SubmitError::Queued) => return ok(tools::failure(QUEUED_TEXT)),
                 Err(SubmitError::RateLimited(wait)) => {
@@ -395,8 +395,8 @@ async fn mcp_post(data: Data<'_>, request: McpRequest, conn: DbConn, pool: &Stat
     if !notification && let Err(wait) = check_connection_rate(&connection) {
         return rate_limited_reply(action, wait);
     }
-    if let Err(e) = RewardenConnection::touch(&connection.uuid, now_unix(), &conn).await {
-        warn!("Could not record Rewarden connection use: {e:?}");
+    if let Err(e) = ReinsConnection::touch(&connection.uuid, now_unix(), &conn).await {
+        warn!("Could not record Reins connection use: {e:?}");
     }
     match action {
         Action::Reply {

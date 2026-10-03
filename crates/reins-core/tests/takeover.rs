@@ -8,10 +8,10 @@ use std::sync::Arc;
 
 use common::{FakeGoogle, FakeKeys, RecordingNotifier};
 use data_encoding::BASE64URL_NOPAD;
-use rewarden_core::crypto::{self, Kdf};
-use rewarden_core::sso::AccountSecret;
-use rewarden_core::{CoreConfig, CoreError, GoogleTokenProvider, Notifier, RewardenCore};
-use rewarden_proto::device::{DEVICE_KEY_HEADER, device_key_hash};
+use reins_core::crypto::{self, Kdf};
+use reins_core::sso::AccountSecret;
+use reins_core::{CoreConfig, CoreError, GoogleTokenProvider, Notifier, ReinsCore};
+use reins_proto::device::{DEVICE_KEY_HEADER, device_key_hash};
 use serde_json::{Value, json};
 use wiremock::matchers::{body_partial_json, body_string_contains, method, path};
 use wiremock::{Mock, MockServer, ResponseTemplate};
@@ -25,7 +25,7 @@ const KDF: Kdf = Kdf::Pbkdf2 {
 
 struct Env {
     server: MockServer,
-    core: Arc<RewardenCore>,
+    core: Arc<ReinsCore>,
     _dir: tempfile::TempDir,
 }
 
@@ -55,9 +55,8 @@ async fn signed_in() -> Env {
     let dir = tempfile::tempdir().unwrap();
     let google: Arc<dyn GoogleTokenProvider> = Arc::new(FakeGoogle::new());
     let notifier: Arc<dyn Notifier> = Arc::new(RecordingNotifier::default());
-    let core =
-        RewardenCore::with_config(dir.path().to_str().unwrap(), &FakeKeys, google, notifier, CoreConfig::default())
-            .unwrap();
+    let core = ReinsCore::with_config(dir.path().to_str().unwrap(), &FakeKeys, google, notifier, CoreConfig::default())
+        .unwrap();
     core.login(server.uri(), EMAIL.to_owned(), PASSWORD.to_owned(), None).await.unwrap();
     Env {
         server,
@@ -70,7 +69,7 @@ async fn signed_in() -> Env {
 async fn serve_device(server: &MockServer, proof: Option<&str>, refusal: &str) {
     if let Some(proof) = proof {
         Mock::given(method("PUT"))
-            .and(path("/rewarden/api/device"))
+            .and(path("/reins/api/device"))
             .and(body_partial_json(json!({"master_password_hash": proof})))
             .respond_with(ResponseTemplate::new(200).set_body_json(json!({"replaced_previous": true})))
             .with_priority(1)
@@ -78,14 +77,14 @@ async fn serve_device(server: &MockServer, proof: Option<&str>, refusal: &str) {
             .await;
     }
     Mock::given(method("PUT"))
-        .and(path("/rewarden/api/device"))
+        .and(path("/reins/api/device"))
         .and(body_string_contains("master_password_hash"))
         .respond_with(ResponseTemplate::new(403).set_body_json(json!({"error": "wrong_proof", "message": "m"})))
         .with_priority(2)
         .mount(server)
         .await;
     Mock::given(method("PUT"))
-        .and(path("/rewarden/api/device"))
+        .and(path("/reins/api/device"))
         .respond_with(ResponseTemplate::new(403).set_body_json(json!({"error": refusal, "message": "m"})))
         .with_priority(3)
         .mount(server)
@@ -97,7 +96,7 @@ async fn registrations(server: &MockServer) -> Vec<(Value, Option<String>)> {
     let requests = server.received_requests().await.unwrap();
     requests
         .iter()
-        .filter(|r| r.method.as_str() == "PUT" && r.url.path() == "/rewarden/api/device")
+        .filter(|r| r.method.as_str() == "PUT" && r.url.path() == "/reins/api/device")
         .map(|r| {
             let key = r.headers.get(DEVICE_KEY_HEADER).map(|v| v.to_str().unwrap().to_owned());
             (serde_json::from_slice(&r.body).unwrap(), key)
@@ -114,7 +113,7 @@ fn password_hash() -> String {
 async fn the_device_key_goes_with_every_phone_api_call_and_nowhere_else() {
     let env = signed_in().await;
     Mock::given(method("PUT"))
-        .and(path("/rewarden/api/device"))
+        .and(path("/reins/api/device"))
         .respond_with(ResponseTemplate::new(200).set_body_json(json!({"replaced_previous": false})))
         .mount(&env.server)
         .await;
@@ -164,7 +163,7 @@ async fn a_wrong_proof_or_a_limit_is_reported() {
 
     let env = signed_in().await;
     Mock::given(method("PUT"))
-        .and(path("/rewarden/api/device"))
+        .and(path("/reins/api/device"))
         .and(body_string_contains("master_password_hash"))
         .respond_with(ResponseTemplate::new(429).set_body_json(json!({"error": "rate_limited", "message": "m"})))
         .with_priority(1)
@@ -185,14 +184,14 @@ async fn the_recovery_code_or_the_master_password_lets_the_phone_prove_itself() 
     // An account made with an account secret (another phone has it): the recovery code opens it here.
     let env = signed_in().await;
     let secret = AccountSecret::generate().unwrap();
-    let keys = rewarden_core::sso::new_keys(&secret).unwrap();
+    let keys = reins_core::sso::new_keys(&secret).unwrap();
     Mock::given(method("GET"))
         .and(path("/api/accounts/profile"))
         .respond_with(ResponseTemplate::new(200).set_body_json(json!({"id": USER_ID, "key": keys.key})))
         .mount(&env.server)
         .await;
     Mock::given(method("PUT"))
-        .and(path("/rewarden/api/device"))
+        .and(path("/reins/api/device"))
         .respond_with(ResponseTemplate::new(200).set_body_json(json!({"replaced_previous": false})))
         .up_to_n_times(1)
         .with_priority(1)
@@ -216,7 +215,7 @@ async fn the_recovery_code_or_the_master_password_lets_the_phone_prove_itself() 
         .mount(&env.server)
         .await;
     Mock::given(method("PUT"))
-        .and(path("/rewarden/api/device"))
+        .and(path("/reins/api/device"))
         .respond_with(ResponseTemplate::new(200).set_body_json(json!({"replaced_previous": false})))
         .up_to_n_times(1)
         .with_priority(1)

@@ -73,7 +73,7 @@ pub struct JoinView {
 pub enum PendingKind {
     Request,
     Pairing,
-    /// A file an AI uploaded with `rewarden_upload`, waiting for the user's decision (see [`BlobView`]).
+    /// A file an AI uploaded with `reins_upload`, waiting for the user's decision (see [`BlobView`]).
     Blob,
     /// Another phone of the account asks for its keys ("Add another phone", see [`JoinView`]).
     Join,
@@ -188,13 +188,13 @@ pub struct ApprovalView {
     pub class: String,
     /// A change to another integration: the kinds of change a standing permission can allow.
     pub classes: Vec<ClassOption>,
-    /// A push from git on the user's computer (through the Rewarden desktop app): what it changes, ref by ref.
+    /// A push from git on the user's computer (through the Reins desktop app): what it changes, ref by ref.
     pub git: Option<GitPushView>,
     /// A write that uses a file the AI uploaded through the server: the file, as the server saw it.
     pub blob: Option<BlobView>,
     /// A call to a tool of an MCP server the user added.
     pub mcp: Option<crate::mcp::McpCallView>,
-    /// A yes-or-no question from the desktop app (`rewarden ask`, a harness hook).
+    /// A yes-or-no question from the desktop app (`reins ask`, a harness hook).
     pub ask: Option<AskView>,
     /// Vault secrets the desktop app asks for, for one command or API route (names only, never the values).
     pub secrets: Option<SecretReleaseView>,
@@ -367,7 +367,7 @@ pub struct PairingView {
     pub client_host: String,
     pub choices: Vec<u8>,
     pub created_at: i64,
-    /// The Rewarden desktop app asks to pair: the eight digits ("4821 9930") of its key, which the computer shows
+    /// The Reins desktop app asks to pair: the eight digits ("4821 9930") of its key, which the computer shows
     /// too. `None` for an AI client (or a key that cannot be used).
     pub key_fingerprint: Option<String>,
 }

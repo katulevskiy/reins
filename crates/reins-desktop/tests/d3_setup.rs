@@ -3,8 +3,8 @@
 use std::path::Path;
 use std::process::Command;
 
-use rewarden_desktop::config::{Config, HostEntry};
-use rewarden_desktop::setup::{Git, Scope};
+use reins_desktop::config::{Config, HostEntry};
+use reins_desktop::setup::{Git, Scope};
 
 fn git(home: &Path) -> Git {
     Git::default()

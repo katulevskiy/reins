@@ -1,4 +1,4 @@
-package dev.rewarden.android.ui.nav
+package dev.reins.android.ui.nav
 
 /** The two root tabs. */
 enum class Tab { Activity, Grants }
@@ -21,7 +21,7 @@ sealed interface Route {
 
     data class Connection(val id: String) : Route
 
-    /** Settings > AI connections > Connect a computer: scan (or type) the code the desktop app or `rewarden login` shows. */
+    /** Settings > AI connections > Connect a computer: scan (or type) the code the desktop app or `reins login` shows. */
     data object ConnectComputer : Route
 
     /** The services that can be connected (Gmail, ...). */

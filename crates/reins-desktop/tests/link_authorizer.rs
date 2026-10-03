@@ -1,4 +1,4 @@
-//! `RewardenAuthorizer` against a mock Rewarden server whose phone answers from a script: approved reads and pushes,
+//! `ReinsAuthorizer` against a mock Reins server whose phone answers from a script: approved reads and pushes,
 //! answers that do not match the request (refused), denials, errors, waiting, and retries of an unanswered request.
 
 mod link_mock;
@@ -6,20 +6,20 @@ mod link_mock;
 use std::sync::Arc;
 
 use link_mock::{App, Mock, Step, config, logged_in, push_to, repo, tag_push};
-use rewarden_desktop::auth::rewarden::RewardenAuthorizer;
-use rewarden_desktop::auth::{Authorizer as _, Refusal};
-use rewarden_proto::desktop::{GIT_FETCH_TOOL, GIT_PUSH_TOOL, GIT_TAG_PUSH_TOOL};
+use reins_desktop::auth::reins::ReinsAuthorizer;
+use reins_desktop::auth::{Authorizer as _, Refusal};
+use reins_proto::desktop::{GIT_FETCH_TOOL, GIT_PUSH_TOOL, GIT_TAG_PUSH_TOOL};
 
 const DIGEST: &str = "9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08";
 
-async fn setup(timeout_secs: u64) -> (Mock, App, RewardenAuthorizer) {
+async fn setup(timeout_secs: u64) -> (Mock, App, ReinsAuthorizer) {
     let mock = Mock::start().await;
     let app = logged_in(&mock).await;
-    let auth = RewardenAuthorizer::new(&app.paths, Arc::clone(&app.identity), &config(timeout_secs)).unwrap();
+    let auth = ReinsAuthorizer::new(&app.paths, Arc::clone(&app.identity), &config(timeout_secs)).unwrap();
     (mock, app, auth)
 }
 
-fn unavailable(r: Result<rewarden_desktop::auth::Credential, Refusal>) -> String {
+fn unavailable(r: Result<reins_desktop::auth::Credential, Refusal>) -> String {
     match r {
         Err(Refusal::Unavailable(m)) => m,
         other => panic!("expected Unavailable, got {other:?}"),
@@ -34,7 +34,7 @@ async fn an_approved_read_is_a_credential_cached_until_it_expires() {
     let c = auth.read(&repo("octo/hello")).await.unwrap();
     assert_eq!(c.username, "x-access-token");
     assert_eq!(c.token.as_str(), "ghs-req-1");
-    assert!(c.is_live(rewarden_desktop::now_unix()));
+    assert!(c.is_live(reins_desktop::now_unix()));
     let calls = mock
         .with(|s| s.calls.iter().map(|c| (c.tool.clone(), c.arguments.clone(), c.account.clone())).collect::<Vec<_>>());
     assert_eq!(calls.len(), 1);
@@ -58,7 +58,7 @@ async fn an_approved_read_is_a_credential_cached_until_it_expires() {
 #[tokio::test]
 async fn an_expired_read_lease_is_asked_again() {
     let (mock, _app, auth) = setup(5).await;
-    mock.plan(&[Step::Tamper(|g| g.expires_at = rewarden_desktop::now_unix() + 2)]);
+    mock.plan(&[Step::Tamper(|g| g.expires_at = reins_desktop::now_unix() + 2)]);
     auth.read(&repo("octo/hello")).await.unwrap();
     auth.read(&repo("octo/hello")).await.unwrap();
     assert_eq!(mock.with(|s| s.calls.len()), 1);
@@ -72,14 +72,11 @@ async fn an_approved_push_is_bound_to_its_digest_and_never_cached() {
     let (mock, _app, auth) = setup(5).await;
     let summary = push_to("main");
     let c = auth.push(&repo("octo/hello"), &summary, DIGEST).await.unwrap();
-    assert!(c.is_live(rewarden_desktop::now_unix()));
+    assert!(c.is_live(reins_desktop::now_unix()));
     let (tool, args) = mock.with(|s| (s.calls[0].tool.clone(), s.calls[0].arguments.clone()));
     assert_eq!(tool, GIT_PUSH_TOOL);
     assert_eq!(args["digest"], DIGEST);
-    assert_eq!(
-        serde_json::from_value::<rewarden_proto::desktop::PushSummary>(args["summary"].clone()).unwrap(),
-        summary
-    );
+    assert_eq!(serde_json::from_value::<reins_proto::desktop::PushSummary>(args["summary"].clone()).unwrap(), summary);
 
     auth.push(&repo("octo/hello"), &summary, DIGEST).await.unwrap();
     assert_eq!(mock.with(|s| s.calls.len()), 2, "a push credential is for one push");
@@ -95,7 +92,7 @@ async fn answers_that_do_not_match_the_request_are_refused() {
         (Step::Tamper(|g| g.nonce = "replayed".to_owned()), "nonce"),
         (Step::Tamper(|g| g.repo = "octo/elsewhere".to_owned()), "octo/elsewhere"),
         (Step::Tamper(|g| g.access = "write".to_owned()), "write access"),
-        (Step::Tamper(|g| g.expires_at = rewarden_desktop::now_unix() - 1), "expired"),
+        (Step::Tamper(|g| g.expires_at = reins_desktop::now_unix() - 1), "expired"),
         (Step::OtherKey, "not sealed to this app's key"),
         (Step::Garbage, "malformed"),
         (Step::Tamper(|g| g.token = String::new()), "no token"),
@@ -206,7 +203,7 @@ async fn an_unanswered_read_waits_and_a_forgotten_request_is_asked_again() {
 #[tokio::test]
 async fn a_phone_that_pinned_another_key_answers_with_an_error() {
     let (mock, _app, auth) = setup(5).await;
-    mock.with(|s| s.pinned_key = Some(rewarden_desktop::identity::Identity::generate().public_key()));
+    mock.with(|s| s.pinned_key = Some(reins_desktop::identity::Identity::generate().public_key()));
     let m = unavailable(auth.read(&repo("octo/hello")).await);
     assert!(m.contains("paired with this phone"), "{m}");
 }

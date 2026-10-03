@@ -1,17 +1,17 @@
-package dev.rewarden.android
+package dev.reins.android
 
 import androidx.compose.ui.test.hasText
 import androidx.compose.ui.test.performClick
 import androidx.test.ext.junit.runners.AndroidJUnit4
-import dev.rewarden.android.feedback.Cue
-import dev.rewarden.android.feedback.Event
-import dev.rewarden.android.feedback.Feedback
-import dev.rewarden.android.feedback.FeedbackProvider
-import dev.rewarden.android.feedback.FeedbackSettings
-import dev.rewarden.android.feedback.Haptic
-import dev.rewarden.android.platform.AppNotifier
-import dev.rewarden.android.platform.AuthResult
-import dev.rewarden.android.platform.Foreground
+import dev.reins.android.feedback.Cue
+import dev.reins.android.feedback.Event
+import dev.reins.android.feedback.Feedback
+import dev.reins.android.feedback.FeedbackProvider
+import dev.reins.android.feedback.FeedbackSettings
+import dev.reins.android.feedback.Haptic
+import dev.reins.android.platform.AppNotifier
+import dev.reins.android.platform.AuthResult
+import dev.reins.android.platform.Foreground
 import java.util.concurrent.CopyOnWriteArrayList
 import org.junit.After
 import org.junit.Assert.assertEquals
@@ -159,7 +159,7 @@ class FeedbackFlowTest : FlowHarness() {
         awaitCore { !container.feedbackStore.current.requestSounds }
         assertEquals(AppNotifier.channelId(AppNotifier.Kind.Approvals, sound = false, vibrate = true), container.notifier.channel(AppNotifier.Kind.Approvals))
         tap("strength:Strong")
-        awaitCore { container.feedbackStore.current.strength == dev.rewarden.android.feedback.HapticStrength.Strong }
+        awaitCore { container.feedbackStore.current.strength == dev.reins.android.feedback.HapticStrength.Strong }
         tap("haptics")
         awaitCore { !container.feedbackStore.current.haptics }
         assertEquals(AppNotifier.channelId(AppNotifier.Kind.Approvals, sound = false, vibrate = false), container.notifier.channel(AppNotifier.Kind.Approvals))

@@ -587,12 +587,12 @@ async fn launch_rocket(pool: db::DbPool, extra_debug: bool) -> Result<(), Error>
         .mount([basepath, "/identity"].concat(), api::identity_routes())
         .mount([basepath, "/icons"].concat(), api::icons_routes())
         .mount([basepath, "/notifications"].concat(), api::notifications_routes())
-        .mount([basepath, "/"].concat(), api::rewarden::routes())
-        .mount("/", api::rewarden::well_known_routes())
+        .mount([basepath, "/"].concat(), api::reins::routes())
+        .mount("/", api::reins::well_known_routes())
         .register([basepath, "/"].concat(), api::web_catchers())
         .register([basepath, "/api"].concat(), api::core_catchers())
         .register([basepath, "/admin"].concat(), api::admin_catchers())
-        .register([basepath, "/rewarden/api"].concat(), api::rewarden::catchers())
+        .register([basepath, "/reins/api"].concat(), api::reins::catchers())
         .manage(pool)
         .manage(Arc::clone(&WS_USERS))
         .manage(Arc::clone(&WS_ANONYMOUS_SUBSCRIPTIONS))
@@ -606,7 +606,7 @@ async fn launch_rocket(pool: db::DbPool, extra_debug: bool) -> Result<(), Error>
 
     // WorkOS user lifecycle (emails, deleted users, revoked sessions), when WorkOS is the SSO provider.
     if let Some(pool) = instance.state::<db::DbPool>() {
-        api::rewarden::workos_sync::spawn(pool.clone());
+        api::reins::workos_sync::spawn(pool.clone());
     }
 
     spawn_shutdown_signal_handler();
@@ -727,17 +727,17 @@ fn schedule_jobs(pool: db::DbPool) {
                 }));
             }
 
-            // Drop expired Rewarden refresh tokens and in-memory relay/OAuth entries.
-            if api::rewarden::enabled() && !CONFIG.rewarden_purge_schedule().is_empty() {
-                sched.add(Job::new(CONFIG.rewarden_purge_schedule().parse().unwrap(), || {
-                    runtime.spawn(api::rewarden::purge(pool.clone()));
+            // Drop expired Reins refresh tokens and in-memory relay/OAuth entries.
+            if api::reins::enabled() && !CONFIG.reins_purge_schedule().is_empty() {
+                sched.add(Job::new(CONFIG.reins_purge_schedule().parse().unwrap(), || {
+                    runtime.spawn(api::reins::purge(pool.clone()));
                 }));
             }
 
-            // Delete expired Rewarden files from disk.
-            if api::rewarden::enabled() && !CONFIG.rewarden_blob_purge_schedule().is_empty() {
-                sched.add(Job::new(CONFIG.rewarden_blob_purge_schedule().parse().unwrap(), || {
-                    runtime.spawn_blocking(api::rewarden::purge_blobs);
+            // Delete expired Reins files from disk.
+            if api::reins::enabled() && !CONFIG.reins_blob_purge_schedule().is_empty() {
+                sched.add(Job::new(CONFIG.reins_blob_purge_schedule().parse().unwrap(), || {
+                    runtime.spawn_blocking(api::reins::purge_blobs);
                 }));
             }
 

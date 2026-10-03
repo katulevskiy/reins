@@ -7,11 +7,11 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use common::FakeKeys;
-use rewarden_core::CoreError;
-use rewarden_core::connector::github::GitHub;
-use rewarden_core::connector::{Connector, Preview};
-use rewarden_core::store::Store;
-use rewarden_proto::connector::{ConnectorCall, Effect, spec_for_tool};
+use reins_core::CoreError;
+use reins_core::connector::github::GitHub;
+use reins_core::connector::{Connector, Preview};
+use reins_core::store::Store;
+use reins_proto::connector::{ConnectorCall, Effect, spec_for_tool};
 use serde_json::{Value, json};
 use wiremock::matchers::{body_json, header, method, path, query_param};
 use wiremock::{Mock, MockServer, ResponseTemplate};
@@ -32,7 +32,7 @@ async fn github(server: &MockServer) -> (GitHub, tempfile::TempDir) {
         .await;
     let dir = tempfile::tempdir().unwrap();
     let store = Arc::new(Store::open(dir.path(), &FakeKeys).unwrap());
-    let github = GitHub::new(rewarden_core::http::client().unwrap(), &server.uri(), store, Duration::from_millis(1));
+    let github = GitHub::new(reins_core::http::client().unwrap(), &server.uri(), store, Duration::from_millis(1));
     assert_eq!(github.sign_in("ghp_secret").await.unwrap(), ACCOUNT);
     (github, dir)
 }
@@ -67,7 +67,7 @@ fn has(lines: &[String], needle: &str) -> bool {
     lines.iter().any(|l| l.contains(needle))
 }
 
-async fn fetch(gh: &GitHub, tool: &str, args: &Value) -> Vec<rewarden_core::connector::Item> {
+async fn fetch(gh: &GitHub, tool: &str, args: &Value) -> Vec<reins_core::connector::Item> {
     gh.fetch(ACCOUNT, &call(tool, args)).await.unwrap()
 }
 

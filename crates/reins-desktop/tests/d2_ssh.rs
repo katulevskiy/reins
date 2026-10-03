@@ -1,7 +1,7 @@
 //! The SSH agent in a daemon in this process, with a mock phone that holds a real ed25519 key, driven by the real
 //! OpenSSH tools: `ssh-add -l` lists the phone's key, `ssh-keygen -Y sign` gets a signature that verifies, a real
 //! `ssh` login to a throwaway `sshd` is signed on the phone with the server named (session-bind + known_hosts), and
-//! refusals fail the client. Also `rewarden ssh setup|unsetup` on a temporary HOME. Skips what needs a missing tool.
+//! refusals fail the client. Also `reins ssh setup|unsetup` on a temporary HOME. Skips what needs a missing tool.
 
 mod d2_support;
 
@@ -11,9 +11,9 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use d2_support::{App, Mock, Step, capture_logs, logged_in};
-use rewarden_desktop::auth::prompt::NoPrompter;
-use rewarden_desktop::config::{Config, Mode};
-use rewarden_desktop::daemon::{Daemon, Options, Running};
+use reins_desktop::auth::prompt::NoPrompter;
+use reins_desktop::config::{Config, Mode};
+use reins_desktop::daemon::{Daemon, Options, Running};
 
 /// Whether the agent can write to the client's stderr: it finds the client through /proc, so only on Linux (elsewhere
 /// it says nothing; see `tell_pid` in ssh_agent/mod.rs).
@@ -23,7 +23,7 @@ const TELLS_THE_CLIENT: bool = cfg!(target_os = "linux");
 /// to a named pipe).
 fn openssh(tool: &str) -> PathBuf {
     if cfg!(windows) {
-        rewarden_desktop::win::system32(&format!("OpenSSH\\{tool}.exe"))
+        reins_desktop::win::system32(&format!("OpenSSH\\{tool}.exe"))
     } else {
         PathBuf::from(tool)
     }
@@ -47,14 +47,14 @@ impl Agent {
         let mock = Mock::start().await;
         let app = logged_in(&mock);
         let socket = if cfg!(windows) {
-            rewarden_desktop::win::ssh_pipe(&app.paths.state_dir)
+            reins_desktop::win::ssh_pipe(&app.paths.state_dir)
         } else {
             app.dir.path().join("agent.sock")
         };
         let known_hosts = app.dir.path().join("known_hosts");
         let mut config = Config {
             listen: "127.0.0.1:0".parse().unwrap(),
-            mode: Mode::Rewarden,
+            mode: Mode::Reins,
             approval_timeout_secs: 20,
             ..Config::default()
         };
@@ -174,11 +174,8 @@ async fn a_signature_made_on_the_phone_verifies_with_ssh_keygen() {
     let (_, stderr) = text(&out);
     assert!(out.status.success(), "{stderr}");
     if TELLS_THE_CLIENT {
-        assert!(
-            stderr.contains("rewarden: waiting for approval in your Rewarden app: sign with Deploy key"),
-            "{stderr}"
-        );
-        assert!(stderr.contains("rewarden: approved."), "{stderr}");
+        assert!(stderr.contains("reins: waiting for approval in your Reins app: sign with Deploy key"), "{stderr}");
+        assert!(stderr.contains("reins: approved."), "{stderr}");
     }
     let signers = a.file("allowed_signers", &format!("me@example.com {}\n", a.mock.key.line()));
     let sig = format!("{}.sig", data.display());
@@ -211,7 +208,7 @@ async fn refused_or_forged_signatures_fail_the_client() {
     let a = Agent::start().await;
     a.mock.plan(&[Step::Approve]);
     for (step, said) in [
-        (Step::Denied("Not this one"), Some("rewarden: Not this one")),
+        (Step::Denied("Not this one"), Some("reins: Not this one")),
         (Step::ForgedNonce, Some("nonce differs")),
         (Step::WrongSignature, Some("does not verify")),
         (Step::OtherKey, Some("not sealed to this app's key")),
@@ -334,7 +331,7 @@ async fn login(sshd: &Path, kind: &str, algorithms: &str) {
     assert!(
         !TELLS_THE_CLIENT
             || stderr.contains(&format!(
-                "rewarden: waiting for approval in your Rewarden app: sign in to {server_name} as {user} with Deploy key"
+                "reins: waiting for approval in your Reins app: sign in to {server_name} as {user} with Deploy key"
             )),
         "{stderr}"
     );
@@ -342,8 +339,8 @@ async fn login(sshd: &Path, kind: &str, algorithms: &str) {
     assert_eq!(calls.len(), 1);
     let args = &calls[0].arguments;
     assert_eq!(args["host"], server_name);
-    let host_blob = rewarden_desktop::ssh_agent::keys::parse_line(&host_pub).unwrap().0;
-    assert_eq!(args["host_key"], rewarden_desktop::ssh_agent::keys::fingerprint(&host_blob));
+    let host_blob = reins_desktop::ssh_agent::keys::parse_line(&host_pub).unwrap().0;
+    assert_eq!(args["host_key"], reins_desktop::ssh_agent::keys::fingerprint(&host_blob));
     assert_eq!(args["key"], a.mock.key.fingerprint());
     // ssh announced the server (session-bind), and the agent checked the server's signature.
     let logged = d2_support::logs();
@@ -362,12 +359,12 @@ fn ssh_setup_and_unsetup_edit_only_the_given_home() {
     std::fs::write(home.join(".ssh/config"), user_config).unwrap();
     let state = dir.path().join("state");
     let run = |args: &[&str]| {
-        let out = std::process::Command::new(env!("CARGO_BIN_EXE_rewarden"))
+        let out = std::process::Command::new(env!("CARGO_BIN_EXE_reins"))
             .args(args)
             .env("HOME", &home)
             .env("USERPROFILE", &home)
-            .env("REWARDEN_CONFIG_DIR", dir.path().join("config"))
-            .env("REWARDEN_STATE_DIR", &state)
+            .env("REINS_CONFIG_DIR", dir.path().join("config"))
+            .env("REINS_STATE_DIR", &state)
             .env_remove("XDG_RUNTIME_DIR")
             .output()
             .unwrap();
@@ -376,11 +373,11 @@ fn ssh_setup_and_unsetup_edit_only_the_given_home() {
     };
     // With its own state directory, the socket is there (on Windows: that directory's named pipe).
     let socket = if cfg!(windows) {
-        rewarden_desktop::win::ssh_pipe(&state)
+        reins_desktop::win::ssh_pipe(&state)
     } else {
         state.join("ssh-agent.sock")
     };
-    let written = rewarden_desktop::ssh_agent::setup::config_form(&socket.display().to_string());
+    let written = reins_desktop::ssh_agent::setup::config_form(&socket.display().to_string());
     let said = run(&["ssh", "setup"]);
     assert!(said.contains(&socket.display().to_string()), "{said}");
     let text = std::fs::read_to_string(home.join(".ssh/config")).unwrap();
@@ -393,12 +390,11 @@ fn ssh_setup_and_unsetup_edit_only_the_given_home() {
     assert!(status.contains(&format!("uses {written}")), "{status}");
     if have("ssh") {
         // ssh itself reads the block.
-        let effective =
-            rewarden_desktop::ssh_agent::setup::effective_agent(&home.join(".ssh/config")).unwrap_or_default();
-        let effective = rewarden_desktop::ssh_agent::setup::config_form(&effective);
+        let effective = reins_desktop::ssh_agent::setup::effective_agent(&home.join(".ssh/config")).unwrap_or_default();
+        let effective = reins_desktop::ssh_agent::setup::config_form(&effective);
         assert!(effective.eq_ignore_ascii_case(&written), "{effective} is not {written}");
     }
     assert!(run(&["ssh", "unsetup"]).contains("removed"));
     assert_eq!(std::fs::read_to_string(home.join(".ssh/config")).unwrap(), user_config);
-    assert!(run(&["ssh", "unsetup"]).contains("no Rewarden block"));
+    assert!(run(&["ssh", "unsetup"]).contains("no Reins block"));
 }

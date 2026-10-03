@@ -1,12 +1,12 @@
 //! A fake MCP server (Streamable HTTP, JSON or SSE answers, sessions, bearer tokens with a 401 that points at its
-//! resource metadata), a fake OAuth authorization server (metadata, registration, token) and the Rewarden server
+//! resource metadata), a fake OAuth authorization server (metadata, registration, token) and the Reins server
 //! endpoints universal MCP uses.
 
 use std::sync::{Arc, Mutex};
 
-use rewarden_proto::gmail::ToolCall;
-use rewarden_proto::relay::RelayRequest;
-use rewarden_proto::remote_mcp::McpCall;
+use reins_proto::gmail::ToolCall;
+use reins_proto::relay::RelayRequest;
+use reins_proto::remote_mcp::McpCall;
 use serde_json::{Value, json};
 use wiremock::matchers::{body_string_contains, method, path, path_regex};
 use wiremock::{Mock, MockServer, Request, Respond, ResponseTemplate};
@@ -227,7 +227,7 @@ pub async fn mount_auth(auth: &MockServer, tokens: &AuthTokens<'_>) {
         .await;
 }
 
-/// `PUT /rewarden/api/blobs/output`: a download for the bytes received.
+/// `PUT /reins/api/blobs/output`: a download for the bytes received.
 struct OutputBlob;
 
 impl Respond for OutputBlob {
@@ -235,12 +235,12 @@ impl Respond for OutputBlob {
         let name = req.url.query_pairs().find(|(k, _)| k == "name").map(|(_, v)| v.into_owned()).unwrap_or_default();
         let content_type = req.headers.get("content-type").and_then(|v| v.to_str().ok()).unwrap_or_default().to_owned();
         ResponseTemplate::new(200).set_body_json(json!({
-            "id": "blob-0123456789abcdef", "download_url": format!("https://rw.example/rewarden/blob/dl-{name}"),
+            "id": "blob-0123456789abcdef", "download_url": format!("https://rw.example/reins/blob/dl-{name}"),
             "name": name, "size": req.body.len(), "sha256": "00", "content_type": content_type, "expires_at": 1_800_000_000}))
     }
 }
 
-/// `POST /rewarden/api/mcp/call`: the server made the call and kept the large content.
+/// `POST /reins/api/mcp/call`: the server made the call and kept the large content.
 struct Proxy;
 
 impl Respond for Proxy {
@@ -250,13 +250,13 @@ impl Respond for Proxy {
         ResponseTemplate::new(200).set_body_json(json!({
             "status": 200,
             "response": {"jsonrpc": "2.0", "id": id, "result": {"content": [
-                {"type": "resource_link", "uri": "https://rw.example/rewarden/blob/proxied", "name": "export-1.txt"}]}},
+                {"type": "resource_link", "uri": "https://rw.example/reins/blob/proxied", "name": "export-1.txt"}]}},
             "session_id": null, "downloads": []}))
     }
 }
 
-/// The Rewarden server: sign-in, the services report, answers, output blobs and proxied calls; nothing pending.
-pub async fn mount_rewarden(rw: &MockServer) {
+/// The Reins server: sign-in, the services report, answers, output blobs and proxied calls; nothing pending.
+pub async fn mount_reins(rw: &MockServer) {
     Mock::given(method("POST"))
         .and(path("/identity/accounts/prelogin"))
         .respond_with(ResponseTemplate::new(200).set_body_json(json!({"kdf": 0, "kdfIterations": 5000})))
@@ -269,19 +269,19 @@ pub async fn mount_rewarden(rw: &MockServer) {
         .mount(rw)
         .await;
     Mock::given(method("PUT"))
-        .and(path("/rewarden/api/services"))
+        .and(path("/reins/api/services"))
         .respond_with(ResponseTemplate::new(204))
         .mount(rw)
         .await;
     Mock::given(method("POST"))
-        .and(path_regex(r"^/rewarden/api/requests/[^/]+/response$"))
+        .and(path_regex(r"^/reins/api/requests/[^/]+/response$"))
         .respond_with(ResponseTemplate::new(204))
         .mount(rw)
         .await;
-    Mock::given(method("PUT")).and(path("/rewarden/api/blobs/output")).respond_with(OutputBlob).mount(rw).await;
-    Mock::given(method("POST")).and(path("/rewarden/api/mcp/call")).respond_with(Proxy).mount(rw).await;
+    Mock::given(method("PUT")).and(path("/reins/api/blobs/output")).respond_with(OutputBlob).mount(rw).await;
+    Mock::given(method("POST")).and(path("/reins/api/mcp/call")).respond_with(Proxy).mount(rw).await;
     Mock::given(method("GET"))
-        .and(path("/rewarden/api/pending"))
+        .and(path("/reins/api/pending"))
         .respond_with(ResponseTemplate::new(200).set_body_json(json!({"requests": [], "pairings": []})))
         .mount(rw)
         .await;

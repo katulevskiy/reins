@@ -62,7 +62,7 @@ impl Session {
         }
     }
 
-    /// The value of the device key header ([`rewarden_proto::device::DEVICE_KEY_HEADER`]).
+    /// The value of the device key header ([`reins_proto::device::DEVICE_KEY_HEADER`]).
     pub fn device_key(&self) -> Option<&str> {
         self.device_key.as_deref()
     }
@@ -260,14 +260,14 @@ mod tests {
             .mount(&server)
             .await;
         Mock::given(method("GET"))
-            .and(path("/rewarden/api/connections"))
+            .and(path("/reins/api/connections"))
             .and(header("authorization", "Bearer ACCESS-NEW"))
             .respond_with(ResponseTemplate::new(200).set_body_json(json!({"connections": []})))
             .with_priority(1)
             .mount(&server)
             .await;
         Mock::given(method("GET"))
-            .and(path("/rewarden/api/connections"))
+            .and(path("/reins/api/connections"))
             .respond_with(ResponseTemplate::new(401))
             .mount(&server)
             .await;
@@ -286,7 +286,7 @@ mod tests {
             .mount(&server)
             .await;
         Mock::given(method("GET"))
-            .and(path("/rewarden/api/connections"))
+            .and(path("/reins/api/connections"))
             .respond_with(ResponseTemplate::new(401))
             .mount(&server)
             .await;

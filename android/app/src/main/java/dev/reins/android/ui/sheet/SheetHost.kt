@@ -1,4 +1,4 @@
-package dev.rewarden.android.ui.sheet
+package dev.reins.android.ui.sheet
 
 import androidx.activity.compose.BackHandler
 import androidx.compose.animation.AnimatedVisibility
@@ -30,13 +30,13 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.unit.dp
-import dev.rewarden.android.design.Glyph
-import dev.rewarden.android.design.LocalColors
-import dev.rewarden.android.design.CircleIconButton
-import dev.rewarden.android.feedback.Event
-import dev.rewarden.android.feedback.LocalFeedback
-import dev.rewarden.android.feedback.SheetOpenFeedback
-import dev.rewarden.android.feedback.play
+import dev.reins.android.design.Glyph
+import dev.reins.android.design.LocalColors
+import dev.reins.android.design.CircleIconButton
+import dev.reins.android.feedback.Event
+import dev.reins.android.feedback.LocalFeedback
+import dev.reins.android.feedback.SheetOpenFeedback
+import dev.reins.android.feedback.play
 
 /**
  * A sheet that covers about 80% of the app, over whatever is showing. Tapping outside, the close button or Back

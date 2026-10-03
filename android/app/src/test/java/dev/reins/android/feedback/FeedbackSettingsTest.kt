@@ -1,4 +1,4 @@
-package dev.rewarden.android.feedback
+package dev.reins.android.feedback
 
 import kotlin.math.log10
 import org.junit.Assert.assertEquals

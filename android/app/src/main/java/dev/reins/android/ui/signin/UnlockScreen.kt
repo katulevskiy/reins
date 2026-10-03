@@ -1,4 +1,4 @@
-package dev.rewarden.android.ui.signin
+package dev.reins.android.ui.signin
 
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.background
@@ -29,20 +29,20 @@ import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
-import dev.rewarden.android.design.Banner
-import dev.rewarden.android.design.BannerKind
-import dev.rewarden.android.design.ButtonStyle
-import dev.rewarden.android.design.CapsuleButton
-import dev.rewarden.android.design.Glyph
-import dev.rewarden.android.design.GlyphIcon
-import dev.rewarden.android.design.LocalColors
-import dev.rewarden.android.design.RText
-import dev.rewarden.android.design.RTextField
-import dev.rewarden.android.design.RType
-import dev.rewarden.android.design.Screen
-import dev.rewarden.android.design.Spinner
-import dev.rewarden.android.ui.common.OTHER_APPROVAL_DEVICE
-import dev.rewarden.android.ui.common.SecureWindow
+import dev.reins.android.design.Banner
+import dev.reins.android.design.BannerKind
+import dev.reins.android.design.ButtonStyle
+import dev.reins.android.design.CapsuleButton
+import dev.reins.android.design.Glyph
+import dev.reins.android.design.GlyphIcon
+import dev.reins.android.design.LocalColors
+import dev.reins.android.design.RText
+import dev.reins.android.design.RTextField
+import dev.reins.android.design.RType
+import dev.reins.android.design.Screen
+import dev.reins.android.design.Spinner
+import dev.reins.android.ui.common.OTHER_APPROVAL_DEVICE
+import dev.reins.android.ui.common.SecureWindow
 
 /**
  * Signed in through "Continue" to an account whose keys are on another phone: ask that phone, enter the recovery code,

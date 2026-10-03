@@ -1,4 +1,4 @@
-package dev.rewarden.android.ui.approval
+package dev.reins.android.ui.approval
 
 import androidx.compose.animation.animateContentSize
 import androidx.compose.foundation.layout.Arrangement
@@ -27,21 +27,21 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.unit.dp
-import dev.rewarden.android.design.Banner
-import dev.rewarden.android.design.BannerKind
-import dev.rewarden.android.design.Card
-import dev.rewarden.android.design.Hairline
-import dev.rewarden.android.design.LocalColors
-import dev.rewarden.android.design.RColors
-import dev.rewarden.android.design.RText
-import dev.rewarden.android.design.RType
-import dev.rewarden.android.design.Tag
-import dev.rewarden.android.design.pressable
-import dev.rewarden.android.ui.common.untrusted
-import dev.rewarden.core.GitCommitView
-import dev.rewarden.core.GitFileView
-import dev.rewarden.core.GitPushView
-import dev.rewarden.core.GitRefView
+import dev.reins.android.design.Banner
+import dev.reins.android.design.BannerKind
+import dev.reins.android.design.Card
+import dev.reins.android.design.Hairline
+import dev.reins.android.design.LocalColors
+import dev.reins.android.design.RColors
+import dev.reins.android.design.RText
+import dev.reins.android.design.RType
+import dev.reins.android.design.Tag
+import dev.reins.android.design.pressable
+import dev.reins.android.ui.common.untrusted
+import dev.reins.core.GitCommitView
+import dev.reins.core.GitFileView
+import dev.reins.core.GitPushView
+import dev.reins.core.GitRefView
 
 /**
  * A push from git on the user's computer, ref by ref: what each branch or tag gains or loses, which commits and files,

@@ -3,7 +3,7 @@
 
 use std::sync::Arc;
 
-use rewarden_proto::connector::{ConnectorCall, TELEGRAM};
+use reins_proto::connector::{ConnectorCall, TELEGRAM};
 use serde_json::{Map, json};
 
 use super::{Connector, Item, LoginProgress, Preview, looks_like_code};

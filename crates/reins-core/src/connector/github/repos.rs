@@ -3,8 +3,8 @@
 use std::fmt::{Display, Write as _};
 
 use data_encoding::BASE64;
+use reins_proto::connector::ConnectorCall;
 use reqwest::Method;
-use rewarden_proto::connector::ConnectorCall;
 use serde_json::{Map, Value, json};
 
 use super::{GitHub, Options, Preview, owner_ok, parents, ref_arg, repo_arg, repo_ok, resource, resource_label};

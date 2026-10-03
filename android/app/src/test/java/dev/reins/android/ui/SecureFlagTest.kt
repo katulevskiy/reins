@@ -1,9 +1,9 @@
-package dev.rewarden.android.ui
+package dev.reins.android.ui
 
 import android.app.Activity
 import android.view.WindowManager
 import androidx.test.ext.junit.runners.AndroidJUnit4
-import dev.rewarden.android.ui.common.SecureFlag
+import dev.reins.android.ui.common.SecureFlag
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test

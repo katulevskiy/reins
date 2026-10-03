@@ -1,4 +1,4 @@
-package dev.rewarden.android.platform.update
+package dev.reins.android.platform.update
 
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import java.io.File

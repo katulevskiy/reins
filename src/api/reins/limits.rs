@@ -1,6 +1,6 @@
 //! Rate and concurrency limits for a public, multi-tenant deployment.
 //!
-//! Every limit is a setting (`REWARDEN_*` in `.env.template`); `0` turns a rate or concurrency limit off. Rates use the
+//! Every limit is a setting (`REINS_*` in `.env.template`); `0` turns a rate or concurrency limit off. Rates use the
 //! same keyed GCRA limiters as Vaultwarden's own (`src/ratelimit.rs`, governor); concurrency limits are counters
 //! released when the guard drops. Quotas on stored files live with the blob store (`blob.rs`).
 //!
@@ -210,53 +210,53 @@ pub fn rate_limited_text(what: &str, wait: Duration) -> String {
 
 /// MCP and desktop requests per AI connection (key: connection id).
 pub static CONNECTION_REQUESTS: LazyLock<RateLimit<String>> =
-    LazyLock::new(|| RateLimit::per_minute(CONFIG.rewarden_connection_requests_per_minute()));
+    LazyLock::new(|| RateLimit::per_minute(CONFIG.reins_connection_requests_per_minute()));
 
 /// Tool calls of one AI connection waiting for the phone at once (key: connection id).
 pub static CONNECTION_WAITING: LazyLock<Concurrency<String>> =
-    LazyLock::new(|| Concurrency::new(CONFIG.rewarden_connection_max_waiting()));
+    LazyLock::new(|| Concurrency::new(CONFIG.reins_connection_max_waiting()));
 
 /// Calls relayed to one account's phone (key: user id).
 pub static ACCOUNT_CALLS: LazyLock<RateLimit<String>> =
-    LazyLock::new(|| RateLimit::per_minute(CONFIG.rewarden_account_calls_per_minute()));
+    LazyLock::new(|| RateLimit::per_minute(CONFIG.reins_account_calls_per_minute()));
 
 /// Connection requests (pairings) for one account email, known or not, so the limit says nothing about whether the
 /// account exists (key: the lowercased email).
 pub static PAIRINGS: LazyLock<RateLimit<String>> = LazyLock::new(|| {
-    RateLimit::with_period(CONFIG.rewarden_pairing_ratelimit_seconds(), CONFIG.rewarden_pairing_ratelimit_max_burst())
+    RateLimit::with_period(CONFIG.reins_pairing_ratelimit_seconds(), CONFIG.reins_pairing_ratelimit_max_burst())
 });
 
 /// Device authorizations (a computer asking for a QR code to pair, RFC 8628) per IP address, with the pairing
 /// settings: each may become a pairing.
 pub static DEVICE_AUTHORIZATIONS: LazyLock<RateLimit<IpAddr>> = LazyLock::new(|| {
-    RateLimit::with_period(CONFIG.rewarden_pairing_ratelimit_seconds(), CONFIG.rewarden_pairing_ratelimit_max_burst())
+    RateLimit::with_period(CONFIG.reins_pairing_ratelimit_seconds(), CONFIG.reins_pairing_ratelimit_max_burst())
 });
 
 /// OAuth dynamic client registrations per IP address.
 pub static REGISTRATIONS: LazyLock<RateLimit<IpAddr>> = LazyLock::new(|| {
-    RateLimit::with_period(CONFIG.rewarden_register_ratelimit_seconds(), CONFIG.rewarden_register_ratelimit_max_burst())
+    RateLimit::with_period(CONFIG.reins_register_ratelimit_seconds(), CONFIG.reins_register_ratelimit_max_burst())
 });
 
 /// `GET /pending` long-polls of one approval device at once (key: device id).
 pub static DEVICE_POLLS: LazyLock<Concurrency<String>> =
-    LazyLock::new(|| Concurrency::new(CONFIG.rewarden_device_max_polls()));
+    LazyLock::new(|| Concurrency::new(CONFIG.reins_device_max_polls()));
 
-/// Wrong proofs sent to take the approval role (`PUT /rewarden/api/device` with a master password hash) for one
+/// Wrong proofs sent to take the approval role (`PUT /reins/api/device` with a master password hash) for one
 /// account (key: user id).
 pub static DEVICE_PROOFS: LazyLock<FailureLimit<String>> = LazyLock::new(|| {
     FailureLimit::new(
-        CONFIG.rewarden_device_proof_max_failures(),
-        Duration::from_secs(CONFIG.rewarden_device_proof_window_seconds()),
+        CONFIG.reins_device_proof_max_failures(),
+        Duration::from_secs(CONFIG.reins_device_proof_window_seconds()),
     )
 });
 
 /// Outbound requests (file sends and fetches, proxied MCP calls) made for one account (key: user id).
 pub static OUTBOUND_REQUESTS: LazyLock<RateLimit<String>> =
-    LazyLock::new(|| RateLimit::per_minute(CONFIG.rewarden_outbound_requests_per_minute()));
+    LazyLock::new(|| RateLimit::per_minute(CONFIG.reins_outbound_requests_per_minute()));
 
 /// Outbound requests of one account running at once (key: user id).
 pub static OUTBOUND_RUNNING: LazyLock<Concurrency<String>> =
-    LazyLock::new(|| Concurrency::new(CONFIG.rewarden_outbound_max_concurrent()));
+    LazyLock::new(|| Concurrency::new(CONFIG.reins_outbound_max_concurrent()));
 
 /// Housekeeping: drops rate-limit state of keys that are back at a full budget.
 pub fn retain_recent() {
@@ -269,17 +269,17 @@ pub fn retain_recent() {
     DEVICE_PROOFS.retain_recent();
 }
 
-/// Cross-field checks of the limit settings; only called when Rewarden is enabled.
+/// Cross-field checks of the limit settings; only called when Reins is enabled.
 pub fn validate_settings(max_blob_bytes: u64, account_files: u32, max_downloads: u32) -> Result<(), String> {
-    use rewarden_proto::blob::MAX_BLOB_BYTES;
+    use reins_proto::blob::MAX_BLOB_BYTES;
     if !(1..=MAX_BLOB_BYTES).contains(&max_blob_bytes) {
-        return Err(format!("`REWARDEN_BLOB_MAX_BYTES` must be between 1 and {MAX_BLOB_BYTES} (1 GiB)"));
+        return Err(format!("`REINS_BLOB_MAX_BYTES` must be between 1 and {MAX_BLOB_BYTES} (1 GiB)"));
     }
     if account_files == 0 {
-        return Err("`REWARDEN_BLOB_ACCOUNT_FILES` must be at least 1".to_owned());
+        return Err("`REINS_BLOB_ACCOUNT_FILES` must be at least 1".to_owned());
     }
     if max_downloads == 0 {
-        return Err("`REWARDEN_BLOB_MAX_DOWNLOADS` must be at least 1".to_owned());
+        return Err("`REINS_BLOB_MAX_DOWNLOADS` must be at least 1".to_owned());
     }
     Ok(())
 }
@@ -376,9 +376,9 @@ mod tests {
     fn settings_are_bounded() {
         assert_eq!(validate_settings(1 << 30, 20, 20), Ok(()));
         assert_eq!(validate_settings(1, 1, 1), Ok(()));
-        assert!(validate_settings(0, 20, 20).unwrap_err().contains("REWARDEN_BLOB_MAX_BYTES"));
-        assert!(validate_settings((1 << 30) + 1, 20, 20).unwrap_err().contains("REWARDEN_BLOB_MAX_BYTES"));
-        assert!(validate_settings(1 << 30, 0, 20).unwrap_err().contains("REWARDEN_BLOB_ACCOUNT_FILES"));
-        assert!(validate_settings(1 << 30, 20, 0).unwrap_err().contains("REWARDEN_BLOB_MAX_DOWNLOADS"));
+        assert!(validate_settings(0, 20, 20).unwrap_err().contains("REINS_BLOB_MAX_BYTES"));
+        assert!(validate_settings((1 << 30) + 1, 20, 20).unwrap_err().contains("REINS_BLOB_MAX_BYTES"));
+        assert!(validate_settings(1 << 30, 0, 20).unwrap_err().contains("REINS_BLOB_ACCOUNT_FILES"));
+        assert!(validate_settings(1 << 30, 20, 0).unwrap_err().contains("REINS_BLOB_MAX_DOWNLOADS"));
     }
 }

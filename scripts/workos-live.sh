@@ -8,7 +8,7 @@
 # With WORKOS_CLIENT_ID and WORKOS_API_KEY already in the environment the script uses them and reads no file.
 # Otherwise workos.env holds WORKOS_CLIENT_ID=client_... and WORKOS_API_KEY=sk_test_... (one per line; never commit it).
 # The script adds http://localhost:8765/identity/connect/oidc-signin to the environment's redirect URIs, installs
-# playwright-core into a cache directory, builds the server and runs crates/rewarden-e2e/examples/workos_live.rs.
+# playwright-core into a cache directory, builds the server and runs crates/reins-e2e/examples/workos_live.rs.
 # Set CARGO_TARGET_DIR to reuse a server build. Port 8765 must be free.
 set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
@@ -36,13 +36,13 @@ fi
 
 DRIVER_DIR="${XDG_CACHE_HOME:-$HOME/.cache}/reins-authkit-driver"
 mkdir -p "$DRIVER_DIR"
-cp "$ROOT/crates/rewarden-e2e/authkit/sign-in.mjs" "$DRIVER_DIR/"
+cp "$ROOT/crates/reins-e2e/authkit/sign-in.mjs" "$DRIVER_DIR/"
 if [[ ! -d "$DRIVER_DIR/node_modules/playwright-core" ]]; then
   (cd "$DRIVER_DIR" && npm init -y >/dev/null && npm install --silent playwright-core)
 fi
 export AUTHKIT_DRIVER="$DRIVER_DIR/sign-in.mjs"
 
 echo "building the server and the live check"
-(cd "$ROOT" && cargo build -q --features sqlite --bin vaultwarden && cargo build -q -p rewarden-e2e --example workos_live)
+(cd "$ROOT" && cargo build -q --features sqlite --bin vaultwarden && cargo build -q -p reins-e2e --example workos_live)
 # The example binary itself: under `cargo run`, the server build it starts sees cargo's variables and rebuilds.
 cd "$ROOT" && exec "${CARGO_TARGET_DIR:-$ROOT/target}/debug/examples/workos_live"

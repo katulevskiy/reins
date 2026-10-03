@@ -37,7 +37,7 @@ pub enum ToolCall {
     Connector(ConnectorCall),
     /// A tool of an MCP server the user added on the phone: see [`crate::remote_mcp`].
     Mcp(crate::remote_mcp::McpCall),
-    /// `rewarden_upload`: the AI wants to pass on a file as a link (see [`crate::blob`]).
+    /// `reins_upload`: the AI wants to pass on a file as a link (see [`crate::blob`]).
     RequestUpload {
         name: String,
         /// Expected size in bytes (the slot allows a little more).
@@ -260,7 +260,7 @@ pub fn normalize_service(raw: &str) -> Result<String, ValidationError> {
 /// The account a call names (`work@gmail.com`), lower-cased; anything that is not an address is refused.
 pub fn normalize_account(raw: &str) -> Result<String, ValidationError> {
     normalize_address(raw.trim())
-        .map_err(|_| invalid("account", "must be one of the addresses from rewarden_list_accounts"))
+        .map_err(|_| invalid("account", "must be one of the addresses from reins_list_accounts"))
 }
 
 /// `a@b.com` → itself (lower-cased); `@b.com` → the domain rule; anything else is refused.

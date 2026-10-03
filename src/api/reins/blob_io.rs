@@ -5,7 +5,7 @@ use std::path::{Path, PathBuf};
 
 use data_encoding::{BASE64, HEXLOWER};
 use futures::{Stream, StreamExt, stream};
-use rewarden_proto::blob::SendBody;
+use reins_proto::blob::SendBody;
 use serde_json::{Map, Value};
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWriteExt};
 
@@ -156,7 +156,7 @@ fn file_stream<R: AsyncRead + Unpin + Send + 'static>(
     })
 }
 
-/// The body of a [`BlobSend`](rewarden_proto::blob::BlobSend): the blob file, as is or as base64 inside JSON. Opened
+/// The body of a [`BlobSend`](reins_proto::blob::BlobSend): the blob file, as is or as base64 inside JSON. Opened
 /// anew for each hop so a 307 can resend it.
 pub struct FileBody {
     pub file: PathBuf,
@@ -245,7 +245,7 @@ mod tests {
     }
 
     fn temp(name: &str) -> PathBuf {
-        std::env::temp_dir().join(format!("rewarden-blob-io-{name}-{}", crate::util::get_uuid()))
+        std::env::temp_dir().join(format!("reins-blob-io-{name}-{}", crate::util::get_uuid()))
     }
 
     #[tokio::test]

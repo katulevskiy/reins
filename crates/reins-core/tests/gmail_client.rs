@@ -6,10 +6,10 @@ use std::time::Duration;
 
 use common::{FakeGoogle, TOKEN_FAILS, TOKEN_NEEDS_CONSENT, gmail_message};
 use data_encoding::BASE64URL;
-use rewarden_core::CoreError;
-use rewarden_core::gmail::{DEFAULT_BASE, GmailClient, Probe};
-use rewarden_core::http::client;
-use rewarden_proto::gmail::OutgoingEmail;
+use reins_core::CoreError;
+use reins_core::gmail::{DEFAULT_BASE, GmailClient, Probe};
+use reins_core::http::client;
+use reins_proto::gmail::OutgoingEmail;
 use serde_json::json;
 use wiremock::matchers::{header, method, path, query_param};
 use wiremock::{Mock, MockServer, Request, ResponseTemplate};

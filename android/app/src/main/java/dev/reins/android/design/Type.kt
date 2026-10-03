@@ -1,4 +1,4 @@
-package dev.rewarden.android.design
+package dev.reins.android.design
 
 import androidx.compose.foundation.text.BasicText
 import androidx.compose.runtime.Composable

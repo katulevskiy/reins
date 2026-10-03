@@ -1,6 +1,6 @@
-//! Large files through the Rewarden server, under the phone's control: upload links for file tools, the file shown
-//! with the write and sent on by the server, uploads the user decides on (`rewarden_upload`), and large results handed
-//! over as download links once released. A mock plays the Rewarden server (its blob endpoints), the vault and GitHub.
+//! Large files through the Reins server, under the phone's control: upload links for file tools, the file shown
+//! with the write and sent on by the server, uploads the user decides on (`reins_upload`), and large results handed
+//! over as download links once released. A mock plays the Reins server (its blob endpoints), the vault and GitHub.
 
 mod common;
 
@@ -13,12 +13,12 @@ use cbc::cipher::block_padding::Pkcs7;
 use cbc::cipher::{BlockDecryptMut, BlockEncryptMut, KeyIvInit};
 use common::{FakeGoogle, FakeKeys, RecordingNotifier};
 use data_encoding::BASE64;
-use rewarden_core::crypto::{Kdf, VaultKey, master_key};
-use rewarden_core::{
-    ApprovalChoice, ApprovalKind, CoreConfig, GoogleTokenProvider, GrantScopeChoice, Notifier, PendingKind,
-    RewardenCore, StandingGrant,
+use reins_core::crypto::{Kdf, VaultKey, master_key};
+use reins_core::{
+    ApprovalChoice, ApprovalKind, CoreConfig, GoogleTokenProvider, GrantScopeChoice, Notifier, PendingKind, ReinsCore,
+    StandingGrant,
 };
-use rewarden_proto::blob::MAX_BLOB_BYTES;
+use reins_proto::blob::MAX_BLOB_BYTES;
 use ring::hmac;
 use serde_json::{Value, json};
 use wiremock::matchers::{method, path, path_regex};
@@ -33,7 +33,7 @@ const UPLOADED: &str = "blob-uploaded-00000001";
 struct Env {
     server: MockServer,
     github: MockServer,
-    core: Arc<RewardenCore>,
+    core: Arc<ReinsCore>,
     notifier: Arc<RecordingNotifier>,
     user: VaultKey,
     counter: AtomicU32,
@@ -163,7 +163,7 @@ async fn env() -> Env {
         .mount(&server)
         .await;
     Mock::given(method("POST"))
-        .and(path_regex(r"^/rewarden/api/requests/[^/]+/response$"))
+        .and(path_regex(r"^/reins/api/requests/[^/]+/response$"))
         .respond_with(ResponseTemplate::new(204))
         .mount(&server)
         .await;
@@ -182,7 +182,7 @@ async fn env() -> Env {
         backoff_base: Duration::from_millis(1),
         ..CoreConfig::default()
     };
-    let core = RewardenCore::with_config(dir.path().to_str().unwrap(), &FakeKeys, google, dyn_notifier, cfg).unwrap();
+    let core = ReinsCore::with_config(dir.path().to_str().unwrap(), &FakeKeys, google, dyn_notifier, cfg).unwrap();
     core.login(server.uri(), EMAIL.to_owned(), PASSWORD.to_owned(), None).await.unwrap();
     core.add_token_account("vault".into(), PASSWORD.into()).await.unwrap();
     core.add_token_account("github".into(), GH_TOKEN.into()).await.unwrap();
@@ -208,7 +208,7 @@ fn info(id: &str, connection: &str, tool: &str, size: u64, preview: &Value) -> V
 }
 
 fn download(id: &str, name: &str, size: u64) -> Value {
-    json!({"id": id, "download_url": format!("https://rw.example/rewarden/blob/DOWNLOAD-{id}"), "name": name,
+    json!({"id": id, "download_url": format!("https://rw.example/reins/blob/DOWNLOAD-{id}"), "name": name,
         "size": size, "sha256": "cd".repeat(32), "content_type": "application/octet-stream",
         "expires_at": now() + 1_800})
 }
@@ -239,28 +239,28 @@ fn read_grant(resources: &[&str]) -> Option<StandingGrant> {
 }
 
 impl Env {
-    /// The blob endpoints of the Rewarden server, answering every call.
+    /// The blob endpoints of the Reins server, answering every call.
     async fn blob_endpoints(&self) {
         Mock::given(method("POST"))
-            .and(path("/rewarden/api/blobs"))
+            .and(path("/reins/api/blobs"))
             .respond_with(ResponseTemplate::new(200).set_body_json(json!({"id": SLOT,
-                "upload_url": "https://rw.example/rewarden/blob/UPLOAD-SECRET",
-                "download_url": "https://rw.example/rewarden/blob/DOWNLOAD-SECRET",
+                "upload_url": "https://rw.example/reins/blob/UPLOAD-SECRET",
+                "download_url": "https://rw.example/reins/blob/DOWNLOAD-SECRET",
                 "expires_at": now() + 1_800})))
             .mount(&self.server)
             .await;
         Mock::given(method("DELETE"))
-            .and(path_regex(r"^/rewarden/api/blobs/[^/]+$"))
+            .and(path_regex(r"^/reins/api/blobs/[^/]+$"))
             .respond_with(ResponseTemplate::new(204))
             .mount(&self.server)
             .await;
         Mock::given(method("POST"))
-            .and(path_regex(r"^/rewarden/api/blobs/[^/]+/decision$"))
+            .and(path_regex(r"^/reins/api/blobs/[^/]+/decision$"))
             .respond_with(ResponseTemplate::new(204))
             .mount(&self.server)
             .await;
         Mock::given(method("POST"))
-            .and(path("/rewarden/api/blobs/fetch"))
+            .and(path("/reins/api/blobs/fetch"))
             .respond_with(ResponseTemplate::new(200).set_body_json(download(
                 "blob-fetched-0000001",
                 "big.iso",
@@ -269,7 +269,7 @@ impl Env {
             .mount(&self.server)
             .await;
         Mock::given(method("PUT"))
-            .and(path("/rewarden/api/blobs/output"))
+            .and(path("/reins/api/blobs/output"))
             .respond_with(ResponseTemplate::new(200).set_body_json(download(
                 "blob-output-00000001",
                 "big.bin",
@@ -282,7 +282,7 @@ impl Env {
     /// The server holds this file.
     async fn holds(&self, info: &Value) {
         Mock::given(method("GET"))
-            .and(path(format!("/rewarden/api/blobs/{}", info["id"].as_str().unwrap())))
+            .and(path(format!("/reins/api/blobs/{}", info["id"].as_str().unwrap())))
             .respond_with(ResponseTemplate::new(200).set_body_json(info))
             .mount(&self.server)
             .await;
@@ -291,7 +291,7 @@ impl Env {
     /// The server sends a file on and the destination answers `status` with `body`.
     async fn sends_on(&self, id: &str, status: u16, body: &Value) {
         Mock::given(method("POST"))
-            .and(path(format!("/rewarden/api/blobs/{id}/send")))
+            .and(path(format!("/reins/api/blobs/{id}/send")))
             .respond_with(ResponseTemplate::new(200).set_body_json(json!({"status": status,
                 "headers": [["content-type", "application/json"]], "body": body.to_string(), "truncated": false})))
             .mount(&self.server)
@@ -324,14 +324,14 @@ impl Env {
 
     async fn pending(&self, body: &Value) {
         Mock::given(method("GET"))
-            .and(path("/rewarden/api/pending"))
+            .and(path("/reins/api/pending"))
             .respond_with(ResponseTemplate::new(200).set_body_json(body))
             .up_to_n_times(1)
             .with_priority(1)
             .mount(&self.server)
             .await;
         Mock::given(method("GET"))
-            .and(path("/rewarden/api/pending"))
+            .and(path("/reins/api/pending"))
             .respond_with(ResponseTemplate::new(200).set_body_json(json!({"requests": [], "pairings": []})))
             .mount(&self.server)
             .await;
@@ -381,7 +381,7 @@ async fn file_tools_called_without_content_are_told_where_to_upload_it() {
     let data = &told["result"]["data"];
     assert_eq!(
         (data["status"].as_str(), data["blob"].as_str(), data["upload_url"].as_str()),
-        (Some("upload_required"), Some(SLOT), Some("https://rw.example/rewarden/blob/UPLOAD-SECRET"))
+        (Some("upload_required"), Some(SLOT), Some("https://rw.example/reins/blob/UPLOAD-SECRET"))
     );
     assert_eq!(data["max_bytes"], MAX_BLOB_BYTES);
     let next = data["next"].as_str().unwrap();
@@ -389,7 +389,7 @@ async fn file_tools_called_without_content_are_told_where_to_upload_it() {
         assert!(next.contains(needle), "{needle} missing in {next}");
     }
     // The slot the phone opened: this connection, this request, this tool only.
-    let slot = env.json_of("POST", "/rewarden/api/blobs").await.pop().unwrap();
+    let slot = env.json_of("POST", "/reins/api/blobs").await.pop().unwrap();
     assert_eq!(
         slot,
         json!({"v": 1, "connection_id": "c1", "request_id": id, "name": "app.apk",
@@ -402,11 +402,11 @@ async fn file_tools_called_without_content_are_told_where_to_upload_it() {
 
     // The contents API and the vault get slots of their own, named after the file.
     env.ask("github", "file_put", &json!({"repo": "octo/cat", "path": "docs/big.pdf", "message": "Add"})).await;
-    let slot = env.json_of("POST", "/rewarden/api/blobs").await.pop().unwrap();
+    let slot = env.json_of("POST", "/reins/api/blobs").await.pop().unwrap();
     assert_eq!((slot["name"].as_str(), slot["max_bytes"].as_u64()), (Some("big.pdf"), Some(100 * 1024 * 1024)));
     assert_eq!(slot["purpose"]["tool"], "github_file_put");
     env.ask("vault", "attachment_add", &json!({"item": "git", "file_name": "scan.pdf"})).await;
-    let slot = env.json_of("POST", "/rewarden/api/blobs").await.pop().unwrap();
+    let slot = env.json_of("POST", "/reins/api/blobs").await.pop().unwrap();
     assert_eq!(
         (slot["name"].as_str(), slot["purpose"]["tool"].as_str()),
         (Some("scan.pdf"), Some("vault_attachment_add"))
@@ -469,7 +469,7 @@ async fn an_uploaded_asset_is_shown_with_the_write_and_streamed_to_github_by_the
     assert!(env.requests("POST", "/send").await.is_empty(), "nothing moves before the user approved");
 
     env.core.approve(id, choice(&[], None)).await.unwrap();
-    let send = env.json_of("POST", &format!("/rewarden/api/blobs/{UPLOADED}/send")).await.pop().unwrap();
+    let send = env.json_of("POST", &format!("/reins/api/blobs/{UPLOADED}/send")).await.pop().unwrap();
     assert_eq!(
         (send["method"].as_str(), send["url"].as_str(), &send["body"]),
         (
@@ -486,7 +486,7 @@ async fn an_uploaded_asset_is_shown_with_the_write_and_streamed_to_github_by_the
         (told["result"]["data"]["uploaded"].as_bool(), told["result"]["data"]["id"].as_i64()),
         (Some(true), Some(99))
     );
-    assert_eq!(env.requests("DELETE", &format!("/rewarden/api/blobs/{UPLOADED}")).await.len(), 1, "used, then deleted");
+    assert_eq!(env.requests("DELETE", &format!("/reins/api/blobs/{UPLOADED}")).await.len(), 1, "used, then deleted");
 }
 
 #[tokio::test]
@@ -514,7 +514,7 @@ async fn a_file_put_from_an_upload_goes_as_base64_inside_the_contents_api_body()
     assert_eq!(view.resources[0].id, "octo/cat@main");
 
     env.core.approve(request_id, choice(&[], None)).await.unwrap();
-    let send = env.json_of("POST", &format!("/rewarden/api/blobs/{id}/send")).await.pop().unwrap();
+    let send = env.json_of("POST", &format!("/reins/api/blobs/{id}/send")).await.pop().unwrap();
     assert_eq!(send["method"], "PUT");
     assert_eq!(send["url"], format!("{}/repos/octo/cat/contents/docs/logo.png", env.github.uri()));
     assert_eq!(
@@ -577,7 +577,7 @@ async fn a_refused_write_deletes_its_upload() {
     assert!(parked);
     env.core.deny(id).await.unwrap();
     assert_eq!(env.told().await["outcome"], "denied");
-    assert_eq!(env.requests("DELETE", &format!("/rewarden/api/blobs/{UPLOADED}")).await.len(), 1);
+    assert_eq!(env.requests("DELETE", &format!("/reins/api/blobs/{UPLOADED}")).await.len(), 1);
 }
 
 #[tokio::test]
@@ -596,7 +596,7 @@ async fn a_vault_attachment_from_an_upload_is_read_encrypted_on_the_phone_and_th
     held["name"] = json!("scan.pdf");
     env.holds(&held).await;
     Mock::given(method("GET"))
-        .and(path(format!("/rewarden/api/blobs/{id}/content")))
+        .and(path(format!("/reins/api/blobs/{id}/content")))
         .respond_with(ResponseTemplate::new(200).set_body_bytes(content.clone()))
         .mount(&env.server)
         .await;
@@ -615,13 +615,13 @@ async fn a_vault_attachment_from_an_upload_is_read_encrypted_on_the_phone_and_th
     let upload = env.requests("POST", "/api/ciphers/git/attachment/att-new").await.pop().expect("uploaded");
     assert_eq!(buffer_decrypt(&file_key, &upload_part(&upload)), content, "encrypted on the phone");
     assert_eq!(env.told().await["result"]["data"]["attachment"], "att-new");
-    assert_eq!(env.requests("DELETE", &format!("/rewarden/api/blobs/{id}")).await.len(), 1);
+    assert_eq!(env.requests("DELETE", &format!("/reins/api/blobs/{id}")).await.len(), 1);
 }
 
-// ---- rewarden_upload ------------------------------------------------------------------------------------------------
+// ---- reins_upload ------------------------------------------------------------------------------------------------
 
 #[tokio::test]
-async fn rewarden_upload_answers_with_links_and_the_user_decides_when_the_file_arrives() {
+async fn reins_upload_answers_with_links_and_the_user_decides_when_the_file_arrives() {
     let env = env().await;
     let call = json!({"tool": "request_upload", "name": "report.pdf", "size": 1_000,
         "content_type": "application/pdf", "reason": "for the review"});
@@ -631,11 +631,11 @@ async fn rewarden_upload_answers_with_links_and_the_user_decides_when_the_file_a
     assert_eq!(data["status"], "upload_ready");
     assert_eq!(
         (data["blob"].as_str(), data["download_url"].as_str()),
-        (Some(SLOT), Some("https://rw.example/rewarden/blob/DOWNLOAD-SECRET"))
+        (Some(SLOT), Some("https://rw.example/reins/blob/DOWNLOAD-SECRET"))
     );
     let next = data["next"].as_str().unwrap();
     assert!(next.contains("curl -T") && next.contains("asked on their phone"), "{next}");
-    let slot = env.json_of("POST", "/rewarden/api/blobs").await.pop().unwrap();
+    let slot = env.json_of("POST", "/reins/api/blobs").await.pop().unwrap();
     assert_eq!(
         (slot["max_bytes"].as_u64(), &slot["purpose"], slot["request_id"].as_str()),
         (Some(1_100), &json!({"kind": "upload", "reason": "for the review"}), Some("u1"))
@@ -673,7 +673,7 @@ async fn rewarden_upload_answers_with_links_and_the_user_decides_when_the_file_a
 
     env.core.answer_blob("blob-report-00000001".into(), true).await.unwrap();
     assert_eq!(
-        env.json_of("POST", "/rewarden/api/blobs/blob-report-00000001/decision").await,
+        env.json_of("POST", "/reins/api/blobs/blob-report-00000001/decision").await,
         [json!({"v": 1, "approved": true})]
     );
     assert!(env.core.pending().await.unwrap().is_empty());
@@ -695,7 +695,7 @@ async fn rewarden_upload_answers_with_links_and_the_user_decides_when_the_file_a
     assert_eq!(env.core.pending().await.unwrap()[0].kind, PendingKind::Blob);
     env.core.answer_blob("blob-pushed-00000001".into(), false).await.unwrap();
     assert_eq!(
-        env.json_of("POST", "/rewarden/api/blobs/blob-pushed-00000001/decision").await,
+        env.json_of("POST", "/reins/api/blobs/blob-pushed-00000001/decision").await,
         [json!({"v": 1, "approved": false})]
     );
     assert_eq!(env.core.activity(1).await.unwrap()[0].outcome, "denied");
@@ -720,12 +720,12 @@ async fn a_large_release_asset_is_fetched_by_the_server_only_once_released_and_h
     assert!(parked);
     let view = env.core.approval_view(id.clone()).await.unwrap();
     assert!(env.requests("POST", "/blobs/fetch").await.is_empty(), "nothing is fetched before the user decides");
-    assert!(!format!("{view:?}").contains("_rewarden"));
+    assert!(!format!("{view:?}").contains("_reins"));
 
     // Released, and the read of octo/cat remembered.
     let ids: Vec<String> = view.messages.iter().map(|m| m.id.clone()).collect();
     env.core.approve(id.clone(), choice(&ids, read_grant(&["octo/cat"]))).await.unwrap();
-    let fetch = env.json_of("POST", "/rewarden/api/blobs/fetch").await.pop().unwrap();
+    let fetch = env.json_of("POST", "/reins/api/blobs/fetch").await.pop().unwrap();
     assert_eq!(
         (fetch["connection_id"].as_str(), fetch["request_id"].as_str(), fetch["name"].as_str()),
         (Some("c1"), Some(id.as_str()), Some("big.iso"))
@@ -735,9 +735,9 @@ async fn a_large_release_asset_is_fetched_by_the_server_only_once_released_and_h
     assert_eq!(header(&fetch, "Authorization"), Some(format!("Bearer {GH_TOKEN}").as_str()));
     assert_eq!(header(&fetch, "Accept"), Some("application/octet-stream"));
     let item = env.told().await["result"]["data"]["items"][0].clone();
-    assert_eq!(item["download_url"], "https://rw.example/rewarden/blob/DOWNLOAD-blob-fetched-0000001");
+    assert_eq!(item["download_url"], "https://rw.example/reins/blob/DOWNLOAD-blob-fetched-0000001");
     assert_eq!((item["encoding"].as_str(), item["sha256"].as_str()), (Some("link"), Some("cd".repeat(32).as_str())));
-    assert!(item.get("_rewarden_deliver").is_none() && item.get("content_base64").is_none(), "{item}");
+    assert!(item.get("_reins_deliver").is_none() && item.get("content_base64").is_none(), "{item}");
 
     // The next download is covered by the permission: fetched and answered at once.
     let (_, parked) = env.ask("github", "release_asset_download", &json!({"repo": "octo/cat", "asset_id": 3})).await;
@@ -782,7 +782,7 @@ async fn a_large_vault_attachment_is_decrypted_on_the_phone_and_handed_over_as_a
     let ids: Vec<String> = view.messages.iter().map(|m| m.id.clone()).collect();
     env.core.approve(id, choice(&ids, None)).await.unwrap();
 
-    let output = env.requests("PUT", "/rewarden/api/blobs/output").await.pop().expect("uploaded once released");
+    let output = env.requests("PUT", "/reins/api/blobs/output").await.pop().expect("uploaded once released");
     assert_eq!(output.body, big_attachment(), "the decrypted file");
     let query: Vec<(String, String)> =
         output.url.query_pairs().map(|(k, v)| (k.into_owned(), v.into_owned())).collect();
@@ -790,7 +790,7 @@ async fn a_large_vault_attachment_is_decrypted_on_the_phone_and_handed_over_as_a
         query.contains(&("connection_id".into(), "c1".into())) && query.contains(&("name".into(), "big.bin".into()))
     );
     let item = env.told().await["result"]["data"]["items"][0].clone();
-    assert_eq!(item["download_url"], "https://rw.example/rewarden/blob/DOWNLOAD-blob-output-00000001");
+    assert_eq!(item["download_url"], "https://rw.example/reins/blob/DOWNLOAD-blob-output-00000001");
     assert_eq!(item["encoding"], "link");
     assert!(!item.to_string().contains(&BASE64.encode(&big_attachment()[..64])), "the content is not inline");
 }
@@ -815,7 +815,7 @@ async fn a_long_job_log_keeps_its_end_inline_and_the_whole_log_comes_as_a_link()
     let item = env.told().await["result"]["data"]["items"][0].clone();
     assert!(item["text"].as_str().unwrap().trim_end().ends_with("step 05999 ok"), "the end of the log is inline");
     assert_eq!((item["truncated"].as_bool(), item["encoding"].as_str()), (Some(true), Some("link")));
-    let fetch = env.json_of("POST", "/rewarden/api/blobs/fetch").await.pop().unwrap();
+    let fetch = env.json_of("POST", "/reins/api/blobs/fetch").await.pop().unwrap();
     assert_eq!(fetch["url"], format!("{}/repos/octo/cat/actions/jobs/5/logs", env.github.uri()));
     assert_eq!(fetch["name"], "job-5.log");
 }

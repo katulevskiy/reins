@@ -1,18 +1,18 @@
-//! `desktop_ask`: a yes-or-no question from the paired desktop app (`rewarden ask`, a harness hook). Only the app whose
+//! `desktop_ask`: a yes-or-no question from the paired desktop app (`reins ask`, a harness hook). Only the app whose
 //! key was pinned at pairing may ask; the user sees the question, its detail and topic; yes is an `AskAnswer` sealed
 //! to the app's key with its nonce, no is the ordinary denial, and a standing answer covers one topic.
 
 mod common;
 
-use common::desktop::{DESK, Desk, REFUSED, call, choice, desk_with, mount_rewarden, standing};
-use rewarden_core::{ApprovalKind, CoreConfig, CoreError};
-use rewarden_proto::desktop::{AskAnswer, encode_key};
+use common::desktop::{DESK, Desk, REFUSED, call, choice, desk_with, mount_reins, standing};
+use reins_core::{ApprovalKind, CoreConfig, CoreError};
+use reins_proto::desktop::{AskAnswer, encode_key};
 use serde_json::{Value, json};
 use wiremock::MockServer;
 
 async fn desk() -> Desk {
     let server = MockServer::start().await;
-    mount_rewarden(&server).await;
+    mount_reins(&server).await;
     desk_with(server, "me@example.com", "pw", CoreConfig::default()).await
 }
 

@@ -1,27 +1,27 @@
-//! The real Laya package, when `REWARDEN_LAYA_PKG` names its directory (`model.onnx`, `tokenizer.json`,
+//! The real Laya package, when `REINS_LAYA_PKG` names its directory (`model.onnx`, `tokenizer.json`,
 //! `laya_config.json`, as `tools/laya/export_onnx.py` writes it). Skipped otherwise.
 
 use std::path::PathBuf;
 
-use rewarden_core::Verdict;
-use rewarden_laya::Judge;
+use reins_core::Verdict;
+use reins_laya::Judge;
 
 fn package() -> Option<PathBuf> {
-    let Some(dir) = std::env::var_os("REWARDEN_LAYA_PKG").map(PathBuf::from) else {
-        eprintln!("skipped: set REWARDEN_LAYA_PKG to a Laya package directory to run this test");
+    let Some(dir) = std::env::var_os("REINS_LAYA_PKG").map(PathBuf::from) else {
+        eprintln!("skipped: set REINS_LAYA_PKG to a Laya package directory to run this test");
         return None;
     };
-    assert!(dir.join("model.onnx").exists(), "REWARDEN_LAYA_PKG={} has no model.onnx", dir.display());
+    assert!(dir.join("model.onnx").exists(), "REINS_LAYA_PKG={} has no model.onnx", dir.display());
     Some(dir)
 }
 
 const ROUTINE: &str = "connection: Claude Code (laptop)\nconnection age: 12 days\nconnection history: 140 approved, 3 \
                        denied\nservice: github\naction: read\noperation: Read a file\nclass: code\naccount: dkat\n\
-                       target: dkat/rewarden\ntarget is new: no\ndetails: repository of the account";
+                       target: dkat/reins\ntarget is new: no\ndetails: repository of the account";
 
 const HARMFUL: &str = "connection: Claude Code (laptop)\nconnection age: 12 days\nconnection history: 140 approved, 3 \
                        denied\nservice: github\naction: write\noperation: Delete a repository\nclass: admin\naccount: \
-                       dkat\ntarget: dkat/rewarden\ntarget is new: no\ndetails: asked every time";
+                       dkat\ntarget: dkat/reins\ntarget is new: no\ndetails: asked every time";
 
 #[test]
 fn the_package_runs_and_its_answers_are_well_formed() {

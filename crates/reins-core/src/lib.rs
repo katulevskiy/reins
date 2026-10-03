@@ -1,4 +1,4 @@
-//! Rewarden phone core: Vaultwarden login, phone API client, encrypted local
+//! Reins phone core: Vaultwarden login, phone API client, encrypted local
 //! store, Gmail connector and the request/approval engine, exported to Kotlin
 //! through UniFFI (contracts §D).
 //!
@@ -36,7 +36,7 @@ pub mod types;
 pub mod vault;
 pub mod views;
 
-pub use api::RewardenCore;
+pub use api::ReinsCore;
 pub use autopilot::{
     AutoDecisionView, AutopilotEvent, AutopilotMode, AutopilotNote, AutopilotSettings, ClassView, ConnectionAutopilot,
     DownloadProgress, ModelInput, ModelOutput, ModelRuntime, ModelState, ModelStatus, NeighbourView, Preset,

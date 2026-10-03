@@ -1,9 +1,9 @@
-package dev.rewarden.android
+package dev.reins.android
 
 import android.app.Application
 import android.os.StrictMode
 
-class RewardenApp : Application() {
+class ReinsApp : Application() {
     lateinit var container: AppContainer
         private set
 
@@ -14,7 +14,7 @@ class RewardenApp : Application() {
                 StrictMode.ThreadPolicy.Builder().detectDiskReads().detectDiskWrites().detectNetwork().penaltyLog().build(),
             )
         }
-        dev.rewarden.android.design.Fonts.init(this)
+        dev.reins.android.design.Fonts.init(this)
         container = AppContainer(this)
         container.notifier.createChannels()
     }

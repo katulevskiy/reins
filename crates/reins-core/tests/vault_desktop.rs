@@ -4,13 +4,13 @@
 
 mod common;
 
-use common::desktop::{DESK, Desk, REFUSED, call, choice, desk_with, mount_rewarden, standing};
+use common::desktop::{DESK, Desk, REFUSED, call, choice, desk_with, mount_reins, standing};
 use data_encoding::BASE64;
-use rewarden_core::connector::vault::totp_code;
-use rewarden_core::crypto::{Kdf, VaultKey, master_key};
-use rewarden_core::store::unix_now;
-use rewarden_core::{ApprovalKind, CoreConfig, CoreError};
-use rewarden_proto::desktop::{SecretGrant, SshSignature};
+use reins_core::connector::vault::totp_code;
+use reins_core::crypto::{Kdf, VaultKey, master_key};
+use reins_core::store::unix_now;
+use reins_core::{ApprovalKind, CoreConfig, CoreError};
+use reins_proto::desktop::{SecretGrant, SshSignature};
 use ring::signature::{self, UnparsedPublicKey};
 use serde_json::{Value, json};
 use wiremock::matchers::{header_exists, method, path};
@@ -120,7 +120,7 @@ fn ciphers(user: &VaultKey) -> Vec<Value> {
 
 async fn desk() -> Desk {
     let server = MockServer::start().await;
-    mount_rewarden(&server).await;
+    mount_reins(&server).await;
     let master = master_key(
         PASSWORD,
         EMAIL,

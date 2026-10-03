@@ -1,26 +1,26 @@
-package dev.rewarden.android.ui
+package dev.reins.android.ui
 
-import dev.rewarden.android.TestData
-import dev.rewarden.android.design.McpNames
-import dev.rewarden.android.design.serviceName
-import dev.rewarden.android.push.PushPayload
-import dev.rewarden.android.ui.approval.leaseLabel
-import dev.rewarden.android.ui.approval.sshTarget
-import dev.rewarden.android.ui.common.fileSize
-import dev.rewarden.android.ui.common.fullTitle
-import dev.rewarden.android.ui.common.isTextFile
-import dev.rewarden.android.ui.common.shortSha
-import dev.rewarden.android.ui.mcp.ToolBadge
-import dev.rewarden.android.ui.mcp.isMcpRedirect
-import dev.rewarden.android.ui.mcp.mcpHost
-import dev.rewarden.android.ui.mcp.mcpStatusLabel
-import dev.rewarden.android.ui.mcp.toolBadges
-import dev.rewarden.android.ui.mcp.toolCount
-import dev.rewarden.android.ui.mcp.webPage
-import dev.rewarden.android.ui.nav.DeepLink
-import dev.rewarden.android.ui.nav.SheetTarget
-import dev.rewarden.android.ui.services.GitHosts
-import dev.rewarden.core.PendingKind
+import dev.reins.android.TestData
+import dev.reins.android.design.McpNames
+import dev.reins.android.design.serviceName
+import dev.reins.android.push.PushPayload
+import dev.reins.android.ui.approval.leaseLabel
+import dev.reins.android.ui.approval.sshTarget
+import dev.reins.android.ui.common.fileSize
+import dev.reins.android.ui.common.fullTitle
+import dev.reins.android.ui.common.isTextFile
+import dev.reins.android.ui.common.shortSha
+import dev.reins.android.ui.mcp.ToolBadge
+import dev.reins.android.ui.mcp.isMcpRedirect
+import dev.reins.android.ui.mcp.mcpHost
+import dev.reins.android.ui.mcp.mcpStatusLabel
+import dev.reins.android.ui.mcp.toolBadges
+import dev.reins.android.ui.mcp.toolCount
+import dev.reins.android.ui.mcp.webPage
+import dev.reins.android.ui.nav.DeepLink
+import dev.reins.android.ui.nav.SheetTarget
+import dev.reins.android.ui.services.GitHosts
+import dev.reins.core.PendingKind
 import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -146,7 +146,7 @@ class NewFeaturesLogicTest {
     @Test
     fun `gitlab's page is filled in with a fresh name and the scopes git needs`() {
         assertEquals(
-            "https://gitlab.com/-/user_settings/personal_access_tokens?name=Rewarden-123456&scopes=read_api,read_repository,write_repository",
+            "https://gitlab.com/-/user_settings/personal_access_tokens?name=Reins-123456&scopes=read_api,read_repository,write_repository",
             GitHosts.of("gitlab")!!.tokenUrl(123_456),
         )
         val names = (1..20).map { GitHosts.of("gitlab")!!.tokenUrl().substringAfter("name=").substringBefore("&") }.toSet()
@@ -182,7 +182,7 @@ class NewFeaturesLogicTest {
 
     @Test
     fun `a notification link opens a waiting upload`() {
-        val link = DeepLink.parse("dev.rewarden.android.OPEN_ITEM", "blob", "blob_0123456789abcdef", "dev.rewarden.android.OPEN_ITEM")
+        val link = DeepLink.parse("dev.reins.android.OPEN_ITEM", "blob", "blob_0123456789abcdef", "dev.reins.android.OPEN_ITEM")
         assertEquals(DeepLink(PendingKind.BLOB, "blob_0123456789abcdef"), link)
         assertEquals(SheetTarget.Upload("blob_0123456789abcdef"), link!!.resolve(listOf(TestData.blobItem())))
         assertNull(link.resolve(emptyList()))

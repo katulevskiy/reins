@@ -57,7 +57,7 @@ async fn an_upload_arrives_with_a_preview_waits_for_the_user_and_then_downloads(
     let upload_url = slot["upload_url"].as_str().unwrap().to_owned();
     let download_url = slot["download_url"].as_str().unwrap().to_owned();
     let id = slot["id"].as_str().unwrap().to_owned();
-    assert!(upload_url.starts_with(&server.url("/rewarden/blob/")), "{upload_url}");
+    assert!(upload_url.starts_with(&server.url("/reins/blob/")), "{upload_url}");
     assert_ne!(upload_url, download_url);
     assert_eq!(download(&download_url).await.status(), StatusCode::NOT_FOUND, "nothing to download yet");
 
@@ -123,12 +123,12 @@ async fn an_upload_arrives_with_a_preview_waits_for_the_user_and_then_downloads(
 
     // Capability secrets never reach the log.
     let log = server.log();
-    assert!(log.contains("/rewarden/blob/"), "uploads are logged, without their secret");
+    assert!(log.contains("/reins/blob/"), "uploads are logged, without their secret");
     assert!(!log.contains(secret_of(&upload_url)) && !log.contains(secret_of(&download_url)), "secret in the log");
 
     assert_eq!(phone.delete(&format!("/blobs/{id}")).await.0, StatusCode::NO_CONTENT);
     assert_eq!(download(&download_url).await.status(), StatusCode::NOT_FOUND);
-    let files = std::fs::read_dir(server.data_dir().join("rewarden-blobs")).unwrap().count();
+    let files = std::fs::read_dir(server.data_dir().join("reins-blobs")).unwrap().count();
     assert_eq!(files, 0, "deleting a blob deletes its file");
 }
 
@@ -151,7 +151,7 @@ async fn a_denied_upload_is_gone_and_sizes_and_slots_are_checked() {
     let (status, denied) = phone.post(&format!("/blobs/{id}/decision"), &json!({"v": 1, "approved": false})).await;
     assert_eq!((status, denied["state"].as_str()), (StatusCode::OK, Some("denied")));
     assert_eq!(download(slot["download_url"].as_str().unwrap()).await.status(), StatusCode::NOT_FOUND);
-    assert_eq!(std::fs::read_dir(server.data_dir().join("rewarden-blobs")).unwrap().count(), 0);
+    assert_eq!(std::fs::read_dir(server.data_dir().join("reins-blobs")).unwrap().count(), 0);
 
     // Raw POST uploads work too; a tool input is never downloadable and not decided on its own.
     let tool = json!({"kind": "tool_input", "tool": "github_release_asset_upload"});

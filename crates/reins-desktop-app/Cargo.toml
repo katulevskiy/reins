@@ -1,5 +1,5 @@
 [package]
-name = "rewarden-desktop-app"
+name = "reins-desktop-app"
 version = "0.1.0"
 description = "Reins desktop app: pairs this computer with your phone, adds Reins to your AI harnesses and keeps the background service running, from a window and a tray icon."
 repository.workspace = true
@@ -16,12 +16,12 @@ path = "src/main.rs"
 
 [features]
 default = ["device-flow"]
-# Pairing by QR code through `rewarden_desktop::server::device` (the device flow). Without it, the app pairs with the
+# Pairing by QR code through `reins_desktop::server::device` (the device flow). Without it, the app pairs with the
 # browser sign-in only.
 device-flow = []
 
 [dependencies]
-rewarden-desktop = { path = "../rewarden-desktop" }
+reins-desktop = { path = "../reins-desktop" }
 # GPUI from the zui fork, the same revision Zeron's desktop app uses (see Zeron's Cargo.toml for what the fork adds).
 gpui = { git = "https://github.com/katulevskiy/zui", rev = "667d0aaf9531d2d1b2d0674a5e55f977df1b09f6" }
 gpui_platform = { git = "https://github.com/katulevskiy/zui", rev = "667d0aaf9531d2d1b2d0674a5e55f977df1b09f6", features = ["font-kit", "runtime_shaders", "wayland", "x11"] }

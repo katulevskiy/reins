@@ -3,7 +3,7 @@
 //! approves. Everything the user's phone and Claude would do, minus real Gmail.
 //!
 //! ```text
-//! REWARDEN_PASSWORD='...' cargo run -p rewarden-e2e --example remote_smoke -- https://rewarden.example.com you@example.com
+//! REINS_PASSWORD='...' cargo run -p reins-e2e --example remote_smoke -- https://reins.example.com you@example.com
 //! ```
 //!
 //! It leaves nothing behind except this headless device as the approval device (sign in on your phone to replace it)
@@ -11,19 +11,19 @@
 
 use std::time::Duration;
 
-use rewarden_core::ApprovalChoice;
-use rewarden_e2e::{AiClient, Phone};
+use reins_core::ApprovalChoice;
+use reins_e2e::{AiClient, Phone};
 use serde_json::json;
 
 #[tokio::main]
 async fn main() {
-    rewarden_e2e::init_tls();
+    reins_e2e::init_tls();
     let mut args = std::env::args().skip(1);
     let (Some(server), Some(email)) = (args.next(), args.next()) else {
-        eprintln!("usage: remote_smoke <server-url> <email>   (password in REWARDEN_PASSWORD)");
+        eprintln!("usage: remote_smoke <server-url> <email>   (password in REINS_PASSWORD)");
         std::process::exit(2);
     };
-    let password = std::env::var("REWARDEN_PASSWORD").expect("set REWARDEN_PASSWORD");
+    let password = std::env::var("REINS_PASSWORD").expect("set REINS_PASSWORD");
     let server = server.trim_end_matches('/').to_owned();
 
     let phone = Phone::sign_in_with(&server, &email, &password).await;

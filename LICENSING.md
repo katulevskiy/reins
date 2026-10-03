@@ -7,14 +7,14 @@ are listed in [NOTICE](NOTICE).
 | Part | Path | License |
 | --- | --- | --- |
 | Server (a Vaultwarden fork with the AI permission relay) | root crate `vaultwarden` and `macros/`: `src/`, `macros/`, `migrations/`, `tests/`, `docker/`, `playwright/`, `resources/`, `build.rs` | AGPL-3.0-only |
-| Phone core (vault client, connectors, approvals, Autopilot) | `crates/rewarden-core` | Apache-2.0 |
+| Phone core (vault client, connectors, approvals, Autopilot) | `crates/reins-core` | Apache-2.0 |
 | Android app | `android/` | Apache-2.0 |
-| Desktop app: daemon, git/SSH/API proxies, harness hooks | `crates/rewarden-desktop` | Apache-2.0 |
-| Desktop app: window and tray (GPUI, Apache-2.0; Geist fonts, OFL-1.1) | `crates/rewarden-desktop-app` | Apache-2.0 |
-| Wire protocol types | `crates/rewarden-proto` | Apache-2.0 |
-| Permission policy engine | `crates/rewarden-policy` | Apache-2.0 |
-| Autopilot model runtime for the desktop and `laya-try` | `crates/rewarden-laya` | Apache-2.0 |
-| End-to-end test harness | `crates/rewarden-e2e` | Apache-2.0 |
+| Desktop app: daemon, git/SSH/API proxies, harness hooks | `crates/reins-desktop` | Apache-2.0 |
+| Desktop app: window and tray (GPUI, Apache-2.0; Geist fonts, OFL-1.1) | `crates/reins-desktop-app` | Apache-2.0 |
+| Wire protocol types | `crates/reins-proto` | Apache-2.0 |
+| Permission policy engine | `crates/reins-policy` | Apache-2.0 |
+| Autopilot model runtime for the desktop and `laya-try` | `crates/reins-laya` | Apache-2.0 |
+| End-to-end test harness | `crates/reins-e2e` | Apache-2.0 |
 | Autopilot model tooling (data, fine-tuning, export, evaluation) | `tools/laya/` | Apache-2.0 |
 | Everything else (scripts, docs, configuration) | | Apache-2.0 |
 
@@ -31,8 +31,8 @@ version, as in upstream Vaultwarden.
   the model tooling are new code. Apache-2.0 lets AI harnesses, agent frameworks, other clients and alternative servers
   build on them without copyleft obligations, and gives an explicit patent license.
 
-The direction of use matters: the AGPL server may use Apache-2.0 code (it uses `rewarden-proto` and
-`rewarden-policy`), but no Apache-2.0 crate may depend on the server's code. `rewarden-e2e` starts the server as a
+The direction of use matters: the AGPL server may use Apache-2.0 code (it uses `reins-proto` and
+`reins-policy`), but no Apache-2.0 crate may depend on the server's code. `reins-e2e` starts the server as a
 separate program and talks to it over HTTP; it does not link it. `deny.toml` checks the licenses of third-party crates
 (`cargo deny --workspace check licenses bans`).
 

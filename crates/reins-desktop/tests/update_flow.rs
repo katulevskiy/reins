@@ -1,10 +1,10 @@
-//! `rewarden update` against a release server: a newer signed release is downloaded and checked; an older release
+//! `reins update` against a release server: a newer signed release is downloaded and checked; an older release
 //! (a replayed manifest), another key's signature, or a binary that differs from the signed hash are refused.
 
 use std::collections::BTreeMap;
 
 use data_encoding::{BASE64URL_NOPAD, HEXLOWER};
-use rewarden_desktop::update::{Asset, Check, Manifest, SIGNING_CONTEXT, Signed, Updater};
+use reins_desktop::update::{Asset, Check, Manifest, SIGNING_CONTEXT, Signed, Updater};
 use ring::signature::{Ed25519KeyPair, KeyPair as _};
 use sha2::{Digest, Sha256};
 use wiremock::matchers::{method, path};
@@ -26,7 +26,7 @@ fn signed(key: &Ed25519KeyPair, build_time: i64, sha256: &str) -> Vec<u8> {
         assets: BTreeMap::from([(
             PLATFORM.to_owned(),
             Asset {
-                file: "rewarden-0.2.0-linux-x86_64".into(),
+                file: "reins-0.2.0-linux-x86_64".into(),
                 sha256: sha256.to_owned(),
                 size: BINARY.len() as u64,
             },
@@ -50,7 +50,7 @@ async fn server(latest: Vec<u8>, binary: &[u8]) -> MockServer {
         .mount(&s)
         .await;
     Mock::given(method("GET"))
-        .and(path("/releases/files/rewarden-0.2.0-linux-x86_64"))
+        .and(path("/releases/files/reins-0.2.0-linux-x86_64"))
         .respond_with(ResponseTemplate::new(200).set_body_bytes(binary.to_vec()))
         .mount(&s)
         .await;

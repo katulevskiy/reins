@@ -3,8 +3,8 @@ import XCTest
 
 /// The `-demo` core must behave like the real one where the screens depend on it.
 final class DemoCoreTests: XCTestCase {
-    private func core(signedIn: Bool = true, installed: Bool = true) -> DemoRewardenCore {
-        DemoRewardenCore(signedIn: signedIn, modelInstalled: installed, syncCap: 0.3)
+    private func core(signedIn: Bool = true, installed: Bool = true) -> DemoReinsCore {
+        DemoReinsCore(signedIn: signedIn, modelInstalled: installed, syncCap: 0.3)
     }
 
     private func scope() -> GrantScopeChoice { DemoData.scope(senderDomains: ["bank.com"]) }
@@ -191,7 +191,7 @@ final class DemoCoreTests: XCTestCase {
     }
 
     func testArrivalComesDuringSync() async throws {
-        let c = DemoRewardenCore(arriveAfter: 0, syncCap: 1)
+        let c = DemoReinsCore(arriveAfter: 0, syncCap: 1)
         let items = try await c.sync(waitSecs: 25)
         XCTAssertEqual(items.first?.id, "req50")
     }

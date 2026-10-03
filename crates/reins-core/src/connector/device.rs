@@ -3,7 +3,7 @@
 
 use std::sync::Arc;
 
-use rewarden_proto::connector::{ConnectorCall, DEVICE_CALENDAR, DEVICE_CONTACTS, SMS};
+use reins_proto::connector::{ConnectorCall, DEVICE_CALENDAR, DEVICE_CONTACTS, SMS};
 use serde_json::{Map, Value, json};
 
 use super::{Connector, Item, Preview, looks_like_code};
@@ -94,7 +94,7 @@ pub trait DeviceBridge: Send + Sync {
 fn map_foreign(e: ForeignError) -> CoreError {
     match e {
         ForeignError::NeedsUserInteraction => {
-            CoreError::needs_attention("Rewarden needs permission on the phone for this")
+            CoreError::needs_attention("Reins needs permission on the phone for this")
         }
         ForeignError::Failed {
             reason,

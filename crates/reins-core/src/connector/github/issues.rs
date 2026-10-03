@@ -2,8 +2,8 @@
 
 use std::fmt::Write;
 
+use reins_proto::connector::ConnectorCall;
 use reqwest::Method;
-use rewarden_proto::connector::ConnectorCall;
 use serde_json::{Map, Value, json};
 
 use super::{GitHub, MAX_BODY, Options, Preview, owner_ok, parents, ref_ok, repo_arg, resource, resource_label};

@@ -1,4 +1,4 @@
-//! `{domain}/rewarden/desktop/calls` (desktop git proxy spec, S): the Rewarden desktop app asks the phone for git access
+//! `{domain}/reins/desktop/calls` (desktop git proxy spec, S): the Reins desktop app asks the phone for git access
 //! with the same OAuth access token an AI uses for `/mcp`. Only desktop-only tools are accepted, and only here; a call
 //! is relayed exactly like an MCP tool call, and the phone's answer (a credential sealed to the app's key, which the
 //! server cannot open) comes back as the relay stored it.
@@ -7,7 +7,7 @@
 
 use std::{io::Cursor, time::Duration};
 
-use rewarden_proto::{
+use reins_proto::{
     connector::{self, ConnectorCall, normalize_account_name},
     gmail::ToolCall,
     ids::{ConnectionId, RequestId},
@@ -31,7 +31,7 @@ use super::{
     now_unix,
     relay::WaitResult,
 };
-use crate::db::{DbConn, DbPool, models::RewardenConnection};
+use crate::db::{DbConn, DbPool, models::ReinsConnection};
 
 /// A push summary is capped at 200 000 bytes by its tool spec; the rest of a call is small.
 pub const MAX_BODY_BYTES: u64 = 512 * 1024;
@@ -211,7 +211,7 @@ fn refuse_browsers(request: &McpRequest) -> Option<DesktopResponse> {
     })
 }
 
-async fn authenticated(request: &McpRequest, conn: &DbConn) -> Result<RewardenConnection, DesktopResponse> {
+async fn authenticated(request: &McpRequest, conn: &DbConn) -> Result<ReinsConnection, DesktopResponse> {
     if let Some(refused) = refuse_browsers(request) {
         return Err(refused);
     }
@@ -219,14 +219,14 @@ async fn authenticated(request: &McpRequest, conn: &DbConn) -> Result<RewardenCo
         authenticate(request.authorization.as_deref(), conn).await.map_err(DesktopResponse::unauthorized)?;
     check_connection_rate(&connection)
         .map_err(|wait| DesktopResponse::rate_limited(CONNECTION_REQUESTS_LIMITED, wait))?;
-    if let Err(e) = RewardenConnection::touch(&connection.uuid, now_unix(), conn).await {
-        warn!("Could not record Rewarden connection use: {e:?}");
+    if let Err(e) = ReinsConnection::touch(&connection.uuid, now_unix(), conn).await {
+        warn!("Could not record Reins connection use: {e:?}");
     }
     Ok(connection)
 }
 
 /// Relays a desktop call to the phone and waits like an MCP tool call.
-#[post("/rewarden/desktop/calls", data = "<data>")]
+#[post("/reins/desktop/calls", data = "<data>")]
 async fn post_call(data: Data<'_>, request: McpRequest, conn: DbConn, pool: &State<DbPool>) -> DesktopResponse {
     let connection = match authenticated(&request, &conn).await {
         Ok(c) => c,
@@ -264,7 +264,7 @@ async fn post_call(data: Data<'_>, request: McpRequest, conn: DbConn, pool: &Sta
                 return DesktopResponse::error(
                     Status::ServiceUnavailable,
                     "busy",
-                    "Rewarden is busy. Try again in a minute.",
+                    "Reins is busy. Try again in a minute.",
                 );
             }
             Err(SubmitError::RateLimited(wait)) => {
@@ -278,7 +278,7 @@ async fn post_call(data: Data<'_>, request: McpRequest, conn: DbConn, pool: &Sta
 }
 
 /// Waits again on an earlier call of the same connection (an approval can come after the first wait ran out).
-#[get("/rewarden/desktop/calls/<id>")]
+#[get("/reins/desktop/calls/<id>")]
 async fn get_call(id: &str, request: McpRequest, conn: DbConn) -> DesktopResponse {
     let connection = match authenticated(&request, &conn).await {
         Ok(c) => c,
@@ -299,7 +299,7 @@ async fn get_call(id: &str, request: McpRequest, conn: DbConn) -> DesktopRespons
 
 #[cfg(test)]
 mod tests {
-    use rewarden_proto::{
+    use reins_proto::{
         desktop::{self, GIT_FETCH_TOOL, GIT_PUSH_TOOL},
         relay::{RelayOutcome, ToolResult},
     };
@@ -350,7 +350,7 @@ mod tests {
 
     #[test]
     fn only_desktop_tools_are_accepted() {
-        for tool in ["github_list_repos", "gmail_search", "rewarden_get_result", "nope", ""] {
+        for tool in ["github_list_repos", "gmail_search", "reins_get_result", "nope", ""] {
             let body = json!({"tool": tool, "arguments": {}});
             assert!(
                 matches!(message(parse_call(body.to_string().as_bytes())), CallError::UnknownTool(_)),

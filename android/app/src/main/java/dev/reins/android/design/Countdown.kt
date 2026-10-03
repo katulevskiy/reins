@@ -1,4 +1,4 @@
-package dev.rewarden.android.design
+package dev.reins.android.design
 
 import androidx.compose.animation.animateColorAsState
 import androidx.compose.foundation.layout.Box

@@ -1,4 +1,4 @@
-package dev.rewarden.android.platform
+package dev.reins.android.platform
 
 import android.accounts.Account
 import android.accounts.AccountManager
@@ -12,8 +12,8 @@ import com.google.android.gms.auth.api.identity.RevokeAccessRequest
 import com.google.android.gms.common.api.ApiException
 import com.google.android.gms.common.api.CommonStatusCodes
 import com.google.android.gms.common.api.Scope
-import dev.rewarden.core.ForeignException
-import dev.rewarden.core.GoogleTokenProvider
+import dev.reins.core.ForeignException
+import dev.reins.core.GoogleTokenProvider
 
 /**
  * Google access tokens (Gmail, Calendar, Contacts) come straight from Google Play Services on this phone: no refresh

@@ -1,4 +1,4 @@
-package dev.rewarden.android.ui.gmail
+package dev.reins.android.ui.gmail
 
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.IntentSenderRequest
@@ -21,26 +21,26 @@ import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
-import dev.rewarden.android.design.BlobAvatar
-import dev.rewarden.android.design.Banner
-import dev.rewarden.android.design.BannerKind
-import dev.rewarden.android.design.ButtonStyle
-import dev.rewarden.android.design.CapsuleButton
-import dev.rewarden.android.design.ConfirmDialog
-import dev.rewarden.android.design.Glyph
-import dev.rewarden.android.design.GlyphIcon
-import dev.rewarden.android.design.Group
-import dev.rewarden.android.design.Hairline
-import dev.rewarden.android.design.LocalColors
-import dev.rewarden.android.design.RText
-import dev.rewarden.android.design.RType
-import dev.rewarden.android.design.Screen
-import dev.rewarden.android.design.pressable
-import dev.rewarden.android.platform.GoogleAuthorizer
-import dev.rewarden.android.state.AppState
-import dev.rewarden.android.ui.common.untrusted
-import dev.rewarden.core.AccountView
-import dev.rewarden.core.GmailStatus
+import dev.reins.android.design.BlobAvatar
+import dev.reins.android.design.Banner
+import dev.reins.android.design.BannerKind
+import dev.reins.android.design.ButtonStyle
+import dev.reins.android.design.CapsuleButton
+import dev.reins.android.design.ConfirmDialog
+import dev.reins.android.design.Glyph
+import dev.reins.android.design.GlyphIcon
+import dev.reins.android.design.Group
+import dev.reins.android.design.Hairline
+import dev.reins.android.design.LocalColors
+import dev.reins.android.design.RText
+import dev.reins.android.design.RType
+import dev.reins.android.design.Screen
+import dev.reins.android.design.pressable
+import dev.reins.android.platform.GoogleAuthorizer
+import dev.reins.android.state.AppState
+import dev.reins.android.ui.common.untrusted
+import dev.reins.core.AccountView
+import dev.reins.core.GmailStatus
 
 /** The Gmail accounts: add as many as you like, or remove any of them. */
 @Composable
@@ -104,7 +104,7 @@ fun GmailScreen(viewModel: GmailViewModel, state: AppState, onBack: () -> Unit) 
             error?.let { Banner(untrusted(it), Modifier.padding(top = 12.dp), BannerKind.Error, tag = "accountError") }
         }
         RText(
-            "Rewarden asks Google for access on this phone only. Nothing about your mail is stored on the server.",
+            "Reins asks Google for access on this phone only. Nothing about your mail is stored on the server.",
             RType.sans(13.5f, lineHeight = 19f),
             c.tertiary,
             Modifier.padding(start = 32.dp, end = 32.dp, bottom = 32.dp),

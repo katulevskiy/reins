@@ -4,7 +4,7 @@
 use std::sync::Mutex;
 use std::sync::atomic::{AtomicU8, AtomicU32, Ordering};
 
-use rewarden_core::{
+use reins_core::{
     AutoDecisionView, AutopilotEvent, ForeignError, GoogleTokenProvider, KeyWrapper, Notifier, PendingItem,
 };
 

@@ -1,7 +1,7 @@
-package dev.rewarden.android.autopilot
+package dev.reins.android.autopilot
 
-import dev.rewarden.core.ForeignException
-import dev.rewarden.core.ModelInput
+import dev.reins.core.ForeignException
+import dev.reins.core.ModelInput
 import java.util.concurrent.CopyOnWriteArrayList
 import java.util.concurrent.Executors
 import java.util.concurrent.TimeUnit

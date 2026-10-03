@@ -4,7 +4,7 @@
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 
 use rand::RngExt;
-use rewarden_proto::{
+use reins_proto::{
     PROTOCOL_VERSION,
     ids::{ConnectionId, PairingId},
     pairing::{PairingRequest, PairingResponse},
@@ -80,7 +80,7 @@ pub struct PairingClient {
     pub client_name: String,
     /// Host of the validated redirect URI.
     pub client_host: String,
-    /// The desktop app's public key (`rewarden_client_key`, checked with `desktop::decode_key`), relayed so the phone
+    /// The desktop app's public key (`reins_client_key`, checked with `desktop::decode_key`), relayed so the phone
     /// can show its fingerprint and pin it to the new connection.
     pub client_key: Option<String>,
 }
@@ -413,7 +413,7 @@ mod tests {
     #[tokio::test(start_paused = true)]
     async fn the_desktop_key_reaches_real_and_decoy_pairings() {
         let h = hub();
-        let key = rewarden_proto::desktop::encode_key(&[7u8; 32]);
+        let key = reins_proto::desktop::encode_key(&[7u8; 32]);
         let desktop = PairingClient {
             client_key: Some(key.clone()),
             ..client()

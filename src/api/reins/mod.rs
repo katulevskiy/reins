@@ -1,4 +1,4 @@
-//! Rewarden server: MCP endpoint, OAuth 2.1 authorization server for AI clients,
+//! Reins server: MCP endpoint, OAuth 2.1 authorization server for AI clients,
 //! phone API and in-memory relay (spec §4, contracts §A and §C).
 
 pub mod apns;
@@ -33,7 +33,7 @@ use std::{
     time::Duration,
 };
 
-use rewarden_proto::{device::Pending, remote_mcp::McpServerReport};
+use reins_proto::{device::Pending, remote_mcp::McpServerReport};
 use rocket::{Catcher, Route};
 
 use self::{
@@ -56,7 +56,7 @@ pub const CIMD_TTL: Duration = Duration::from_secs(3600);
 pub const ACCESS_TOKEN_SECS: i64 = 3600;
 /// MCP refresh token lifetime (seconds): 30 days.
 pub const REFRESH_TOKEN_SECS: i64 = 30 * 24 * 3600;
-/// Upper bound for `REWARDEN_RELAY_WAIT_SECS` (ChatGPT's hard tool timeout is 60 s).
+/// Upper bound for `REINS_RELAY_WAIT_SECS` (ChatGPT's hard tool timeout is 60 s).
 pub const MAX_RELAY_WAIT_SECS: u64 = 55;
 
 /// Relay timing (spec §4.3). Tests construct it directly.
@@ -71,8 +71,8 @@ pub struct Timing {
 impl Timing {
     pub fn from_config() -> Self {
         Self {
-            relay_wait: Duration::from_secs(CONFIG.rewarden_relay_wait_secs()),
-            offline: Duration::from_secs(CONFIG.rewarden_offline_secs()),
+            relay_wait: Duration::from_secs(CONFIG.reins_relay_wait_secs()),
+            offline: Duration::from_secs(CONFIG.reins_offline_secs()),
         }
     }
 }
@@ -178,27 +178,27 @@ impl Hub {
 
 /// The process-wide hub (spec §2: one server instance per deployment).
 pub static HUB: LazyLock<Hub> = LazyLock::new(|| {
-    let max_queued = usize::try_from(CONFIG.rewarden_account_max_queued()).unwrap_or(usize::MAX);
+    let max_queued = usize::try_from(CONFIG.reins_account_max_queued()).unwrap_or(usize::MAX);
     Hub::with_limits(Timing::from_config(), max_queued, BlobLimits::from_config())
 });
 
 pub fn enabled() -> bool {
-    CONFIG.rewarden_enabled()
+    CONFIG.reins_enabled()
 }
 
 /// Scheduled housekeeping: expired refresh tokens and in-memory entries.
 pub async fn purge(pool: crate::db::DbPool) {
-    debug!("Purging Rewarden state");
+    debug!("Purging Reins state");
     HUB.purge();
     oauth_state::OAUTH.purge();
     device_flow::DEVICE_GRANTS.purge();
     limits::retain_recent();
     if let Ok(conn) = pool.get().await {
-        if let Err(e) = crate::db::models::RewardenRefreshToken::delete_expired(now_unix(), &conn).await {
-            error!("Failed to purge Rewarden refresh tokens: {e:?}");
+        if let Err(e) = crate::db::models::ReinsRefreshToken::delete_expired(now_unix(), &conn).await {
+            error!("Failed to purge Reins refresh tokens: {e:?}");
         }
     } else {
-        error!("Failed to get DB connection while purging Rewarden state");
+        error!("Failed to get DB connection while purging Reins state");
     }
 }
 
@@ -208,19 +208,19 @@ pub fn purge_blobs() {
     HUB.blobs.purge(now_unix());
 }
 
-/// Current time as unix seconds (the unit of every Rewarden timestamp).
+/// Current time as unix seconds (the unit of every Reins timestamp).
 pub fn now_unix() -> i64 {
     chrono::Utc::now().timestamp()
 }
 
-/// Routes mounted at `{domain_path}/` (they carry their full paths: `/mcp`, `/rewarden/...`).
+/// Routes mounted at `{domain_path}/` (they carry their full paths: `/mcp`, `/reins/...`).
 pub fn routes() -> Vec<Route> {
     if !enabled() {
         return Vec::new();
     }
     // Called once at launch: files held by a previous run are deleted now, not when the next file arrives.
     if let Err(e) = HUB.blobs.prepare() {
-        error!("Rewarden blob store unavailable: {e}");
+        error!("Reins blob store unavailable: {e}");
     }
     warn_about_public_settings();
     let mut routes = device_api::routes();
@@ -239,7 +239,7 @@ pub fn routes() -> Vec<Route> {
 fn warn_about_public_settings() {
     if outbound::allow_loopback() {
         warn!(
-            "`{}` is set: Rewarden may send requests to http://127.0.0.1. This is for tests only; never set it on a \
+            "`{}` is set: Reins may send requests to http://127.0.0.1. This is for tests only; never set it on a \
              real server",
             outbound::ALLOW_LOOPBACK_ENV
         );
@@ -252,7 +252,7 @@ fn warn_about_public_settings() {
     });
     if public && CONFIG.signups_allowed() && !CONFIG.signups_verify() {
         warn!(
-            "Rewarden is enabled with open sign-ups that need no email verification: anyone can create accounts \
+            "Reins is enabled with open sign-ups that need no email verification: anyone can create accounts \
              (each with its own file and call quotas). On a public server set SIGNUPS_VERIFY=true (needs SMTP) or \
              restrict SIGNUPS_ALLOWED / SIGNUPS_DOMAINS_WHITELIST"
         );
@@ -277,7 +277,7 @@ pub fn well_known_routes() -> Vec<Route> {
     routes
 }
 
-/// Catchers registered at `{domain_path}/rewarden/api`.
+/// Catchers registered at `{domain_path}/reins/api`.
 pub fn catchers() -> Vec<Catcher> {
     if !enabled() {
         return Vec::new();
@@ -285,7 +285,7 @@ pub fn catchers() -> Vec<Catcher> {
     device_api::catchers()
 }
 
-/// Cross-field checks for the `rewarden` config group; only called when Rewarden is enabled.
+/// Cross-field checks for the `reins` config group; only called when Reins is enabled.
 pub fn validate_settings(
     domain: &str,
     domain_set: bool,
@@ -295,7 +295,7 @@ pub fn validate_settings(
     apns: &apns::Settings,
 ) -> Result<(), String> {
     if !domain_set {
-        return Err("`REWARDEN_ENABLED` requires `DOMAIN` to be set to the public URL of this server".to_owned());
+        return Err("`REINS_ENABLED` requires `DOMAIN` to be set to the public URL of this server".to_owned());
     }
     let url = url::Url::parse(domain).map_err(|e| format!("`DOMAIN` is not a valid URL: {e}"))?;
     let loopback = match url.host() {
@@ -306,20 +306,20 @@ pub fn validate_settings(
     };
     if url.scheme() != "https" && !(url.scheme() == "http" && loopback) {
         return Err(
-            "`REWARDEN_ENABLED` requires an https:// `DOMAIN` (http is only allowed for localhost, 127.0.0.1 and [::1])"
+            "`REINS_ENABLED` requires an https:// `DOMAIN` (http is only allowed for localhost, 127.0.0.1 and [::1])"
                 .to_owned(),
         );
     }
     if !(1..=MAX_RELAY_WAIT_SECS).contains(&wait_secs) {
         return Err(format!(
-            "`REWARDEN_RELAY_WAIT_SECS` must be between 1 and {MAX_RELAY_WAIT_SECS} (ChatGPT aborts tool calls after 60 s)"
+            "`REINS_RELAY_WAIT_SECS` must be between 1 and {MAX_RELAY_WAIT_SECS} (ChatGPT aborts tool calls after 60 s)"
         ));
     }
     if offline_secs == 0 || offline_secs > wait_secs {
-        return Err("`REWARDEN_OFFLINE_SECS` must be at least 1 and at most `REWARDEN_RELAY_WAIT_SECS`".to_owned());
+        return Err("`REINS_OFFLINE_SECS` must be at least 1 and at most `REINS_RELAY_WAIT_SECS`".to_owned());
     }
     if !fcm_path.is_empty() {
-        fcm::ServiceAccount::from_file(fcm_path).map_err(|e| format!("`REWARDEN_FCM_SERVICE_ACCOUNT`: {e}"))?;
+        fcm::ServiceAccount::from_file(fcm_path).map_err(|e| format!("`REINS_FCM_SERVICE_ACCOUNT`: {e}"))?;
     }
     apns.load()?;
     Ok(())
@@ -329,7 +329,7 @@ pub fn validate_settings(
 mod tests {
     use super::*;
 
-    const OK_DOMAIN: &str = "https://rewarden.example.com";
+    const OK_DOMAIN: &str = "https://reins.example.com";
     const NO_APNS: apns::Settings = apns::Settings {
         key_file: String::new(),
         key_id: String::new(),
@@ -349,30 +349,26 @@ mod tests {
     fn requires_explicit_https_domain() {
         assert!(validate_settings(OK_DOMAIN, false, 45, 10, "", &NO_APNS).unwrap_err().contains("DOMAIN"));
         assert!(
-            validate_settings("http://rewarden.example.com", true, 45, 10, "", &NO_APNS).unwrap_err().contains("https")
+            validate_settings("http://reins.example.com", true, 45, 10, "", &NO_APNS).unwrap_err().contains("https")
         );
         assert!(validate_settings("not a url", true, 45, 10, "", &NO_APNS).is_err());
     }
 
     #[test]
     fn timing_bounds() {
+        assert!(validate_settings(OK_DOMAIN, true, 0, 0, "", &NO_APNS).unwrap_err().contains("REINS_RELAY_WAIT_SECS"));
         assert!(
-            validate_settings(OK_DOMAIN, true, 0, 0, "", &NO_APNS).unwrap_err().contains("REWARDEN_RELAY_WAIT_SECS")
+            validate_settings(OK_DOMAIN, true, 56, 10, "", &NO_APNS).unwrap_err().contains("REINS_RELAY_WAIT_SECS")
         );
-        assert!(
-            validate_settings(OK_DOMAIN, true, 56, 10, "", &NO_APNS).unwrap_err().contains("REWARDEN_RELAY_WAIT_SECS")
-        );
-        assert!(validate_settings(OK_DOMAIN, true, 45, 0, "", &NO_APNS).unwrap_err().contains("REWARDEN_OFFLINE_SECS"));
-        assert!(
-            validate_settings(OK_DOMAIN, true, 10, 11, "", &NO_APNS).unwrap_err().contains("REWARDEN_OFFLINE_SECS")
-        );
+        assert!(validate_settings(OK_DOMAIN, true, 45, 0, "", &NO_APNS).unwrap_err().contains("REINS_OFFLINE_SECS"));
+        assert!(validate_settings(OK_DOMAIN, true, 10, 11, "", &NO_APNS).unwrap_err().contains("REINS_OFFLINE_SECS"));
     }
 
     #[test]
     fn fcm_path_must_exist_when_set() {
-        let missing = std::env::temp_dir().join("rewarden-missing-service-account.json");
+        let missing = std::env::temp_dir().join("reins-missing-service-account.json");
         let err = validate_settings(OK_DOMAIN, true, 45, 10, missing.to_str().unwrap(), &NO_APNS).unwrap_err();
-        assert!(err.contains("REWARDEN_FCM_SERVICE_ACCOUNT"), "{err}");
+        assert!(err.contains("REINS_FCM_SERVICE_ACCOUNT"), "{err}");
     }
 
     #[test]
@@ -382,7 +378,7 @@ mod tests {
             ..NO_APNS
         };
         let err = validate_settings(OK_DOMAIN, true, 45, 10, "", &partial).unwrap_err();
-        assert!(err.contains("REWARDEN_APNS_KEY_FILE"), "{err}");
+        assert!(err.contains("REINS_APNS_KEY_FILE"), "{err}");
         let missing = apns::Settings {
             key_file: "/nonexistent/AuthKey_ABC123DEFG.p8".to_owned(),
             team_id: "DEF123GHIJ".to_owned(),
@@ -390,14 +386,14 @@ mod tests {
             ..partial
         };
         let err = validate_settings(OK_DOMAIN, true, 45, 10, "", &missing).unwrap_err();
-        assert!(err.contains("REWARDEN_APNS_KEY_FILE") && err.contains("/nonexistent"), "{err}");
+        assert!(err.contains("REINS_APNS_KEY_FILE") && err.contains("/nonexistent"), "{err}");
     }
 
     #[test]
     fn blob_secrets_are_kept_out_of_logged_paths() {
-        assert_eq!(loggable_path("/rewarden/blob/c2VjcmV0LXNlY3JldA"), "/rewarden/blob/\u{2026}");
-        assert_eq!(loggable_path("/vw/rewarden/blob/abc"), "/vw/rewarden/blob/\u{2026}");
-        assert_eq!(loggable_path("/rewarden/api/blobs/abc"), "/rewarden/api/blobs/abc");
+        assert_eq!(loggable_path("/reins/blob/c2VjcmV0LXNlY3JldA"), "/reins/blob/\u{2026}");
+        assert_eq!(loggable_path("/vw/reins/blob/abc"), "/vw/reins/blob/\u{2026}");
+        assert_eq!(loggable_path("/reins/api/blobs/abc"), "/reins/api/blobs/abc");
         assert_eq!(loggable_path("/mcp"), "/mcp");
     }
 
@@ -414,7 +410,7 @@ mod tests {
 
 #[cfg(test)]
 mod hub_tests {
-    use rewarden_proto::gmail::ToolCall;
+    use reins_proto::gmail::ToolCall;
     use tokio::time::{Instant, sleep};
 
     use super::*;

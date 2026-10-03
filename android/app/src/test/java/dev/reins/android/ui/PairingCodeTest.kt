@@ -1,6 +1,6 @@
-package dev.rewarden.android.ui
+package dev.reins.android.ui
 
-import dev.rewarden.android.ui.pairing.PairingCode
+import dev.reins.android.ui.pairing.PairingCode
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
 import org.junit.Test

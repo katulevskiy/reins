@@ -1,4 +1,4 @@
-package dev.rewarden.android.ui.autopilot
+package dev.reins.android.ui.autopilot
 
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.core.spring
@@ -34,23 +34,23 @@ import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
-import dev.rewarden.android.autopilot.AutopilotText
-import dev.rewarden.android.design.Banner
-import dev.rewarden.android.design.BannerKind
-import dev.rewarden.android.design.ButtonStyle
-import dev.rewarden.android.design.CapsuleButton
-import dev.rewarden.android.design.Glyph
-import dev.rewarden.android.design.GlyphIcon
-import dev.rewarden.android.design.LocalColors
-import dev.rewarden.android.design.RText
-import dev.rewarden.android.design.RType
-import dev.rewarden.android.design.Screen
-import dev.rewarden.android.design.SectionLabel
-import dev.rewarden.android.design.SelectChip
-import dev.rewarden.android.ui.common.untrusted
-import dev.rewarden.core.ModelState
-import dev.rewarden.core.SuggestionView
-import dev.rewarden.core.Verdict
+import dev.reins.android.autopilot.AutopilotText
+import dev.reins.android.design.Banner
+import dev.reins.android.design.BannerKind
+import dev.reins.android.design.ButtonStyle
+import dev.reins.android.design.CapsuleButton
+import dev.reins.android.design.Glyph
+import dev.reins.android.design.GlyphIcon
+import dev.reins.android.design.LocalColors
+import dev.reins.android.design.RText
+import dev.reins.android.design.RType
+import dev.reins.android.design.Screen
+import dev.reins.android.design.SectionLabel
+import dev.reins.android.design.SelectChip
+import dev.reins.android.ui.common.untrusted
+import dev.reins.core.ModelState
+import dev.reins.core.SuggestionView
+import dev.reins.core.Verdict
 
 /**
  * "Try it": a request typed in the situation format the model reads (spec §4), and what a profile would do with it:

@@ -1,4 +1,4 @@
-package dev.rewarden.android
+package dev.reins.android
 
 import android.content.Intent
 import android.net.Uri
@@ -10,9 +10,9 @@ import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performTextReplacement
 import androidx.test.ext.junit.runners.AndroidJUnit4
-import dev.rewarden.android.platform.McpRedirectActivity
-import dev.rewarden.core.CoreException
-import dev.rewarden.core.McpAddStep
+import dev.reins.android.platform.McpRedirectActivity
+import dev.reins.core.CoreException
+import dev.reins.core.McpAddStep
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotNull

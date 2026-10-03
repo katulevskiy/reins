@@ -8,20 +8,20 @@ flowchart TB
     subgraph computer["Computer"]
         harness["Harness<br/>(Claude Code, Codex, Cursor, Gemini CLI)"]
         git["git, ssh, scripts"]
-        desktop["rewarden (crates/rewarden-desktop)<br/>MCP bridge, hooks, git proxy,<br/>API proxy, SSH agent, run, ask"]
+        desktop["reins (crates/reins-desktop)<br/>MCP bridge, hooks, git proxy,<br/>API proxy, SSH agent, run, ask"]
     end
     cloudai["Claude.ai, ChatGPT"]
-    subgraph server["Server (Vaultwarden fork, src/api/rewarden)"]
+    subgraph server["Server (Vaultwarden fork, src/api/reins)"]
         mcp["/mcp<br/>MCP endpoint"]
-        oauth["/rewarden/oauth, /.well-known<br/>OAuth 2.1 server"]
-        dapi["/rewarden/desktop/calls"]
+        oauth["/reins/oauth, /.well-known<br/>OAuth 2.1 server"]
+        dapi["/reins/desktop/calls"]
         relay["in-memory relay,<br/>pairings, file slots"]
-        papi["/rewarden/api<br/>phone API"]
+        papi["/reins/api<br/>phone API"]
     end
     fcm["Firebase Cloud Messaging"]
     subgraph phone["Phone"]
         app["Android app (android/), iOS app (ios/)<br/>UI, Keystore / keychain, biometrics, push"]
-        core["rewarden-core (Rust, UniFFI)<br/>grants, connectors, store,<br/>Autopilot"]
+        core["reins-core (Rust, UniFFI)<br/>grants, connectors, store,<br/>Autopilot"]
     end
     services["Gmail, GitHub, Calendar, Contacts,<br/>Telegram, vault, MCP servers"]
     hosts["git hosts"]
@@ -32,7 +32,7 @@ flowchart TB
     desktop -- "git, ask, secrets, SSH" --> dapi
     cloudai -- "MCP" --> mcp
     cloudai -. "sign-in" .-> oauth
-    desktop -. "rewarden login" .-> oauth
+    desktop -. "reins login" .-> oauth
     mcp & dapi --> relay
     relay --> papi
     relay -- "request id" --> fcm --> app
@@ -46,38 +46,38 @@ flowchart TB
 
 | Component | Where | Language | What it does |
 |---|---|---|---|
-| Server | `src/` (Vaultwarden fork), Reins code in `src/api/rewarden/` | Rust (Rocket, Diesel) | Accounts and vault (Vaultwarden), MCP endpoint, OAuth 2.1 authorization server, relay, phone API, desktop API, file slots, FCM and APNs senders |
-| Protocol | `crates/rewarden-proto` | Rust, no IO | Wire types shared by server, phone and desktop: tool specs and argument validation, relay requests and results, pairing, desktop tools, sealed payloads, file slots, MCP server reports |
-| Policy | `crates/rewarden-policy` | Rust, no IO | Grants and their evaluation: scopes, patterns, expiry, uses |
-| Phone core | `crates/rewarden-core` | Rust, exported to Kotlin with UniFFI | Request handling, connectors (Gmail, Google, GitHub, git hosts, Telegram, device data, vault, remote MCP, desktop tools), encrypted SQLite store, audit log, Autopilot |
+| Server | `src/` (Vaultwarden fork), Reins code in `src/api/reins/` | Rust (Rocket, Diesel) | Accounts and vault (Vaultwarden), MCP endpoint, OAuth 2.1 authorization server, relay, phone API, desktop API, file slots, FCM and APNs senders |
+| Protocol | `crates/reins-proto` | Rust, no IO | Wire types shared by server, phone and desktop: tool specs and argument validation, relay requests and results, pairing, desktop tools, sealed payloads, file slots, MCP server reports |
+| Policy | `crates/reins-policy` | Rust, no IO | Grants and their evaluation: scopes, patterns, expiry, uses |
+| Phone core | `crates/reins-core` | Rust, exported to Kotlin with UniFFI | Request handling, connectors (Gmail, Google, GitHub, git hosts, Telegram, device data, vault, remote MCP, desktop tools), encrypted SQLite store, audit log, Autopilot |
 | Android app | `android/` | Kotlin, Jetpack Compose | UI, Android Keystore (wraps the core's data key), biometrics, Google Play services tokens, FCM, WorkManager, ONNX Runtime for Autopilot |
 | iOS app | `ios/` | Swift, SwiftUI | UI, keychain (wraps the core's data key), Face ID, Google OAuth tokens, APNs and a notification service extension, widgets and Live Activities, ONNX Runtime for Autopilot |
-| Desktop app | `crates/rewarden-desktop` | Rust | The `rewarden` CLI and daemon |
-| Model runtime for tools | `crates/rewarden-laya` | Rust (`ort`) | Runs the Autopilot model on desktop CPUs for tests and `laya-try`. Not part of the phone. |
+| Desktop app | `crates/reins-desktop` | Rust | The `reins` CLI and daemon |
+| Model runtime for tools | `crates/reins-laya` | Rust (`ort`) | Runs the Autopilot model on desktop CPUs for tests and `laya-try`. Not part of the phone. |
 | Model tooling | `tools/laya` | Python | Synthetic data, fine-tuning, ONNX export, evaluation |
-| End-to-end tests | `crates/rewarden-e2e` | Rust | Real server + real phone core + desktop app, with fake services |
+| End-to-end tests | `crates/reins-e2e` | Rust | Real server + real phone core + desktop app, with fake services |
 
 ## Server endpoints
 
 | Path | Who calls it | Auth |
 |---|---|---|
-| `POST /mcp` | AI clients, `rewarden mcp` | OAuth bearer token (1 h JWT) |
+| `POST /mcp` | AI clients, `reins mcp` | OAuth bearer token (1 h JWT) |
 | `/.well-known/oauth-authorization-server`, `/.well-known/oauth-protected-resource[/mcp]` | AI clients | none |
-| `/rewarden/oauth/register`, `/authorize`, `/token` | AI clients, `rewarden login` | PKCE S256; public clients (dynamic registration or client ID metadata document) |
-| `POST /rewarden/oauth/device_authorization` | `rewarden login` (QR code) | public clients; RFC 8628, polled at `/token` |
+| `/reins/oauth/register`, `/authorize`, `/token` | AI clients, `reins login` | PKCE S256; public clients (dynamic registration or client ID metadata document) |
+| `POST /reins/oauth/device_authorization` | `reins login` (QR code) | public clients; RFC 8628, polled at `/token` |
 | `GET /pair?code=` | a phone that scanned a computer's QR code without the app | none; opens the app or offers it |
-| `/.well-known/apple-app-site-association`, `/.well-known/assetlinks.json` | iOS, Android | none; pairing links open the app (`REWARDEN_APPLE_TEAM_ID`, `REWARDEN_ANDROID_CERT_SHA256`) |
-| `POST /rewarden/desktop/calls`, `GET /rewarden/desktop/calls/<id>` | desktop app | the same OAuth token as MCP; only desktop-only tools |
-| `/rewarden/api/*` (`device`, `pending`, `requests`, `pairings`, `pairings/claim`, `connections`, `services`, `blobs`, `mcp/call`) | the phone | Vaultwarden login token, and the caller must be the account's approval device |
-| `POST /rewarden/api/joins`, `GET /rewarden/api/joins/<id>` | a phone of the account that cannot open its keys | Vaultwarden login token (any device of the account but the approval device) |
-| `GET /rewarden/api/joins/<id>`, `POST /rewarden/api/joins/<id>/response` | the approval device | as the rest of `/rewarden/api/*` |
-| `PUT`/`POST`/`GET /rewarden/blob/<secret>` | whoever holds the link (AI, curl) | the unguessable link itself, single-purpose, expiring |
+| `/.well-known/apple-app-site-association`, `/.well-known/assetlinks.json` | iOS, Android | none; pairing links open the app (`REINS_APPLE_TEAM_ID`, `REINS_ANDROID_CERT_SHA256`) |
+| `POST /reins/desktop/calls`, `GET /reins/desktop/calls/<id>` | desktop app | the same OAuth token as MCP; only desktop-only tools |
+| `/reins/api/*` (`device`, `pending`, `requests`, `pairings`, `pairings/claim`, `connections`, `services`, `blobs`, `mcp/call`) | the phone | Vaultwarden login token, and the caller must be the account's approval device |
+| `POST /reins/api/joins`, `GET /reins/api/joins/<id>` | a phone of the account that cannot open its keys | Vaultwarden login token (any device of the account but the approval device) |
+| `GET /reins/api/joins/<id>`, `POST /reins/api/joins/<id>/response` | the approval device | as the rest of `/reins/api/*` |
+| `PUT`/`POST`/`GET /reins/blob/<secret>` | whoever holds the link (AI, curl) | the unguessable link itself, single-purpose, expiring |
 | `/identity/connect/authorize`, `/identity/connect/oidc-signin`, `/identity/connect/token` (`authorization_code`) | the phone apps' "Continue", through the browser | SSO (WorkOS AuthKit on the hosted server), PKCE S256 end to end |
-| `POST /rewarden/workos/webhook` | WorkOS | `WorkOS-Signature` (HMAC-SHA256); only wakes the WorkOS sync |
+| `POST /reins/workos/webhook` | WorkOS | `WorkOS-Signature` (HMAC-SHA256); only wakes the WorkOS sync |
 
-Persistent tables: `rewarden_devices` (the approval device and its push token), `rewarden_clients` (registered OAuth
-clients), `rewarden_connections` (authorized AIs and desktop apps), `rewarden_refresh_tokens` (SHA-256 hashed),
-`rewarden_sso_sessions` (the WorkOS session each device signed in with), `rewarden_settings` (the WorkOS events
+Persistent tables: `reins_devices` (the approval device and its push token), `reins_clients` (registered OAuth
+clients), `reins_connections` (authorized AIs and desktop apps), `reins_refresh_tokens` (SHA-256 hashed),
+`reins_sso_sessions` (the WorkOS session each device signed in with), `reins_settings` (the WorkOS events
 cursor). Everything else is in memory with a time limit, so there is one server process per deployment.
 
 ## Flows
@@ -111,7 +111,7 @@ a six-digit code compared on both screens, the secret sealed to the key and rela
 code. Either is also what lets it take the approval role from the first phone: the server wants that approval, or the
 master password hash of the secret, before another device approves
 ([security-model.md](security-model.md#which-device-approves)). The server follows WorkOS in the background
-(`src/api/rewarden/workos_sync.rs`): verified email changes, deleted users, revoked sessions. See
+(`src/api/reins/workos_sync.rs`): verified email changes, deleted users, revoked sessions. See
 [security-model.md](security-model.md#accounts-without-a-master-password).
 
 ### A tool call from an AI
@@ -127,17 +127,17 @@ sequenceDiagram
     S->>S: validate arguments against the tool spec, park the request (memory, 10 min)
     S->>F: data message {request id}
     F->>P: wake up
-    P->>S: GET /rewarden/api/requests/<id>
+    P->>S: GET /reins/api/requests/<id>
     P->>P: grants cover it? else notify and wait for the user
     Note over P: user approves (biometrics), or Autopilot decides
     P->>G: send, with the phone's own token
-    P->>S: POST /rewarden/api/requests/<id>/response {result}
+    P->>S: POST /reins/api/requests/<id>/response {result}
     S-->>AI: result
 ```
 
-If the phone has not fetched the request within `REWARDEN_OFFLINE_SECS`, the AI is told the device is offline. If
-nobody decided within `REWARDEN_RELAY_WAIT_SECS`, it is told to call `rewarden_get_result` later. The request stays
-answerable for 10 minutes, and a late answer is kept for `rewarden_get_result`.
+If the phone has not fetched the request within `REINS_OFFLINE_SECS`, the AI is told the device is offline. If
+nobody decided within `REINS_RELAY_WAIT_SECS`, it is told to call `reins_get_result` later. The request stays
+answerable for 10 minutes, and a late answer is kept for `reins_get_result`.
 
 For reads, the phone runs the search itself and checks each result against the grants. The AI's query is only a
 prefilter, so query syntax cannot widen what a grant allows.
@@ -145,7 +145,7 @@ prefilter, so query syntax cannot widen what a grant allows.
 ### Pairing an AI or the desktop app
 
 1. The client registers (dynamic registration, or a client ID metadata document URL) and opens
-   `/rewarden/oauth/authorize` with PKCE. The desktop app adds `rewarden_client_key=<X25519 public key>`.
+   `/reins/oauth/authorize` with PKCE. The desktop app adds `reins_client_key=<X25519 public key>`.
 2. The user enters their email. The page shows a two-digit code (and the desktop key's fingerprint). The phone gets a
    pairing request.
 3. The user taps the matching code among three, names the connection, and confirms with biometrics. For the desktop
@@ -153,15 +153,15 @@ prefilter, so query syntax cannot widen what a grant allows.
 4. The page redirects with an authorization code. The client exchanges it for an access token (1 h) and a rotating
    refresh token (30 days).
 
-`rewarden login` pairs without a browser by default (OAuth device authorization, RFC 8628):
+`reins login` pairs without a browser by default (OAuth device authorization, RFC 8628):
 
-1. The app asks `/rewarden/oauth/device_authorization` for a code, with its key. It shows a QR code of
+1. The app asks `/reins/oauth/device_authorization` for a code, with its key. It shows a QR code of
    `https://<server>/pair?code=BCDF-GHJK`, the code itself, a two-digit number and its key's fingerprint.
 2. The phone scans the QR code (the camera opens the link in the app; the app's own scanner reads it), and claims the
-   code (`POST /rewarden/api/pairings/claim`). That starts an ordinary pairing for the phone's account, with the
+   code (`POST /reins/api/pairings/claim`). That starts an ordinary pairing for the phone's account, with the
    computer's number among the three choices.
 3. The user taps that number, compares the key and confirms with biometrics, as above. The phone pins the key.
-4. The app polls `/rewarden/oauth/token` (grant type `urn:ietf:params:oauth:grant-type:device_code`) and gets the same
+4. The app polls `/reins/oauth/token` (grant type `urn:ietf:params:oauth:grant-type:device_code`) and gets the same
    tokens. Codes live 10 minutes, in memory.
 
 ### A git push through the desktop app
@@ -169,7 +169,7 @@ prefilter, so query syntax cannot widen what a grant allows.
 ```mermaid
 sequenceDiagram
     participant G as git
-    participant D as rewarden daemon
+    participant D as reins daemon
     participant S as Server
     participant P as Phone
     participant H as GitHub
@@ -193,7 +193,7 @@ phone sees only the summary.
 
 ### Other desktop tools
 
-`rewarden ask` (`desktop_ask`), `rewarden run` and the API proxy (`vault_secret_release`), and the SSH agent
+`reins ask` (`desktop_ask`), `reins run` and the API proxy (`vault_secret_release`), and the SSH agent
 (`vault_ssh_keys`, `vault_ssh_sign`) use the same path. Each answer is sealed to the pinned key and echoes the
 request's nonce. GitLab, Codeberg and Bitbucket use `<service>_git_fetch`, `_push` and `_tag_push`. Their pushes are
 analysed from the pack alone, without the host's API.
@@ -216,7 +216,7 @@ You add MCP servers on the phone. The phone is the MCP client, and their tokens 
 server's id, name and tool list to the server, which lists them to AIs as `<server>__<tool>`. A call is relayed to
 the phone like any other. Tools the server marks read-only are reads, and all others are writes. Destructive tools
 are asked every time. When a tool's results are very large, later calls to it go through the server
-(`/rewarden/api/mcp/call`), so large items can be replaced with download links.
+(`/reins/api/mcp/call`), so large items can be replaced with download links.
 
 ### Autopilot
 
@@ -228,8 +228,8 @@ taps use, or attaches a suggestion and notifies the user. See [autopilot.md](aut
 
 The design specs under `docs/superpowers/specs/` record the detailed contracts and the reasoning behind them:
 
-- `2026-09-28-rewarden-mvp-design.md`: the server, relay, OAuth, phone core and policy.
-- `2026-09-29-rewarden-contracts.md`: wire contracts.
+- `2026-09-28-reins-mvp-design.md`: the server, relay, OAuth, phone core and policy.
+- `2026-09-29-reins-contracts.md`: wire contracts.
 - `2026-09-30-desktop-git-proxy.md`: the desktop app and git.
 - `2026-09-30-github-vault-tools.md`: the GitHub and vault tools.
 - `2026-10-01-files-mcp-daemon.md`: large files, remote MCP, and the desktop app's other parts.

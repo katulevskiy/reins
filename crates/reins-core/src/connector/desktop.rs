@@ -1,12 +1,12 @@
-//! The paired Rewarden desktop app itself: `desktop_ask`, a yes-or-no question (`rewarden ask`, a harness hook before a
+//! The paired Reins desktop app itself: `desktop_ask`, a yes-or-no question (`reins ask`, a harness hook before a
 //! command). The user reads it on the phone; approving answers yes with an [`AskAnswer`] sealed to the app's key and
 //! bound to its nonce, denying is the ordinary denied answer. A standing permission can cover a topic
 //! (`command:git push --force`), or questions without one (`ask`).
 //!
 //! There is no account to connect: the paired app is the account, and the flow checks its key.
 
-use rewarden_proto::connector::{ConnectorCall, DESKTOP};
-use rewarden_proto::desktop::{AskAnswer, SEALED_FIELD};
+use reins_proto::connector::{ConnectorCall, DESKTOP};
+use reins_proto::desktop::{AskAnswer, SEALED_FIELD};
 use serde_json::{Value, json};
 
 use super::sealed::{client_key, nonce_arg, seal};

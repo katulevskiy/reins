@@ -1,4 +1,4 @@
-package dev.rewarden.android.ui.update
+package dev.reins.android.ui.update
 
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
@@ -26,18 +26,18 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
-import dev.rewarden.android.feedback.DialogFeedback
-import dev.rewarden.android.design.ButtonStyle
-import dev.rewarden.android.design.CapsuleButton
-import dev.rewarden.android.design.Glyph
-import dev.rewarden.android.design.GlyphIcon
-import dev.rewarden.android.design.LocalColors
-import dev.rewarden.android.design.RText
-import dev.rewarden.android.design.RType
-import dev.rewarden.android.design.Spinner
-import dev.rewarden.android.design.glass
-import dev.rewarden.android.platform.update.UpdateController
-import dev.rewarden.android.platform.update.UpdateStatus
+import dev.reins.android.feedback.DialogFeedback
+import dev.reins.android.design.ButtonStyle
+import dev.reins.android.design.CapsuleButton
+import dev.reins.android.design.Glyph
+import dev.reins.android.design.GlyphIcon
+import dev.reins.android.design.LocalColors
+import dev.reins.android.design.RText
+import dev.reins.android.design.RType
+import dev.reins.android.design.Spinner
+import dev.reins.android.design.glass
+import dev.reins.android.platform.update.UpdateController
+import dev.reins.android.platform.update.UpdateStatus
 
 /** A thin bar for download progress (0..100). */
 @Composable
@@ -58,9 +58,9 @@ fun UpdatePrompt(status: UpdateStatus, onInstall: () -> Unit, onLater: () -> Uni
     val release = status.release ?: return
     val name = release.versionName
     val (title, body) = when (status) {
-        is UpdateStatus.Ready -> "Update ready" to "Rewarden $name is ready to install."
-        is UpdateStatus.Available -> "Update available" to "Rewarden $name is available."
-        is UpdateStatus.Downloading -> "Downloading update" to "Rewarden $name · ${status.percent}%"
+        is UpdateStatus.Ready -> "Update ready" to "Reins $name is ready to install."
+        is UpdateStatus.Available -> "Update available" to "Reins $name is available."
+        is UpdateStatus.Downloading -> "Downloading update" to "Reins $name · ${status.percent}%"
         is UpdateStatus.Installing -> "Installing update" to "Confirm in Android's installer to finish."
         is UpdateStatus.Failed -> "Update failed" to status.message
         else -> return
@@ -110,10 +110,10 @@ fun InstallPermissionDialog(onOpenSettings: () -> Unit, onDismiss: () -> Unit) {
     Dialog(onDismissRequest = onDismiss, properties = DialogProperties(usePlatformDefaultWidth = false)) {
         DialogFeedback()
         Column(Modifier.padding(horizontal = 28.dp).fillMaxWidth().glass(c, RoundedCornerShape(26.dp), 16.dp).padding(22.dp)) {
-            RText("Allow Rewarden to install updates", RType.sans(19f, FontWeight.SemiBold), c.text)
+            RText("Allow Reins to install updates", RType.sans(19f, FontWeight.SemiBold), c.text)
             Spacer(Modifier.height(8.dp))
             RText(
-                "Rewarden isn't installed from the Play Store, so Android asks once before it may install its own " +
+                "Reins isn't installed from the Play Store, so Android asks once before it may install its own " +
                     "updates. Turn on “Allow from this source”, then come back to finish the update.",
                 RType.sans(15f, lineHeight = 21f),
                 c.secondary,

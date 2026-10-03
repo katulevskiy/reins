@@ -1,4 +1,4 @@
-//! HTTP tests against the real `vaultwarden` binary with Rewarden enabled
+//! HTTP tests against the real `vaultwarden` binary with Reins enabled
 //! (plan Decision 27). Each test starts its own server on a free port with a
 //! temporary SQLite database.
 

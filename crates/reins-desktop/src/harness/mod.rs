@@ -1,5 +1,5 @@
-//! `rewarden harness add|remove|list`: registers `rewarden mcp --via <harness>` as an MCP server in an AI harness's
-//! user settings, and `rewarden hook <harness>` as its pre-command hook where it has one.
+//! `reins harness add|remove|list`: registers `reins mcp --via <harness>` as an MCP server in an AI harness's
+//! user settings, and `reins hook <harness>` as its pre-command hook where it has one.
 //!
 //! | harness     | MCP server                                   | hook                                                    |
 //! |-------------|----------------------------------------------|---------------------------------------------------------|
@@ -27,7 +27,7 @@ use crate::config::Paths;
 use jsonedit::{Entry, Node};
 
 /// The MCP server's name in every harness.
-pub const SERVER_NAME: &str = "rewarden";
+pub const SERVER_NAME: &str = "reins";
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub enum Harness {
@@ -51,7 +51,7 @@ impl Harness {
         }
     }
 
-    /// The name people know (`Claude Code`), sent as `X-Rewarden-Via`.
+    /// The name people know (`Claude Code`), sent as `X-Reins-Via`.
     #[must_use]
     pub fn label(self) -> &'static str {
         match self {
@@ -84,7 +84,7 @@ pub struct Setup {
     pub home: PathBuf,
     /// This program (what the harness runs).
     pub exe: PathBuf,
-    /// How long `rewarden hook` waits for an answer; the harness's own hook timeout is a little longer.
+    /// How long `reins hook` waits for an answer; the harness's own hook timeout is a little longer.
     pub hook_timeout_secs: u64,
 }
 
@@ -223,7 +223,7 @@ fn targets(h: Harness, s: &Setup) -> Vec<(Role, Target)> {
                     path: path(&["hooks", "PreToolUse"]),
                     value: json!({
                         "matcher": "^(Bash|apply_patch)$",
-                        "hooks": [{"type": "command", "command": hook, "timeout": secs, "statusMessage": "Rewarden: checking the command"}],
+                        "hooks": [{"type": "command", "command": hook, "timeout": secs, "statusMessage": "Reins: checking the command"}],
                     }),
                     marker: hook,
                 },
@@ -247,7 +247,7 @@ fn targets(h: Harness, s: &Setup) -> Vec<(Role, Target)> {
                     path: path(&["hooks", "BeforeTool"]),
                     value: json!({
                         "matcher": "^(run_shell_command|write_file|replace|read_file)$",
-                        "hooks": [{"name": "rewarden", "type": "command", "command": hook, "timeout": secs * 1000}],
+                        "hooks": [{"name": "reins", "type": "command", "command": hook, "timeout": secs * 1000}],
                     }),
                     marker: hook,
                 },
@@ -528,7 +528,7 @@ fn add_json(text: &str, shown: &str, spot: &Spot<'_>, keep_existing: bool) -> Re
                         return Ok(None);
                     }
                     return Err(format!(
-                        "{shown} already has a different `{k}` in {}; remove it or `rewarden harness remove` first",
+                        "{shown} already has a different `{k}` in {}; remove it or `reins harness remove` first",
                         dotted()
                     ));
                 }
@@ -651,9 +651,7 @@ fn add_toml(text: &str, shown: &str, header: &str, body: &str) -> Result<Option<
         if text.contains(&format!("[{header}]\n{body}")) {
             return Ok(None);
         }
-        return Err(format!(
-            "{shown} already has a different [{header}]; remove it or `rewarden harness remove` first"
-        ));
+        return Err(format!("{shown} already has a different [{header}]; remove it or `reins harness remove` first"));
     }
     let mut appended = String::new();
     if !text.is_empty() {
@@ -1048,7 +1046,7 @@ pub fn list(paths: &Paths, s: &Setup, h: Harness) -> Result<Vec<String>, String>
     };
     lines.push(format!("  hook:       {hook}"));
     if recorded {
-        lines.push("  (added by `rewarden harness add`)".to_owned());
+        lines.push("  (added by `reins harness add`)".to_owned());
     }
     Ok(lines)
 }
@@ -1075,16 +1073,16 @@ mod tests {
         }
         assert_eq!("Claude".parse::<Harness>().unwrap(), Harness::ClaudeCode);
         assert!("vim".parse::<Harness>().is_err());
-        assert_eq!(shell_quote("/home/me/.local/bin/rewarden"), "/home/me/.local/bin/rewarden");
-        assert_eq!(shell_quote("/Users/me/My Apps/rewarden"), "'/Users/me/My Apps/rewarden'");
+        assert_eq!(shell_quote("/home/me/.local/bin/reins"), "/home/me/.local/bin/reins");
+        assert_eq!(shell_quote("/Users/me/My Apps/reins"), "'/Users/me/My Apps/reins'");
         assert_eq!(shell_quote("/x/it's"), "'/x/it'\\''s'");
     }
 
     #[test]
     fn toml_tables_are_appended_and_taken_out_again() {
-        let body = "command = \"/bin/rewarden\"\nargs = [\"mcp\"]\n";
+        let body = "command = \"/bin/reins\"\nargs = [\"mcp\"]\n";
         for before in ["", "model = \"o3\"\n", "model = \"o3\"", "[mcp_servers.other]\ncommand = \"x\"\n"] {
-            let (after, change) = add_toml(before, "f", "mcp_servers.rewarden", body).unwrap().unwrap();
+            let (after, change) = add_toml(before, "f", "mcp_servers.reins", body).unwrap().unwrap();
             let Change::Toml {
                 text,
                 ..
@@ -1092,15 +1090,15 @@ mod tests {
             else {
                 panic!()
             };
-            assert!(toml_has_table(&after, "mcp_servers.rewarden"));
-            assert!(add_toml(&after, "f", "mcp_servers.rewarden", body).unwrap().is_none());
-            assert_eq!(undo_toml(&after, "mcp_servers.rewarden", &text), before);
+            assert!(toml_has_table(&after, "mcp_servers.reins"));
+            assert!(add_toml(&after, "f", "mcp_servers.reins", body).unwrap().is_none());
+            assert_eq!(undo_toml(&after, "mcp_servers.reins", &text), before);
             // Something added after it by the user stays.
             let edited = format!("{after}[profiles.x]\nmodel = \"y\"\n");
-            let back = undo_toml(&edited, "mcp_servers.rewarden", &text);
-            assert!(!back.contains("rewarden") && back.contains("[profiles.x]"), "{back}");
+            let back = undo_toml(&edited, "mcp_servers.reins", &text);
+            assert!(!back.contains("reins") && back.contains("[profiles.x]"), "{back}");
         }
-        assert!(add_toml("[mcp_servers.rewarden]\ncommand = \"other\"\n", "f", "mcp_servers.rewarden", body).is_err());
-        assert!(add_toml("mcp_servers = { a = 1 }\n", "f", "mcp_servers.rewarden", body).is_err());
+        assert!(add_toml("[mcp_servers.reins]\ncommand = \"other\"\n", "f", "mcp_servers.reins", body).is_err());
+        assert!(add_toml("mcp_servers = { a = 1 }\n", "f", "mcp_servers.reins", body).is_err());
     }
 }

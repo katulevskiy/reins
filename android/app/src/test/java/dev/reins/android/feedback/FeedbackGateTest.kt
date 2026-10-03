@@ -1,4 +1,4 @@
-package dev.rewarden.android.feedback
+package dev.reins.android.feedback
 
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue

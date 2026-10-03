@@ -1,4 +1,4 @@
-package dev.rewarden.android.ui.autopilot
+package dev.reins.android.ui.autopilot
 
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
@@ -20,22 +20,22 @@ import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
-import dev.rewarden.android.autopilot.AutopilotText
-import dev.rewarden.android.design.Banner
-import dev.rewarden.android.design.BannerKind
-import dev.rewarden.android.design.ButtonStyle
-import dev.rewarden.android.design.CapsuleButton
-import dev.rewarden.android.design.ConfirmDialog
-import dev.rewarden.android.design.Glyph
-import dev.rewarden.android.design.Group
-import dev.rewarden.android.design.Hairline
-import dev.rewarden.android.design.LocalColors
-import dev.rewarden.android.design.RText
-import dev.rewarden.android.design.RType
-import dev.rewarden.android.design.SelectChip
-import dev.rewarden.android.design.rememberNowMillis
-import dev.rewarden.android.ui.common.untrusted
-import dev.rewarden.core.AutopilotMode
+import dev.reins.android.autopilot.AutopilotText
+import dev.reins.android.design.Banner
+import dev.reins.android.design.BannerKind
+import dev.reins.android.design.ButtonStyle
+import dev.reins.android.design.CapsuleButton
+import dev.reins.android.design.ConfirmDialog
+import dev.reins.android.design.Glyph
+import dev.reins.android.design.Group
+import dev.reins.android.design.Hairline
+import dev.reins.android.design.LocalColors
+import dev.reins.android.design.RText
+import dev.reins.android.design.RType
+import dev.reins.android.design.SelectChip
+import dev.reins.android.design.rememberNowMillis
+import dev.reins.android.ui.common.untrusted
+import dev.reins.core.AutopilotMode
 
 /**
  * The Autopilot part of an AI's page: its own mode (or the global one), a bypass for just this AI, and the profile

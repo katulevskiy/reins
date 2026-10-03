@@ -7,8 +7,8 @@ import Foundation
 // Depending on the consumer's build setup, the low-level FFI code
 // might be in a separate module, or it might be compiled inline into
 // this module. This is a bit of light hackery to work with both.
-#if canImport(rewarden_coreFFI)
-import rewarden_coreFFI
+#if canImport(reins_coreFFI)
+import reins_coreFFI
 #endif
 
 fileprivate extension RustBuffer {
@@ -25,13 +25,13 @@ fileprivate extension RustBuffer {
     }
 
     static func from(_ ptr: UnsafeBufferPointer<UInt8>) -> RustBuffer {
-        try! rustCall { ffi_rewarden_core_rustbuffer_from_bytes(ForeignBytes(bufferPointer: ptr), $0) }
+        try! rustCall { ffi_reins_core_rustbuffer_from_bytes(ForeignBytes(bufferPointer: ptr), $0) }
     }
 
     // Frees the buffer in place.
     // The buffer must not be used after this is called.
     func deallocate() {
-        try! rustCall { ffi_rewarden_core_rustbuffer_free(self, $0) }
+        try! rustCall { ffi_reins_core_rustbuffer_free(self, $0) }
     }
 }
 
@@ -327,7 +327,7 @@ private func makeRustCall<T, E: Swift.Error>(
     _ callback: (UnsafeMutablePointer<RustCallStatus>) -> T,
     errorHandler: ((RustBuffer) throws -> E)?
 ) throws -> T {
-    uniffiEnsureRewardenCoreInitialized()
+    uniffiEnsureReinsCoreInitialized()
     var callStatus = RustCallStatus.init()
     let returnedVal = callback(&callStatus)
     try uniffiCheckCallStatus(callStatus: callStatus, errorHandler: errorHandler)
@@ -745,7 +745,7 @@ open class DeviceBridgeImpl: DeviceBridge, @unchecked Sendable {
     @_documentation(visibility: private)
 #endif
     public func uniffiCloneHandle() -> UInt64 {
-        return try! rustCall { uniffi_rewarden_core_fn_clone_devicebridge(self.handle, $0) }
+        return try! rustCall { uniffi_reins_core_fn_clone_devicebridge(self.handle, $0) }
     }
     // No primary constructor declared for this class.
 
@@ -755,7 +755,7 @@ open class DeviceBridgeImpl: DeviceBridge, @unchecked Sendable {
             return
         }
 
-        try! rustCall { uniffi_rewarden_core_fn_free_devicebridge(handle, $0) }
+        try! rustCall { uniffi_reins_core_fn_free_devicebridge(handle, $0) }
     }
 
     
@@ -768,7 +768,7 @@ open class DeviceBridgeImpl: DeviceBridge, @unchecked Sendable {
 open func services() -> [String]  {
     return try!  FfiConverterSequenceString.lift(try! rustCall() {
         uniffiCallStatus in
-    uniffi_rewarden_core_fn_method_devicebridge_services(
+    uniffi_reins_core_fn_method_devicebridge_services(
             self.uniffiCloneHandle(),uniffiCallStatus
     )
 })
@@ -780,7 +780,7 @@ open func services() -> [String]  {
 open func permitted(service: String) -> Bool  {
     return try!  FfiConverterBool.lift(try! rustCall() {
         uniffiCallStatus in
-    uniffi_rewarden_core_fn_method_devicebridge_permitted(
+    uniffi_reins_core_fn_method_devicebridge_permitted(
             self.uniffiCloneHandle(),
         FfiConverterString.lower(service),uniffiCallStatus
     )
@@ -790,7 +790,7 @@ open func permitted(service: String) -> Bool  {
 open func calendarEvents(from: Int64, to: Int64, query: String?, limit: UInt32)throws  -> [DeviceEvent]  {
     return try  FfiConverterSequenceTypeDeviceEvent.lift(try rustCallWithError(FfiConverterTypeForeignError_lift) {
         uniffiCallStatus in
-    uniffi_rewarden_core_fn_method_devicebridge_calendar_events(
+    uniffi_reins_core_fn_method_devicebridge_calendar_events(
             self.uniffiCloneHandle(),
         FfiConverterInt64.lower(from),
         FfiConverterInt64.lower(to),
@@ -806,7 +806,7 @@ open func calendarEvents(from: Int64, to: Int64, query: String?, limit: UInt32)t
 open func calendarCreate(event: NewDeviceEvent)throws  -> String  {
     return try  FfiConverterString.lift(try rustCallWithError(FfiConverterTypeForeignError_lift) {
         uniffiCallStatus in
-    uniffi_rewarden_core_fn_method_devicebridge_calendar_create(
+    uniffi_reins_core_fn_method_devicebridge_calendar_create(
             self.uniffiCloneHandle(),
         FfiConverterTypeNewDeviceEvent_lower(event),uniffiCallStatus
     )
@@ -816,7 +816,7 @@ open func calendarCreate(event: NewDeviceEvent)throws  -> String  {
 open func contactsSearch(query: String, limit: UInt32)throws  -> [DeviceContact]  {
     return try  FfiConverterSequenceTypeDeviceContact.lift(try rustCallWithError(FfiConverterTypeForeignError_lift) {
         uniffiCallStatus in
-    uniffi_rewarden_core_fn_method_devicebridge_contacts_search(
+    uniffi_reins_core_fn_method_devicebridge_contacts_search(
             self.uniffiCloneHandle(),
         FfiConverterString.lower(query),
         FfiConverterUInt32.lower(limit),uniffiCallStatus
@@ -827,7 +827,7 @@ open func contactsSearch(query: String, limit: UInt32)throws  -> [DeviceContact]
 open func smsThreads(limit: UInt32)throws  -> [SmsThread]  {
     return try  FfiConverterSequenceTypeSmsThread.lift(try rustCallWithError(FfiConverterTypeForeignError_lift) {
         uniffiCallStatus in
-    uniffi_rewarden_core_fn_method_devicebridge_sms_threads(
+    uniffi_reins_core_fn_method_devicebridge_sms_threads(
             self.uniffiCloneHandle(),
         FfiConverterUInt32.lower(limit),uniffiCallStatus
     )
@@ -837,7 +837,7 @@ open func smsThreads(limit: UInt32)throws  -> [SmsThread]  {
 open func smsMessages(thread: String, limit: UInt32)throws  -> [SmsMessage]  {
     return try  FfiConverterSequenceTypeSmsMessage.lift(try rustCallWithError(FfiConverterTypeForeignError_lift) {
         uniffiCallStatus in
-    uniffi_rewarden_core_fn_method_devicebridge_sms_messages(
+    uniffi_reins_core_fn_method_devicebridge_sms_messages(
             self.uniffiCloneHandle(),
         FfiConverterString.lower(thread),
         FfiConverterUInt32.lower(limit),uniffiCallStatus
@@ -847,7 +847,7 @@ open func smsMessages(thread: String, limit: UInt32)throws  -> [SmsMessage]  {
     
 open func smsSend(to: String, text: String)throws   {try rustCallWithError(FfiConverterTypeForeignError_lift) {
         uniffiCallStatus in
-    uniffi_rewarden_core_fn_method_devicebridge_sms_send(
+    uniffi_reins_core_fn_method_devicebridge_sms_send(
             self.uniffiCloneHandle(),
         FfiConverterString.lower(to),
         FfiConverterString.lower(text),uniffiCallStatus
@@ -1107,7 +1107,7 @@ fileprivate struct UniffiCallbackInterfaceDeviceBridge {
 }
 
 private func uniffiCallbackInitDeviceBridge() {
-    uniffi_rewarden_core_fn_init_callback_vtable_devicebridge(UniffiCallbackInterfaceDeviceBridge.vtablePtr)
+    uniffi_reins_core_fn_init_callback_vtable_devicebridge(UniffiCallbackInterfaceDeviceBridge.vtablePtr)
 }
 
 #if swift(>=5.8)
@@ -1221,7 +1221,7 @@ open class DownloadProgressImpl: DownloadProgress, @unchecked Sendable {
     @_documentation(visibility: private)
 #endif
     public func uniffiCloneHandle() -> UInt64 {
-        return try! rustCall { uniffi_rewarden_core_fn_clone_downloadprogress(self.handle, $0) }
+        return try! rustCall { uniffi_reins_core_fn_clone_downloadprogress(self.handle, $0) }
     }
     // No primary constructor declared for this class.
 
@@ -1231,7 +1231,7 @@ open class DownloadProgressImpl: DownloadProgress, @unchecked Sendable {
             return
         }
 
-        try! rustCall { uniffi_rewarden_core_fn_free_downloadprogress(handle, $0) }
+        try! rustCall { uniffi_reins_core_fn_free_downloadprogress(handle, $0) }
     }
 
     
@@ -1242,7 +1242,7 @@ open class DownloadProgressImpl: DownloadProgress, @unchecked Sendable {
      */
 open func progress(downloaded: UInt64, total: UInt64)  {try! rustCall() {
         uniffiCallStatus in
-    uniffi_rewarden_core_fn_method_downloadprogress_progress(
+    uniffi_reins_core_fn_method_downloadprogress_progress(
             self.uniffiCloneHandle(),
         FfiConverterUInt64.lower(downloaded),
         FfiConverterUInt64.lower(total),uniffiCallStatus
@@ -1320,7 +1320,7 @@ fileprivate struct UniffiCallbackInterfaceDownloadProgress {
 }
 
 private func uniffiCallbackInitDownloadProgress() {
-    uniffi_rewarden_core_fn_init_callback_vtable_downloadprogress(UniffiCallbackInterfaceDownloadProgress.vtablePtr)
+    uniffi_reins_core_fn_init_callback_vtable_downloadprogress(UniffiCallbackInterfaceDownloadProgress.vtablePtr)
 }
 
 #if swift(>=5.8)
@@ -1430,7 +1430,7 @@ open class GoogleTokenProviderImpl: GoogleTokenProvider, @unchecked Sendable {
     @_documentation(visibility: private)
 #endif
     public func uniffiCloneHandle() -> UInt64 {
-        return try! rustCall { uniffi_rewarden_core_fn_clone_googletokenprovider(self.handle, $0) }
+        return try! rustCall { uniffi_reins_core_fn_clone_googletokenprovider(self.handle, $0) }
     }
     // No primary constructor declared for this class.
 
@@ -1440,7 +1440,7 @@ open class GoogleTokenProviderImpl: GoogleTokenProvider, @unchecked Sendable {
             return
         }
 
-        try! rustCall { uniffi_rewarden_core_fn_free_googletokenprovider(handle, $0) }
+        try! rustCall { uniffi_reins_core_fn_free_googletokenprovider(handle, $0) }
     }
 
     
@@ -1455,13 +1455,13 @@ open func accessToken(account: String, service: String)async throws  -> String  
     return
         try  await uniffiRustCallAsync(
             rustFutureFunc: {
-                uniffi_rewarden_core_fn_method_googletokenprovider_access_token(
+                uniffi_reins_core_fn_method_googletokenprovider_access_token(
                         self.uniffiCloneHandle(),FfiConverterString.lower(account),FfiConverterString.lower(service)
                 )
             },
-            pollFunc: ffi_rewarden_core_rust_future_poll_rust_buffer,
-            completeFunc: ffi_rewarden_core_rust_future_complete_rust_buffer,
-            freeFunc: ffi_rewarden_core_rust_future_free_rust_buffer,
+            pollFunc: ffi_reins_core_rust_future_poll_rust_buffer,
+            completeFunc: ffi_reins_core_rust_future_complete_rust_buffer,
+            freeFunc: ffi_reins_core_rust_future_free_rust_buffer,
             liftFunc: FfiConverterString.lift,
             errorHandler: FfiConverterTypeForeignError_lift
         )
@@ -1556,7 +1556,7 @@ fileprivate struct UniffiCallbackInterfaceGoogleTokenProvider {
 }
 
 private func uniffiCallbackInitGoogleTokenProvider() {
-    uniffi_rewarden_core_fn_init_callback_vtable_googletokenprovider(UniffiCallbackInterfaceGoogleTokenProvider.vtablePtr)
+    uniffi_reins_core_fn_init_callback_vtable_googletokenprovider(UniffiCallbackInterfaceGoogleTokenProvider.vtablePtr)
 }
 
 #if swift(>=5.8)
@@ -1666,7 +1666,7 @@ open class KeyWrapperImpl: KeyWrapper, @unchecked Sendable {
     @_documentation(visibility: private)
 #endif
     public func uniffiCloneHandle() -> UInt64 {
-        return try! rustCall { uniffi_rewarden_core_fn_clone_keywrapper(self.handle, $0) }
+        return try! rustCall { uniffi_reins_core_fn_clone_keywrapper(self.handle, $0) }
     }
     // No primary constructor declared for this class.
 
@@ -1676,7 +1676,7 @@ open class KeyWrapperImpl: KeyWrapper, @unchecked Sendable {
             return
         }
 
-        try! rustCall { uniffi_rewarden_core_fn_free_keywrapper(handle, $0) }
+        try! rustCall { uniffi_reins_core_fn_free_keywrapper(handle, $0) }
     }
 
     
@@ -1688,7 +1688,7 @@ open class KeyWrapperImpl: KeyWrapper, @unchecked Sendable {
 open func wrap(plaintext: Data)throws  -> Data  {
     return try  FfiConverterData.lift(try rustCallWithError(FfiConverterTypeForeignError_lift) {
         uniffiCallStatus in
-    uniffi_rewarden_core_fn_method_keywrapper_wrap(
+    uniffi_reins_core_fn_method_keywrapper_wrap(
             self.uniffiCloneHandle(),
         FfiConverterData.lower(plaintext),uniffiCallStatus
     )
@@ -1698,7 +1698,7 @@ open func wrap(plaintext: Data)throws  -> Data  {
 open func unwrap(wrapped: Data)throws  -> Data  {
     return try  FfiConverterData.lift(try rustCallWithError(FfiConverterTypeForeignError_lift) {
         uniffiCallStatus in
-    uniffi_rewarden_core_fn_method_keywrapper_unwrap(
+    uniffi_reins_core_fn_method_keywrapper_unwrap(
             self.uniffiCloneHandle(),
         FfiConverterData.lower(wrapped),uniffiCallStatus
     )
@@ -1799,7 +1799,7 @@ fileprivate struct UniffiCallbackInterfaceKeyWrapper {
 }
 
 private func uniffiCallbackInitKeyWrapper() {
-    uniffi_rewarden_core_fn_init_callback_vtable_keywrapper(UniffiCallbackInterfaceKeyWrapper.vtablePtr)
+    uniffi_reins_core_fn_init_callback_vtable_keywrapper(UniffiCallbackInterfaceKeyWrapper.vtablePtr)
 }
 
 #if swift(>=5.8)
@@ -1922,7 +1922,7 @@ open class ModelRuntimeImpl: ModelRuntime, @unchecked Sendable {
     @_documentation(visibility: private)
 #endif
     public func uniffiCloneHandle() -> UInt64 {
-        return try! rustCall { uniffi_rewarden_core_fn_clone_modelruntime(self.handle, $0) }
+        return try! rustCall { uniffi_reins_core_fn_clone_modelruntime(self.handle, $0) }
     }
     // No primary constructor declared for this class.
 
@@ -1932,7 +1932,7 @@ open class ModelRuntimeImpl: ModelRuntime, @unchecked Sendable {
             return
         }
 
-        try! rustCall { uniffi_rewarden_core_fn_free_modelruntime(handle, $0) }
+        try! rustCall { uniffi_reins_core_fn_free_modelruntime(handle, $0) }
     }
 
     
@@ -1943,7 +1943,7 @@ open class ModelRuntimeImpl: ModelRuntime, @unchecked Sendable {
      */
 open func load(path: String)throws   {try rustCallWithError(FfiConverterTypeForeignError_lift) {
         uniffiCallStatus in
-    uniffi_rewarden_core_fn_method_modelruntime_load(
+    uniffi_reins_core_fn_method_modelruntime_load(
             self.uniffiCloneHandle(),
         FfiConverterString.lower(path),uniffiCallStatus
     )
@@ -1953,7 +1953,7 @@ open func load(path: String)throws   {try rustCallWithError(FfiConverterTypeFore
 open func run(input: ModelInput)throws  -> ModelOutput  {
     return try  FfiConverterTypeModelOutput_lift(try rustCallWithError(FfiConverterTypeForeignError_lift) {
         uniffiCallStatus in
-    uniffi_rewarden_core_fn_method_modelruntime_run(
+    uniffi_reins_core_fn_method_modelruntime_run(
             self.uniffiCloneHandle(),
         FfiConverterTypeModelInput_lower(input),uniffiCallStatus
     )
@@ -1965,7 +1965,7 @@ open func run(input: ModelInput)throws  -> ModelOutput  {
      */
 open func unload()  {try! rustCall() {
         uniffiCallStatus in
-    uniffi_rewarden_core_fn_method_modelruntime_unload(
+    uniffi_reins_core_fn_method_modelruntime_unload(
             self.uniffiCloneHandle(),uniffiCallStatus
     )
 }
@@ -2087,7 +2087,7 @@ fileprivate struct UniffiCallbackInterfaceModelRuntime {
 }
 
 private func uniffiCallbackInitModelRuntime() {
-    uniffi_rewarden_core_fn_init_callback_vtable_modelruntime(UniffiCallbackInterfaceModelRuntime.vtablePtr)
+    uniffi_reins_core_fn_init_callback_vtable_modelruntime(UniffiCallbackInterfaceModelRuntime.vtablePtr)
 }
 
 #if swift(>=5.8)
@@ -2207,7 +2207,7 @@ open class NotifierImpl: Notifier, @unchecked Sendable {
     @_documentation(visibility: private)
 #endif
     public func uniffiCloneHandle() -> UInt64 {
-        return try! rustCall { uniffi_rewarden_core_fn_clone_notifier(self.handle, $0) }
+        return try! rustCall { uniffi_reins_core_fn_clone_notifier(self.handle, $0) }
     }
     // No primary constructor declared for this class.
 
@@ -2217,7 +2217,7 @@ open class NotifierImpl: Notifier, @unchecked Sendable {
             return
         }
 
-        try! rustCall { uniffi_rewarden_core_fn_free_notifier(handle, $0) }
+        try! rustCall { uniffi_reins_core_fn_free_notifier(handle, $0) }
     }
 
     
@@ -2228,7 +2228,7 @@ open class NotifierImpl: Notifier, @unchecked Sendable {
      */
 open func itemPending(item: PendingItem)  {try! rustCall() {
         uniffiCallStatus in
-    uniffi_rewarden_core_fn_method_notifier_item_pending(
+    uniffi_reins_core_fn_method_notifier_item_pending(
             self.uniffiCloneHandle(),
         FfiConverterTypePendingItem_lower(item),uniffiCallStatus
     )
@@ -2237,7 +2237,7 @@ open func itemPending(item: PendingItem)  {try! rustCall() {
     
 open func itemResolved(id: String)  {try! rustCall() {
         uniffiCallStatus in
-    uniffi_rewarden_core_fn_method_notifier_item_resolved(
+    uniffi_reins_core_fn_method_notifier_item_resolved(
             self.uniffiCloneHandle(),
         FfiConverterString.lower(id),uniffiCallStatus
     )
@@ -2249,7 +2249,7 @@ open func itemResolved(id: String)  {try! rustCall() {
      */
 open func autoDecided(decision: AutoDecisionView)  {try! rustCall() {
         uniffiCallStatus in
-    uniffi_rewarden_core_fn_method_notifier_auto_decided(
+    uniffi_reins_core_fn_method_notifier_auto_decided(
             self.uniffiCloneHandle(),
         FfiConverterTypeAutoDecisionView_lower(decision),uniffiCallStatus
     )
@@ -2261,7 +2261,7 @@ open func autoDecided(decision: AutoDecisionView)  {try! rustCall() {
      */
 open func autopilotChanged(event: AutopilotEvent)  {try! rustCall() {
         uniffiCallStatus in
-    uniffi_rewarden_core_fn_method_notifier_autopilot_changed(
+    uniffi_reins_core_fn_method_notifier_autopilot_changed(
             self.uniffiCloneHandle(),
         FfiConverterTypeAutopilotEvent_lower(event),uniffiCallStatus
     )
@@ -2408,7 +2408,7 @@ fileprivate struct UniffiCallbackInterfaceNotifier {
 }
 
 private func uniffiCallbackInitNotifier() {
-    uniffi_rewarden_core_fn_init_callback_vtable_notifier(UniffiCallbackInterfaceNotifier.vtablePtr)
+    uniffi_reins_core_fn_init_callback_vtable_notifier(UniffiCallbackInterfaceNotifier.vtablePtr)
 }
 
 #if swift(>=5.8)
@@ -2471,7 +2471,7 @@ public func FfiConverterTypeNotifier_lower(_ value: Notifier) -> UInt64 {
 
 
 
-public protocol RewardenCoreProtocol: AnyObject, Sendable {
+public protocol ReinsCoreProtocol: AnyObject, Sendable {
     
     /**
      * Whether this phone can open the signed-in account's vault.
@@ -2816,12 +2816,12 @@ public protocol RewardenCoreProtocol: AnyObject, Sendable {
     func mcpServers() async throws  -> [McpServerView]
     
     /**
-     * Sends a tool's results through the Rewarden server (for large results) or not.
+     * Sends a tool's results through the Reins server (for large results) or not.
      */
     func mcpSetHeavy(id: String, tool: String, heavy: Bool) async throws 
     
 }
-open class RewardenCore: RewardenCoreProtocol, @unchecked Sendable {
+open class ReinsCore: ReinsCoreProtocol, @unchecked Sendable {
     fileprivate let handle: UInt64
 
     /// Used to instantiate a [FFIObject] without an actual handle, for fakes in tests, mostly.
@@ -2858,13 +2858,13 @@ open class RewardenCore: RewardenCoreProtocol, @unchecked Sendable {
     @_documentation(visibility: private)
 #endif
     public func uniffiCloneHandle() -> UInt64 {
-        return try! rustCall { uniffi_rewarden_core_fn_clone_rewardencore(self.handle, $0) }
+        return try! rustCall { uniffi_reins_core_fn_clone_reinscore(self.handle, $0) }
     }
 public convenience init(dataDir: String, keys: KeyWrapper, google: GoogleTokenProvider, notifier: Notifier, device: DeviceBridge?, telegramApiId: Int32, telegramApiHash: String)throws  {
     let handle =
         try rustCallWithError(FfiConverterTypeCoreError_lift) {
         uniffiCallStatus in
-    uniffi_rewarden_core_fn_constructor_rewardencore_new(
+    uniffi_reins_core_fn_constructor_reinscore_new(
         FfiConverterString.lower(dataDir),
         FfiConverterTypeKeyWrapper_lower(keys),
         FfiConverterTypeGoogleTokenProvider_lower(google),
@@ -2883,7 +2883,7 @@ public convenience init(dataDir: String, keys: KeyWrapper, google: GoogleTokenPr
             return
         }
 
-        try! rustCall { uniffi_rewarden_core_fn_free_rewardencore(handle, $0) }
+        try! rustCall { uniffi_reins_core_fn_free_reinscore(handle, $0) }
     }
 
     
@@ -2896,13 +2896,13 @@ open func accountKeys()async throws  -> AccountKeys  {
     return
         try  await uniffiRustCallAsync(
             rustFutureFunc: {
-                uniffi_rewarden_core_fn_method_rewardencore_account_keys(
+                uniffi_reins_core_fn_method_reinscore_account_keys(
                         self.uniffiCloneHandle()
                 )
             },
-            pollFunc: ffi_rewarden_core_rust_future_poll_rust_buffer,
-            completeFunc: ffi_rewarden_core_rust_future_complete_rust_buffer,
-            freeFunc: ffi_rewarden_core_rust_future_free_rust_buffer,
+            pollFunc: ffi_reins_core_rust_future_poll_rust_buffer,
+            completeFunc: ffi_reins_core_rust_future_complete_rust_buffer,
+            freeFunc: ffi_reins_core_rust_future_free_rust_buffer,
             liftFunc: FfiConverterTypeAccountKeys_lift,
             errorHandler: FfiConverterTypeCoreError_lift
         )
@@ -2916,13 +2916,13 @@ open func accountRecoveryCode()async throws  -> String  {
     return
         try  await uniffiRustCallAsync(
             rustFutureFunc: {
-                uniffi_rewarden_core_fn_method_rewardencore_account_recovery_code(
+                uniffi_reins_core_fn_method_reinscore_account_recovery_code(
                         self.uniffiCloneHandle()
                 )
             },
-            pollFunc: ffi_rewarden_core_rust_future_poll_rust_buffer,
-            completeFunc: ffi_rewarden_core_rust_future_complete_rust_buffer,
-            freeFunc: ffi_rewarden_core_rust_future_free_rust_buffer,
+            pollFunc: ffi_reins_core_rust_future_poll_rust_buffer,
+            completeFunc: ffi_reins_core_rust_future_complete_rust_buffer,
+            freeFunc: ffi_reins_core_rust_future_free_rust_buffer,
             liftFunc: FfiConverterString.lift,
             errorHandler: FfiConverterTypeCoreError_lift
         )
@@ -2935,13 +2935,13 @@ open func accountStatus(account: String)async  -> GmailStatus  {
     return
         try!  await uniffiRustCallAsync(
             rustFutureFunc: {
-                uniffi_rewarden_core_fn_method_rewardencore_account_status(
+                uniffi_reins_core_fn_method_reinscore_account_status(
                         self.uniffiCloneHandle(),FfiConverterString.lower(account)
                 )
             },
-            pollFunc: ffi_rewarden_core_rust_future_poll_rust_buffer,
-            completeFunc: ffi_rewarden_core_rust_future_complete_rust_buffer,
-            freeFunc: ffi_rewarden_core_rust_future_free_rust_buffer,
+            pollFunc: ffi_reins_core_rust_future_poll_rust_buffer,
+            completeFunc: ffi_reins_core_rust_future_complete_rust_buffer,
+            freeFunc: ffi_reins_core_rust_future_free_rust_buffer,
             liftFunc: FfiConverterTypeGmailStatus_lift,
             errorHandler: nil
             
@@ -2955,13 +2955,13 @@ open func accounts()async throws  -> [AccountView]  {
     return
         try  await uniffiRustCallAsync(
             rustFutureFunc: {
-                uniffi_rewarden_core_fn_method_rewardencore_accounts(
+                uniffi_reins_core_fn_method_reinscore_accounts(
                         self.uniffiCloneHandle()
                 )
             },
-            pollFunc: ffi_rewarden_core_rust_future_poll_rust_buffer,
-            completeFunc: ffi_rewarden_core_rust_future_complete_rust_buffer,
-            freeFunc: ffi_rewarden_core_rust_future_free_rust_buffer,
+            pollFunc: ffi_reins_core_rust_future_poll_rust_buffer,
+            completeFunc: ffi_reins_core_rust_future_complete_rust_buffer,
+            freeFunc: ffi_reins_core_rust_future_free_rust_buffer,
             liftFunc: FfiConverterSequenceTypeAccountView.lift,
             errorHandler: FfiConverterTypeCoreError_lift
         )
@@ -2971,13 +2971,13 @@ open func activity(limit: UInt32)async throws  -> [ActivityEntry]  {
     return
         try  await uniffiRustCallAsync(
             rustFutureFunc: {
-                uniffi_rewarden_core_fn_method_rewardencore_activity(
+                uniffi_reins_core_fn_method_reinscore_activity(
                         self.uniffiCloneHandle(),FfiConverterUInt32.lower(limit)
                 )
             },
-            pollFunc: ffi_rewarden_core_rust_future_poll_rust_buffer,
-            completeFunc: ffi_rewarden_core_rust_future_complete_rust_buffer,
-            freeFunc: ffi_rewarden_core_rust_future_free_rust_buffer,
+            pollFunc: ffi_reins_core_rust_future_poll_rust_buffer,
+            completeFunc: ffi_reins_core_rust_future_complete_rust_buffer,
+            freeFunc: ffi_reins_core_rust_future_free_rust_buffer,
             liftFunc: FfiConverterSequenceTypeActivityEntry.lift,
             errorHandler: FfiConverterTypeCoreError_lift
         )
@@ -2990,13 +2990,13 @@ open func addAccount(hint: String)async throws  -> AccountView  {
     return
         try  await uniffiRustCallAsync(
             rustFutureFunc: {
-                uniffi_rewarden_core_fn_method_rewardencore_add_account(
+                uniffi_reins_core_fn_method_reinscore_add_account(
                         self.uniffiCloneHandle(),FfiConverterString.lower(hint)
                 )
             },
-            pollFunc: ffi_rewarden_core_rust_future_poll_rust_buffer,
-            completeFunc: ffi_rewarden_core_rust_future_complete_rust_buffer,
-            freeFunc: ffi_rewarden_core_rust_future_free_rust_buffer,
+            pollFunc: ffi_reins_core_rust_future_poll_rust_buffer,
+            completeFunc: ffi_reins_core_rust_future_complete_rust_buffer,
+            freeFunc: ffi_reins_core_rust_future_free_rust_buffer,
             liftFunc: FfiConverterTypeAccountView_lift,
             errorHandler: FfiConverterTypeCoreError_lift
         )
@@ -3010,13 +3010,13 @@ open func addServiceAccount(service: String, hint: String)async throws  -> Accou
     return
         try  await uniffiRustCallAsync(
             rustFutureFunc: {
-                uniffi_rewarden_core_fn_method_rewardencore_add_service_account(
+                uniffi_reins_core_fn_method_reinscore_add_service_account(
                         self.uniffiCloneHandle(),FfiConverterString.lower(service),FfiConverterString.lower(hint)
                 )
             },
-            pollFunc: ffi_rewarden_core_rust_future_poll_rust_buffer,
-            completeFunc: ffi_rewarden_core_rust_future_complete_rust_buffer,
-            freeFunc: ffi_rewarden_core_rust_future_free_rust_buffer,
+            pollFunc: ffi_reins_core_rust_future_poll_rust_buffer,
+            completeFunc: ffi_reins_core_rust_future_complete_rust_buffer,
+            freeFunc: ffi_reins_core_rust_future_free_rust_buffer,
             liftFunc: FfiConverterTypeAccountView_lift,
             errorHandler: FfiConverterTypeCoreError_lift
         )
@@ -3029,13 +3029,13 @@ open func addTokenAccount(service: String, token: String)async throws  -> Accoun
     return
         try  await uniffiRustCallAsync(
             rustFutureFunc: {
-                uniffi_rewarden_core_fn_method_rewardencore_add_token_account(
+                uniffi_reins_core_fn_method_reinscore_add_token_account(
                         self.uniffiCloneHandle(),FfiConverterString.lower(service),FfiConverterString.lower(token)
                 )
             },
-            pollFunc: ffi_rewarden_core_rust_future_poll_rust_buffer,
-            completeFunc: ffi_rewarden_core_rust_future_complete_rust_buffer,
-            freeFunc: ffi_rewarden_core_rust_future_free_rust_buffer,
+            pollFunc: ffi_reins_core_rust_future_poll_rust_buffer,
+            completeFunc: ffi_reins_core_rust_future_complete_rust_buffer,
+            freeFunc: ffi_reins_core_rust_future_free_rust_buffer,
             liftFunc: FfiConverterTypeAccountView_lift,
             errorHandler: FfiConverterTypeCoreError_lift
         )
@@ -3048,13 +3048,13 @@ open func answerBlob(id: String, approve: Bool)async throws   {
     return
         try  await uniffiRustCallAsync(
             rustFutureFunc: {
-                uniffi_rewarden_core_fn_method_rewardencore_answer_blob(
+                uniffi_reins_core_fn_method_reinscore_answer_blob(
                         self.uniffiCloneHandle(),FfiConverterString.lower(id),FfiConverterBool.lower(approve)
                 )
             },
-            pollFunc: ffi_rewarden_core_rust_future_poll_void,
-            completeFunc: ffi_rewarden_core_rust_future_complete_void,
-            freeFunc: ffi_rewarden_core_rust_future_free_void,
+            pollFunc: ffi_reins_core_rust_future_poll_void,
+            completeFunc: ffi_reins_core_rust_future_complete_void,
+            freeFunc: ffi_reins_core_rust_future_free_void,
             liftFunc: { $0 },
             errorHandler: FfiConverterTypeCoreError_lift
         )
@@ -3068,13 +3068,13 @@ open func answerJoin(id: String, approve: Bool)async throws   {
     return
         try  await uniffiRustCallAsync(
             rustFutureFunc: {
-                uniffi_rewarden_core_fn_method_rewardencore_answer_join(
+                uniffi_reins_core_fn_method_reinscore_answer_join(
                         self.uniffiCloneHandle(),FfiConverterString.lower(id),FfiConverterBool.lower(approve)
                 )
             },
-            pollFunc: ffi_rewarden_core_rust_future_poll_void,
-            completeFunc: ffi_rewarden_core_rust_future_complete_void,
-            freeFunc: ffi_rewarden_core_rust_future_free_void,
+            pollFunc: ffi_reins_core_rust_future_poll_void,
+            completeFunc: ffi_reins_core_rust_future_complete_void,
+            freeFunc: ffi_reins_core_rust_future_free_void,
             liftFunc: { $0 },
             errorHandler: FfiConverterTypeCoreError_lift
         )
@@ -3084,13 +3084,13 @@ open func answerPairing(pairingId: String, approve: Bool, chosenCode: UInt8?, la
     return
         try  await uniffiRustCallAsync(
             rustFutureFunc: {
-                uniffi_rewarden_core_fn_method_rewardencore_answer_pairing(
+                uniffi_reins_core_fn_method_reinscore_answer_pairing(
                         self.uniffiCloneHandle(),FfiConverterString.lower(pairingId),FfiConverterBool.lower(approve),FfiConverterOptionUInt8.lower(chosenCode),FfiConverterOptionString.lower(label)
                 )
             },
-            pollFunc: ffi_rewarden_core_rust_future_poll_void,
-            completeFunc: ffi_rewarden_core_rust_future_complete_void,
-            freeFunc: ffi_rewarden_core_rust_future_free_void,
+            pollFunc: ffi_reins_core_rust_future_poll_void,
+            completeFunc: ffi_reins_core_rust_future_complete_void,
+            freeFunc: ffi_reins_core_rust_future_free_void,
             liftFunc: { $0 },
             errorHandler: FfiConverterTypeCoreError_lift
         )
@@ -3100,13 +3100,13 @@ open func approvalView(requestId: String)async throws  -> ApprovalView  {
     return
         try  await uniffiRustCallAsync(
             rustFutureFunc: {
-                uniffi_rewarden_core_fn_method_rewardencore_approval_view(
+                uniffi_reins_core_fn_method_reinscore_approval_view(
                         self.uniffiCloneHandle(),FfiConverterString.lower(requestId)
                 )
             },
-            pollFunc: ffi_rewarden_core_rust_future_poll_rust_buffer,
-            completeFunc: ffi_rewarden_core_rust_future_complete_rust_buffer,
-            freeFunc: ffi_rewarden_core_rust_future_free_rust_buffer,
+            pollFunc: ffi_reins_core_rust_future_poll_rust_buffer,
+            completeFunc: ffi_reins_core_rust_future_complete_rust_buffer,
+            freeFunc: ffi_reins_core_rust_future_free_rust_buffer,
             liftFunc: FfiConverterTypeApprovalView_lift,
             errorHandler: FfiConverterTypeCoreError_lift
         )
@@ -3116,13 +3116,13 @@ open func approve(requestId: String, choice: ApprovalChoice)async throws   {
     return
         try  await uniffiRustCallAsync(
             rustFutureFunc: {
-                uniffi_rewarden_core_fn_method_rewardencore_approve(
+                uniffi_reins_core_fn_method_reinscore_approve(
                         self.uniffiCloneHandle(),FfiConverterString.lower(requestId),FfiConverterTypeApprovalChoice_lower(choice)
                 )
             },
-            pollFunc: ffi_rewarden_core_rust_future_poll_void,
-            completeFunc: ffi_rewarden_core_rust_future_complete_void,
-            freeFunc: ffi_rewarden_core_rust_future_free_void,
+            pollFunc: ffi_reins_core_rust_future_poll_void,
+            completeFunc: ffi_reins_core_rust_future_complete_void,
+            freeFunc: ffi_reins_core_rust_future_free_void,
             liftFunc: { $0 },
             errorHandler: FfiConverterTypeCoreError_lift
         )
@@ -3135,13 +3135,13 @@ open func assignProfile(connectionId: String, profileId: String?)async throws   
     return
         try  await uniffiRustCallAsync(
             rustFutureFunc: {
-                uniffi_rewarden_core_fn_method_rewardencore_assign_profile(
+                uniffi_reins_core_fn_method_reinscore_assign_profile(
                         self.uniffiCloneHandle(),FfiConverterString.lower(connectionId),FfiConverterOptionString.lower(profileId)
                 )
             },
-            pollFunc: ffi_rewarden_core_rust_future_poll_void,
-            completeFunc: ffi_rewarden_core_rust_future_complete_void,
-            freeFunc: ffi_rewarden_core_rust_future_free_void,
+            pollFunc: ffi_reins_core_rust_future_poll_void,
+            completeFunc: ffi_reins_core_rust_future_complete_void,
+            freeFunc: ffi_reins_core_rust_future_free_void,
             liftFunc: { $0 },
             errorHandler: FfiConverterTypeCoreError_lift
         )
@@ -3154,13 +3154,13 @@ open func autopilotEvaluate(profileId: String?, situation: String)async throws  
     return
         try  await uniffiRustCallAsync(
             rustFutureFunc: {
-                uniffi_rewarden_core_fn_method_rewardencore_autopilot_evaluate(
+                uniffi_reins_core_fn_method_reinscore_autopilot_evaluate(
                         self.uniffiCloneHandle(),FfiConverterOptionString.lower(profileId),FfiConverterString.lower(situation)
                 )
             },
-            pollFunc: ffi_rewarden_core_rust_future_poll_rust_buffer,
-            completeFunc: ffi_rewarden_core_rust_future_complete_rust_buffer,
-            freeFunc: ffi_rewarden_core_rust_future_free_rust_buffer,
+            pollFunc: ffi_reins_core_rust_future_poll_rust_buffer,
+            completeFunc: ffi_reins_core_rust_future_complete_rust_buffer,
+            freeFunc: ffi_reins_core_rust_future_free_rust_buffer,
             liftFunc: FfiConverterTypeSuggestionView_lift,
             errorHandler: FfiConverterTypeCoreError_lift
         )
@@ -3173,13 +3173,13 @@ open func autopilotProfiles()async throws  -> [ProfileView]  {
     return
         try  await uniffiRustCallAsync(
             rustFutureFunc: {
-                uniffi_rewarden_core_fn_method_rewardencore_autopilot_profiles(
+                uniffi_reins_core_fn_method_reinscore_autopilot_profiles(
                         self.uniffiCloneHandle()
                 )
             },
-            pollFunc: ffi_rewarden_core_rust_future_poll_rust_buffer,
-            completeFunc: ffi_rewarden_core_rust_future_complete_rust_buffer,
-            freeFunc: ffi_rewarden_core_rust_future_free_rust_buffer,
+            pollFunc: ffi_reins_core_rust_future_poll_rust_buffer,
+            completeFunc: ffi_reins_core_rust_future_complete_rust_buffer,
+            freeFunc: ffi_reins_core_rust_future_free_rust_buffer,
             liftFunc: FfiConverterSequenceTypeProfileView.lift,
             errorHandler: FfiConverterTypeCoreError_lift
         )
@@ -3192,13 +3192,13 @@ open func autopilotSettings()async throws  -> AutopilotSettings  {
     return
         try  await uniffiRustCallAsync(
             rustFutureFunc: {
-                uniffi_rewarden_core_fn_method_rewardencore_autopilot_settings(
+                uniffi_reins_core_fn_method_reinscore_autopilot_settings(
                         self.uniffiCloneHandle()
                 )
             },
-            pollFunc: ffi_rewarden_core_rust_future_poll_rust_buffer,
-            completeFunc: ffi_rewarden_core_rust_future_complete_rust_buffer,
-            freeFunc: ffi_rewarden_core_rust_future_free_rust_buffer,
+            pollFunc: ffi_reins_core_rust_future_poll_rust_buffer,
+            completeFunc: ffi_reins_core_rust_future_complete_rust_buffer,
+            freeFunc: ffi_reins_core_rust_future_free_rust_buffer,
             liftFunc: FfiConverterTypeAutopilotSettings_lift,
             errorHandler: FfiConverterTypeCoreError_lift
         )
@@ -3211,13 +3211,13 @@ open func autopilotSuggestion(requestId: String)async throws  -> SuggestionView?
     return
         try  await uniffiRustCallAsync(
             rustFutureFunc: {
-                uniffi_rewarden_core_fn_method_rewardencore_autopilot_suggestion(
+                uniffi_reins_core_fn_method_reinscore_autopilot_suggestion(
                         self.uniffiCloneHandle(),FfiConverterString.lower(requestId)
                 )
             },
-            pollFunc: ffi_rewarden_core_rust_future_poll_rust_buffer,
-            completeFunc: ffi_rewarden_core_rust_future_complete_rust_buffer,
-            freeFunc: ffi_rewarden_core_rust_future_free_rust_buffer,
+            pollFunc: ffi_reins_core_rust_future_poll_rust_buffer,
+            completeFunc: ffi_reins_core_rust_future_complete_rust_buffer,
+            freeFunc: ffi_reins_core_rust_future_free_rust_buffer,
             liftFunc: FfiConverterOptionTypeSuggestionView.lift,
             errorHandler: FfiConverterTypeCoreError_lift
         )
@@ -3230,13 +3230,13 @@ open func blobView(id: String)async throws  -> BlobView  {
     return
         try  await uniffiRustCallAsync(
             rustFutureFunc: {
-                uniffi_rewarden_core_fn_method_rewardencore_blob_view(
+                uniffi_reins_core_fn_method_reinscore_blob_view(
                         self.uniffiCloneHandle(),FfiConverterString.lower(id)
                 )
             },
-            pollFunc: ffi_rewarden_core_rust_future_poll_rust_buffer,
-            completeFunc: ffi_rewarden_core_rust_future_complete_rust_buffer,
-            freeFunc: ffi_rewarden_core_rust_future_free_rust_buffer,
+            pollFunc: ffi_reins_core_rust_future_poll_rust_buffer,
+            completeFunc: ffi_reins_core_rust_future_complete_rust_buffer,
+            freeFunc: ffi_reins_core_rust_future_free_rust_buffer,
             liftFunc: FfiConverterTypeBlobView_lift,
             errorHandler: FfiConverterTypeCoreError_lift
         )
@@ -3246,13 +3246,13 @@ open func connections()async throws  -> [ConnectionView]  {
     return
         try  await uniffiRustCallAsync(
             rustFutureFunc: {
-                uniffi_rewarden_core_fn_method_rewardencore_connections(
+                uniffi_reins_core_fn_method_reinscore_connections(
                         self.uniffiCloneHandle()
                 )
             },
-            pollFunc: ffi_rewarden_core_rust_future_poll_rust_buffer,
-            completeFunc: ffi_rewarden_core_rust_future_complete_rust_buffer,
-            freeFunc: ffi_rewarden_core_rust_future_free_rust_buffer,
+            pollFunc: ffi_reins_core_rust_future_poll_rust_buffer,
+            completeFunc: ffi_reins_core_rust_future_complete_rust_buffer,
+            freeFunc: ffi_reins_core_rust_future_free_rust_buffer,
             liftFunc: FfiConverterSequenceTypeConnectionView.lift,
             errorHandler: FfiConverterTypeCoreError_lift
         )
@@ -3265,13 +3265,13 @@ open func correctDecision(activityId: Int64, shouldHave: Verdict)async throws   
     return
         try  await uniffiRustCallAsync(
             rustFutureFunc: {
-                uniffi_rewarden_core_fn_method_rewardencore_correct_decision(
+                uniffi_reins_core_fn_method_reinscore_correct_decision(
                         self.uniffiCloneHandle(),FfiConverterInt64.lower(activityId),FfiConverterTypeVerdict_lower(shouldHave)
                 )
             },
-            pollFunc: ffi_rewarden_core_rust_future_poll_void,
-            completeFunc: ffi_rewarden_core_rust_future_complete_void,
-            freeFunc: ffi_rewarden_core_rust_future_free_void,
+            pollFunc: ffi_reins_core_rust_future_poll_void,
+            completeFunc: ffi_reins_core_rust_future_complete_void,
+            freeFunc: ffi_reins_core_rust_future_free_void,
             liftFunc: { $0 },
             errorHandler: FfiConverterTypeCoreError_lift
         )
@@ -3286,13 +3286,13 @@ open func createAccount(serverUrl: String, email: String, password: String)async
     return
         try  await uniffiRustCallAsync(
             rustFutureFunc: {
-                uniffi_rewarden_core_fn_method_rewardencore_create_account(
+                uniffi_reins_core_fn_method_reinscore_create_account(
                         self.uniffiCloneHandle(),FfiConverterString.lower(serverUrl),FfiConverterString.lower(email),FfiConverterString.lower(password)
                 )
             },
-            pollFunc: ffi_rewarden_core_rust_future_poll_rust_buffer,
-            completeFunc: ffi_rewarden_core_rust_future_complete_rust_buffer,
-            freeFunc: ffi_rewarden_core_rust_future_free_rust_buffer,
+            pollFunc: ffi_reins_core_rust_future_poll_rust_buffer,
+            completeFunc: ffi_reins_core_rust_future_complete_rust_buffer,
+            freeFunc: ffi_reins_core_rust_future_free_rust_buffer,
             liftFunc: FfiConverterTypeSessionInfo_lift,
             errorHandler: FfiConverterTypeCoreError_lift
         )
@@ -3305,13 +3305,13 @@ open func createGrant(connectionId: String, account: String, kind: ApprovalKind,
     return
         try  await uniffiRustCallAsync(
             rustFutureFunc: {
-                uniffi_rewarden_core_fn_method_rewardencore_create_grant(
+                uniffi_reins_core_fn_method_reinscore_create_grant(
                         self.uniffiCloneHandle(),FfiConverterString.lower(connectionId),FfiConverterString.lower(account),FfiConverterTypeApprovalKind_lower(kind),FfiConverterTypeStandingGrant_lower(standing)
                 )
             },
-            pollFunc: ffi_rewarden_core_rust_future_poll_void,
-            completeFunc: ffi_rewarden_core_rust_future_complete_void,
-            freeFunc: ffi_rewarden_core_rust_future_free_void,
+            pollFunc: ffi_reins_core_rust_future_poll_void,
+            completeFunc: ffi_reins_core_rust_future_complete_void,
+            freeFunc: ffi_reins_core_rust_future_free_void,
             liftFunc: { $0 },
             errorHandler: FfiConverterTypeCoreError_lift
         )
@@ -3321,13 +3321,13 @@ open func createProfile(name: String, icon: String?)async throws  -> ProfileView
     return
         try  await uniffiRustCallAsync(
             rustFutureFunc: {
-                uniffi_rewarden_core_fn_method_rewardencore_create_profile(
+                uniffi_reins_core_fn_method_reinscore_create_profile(
                         self.uniffiCloneHandle(),FfiConverterString.lower(name),FfiConverterOptionString.lower(icon)
                 )
             },
-            pollFunc: ffi_rewarden_core_rust_future_poll_rust_buffer,
-            completeFunc: ffi_rewarden_core_rust_future_complete_rust_buffer,
-            freeFunc: ffi_rewarden_core_rust_future_free_rust_buffer,
+            pollFunc: ffi_reins_core_rust_future_poll_rust_buffer,
+            completeFunc: ffi_reins_core_rust_future_complete_rust_buffer,
+            freeFunc: ffi_reins_core_rust_future_free_rust_buffer,
             liftFunc: FfiConverterTypeProfileView_lift,
             errorHandler: FfiConverterTypeCoreError_lift
         )
@@ -3340,13 +3340,13 @@ open func deleteGrant(grantId: String)async throws   {
     return
         try  await uniffiRustCallAsync(
             rustFutureFunc: {
-                uniffi_rewarden_core_fn_method_rewardencore_delete_grant(
+                uniffi_reins_core_fn_method_reinscore_delete_grant(
                         self.uniffiCloneHandle(),FfiConverterString.lower(grantId)
                 )
             },
-            pollFunc: ffi_rewarden_core_rust_future_poll_void,
-            completeFunc: ffi_rewarden_core_rust_future_complete_void,
-            freeFunc: ffi_rewarden_core_rust_future_free_void,
+            pollFunc: ffi_reins_core_rust_future_poll_void,
+            completeFunc: ffi_reins_core_rust_future_complete_void,
+            freeFunc: ffi_reins_core_rust_future_free_void,
             liftFunc: { $0 },
             errorHandler: FfiConverterTypeCoreError_lift
         )
@@ -3356,13 +3356,13 @@ open func deleteModel()async throws   {
     return
         try  await uniffiRustCallAsync(
             rustFutureFunc: {
-                uniffi_rewarden_core_fn_method_rewardencore_delete_model(
+                uniffi_reins_core_fn_method_reinscore_delete_model(
                         self.uniffiCloneHandle()
                 )
             },
-            pollFunc: ffi_rewarden_core_rust_future_poll_void,
-            completeFunc: ffi_rewarden_core_rust_future_complete_void,
-            freeFunc: ffi_rewarden_core_rust_future_free_void,
+            pollFunc: ffi_reins_core_rust_future_poll_void,
+            completeFunc: ffi_reins_core_rust_future_complete_void,
+            freeFunc: ffi_reins_core_rust_future_free_void,
             liftFunc: { $0 },
             errorHandler: FfiConverterTypeCoreError_lift
         )
@@ -3375,13 +3375,13 @@ open func deleteProfile(profileId: String)async throws   {
     return
         try  await uniffiRustCallAsync(
             rustFutureFunc: {
-                uniffi_rewarden_core_fn_method_rewardencore_delete_profile(
+                uniffi_reins_core_fn_method_reinscore_delete_profile(
                         self.uniffiCloneHandle(),FfiConverterString.lower(profileId)
                 )
             },
-            pollFunc: ffi_rewarden_core_rust_future_poll_void,
-            completeFunc: ffi_rewarden_core_rust_future_complete_void,
-            freeFunc: ffi_rewarden_core_rust_future_free_void,
+            pollFunc: ffi_reins_core_rust_future_poll_void,
+            completeFunc: ffi_reins_core_rust_future_complete_void,
+            freeFunc: ffi_reins_core_rust_future_free_void,
             liftFunc: { $0 },
             errorHandler: FfiConverterTypeCoreError_lift
         )
@@ -3391,13 +3391,13 @@ open func deny(requestId: String)async throws   {
     return
         try  await uniffiRustCallAsync(
             rustFutureFunc: {
-                uniffi_rewarden_core_fn_method_rewardencore_deny(
+                uniffi_reins_core_fn_method_reinscore_deny(
                         self.uniffiCloneHandle(),FfiConverterString.lower(requestId)
                 )
             },
-            pollFunc: ffi_rewarden_core_rust_future_poll_void,
-            completeFunc: ffi_rewarden_core_rust_future_complete_void,
-            freeFunc: ffi_rewarden_core_rust_future_free_void,
+            pollFunc: ffi_reins_core_rust_future_poll_void,
+            completeFunc: ffi_reins_core_rust_future_complete_void,
+            freeFunc: ffi_reins_core_rust_future_free_void,
             liftFunc: { $0 },
             errorHandler: FfiConverterTypeCoreError_lift
         )
@@ -3410,13 +3410,13 @@ open func downloadModel(progress: DownloadProgress)async throws  -> ModelStatus 
     return
         try  await uniffiRustCallAsync(
             rustFutureFunc: {
-                uniffi_rewarden_core_fn_method_rewardencore_download_model(
+                uniffi_reins_core_fn_method_reinscore_download_model(
                         self.uniffiCloneHandle(),FfiConverterTypeDownloadProgress_lower(progress)
                 )
             },
-            pollFunc: ffi_rewarden_core_rust_future_poll_rust_buffer,
-            completeFunc: ffi_rewarden_core_rust_future_complete_rust_buffer,
-            freeFunc: ffi_rewarden_core_rust_future_free_rust_buffer,
+            pollFunc: ffi_reins_core_rust_future_poll_rust_buffer,
+            completeFunc: ffi_reins_core_rust_future_complete_rust_buffer,
+            freeFunc: ffi_reins_core_rust_future_free_rust_buffer,
             liftFunc: FfiConverterTypeModelStatus_lift,
             errorHandler: FfiConverterTypeCoreError_lift
         )
@@ -3429,13 +3429,13 @@ open func fetchEmail(account: String?, messageId: String)async throws  -> EmailC
     return
         try  await uniffiRustCallAsync(
             rustFutureFunc: {
-                uniffi_rewarden_core_fn_method_rewardencore_fetch_email(
+                uniffi_reins_core_fn_method_reinscore_fetch_email(
                         self.uniffiCloneHandle(),FfiConverterOptionString.lower(account),FfiConverterString.lower(messageId)
                 )
             },
-            pollFunc: ffi_rewarden_core_rust_future_poll_rust_buffer,
-            completeFunc: ffi_rewarden_core_rust_future_complete_rust_buffer,
-            freeFunc: ffi_rewarden_core_rust_future_free_rust_buffer,
+            pollFunc: ffi_reins_core_rust_future_poll_rust_buffer,
+            completeFunc: ffi_reins_core_rust_future_complete_rust_buffer,
+            freeFunc: ffi_reins_core_rust_future_free_rust_buffer,
             liftFunc: FfiConverterTypeEmailContent_lift,
             errorHandler: FfiConverterTypeCoreError_lift
         )
@@ -3448,13 +3448,13 @@ open func gmailStatus()async  -> GmailStatus  {
     return
         try!  await uniffiRustCallAsync(
             rustFutureFunc: {
-                uniffi_rewarden_core_fn_method_rewardencore_gmail_status(
+                uniffi_reins_core_fn_method_reinscore_gmail_status(
                         self.uniffiCloneHandle()
                 )
             },
-            pollFunc: ffi_rewarden_core_rust_future_poll_rust_buffer,
-            completeFunc: ffi_rewarden_core_rust_future_complete_rust_buffer,
-            freeFunc: ffi_rewarden_core_rust_future_free_rust_buffer,
+            pollFunc: ffi_reins_core_rust_future_poll_rust_buffer,
+            completeFunc: ffi_reins_core_rust_future_complete_rust_buffer,
+            freeFunc: ffi_reins_core_rust_future_free_rust_buffer,
             liftFunc: FfiConverterTypeGmailStatus_lift,
             errorHandler: nil
             
@@ -3465,13 +3465,13 @@ open func grants()async throws  -> [GrantView]  {
     return
         try  await uniffiRustCallAsync(
             rustFutureFunc: {
-                uniffi_rewarden_core_fn_method_rewardencore_grants(
+                uniffi_reins_core_fn_method_reinscore_grants(
                         self.uniffiCloneHandle()
                 )
             },
-            pollFunc: ffi_rewarden_core_rust_future_poll_rust_buffer,
-            completeFunc: ffi_rewarden_core_rust_future_complete_rust_buffer,
-            freeFunc: ffi_rewarden_core_rust_future_free_rust_buffer,
+            pollFunc: ffi_reins_core_rust_future_poll_rust_buffer,
+            completeFunc: ffi_reins_core_rust_future_complete_rust_buffer,
+            freeFunc: ffi_reins_core_rust_future_free_rust_buffer,
             liftFunc: FfiConverterSequenceTypeGrantView.lift,
             errorHandler: FfiConverterTypeCoreError_lift
         )
@@ -3484,13 +3484,13 @@ open func handlePush(kind: String, id: String)async throws   {
     return
         try  await uniffiRustCallAsync(
             rustFutureFunc: {
-                uniffi_rewarden_core_fn_method_rewardencore_handle_push(
+                uniffi_reins_core_fn_method_reinscore_handle_push(
                         self.uniffiCloneHandle(),FfiConverterString.lower(kind),FfiConverterString.lower(id)
                 )
             },
-            pollFunc: ffi_rewarden_core_rust_future_poll_void,
-            completeFunc: ffi_rewarden_core_rust_future_complete_void,
-            freeFunc: ffi_rewarden_core_rust_future_free_void,
+            pollFunc: ffi_reins_core_rust_future_poll_void,
+            completeFunc: ffi_reins_core_rust_future_complete_void,
+            freeFunc: ffi_reins_core_rust_future_free_void,
             liftFunc: { $0 },
             errorHandler: FfiConverterTypeCoreError_lift
         )
@@ -3504,13 +3504,13 @@ open func handlePushDeferringAutopilot(kind: String, id: String)async throws   {
     return
         try  await uniffiRustCallAsync(
             rustFutureFunc: {
-                uniffi_rewarden_core_fn_method_rewardencore_handle_push_deferring_autopilot(
+                uniffi_reins_core_fn_method_reinscore_handle_push_deferring_autopilot(
                         self.uniffiCloneHandle(),FfiConverterString.lower(kind),FfiConverterString.lower(id)
                 )
             },
-            pollFunc: ffi_rewarden_core_rust_future_poll_void,
-            completeFunc: ffi_rewarden_core_rust_future_complete_void,
-            freeFunc: ffi_rewarden_core_rust_future_free_void,
+            pollFunc: ffi_reins_core_rust_future_poll_void,
+            completeFunc: ffi_reins_core_rust_future_complete_void,
+            freeFunc: ffi_reins_core_rust_future_free_void,
             liftFunc: { $0 },
             errorHandler: FfiConverterTypeCoreError_lift
         )
@@ -3525,13 +3525,13 @@ open func joinBegin(deviceName: String)async throws  -> JoinStart  {
     return
         try  await uniffiRustCallAsync(
             rustFutureFunc: {
-                uniffi_rewarden_core_fn_method_rewardencore_join_begin(
+                uniffi_reins_core_fn_method_reinscore_join_begin(
                         self.uniffiCloneHandle(),FfiConverterString.lower(deviceName)
                 )
             },
-            pollFunc: ffi_rewarden_core_rust_future_poll_rust_buffer,
-            completeFunc: ffi_rewarden_core_rust_future_complete_rust_buffer,
-            freeFunc: ffi_rewarden_core_rust_future_free_rust_buffer,
+            pollFunc: ffi_reins_core_rust_future_poll_rust_buffer,
+            completeFunc: ffi_reins_core_rust_future_complete_rust_buffer,
+            freeFunc: ffi_reins_core_rust_future_free_rust_buffer,
             liftFunc: FfiConverterTypeJoinStart_lift,
             errorHandler: FfiConverterTypeCoreError_lift
         )
@@ -3541,13 +3541,13 @@ open func joinCancel()async throws   {
     return
         try  await uniffiRustCallAsync(
             rustFutureFunc: {
-                uniffi_rewarden_core_fn_method_rewardencore_join_cancel(
+                uniffi_reins_core_fn_method_reinscore_join_cancel(
                         self.uniffiCloneHandle()
                 )
             },
-            pollFunc: ffi_rewarden_core_rust_future_poll_void,
-            completeFunc: ffi_rewarden_core_rust_future_complete_void,
-            freeFunc: ffi_rewarden_core_rust_future_free_void,
+            pollFunc: ffi_reins_core_rust_future_poll_void,
+            completeFunc: ffi_reins_core_rust_future_complete_void,
+            freeFunc: ffi_reins_core_rust_future_free_void,
             liftFunc: { $0 },
             errorHandler: FfiConverterTypeCoreError_lift
         )
@@ -3560,13 +3560,13 @@ open func joinPoll()async throws  -> JoinProgress  {
     return
         try  await uniffiRustCallAsync(
             rustFutureFunc: {
-                uniffi_rewarden_core_fn_method_rewardencore_join_poll(
+                uniffi_reins_core_fn_method_reinscore_join_poll(
                         self.uniffiCloneHandle()
                 )
             },
-            pollFunc: ffi_rewarden_core_rust_future_poll_rust_buffer,
-            completeFunc: ffi_rewarden_core_rust_future_complete_rust_buffer,
-            freeFunc: ffi_rewarden_core_rust_future_free_rust_buffer,
+            pollFunc: ffi_reins_core_rust_future_poll_rust_buffer,
+            completeFunc: ffi_reins_core_rust_future_complete_rust_buffer,
+            freeFunc: ffi_reins_core_rust_future_free_rust_buffer,
             liftFunc: FfiConverterTypeJoinProgress_lift,
             errorHandler: FfiConverterTypeCoreError_lift
         )
@@ -3579,13 +3579,13 @@ open func joinView(id: String)async throws  -> JoinView  {
     return
         try  await uniffiRustCallAsync(
             rustFutureFunc: {
-                uniffi_rewarden_core_fn_method_rewardencore_join_view(
+                uniffi_reins_core_fn_method_reinscore_join_view(
                         self.uniffiCloneHandle(),FfiConverterString.lower(id)
                 )
             },
-            pollFunc: ffi_rewarden_core_rust_future_poll_rust_buffer,
-            completeFunc: ffi_rewarden_core_rust_future_complete_rust_buffer,
-            freeFunc: ffi_rewarden_core_rust_future_free_rust_buffer,
+            pollFunc: ffi_reins_core_rust_future_poll_rust_buffer,
+            completeFunc: ffi_reins_core_rust_future_complete_rust_buffer,
+            freeFunc: ffi_reins_core_rust_future_free_rust_buffer,
             liftFunc: FfiConverterTypeJoinView_lift,
             errorHandler: FfiConverterTypeCoreError_lift
         )
@@ -3595,13 +3595,13 @@ open func login(serverUrl: String, email: String, password: String, totp: String
     return
         try  await uniffiRustCallAsync(
             rustFutureFunc: {
-                uniffi_rewarden_core_fn_method_rewardencore_login(
+                uniffi_reins_core_fn_method_reinscore_login(
                         self.uniffiCloneHandle(),FfiConverterString.lower(serverUrl),FfiConverterString.lower(email),FfiConverterString.lower(password),FfiConverterOptionString.lower(totp)
                 )
             },
-            pollFunc: ffi_rewarden_core_rust_future_poll_rust_buffer,
-            completeFunc: ffi_rewarden_core_rust_future_complete_rust_buffer,
-            freeFunc: ffi_rewarden_core_rust_future_free_rust_buffer,
+            pollFunc: ffi_reins_core_rust_future_poll_rust_buffer,
+            completeFunc: ffi_reins_core_rust_future_complete_rust_buffer,
+            freeFunc: ffi_reins_core_rust_future_free_rust_buffer,
             liftFunc: FfiConverterTypeSessionInfo_lift,
             errorHandler: FfiConverterTypeCoreError_lift
         )
@@ -3614,13 +3614,13 @@ open func loginBegin(service: String, phone: String)async throws   {
     return
         try  await uniffiRustCallAsync(
             rustFutureFunc: {
-                uniffi_rewarden_core_fn_method_rewardencore_login_begin(
+                uniffi_reins_core_fn_method_reinscore_login_begin(
                         self.uniffiCloneHandle(),FfiConverterString.lower(service),FfiConverterString.lower(phone)
                 )
             },
-            pollFunc: ffi_rewarden_core_rust_future_poll_void,
-            completeFunc: ffi_rewarden_core_rust_future_complete_void,
-            freeFunc: ffi_rewarden_core_rust_future_free_void,
+            pollFunc: ffi_reins_core_rust_future_poll_void,
+            completeFunc: ffi_reins_core_rust_future_complete_void,
+            freeFunc: ffi_reins_core_rust_future_free_void,
             liftFunc: { $0 },
             errorHandler: FfiConverterTypeCoreError_lift
         )
@@ -3633,13 +3633,13 @@ open func loginCode(service: String, code: String)async throws  -> LoginProgress
     return
         try  await uniffiRustCallAsync(
             rustFutureFunc: {
-                uniffi_rewarden_core_fn_method_rewardencore_login_code(
+                uniffi_reins_core_fn_method_reinscore_login_code(
                         self.uniffiCloneHandle(),FfiConverterString.lower(service),FfiConverterString.lower(code)
                 )
             },
-            pollFunc: ffi_rewarden_core_rust_future_poll_rust_buffer,
-            completeFunc: ffi_rewarden_core_rust_future_complete_rust_buffer,
-            freeFunc: ffi_rewarden_core_rust_future_free_rust_buffer,
+            pollFunc: ffi_reins_core_rust_future_poll_rust_buffer,
+            completeFunc: ffi_reins_core_rust_future_complete_rust_buffer,
+            freeFunc: ffi_reins_core_rust_future_free_rust_buffer,
             liftFunc: FfiConverterTypeLoginProgress_lift,
             errorHandler: FfiConverterTypeCoreError_lift
         )
@@ -3652,13 +3652,13 @@ open func loginPassword(service: String, password: String)async throws  -> Accou
     return
         try  await uniffiRustCallAsync(
             rustFutureFunc: {
-                uniffi_rewarden_core_fn_method_rewardencore_login_password(
+                uniffi_reins_core_fn_method_reinscore_login_password(
                         self.uniffiCloneHandle(),FfiConverterString.lower(service),FfiConverterString.lower(password)
                 )
             },
-            pollFunc: ffi_rewarden_core_rust_future_poll_rust_buffer,
-            completeFunc: ffi_rewarden_core_rust_future_complete_rust_buffer,
-            freeFunc: ffi_rewarden_core_rust_future_free_rust_buffer,
+            pollFunc: ffi_reins_core_rust_future_poll_rust_buffer,
+            completeFunc: ffi_reins_core_rust_future_complete_rust_buffer,
+            freeFunc: ffi_reins_core_rust_future_free_rust_buffer,
             liftFunc: FfiConverterTypeAccountView_lift,
             errorHandler: FfiConverterTypeCoreError_lift
         )
@@ -3668,13 +3668,13 @@ open func logout()async throws   {
     return
         try  await uniffiRustCallAsync(
             rustFutureFunc: {
-                uniffi_rewarden_core_fn_method_rewardencore_logout(
+                uniffi_reins_core_fn_method_reinscore_logout(
                         self.uniffiCloneHandle()
                 )
             },
-            pollFunc: ffi_rewarden_core_rust_future_poll_void,
-            completeFunc: ffi_rewarden_core_rust_future_complete_void,
-            freeFunc: ffi_rewarden_core_rust_future_free_void,
+            pollFunc: ffi_reins_core_rust_future_poll_void,
+            completeFunc: ffi_reins_core_rust_future_complete_void,
+            freeFunc: ffi_reins_core_rust_future_free_void,
             liftFunc: { $0 },
             errorHandler: FfiConverterTypeCoreError_lift
         )
@@ -3684,13 +3684,13 @@ open func modelStatus()async  -> ModelStatus  {
     return
         try!  await uniffiRustCallAsync(
             rustFutureFunc: {
-                uniffi_rewarden_core_fn_method_rewardencore_model_status(
+                uniffi_reins_core_fn_method_reinscore_model_status(
                         self.uniffiCloneHandle()
                 )
             },
-            pollFunc: ffi_rewarden_core_rust_future_poll_rust_buffer,
-            completeFunc: ffi_rewarden_core_rust_future_complete_rust_buffer,
-            freeFunc: ffi_rewarden_core_rust_future_free_rust_buffer,
+            pollFunc: ffi_reins_core_rust_future_poll_rust_buffer,
+            completeFunc: ffi_reins_core_rust_future_complete_rust_buffer,
+            freeFunc: ffi_reins_core_rust_future_free_rust_buffer,
             liftFunc: FfiConverterTypeModelStatus_lift,
             errorHandler: nil
             
@@ -3706,13 +3706,13 @@ open func pairingByCode(userCode: String)async throws  -> PairingView  {
     return
         try  await uniffiRustCallAsync(
             rustFutureFunc: {
-                uniffi_rewarden_core_fn_method_rewardencore_pairing_by_code(
+                uniffi_reins_core_fn_method_reinscore_pairing_by_code(
                         self.uniffiCloneHandle(),FfiConverterString.lower(userCode)
                 )
             },
-            pollFunc: ffi_rewarden_core_rust_future_poll_rust_buffer,
-            completeFunc: ffi_rewarden_core_rust_future_complete_rust_buffer,
-            freeFunc: ffi_rewarden_core_rust_future_free_rust_buffer,
+            pollFunc: ffi_reins_core_rust_future_poll_rust_buffer,
+            completeFunc: ffi_reins_core_rust_future_complete_rust_buffer,
+            freeFunc: ffi_reins_core_rust_future_free_rust_buffer,
             liftFunc: FfiConverterTypePairingView_lift,
             errorHandler: FfiConverterTypeCoreError_lift
         )
@@ -3722,13 +3722,13 @@ open func pairingView(pairingId: String)async throws  -> PairingView  {
     return
         try  await uniffiRustCallAsync(
             rustFutureFunc: {
-                uniffi_rewarden_core_fn_method_rewardencore_pairing_view(
+                uniffi_reins_core_fn_method_reinscore_pairing_view(
                         self.uniffiCloneHandle(),FfiConverterString.lower(pairingId)
                 )
             },
-            pollFunc: ffi_rewarden_core_rust_future_poll_rust_buffer,
-            completeFunc: ffi_rewarden_core_rust_future_complete_rust_buffer,
-            freeFunc: ffi_rewarden_core_rust_future_free_rust_buffer,
+            pollFunc: ffi_reins_core_rust_future_poll_rust_buffer,
+            completeFunc: ffi_reins_core_rust_future_complete_rust_buffer,
+            freeFunc: ffi_reins_core_rust_future_free_rust_buffer,
             liftFunc: FfiConverterTypePairingView_lift,
             errorHandler: FfiConverterTypeCoreError_lift
         )
@@ -3741,13 +3741,13 @@ open func pending()async throws  -> [PendingItem]  {
     return
         try  await uniffiRustCallAsync(
             rustFutureFunc: {
-                uniffi_rewarden_core_fn_method_rewardencore_pending(
+                uniffi_reins_core_fn_method_reinscore_pending(
                         self.uniffiCloneHandle()
                 )
             },
-            pollFunc: ffi_rewarden_core_rust_future_poll_rust_buffer,
-            completeFunc: ffi_rewarden_core_rust_future_complete_rust_buffer,
-            freeFunc: ffi_rewarden_core_rust_future_free_rust_buffer,
+            pollFunc: ffi_reins_core_rust_future_poll_rust_buffer,
+            completeFunc: ffi_reins_core_rust_future_complete_rust_buffer,
+            freeFunc: ffi_reins_core_rust_future_free_rust_buffer,
             liftFunc: FfiConverterSequenceTypePendingItem.lift,
             errorHandler: FfiConverterTypeCoreError_lift
         )
@@ -3757,13 +3757,13 @@ open func registerDevice(fcmToken: String?)async throws   {
     return
         try  await uniffiRustCallAsync(
             rustFutureFunc: {
-                uniffi_rewarden_core_fn_method_rewardencore_register_device(
+                uniffi_reins_core_fn_method_reinscore_register_device(
                         self.uniffiCloneHandle(),FfiConverterOptionString.lower(fcmToken)
                 )
             },
-            pollFunc: ffi_rewarden_core_rust_future_poll_void,
-            completeFunc: ffi_rewarden_core_rust_future_complete_void,
-            freeFunc: ffi_rewarden_core_rust_future_free_void,
+            pollFunc: ffi_reins_core_rust_future_poll_void,
+            completeFunc: ffi_reins_core_rust_future_complete_void,
+            freeFunc: ffi_reins_core_rust_future_free_void,
             liftFunc: { $0 },
             errorHandler: FfiConverterTypeCoreError_lift
         )
@@ -3776,13 +3776,13 @@ open func removeAccount(account: String)async throws   {
     return
         try  await uniffiRustCallAsync(
             rustFutureFunc: {
-                uniffi_rewarden_core_fn_method_rewardencore_remove_account(
+                uniffi_reins_core_fn_method_reinscore_remove_account(
                         self.uniffiCloneHandle(),FfiConverterString.lower(account)
                 )
             },
-            pollFunc: ffi_rewarden_core_rust_future_poll_void,
-            completeFunc: ffi_rewarden_core_rust_future_complete_void,
-            freeFunc: ffi_rewarden_core_rust_future_free_void,
+            pollFunc: ffi_reins_core_rust_future_poll_void,
+            completeFunc: ffi_reins_core_rust_future_complete_void,
+            freeFunc: ffi_reins_core_rust_future_free_void,
             liftFunc: { $0 },
             errorHandler: FfiConverterTypeCoreError_lift
         )
@@ -3795,13 +3795,13 @@ open func removeServiceAccount(service: String, account: String)async throws   {
     return
         try  await uniffiRustCallAsync(
             rustFutureFunc: {
-                uniffi_rewarden_core_fn_method_rewardencore_remove_service_account(
+                uniffi_reins_core_fn_method_reinscore_remove_service_account(
                         self.uniffiCloneHandle(),FfiConverterString.lower(service),FfiConverterString.lower(account)
                 )
             },
-            pollFunc: ffi_rewarden_core_rust_future_poll_void,
-            completeFunc: ffi_rewarden_core_rust_future_complete_void,
-            freeFunc: ffi_rewarden_core_rust_future_free_void,
+            pollFunc: ffi_reins_core_rust_future_poll_void,
+            completeFunc: ffi_reins_core_rust_future_complete_void,
+            freeFunc: ffi_reins_core_rust_future_free_void,
             liftFunc: { $0 },
             errorHandler: FfiConverterTypeCoreError_lift
         )
@@ -3811,13 +3811,13 @@ open func renameProfile(profileId: String, name: String, icon: String?)async thr
     return
         try  await uniffiRustCallAsync(
             rustFutureFunc: {
-                uniffi_rewarden_core_fn_method_rewardencore_rename_profile(
+                uniffi_reins_core_fn_method_reinscore_rename_profile(
                         self.uniffiCloneHandle(),FfiConverterString.lower(profileId),FfiConverterString.lower(name),FfiConverterOptionString.lower(icon)
                 )
             },
-            pollFunc: ffi_rewarden_core_rust_future_poll_void,
-            completeFunc: ffi_rewarden_core_rust_future_complete_void,
-            freeFunc: ffi_rewarden_core_rust_future_free_void,
+            pollFunc: ffi_reins_core_rust_future_poll_void,
+            completeFunc: ffi_reins_core_rust_future_complete_void,
+            freeFunc: ffi_reins_core_rust_future_free_void,
             liftFunc: { $0 },
             errorHandler: FfiConverterTypeCoreError_lift
         )
@@ -3830,13 +3830,13 @@ open func resetProfile(profileId: String)async throws   {
     return
         try  await uniffiRustCallAsync(
             rustFutureFunc: {
-                uniffi_rewarden_core_fn_method_rewardencore_reset_profile(
+                uniffi_reins_core_fn_method_reinscore_reset_profile(
                         self.uniffiCloneHandle(),FfiConverterString.lower(profileId)
                 )
             },
-            pollFunc: ffi_rewarden_core_rust_future_poll_void,
-            completeFunc: ffi_rewarden_core_rust_future_complete_void,
-            freeFunc: ffi_rewarden_core_rust_future_free_void,
+            pollFunc: ffi_reins_core_rust_future_poll_void,
+            completeFunc: ffi_reins_core_rust_future_complete_void,
+            freeFunc: ffi_reins_core_rust_future_free_void,
             liftFunc: { $0 },
             errorHandler: FfiConverterTypeCoreError_lift
         )
@@ -3849,13 +3849,13 @@ open func resumeGrant(grantId: String, durationSecs: UInt64)async throws   {
     return
         try  await uniffiRustCallAsync(
             rustFutureFunc: {
-                uniffi_rewarden_core_fn_method_rewardencore_resume_grant(
+                uniffi_reins_core_fn_method_reinscore_resume_grant(
                         self.uniffiCloneHandle(),FfiConverterString.lower(grantId),FfiConverterUInt64.lower(durationSecs)
                 )
             },
-            pollFunc: ffi_rewarden_core_rust_future_poll_void,
-            completeFunc: ffi_rewarden_core_rust_future_complete_void,
-            freeFunc: ffi_rewarden_core_rust_future_free_void,
+            pollFunc: ffi_reins_core_rust_future_poll_void,
+            completeFunc: ffi_reins_core_rust_future_complete_void,
+            freeFunc: ffi_reins_core_rust_future_free_void,
             liftFunc: { $0 },
             errorHandler: FfiConverterTypeCoreError_lift
         )
@@ -3868,13 +3868,13 @@ open func resumeGrantEdited(grantId: String, standing: StandingGrant)async throw
     return
         try  await uniffiRustCallAsync(
             rustFutureFunc: {
-                uniffi_rewarden_core_fn_method_rewardencore_resume_grant_edited(
+                uniffi_reins_core_fn_method_reinscore_resume_grant_edited(
                         self.uniffiCloneHandle(),FfiConverterString.lower(grantId),FfiConverterTypeStandingGrant_lower(standing)
                 )
             },
-            pollFunc: ffi_rewarden_core_rust_future_poll_void,
-            completeFunc: ffi_rewarden_core_rust_future_complete_void,
-            freeFunc: ffi_rewarden_core_rust_future_free_void,
+            pollFunc: ffi_reins_core_rust_future_poll_void,
+            completeFunc: ffi_reins_core_rust_future_complete_void,
+            freeFunc: ffi_reins_core_rust_future_free_void,
             liftFunc: { $0 },
             errorHandler: FfiConverterTypeCoreError_lift
         )
@@ -3884,13 +3884,13 @@ open func revokeConnection(connectionId: String)async throws   {
     return
         try  await uniffiRustCallAsync(
             rustFutureFunc: {
-                uniffi_rewarden_core_fn_method_rewardencore_revoke_connection(
+                uniffi_reins_core_fn_method_reinscore_revoke_connection(
                         self.uniffiCloneHandle(),FfiConverterString.lower(connectionId)
                 )
             },
-            pollFunc: ffi_rewarden_core_rust_future_poll_void,
-            completeFunc: ffi_rewarden_core_rust_future_complete_void,
-            freeFunc: ffi_rewarden_core_rust_future_free_void,
+            pollFunc: ffi_reins_core_rust_future_poll_void,
+            completeFunc: ffi_reins_core_rust_future_complete_void,
+            freeFunc: ffi_reins_core_rust_future_free_void,
             liftFunc: { $0 },
             errorHandler: FfiConverterTypeCoreError_lift
         )
@@ -3900,13 +3900,13 @@ open func revokeGrant(grantId: String)async throws   {
     return
         try  await uniffiRustCallAsync(
             rustFutureFunc: {
-                uniffi_rewarden_core_fn_method_rewardencore_revoke_grant(
+                uniffi_reins_core_fn_method_reinscore_revoke_grant(
                         self.uniffiCloneHandle(),FfiConverterString.lower(grantId)
                 )
             },
-            pollFunc: ffi_rewarden_core_rust_future_poll_void,
-            completeFunc: ffi_rewarden_core_rust_future_complete_void,
-            freeFunc: ffi_rewarden_core_rust_future_free_void,
+            pollFunc: ffi_reins_core_rust_future_poll_void,
+            completeFunc: ffi_reins_core_rust_future_complete_void,
+            freeFunc: ffi_reins_core_rust_future_free_void,
             liftFunc: { $0 },
             errorHandler: FfiConverterTypeCoreError_lift
         )
@@ -3919,13 +3919,13 @@ open func serviceAccountStatus(service: String, account: String)async  -> GmailS
     return
         try!  await uniffiRustCallAsync(
             rustFutureFunc: {
-                uniffi_rewarden_core_fn_method_rewardencore_service_account_status(
+                uniffi_reins_core_fn_method_reinscore_service_account_status(
                         self.uniffiCloneHandle(),FfiConverterString.lower(service),FfiConverterString.lower(account)
                 )
             },
-            pollFunc: ffi_rewarden_core_rust_future_poll_rust_buffer,
-            completeFunc: ffi_rewarden_core_rust_future_complete_rust_buffer,
-            freeFunc: ffi_rewarden_core_rust_future_free_rust_buffer,
+            pollFunc: ffi_reins_core_rust_future_poll_rust_buffer,
+            completeFunc: ffi_reins_core_rust_future_complete_rust_buffer,
+            freeFunc: ffi_reins_core_rust_future_free_rust_buffer,
             liftFunc: FfiConverterTypeGmailStatus_lift,
             errorHandler: nil
             
@@ -3939,13 +3939,13 @@ open func services()async throws  -> [ServiceView]  {
     return
         try  await uniffiRustCallAsync(
             rustFutureFunc: {
-                uniffi_rewarden_core_fn_method_rewardencore_services(
+                uniffi_reins_core_fn_method_reinscore_services(
                         self.uniffiCloneHandle()
                 )
             },
-            pollFunc: ffi_rewarden_core_rust_future_poll_rust_buffer,
-            completeFunc: ffi_rewarden_core_rust_future_complete_rust_buffer,
-            freeFunc: ffi_rewarden_core_rust_future_free_rust_buffer,
+            pollFunc: ffi_reins_core_rust_future_poll_rust_buffer,
+            completeFunc: ffi_reins_core_rust_future_complete_rust_buffer,
+            freeFunc: ffi_reins_core_rust_future_free_rust_buffer,
             liftFunc: FfiConverterSequenceTypeServiceView.lift,
             errorHandler: FfiConverterTypeCoreError_lift
         )
@@ -3958,13 +3958,13 @@ open func session()async  -> SessionInfo?  {
     return
         try!  await uniffiRustCallAsync(
             rustFutureFunc: {
-                uniffi_rewarden_core_fn_method_rewardencore_session(
+                uniffi_reins_core_fn_method_reinscore_session(
                         self.uniffiCloneHandle()
                 )
             },
-            pollFunc: ffi_rewarden_core_rust_future_poll_rust_buffer,
-            completeFunc: ffi_rewarden_core_rust_future_complete_rust_buffer,
-            freeFunc: ffi_rewarden_core_rust_future_free_rust_buffer,
+            pollFunc: ffi_reins_core_rust_future_poll_rust_buffer,
+            completeFunc: ffi_reins_core_rust_future_complete_rust_buffer,
+            freeFunc: ffi_reins_core_rust_future_free_rust_buffer,
             liftFunc: FfiConverterOptionTypeSessionInfo.lift,
             errorHandler: nil
             
@@ -3980,13 +3980,13 @@ open func setAutopilotMode(connectionId: String?, mode: AutopilotMode?, minutes:
     return
         try  await uniffiRustCallAsync(
             rustFutureFunc: {
-                uniffi_rewarden_core_fn_method_rewardencore_set_autopilot_mode(
+                uniffi_reins_core_fn_method_reinscore_set_autopilot_mode(
                         self.uniffiCloneHandle(),FfiConverterOptionString.lower(connectionId),FfiConverterOptionTypeAutopilotMode.lower(mode),FfiConverterOptionUInt32.lower(minutes)
                 )
             },
-            pollFunc: ffi_rewarden_core_rust_future_poll_void,
-            completeFunc: ffi_rewarden_core_rust_future_complete_void,
-            freeFunc: ffi_rewarden_core_rust_future_free_void,
+            pollFunc: ffi_reins_core_rust_future_poll_void,
+            completeFunc: ffi_reins_core_rust_future_complete_void,
+            freeFunc: ffi_reins_core_rust_future_free_void,
             liftFunc: { $0 },
             errorHandler: FfiConverterTypeCoreError_lift
         )
@@ -3999,13 +3999,13 @@ open func setAutopilotWifiOnly(wifiOnly: Bool)async throws   {
     return
         try  await uniffiRustCallAsync(
             rustFutureFunc: {
-                uniffi_rewarden_core_fn_method_rewardencore_set_autopilot_wifi_only(
+                uniffi_reins_core_fn_method_reinscore_set_autopilot_wifi_only(
                         self.uniffiCloneHandle(),FfiConverterBool.lower(wifiOnly)
                 )
             },
-            pollFunc: ffi_rewarden_core_rust_future_poll_void,
-            completeFunc: ffi_rewarden_core_rust_future_complete_void,
-            freeFunc: ffi_rewarden_core_rust_future_free_void,
+            pollFunc: ffi_reins_core_rust_future_poll_void,
+            completeFunc: ffi_reins_core_rust_future_complete_void,
+            freeFunc: ffi_reins_core_rust_future_free_void,
             liftFunc: { $0 },
             errorHandler: FfiConverterTypeCoreError_lift
         )
@@ -4019,13 +4019,13 @@ open func setClassLock(profileId: String, classKey: String, locked: Bool?)async 
     return
         try  await uniffiRustCallAsync(
             rustFutureFunc: {
-                uniffi_rewarden_core_fn_method_rewardencore_set_class_lock(
+                uniffi_reins_core_fn_method_reinscore_set_class_lock(
                         self.uniffiCloneHandle(),FfiConverterString.lower(profileId),FfiConverterString.lower(classKey),FfiConverterOptionBool.lower(locked)
                 )
             },
-            pollFunc: ffi_rewarden_core_rust_future_poll_void,
-            completeFunc: ffi_rewarden_core_rust_future_complete_void,
-            freeFunc: ffi_rewarden_core_rust_future_free_void,
+            pollFunc: ffi_reins_core_rust_future_poll_void,
+            completeFunc: ffi_reins_core_rust_future_complete_void,
+            freeFunc: ffi_reins_core_rust_future_free_void,
             liftFunc: { $0 },
             errorHandler: FfiConverterTypeCoreError_lift
         )
@@ -4038,13 +4038,13 @@ open func setConnectionIcon(connectionId: String, icon: String?)async throws   {
     return
         try  await uniffiRustCallAsync(
             rustFutureFunc: {
-                uniffi_rewarden_core_fn_method_rewardencore_set_connection_icon(
+                uniffi_reins_core_fn_method_reinscore_set_connection_icon(
                         self.uniffiCloneHandle(),FfiConverterString.lower(connectionId),FfiConverterOptionString.lower(icon)
                 )
             },
-            pollFunc: ffi_rewarden_core_rust_future_poll_void,
-            completeFunc: ffi_rewarden_core_rust_future_complete_void,
-            freeFunc: ffi_rewarden_core_rust_future_free_void,
+            pollFunc: ffi_reins_core_rust_future_poll_void,
+            completeFunc: ffi_reins_core_rust_future_complete_void,
+            freeFunc: ffi_reins_core_rust_future_free_void,
             liftFunc: { $0 },
             errorHandler: FfiConverterTypeCoreError_lift
         )
@@ -4057,13 +4057,13 @@ open func setDefaultProfile(profileId: String)async throws   {
     return
         try  await uniffiRustCallAsync(
             rustFutureFunc: {
-                uniffi_rewarden_core_fn_method_rewardencore_set_default_profile(
+                uniffi_reins_core_fn_method_reinscore_set_default_profile(
                         self.uniffiCloneHandle(),FfiConverterString.lower(profileId)
                 )
             },
-            pollFunc: ffi_rewarden_core_rust_future_poll_void,
-            completeFunc: ffi_rewarden_core_rust_future_complete_void,
-            freeFunc: ffi_rewarden_core_rust_future_free_void,
+            pollFunc: ffi_reins_core_rust_future_poll_void,
+            completeFunc: ffi_reins_core_rust_future_complete_void,
+            freeFunc: ffi_reins_core_rust_future_free_void,
             liftFunc: { $0 },
             errorHandler: FfiConverterTypeCoreError_lift
         )
@@ -4075,7 +4075,7 @@ open func setDefaultProfile(profileId: String)async throws   {
      */
 open func setModelRuntime(runtime: ModelRuntime)  {try! rustCall() {
         uniffiCallStatus in
-    uniffi_rewarden_core_fn_method_rewardencore_set_model_runtime(
+    uniffi_reins_core_fn_method_reinscore_set_model_runtime(
             self.uniffiCloneHandle(),
         FfiConverterTypeModelRuntime_lower(runtime),uniffiCallStatus
     )
@@ -4086,13 +4086,13 @@ open func setPreset(profileId: String, preset: Preset)async throws   {
     return
         try  await uniffiRustCallAsync(
             rustFutureFunc: {
-                uniffi_rewarden_core_fn_method_rewardencore_set_preset(
+                uniffi_reins_core_fn_method_reinscore_set_preset(
                         self.uniffiCloneHandle(),FfiConverterString.lower(profileId),FfiConverterTypePreset_lower(preset)
                 )
             },
-            pollFunc: ffi_rewarden_core_rust_future_poll_void,
-            completeFunc: ffi_rewarden_core_rust_future_complete_void,
-            freeFunc: ffi_rewarden_core_rust_future_free_void,
+            pollFunc: ffi_reins_core_rust_future_poll_void,
+            completeFunc: ffi_reins_core_rust_future_complete_void,
+            freeFunc: ffi_reins_core_rust_future_free_void,
             liftFunc: { $0 },
             errorHandler: FfiConverterTypeCoreError_lift
         )
@@ -4107,13 +4107,13 @@ open func ssoBegin(serverUrl: String)async throws  -> SsoStart  {
     return
         try  await uniffiRustCallAsync(
             rustFutureFunc: {
-                uniffi_rewarden_core_fn_method_rewardencore_sso_begin(
+                uniffi_reins_core_fn_method_reinscore_sso_begin(
                         self.uniffiCloneHandle(),FfiConverterString.lower(serverUrl)
                 )
             },
-            pollFunc: ffi_rewarden_core_rust_future_poll_rust_buffer,
-            completeFunc: ffi_rewarden_core_rust_future_complete_rust_buffer,
-            freeFunc: ffi_rewarden_core_rust_future_free_rust_buffer,
+            pollFunc: ffi_reins_core_rust_future_poll_rust_buffer,
+            completeFunc: ffi_reins_core_rust_future_complete_rust_buffer,
+            freeFunc: ffi_reins_core_rust_future_free_rust_buffer,
             liftFunc: FfiConverterTypeSsoStart_lift,
             errorHandler: FfiConverterTypeCoreError_lift
         )
@@ -4127,13 +4127,13 @@ open func ssoFinish(serverUrl: String, callbackUrl: String, state: String, verif
     return
         try  await uniffiRustCallAsync(
             rustFutureFunc: {
-                uniffi_rewarden_core_fn_method_rewardencore_sso_finish(
+                uniffi_reins_core_fn_method_reinscore_sso_finish(
                         self.uniffiCloneHandle(),FfiConverterString.lower(serverUrl),FfiConverterString.lower(callbackUrl),FfiConverterString.lower(state),FfiConverterString.lower(verifier)
                 )
             },
-            pollFunc: ffi_rewarden_core_rust_future_poll_rust_buffer,
-            completeFunc: ffi_rewarden_core_rust_future_complete_rust_buffer,
-            freeFunc: ffi_rewarden_core_rust_future_free_rust_buffer,
+            pollFunc: ffi_reins_core_rust_future_poll_rust_buffer,
+            completeFunc: ffi_reins_core_rust_future_complete_rust_buffer,
+            freeFunc: ffi_reins_core_rust_future_free_rust_buffer,
             liftFunc: FfiConverterTypeSsoOutcome_lift,
             errorHandler: FfiConverterTypeCoreError_lift
         )
@@ -4146,13 +4146,13 @@ open func sync(waitSecs: UInt32)async throws  -> [PendingItem]  {
     return
         try  await uniffiRustCallAsync(
             rustFutureFunc: {
-                uniffi_rewarden_core_fn_method_rewardencore_sync(
+                uniffi_reins_core_fn_method_reinscore_sync(
                         self.uniffiCloneHandle(),FfiConverterUInt32.lower(waitSecs)
                 )
             },
-            pollFunc: ffi_rewarden_core_rust_future_poll_rust_buffer,
-            completeFunc: ffi_rewarden_core_rust_future_complete_rust_buffer,
-            freeFunc: ffi_rewarden_core_rust_future_free_rust_buffer,
+            pollFunc: ffi_reins_core_rust_future_poll_rust_buffer,
+            completeFunc: ffi_reins_core_rust_future_complete_rust_buffer,
+            freeFunc: ffi_reins_core_rust_future_free_rust_buffer,
             liftFunc: FfiConverterSequenceTypePendingItem.lift,
             errorHandler: FfiConverterTypeCoreError_lift
         )
@@ -4166,13 +4166,13 @@ open func unlockAccount(codeOrPassword: String)async throws   {
     return
         try  await uniffiRustCallAsync(
             rustFutureFunc: {
-                uniffi_rewarden_core_fn_method_rewardencore_unlock_account(
+                uniffi_reins_core_fn_method_reinscore_unlock_account(
                         self.uniffiCloneHandle(),FfiConverterString.lower(codeOrPassword)
                 )
             },
-            pollFunc: ffi_rewarden_core_rust_future_poll_void,
-            completeFunc: ffi_rewarden_core_rust_future_complete_void,
-            freeFunc: ffi_rewarden_core_rust_future_free_void,
+            pollFunc: ffi_reins_core_rust_future_poll_void,
+            completeFunc: ffi_reins_core_rust_future_complete_void,
+            freeFunc: ffi_reins_core_rust_future_free_void,
             liftFunc: { $0 },
             errorHandler: FfiConverterTypeCoreError_lift
         )
@@ -4186,13 +4186,13 @@ open func mcpAdd(url: String, name: String?)async throws  -> McpAddStep  {
     return
         try  await uniffiRustCallAsync(
             rustFutureFunc: {
-                uniffi_rewarden_core_fn_method_rewardencore_mcp_add(
+                uniffi_reins_core_fn_method_reinscore_mcp_add(
                         self.uniffiCloneHandle(),FfiConverterString.lower(url),FfiConverterOptionString.lower(name)
                 )
             },
-            pollFunc: ffi_rewarden_core_rust_future_poll_rust_buffer,
-            completeFunc: ffi_rewarden_core_rust_future_complete_rust_buffer,
-            freeFunc: ffi_rewarden_core_rust_future_free_rust_buffer,
+            pollFunc: ffi_reins_core_rust_future_poll_rust_buffer,
+            completeFunc: ffi_reins_core_rust_future_complete_rust_buffer,
+            freeFunc: ffi_reins_core_rust_future_free_rust_buffer,
             liftFunc: FfiConverterTypeMcpAddStep_lift,
             errorHandler: FfiConverterTypeCoreError_lift
         )
@@ -4205,13 +4205,13 @@ open func mcpAddWithToken(url: String, token: String, name: String?)async throws
     return
         try  await uniffiRustCallAsync(
             rustFutureFunc: {
-                uniffi_rewarden_core_fn_method_rewardencore_mcp_add_with_token(
+                uniffi_reins_core_fn_method_reinscore_mcp_add_with_token(
                         self.uniffiCloneHandle(),FfiConverterString.lower(url),FfiConverterString.lower(token),FfiConverterOptionString.lower(name)
                 )
             },
-            pollFunc: ffi_rewarden_core_rust_future_poll_rust_buffer,
-            completeFunc: ffi_rewarden_core_rust_future_complete_rust_buffer,
-            freeFunc: ffi_rewarden_core_rust_future_free_rust_buffer,
+            pollFunc: ffi_reins_core_rust_future_poll_rust_buffer,
+            completeFunc: ffi_reins_core_rust_future_complete_rust_buffer,
+            freeFunc: ffi_reins_core_rust_future_free_rust_buffer,
             liftFunc: FfiConverterTypeMcpServerView_lift,
             errorHandler: FfiConverterTypeCoreError_lift
         )
@@ -4224,13 +4224,13 @@ open func mcpFinishSignIn(serverId: String, redirectUrl: String)async throws  ->
     return
         try  await uniffiRustCallAsync(
             rustFutureFunc: {
-                uniffi_rewarden_core_fn_method_rewardencore_mcp_finish_sign_in(
+                uniffi_reins_core_fn_method_reinscore_mcp_finish_sign_in(
                         self.uniffiCloneHandle(),FfiConverterString.lower(serverId),FfiConverterString.lower(redirectUrl)
                 )
             },
-            pollFunc: ffi_rewarden_core_rust_future_poll_rust_buffer,
-            completeFunc: ffi_rewarden_core_rust_future_complete_rust_buffer,
-            freeFunc: ffi_rewarden_core_rust_future_free_rust_buffer,
+            pollFunc: ffi_reins_core_rust_future_poll_rust_buffer,
+            completeFunc: ffi_reins_core_rust_future_complete_rust_buffer,
+            freeFunc: ffi_reins_core_rust_future_free_rust_buffer,
             liftFunc: FfiConverterTypeMcpServerView_lift,
             errorHandler: FfiConverterTypeCoreError_lift
         )
@@ -4243,13 +4243,13 @@ open func mcpRefresh(id: String)async throws  -> McpAddStep  {
     return
         try  await uniffiRustCallAsync(
             rustFutureFunc: {
-                uniffi_rewarden_core_fn_method_rewardencore_mcp_refresh(
+                uniffi_reins_core_fn_method_reinscore_mcp_refresh(
                         self.uniffiCloneHandle(),FfiConverterString.lower(id)
                 )
             },
-            pollFunc: ffi_rewarden_core_rust_future_poll_rust_buffer,
-            completeFunc: ffi_rewarden_core_rust_future_complete_rust_buffer,
-            freeFunc: ffi_rewarden_core_rust_future_free_rust_buffer,
+            pollFunc: ffi_reins_core_rust_future_poll_rust_buffer,
+            completeFunc: ffi_reins_core_rust_future_complete_rust_buffer,
+            freeFunc: ffi_reins_core_rust_future_free_rust_buffer,
             liftFunc: FfiConverterTypeMcpAddStep_lift,
             errorHandler: FfiConverterTypeCoreError_lift
         )
@@ -4262,13 +4262,13 @@ open func mcpRemove(id: String)async throws   {
     return
         try  await uniffiRustCallAsync(
             rustFutureFunc: {
-                uniffi_rewarden_core_fn_method_rewardencore_mcp_remove(
+                uniffi_reins_core_fn_method_reinscore_mcp_remove(
                         self.uniffiCloneHandle(),FfiConverterString.lower(id)
                 )
             },
-            pollFunc: ffi_rewarden_core_rust_future_poll_void,
-            completeFunc: ffi_rewarden_core_rust_future_complete_void,
-            freeFunc: ffi_rewarden_core_rust_future_free_void,
+            pollFunc: ffi_reins_core_rust_future_poll_void,
+            completeFunc: ffi_reins_core_rust_future_complete_void,
+            freeFunc: ffi_reins_core_rust_future_free_void,
             liftFunc: { $0 },
             errorHandler: FfiConverterTypeCoreError_lift
         )
@@ -4281,32 +4281,32 @@ open func mcpServers()async throws  -> [McpServerView]  {
     return
         try  await uniffiRustCallAsync(
             rustFutureFunc: {
-                uniffi_rewarden_core_fn_method_rewardencore_mcp_servers(
+                uniffi_reins_core_fn_method_reinscore_mcp_servers(
                         self.uniffiCloneHandle()
                 )
             },
-            pollFunc: ffi_rewarden_core_rust_future_poll_rust_buffer,
-            completeFunc: ffi_rewarden_core_rust_future_complete_rust_buffer,
-            freeFunc: ffi_rewarden_core_rust_future_free_rust_buffer,
+            pollFunc: ffi_reins_core_rust_future_poll_rust_buffer,
+            completeFunc: ffi_reins_core_rust_future_complete_rust_buffer,
+            freeFunc: ffi_reins_core_rust_future_free_rust_buffer,
             liftFunc: FfiConverterSequenceTypeMcpServerView.lift,
             errorHandler: FfiConverterTypeCoreError_lift
         )
 }
     
     /**
-     * Sends a tool's results through the Rewarden server (for large results) or not.
+     * Sends a tool's results through the Reins server (for large results) or not.
      */
 open func mcpSetHeavy(id: String, tool: String, heavy: Bool)async throws   {
     return
         try  await uniffiRustCallAsync(
             rustFutureFunc: {
-                uniffi_rewarden_core_fn_method_rewardencore_mcp_set_heavy(
+                uniffi_reins_core_fn_method_reinscore_mcp_set_heavy(
                         self.uniffiCloneHandle(),FfiConverterString.lower(id),FfiConverterString.lower(tool),FfiConverterBool.lower(heavy)
                 )
             },
-            pollFunc: ffi_rewarden_core_rust_future_poll_void,
-            completeFunc: ffi_rewarden_core_rust_future_complete_void,
-            freeFunc: ffi_rewarden_core_rust_future_free_void,
+            pollFunc: ffi_reins_core_rust_future_poll_void,
+            completeFunc: ffi_reins_core_rust_future_complete_void,
+            freeFunc: ffi_reins_core_rust_future_free_void,
             liftFunc: { $0 },
             errorHandler: FfiConverterTypeCoreError_lift
         )
@@ -4320,24 +4320,24 @@ open func mcpSetHeavy(id: String, tool: String, heavy: Bool)async throws   {
 #if swift(>=5.8)
 @_documentation(visibility: private)
 #endif
-public struct FfiConverterTypeRewardenCore: FfiConverter {
+public struct FfiConverterTypeReinsCore: FfiConverter {
     typealias FfiType = UInt64
-    typealias SwiftType = RewardenCore
+    typealias SwiftType = ReinsCore
 
-    public static func lift(_ handle: UInt64) throws -> RewardenCore {
-        return RewardenCore(unsafeFromHandle: handle)
+    public static func lift(_ handle: UInt64) throws -> ReinsCore {
+        return ReinsCore(unsafeFromHandle: handle)
     }
 
-    public static func lower(_ value: RewardenCore) -> UInt64 {
+    public static func lower(_ value: ReinsCore) -> UInt64 {
         return value.uniffiCloneHandle()
     }
 
-    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> RewardenCore {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> ReinsCore {
         let handle: UInt64 = try readInt(&buf)
         return try lift(handle)
     }
 
-    public static func write(_ value: RewardenCore, into buf: inout [UInt8]) {
+    public static func write(_ value: ReinsCore, into buf: inout [UInt8]) {
         writeInt(&buf, lower(value))
     }
 }
@@ -4346,15 +4346,15 @@ public struct FfiConverterTypeRewardenCore: FfiConverter {
 #if swift(>=5.8)
 @_documentation(visibility: private)
 #endif
-public func FfiConverterTypeRewardenCore_lift(_ handle: UInt64) throws -> RewardenCore {
-    return try FfiConverterTypeRewardenCore.lift(handle)
+public func FfiConverterTypeReinsCore_lift(_ handle: UInt64) throws -> ReinsCore {
+    return try FfiConverterTypeReinsCore.lift(handle)
 }
 
 #if swift(>=5.8)
 @_documentation(visibility: private)
 #endif
-public func FfiConverterTypeRewardenCore_lower(_ value: RewardenCore) -> UInt64 {
-    return FfiConverterTypeRewardenCore.lower(value)
+public func FfiConverterTypeReinsCore_lower(_ value: ReinsCore) -> UInt64 {
+    return FfiConverterTypeReinsCore.lower(value)
 }
 
 
@@ -4855,7 +4855,7 @@ public struct ApprovalView: Equatable, Hashable {
      */
     public var classes: [ClassOption]
     /**
-     * A push from git on the user's computer (through the Rewarden desktop app): what it changes, ref by ref.
+     * A push from git on the user's computer (through the Reins desktop app): what it changes, ref by ref.
      */
     public var git: GitPushView?
     /**
@@ -4867,7 +4867,7 @@ public struct ApprovalView: Equatable, Hashable {
      */
     public var mcp: McpCallView?
     /**
-     * A yes-or-no question from the desktop app (`rewarden ask`, a harness hook).
+     * A yes-or-no question from the desktop app (`reins ask`, a harness hook).
      */
     public var ask: AskView?
     /**
@@ -4916,7 +4916,7 @@ public struct ApprovalView: Equatable, Hashable {
          * A change to another integration: the kinds of change a standing permission can allow.
          */classes: [ClassOption], 
         /**
-         * A push from git on the user's computer (through the Rewarden desktop app): what it changes, ref by ref.
+         * A push from git on the user's computer (through the Reins desktop app): what it changes, ref by ref.
          */git: GitPushView?, 
         /**
          * A write that uses a file the AI uploaded through the server: the file, as the server saw it.
@@ -4925,7 +4925,7 @@ public struct ApprovalView: Equatable, Hashable {
          * A call to a tool of an MCP server the user added.
          */mcp: McpCallView?, 
         /**
-         * A yes-or-no question from the desktop app (`rewarden ask`, a harness hook).
+         * A yes-or-no question from the desktop app (`reins ask`, a harness hook).
          */ask: AskView?, 
         /**
          * Vault secrets the desktop app asks for, for one command or API route (names only, never the values).
@@ -5149,7 +5149,7 @@ public struct AutoDecisionView: Equatable, Hashable {
     public var connectionId: String
     public var connectionLabel: String
     /**
-     * What it was, in a few words ("Push to a branch · dkat/rewarden").
+     * What it was, in a few words ("Push to a branch · dkat/reins").
      */
     public var title: String
     /**
@@ -5171,7 +5171,7 @@ public struct AutoDecisionView: Equatable, Hashable {
     // declare one manually.
     public init(requestId: String, kind: PendingKind, connectionId: String, connectionLabel: String, 
         /**
-         * What it was, in a few words ("Push to a branch · dkat/rewarden").
+         * What it was, in a few words ("Push to a branch · dkat/reins").
          */title: String, 
         /**
          * `Approve` or `Deny`.
@@ -7399,7 +7399,7 @@ public struct McpToolView: Equatable, Hashable {
      */
     public var destructive: Bool
     /**
-     * Its results go through the Rewarden server (they were too large for the phone once).
+     * Its results go through the Reins server (they were too large for the phone once).
      */
     public var heavy: Bool
 
@@ -7416,7 +7416,7 @@ public struct McpToolView: Equatable, Hashable {
          * The server says it may destroy things: asked every time, never remembered.
          */destructive: Bool, 
         /**
-         * Its results go through the Rewarden server (they were too large for the phone once).
+         * Its results go through the Reins server (they were too large for the phone once).
          */heavy: Bool) {
         self.name = name
         self.title = title
@@ -7867,7 +7867,7 @@ public func FfiConverterTypeModelStatus_lower(_ value: ModelStatus) -> RustBuffe
  */
 public struct NeighbourView: Equatable, Hashable {
     /**
-     * Short label ("Push to a branch · dkat/rewarden").
+     * Short label ("Push to a branch · dkat/reins").
      */
     public var label: String
     /**
@@ -7884,7 +7884,7 @@ public struct NeighbourView: Equatable, Hashable {
     // declare one manually.
     public init(
         /**
-         * Short label ("Push to a branch · dkat/rewarden").
+         * Short label ("Push to a branch · dkat/reins").
          */label: String, 
         /**
          * What the user decided then (`Approve` or `Deny`).
@@ -8022,7 +8022,7 @@ public struct PairingView: Equatable, Hashable {
     public var choices: Data
     public var createdAt: Int64
     /**
-     * The Rewarden desktop app asks to pair: the eight digits ("4821 9930") of its key, which the computer shows
+     * The Reins desktop app asks to pair: the eight digits ("4821 9930") of its key, which the computer shows
      * too. `None` for an AI client (or a key that cannot be used).
      */
     public var keyFingerprint: String?
@@ -8031,7 +8031,7 @@ public struct PairingView: Equatable, Hashable {
     // declare one manually.
     public init(id: String, clientName: String, clientHost: String, choices: Data, createdAt: Int64, 
         /**
-         * The Rewarden desktop app asks to pair: the eight digits ("4821 9930") of its key, which the computer shows
+         * The Reins desktop app asks to pair: the eight digits ("4821 9930") of its key, which the computer shows
          * too. `None` for an AI client (or a key that cannot be used).
          */keyFingerprint: String?) {
         self.id = id
@@ -9085,7 +9085,7 @@ public struct SuggestionView: Equatable, Hashable {
      */
     public var confidence: Float
     /**
-     * One line, e.g. "Like 4 times you approved: Push to a branch · dkat/rewarden".
+     * One line, e.g. "Like 4 times you approved: Push to a branch · dkat/reins".
      */
     public var reason: String
     public var neighbours: [NeighbourView]
@@ -9118,7 +9118,7 @@ public struct SuggestionView: Equatable, Hashable {
          * 1 − normalised entropy of (approve, deny, ask).
          */confidence: Float, 
         /**
-         * One line, e.g. "Like 4 times you approved: Push to a branch · dkat/rewarden".
+         * One line, e.g. "Like 4 times you approved: Push to a branch · dkat/reins".
          */reason: String, neighbours: [NeighbourView], profileId: String, profileName: String, classKey: String, 
         /**
          * The target was never approved for this connection before.
@@ -10302,7 +10302,7 @@ public enum PendingKind: Equatable, Hashable {
     case request
     case pairing
     /**
-     * A file an AI uploaded with `rewarden_upload`, waiting for the user's decision (see [`BlobView`]).
+     * A file an AI uploaded with `reins_upload`, waiting for the user's decision (see [`BlobView`]).
      */
     case blob
     /**
@@ -11758,7 +11758,7 @@ fileprivate func uniffiRustCallAsync<F, T>(
 ) async throws -> T {
     // Make sure to call the ensure init function since future creation doesn't have a
     // RustCallStatus param, so doesn't use makeRustCall()
-    uniffiEnsureRewardenCoreInitialized()
+    uniffiEnsureReinsCoreInitialized()
     let rustFuture = rustFutureFunc()
     defer {
         freeFunc(rustFuture)
@@ -11878,7 +11878,7 @@ private func uniffiForeignFutureDroppedCallback(handle: UInt64) {
 }
 
 // For testing
-public func uniffiForeignFutureHandleCountRewardenCore() -> Int {
+public func uniffiForeignFutureHandleCountReinsCore() -> Int {
     UNIFFI_FOREIGN_FUTURE_HANDLE_MAP.count
 }
 
@@ -11893,299 +11893,299 @@ private let initializationResult: InitializationResult = {
     // Get the bindings contract version from our ComponentInterface
     let bindings_contract_version = 30
     // Get the scaffolding contract version by calling the into the dylib
-    let scaffolding_contract_version = ffi_rewarden_core_uniffi_contract_version()
+    let scaffolding_contract_version = ffi_reins_core_uniffi_contract_version()
     if bindings_contract_version != scaffolding_contract_version {
         return InitializationResult.contractVersionMismatch
     }
-    if (uniffi_rewarden_core_checksum_method_rewardencore_account_keys() != 55556) {
+    if (uniffi_reins_core_checksum_method_reinscore_account_keys() != 41425) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_rewarden_core_checksum_method_rewardencore_account_recovery_code() != 25859) {
+    if (uniffi_reins_core_checksum_method_reinscore_account_recovery_code() != 1786) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_rewarden_core_checksum_method_rewardencore_account_status() != 57626) {
+    if (uniffi_reins_core_checksum_method_reinscore_account_status() != 62124) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_rewarden_core_checksum_method_rewardencore_accounts() != 3885) {
+    if (uniffi_reins_core_checksum_method_reinscore_accounts() != 48644) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_rewarden_core_checksum_method_rewardencore_activity() != 47459) {
+    if (uniffi_reins_core_checksum_method_reinscore_activity() != 58338) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_rewarden_core_checksum_method_rewardencore_add_account() != 16010) {
+    if (uniffi_reins_core_checksum_method_reinscore_add_account() != 25987) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_rewarden_core_checksum_method_rewardencore_add_service_account() != 53529) {
+    if (uniffi_reins_core_checksum_method_reinscore_add_service_account() != 1627) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_rewarden_core_checksum_method_rewardencore_add_token_account() != 28323) {
+    if (uniffi_reins_core_checksum_method_reinscore_add_token_account() != 43246) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_rewarden_core_checksum_method_rewardencore_answer_blob() != 15626) {
+    if (uniffi_reins_core_checksum_method_reinscore_answer_blob() != 10725) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_rewarden_core_checksum_method_rewardencore_answer_join() != 47286) {
+    if (uniffi_reins_core_checksum_method_reinscore_answer_join() != 45029) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_rewarden_core_checksum_method_rewardencore_answer_pairing() != 57523) {
+    if (uniffi_reins_core_checksum_method_reinscore_answer_pairing() != 8400) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_rewarden_core_checksum_method_rewardencore_approval_view() != 2205) {
+    if (uniffi_reins_core_checksum_method_reinscore_approval_view() != 29546) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_rewarden_core_checksum_method_rewardencore_approve() != 43724) {
+    if (uniffi_reins_core_checksum_method_reinscore_approve() != 62035) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_rewarden_core_checksum_method_rewardencore_assign_profile() != 43870) {
+    if (uniffi_reins_core_checksum_method_reinscore_assign_profile() != 6030) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_rewarden_core_checksum_method_rewardencore_autopilot_evaluate() != 62340) {
+    if (uniffi_reins_core_checksum_method_reinscore_autopilot_evaluate() != 55479) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_rewarden_core_checksum_method_rewardencore_autopilot_profiles() != 21798) {
+    if (uniffi_reins_core_checksum_method_reinscore_autopilot_profiles() != 57675) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_rewarden_core_checksum_method_rewardencore_autopilot_settings() != 4862) {
+    if (uniffi_reins_core_checksum_method_reinscore_autopilot_settings() != 18344) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_rewarden_core_checksum_method_rewardencore_autopilot_suggestion() != 29048) {
+    if (uniffi_reins_core_checksum_method_reinscore_autopilot_suggestion() != 53484) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_rewarden_core_checksum_method_rewardencore_blob_view() != 62453) {
+    if (uniffi_reins_core_checksum_method_reinscore_blob_view() != 35360) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_rewarden_core_checksum_method_rewardencore_connections() != 18299) {
+    if (uniffi_reins_core_checksum_method_reinscore_connections() != 58172) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_rewarden_core_checksum_method_rewardencore_correct_decision() != 34541) {
+    if (uniffi_reins_core_checksum_method_reinscore_correct_decision() != 45214) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_rewarden_core_checksum_method_rewardencore_create_account() != 34743) {
+    if (uniffi_reins_core_checksum_method_reinscore_create_account() != 55260) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_rewarden_core_checksum_method_rewardencore_create_grant() != 8698) {
+    if (uniffi_reins_core_checksum_method_reinscore_create_grant() != 60205) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_rewarden_core_checksum_method_rewardencore_create_profile() != 15693) {
+    if (uniffi_reins_core_checksum_method_reinscore_create_profile() != 4955) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_rewarden_core_checksum_method_rewardencore_delete_grant() != 49190) {
+    if (uniffi_reins_core_checksum_method_reinscore_delete_grant() != 24211) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_rewarden_core_checksum_method_rewardencore_delete_model() != 13000) {
+    if (uniffi_reins_core_checksum_method_reinscore_delete_model() != 4397) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_rewarden_core_checksum_method_rewardencore_delete_profile() != 10342) {
+    if (uniffi_reins_core_checksum_method_reinscore_delete_profile() != 17943) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_rewarden_core_checksum_method_rewardencore_deny() != 20686) {
+    if (uniffi_reins_core_checksum_method_reinscore_deny() != 24458) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_rewarden_core_checksum_method_rewardencore_download_model() != 56548) {
+    if (uniffi_reins_core_checksum_method_reinscore_download_model() != 52176) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_rewarden_core_checksum_method_rewardencore_fetch_email() != 53099) {
+    if (uniffi_reins_core_checksum_method_reinscore_fetch_email() != 21111) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_rewarden_core_checksum_method_rewardencore_gmail_status() != 56539) {
+    if (uniffi_reins_core_checksum_method_reinscore_gmail_status() != 55396) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_rewarden_core_checksum_method_rewardencore_grants() != 3132) {
+    if (uniffi_reins_core_checksum_method_reinscore_grants() != 31182) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_rewarden_core_checksum_method_rewardencore_handle_push() != 24778) {
+    if (uniffi_reins_core_checksum_method_reinscore_handle_push() != 31505) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_rewarden_core_checksum_method_rewardencore_handle_push_deferring_autopilot() != 33611) {
+    if (uniffi_reins_core_checksum_method_reinscore_handle_push_deferring_autopilot() != 38744) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_rewarden_core_checksum_method_rewardencore_join_begin() != 7205) {
+    if (uniffi_reins_core_checksum_method_reinscore_join_begin() != 61201) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_rewarden_core_checksum_method_rewardencore_join_cancel() != 34469) {
+    if (uniffi_reins_core_checksum_method_reinscore_join_cancel() != 52669) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_rewarden_core_checksum_method_rewardencore_join_poll() != 55590) {
+    if (uniffi_reins_core_checksum_method_reinscore_join_poll() != 64197) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_rewarden_core_checksum_method_rewardencore_join_view() != 30696) {
+    if (uniffi_reins_core_checksum_method_reinscore_join_view() != 30242) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_rewarden_core_checksum_method_rewardencore_login() != 49678) {
+    if (uniffi_reins_core_checksum_method_reinscore_login() != 8846) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_rewarden_core_checksum_method_rewardencore_login_begin() != 49495) {
+    if (uniffi_reins_core_checksum_method_reinscore_login_begin() != 6723) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_rewarden_core_checksum_method_rewardencore_login_code() != 10919) {
+    if (uniffi_reins_core_checksum_method_reinscore_login_code() != 12921) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_rewarden_core_checksum_method_rewardencore_login_password() != 1565) {
+    if (uniffi_reins_core_checksum_method_reinscore_login_password() != 16445) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_rewarden_core_checksum_method_rewardencore_logout() != 37191) {
+    if (uniffi_reins_core_checksum_method_reinscore_logout() != 36033) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_rewarden_core_checksum_method_rewardencore_model_status() != 11237) {
+    if (uniffi_reins_core_checksum_method_reinscore_model_status() != 15718) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_rewarden_core_checksum_method_rewardencore_pairing_by_code() != 39601) {
+    if (uniffi_reins_core_checksum_method_reinscore_pairing_by_code() != 29957) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_rewarden_core_checksum_method_rewardencore_pairing_view() != 62634) {
+    if (uniffi_reins_core_checksum_method_reinscore_pairing_view() != 14669) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_rewarden_core_checksum_method_rewardencore_pending() != 30347) {
+    if (uniffi_reins_core_checksum_method_reinscore_pending() != 41948) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_rewarden_core_checksum_method_rewardencore_register_device() != 22047) {
+    if (uniffi_reins_core_checksum_method_reinscore_register_device() != 53382) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_rewarden_core_checksum_method_rewardencore_remove_account() != 32687) {
+    if (uniffi_reins_core_checksum_method_reinscore_remove_account() != 62770) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_rewarden_core_checksum_method_rewardencore_remove_service_account() != 7518) {
+    if (uniffi_reins_core_checksum_method_reinscore_remove_service_account() != 28197) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_rewarden_core_checksum_method_rewardencore_rename_profile() != 55217) {
+    if (uniffi_reins_core_checksum_method_reinscore_rename_profile() != 43478) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_rewarden_core_checksum_method_rewardencore_reset_profile() != 17818) {
+    if (uniffi_reins_core_checksum_method_reinscore_reset_profile() != 9460) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_rewarden_core_checksum_method_rewardencore_resume_grant() != 47808) {
+    if (uniffi_reins_core_checksum_method_reinscore_resume_grant() != 58497) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_rewarden_core_checksum_method_rewardencore_resume_grant_edited() != 36136) {
+    if (uniffi_reins_core_checksum_method_reinscore_resume_grant_edited() != 34009) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_rewarden_core_checksum_method_rewardencore_revoke_connection() != 55114) {
+    if (uniffi_reins_core_checksum_method_reinscore_revoke_connection() != 10319) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_rewarden_core_checksum_method_rewardencore_revoke_grant() != 48554) {
+    if (uniffi_reins_core_checksum_method_reinscore_revoke_grant() != 13815) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_rewarden_core_checksum_method_rewardencore_service_account_status() != 58313) {
+    if (uniffi_reins_core_checksum_method_reinscore_service_account_status() != 15888) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_rewarden_core_checksum_method_rewardencore_services() != 11999) {
+    if (uniffi_reins_core_checksum_method_reinscore_services() != 31924) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_rewarden_core_checksum_method_rewardencore_session() != 20774) {
+    if (uniffi_reins_core_checksum_method_reinscore_session() != 8809) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_rewarden_core_checksum_method_rewardencore_set_autopilot_mode() != 203) {
+    if (uniffi_reins_core_checksum_method_reinscore_set_autopilot_mode() != 26200) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_rewarden_core_checksum_method_rewardencore_set_autopilot_wifi_only() != 18478) {
+    if (uniffi_reins_core_checksum_method_reinscore_set_autopilot_wifi_only() != 5322) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_rewarden_core_checksum_method_rewardencore_set_class_lock() != 47652) {
+    if (uniffi_reins_core_checksum_method_reinscore_set_class_lock() != 43604) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_rewarden_core_checksum_method_rewardencore_set_connection_icon() != 27545) {
+    if (uniffi_reins_core_checksum_method_reinscore_set_connection_icon() != 4706) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_rewarden_core_checksum_method_rewardencore_set_default_profile() != 61538) {
+    if (uniffi_reins_core_checksum_method_reinscore_set_default_profile() != 2528) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_rewarden_core_checksum_method_rewardencore_set_model_runtime() != 11087) {
+    if (uniffi_reins_core_checksum_method_reinscore_set_model_runtime() != 29047) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_rewarden_core_checksum_method_rewardencore_set_preset() != 49459) {
+    if (uniffi_reins_core_checksum_method_reinscore_set_preset() != 57690) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_rewarden_core_checksum_method_rewardencore_sso_begin() != 31222) {
+    if (uniffi_reins_core_checksum_method_reinscore_sso_begin() != 4525) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_rewarden_core_checksum_method_rewardencore_sso_finish() != 49441) {
+    if (uniffi_reins_core_checksum_method_reinscore_sso_finish() != 10284) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_rewarden_core_checksum_method_rewardencore_sync() != 34004) {
+    if (uniffi_reins_core_checksum_method_reinscore_sync() != 42469) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_rewarden_core_checksum_method_rewardencore_unlock_account() != 1080) {
+    if (uniffi_reins_core_checksum_method_reinscore_unlock_account() != 55036) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_rewarden_core_checksum_method_rewardencore_mcp_add() != 45649) {
+    if (uniffi_reins_core_checksum_method_reinscore_mcp_add() != 53705) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_rewarden_core_checksum_method_rewardencore_mcp_add_with_token() != 51093) {
+    if (uniffi_reins_core_checksum_method_reinscore_mcp_add_with_token() != 31274) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_rewarden_core_checksum_method_rewardencore_mcp_finish_sign_in() != 47710) {
+    if (uniffi_reins_core_checksum_method_reinscore_mcp_finish_sign_in() != 47981) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_rewarden_core_checksum_method_rewardencore_mcp_refresh() != 39029) {
+    if (uniffi_reins_core_checksum_method_reinscore_mcp_refresh() != 13819) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_rewarden_core_checksum_method_rewardencore_mcp_remove() != 40905) {
+    if (uniffi_reins_core_checksum_method_reinscore_mcp_remove() != 18678) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_rewarden_core_checksum_method_rewardencore_mcp_servers() != 11280) {
+    if (uniffi_reins_core_checksum_method_reinscore_mcp_servers() != 62313) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_rewarden_core_checksum_method_rewardencore_mcp_set_heavy() != 58452) {
+    if (uniffi_reins_core_checksum_method_reinscore_mcp_set_heavy() != 52286) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_rewarden_core_checksum_method_downloadprogress_progress() != 29326) {
+    if (uniffi_reins_core_checksum_method_downloadprogress_progress() != 29206) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_rewarden_core_checksum_method_modelruntime_load() != 52469) {
+    if (uniffi_reins_core_checksum_method_modelruntime_load() != 5557) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_rewarden_core_checksum_method_modelruntime_run() != 39003) {
+    if (uniffi_reins_core_checksum_method_modelruntime_run() != 7762) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_rewarden_core_checksum_method_modelruntime_unload() != 46871) {
+    if (uniffi_reins_core_checksum_method_modelruntime_unload() != 53717) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_rewarden_core_checksum_method_devicebridge_services() != 3910) {
+    if (uniffi_reins_core_checksum_method_devicebridge_services() != 20041) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_rewarden_core_checksum_method_devicebridge_permitted() != 12094) {
+    if (uniffi_reins_core_checksum_method_devicebridge_permitted() != 38765) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_rewarden_core_checksum_method_devicebridge_calendar_events() != 47391) {
+    if (uniffi_reins_core_checksum_method_devicebridge_calendar_events() != 62110) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_rewarden_core_checksum_method_devicebridge_calendar_create() != 5966) {
+    if (uniffi_reins_core_checksum_method_devicebridge_calendar_create() != 8919) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_rewarden_core_checksum_method_devicebridge_contacts_search() != 28782) {
+    if (uniffi_reins_core_checksum_method_devicebridge_contacts_search() != 59259) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_rewarden_core_checksum_method_devicebridge_sms_threads() != 41349) {
+    if (uniffi_reins_core_checksum_method_devicebridge_sms_threads() != 46233) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_rewarden_core_checksum_method_devicebridge_sms_messages() != 49584) {
+    if (uniffi_reins_core_checksum_method_devicebridge_sms_messages() != 43150) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_rewarden_core_checksum_method_devicebridge_sms_send() != 44794) {
+    if (uniffi_reins_core_checksum_method_devicebridge_sms_send() != 18382) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_rewarden_core_checksum_method_googletokenprovider_access_token() != 58285) {
+    if (uniffi_reins_core_checksum_method_googletokenprovider_access_token() != 35733) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_rewarden_core_checksum_method_keywrapper_wrap() != 57404) {
+    if (uniffi_reins_core_checksum_method_keywrapper_wrap() != 35710) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_rewarden_core_checksum_method_keywrapper_unwrap() != 49763) {
+    if (uniffi_reins_core_checksum_method_keywrapper_unwrap() != 33536) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_rewarden_core_checksum_method_notifier_item_pending() != 52902) {
+    if (uniffi_reins_core_checksum_method_notifier_item_pending() != 34462) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_rewarden_core_checksum_method_notifier_item_resolved() != 1487) {
+    if (uniffi_reins_core_checksum_method_notifier_item_resolved() != 54939) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_rewarden_core_checksum_method_notifier_auto_decided() != 21589) {
+    if (uniffi_reins_core_checksum_method_notifier_auto_decided() != 3570) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_rewarden_core_checksum_method_notifier_autopilot_changed() != 49462) {
+    if (uniffi_reins_core_checksum_method_notifier_autopilot_changed() != 32979) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_rewarden_core_checksum_constructor_rewardencore_new() != 36733) {
+    if (uniffi_reins_core_checksum_constructor_reinscore_new() != 41877) {
         return InitializationResult.apiChecksumMismatch
     }
 
@@ -12200,7 +12200,7 @@ private let initializationResult: InitializationResult = {
 
 // Make the ensure init function public so that other modules which have external type references to
 // our types can call it.
-public func uniffiEnsureRewardenCoreInitialized() {
+public func uniffiEnsureReinsCoreInitialized() {
     switch initializationResult {
     case .ok:
         break

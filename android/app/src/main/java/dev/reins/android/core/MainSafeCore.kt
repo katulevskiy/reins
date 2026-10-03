@@ -1,39 +1,39 @@
-package dev.rewarden.android.core
+package dev.reins.android.core
 
-import dev.rewarden.core.AccountKeys
-import dev.rewarden.core.AccountView
-import dev.rewarden.core.AutopilotMode
-import dev.rewarden.core.AutopilotSettings
-import dev.rewarden.core.DownloadProgress
-import dev.rewarden.core.ModelRuntime
-import dev.rewarden.core.ModelStatus
-import dev.rewarden.core.Preset
-import dev.rewarden.core.ProfileView
-import dev.rewarden.core.SuggestionView
-import dev.rewarden.core.Verdict
-import dev.rewarden.core.ActivityEntry
-import dev.rewarden.core.ApprovalChoice
-import dev.rewarden.core.ApprovalKind
-import dev.rewarden.core.StandingGrant
-import dev.rewarden.core.ApprovalView
-import dev.rewarden.core.BlobView
-import dev.rewarden.core.ConnectionView
-import dev.rewarden.core.EmailContent
-import dev.rewarden.core.GmailStatus
-import dev.rewarden.core.GrantView
-import dev.rewarden.core.JoinProgress
-import dev.rewarden.core.JoinStart
-import dev.rewarden.core.JoinView
-import dev.rewarden.core.LoginProgress
-import dev.rewarden.core.McpAddStep
-import dev.rewarden.core.McpServerView
-import dev.rewarden.core.ServiceView
-import dev.rewarden.core.PairingView
-import dev.rewarden.core.PendingItem
-import dev.rewarden.core.RewardenCoreInterface
-import dev.rewarden.core.SessionInfo
-import dev.rewarden.core.SsoOutcome
-import dev.rewarden.core.SsoStart
+import dev.reins.core.AccountKeys
+import dev.reins.core.AccountView
+import dev.reins.core.AutopilotMode
+import dev.reins.core.AutopilotSettings
+import dev.reins.core.DownloadProgress
+import dev.reins.core.ModelRuntime
+import dev.reins.core.ModelStatus
+import dev.reins.core.Preset
+import dev.reins.core.ProfileView
+import dev.reins.core.SuggestionView
+import dev.reins.core.Verdict
+import dev.reins.core.ActivityEntry
+import dev.reins.core.ApprovalChoice
+import dev.reins.core.ApprovalKind
+import dev.reins.core.StandingGrant
+import dev.reins.core.ApprovalView
+import dev.reins.core.BlobView
+import dev.reins.core.ConnectionView
+import dev.reins.core.EmailContent
+import dev.reins.core.GmailStatus
+import dev.reins.core.GrantView
+import dev.reins.core.JoinProgress
+import dev.reins.core.JoinStart
+import dev.reins.core.JoinView
+import dev.reins.core.LoginProgress
+import dev.reins.core.McpAddStep
+import dev.reins.core.McpServerView
+import dev.reins.core.ServiceView
+import dev.reins.core.PairingView
+import dev.reins.core.PendingItem
+import dev.reins.core.ReinsCoreInterface
+import dev.reins.core.SessionInfo
+import dev.reins.core.SsoOutcome
+import dev.reins.core.SsoStart
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
@@ -46,11 +46,11 @@ import kotlinx.coroutines.withContext
  */
 class MainSafeCore(
     private val dispatcher: CoroutineDispatcher = Dispatchers.IO,
-    create: () -> RewardenCoreInterface,
-) : RewardenCoreInterface {
+    create: () -> ReinsCoreInterface,
+) : ReinsCoreInterface {
     private val delegate by lazy(create)
 
-    private suspend inline fun <T> io(crossinline block: suspend RewardenCoreInterface.() -> T): T =
+    private suspend inline fun <T> io(crossinline block: suspend ReinsCoreInterface.() -> T): T =
         withContext(dispatcher) { delegate.block() }
 
     override suspend fun activity(limit: UInt): List<ActivityEntry> = io { activity(limit) }

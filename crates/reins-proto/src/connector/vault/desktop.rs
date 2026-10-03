@@ -1,5 +1,5 @@
-//! Vault tools only the paired Rewarden desktop app may call: secrets for one command or API route (`rewarden run`,
-//! the API proxy), and SSH signing (`rewarden`'s SSH agent). The private SSH key never leaves the phone: the phone signs.
+//! Vault tools only the paired Reins desktop app may call: secrets for one command or API route (`reins run`,
+//! the API proxy), and SSH signing (`reins`'s SSH agent). The private SSH key never leaves the phone: the phone signs.
 
 use crate::connector::{Effect, Param, ToolSpec, VAULT, int_p, list_p, str_p, text_p, tool};
 

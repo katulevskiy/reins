@@ -32,7 +32,7 @@ const TOTAL_TIMEOUT: Duration = Duration::from_hours(1);
 
 /// Test-only: lets the integration tests use `http://127.0.0.1` mock servers. Never set in production; it is read
 /// from the environment because it is not a setting anybody should find in the admin page.
-pub const ALLOW_LOOPBACK_ENV: &str = "REWARDEN_TEST_ALLOW_LOOPBACK";
+pub const ALLOW_LOOPBACK_ENV: &str = "REINS_TEST_ALLOW_LOOPBACK";
 
 static ALLOW_LOOPBACK: LazyLock<bool> =
     LazyLock::new(|| std::env::var(ALLOW_LOOPBACK_ENV).is_ok_and(|v| matches!(v.trim(), "true" | "1")));
@@ -233,7 +233,7 @@ fn build_client(allow_loopback: bool) -> Client {
         .connect_timeout(CONNECT_TIMEOUT)
         .read_timeout(READ_TIMEOUT)
         .timeout(TOTAL_TIMEOUT)
-        .user_agent(concat!("Rewarden/", env!("CARGO_PKG_VERSION")))
+        .user_agent(concat!("Reins/", env!("CARGO_PKG_VERSION")))
         .build()
         .expect("the outbound HTTP client builds")
 }

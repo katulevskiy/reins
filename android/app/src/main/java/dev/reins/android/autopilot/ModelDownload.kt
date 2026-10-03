@@ -1,4 +1,4 @@
-package dev.rewarden.android.autopilot
+package dev.reins.android.autopilot
 
 import android.content.Context
 import android.content.pm.ServiceInfo
@@ -11,11 +11,11 @@ import androidx.work.OneTimeWorkRequestBuilder
 import androidx.work.WorkInfo
 import androidx.work.WorkManager
 import androidx.work.WorkerParameters
-import dev.rewarden.android.RewardenApp
-import dev.rewarden.android.platform.AppNotifier
-import dev.rewarden.android.ui.common.userMessage
-import dev.rewarden.core.CoreException
-import dev.rewarden.core.DownloadProgress
+import dev.reins.android.ReinsApp
+import dev.reins.android.platform.AppNotifier
+import dev.reins.android.ui.common.userMessage
+import dev.reins.core.CoreException
+import dev.reins.core.DownloadProgress
 import kotlin.coroutines.cancellation.CancellationException
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.map
@@ -77,7 +77,7 @@ class WorkModelDownloads(private val context: Context) : ModelDownloads {
  */
 class ModelDownloadWorker(context: Context, params: WorkerParameters) : CoroutineWorker(context, params) {
     override suspend fun doWork(): Result {
-        val container = (applicationContext as RewardenApp).container
+        val container = (applicationContext as ReinsApp).container
         val notifier = container.notifier
         showProgress(notifier, 0, 0)
         val progress = object : DownloadProgress {
@@ -121,7 +121,7 @@ class ModelDownloadWorker(context: Context, params: WorkerParameters) : Coroutin
     }
 
     override suspend fun getForegroundInfo(): ForegroundInfo =
-        foregroundInfo((applicationContext as RewardenApp).container.notifier, 0, 0)
+        foregroundInfo((applicationContext as ReinsApp).container.notifier, 0, 0)
 
     private fun foregroundInfo(notifier: AppNotifier, downloaded: Long, total: Long) =
         ForegroundInfo(AppNotifier.DOWNLOAD_ID, notifier.downloadNotification(downloaded, total), ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC)

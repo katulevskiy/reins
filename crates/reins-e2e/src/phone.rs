@@ -4,9 +4,9 @@ use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use data_encoding::BASE64URL_NOPAD;
-use rewarden_core::{
+use reins_core::{
     AutoDecisionView, AutopilotEvent, CoreConfig, CoreError, ForeignError, GoogleTokenProvider, KeyWrapper, Notifier,
-    PendingItem, RewardenCore, SsoOutcome,
+    PendingItem, ReinsCore, SsoOutcome,
 };
 use serde_json::{Value, json};
 use wiremock::matchers::{method, path};
@@ -60,7 +60,7 @@ impl Notifier for Notes {
 }
 
 pub struct Phone {
-    pub core: Arc<RewardenCore>,
+    pub core: Arc<ReinsCore>,
     pub gmail: MockServer,
     pub notes: Arc<Notes>,
     _dir: tempfile::TempDir,
@@ -151,9 +151,8 @@ impl Phone {
         };
         configure(&mut cfg);
         let notifier: Arc<dyn Notifier> = Arc::<Notes>::clone(&notes);
-        let core =
-            RewardenCore::with_config(dir.path().to_str().expect("utf8"), &Keys, Arc::new(Google), notifier, cfg)
-                .expect("core");
+        let core = ReinsCore::with_config(dir.path().to_str().expect("utf8"), &Keys, Arc::new(Google), notifier, cfg)
+            .expect("core");
         Self {
             core,
             gmail,

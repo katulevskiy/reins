@@ -1,4 +1,4 @@
-package dev.rewarden.android.platform.update
+package dev.reins.android.platform.update
 
 import android.content.Context
 import android.content.pm.PackageInstaller
@@ -43,7 +43,7 @@ data class UpdateState(
     val snoozed: Boolean = false,
     /** The user asked to install: the prompt follows the download and the install through. */
     val installRequested: Boolean = false,
-    /** Android needs "install unknown apps" for Rewarden first; the app explains before opening that setting. */
+    /** Android needs "install unknown apps" for Reins first; the app explains before opening that setting. */
     val askPermission: Boolean = false,
 ) {
     /** Whether the in-app prompt is up (the screen still decides where, and never over an approval sheet). */
@@ -122,7 +122,7 @@ class UpdateController(
                 install()
             } else {
                 status.release?.let { release ->
-                    setStatus(UpdateStatus.Failed("Rewarden can't install updates until you allow it to install apps.", release))
+                    setStatus(UpdateStatus.Failed("Reins can't install updates until you allow it to install apps.", release))
                 }
             }
             return
@@ -340,7 +340,7 @@ class UpdateController(
 fun installFailureMessage(status: Int, message: String?): String? = when (status) {
     PackageInstaller.STATUS_SUCCESS, PackageInstaller.STATUS_PENDING_USER_ACTION, PackageInstaller.STATUS_FAILURE_ABORTED -> null
     PackageInstaller.STATUS_FAILURE_CONFLICT ->
-        "Android refused the update: it is signed with a different key than the Rewarden installed on this phone."
+        "Android refused the update: it is signed with a different key than the Reins installed on this phone."
     PackageInstaller.STATUS_FAILURE_INCOMPATIBLE -> "This update can't be installed on this phone."
     PackageInstaller.STATUS_FAILURE_STORAGE -> "Not enough free space to install the update."
     PackageInstaller.STATUS_FAILURE_INVALID -> "The downloaded file is not a valid app and was deleted."

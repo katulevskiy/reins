@@ -6,8 +6,8 @@
 use std::sync::Arc;
 use std::time::Duration;
 
+use reins_proto::connector::{ConnectorCall, GITHUB};
 use reqwest::{Method, StatusCode};
-use rewarden_proto::connector::{ConnectorCall, GITHUB};
 use serde_json::Value;
 
 use super::{Connector, Item, Preview};
@@ -55,7 +55,7 @@ fn fetch_headers(token: &str) -> Vec<(String, String)> {
     vec![
         ("Authorization".to_owned(), format!("Bearer {token}")),
         ("X-GitHub-Api-Version".to_owned(), "2022-11-28".to_owned()),
-        ("User-Agent".to_owned(), "rewarden".to_owned()),
+        ("User-Agent".to_owned(), "reins".to_owned()),
     ]
 }
 
@@ -238,7 +238,7 @@ impl GitHub {
                 .bearer_auth(token)
                 .header("Accept", options.accept.unwrap_or("application/vnd.github+json"))
                 .header("X-GitHub-Api-Version", "2022-11-28")
-                .header("User-Agent", "rewarden")
+                .header("User-Agent", "reins")
                 .query(query);
             if let Some((content_type, bytes)) = &options.raw {
                 req = req.header("Content-Type", *content_type).body(bytes.clone());
@@ -497,7 +497,7 @@ mod tests {
         );
         assert_eq!(parents("me/app", None), [("me".to_owned(), "Every repository of me".to_owned())]);
         for (granted, thing) in [("me/app", "me/app@main"), ("me", "me/app"), ("me", "me/app@main")] {
-            assert!(rewarden_policy::resource_covers(granted, thing));
+            assert!(reins_policy::resource_covers(granted, thing));
         }
     }
 }

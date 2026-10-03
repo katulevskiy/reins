@@ -77,7 +77,7 @@ enum DeviceStatus {
 @Observable
 @MainActor
 final class AppModel {
-    let core: any RewardenCoreProtocol
+    let core: any ReinsCoreProtocol
     let feedback: Feedback
     let authenticator: Authenticating
     /// True for the `-demo` fake core (screenshots, UI tests, a look around without a server).
@@ -155,7 +155,7 @@ final class AppModel {
     /// Autopilot's model coming down: the job, its bytes, the network it waits for (the screen, the Live Activity).
     let modelDownloads: ModelDownloads
 
-    init(core: any RewardenCoreProtocol, feedback: Feedback, authenticator: Authenticating, demo: Bool = false,
+    init(core: any ReinsCoreProtocol, feedback: Feedback, authenticator: Authenticating, demo: Bool = false,
          modelDownloads: ModelDownloads? = nil) {
         self.core = core
         self.feedback = feedback

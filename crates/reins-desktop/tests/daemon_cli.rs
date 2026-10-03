@@ -1,4 +1,4 @@
-//! The `rewarden` command line: git setup on a temporary `HOME`, and status / pending / approve against a daemon
+//! The `reins` command line: git setup on a temporary `HOME`, and status / pending / approve against a daemon
 //! started by the binary itself.
 
 use std::path::Path;
@@ -16,7 +16,7 @@ impl Env {
         std::fs::create_dir_all(&config).unwrap();
         std::fs::write(
             config.join("config.toml"),
-            format!("listen = \"127.0.0.1:{port}\"\nmode = \"local\"\n[github]\ntoken = \"env:REWARDEN_TEST_TOKEN\"\n"),
+            format!("listen = \"127.0.0.1:{port}\"\nmode = \"local\"\n[github]\ntoken = \"env:REINS_TEST_TOKEN\"\n"),
         )
         .unwrap();
         Self {
@@ -27,16 +27,16 @@ impl Env {
     fn command(&self, args: &[&str]) -> Command {
         let home = self.dir.path().join("home");
         std::fs::create_dir_all(&home).unwrap();
-        let mut c = Command::new(env!("CARGO_BIN_EXE_rewarden"));
+        let mut c = Command::new(env!("CARGO_BIN_EXE_reins"));
         c.args(args)
             .env("HOME", &home)
             .env("USERPROFILE", &home)
             .env("XDG_CONFIG_HOME", home.join(".config"))
             .env("GIT_CONFIG_GLOBAL", home.join(".gitconfig"))
             .env("GIT_CONFIG_NOSYSTEM", "1")
-            .env("REWARDEN_CONFIG_DIR", self.dir.path().join("config"))
-            .env("REWARDEN_STATE_DIR", self.dir.path().join("state"))
-            .env("REWARDEN_TEST_TOKEN", "t0ken");
+            .env("REINS_CONFIG_DIR", self.dir.path().join("config"))
+            .env("REINS_STATE_DIR", self.dir.path().join("state"))
+            .env("REINS_TEST_TOKEN", "t0ken");
         c
     }
 
@@ -146,12 +146,12 @@ fn the_daemon_stops_cleanly_when_the_control_api_asks() {
     let mut daemon = env.command(&["daemon"]).stderr(std::process::Stdio::null()).spawn().unwrap();
     let token = env.dir.path().join("state/control.token");
     wait_for(&token);
-    let paths = rewarden_desktop::config::Paths {
+    let paths = reins_desktop::config::Paths {
         config_dir: env.dir.path().join("config"),
         state_dir: env.dir.path().join("state"),
     };
     let rt = tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap();
-    let client = rewarden_desktop::control::Client::new(&paths, ([127, 0, 0, 1], port).into()).unwrap();
+    let client = reins_desktop::control::Client::new(&paths, ([127, 0, 0, 1], port).into()).unwrap();
     let stopped = rt.block_on(client.shutdown(Duration::from_secs(10)));
     if stopped.is_err() {
         daemon.kill().ok();

@@ -1,4 +1,4 @@
-package dev.rewarden.android.design
+package dev.reins.android.design
 
 import android.content.Context
 import android.graphics.Bitmap
@@ -28,7 +28,7 @@ import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import com.caverock.androidsvg.SVG
-import dev.rewarden.android.design.blobatar.Blobatar
+import dev.reins.android.design.blobatar.Blobatar
 
 /**
  * An AI provider the user can pick as a connection's icon.

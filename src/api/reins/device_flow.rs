@@ -1,9 +1,9 @@
 //! OAuth 2.0 Device Authorization Grant (RFC 8628) for the desktop app: the computer shows a QR code, the phone scans
 //! it, and the phone's answer logs the computer in. No browser and nothing to type.
 //!
-//! 1. The desktop app asks for a grant (`POST /rewarden/oauth/device_authorization`) and gets a secret device code, a
+//! 1. The desktop app asks for a grant (`POST /reins/oauth/device_authorization`) and gets a secret device code, a
 //!    short user code (`BCDF-GHJK`, also in the QR code's link) and a two-digit number to show.
-//! 2. The phone of the account (its approval device) claims the user code (`POST /rewarden/api/pairings/claim`). That
+//! 2. The phone of the account (its approval device) claims the user code (`POST /reins/api/pairings/claim`). That
 //!    starts an ordinary pairing ([`PairingHub`]) for the phone's account, with the number the computer shows among
 //!    the three choices, and the desktop app's key to compare and pin.
 //! 3. The phone answers the pairing as always (A6): the right number, a name, biometrics. The connection is created.
@@ -17,7 +17,7 @@ use std::sync::{LazyLock, Mutex, MutexGuard, PoisonError};
 use std::time::Duration;
 
 use rand::RngExt;
-use rewarden_proto::{
+use reins_proto::{
     ids::{ConnectionId, PairingId},
     pairing::{PairingRequest, USER_CODE_ALPHABET, USER_CODE_LEN, normalize_user_code},
 };
@@ -27,7 +27,7 @@ use super::{
     pairing::{PairingClient, PairingHub, PairingStatus, generate_choices},
     ttl::{Full, TtlMap},
 };
-use crate::auth::rewarden::{hash_token, random_token};
+use crate::auth::reins::{hash_token, random_token};
 
 /// `grant_type` of the token request that redeems a device code.
 pub const DEVICE_CODE_GRANT: &str = "urn:ietf:params:oauth:grant-type:device_code";
@@ -242,10 +242,10 @@ pub static DEVICE_GRANTS: LazyLock<DeviceGrants> = LazyLock::new(DeviceGrants::n
 mod tests {
     use std::{collections::HashSet, sync::Arc};
 
-    use rewarden_proto::pairing::PairingResponse;
+    use reins_proto::pairing::PairingResponse;
 
     use super::*;
-    use crate::api::rewarden::{
+    use crate::api::reins::{
         pairing::{PairingAnswer, PairingAnswerError},
         relay::ItemSignal,
     };
@@ -259,7 +259,7 @@ mod tests {
             client_id: "desktop-client".to_owned(),
             client_name: "Reins desktop app on mac".to_owned(),
             client_host: "127.0.0.1".to_owned(),
-            client_key: Some(rewarden_proto::desktop::encode_key(&[7u8; 32])),
+            client_key: Some(reins_proto::desktop::encode_key(&[7u8; 32])),
         }
     }
 

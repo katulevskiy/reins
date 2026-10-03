@@ -7,12 +7,12 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use common::{FakeGoogle, FakeKeys};
-use rewarden_core::connector::Connector;
-use rewarden_core::connector::calendar::{GoogleCalendar, GoogleContacts};
-use rewarden_core::connector::github::GitHub;
-use rewarden_core::store::Store;
-use rewarden_core::{CoreError, GmailStatus, GoogleTokenProvider};
-use rewarden_proto::connector::{ConnectorCall, spec_for_tool};
+use reins_core::connector::Connector;
+use reins_core::connector::calendar::{GoogleCalendar, GoogleContacts};
+use reins_core::connector::github::GitHub;
+use reins_core::store::Store;
+use reins_core::{CoreError, GmailStatus, GoogleTokenProvider};
+use reins_proto::connector::{ConnectorCall, spec_for_tool};
 use serde_json::{Value, json};
 use wiremock::matchers::{body_json, header, method, path, query_param};
 use wiremock::{Mock, MockServer, ResponseTemplate};
@@ -26,7 +26,7 @@ fn google() -> Arc<dyn GoogleTokenProvider> {
 }
 
 fn client() -> reqwest::Client {
-    rewarden_core::http::client().unwrap()
+    reins_core::http::client().unwrap()
 }
 
 // ---- Google Calendar ---------------------------------------------------------------------------------------------

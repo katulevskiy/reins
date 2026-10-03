@@ -1,4 +1,4 @@
-package dev.rewarden.android.ui.signin
+package dev.reins.android.ui.signin
 
 import android.Manifest
 import android.content.ClipData
@@ -34,24 +34,24 @@ import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import dev.rewarden.android.design.ButtonStyle
-import dev.rewarden.android.design.CapsuleButton
-import dev.rewarden.android.design.Glyph
-import dev.rewarden.android.design.GlyphIcon
-import dev.rewarden.android.design.Group
-import dev.rewarden.android.design.LocalColors
-import dev.rewarden.android.design.RText
-import dev.rewarden.android.design.RType
-import dev.rewarden.android.design.Screen
-import dev.rewarden.android.feedback.Cue
-import dev.rewarden.android.feedback.Event
-import dev.rewarden.android.feedback.LocalFeedback
-import dev.rewarden.android.feedback.cueUnlessRecent
-import dev.rewarden.android.feedback.play
-import dev.rewarden.android.ui.AppViewModel
-import dev.rewarden.android.ui.pairing.ComputerHowTo
-import dev.rewarden.android.ui.pairing.ConnectComputerPanel
-import dev.rewarden.android.ui.pairing.DesktopAppLink
+import dev.reins.android.design.ButtonStyle
+import dev.reins.android.design.CapsuleButton
+import dev.reins.android.design.Glyph
+import dev.reins.android.design.GlyphIcon
+import dev.reins.android.design.Group
+import dev.reins.android.design.LocalColors
+import dev.reins.android.design.RText
+import dev.reins.android.design.RType
+import dev.reins.android.design.Screen
+import dev.reins.android.feedback.Cue
+import dev.reins.android.feedback.Event
+import dev.reins.android.feedback.LocalFeedback
+import dev.reins.android.feedback.cueUnlessRecent
+import dev.reins.android.feedback.play
+import dev.reins.android.ui.AppViewModel
+import dev.reins.android.ui.pairing.ComputerHowTo
+import dev.reins.android.ui.pairing.ConnectComputerPanel
+import dev.reins.android.ui.pairing.DesktopAppLink
 
 /** The two pages after a fresh sign-in. */
 enum class SetupPage { Computer, Ai }

@@ -2,7 +2,7 @@
 //! `read_repository` (fetch) and `write_repository` (push). The API takes it as a bearer token; git over HTTPS takes
 //! any user name with it, `oauth2` by convention. Repositories may sit in nested groups (`group/subgroup/name`).
 
-use rewarden_proto::connector::GITLAB;
+use reins_proto::connector::GITLAB;
 use serde_json::Value;
 
 use super::{Auth, Credentials, Forge, GitHost, plain_token};

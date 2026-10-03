@@ -1,4 +1,4 @@
-package dev.rewarden.android.ui.common
+package dev.reins.android.ui.common
 
 import java.text.DateFormat
 import java.util.Date
@@ -10,7 +10,7 @@ fun formatTime(epochSeconds: Long): String =
 /** "expires in 2 h" style remaining time for an expiry in unix seconds. */
 fun formatExpiry(
     expiresAt: Long?,
-    nowSeconds: Long = (dev.rewarden.android.design.Timers.frozenNowMillis ?: System.currentTimeMillis()) / 1000,
+    nowSeconds: Long = (dev.reins.android.design.Timers.frozenNowMillis ?: System.currentTimeMillis()) / 1000,
 ): String {
     if (expiresAt == null) return "no time limit"
     val left = expiresAt - nowSeconds
@@ -25,7 +25,7 @@ fun formatExpiry(
 /** "just now", "5 min ago", "3 h ago", "yesterday", else the date. */
 fun relativeTime(
     epochSeconds: Long,
-    nowSeconds: Long = (dev.rewarden.android.design.Timers.frozenNowMillis ?: System.currentTimeMillis()) / 1000,
+    nowSeconds: Long = (dev.reins.android.design.Timers.frozenNowMillis ?: System.currentTimeMillis()) / 1000,
 ): String {
     val d = nowSeconds - epochSeconds
     return when {

@@ -1,4 +1,4 @@
-CREATE TABLE rewarden_devices (
+CREATE TABLE reins_devices (
     user_uuid   CHAR(36) NOT NULL PRIMARY KEY,
     device_uuid CHAR(36) NOT NULL,
     fcm_token   TEXT,
@@ -6,14 +6,14 @@ CREATE TABLE rewarden_devices (
     FOREIGN KEY (user_uuid) REFERENCES users (uuid) ON DELETE CASCADE
 );
 
-CREATE TABLE rewarden_clients (
+CREATE TABLE reins_clients (
     client_id     VARCHAR(64) NOT NULL PRIMARY KEY,
     client_name   TEXT        NOT NULL,
     redirect_uris TEXT        NOT NULL,
     created_at    BIGINT      NOT NULL
 );
 
-CREATE TABLE rewarden_connections (
+CREATE TABLE reins_connections (
     uuid         CHAR(36) NOT NULL PRIMARY KEY,
     user_uuid    CHAR(36) NOT NULL,
     client_id    TEXT     NOT NULL,
@@ -25,13 +25,13 @@ CREATE TABLE rewarden_connections (
     FOREIGN KEY (user_uuid) REFERENCES users (uuid) ON DELETE CASCADE
 );
 
-CREATE INDEX idx_rewarden_connections_user ON rewarden_connections (user_uuid);
+CREATE INDEX idx_reins_connections_user ON reins_connections (user_uuid);
 
-CREATE TABLE rewarden_refresh_tokens (
+CREATE TABLE reins_refresh_tokens (
     token_hash      CHAR(64) NOT NULL PRIMARY KEY,
     connection_uuid CHAR(36) NOT NULL,
     expires_at      BIGINT   NOT NULL,
-    FOREIGN KEY (connection_uuid) REFERENCES rewarden_connections (uuid) ON DELETE CASCADE
+    FOREIGN KEY (connection_uuid) REFERENCES reins_connections (uuid) ON DELETE CASCADE
 );
 
-CREATE INDEX idx_rewarden_refresh_tokens_connection ON rewarden_refresh_tokens (connection_uuid);
+CREATE INDEX idx_reins_refresh_tokens_connection ON reins_refresh_tokens (connection_uuid);

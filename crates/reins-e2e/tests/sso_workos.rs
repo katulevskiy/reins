@@ -3,15 +3,15 @@
 
 use std::time::Duration;
 
-use rewarden_core::{AccountKeys, CoreError};
-use rewarden_e2e::workos::{FakeWorkos, User};
-use rewarden_e2e::{Phone, Server};
+use reins_core::{AccountKeys, CoreError};
+use reins_e2e::workos::{FakeWorkos, User};
+use reins_e2e::{Phone, Server};
 use serde_json::{Value, json};
 
 /// The KDF iterations prelogin reports for `email`: 100 000 for a keyless account, the server's default (600 000)
 /// for an email it does not know.
 async fn prelogin_iterations(server: &Server, email: &str) -> u64 {
-    rewarden_e2e::init_tls();
+    reins_e2e::init_tls();
     let r: Value = reqwest::Client::new()
         .post(server.url("/identity/accounts/prelogin"))
         .json(&json!({"email": email}))
@@ -112,7 +112,7 @@ async fn sso_sign_in_makes_a_keyless_vault_that_follows_workos() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn another_phone_gets_the_keys_from_the_approval_device() {
-    use rewarden_core::{JoinProgress, PendingKind};
+    use reins_core::{JoinProgress, PendingKind};
 
     let workos = FakeWorkos::start().await;
     let server = Server::start_with_env(5, 3, &workos.server_env()).await;

@@ -9,7 +9,7 @@
   <key>CFBundleDisplayName</key>
   <string>Reins</string>
   <key>CFBundleExecutable</key>
-  <string>Reins</string>
+  <string>reins-app</string>
   <key>CFBundleIconFile</key>
   <string>Reins.icns</string>
   <key>CFBundleIdentifier</key>

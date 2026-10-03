@@ -1,7 +1,7 @@
-package dev.rewarden.android.ui.nav
+package dev.reins.android.ui.nav
 
-import dev.rewarden.core.PendingItem
-import dev.rewarden.core.PendingKind
+import dev.reins.core.PendingItem
+import dev.reins.core.PendingKind
 
 /** An `OPEN_ITEM` intent. Any app can send one to the exported launcher activity, so nothing in it is trusted. */
 data class DeepLink(val kind: PendingKind, val id: String) {

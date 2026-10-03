@@ -1,7 +1,7 @@
 use std::fmt;
 
 use regex::{Regex, RegexBuilder};
-use rewarden_proto::normalize_address;
+use reins_proto::normalize_address;
 use serde::de::Error as _;
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 
@@ -172,7 +172,7 @@ impl AddrRule {
         Ok(Self::Regex(Pattern::full(source)?))
     }
 
-    /// `addr` must already be normalized (see `rewarden_proto::normalize_address`).
+    /// `addr` must already be normalized (see `reins_proto::normalize_address`).
     /// Anything else (display names, several addresses, whitespace, control
     /// characters, upper case) never matches, whatever the rule.
     #[must_use]

@@ -1,4 +1,4 @@
-package dev.rewarden.android.feedback
+package dev.reins.android.feedback
 
 /**
  * What the device is doing right now. Read per event, so implementations cache (the real one answers from a value

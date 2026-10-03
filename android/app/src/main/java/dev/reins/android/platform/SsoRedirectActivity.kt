@@ -1,10 +1,10 @@
-package dev.rewarden.android.platform
+package dev.reins.android.platform
 
 import android.app.Activity
 import android.content.Intent
 import android.os.Bundle
-import dev.rewarden.android.MainActivity
-import dev.rewarden.android.ui.signin.AccountRules
+import dev.reins.android.MainActivity
+import dev.reins.android.ui.signin.AccountRules
 
 /**
  * Receives `com.reins2fa.app://sso-callback?…`, where the server's sign-in page ("Continue") sends the browser back to,
@@ -28,6 +28,6 @@ class SsoRedirectActivity : Activity() {
 
     companion object {
         /** The action [MainActivity] receives the callback with. */
-        const val ACTION_SIGNED_IN = "dev.rewarden.android.SSO_SIGNED_IN"
+        const val ACTION_SIGNED_IN = "dev.reins.android.SSO_SIGNED_IN"
     }
 }

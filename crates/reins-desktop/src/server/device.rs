@@ -1,4 +1,4 @@
-//! `rewarden login` without a browser: OAuth 2.0 device authorization (RFC 8628). This computer shows a QR code; the
+//! `reins login` without a browser: OAuth 2.0 device authorization (RFC 8628). This computer shows a QR code; the
 //! phone scans it, the user taps the number shown here among three, compares this app's key and approves. The phone
 //! pins the key to the new connection exactly as after the browser login, and the session is saved the same way
 //! (`session.json`), so everything after the login is the same.
@@ -34,7 +34,7 @@ pub enum StartError {
 impl std::fmt::Display for StartError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            Self::Unsupported => f.write_str("this server cannot pair by QR code; use `rewarden login --browser`"),
+            Self::Unsupported => f.write_str("this server cannot pair by QR code; use `reins login --browser`"),
             Self::Failed(m) => f.write_str(m),
         }
     }
@@ -96,7 +96,7 @@ struct Authorization {
     #[serde(default)]
     interval: Option<u64>,
     #[serde(default)]
-    rewarden_confirm_code: Option<u8>,
+    reins_confirm_code: Option<u8>,
 }
 
 #[derive(Deserialize)]
@@ -131,7 +131,7 @@ impl DevicePairing {
             ("client_id", client_id.as_str()),
             ("scope", "mcp"),
             ("resource", resource.as_str()),
-            ("rewarden_client_key", key.as_str()),
+            ("reins_client_key", key.as_str()),
         ];
         let resp = http
             .post(&endpoint)
@@ -167,7 +167,7 @@ impl DevicePairing {
             qr_url,
             user_code: a.user_code,
             verification_uri,
-            confirm_code: a.rewarden_confirm_code,
+            confirm_code: a.reins_confirm_code,
             key_fingerprint: identity.fingerprint(),
             expires_at: crate::now_unix().saturating_add(a.expires_in.clamp(1, MAX_EXPIRES_SECS)),
             client_id,
@@ -218,7 +218,7 @@ impl DevicePairing {
             }
             "access_denied" => Err("the pairing was denied on your phone; not logged in".to_owned()),
             "expired_token" => {
-                Err("the code expired before your phone approved it; run `rewarden login` again".to_owned())
+                Err("the code expired before your phone approved it; run `reins login` again".to_owned())
             }
             _ if status == reqwest::StatusCode::TOO_MANY_REQUESTS || status.is_server_error() => {
                 log::warn!("the server answered {status} while waiting for the phone");
@@ -233,7 +233,7 @@ impl DevicePairing {
         loop {
             tokio::time::sleep(self.interval).await;
             if crate::now_unix() >= self.expires_at {
-                return Err("the code expired before your phone approved it; run `rewarden login` again".to_owned());
+                return Err("the code expired before your phone approved it; run `reins login` again".to_owned());
             }
             if let DeviceStatus::LoggedIn {
                 server,

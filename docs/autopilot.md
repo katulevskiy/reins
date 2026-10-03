@@ -48,7 +48,7 @@ service: github
 action: write
 operation: Push to a branch
 class: push
-target: dkat/rewarden
+target: dkat/reins
 target is new: no
 details: branch feature/laya (not the default branch); 3 commits; 7 files changed; no force
 ```

@@ -14,8 +14,8 @@
 use std::process::Command;
 use std::time::Duration;
 
-use rewarden_core::{AccountKeys, CoreError};
-use rewarden_e2e::{Phone, Server};
+use reins_core::{AccountKeys, CoreError};
+use reins_e2e::{Phone, Server};
 use serde_json::{Value, json};
 
 const BASE: &str = "http://localhost:8765";
@@ -59,7 +59,7 @@ fn browser_sign_in(url: &str, scheme: &str, email: &str, password: &str) -> Stri
     stdout.lines().find_map(|l| l.strip_prefix("CALLBACK ")).expect("callback").trim().to_owned()
 }
 
-async fn sso(phone: &Phone, email: &str, password: &str) -> rewarden_core::SsoOutcome {
+async fn sso(phone: &Phone, email: &str, password: &str) -> reins_core::SsoOutcome {
     let start = phone.core.sso_begin(BASE.to_owned()).await.expect("sso_begin");
     let (url, scheme, email, password) =
         (start.url.clone(), start.callback_scheme.clone(), email.to_owned(), password.to_owned());
@@ -98,7 +98,7 @@ async fn run(workos: &Workos, user_id: &str, email: &str, password: &str) {
         ("SSO_CLIENT_ID", client_id.as_str()),
         ("SSO_CLIENT_SECRET", workos.key.as_str()),
         ("SSO_AUTH_ONLY_NOT_SESSION", "true"),
-        ("REWARDEN_WORKOS_SYNC_SECS", "2"),
+        ("REINS_WORKOS_SYNC_SECS", "2"),
     ]
     .into_iter()
     .map(|(k, v)| (k.to_owned(), v.to_owned()))
@@ -167,7 +167,7 @@ async fn run(workos: &Workos, user_id: &str, email: &str, password: &str) {
 
 #[tokio::main]
 async fn main() {
-    rewarden_e2e::init_tls();
+    reins_e2e::init_tls();
     let workos = Workos {
         http: reqwest::Client::new(),
         key: env("WORKOS_API_KEY"),

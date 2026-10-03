@@ -1,11 +1,11 @@
 use diesel::prelude::*;
-use rewarden_proto::{device::ConnectionInfo, ids::ConnectionId};
+use reins_proto::{device::ConnectionInfo, ids::ConnectionId};
 
 use crate::{
     api::EmptyResult,
     db::{
         DbConn, DbConnInner,
-        schema::{rewarden_connections, rewarden_refresh_tokens},
+        schema::{reins_connections, reins_refresh_tokens},
     },
     error::MapResult,
     util::get_uuid,
@@ -18,9 +18,9 @@ const TOUCH_INTERVAL_SECS: i64 = 60;
 
 /// An AI client authorized by a user (one per completed OAuth pairing).
 #[derive(Clone, Debug, Identifiable, Queryable, Insertable)]
-#[diesel(table_name = rewarden_connections)]
+#[diesel(table_name = reins_connections)]
 #[diesel(primary_key(uuid))]
-pub struct RewardenConnection {
+pub struct ReinsConnection {
     pub uuid: String,
     pub user_uuid: UserId,
     pub client_id: String,
@@ -33,16 +33,16 @@ pub struct RewardenConnection {
 
 /// An MCP refresh token, stored only as its SHA-256 hex digest.
 #[derive(Clone, Debug, Identifiable, Queryable, Insertable)]
-#[diesel(table_name = rewarden_refresh_tokens)]
+#[diesel(table_name = reins_refresh_tokens)]
 #[diesel(primary_key(token_hash))]
-pub struct RewardenRefreshToken {
+pub struct ReinsRefreshToken {
     pub token_hash: String,
     pub connection_uuid: String,
     /// Unix seconds; the token is dead at `now >= expires_at`.
     pub expires_at: i64,
 }
 
-impl RewardenConnection {
+impl ReinsConnection {
     pub fn new(
         user_uuid: UserId,
         client_id: String,
@@ -75,7 +75,7 @@ impl RewardenConnection {
     }
 
     pub async fn save(&self, conn: &DbConn) -> EmptyResult {
-        conn.run(move |c| q_save(c, self)).await.map_res("Error saving Rewarden connection")
+        conn.run(move |c| q_save(c, self)).await.map_res("Error saving Reins connection")
     }
 
     pub async fn find_by_uuid_and_user(uuid: &str, user_uuid: &UserId, conn: &DbConn) -> Option<Self> {
@@ -92,18 +92,18 @@ impl RewardenConnection {
     }
 
     pub async fn touch(uuid: &str, now: i64, conn: &DbConn) -> EmptyResult {
-        conn.run(move |c| q_touch(c, uuid, now)).await.map_res("Error updating Rewarden connection")
+        conn.run(move |c| q_touch(c, uuid, now)).await.map_res("Error updating Reins connection")
     }
 
     /// Deletes the connection and its refresh tokens (SQLite does not enforce the FK cascade).
     pub async fn delete(&self, conn: &DbConn) -> EmptyResult {
-        conn.run(move |c| q_delete(c, &self.uuid)).await.map_res("Error deleting Rewarden connection")
+        conn.run(move |c| q_delete(c, &self.uuid)).await.map_res("Error deleting Reins connection")
     }
 }
 
-impl RewardenRefreshToken {
+impl ReinsRefreshToken {
     pub async fn save(&self, conn: &DbConn) -> EmptyResult {
-        conn.run(move |c| q_save_token(c, self)).await.map_res("Error saving Rewarden refresh token")
+        conn.run(move |c| q_save_token(c, self)).await.map_res("Error saving Reins refresh token")
     }
 
     /// Consumes the token: deletes it and returns it only if it existed and was still valid.
@@ -112,86 +112,79 @@ impl RewardenRefreshToken {
     }
 
     pub async fn delete_expired(now: i64, conn: &DbConn) -> EmptyResult {
-        conn.run(move |c| q_delete_expired_tokens(c, now)).await.map_res("Error purging Rewarden refresh tokens")
+        conn.run(move |c| q_delete_expired_tokens(c, now)).await.map_res("Error purging Reins refresh tokens")
     }
 }
 
-fn q_save(c: &mut DbConnInner, row: &RewardenConnection) -> QueryResult<()> {
-    diesel::insert_into(rewarden_connections::table).values(row).execute(c).map(|_| ())
+fn q_save(c: &mut DbConnInner, row: &ReinsConnection) -> QueryResult<()> {
+    diesel::insert_into(reins_connections::table).values(row).execute(c).map(|_| ())
 }
 
-fn q_find_by_uuid_and_user(c: &mut DbConnInner, uuid: &str, user_uuid: &UserId) -> Option<RewardenConnection> {
-    rewarden_connections::table
-        .filter(rewarden_connections::uuid.eq(uuid))
-        .filter(rewarden_connections::user_uuid.eq(user_uuid))
-        .first::<RewardenConnection>(c)
+fn q_find_by_uuid_and_user(c: &mut DbConnInner, uuid: &str, user_uuid: &UserId) -> Option<ReinsConnection> {
+    reins_connections::table
+        .filter(reins_connections::uuid.eq(uuid))
+        .filter(reins_connections::user_uuid.eq(user_uuid))
+        .first::<ReinsConnection>(c)
         .ok()
 }
 
-fn q_find_by_uuid(c: &mut DbConnInner, uuid: &str) -> Option<RewardenConnection> {
-    rewarden_connections::table.filter(rewarden_connections::uuid.eq(uuid)).first::<RewardenConnection>(c).ok()
+fn q_find_by_uuid(c: &mut DbConnInner, uuid: &str) -> Option<ReinsConnection> {
+    reins_connections::table.filter(reins_connections::uuid.eq(uuid)).first::<ReinsConnection>(c).ok()
 }
 
-fn q_find_by_user(c: &mut DbConnInner, user_uuid: &UserId) -> Vec<RewardenConnection> {
-    rewarden_connections::table
-        .filter(rewarden_connections::user_uuid.eq(user_uuid))
-        .order((rewarden_connections::created_at.asc(), rewarden_connections::uuid.asc()))
-        .load::<RewardenConnection>(c)
+fn q_find_by_user(c: &mut DbConnInner, user_uuid: &UserId) -> Vec<ReinsConnection> {
+    reins_connections::table
+        .filter(reins_connections::user_uuid.eq(user_uuid))
+        .order((reins_connections::created_at.asc(), reins_connections::uuid.asc()))
+        .load::<ReinsConnection>(c)
         .unwrap_or_default()
 }
 
 fn q_touch(c: &mut DbConnInner, uuid: &str, now: i64) -> QueryResult<()> {
-    diesel::update(
-        rewarden_connections::table.filter(rewarden_connections::uuid.eq(uuid)).filter(
-            rewarden_connections::last_used_at
-                .is_null()
-                .or(rewarden_connections::last_used_at.lt(now - TOUCH_INTERVAL_SECS)),
-        ),
-    )
-    .set(rewarden_connections::last_used_at.eq(Some(now)))
+    diesel::update(reins_connections::table.filter(reins_connections::uuid.eq(uuid)).filter(
+        reins_connections::last_used_at.is_null().or(reins_connections::last_used_at.lt(now - TOUCH_INTERVAL_SECS)),
+    ))
+    .set(reins_connections::last_used_at.eq(Some(now)))
     .execute(c)
     .map(|_| ())
 }
 
 fn q_delete(c: &mut DbConnInner, uuid: &str) -> QueryResult<()> {
     c.transaction(|c| {
-        diesel::delete(rewarden_refresh_tokens::table.filter(rewarden_refresh_tokens::connection_uuid.eq(uuid)))
+        diesel::delete(reins_refresh_tokens::table.filter(reins_refresh_tokens::connection_uuid.eq(uuid)))
             .execute(c)?;
-        diesel::delete(rewarden_connections::table.filter(rewarden_connections::uuid.eq(uuid))).execute(c)?;
+        diesel::delete(reins_connections::table.filter(reins_connections::uuid.eq(uuid))).execute(c)?;
         Ok(())
     })
 }
 
-fn q_save_token(c: &mut DbConnInner, row: &RewardenRefreshToken) -> QueryResult<()> {
-    diesel::insert_into(rewarden_refresh_tokens::table).values(row).execute(c).map(|_| ())
+fn q_save_token(c: &mut DbConnInner, row: &ReinsRefreshToken) -> QueryResult<()> {
+    diesel::insert_into(reins_refresh_tokens::table).values(row).execute(c).map(|_| ())
 }
 
-fn q_take_token(c: &mut DbConnInner, token_hash: &str, now: i64) -> Option<RewardenRefreshToken> {
-    let row = rewarden_refresh_tokens::table
-        .filter(rewarden_refresh_tokens::token_hash.eq(token_hash))
-        .first::<RewardenRefreshToken>(c)
+fn q_take_token(c: &mut DbConnInner, token_hash: &str, now: i64) -> Option<ReinsRefreshToken> {
+    let row = reins_refresh_tokens::table
+        .filter(reins_refresh_tokens::token_hash.eq(token_hash))
+        .first::<ReinsRefreshToken>(c)
         .ok()?;
     // Only the caller whose DELETE removed the row may use it (concurrent refreshes race here).
-    let deleted =
-        diesel::delete(rewarden_refresh_tokens::table.filter(rewarden_refresh_tokens::token_hash.eq(token_hash)))
-            .execute(c)
-            .ok()?;
+    let deleted = diesel::delete(reins_refresh_tokens::table.filter(reins_refresh_tokens::token_hash.eq(token_hash)))
+        .execute(c)
+        .ok()?;
     (deleted == 1 && now < row.expires_at).then_some(row)
 }
 
 fn q_delete_expired_tokens(c: &mut DbConnInner, now: i64) -> QueryResult<()> {
-    diesel::delete(rewarden_refresh_tokens::table.filter(rewarden_refresh_tokens::expires_at.le(now)))
-        .execute(c)
-        .map(|_| ())
+    diesel::delete(reins_refresh_tokens::table.filter(reins_refresh_tokens::expires_at.le(now))).execute(c).map(|_| ())
 }
 
 #[cfg(all(test, sqlite))]
 mod tests {
-    use super::super::rewarden_device::test_db;
+    use super::super::reins_device::test_db;
     use super::*;
 
-    fn conn_for(user: &str, now: i64) -> RewardenConnection {
-        RewardenConnection::new(
+    fn conn_for(user: &str, now: i64) -> ReinsConnection {
+        ReinsConnection::new(
             UserId::from(user.to_owned()),
             "https://chatgpt.com/oauth/client.json".to_owned(),
             "ChatGPT".to_owned(),
@@ -201,8 +194,8 @@ mod tests {
         )
     }
 
-    fn token(hash: &str, conn: &RewardenConnection, expires_at: i64) -> RewardenRefreshToken {
-        RewardenRefreshToken {
+    fn token(hash: &str, conn: &ReinsConnection, expires_at: i64) -> ReinsRefreshToken {
+        ReinsRefreshToken {
             token_hash: hash.to_owned(),
             connection_uuid: conn.uuid.clone(),
             expires_at,

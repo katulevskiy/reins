@@ -1,14 +1,14 @@
-//! Git for GitLab, Codeberg and Bitbucket through the Rewarden desktop app: token sign-in checked against each host's
+//! Git for GitLab, Codeberg and Bitbucket through the Reins desktop app: token sign-in checked against each host's
 //! API, fetches and pushes answered with the token sealed to the app's key, with the user name each host expects for
 //! git over HTTPS. Fake hosts answer only for the right credentials.
 
 mod common;
 
-use common::desktop::{DESK, Desk, REFUSED, call, choice, desk_with, mount_rewarden, standing};
+use common::desktop::{DESK, Desk, REFUSED, call, choice, desk_with, mount_reins, standing};
 use data_encoding::BASE64;
-use rewarden_core::store::unix_now;
-use rewarden_core::{ApprovalKind, CoreConfig, CoreError};
-use rewarden_proto::desktop::{CredentialGrant, PUSH_LEASE_SECS, PushSummary, RefChange, RefUpdate, ZERO_OID};
+use reins_core::store::unix_now;
+use reins_core::{ApprovalKind, CoreConfig, CoreError};
+use reins_proto::desktop::{CredentialGrant, PUSH_LEASE_SECS, PushSummary, RefChange, RefUpdate, ZERO_OID};
 use serde_json::{Value, json};
 use wiremock::matchers::{header, method, path};
 use wiremock::{Mock, MockServer, ResponseTemplate};
@@ -60,7 +60,7 @@ async fn refuses_the_rest(server: &MockServer) {
 
 async fn hosts() -> Hosts {
     let server = MockServer::start().await;
-    mount_rewarden(&server).await;
+    mount_reins(&server).await;
     let gitlab = MockServer::start().await;
     let codeberg = MockServer::start().await;
     let bitbucket = MockServer::start().await;
@@ -183,7 +183,7 @@ async fn each_host_signs_in_with_a_token_its_api_accepts_and_is_offered_with_tok
         assert_eq!(s.accounts.iter().map(|a| a.account.as_str()).collect::<Vec<_>>(), [account]);
         assert_eq!(
             core.service_account_status(service.into(), account.into()).await,
-            rewarden_core::GmailStatus::Ready,
+            reins_core::GmailStatus::Ready,
             "{service}"
         );
     }

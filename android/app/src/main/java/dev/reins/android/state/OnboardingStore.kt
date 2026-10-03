@@ -1,8 +1,8 @@
-package dev.rewarden.android.state
+package dev.reins.android.state
 
 import android.content.Context
 import androidx.core.content.edit
-import dev.rewarden.core.SessionInfo
+import dev.reins.core.SessionInfo
 
 /**
  * Whether the short setup after signing in (connect a computer, connect Claude or ChatGPT) is still to be shown, per

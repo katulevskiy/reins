@@ -1,4 +1,4 @@
-//! Shared by the D2 tests (`rewarden run`, the API proxy, the SSH agent): a mock Rewarden server whose phone answers
+//! Shared by the D2 tests (`reins run`, the API proxy, the SSH agent): a mock Reins server whose phone answers
 //! the desktop calls from a vault (secrets sealed in a `SecretGrant`, an SSH key list, signatures made with a real
 //! ed25519 key and sealed in an `SshSignature`), an app state directory logged in to it, and a log capture.
 
@@ -11,9 +11,9 @@ use std::sync::{Arc, Mutex, OnceLock};
 use data_encoding::BASE64;
 use http_body_util::{BodyExt as _, Full};
 use hyper::body::Bytes;
-use rewarden_desktop::config::Paths;
-use rewarden_desktop::identity::{Identity, seal_to};
-use rewarden_proto::desktop::{SecretGrant, SshSignature};
+use reins_desktop::config::Paths;
+use reins_desktop::identity::{Identity, seal_to};
+use reins_proto::desktop::{SecretGrant, SshSignature};
 use ring::signature::{Ed25519KeyPair, KeyPair as _};
 use serde_json::{Value, json};
 
@@ -89,7 +89,7 @@ impl SshKey {
     }
 
     pub fn fingerprint(&self) -> String {
-        rewarden_desktop::ssh_agent::keys::fingerprint(&self.blob())
+        reins_desktop::ssh_agent::keys::fingerprint(&self.blob())
     }
 
     fn sign(&self, data: &[u8]) -> String {
@@ -193,10 +193,10 @@ async fn handle(state: &Mutex<State>, key: &SshKey, req: hyper::Request<hyper::b
     }
     let mut s = state.lock().unwrap();
     match (method.as_str(), path.as_str()) {
-        ("POST", "/rewarden/desktop/calls") => {
+        ("POST", "/reins/desktop/calls") => {
             let doc: Value = serde_json::from_slice(&body).unwrap_or_default();
             let tool = doc["tool"].as_str().unwrap_or_default().to_owned();
-            let Some(spec) = rewarden_proto::connector::spec_for_tool(&tool).filter(|s| s.desktop_only) else {
+            let Some(spec) = reins_proto::connector::spec_for_tool(&tool).filter(|s| s.desktop_only) else {
                 return json_resp(400, &json!({"error": "unknown_tool"}));
             };
             if let Err(message) = spec.parse(&doc["arguments"]) {
@@ -220,8 +220,8 @@ async fn handle(state: &Mutex<State>, key: &SshKey, req: hyper::Request<hyper::b
             );
             answer(&mut s, key, &id)
         }
-        ("GET", p) if p.starts_with("/rewarden/desktop/calls/") => {
-            let id = p["/rewarden/desktop/calls/".len()..].to_owned();
+        ("GET", p) if p.starts_with("/reins/desktop/calls/") => {
+            let id = p["/reins/desktop/calls/".len()..].to_owned();
             s.polls.push(id.clone());
             if !s.requests.contains_key(&id) {
                 return json_resp(404, &json!({"error": "not_found"}));
@@ -256,7 +256,7 @@ fn answer(s: &mut State, key: &SshKey, id: &str) -> Resp {
     } else {
         client_key
     };
-    let now = rewarden_desktop::now_unix();
+    let now = reins_desktop::now_unix();
     match r.tool.as_str() {
         "vault_secret_release" => {
             let lease = r.arguments["lease_secs"].as_i64().unwrap_or(3600);
@@ -322,12 +322,12 @@ pub fn logged_in(mock: &Mock) -> App {
     let session = json!({
         "server": mock.base,
         "client_id": "client-1",
-        "token_endpoint": format!("{}/rewarden/oauth/token", mock.base),
+        "token_endpoint": format!("{}/reins/oauth/token", mock.base),
         "access_token": ACCESS_TOKEN,
-        "access_expires_at": rewarden_desktop::now_unix() + 86_400,
+        "access_expires_at": reins_desktop::now_unix() + 86_400,
         "refresh_token": null,
     });
-    rewarden_desktop::config::write_private(&paths.session_file(), session.to_string().as_bytes()).unwrap();
+    reins_desktop::config::write_private(&paths.session_file(), session.to_string().as_bytes()).unwrap();
     Identity::load_or_create(&paths.identity_file()).unwrap();
     App {
         dir,

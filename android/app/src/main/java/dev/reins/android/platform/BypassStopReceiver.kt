@@ -1,4 +1,4 @@
-package dev.rewarden.android.platform
+package dev.reins.android.platform
 
 import android.content.BroadcastReceiver
 import android.content.Context
@@ -8,7 +8,7 @@ import androidx.work.ExistingWorkPolicy
 import androidx.work.OneTimeWorkRequestBuilder
 import androidx.work.WorkManager
 import androidx.work.WorkerParameters
-import dev.rewarden.android.RewardenApp
+import dev.reins.android.ReinsApp
 import java.util.concurrent.TimeUnit
 import kotlinx.coroutines.launch
 
@@ -16,7 +16,7 @@ import kotlinx.coroutines.launch
 class BypassStopReceiver : BroadcastReceiver() {
     override fun onReceive(context: Context, intent: Intent) {
         if (intent.action != ACTION_STOP) return
-        val container = (context.applicationContext as RewardenApp).container
+        val container = (context.applicationContext as ReinsApp).container
         val pending = goAsync()
         container.appScope.launch {
             try {
@@ -28,7 +28,7 @@ class BypassStopReceiver : BroadcastReceiver() {
     }
 
     companion object {
-        const val ACTION_STOP = "dev.rewarden.android.STOP_BYPASS"
+        const val ACTION_STOP = "dev.reins.android.STOP_BYPASS"
     }
 }
 
@@ -38,7 +38,7 @@ class BypassStopReceiver : BroadcastReceiver() {
  */
 class BypassEndWorker(context: Context, params: WorkerParameters) : CoroutineWorker(context, params) {
     override suspend fun doWork(): Result {
-        (applicationContext as RewardenApp).container.refreshAutopilot()
+        (applicationContext as ReinsApp).container.refreshAutopilot()
         return Result.success()
     }
 

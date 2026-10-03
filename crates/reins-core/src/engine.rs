@@ -1,4 +1,4 @@
-//! The engine behind the exported `RewardenCore` object (contracts §D): session
+//! The engine behind the exported `ReinsCore` object (contracts §D): session
 //! management, the sync/push entry points and the read-only views. Request
 //! processing lives in `handler.rs`, approvals in `approval.rs`.
 
@@ -7,8 +7,8 @@ use std::path::Path;
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 use std::time::Duration;
 
-use rewarden_proto::device::{DeviceRegistration, codes};
-use rewarden_proto::ids::{ConnectionId, GrantId};
+use reins_proto::device::{DeviceRegistration, codes};
+use reins_proto::ids::{ConnectionId, GrantId};
 use zeroize::Zeroizing;
 
 use crate::crypto::{Kdf, new_account_keys};
@@ -99,7 +99,7 @@ pub struct Engine {
     pub(crate) connectors: crate::connector::Registry,
     session: crate::connector::vault::SessionSlot,
     /// What was last reported to the server, so that a report is sent only when it changes.
-    reported_services: Mutex<Option<rewarden_proto::device::ServicesReport>>,
+    reported_services: Mutex<Option<reins_proto::device::ServicesReport>>,
     /// Universal MCP: sessions with the added servers.
     pub(crate) mcp: crate::mcp::McpState,
     inflight: Arc<Mutex<HashSet<String>>>,
@@ -278,11 +278,11 @@ impl Engine {
         match (named, accounts.as_slice()) {
             (_, []) => Err(crate::handler::ai_message(&CoreError::GmailNeedsConsent)),
             (Some(name), _) => accounts.iter().find(|a| a.eq_ignore_ascii_case(name)).cloned().ok_or_else(|| {
-                format!("The account {name} is not connected to Rewarden. Call rewarden_list_accounts with service=\"gmail\" to ask the user to share their accounts, and pick one of those.")
+                format!("The account {name} is not connected to Reins. Call reins_list_accounts with service=\"gmail\" to ask the user to share their accounts, and pick one of those.")
             }),
             (None, [only]) => Ok(only.clone()),
             (None, _) => Err(
-                "Several accounts are connected. Call rewarden_list_accounts with service=\"gmail\" (the user has to allow it) and pass the one you want as `account`.".to_owned(),
+                "Several accounts are connected. Call reins_list_accounts with service=\"gmail\" (the user has to allow it) and pass the one you want as `account`.".to_owned(),
             ),
         }
     }
@@ -291,7 +291,7 @@ impl Engine {
     /// accepted). The name is kept in lower case.
     pub fn register_account(&self, service: &str, account: &str) -> Result<AccountView, CoreError> {
         let account = account.trim().to_lowercase();
-        if account.is_empty() || account.len() > rewarden_proto::connector::MAX_ACCOUNT_LEN {
+        if account.is_empty() || account.len() > reins_proto::connector::MAX_ACCOUNT_LEN {
             return Err(CoreError::invalid("that is not a usable account name"));
         }
         let now = unix_now();
@@ -320,7 +320,7 @@ impl Engine {
     /// Connects a Google account the user just authorized. `hint` is the address the phone authorized; the
     /// address Gmail reports for it is what gets stored.
     pub async fn add_account(&self, hint: &str) -> Result<AccountView, CoreError> {
-        let hint = rewarden_proto::gmail::normalize_account(hint).map_err(|e| CoreError::invalid(e.to_string()))?;
+        let hint = reins_proto::gmail::normalize_account(hint).map_err(|e| CoreError::invalid(e.to_string()))?;
         let found = self.gmail_for(&hint).account().await?.unwrap_or(hint);
         let now = unix_now();
         self.store.add_account(views::SERVICE_GMAIL, &found, now)?;
@@ -526,7 +526,7 @@ impl Engine {
     pub(crate) async fn report_services(&self, session: &Session) {
         let mut services = self.integrations();
         services.sort();
-        let report = rewarden_proto::device::ServicesReport {
+        let report = reins_proto::device::ServicesReport {
             services,
             mcp: self.mcp_reports(),
         };
@@ -559,7 +559,7 @@ impl Engine {
     async fn handle_push_inner(&self, kind: &str, id: &str) -> Result<(), CoreError> {
         match kind {
             "replaced" => {
-                log::info!("this device is no longer the Rewarden approval device");
+                log::info!("this device is no longer the Reins approval device");
                 Ok(())
             }
             "blob" => self.handle_blob_push(id).await,
@@ -666,18 +666,18 @@ impl Engine {
     /// The kind (read or send) stays as it was.
     pub fn resume_grant_edited(&self, grant_id: &str, standing: &crate::types::StandingGrant) -> Result<(), CoreError> {
         let secs = standing.duration_secs.ok_or_else(|| CoreError::invalid("choose for how long"))?;
-        if !(rewarden_proto::gmail::MIN_GRANT_SECS..=rewarden_proto::gmail::MAX_GRANT_SECS).contains(&secs) {
+        if !(reins_proto::gmail::MIN_GRANT_SECS..=reins_proto::gmail::MAX_GRANT_SECS).contains(&secs) {
             return Err(CoreError::invalid("choose a period between a minute and 30 days"));
         }
-        if standing.scope.all_mail && secs > rewarden_proto::gmail::MAX_ANY_GRANT_SECS {
+        if standing.scope.all_mail && secs > reins_proto::gmail::MAX_ANY_GRANT_SECS {
             return Err(CoreError::invalid("access to all mail can be resumed for a week at most"));
         }
         let now = unix_now();
         let resumed = self.store.resume_grant_with(&GrantId(grant_id.to_owned()), now, |old| {
             let kind = match old.scope {
-                rewarden_policy::Scope::Read(_) => crate::types::ApprovalKind::Read,
-                rewarden_policy::Scope::Send(_) => crate::types::ApprovalKind::Send,
-                rewarden_policy::Scope::Accounts(_) | rewarden_policy::Scope::Service(_) => {
+                reins_policy::Scope::Read(_) => crate::types::ApprovalKind::Read,
+                reins_policy::Scope::Send(_) => crate::types::ApprovalKind::Send,
+                reins_policy::Scope::Accounts(_) | reins_policy::Scope::Service(_) => {
                     return Err(CoreError::invalid("this grant can only be resumed as it was"));
                 }
             };
@@ -729,7 +729,7 @@ impl Engine {
 
     /// Starts a grant that ended (expired, used up or deleted) over for `duration_secs`.
     pub fn resume_grant(&self, grant_id: &str, duration_secs: u64) -> Result<(), CoreError> {
-        if !(rewarden_proto::gmail::MIN_GRANT_SECS..=rewarden_proto::gmail::MAX_GRANT_SECS).contains(&duration_secs) {
+        if !(reins_proto::gmail::MIN_GRANT_SECS..=reins_proto::gmail::MAX_GRANT_SECS).contains(&duration_secs) {
             return Err(CoreError::invalid("choose a period between a minute and 30 days"));
         }
         let secs = i64::try_from(duration_secs).unwrap_or(i64::MAX);

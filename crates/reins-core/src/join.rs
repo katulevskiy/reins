@@ -1,4 +1,4 @@
-//! "Add another phone" ([`rewarden_proto::join`]), both sides.
+//! "Add another phone" ([`reins_proto::join`]), both sides.
 //!
 //! The new phone (signed in, keys `Locked`): [`Engine::join_begin`] makes an X25519 key pair, kept in the store until
 //! the request ends, and asks the server; the app shows [`JoinStart::code`] and calls [`Engine::join_poll`] every few
@@ -10,11 +10,11 @@
 //! key the server relayed; [`Engine::answer_join`] (after biometrics) seals the account secret to that key.
 
 use data_encoding::BASE64URL_NOPAD;
-use reqwest::Method;
-use rewarden_proto::PROTOCOL_VERSION;
-use rewarden_proto::join::{
+use reins_proto::PROTOCOL_VERSION;
+use reins_proto::join::{
     JoinAnswer, JoinCreated, JoinRequest, JoinState, JoinStatus, NewJoin, SealedSecret, join_code,
 };
+use reqwest::Method;
 use serde::{Deserialize, Serialize};
 use zeroize::Zeroizing;
 
@@ -183,7 +183,7 @@ impl Engine {
     }
 
     pub(crate) fn park_join(&self, join: &JoinRequest) -> Result<(), CoreError> {
-        rewarden_proto::check_version(join.v).map_err(|e| CoreError::invalid(e.to_string()))?;
+        reins_proto::check_version(join.v).map_err(|e| CoreError::invalid(e.to_string()))?;
         code_of(&join.public_key)?;
         let payload = serde_json::to_vec(join).map_err(|e| CoreError::storage(e.to_string()))?;
         if self.store.park(&join.id, PendingKind::Join, join.created_at, unix_now(), &payload)? {
@@ -223,7 +223,7 @@ impl Engine {
                     "This account was made with a master password: sign in on the new phone with it instead.",
                 )
             })?;
-            let key = rewarden_proto::desktop::decode_key(&join.public_key)
+            let key = reins_proto::desktop::decode_key(&join.public_key)
                 .ok_or_else(|| CoreError::invalid("the request carries no valid key"))?;
             let plain = Zeroizing::new(
                 serde_json::to_vec(&SealedSecret {

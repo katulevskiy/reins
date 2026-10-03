@@ -1,4 +1,4 @@
-package dev.rewarden.android.ui.settings
+package dev.reins.android.ui.settings
 
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
@@ -21,27 +21,27 @@ import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
-import dev.rewarden.android.design.Glyph
-import dev.rewarden.android.design.GlyphIcon
-import dev.rewarden.android.design.Group
-import dev.rewarden.android.design.Hairline
-import dev.rewarden.android.design.ListRow
-import dev.rewarden.android.design.LocalColors
-import dev.rewarden.android.design.RText
-import dev.rewarden.android.design.RType
-import dev.rewarden.android.design.Screen
-import dev.rewarden.android.design.SelectChip
-import dev.rewarden.android.design.SwitchRow
-import dev.rewarden.android.feedback.AndroidFeedback
-import dev.rewarden.android.feedback.Event
-import dev.rewarden.android.feedback.FeedbackSettings
-import dev.rewarden.android.feedback.HapticStrength
+import dev.reins.android.design.Glyph
+import dev.reins.android.design.GlyphIcon
+import dev.reins.android.design.Group
+import dev.reins.android.design.Hairline
+import dev.reins.android.design.ListRow
+import dev.reins.android.design.LocalColors
+import dev.reins.android.design.RText
+import dev.reins.android.design.RType
+import dev.reins.android.design.Screen
+import dev.reins.android.design.SelectChip
+import dev.reins.android.design.SwitchRow
+import dev.reins.android.feedback.AndroidFeedback
+import dev.reins.android.feedback.Event
+import dev.reins.android.feedback.FeedbackSettings
+import dev.reins.android.feedback.HapticStrength
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 
 /**
  * Settings > Sounds & haptics: one master above everything (notifications included), the sounds by kind with a
- * volume, haptics with a strength, and a list that plays the real thing. The switches here are the only ones Rewarden
+ * volume, haptics with a strength, and a list that plays the real thing. The switches here are the only ones Reins
  * listens to: the phone's touch-sound and touch-vibration settings are not consulted.
  */
 @Composable
@@ -52,16 +52,16 @@ fun SoundsScreen(engine: AndroidFeedback, onBack: () -> Unit) {
     Screen(title = "Sounds & haptics", onBack = onBack) {
         Group(
             Modifier.padding(top = 10.dp),
-            footer = "Off silences every sound and vibration in Rewarden, its notifications included.",
+            footer = "Off silences every sound and vibration in Reins, its notifications included.",
         ) {
             SwitchRow("Sounds & haptics", s.master, { on -> update { copy(master = on) } }, glyph = Glyph.Speaker, tag = "soundsMaster")
         }
 
         Group(
             header = "Sounds",
-            footer = "While Rewarden is open. In the background the same chimes come with the notification, at your phone's notification volume.",
+            footer = "While Reins is open. In the background the same chimes come with the notification, at your phone's notification volume.",
         ) {
-            SwitchRow("Sounds", s.sounds, { on -> update { copy(sounds = on) } }, subtitle = "Every sound in Rewarden", glyph = Glyph.Speaker, enabled = s.master, tag = "sounds")
+            SwitchRow("Sounds", s.sounds, { on -> update { copy(sounds = on) } }, subtitle = "Every sound in Reins", glyph = Glyph.Speaker, enabled = s.master, tag = "sounds")
             Hairline(inset = 51.dp)
             SwitchRow(
                 "Interface",

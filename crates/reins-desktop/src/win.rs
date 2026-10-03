@@ -51,7 +51,7 @@ pub fn strip_verbatim(path: &Path) -> PathBuf {
 
 /// How a harness hook runs this program on Windows. Claude Code runs hook commands with Git Bash (PowerShell without
 /// it), other harnesses with PowerShell or cmd: an unquoted path with forward slashes is the one form all of them run.
-/// A path that needs quoting (a space in the user name) has no such form: then the bare `rewarden` when this program is
+/// A path that needs quoting (a space in the user name) has no such form: then the bare `reins` when this program is
 /// the one on `PATH` (`on_path`), else the path in double quotes, which Git Bash and cmd run (PowerShell would need
 /// `& "…"`).
 #[must_use]
@@ -61,7 +61,7 @@ pub fn hook_program(exe: &str, on_path: bool) -> String {
     if !forward.is_empty() && forward.chars().all(plain) {
         forward
     } else if on_path {
-        "rewarden".to_owned()
+        "reins".to_owned()
     } else {
         format!("\"{forward}\"")
     }
@@ -81,7 +81,7 @@ pub fn dir_on_path(exe: &Path, path_dirs: &[PathBuf]) -> bool {
 
 /// The program a bare name like `npm` runs on Windows: the first directory of `path_dirs` holding `name` with one of
 /// the `PATHEXT` endings (`.COM;.EXE;.BAT;.CMD` by default). Rust's `Command` itself only looks for `name.exe`, so
-/// `rewarden run -- npm test` would not find `npm.cmd`. A name with a directory or an ending of its own is left alone.
+/// `reins run -- npm test` would not find `npm.cmd`. A name with a directory or an ending of its own is left alone.
 #[must_use]
 pub fn resolve_program(
     name: &OsStr,
@@ -101,13 +101,13 @@ pub fn resolve_program(
 }
 
 /// The named pipe the SSH agent listens on for the state directory `state_dir`: one per state directory (and so per
-/// user), `\\.\pipe\rewarden-ssh-agent-<16 hex digits>`.
+/// user), `\\.\pipe\reins-ssh-agent-<16 hex digits>`.
 #[must_use]
 pub fn ssh_pipe(state_dir: &Path) -> PathBuf {
     use sha2::Digest as _;
     let key = state_dir.to_string_lossy().to_lowercase();
     let digest = sha2::Sha256::digest(key.as_bytes());
-    PathBuf::from(format!(r"\\.\pipe\rewarden-ssh-agent-{}", data_encoding::HEXLOWER.encode(&digest[..8])))
+    PathBuf::from(format!(r"\\.\pipe\reins-ssh-agent-{}", data_encoding::HEXLOWER.encode(&digest[..8])))
 }
 
 /// A named pipe path: `\\.\pipe\name` (also written with forward slashes).
@@ -150,7 +150,7 @@ fn optional_header(pe: &[u8]) -> Result<usize, String> {
     }
 }
 
-/// The subsystem of a PE file (`SUBSYSTEM_CONSOLE` for `rewarden.exe`).
+/// The subsystem of a PE file (`SUBSYSTEM_CONSOLE` for `reins.exe`).
 #[must_use]
 pub fn pe_subsystem(pe: &[u8]) -> Option<u16> {
     let opt = optional_header(pe).ok()?;
@@ -216,7 +216,7 @@ pub fn command_line_arg(arg: &str) -> String {
 /// The PowerShell that shows a Yes/No message box on top of the other windows, No as the default, and prints `Yes` or
 /// `No`. The title and text come from environment variables, never from the script itself.
 pub const MESSAGE_BOX_SCRIPT: &str = "Add-Type -AssemblyName System.Windows.Forms; \
-     $r = [System.Windows.Forms.MessageBox]::Show($env:REWARDEN_PROMPT_TEXT, $env:REWARDEN_PROMPT_TITLE, 'YesNo', \
+     $r = [System.Windows.Forms.MessageBox]::Show($env:REINS_PROMPT_TEXT, $env:REINS_PROMPT_TITLE, 'YesNo', \
      'Question', 'Button2', 'DefaultDesktopOnly'); [Console]::Out.Write([string]$r)";
 
 /// The answer [`MESSAGE_BOX_SCRIPT`] printed: `Some(true)` Yes, `Some(false)` No, `None` nothing (killed, failed).
@@ -238,8 +238,8 @@ pub fn message_box(title: &str, text: &str) -> Option<tokio::process::Command> {
     {
         let mut c = tokio::process::Command::new(system32(r"WindowsPowerShell\v1.0\powershell.exe"));
         c.args(["-NoProfile", "-NonInteractive", "-Command", MESSAGE_BOX_SCRIPT])
-            .env("REWARDEN_PROMPT_TITLE", title)
-            .env("REWARDEN_PROMPT_TEXT", text);
+            .env("REINS_PROMPT_TITLE", title)
+            .env("REINS_PROMPT_TEXT", text);
         hidden_async(&mut c);
         Some(c)
     }
@@ -333,29 +333,26 @@ mod tests {
 
     #[test]
     fn verbatim_prefixes_are_dropped() {
-        assert_eq!(
-            strip_verbatim(Path::new(r"\\?\C:\Users\me\rewarden.exe")),
-            PathBuf::from(r"C:\Users\me\rewarden.exe")
-        );
+        assert_eq!(strip_verbatim(Path::new(r"\\?\C:\Users\me\reins.exe")), PathBuf::from(r"C:\Users\me\reins.exe"));
         assert_eq!(strip_verbatim(Path::new(r"\\?\UNC\srv\share\r.exe")), PathBuf::from(r"\\srv\share\r.exe"));
         assert_eq!(strip_verbatim(Path::new(r"\\?\Volume{x}\r.exe")), PathBuf::from(r"\\?\Volume{x}\r.exe"));
-        assert_eq!(strip_verbatim(Path::new("/usr/bin/rewarden")), PathBuf::from("/usr/bin/rewarden"));
+        assert_eq!(strip_verbatim(Path::new("/usr/bin/reins")), PathBuf::from("/usr/bin/reins"));
     }
 
     #[test]
     fn hook_programs_run_in_every_windows_shell() {
-        let exe = r"C:\Users\me\AppData\Local\Programs\Reins\rewarden.exe";
-        assert_eq!(hook_program(exe, false), "C:/Users/me/AppData/Local/Programs/Reins/rewarden.exe");
-        assert_eq!(hook_program(exe, true), "C:/Users/me/AppData/Local/Programs/Reins/rewarden.exe");
-        let spaced = r"C:\Users\Jo Doe\AppData\Local\Programs\Reins\rewarden.exe";
-        assert_eq!(hook_program(spaced, true), "rewarden");
-        assert_eq!(hook_program(spaced, false), "\"C:/Users/Jo Doe/AppData/Local/Programs/Reins/rewarden.exe\"");
-        assert_eq!(hook_program(r"C:\100%\rewarden.exe", false), "\"C:/100%/rewarden.exe\"");
+        let exe = r"C:\Users\me\AppData\Local\Programs\Reins\reins.exe";
+        assert_eq!(hook_program(exe, false), "C:/Users/me/AppData/Local/Programs/Reins/reins.exe");
+        assert_eq!(hook_program(exe, true), "C:/Users/me/AppData/Local/Programs/Reins/reins.exe");
+        let spaced = r"C:\Users\Jo Doe\AppData\Local\Programs\Reins\reins.exe";
+        assert_eq!(hook_program(spaced, true), "reins");
+        assert_eq!(hook_program(spaced, false), "\"C:/Users/Jo Doe/AppData/Local/Programs/Reins/reins.exe\"");
+        assert_eq!(hook_program(r"C:\100%\reins.exe", false), "\"C:/100%/reins.exe\"");
     }
 
     #[test]
     fn the_program_directory_is_found_on_path_ignoring_case() {
-        let exe = Path::new(r"C:\Users\Jo Doe\AppData\Local\Programs\Reins\rewarden.exe");
+        let exe = Path::new(r"C:\Users\Jo Doe\AppData\Local\Programs\Reins\reins.exe");
         let dirs = |d: &[&str]| d.iter().map(PathBuf::from).collect::<Vec<_>>();
         assert!(dir_on_path(exe, &dirs(&[r"C:\Windows", r"c:\users\jo doe\appdata\local\programs\reins\"])));
         assert!(dir_on_path(exe, &dirs(&["C:/Users/Jo Doe/AppData/Local/Programs/Reins"])));
@@ -383,11 +380,11 @@ mod tests {
 
     #[test]
     fn the_ssh_pipe_is_per_state_directory() {
-        let a = ssh_pipe(Path::new(r"C:\Users\me\AppData\Local\rewarden"));
-        assert!(a.to_string_lossy().starts_with(r"\\.\pipe\rewarden-ssh-agent-"), "{}", a.display());
-        assert_eq!(a.to_string_lossy().len(), r"\\.\pipe\rewarden-ssh-agent-".len() + 16);
-        assert_eq!(a, ssh_pipe(Path::new(r"c:\users\me\appdata\local\rewarden")));
-        assert_ne!(a, ssh_pipe(Path::new(r"C:\Users\other\AppData\Local\rewarden")));
+        let a = ssh_pipe(Path::new(r"C:\Users\me\AppData\Local\reins"));
+        assert!(a.to_string_lossy().starts_with(r"\\.\pipe\reins-ssh-agent-"), "{}", a.display());
+        assert_eq!(a.to_string_lossy().len(), r"\\.\pipe\reins-ssh-agent-".len() + 16);
+        assert_eq!(a, ssh_pipe(Path::new(r"c:\users\me\appdata\local\reins")));
+        assert_ne!(a, ssh_pipe(Path::new(r"C:\Users\other\AppData\Local\reins")));
         assert!(is_pipe_path(&a));
         assert!(is_pipe_path(Path::new("//./pipe/openssh-ssh-agent")));
         assert!(!is_pipe_path(Path::new(r"C:\pipe\x")));
@@ -432,8 +429,8 @@ mod tests {
 
     #[test]
     fn registry_values_are_read_from_reg_query() {
-        let out = "\r\nHKEY_CURRENT_USER\\Software\\Microsoft\\Windows\\CurrentVersion\\Run\r\n    Reins    REG_SZ    \"C:\\Users\\me\\rewarden-daemon.exe\" daemon\r\n\r\n";
-        assert_eq!(reg_value(out, "Reins").as_deref(), Some("\"C:\\Users\\me\\rewarden-daemon.exe\" daemon"));
+        let out = "\r\nHKEY_CURRENT_USER\\Software\\Microsoft\\Windows\\CurrentVersion\\Run\r\n    Reins    REG_SZ    \"C:\\Users\\me\\reins-daemon.exe\" daemon\r\n\r\n";
+        assert_eq!(reg_value(out, "Reins").as_deref(), Some("\"C:\\Users\\me\\reins-daemon.exe\" daemon"));
         assert_eq!(reg_value(out, "Other"), None);
         assert_eq!(reg_value("    ReinsX    REG_SZ    x\r\n", "Reins"), None);
         assert_eq!(
@@ -444,8 +441,8 @@ mod tests {
 
     #[test]
     fn command_line_arguments_are_quoted_for_windows() {
-        assert_eq!(command_line_arg(r"C:\x\rewarden.exe"), r"C:\x\rewarden.exe");
-        assert_eq!(command_line_arg(r"C:\Jo Doe\rewarden.exe"), r#""C:\Jo Doe\rewarden.exe""#);
+        assert_eq!(command_line_arg(r"C:\x\reins.exe"), r"C:\x\reins.exe");
+        assert_eq!(command_line_arg(r"C:\Jo Doe\reins.exe"), r#""C:\Jo Doe\reins.exe""#);
         assert_eq!(command_line_arg(r"C:\Jo Doe\"), r#""C:\Jo Doe\\""#);
         assert_eq!(command_line_arg(""), r#""""#);
         assert_eq!(command_line_arg(r#"a"b"#), r#""a\"b""#);
@@ -453,7 +450,7 @@ mod tests {
 
     #[test]
     fn the_message_box_takes_its_text_from_the_environment_only() {
-        assert!(MESSAGE_BOX_SCRIPT.contains("$env:REWARDEN_PROMPT_TEXT, $env:REWARDEN_PROMPT_TITLE"));
+        assert!(MESSAGE_BOX_SCRIPT.contains("$env:REINS_PROMPT_TEXT, $env:REINS_PROMPT_TITLE"));
         assert!(MESSAGE_BOX_SCRIPT.contains("'Button2'"), "No is the default");
         assert_eq!(message_box_answer("Yes"), Some(true));
         assert_eq!(message_box_answer("No\r\n"), Some(false));

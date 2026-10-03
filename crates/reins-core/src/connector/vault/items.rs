@@ -4,7 +4,7 @@
 //! for the preview and again, from a fresh read of the vault, for the change itself; strings are encrypted here with
 //! the item's key, and an edit keeps the item's own key and resends everything it did not change.
 
-use rewarden_proto::connector::ConnectorCall;
+use reins_proto::connector::ConnectorCall;
 use serde::Deserialize;
 use serde_json::Value;
 use url::Url;

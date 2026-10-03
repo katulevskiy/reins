@@ -3,12 +3,12 @@
 
 use std::collections::BTreeSet;
 
-use rewarden_policy::{AddrRule, Grant, Pattern, ReadScope, Scope, SendScope};
-use rewarden_proto::PROTOCOL_VERSION;
-use rewarden_proto::gmail::{GrantAction, GrantRequest, MessageSummary, ToolCall};
-use rewarden_proto::ids::{ConnectionId, GrantId};
-use rewarden_proto::pairing::{PairingRequest, PairingResponse, normalize_user_code};
-use rewarden_proto::relay::{RelayOutcome, ToolResult};
+use reins_policy::{AddrRule, Grant, Pattern, ReadScope, Scope, SendScope};
+use reins_proto::PROTOCOL_VERSION;
+use reins_proto::gmail::{GrantAction, GrantRequest, MessageSummary, ToolCall};
+use reins_proto::ids::{ConnectionId, GrantId};
+use reins_proto::pairing::{PairingRequest, PairingResponse, normalize_user_code};
+use reins_proto::relay::{RelayOutcome, ToolResult};
 
 use crate::autopilot::Verdict;
 use crate::autopilot::context::{Decision, deciding};
@@ -436,7 +436,7 @@ impl Engine {
                 Grant::new(
                     GrantId(uuid::Uuid::new_v4().to_string()),
                     parked.request.connection_id.clone(),
-                    Scope::Accounts(rewarden_policy::AccountsScope {
+                    Scope::Accounts(reins_policy::AccountsScope {
                         service: service.clone(),
                         accounts: picked.clone(),
                     }),
@@ -639,12 +639,12 @@ impl Engine {
         };
         // The desktop app's key, compared by the user on both screens, now belongs to this connection.
         let new_connection = result.as_ref().ok().filter(|_| approve).and_then(|r| r.connection_id.as_ref());
-        let key = pairing.client_key.as_deref().and_then(rewarden_proto::desktop::decode_key);
+        let key = pairing.client_key.as_deref().and_then(reins_proto::desktop::decode_key);
         let mut note = format!("From {}", pairing.client_host);
         if let (Some(connection), Some(key)) = (new_connection, key) {
-            let key = rewarden_proto::desktop::encode_key(&key);
+            let key = reins_proto::desktop::encode_key(&key);
             self.store.pin_desktop_key(&connection.0, &key, now)?;
-            if let Some(fingerprint) = rewarden_proto::desktop::key_fingerprint(&key) {
+            if let Some(fingerprint) = reins_proto::desktop::key_fingerprint(&key) {
                 note = format!("{note}. Desktop app key {fingerprint}");
             }
         }

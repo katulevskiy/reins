@@ -6,10 +6,10 @@ mod link_mock;
 use std::sync::Arc;
 
 use link_mock::{Mock, config, logged_in, push_to, tag_push};
-use rewarden_desktop::auth::Repo;
-use rewarden_desktop::auth::rewarden::RewardenAuthorizer;
-use rewarden_desktop::auth::{Authorizer as _, Refusal};
-use rewarden_desktop::config::HostEntry;
+use reins_desktop::auth::Repo;
+use reins_desktop::auth::reins::ReinsAuthorizer;
+use reins_desktop::auth::{Authorizer as _, Refusal};
+use reins_desktop::config::HostEntry;
 
 const DIGEST: &str = "9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08";
 
@@ -35,7 +35,7 @@ async fn each_host_asks_its_own_tools_with_its_own_account() {
             ..HostEntry::default()
         },
     ];
-    let auth = RewardenAuthorizer::new(&app.paths, Arc::clone(&app.identity), &c).unwrap();
+    let auth = ReinsAuthorizer::new(&app.paths, Arc::clone(&app.identity), &c).unwrap();
 
     let gitlab = on("gitlab.com", "gitlab", "group/sub/app");
     let cred = auth.read(&gitlab).await.unwrap();
@@ -71,7 +71,7 @@ async fn each_host_asks_its_own_tools_with_its_own_account() {
 async fn an_answer_for_another_repository_on_a_nested_path_is_refused() {
     let mock = Mock::start().await;
     let app = logged_in(&mock).await;
-    let auth = RewardenAuthorizer::new(&app.paths, Arc::clone(&app.identity), &config(5)).unwrap();
+    let auth = ReinsAuthorizer::new(&app.paths, Arc::clone(&app.identity), &config(5)).unwrap();
     mock.plan(&[link_mock::Step::Tamper(|g| g.repo = "group/app".to_owned())]);
     let r = auth.read(&on("gitlab.com", "gitlab", "group/sub/app")).await;
     assert!(matches!(&r, Err(Refusal::Unavailable(m)) if m.contains("group/app")), "{r:?}");

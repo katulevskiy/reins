@@ -1,4 +1,4 @@
-package dev.rewarden.android.platform.update
+package dev.reins.android.platform.update
 
 import android.content.Context
 import androidx.work.Constraints
@@ -8,14 +8,14 @@ import androidx.work.NetworkType
 import androidx.work.PeriodicWorkRequestBuilder
 import androidx.work.WorkManager
 import androidx.work.WorkerParameters
-import dev.rewarden.android.RewardenApp
+import dev.reins.android.ReinsApp
 import java.util.concurrent.TimeUnit
 
 /** Looks for a new release every few hours while online, downloads it if allowed and announces it once. */
 class UpdateWorker(context: Context, params: WorkerParameters) : CoroutineWorker(context, params) {
     override suspend fun doWork(): Result {
         // Failures are quiet: the next run tries again.
-        (applicationContext as RewardenApp).container.updates?.backgroundCheck()
+        (applicationContext as ReinsApp).container.updates?.backgroundCheck()
         return Result.success()
     }
 
