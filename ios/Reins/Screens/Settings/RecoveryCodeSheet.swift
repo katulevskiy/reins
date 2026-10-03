@@ -119,7 +119,7 @@ struct RecoveryCodeSheet: View {
                 Toggle("I wrote this code down and stored it somewhere safe.", isOn: $recorded)
                     .font(RFont.sans(15))
                     .accessibilityIdentifier("recoveryRecorded")
-                TextField("Final group from your written copy", text: $lastGroup)
+                TextField("Final group from written copy", text: $lastGroup)
                     .textInputAutocapitalization(.characters)
                     .autocorrectionDisabled()
                     .font(RFont.mono(17))

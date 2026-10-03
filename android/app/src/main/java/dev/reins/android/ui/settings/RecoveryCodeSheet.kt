@@ -98,7 +98,7 @@ fun RecoveryCodeSheet(code: String, onCopy: () -> Unit, onDone: () -> Unit, requ
                     RText("I wrote this code down and stored it somewhere safe.", RType.sans(14.5f, lineHeight = 20f), c.text, Modifier.weight(1f))
                 }
                 Spacer(Modifier.height(12.dp))
-                RTextField(lastGroup, { lastGroup = it }, "Type the final group from your written copy", tag = "recoveryConfirmGroup", mono = true, keyboardOptions = KeyboardOptions(autoCorrectEnabled = false))
+                RTextField(lastGroup, { lastGroup = it }, "Final group from written copy", tag = "recoveryConfirmGroup", mono = true, keyboardOptions = KeyboardOptions(autoCorrectEnabled = false))
                 Spacer(Modifier.height(12.dp))
             }
             Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
