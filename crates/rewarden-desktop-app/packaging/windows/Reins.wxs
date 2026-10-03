@@ -33,13 +33,14 @@
     </StandardDirectory>
 
     <!-- Per-user components keep their key path in HKCU (a file under the profile cannot be one). -->
+    <!-- AppExe and CliExe hold a file and a registry key path, so WiX cannot generate their guids: these must never change. -->
     <ComponentGroup Id="ReinsFiles" Directory="INSTALLFOLDER">
-      <Component Id="AppExe">
+      <Component Id="AppExe" Guid="12E8C338-F2B5-4A01-9BE3-97B54D6215D2">
         <File Id="ReinsExe" Source="$(var.AppExe)" Name="Reins.exe" KeyPath="no" />
         <RegistryValue Root="HKCU" Key="Software\Reins\Desktop" Name="App" Type="string" Value="[INSTALLFOLDER]Reins.exe" KeyPath="yes" />
         <RemoveFolder Id="RemoveInstallFolder" On="uninstall" />
       </Component>
-      <Component Id="CliExe">
+      <Component Id="CliExe" Guid="EB5FACF7-61E9-4D8E-9C6A-3460D6B8BEA7">
         <File Id="RewardenExe" Source="$(var.CliExe)" Name="rewarden.exe" KeyPath="no" />
         <RegistryValue Root="HKCU" Key="Software\Reins\Desktop" Name="Cli" Type="string" Value="[INSTALLFOLDER]rewarden.exe" KeyPath="yes" />
       </Component>
