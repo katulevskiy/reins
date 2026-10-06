@@ -130,7 +130,7 @@ jobs:
       - uses: Swatinem/rust-cache@v2
         with:
           shared-key: linux-server-core
-          save-if: ${{ github.ref == 'refs/heads/main' }}
+          save-if: ${{ github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository }}
       - uses: taiki-e/install-action@v2
         with:
           tool: nextest@0.9.146
@@ -161,7 +161,7 @@ jobs:
       - uses: Swatinem/rust-cache@v2
         with:
           shared-key: linux-server-core-clippy
-          save-if: ${{ github.ref == 'refs/heads/main' }}
+          save-if: ${{ github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository }}
       - run: cargo clippy --locked --workspace --exclude reins-desktop-app --features sqlite --all-targets -- -D warnings
 
   desktop-linux:
@@ -179,7 +179,7 @@ jobs:
       - uses: Swatinem/rust-cache@v2
         with:
           shared-key: linux-desktop-ui
-          save-if: ${{ github.ref == 'refs/heads/main' }}
+          save-if: ${{ github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository }}
       - name: GUI libraries
         run: |
           sudo apt-get update -qq
@@ -203,7 +203,7 @@ jobs:
         run: rustup toolchain install && rustc -vV
       - uses: Swatinem/rust-cache@v2
         with:
-          save-if: ${{ github.ref == 'refs/heads/main' }}
+          save-if: ${{ github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository }}
       - run: cargo clippy --locked -p reins-desktop --all-targets -- -D warnings
       - run: cargo test --locked --no-fail-fast -p reins-desktop
 
@@ -228,7 +228,7 @@ jobs:
         run: rustup toolchain install && rustup target add aarch64-pc-windows-msvc && rustc -vV
       - uses: Swatinem/rust-cache@v2
         with:
-          save-if: ${{ github.ref == 'refs/heads/main' }}
+          save-if: ${{ github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository }}
       - run: cargo clippy --locked -p reins-desktop --all-targets -- -D warnings
       - run: cargo test --locked --no-fail-fast -p reins-desktop
       # scripts/install.ps1 as `irm | iex` runs it, in Windows PowerShell 5.1, from a release made here of the test
@@ -283,7 +283,7 @@ jobs:
           rustc -vV
       - uses: Swatinem/rust-cache@v2
         with:
-          save-if: ${{ github.ref == 'refs/heads/main' }}
+          save-if: ${{ github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository }}
       - uses: actions/cache@v5
         with:
           path: ~/.cargo/bin/cargo-ndk

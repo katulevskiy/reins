@@ -551,7 +551,7 @@ jobs:
         id: native
         with:
           path: native
-          key: android-native-v1-${{ runner.os }}-${{ matrix.kind }}-${{ hashFiles('Cargo.toml', 'Cargo.lock', 'rust-toolchain.toml', '.cargo/**', 'crates/reins-core/**', 'crates/reins-proto/**', 'crates/reins-policy/**', 'android/app/build.gradle.kts', 'scripts/build-android-native.sh') }}
+          key: android-native-v1-${{ runner.os }}-${{ matrix.kind }}-${{ hashFiles('Cargo.toml', 'Cargo.lock', 'rust-toolchain.toml', '.cargo/**', 'crates/reins-core/**', 'crates/reins-proto/**', 'crates/reins-policy/**', 'android/app/build.gradle.kts', 'scripts/build-android-native.sh', '.github/workflows/release.yml') }}
       - name: Install Rust toolchain and Android targets
         if: steps.native.outputs.cache-hit != 'true'
         run: |
