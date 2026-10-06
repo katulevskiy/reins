@@ -246,7 +246,6 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - { platform: macOS, os: macos-15 }
           - { platform: Windows-x64, os: windows-2025 }
           # The oldest supported Ubuntu: the AppImage needs this glibc or newer.
           - { platform: Linux-x86_64, os: ubuntu-22.04 }
@@ -282,41 +281,6 @@ jobs:
             libx11-xcb-dev libfontconfig1-dev libfreetype-dev libvulkan-dev pkg-config
       - name: Set the version
         run: scripts/set-desktop-version.sh "$VERSION"
-      - name: Package (macOS)
-        if: runner.os == 'macOS'
-        # Signing set up and used in one step: the identity and notary key never pass through GITHUB_ENV.
-        env:
-          ARCHS: aarch64 x86_64
-          MACOS_CERT_P12: ${{ secrets.MACOS_CERT_P12 }}
-          MACOS_CERT_PASSWORD: ${{ secrets.MACOS_CERT_PASSWORD }}
-          AC_API_KEY_P8: ${{ secrets.AC_API_KEY_P8 }}
-          AC_API_KEY_ID: ${{ secrets.AC_API_KEY_ID }}
-          AC_API_ISSUER_ID: ${{ secrets.AC_API_ISSUER_ID }}
-        run: |
-          if [[ -z "$MACOS_CERT_P12" ]]; then
-            echo "::notice::macOS app not signed with a Developer ID: MACOS_CERT_P12 is not configured"
-          else
-            keychain="$RUNNER_TEMP/release.keychain-db"
-            pass="$(openssl rand -hex 16)"
-            security create-keychain -p "$pass" "$keychain"
-            security set-keychain-settings -lut 3600 "$keychain"
-            security unlock-keychain -p "$pass" "$keychain"
-            base64 -d <<<"$MACOS_CERT_P12" > "$RUNNER_TEMP/cert.p12"
-            security import "$RUNNER_TEMP/cert.p12" -k "$keychain" -P "$MACOS_CERT_PASSWORD" -T /usr/bin/codesign
-            rm -f "$RUNNER_TEMP/cert.p12"
-            security set-key-partition-list -S apple-tool:,apple: -s -k "$pass" "$keychain" > /dev/null
-            security list-keychains -d user -s "$keychain" login.keychain-db
-            REINS_DEVELOPER_ID="$(security find-identity -v -p codesigning "$keychain" |
-              sed -n 's/.*"\(Developer ID Application: [^"]*\)".*/\1/p' | head -1)"
-            [[ -n "$REINS_DEVELOPER_ID" ]] || { echo "::error::the .p12 holds no Developer ID Application identity"; exit 1; }
-            export REINS_DEVELOPER_ID
-            if [[ -n "$AC_API_KEY_P8" && -n "$AC_API_KEY_ID" && -n "$AC_API_ISSUER_ID" ]]; then
-              printf '%s' "$AC_API_KEY_P8" > "$RUNNER_TEMP/notary.p8"
-              export REINS_NOTARY_KEY="$RUNNER_TEMP/notary.p8" REINS_NOTARY_KEY_ID="$AC_API_KEY_ID" \
-                REINS_NOTARY_ISSUER="$AC_API_ISSUER_ID"
-            fi
-          fi
-          scripts/package/macos.sh
       - name: Package (Windows)
         if: runner.os == 'Windows'
         shell: pwsh
@@ -360,6 +324,139 @@ jobs:
           name: dist-app-${{ matrix.platform }}
           compression-level: 0
           path: dist/*
+          if-no-files-found: error
+          retention-days: 7
+
+  # Compile the two macOS architectures on native runners; only bundling/signing is serial.
+  macos-app-native:
+    name: macOS app binaries (${{ matrix.arch }})
+    needs: plan
+    if: needs.plan.outputs.release == 'true'
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 30
+    permissions:
+      contents: read
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { arch: aarch64, os: macos-15 }
+          - { arch: x86_64, os: macos-15-intel }
+    env:
+      TARGET: ${{ matrix.arch }}-apple-darwin
+      VERSION: ${{ needs.plan.outputs.version }}
+      REINS_BUILD: ${{ needs.plan.outputs.build }}
+      REINS_BUILD_TIME: ${{ needs.plan.outputs.build-time }}
+      MACOSX_DEPLOYMENT_TARGET: "12.0"
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ needs.plan.outputs.sha }}
+          persist-credentials: false
+      - name: Install Rust toolchain
+        run: rustup toolchain install && rustup target add "$TARGET"
+      - uses: Swatinem/rust-cache@v2
+        with:
+          # Rust's host architecture differentiates these caches; the Arm worker can restore the old macOS cache.
+          shared-key: release-desktop-app-${{ runner.os }}
+      - name: Set the version
+        run: scripts/set-desktop-version.sh "$VERSION"
+      - name: Build the app and bundled CLI
+        run: cargo build --locked --profile release-app -p reins-desktop-app -p reins-desktop --bin reins-app --bin reins --target "$TARGET"
+      - name: Smoke test the bundled CLI
+        run: |
+          out="$("target/$TARGET/release-app/reins" --version)"
+          echo "$out"
+          [[ "$out" == *"$VERSION ($REINS_BUILD)"* ]] || { echo "::error::unexpected CLI version: $out"; exit 1; }
+      - uses: actions/upload-artifact@v7
+        with:
+          name: macos-app-${{ matrix.arch }}
+          compression-level: 0
+          path: |
+            target/${{ env.TARGET }}/release-app/reins-app
+            target/${{ env.TARGET }}/release-app/reins
+          if-no-files-found: error
+          retention-days: 1
+
+  desktop-app-macos:
+    name: Desktop app (macOS universal)
+    needs: [plan, macos-app-native]
+    if: needs.plan.outputs.release == 'true'
+    runs-on: macos-15
+    timeout-minutes: 20
+    permissions:
+      contents: read
+    env:
+      VERSION: ${{ needs.plan.outputs.version }}
+      REINS_BUILD: ${{ needs.plan.outputs.build }}
+      REINS_BUILD_TIME: ${{ needs.plan.outputs.build-time }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ needs.plan.outputs.sha }}
+          persist-credentials: false
+      - uses: actions/download-artifact@v8
+        with:
+          name: macos-app-aarch64
+          path: target/aarch64-apple-darwin/release-app
+      - uses: actions/download-artifact@v8
+        with:
+          name: macos-app-x86_64
+          path: target/x86_64-apple-darwin/release-app
+      - name: Restore executable permissions and set the version
+        run: |
+          chmod +x target/{aarch64,x86_64}-apple-darwin/release-app/{reins,reins-app}
+          scripts/set-desktop-version.sh "$VERSION"
+      - name: Package (macOS)
+        # Signing set up and used in one step: the identity and notary key never pass through GITHUB_ENV.
+        env:
+          ARCHS: aarch64 x86_64
+          REINS_SKIP_BUILD: "1"
+          MACOS_CERT_P12: ${{ secrets.MACOS_CERT_P12 }}
+          MACOS_CERT_PASSWORD: ${{ secrets.MACOS_CERT_PASSWORD }}
+          AC_API_KEY_P8: ${{ secrets.AC_API_KEY_P8 }}
+          AC_API_KEY_ID: ${{ secrets.AC_API_KEY_ID }}
+          AC_API_ISSUER_ID: ${{ secrets.AC_API_ISSUER_ID }}
+        run: |
+          if [[ -z "$MACOS_CERT_P12" ]]; then
+            echo "::notice::macOS app not signed with a Developer ID: MACOS_CERT_P12 is not configured"
+          else
+            keychain="$RUNNER_TEMP/release.keychain-db"
+            pass="$(openssl rand -hex 16)"
+            security create-keychain -p "$pass" "$keychain"
+            security set-keychain-settings -lut 3600 "$keychain"
+            security unlock-keychain -p "$pass" "$keychain"
+            base64 -d <<<"$MACOS_CERT_P12" > "$RUNNER_TEMP/cert.p12"
+            security import "$RUNNER_TEMP/cert.p12" -k "$keychain" -P "$MACOS_CERT_PASSWORD" -T /usr/bin/codesign
+            rm -f "$RUNNER_TEMP/cert.p12"
+            security set-key-partition-list -S apple-tool:,apple: -s -k "$pass" "$keychain" > /dev/null
+            security list-keychains -d user -s "$keychain" login.keychain-db
+            REINS_DEVELOPER_ID="$(security find-identity -v -p codesigning "$keychain" |
+              sed -n 's/.*"\(Developer ID Application: [^"]*\)".*/\1/p' | head -1)"
+            [[ -n "$REINS_DEVELOPER_ID" ]] || { echo "::error::the .p12 holds no Developer ID Application identity"; exit 1; }
+            export REINS_DEVELOPER_ID
+            if [[ -n "$AC_API_KEY_P8" && -n "$AC_API_KEY_ID" && -n "$AC_API_ISSUER_ID" ]]; then
+              printf '%s' "$AC_API_KEY_P8" > "$RUNNER_TEMP/notary.p8"
+              export REINS_NOTARY_KEY="$RUNNER_TEMP/notary.p8" REINS_NOTARY_KEY_ID="$AC_API_KEY_ID" \
+                REINS_NOTARY_ISSUER="$AC_API_ISSUER_ID"
+            fi
+          fi
+          scripts/package/macos.sh
+      - name: Verify universal executables
+        run: |
+          for binary in reins reins-app; do
+            archs="$(lipo -archs "target/package/Reins.app/Contents/MacOS/$binary")"
+            [[ "$archs" == *arm64* && "$archs" == *x86_64* ]] || { echo "::error::Missing app architecture: $archs"; exit 1; }
+            test -x "target/package/Reins.app/Contents/MacOS/$binary"
+          done
+      - name: Remove signing material
+        if: always()
+        run: rm -f "$RUNNER_TEMP/notary.p8"
+      - uses: actions/upload-artifact@v7
+        with:
+          name: dist-app-macOS
+          compression-level: 0
+          path: target/package/Reins-*.dmg
           if-no-files-found: error
           retention-days: 7
 
@@ -451,7 +548,7 @@ jobs:
           context: .
           file: docker/Dockerfile.debian
           platforms: linux/${{ matrix.arch }}
-          # Push immutable digests first; the merge job updates public version/latest tags together.
+          # Push immutable digests first; the publisher updates public version/latest tags together.
           outputs: ${{ inputs.verify_only && 'type=cacheonly' || format('type=image,name={0},push-by-digest=true,name-canonical=true,push=true', steps.image.outputs.name) }}
           # Docker layers were evicting Rust/Gradle caches from the repository's shared cache quota.
           cache-from: type=registry,ref=${{ steps.image.outputs.name }}:buildcache-${{ matrix.arch }}
@@ -565,14 +662,11 @@ jobs:
           pattern: android-native-*
           merge-multiple: true
           path: native
-      - name: Stage native libraries and bindings
+      - name: Require native libraries and bindings
         run: |
           test -s native/jni/arm64-v8a/libreins_core.so
           test -s native/jni/x86_64/libreins_core.so
           test -s native/kotlin/dev/reins/core/reins_core.kt
-          mkdir -p android/app/build/rustJniLibs android/app/build/generated/uniffi/shared
-          cp -r native/jni android/app/build/rustJniLibs/shared
-          cp -r native/kotlin android/app/build/generated/uniffi/shared/kotlin
       - uses: gradle/actions/setup-gradle@v6
         with:
           cache-provider: basic
@@ -618,7 +712,7 @@ jobs:
           echo "version-code=$version_code" >> "$GITHUB_OUTPUT"
           # The site and the sign-in screen's server are gradle.properties' reins.site / reins.defaultServer.
           ./gradlew --no-daemon --parallel --no-configuration-cache :app:assembleFullRelease \
-            -x :app:cargoNdk -x :app:uniffiBindgen \
+            "-Preins.prebuiltNativeDir=$GITHUB_WORKSPACE/native" \
             -Preins.secureScreens=true \
             "-Preins.versionCode=$version_code" \
             "-Preins.versionName=$VERSION" \
@@ -656,10 +750,11 @@ jobs:
 
   publish:
     name: Publish the release
-    needs: [plan, desktop, desktop-app, server, docker, android]
+    needs: [plan, desktop, desktop-app, desktop-app-macos, server, docker, android]
     if: >-
       always() && needs.plan.outputs.release == 'true' &&
       needs.desktop.result == 'success' && needs.desktop-app.result == 'success' &&
+      needs.desktop-app-macos.result == 'success' &&
       needs.server.result == 'success' && needs.docker.result == 'success' &&
       needs.android.result == 'success'
     runs-on: ubuntu-24.04

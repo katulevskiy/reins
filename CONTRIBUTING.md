@@ -156,7 +156,8 @@ version/latest tags. Build caches are refreshed, including the per-architecture 
 
 Routine release builds use Thin LTO and 16 codegen units. `cargo build --profile release-fat` retains the previous fat
 LTO/one-codegen-unit configuration for explicit optimization benchmarks. Installers compile the GUI and bundled CLI
-under one profile to share dependencies; Windows CLI downloads reuse the installer binary. Standalone macOS CLI
+under one profile to share dependencies; Windows CLI downloads reuse the installer binary. macOS GUI architectures
+compile on separate native runners before universal bundling and signing. Standalone macOS CLI
 builds remain separate to preserve macOS 11 support (the GUI requires macOS 12). Android builds each ABI and the Kotlin bindings on separate workers; native
 outputs are reused only for an exact native source/configuration hash. Every packaged APK verifies both ELF
 architectures as well as the production signing certificate and installed identity.

@@ -177,6 +177,20 @@ kotlin {
 val repoRoot: File = rootProject.projectDir.parentFile
 val rustProfile = providers.gradleProperty("reins.rustProfile").getOrElse("release")
 val cargoBin = "${System.getProperty("user.home")}/.cargo/bin"
+// Release workers supply exact-source native artifacts; register them as static sources rather than excluding
+// generated-source tasks (Gradle cannot read a generated output provider when its producer was excluded).
+val prebuiltNativeDir = providers.gradleProperty("reins.prebuiltNativeDir").orNull?.let { file(it) }
+prebuiltNativeDir?.let { native ->
+    listOf(
+        "jni/arm64-v8a/libreins_core.so",
+        "jni/x86_64/libreins_core.so",
+        "kotlin/dev/reins/core/reins_core.kt",
+    ).forEach { relative ->
+        check(native.resolve(relative).isFile && native.resolve(relative).length() > 0) {
+            "Missing prebuilt native output: ${native.resolve(relative)}"
+        }
+    }
+}
 
 /** Builds `reins-core` for the shipped ABIs with 16 KB page alignment. cargo is incremental, so this always runs. */
 abstract class CargoNdkTask : DefaultTask() {
@@ -283,8 +297,13 @@ androidComponents {
         android.signingConfigs.findByName("release")?.let { variant.signingConfig.setConfig(it) }
     }
     onVariants { variant ->
-        variant.sources.jniLibs?.addGeneratedSourceDirectory(sharedCargo, CargoNdkTask::outputDir)
-        variant.sources.kotlin?.addGeneratedSourceDirectory(sharedBindgen, UniffiBindgenTask::outputDir)
+        if (prebuiltNativeDir != null) {
+            variant.sources.jniLibs?.addStaticSourceDirectory(prebuiltNativeDir.resolve("jni").absolutePath)
+            variant.sources.kotlin?.addStaticSourceDirectory(prebuiltNativeDir.resolve("kotlin").absolutePath)
+        } else {
+            variant.sources.jniLibs?.addGeneratedSourceDirectory(sharedCargo, CargoNdkTask::outputDir)
+            variant.sources.kotlin?.addGeneratedSourceDirectory(sharedBindgen, UniffiBindgenTask::outputDir)
+        }
     }
 }
 
