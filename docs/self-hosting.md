@@ -93,8 +93,9 @@ Everything else (database URL, SMTP, `ADMIN_TOKEN`, two-factor options) works as
 ## Accounts and the web vault
 
 For WorkOS deployments (`REINS_ENABLED=true`, `SSO_ENABLED=true`, `SSO_PROVIDER=workos`), the phone uses hosted AuthKit
-and the server requires passkey authentication by default (`REINS_WORKOS_REQUIRE_PASSKEY=true`). Configure AuthKit
-passkeys and a production custom domain before rollout. Local password signup and sign-in are disabled automatically.
+and the server accepts the authentication methods enabled in WorkOS by default (`REINS_WORKOS_REQUIRE_PASSKEY=false`).
+Enable email and social providers in the correct WorkOS environment; passkey-only deployments can explicitly set
+this option to true after configuring and testing AuthKit passkeys. Local password signup and sign-in are disabled automatically.
 See [deployment.md](deployment.md#workos-passkeys-and-recovery-rollout).
 
 For self-hosted password deployments, people need an account before the phone can sign in. There are four ways to create one:

@@ -53,10 +53,12 @@ permissions) and the password vault (master password once) are each added from t
 
 ### Onboarding, pairing codes and links
 
-Signed out, the app shows a welcome with "Continue with a passkey" (`ui/signin`). It calls the core's `ssoBegin` for
+Signed out, the app shows a welcome with "Continue" (`ui/signin`). It calls the core's `ssoBegin` for
 `BuildConfig.DEFAULT_SERVER` (`reins.defaultServer`, default `https://app.reins2fa.com`) and opens the server's
-WorkOS AuthKit sign-in page in a Custom Tab. Hosted sign-in requires a passkey; enabling passkeys and using
-a stable AuthKit custom domain are WorkOS environment configuration. Other servers can keep their own SSO policy. The page sends the browser to
+WorkOS AuthKit sign-in page in a Custom Tab, preferring a browser with Custom Tabs support even if the default
+browser has none. AuthKit presents the email, social and passkey methods enabled in its WorkOS environment.
+Passkeys currently require WorkOS's hosted UI; Google OAuth also uses the browser session. Other servers can keep
+their own SSO policy. The page sends the browser to
 `com.reins2fa.app://sso-callback`, which `platform/SsoRedirectActivity` hands to `MainActivity` (closing the tab), and the
 sign-in screen finishes it with `ssoFinish`. `platform/SsoSignIn` keeps the server, `state` and PKCE verifier in the
 app's private storage while the page is open, so the sign-in still finishes when Android stopped the app meanwhile.

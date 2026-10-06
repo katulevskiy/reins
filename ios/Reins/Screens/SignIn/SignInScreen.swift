@@ -111,13 +111,13 @@ struct SignInScreen: View {
             } label: {
                 HStack(spacing: 10) {
                     if sso.busy { ProgressView().tint(Palette.background) }
-                    Text(customServer ? "Continue" : "Continue with a passkey")
+                    Text("Continue")
                 }
             }
             .buttonStyle(CapsuleButtonStyle(kind: .primary))
             .disabled(sso.busy || serverUrl.count <= "https://".count)
             .accessibilityIdentifier("continue")
-            Text(customServer ? "Continue through your server's sign-in page." : "Create or use a passkey on the secure sign-in page. Your phone protects it with Face ID, Touch ID or its screen lock.")
+            Text(customServer ? "Continue through your server's sign-in page." : "Sign in or create an account on the secure sign-in page.")
                 .font(RFont.sans(13.5))
                 .foregroundStyle(Palette.tertiary)
                 .fixedSize(horizontal: false, vertical: true)

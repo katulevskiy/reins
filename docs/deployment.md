@@ -156,7 +156,7 @@ Google Calendar and Google Contacts use the same Android client. Additionally en
 * **Calendar, contacts and text messages on the phone**: Android permissions (`READ/WRITE_CALENDAR`, `READ_CONTACTS`,
   `READ_SMS`, `SEND_SMS`) requested when the user connects each one. Messages that look like login codes are never
   shared unless ticked one by one.
-* **Password vault** (items of every kind, folders, trash, archive, attachments, Sends and the generator): the vault of the Vaultwarden account the phone is signed in to. WorkOS accounts generate vault keys on the phone and require a passkey sign-in plus a saved recovery code. Legacy
+* **Password vault** (items of every kind, folders, trash, archive, attachments, Sends and the generator): the vault of the Vaultwarden account the phone is signed in to. WorkOS accounts generate vault keys on the phone and require a WorkOS sign-in plus a saved recovery code. Legacy
   self-hosted password accounts enter their password once to unlock the vault key, kept sealed on the phone. Every secret (a password, a
   one-time code, a note, a card number, an SSH private key) is asked for at each request and can never be covered by a standing grant; passwords are not written to
   the activity log.
@@ -232,8 +232,17 @@ may need to reconnect the connector to refresh its tool list after a new integra
 ## WorkOS passkeys and recovery rollout
 
 With Reins and WorkOS enabled, accounts can only authenticate through WorkOS; local password sign-in and registration
-are disabled automatically. `REINS_WORKOS_REQUIRE_PASSKEY=true` is the default: a successful hosted AuthKit callback
-must report `authentication_method=Passkey`. Other WorkOS methods are refused before a Reins session is issued.
+are disabled automatically. `REINS_WORKOS_REQUIRE_PASSKEY=false` is the default: email, social and passkey sign-ins
+enabled in WorkOS are accepted. Reins still requires a WorkOS session identifier so lifecycle revocation works for
+every login method. Set this option to true only for a deliberate passkey-only deployment; its AuthKit callback must
+report `authentication_method=Passkey`.
+
+In the WorkOS environment matching `SSO_CLIENT_ID`, enable Email + Password, Magic Auth (email codes), passkeys,
+and configured social providers under Authentication. Social providers require their own OAuth configuration in
+production. AuthKit's standard methods are included in its free user tier; enterprise SSO and custom domains have
+separate pricing. A hosted page showing only "Continue with SSO" has no consumer login methods enabled. Enable those
+methods before expecting ordinary email accounts to sign up or sign in. Check invitation-only signup and organization
+policies if AuthKit still reports that an account is not authorized.
 
 Configure the AuthKit production custom domain before enabling passkeys, since credentials are bound to that domain.
 Enable passkeys in WorkOS Authentication settings, and verify signup and sign-in on both iOS and Android. Optional
@@ -247,6 +256,5 @@ recover a WorkOS identity by itself. Users should keep it offline. Neither ident
 the account secret. Platform passkey providers manage passkey synchronization; Reins transfers vault keys to another
 phone only through a confirmed encrypted join or the recovery code.
 
-Verify the deployment checklist in [release-readiness.md](release-readiness.md). Keep production policy enabled;
-`REINS_WORKOS_REQUIRE_PASSKEY=false` is only for explicit legacy migrations or staging tests. The headless WorkOS live
-check uses a disposable staging user and Magic Auth and does not prove a native passkey signup works.
+Verify the deployment checklist in [release-readiness.md](release-readiness.md). The headless WorkOS live check uses
+a disposable staging user and Magic Auth and does not prove native passkey signup or production social login works.

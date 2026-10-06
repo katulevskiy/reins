@@ -7,8 +7,9 @@ Review date: 2026-10-02. Source baseline: `97b9cd7` (Reins) and the merged downl
 
 - Both mobile apps use WorkOS AuthKit with PKCE. The live hosted authorize endpoint was also verified to redirect
   to WorkOS AuthKit at review time. WorkOS-backed Reins disables local password login, signup and
-  password-token refresh automatically. Passkey authentication is required by default, checked against the
-  server-to-server WorkOS authentication response before issuing a Reins session.
+  password-token refresh automatically. WorkOS's configured email, social and passkey methods are accepted by
+  default; passkey-only sign-in remains an explicit deployment option. Every Reins sign-in requires a WorkOS session
+  identifier for revocation.
 - Vault keys are random and encrypted on the phone, independent of the email address. Both apps require recording
   the recovery code and confirming its final group before continuing; the acknowledgment persists through relaunch
   and email changes without storing the recovery code in preferences.
@@ -41,9 +42,9 @@ Review date: 2026-10-02. Source baseline: `97b9cd7` (Reins) and the merged downl
 
 | Item | Missing or unverified |
 | --- | --- |
-| WorkOS passkeys | Enable passkeys on the production AuthKit custom domain and verify enrollment/sign-in on iOS and Android. WorkOS progressive enrollment is optional and skippable; existing social/email accounts need a tested migration path. The server refuses non-passkey sign-in rather than pretending enrollment occurred. |
+| WorkOS login methods | Enable email codes, email/password, passkeys and configured social providers in the environment matching the live `SSO_CLIENT_ID`. Verify ordinary account signup and sign-in on Android/iOS. WorkOS passkeys require the hosted UI, and progressive enrollment is optional and skippable. |
 | Legacy vault migration | New WorkOS accounts use random keys and mandatory recovery recording. Existing password-encrypted accounts retain their password for key unlock. Require an authenticated rewrap/migration using the original decryption credential before claiming every existing account is passwordless. |
-| Existing sessions | Passkey enforcement applies to new sign-ins. Revoke existing non-passkey WorkOS/Reins sessions during the planned rollout so old authenticated sessions cannot bypass the new signup requirement. |
+| Existing sessions | If choosing a passkey-only deployment, enforcement applies to new sign-ins. Revoke existing non-passkey WorkOS/Reins sessions during that rollout so old sessions cannot bypass the policy. |
 | WorkOS recovery | The Reins recovery code recovers encrypted vault keys, not a lost WorkOS identity. Confirm the identity recovery journey in WorkOS and explain this distinction to users. |
 | Infisical access | The configured project returned HTTP 404 in both dev and prod. Signing secrets could not be imported or inspected. Sign in again, restore project access, import the prepared private signing bundle and configure the release machine identity. |
 | GitHub release identity | Set `INFISICAL_RELEASE_IDENTITY_ID` and bind the identity to this repository's release workflow on `main`, with access limited to `/signing/android`. There were no GitHub repository secrets or variables at review time. |
