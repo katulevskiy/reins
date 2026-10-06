@@ -163,6 +163,9 @@ jobs:
         include:
           - { target: x86_64-unknown-linux-musl, os: ubuntu-24.04, zig: true, native: true, optional: false }
           - { target: aarch64-unknown-linux-musl, os: ubuntu-24.04, zig: true, native: false, optional: false }
+          # Standalone macOS CLI supports macOS 11; the GUI bundle requires macOS 12.
+          - { target: aarch64-apple-darwin, os: macos-15, zig: false, native: true, optional: false }
+          - { target: x86_64-apple-darwin, os: macos-15, zig: false, native: false, optional: false }
           - { target: aarch64-pc-windows-msvc, os: windows-2025, zig: false, native: false, optional: true }
     env:
       TARGET: ${{ matrix.target }}
@@ -346,24 +349,16 @@ jobs:
             target/package/Reins-*.tar.gz dist/ 2>/dev/null || true
           ls -l dist
           [[ -n "$(ls dist)" ]] || { echo "::error::no installer was made"; exit 1; }
-      # macOS/Windows CLI archives reuse the exact binaries already built for the installers.
-      # This removes three redundant build jobs and their dependency caches.
-      - name: CLI archives from installer binaries
-        if: runner.os != 'Linux'
+      # Windows CLI archives reuse the exact binary already built for the installer.
+      # Keep macOS CLI jobs separate to preserve their older deployment target.
+      - name: CLI archive from Windows installer binary
+        if: runner.os == 'Windows'
         run: |
-          if [[ "$RUNNER_OS" == macOS ]]; then
-            targets=(aarch64-apple-darwin x86_64-apple-darwin)
-            native=aarch64-apple-darwin
-            suffix=""
-          else
-            targets=(x86_64-pc-windows-msvc)
-            native=x86_64-pc-windows-msvc
-            suffix=.exe
-          fi
-          out="$("target/$native/release-app/reins$suffix" --version)"
+          target=x86_64-pc-windows-msvc
+          out="$("target/$target/release-app/reins.exe" --version)"
           echo "$out"
           [[ "$out" == *"$VERSION ($REINS_BUILD)"* ]] || { echo "::error::unexpected CLI version: $out"; exit 1; }
-          for target in "${targets[@]}"; do scripts/package-cli.sh "$target" "$VERSION" release-app; done
+          scripts/package-cli.sh "$target" "$VERSION" release-app
       - name: Remove signing material
         if: always()
         run: rm -f "$RUNNER_TEMP/notary.p8" "$RUNNER_TEMP/cert.pfx"
