@@ -85,4 +85,19 @@ assert publisher.index("--draft\n") < publisher.index(
     'gh release edit "$TAG" --draft=false --latest'
 )
 assert "needs.android.result == 'success'" in publisher
-print("18 release CI gate checks passed")
+# Artifact retries must preserve the release gate: only the first attempt may fail softly.
+action = (ROOT / ".github/actions/upload-artifact/action.yml").read_text()
+first, retry = action.split("    - id: retry\n", 1)
+assert "continue-on-error: true" in first
+assert "continue-on-error:" not in retry
+assert "steps.upload.outcome == 'failure'" in retry
+assert "!cancelled()" in retry
+assert "overwrite: true" in retry
+assert action.count("if-no-files-found: error") == 2
+for field in ("name", "path", "compression-level", "retention-days"):
+    assert action.count(f"{field}: ${{{{ inputs.{field} }}}}") == 2
+desktop = workflow.split("  desktop:\n", 1)[1].split("  desktop-app:\n", 1)[0]
+assert "fail-fast: false" in desktop
+assert "uses: actions/upload-artifact@" not in workflow
+assert workflow.count("uses: ./.github/actions/upload-artifact") == 8
+print("31 release CI gate and artifact retry checks passed")

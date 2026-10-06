@@ -1,0 +1,43 @@
+name: Upload artifact with retry
+description: Retry one failed artifact upload while preserving fatal failure after exhaustion
+inputs:
+  name:
+    description: Unique artifact name within this workflow run
+    required: true
+  path:
+    description: Files or glob patterns to upload
+    required: true
+  compression-level:
+    description: Artifact archive compression level
+    default: "6"
+  retention-days:
+    description: Days to retain the artifact
+    default: "7"
+runs:
+  using: composite
+  steps:
+    - id: upload
+      uses: actions/upload-artifact@v7
+      continue-on-error: true
+      with:
+        name: ${{ inputs.name }}
+        path: ${{ inputs.path }}
+        compression-level: ${{ inputs.compression-level }}
+        retention-days: ${{ inputs.retention-days }}
+        if-no-files-found: error
+    - name: Back off before retrying the artifact service
+      if: ${{ !cancelled() && steps.upload.outcome == 'failure' }}
+      shell: bash
+      run: sleep 5
+    # A failed request may have created an incomplete artifact. Replace only this job's uniquely named artifact.
+    # This attempt is fatal: missing files and persistent service failures still block publication.
+    - id: retry
+      uses: actions/upload-artifact@v7
+      if: ${{ !cancelled() && steps.upload.outcome == 'failure' }}
+      with:
+        name: ${{ inputs.name }}
+        path: ${{ inputs.path }}
+        compression-level: ${{ inputs.compression-level }}
+        retention-days: ${{ inputs.retention-days }}
+        if-no-files-found: error
+        overwrite: true

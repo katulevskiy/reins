@@ -152,6 +152,8 @@ jobs:
     # a failure leaves that one archive out of the release instead of holding the release back.
     continue-on-error: ${{ matrix.optional }}
     strategy:
+      # A failed upload must not cancel independent builds needed by a release retry.
+      fail-fast: false
       matrix:
         include:
           - { target: x86_64-unknown-linux-musl, os: ubuntu-24.04, zig: true, native: true, optional: false }
@@ -215,14 +217,13 @@ jobs:
       # scripts/install.ps1 unpacks); the same layout inside.
       - name: Package
         run: scripts/package-cli.sh "$TARGET" "$VERSION"
-      - uses: actions/upload-artifact@v7
+      - uses: ./.github/actions/upload-artifact # zizmor: ignore[self-repository] use the exact release checkout
         with:
           name: dist-desktop-${{ matrix.target }}
           compression-level: 0
           path: |
             dist/*.tar.gz
             dist/*.zip
-          if-no-files-found: error
           retention-days: 7
 
   # The Reins desktop app (crates/reins-desktop-app, GPUI) with reins inside, as installers: Reins-macOS.dmg
@@ -319,12 +320,11 @@ jobs:
       - name: Remove signing material
         if: always()
         run: rm -f "$RUNNER_TEMP/notary.p8" "$RUNNER_TEMP/cert.pfx"
-      - uses: actions/upload-artifact@v7
+      - uses: ./.github/actions/upload-artifact # zizmor: ignore[self-repository] use the exact release checkout
         with:
           name: dist-app-${{ matrix.platform }}
           compression-level: 0
           path: dist/*
-          if-no-files-found: error
           retention-days: 7
 
   # Compile the two macOS architectures on native runners; only bundling/signing is serial.
@@ -377,14 +377,13 @@ jobs:
           out="$("target/$TARGET/release-app/reins" --version)"
           echo "$out"
           [[ "$out" == *"$VERSION ($REINS_BUILD)"* ]] || { echo "::error::unexpected CLI version: $out"; exit 1; }
-      - uses: actions/upload-artifact@v7
+      - uses: ./.github/actions/upload-artifact # zizmor: ignore[self-repository] use the exact release checkout
         with:
           name: macos-app-${{ matrix.arch }}
           compression-level: 0
           path: |
             target/${{ env.TARGET }}/release-app/reins-app
             target/${{ env.TARGET }}/release-app/reins
-          if-no-files-found: error
           retention-days: 1
 
   desktop-app-macos:
@@ -461,12 +460,11 @@ jobs:
       - name: Remove signing material
         if: always()
         run: rm -f "$RUNNER_TEMP/notary.p8"
-      - uses: actions/upload-artifact@v7
+      - uses: ./.github/actions/upload-artifact # zizmor: ignore[self-repository] use the exact release checkout
         with:
           name: dist-app-macOS
           compression-level: 0
           path: target/package/Reins-*.dmg
-          if-no-files-found: error
           retention-days: 7
 
   server:
@@ -511,12 +509,11 @@ jobs:
           tar -C dist -czf "dist/$name.tar.gz" "$name"
           rm -rf "dist/${name:?}"
           ls -l dist
-      - uses: actions/upload-artifact@v7
+      - uses: ./.github/actions/upload-artifact # zizmor: ignore[self-repository] use the exact release checkout
         with:
           name: dist-server
           compression-level: 0
           path: dist/*.tar.gz
-          if-no-files-found: error
           retention-days: 7
 
   docker:
@@ -589,12 +586,11 @@ jobs:
           [[ "$DIGEST" =~ ^sha256:[0-9a-f]{64}$ ]]
           mkdir -p digests
           touch "digests/${DIGEST#sha256:}"
-      - uses: actions/upload-artifact@v7
+      - uses: ./.github/actions/upload-artifact # zizmor: ignore[self-repository] use the exact release checkout
         if: inputs.verify_only != true
         with:
           name: image-digest-${{ matrix.arch }}
           path: digests/*
-          if-no-files-found: error
           retention-days: 1
 
   android-native:
@@ -648,11 +644,10 @@ jobs:
         env:
           KIND: ${{ matrix.kind }}
         run: scripts/build-android-native.sh "$KIND" "$GITHUB_WORKSPACE/native"
-      - uses: actions/upload-artifact@v7
+      - uses: ./.github/actions/upload-artifact # zizmor: ignore[self-repository] use the exact release checkout
         with:
           name: android-native-${{ matrix.kind }}
           path: native/
-          if-no-files-found: error
           retention-days: 1
 
   android:
@@ -760,12 +755,11 @@ jobs:
             grep -E 'certificate SHA-(1|256) digest' certs.txt
             echo '```'
           } >> "$GITHUB_STEP_SUMMARY"
-      - uses: actions/upload-artifact@v7
+      - uses: ./.github/actions/upload-artifact # zizmor: ignore[self-repository] use the exact release checkout
         with:
           name: dist-android
           compression-level: 0
           path: dist/*.apk
-          if-no-files-found: error
           retention-days: 7
 
   publish:
