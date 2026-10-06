@@ -46,3 +46,5 @@ macro_rules! default_server {
 
 /// [`default_server!`] as a constant.
 pub const DEFAULT_SERVER: &str = default_server!();
+
+pub mod account_state;

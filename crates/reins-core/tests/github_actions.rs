@@ -612,7 +612,7 @@ async fn the_account_reads_are_about_the_account_resource() {
     })
     .await;
     assert_eq!((me[0].resource_label.as_str(), me[0].extra["plan"].clone()), ("Your GitHub account", json!("pro")));
-    assert!(me[0].parents.is_empty());
+    assert_eq!(me[0].parents.len(), 0);
     check_read(Read {
         tool: "github_user_get",
         args: json!({"username": "ann"}),
@@ -934,7 +934,7 @@ async fn check_write(w: Write) -> Value {
     assert!(preview.lines[0].contains(w.first_line), "{}: {:?}", w.tool, preview.lines);
     assert_eq!(preview.once_only, w.once, "{} once-only", w.tool);
     assert_eq!(preview.resource, w.resource, "{}", w.tool);
-    assert!(!preview.resource_label.is_empty());
+    assert_ne!(preview.resource_label, "");
     if w.resource == "account" {
         assert_eq!((preview.resource_label.as_str(), preview.parents.is_empty()), ("Your GitHub account", true));
     } else {
@@ -2058,7 +2058,7 @@ async fn raw_paths_that_could_escape_never_reach_the_network() {
     assert!(requests(&server).await.is_empty(), "nothing was sent");
     let c = call("github_request_read", &json!({"path": "/repos/octo/cat/issues", "query": {"a b": "1"}}));
     assert!(text(&gh.fetch(ME, &c).await.unwrap_err()).contains("query name"));
-    assert!(requests(&server).await.is_empty());
+    assert_eq!(requests(&server).await.len(), 0);
 }
 
 #[tokio::test]

@@ -273,7 +273,7 @@ async fn mistakes_are_told_before_the_user_is_asked() {
     let short_lease = release(&desk, "r8", &["GitHub/password"], 30);
     desk.send(&[short_lease]).await;
     desk.error("r8").await;
-    assert!(desk.waiting().await.is_empty());
+    assert_eq!(desk.waiting().await.len(), 0);
 }
 
 // ---- SSH ------------------------------------------------------------------------------------------------------------
@@ -504,5 +504,5 @@ async fn only_sign_ins_with_the_named_key_are_signed() {
         let message = desk.error(id).await;
         assert!(message.contains(says), "{id}: {message}");
     }
-    assert!(desk.waiting().await.is_empty());
+    assert_eq!(desk.waiting().await.len(), 0);
 }

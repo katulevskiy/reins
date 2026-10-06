@@ -38,7 +38,7 @@ log = "0.4.34"
 mail-parser = "0.11.9"
 reqwest = { version = "0.13.5", default-features = false, features = ["rustls-no-provider", "json", "form", "query", "http2", "charset", "multipart"] }
 ring = "0.17.14"
-rusqlite = { version = "0.40.2", features = ["bundled"] }
+rusqlite = { version = "0.40.2", features = ["bundled", "serialize"] }
 rustls = { version = "0.23.44", default-features = false, features = ["ring", "std", "tls12"] }
 serde = { version = "1.0.229", features = ["derive"] }
 serde_json = "1.0.151"

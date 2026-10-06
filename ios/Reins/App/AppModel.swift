@@ -1,3 +1,4 @@
+import CryptoKit
 import Foundation
 import Observation
 import UIKit
@@ -31,10 +32,20 @@ enum SessionState: Equatable {
 enum KeysLock {
     private static let key = "account.keysLocked"
 
-    static func set(_ info: SessionInfo) { AppGroup.defaults.set("\(info.serverUrl)|\(info.email)", forKey: key) }
+    static func set(_ info: SessionInfo) {
+        let data = Data("\(info.serverUrl)|\(info.email)".utf8)
+        guard let sealed = try? SealedSnapshot.seal(data) else { return }
+        AppGroup.defaults.set(sealed, forKey: key)
+    }
 
     static func matches(_ info: SessionInfo) -> Bool {
-        AppGroup.defaults.string(forKey: key) == "\(info.serverUrl)|\(info.email)"
+        let value = "\(info.serverUrl)|\(info.email)"
+        if let legacy = AppGroup.defaults.string(forKey: key) {
+            AppGroup.defaults.removeObject(forKey: key)
+            if legacy == value { set(info); return true }
+        }
+        guard let data = AppGroup.defaults.data(forKey: key), let plain = try? SealedSnapshot.open(data) else { return false }
+        return String(data: plain, encoding: .utf8) == value
     }
 
     static func clear() { AppGroup.defaults.removeObject(forKey: key) }
@@ -48,26 +59,42 @@ enum DeviceStatus {
     private static let seenKey = "device.seenActivity"
     private static var d: UserDefaults { AppGroup.defaults }
 
-    static var replaced: Bool {
-        get { d.bool(forKey: replacedKey) }
-        set {
-            d.set(newValue, forKey: replacedKey)
-            if newValue { d.set(false, forKey: approvalKey) }
+    private static func read(_ key: String) -> String? {
+        guard let data = d.data(forKey: key), let plain = try? SealedSnapshot.open(data),
+              let value = String(data: plain, encoding: .utf8), value.hasPrefix(key + "\u{0}") else { return nil }
+        return String(value.dropFirst(key.count + 1))
+    }
+    private static func write(_ value: String, key: String) {
+        guard let data = try? SealedSnapshot.seal(Data((key + "\u{0}" + value).utf8)) else {
+            d.removeObject(forKey: key)
+            return
+        }
+        d.set(data, forKey: key)
+    }
+    static func selectAccount(_ info: SessionInfo) {
+        let owner = Snapshot.owner(server: info.serverUrl, email: info.email)
+        if read("device.account") != owner {
+            clear()
+            write(owner, key: "device.account")
         }
     }
-
+    static var replaced: Bool {
+        get { read(replacedKey) == "true" }
+        set {
+            write(String(newValue), key: replacedKey)
+            if newValue { write("false", key: approvalKey) }
+        }
+    }
     static var approvalDevice: Bool {
-        get { d.bool(forKey: approvalKey) }
-        set { d.set(newValue, forKey: approvalKey) }
+        get { read(approvalKey) == "true" }
+        set { write(String(newValue), key: approvalKey) }
     }
-
     static var seenActivityId: Int64 {
-        get { Int64(d.integer(forKey: seenKey)) }
-        set { d.set(Int(newValue), forKey: seenKey) }
+        get { read(seenKey).flatMap(Int64.init) ?? 0 }
+        set { write(String(newValue), key: seenKey) }
     }
-
     static func clear() {
-        [replacedKey, approvalKey, seenKey].forEach(d.removeObject(forKey:))
+        [replacedKey, approvalKey, seenKey, "device.account"].forEach(d.removeObject(forKey:))
     }
 }
 
@@ -174,28 +201,32 @@ final class AppModel {
     // MARK: Session
 
     func refreshSession() async {
+        let epoch = accountEpoch
         let info = await core.session()
-        // The demo core keeps nothing across launches, so neither does its lock.
-        if let info, !demo, KeysLock.matches(info) {
-            setSession(.keysLocked(info))
-            return
-        }
+        guard epoch == accountEpoch else { return }
+        var keys: AccountKeys?
+        if info != nil && !demo { keys = try? await core.accountKeys() }
+        var recoveryFailure: String?
+        var code: String?
         if info != nil {
-            seenActivityId = DeviceStatus.seenActivityId
-            approvalDevice = DeviceStatus.approvalDevice && !DeviceStatus.replaced
-        }
-        if let info {
-            var recoveryFailure: String?
-            var code: String?
             do { code = try await core.accountRecoveryCode() }
             catch CoreError.Invalid { /* Password accounts have no recovery secret. */ }
             catch { recoveryFailure = error.userMessage }
+        }
+        let current = await core.session()
+        guard epoch == accountEpoch, current == info else { return }
+        if let info, !demo, KeysLock.matches(info) || keys != .unlocked {
+            setSession(.keysLocked(info))
+            return
+        }
+        setSession(info.map(SessionState.signedIn) ?? .signedOut)
+        if let info {
+            DeviceStatus.selectAccount(info)
+            seenActivityId = DeviceStatus.seenActivityId
+            approvalDevice = DeviceStatus.approvalDevice && !DeviceStatus.replaced
             recoveryCodeAvailable = code != nil
             recoveryToRecord = code.flatMap { RecoveryRecord.confirmed(server: info.serverUrl, code: $0) ? nil : $0 }
             recoveryLoadError = recoveryFailure
-        }
-        setSession(info.map(SessionState.signedIn) ?? .signedOut)
-        if info != nil {
             onSignedIn?()
             await refreshPending()
             await refreshConnections()
@@ -203,9 +234,21 @@ final class AppModel {
         }
     }
 
+    private(set) var accountEpoch: UInt64 = 0
+    private func identity(_ state: SessionState) -> String? {
+        if case let .signedIn(info) = state { return info.serverUrl + "\u{0}" + info.email }
+        return nil
+    }
     func setSession(_ state: SessionState) {
+        let previous = identity(session)
+        let next = identity(state)
+        if previous != next { accountEpoch &+= 1 }
         session = state
-        if case .signedIn = state { return }
+        if next != nil && (previous == nil || previous == next) { return }
+        syncTask?.cancel()
+        syncTask = nil
+        seenActivityId = 0
+        deviceReplaced = false
         pending = []
         activity = []
         grants = []
@@ -306,23 +349,30 @@ final class AppModel {
 
     /// Re-reads everything held on the phone: what waits, what happened, which permissions exist.
     func refreshPending() async {
+        let epoch = accountEpoch
         do {
-            pending = try await core.pending()
-            activity = try await core.activity(limit: 300)
-            grants = try await core.grants()
-            accounts = try await core.accounts()
-            services = try await core.services().filter { $0.service != "sms" }
-            setMcpServers(try await core.mcpServers())
-            if let info = await core.session(), case .signedIn = session {
-                setSession(.signedIn(info))
-            }
+            let newPending = try await core.pending()
+            let newActivity = try await core.activity(limit: 300)
+            let newGrants = try await core.grants()
+            let newAccounts = try await core.accounts()
+            let newServices = try await core.services().filter { $0.service != "sms" }
+            let newServers = try await core.mcpServers()
+            guard epoch == accountEpoch else { return }
+            pending = newPending
+            activity = newActivity
+            grants = newGrants
+            accounts = newAccounts
+            services = newServices
+            setMcpServers(newServers)
             await refreshAutopilot()
+            guard epoch == accountEpoch else { return }
             onGrantsChanged?(grants)
         } catch CoreError.NotLoggedIn {
-            setSession(.signedOut)
+            if epoch == accountEpoch { setSession(.signedOut) }
         } catch {
-            // Offline or a failing store: keep what is shown.
+            // Offline: the current account keeps its last decrypted view.
         }
+        guard epoch == accountEpoch else { return }
         deviceReplaced = DeviceStatus.replaced
         onPendingChanged?(pending)
         maybePresent()
@@ -332,7 +382,8 @@ final class AppModel {
     /// Re-reads Autopilot (modes, bypasses, model) and keeps what shows it in step.
     @discardableResult
     func refreshAutopilot() async -> AutopilotSettings? {
-        guard let settings = try? await core.autopilotSettings() else { return autopilot }
+        let epoch = accountEpoch
+        guard let settings = try? await core.autopilotSettings(), epoch == accountEpoch else { return nil }
         autopilot = settings
         onAutopilotChanged?(settings)
         publish()
@@ -354,7 +405,8 @@ final class AppModel {
 
     /// The AI connections (a network call; failures keep the last list).
     func refreshConnections() async {
-        if let list = try? await core.connections() {
+        let epoch = accountEpoch
+        if let list = try? await core.connections(), epoch == accountEpoch {
             connections = list
             publish()
         }
@@ -668,6 +720,9 @@ final class AppModel {
     /// Writes what widgets and controls show and asks WidgetKit to redraw.
     func publish() {
         var s = Snapshot()
+        if case let .signedIn(info) = session {
+            s.accountFingerprint = Snapshot.owner(server: info.serverUrl, email: info.email)
+        }
         if case .signedIn = session { s.signedIn = true }
         s.approvalDevice = approvalDevice
         s.pending = pending.map(snapshotItem)
@@ -695,11 +750,13 @@ enum OnboardingRecord {
     static func key(server: String, email: String) -> String {
         var s = server.trimmingCharacters(in: .whitespaces).lowercased()
         while s.hasSuffix("/") { s.removeLast() }
-        return "onboarded:\(s)|\(email.trimmingCharacters(in: .whitespaces).lowercased())"
+        let value = "\(s)|\(email.trimmingCharacters(in: .whitespaces).lowercased())"
+        return "onboarded:" + SHA256.hash(data: Data(value.utf8)).map { String(format: "%02x", $0) }.joined()
     }
 
     /// True the first time `email` on `server` signs in on this phone; records that it did.
     static func firstTime(server: String, email: String, defaults: UserDefaults = AppGroup.defaults) -> Bool {
+        defaults.dictionaryRepresentation().keys.filter { $0.hasPrefix("onboarded:") && $0.contains("@") }.forEach { defaults.removeObject(forKey: $0) }
         let k = key(server: server, email: email)
         guard !defaults.bool(forKey: k) else { return false }
         defaults.set(true, forKey: k)

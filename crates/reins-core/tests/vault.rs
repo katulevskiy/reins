@@ -38,7 +38,7 @@ async fn env() -> Env {
     Mock::given(method("POST"))
         .and(path("/identity/connect/token"))
         .respond_with(ResponseTemplate::new(200).set_body_json(json!({
-            "access_token": "ACCESS", "refresh_token": "REFRESH", "expires_in": 7200})))
+            "access_token": common::account_token(), "refresh_token": "REFRESH", "expires_in": 7200})))
         .mount(&server)
         .await;
 
@@ -73,7 +73,7 @@ async fn env() -> Env {
     ciphers[1]["key"] = json!(user.encrypt(&own.to_bytes()).unwrap());
     Mock::given(method("GET"))
         .and(path("/api/sync"))
-        .and(header("authorization", "Bearer ACCESS"))
+        .and(header("authorization", format!("Bearer {}", common::account_token()).as_str()))
         .respond_with(
             ResponseTemplate::new(200).set_body_json(json!({"profile": {"key": wrapped}, "ciphers": ciphers})),
         )
@@ -92,6 +92,7 @@ async fn env() -> Env {
         vec![],
     )
     .unwrap();
+    common::mount_account_vault(&server, EMAIL, PASSWORD).await;
     core.login(server.uri(), EMAIL.to_owned(), PASSWORD.to_owned(), None).await.unwrap();
     Env {
         server,
@@ -149,7 +150,7 @@ fn choice(ids: &[&str], standing: Option<StandingGrant>) -> ApprovalChoice {
 async fn the_master_password_unlocks_the_vault_once_and_a_wrong_one_does_not() {
     let env = env().await;
     assert!(matches!(env.core.add_token_account("vault".into(), "wrong".into()).await, Err(CoreError::Invalid { .. })));
-    assert!(env.core.accounts().await.unwrap().is_empty());
+    assert_eq!(env.core.accounts().await.unwrap().len(), 1, "login opens only this account vault");
     let added = env.core.add_token_account("vault".into(), PASSWORD.into()).await.unwrap();
     assert_eq!((added.service.as_str(), added.account.as_str()), ("vault", EMAIL));
     assert_eq!(env.core.service_account_status("vault".into(), EMAIL.into()).await, GmailStatus::Ready);
@@ -219,14 +220,14 @@ async fn a_field_is_handed_over_only_after_approval_every_time_and_never_written
         scope,
     };
     assert!(env.core.approve("r1".to_owned(), choice(&["git:password"], Some(standing))).await.is_err());
-    assert!(env.core.grants().await.unwrap().is_empty());
+    assert_eq!(env.core.grants().await.unwrap().len(), 0);
 
     env.core.approve("r1".to_owned(), choice(&["git:password"], None)).await.unwrap();
     let told = answers(&env).await;
     assert_eq!(told[0]["result"]["data"]["items"][0]["text"], "hunter2!");
     let entry = &env.core.activity(1).await.unwrap()[0];
     assert!(!format!("{entry:?}").contains("hunter2"), "the log never keeps a password: {entry:?}");
-    assert!(env.core.grants().await.unwrap().is_empty());
+    assert_eq!(env.core.grants().await.unwrap().len(), 0);
 
     serve_pending(&env, &[request("r2", "get", &json!({"item": "git", "field": "password"}))]).await;
     assert_eq!(env.core.sync(0).await.unwrap().len(), 1, "asked again every time");
@@ -252,7 +253,7 @@ async fn usernames_and_one_time_codes_are_fetched_and_mistakes_are_explained() {
         ("r5", json!({"item": "org", "field": "password"}), "No login with that id"),
     ] {
         serve_pending(&env, &[request(id, "get", &args)]).await;
-        assert!(env.core.sync(0).await.unwrap().is_empty());
+        assert_eq!(env.core.sync(0).await.unwrap().len(), 0);
         let told = answers(&env).await;
         let message = told.last().unwrap()["message"].as_str().unwrap().to_owned();
         assert!(message.contains(needle), "{id}: {message}");

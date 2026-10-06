@@ -80,7 +80,7 @@ async fn login_and_refresh_never_leak_secrets() {
         .and(path("/identity/connect/token"))
         .and(body_string_contains("twoFactorToken=123456"))
         .respond_with(ResponseTemplate::new(200).set_body_json(json!({
-            "access_token": "ACCESS-SECRET-1", "refresh_token": "REFRESH-SECRET-1", "expires_in": 7200
+            "access_token": common::account_token(), "refresh_token": "REFRESH-SECRET-1", "expires_in": 7200
         })))
         .with_priority(1)
         .mount(&server)
@@ -137,7 +137,7 @@ async fn files_through_the_server() -> String {
         (
             "POST",
             "/identity/connect/token",
-            json!({"access_token": "ACCESS", "refresh_token": "REFRESH", "expires_in": 7200}),
+            json!({"access_token": common::account_token(), "refresh_token": "REFRESH", "expires_in": 7200}),
         ),
         (
             "POST",
@@ -201,6 +201,7 @@ async fn files_through_the_server() -> String {
         vec![],
     )
     .unwrap();
+    common::mount_account_vault(&server, "me@example.com", "pw").await;
     core.login(server.uri(), "me@example.com".to_owned(), "pw".to_owned(), None).await.unwrap();
     core.add_token_account("github".to_owned(), GITHUB_TOKEN.to_owned()).await.unwrap();
     let request = |id: &str, op: &str, args: Value| -> Value {
@@ -265,7 +266,7 @@ async fn git_through_the_desktop_app() -> String {
     Mock::given(method("POST"))
         .and(path("/identity/connect/token"))
         .respond_with(ResponseTemplate::new(200).set_body_json(json!({
-            "access_token": "ACCESS", "refresh_token": "REFRESH", "expires_in": 7200})))
+            "access_token": common::account_token(), "refresh_token": "REFRESH", "expires_in": 7200})))
         .mount(&server)
         .await;
     Mock::given(method("POST"))
@@ -302,6 +303,7 @@ async fn git_through_the_desktop_app() -> String {
         vec![],
     )
     .unwrap();
+    common::mount_account_vault(&server, "me@example.com", "pw").await;
     core.login(server.uri(), "me@example.com".to_owned(), "pw".to_owned(), None).await.unwrap();
     core.add_token_account("github".to_owned(), GITHUB_TOKEN.to_owned()).await.unwrap();
     let key = reins_proto::desktop::encode_key(&[9u8; 32]);
@@ -523,6 +525,7 @@ async fn mcp_through_the_phone() -> String {
         vec![],
     )
     .unwrap();
+    common::mount_account_vault(&rw, "me@example.com", "pw").await;
     core.login(rw.uri(), "me@example.com".to_owned(), "pw".to_owned(), None).await.unwrap();
     let McpAddStep::NeedsSignIn {
         server_id,

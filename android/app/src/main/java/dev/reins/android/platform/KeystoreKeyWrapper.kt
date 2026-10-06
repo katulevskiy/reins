@@ -13,7 +13,7 @@ import javax.crypto.spec.GCMParameterSpec
 /**
  * Wraps the core's data-encryption key with a non-exportable AES-256-GCM key in the Android Keystore
  * (StrongBox when the device has it). Output layout: 12-byte IV followed by ciphertext and tag.
- * A key that was lost or invalidated makes [unwrap] fail; the core then starts over with a fresh key.
+ * A key that was lost or invalidated makes [unwrap] fail; the core fails closed and preserves its ciphertext.
  */
 class KeystoreKeyWrapper(private val alias: String = DEFAULT_ALIAS) : KeyWrapper {
     private val store: KeyStore = KeyStore.getInstance(PROVIDER).apply { load(null) }

@@ -27,7 +27,7 @@ impl Store {
     ) -> Result<(), CoreError> {
         let to = &session.email;
         let token = self.seal("session.refresh_token", session.refresh_token.as_bytes())?;
-        let mut conn = self.lock();
+        let mut conn = self.lock()?;
         let tx = conn.transaction()?;
         if from != to {
             let raw: Option<Vec<u8>> = tx
@@ -53,12 +53,17 @@ impl Store {
         )?;
         tx.execute("INSERT INTO session (id, server_url, email, refresh_token) VALUES (1, ?1, ?2, ?3) ON CONFLICT (id) DO UPDATE SET server_url = excluded.server_url, email = excluded.email, refresh_token = excluded.refresh_token", params![session.server_url, session.email, token])?;
         tx.commit()?;
+        drop(conn);
+        if let Some(control) = &self.control {
+            control.meta_set(account_id_key, account_id)?;
+            self.save_session(session)?;
+        }
         Ok(())
     }
 
     /// Every connected account, oldest first.
     pub fn accounts(&self) -> Result<Vec<StoredAccount>, CoreError> {
-        let conn = self.lock();
+        let conn = self.lock()?;
         let mut stmt = conn.prepare("SELECT service, account, added_at FROM accounts ORDER BY added_at, account")?;
         let rows = stmt
             .query_map([], |r| {
@@ -76,7 +81,7 @@ impl Store {
     /// made before accounts existed.
     pub fn add_account(&self, service: &str, account: &str, now: i64) -> Result<bool, CoreError> {
         let account = account.trim().to_lowercase();
-        let conn = self.lock();
+        let conn = self.lock()?;
         let first: bool = conn.query_row("SELECT COUNT(*) = 0 FROM accounts", [], |r| r.get(0))?;
         let added = conn.execute(
             "INSERT OR IGNORE INTO accounts (service, account, added_at) VALUES (?1, ?2, ?3)",
@@ -95,7 +100,7 @@ impl Store {
     /// Forgets an account and deletes its grants. Returns false when it was not registered.
     pub fn remove_account(&self, service: &str, account: &str) -> Result<bool, CoreError> {
         let account = account.trim().to_lowercase();
-        let mut conn = self.lock();
+        let mut conn = self.lock()?;
         let tx = conn.transaction()?;
         let removed =
             tx.execute("DELETE FROM accounts WHERE service = ?1 AND account = ?2", params![service, account])? > 0;
@@ -150,14 +155,14 @@ mod tests {
             refresh_token: Zeroizing::new("refresh-new".into()),
             ..initial.clone()
         };
-        store.lock().execute_batch("CREATE TEMP TRIGGER refuse_rename BEFORE INSERT ON session BEGIN SELECT RAISE(ABORT, 'test write failure'); END;").unwrap();
+        store.lock().unwrap().execute_batch("CREATE TEMP TRIGGER refuse_rename BEFORE INSERT ON session BEGIN SELECT RAISE(ABORT, 'test write failure'); END;").unwrap();
         assert!(store.rename_session_account("vault", old, &renamed, "subject-new", "account-id").is_err());
         assert_eq!(store.load_session().unwrap().unwrap(), initial);
         assert_eq!(store.secret_get("vault", old).unwrap().unwrap(), b"key");
         assert!(store.secret_get("vault", new).unwrap().is_none());
         assert!(store.meta_get("subject-new").unwrap().is_none());
         assert!(store.grants().unwrap().iter().all(|g| g.grant.account.as_deref() == Some(old)));
-        store.lock().execute_batch("DROP TRIGGER refuse_rename").unwrap();
+        store.lock().unwrap().execute_batch("DROP TRIGGER refuse_rename").unwrap();
         store.rename_session_account("vault", old, &renamed, "subject-new", "account-id").unwrap();
         assert_eq!(store.load_session().unwrap().unwrap(), renamed);
         assert_eq!(store.secret_get("vault", new).unwrap().unwrap(), b"key");

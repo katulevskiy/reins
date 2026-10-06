@@ -45,6 +45,7 @@ abstract class FlowHarness {
 
     @Before
     fun resetCore() {
+        dev.reins.android.TestNativeKeys.install()
         shadowOf(context as android.app.Application).grantPermissions(android.Manifest.permission.POST_NOTIFICATIONS)
         Timers.live = false
         Timers.frozenNowMillis = 1_700_000_100_000

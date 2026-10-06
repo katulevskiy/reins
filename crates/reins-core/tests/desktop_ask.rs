@@ -39,7 +39,7 @@ async fn only_the_paired_app_may_ask() {
     desk.send(&[wrong_key, wrong_connection]).await;
     assert_eq!(desk.error("r1").await, REFUSED);
     assert_eq!(desk.error("r2").await, REFUSED);
-    assert!(desk.waiting().await.is_empty());
+    assert_eq!(desk.waiting().await.len(), 0);
 }
 
 #[tokio::test]
@@ -87,7 +87,7 @@ async fn no_is_the_ordinary_denial() {
     let answer = desk.answer("r1").await.unwrap();
     assert_eq!(answer["outcome"], "denied", "{answer}");
     assert!(answer.get("result").is_none());
-    assert!(desk.waiting().await.is_empty());
+    assert_eq!(desk.waiting().await.len(), 0);
 }
 
 #[tokio::test]
@@ -123,5 +123,5 @@ async fn questions_and_topics_are_checked() {
     desk.send(&[ask(&desk, "r1", "  ", None), no_nonce]).await;
     assert!(!desk.error("r1").await.is_empty(), "a blank question is refused");
     assert!(desk.error("r2").await.contains("nonce"));
-    assert!(desk.waiting().await.is_empty());
+    assert_eq!(desk.waiting().await.len(), 0);
 }

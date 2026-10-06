@@ -135,9 +135,23 @@ class AppState {
     val recoveryLoadError: StateFlow<String?> = _recoveryLoadError.asStateFlow()
     fun setRecoveryLoadError(error: String?) { _recoveryLoadError.value = error }
 
-    fun setSession(state: SessionState) {
-        _session.value = state
-        if (state !is SessionState.SignedIn) {
+    var onAccountChange: (() -> Unit)? = null
+    private val _accountEpoch = MutableStateFlow(0L)
+    val accountEpoch: StateFlow<Long> = _accountEpoch.asStateFlow()
+    fun isCurrent(epoch: Long) = epoch == _accountEpoch.value
+
+    fun setSession(state: SessionState, beforePublish: () -> Unit = {}) {
+        val previous = (_session.value as? SessionState.SignedIn)?.info
+        val next = (state as? SessionState.SignedIn)?.info
+        val changed = previous?.let { it.serverUrl to it.email } != next?.let { it.serverUrl to it.email }
+        if (changed) {
+            _accountEpoch.value += 1
+            onAccountChange?.invoke()
+        }
+        if (state !is SessionState.SignedIn || (previous != null && changed)) {
+            _seenActivityId.value = 0L
+            _deviceReplaced.value = false
+            _registrationError.value = null
             _recoveryToRecord.value = null
             _recoveryLoadError.value = null
             _setupPending.value = false
@@ -154,6 +168,8 @@ class AppState {
             _approvalTakeover.value = false
             _autopilot.value = null
         }
+        beforePublish()
+        _session.value = state
     }
 
     fun setPending(items: List<PendingItem>) {

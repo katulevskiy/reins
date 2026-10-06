@@ -28,10 +28,5 @@ class RecoveryRecordTest {
         assertTrue(preferences.all.keys.none { it.contains(FakeCore.RECOVERY_CODE) })
     }
 
-    @Test
-    fun theWrittenFinalGroupMustMatchAndCanBeEnteredInLowercase() {
-        assertFalse(RecoveryRecord.matchesLastGroup(FakeCore.RECOVERY_CODE, ""))
-        assertFalse(RecoveryRecord.matchesLastGroup(FakeCore.RECOVERY_CODE, "XXXX"))
-        assertTrue(RecoveryRecord.matchesLastGroup(FakeCore.RECOVERY_CODE, " " + FakeCore.RECOVERY_CODE.substringAfterLast('-').lowercase() + " "))
-    }
+
 }

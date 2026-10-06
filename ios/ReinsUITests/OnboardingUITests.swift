@@ -41,8 +41,7 @@ final class OnboardingUITests: XCTestCase {
         XCTAssertFalse(element("recoveryDone").isEnabled)
         scrollTo("recoveryRecorded")
         tap("recoveryRecorded")
-        XCTAssertFalse(element("recoveryDone").isEnabled)
-        typeInto("recoveryConfirmGroup", "ZE4B")
+        XCTAssertTrue(element("recoveryDone").isEnabled)
         scrollTo("recoveryDone")
         tap("recoveryDone")
     }

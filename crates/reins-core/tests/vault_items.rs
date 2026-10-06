@@ -187,7 +187,7 @@ async fn env() -> Env {
     Mock::given(method("POST"))
         .and(path("/identity/connect/token"))
         .respond_with(ResponseTemplate::new(200).set_body_json(json!({
-            "access_token": "ACCESS", "refresh_token": "REFRESH", "expires_in": 7200})))
+            "access_token": common::account_token(), "refresh_token": "REFRESH", "expires_in": 7200})))
         .mount(&server)
         .await;
 
@@ -274,6 +274,7 @@ async fn env() -> Env {
         vec![],
     )
     .unwrap();
+    common::mount_account_vault(&server, EMAIL, PASSWORD).await;
     core.login(server.uri(), EMAIL.to_owned(), PASSWORD.to_owned(), None).await.unwrap();
     core.add_token_account("vault".into(), PASSWORD.into()).await.unwrap();
     Env {
@@ -906,7 +907,7 @@ async fn creating_with_bad_input_is_refused_before_anything_is_sent() {
         let message = refused(&env, "item_create", args.clone()).await;
         assert!(message.contains(needle), "{args}: {message}");
     }
-    assert!(changes(&env).await.is_empty());
+    assert_eq!(changes(&env).await.len(), 0);
     // The registry itself refuses malformed arguments.
     let spec = call_of("item_create").spec().unwrap();
     assert!(spec.parse(&json!({"name": "x"})).unwrap_err().contains("`type` is required"));
@@ -1043,7 +1044,7 @@ async fn updates_that_make_no_sense_are_refused_and_nothing_is_sent() {
         let message = refused(&env, "item_update", args.clone()).await;
         assert!(message.contains(needle), "{args}: {message}");
     }
-    assert!(changes(&env).await.is_empty());
+    assert_eq!(changes(&env).await.len(), 0);
 }
 
 #[tokio::test]
@@ -1139,7 +1140,7 @@ async fn an_attachment_is_encrypted_with_a_fresh_key_that_the_item_key_protects(
         .into_iter()
         .find(|r| r.method.as_str() == "POST" && r.url.path() == "/api/ciphers/git/attachment/att-new")
         .expect("the file is uploaded");
-    assert_eq!(upload.headers.get("authorization").unwrap(), "Bearer ACCESS");
+    assert_eq!(upload.headers.get("authorization").unwrap(), format!("Bearer {}", common::account_token()).as_str());
     let (encrypted, part_name) = upload_part(&upload);
     assert_eq!(
         announce["fileSize"].as_u64().unwrap(),
@@ -1278,7 +1279,7 @@ async fn state_changes_that_do_not_apply_are_refused() {
     }
     let message = refused(&env, "item_move", json!({"item": "git", "folder": "Nowhere"})).await;
     assert!(message.contains("No folder with that id or name"), "{message}");
-    assert!(changes(&env).await.is_empty());
+    assert_eq!(changes(&env).await.len(), 0);
 }
 
 #[tokio::test]
@@ -1355,7 +1356,7 @@ async fn deleting_for_good_and_emptying_the_trash_are_asked_every_time() {
             .await
             .is_err()
     );
-    assert!(env.core.grants().await.unwrap().is_empty());
+    assert_eq!(env.core.grants().await.unwrap().len(), 0);
     assert!(changes(&env).await.is_empty(), "nothing is deleted until the user agrees");
     env.core.approve(id, nothing_selected()).await.unwrap();
     assert_eq!(changes(&env).await, [("DELETE".to_owned(), "/api/ciphers/old".to_owned())]);
@@ -1387,7 +1388,7 @@ async fn an_empty_trash_and_an_unknown_item_are_reported() {
     assert!(message.contains("No item with that id"), "{message}");
     let message = refused(&env, "item_delete", json!({"item": "org"})).await;
     assert!(message.contains("No item with that id"), "{message}");
-    assert!(changes(&env).await.is_empty());
+    assert_eq!(changes(&env).await.len(), 0);
 }
 
 // ---- cloning ----------------------------------------------------------------------------------------------------
@@ -1449,10 +1450,10 @@ async fn previews_change_nothing_and_a_denied_write_sends_nothing() {
         let (id, parked) = ask(&env, op, args).await;
         assert!(parked, "{op}");
         let view = env.core.approval_view(id.clone()).await.unwrap();
-        assert!(!view.preview.is_empty());
+        assert_ne!(view.preview.len(), 0);
         env.core.deny(id).await.unwrap();
     }
-    assert!(changes(&env).await.is_empty());
+    assert_eq!(changes(&env).await.len(), 0);
 }
 
 #[tokio::test]
@@ -1471,7 +1472,7 @@ async fn an_empty_trash_is_reported_and_nothing_is_sent() {
         .await;
     let message = refused(&env, "trash_empty", json!({})).await;
     assert!(message.contains("trash is empty"), "{message}");
-    assert!(changes(&env).await.is_empty());
+    assert_eq!(changes(&env).await.len(), 0);
 }
 
 #[tokio::test]

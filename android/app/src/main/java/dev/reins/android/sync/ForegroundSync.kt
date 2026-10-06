@@ -12,10 +12,12 @@ import kotlinx.coroutines.delay
  */
 class ForegroundSync(private val container: AppContainer, private val waitSecs: UInt = 25u) {
     suspend fun run() {
+        val epoch = container.state.accountEpoch.value
         var failures = 0
-        while (true) {
+        while (container.state.isCurrent(epoch)) {
             try {
                 val items = container.core.sync(waitSecs)
+                if (!container.state.isCurrent(epoch)) return
                 container.state.setPending(items)
                 // Requests that grants answered by themselves leave no prompt, only a new activity entry.
                 container.refreshPending()
@@ -23,6 +25,7 @@ class ForegroundSync(private val container: AppContainer, private val waitSecs: 
             } catch (e: CancellationException) {
                 throw e
             } catch (e: CoreException) {
+                if (!container.state.isCurrent(epoch)) return
                 when {
                     e is CoreException.NotLoggedIn -> {
                         container.state.setSession(SessionState.SignedOut)

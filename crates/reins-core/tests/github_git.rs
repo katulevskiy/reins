@@ -59,7 +59,7 @@ async fn env() -> Env {
     Mock::given(method("POST"))
         .and(path("/identity/connect/token"))
         .respond_with(ResponseTemplate::new(200).set_body_json(json!({
-            "access_token": "ACCESS", "refresh_token": "REFRESH", "expires_in": 7200})))
+            "access_token": common::account_token(), "refresh_token": "REFRESH", "expires_in": 7200})))
         .mount(&server)
         .await;
     Mock::given(method("POST"))
@@ -111,6 +111,7 @@ async fn env() -> Env {
         vec![],
     )
     .unwrap();
+    common::mount_account_vault(&server, "me@example.com", "hunter2").await;
     core.login(server.uri(), "me@example.com".to_owned(), "hunter2".to_owned(), None).await.unwrap();
     core.add_token_account("github".to_owned(), TOKEN.to_owned()).await.unwrap();
     Env {
@@ -385,14 +386,14 @@ async fn only_the_pinned_key_of_the_same_connection_is_answered() {
     for id in ["r1", "r2", "r3"] {
         assert_refused(answer(&env, id).await);
     }
-    assert!(waiting(&env).await.is_empty());
+    assert_eq!(waiting(&env).await.len(), 0);
     assert_eq!(repo_lookups(&env).await, 0);
     let activity = env.core.activity(10).await.unwrap();
     assert!(activity.iter().filter(|a| a.outcome == "error").count() >= 3);
 }
 
 #[tokio::test]
-async fn removing_the_connection_or_logging_out_drops_the_key() {
+async fn revoking_drops_the_key_and_returning_to_its_owner_restores_the_pin() {
     let env = env().await;
     let key = env.public();
     pair(&env, "p1", Some(&key), Some(DESK), true).await;
@@ -411,7 +412,8 @@ async fn removing_the_connection_or_logging_out_drops_the_key() {
     env.core.login(env.server.uri(), "me@example.com".to_owned(), "hunter2".to_owned(), None).await.unwrap();
     serve(&env, &[fetch("r2", DESK, &key, "me/app")], &[]).await;
     env.core.sync(0).await.unwrap();
-    assert_refused(answer(&env, "r2").await);
+    assert!(answer(&env, "r2").await.is_none(), "the owner keeps its pinned computer; sharing still needs approval");
+    assert!(env.core.pending().await.unwrap().iter().any(|p| p.id == "r2"));
 }
 
 // ---- fetch ----------------------------------------------------------------------------------------------------------
@@ -458,7 +460,7 @@ async fn a_fetch_is_parked_then_answered_with_a_sealed_read_credential_and_a_rea
     // The read permission on the repository answers the next fetch at once.
     serve(&env, &[fetch("r2", DESK, &key, "me/app")], &[]).await;
     env.core.sync(0).await.unwrap();
-    assert!(waiting(&env).await.is_empty());
+    assert_eq!(waiting(&env).await.len(), 0);
     let next = answer(&env, "r2").await.unwrap();
     let grant = open(&env.key, &next["result"]["data"]["items"][0]["sealed"]);
     assert_eq!((grant.nonce.as_str(), grant.access.as_str()), ("nonce-r2", "read"));
@@ -474,7 +476,7 @@ async fn a_fetch_of_a_repository_the_token_cannot_see_fails() {
     let answered = answer(&env, "r1").await.unwrap();
     assert_eq!(answered["outcome"], "error");
     assert!(answered["message"].as_str().unwrap().contains("does not exist"), "{answered}");
-    assert!(waiting(&env).await.is_empty());
+    assert_eq!(waiting(&env).await.len(), 0);
 }
 
 #[tokio::test]

@@ -22,6 +22,7 @@ struct TokenState {
 
 pub struct Session {
     pub server: ServerUrl,
+    active: std::sync::atomic::AtomicBool,
     email: std::sync::Mutex<String>,
     pub http: reqwest::Client,
     store: Arc<Store>,
@@ -53,6 +54,7 @@ impl Session {
         let device_key = store.device_key().map_err(|e| log::warn!("no device key: {e}")).ok();
         Self {
             server,
+            active: std::sync::atomic::AtomicBool::new(true),
             email: std::sync::Mutex::new(email),
             http,
             store,
@@ -102,8 +104,50 @@ impl Session {
     }
 
     /// A valid access token, refreshing when missing or about to expire.
+    pub fn is_active(&self) -> bool {
+        self.active.load(std::sync::atomic::Ordering::Acquire) && self.store.check_owner().is_ok()
+    }
+
+    pub(crate) fn close(&self) {
+        self.active.store(false, std::sync::atomic::Ordering::Release);
+        self.forget_proof();
+        if let Ok(mut state) = self.state.try_lock() {
+            state.access = None;
+            state.refresh.clear();
+        }
+    }
+
+    pub(crate) async fn stored(&self) -> StoredSession {
+        let state = self.state.lock().await;
+        StoredSession {
+            server_url: self.server.as_str().to_owned(),
+            email: self.email(),
+            refresh_token: state.refresh.clone(),
+        }
+    }
+    pub(crate) async fn rebind(&self, store: Arc<Store>) -> Self {
+        let state = self.state.lock().await;
+        let access = state.access.as_ref().map(|(token, deadline)| {
+            (token.clone(), i64::try_from(deadline.saturating_duration_since(Instant::now()).as_secs()).unwrap_or(0))
+        });
+        let session =
+            Self::new(self.http.clone(), store, self.server.clone(), self.email(), state.refresh.clone(), access);
+        if let Some(proof) = self.proof() {
+            session.keep_proof(proof);
+        }
+        session
+    }
+
     pub async fn access_token(&self) -> Result<Zeroizing<String>, CoreError> {
+        if !self.is_active() {
+            return Err(CoreError::NotLoggedIn);
+        }
         let mut state = self.state.lock().await;
+        if !self.is_active() {
+            state.access = None;
+            state.refresh.clear();
+            return Err(CoreError::NotLoggedIn);
+        }
         let cached = state
             .access
             .as_ref()
@@ -117,6 +161,9 @@ impl Session {
     /// The subject from a token authenticated by this server, remembered across restarts. This only identifies
     /// locally encrypted secrets; it never authorizes a server call. Reading recovery keys must also work offline.
     pub(crate) async fn account_user_id(&self) -> Result<String, CoreError> {
+        if let Some(owner) = &self.store.owner {
+            return Ok(owner.user_id.clone());
+        }
         let key = account_id_key(&self.server, &self.email());
         if let Some(id) = self.store.meta_get(&key)? {
             return Ok(id);
@@ -177,6 +224,9 @@ impl Session {
             }
             Err(e) => return Err(e),
         };
+        if !self.is_active() {
+            return Err(CoreError::NotLoggedIn);
+        }
         state.refresh.clone_from(&tokens.refresh_token);
         let mut email = self.email();
         let mut saved_with_rename = false;
@@ -226,7 +276,7 @@ impl Session {
     }
 }
 
-fn account_id_key(server: &ServerUrl, email: &str) -> String {
+pub(crate) fn account_id_key(server: &ServerUrl, email: &str) -> String {
     // A JSON tuple is unambiguous even for unusual self-hosted paths or email addresses.
     format!("session.account-id:{}", serde_json::json!([server.as_str(), email]))
 }
@@ -251,7 +301,11 @@ macro_rules! api_call {
                     let $api = $crate::phone_api::PhoneApi::new(&session.http, &session.server, &token)
                         .with_device_key(session.device_key());
                     let result = $body.await;
-                    result
+                    if session.is_active() {
+                        result
+                    } else {
+                        Err($crate::phone_api::ApiFailure::Core($crate::CoreError::NotLoggedIn))
+                    }
                 }
                 Err(e) => Err($crate::phone_api::ApiFailure::Core(e)),
             };
@@ -342,7 +396,7 @@ mod tests {
         assert_eq!(store.load_session().unwrap().unwrap().email, "updated@example.com");
         assert_eq!(store.secret_get("vault", "updated@example.com").unwrap().unwrap(), b"vault-key");
         assert_eq!(session.account_user_id().await.unwrap(), "account-1");
-        assert!(server.received_requests().await.unwrap().is_empty());
+        assert_eq!(server.received_requests().await.unwrap().len(), 0);
     }
 
     #[tokio::test]
@@ -354,7 +408,7 @@ mod tests {
         let (_, session) = session_with(&server, dir.path(), Some((&format!("h.{payload}.s"), 3600)));
         session.adopt_account_email("updated@example.com").await.unwrap();
         assert_eq!(session.email(), "me@example.com");
-        assert!(server.received_requests().await.unwrap().is_empty());
+        assert_eq!(server.received_requests().await.unwrap().len(), 0);
     }
 
     #[tokio::test]
@@ -488,7 +542,7 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let (_, session) = session_with(&server, dir.path(), Some(("ACCESS-OLD", 3600)));
         let list = api_call!(&session, |api| api.connections()).unwrap();
-        assert!(list.connections.is_empty());
+        assert_eq!(list.connections.len(), 0);
     }
 
     #[tokio::test]

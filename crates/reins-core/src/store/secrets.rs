@@ -14,7 +14,7 @@ fn aad(service: &str, account: &str) -> String {
 impl Store {
     pub fn secret_get(&self, service: &str, account: &str) -> Result<Option<Vec<u8>>, CoreError> {
         let blob: Option<Vec<u8>> = self
-            .lock()
+            .lock()?
             .query_row(
                 "SELECT value FROM secrets WHERE service = ?1 AND account = ?2",
                 params![service, account],
@@ -26,7 +26,7 @@ impl Store {
 
     pub fn secret_put(&self, service: &str, account: &str, value: &[u8]) -> Result<(), CoreError> {
         let sealed = self.seal(&aad(service, account), value)?;
-        self.lock().execute(
+        self.lock()?.execute(
             "INSERT INTO secrets (service, account, value) VALUES (?1, ?2, ?3) \
              ON CONFLICT (service, account) DO UPDATE SET value = ?3",
             params![service, account, sealed],
@@ -35,7 +35,7 @@ impl Store {
     }
 
     pub fn secret_delete(&self, service: &str, account: &str) -> Result<(), CoreError> {
-        self.lock().execute("DELETE FROM secrets WHERE service = ?1 AND account = ?2", params![service, account])?;
+        self.lock()?.execute("DELETE FROM secrets WHERE service = ?1 AND account = ?2", params![service, account])?;
         Ok(())
     }
 
@@ -43,6 +43,9 @@ impl Store {
     /// first time and kept sealed. Lost with the data key, it is made again, and the server then wants a proof from
     /// this phone before it approves again, as from any other.
     pub fn device_key(&self) -> Result<String, CoreError> {
+        if let Some(control) = &self.control {
+            return control.device_key();
+        }
         let (service, account) = DEVICE_KEY;
         match self.secret_get(service, account)? {
             Some(raw) if raw.len() == 32 => return Ok(BASE64URL_NOPAD.encode(&raw)),
@@ -52,7 +55,7 @@ impl Store {
         let fresh = Zeroizing::new(crate::crypto::random_bytes::<32>()?);
         let sealed = self.seal(&aad(service, account), &fresh[..])?;
         // Of two first calls at once, the first key stays.
-        self.lock().execute(
+        self.lock()?.execute(
             "INSERT INTO secrets (service, account, value) VALUES (?1, ?2, ?3) ON CONFLICT (service, account) DO NOTHING",
             params![service, account, sealed],
         )?;
@@ -76,10 +79,10 @@ mod tests {
         store.secret_put("github", "octocat", b"ghp_token").unwrap();
         assert_eq!(store.secret_get("github", "octocat").unwrap().as_deref(), Some(b"ghp_token".as_slice()));
         assert_eq!(store.secret_get("github", "other").unwrap(), None);
-        let raw: Vec<u8> = store.lock().query_row("SELECT value FROM secrets", [], |r| r.get(0)).unwrap();
+        let raw: Vec<u8> = store.lock().unwrap().query_row("SELECT value FROM secrets", [], |r| r.get(0)).unwrap();
         assert!(!raw.windows(9).any(|w| w == b"ghp_token"), "the token is not stored in the clear");
         // A blob copied to another account does not open there.
-        store.lock().execute("UPDATE secrets SET account = 'thief'", []).unwrap();
+        store.lock().unwrap().execute("UPDATE secrets SET account = 'thief'", []).unwrap();
         assert!(store.secret_get("github", "thief").is_err());
         store.secret_delete("github", "thief").unwrap();
         assert_eq!(store.secret_get("github", "thief").unwrap(), None);

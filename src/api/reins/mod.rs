@@ -1,6 +1,7 @@
 //! Reins server: MCP endpoint, OAuth 2.1 authorization server for AI clients,
 //! phone API and in-memory relay (spec §4, contracts §A and §C).
 
+pub mod account_state;
 pub mod apns;
 pub mod blob;
 pub mod blob_io;
@@ -225,6 +226,7 @@ pub fn routes() -> Vec<Route> {
     }
     warn_about_public_settings();
     let mut routes = device_api::routes();
+    routes.extend(account_state::routes());
     routes.extend(oauth_routes::routes());
     routes.extend(mcp_routes::routes());
     routes.extend(desktop_routes::routes());

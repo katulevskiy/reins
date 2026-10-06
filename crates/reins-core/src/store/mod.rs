@@ -1,6 +1,6 @@
-//! Encrypted local store (contracts §E): SQLite at `<data_dir>/reins.db`,
-//! secrets sealed with a data key kept in `<data_dir>/dek.bin`, wrapped by
-//! the Android Keystore through [`KeyWrapper`].
+//! SQLite exists only in memory. Complete snapshots (including metadata) are authenticated
+//! ciphertext on disk. Installation keys are wrapped by the platform [`KeyWrapper`];
+//! account stores use separate keys derived from the owning account vault key.
 //!
 //! One connection behind one mutex: every method is a short critical section
 //! and the mutex doubles as the single-writer lock that makes grant
@@ -12,13 +12,16 @@ mod desktop;
 mod grants;
 mod mcp;
 mod pending;
+mod protected;
+mod snapshot;
+pub(crate) use protected::Owner;
 mod secrets;
 
 use std::fmt;
 use std::fs;
 use std::io::{ErrorKind, Write};
 use std::path::{Path, PathBuf};
-use std::sync::{Mutex, MutexGuard, PoisonError};
+use std::sync::{Arc, Mutex, PoisonError};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use rusqlite::{Connection, OptionalExtension, params};
@@ -37,7 +40,6 @@ use crate::{CoreError, ForeignError, KeyWrapper};
 
 const DB_FILE: &str = "reins.db";
 const DEK_FILE: &str = "dek.bin";
-const LOST_DEK_FILE: &str = "dek.bin.lost";
 const DEK_CHECK_AAD: &str = "meta.dek_check";
 const DEK_CHECK_PLAINTEXT: &[u8] = b"reins-dek-check";
 
@@ -251,8 +253,13 @@ impl fmt::Debug for StoredSession {
 }
 
 pub struct Store {
-    conn: Mutex<Connection>,
-    dek: Dek,
+    active: std::sync::atomic::AtomicBool,
+    conn: Mutex<Option<Connection>>,
+    dek: Mutex<Option<Dek>>,
+    persistence: Option<protected::Persistence>,
+    control: Option<Arc<Store>>,
+    control_owner: Mutex<Option<Owner>>,
+    pub(crate) owner: Option<Owner>,
     dek_was_reset: bool,
 }
 
@@ -265,21 +272,29 @@ impl fmt::Debug for Store {
 impl Store {
     /// Opens (or creates) the store in `data_dir`.
     ///
-    /// DEK lifecycle: a missing, unwrappable or wrong `dek.bin` is treated as a
-    /// lost key — encrypted data (session, pending items, audit details) is
-    /// discarded and a new key is created; grants and the device id survive.
-    /// A locked Keystore (`NeedsUserInteraction`) fails without changing anything.
+    /// Missing or invalid existing keys fail closed without rewriting encrypted data.
+    /// Legacy SQLite is encrypted durably before its plaintext files are removed.
     pub fn open(data_dir: &Path, keys: &dyn KeyWrapper) -> Result<Self, CoreError> {
         fs::create_dir_all(data_dir).map_err(|e| CoreError::storage(format!("cannot create data directory: {e}")))?;
-        let conn = Connection::open(data_dir.join(DB_FILE))?;
+        let protected_path = data_dir.join("reins.sealed");
+        let disk = if !protected_path.exists() && data_dir.join(DB_FILE).exists() {
+            Some(Connection::open(data_dir.join(DB_FILE))?)
+        } else {
+            None
+        };
+        let conn = Connection::open_in_memory()?;
         conn.execute_batch(SCHEMA)?;
         migrate(&conn)?;
+        conn.execute_batch("PRAGMA temp_store=MEMORY; PRAGMA secure_delete=ON;")?;
         let dek_path = data_dir.join(DEK_FILE);
         let (existing, had_key) = match fs::read(&dek_path) {
             Ok(wrapped) => match keys.unwrap(wrapped) {
                 Ok(raw) => {
                     let raw = Zeroizing::new(raw);
-                    (Dek::from_bytes(&raw).ok().filter(|dek| key_check_passes(&conn, dek)), true)
+                    (
+                        Dek::from_bytes(&raw).ok().filter(|dek| key_check_passes(disk.as_ref().unwrap_or(&conn), dek)),
+                        true,
+                    )
                 }
                 Err(ForeignError::NeedsUserInteraction) => {
                     return Err(CoreError::storage("the device keystore is locked; unlock the phone and try again"));
@@ -287,8 +302,10 @@ impl Store {
                 Err(ForeignError::Failed {
                     reason: message,
                 }) => {
-                    log::warn!("data key could not be unwrapped ({message}); starting over");
-                    (None, true)
+                    drop(message);
+                    return Err(CoreError::storage(
+                        "the device encryption key is unavailable; encrypted account data was preserved",
+                    ));
                 }
             },
             Err(e) if e.kind() == ErrorKind::NotFound => (None, false),
@@ -296,14 +313,39 @@ impl Store {
         };
         let (dek, dek_was_reset) = match existing {
             Some(dek) => (dek, false),
-            None => (replace_dek(data_dir, &dek_path, &conn, keys)?, had_key),
+            None if protected_path.exists() || had_key => {
+                return Err(CoreError::storage(
+                    "the device encryption key is unavailable; encrypted account data was preserved",
+                ));
+            }
+            None => (create_dek(&dek_path, keys)?, false),
         };
         write_key_check_if_missing(&conn, &dek)?;
-        Ok(Self {
-            conn: Mutex::new(conn),
-            dek,
+        let mut conn = conn;
+        if let Some(disk) = disk {
+            disk.execute_batch(SCHEMA)?;
+            migrate(&disk)?;
+            let legacy = snapshot::export(&disk, false)?;
+            snapshot::import(&mut conn, &legacy, false)?;
+            drop(disk);
+        }
+        let store = Self {
+            active: std::sync::atomic::AtomicBool::new(true),
+            conn: Mutex::new(Some(conn)),
+            dek: Mutex::new(Some(dek)),
             dek_was_reset,
-        })
+            persistence: Some(protected::Persistence {
+                path: protected_path,
+                aad: "reins.device-store.v1".to_owned(),
+                stamp: Mutex::new(None),
+                failure: Mutex::new(None),
+            }),
+            control: None,
+            control_owner: Mutex::new(None),
+            owner: None,
+        };
+        protected::protect(&store, data_dir)?;
+        Ok(store)
     }
 
     /// True when `open` found a data key it could not use and discarded the
@@ -312,21 +354,25 @@ impl Store {
         self.dek_was_reset
     }
 
-    pub(crate) fn lock(&self) -> MutexGuard<'_, Connection> {
-        self.conn.lock().unwrap_or_else(PoisonError::into_inner)
-    }
-
     pub(crate) fn seal(&self, aad: &str, plaintext: &[u8]) -> Result<Vec<u8>, CoreError> {
-        self.dek.seal(aad, plaintext)
+        self.dek
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .as_ref()
+            .ok_or(CoreError::NotLoggedIn)?
+            .seal(aad, plaintext)
     }
 
     pub(crate) fn unseal(&self, aad: &str, blob: &[u8]) -> Result<Vec<u8>, CoreError> {
-        self.dek.open(aad, blob)
+        self.dek.lock().unwrap_or_else(PoisonError::into_inner).as_ref().ok_or(CoreError::NotLoggedIn)?.open(aad, blob)
     }
 
     /// This installation's stable device identifier (UUID v4), created on first use.
     pub fn device_id(&self) -> Result<String, CoreError> {
-        let conn = self.lock();
+        if let Some(control) = &self.control {
+            return control.device_id();
+        }
+        let conn = self.lock()?;
         let existing: Option<String> =
             conn.query_row("SELECT value FROM meta WHERE key = 'device_id'", [], |r| r.get(0)).optional()?;
         if let Some(id) = existing {
@@ -338,8 +384,14 @@ impl Store {
     }
 
     pub fn save_session(&self, session: &StoredSession) -> Result<(), CoreError> {
+        if let Some(control) = &self.control
+            && let Some(owner) = self.bound_owner()
+        {
+            self.check_owner()?;
+            return control.save_session_for(session, &owner);
+        }
         let token = self.seal("session.refresh_token", session.refresh_token.as_bytes())?;
-        self.lock().execute(
+        self.lock()?.execute(
             "INSERT INTO session (id, server_url, email, refresh_token) VALUES (1, ?1, ?2, ?3)
                  ON CONFLICT (id) DO UPDATE SET server_url = ?1, email = ?2, refresh_token = ?3",
             params![session.server_url, session.email, token],
@@ -349,8 +401,11 @@ impl Store {
 
     /// The saved session; `None` when signed out or when it cannot be decrypted.
     pub fn load_session(&self) -> Result<Option<StoredSession>, CoreError> {
+        if let Some(control) = &self.control {
+            return control.load_session();
+        }
         let row: Option<(String, String, Vec<u8>)> = self
-            .lock()
+            .lock()?
             .query_row("SELECT server_url, email, refresh_token FROM session WHERE id = 1", [], |r| {
                 Ok((r.get(0)?, r.get(1)?, r.get(2)?))
             })
@@ -374,7 +429,7 @@ impl Store {
 
     pub fn meta_get(&self, key: &str) -> Result<Option<String>, CoreError> {
         Ok(self
-            .lock()
+            .lock()?
             .query_row("SELECT value FROM meta WHERE key = ?1", params![format!("app.{key}")], |r| {
                 r.get::<_, String>(0)
             })
@@ -382,17 +437,90 @@ impl Store {
     }
 
     pub fn meta_set(&self, key: &str, value: &str) -> Result<(), CoreError> {
-        self.lock().execute(
+        self.lock()?.execute(
             "INSERT INTO meta (key, value) VALUES (?1, ?2) ON CONFLICT (key) DO UPDATE SET value = ?2",
             params![format!("app.{key}"), value],
         )?;
         Ok(())
     }
 
+    pub(crate) fn bound_owner(&self) -> Option<Owner> {
+        self.owner.clone().or_else(|| self.control_owner.lock().unwrap_or_else(PoisonError::into_inner).clone())
+    }
+    pub(crate) fn bind_control_owner(&self, owner: Owner) {
+        *self.control_owner.lock().unwrap_or_else(PoisonError::into_inner) = Some(owner);
+    }
+    fn active_owner_matches(conn: &Connection, owner: Option<&Owner>) -> Result<bool, CoreError> {
+        let active: Option<String> =
+            conn.query_row("SELECT value FROM meta WHERE key = 'app.active-account'", [], |r| r.get(0)).optional()?;
+        Ok(active.unwrap_or_default() == owner.map(Owner::id).unwrap_or_default())
+    }
+    fn save_session_for(&self, session: &StoredSession, owner: &Owner) -> Result<(), CoreError> {
+        if session.server_url != owner.server {
+            return Err(CoreError::NotLoggedIn);
+        }
+        let sealed = self.seal("session.refresh_token", session.refresh_token.as_bytes())?;
+        let conn = self.lock()?;
+        if !Self::active_owner_matches(&conn, Some(owner))? {
+            return Err(CoreError::NotLoggedIn);
+        }
+        conn.execute("INSERT INTO session (id, server_url, email, refresh_token) VALUES (1, ?1, ?2, ?3) ON CONFLICT (id) DO UPDATE SET server_url=?1, email=?2, refresh_token=?3", params![session.server_url,session.email,sealed])?;
+        Ok(())
+    }
+    pub(crate) fn bind_account_session(&self, session: &StoredSession, owner: &Owner) -> Result<(), CoreError> {
+        let sealed = self.seal("session.refresh_token", session.refresh_token.as_bytes())?;
+        let encoded = serde_json::to_string(owner).map_err(|_| CoreError::storage("cannot remember account"))?;
+        let server = crate::http::ServerUrl::parse(&session.server_url)?;
+        if server.as_str() != owner.server {
+            return Err(CoreError::NotLoggedIn);
+        }
+        let mut conn = self.lock()?;
+        let tx = conn.transaction()?;
+        for (name, value) in [
+            ("active-account".to_owned(), owner.id()),
+            ("active-owner".to_owned(), encoded),
+            (crate::session::account_id_key(&server, &session.email), owner.user_id.clone()),
+        ] {
+            tx.execute(
+                "INSERT INTO meta (key,value) VALUES (?1,?2) ON CONFLICT(key) DO UPDATE SET value=?2",
+                params![format!("app.{name}"), value],
+            )?;
+        }
+        tx.execute("INSERT INTO session (id,server_url,email,refresh_token) VALUES (1,?1,?2,?3) ON CONFLICT(id) DO UPDATE SET server_url=?1,email=?2,refresh_token=?3",params![session.server_url,session.email,sealed])?;
+        tx.commit()?;
+        drop(conn);
+        self.flush()
+    }
+    pub(crate) fn clear_session_for(&self, owner: Option<&Owner>) -> Result<(), CoreError> {
+        let mut conn = self.lock()?;
+        if !Self::active_owner_matches(&conn, owner)? {
+            return Err(CoreError::NotLoggedIn);
+        }
+        let tx = conn.transaction()?;
+        tx.execute("DELETE FROM session", [])?;
+        tx.execute("DELETE FROM meta WHERE key IN ('app.active-account','app.active-owner')", [])?;
+        tx.commit()?;
+        drop(conn);
+        self.flush()
+    }
+
+    pub(crate) fn check_owner(&self) -> Result<(), CoreError> {
+        if !self.active.load(std::sync::atomic::Ordering::Acquire) {
+            return Err(CoreError::NotLoggedIn);
+        }
+        if let Some(control) = &self.control
+            && let Some(owner) = self.bound_owner()
+            && control.meta_get("active-account")?.as_deref() != Some(&owner.id())
+        {
+            return Err(CoreError::NotLoggedIn);
+        }
+        Ok(())
+    }
+
     /// The icon the user picked for a connection (`None` = automatic).
     pub fn connection_icon(&self, connection_id: &str) -> Result<Option<String>, CoreError> {
         Ok(self
-            .lock()
+            .lock()?
             .query_row("SELECT icon FROM connection_prefs WHERE connection_id = ?1", params![connection_id], |r| {
                 r.get::<_, Option<String>>(0)
             })
@@ -401,7 +529,7 @@ impl Store {
     }
 
     pub fn set_connection_icon(&self, connection_id: &str, icon: Option<&str>) -> Result<(), CoreError> {
-        self.lock().execute(
+        self.lock()?.execute(
             "INSERT INTO connection_prefs (connection_id, icon) VALUES (?1, ?2)
                  ON CONFLICT (connection_id) DO UPDATE SET icon = ?2",
             params![connection_id, icon],
@@ -410,7 +538,12 @@ impl Store {
     }
 
     pub fn clear_session(&self) -> Result<(), CoreError> {
-        self.lock().execute("DELETE FROM session", [])?;
+        if let Some(control) = &self.control
+            && let Some(owner) = self.bound_owner()
+        {
+            return control.clear_session_for(Some(&owner));
+        }
+        self.lock()?.execute("DELETE FROM session", [])?;
         Ok(())
     }
 }
@@ -428,23 +561,7 @@ fn write_key_check_if_missing(conn: &Connection, dek: &Dek) -> Result<(), CoreEr
     Ok(())
 }
 
-fn replace_dek(data_dir: &Path, dek_path: &Path, conn: &Connection, keys: &dyn KeyWrapper) -> Result<Dek, CoreError> {
-    if dek_path.exists() {
-        fs::rename(dek_path, data_dir.join(LOST_DEK_FILE))
-            .map_err(|e| CoreError::storage(format!("cannot set the old data key aside: {e}")))?;
-    }
-    conn.execute_batch(
-        "BEGIN;
-         DELETE FROM session;
-         DELETE FROM pending;
-         UPDATE audit SET detail = NULL, info = NULL;
-         DELETE FROM autopilot_profiles;
-         DELETE FROM autopilot_memory;
-         DELETE FROM autopilot_suggestions;
-         DELETE FROM autopilot_targets;
-         DELETE FROM meta WHERE key IN ('dek_check', 'autopilot_salt');
-         COMMIT;",
-    )?;
+fn create_dek(dek_path: &Path, keys: &dyn KeyWrapper) -> Result<Dek, CoreError> {
     let (dek, raw) = Dek::generate()?;
     let wrapped = keys.wrap(raw.to_vec()).map_err(|e| match e {
         ForeignError::NeedsUserInteraction => {
@@ -461,10 +578,21 @@ fn replace_dek(data_dir: &Path, dek_path: &Path, conn: &Connection, keys: &dyn K
 fn write_atomically(path: &Path, bytes: &[u8]) -> Result<(), CoreError> {
     let tmp: PathBuf = path.with_extension("tmp");
     let fail = |e: std::io::Error| CoreError::storage(format!("cannot write the data key: {e}"));
-    let mut file = fs::File::create(&tmp).map_err(fail)?;
+    let mut options = fs::OpenOptions::new();
+    options.write(true).create(true).truncate(true);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+        options.mode(0o600);
+    }
+    let mut file = options.open(&tmp).map_err(fail)?;
     file.write_all(bytes).map_err(fail)?;
     file.sync_all().map_err(fail)?;
-    fs::rename(&tmp, path).map_err(fail)
+    fs::rename(&tmp, path).map_err(fail)?;
+    if let Some(parent) = path.parent() {
+        fs::File::open(parent).and_then(|f| f.sync_all()).map_err(fail)?;
+    }
+    Ok(())
 }
 
 #[cfg(test)]
@@ -515,8 +643,12 @@ pub(crate) mod tests {
         }
     }
 
-    fn fill(store: &Store) {
-        store.save_session(&session()).unwrap();
+    pub(crate) fn fill(store: &Store) {
+        let mut saved = session();
+        if let Some(owner) = store.bound_owner() {
+            saved.server_url = owner.server;
+        }
+        store.save_session(&saved).unwrap();
         store.park("r1", crate::PendingKind::Request, 100, unix_now(), b"{\"x\":1}").unwrap();
         store
             .append_audit(&AuditRecord {
@@ -565,12 +697,12 @@ pub(crate) mod tests {
         let old = store.activity(5).unwrap();
         assert_eq!((old[0].at, old[0].connection_label.as_str(), old[0].service.as_str()), (7, "Old", "gmail"));
         assert_eq!(old[0].detail, DETAIL_UNAVAILABLE, "rows from before the details existed have none");
-        let version: i64 = store.lock().query_row("PRAGMA user_version", [], |r| r.get(0)).unwrap();
+        let version: i64 = store.lock().unwrap().query_row("PRAGMA user_version", [], |r| r.get(0)).unwrap();
         assert_eq!(version, 9);
         assert_eq!(store.desktop_key("c1").unwrap(), None, "the desktop keys table exists");
         assert!(store.ap_profiles().unwrap().is_empty(), "the Autopilot tables exist");
         assert_eq!(store.ap_mode_row("").unwrap(), crate::autopilot::modes::ModeRow::default());
-        assert!(store.ap_memory("p").unwrap().is_empty());
+        assert_eq!(store.ap_memory("p").unwrap().len(), 0);
         assert!(store.mcp_servers().unwrap().is_empty(), "the MCP servers table exists");
         assert!(store.park("b1", crate::PendingKind::Blob, 1, 2, b"x").unwrap(), "uploads can be parked");
         assert!(store.park("j1", crate::PendingKind::Join, 1, 2, b"x").unwrap(), "other phones can be parked");
@@ -601,7 +733,8 @@ pub(crate) mod tests {
         assert!(!store.dek_was_reset());
         assert_eq!(store.load_session().unwrap(), Some(session()));
         drop(store);
-        let raw = fs::read(dir.path().join(DB_FILE)).unwrap();
+        let raw = fs::read(dir.path().join("reins.sealed")).unwrap();
+        assert!(!dir.path().join(DB_FILE).exists());
         let wal = fs::read(dir.path().join("reins.db-wal")).unwrap_or_default();
         for bytes in [raw, wal] {
             assert!(!bytes.windows(20).any(|w| w == b"REFRESH-TOKEN-SECRET"), "token stored in clear");
@@ -618,39 +751,31 @@ pub(crate) mod tests {
     }
 
     #[test]
-    fn lost_key_discards_secrets_but_keeps_grants() {
+    fn lost_key_fails_closed_and_preserves_ciphertext() {
         let dir = tempfile::tempdir().unwrap();
-        let device_id;
-        {
-            let store = open(dir.path());
-            device_id = store.device_id().unwrap();
-            fill(&store);
-            store.insert_grant(&grants::tests::read_grant("g1", "c1", None), "ChatGPT").unwrap();
-        }
+        fill(&open(dir.path()));
+        let before = fs::read(dir.path().join("reins.sealed")).unwrap();
+        let wrapped = fs::read(dir.path().join(DEK_FILE)).unwrap();
         let broken = FakeKeys(AtomicU8::new(BROKEN));
-        let store = Store::open(dir.path(), &broken).unwrap();
-        assert!(store.dek_was_reset());
-        assert!(dir.path().join(LOST_DEK_FILE).exists());
-        assert_eq!(store.load_session().unwrap(), None);
-        assert!(store.pending_rows(unix_now()).unwrap().is_empty());
-        assert_eq!(store.activity(10).unwrap()[0].detail, DETAIL_UNAVAILABLE);
-        assert_eq!(store.grants().unwrap().len(), 1);
-        assert_eq!(store.device_id().unwrap(), device_id);
-        drop(store);
-        // The replacement key is usable afterwards.
-        let store = open(dir.path());
-        assert!(!store.dek_was_reset());
+        assert!(Store::open(dir.path(), &broken).is_err());
+        assert_eq!(fs::read(dir.path().join("reins.sealed")).unwrap(), before);
+        assert_eq!(fs::read(dir.path().join(DEK_FILE)).unwrap(), wrapped);
+        fs::remove_file(dir.path().join(DEK_FILE)).unwrap();
+        assert!(Store::open(dir.path(), &FakeKeys::default()).is_err());
+        assert_eq!(fs::read(dir.path().join("reins.sealed")).unwrap(), before);
+        fs::write(dir.path().join(DEK_FILE), wrapped).unwrap();
+        assert_eq!(open(dir.path()).load_session().unwrap(), Some(session()));
     }
 
     #[test]
-    fn replaced_key_file_is_detected_by_the_key_check() {
+    fn replaced_key_file_cannot_open_or_overwrite_data() {
         let dir = tempfile::tempdir().unwrap();
         fill(&open(dir.path()));
+        let before = fs::read(dir.path().join("reins.sealed")).unwrap();
         let (_, other) = Dek::generate().unwrap();
         fs::write(dir.path().join(DEK_FILE), FakeKeys::default().wrap(other.to_vec()).unwrap()).unwrap();
-        let store = open(dir.path());
-        assert!(store.dek_was_reset());
-        assert_eq!(store.load_session().unwrap(), None);
+        assert!(Store::open(dir.path(), &FakeKeys::default()).is_err());
+        assert_eq!(fs::read(dir.path().join("reins.sealed")).unwrap(), before);
     }
 
     #[test]

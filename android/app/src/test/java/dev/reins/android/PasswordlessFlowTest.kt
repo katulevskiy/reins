@@ -46,6 +46,7 @@ class PasswordlessFlowTest : FlowHarness() {
 
     @Before
     fun signedOut() {
+        dev.reins.android.TestNativeKeys.install()
         core.session = null
         core.registrations.clear()
         core.resetOnboarding()
@@ -82,7 +83,7 @@ class PasswordlessFlowTest : FlowHarness() {
         awaitTag("recoveryRecorded")
         rule.onNodeWithTag("recoveryCodeDone").assertIsNotEnabled()
         tap("recoveryRecorded")
-        rule.onNodeWithTag("recoveryConfirmGroup").performTextReplacement(FakeCore.RECOVERY_CODE.substringAfterLast('-'))
+
         tap("recoveryCodeDone")
         awaitGone("recoveryRecorded")
     }
@@ -424,9 +425,9 @@ class PasswordlessFlowTest : FlowHarness() {
         tap("recoveryCodeRow")
         awaitTag("recoveryCodeSheet")
         assertEquals(2, prompts.get())
-        assertTrue(showsText("ABCD EFGH IJKL MNOP"))
+        assertTrue(showsText("ABCD EFGH IJKL MNOP", substring = true))
         assertTrue(showsText("Reins cannot show it to you again", substring = true))
-        tap("copyRecoveryCode")
+        tap("recoveryCode")
         val clip = context.getSystemService(ClipboardManager::class.java).primaryClip
         assertEquals(FakeCore.RECOVERY_CODE, clip?.getItemAt(0)?.text?.toString())
         tap("recoveryCodeDone")

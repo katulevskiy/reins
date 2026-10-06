@@ -90,7 +90,7 @@ impl Store {
 
     pub fn insert_grant_from(&self, grant: &Grant, connection_label: &str, origin: &str) -> Result<(), CoreError> {
         let json = serde_json::to_string(grant).map_err(|e| CoreError::storage(e.to_string()))?;
-        self.lock().execute(
+        self.lock()?.execute(
             "INSERT INTO grants (id, connection_id, connection_label, created_at, grant_json, origin) \
              VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
             params![grant.id.0, grant.connection_id.0, connection_label, grant.created_at, json, origin],
@@ -100,7 +100,7 @@ impl Store {
 
     /// Every grant (active, expired, used up or revoked), newest first. Corrupt rows are skipped.
     pub fn grants(&self) -> Result<Vec<StoredGrant>, CoreError> {
-        let conn = self.lock();
+        let conn = self.lock()?;
         let mut stmt = conn.prepare(
             "SELECT id, connection_id, connection_label, grant_json, last_used_at, origin FROM grants \
              ORDER BY created_at DESC, id",
@@ -132,7 +132,7 @@ impl Store {
 
     /// Marks a grant revoked. Returns false when no such grant exists.
     pub fn revoke_grant(&self, id: &GrantId) -> Result<bool, CoreError> {
-        let mut conn = self.lock();
+        let mut conn = self.lock()?;
         let tx = conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
         let Some(mut grant) = load_grant(&tx, id)? else {
             return Ok(false);
@@ -146,7 +146,7 @@ impl Store {
     /// Removes a grant that is no longer active for good (it cannot be resumed afterwards). Returns `Ok(false)` when
     /// there is no such grant; a grant that still works has to be revoked first.
     pub fn delete_ended_grant(&self, id: &GrantId, now: i64) -> Result<bool, CoreError> {
-        let mut conn = self.lock();
+        let mut conn = self.lock()?;
         let tx = conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
         let Some(grant) = load_grant(&tx, id)? else {
             return Ok(false);
@@ -162,7 +162,7 @@ impl Store {
     /// Deletes every grant of a connection (after the connection itself was revoked): with nothing left to
     /// give them to, there is nothing to resume either.
     pub fn remove_connection_grants(&self, connection: &ConnectionId) -> Result<(), CoreError> {
-        self.lock().execute("DELETE FROM grants WHERE connection_id = ?1", params![connection.0])?;
+        self.lock()?.execute("DELETE FROM grants WHERE connection_id = ?1", params![connection.0])?;
         Ok(())
     }
 
@@ -190,7 +190,7 @@ impl Store {
         now: i64,
         make: impl FnOnce(&Grant) -> Result<Grant, CoreError>,
     ) -> Result<bool, CoreError> {
-        let mut conn = self.lock();
+        let mut conn = self.lock()?;
         let tx = conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
         let Some(old) = load_grant(&tx, id)? else {
             return Ok(false);
@@ -211,7 +211,7 @@ impl Store {
 
     /// Whether an active grant of `connection` for `account` needs message bodies to decide.
     pub fn needs_body(&self, connection: &ConnectionId, account: Option<&str>, now: i64) -> Result<bool, CoreError> {
-        let conn = self.lock();
+        let conn = self.lock()?;
         Ok(needs_body(&connection_grants(&conn, connection, account)?, connection, now))
     }
 
@@ -224,7 +224,7 @@ impl Store {
         facts: &[MessageFacts],
         now: i64,
     ) -> Result<ReadDecision, CoreError> {
-        let mut conn = self.lock();
+        let mut conn = self.lock()?;
         let tx = conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
         let mut grants = connection_grants(&tx, connection, account)?;
         let decision = evaluate_read(&grants, connection, facts, now);
@@ -255,7 +255,7 @@ impl Store {
         reserve: bool,
         now: i64,
     ) -> Result<std::collections::BTreeMap<String, GrantId>, CoreError> {
-        let mut conn = self.lock();
+        let mut conn = self.lock()?;
         let tx = conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
         let mut grants = all_connection_grants(&tx, connection)?;
         let mut covered = std::collections::BTreeMap::new();
@@ -285,7 +285,7 @@ impl Store {
         service: &str,
         now: i64,
     ) -> Result<reins_policy::AccountCoverage, CoreError> {
-        let conn = self.lock();
+        let conn = self.lock()?;
         let grants = all_connection_grants(&conn, connection)?;
         Ok(reins_policy::account_coverage(&grants, connection, service, now))
     }
@@ -298,7 +298,7 @@ impl Store {
         email: &OutgoingEmail,
         now: i64,
     ) -> Result<SendDecision, CoreError> {
-        let mut conn = self.lock();
+        let mut conn = self.lock()?;
         let tx = conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
         let mut grants = connection_grants(&tx, connection, account)?;
         let decision = evaluate_send(&grants, connection, email, now);
@@ -315,7 +315,7 @@ impl Store {
 
     /// Gives back uses reserved for a call that then failed to execute.
     pub fn refund(&self, ids: &BTreeSet<GrantId>) -> Result<(), CoreError> {
-        let mut conn = self.lock();
+        let mut conn = self.lock()?;
         let tx = conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
         for id in ids {
             if let Some(mut grant) = load_grant(&tx, id)? {
@@ -329,7 +329,7 @@ impl Store {
     /// Consumes one use of each listed grant that is still active (used when
     /// the user approves a request that some grants partially covered).
     pub fn consume_active(&self, ids: &BTreeSet<GrantId>, now: i64) -> Result<(), CoreError> {
-        let mut conn = self.lock();
+        let mut conn = self.lock()?;
         let tx = conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
         for id in ids {
             if let Some(mut grant) = load_grant(&tx, id)?
@@ -454,7 +454,7 @@ pub(crate) mod tests {
         assert!(store.delete_ended_grant(&"g1".into(), 100).is_err(), "still active");
         store.revoke_grant(&"g1".into()).unwrap();
         assert!(store.delete_ended_grant(&"g1".into(), 100).unwrap());
-        assert!(store.grants().unwrap().is_empty());
+        assert_eq!(store.grants().unwrap().len(), 0);
         assert!(!store.delete_ended_grant(&"g1".into(), 100).unwrap());
     }
 
@@ -475,7 +475,7 @@ pub(crate) mod tests {
         let dir = tempfile::tempdir().unwrap();
         let store = open(dir.path());
         let good = serde_json::to_string(&read_grant("g1", "c1", None)).unwrap();
-        let conn = store.lock();
+        let conn = store.lock().unwrap();
         conn.execute(
             "INSERT INTO grants (id, connection_id, connection_label, created_at, grant_json) VALUES ('bad', 'c1', 'X', 1, '{\"id\":\"bad\",\"scope\":{\"action\":\"read\"}}')",
             [],
@@ -487,7 +487,7 @@ pub(crate) mod tests {
         )
         .unwrap();
         drop(conn);
-        assert!(store.grants().unwrap().is_empty());
+        assert_eq!(store.grants().unwrap().len(), 0);
         for c in ["c1", "c9"] {
             let d = store.evaluate_read_and_reserve(&c.into(), None, &[fact("m1", "a@bank.com")], 100).unwrap();
             assert_eq!(d.needs_approval, vec![0]);

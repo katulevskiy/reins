@@ -8,7 +8,7 @@ use crate::CoreError;
 
 impl Store {
     pub fn pin_desktop_key(&self, connection_id: &str, public_key: &str, now: i64) -> Result<(), CoreError> {
-        self.lock().execute(
+        self.lock()?.execute(
             "INSERT INTO desktop_keys (connection_id, public_key, pinned_at) VALUES (?1, ?2, ?3) \
              ON CONFLICT (connection_id) DO UPDATE SET public_key = ?2, pinned_at = ?3",
             params![connection_id, public_key, now],
@@ -18,7 +18,7 @@ impl Store {
 
     pub fn desktop_key(&self, connection_id: &str) -> Result<Option<String>, CoreError> {
         Ok(self
-            .lock()
+            .lock()?
             .query_row("SELECT public_key FROM desktop_keys WHERE connection_id = ?1", params![connection_id], |r| {
                 r.get(0)
             })
@@ -26,13 +26,13 @@ impl Store {
     }
 
     pub fn remove_desktop_key(&self, connection_id: &str) -> Result<(), CoreError> {
-        self.lock().execute("DELETE FROM desktop_keys WHERE connection_id = ?1", params![connection_id])?;
+        self.lock()?.execute("DELETE FROM desktop_keys WHERE connection_id = ?1", params![connection_id])?;
         Ok(())
     }
 
     /// Signing out: the connections may be gone by the next sign-in, and a key must never outlive its pairing.
     pub fn clear_desktop_keys(&self) -> Result<(), CoreError> {
-        self.lock().execute("DELETE FROM desktop_keys", [])?;
+        self.lock()?.execute("DELETE FROM desktop_keys", [])?;
         Ok(())
     }
 }

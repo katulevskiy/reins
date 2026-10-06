@@ -7,7 +7,7 @@ import Security
 /// not synced or backed up (`ThisDeviceOnly`), and lives in the shared keychain group so the notification extension
 /// opens the same store. Output is nonce || ciphertext || tag.
 ///
-/// The core treats `Failed` from `unwrap` as a lost key and starts over (it deletes the session and what waits), so
+/// The core treats `Failed` from `unwrap` as a lost key and preserves the encrypted store, so
 /// only a definite answer may say that: a keychain that cannot be read right now (locked before the first unlock,
 /// interaction not allowed) is `NeedsUserInteraction`, which makes opening the store fail without changing anything.
 final class KeychainKeyWrapper: KeyWrapper, @unchecked Sendable {

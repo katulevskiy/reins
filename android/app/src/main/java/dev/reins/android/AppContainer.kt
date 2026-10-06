@@ -32,6 +32,7 @@ import dev.reins.android.state.OnboardingStore
 import dev.reins.android.state.RecoveryRecord
 import dev.reins.android.state.SessionState
 import dev.reins.android.ui.common.userMessage
+import dev.reins.core.AccountKeys
 import dev.reins.core.AutopilotSettings
 import dev.reins.core.CoreException
 import dev.reins.core.ReinsCore
@@ -121,14 +122,17 @@ class AppContainer(private val context: Context) {
     }
 
     suspend fun refreshSession() {
+        val epoch = state.accountEpoch.value
         val info = try {
             core.session()
         } catch (e: CoreException) {
             null
         }
+        if (!state.isCurrent(epoch)) return
         if (info != null) {
             // Compute the gate before publishing SignedIn, including after a process restart. Password accounts
             // have no account secret and keep their self-hosted onboarding.
+            val keysOpen = try { core.accountKeys() != AccountKeys.LOCKED } catch (e: CancellationException) { throw e } catch (e: Exception) { false }
             var recoveryFailure: String? = null
             val code = try {
                 core.accountRecoveryCode()
@@ -143,44 +147,60 @@ class AppContainer(private val context: Context) {
                 null
             }
             val needsRecording = code != null && withContext(Dispatchers.IO) { !recoveryRecord.confirmed(info.serverUrl, code) }
-            state.setRecoveryToRecord(if (needsRecording) code else null)
-            state.setRecoveryLoadError(recoveryFailure)
-            withContext(Dispatchers.IO) {
-                state.setSeenActivityId(deviceStatus.seenActivityId())
-                state.setApprovalDevice(deviceStatus.isApprovalDevice() && !deviceStatus.isReplaced())
-                // Before the session flips, so the main screen does not flash up ahead of the setup or the Unlock screen.
-                state.setSetupPending(onboarding.isPending(info))
-                state.setKeysLocked(deviceStatus.keysLocked())
-                state.setApprovalTakeover(deviceStatus.needsTakeover())
+            val device = withContext(Dispatchers.IO) {
+                deviceStatus.selectAccount(info)
+                deviceStatus.setKeysLocked(!keysOpen)
+                DeviceGate(deviceStatus.seenActivityId(), deviceStatus.isApprovalDevice() && !deviceStatus.isReplaced(),
+                    onboarding.isPending(info), deviceStatus.needsTakeover())
             }
+            // Stage every secret locally until the final identity check; no partially refreshed UI belongs to another login.
+            if (!state.isCurrent(epoch) || core.session() != info || !state.isCurrent(epoch)) return
+            state.setSession(SessionState.SignedIn(info)) {
+                state.setRecoveryToRecord(if (needsRecording) code else null)
+                state.setRecoveryLoadError(recoveryFailure)
+                state.setSeenActivityId(device.seen)
+                state.setApprovalDevice(device.approval)
+                state.setSetupPending(device.setup)
+                state.setKeysLocked(!keysOpen)
+                state.setApprovalTakeover(device.takeover)
+            }
+        } else {
+            if (!state.isCurrent(epoch) || core.session() != null || !state.isCurrent(epoch)) return
+            state.setSession(SessionState.SignedOut)
         }
-        state.setSession(if (info == null) SessionState.SignedOut else SessionState.SignedIn(info))
         if (info != null && !state.keysLocked.value) {
             refreshPending()
             refreshConnections()
         }
     }
 
+    private data class DeviceGate(val seen: Long, val approval: Boolean, val setup: Boolean, val takeover: Boolean)
+
     /** Re-reads everything held on the phone: what waits, what happened, which permissions exist. */
     suspend fun refreshPending() {
+        val epoch = state.accountEpoch.value
         try {
-            state.setPending(core.pending())
-            state.setActivity(core.activity(ACTIVITY_LIMIT))
+            val pending = core.pending()
+            val activity = core.activity(ACTIVITY_LIMIT)
             val grants = core.grants()
+            val accounts = core.accounts()
+            val services = core.services()
+            val servers = core.mcpServers()
+            if (!state.isCurrent(epoch)) return
+            state.setPending(pending)
+            state.setActivity(activity)
             state.setGrants(grants)
-            state.setAccounts(core.accounts())
-            state.setServices(core.services())
-            state.setMcpServers(core.mcpServers())
-            val info = core.session()
-            if (info != null && state.session.value is SessionState.SignedIn) {
-                state.setSession(SessionState.SignedIn(info))
-            }
+            state.setAccounts(accounts)
+            state.setServices(services)
+            state.setMcpServers(servers)
             refreshAutopilot()
-            withContext(Dispatchers.IO) { GrantReminders.sync(context, grants) }
+            withContext(Dispatchers.IO) {
+                if (state.isCurrent(epoch)) GrantReminders.sync(context, grants)
+            }
         } catch (e: CoreException) {
-            if (e is CoreException.NotLoggedIn) state.setSession(SessionState.SignedOut)
+            if (state.isCurrent(epoch) && e is CoreException.NotLoggedIn) state.setSession(SessionState.SignedOut)
         }
-        withContext(Dispatchers.IO) { state.setDeviceReplaced(deviceStatus.isReplaced()) }
+        if (state.isCurrent(epoch)) state.setDeviceReplaced(deviceStatus.isReplaced())
     }
 
     /**
@@ -188,6 +208,7 @@ class AppContainer(private val context: Context) {
      * notification and the job that refreshes all this when a bypass ends.
      */
     suspend fun refreshAutopilot(): AutopilotSettings? {
+        val epoch = state.accountEpoch.value
         val settings = try {
             core.autopilotSettings()
         } catch (e: CancellationException) {
@@ -195,10 +216,12 @@ class AppContainer(private val context: Context) {
         } catch (e: Exception) {
             return state.autopilot.value
         }
+        if (!state.isCurrent(epoch)) return null
         state.setAutopilot(settings)
         val labels = state.connections.value.associate { it.id to it.label }
         val notice = AutopilotText.bypassNotice(settings, { labels[it] ?: "an AI" }, System.currentTimeMillis() / 1000)
         withContext(Dispatchers.IO) {
+            if (!state.isCurrent(epoch)) return@withContext
             notifier.showBypass(notice)
             BypassEndWorker.schedule(context, notice?.until)
         }
@@ -226,6 +249,7 @@ class AppContainer(private val context: Context) {
      * [AppState.registrationError] (Settings offers it again); the sign-in itself stands.
      */
     suspend fun finishSignIn(info: SessionInfo) {
+        withContext(Dispatchers.IO) { deviceStatus.selectAccount(info) }
         setKeysLocked(false)
         beginOnboarding(info)
         state.setRegistrationError(null)
@@ -273,8 +297,10 @@ class AppContainer(private val context: Context) {
 
     /** The AI connections (a network call; failures keep the last list). */
     suspend fun refreshConnections() {
+        val epoch = state.accountEpoch.value
         try {
-            state.setConnections(core.connections())
+            val connections = core.connections()
+            if (state.isCurrent(epoch)) state.setConnections(connections)
         } catch (e: CancellationException) {
             throw e
         } catch (e: Exception) {
@@ -297,15 +323,24 @@ class AppContainer(private val context: Context) {
      * ([CoreException.OtherApprovalDevice], rethrown): the Unlock screen then offers the two ways to take over.
      */
     suspend fun registerDevice(force: Boolean) {
-        val (replaced, locked) = withContext(Dispatchers.IO) { deviceStatus.isReplaced() to deviceStatus.keysLocked() }
+        val epoch = state.accountEpoch.value
+        val info = core.session() ?: return
+        val keysOpen = core.accountKeys() != AccountKeys.LOCKED
+        val (replaced, locked) = withContext(Dispatchers.IO) {
+            deviceStatus.selectAccount(info)
+            deviceStatus.setKeysLocked(!keysOpen)
+            deviceStatus.isReplaced() to deviceStatus.keysLocked()
+        }
         if (locked || (replaced && !force)) return
         val token = FirebaseSupport.token(context)
         try {
             core.registerDevice(token)
         } catch (e: CoreException.OtherApprovalDevice) {
+            if (!state.isCurrent(epoch) || core.session() != info) throw e
             setApprovalTakeover(true)
             throw e
         }
+        if (!state.isCurrent(epoch) || core.session() != info) return
         withContext(Dispatchers.IO) {
             deviceStatus.setReplaced(false)
             deviceStatus.setApprovalDevice(true)
@@ -334,7 +369,14 @@ class AppContainer(private val context: Context) {
 
     /** Forgets what belongs to the signed-in account. */
     suspend fun forgetAccount() {
-        withContext(Dispatchers.IO) { deviceStatus.clear() }
+        withContext(Dispatchers.IO) {
+            deviceStatus.clear()
+            GrantReminders.sync(context, emptyList())
+            BypassEndWorker.schedule(context, null)
+            notifier.showBypass(null)
+            context.getSystemService(android.app.NotificationManager::class.java).cancelAll()
+            mcpSignIn.clear()
+        }
         state.setApprovalDevice(false)
         state.setDeviceReplaced(false)
         state.setKeysLocked(false)

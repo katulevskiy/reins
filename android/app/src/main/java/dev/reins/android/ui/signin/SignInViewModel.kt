@@ -16,6 +16,7 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.filterNotNull
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.Dispatchers
 
 data class SignInUi(
     val busy: Boolean = false,
@@ -80,7 +81,7 @@ class SignInViewModel(private val container: AppContainer) : ViewModel() {
     private fun finishSso() {
         val (pending, callback) = container.ssoSignIn.take() ?: return
         _ui.value = _ui.value.copy(busy = true, error = null)
-        viewModelScope.launch {
+        container.appScope.launch(Dispatchers.Main) {
             try {
                 val outcome = container.core.ssoFinish(pending.server, callback, pending.state, pending.verifier)
                 when (outcome.keys) {
@@ -147,7 +148,7 @@ class SignInViewModel(private val container: AppContainer) : ViewModel() {
     private fun submit(call: suspend () -> SessionInfo?) {
         if (_ui.value.busy) return
         _ui.value = _ui.value.copy(busy = true, error = null)
-        viewModelScope.launch {
+        container.appScope.launch(Dispatchers.Main) {
             try {
                 val info = call() ?: return@launch
                 container.feedback.play(Event.Connected)

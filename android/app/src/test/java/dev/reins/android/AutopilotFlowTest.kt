@@ -37,6 +37,7 @@ class AutopilotFlowTest : FlowHarness() {
 
     @Before
     fun listen() {
+        dev.reins.android.TestNativeKeys.install()
         FeedbackProvider.observer = heard
     }
 

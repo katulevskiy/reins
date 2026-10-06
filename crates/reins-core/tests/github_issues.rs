@@ -1345,7 +1345,7 @@ async fn code_repositories_commits_users_topics_and_labels_are_searched() {
         (users[0].id.as_str(), users[0].resource.as_str(), users[0].snippet.as_str()),
         ("octocat", "octocat", "User")
     );
-    assert!(users[0].parents.is_empty());
+    assert_eq!(users[0].parents.len(), 0);
 
     mount(
         &server,

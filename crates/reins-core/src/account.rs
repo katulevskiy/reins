@@ -49,6 +49,14 @@ impl Engine {
         let code = sso::callback_code(callback_url, state)?;
         let device_id = self.store.device_id()?;
         let signed_in = sso::exchange(&self.http, &server, &code, &verifier, &device_id).await?;
+        self.finish_sso(&server, signed_in).await
+    }
+
+    pub(crate) async fn finish_sso(
+        &self,
+        server: &ServerUrl,
+        signed_in: sso::SignedIn,
+    ) -> Result<SsoOutcome, CoreError> {
         let access = signed_in.tokens.access_token.clone();
         let email = signed_in.email.clone();
         self.store.save_session(&StoredSession {
@@ -71,7 +79,7 @@ impl Engine {
 
         let keys = match signed_in.key {
             None => {
-                self.create_keys(&server, &access, &signed_in.user_id, &email).await?;
+                self.create_keys(server, &access, &signed_in.user_id, &email).await?;
                 AccountKeys::Created
             }
             Some(wrapped) => match self.secret_of(&signed_in.user_id)? {
@@ -113,7 +121,7 @@ impl Engine {
 
     /// Keeps the vault key sealed, as unlocking the vault with a master password does, and lists the vault as a
     /// connected integration: an account without a master password never asks for one.
-    fn keep_vault_key(&self, email: &str, key: &VaultKey) -> Result<(), CoreError> {
+    pub(crate) fn keep_vault_key(&self, email: &str, key: &VaultKey) -> Result<(), CoreError> {
         self.store.secret_put(VAULT, email, &key.to_bytes())?;
         self.register_account(VAULT, email).map(drop)
     }

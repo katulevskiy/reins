@@ -67,6 +67,7 @@ class AppViewModel(private val container: AppContainer) : ViewModel() {
     val current: Route? get() = stack.lastOrNull()
 
     init {
+        container.state.onAccountChange = ::resetAccountNavigation
         // Not immediate: state changes must not resume collectors (e.g. the deep-link handler, which looks this
         // view model up) while the view model is still being constructed.
         viewModelScope.launch(Dispatchers.Main) { container.refreshSession() }
@@ -221,6 +222,10 @@ class AppViewModel(private val container: AppContainer) : ViewModel() {
 
     fun signedOut() {
         container.state.setSession(SessionState.SignedOut)
+        resetAccountNavigation()
+    }
+
+    fun resetAccountNavigation() {
         home()
         _sheet.value = null
         _connect.value = ConnectUi()

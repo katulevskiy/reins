@@ -53,6 +53,7 @@ class FeedbackFlowTest : FlowHarness() {
 
     @Before
     fun listen() {
+        dev.reins.android.TestNativeKeys.install()
         FeedbackProvider.observer = heard
     }
 

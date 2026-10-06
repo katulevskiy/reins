@@ -279,7 +279,7 @@ async fn forks_languages_contributors_and_topics_are_read() {
     assert_eq!(topics[0].body.as_deref(), Some("rust, cli"));
 
     e.on("GET", "/repos/octo/empty/contributors", 204, Value::Null).await;
-    assert!(e.fetch("github_repo_contributors", &json!({"repo": "octo/empty"})).await.is_empty());
+    assert_eq!(e.fetch("github_repo_contributors", &json!({"repo": "octo/empty"})).await.len(), 0);
 }
 
 #[tokio::test]
@@ -380,7 +380,10 @@ async fn creating_a_repository_that_exists_or_with_a_bad_name_is_refused() {
         );
     }
     assert!(parse_err("github_repo_create", &json!({"description": "x"})).contains("`name` is required"));
-    assert!(e.requests().await.iter().all(|(m, _)| m == "GET"), "nothing was created");
+    assert!(
+        e.requests().await.iter().all(|(m, p)| m == "GET" || p == "/reins/api/account-state"),
+        "nothing was created"
+    );
 }
 
 #[tokio::test]
@@ -427,7 +430,7 @@ async fn a_settings_change_needs_something_to_change_and_refuses_unarchiving_and
     assert!(err.contains("cannot unarchive"), "{err}");
     let err = e.preview_err("github_repo_update", &json!({"repo": "octo/cat", "default_branch": "a..b"})).await;
     assert!(err.contains("not a valid branch"), "{err}");
-    assert!(e.requests().await.iter().all(|(m, _)| m == "GET"));
+    assert!(e.requests().await.iter().all(|(m, p)| m == "GET" || p == "/reins/api/account-state"));
 }
 
 #[tokio::test]
@@ -919,7 +922,7 @@ async fn protection_arguments_are_checked() {
         )
         .contains("0..=6")
     );
-    assert!(e.requests().await.is_empty());
+    assert_eq!(e.requests().await.len(), 0);
 }
 
 #[tokio::test]
@@ -1236,7 +1239,7 @@ async fn webhook_addresses_and_events_are_validated() {
             .await
             .contains("at least one thing")
     );
-    assert!(e.requests().await.is_empty());
+    assert_eq!(e.requests().await.len(), 0);
 }
 
 #[tokio::test]

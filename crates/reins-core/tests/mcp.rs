@@ -55,6 +55,7 @@ impl World {
             vec![],
         )
         .unwrap();
+        common::mount_account_vault(&rw, "me@example.com", "pw").await;
         core.login(rw.uri(), "me@example.com".to_owned(), "pw".to_owned(), None).await.unwrap();
         Self {
             rw,
@@ -368,7 +369,7 @@ async fn a_destructive_tool_is_asked_every_time() {
     assert_eq!(w.answer("r1").await["result"]["result"]["content"][0]["text"], "deleted");
     w.relay("r2", "delete_issue", &json!({"id": "ISS-2"})).await;
     assert!(w.is_pending("r2").await, "asked again");
-    assert!(w.core.grants().await.unwrap().is_empty());
+    assert_eq!(w.core.grants().await.unwrap().len(), 0);
 }
 
 #[tokio::test]
@@ -381,7 +382,7 @@ async fn unknown_servers_and_tools_and_server_errors_are_answered_with_an_error(
     assert!(answer["message"].as_str().unwrap().contains("no tool named nope"), "{answer}");
     w.relay_to("r2", "ghost", "search", &json!({})).await;
     assert!(w.answer("r2").await["message"].as_str().unwrap().contains("not added"));
-    assert!(w.state.lock().unwrap().calls.is_empty());
+    assert_eq!(w.state.lock().unwrap().calls.len(), 0);
     assert_eq!(w.core.activity(5).await.unwrap()[0].outcome, "error");
 
     // The server says the arguments are wrong: the AI is told, nothing stays waiting.
@@ -495,7 +496,7 @@ async fn removing_a_server_drops_its_tools_grants_and_waiting_calls() {
 
     w.core.mcp_remove("tracker".to_owned()).await.unwrap();
     assert!(w.report().await.get("mcp").is_none(), "{}", w.report().await);
-    assert!(w.core.mcp_servers().await.unwrap().is_empty());
+    assert_eq!(w.core.mcp_servers().await.unwrap().len(), 0);
     assert!(w.core.grants().await.unwrap().is_empty(), "its permissions are gone");
     assert!(!w.is_pending("r2").await);
     assert_eq!(w.answer("r2").await["outcome"], "error");

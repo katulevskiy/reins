@@ -13,7 +13,11 @@ import dev.reins.core.SessionInfo
 class OnboardingStore(context: Context) {
     private val appContext = context.applicationContext
 
-    private val prefs by lazy { appContext.getSharedPreferences("onboarding", Context.MODE_PRIVATE) }
+    private val prefs by lazy {
+        appContext.getSharedPreferences("onboarding", Context.MODE_PRIVATE).also { prefs ->
+            prefs.all.keys.filter { it.contains('@') }.forEach { prefs.edit().remove(it).apply() }
+        }
+    }
 
     /** Marks the setup as waiting for [account], unless it was already done for it. */
     fun begin(account: SessionInfo) {
@@ -30,8 +34,10 @@ class OnboardingStore(context: Context) {
         putBoolean(DONE + key, true)
     }
 
-    private fun key(account: SessionInfo) =
-        account.serverUrl.trim().trimEnd('/').lowercase(java.util.Locale.ROOT) + " " + account.email.trim().lowercase(java.util.Locale.ROOT)
+    private fun key(account: SessionInfo): String {
+        val value = account.serverUrl.trim().trimEnd('/').lowercase(java.util.Locale.ROOT) + " " + account.email.trim().lowercase(java.util.Locale.ROOT)
+        return java.security.MessageDigest.getInstance("SHA-256").digest(value.toByteArray()).joinToString("") { "%02x".format(it) }
+    }
 
     private companion object {
         const val PENDING = "pending:"

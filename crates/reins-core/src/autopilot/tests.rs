@@ -86,9 +86,19 @@ async fn env(with_model: bool) -> Env {
         "POST",
         "/identity/connect/token",
         200,
-        json!({"access_token": "ACCESS", "refresh_token": "REFRESH", "expires_in": 7200}),
+        json!({"access_token": format!("h.{}.s", data_encoding::BASE64URL_NOPAD.encode(br#"{"sub":"account-1","email":"me@example.com"}"#)), "refresh_token": "REFRESH", "expires_in": 7200}),
     )
     .await;
+    let master = crate::crypto::master_key(
+        "pw",
+        "me@example.com",
+        crate::crypto::Kdf::Pbkdf2 {
+            iterations: 5000,
+        },
+    )
+    .unwrap();
+    let key = master.stretch().encrypt(&[7; 64]).unwrap();
+    mount(&server, "GET", "/api/sync", 200, json!({"profile":{"key":key}})).await;
     let now = unix_now();
     let conn = |id: &str, at: i64| {
         json!({"id": id, "label": "Claude", "client_name": "Claude", "client_host": "claude.ai", "created_at": at,
@@ -175,8 +185,8 @@ fn blob(id: &str, name: &str, mime: &str, head: &str) -> Value {
 }
 
 impl Env {
-    fn store(&self) -> &Store {
-        &self.core.engine().store
+    fn store(&self) -> Arc<Store> {
+        Arc::clone(&self.core.engine().store)
     }
 
     /// The request arrives (as a push would bring it) and Autopilot's pass runs.
@@ -282,7 +292,7 @@ async fn without_a_model_requests_wait_as_before_and_say_why() {
     assert_eq!(entry.decided_by, "");
     assert!(entry.autopilot.unwrap().reason.contains("could not judge"));
     assert!(env.memory(&env.profile_id().await).is_empty(), "nothing to learn without the model");
-    assert!(env.decided().is_empty());
+    assert_eq!(env.decided().len(), 0);
 }
 
 #[tokio::test]
@@ -329,7 +339,7 @@ async fn a_model_that_does_not_answer_in_time_leaves_the_request_to_the_user() {
     env.relay("r1", OLD, email("friend@x.com", "hi")).await;
     assert_eq!(env.waiting().await, ["r1"]);
     assert!(env.suggestion("r1").await.reason.contains("could not judge"));
-    assert!(env.decided().is_empty());
+    assert_eq!(env.decided().len(), 0);
     assert_eq!(env.sent().await, 0);
 }
 
@@ -605,8 +615,8 @@ async fn rate_limits_pause_auto_approvals() {
         env.store().ap_rate_add(OTHER, now - 3_600).unwrap();
     }
     env.relay("o2", OTHER, email("friend@x.com", "hi")).await;
-    assert!(env.decided().is_empty());
-    env.store().lock().execute("DELETE FROM autopilot_rate", []).unwrap();
+    assert_eq!(env.decided().len(), 0);
+    env.store().lock().unwrap().execute("DELETE FROM autopilot_rate", []).unwrap();
     env.relay("o3", OTHER, email("friend@x.com", "hi")).await;
     assert_eq!(env.decided(), [("o3".to_owned(), Verdict::Approve, "autopilot".to_owned())]);
 }
@@ -695,7 +705,7 @@ async fn the_playground_judges_a_typed_situation_without_keeping_it() {
     assert_eq!((s.class_key.as_str(), s.novel, s.judged), ("github/write/push", false, true));
     assert!((s.p_approve - 0.9).abs() < 0.01, "{s:?}");
     assert!(env.core.autopilot_evaluate(None, "  ".to_owned()).await.is_err());
-    assert!(env.memory(&env.profile_id().await).is_empty());
+    assert_eq!(env.memory(&env.profile_id().await).len(), 0);
 }
 
 // ---- profiles --------------------------------------------------------------------------------------------------------
@@ -712,12 +722,12 @@ async fn profiles_are_created_assigned_reset_and_deleted() {
     env.relay("r1", OTHER, email("friend@x.com", "hi")).await;
     env.approve("r1").await;
     assert_eq!(env.memory(&work).len(), 1, "a connection trains its own profile");
-    assert!(env.memory(&views[0].id).is_empty());
+    assert_eq!(env.memory(&views[0].id).len(), 0);
     let created = env.core.create_profile("  Side\nproject ".to_owned(), Some("rocket".to_owned())).await.unwrap();
     assert_eq!((created.name.as_str(), created.icon.as_deref()), ("Side project", Some("rocket")));
     env.core.rename_profile(created.id.clone(), "Hobby".to_owned(), None).await.unwrap();
     env.core.reset_profile(work.clone()).await.unwrap();
-    assert!(env.memory(&work).is_empty());
+    assert_eq!(env.memory(&work).len(), 0);
     env.core.set_default_profile(work.clone()).await.unwrap();
     env.core.delete_profile(work.clone()).await.unwrap();
     let after = env.core.autopilot_profiles().await.unwrap();
@@ -738,11 +748,13 @@ async fn everything_learned_is_sealed() {
     env.relay("r1", OLD, email("zebra-friend@x.com", "the ZEBRA-BODY-TEXT")).await;
     env.approve("r1").await;
     env.relay("r2", OLD, email("zebra-friend@x.com", "the ZEBRA-BODY-TEXT")).await;
-    assert!(!env.memory(&env.profile_id().await).is_empty());
+    assert_ne!(env.memory(&env.profile_id().await).len(), 0);
     drop(env.core);
     let dir = env.dir.path();
-    let bytes: Vec<u8> =
-        ["reins.db", "reins.db-wal"].iter().flat_map(|f| std::fs::read(dir.join(f)).unwrap_or_default()).collect();
+    let bytes: Vec<u8> = std::iter::once(dir.join("reins.sealed"))
+        .chain(std::fs::read_dir(dir.join("accounts")).unwrap().filter_map(Result::ok).map(|e| e.path()))
+        .flat_map(|p| std::fs::read(p).unwrap_or_default())
+        .collect();
     for needle in
         ["zebra-friend", "ZEBRA-BODY", "ZebraProfileName", "connection history", "Send an email", "written by"]
     {

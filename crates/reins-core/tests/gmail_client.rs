@@ -110,7 +110,7 @@ async fn empty_search_and_malformed_ids() {
         .mount(&server)
         .await;
     let g = gmail(&server, Arc::new(FakeGoogle::new()));
-    assert!(g.list("nothing", 5).await.unwrap().is_empty());
+    assert_eq!(g.list("nothing", 5).await.unwrap().len(), 0);
     for bad in ["", "../profile", "a/b", "a?x=1", "m 1"] {
         let err = g.fetch(&[bad.to_owned()], false).await.unwrap_err();
         assert!(matches!(err, CoreError::Invalid { .. }), "{bad:?}: {err:?}");

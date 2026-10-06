@@ -40,6 +40,7 @@ class UpdateControllerTest {
 
     @Before
     fun setUp() {
+        dev.reins.android.TestNativeKeys.install()
         shadowOf(context as android.app.Application).grantPermissions(android.Manifest.permission.POST_NOTIFICATIONS)
         AppNotifier(context) {}.createChannels()
         // The app creates it in the `full` build only; the updater's logic is the same in both.
