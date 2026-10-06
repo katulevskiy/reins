@@ -112,9 +112,10 @@ ARG VW_VERSION
 
 # Builds again, this time it will be the actual source files being build
 RUN . /env-cargo && \
-    # Make sure that we actually build the project by updating the src/main.rs timestamp
-    # Also do this for build.rs to ensure the version is rechecked
-    touch build.rs src/main.rs && \
+    # Refresh workspace sources after cooking dummies, for every supported Cargo profile and cross target.
+    # build.rs also needs to recheck the release version.
+    touch build.rs && \
+    find src macros crates -type f -name '*.rs' -exec touch {} + && \
     # Create a symlink to the binary target folder to easy copy the binary in the final stage
     cargo build --features ${DB} --profile "${CARGO_PROFILE}" --target="${CARGO_TARGET}" && \
     if [ "${CARGO_PROFILE}" = "dev" ] ; then \
