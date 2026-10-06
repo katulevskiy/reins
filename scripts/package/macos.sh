@@ -40,11 +40,10 @@ for arch in "${archs[@]}"; do
     triple="$arch-apple-darwin"
     if [ "${REINS_SKIP_BUILD:-}" != 1 ]; then
         say "building for $triple"
-        cargo build --locked --profile release-app -p reins-desktop-app --bin reins-app --target "$triple"
-        cargo build --locked --release -p reins-desktop --bin reins --target "$triple"
+        cargo build --locked --profile release-app -p reins-desktop-app -p reins-desktop --bin reins-app --bin reins --target "$triple"
     fi
     bins_app+=("$target_dir/$triple/release-app/reins-app")
-    bins_cli+=("$target_dir/$triple/release/reins")
+    bins_cli+=("$target_dir/$triple/release-app/reins")
 done
 
 # 2. The bundle.

@@ -40,11 +40,10 @@ say() { printf '==> %s\n' "$*"; }
 
 if [ "${REINS_SKIP_BUILD:-}" != 1 ]; then
     say "building for $triple"
-    cargo build --locked --profile release-app -p reins-desktop-app --bin reins-app --target "$triple"
-    cargo build --locked --release -p reins-desktop --bin reins --target "$triple"
+    cargo build --locked --profile release-app -p reins-desktop-app -p reins-desktop --bin reins-app --bin reins --target "$triple"
 fi
 app_bin="$target_dir/$triple/release-app/reins-app"
-cli_bin="$target_dir/$triple/release/reins"
+cli_bin="$target_dir/$triple/release-app/reins"
 
 # The tarball.
 name="Reins-$version-Linux-$arch"

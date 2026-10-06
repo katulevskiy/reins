@@ -39,7 +39,7 @@ FROM --platform=$BUILDPLATFORM ghcr.io/blackdex/rust-musl:arm-musleabi-stable-1.
 
 ########################## BUILD IMAGE ##########################
 # hadolint ignore=DL3006
-FROM --platform=$BUILDPLATFORM build_${TARGETARCH}${TARGETVARIANT} AS build
+FROM --platform=$BUILDPLATFORM build_${TARGETARCH}${TARGETVARIANT} AS build_base
 ARG TARGETARCH
 ARG TARGETVARIANT
 ARG TARGETPLATFORM
@@ -58,11 +58,11 @@ ENV DEBIAN_FRONTEND=noninteractive \
     PQ_LIB_DIR="/usr/local/musl/pq17/lib"
 
 # Create CARGO_HOME folder and don't download rust docs
+RUN apk --no-cache add xz
 RUN mkdir -pv "${CARGO_HOME}" && \
     rustup set profile minimal
 
-# Creates a dummy project used to grab dependencies
-RUN USER=root cargo new --bin /app
+# The recipe and final build must use the same path and Rust toolchain.
 WORKDIR /app
 
 # Environment variables for Cargo on Alpine based builds
@@ -73,11 +73,24 @@ RUN echo "export CARGO_TARGET=${CARGO_BUILD_TARGET}" >> /env-cargo && \
 RUN . /env-cargo && \
     rustup target add "${CARGO_TARGET}"
 
-# Copies over *only* your manifests and build files
-COPY ./Cargo.* ./rust-toolchain.toml ./build.rs ./
-COPY ./macros ./macros
-# The other workspace members: Cargo needs every member to load the workspace, and the server uses reins-proto
-COPY ./crates ./crates
+# Pinned static cargo-chef binaries run on both Debian and musl build hosts; no tool compilation is needed.
+ADD --checksum=sha256:aca691abfbfbbe00d482e0ed2249eec3091b65e96a0ce92947fb5b254d48b16d https://github.com/LukeMathWalker/cargo-chef/releases/download/v0.1.78/cargo-chef-x86_64-unknown-linux-musl.tar.xz /tmp/chef-x86_64.tar.xz
+ADD --checksum=sha256:cd59b90fce5fa84c4189648fec33404ec5491791eebdb812df5e7fca8336408d https://github.com/LukeMathWalker/cargo-chef/releases/download/v0.1.78/cargo-chef-aarch64-unknown-linux-musl.tar.xz /tmp/chef-aarch64.tar.xz
+RUN case "$(uname -m)" in \
+        x86_64) chef_arch=x86_64 ;; \
+        aarch64) chef_arch=aarch64 ;; \
+        *) echo "Unsupported build host architecture" >&2; exit 1 ;; \
+    esac && \
+    tar -xJf "/tmp/chef-${chef_arch}.tar.xz" --strip-components=1 -C /usr/local/bin "cargo-chef-${chef_arch}-unknown-linux-musl/cargo-chef" && \
+    rm -f /tmp/chef-*.tar.xz
+
+# Source edits rerun this cheap planner, while unchanged manifests/lockfile produce the same dependency recipe.
+FROM build_base AS planner
+COPY . .
+RUN cargo chef prepare --recipe-path /recipe.json
+
+FROM build_base AS build
+COPY --from=planner /recipe.json /tmp/recipe.json
 
 ARG CARGO_PROFILE=release
 
@@ -89,7 +102,7 @@ ARG DB=sqlite,mysql,postgresql,enable_mimalloc
 # dummy project, except the target folder
 # This folder contains the compiled dependencies
 RUN . /env-cargo && \
-    cargo build --features ${DB} --profile "${CARGO_PROFILE}" --target="${CARGO_TARGET}" && \
+    cargo chef cook --recipe-path /tmp/recipe.json --features ${DB} --profile "${CARGO_PROFILE}" --target="${CARGO_TARGET}" --locked && \
     find . -not -path "./target*" -delete
 
 # Copies the complete project
@@ -100,9 +113,10 @@ ARG VW_VERSION
 
 # Builds again, this time it will be the actual source files being build
 RUN . /env-cargo && \
-    # Make sure that we actually build the project by updating the src/main.rs timestamp
-    # Also do this for build.rs to ensure the version is rechecked
-    touch build.rs src/main.rs && \
+    # Refresh workspace sources after cooking dummies, for every supported Cargo profile and cross target.
+    # build.rs also needs to recheck the release version.
+    touch build.rs && \
+    find src macros crates -type f -name '*.rs' -exec touch {} + && \
     # Create a symlink to the binary target folder to easy copy the binary in the final stage
     cargo build --features ${DB} --profile "${CARGO_PROFILE}" --target="${CARGO_TARGET}" && \
     if [ "${CARGO_PROFILE}" = "dev" ] ; then \

@@ -76,6 +76,7 @@ jobs:
       - uses: crate-ci/typos@v1.50.1
       - run: python3 scripts/check-branding.py
       - run: python3 scripts/test-android-release.py
+      - run: python3 scripts/test-ci-release-gate.py
       - run: python3 scripts/check-doc-links.py
       - run: python3 scripts/test-ci-routing.py
       - name: Conflict markers and shell syntax
@@ -116,11 +117,11 @@ jobs:
           docker build --check . -f docker/Dockerfile.alpine
 
   rust:
-    name: Server and core (clippy + parallel tests)
+    name: Server and core tests (Nextest)
     needs: changes
     if: needs.changes.outputs.rust == 'true'
     runs-on: ubuntu-24.04
-    timeout-minutes: 60
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@v7
         with:
@@ -130,25 +131,39 @@ jobs:
       - uses: Swatinem/rust-cache@v2
         with:
           shared-key: linux-server-core
-          save-if: ${{ github.ref == 'refs/heads/main' }}
-      # E2E tests start this exact server binary. Compile it once before running both suites.
-      - run: cargo build --locked --features sqlite --bin vaultwarden
-      - run: cargo test --locked --workspace --exclude reins-desktop-app --features sqlite --no-run
-      - name: Run independent tests and clippy in parallel
+          save-if: ${{ github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository }}
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: nextest@0.9.146
+      # Cargo builds the normal server binary for tests/reins_server (CARGO_BIN_EXE_vaultwarden).
+      # Nextest compiles all targets before starting E2E tests, so a separate server build is redundant.
+      - name: Run all Rust tests
         env:
-          # Avoid nested Cargo builds/locks in every E2E executable. This was built from this checkout above.
           REINS_TEST_SERVER_BINARY: ${{ github.workspace }}/target/debug/vaultwarden
-        run: |
-          cargo test --locked -p vaultwarden --features sqlite & server=$!
-          cargo test --locked -p reins-proto -p reins-policy -p reins-core -p reins-desktop -p reins-laya & core=$!
-          cargo test --locked -p reins-e2e & e2e=$!
-          (
-            cargo clippy --locked --workspace --exclude vaultwarden --exclude reins-desktop-app --all-targets -- -D warnings
-            cargo clippy --locked --features sqlite -- -D warnings
-          ) & lint=$!
-          result=0
-          for pid in "$server" "$core" "$e2e" "$lint"; do wait "$pid" || result=1; done
-          exit "$result"
+        run: cargo nextest run --locked --workspace --exclude reins-desktop-app --features sqlite --no-fail-fast --test-threads 8
+      # Nextest does not run doctests; retain Cargo's separate documentation test pass.
+      - name: Documentation tests
+        run: cargo test --locked --workspace --exclude reins-desktop-app --features sqlite --doc
+
+  rust-clippy:
+    name: Server and core Clippy
+    needs: changes
+    if: needs.changes.outputs.rust == 'true'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - name: Install Rust toolchain
+        run: rustup toolchain install
+      - uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: linux-server-core-clippy
+          save-if: ${{ github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository }}
+      # Preserve the existing lint coverage: all core targets and the production server target.
+      - run: cargo clippy --locked --workspace --exclude vaultwarden --exclude reins-desktop-app --all-targets -- -D warnings
+      - run: cargo clippy --locked --features sqlite -- -D warnings
 
   desktop-linux:
     name: Desktop UI on Linux (clippy + tests)
@@ -165,7 +180,7 @@ jobs:
       - uses: Swatinem/rust-cache@v2
         with:
           shared-key: linux-desktop-ui
-          save-if: ${{ github.ref == 'refs/heads/main' }}
+          save-if: ${{ github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository }}
       - name: GUI libraries
         run: |
           sudo apt-get update -qq
@@ -189,7 +204,7 @@ jobs:
         run: rustup toolchain install && rustc -vV
       - uses: Swatinem/rust-cache@v2
         with:
-          save-if: ${{ github.ref == 'refs/heads/main' }}
+          save-if: ${{ github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository }}
       - run: cargo clippy --locked -p reins-desktop --all-targets -- -D warnings
       - run: cargo test --locked --no-fail-fast -p reins-desktop
 
@@ -214,7 +229,7 @@ jobs:
         run: rustup toolchain install && rustup target add aarch64-pc-windows-msvc && rustc -vV
       - uses: Swatinem/rust-cache@v2
         with:
-          save-if: ${{ github.ref == 'refs/heads/main' }}
+          save-if: ${{ github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository }}
       - run: cargo clippy --locked -p reins-desktop --all-targets -- -D warnings
       - run: cargo test --locked --no-fail-fast -p reins-desktop
       # scripts/install.ps1 as `irm | iex` runs it, in Windows PowerShell 5.1, from a release made here of the test
@@ -248,12 +263,65 @@ jobs:
         continue-on-error: true
         run: cargo check --locked -p reins-desktop --bin reins --target aarch64-pc-windows-msvc
 
-  android:
-    name: Android unit tests + debug APK
+  android-native:
+    name: Android debug native (${{ matrix.kind }})
     needs: changes
     if: needs.changes.outputs.android == 'true'
     runs-on: ubuntu-24.04
-    timeout-minutes: 60
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        kind: [arm64-v8a, x86_64, bindings]
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: actions/cache@v5
+        id: native
+        with:
+          path: native
+          key: android-native-dev-v1-${{ runner.os }}-${{ matrix.kind }}-${{ hashFiles('Cargo.toml', 'Cargo.lock', 'rust-toolchain.toml', '.cargo/**', 'crates/reins-core/**', 'crates/reins-proto/**', 'crates/reins-policy/**', 'android/app/build.gradle.kts', 'scripts/build-android-native.sh', '.github/workflows/ci.yml') }}
+      - name: Install Rust toolchain and Android targets
+        if: steps.native.outputs.cache-hit != 'true'
+        run: |
+          rustup toolchain install
+          rustup target add aarch64-linux-android x86_64-linux-android
+      - uses: Swatinem/rust-cache@v2
+        if: steps.native.outputs.cache-hit != 'true'
+        with:
+          # Bindgen can read the host dependencies built by the server/core tests; do not duplicate that cache.
+          shared-key: ${{ matrix.kind == 'bindings' && 'linux-server-core' || format('android-debug-native-{0}', matrix.kind) }}
+          save-if: ${{ matrix.kind != 'bindings' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) }}
+      - uses: actions/cache@v5
+        if: steps.native.outputs.cache-hit != 'true' && matrix.kind != 'bindings'
+        with:
+          path: ~/.cargo/bin/cargo-ndk
+          key: cargo-ndk-${{ runner.os }}-4.1.2
+      - name: Install cargo-ndk and NDK
+        if: steps.native.outputs.cache-hit != 'true' && matrix.kind != 'bindings'
+        run: |
+          cargo ndk --version || cargo install --locked cargo-ndk@4.1.2
+          ndk="$(grep -oP 'reinsNdkVersion = "\K[^"]+' android/app/build.gradle.kts)"
+          "${ANDROID_HOME}/cmdline-tools/latest/bin/sdkmanager" --install "ndk;${ndk}" > /dev/null
+      - name: Build debug native output
+        if: steps.native.outputs.cache-hit != 'true'
+        env:
+          KIND: ${{ matrix.kind }}
+        run: scripts/build-android-native.sh "$KIND" "$GITHUB_WORKSPACE/native" dev
+      - uses: actions/upload-artifact@v7
+        with:
+          name: android-debug-native-${{ matrix.kind }}
+          path: native/
+          if-no-files-found: error
+          retention-days: 1
+
+  android:
+    name: Android unit tests + debug APK
+    needs: [changes, android-native]
+    if: needs.changes.outputs.android == 'true'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@v7
         with:
@@ -262,33 +330,31 @@ jobs:
         with:
           distribution: temurin
           java-version: "21"
-      - name: Install Rust toolchain and Android targets
-        run: |
-          rustup toolchain install
-          rustup target add aarch64-linux-android x86_64-linux-android
-          rustc -vV
-      - uses: Swatinem/rust-cache@v2
+      - uses: actions/download-artifact@v8
         with:
-          save-if: ${{ github.ref == 'refs/heads/main' }}
-      - uses: actions/cache@v5
-        with:
-          path: ~/.cargo/bin/cargo-ndk
-          key: cargo-ndk-${{ runner.os }}-4.1.2
-      - name: Install cargo-ndk
-        run: cargo ndk --version || cargo install --locked cargo-ndk@4.1.2
-      # The NDK version is the one app/build.gradle.kts pins (reinsNdkVersion); the build looks it up by path.
-      - name: Install Android NDK
-        run: |
-          ndk="$(grep -oP 'reinsNdkVersion = "\K[^"]+' android/app/build.gradle.kts)"
-          echo "NDK ${ndk}"
-          "${ANDROID_HOME}/cmdline-tools/latest/bin/sdkmanager" --install "ndk;${ndk}" > /dev/null
+          pattern: android-debug-native-*
+          merge-multiple: true
+          path: native
       - uses: gradle/actions/setup-gradle@v6
         with:
           cache-provider: basic
-      # No google-services.json in CI: the build skips the Firebase plugin (hasFirebase) and still assembles.
+          cache-read-only: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name != github.repository }}
+      # Both flavor test suites and the APK use exact-source debug native outputs from the parallel workers.
       - name: Unit tests and debug APK
         working-directory: android
-        run: ./gradlew --no-daemon --parallel :app:testFullDebugUnitTest :app:testPlayDebugUnitTest :app:assembleFullDebug -Preins.rustProfile=debug
+        run: |
+          ./gradlew --no-daemon --parallel --no-configuration-cache \
+            :app:testFullDebugUnitTest :app:testPlayDebugUnitTest :app:assembleFullDebug \
+            "-Preins.prebuiltNativeDir=$GITHUB_WORKSPACE/native"
+      - name: Verify debug APK native architectures
+        run: |
+          python3 - <<'PYTHON'
+          import importlib.util
+          spec = importlib.util.spec_from_file_location("apk", "scripts/check-android-apk.py")
+          checker = importlib.util.module_from_spec(spec)
+          spec.loader.exec_module(checker)
+          checker.validate_native_libraries("android/app/build/outputs/apk/full/debug/app-full-debug.apk")
+          PYTHON
       - name: Upload test reports
         if: failure()
         uses: actions/upload-artifact@v7
