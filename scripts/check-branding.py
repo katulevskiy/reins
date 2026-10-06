@@ -1,11 +1,10 @@
 #!/usr/bin/env python3
 """Reject obsolete branding in tracked file names and contents."""
 
-from pathlib import Path
 import re
 import subprocess
 import sys
-
+from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
 # The character class lets the check inspect its own source without matching itself.
@@ -17,10 +16,15 @@ def main():
     failures = []
     for name in filter(None, names):
         path = ROOT / name.decode()
-        if OBSOLETE.search(name) or (path.is_file() and OBSOLETE.search(path.read_bytes())):
+        if OBSOLETE.search(name) or (
+            path.is_file() and OBSOLETE.search(path.read_bytes())
+        ):
             failures.append(name.decode())
     if failures:
-        print("Obsolete branding in tracked files:\n" + "\n".join(failures), file=sys.stderr)
+        print(
+            "Obsolete branding in tracked files:\n" + "\n".join(failures),
+            file=sys.stderr,
+        )
         return 1
     print("Reins branding check passed")
     return 0

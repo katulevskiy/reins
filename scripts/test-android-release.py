@@ -2,18 +2,19 @@
 """Exercise missing-signing failure and the packaged Android identity checks."""
 
 import importlib.util
-import sys
 import os
-from pathlib import Path
 import subprocess
+import sys
 import tempfile
 import textwrap
-
+from pathlib import Path
 
 sys.dont_write_bytecode = True
 
 ROOT = Path(__file__).resolve().parent.parent
-spec = importlib.util.spec_from_file_location("apk_check", ROOT / "scripts/check-android-apk.py")
+spec = importlib.util.spec_from_file_location(
+    "apk_check", ROOT / "scripts/check-android-apk.py"
+)
 apk_check = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(apk_check)
 
@@ -49,7 +50,12 @@ for line in lines:
     body.append(line)
 shell = textwrap.dedent("\n".join(body))
 keys = ["KEYSTORE", "KEYSTORE_PASSWORD", "KEY_ALIAS", "KEY_PASSWORD"]
-fallbacks = ["ANDROID_KEYSTORE_BASE64", "ANDROID_KEYSTORE_PASSWORD", "ANDROID_KEY_ALIAS", "ANDROID_KEY_PASSWORD"]
+fallbacks = [
+    "ANDROID_KEYSTORE_BASE64",
+    "ANDROID_KEYSTORE_PASSWORD",
+    "ANDROID_KEY_ALIAS",
+    "ANDROID_KEY_PASSWORD",
+]
 with tempfile.TemporaryDirectory(prefix="reins-signing-test-") as directory:
     environment = os.environ.copy()
     for key in keys + fallbacks:
@@ -59,11 +65,25 @@ with tempfile.TemporaryDirectory(prefix="reins-signing-test-") as directory:
     for source in (keys, fallbacks):
         for missing in (None, *source):
             values = {key: "test-value" for key in source if key != missing}
-            result = subprocess.run(["bash", "-e", "-o", "pipefail", "-c", shell],
-                                    env=environment | values, capture_output=True, text=True)
-            assert (result.returncode == 0) == (missing is None), (source, missing, result.stdout)
-    result = subprocess.run(["bash", "-e", "-o", "pipefail", "-c", shell],
-                            env=environment, capture_output=True, text=True)
+            result = subprocess.run(
+                ["bash", "-e", "-o", "pipefail", "-c", shell],
+                env=environment | values,
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+            assert (result.returncode == 0) == (missing is None), (
+                source,
+                missing,
+                result.stdout,
+            )
+    result = subprocess.run(
+        ["bash", "-e", "-o", "pipefail", "-c", shell],
+        env=environment,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
     assert result.returncode != 0
 
 assert "needs.plan.outputs.apk" not in workflow
