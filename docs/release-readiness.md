@@ -33,6 +33,9 @@ Review date: 2026-10-02. Source baseline: `97b9cd7` (Reins) and the merged downl
   Optimized, non-debuggable FullRelease APK and signed PlayRelease AAB were built locally and their signatures
   verified against that production certificate. The APK passed 16 KB ZIP alignment verification. These local review
   artifacts have not been uploaded or published; device testing and store enrollment remain.
+- Releases require Android production signing and a successfully built APK. Publication verifies the installed
+  name `Reins`, package `com.reins2fa.app`, release version and non-debuggable status. CI checks all tracked paths
+  and file contents for obsolete branding.
 
 ## Required before production rollout
 
@@ -44,7 +47,7 @@ Review date: 2026-10-02. Source baseline: `97b9cd7` (Reins) and the merged downl
 | WorkOS recovery | The Reins recovery code recovers encrypted vault keys, not a lost WorkOS identity. Confirm the identity recovery journey in WorkOS and explain this distinction to users. |
 | Infisical access | The configured project returned HTTP 404 in both dev and prod. Signing secrets could not be imported or inspected. Sign in again, restore project access, import the prepared private signing bundle and configure the release machine identity. |
 | GitHub release identity | Set `INFISICAL_RELEASE_IDENTITY_ID` and bind the identity to this repository's release workflow on `main`, with access limited to `/signing/android`. There were no GitHub repository secrets or variables at review time. |
-| Historical Android package/certificate | Old Rewarden uses `dev.rewarden.android`; current Reins uses `com.reins2fa.app`, a separate installation. Current-package test/direct builds signed with the old debug certificate also cannot update to the new production key. Verify recovery before any reinstall and provide an authenticated migration path; never silently discard encrypted data. |
+| Historical Android package/certificate | Earlier builds used a different package id; current Reins uses `com.reins2fa.app`, a separate installation. Current-package test/direct builds signed with the old debug certificate also cannot update to the new production key. Verify recovery before any reinstall and provide an authenticated migration path; never silently discard encrypted data. |
 | Android push/Google client | The local `google-services.json` has no client for `com.reins2fa.app`. Supply the correct Firebase/Google configuration and register the new production certificate and, for Play, the actual Google-held app signing certificate. Tests without Firebase do not verify push or Google integration. |
 | Play production signing | A signed `playRelease` AAB was built and verified locally with the dedicated production upload key. Enroll in Play App Signing, register the distributed certificate with Firebase/Google, upload the bundle and complete native/store verification. Google-held app signing keys may differ from the upload/direct-APK key. |
 | App Store and Play Store | No real App Store listing or configured Google Play listing is available. Add actual listing URLs in the website store configuration. Android currently falls back to the signed APK; iOS must show availability until its listing exists. |

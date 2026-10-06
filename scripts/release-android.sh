@@ -134,11 +134,8 @@ expected_sha256="$(cat android/release-signing.sha256)"
     echo "the APK signing certificate changed; existing phones would refuse the update" >&2
     exit 1
 }
-badging="$("$build_tools/aapt2" dump badging "$stage/$file" 2>/dev/null | head -1 || true)"
-[[ "$badging" == *"versionCode='$version_code'"* ]] || {
-    echo "the APK does not carry versionCode $version_code: $badging" >&2
-    exit 1
-}
+python3 scripts/check-android-apk.py "$stage/$file" --aapt2 "$build_tools/aapt2" \
+    --version "$version" --version-code "$version_code"
 
 apk_sha="$(sha256sum "$stage/$file" | cut -d' ' -f1)"
 size="$(stat -c %s "$stage/$file")"

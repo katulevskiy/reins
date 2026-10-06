@@ -187,8 +187,8 @@ only this repository's release workflow on `main`, then set the GitHub Actions v
 
 Import a private dotenv file with `infisical secrets set --env=prod --path=/signing/android --file=/private/android.env`.
 Keep the keystore and import file outside the repository, with mode `0600`. Existing GitHub repository secrets of the
-same names remain a fallback while migrating. With neither configured, the release explicitly reports that the APK
-was omitted.
+same names remain a fallback while migrating. Without complete signing credentials, the release fails before
+building or publishing. Every release must include the signed Android APK.
 
 Production signing uses a dedicated non-debug RSA-4096 identity, alias `reinsrelease`. Its SHA-256 certificate is
 `61edfc4c65cbdfa1b7a07109a9df347de93500b52012c3380b38c7c4a4e3f1c8`, pinned in
@@ -199,7 +199,7 @@ bundle; the historical `androiddebugkey` is retained separately for recovery/tes
 store. Repackaging a debug key with a stronger password does not make its certificate suitable for publishing.
 See [Android's signing guide](https://developer.android.com/studio/publish/app-signing).
 
-The old Rewarden package was `dev.rewarden.android`; Reins is `com.reins2fa.app`, so it installs as a separate app.
+Earlier Android builds used a different package id; Reins is `com.reins2fa.app`, so it installs as a separate app.
 Any `com.reins2fa.app` test/direct APK signed with the historical debug certificate also cannot update to the new
 production certificate. Save and verify the vault recovery code before reinstalling; plan authenticated migration
 rather than discarding encrypted data. Later production updates must keep the new identity.

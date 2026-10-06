@@ -2,8 +2,8 @@ name: Release
 # Publishes a GitHub release for every push to main that passes CI. The version comes from the commits since the last
 # vX.Y.Z tag (scripts/next-version.sh; CONTRIBUTING.md, "Releases"); the tag is created on the exact commit CI tested.
 # Assets: the desktop app for Linux (static musl), macOS and Windows (a zip with reins.exe), the Reins app's
-# installers (a .dmg, an .msi, an AppImage and its tarball), the server binary, the server image on GHCR, the Android
-# APK when the signing secrets are configured, and SHA256SUMS. The desktop archives and the installers come under a
+# installers (a .dmg, an .msi, an AppImage and its tarball), the server binary, the server image on GHCR,
+# the signed Android APK, and SHA256SUMS. Android signing is required for every release. Archives and installers use a
 # versioned name and under a fixed one (reins-desktop-<target>.tar.gz, Reins-macOS.dmg, ...) for "latest" links.
 
 # workflow_run runs with this repository's token, so it must never build code CI ran for someone else: the plan job
@@ -57,7 +57,6 @@ jobs:
       sha: ${{ steps.commit.outputs.sha }}
       build: ${{ steps.version.outputs.build }}
       build-time: ${{ steps.version.outputs.build-time }}
-      apk: ${{ steps.signing.outputs.apk }}
     steps:
       - name: Commit to release
         id: commit
@@ -122,8 +121,8 @@ jobs:
           identity-id: ${{ vars.INFISICAL_RELEASE_IDENTITY_ID }}
           environment: ${{ vars.INFISICAL_RELEASE_ENVIRONMENT || 'prod' }}
           secret-path: ${{ vars.INFISICAL_ANDROID_SIGNING_PATH || '/signing/android' }}
-      - name: Android signing secrets
-        id: signing
+      - name: Require Android signing secrets
+        if: steps.version.outputs.release == 'true'
         env:
           KEYSTORE: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
           KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
@@ -134,11 +133,9 @@ jobs:
           KEYSTORE_PASSWORD="${KEYSTORE_PASSWORD:-${ANDROID_KEYSTORE_PASSWORD:-}}"
           KEY_ALIAS="${KEY_ALIAS:-${ANDROID_KEY_ALIAS:-}}"
           KEY_PASSWORD="${KEY_PASSWORD:-${ANDROID_KEY_PASSWORD:-}}"
-          if [[ -n "$KEYSTORE" && -n "$KEYSTORE_PASSWORD" && -n "$KEY_ALIAS" && -n "$KEY_PASSWORD" ]]; then
-            echo "apk=true" >> "$GITHUB_OUTPUT"
-          else
-            echo "::notice::APK not built: signing secrets are not configured"
-            echo "apk=false" >> "$GITHUB_OUTPUT"
+          if [[ -z "$KEYSTORE" || -z "$KEYSTORE_PASSWORD" || -z "$KEY_ALIAS" || -z "$KEY_PASSWORD" ]]; then
+            echo "::error::Android signing is required. Configure INFISICAL_RELEASE_IDENTITY_ID or the four ANDROID_KEYSTORE/KEY secrets described in CONTRIBUTING.md."
+            exit 1
           fi
 
   desktop:
@@ -467,7 +464,7 @@ jobs:
   android:
     name: Android APK (full)
     needs: plan
-    if: needs.plan.outputs.release == 'true' && needs.plan.outputs.apk == 'true'
+    if: needs.plan.outputs.release == 'true'
     runs-on: ubuntu-24.04
     timeout-minutes: 90
     permissions:
@@ -569,12 +566,8 @@ jobs:
           expected="$(cat android/release-signing.sha256)"
           actual="$(sed -n 's/.*certificate SHA-256 digest: //p' certs.txt | head -1)"
           [[ "$actual" == "$expected" ]] || { echo "::error::APK signing certificate changed; existing users cannot update"; exit 1; }
-          badging="$("$build_tools/aapt2" dump badging "$apk" | head -1)"
-          echo "$badging"
-          [[ "$badging" == *"versionCode='$VERSION_CODE'"* && "$badging" == *"versionName='$VERSION'"* ]] || {
-            echo "::error::the APK does not carry versionCode $VERSION_CODE / versionName $VERSION"
-            exit 1
-          }
+          python3 scripts/check-android-apk.py "$apk" --aapt2 "$build_tools/aapt2" \
+            --version "$VERSION" --version-code "$VERSION_CODE"
           {
             echo "### APK signing certificate"
             echo '```'
@@ -595,7 +588,7 @@ jobs:
       always() && needs.plan.outputs.release == 'true' &&
       needs.desktop.result == 'success' && needs.desktop-app.result == 'success' &&
       needs.server.result == 'success' && needs.docker.result == 'success' &&
-      (needs.android.result == 'success' || (needs.android.result == 'skipped' && needs.plan.outputs.apk != 'true'))
+      needs.android.result == 'success'
     runs-on: ubuntu-24.04
     timeout-minutes: 15
     permissions:
@@ -605,7 +598,6 @@ jobs:
       TAG: ${{ needs.plan.outputs.tag }}
       PREVIOUS: ${{ needs.plan.outputs.previous }}
       SHA: ${{ needs.plan.outputs.sha }}
-      APK: ${{ needs.plan.outputs.apk }}
     steps:
       - uses: actions/checkout@v7
         with:
@@ -621,17 +613,15 @@ jobs:
       - name: Checksums
         working-directory: dist
         run: |
+          [[ -s "reins-$VERSION-android.apk" ]] || { echo "::error::Android APK is missing from release assets"; exit 1; }
           sha256sum -- * > SHA256SUMS
           cat SHA256SUMS
       - name: Release notes
         env:
           OWNER: ${{ github.repository_owner }}
         run: |
-          notes=()
-          [[ "$APK" == true ]] || notes+=(--note "APK not built: signing secrets are not configured.")
           scripts/release-notes.sh --version "$VERSION" --previous "$PREVIOUS" --rev "$SHA" \
-            --repo "$GITHUB_SERVER_URL/$GITHUB_REPOSITORY" --image "ghcr.io/${OWNER,,}/reins-server" \
-            ${notes[@]+"${notes[@]}"} > notes.md
+            --repo "$GITHUB_SERVER_URL/$GITHUB_REPOSITORY" --image "ghcr.io/${OWNER,,}/reins-server" > notes.md
           cat notes.md >> "$GITHUB_STEP_SUMMARY"
       - name: Create the release
         env:

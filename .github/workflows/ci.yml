@@ -74,6 +74,8 @@ jobs:
         run: rustup toolchain install
       - run: cargo fmt --all -- --check
       - uses: crate-ci/typos@v1.50.1
+      - run: python3 scripts/check-branding.py
+      - run: python3 scripts/test-android-release.py
       - run: python3 scripts/check-doc-links.py
       - run: python3 scripts/test-ci-routing.py
       - name: Conflict markers and shell syntax
