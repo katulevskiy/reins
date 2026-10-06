@@ -1,17 +1,15 @@
 name: Release
-# Publishes a GitHub release for every push to main that passes CI. The version comes from the commits since the last
+# Builds alongside CI on main; publication waits for successful CI on the exact commit. The version comes from the commits since the last
 # vX.Y.Z tag (scripts/next-version.sh; CONTRIBUTING.md, "Releases"); the tag is created on the exact commit CI tested.
 # Assets: the desktop app for Linux (static musl), macOS and Windows (a zip with reins.exe), the Reins app's
 # installers (a .dmg, an .msi, an AppImage and its tarball), the server binary, the server image on GHCR,
 # the signed Android APK, and SHA256SUMS. Android signing is required for every release. Archives and installers use a
 # versioned name and under a fixed one (reins-desktop-<target>.tar.gz, Reins-macOS.dmg, ...) for "latest" links.
 
-# workflow_run runs with this repository's token, so it must never build code CI ran for someone else: the plan job
-# only accepts CI runs of a push to main in this repository, and then checks out exactly the commit CI tested.
-on: # zizmor: ignore[dangerous-triggers]
-  workflow_run:
-    workflows: [CI]
-    types: [completed]
+# Only main pushes and maintainer dispatches can build with release credentials.
+# Public release/image tags are updated only after CI and all required builds pass.
+on:
+  push:
     branches: [main]
   workflow_dispatch:
     inputs:
@@ -29,7 +27,7 @@ permissions: {}
 
 concurrency:
   group: ${{ inputs.verify_only && format('release-verification-{0}', github.ref) || 'release' }}
-  cancel-in-progress: false
+  cancel-in-progress: true
 
 defaults:
   run:
@@ -37,7 +35,6 @@ defaults:
 
 env:
   CARGO_TERM_COLOR: always
-  CARGO_PROFILE_DEV_DEBUG: "0"
 
 jobs:
   plan:
@@ -46,10 +43,7 @@ jobs:
     timeout-minutes: 10
     if: >-
       github.event_name == 'workflow_dispatch' ||
-      (github.event.workflow_run.conclusion == 'success' &&
-       github.event.workflow_run.event == 'push' &&
-       github.event.workflow_run.head_branch == 'main' &&
-       github.event.workflow_run.head_repository.full_name == github.repository)
+      (github.event_name == 'push' && github.ref == 'refs/heads/main')
     permissions:
       actions: read # the CI result of a manually released commit
       contents: read
@@ -69,20 +63,19 @@ jobs:
           EVENT: ${{ github.event_name }}
           REF: ${{ github.ref }}
           VERIFY_ONLY: ${{ inputs.verify_only }}
-          DISPATCH_SHA: ${{ github.sha }}
-          CI_SHA: ${{ github.event.workflow_run.head_sha }}
+          EVENT_SHA: ${{ github.sha }}
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
         run: |
           if [[ "$EVENT" == workflow_dispatch ]]; then
             [[ "$REF" == refs/heads/main || "$VERIFY_ONLY" == true ]] || { echo "::error::Releases are made from main, not $REF"; exit 1; }
-            sha="$DISPATCH_SHA"
+            sha="$EVENT_SHA"
             args=()
             [[ "$VERIFY_ONLY" == true ]] || args+=(--event push)
             ci="$(gh run list --workflow ci.yml --commit "$sha" "${args[@]}" --limit 1 --json conclusion --jq '.[0].conclusion // ""')"
             [[ "$ci" == success ]] || { echo "::error::CI has not passed on $sha (${ci:-no run})"; exit 1; }
           else
-            sha="$CI_SHA"
+            sha="$EVENT_SHA"
           fi
           [[ "$sha" =~ ^[0-9a-f]{40}$ ]] || { echo "::error::Unexpected commit '$sha'"; exit 1; }
           echo "sha=$sha" >> "$GITHUB_OUTPUT"
@@ -420,7 +413,7 @@ jobs:
           if-no-files-found: error
           retention-days: 7
 
-  docker-build:
+  docker:
     name: Server image (${{ matrix.arch }})
     needs: plan
     if: needs.plan.outputs.release == 'true'
@@ -488,46 +481,6 @@ jobs:
           if-no-files-found: error
           retention-days: 1
 
-  docker:
-    name: Server image (GHCR)
-    needs: [plan, docker-build]
-    if: needs.plan.outputs.release == 'true'
-    runs-on: ubuntu-24.04
-    timeout-minutes: 5
-    permissions:
-      contents: read
-      packages: write
-    steps:
-      - uses: docker/setup-buildx-action@v4
-        if: inputs.verify_only != true
-      - uses: docker/login-action@v4
-        if: inputs.verify_only != true
-        with:
-          registry: ghcr.io
-          username: ${{ github.repository_owner }}
-          password: ${{ secrets.GITHUB_TOKEN }}
-      - uses: actions/download-artifact@v8
-        if: inputs.verify_only != true
-        with:
-          pattern: image-digest-*
-          merge-multiple: true
-          path: digests
-      - name: Publish multi-architecture manifest
-        if: inputs.verify_only != true
-        env:
-          OWNER: ${{ github.repository_owner }}
-          VERSION: ${{ needs.plan.outputs.version }}
-        run: |
-          image="ghcr.io/${OWNER,,}/reins-server"
-          refs=()
-          for digest in digests/*; do refs+=("$image@sha256:${digest##*/}"); done
-          [[ "${#refs[@]}" == 2 ]] || { echo "::error::Missing image architecture"; exit 1; }
-          docker buildx imagetools create --tag "$image:$VERSION" --tag "$image:latest" "${refs[@]}"
-          docker buildx imagetools inspect "$image:$VERSION"
-      - name: Verification complete
-        if: inputs.verify_only == true
-        run: echo 'Both native server images built successfully; publishing disabled.'
-
   android-native:
     name: Android native (${{ matrix.kind }})
     needs: plan
@@ -540,6 +493,8 @@ jobs:
       fail-fast: false
       matrix:
         kind: [arm64-v8a, x86_64, bindings]
+    env:
+      CARGO_PROFILE_DEV_DEBUG: "0"
     steps:
       - uses: actions/checkout@v7
         with:
@@ -708,9 +663,11 @@ jobs:
       needs.server.result == 'success' && needs.docker.result == 'success' &&
       needs.android.result == 'success'
     runs-on: ubuntu-24.04
-    timeout-minutes: 15
+    timeout-minutes: 20
     permissions:
       contents: write
+      actions: read # exact-commit CI publication gate
+      packages: write # publish the completed multi-architecture image
     env:
       VERSION: ${{ needs.plan.outputs.version }}
       TAG: ${{ needs.plan.outputs.tag }}
@@ -723,6 +680,17 @@ jobs:
           fetch-depth: 0
           fetch-tags: true
           persist-credentials: false
+      - name: Require successful CI on the exact release commit
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          VERIFY_ONLY: ${{ inputs.verify_only }}
+        run: |
+          if [[ "$VERIFY_ONLY" == true ]]; then
+            echo 'Verification branch CI was checked in plan; public publishing is disabled.'
+          else
+            scripts/wait-for-ci.sh "$SHA"
+          fi
       - uses: actions/download-artifact@v8
         with:
           pattern: dist-*
@@ -734,6 +702,36 @@ jobs:
           [[ -s "reins-$VERSION-android.apk" ]] || { echo "::error::Android APK is missing from release assets"; exit 1; }
           sha256sum -- * > SHA256SUMS
           cat SHA256SUMS
+      - uses: docker/setup-buildx-action@v4
+        if: inputs.verify_only != true
+      - uses: docker/login-action@v4
+        if: inputs.verify_only != true
+        with:
+          registry: ghcr.io
+          username: ${{ github.repository_owner }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - uses: actions/download-artifact@v8
+        if: inputs.verify_only != true
+        with:
+          pattern: image-digest-*
+          merge-multiple: true
+          path: digests
+      - name: Publish multi-architecture manifest
+        if: inputs.verify_only != true
+        env:
+          OWNER: ${{ github.repository_owner }}
+          VERSION: ${{ needs.plan.outputs.version }}
+        run: |
+          image="ghcr.io/${OWNER,,}/reins-server"
+          refs=()
+          for digest in digests/*; do refs+=("$image@sha256:${digest##*/}"); done
+          [[ "${#refs[@]}" == 2 ]] || { echo "::error::Missing image architecture"; exit 1; }
+          docker buildx imagetools create --tag "$image:$VERSION" --tag "$image:latest" "${refs[@]}"
+          docker buildx imagetools inspect "$image:$VERSION"
+      - name: Verification complete
+        if: inputs.verify_only == true
+        run: echo 'Both native server images built successfully; publishing disabled.'
+
       - name: Release notes
         env:
           OWNER: ${{ github.repository_owner }}

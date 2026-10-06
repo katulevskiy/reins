@@ -122,7 +122,9 @@ cd android
 
 ## Commit messages and releases
 
-Every push to `main` that passes CI is released: `.github/workflows/release.yml` tags the commit CI tested as
+Release builds start alongside CI on every push to `main`; publication waits for successful CI on that exact commit
+and all required assets. Only a successful push CI run on `main` qualifies. Obsolete runs are cancelled when a newer
+push arrives. Every push to `main` that passes CI is released: `.github/workflows/release.yml` tags the commit CI tested as
 `vX.Y.Z` and publishes a [GitHub release](https://github.com/katulevskiy/reins/releases) with the desktop app (Linux
 x86_64/aarch64, static; macOS Apple silicon/Intel; Windows x86_64/Arm as zips), the server binary, the server image
 `ghcr.io/katulevskiy/reins-server`, the Android APK and `SHA256SUMS`, with notes generated from the commits. Nobody
