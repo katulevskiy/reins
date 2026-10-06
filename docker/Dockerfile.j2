@@ -88,7 +88,8 @@ RUN apt-get update && \
     apt-get install -y \
         --no-install-recommends \
         clang \
-        git && \
+        git \
+        xz-utils && \
     xx-apt-get install -y \
         --no-install-recommends \
         libpq-dev \
@@ -104,6 +105,9 @@ RUN apt-get update && \
 {% endif %}
 
 # Create CARGO_HOME folder and don't download rust docs
+{% if base == "alpine" %}
+RUN apk --no-cache add xz
+{% endif %}
 RUN mkdir -pv "${CARGO_HOME}" && \
     rustup set profile minimal
 

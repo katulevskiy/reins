@@ -359,6 +359,14 @@ jobs:
         with:
           # Rust's host architecture differentiates these caches; the Arm worker can restore the old macOS cache.
           shared-key: release-desktop-app-${{ runner.os }}
+      - name: Remove obsolete macOS cache outputs
+        run: |
+          # This worker builds one native target with release-app. The old universal job cached both
+          # architectures and the fat release profile; retaining them evicts useful Rust/Gradle caches.
+          rm -rf target/release target/debug target/{aarch64,x86_64}-apple-darwin/release
+          for cached_target in aarch64-apple-darwin x86_64-apple-darwin; do
+            [[ "$cached_target" == "$TARGET" ]] || rm -rf "target/$cached_target"
+          done
       - name: Set the version
         run: scripts/set-desktop-version.sh "$VERSION"
       - name: Build the app and bundled CLI
