@@ -116,11 +116,11 @@ jobs:
           docker build --check . -f docker/Dockerfile.alpine
 
   rust:
-    name: Server and core (clippy + parallel tests)
+    name: Server and core tests (Nextest)
     needs: changes
     if: needs.changes.outputs.rust == 'true'
     runs-on: ubuntu-24.04
-    timeout-minutes: 60
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@v7
         with:
@@ -131,24 +131,38 @@ jobs:
         with:
           shared-key: linux-server-core
           save-if: ${{ github.ref == 'refs/heads/main' }}
-      # E2E tests start this exact server binary. Compile it once before running both suites.
-      - run: cargo build --locked --features sqlite --bin vaultwarden
-      - run: cargo test --locked --workspace --exclude reins-desktop-app --features sqlite --no-run
-      - name: Run independent tests and clippy in parallel
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: nextest@0.9.146
+      # Use one workspace feature set for both commands. Separate package-level Cargo invocations
+      # serialized on the target lock and recompiled the same crates with different feature unions.
+      - name: Build the E2E server and workspace binaries
+        run: cargo build --locked --workspace --exclude reins-desktop-app --features sqlite --bins
+      - name: Run all Rust tests
         env:
-          # Avoid nested Cargo builds/locks in every E2E executable. This was built from this checkout above.
           REINS_TEST_SERVER_BINARY: ${{ github.workspace }}/target/debug/vaultwarden
-        run: |
-          cargo test --locked -p vaultwarden --features sqlite & server=$!
-          cargo test --locked -p reins-proto -p reins-policy -p reins-core -p reins-desktop -p reins-laya & core=$!
-          cargo test --locked -p reins-e2e & e2e=$!
-          (
-            cargo clippy --locked --workspace --exclude vaultwarden --exclude reins-desktop-app --all-targets -- -D warnings
-            cargo clippy --locked --features sqlite -- -D warnings
-          ) & lint=$!
-          result=0
-          for pid in "$server" "$core" "$e2e" "$lint"; do wait "$pid" || result=1; done
-          exit "$result"
+        run: cargo nextest run --locked --workspace --exclude reins-desktop-app --features sqlite --no-fail-fast
+      # Nextest does not run doctests; retain Cargo's separate documentation test pass.
+      - name: Documentation tests
+        run: cargo test --locked --workspace --exclude reins-desktop-app --features sqlite --doc
+
+  rust-clippy:
+    name: Server and core Clippy
+    needs: changes
+    if: needs.changes.outputs.rust == 'true'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - name: Install Rust toolchain
+        run: rustup toolchain install
+      - uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: linux-server-core-clippy
+          save-if: ${{ github.ref == 'refs/heads/main' }}
+      - run: cargo clippy --locked --workspace --exclude reins-desktop-app --features sqlite --all-targets -- -D warnings
 
   desktop-linux:
     name: Desktop UI on Linux (clippy + tests)

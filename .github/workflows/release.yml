@@ -20,11 +20,15 @@ on: # zizmor: ignore[dangerous-triggers]
         type: choice
         options: [auto, patch, minor, major]
         default: auto
+      verify_only:
+        description: Build and verify all assets without publishing (allows CI-tested branches)
+        type: boolean
+        default: false
 
 permissions: {}
 
 concurrency:
-  group: release
+  group: ${{ inputs.verify_only && format('release-verification-{0}', github.ref) || 'release' }}
   cancel-in-progress: false
 
 defaults:
@@ -33,6 +37,7 @@ defaults:
 
 env:
   CARGO_TERM_COLOR: always
+  CARGO_PROFILE_DEV_DEBUG: "0"
 
 jobs:
   plan:
@@ -63,15 +68,18 @@ jobs:
         env:
           EVENT: ${{ github.event_name }}
           REF: ${{ github.ref }}
+          VERIFY_ONLY: ${{ inputs.verify_only }}
           DISPATCH_SHA: ${{ github.sha }}
           CI_SHA: ${{ github.event.workflow_run.head_sha }}
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
         run: |
           if [[ "$EVENT" == workflow_dispatch ]]; then
-            [[ "$REF" == refs/heads/main ]] || { echo "::error::Releases are made from main, not $REF"; exit 1; }
+            [[ "$REF" == refs/heads/main || "$VERIFY_ONLY" == true ]] || { echo "::error::Releases are made from main, not $REF"; exit 1; }
             sha="$DISPATCH_SHA"
-            ci="$(gh run list --workflow ci.yml --commit "$sha" --event push --limit 1 --json conclusion --jq '.[0].conclusion // ""')"
+            args=()
+            [[ "$VERIFY_ONLY" == true ]] || args+=(--event push)
+            ci="$(gh run list --workflow ci.yml --commit "$sha" "${args[@]}" --limit 1 --json conclusion --jq '.[0].conclusion // ""')"
             [[ "$ci" == success ]] || { echo "::error::CI has not passed on $sha (${ci:-no run})"; exit 1; }
           else
             sha="$CI_SHA"
@@ -89,10 +97,11 @@ jobs:
         env:
           SHA: ${{ steps.commit.outputs.sha }}
           BUMP: ${{ inputs.bump }}
+          VERIFY_ONLY: ${{ inputs.verify_only }}
         run: |
           # A newer push to main has its own CI run, which releases it with these commits included.
           tip="$(git ls-remote origin refs/heads/main | cut -f1)"
-          if [[ "$tip" != "$SHA" ]]; then
+          if [[ "$tip" != "$SHA" && "$VERIFY_ONLY" != true ]]; then
             echo "::notice::$SHA is no longer the tip of main ($tip); the newer commit will be released"
             echo "release=false" >> "$GITHUB_OUTPUT"
             exit 0
@@ -411,15 +420,21 @@ jobs:
           if-no-files-found: error
           retention-days: 7
 
-  docker:
-    name: Server image (GHCR)
+  docker-build:
+    name: Server image (${{ matrix.arch }})
     needs: plan
     if: needs.plan.outputs.release == 'true'
-    runs-on: ubuntu-24.04
-    timeout-minutes: 150
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 30
     permissions:
       contents: read
       packages: write
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { arch: amd64, os: ubuntu-24.04 }
+          - { arch: arm64, os: ubuntu-24.04-arm }
     steps:
       - uses: actions/checkout@v7
         with:
@@ -430,10 +445,7 @@ jobs:
         env:
           OWNER: ${{ github.repository_owner }}
         run: echo "name=ghcr.io/${OWNER,,}/reins-server" >> "$GITHUB_OUTPUT"
-      # The Dockerfile cross-compiles the server for arm64 on the amd64 runner; QEMU runs the arm64 image's apt-get.
-      - uses: docker/setup-qemu-action@v4
-        with:
-          platforms: arm64
+      # Native runners give each architecture its own CPUs and avoid emulated apt-get.
       - uses: docker/setup-buildx-action@v4
       - uses: docker/login-action@v4
         with:
@@ -441,18 +453,18 @@ jobs:
           username: ${{ github.repository_owner }}
           password: ${{ secrets.GITHUB_TOKEN }}
       - uses: docker/build-push-action@v7
+        id: build
         with:
           context: .
           file: docker/Dockerfile.debian
-          platforms: linux/amd64,linux/arm64
-          push: true
-          cache-from: type=gha,scope=server-image
-          cache-to: type=gha,mode=max,scope=server-image
+          platforms: linux/${{ matrix.arch }}
+          # Push immutable digests first; the merge job updates public version/latest tags together.
+          outputs: ${{ inputs.verify_only && 'type=cacheonly' || format('type=image,name={0},push-by-digest=true,name-canonical=true,push=true', steps.image.outputs.name) }}
+          # Docker layers were evicting Rust/Gradle caches from the repository's shared cache quota.
+          cache-from: type=registry,ref=${{ steps.image.outputs.name }}:buildcache-${{ matrix.arch }}
+          cache-to: ${{ inputs.verify_only && 'type=inline' || format('type=registry,ref={0}:buildcache-{1},mode=max', steps.image.outputs.name, matrix.arch) }}
           build-args: |
             VW_VERSION=${{ needs.plan.outputs.version }}
-          tags: |
-            ${{ steps.image.outputs.name }}:${{ needs.plan.outputs.version }}
-            ${{ steps.image.outputs.name }}:latest
           labels: |
             org.opencontainers.image.title=Reins server
             org.opencontainers.image.description=The Reins server: Vaultwarden with the Reins permission relay for AI agents
@@ -460,10 +472,121 @@ jobs:
             org.opencontainers.image.version=${{ needs.plan.outputs.version }}
             org.opencontainers.image.revision=${{ needs.plan.outputs.sha }}
             org.opencontainers.image.licenses=AGPL-3.0-only
+      - name: Export image digest
+        if: inputs.verify_only != true
+        env:
+          DIGEST: ${{ steps.build.outputs.digest }}
+        run: |
+          [[ "$DIGEST" =~ ^sha256:[0-9a-f]{64}$ ]]
+          mkdir -p digests
+          touch "digests/${DIGEST#sha256:}"
+      - uses: actions/upload-artifact@v7
+        if: inputs.verify_only != true
+        with:
+          name: image-digest-${{ matrix.arch }}
+          path: digests/*
+          if-no-files-found: error
+          retention-days: 1
+
+  docker:
+    name: Server image (GHCR)
+    needs: [plan, docker-build]
+    if: needs.plan.outputs.release == 'true'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: docker/setup-buildx-action@v4
+        if: inputs.verify_only != true
+      - uses: docker/login-action@v4
+        if: inputs.verify_only != true
+        with:
+          registry: ghcr.io
+          username: ${{ github.repository_owner }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - uses: actions/download-artifact@v8
+        if: inputs.verify_only != true
+        with:
+          pattern: image-digest-*
+          merge-multiple: true
+          path: digests
+      - name: Publish multi-architecture manifest
+        if: inputs.verify_only != true
+        env:
+          OWNER: ${{ github.repository_owner }}
+          VERSION: ${{ needs.plan.outputs.version }}
+        run: |
+          image="ghcr.io/${OWNER,,}/reins-server"
+          refs=()
+          for digest in digests/*; do refs+=("$image@sha256:${digest##*/}"); done
+          [[ "${#refs[@]}" == 2 ]] || { echo "::error::Missing image architecture"; exit 1; }
+          docker buildx imagetools create --tag "$image:$VERSION" --tag "$image:latest" "${refs[@]}"
+          docker buildx imagetools inspect "$image:$VERSION"
+      - name: Verification complete
+        if: inputs.verify_only == true
+        run: echo 'Both native server images built successfully; publishing disabled.'
+
+  android-native:
+    name: Android native (${{ matrix.kind }})
+    needs: plan
+    if: needs.plan.outputs.release == 'true'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    permissions:
+      contents: read
+    strategy:
+      fail-fast: false
+      matrix:
+        kind: [arm64-v8a, x86_64, bindings]
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ needs.plan.outputs.sha }}
+          persist-credentials: false
+      # No prefix fallback: these libraries must match the exact native sources/configuration.
+      # Version, build ID and signing only enter the later APK packaging job.
+      - uses: actions/cache@v5
+        id: native
+        with:
+          path: native
+          key: android-native-v1-${{ runner.os }}-${{ matrix.kind }}-${{ hashFiles('Cargo.toml', 'Cargo.lock', 'rust-toolchain.toml', '.cargo/**', 'crates/reins-core/**', 'crates/reins-proto/**', 'crates/reins-policy/**', 'android/app/build.gradle.kts', 'scripts/build-android-native.sh') }}
+      - name: Install Rust toolchain and Android targets
+        if: steps.native.outputs.cache-hit != 'true'
+        run: |
+          rustup toolchain install
+          rustup target add aarch64-linux-android x86_64-linux-android
+      - uses: Swatinem/rust-cache@v2
+        if: steps.native.outputs.cache-hit != 'true'
+        with:
+          shared-key: release-android-native-${{ matrix.kind }}
+      - uses: actions/cache@v5
+        if: steps.native.outputs.cache-hit != 'true' && matrix.kind != 'bindings'
+        with:
+          path: ~/.cargo/bin/cargo-ndk
+          key: cargo-ndk-${{ runner.os }}-4.1.2
+      - name: Install cargo-ndk and NDK
+        if: steps.native.outputs.cache-hit != 'true' && matrix.kind != 'bindings'
+        run: |
+          cargo ndk --version || cargo install --locked cargo-ndk@4.1.2
+          ndk="$(grep -oP 'reinsNdkVersion = "\K[^"]+' android/app/build.gradle.kts)"
+          "${ANDROID_HOME}/cmdline-tools/latest/bin/sdkmanager" --install "ndk;${ndk}" > /dev/null
+      - name: Build native output
+        if: steps.native.outputs.cache-hit != 'true'
+        env:
+          KIND: ${{ matrix.kind }}
+        run: scripts/build-android-native.sh "$KIND" "$GITHUB_WORKSPACE/native"
+      - uses: actions/upload-artifact@v7
+        with:
+          name: android-native-${{ matrix.kind }}
+          path: native/
+          if-no-files-found: error
+          retention-days: 1
 
   android:
     name: Android APK (full)
-    needs: plan
+    needs: [plan, android-native]
     if: needs.plan.outputs.release == 'true'
     runs-on: ubuntu-24.04
     timeout-minutes: 90
@@ -482,26 +605,19 @@ jobs:
         with:
           distribution: temurin
           java-version: "21"
-      - name: Install Rust toolchain and Android targets
-        run: |
-          rustup toolchain install
-          rustup target add aarch64-linux-android x86_64-linux-android
-          rustc -vV
-      - uses: Swatinem/rust-cache@v2
+      - uses: actions/download-artifact@v8
         with:
-          shared-key: release-android-${{ runner.os }}
-
-      - uses: actions/cache@v5
-        with:
-          path: ~/.cargo/bin/cargo-ndk
-          key: cargo-ndk-${{ runner.os }}-4.1.2
-      - name: Install cargo-ndk
-        run: cargo ndk --version || cargo install --locked cargo-ndk@4.1.2
-      - name: Install Android NDK
+          pattern: android-native-*
+          merge-multiple: true
+          path: native
+      - name: Stage native libraries and bindings
         run: |
-          ndk="$(grep -oP 'reinsNdkVersion = "\K[^"]+' android/app/build.gradle.kts)"
-          echo "NDK ${ndk}"
-          "${ANDROID_HOME}/cmdline-tools/latest/bin/sdkmanager" --install "ndk;${ndk}" > /dev/null
+          test -s native/jni/arm64-v8a/libreins_core.so
+          test -s native/jni/x86_64/libreins_core.so
+          test -s native/kotlin/dev/reins/core/reins_core.kt
+          mkdir -p android/app/build/rustJniLibs android/app/build/generated/uniffi/shared
+          cp -r native/jni android/app/build/rustJniLibs/shared
+          cp -r native/kotlin android/app/build/generated/uniffi/shared/kotlin
       - uses: gradle/actions/setup-gradle@v6
         with:
           cache-provider: basic
@@ -547,6 +663,7 @@ jobs:
           echo "version-code=$version_code" >> "$GITHUB_OUTPUT"
           # The site and the sign-in screen's server are gradle.properties' reins.site / reins.defaultServer.
           ./gradlew --no-daemon --parallel --no-configuration-cache :app:assembleFullRelease \
+            -x :app:cargoNdk -x :app:uniffiBindgen \
             -Preins.secureScreens=true \
             "-Preins.versionCode=$version_code" \
             "-Preins.versionName=$VERSION" \
@@ -624,6 +741,7 @@ jobs:
             --repo "$GITHUB_SERVER_URL/$GITHUB_REPOSITORY" --image "ghcr.io/${OWNER,,}/reins-server" > notes.md
           cat notes.md >> "$GITHUB_STEP_SUMMARY"
       - name: Create the release
+        if: inputs.verify_only != true
         env:
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}

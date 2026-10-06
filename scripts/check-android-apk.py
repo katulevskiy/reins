@@ -4,6 +4,7 @@
 import argparse
 import re
 import subprocess
+import zipfile
 
 
 def validate_badging(badging, version, version_code):
@@ -33,6 +34,25 @@ def validate_badging(badging, version, version_code):
         raise ValueError("APK metadata contains obsolete branding")
 
 
+def validate_native_libraries(apk):
+    # Check the packaged libraries, including their actual ELF architecture. Parallel build
+    # artifacts must not accidentally produce a one-ABI APK or put the wrong library in an ABI folder.
+    with zipfile.ZipFile(apk) as archive:
+        for abi, machine in (("arm64-v8a", 183), ("x86_64", 62)):
+            name = f"lib/{abi}/libreins_core.so"
+            try:
+                with archive.open(name) as library:
+                    header = library.read(20)
+            except KeyError as error:
+                raise ValueError(f"APK is missing {name}") from error
+            if (
+                len(header) != 20
+                or header[:6] != b"\x7fELF\x02\x01"
+                or int.from_bytes(header[18:20], "little") != machine
+            ):
+                raise ValueError(f"APK has an invalid native library for {abi}")
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("apk")
@@ -44,6 +64,7 @@ def main():
         [args.aapt2, "dump", "badging", args.apk], text=True
     )
     validate_badging(badging, args.version, args.version_code)
+    validate_native_libraries(args.apk)
     print(
         f"Verified Reins ({args.version}, {args.version_code}), com.reins2fa.app, non-debuggable"
     )
