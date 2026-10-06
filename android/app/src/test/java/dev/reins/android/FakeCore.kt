@@ -246,6 +246,11 @@ class FakeCore : ReinsCoreInterface {
     override suspend fun logout() {
         session = null
     }
+    @Volatile var browserLogoutUrl: String? = null
+    override suspend fun logoutWithBrowser(): String? {
+        logout()
+        return browserLogoutUrl
+    }
 
     // ---- passwordless sign-in and "Add another phone" ------------------------------------------------------------
 
@@ -279,6 +284,7 @@ class FakeCore : ReinsCoreInterface {
     val joinAnswers = CopyOnWriteArrayList<Pair<String, Boolean>>()
 
     fun resetSso() {
+        browserLogoutUrl = null
         ssoKeys = AccountKeys.CREATED
         ssoEmail = "me@example.com"
         ssoBeginError = null

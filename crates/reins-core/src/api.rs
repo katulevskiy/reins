@@ -269,6 +269,13 @@ impl ReinsCore {
         rt::run(async move { runtime.logout().await }).await
     }
 
+    /// Sign out locally and revoke this device on the server. Open the returned URL in the sign-in browser to
+    /// end its AuthKit session too. Network failure never prevents local sign-out; `None` means no URL is available.
+    pub async fn logout_with_browser(&self) -> Result<Option<String>, CoreError> {
+        let runtime = Arc::clone(&self.runtime);
+        rt::run(async move { runtime.logout_with_browser(true).await }).await
+    }
+
     pub async fn register_device(&self, fcm_token: Option<String>) -> Result<(), CoreError> {
         let runtime = Arc::clone(&self.runtime);
         let generation = runtime.generation();

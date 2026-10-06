@@ -62,6 +62,18 @@ pub fn api_base() -> ApiResult<String> {
     Ok(base)
 }
 
+/// The fixed signed-out landing page must be registered in WorkOS's allowed sign-out URIs.
+/// Never put API keys or app tokens in this URL, or accept a caller-provided return URI.
+pub fn logout_url(session_id: &str) -> ApiResult<String> {
+    let Ok(mut url) = Url::parse(&format!("{}/user_management/sessions/logout", api_base()?)) else {
+        err!("Invalid WorkOS logout URL");
+    };
+    url.query_pairs_mut()
+        .append_pair("session_id", session_id)
+        .append_pair("return_to", &format!("{}/reins/signed-out", CONFIG.domain()));
+    Ok(url.into())
+}
+
 /// The key the User Management and Events APIs take: `REINS_WORKOS_API_KEY`, else `SSO_CLIENT_SECRET` (WorkOS
 /// uses the API key as the client secret).
 pub fn api_key() -> String {

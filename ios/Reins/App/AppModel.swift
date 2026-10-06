@@ -336,13 +336,24 @@ final class AppModel {
     }
 
     func signOut() async {
-        try? await core.logout()
+        let logoutUrl: String?
+        do {
+            logoutUrl = try await core.logoutWithBrowser()
+        } catch {
+            notice = error.userMessage
+            return
+        }
         KeysLock.clear()
         DeviceStatus.clear()
         approvalDevice = false
         deviceReplaced = false
         onboardingAfterUnlock = false
         setSession(.signedOut)
+        if let logoutUrl, let url = URL(string: logoutUrl) {
+            // Use the authentication sheet's shared cookie store, like sign-in. Cancelling it never unlocks
+            // the account again; subsequent mobile sign-in requires fresh authentication on the server.
+            _ = try? await WebAuth.run(url, callbackScheme: "com.reins2fa.app")
+        }
     }
 
     // MARK: Refreshing

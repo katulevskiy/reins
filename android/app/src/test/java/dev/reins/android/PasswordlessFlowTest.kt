@@ -73,6 +73,19 @@ class PasswordlessFlowTest : FlowHarness() {
         awaitTag("unlock")
     }
 
+    @Test
+    fun signingOutOfLockedAccountAlsoEndsTheBrowserSession() {
+        signInLocked()
+        val app = shadowOf(context as android.app.Application)
+        while (app.nextStartedActivity != null) { /* discard the initial sign-in browser intent */ }
+        core.browserLogoutUrl = "https://api.workos.com/user_management/sessions/logout?session_id=session_locked"
+        tap("unlockSignOut")
+        awaitTag("welcome")
+        assertEquals(core.browserLogoutUrl, app.nextStartedActivity?.data?.toString())
+        assertNull(core.session)
+        assertNull(container.ssoSignIn.pending())
+    }
+
     /** Lets the join poll's pauses pass (the main looper's clock only moves when told to). */
     private fun pollOnce() {
         shadowOf(Looper.getMainLooper()).idleFor(Duration.ofMillis(2_100))

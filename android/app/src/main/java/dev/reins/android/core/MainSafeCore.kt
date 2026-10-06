@@ -119,6 +119,7 @@ class MainSafeCore(
         io { createAccount(serverUrl, email, password) }
 
     override suspend fun logout() = io { logout() }
+    override suspend fun logoutWithBrowser(): String? = io { logoutWithBrowser() }
 
     override suspend fun ssoBegin(serverUrl: String): SsoStart = io { ssoBegin(serverUrl) }
 

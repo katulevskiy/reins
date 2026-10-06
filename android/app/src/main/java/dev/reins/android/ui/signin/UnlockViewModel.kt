@@ -149,14 +149,13 @@ class UnlockViewModel(
         viewModelScope.launch {
             withdraw()
             try {
-                container.core.logout()
+                container.signOut()
             } catch (e: CancellationException) {
                 throw e
             } catch (e: Exception) {
-                // Signed out on this phone either way.
+                _ui.update { it.copy(busy = false, error = e.userMessage()) }
+                return@launch
             }
-            container.forgetAccount()
-            container.state.setSession(SessionState.SignedOut)
             _ui.value = UnlockUi()
         }
     }

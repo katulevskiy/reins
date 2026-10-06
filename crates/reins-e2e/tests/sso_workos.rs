@@ -8,6 +8,64 @@ use reins_e2e::workos::{FakeWorkos, User};
 use reins_e2e::{Phone, Server};
 use serde_json::{Value, json};
 
+#[tokio::test(flavor = "multi_thread")]
+async fn mobile_logout_ends_only_its_device_and_next_login_requires_fresh_authentication() {
+    let workos = FakeWorkos::start().await;
+    let server = Server::start_with_env(5, 3, &workos.server_env()).await;
+    let http = reqwest::Client::builder().redirect(reqwest::redirect::Policy::none()).build().unwrap();
+    assert_eq!(http.post(format!("{}/reins/api/logout", server.base)).send().await.unwrap().status(), 401);
+
+    let alice = User {
+        id: "user_logout_alice".to_owned(),
+        email: "logout-alice@example.com".to_owned(),
+    };
+    workos.sign_in_as(&alice);
+    let first = Phone::signed_out(|_| {}).await;
+    first.sso_sign_in(&server.base).await.unwrap();
+    first.core.register_device(None).await.unwrap();
+    let recovery = first.core.account_recovery_code().await.unwrap();
+    let second = Phone::signed_out(|_| {}).await;
+    second.sso_sign_in(&server.base).await.unwrap();
+    second.core.unlock_account(recovery).await.unwrap();
+    workos.sign_in_as(&User {
+        id: "user_logout_bob".to_owned(),
+        email: "logout-bob@example.com".to_owned(),
+    });
+    let other_account = Phone::signed_out(|_| {}).await;
+    other_account.sso_sign_in(&server.base).await.unwrap();
+    other_account.core.register_device(None).await.unwrap();
+    let db = rusqlite::Connection::open(server.database_path()).unwrap();
+    let first_device: String = db
+        .query_row("SELECT device_uuid FROM reins_sso_sessions WHERE session_id=?1", [&workos.sessions()[0]], |row| {
+            row.get(0)
+        })
+        .unwrap();
+
+    let logout = first.core.logout_with_browser().await.unwrap().expect("provider logout URL");
+    let url = url::Url::parse(&logout).unwrap();
+    assert_eq!(url.path(), "/user_management/sessions/logout");
+    let query: std::collections::HashMap<_, _> = url.query_pairs().into_owned().collect();
+    assert_eq!(query["session_id"], workos.sessions()[0]);
+    assert_eq!(query["return_to"], format!("{}/reins/signed-out", server.base));
+    assert!(first.core.session().await.is_none());
+    let count: i64 =
+        db.query_row("SELECT COUNT(*) FROM devices WHERE uuid=?1", [&first_device], |row| row.get(0)).unwrap();
+    assert_eq!(count, 0, "server-side access and refresh tokens must be revoked too");
+    other_account.core.register_device(None).await.expect("other account remains signed in");
+    second.core.register_device(None).await.expect("other phone of the same account remains signed in");
+    let page = http.get(&query["return_to"]).send().await.unwrap();
+    assert_eq!(page.status(), 200);
+    assert!(page.text().await.unwrap().contains("com.reins2fa.app://signed-out"));
+
+    // The real server's browser redirect requests fresh authentication, even if its logout tab was closed.
+    let begin = first.core.sso_begin(server.base.clone()).await.unwrap();
+    let redirect = http.get(&begin.url).send().await.unwrap();
+    let provider = url::Url::parse(redirect.headers()["location"].to_str().unwrap()).unwrap();
+    let query: std::collections::HashMap<_, _> = provider.query_pairs().into_owned().collect();
+    assert_eq!(query["prompt"], "login");
+    assert_eq!(query["max_age"], "0");
+}
+
 /// The KDF iterations prelogin reports for `email`: 100 000 for a keyless account, the server's default (600 000)
 /// for an email it does not know.
 async fn prelogin_iterations(server: &Server, email: &str) -> u64 {

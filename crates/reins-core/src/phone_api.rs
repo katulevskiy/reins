@@ -155,6 +155,26 @@ impl<'a> PhoneApi<'a> {
         Self::json(self.request(Method::PUT, "/device").json(registration)).await
     }
 
+    pub async fn logout_browser_url(&self) -> Result<Option<String>, ApiFailure> {
+        #[derive(serde::Deserialize)]
+        struct Answer {
+            browser_url: Option<String>,
+        }
+        let answer: Answer = Self::json(self.request(Method::POST, "/logout")).await?;
+        if let Some(raw) = &answer.browser_url {
+            let url = url::Url::parse(raw).map_err(|_| CoreError::invalid("invalid browser logout URL"))?;
+            let local = matches!(url.host_str(), Some("localhost" | "127.0.0.1" | "[::1]"));
+            if !(url.scheme() == "https" || (url.scheme() == "http" && local))
+                || !url.username().is_empty()
+                || url.password().is_some()
+                || url.path() != "/user_management/sessions/logout"
+            {
+                return Err(CoreError::invalid("invalid browser logout URL").into());
+            }
+        }
+        Ok(answer.browser_url)
+    }
+
     /// `PUT /services`: which integrations have an account on this phone.
     pub async fn put_services(&self, report: &reins_proto::device::ServicesReport) -> Result<(), ApiFailure> {
         Self::send(self.request(Method::PUT, "/services").json(report)).await.map(drop)
@@ -426,6 +446,27 @@ mod tests {
             assert!(matches!(api.get_request(bad).await, Err(ApiFailure::Core(CoreError::Invalid { .. }))), "{bad}");
             assert!(api.get_pairing(bad).await.is_err());
             assert!(api.delete_connection(bad).await.is_err());
+        }
+    }
+
+    #[tokio::test]
+    async fn browser_logout_never_returns_an_insecure_or_unrelated_navigation() {
+        let server = MockServer::start().await;
+        let (http, url) = setup(&server);
+        let api = PhoneApi::new(&http, &url, "TOKEN");
+        for raw in [
+            "javascript:alert(1)",
+            "http://example.com/user_management/sessions/logout",
+            "https://user:password@example.com/user_management/sessions/logout",
+            "https://api.workos.com/other",
+        ] {
+            server.reset().await;
+            Mock::given(method("POST"))
+                .and(path("/reins/api/logout"))
+                .respond_with(ResponseTemplate::new(200).set_body_json(json!({"browser_url":raw})))
+                .mount(&server)
+                .await;
+            assert!(matches!(api.logout_browser_url().await, Err(ApiFailure::Core(CoreError::Invalid { .. }))));
         }
     }
 }

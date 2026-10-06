@@ -281,17 +281,32 @@ impl AccountRuntime {
         Ok(())
     }
     pub async fn logout(&self) -> Result<(), CoreError> {
+        self.logout_with_browser(false).await.map(drop)
+    }
+    pub async fn logout_with_browser(&self, browser: bool) -> Result<Option<String>, CoreError> {
         let _guard = self.transition.lock().await;
         self.generation.fetch_add(1, std::sync::atomic::Ordering::AcqRel);
         let previous = self.engine();
         // Best-effort remote upload; the durable local ciphertext remains available even while offline.
         drop(tokio::time::timeout(std::time::Duration::from_secs(2), previous.sync_account_state()).await);
+        // Bounded, best-effort provider logout preparation. Local ciphertext and account isolation must still
+        // be locked when offline, talking to an older server, or unable to refresh an expired access token.
+        let browser_url = if browser {
+            let get_url = async {
+                let session = previous.session()?;
+                crate::session::api_call!(&session, |api| api.logout_browser_url())
+                    .map_err(crate::phone_api::ApiFailure::into_core)
+            };
+            tokio::time::timeout(std::time::Duration::from_secs(3), get_url).await.ok().and_then(Result::ok).flatten()
+        } else {
+            None
+        };
         previous.ensure_active()?;
         self.control.clear_session_for(previous.store.bound_owner().as_ref())?;
         previous.retire()?;
         let fresh = self.build(Arc::new(Store::ephemeral(Some(Arc::clone(&self.control)))?))?;
         *self.current.lock().unwrap_or_else(PoisonError::into_inner) = fresh;
-        Ok(())
+        Ok(browser_url)
     }
     pub fn check_engine(&self, engine: &Arc<Engine>) -> Result<(), CoreError> {
         engine.ensure_active()?;

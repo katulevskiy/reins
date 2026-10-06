@@ -69,6 +69,34 @@ fn core(dir: &std::path::Path) -> Arc<ReinsCore> {
     let notifier: Arc<dyn Notifier> = Arc::new(common::RecordingNotifier::default());
     ReinsCore::with_config(dir.to_str().unwrap(), &common::FakeKeys, google, notifier, CoreConfig::default()).unwrap()
 }
+
+#[tokio::test]
+async fn unavailable_browser_logout_still_locks_local_account_and_retires_old_calls() {
+    let server = MockServer::start().await;
+    Mock::given(method("POST"))
+        .and(path("/identity/accounts/prelogin"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({"kdf":0,"kdfIterations":5000})))
+        .mount(&server)
+        .await;
+    Mock::given(method("POST")).and(path("/identity/connect/token")).respond_with(Identity).mount(&server).await;
+    Mock::given(method("GET")).and(path("/api/sync")).respond_with(VaultProfile).mount(&server).await;
+    Mock::given(path("/reins/api/account-state")).respond_with(Cloud::default()).mount(&server).await;
+    Mock::given(method("POST"))
+        .and(path("/reins/api/logout"))
+        .respond_with(ResponseTemplate::new(503))
+        .expect(1)
+        .mount(&server)
+        .await;
+    let dir = tempfile::tempdir().unwrap();
+    let app = core(dir.path());
+    app.login(server.uri(), "alice@example.com".to_owned(), "pw".to_owned(), None).await.unwrap();
+    let old = app.engine();
+    old.register_account("github", "alice-private-integration").unwrap();
+    assert_eq!(app.logout_with_browser().await.unwrap(), None);
+    assert!(app.session().await.is_none());
+    assert_eq!(old.register_account("github", "late").unwrap_err(), CoreError::NotLoggedIn);
+    assert_eq!(app.accounts().await.unwrap().len(), 0);
+}
 #[tokio::test]
 async fn switching_accounts_locks_previous_runtime_and_restores_only_own_integrations_on_each_device() {
     let server = MockServer::start().await;

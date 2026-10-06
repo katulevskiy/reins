@@ -9,7 +9,6 @@ import dev.reins.android.feedback.play
 import dev.reins.android.platform.AuthResult
 import dev.reins.android.platform.Authenticator
 import dev.reins.android.platform.update.UpdateController
-import dev.reins.android.state.SessionState
 import dev.reins.android.ui.common.userMessage
 import kotlin.coroutines.cancellation.CancellationException
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -94,11 +93,9 @@ class SettingsViewModel(private val container: AppContainer) : ViewModel() {
 
     fun signOut() {
         run(null) {
-            container.core.logout()
             _hasRecoveryCode.value = false
             _recoveryCode.value = null
-            container.forgetAccount()
-            container.state.setSession(SessionState.SignedOut)
+            container.signOut()
         }
     }
 

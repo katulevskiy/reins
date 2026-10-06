@@ -262,6 +262,7 @@ final class DemoReinsCore: ReinsCoreProtocol, @unchecked Sendable {
     }
 
     func logout() async throws { locked { $0.session = nil } }
+    func logoutWithBrowser() async throws -> String? { try await logout(); return nil }
 
     /// Refused with `-demoOtherPhone` until the recovery code or the other phone's approval, like the server, which
     /// wants the proof the core attaches.

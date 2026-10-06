@@ -2660,6 +2660,12 @@ public protocol ReinsCoreProtocol: AnyObject, Sendable {
     
     func logout() async throws 
     
+    /**
+     * Sign out locally and revoke this device on the server. Open the returned URL in the sign-in browser to
+     * end its AuthKit session too. Network failure never prevents local sign-out; `None` means no URL is available.
+     */
+    func logoutWithBrowser() async throws  -> String?
+
     func modelStatus() async  -> ModelStatus
     
     /**
@@ -3680,6 +3686,26 @@ open func logout()async throws   {
         )
 }
     
+    /**
+     * Sign out locally and revoke this device on the server. Open the returned URL in the sign-in browser to
+     * end its AuthKit session too. Network failure never prevents local sign-out; `None` means no URL is available.
+     */
+open func logoutWithBrowser()async throws  -> String?  {
+    return
+        try  await uniffiRustCallAsync(
+            rustFutureFunc: {
+                uniffi_reins_core_fn_method_reinscore_logout_with_browser(
+                        self.uniffiCloneHandle()
+                )
+            },
+            pollFunc: ffi_reins_core_rust_future_poll_rust_buffer,
+            completeFunc: ffi_reins_core_rust_future_complete_rust_buffer,
+            freeFunc: ffi_reins_core_rust_future_free_rust_buffer,
+            liftFunc: FfiConverterOptionString.lift,
+            errorHandler: FfiConverterTypeCoreError_lift
+        )
+}
+
 open func modelStatus()async  -> ModelStatus  {
     return
         try!  await uniffiRustCallAsync(
@@ -12024,6 +12050,9 @@ private let initializationResult: InitializationResult = {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_reins_core_checksum_method_reinscore_logout() != 36033) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_reins_core_checksum_method_reinscore_logout_with_browser() != 40469) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_reins_core_checksum_method_reinscore_model_status() != 15718) {

@@ -59,7 +59,8 @@ pub fn routes() -> Vec<Route> {
         post_pairing_response,
         post_pairing_claim,
         get_connections,
-        delete_connection
+        delete_connection,
+        post_logout
     ]
 }
 
@@ -143,6 +144,27 @@ pub async fn read_body_limited(data: Data<'_>, limit: u64) -> PhoneResult<Vec<u8
 
 pub fn user_key(headers: &Headers) -> String {
     headers.user.uuid.to_string()
+}
+
+/// Return the provider's logout URL to the native app. Visiting it in the same browser as sign-in clears
+/// AuthKit's cookie; a server-side HTTP request cannot do that. The caller cannot supply a session id or redirect.
+#[post("/reins/api/logout")]
+async fn post_logout(headers: Headers, conn: DbConn) -> PhoneResult<Json<Value>> {
+    let browser_url = if crate::sso_workos::enabled() {
+        crate::db::models::ReinsSsoSession::latest_for_device(&headers.user.uuid, &headers.device.uuid, &conn)
+            .await
+            .map_err(|e| internal(&e))?
+            .map(|session| crate::sso_workos::logout_url(&session.session_id))
+            .transpose()
+            .map_err(|e| internal(&e))?
+    } else {
+        None
+    };
+    // Invalidate this device's access and refresh tokens immediately, even if the browser is later closed.
+    crate::db::models::ReinsSsoSession::revoke_device(&headers.user.uuid, &headers.device.uuid, &conn)
+        .await
+        .map_err(|e| internal(&e))?;
+    Ok(Json(serde_json::json!({"browser_url": browser_url})))
 }
 
 /// The caller's device key ([`DEVICE_KEY_HEADER`]) as the server keeps it ([`device_key_hash`]); `None` when the

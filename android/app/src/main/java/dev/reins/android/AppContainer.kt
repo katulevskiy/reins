@@ -367,6 +367,15 @@ class AppContainer(private val context: Context) {
         state.setApprovalDevice(false)
     }
 
+    /** Lock the account first, then end AuthKit's session in the same browser used by Continue. */
+    suspend fun signOut() {
+        val logoutUrl = core.logoutWithBrowser()
+        forgetAccount()
+        ssoSignIn.clear()
+        state.setSession(SessionState.SignedOut)
+        logoutUrl?.let { dev.reins.android.platform.Browser.open(context, it) }
+    }
+
     /** Forgets what belongs to the signed-in account. */
     suspend fun forgetAccount() {
         withContext(Dispatchers.IO) {

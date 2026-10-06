@@ -1367,8 +1367,17 @@ async fn authorize(data: AuthorizeData, cookies: &CookieJar<'_>, secure: Secure,
     let binding_token = data_encoding::BASE64URL_NOPAD.encode(&crypto::get_random_bytes::<32>());
     let binding_hash = crypto::sha256_hex(binding_token.as_bytes());
 
-    let auth_url =
+    let mut auth_url =
         sso::authorize_url(state, code_challenge, &client_id, &redirect_uri, Some(binding_hash), conn).await?;
+
+    // Mobile sign-in is an explicit user action. Do not silently resume a browser session after local/offline
+    // sign-out or a cancelled provider logout. Keep this independent of the browser's cookie-clearing support.
+    if client_id == "mobile" && crate::sso_workos::enabled() {
+        let query: Vec<_> =
+            auth_url.query_pairs().into_owned().filter(|(k, _)| k != "prompt" && k != "max_age").collect();
+        auth_url.set_query(None);
+        auth_url.query_pairs_mut().extend_pairs(query).append_pair("prompt", "login").append_pair("max_age", "0");
+    }
 
     cookies.add(
         Cookie::build((SSO_BINDING_COOKIE, binding_token))

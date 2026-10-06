@@ -246,7 +246,20 @@ pub fn asset_links(fingerprints: &[String]) -> serde_json::Value {
 
 /// Routes mounted at `{domain_path}/`.
 pub fn routes() -> Vec<rocket::Route> {
-    routes![pair]
+    routes![pair, signed_out]
+}
+
+/// AuthKit's logout landing page never initiates a new sign-in. The explicit link also works in Firefox,
+/// which may require a user gesture to hand a custom scheme back to the native app.
+#[get("/reins/signed-out")]
+fn signed_out() -> rocket::response::content::RawHtml<String> {
+    rocket::response::content::RawHtml(layout(
+        "Signed out",
+        "",
+        "<h1>Signed out</h1><p>Your browser sign-in session has ended.</p>\
+<a class=\"button\" href=\"com.reins2fa.app://signed-out\">Return to Reins</a>\
+<p class=\"muted\">You can also close this page and return to the app.</p>",
+    ))
 }
 
 /// Routes mounted at the server root `/`, where the phones look for them.

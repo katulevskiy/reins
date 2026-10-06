@@ -1771,12 +1771,17 @@ class AppFlowTest {
 
     @Test
     fun signingOutReturnsToSignIn() {
+        core.browserLogoutUrl = "https://api.workos.com/user_management/sessions/logout?session_id=session_test"
         launch()
         tap("openSettings")
         tap("signOut")
         rule.onAllNodes(hasText("Sign out")).let { it[it.fetchSemanticsNodes().lastIndex] }.performClick()
         awaitTag("welcome")
         awaitTag("continue")
+        val opened = shadowOf(context as android.app.Application).nextStartedActivity
+        assertEquals(core.browserLogoutUrl, opened?.data?.toString())
+        assertNull(core.session)
+        core.browserLogoutUrl = null
     }
 
     // ---- misc ----------------------------------------------------------------------------------------------------

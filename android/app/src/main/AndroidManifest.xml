@@ -49,6 +49,13 @@
                 <data android:scheme="https" android:host="app.reins2fa.com" android:pathPrefix="/pair" />
             </intent-filter>
             <!-- The same link where App Links cannot be used (a self-hosted server, a browser that opens it). -->
+            <!-- A logout return only brings the welcome screen forward; it never creates a session. -->
+            <intent-filter>
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <category android:name="android.intent.category.BROWSABLE" />
+                <data android:scheme="com.reins2fa.app" android:host="signed-out" />
+            </intent-filter>
             <intent-filter>
                 <action android:name="android.intent.action.VIEW" />
                 <category android:name="android.intent.category.DEFAULT" />

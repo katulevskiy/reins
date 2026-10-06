@@ -136,6 +136,10 @@ SSO_SIGNUPS_MATCH_EMAIL=true        # an existing account with the same (WorkOS-
 In the WorkOS dashboard (or through its API), add `https://<domain>/identity/connect/oidc-signin` to the redirect
 URIs and turn on the sign-in methods you want under **Authentication**; Google, Apple and GitHub need their own
 OAuth credentials for production (WorkOS's shared test credentials work in a staging environment).
+Add `https://<domain>/reins/signed-out` to the allowed **Sign-out URIs** too. Mobile sign-out revokes only the
+current phone's Reins session and visits WorkOS logout in the sign-in browser, then offers **Return to Reins**.
+Offline sign-out still locks the local encrypted account. Mobile sign-in requests fresh authentication even if
+the logout browser was closed before it finished.
 
 How it fits together:
 

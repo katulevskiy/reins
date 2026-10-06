@@ -67,6 +67,24 @@ pub struct ReinsSsoSession {
 }
 
 impl ReinsSsoSession {
+    /// Only sessions belonging to the authenticated account and this device may be signed out.
+    pub async fn latest_for_device(
+        user: &UserId,
+        device: &DeviceId,
+        conn: &DbConn,
+    ) -> Result<Option<Self>, crate::Error> {
+        conn.run(move |c| {
+            reins_sso_sessions::table
+                .filter(reins_sso_sessions::user_uuid.eq(user))
+                .filter(reins_sso_sessions::device_uuid.eq(device))
+                .order((reins_sso_sessions::created_at.desc(), reins_sso_sessions::session_id.desc()))
+                .first::<Self>(c)
+                .optional()
+                .map_res("Error finding this device's SSO session")
+        })
+        .await
+    }
+
     /// Remembers the session of a sign-in; the same session signing in again (a second device) keeps the first row.
     pub async fn save(&self, conn: &DbConn) -> EmptyResult {
         conn.run(move |c| q_save_session(c, self)).await.map_res("Error saving SSO session")
@@ -75,6 +93,24 @@ impl ReinsSsoSession {
     /// Revoke the device and forget its session together. A database failure leaves the mapping for a retry.
     pub async fn revoke(session_id: &str, conn: &DbConn) -> EmptyResult {
         conn.run(move |c| q_revoke_session(c, session_id)).await.map_res("Error revoking WorkOS session")
+    }
+
+    pub async fn revoke_device(user: &UserId, device: &DeviceId, conn: &DbConn) -> EmptyResult {
+        conn.run(move |c| {
+            c.transaction(|c| {
+                diesel::delete(devices::table.filter(devices::user_uuid.eq(user)).filter(devices::uuid.eq(device)))
+                    .execute(c)?;
+                diesel::delete(
+                    reins_sso_sessions::table
+                        .filter(reins_sso_sessions::user_uuid.eq(user))
+                        .filter(reins_sso_sessions::device_uuid.eq(device)),
+                )
+                .execute(c)?;
+                Ok::<_, diesel::result::Error>(())
+            })
+            .map_res("Error signing out this device")
+        })
+        .await
     }
 }
 
