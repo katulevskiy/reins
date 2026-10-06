@@ -5,6 +5,8 @@ set -euo pipefail
 cd "$(dirname "${BASH_SOURCE[0]}")/.."
 kind="${1:?expected arm64-v8a, x86_64 or bindings}"
 out="${2:?output directory}"
+profile="${3:-release}"
+[[ "$profile" == release || "$profile" == dev ]] || { echo "Unexpected native profile: $profile" >&2; exit 1; }
 mkdir -p "$out"
 case "$kind" in
 arm64-v8a | x86_64)
@@ -13,7 +15,7 @@ arm64-v8a | x86_64)
         export ANDROID_NDK_HOME="$ANDROID_HOME/ndk/$ndk"
     fi
     export CARGO_ENCODED_RUSTFLAGS="-Clink-arg=-Wl,-z,max-page-size=16384"
-    cargo ndk -t "$kind" --platform 31 -o "$out/jni" build --profile release -p reins-core --lib --locked
+    cargo ndk -t "$kind" --platform 31 -o "$out/jni" build --profile "$profile" -p reins-core --lib --locked
     test -s "$out/jni/$kind/libreins_core.so"
     ;;
 bindings)

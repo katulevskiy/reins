@@ -670,6 +670,7 @@ jobs:
       - uses: gradle/actions/setup-gradle@v6
         with:
           cache-provider: basic
+          cache-read-only: false # maintainer dispatches also warm the Gradle build cache
       - name: Fetch signing identity from Infisical
         if: vars.INFISICAL_RELEASE_IDENTITY_ID != ''
         uses: ./.github/actions/android-signing # zizmor: ignore[self-repository] use the exact release checkout

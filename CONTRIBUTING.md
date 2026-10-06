@@ -160,7 +160,8 @@ level 3 with LTO disabled to avoid long GPUI links and large bitcode caches. Ins
 under one profile to share dependencies; Windows CLI downloads reuse the installer binary. macOS GUI architectures
 compile on separate native runners before universal bundling and signing. Standalone macOS CLI
 builds remain separate to preserve macOS 11 support (the GUI requires macOS 12). Android builds each ABI and the Kotlin bindings on separate workers; native
-outputs are reused only for an exact native source/configuration hash. Every packaged APK verifies both ELF
+outputs are reused only for an exact native source/configuration hash. CI uses separate debug output caches and
+retains both Android flavor test suites. Every packaged APK verifies both ELF
 architectures as well as the production signing certificate and installed identity.
 
 ## Pull requests

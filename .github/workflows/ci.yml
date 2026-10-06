@@ -263,12 +263,65 @@ jobs:
         continue-on-error: true
         run: cargo check --locked -p reins-desktop --bin reins --target aarch64-pc-windows-msvc
 
-  android:
-    name: Android unit tests + debug APK
+  android-native:
+    name: Android debug native (${{ matrix.kind }})
     needs: changes
     if: needs.changes.outputs.android == 'true'
     runs-on: ubuntu-24.04
-    timeout-minutes: 60
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        kind: [arm64-v8a, x86_64, bindings]
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: actions/cache@v5
+        id: native
+        with:
+          path: native
+          key: android-native-dev-v1-${{ runner.os }}-${{ matrix.kind }}-${{ hashFiles('Cargo.toml', 'Cargo.lock', 'rust-toolchain.toml', '.cargo/**', 'crates/reins-core/**', 'crates/reins-proto/**', 'crates/reins-policy/**', 'android/app/build.gradle.kts', 'scripts/build-android-native.sh', '.github/workflows/ci.yml') }}
+      - name: Install Rust toolchain and Android targets
+        if: steps.native.outputs.cache-hit != 'true'
+        run: |
+          rustup toolchain install
+          rustup target add aarch64-linux-android x86_64-linux-android
+      - uses: Swatinem/rust-cache@v2
+        if: steps.native.outputs.cache-hit != 'true'
+        with:
+          # Bindgen can read the host dependencies built by the server/core tests; do not duplicate that cache.
+          shared-key: ${{ matrix.kind == 'bindings' && 'linux-server-core' || format('android-debug-native-{0}', matrix.kind) }}
+          save-if: ${{ matrix.kind != 'bindings' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) }}
+      - uses: actions/cache@v5
+        if: steps.native.outputs.cache-hit != 'true' && matrix.kind != 'bindings'
+        with:
+          path: ~/.cargo/bin/cargo-ndk
+          key: cargo-ndk-${{ runner.os }}-4.1.2
+      - name: Install cargo-ndk and NDK
+        if: steps.native.outputs.cache-hit != 'true' && matrix.kind != 'bindings'
+        run: |
+          cargo ndk --version || cargo install --locked cargo-ndk@4.1.2
+          ndk="$(grep -oP 'reinsNdkVersion = "\K[^"]+' android/app/build.gradle.kts)"
+          "${ANDROID_HOME}/cmdline-tools/latest/bin/sdkmanager" --install "ndk;${ndk}" > /dev/null
+      - name: Build debug native output
+        if: steps.native.outputs.cache-hit != 'true'
+        env:
+          KIND: ${{ matrix.kind }}
+        run: scripts/build-android-native.sh "$KIND" "$GITHUB_WORKSPACE/native" dev
+      - uses: actions/upload-artifact@v7
+        with:
+          name: android-debug-native-${{ matrix.kind }}
+          path: native/
+          if-no-files-found: error
+          retention-days: 1
+
+  android:
+    name: Android unit tests + debug APK
+    needs: [changes, android-native]
+    if: needs.changes.outputs.android == 'true'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@v7
         with:
@@ -277,33 +330,31 @@ jobs:
         with:
           distribution: temurin
           java-version: "21"
-      - name: Install Rust toolchain and Android targets
-        run: |
-          rustup toolchain install
-          rustup target add aarch64-linux-android x86_64-linux-android
-          rustc -vV
-      - uses: Swatinem/rust-cache@v2
+      - uses: actions/download-artifact@v8
         with:
-          save-if: ${{ github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository }}
-      - uses: actions/cache@v5
-        with:
-          path: ~/.cargo/bin/cargo-ndk
-          key: cargo-ndk-${{ runner.os }}-4.1.2
-      - name: Install cargo-ndk
-        run: cargo ndk --version || cargo install --locked cargo-ndk@4.1.2
-      # The NDK version is the one app/build.gradle.kts pins (reinsNdkVersion); the build looks it up by path.
-      - name: Install Android NDK
-        run: |
-          ndk="$(grep -oP 'reinsNdkVersion = "\K[^"]+' android/app/build.gradle.kts)"
-          echo "NDK ${ndk}"
-          "${ANDROID_HOME}/cmdline-tools/latest/bin/sdkmanager" --install "ndk;${ndk}" > /dev/null
+          pattern: android-debug-native-*
+          merge-multiple: true
+          path: native
       - uses: gradle/actions/setup-gradle@v6
         with:
           cache-provider: basic
-      # No google-services.json in CI: the build skips the Firebase plugin (hasFirebase) and still assembles.
+          cache-read-only: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name != github.repository }}
+      # Both flavor test suites and the APK use exact-source debug native outputs from the parallel workers.
       - name: Unit tests and debug APK
         working-directory: android
-        run: ./gradlew --no-daemon --parallel :app:testFullDebugUnitTest :app:testPlayDebugUnitTest :app:assembleFullDebug -Preins.rustProfile=debug
+        run: |
+          ./gradlew --no-daemon --parallel --no-configuration-cache \
+            :app:testFullDebugUnitTest :app:testPlayDebugUnitTest :app:assembleFullDebug \
+            "-Preins.prebuiltNativeDir=$GITHUB_WORKSPACE/native"
+      - name: Verify debug APK native architectures
+        run: |
+          python3 - <<'PYTHON'
+          import importlib.util
+          spec = importlib.util.spec_from_file_location("apk", "scripts/check-android-apk.py")
+          checker = importlib.util.module_from_spec(spec)
+          spec.loader.exec_module(checker)
+          checker.validate_native_libraries("android/app/build/outputs/apk/full/debug/app-full-debug.apk")
+          PYTHON
       - name: Upload test reports
         if: failure()
         uses: actions/upload-artifact@v7
