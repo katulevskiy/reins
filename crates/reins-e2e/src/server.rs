@@ -148,7 +148,7 @@ impl Server {
 
     /// Registers `email` with the real master-password hash, exactly as a Bitwarden client would.
     pub async fn register(&self, email: &str) {
-        let hash = {
+        let (hash, vault_key) = {
             let email = email.to_owned();
             tokio::task::spawn_blocking(move || {
                 let key = master_key(
@@ -159,14 +159,17 @@ impl Server {
                     },
                 )
                 .expect("kdf");
-                master_password_hash(&key, PASSWORD).to_string()
+                (
+                    master_password_hash(&key, PASSWORD).to_string(),
+                    key.stretch().encrypt(&[7; 64]).expect("wrap the account vault key"),
+                )
             })
             .await
             .expect("hash task")
         };
         let body = json!({
             "email": email, "name": "E2E", "masterPasswordHash": hash, "masterPasswordHint": null,
-            "key": "2.AAAAAAAAAAAAAAAAAAAAAA==|AAAAAAAAAAAAAAAAAAAAAA==|AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=",
+            "key": vault_key,
             "kdf": 0, "kdfIterations": KDF_ITERATIONS
         });
         let r = Self::http().post(self.url("/identity/accounts/register")).json(&body).send().await.expect("register");

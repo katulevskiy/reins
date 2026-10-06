@@ -203,7 +203,13 @@ async fn an_ai_sees_the_integrations_and_gets_their_accounts_only_when_the_user_
     let (listing, waiting) = tokio::join!(listing, app_open);
     assert!(waiting.is_empty(), "nothing needed the user");
     assert_eq!(listing["isError"], false, "{listing}");
-    assert_eq!(listing["structuredContent"]["integrations"], json!([{"service": "gmail", "name": "Gmail"}]));
+    assert_eq!(
+        listing["structuredContent"]["integrations"],
+        json!([
+            {"service": "gmail", "name": "Gmail"},
+            {"service": "vault", "name": "Password vault"}
+        ])
+    );
     assert!(!listing.to_string().contains(reins_e2e::phone::GMAIL_ACCOUNT), "{listing}");
 
     // The accounts wait for the user, who allows them for a month.
