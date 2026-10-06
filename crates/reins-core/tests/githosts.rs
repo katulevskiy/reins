@@ -230,7 +230,7 @@ async fn fetches_are_sealed_with_the_user_name_each_host_expects() {
     }
     // The read permission answers the next fetch at once.
     desk.send(&[fetch(desk, "r4", "gitlab", "grp/sub/app")]).await;
-    assert!(desk.waiting().await.is_empty());
+    assert_eq!(desk.waiting().await.len(), 0);
     let grant: CredentialGrant = desk.open(&desk.data("r4").await["items"][0]["sealed"]);
     assert_eq!(grant.username, "oauth2");
 }
@@ -305,7 +305,7 @@ async fn wrong_tools_paths_and_unseen_repositories_are_refused() {
     assert!(desk.error("r2").await.contains("owner/name"));
     assert!(desk.error("r3").await.contains("GitLab says that does not exist"));
     desk.error("r4").await;
-    assert!(desk.waiting().await.is_empty());
+    assert_eq!(desk.waiting().await.len(), 0);
 }
 
 #[tokio::test]

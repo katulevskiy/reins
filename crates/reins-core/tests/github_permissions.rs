@@ -97,7 +97,7 @@ async fn env() -> Env {
     Mock::given(method("POST"))
         .and(path("/identity/connect/token"))
         .respond_with(ResponseTemplate::new(200).set_body_json(json!({
-            "access_token": "ACCESS", "refresh_token": "REFRESH", "expires_in": 7200})))
+            "access_token": common::account_token(), "refresh_token": "REFRESH", "expires_in": 7200})))
         .mount(&server)
         .await;
     let dir = tempfile::tempdir().unwrap();
@@ -116,6 +116,7 @@ async fn env() -> Env {
         vec![Arc::<FakeGitHub>::clone(&github)],
     )
     .unwrap();
+    common::mount_account_vault(&server, "me@example.com", "hunter2").await;
     core.login(server.uri(), "me@example.com".to_owned(), "hunter2".to_owned(), None).await.unwrap();
     core.engine().register_account("github", "octo").unwrap();
     Env {
@@ -264,7 +265,7 @@ async fn kinds_of_change_are_checked() {
         ),
         "a resource that was not part of the request"
     );
-    assert!(env.core.grants().await.unwrap().is_empty());
+    assert_eq!(env.core.grants().await.unwrap().len(), 0);
 }
 
 #[tokio::test]
@@ -281,7 +282,7 @@ async fn a_destructive_change_is_asked_every_time_and_never_remembered() {
     ));
     assert!(env.github.done.lock().unwrap().is_empty(), "nothing happened");
     env.core.approve("r1".to_owned(), choice(None)).await.unwrap();
-    assert!(env.core.grants().await.unwrap().is_empty());
+    assert_eq!(env.core.grants().await.unwrap().len(), 0);
 
     // Even a broad permission for the repository does not cover it.
     serve(&env, &[put("r2", "main")]).await;

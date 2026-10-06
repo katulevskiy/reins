@@ -117,3 +117,34 @@ pub fn gmail_message(id: &str, from: &str, subject: &str, body: Option<&str>) ->
         "internalDate": "1700000000000", "payload": payload
     })
 }
+
+/// A real server token includes a stable subject; account storage never falls back to an email or device database.
+pub fn account_token() -> String {
+    format!("h.{}.s", data_encoding::BASE64URL_NOPAD.encode(br#"{"sub":"account-1","email":"me@example.com"}"#))
+}
+
+/// Older connector fixtures did not model the vault. Supply its authenticated wrapped key without overriding a fixture's vault.
+pub async fn mount_account_vault(server: &wiremock::MockServer, email: &str, password: &str) {
+    use reins_core::crypto::{Kdf, master_key};
+    use wiremock::matchers::{method, path};
+    use wiremock::{Mock, ResponseTemplate};
+    let key = master_key(
+        password,
+        email,
+        Kdf::Pbkdf2 {
+            iterations: 5000,
+        },
+    )
+    .unwrap()
+    .stretch()
+    .encrypt(&[7; 64])
+    .unwrap();
+    Mock::given(method("GET"))
+        .and(path("/api/sync"))
+        .respond_with(
+            ResponseTemplate::new(200).set_body_json(serde_json::json!({"profile":{"id":"account-1","key":key}})),
+        )
+        .with_priority(250)
+        .mount(server)
+        .await;
+}

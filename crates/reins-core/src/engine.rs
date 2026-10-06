@@ -91,6 +91,9 @@ impl Drop for InFlight {
 
 pub struct Engine {
     pub(crate) store: Arc<Store>,
+    pub(crate) closed: std::sync::atomic::AtomicBool,
+    retired: tokio::sync::watch::Sender<bool>,
+    pub(crate) account_sync: tokio::sync::Mutex<()>,
     pub(crate) http: reqwest::Client,
     pub(crate) cfg: CoreConfig,
     pub(crate) google: Arc<dyn GoogleTokenProvider>,
@@ -130,6 +133,21 @@ impl Engine {
         extra: Vec<Arc<dyn crate::connector::Connector>>,
     ) -> Result<Arc<Self>, CoreError> {
         let store = Arc::new(Store::open(data_dir, keys)?);
+        Self::with_store(data_dir, store, google, notifier, cfg, extra)
+    }
+
+    pub(crate) fn with_store(
+        data_dir: &Path,
+        store: Arc<Store>,
+        google: Arc<dyn GoogleTokenProvider>,
+        notifier: Arc<dyn Notifier>,
+        cfg: CoreConfig,
+        extra: Vec<Arc<dyn crate::connector::Connector>>,
+    ) -> Result<Arc<Self>, CoreError> {
+        let notifier: Arc<dyn Notifier> = Arc::new(crate::account_runtime::ScopedNotifier {
+            target: notifier,
+            store: Arc::downgrade(&store),
+        });
         let http = http::client()?;
         let session = match store.load_session()? {
             Some(saved) => {
@@ -201,6 +219,9 @@ impl Engine {
         }
         Ok(Arc::new(Self {
             store,
+            closed: std::sync::atomic::AtomicBool::new(false),
+            retired: tokio::sync::watch::channel(false).0,
+            account_sync: tokio::sync::Mutex::new(()),
             http,
             cfg,
             google,
@@ -357,6 +378,7 @@ impl Engine {
     }
 
     pub(crate) fn session(&self) -> Result<Arc<Session>, CoreError> {
+        self.ensure_active()?;
         self.session_slot().clone().ok_or(CoreError::NotLoggedIn)
     }
 
@@ -453,17 +475,48 @@ impl Engine {
         self.login(server.as_str(), &email, password, None).await
     }
 
-    /// Signs out. Grants, audit log and the device id are kept; parked items and the desktop apps' keys are dropped
-    /// (a desktop app is paired again after signing in).
+    /// Sign out and retire this runtime. Account state remains encrypted for its owner.
     pub fn logout(&self) -> Result<(), CoreError> {
-        *self.session_slot() = None;
-        self.store.clear_session()?;
-        self.store.clear_desktop_keys()?;
-        let now = unix_now();
-        for row in self.store.pending_rows(now)? {
-            self.notifier.item_resolved(row.id);
+        if let Ok(session) = self.session() {
+            session.close();
         }
-        self.store.delete_all_pending()
+        self.set_session(None);
+        self.store.clear_session()?;
+        self.closed.store(true, std::sync::atomic::Ordering::Release);
+        self.retired.send_replace(true);
+        Ok(())
+    }
+
+    pub(crate) fn ensure_active(&self) -> Result<(), CoreError> {
+        if self.closed.load(std::sync::atomic::Ordering::Acquire) {
+            return Err(CoreError::NotLoggedIn);
+        }
+        self.store.check_owner()
+    }
+
+    /// Drop account futures at logout so temporary credentials and decrypted connector data are released too.
+    pub(crate) fn run_account<'a, T: Send + 'a>(
+        &'a self,
+        work: impl Future<Output = Result<T, CoreError>> + Send + 'a,
+    ) -> std::pin::Pin<Box<dyn Future<Output = Result<T, CoreError>> + Send + 'a>> {
+        // Connector futures are large. Keep the cancellation wrapper and its work on the heap.
+        let work = Box::pin(work);
+        Box::pin(async move {
+            let mut retired = self.retired.subscribe();
+            self.ensure_active()?;
+            tokio::select! { biased;
+                _ = retired.changed() => Err(CoreError::NotLoggedIn),
+                result = work => { self.ensure_active()?; result }
+            }
+        })
+    }
+    pub(crate) fn retire(&self) -> Result<(), CoreError> {
+        self.closed.store(true, std::sync::atomic::Ordering::Release);
+        self.retired.send_replace(true);
+        if let Some(session) = self.session_slot().take() {
+            session.close();
+        }
+        self.store.close()
     }
 
     /// Makes this phone the account's approval device. When another device approves for the account, the server wants

@@ -109,7 +109,7 @@ impl Store {
         crate::autopilot::context::stamp(&mut info);
         let info_json = serde_json::to_vec(&info).map_err(|e| CoreError::storage(e.to_string()))?;
         let info = self.seal(INFO_AAD, &info_json)?;
-        let conn = self.lock();
+        let conn = self.lock()?;
         conn.execute(
             "INSERT INTO audit (at, connection_id, connection_label, action, outcome, grant_id, detail, service, account, \
              item_count, info, op) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)",
@@ -161,7 +161,7 @@ impl Store {
             info: Option<Vec<u8>>,
             op: String,
         }
-        let conn = self.lock();
+        let conn = self.lock()?;
         let mut stmt = conn.prepare(&format!(
             "SELECT seq, at, connection_id, connection_label, action, outcome, grant_id, detail, service, account, \
              item_count, info, op FROM audit {clause}"
@@ -273,7 +273,7 @@ mod tests {
         for at in 0..AUDIT_RETENTION + 3 {
             store.append_audit(&record(at)).unwrap();
         }
-        let count: i64 = store.lock().query_row("SELECT COUNT(*) FROM audit", [], |r| r.get(0)).unwrap();
+        let count: i64 = store.lock().unwrap().query_row("SELECT COUNT(*) FROM audit", [], |r| r.get(0)).unwrap();
         assert_eq!(count, AUDIT_RETENTION);
         assert_eq!(store.activity(1).unwrap()[0].at, AUDIT_RETENTION + 2);
     }

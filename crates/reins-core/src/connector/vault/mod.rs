@@ -107,6 +107,9 @@ impl Vault {
                 req = req.json(body);
             }
             let response = req.send().await?;
+            if !session.is_active() {
+                return Err(CoreError::NotLoggedIn);
+            }
             let status = response.status();
             if status.as_u16() == 401 && !retried {
                 retried = true;
@@ -151,6 +154,9 @@ impl Vault {
                 .multipart(form())
                 .send()
                 .await?;
+            if !session.is_active() {
+                return Err(CoreError::NotLoggedIn);
+            }
             let status = response.status();
             if status.as_u16() == 401 && !retried {
                 retried = true;

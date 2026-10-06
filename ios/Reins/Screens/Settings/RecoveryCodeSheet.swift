@@ -65,7 +65,12 @@ struct RecoveryCodeSheet: View {
     @Environment(\.feedback) private var feedback
     @State private var copied = false
     @State private var recorded = false
-    @State private var lastGroup = ""
+
+    private func copy() {
+        UIPasteboard.general.setItems([[UIPasteboard.typeAutomatic: code]], options: [.localOnly: true, .expirationDate: Date().addingTimeInterval(60)])
+        feedback.play(.copied)
+        copied = true
+    }
 
     /// The thirteen groups, in rows of three (the last row has four).
     static func rows(_ code: String) -> [String] {
@@ -101,6 +106,9 @@ struct RecoveryCodeSheet: View {
             .background(Palette.controlFill, in: RoundedRectangle(cornerRadius: 18, style: .continuous))
             .environment(\.layoutDirection, .leftToRight)
             .textSelection(.enabled)
+            .contentShape(Rectangle())
+            .onTapGesture(perform: copy)
+            .accessibilityAction(named: "Copy recovery code", copy)
             .accessibilityElement(children: .combine)
             .accessibilityIdentifier("recoveryCode")
             Text("To add another phone, sign in on it: this phone asks you to approve it, and no code is needed.")
@@ -108,10 +116,7 @@ struct RecoveryCodeSheet: View {
                 .foregroundStyle(Palette.tertiary)
                 .fixedSize(horizontal: false, vertical: true)
             Button(copied ? "Copied" : "Copy") {
-                // Kept out of other devices' clipboards and dropped after a minute.
-                UIPasteboard.general.setItems([[UIPasteboard.typeAutomatic: code]], options: [.localOnly: true, .expirationDate: Date().addingTimeInterval(60)])
-                feedback.play(.copied)
-                copied = true
+                copy()
             }
             .buttonStyle(CapsuleButtonStyle(kind: .secondary))
             .accessibilityIdentifier("copyRecoveryCode")
@@ -119,16 +124,11 @@ struct RecoveryCodeSheet: View {
                 Toggle("I wrote this code down and stored it somewhere safe.", isOn: $recorded)
                     .font(RFont.sans(15))
                     .accessibilityIdentifier("recoveryRecorded")
-                TextField("Final group from written copy", text: $lastGroup)
-                    .textInputAutocapitalization(.characters)
-                    .autocorrectionDisabled()
-                    .font(RFont.mono(17))
-                    .fieldWell()
-                    .accessibilityIdentifier("recoveryConfirmGroup")
+
             }
             Button(required ? "Continue" : "Done", action: onDone)
                 .buttonStyle(CapsuleButtonStyle(kind: .primary))
-                .disabled(required && !(recorded && RecoveryRecord.matchesLastGroup(code: code, entered: lastGroup)))
+                .disabled(required && !recorded)
                 .accessibilityIdentifier("recoveryDone")
         }
         .padding(24)

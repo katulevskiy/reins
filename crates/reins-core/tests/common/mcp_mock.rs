@@ -265,7 +265,7 @@ pub async fn mount_reins(rw: &MockServer) {
     Mock::given(method("POST"))
         .and(path("/identity/connect/token"))
         .respond_with(ResponseTemplate::new(200).set_body_json(json!({
-            "access_token": "RW-ACCESS", "refresh_token": "RW-REFRESH", "expires_in": 7200})))
+            "access_token": super::account_token(), "refresh_token": "RW-REFRESH", "expires_in": 7200})))
         .mount(rw)
         .await;
     Mock::given(method("PUT"))

@@ -51,8 +51,13 @@ enum SnapshotWriter {
 
     /// Re-reads what widgets show and saves it; keeps the last values of anything that cannot be read.
     static func update(from core: any ReinsCoreProtocol) async {
+        let session = await core.session()
+        guard let session else { Snapshot().save(); return }
+        let owner = Snapshot.owner(server: session.serverUrl, email: session.email)
         var s = Snapshot.load()
-        s.signedIn = await core.session() != nil
+        if s.accountFingerprint != owner { s = Snapshot() }
+        s.accountFingerprint = owner
+        s.signedIn = true
         if let pending = try? await core.pending() {
             // The connections (and their logo picks) are a network call away: keep the picks the app last wrote.
             let icons = Dictionary(s.pending.map { ($0.connection, $0.connectionIcon) }, uniquingKeysWith: { a, _ in a })
@@ -71,6 +76,7 @@ enum SnapshotWriter {
         }
         if let grants = try? await core.grants() { s.activeGrants = grants.filter(\.active).count }
         s.updatedAt = Int64(Date().timeIntervalSince1970)
+        guard await core.session() == session else { return }
         s.save()
         WidgetCenter.shared.reloadAllTimelines()
         ControlCenter.shared.reloadAllControls()

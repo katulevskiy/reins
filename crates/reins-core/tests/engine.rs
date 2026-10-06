@@ -74,7 +74,7 @@ async fn mount_identity(server: &MockServer) {
     Mock::given(method("POST"))
         .and(path("/identity/connect/token"))
         .respond_with(ResponseTemplate::new(200).set_body_json(json!({
-            "access_token": "ACCESS", "refresh_token": "REFRESH", "expires_in": 7200})))
+            "access_token": common::account_token(), "refresh_token": "REFRESH", "expires_in": 7200})))
         .mount(server)
         .await;
 }
@@ -87,6 +87,7 @@ async fn env() -> Env {
     let google = Arc::new(FakeGoogle::new());
     let notifier = Arc::new(RecordingNotifier::default());
     let core = open_core(dir.path(), &gmail, &google, &notifier);
+    common::mount_account_vault(&server, EMAIL, "hunter2").await;
     core.login(server.uri(), EMAIL.to_owned(), "hunter2".to_owned(), None).await.unwrap();
     // One Gmail account is connected, as on a phone that has been set up.
     Mock::given(method("GET"))
@@ -213,7 +214,7 @@ async fn an_uncovered_search_is_parked_then_approved_with_a_standing_grant() {
     assert_eq!(sent[0].1["outcome"], "result");
     assert_eq!(sent[0].1["result"]["kind"], "search");
     assert_eq!(sent[0].1["result"]["messages"][0]["from"], "alerts@bank.com");
-    assert!(env.core.pending().await.unwrap().is_empty());
+    assert_eq!(env.core.pending().await.unwrap().len(), 0);
     assert_eq!(env.notifier.resolved.lock().unwrap().as_slice(), ["r1"]);
     let grants = env.core.grants().await.unwrap();
     assert_eq!(grants.len(), 1);
@@ -229,7 +230,7 @@ async fn an_uncovered_search_is_parked_then_approved_with_a_standing_grant() {
     let sent = answers(&env).await;
     assert_eq!(sent.len(), 2, "answered automatically");
     assert_eq!(sent[1].0, "r2");
-    assert!(env.core.pending().await.unwrap().is_empty());
+    assert_eq!(env.core.pending().await.unwrap().len(), 0);
     assert_eq!(env.notifier.pending.lock().unwrap().len(), 1, "no second prompt");
     // A different connection is not covered by that grant.
     serve_pending(&env, &[search_request("r3", "other", "Claude", "from:bank")], &[]).await;
@@ -338,7 +339,7 @@ async fn an_ai_can_ask_for_a_narrow_permission_and_the_user_can_only_shorten_it(
 
     // The permission now answers a matching search without a prompt.
     serve_pending(&env, &[search_request("r2", "c1", "Claude", "from:bank")], &[]).await;
-    assert!(env.core.sync(0).await.unwrap().is_empty());
+    assert_eq!(env.core.sync(0).await.unwrap().len(), 0);
     assert_eq!(answers(&env).await.len(), 2);
     let activity = env.core.activity(10).await.unwrap();
     assert!(activity.iter().any(|a| a.action == "grant" && a.outcome == "granted"));
@@ -351,7 +352,7 @@ async fn a_refused_permission_request_creates_nothing() {
     env.core.sync(0).await.unwrap();
     env.core.deny("g-r1".to_owned()).await.unwrap();
     assert_eq!(answers(&env).await[0].1["outcome"], "denied");
-    assert!(env.core.grants().await.unwrap().is_empty());
+    assert_eq!(env.core.grants().await.unwrap().len(), 0);
 }
 
 #[tokio::test]
@@ -410,7 +411,7 @@ async fn a_permission_can_be_created_ahead_of_time_and_used_once() {
     assert_eq!((grants[0].origin.as_str(), grants[0].connection_label.as_str(), grants[0].uses), ("user", "Claude", 0));
 
     serve_pending(&env, &[search_request("r1", "c1", "Claude", "from:bank")], &[]).await;
-    assert!(env.core.sync(0).await.unwrap().is_empty());
+    assert_eq!(env.core.sync(0).await.unwrap().len(), 0);
     let after = env.core.grants().await.unwrap();
     assert_eq!((after[0].uses, after[0].active), (1, false), "used up");
     assert!(after[0].last_used_at.is_some());
@@ -543,7 +544,7 @@ async fn deny_answers_denied_and_is_logged() {
     assert_eq!(answers(&env).await[0].1, json!({"v": 1, "outcome": "denied", "reason": null}));
     assert_eq!(env.core.activity(5).await.unwrap()[0].outcome, "denied");
     assert_eq!(env.core.deny("r1".to_owned()).await.unwrap_err(), CoreError::NotFound, "cannot decide twice");
-    assert!(env.core.grants().await.unwrap().is_empty());
+    assert_eq!(env.core.grants().await.unwrap().len(), 0);
 }
 
 #[tokio::test]
@@ -588,7 +589,7 @@ async fn the_same_request_by_push_and_by_poll_is_processed_once() {
     env.core.deny("dup1".to_owned()).await.unwrap();
     env.core.handle_push("req".to_owned(), "dup1".to_owned()).await.unwrap();
     assert_eq!(answers(&env).await.len(), 1);
-    assert!(env.core.pending().await.unwrap().is_empty());
+    assert_eq!(env.core.pending().await.unwrap().len(), 0);
 }
 
 #[tokio::test]
@@ -695,7 +696,7 @@ async fn malformed_and_hostile_requests_are_rejected_not_executed() {
     let too_many = json!({"v": 1, "id": "b3", "connection_id": "c1", "connection_label": "AI", "created_at": 1,
         "call": {"tool": "gmail_search", "query": "x", "max_results": 5000}});
     serve_pending(&env, &[bad_version, injected, too_many], &[]).await;
-    assert!(env.core.sync(0).await.unwrap().is_empty());
+    assert_eq!(env.core.sync(0).await.unwrap().len(), 0);
     let sent = answers(&env).await;
     assert_eq!(sent.len(), 3);
     assert!(sent.iter().all(|(_, body)| body["outcome"] == "error"));
@@ -733,7 +734,7 @@ async fn pairing_requests_are_cleaned_and_answered() {
         .map(|r| serde_json::from_slice(&r.body).unwrap())
         .collect();
     assert_eq!(posted[0], json!({"v": 1, "approved": true, "chosen_code": 47, "label": "Work Claude"}));
-    assert!(env.core.pending().await.unwrap().is_empty());
+    assert_eq!(env.core.pending().await.unwrap().len(), 0);
     assert_eq!(env.core.activity(1).await.unwrap()[0].action, "pair");
 }
 
@@ -808,7 +809,7 @@ async fn revoking_a_connection_revokes_its_grants_and_drops_its_parked_requests(
         .mount(&env.server)
         .await;
     env.core.revoke_connection("other".to_owned()).await.unwrap();
-    assert!(env.core.pending().await.unwrap().is_empty());
+    assert_eq!(env.core.pending().await.unwrap().len(), 0);
     assert!(matches!(env.core.revoke_connection("../x".to_owned()).await, Err(CoreError::Invalid { .. })));
 }
 
@@ -843,7 +844,7 @@ async fn grants_can_be_revoked_and_unknown_ids_are_not_found() {
     assert!(matches!(env.core.delete_grant(id.clone()).await, Err(CoreError::Invalid { .. })));
     env.core.revoke_grant(id.clone()).await.unwrap();
     env.core.delete_grant(id.clone()).await.unwrap();
-    assert!(env.core.grants().await.unwrap().is_empty());
+    assert_eq!(env.core.grants().await.unwrap().len(), 0);
     assert_eq!(env.core.delete_grant(id).await.unwrap_err(), CoreError::NotFound);
 }
 
@@ -876,7 +877,7 @@ async fn nothing_works_signed_out_and_state_survives_a_restart() {
     assert_eq!(restarted.register_device(None).await.unwrap_err(), CoreError::NotLoggedIn);
     assert_eq!(restarted.connections().await.unwrap_err(), CoreError::NotLoggedIn);
     assert_eq!(restarted.handle_push("req".to_owned(), "x".to_owned()).await.unwrap_err(), CoreError::NotLoggedIn);
-    assert_eq!(restarted.activity(5).await.unwrap().len(), 1, "the audit log survives sign-out");
+    assert_eq!(restarted.activity(5).await.unwrap().len(), 0, "signed-out views have no decrypted account history");
     assert!(matches!(restarted.handle_push("bogus".to_owned(), "x".to_owned()).await, Err(CoreError::Invalid { .. })));
 }
 
@@ -889,7 +890,14 @@ async fn register_device_sends_the_fcm_token_and_reports_server_refusals() {
         .mount(&env.server)
         .await;
     env.core.register_device(Some("fcm-token-1".to_owned())).await.unwrap();
-    let put = env.server.received_requests().await.unwrap().into_iter().find(|r| r.method.as_str() == "PUT").unwrap();
+    let put = env
+        .server
+        .received_requests()
+        .await
+        .unwrap()
+        .into_iter()
+        .find(|r| r.method.as_str() == "PUT" && r.url.path() == "/reins/api/device")
+        .unwrap();
     assert_eq!(serde_json::from_slice::<Value>(&put.body).unwrap(), json!({"fcm_token": "fcm-token-1"}));
     Mock::given(method("GET"))
         .and(path("/reins/api/pending"))
@@ -951,15 +959,16 @@ async fn add_work_account(env: &Env) {
 #[tokio::test]
 async fn accounts_are_added_listed_and_removed() {
     let env = env().await;
-    assert_eq!(env.core.accounts().await.unwrap().len(), 1, "the account of the setup");
+    assert_eq!(env.core.accounts().await.unwrap().len(), 2, "the owning vault and the Gmail account of the setup");
     add_work_account(&env).await;
-    let names: Vec<_> = env.core.accounts().await.unwrap().into_iter().map(|a| a.account).collect();
+    let names: Vec<_> =
+        env.core.accounts().await.unwrap().into_iter().filter(|a| a.service == "gmail").map(|a| a.account).collect();
     assert_eq!(names, [GMAIL, WORK]);
     assert!(matches!(env.core.add_account("not an address".to_owned()).await, Err(CoreError::Invalid { .. })));
     assert_eq!(env.core.account_status(WORK.to_owned()).await, GmailStatus::Ready);
     env.core.remove_account("WORK@gmail.com".to_owned()).await.unwrap();
     assert_eq!(env.core.remove_account(WORK.to_owned()).await.unwrap_err(), CoreError::NotFound);
-    assert_eq!(env.core.accounts().await.unwrap().len(), 1);
+    assert_eq!(env.core.accounts().await.unwrap().len(), 2);
 }
 
 fn list_request(id: &str, conn: &str, service: Option<&str>) -> Value {
@@ -1004,10 +1013,13 @@ async fn the_ai_sees_the_integrations_freely_but_their_accounts_only_when_the_us
 
     // Integrations: no accounts in the answer, nothing to approve.
     serve_pending(&env, &[list_request("r1", "c1", None)], &[]).await;
-    assert!(env.core.sync(0).await.unwrap().is_empty());
+    assert_eq!(env.core.sync(0).await.unwrap().len(), 0);
     let told = answers(&env).await;
     assert_eq!(told[0].1["result"]["kind"], "integrations");
-    assert_eq!(told[0].1["result"]["integrations"], json!([{"service": "gmail", "name": "Gmail"}]));
+    assert_eq!(
+        told[0].1["result"]["integrations"],
+        json!([{"service": "vault", "name": "Password vault"}, {"service": "gmail", "name": "Gmail"}])
+    );
     assert!(!told[0].1.to_string().contains('@'), "no address in the answer: {}", told[0].1);
 
     // Accounts of an integration: waits for the user, who is shown every account and picks the ones to share.
@@ -1016,7 +1028,7 @@ async fn the_ai_sees_the_integrations_freely_but_their_accounts_only_when_the_us
     assert_eq!((items[0].action.as_str(), items[0].count, items[0].service.as_str()), ("accounts", 2, "gmail"));
     let view = env.core.approval_view("r2".to_owned()).await.unwrap();
     assert_eq!((view.kind, view.accounts.clone()), (ApprovalKind::Accounts, vec![GMAIL.to_owned(), WORK.to_owned()]));
-    assert!(view.shared_accounts.is_empty());
+    assert_eq!(view.shared_accounts.len(), 0);
     assert_eq!(answers(&env).await.len(), 1, "nothing was told yet");
     let month = || StandingGrant {
         duration_secs: Some(30 * 86_400),
@@ -1110,7 +1122,7 @@ async fn accounts_can_also_be_shown_just_once_and_only_of_a_connected_integratio
     assert_eq!(answers(&env).await[0].1["result"]["kind"], "accounts");
     assert!(env.core.grants().await.unwrap().is_empty(), "once means once");
     serve_pending(&env, &[list_request("r2", "c1", Some("drive"))], &[]).await;
-    assert!(env.core.sync(0).await.unwrap().is_empty());
+    assert_eq!(env.core.sync(0).await.unwrap().len(), 0);
     let told = answers(&env).await;
     assert_eq!(told[1].1["outcome"], "error");
     assert!(told[1].1["message"].as_str().unwrap().contains("not connected"));
@@ -1156,7 +1168,7 @@ async fn a_request_is_served_from_the_account_it_names_and_grants_stay_with_that
 
     // Removing the work account takes its grant along.
     env.core.remove_account(WORK.to_owned()).await.unwrap();
-    assert!(env.core.grants().await.unwrap().is_empty());
+    assert_eq!(env.core.grants().await.unwrap().len(), 0);
 }
 
 #[tokio::test]
@@ -1167,7 +1179,7 @@ async fn removing_an_account_answers_the_requests_waiting_for_it() {
     serve_pending(&env, &[for_account(search_request("r1", "c1", "Claude", "x"), WORK)], &[]).await;
     assert_eq!(env.core.sync(0).await.unwrap().len(), 1);
     env.core.remove_account(WORK.to_owned()).await.unwrap();
-    assert!(env.core.pending().await.unwrap().is_empty());
+    assert_eq!(env.core.pending().await.unwrap().len(), 0);
     let told = answers(&env).await;
     assert_eq!(told[0].1["outcome"], "error");
     assert!(told[0].1["message"].as_str().unwrap().contains("disconnected"));

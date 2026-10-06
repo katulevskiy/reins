@@ -30,6 +30,7 @@ class GrantRemindersTest {
 
     @Before
     fun setUp() {
+        dev.reins.android.TestNativeKeys.install()
         shadowOf(context as android.app.Application).grantPermissions(android.Manifest.permission.POST_NOTIFICATIONS)
         context.getSharedPreferences("grant_reminders", Context.MODE_PRIVATE).edit().clear().commit()
         Timers.frozenNowMillis = now * 1000

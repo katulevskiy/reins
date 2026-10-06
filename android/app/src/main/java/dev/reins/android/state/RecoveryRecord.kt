@@ -13,9 +13,6 @@ class RecoveryRecord(context: Context) {
     fun confirm(server: String, code: String): Boolean = prefs.edit().putBoolean(key(server, code), true).commit()
 
     companion object {
-        fun matchesLastGroup(code: String, entered: String): Boolean =
-            entered.trim().uppercase(java.util.Locale.ROOT) == code.substringAfterLast('-')
-
         internal fun key(server: String, code: String): String {
             val identity = server.trim().trimEnd('/').lowercase(java.util.Locale.ROOT) + "|" + code
             return MessageDigest.getInstance("SHA-256").digest(identity.toByteArray(Charsets.UTF_8))

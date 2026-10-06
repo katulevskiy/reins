@@ -113,7 +113,7 @@ async fn env(sends: Vec<Value>) -> Env {
     Mock::given(method("POST"))
         .and(path("/identity/connect/token"))
         .respond_with(ResponseTemplate::new(200).set_body_json(json!({
-            "access_token": "ACCESS", "refresh_token": "REFRESH", "expires_in": 7200})))
+            "access_token": common::account_token(), "refresh_token": "REFRESH", "expires_in": 7200})))
         .mount(&server)
         .await;
     let master = master_key(
@@ -143,6 +143,7 @@ async fn env(sends: Vec<Value>) -> Env {
         vec![],
     )
     .unwrap();
+    common::mount_account_vault(&server, EMAIL, PASSWORD).await;
     core.login(server.uri(), EMAIL.to_owned(), PASSWORD.to_owned(), None).await.unwrap();
     core.add_token_account("vault".into(), PASSWORD.into()).await.unwrap();
     Env {
@@ -343,7 +344,10 @@ async fn a_text_send_is_encrypted_with_its_own_key_and_the_link_opens_it_for_any
     // The request the server received.
     let requests = sent(&env, "POST", "/api/sends").await;
     assert_eq!(requests.len(), 1);
-    assert_eq!(requests[0].headers.get("authorization").unwrap().to_str().unwrap(), "Bearer ACCESS");
+    assert_eq!(
+        requests[0].headers.get("authorization").unwrap().to_str().unwrap(),
+        format!("Bearer {}", common::account_token()).as_str()
+    );
     let wire = body(&requests[0]);
     let raw = send_key_of(&wire);
     assert_eq!(raw.len(), 16, "a 16-byte send key, wrapped with the user key");
@@ -449,7 +453,10 @@ async fn a_file_send_is_created_then_its_encrypted_content_uploaded() {
 
     let uploads = sent(&env, "POST", &format!("/api/sends/{NEW_ID}/file/FILE123")).await;
     assert_eq!(uploads.len(), 1, "one upload");
-    assert_eq!(uploads[0].headers.get("authorization").unwrap().to_str().unwrap(), "Bearer ACCESS");
+    assert_eq!(
+        uploads[0].headers.get("authorization").unwrap().to_str().unwrap(),
+        format!("Bearer {}", common::account_token()).as_str()
+    );
     let parts = multipart(&uploads[0]);
     assert_eq!(parts.len(), 1);
     let (headers, data) = &parts[0];
@@ -792,7 +799,7 @@ async fn unknown_or_malformed_ids_are_refused_without_a_request_to_the_server() 
         let message = refused(&env, id, op, &json!({"send": send})).await;
         assert!(message.contains("No Send with that id") || message.contains("must be the id"), "{id}: {message}");
     }
-    assert!(sent(&env, "DELETE", "/api/sends/nope").await.is_empty());
+    assert_eq!(sent(&env, "DELETE", "/api/sends/nope").await.len(), 0);
 }
 
 // ================= changing =================
@@ -830,7 +837,7 @@ async fn an_update_sends_the_whole_send_with_only_the_given_fields_changed() {
     assert!(shown.contains("Text: replaced by 8 characters: new text"), "{shown}");
     assert!(shown.contains("Password: set (not shown here)") && shown.contains("Disabled: no -> yes"), "{shown}");
     assert!(!shown.contains("fresh"), "{shown}");
-    assert!(sent(&env, "PUT", &format!("/api/sends/{TEXT_ID}")).await.is_empty());
+    assert_eq!(sent(&env, "PUT", &format!("/api/sends/{TEXT_ID}")).await.len(), 0);
     env.core.approve("r1".to_owned(), choice(&[], None)).await.unwrap();
 
     let wire = body(&sent(&env, "PUT", &format!("/api/sends/{TEXT_ID}")).await[0]);
@@ -901,7 +908,7 @@ async fn updates_that_make_no_sense_are_refused_before_the_user_is_asked() {
         let message = refused(&env, id, "send_update", &args).await;
         assert!(message.contains(needle), "{id}: {message}");
     }
-    assert!(sent(&env, "PUT", &format!("/api/sends/{TEXT_ID}")).await.is_empty());
+    assert_eq!(sent(&env, "PUT", &format!("/api/sends/{TEXT_ID}")).await.len(), 0);
 }
 
 #[tokio::test]
@@ -943,11 +950,11 @@ async fn the_password_of_a_send_can_be_removed_but_only_if_it_has_one() {
         view.preview,
         ["Remove the password of the Send \"Locked\"", "Anyone with the link will be able to open it"]
     );
-    assert!(sent(&env, "PUT", &format!("/api/sends/{FILE_ID}/remove-password")).await.is_empty());
+    assert_eq!(sent(&env, "PUT", &format!("/api/sends/{FILE_ID}/remove-password")).await.len(), 0);
     env.core.approve("r1".to_owned(), choice(&[], None)).await.unwrap();
     let requests = sent(&env, "PUT", &format!("/api/sends/{FILE_ID}/remove-password")).await;
     assert_eq!(requests.len(), 1);
-    assert!(requests[0].body.is_empty());
+    assert_eq!(requests[0].body.len(), 0);
     assert_eq!(answers(&env).await.pop().unwrap()["result"]["data"], json!({"password_removed": true, "id": FILE_ID}));
 }
 
@@ -965,7 +972,7 @@ async fn a_send_is_deleted_only_after_the_user_sees_which() {
     assert_eq!(view.preview[0], "Delete the Send \"Wifi\" for good");
     assert!(view.preview.iter().any(|l| l.contains("opened 2 times")));
     assert!(!view.no_standing, "deleting a Send is not once-only: a standing permission may cover it");
-    assert!(sent(&env, "DELETE", &format!("/api/sends/{TEXT_ID}")).await.is_empty());
+    assert_eq!(sent(&env, "DELETE", &format!("/api/sends/{TEXT_ID}")).await.len(), 0);
     env.core.approve("r1".to_owned(), choice(&[], None)).await.unwrap();
     assert_eq!(sent(&env, "DELETE", &format!("/api/sends/{TEXT_ID}")).await.len(), 1);
     assert_eq!(answers(&env).await.pop().unwrap()["result"]["data"], json!({"deleted": true, "id": TEXT_ID}));

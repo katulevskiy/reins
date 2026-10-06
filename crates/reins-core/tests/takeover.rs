@@ -57,6 +57,7 @@ async fn signed_in() -> Env {
     let notifier: Arc<dyn Notifier> = Arc::new(RecordingNotifier::default());
     let core = ReinsCore::with_config(dir.path().to_str().unwrap(), &FakeKeys, google, notifier, CoreConfig::default())
         .unwrap();
+    common::mount_account_vault(&server, EMAIL, PASSWORD).await;
     core.login(server.uri(), EMAIL.to_owned(), PASSWORD.to_owned(), None).await.unwrap();
     Env {
         server,

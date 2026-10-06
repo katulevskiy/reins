@@ -160,7 +160,7 @@ async fn env() -> Env {
     Mock::given(method("POST"))
         .and(path("/identity/connect/token"))
         .respond_with(ResponseTemplate::new(200).set_body_json(json!({
-            "access_token": "ACCESS", "refresh_token": "REFRESH", "expires_in": 7200})))
+            "access_token": common::account_token(), "refresh_token": "REFRESH", "expires_in": 7200})))
         .mount(&server)
         .await;
     let dir = tempfile::tempdir().unwrap();
@@ -181,6 +181,7 @@ async fn env() -> Env {
         vec![Arc::<FakeTelegram>::clone(&telegram)],
     )
     .unwrap();
+    common::mount_account_vault(&server, "me@example.com", "hunter2").await;
     core.login(server.uri(), "me@example.com".to_owned(), "hunter2".to_owned(), None).await.unwrap();
     core.engine().register_account("telegram", "+15550100").unwrap();
     Env {
@@ -389,7 +390,7 @@ async fn when_everything_found_is_sensitive_nothing_can_be_remembered() {
         Err(CoreError::Invalid { .. })
     ));
     env.core.approve("r1".to_owned(), choice(&["200:9"], None)).await.unwrap();
-    assert!(env.core.grants().await.unwrap().is_empty());
+    assert_eq!(env.core.grants().await.unwrap().len(), 0);
 }
 
 #[tokio::test]
@@ -459,7 +460,7 @@ async fn a_search_across_chats_is_covered_only_when_every_chat_it_touches_is() {
     env.core.approve("r0".to_owned(), choice(&["100:1"], hour(&["100"]))).await.unwrap();
     // "dinner" is only in Family: covered. "report" is only in Work: not.
     serve_pending(&env, &[call_request("r1", "c1", "search", &json!({"query": "dinner"}))]).await;
-    assert!(env.core.sync(0).await.unwrap().is_empty());
+    assert_eq!(env.core.sync(0).await.unwrap().len(), 0);
     serve_pending(&env, &[call_request("r2", "c1", "search", &json!({"query": "report"}))]).await;
     assert_eq!(env.core.sync(0).await.unwrap().len(), 1);
     // Nothing found: nothing to ask.
@@ -481,7 +482,7 @@ async fn a_refusal_lists_what_would_have_been_shared_and_errors_reach_the_ai() {
 
     *env.telegram.fail.lock().unwrap() = true;
     serve_pending(&env, &[call_request("r2", "c1", "read", &json!({"chat": "Family"}))]).await;
-    assert!(env.core.sync(0).await.unwrap().is_empty());
+    assert_eq!(env.core.sync(0).await.unwrap().len(), 0);
     let last = answers(&env).await.pop().unwrap();
     assert_eq!(last["outcome"], "error");
     assert!(last["message"].as_str().unwrap().contains("bad day"));
@@ -494,7 +495,7 @@ async fn accounts_are_chosen_by_name_and_never_revealed_by_errors() {
     let env = env().await;
     env.core.engine().register_account("telegram", "+15550199").unwrap();
     serve_pending(&env, &[call_request("r1", "c1", "read", &json!({"chat": "Family"}))]).await;
-    assert!(env.core.sync(0).await.unwrap().is_empty());
+    assert_eq!(env.core.sync(0).await.unwrap().len(), 0);
     let message = answers(&env).await[0]["message"].as_str().unwrap().to_owned();
     assert!(message.contains("reins_list_accounts") && !message.contains("+1555"), "{message}");
 
@@ -518,7 +519,7 @@ async fn an_integration_that_is_not_there_or_not_connected_says_so() {
     let github = json!({"v": 1, "id": "r1", "connection_id": "c1", "connection_label": "Claude", "created_at": 100,
         "call": {"tool": "connector", "service": "github", "op": "list_repos", "args": {"limit": 20}}});
     serve_pending(&env, &[github]).await;
-    assert!(env.core.sync(0).await.unwrap().is_empty());
+    assert_eq!(env.core.sync(0).await.unwrap().len(), 0);
     let said = answers(&env).await[0]["message"].as_str().unwrap().to_owned();
     assert!(said.contains("not connected"), "{said}");
     let vault = json!({"v": 1, "id": "r0", "connection_id": "c1", "connection_label": "Claude", "created_at": 100,

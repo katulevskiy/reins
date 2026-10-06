@@ -46,7 +46,7 @@ impl Store {
         payload: &[u8],
     ) -> Result<bool, CoreError> {
         let sealed = self.seal(&aad(id), payload)?;
-        let inserted = self.lock().execute(
+        let inserted = self.lock()?.execute(
             "INSERT OR IGNORE INTO pending (id, kind, created_at, parked_at, payload) VALUES (?1, ?2, ?3, ?4, ?5)",
             params![id, kind_str(kind), created_at, now, sealed],
         )?;
@@ -60,7 +60,7 @@ impl Store {
 
     /// Unexpired parked items, newest first. Expired and undecryptable rows are deleted.
     pub fn pending_rows(&self, now: i64) -> Result<Vec<PendingRow>, CoreError> {
-        let conn = self.lock();
+        let conn = self.lock()?;
         conn.execute("DELETE FROM pending WHERE parked_at <= ?1", params![now - PENDING_TTL_SECS])?;
         let mut stmt =
             conn.prepare("SELECT id, kind, created_at, parked_at, payload FROM pending ORDER BY created_at DESC, id")?;
@@ -102,17 +102,17 @@ impl Store {
 
     /// Removes a parked item. Returns whether it existed.
     pub fn remove_pending(&self, id: &str) -> Result<bool, CoreError> {
-        Ok(self.lock().execute("DELETE FROM pending WHERE id = ?1", params![id])? == 1)
+        Ok(self.lock()?.execute("DELETE FROM pending WHERE id = ?1", params![id])? == 1)
     }
 
     pub fn delete_all_pending(&self) -> Result<(), CoreError> {
-        self.lock().execute("DELETE FROM pending", [])?;
+        self.lock()?.execute("DELETE FROM pending", [])?;
         Ok(())
     }
 
     /// Remembers that `id` was answered.
     pub fn mark_handled(&self, id: &str, now: i64) -> Result<(), CoreError> {
-        let conn = self.lock();
+        let conn = self.lock()?;
         conn.execute("DELETE FROM handled WHERE at <= ?1", params![now - HANDLED_RETENTION_SECS])?;
         conn.execute("INSERT OR REPLACE INTO handled (id, at) VALUES (?1, ?2)", params![id, now])?;
         Ok(())
@@ -120,7 +120,7 @@ impl Store {
 
     /// True when `id` is parked or was already answered.
     pub fn is_known(&self, id: &str) -> Result<bool, CoreError> {
-        let conn = self.lock();
+        let conn = self.lock()?;
         let found: Option<i64> = conn
             .query_row(
                 "SELECT 1 FROM pending WHERE id = ?1 UNION ALL SELECT 1 FROM handled WHERE id = ?1 LIMIT 1",
@@ -177,7 +177,7 @@ mod tests {
         let store = open(dir.path());
         store.park("a", PendingKind::Request, 1, 10, b"secret-a").unwrap();
         store.park("b", PendingKind::Request, 1, 10, b"secret-b").unwrap();
-        let conn = store.lock();
+        let conn = store.lock().unwrap();
         conn.execute("UPDATE pending SET payload = (SELECT payload FROM pending WHERE id = 'a') WHERE id = 'b'", [])
             .unwrap();
         drop(conn);

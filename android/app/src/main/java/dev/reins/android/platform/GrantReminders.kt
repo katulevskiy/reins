@@ -47,7 +47,7 @@ object GrantReminders {
     /** Aligns the alarms with [grants]. */
     fun sync(context: Context, grants: List<GrantView>, nowSeconds: Long = System.currentTimeMillis() / 1000) {
         val wanted = plan(grants).filter { it.expiresAt > nowSeconds }
-        val prefs = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
+        val prefs = SealedPreferences(context, PREFS)
         val before = read(prefs.getString(PLAN, null))
         before.filter { old -> wanted.none { it.key == old.key } }.forEach { cancel(context, it.id) }
         val done = prefs.getStringSet(DONE, emptySet()).orEmpty().filter { key -> wanted.any { it.key == key } }.toSet()
@@ -57,14 +57,14 @@ object GrantReminders {
 
     /** After a reboot: puts the alarms back from the saved plan. */
     fun rearm(context: Context, nowSeconds: Long = System.currentTimeMillis() / 1000) {
-        val prefs = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
+        val prefs = SealedPreferences(context, PREFS)
         val done = prefs.getStringSet(DONE, emptySet()).orEmpty()
         read(prefs.getString(PLAN, null)).filter { it.expiresAt > nowSeconds && it.key !in done }.forEach { schedule(context, it, nowSeconds) }
     }
 
     /** The alarm for [id] went off. */
     fun due(context: Context, id: String, nowSeconds: Long = System.currentTimeMillis() / 1000) {
-        val prefs = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
+        val prefs = SealedPreferences(context, PREFS)
         val reminder = read(prefs.getString(PLAN, null)).firstOrNull { it.id == id } ?: return
         val done = prefs.getStringSet(DONE, emptySet()).orEmpty()
         if (reminder.key in done || reminder.expiresAt <= nowSeconds) return

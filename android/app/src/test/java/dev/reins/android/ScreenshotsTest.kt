@@ -54,6 +54,7 @@ abstract class ScreenshotsBase(private val suffix: String) {
 
     @Before
     fun setUp() {
+        dev.reins.android.TestNativeKeys.install()
         assumeTrue(System.getProperty("reins.screenshots") != null)
         shadowOf(context as android.app.Application).grantPermissions(android.Manifest.permission.POST_NOTIFICATIONS)
         Timers.live = false

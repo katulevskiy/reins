@@ -45,6 +45,7 @@ class OnboardingFlowTest : FlowHarness() {
 
     @Before
     fun resetOnboarding() {
+        dev.reins.android.TestNativeKeys.install()
         core.resetOnboarding()
         core.logins.clear()
         core.registrations.clear()

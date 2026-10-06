@@ -44,9 +44,11 @@ class TakeoverFlowTest : FlowHarness() {
 
     @Before
     fun anotherPhoneApproves() {
+        dev.reins.android.TestNativeKeys.install()
         core.registrations.clear()
         core.resetOnboarding()
         core.otherApprovalDevice = true
+        core.session?.let { container.deviceStatus.selectAccount(it) }
     }
 
     private fun callbackIntent() = Intent(context, MainActivity::class.java)
@@ -97,7 +99,7 @@ class TakeoverFlowTest : FlowHarness() {
         rule.onNodeWithTag("recoveryCode").performTextReplacement(FakeCore.RECOVERY_CODE)
         tap("unlockAccount")
         tap("recoveryRecorded")
-        rule.onNodeWithTag("recoveryConfirmGroup").performTextReplacement(FakeCore.RECOVERY_CODE.substringAfterLast('-'))
+
         tap("recoveryCodeDone")
         awaitTag("setupComputer")
         assertEquals(FakeCore.RECOVERY_CODE, core.unlockAttempts.single())
@@ -116,7 +118,7 @@ class TakeoverFlowTest : FlowHarness() {
         rule.onNodeWithTag("joinCode").assertTextEquals("482 193")
         repeat(3) { pollOnce() }
         tap("recoveryRecorded")
-        rule.onNodeWithTag("recoveryConfirmGroup").performTextReplacement(FakeCore.RECOVERY_CODE.substringAfterLast('-'))
+
         tap("recoveryCodeDone")
         awaitTag("setupComputer")
         awaitCore { core.registrations.size == 1 }

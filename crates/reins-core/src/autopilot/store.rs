@@ -133,7 +133,7 @@ impl Store {
     }
 
     pub fn ap_mode_rows(&self) -> Result<Vec<(String, ModeRow)>, CoreError> {
-        let conn = self.lock();
+        let conn = self.lock()?;
         let mut stmt =
             conn.prepare("SELECT scope, mode, bypass_until, profile_id FROM autopilot_settings ORDER BY scope")?;
         let rows = stmt
@@ -152,7 +152,7 @@ impl Store {
     }
 
     pub fn ap_set_mode_row(&self, scope: &str, row: &ModeRow, now: i64) -> Result<(), CoreError> {
-        let conn = self.lock();
+        let conn = self.lock()?;
         if row == &ModeRow::default() {
             conn.execute("DELETE FROM autopilot_settings WHERE scope = ?1", params![scope])?;
             return Ok(());
@@ -170,7 +170,7 @@ impl Store {
     /// Oldest first; profiles that cannot be decrypted are skipped.
     pub fn ap_profiles(&self) -> Result<Vec<StoredProfile>, CoreError> {
         let rows: Vec<(String, i64, Vec<u8>)> = {
-            let conn = self.lock();
+            let conn = self.lock()?;
             let mut stmt =
                 conn.prepare("SELECT id, created_at, data FROM autopilot_profiles ORDER BY created_at, id")?;
             stmt.query_map([], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)))?.collect::<Result<Vec<_>, _>>()?
@@ -195,7 +195,7 @@ impl Store {
 
     pub fn ap_put_profile(&self, id: &str, created_at: i64, profile: &Profile) -> Result<(), CoreError> {
         let sealed = self.seal(&profile_aad(id), &to_json(profile)?)?;
-        self.lock().execute(
+        self.lock()?.execute(
             "INSERT INTO autopilot_profiles (id, created_at, data) VALUES (?1, ?2, ?3)
                  ON CONFLICT (id) DO UPDATE SET data = ?3",
             params![id, created_at, sealed],
@@ -205,7 +205,7 @@ impl Store {
 
     /// Deletes a profile, its memory, and the assignments to it.
     pub fn ap_delete_profile(&self, id: &str) -> Result<(), CoreError> {
-        let conn = self.lock();
+        let conn = self.lock()?;
         conn.execute("DELETE FROM autopilot_profiles WHERE id = ?1", params![id])?;
         conn.execute("DELETE FROM autopilot_memory WHERE profile_id = ?1", params![id])?;
         conn.execute("UPDATE autopilot_settings SET profile_id = NULL WHERE profile_id = ?1", params![id])?;
@@ -221,7 +221,7 @@ impl Store {
     /// A profile's memory, newest first (rows that cannot be decrypted are skipped).
     pub fn ap_memory(&self, profile_id: &str) -> Result<Vec<MemoryRow>, CoreError> {
         let rows: Vec<(String, Vec<u8>)> = {
-            let conn = self.lock();
+            let conn = self.lock()?;
             let mut stmt = conn.prepare(
                 "SELECT request_id, data FROM autopilot_memory WHERE profile_id = ?1 ORDER BY at DESC, id DESC",
             )?;
@@ -237,7 +237,7 @@ impl Store {
     }
 
     pub fn ap_memory_count(&self, profile_id: &str) -> Result<u32, CoreError> {
-        Ok(self.lock().query_row(
+        Ok(self.lock()?.query_row(
             "SELECT COUNT(*) FROM autopilot_memory WHERE profile_id = ?1",
             params![profile_id],
             |r| r.get(0),
@@ -247,7 +247,7 @@ impl Store {
     /// Remembers a decision (replacing an earlier one about the same request) and evicts beyond the cap.
     pub fn ap_add_memory(&self, profile_id: &str, row: &MemoryRow) -> Result<(), CoreError> {
         let sealed = self.seal(&memory_aad(profile_id, &row.request_id), &to_json(row)?)?;
-        let conn = self.lock();
+        let conn = self.lock()?;
         conn.execute("DELETE FROM autopilot_memory WHERE request_id = ?1", params![row.request_id])?;
         conn.execute(
             "INSERT INTO autopilot_memory (profile_id, request_id, at, data) VALUES (?1, ?2, ?3, ?4)",
@@ -262,7 +262,7 @@ impl Store {
     }
 
     pub fn ap_clear_memory(&self, profile_id: &str) -> Result<(), CoreError> {
-        self.lock().execute("DELETE FROM autopilot_memory WHERE profile_id = ?1", params![profile_id])?;
+        self.lock()?.execute("DELETE FROM autopilot_memory WHERE profile_id = ?1", params![profile_id])?;
         Ok(())
     }
 
@@ -270,7 +270,7 @@ impl Store {
 
     pub fn ap_suggestion(&self, request_id: &str) -> Result<Option<Suggestion>, CoreError> {
         let sealed: Option<Vec<u8>> = self
-            .lock()
+            .lock()?
             .query_row("SELECT data FROM autopilot_suggestions WHERE request_id = ?1", params![request_id], |r| {
                 r.get(0)
             })
@@ -282,7 +282,7 @@ impl Store {
 
     pub fn ap_put_suggestion(&self, s: &Suggestion) -> Result<(), CoreError> {
         let sealed = self.seal(&suggestion_aad(&s.request_id), &to_json(s)?)?;
-        self.lock().execute(
+        self.lock()?.execute(
             "INSERT INTO autopilot_suggestions (request_id, at, data) VALUES (?1, ?2, ?3)
                  ON CONFLICT (request_id) DO UPDATE SET data = ?3",
             params![s.request_id, s.at, sealed],
@@ -292,7 +292,7 @@ impl Store {
 
     /// The requests the pass already went through.
     pub fn ap_evaluated(&self) -> Result<HashSet<String>, CoreError> {
-        let conn = self.lock();
+        let conn = self.lock()?;
         let mut stmt = conn.prepare("SELECT request_id FROM autopilot_suggestions")?;
         let ids = stmt.query_map([], |r| r.get::<_, String>(0))?.collect::<Result<HashSet<_>, _>>()?;
         Ok(ids)
@@ -300,7 +300,7 @@ impl Store {
 
     /// Forgets old evaluations and old rate-limit entries.
     pub fn ap_prune(&self, now: i64) -> Result<(), CoreError> {
-        let conn = self.lock();
+        let conn = self.lock()?;
         conn.execute("DELETE FROM autopilot_suggestions WHERE at <= ?1", params![now - SUGGESTION_RETENTION_SECS])?;
         conn.execute("DELETE FROM autopilot_rate WHERE at <= ?1", params![now - DAY_SECS])?;
         Ok(())
@@ -309,14 +309,14 @@ impl Store {
     // ---- rate limit ----------------------------------------------------------------------------------------------
 
     pub fn ap_rate_add(&self, connection_id: &str, at: i64) -> Result<(), CoreError> {
-        self.lock()
+        self.lock()?
             .execute("INSERT INTO autopilot_rate (connection_id, at) VALUES (?1, ?2)", params![connection_id, at])?;
         Ok(())
     }
 
     /// Auto-approvals of a connection after `since`.
     pub fn ap_rate_count(&self, connection_id: &str, since: i64) -> Result<u32, CoreError> {
-        Ok(self.lock().query_row(
+        Ok(self.lock()?.query_row(
             "SELECT COUNT(*) FROM autopilot_rate WHERE connection_id = ?1 AND at > ?2",
             params![connection_id, since],
             |r| r.get(0),
@@ -327,7 +327,7 @@ impl Store {
 
     /// The secret the target hashes are keyed with (made on first use).
     fn ap_salt(&self) -> Result<Vec<u8>, CoreError> {
-        let conn = self.lock();
+        let conn = self.lock()?;
         let existing: Option<Vec<u8>> =
             conn.query_row("SELECT value FROM meta WHERE key = 'autopilot_salt'", [], |r| r.get(0)).optional()?;
         if let Some(salt) = existing.and_then(|s| self.unseal(SALT_AAD, &s).ok()) {
@@ -359,14 +359,14 @@ impl Store {
             return Ok(false);
         }
         let found: Option<i64> = self
-            .lock()
+            .lock()?
             .query_row("SELECT 1 FROM autopilot_targets WHERE key = ?1", params![key], |r| r.get(0))
             .optional()?;
         Ok(found.is_some())
     }
 
     pub fn ap_target_forget(&self, key: &str) -> Result<(), CoreError> {
-        self.lock().execute("DELETE FROM autopilot_targets WHERE key = ?1", params![key])?;
+        self.lock()?.execute("DELETE FROM autopilot_targets WHERE key = ?1", params![key])?;
         Ok(())
     }
 
@@ -374,7 +374,7 @@ impl Store {
         if key.is_empty() {
             return Ok(());
         }
-        self.lock().execute(
+        self.lock()?.execute(
             "INSERT INTO autopilot_targets (key, at) VALUES (?1, ?2) ON CONFLICT (key) DO UPDATE SET at = ?2",
             params![key, at],
         )?;
@@ -385,7 +385,7 @@ impl Store {
 
     /// (approved, denied) entries of a connection in the activity.
     pub fn ap_history(&self, connection_id: &str) -> Result<(u32, u32), CoreError> {
-        Ok(self.lock().query_row(
+        Ok(self.lock()?.query_row(
             "SELECT
                  COALESCE(SUM(outcome IN ('released', 'sent', 'granted')), 0),
                  COALESCE(SUM(outcome = 'denied'), 0)
@@ -397,7 +397,7 @@ impl Store {
 
     /// When this phone approved the connection's pairing (its own clock), if it did.
     pub fn ap_paired_at(&self, connection_id: &str) -> Result<Option<i64>, CoreError> {
-        Ok(self.lock().query_row(
+        Ok(self.lock()?.query_row(
             "SELECT MAX(at) FROM audit WHERE connection_id = ?1 AND action = 'pair' AND outcome = 'released'",
             params![connection_id],
             |r| r.get(0),

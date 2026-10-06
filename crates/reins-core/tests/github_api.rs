@@ -41,7 +41,7 @@ async fn env() -> Env {
     Mock::given(method("POST"))
         .and(path("/identity/connect/token"))
         .respond_with(ResponseTemplate::new(200).set_body_json(json!({
-            "access_token": "ACCESS", "refresh_token": "REFRESH", "expires_in": 7200})))
+            "access_token": common::account_token(), "refresh_token": "REFRESH", "expires_in": 7200})))
         .mount(&server)
         .await;
     Mock::given(method("POST"))
@@ -72,6 +72,7 @@ async fn env() -> Env {
         ..CoreConfig::default()
     };
     let core = ReinsCore::with_config(dir.path().to_str().unwrap(), &FakeKeys, google, notifier, cfg).unwrap();
+    common::mount_account_vault(&server, "me@example.com", "pw").await;
     core.login(server.uri(), "me@example.com".to_owned(), "pw".to_owned(), None).await.unwrap();
     core.add_token_account("github".into(), GH_TOKEN.into()).await.unwrap();
     Env {
@@ -231,7 +232,7 @@ fn a_call_is_about_what_its_path_names_and_far_reaching_changes_are_asked_every_
     assert_eq!(branch.resource, "octo/cat@feature/x");
     let parents: Vec<&str> = branch.parents.iter().map(|(id, _)| id.as_str()).collect();
     assert_eq!(parents, ["octo/cat", "octo"]);
-    assert!(target("GET", "/orgs/acme", &[], None).unwrap().parents.is_empty());
+    assert_eq!(target("GET", "/orgs/acme", &[], None).unwrap().parents.len(), 0);
     // Keys and addresses are never read under a permission.
     assert!(target("GET", "/user/emails", &[], None).unwrap().sensitive);
     assert!(target("GET", "/repos/octo/cat/keys", &[], None).unwrap().sensitive);
@@ -399,7 +400,11 @@ async fn the_kind_of_change_a_preview_names_is_what_permissions_are_checked_agai
     let server = MockServer::start().await;
     for (verb, p, body) in [
         ("POST", "/identity/accounts/prelogin", json!({"kdf": 0, "kdfIterations": 5000})),
-        ("POST", "/identity/connect/token", json!({"access_token": "A", "refresh_token": "R", "expires_in": 7200})),
+        (
+            "POST",
+            "/identity/connect/token",
+            json!({"access_token": common::account_token(), "refresh_token": "R", "expires_in": 7200}),
+        ),
     ] {
         Mock::given(method(verb))
             .and(path(p))
@@ -425,6 +430,7 @@ async fn the_kind_of_change_a_preview_names_is_what_permissions_are_checked_agai
         vec![Arc::<ClassFromPreview>::clone(&fake)],
     )
     .unwrap();
+    common::mount_account_vault(&server, "me@example.com", "pw").await;
     core.login(server.uri(), "me@example.com".to_owned(), "pw".to_owned(), None).await.unwrap();
     core.engine().register_account("github", "octo").unwrap();
     let env = Env {

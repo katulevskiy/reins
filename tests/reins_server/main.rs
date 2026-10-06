@@ -2,6 +2,7 @@
 //! (plan Decision 27). Each test starts its own server on a free port with a
 //! temporary SQLite database.
 
+mod account_state;
 mod blobs;
 mod desktop;
 mod harness;

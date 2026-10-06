@@ -108,7 +108,7 @@ async fn env() -> Env {
     Mock::given(method("POST"))
         .and(path("/identity/connect/token"))
         .respond_with(ResponseTemplate::new(200).set_body_json(json!({
-            "access_token": "ACCESS", "refresh_token": "REFRESH", "expires_in": 7200})))
+            "access_token": common::account_token(), "refresh_token": "REFRESH", "expires_in": 7200})))
         .mount(&server)
         .await;
     // The vault: one login with one large attachment.
@@ -183,6 +183,7 @@ async fn env() -> Env {
         ..CoreConfig::default()
     };
     let core = ReinsCore::with_config(dir.path().to_str().unwrap(), &FakeKeys, google, dyn_notifier, cfg).unwrap();
+    common::mount_account_vault(&server, EMAIL, PASSWORD).await;
     core.login(server.uri(), EMAIL.to_owned(), PASSWORD.to_owned(), None).await.unwrap();
     core.add_token_account("vault".into(), PASSWORD.into()).await.unwrap();
     core.add_token_account("github".into(), GH_TOKEN.into()).await.unwrap();
@@ -556,7 +557,7 @@ async fn an_upload_of_another_connection_an_expired_one_or_one_for_another_tool_
         assert_eq!(told["outcome"], "error", "{blob}: {told}");
         assert!(told["message"].as_str().unwrap().contains(needle), "{blob}: {told}");
     }
-    assert!(env.requests("POST", "/send").await.is_empty());
+    assert_eq!(env.requests("POST", "/send").await.len(), 0);
     assert!(
         env.github
             .received_requests()
@@ -640,7 +641,7 @@ async fn reins_upload_answers_with_links_and_the_user_decides_when_the_file_arri
         (slot["max_bytes"].as_u64(), &slot["purpose"], slot["request_id"].as_str()),
         (Some(1_100), &json!({"kind": "upload", "reason": "for the review"}), Some("u1"))
     );
-    assert!(env.core.pending().await.unwrap().is_empty());
+    assert_eq!(env.core.pending().await.unwrap().len(), 0);
 
     // The file arrives: the server lists it once.
     let mut arrived = info(
@@ -676,7 +677,7 @@ async fn reins_upload_answers_with_links_and_the_user_decides_when_the_file_arri
         env.json_of("POST", "/reins/api/blobs/blob-report-00000001/decision").await,
         [json!({"v": 1, "approved": true})]
     );
-    assert!(env.core.pending().await.unwrap().is_empty());
+    assert_eq!(env.core.pending().await.unwrap().len(), 0);
     assert!(env.notifier.resolved.lock().unwrap().contains(&"blob-report-00000001".to_owned()));
     let entry = &env.core.activity(1).await.unwrap()[0];
     assert_eq!(
@@ -685,7 +686,7 @@ async fn reins_upload_answers_with_links_and_the_user_decides_when_the_file_arri
     );
     // Listed again by mistake: it was decided already.
     env.pending(&json!({"requests": [], "pairings": [], "blobs": [arrived]})).await;
-    assert!(env.core.sync(0).await.unwrap().is_empty());
+    assert_eq!(env.core.sync(0).await.unwrap().len(), 0);
 
     // By push, refused.
     let mut pushed = arrived.clone();
@@ -768,7 +769,7 @@ async fn small_results_stay_inline() {
     let ids: Vec<String> = view.messages.iter().map(|m| m.id.clone()).collect();
     env.core.approve(id, choice(&ids, None)).await.unwrap();
     assert_eq!(env.told().await["result"]["data"]["items"][0]["text"], "tiny");
-    assert!(env.requests("POST", "/blobs/fetch").await.is_empty());
+    assert_eq!(env.requests("POST", "/blobs/fetch").await.len(), 0);
 }
 
 #[tokio::test]

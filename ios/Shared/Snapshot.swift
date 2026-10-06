@@ -1,8 +1,9 @@
 import Foundation
+import CryptoKit
 
 /// What widgets, controls and Live Activities show, written by the app (and the notification extension) after every
 /// refresh and read by the widget extension, which never runs the core. Titles are the same content-safe one-liners
-/// the notifications show; nothing secret is in here.
+/// the notifications show; the complete snapshot is encrypted in preferences.
 struct Snapshot: Codable, Equatable {
     struct Item: Codable, Equatable, Identifiable {
         /// `join`: another phone asks for the account's keys.
@@ -39,6 +40,7 @@ struct Snapshot: Codable, Equatable {
     }
 
     var signedIn: Bool = false
+    var accountFingerprint: String?
     var approvalDevice: Bool = false
     var pending: [Item] = []
     var latest: [Entry] = []
@@ -56,8 +58,12 @@ struct Snapshot: Codable, Equatable {
 
     static let key = "widget.snapshot.v1"
 
+    static func owner(server: String, email: String) -> String {
+        SHA256.hash(data: Data((server + "\u{0}" + email).utf8)).map { String(format: "%02x", $0) }.joined()
+    }
+
     static func load(from defaults: UserDefaults = AppGroup.defaults) -> Snapshot {
-        guard let data = defaults.data(forKey: key), let snapshot = try? JSONDecoder().decode(Snapshot.self, from: data) else {
+        guard let data = defaults.data(forKey: key), let plain = try? SealedSnapshot.open(data), let snapshot = try? JSONDecoder().decode(Snapshot.self, from: plain) else {
             return Snapshot()
         }
         return snapshot
@@ -65,7 +71,8 @@ struct Snapshot: Codable, Equatable {
 
     func save(to defaults: UserDefaults = AppGroup.defaults) {
         guard let data = try? JSONEncoder().encode(self) else { return }
-        defaults.set(data, forKey: Self.key)
+        guard let sealed = try? SealedSnapshot.seal(data) else { defaults.removeObject(forKey: Self.key); return }
+        defaults.set(sealed, forKey: Self.key)
     }
 
     /// Items whose answer window has not closed yet.

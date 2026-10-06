@@ -17,7 +17,7 @@ data class PendingSso(val server: String, val state: String, val verifier: Strin
  * once, by the first callback that arrives for it; the core checks that the callback answers it (`state`).
  */
 class SsoSignIn(context: Context, private val now: () -> Long = System::currentTimeMillis) {
-    private val prefs = context.getSharedPreferences("sso_sign_in", Context.MODE_PRIVATE)
+    private val prefs = SealedPreferences(context, "sso_sign_in")
 
     private val _callback = MutableStateFlow<String?>(null)
 

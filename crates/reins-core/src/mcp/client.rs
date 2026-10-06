@@ -405,10 +405,10 @@ mod tests {
     #[test]
     fn sse_events_are_split_across_chunks_and_lines() {
         let mut r = SseReader::default();
-        assert!(r.feed(b"event: message\r\nid: 1\r\ndata: {\"a\"").is_empty());
+        assert_eq!(r.feed(b"event: message\r\nid: 1\r\ndata: {\"a\"").len(), 0);
         let events = r.feed(b":1}\r\n\r\n: comment\n\ndata: x\ndata: y\n\n");
         assert_eq!(events, ["{\"a\":1}", "x\ny"]);
-        assert!(r.feed(b"data: tail").is_empty());
+        assert_eq!(r.feed(b"data: tail").len(), 0);
         assert_eq!(r.finish().as_deref(), Some("tail"));
     }
 

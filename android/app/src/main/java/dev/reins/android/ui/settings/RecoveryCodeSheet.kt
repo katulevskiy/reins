@@ -7,6 +7,8 @@ import android.content.Context
 import android.os.Build
 import android.os.PersistableBundle
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.layout.Arrangement
@@ -23,7 +25,6 @@ import androidx.compose.runtime.setValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.material3.Checkbox
-import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.testTag
@@ -39,8 +40,6 @@ import dev.reins.android.design.CapsuleButton
 import dev.reins.android.design.Glyph
 import dev.reins.android.design.LocalColors
 import dev.reins.android.design.RText
-import dev.reins.android.design.RTextField
-import dev.reins.android.state.RecoveryRecord
 import dev.reins.android.design.RType
 import dev.reins.android.design.glass
 import dev.reins.android.feedback.DialogFeedback
@@ -55,7 +54,6 @@ fun RecoveryCodeSheet(code: String, onCopy: () -> Unit, onDone: () -> Unit, requ
     val c = LocalColors.current
     // An acknowledgement is deliberately not saved across process restarts.
     var recorded by remember(code) { mutableStateOf(false) }
-    var lastGroup by remember(code) { mutableStateOf("") }
     Dialog(
         onDismissRequest = { if (!required) onDone() },
         properties = DialogProperties(
@@ -71,18 +69,18 @@ fun RecoveryCodeSheet(code: String, onCopy: () -> Unit, onDone: () -> Unit, requ
         ) {
             RText("Recovery code", RType.sans(19f, FontWeight.SemiBold), c.text)
             Spacer(Modifier.height(14.dp))
-            Column(
-                Modifier
-                    .fillMaxWidth()
-                    .background(c.controlFill, RoundedCornerShape(16.dp))
-                    .padding(vertical = 16.dp, horizontal = 12.dp)
-                    .testTag("recoveryCode"),
-                horizontalAlignment = Alignment.CenterHorizontally,
-                verticalArrangement = Arrangement.spacedBy(6.dp),
-            ) {
-                recoveryCodeLines(code).forEach { line ->
-                    RText(line, RType.mono(19f, FontWeight.Medium).copy(letterSpacing = 1.sp), c.text, maxLines = 1, ltr = true)
-                }
+            SelectionContainer {
+                RText(
+                    recoveryCodeLines(code).joinToString("\n"),
+                    RType.mono(19f, FontWeight.Medium).copy(letterSpacing = 1.sp, lineHeight = 26.sp),
+                    c.text,
+                    Modifier.fillMaxWidth()
+                        .background(c.controlFill, RoundedCornerShape(16.dp))
+                        .clickable(onClickLabel = "Copy recovery code", onClick = onCopy)
+                        .padding(vertical = 16.dp, horizontal = 12.dp)
+                        .testTag("recoveryCode"),
+                    ltr = true,
+                )
             }
             Spacer(Modifier.height(14.dp))
             RText(
@@ -98,12 +96,10 @@ fun RecoveryCodeSheet(code: String, onCopy: () -> Unit, onDone: () -> Unit, requ
                     RText("I wrote this code down and stored it somewhere safe.", RType.sans(14.5f, lineHeight = 20f), c.text, Modifier.weight(1f))
                 }
                 Spacer(Modifier.height(12.dp))
-                RTextField(lastGroup, { lastGroup = it }, "Final group from written copy", tag = "recoveryConfirmGroup", mono = true, keyboardOptions = KeyboardOptions(autoCorrectEnabled = false))
-                Spacer(Modifier.height(12.dp))
             }
             Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                 CapsuleButton("Copy", Modifier.weight(1f).testTag("copyRecoveryCode"), style = ButtonStyle.Secondary, glyph = Glyph.Copy, onClick = onCopy)
-                CapsuleButton(if (required) "Continue" else "Done", Modifier.weight(1f).testTag("recoveryCodeDone"), enabled = !required || (recorded && RecoveryRecord.matchesLastGroup(code, lastGroup)), style = ButtonStyle.Primary, onClick = onDone)
+                CapsuleButton(if (required) "Continue" else "Done", Modifier.weight(1f).testTag("recoveryCodeDone"), enabled = !required || recorded, style = ButtonStyle.Primary, onClick = onDone)
             }
         }
     }

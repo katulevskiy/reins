@@ -77,7 +77,7 @@ fn json<T: Serialize>(value: &T) -> Result<String, CoreError> {
 impl Store {
     /// Every added server, oldest first.
     pub fn mcp_servers(&self) -> Result<Vec<StoredMcpServer>, CoreError> {
-        let conn = self.lock();
+        let conn = self.lock()?;
         let mut stmt = conn.prepare(&format!("SELECT {COLUMNS} FROM mcp_servers ORDER BY added_at, id"))?;
         let rows = stmt.query_map([], from_row)?.collect::<Result<Vec<_>, _>>()?;
         Ok(rows)
@@ -85,14 +85,14 @@ impl Store {
 
     pub fn mcp_server(&self, id: &str) -> Result<Option<StoredMcpServer>, CoreError> {
         Ok(self
-            .lock()
+            .lock()?
             .query_row(&format!("SELECT {COLUMNS} FROM mcp_servers WHERE id = ?1"), params![id], from_row)
             .optional()?)
     }
 
     /// Adds a server, or replaces the one with the same id.
     pub fn mcp_put(&self, s: &StoredMcpServer) -> Result<(), CoreError> {
-        self.lock().execute(
+        self.lock()?.execute(
             &format!(
                 "INSERT INTO mcp_servers ({COLUMNS}) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11) \
                  ON CONFLICT (id) DO UPDATE SET name = ?2, url = ?3, auth = ?4, client = ?5, tools = ?6, heavy = ?7, \
@@ -121,7 +121,7 @@ impl Store {
             return Err(CoreError::NotFound);
         };
         server.heavy.retain(|h| tools.iter().any(|t| &t.name == h));
-        self.lock().execute(
+        self.lock()?.execute(
             "UPDATE mcp_servers SET tools = ?2, heavy = ?3, listed_at = ?4, status = 'ok', error = NULL WHERE id = ?1",
             params![id, json(&tools)?, json(&server.heavy)?, now],
         )?;
@@ -129,19 +129,19 @@ impl Store {
     }
 
     pub fn mcp_set_status(&self, id: &str, status: &str, error: Option<&str>) -> Result<(), CoreError> {
-        self.lock()
+        self.lock()?
             .execute("UPDATE mcp_servers SET status = ?2, error = ?3 WHERE id = ?1", params![id, status, error])?;
         Ok(())
     }
 
     pub fn mcp_set_client(&self, id: &str, client: Option<&str>) -> Result<(), CoreError> {
-        self.lock().execute("UPDATE mcp_servers SET client = ?2 WHERE id = ?1", params![id, client])?;
+        self.lock()?.execute("UPDATE mcp_servers SET client = ?2 WHERE id = ?1", params![id, client])?;
         Ok(())
     }
 
     /// Marks a tool heavy (its results go through the server) or not. False when the server or tool is unknown.
     pub fn mcp_set_heavy(&self, id: &str, tool: &str, heavy: bool) -> Result<bool, CoreError> {
-        let mut conn = self.lock();
+        let mut conn = self.lock()?;
         let tx = conn.transaction()?;
         let row: Option<(String, String)> = tx
             .query_row("SELECT tools, heavy FROM mcp_servers WHERE id = ?1", params![id], |r| {
@@ -168,7 +168,7 @@ impl Store {
     /// Forgets a server with its tokens, its unfinished sign-in and the permissions given for it (`grant_service` is
     /// the service its grants name). False when it was not there.
     pub fn mcp_remove(&self, id: &str, grant_service: &str) -> Result<bool, CoreError> {
-        let mut conn = self.lock();
+        let mut conn = self.lock()?;
         let tx = conn.transaction()?;
         let removed = tx.execute("DELETE FROM mcp_servers WHERE id = ?1", params![id])? > 0;
         tx.execute(
@@ -238,7 +238,7 @@ mod tests {
 
         // A tool that disappears loses its mark.
         store.mcp_set_tools("a", &[tool("search")], 11).unwrap();
-        assert!(store.mcp_server("a").unwrap().unwrap().heavy.is_empty());
+        assert_eq!(store.mcp_server("a").unwrap().unwrap().heavy.len(), 0);
 
         store.mcp_set_status("a", "error", Some("could not connect")).unwrap();
         assert_eq!(store.mcp_server("a").unwrap().unwrap().error.as_deref(), Some("could not connect"));

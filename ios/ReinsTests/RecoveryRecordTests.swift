@@ -41,9 +41,5 @@ final class RecoveryRecordTests: XCTestCase {
         XCTAssertNil(model.recoveryToRecord)
     }
 
-    func testFinalGroupMustMatch() {
-        XCTAssertFalse(RecoveryRecord.matchesLastGroup(code: DemoData.recoveryCode, entered: ""))
-        XCTAssertFalse(RecoveryRecord.matchesLastGroup(code: DemoData.recoveryCode, entered: "AAAA"))
-        XCTAssertTrue(RecoveryRecord.matchesLastGroup(code: DemoData.recoveryCode, entered: " ze4b "))
-    }
+
 }

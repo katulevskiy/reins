@@ -29,7 +29,7 @@ class McpSignIn(
     private val state: AppState,
     private val now: () -> Long = System::currentTimeMillis,
 ) {
-    private val prefs = context.getSharedPreferences("mcp_sign_in", Context.MODE_PRIVATE)
+    private val prefs = SealedPreferences(context, "mcp_sign_in")
 
     /** The sign-in page of [serverId] is about to open. */
     fun begin(serverId: String) {
@@ -42,13 +42,14 @@ class McpSignIn(
         return id.takeIf { now() - prefs.getLong(KEY_STARTED, 0) in 0..MAX_AGE_MILLIS }
     }
 
-    private fun clear() {
+    fun clear() {
         prefs.edit().clear().commit()
     }
 
     /** Hands [redirect] to the core for the waiting sign-in, then reloads the servers. */
     suspend fun finish(redirect: String): McpSignInResult {
         if (!isMcpRedirect(redirect)) return McpSignInResult.Ignored
+        val epoch = state.accountEpoch.value
         val id = pending() ?: return McpSignInResult.Ignored
         clear()
         val result = try {
@@ -59,13 +60,14 @@ class McpSignIn(
             McpSignInResult.Failed(id, e.userMessage())
         }
         try {
-            state.setMcpServers(core().mcpServers())
+            val servers = core().mcpServers()
+            if (state.isCurrent(epoch)) state.setMcpServers(servers)
         } catch (e: CancellationException) {
             throw e
         } catch (e: Exception) {
             // The list is reloaded on the next refresh.
         }
-        return result
+        return if (state.isCurrent(epoch)) result else McpSignInResult.Ignored
     }
 
     private companion object {

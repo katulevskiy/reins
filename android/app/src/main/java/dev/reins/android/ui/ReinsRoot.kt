@@ -10,6 +10,10 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.navigationBars
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.windowInsetsPadding
+import androidx.compose.runtime.DisposableEffect
+import androidx.lifecycle.ViewModelStore
+import androidx.lifecycle.ViewModelStoreOwner
+import androidx.lifecycle.viewmodel.compose.LocalViewModelStoreOwner
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.LaunchedEffect
@@ -93,6 +97,16 @@ fun ReinsRoot(container: AppContainer, app: AppViewModel, authenticator: Authent
 
 @Composable
 private fun RootContent(container: AppContainer, app: AppViewModel, authenticator: Authenticator) {
+    val epoch by container.state.accountEpoch.collectAsStateWithLifecycle()
+    val owner = remember(epoch) { object : ViewModelStoreOwner { override val viewModelStore = ViewModelStore() } }
+    DisposableEffect(owner) { onDispose { owner.viewModelStore.clear() } }
+    CompositionLocalProvider(LocalViewModelStoreOwner provides owner) {
+        AccountContent(container, app, authenticator)
+    }
+}
+
+@Composable
+private fun AccountContent(container: AppContainer, app: AppViewModel, authenticator: Authenticator) {
     val context = androidx.compose.ui.platform.LocalContext.current
     val session by container.state.session.collectAsStateWithLifecycle()
     when (session) {
