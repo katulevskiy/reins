@@ -558,7 +558,8 @@ jobs:
           file: docker/Dockerfile.debian
           platforms: linux/${{ matrix.arch }}
           # Push immutable digests first; the publisher updates public version/latest tags together.
-          outputs: ${{ inputs.verify_only && 'type=cacheonly' || format('type=image,name={0},push-by-digest=true,name-canonical=true,push=true', steps.image.outputs.name) }}
+          outputs: ${{ inputs.verify_only && 'type=docker' || format('type=image,name={0},push-by-digest=true,name-canonical=true,push=true', steps.image.outputs.name) }}
+          tags: ${{ inputs.verify_only && format('reins-server-verify:{0}', matrix.arch) || '' }}
           # Docker layers were evicting Rust/Gradle caches from the repository's shared cache quota.
           cache-from: type=registry,ref=${{ steps.image.outputs.name }}:buildcache-${{ matrix.arch }}
           cache-to: type=registry,ref=${{ steps.image.outputs.name }}:buildcache-${{ matrix.arch }},mode=max
@@ -571,6 +572,15 @@ jobs:
             org.opencontainers.image.version=${{ needs.plan.outputs.version }}
             org.opencontainers.image.revision=${{ needs.plan.outputs.sha }}
             org.opencontainers.image.licenses=AGPL-3.0-only
+      - name: Smoke test the built image
+        if: inputs.verify_only == true
+        env:
+          ARCH: ${{ matrix.arch }}
+          VERSION: ${{ needs.plan.outputs.version }}
+        run: |
+          out="$(docker run --rm --entrypoint /vaultwarden "reins-server-verify:$ARCH" --version)"
+          echo "$out"
+          [[ "$out" == *"$VERSION"* ]] || { echo "::error::unexpected image version: $out"; exit 1; }
       - name: Export image digest
         if: inputs.verify_only != true
         env:
