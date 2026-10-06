@@ -118,7 +118,7 @@ jobs:
           echo "::notice::Releasing v$version from $SHA"
       - name: Fetch signing identity from Infisical
         if: steps.version.outputs.release == 'true' && vars.INFISICAL_RELEASE_IDENTITY_ID != ''
-        uses: ./.github/actions/android-signing # zizmor: ignore[self-repository] use the exact CI-tested checkout
+        uses: ./.github/actions/android-signing # zizmor: ignore[self-repository] use the exact release checkout
         with:
           identity-id: ${{ vars.INFISICAL_RELEASE_IDENTITY_ID }}
           environment: ${{ vars.INFISICAL_RELEASE_ENVIRONMENT || 'prod' }}
@@ -578,7 +578,7 @@ jobs:
           cache-provider: basic
       - name: Fetch signing identity from Infisical
         if: vars.INFISICAL_RELEASE_IDENTITY_ID != ''
-        uses: ./.github/actions/android-signing # zizmor: ignore[self-repository] use the exact CI-tested checkout
+        uses: ./.github/actions/android-signing # zizmor: ignore[self-repository] use the exact release checkout
         with:
           identity-id: ${{ vars.INFISICAL_RELEASE_IDENTITY_ID }}
           environment: ${{ vars.INFISICAL_RELEASE_ENVIRONMENT || 'prod' }}
@@ -745,5 +745,7 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
         run: |
-          gh release create "$TAG" dist/* --target "$SHA" --title "Reins $TAG" --notes-file notes.md --latest
+          # Upload everything before making this release visible to latest/download clients.
+          gh release create "$TAG" dist/* --target "$SHA" --title "Reins $TAG" --notes-file notes.md --draft
+          gh release edit "$TAG" --draft=false --latest
           echo "::notice::Published $GITHUB_SERVER_URL/$GITHUB_REPOSITORY/releases/tag/$TAG"

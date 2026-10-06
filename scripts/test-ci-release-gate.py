@@ -76,4 +76,13 @@ with tempfile.TemporaryDirectory(prefix="reins-ci-gate-") as directory:
     )
     assert result.returncode != 0
 
-print("14 release CI gate checks passed")
+workflow = (ROOT / ".github/workflows/release.yml").read_text()
+publisher = workflow.split("  publish:\n", 1)[1]
+gate = publisher.index('scripts/wait-for-ci.sh "$SHA"')
+assert gate < publisher.index("docker buildx imagetools create")
+assert gate < publisher.index("gh release create")
+assert publisher.index("--draft\n") < publisher.index(
+    'gh release edit "$TAG" --draft=false --latest'
+)
+assert "needs.android.result == 'success'" in publisher
+print("18 release CI gate checks passed")
