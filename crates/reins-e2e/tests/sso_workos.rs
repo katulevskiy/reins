@@ -37,6 +37,7 @@ async fn workos_requires_passkeys_even_when_sso_only_is_unset() {
     let workos = FakeWorkos::start().await;
     let mut env = workos.server_env();
     env.retain(|(key, _)| key != "SSO_ONLY");
+    env.push(("REINS_WORKOS_REQUIRE_PASSKEY".to_owned(), "true".to_owned()));
     let server = Server::start_with_env(5, 3, &env).await;
     let user = User {
         id: "user_PASSKEY".to_owned(),
@@ -54,6 +55,33 @@ async fn workos_requires_passkeys_even_when_sso_only_is_unset() {
     assert_eq!(outcome.keys, AccountKeys::Created);
     let error = phone.core.login(server.base.clone(), user.email, "password".to_owned(), None).await.unwrap_err();
     assert!(error.to_string().contains("SSO sign-in is required"), "{error}");
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn workos_email_and_social_login_work_by_default_and_sessions_are_revocable() {
+    let workos = FakeWorkos::start().await;
+    let server = Server::start_with_env(5, 3, &workos.server_env()).await;
+    for method in ["GoogleOAuth", "MagicAuth", "Password", "GitHubOAuth", "MicrosoftOAuth", "AppleOAuth", "Passkey"] {
+        let user = User {
+            id: format!("user_{method}"),
+            email: format!("{method}@example.com").to_lowercase(),
+        };
+        workos.sign_in_as(&user);
+        workos.authenticate_with(method);
+        let phone = Phone::signed_out(|_| {}).await;
+        let outcome = phone.sso_sign_in(&server.base).await.expect("WorkOS sign-in");
+        assert_eq!(outcome.keys, AccountKeys::Created, "{method}");
+        phone.core.register_device(None).await.unwrap();
+        // Identity login cannot enable the local master-password route.
+        let error = phone.core.login(server.base.clone(), user.email, "password".to_owned(), None).await.unwrap_err();
+        assert!(error.to_string().contains("SSO sign-in is required"), "{method}: {error}");
+        let session = workos.sessions().last().unwrap().clone();
+        workos.emit("session.revoked", json!({"id": session}));
+        eventually("WorkOS session revocation", async || {
+            matches!(phone.core.register_device(None).await, Err(CoreError::NotLoggedIn))
+        })
+        .await;
+    }
 }
 
 #[tokio::test(flavor = "multi_thread")]

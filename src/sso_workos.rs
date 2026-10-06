@@ -211,10 +211,10 @@ pub async fn exchange_code(code: &OIDCCode, verifier: OIDCCodeVerifier) -> ApiRe
         body["code_verifier"] = Value::String(verifier.to_string());
     }
     let text = authenticate(&body).await?;
-    parse_authenticated(&text, CONFIG.reins_enabled() && CONFIG.reins_workos_require_passkey())
+    parse_authenticated(&text, CONFIG.reins_enabled() && CONFIG.reins_workos_require_passkey(), CONFIG.reins_enabled())
 }
 
-fn parse_authenticated(text: &str, require_passkey: bool) -> ApiResult<OIDCAuthenticatedUser> {
+fn parse_authenticated(text: &str, require_passkey: bool, require_session: bool) -> ApiResult<OIDCAuthenticatedUser> {
     let auth: AuthenticateResponse = match serde_json::from_str(text) {
         Ok(a) => a,
         Err(e) => err!(format!("Unexpected WorkOS authenticate answer: {e}")),
@@ -226,7 +226,7 @@ fn parse_authenticated(text: &str, require_passkey: bool) -> ApiResult<OIDCAuthe
         err!("A passkey is required. Create a passkey in the WorkOS sign-up screen, then sign in with your passkey.")
     }
     let claims = access_claims(&auth.access_token);
-    if require_passkey && claims.sid.as_deref().is_none_or(str::is_empty) {
+    if (require_passkey || require_session) && claims.sid.as_deref().is_none_or(str::is_empty) {
         err!("WorkOS did not return a session identifier; please sign in again")
     }
     let name = [auth.user.first_name.as_deref(), auth.user.last_name.as_deref()]
@@ -302,7 +302,7 @@ mod tests {
             "refresh_token": "rt-1",
             "authentication_method": "GoogleOAuth",
         });
-        let user = parse_authenticated(&answer.to_string(), false).unwrap();
+        let user = parse_authenticated(&answer.to_string(), false, false).unwrap();
         assert_eq!(user.email, "me@example.com");
         assert_eq!(user.email_verified, Some(true));
         assert_eq!(user.user_name.as_deref(), Some("Ada Lovelace"));
@@ -320,11 +320,11 @@ mod tests {
             "access_token": "opaque",
             "impersonator": {"email": "admin@example.com", "reason": "support"},
         });
-        assert!(parse_authenticated(&answer.to_string(), false).is_err());
-        assert!(parse_authenticated("{\"access_token\": \"x\"}", false).is_err());
+        assert!(parse_authenticated(&answer.to_string(), false, false).is_err());
+        assert!(parse_authenticated("{\"access_token\": \"x\"}", false, false).is_err());
         // An opaque access token still signs in; it has no session id or expiry.
         let answer = json!({"user": {"id": "u", "email": "a@b.c"}, "access_token": "opaque"});
-        let user = parse_authenticated(&answer.to_string(), false).unwrap();
+        let user = parse_authenticated(&answer.to_string(), false, false).unwrap();
         assert_eq!((user.session_id, user.expires_in, user.email_verified), (None, None, None));
     }
 
@@ -332,16 +332,39 @@ mod tests {
     fn passkey_policy_refuses_other_and_missing_authentication_methods() {
         let mut answer = json!({"user": {"id": "u", "email": "a@b.c", "email_verified": true},
                                 "access_token": "opaque"});
-        assert!(parse_authenticated(&answer.to_string(), true).is_err());
+        assert!(parse_authenticated(&answer.to_string(), true, true).is_err());
         for method in ["Password", "MagicAuth", "GoogleOAuth", "passkey"] {
             answer["authentication_method"] = json!(method);
-            assert!(parse_authenticated(&answer.to_string(), true).is_err(), "{method}");
-            assert!(parse_authenticated(&answer.to_string(), false).is_ok());
+            assert!(parse_authenticated(&answer.to_string(), true, true).is_err(), "{method}");
+            assert!(parse_authenticated(&answer.to_string(), false, false).is_ok());
         }
         answer["authentication_method"] = json!("Passkey");
-        assert!(parse_authenticated(&answer.to_string(), true).is_err(), "revocation needs a WorkOS session id");
+        assert!(parse_authenticated(&answer.to_string(), true, true).is_err(), "revocation needs a WorkOS session id");
         answer["access_token"] = json!(token(&json!({"sid": "session_passkey"})));
-        assert!(parse_authenticated(&answer.to_string(), true).is_ok());
+        assert!(parse_authenticated(&answer.to_string(), true, true).is_ok());
+    }
+
+    #[test]
+    fn workos_login_methods_keep_a_revocable_reins_session() {
+        let mut answer = json!({
+            "user": {"id": "u", "email": "a@b.c", "email_verified": true},
+            "access_token": token(&json!({"sid": "session_authkit"})),
+        });
+        for method in ["Password", "MagicAuth", "GoogleOAuth", "GitHubOAuth", "MicrosoftOAuth", "AppleOAuth", "Passkey"]
+        {
+            answer["authentication_method"] = json!(method);
+            let user = parse_authenticated(&answer.to_string(), false, true).unwrap();
+            assert_eq!(user.session_id.as_deref(), Some("session_authkit"), "{method}");
+            assert_eq!(user.email_verified, Some(true));
+        }
+        // Email/social sign-in needs the same session revocation support as passkeys.
+        for claims in [json!({}), json!({"sid": ""})] {
+            answer["access_token"] = json!(token(&claims));
+            assert!(parse_authenticated(&answer.to_string(), false, true).is_err());
+        }
+        answer["access_token"] = json!(token(&json!({"sid": "session_authkit"})));
+        answer["impersonator"] = json!({"email": "admin@example.com"});
+        assert!(parse_authenticated(&answer.to_string(), false, true).is_err());
     }
 
     #[test]

@@ -107,6 +107,7 @@ class OnboardingFlowTest : FlowHarness() {
         launch()
         awaitTag("welcome")
         rule.onNodeWithTag("continue").assertIsEnabled()
+        rule.onNodeWithTag("continue").assertTextEquals("Continue")
         rule.onNodeWithTag("serverName").assertTextContains(AccountRules.displayHost(BuildConfig.DEFAULT_SERVER), substring = true)
         assertFalse(has("createAccount"))
         assertFalse(has("startSignIn"))
