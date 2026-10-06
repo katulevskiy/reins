@@ -99,7 +99,8 @@ RUN apt-get update && \
         zlib1g-dev \
         xx-c-essentials && \
     # Run xx-cargo early, since it sometimes seems to break when run at a later stage
-    echo "export CARGO_TARGET=$(xx-cargo --print-target-triple)" >> /env-cargo
+    echo "export CARGO_TARGET=$(xx-cargo --print-target-triple)" >> /env-cargo && \
+    rm -rf /var/lib/apt/lists/*
 {% endif %}
 
 # Create CARGO_HOME folder and don't download rust docs
