@@ -27,7 +27,7 @@
 #     $ docker image inspect --format "{{ '{{' }}.RepoTags}}" docker.io/vaultwarden/web-vault@{{ vault_image_digest }}
 #     [docker.io/vaultwarden/web-vault:{{ vault_version | replace('+', '_') }}]
 #
-{% macro xx_cargo_config() -%}
+{% macro xx_cargo_config(chef=false) -%}
 # Configure xx-cargo for target pkg-config and Debian transitive library lookup
     # https://github.com/tonistiigi/xx/pull/108#issuecomment-3700635977
     # https://github.com/dani-garcia/vaultwarden/discussions/7522
@@ -35,7 +35,7 @@
         XX_RUSTFLAGS="-C link-arg=-Wl,-rpath-link,/usr/lib/$(xx-info triple)"; \
         export XX_RUSTFLAGS; \
     fi && \
-    PKG_CONFIG="$(command -v "$(xx-info)-pkg-config")" xx-cargo build --features ${DB} --profile "${CARGO_PROFILE}"
+    PKG_CONFIG="$(command -v "$(xx-info)-pkg-config")" {% if chef %}CARGO="$(command -v xx-cargo)" cargo-chef chef cook --recipe-path /tmp/recipe.json --features ${DB} --profile "${CARGO_PROFILE}" --target "${CARGO_TARGET}" --locked{% else %}xx-cargo build --features ${DB} --profile "${CARGO_PROFILE}"{% endif %}
 {%- endmacro %}
 FROM --platform=linux/amd64 docker.io/vaultwarden/web-vault@{{ vault_image_digest }} AS vault
 
@@ -55,7 +55,7 @@ FROM --platform=$BUILDPLATFORM {{ build_stage_image[base].arch_image[arch] }} AS
 
 ########################## BUILD IMAGE ##########################
 # hadolint ignore=DL3006
-FROM --platform=$BUILDPLATFORM {{ build_stage_image[base].image }} AS build
+FROM --platform=$BUILDPLATFORM {{ build_stage_image[base].image }} AS build_base
 {% if base == "debian" %}
 # hadolint ignore=DL3067
 COPY --from=xx / /
@@ -88,7 +88,8 @@ RUN apt-get update && \
     apt-get install -y \
         --no-install-recommends \
         clang \
-        git && \
+        git \
+        xz-utils && \
     xx-apt-get install -y \
         --no-install-recommends \
         libpq-dev \
@@ -99,15 +100,18 @@ RUN apt-get update && \
         zlib1g-dev \
         xx-c-essentials && \
     # Run xx-cargo early, since it sometimes seems to break when run at a later stage
-    echo "export CARGO_TARGET=$(xx-cargo --print-target-triple)" >> /env-cargo
+    echo "export CARGO_TARGET=$(xx-cargo --print-target-triple)" >> /env-cargo && \
+    rm -rf /var/lib/apt/lists/*
 {% endif %}
 
 # Create CARGO_HOME folder and don't download rust docs
+{% if base == "alpine" %}
+RUN apk --no-cache add xz
+{% endif %}
 RUN mkdir -pv "${CARGO_HOME}" && \
     rustup set profile minimal
 
-# Creates a dummy project used to grab dependencies
-RUN USER=root cargo new --bin /app
+# The recipe and final build must use the same path and Rust toolchain.
 WORKDIR /app
 
 {% if base == "alpine" %}
@@ -120,11 +124,24 @@ RUN echo "export CARGO_TARGET=${CARGO_BUILD_TARGET}" >> /env-cargo && \
 RUN . /env-cargo && \
     rustup target add "${CARGO_TARGET}"
 
-# Copies over *only* your manifests and build files
-COPY ./Cargo.* ./rust-toolchain.toml ./build.rs ./
-COPY ./macros ./macros
-# The other workspace members: Cargo needs every member to load the workspace, and the server uses reins-proto
-COPY ./crates ./crates
+# Pinned static cargo-chef binaries run on both Debian and musl build hosts; no tool compilation is needed.
+ADD --checksum=sha256:aca691abfbfbbe00d482e0ed2249eec3091b65e96a0ce92947fb5b254d48b16d https://github.com/LukeMathWalker/cargo-chef/releases/download/v0.1.78/cargo-chef-x86_64-unknown-linux-musl.tar.xz /tmp/chef-x86_64.tar.xz
+ADD --checksum=sha256:cd59b90fce5fa84c4189648fec33404ec5491791eebdb812df5e7fca8336408d https://github.com/LukeMathWalker/cargo-chef/releases/download/v0.1.78/cargo-chef-aarch64-unknown-linux-musl.tar.xz /tmp/chef-aarch64.tar.xz
+RUN case "$(uname -m)" in \
+        x86_64) chef_arch=x86_64 ;; \
+        aarch64) chef_arch=aarch64 ;; \
+        *) echo "Unsupported build host architecture" >&2; exit 1 ;; \
+    esac && \
+    tar -xJf "/tmp/chef-${chef_arch}.tar.xz" --strip-components=1 -C /usr/local/bin "cargo-chef-${chef_arch}-unknown-linux-musl/cargo-chef" && \
+    rm -f /tmp/chef-*.tar.xz
+
+# Source edits rerun this cheap planner, while unchanged manifests/lockfile produce the same dependency recipe.
+FROM build_base AS planner
+COPY . .
+RUN cargo chef prepare --recipe-path /recipe.json
+
+FROM build_base AS build
+COPY --from=planner /recipe.json /tmp/recipe.json
 
 ARG CARGO_PROFILE=release
 
@@ -141,9 +158,9 @@ ARG DB=sqlite,mysql,postgresql,enable_mimalloc
 # This folder contains the compiled dependencies
 RUN . /env-cargo && \
 {% if base == "debian" %}
-    {{ xx_cargo_config() }} && \
+    {{ xx_cargo_config(chef=true) }} && \
 {% elif base == "alpine" %}
-    cargo build --features ${DB} --profile "${CARGO_PROFILE}" --target="${CARGO_TARGET}" && \
+    cargo chef cook --recipe-path /tmp/recipe.json --features ${DB} --profile "${CARGO_PROFILE}" --target="${CARGO_TARGET}" --locked && \
 {% endif %}
     find . -not -path "./target*" -delete
 
@@ -155,9 +172,10 @@ ARG VW_VERSION
 
 # Builds again, this time it will be the actual source files being build
 RUN . /env-cargo && \
-    # Make sure that we actually build the project by updating the src/main.rs timestamp
-    # Also do this for build.rs to ensure the version is rechecked
-    touch build.rs src/main.rs && \
+    # Refresh workspace sources after cooking dummies, for every supported Cargo profile and cross target.
+    # build.rs also needs to recheck the release version.
+    touch build.rs && \
+    find src macros crates -type f -name '*.rs' -exec touch {} + && \
     # Create a symlink to the binary target folder to easy copy the binary in the final stage
 {% if base == "debian" %}
     {{ xx_cargo_config() }} && \

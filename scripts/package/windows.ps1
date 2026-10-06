@@ -34,16 +34,14 @@ if (-not $env:GPUI_FXC_PATH) {
 }
 
 Write-Host "==> building Reins $Version for $Target"
-cargo build --locked --profile release-app -p reins-desktop-app --bin reins-app --target $Target
-if ($LASTEXITCODE -ne 0) { throw 'building the app failed' }
-cargo build --locked --release -p reins-desktop --bin reins --target $Target
-if ($LASTEXITCODE -ne 0) { throw 'building reins failed' }
+cargo build --locked --profile release-app -p reins-desktop-app -p reins-desktop --bin reins-app --bin reins --target $Target
+if ($LASTEXITCODE -ne 0) { throw 'building Reins failed' }
 
 $stage = Join-Path $out 'windows'
 Remove-Item -Recurse -Force $stage -ErrorAction SilentlyContinue
 New-Item -ItemType Directory -Force -Path $stage | Out-Null
 Copy-Item (Join-Path $targetDir "$Target\release-app\reins-app.exe") (Join-Path $stage 'reins-app.exe')
-Copy-Item (Join-Path $targetDir "$Target\release\reins.exe") (Join-Path $stage 'reins.exe')
+Copy-Item (Join-Path $targetDir "$Target\release-app\reins.exe") (Join-Path $stage 'reins.exe')
 
 $pfx = $env:REINS_WINDOWS_CERT
 function Sign([string]$file) {

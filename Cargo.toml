@@ -287,19 +287,25 @@ http = "1.5.0"
 
 # Strip debuginfo from the release builds
 # The debug symbols are to provide better panic traces
-# Also enable fat LTO and use 1 codegen unit for optimizations
+# Thin LTO preserves whole-program optimization without the long serial fat-LTO link.
 [profile.release]
 strip = "debuginfo"
-lto = "fat"
-codegen-units = 1
-debug = false
-
-# The desktop app (GPUI, scripts/package/): thin LTO, as Zeron's desktop app builds it. Fat LTO over all of GPUI takes
-# many times longer for little gain.
-[profile.release-app]
-inherits = "release"
 lto = "thin"
 codegen-units = 16
+debug = false
+
+# Keep normal release optimization for desktop installers, without GPUI's expensive whole-program link.
+# Both bundled programs use this profile so their shared dependencies are compiled once.
+[profile.release-app]
+inherits = "release"
+lto = "off"
+codegen-units = 16
+
+# Opt-in exhaustive optimization for profiling/benchmarks, outside the routine release path.
+[profile.release-fat]
+inherits = "release"
+lto = "fat"
+codegen-units = 1
 
 # Optimize for size
 [profile.release-micro]
@@ -344,6 +350,20 @@ opt-level = 3
 
 # The phone core makes an RSA-2048 key pair when it creates an account; unoptimized that takes many seconds.
 [profile.dev.package.num-bigint-dig]
+opt-level = 3
+
+# Keep the full randomized policy cases and production-strength PBKDF2 iterations in tests.
+# Optimize their regex/PBKDF2 engines instead of spending CI time in unoptimized dependency loops.
+[profile.dev.package.regex]
+opt-level = 3
+
+[profile.dev.package.regex-automata]
+opt-level = 3
+
+[profile.dev.package.regex-syntax]
+opt-level = 3
+
+[profile.dev.package.ring]
 opt-level = 3
 
 # Linting config

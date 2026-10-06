@@ -7,6 +7,7 @@ import subprocess
 import sys
 import tempfile
 import textwrap
+import zipfile
 from pathlib import Path
 
 sys.dont_write_bytecode = True
@@ -90,4 +91,37 @@ assert "needs.plan.outputs.apk" not in workflow
 assert "needs.android.result == 'success'" in workflow
 assert "needs.android.result == 'skipped'" not in workflow
 assert '[[ -s "reins-$VERSION-android.apk" ]]' in workflow
-print("19 Android release checks passed")
+
+with tempfile.TemporaryDirectory(prefix="reins-apk-native-") as directory:
+    apk = Path(directory) / "test.apk"
+    libraries = {}
+    for abi, machine in (("arm64-v8a", 183), ("x86_64", 62)):
+        header = bytearray(20)
+        header[:6] = b"\x7fELF\x02\x01"
+        header[18:20] = machine.to_bytes(2, "little")
+        libraries[f"lib/{abi}/libreins_core.so"] = header
+
+    def write_apk(files):
+        with zipfile.ZipFile(apk, "w") as archive:
+            for name, contents in files.items():
+                archive.writestr(name, contents)
+
+    write_apk(libraries)
+    apk_check.validate_native_libraries(apk)
+    invalid_native = [
+        {},
+        {name: header for name, header in libraries.items() if "arm64" in name},
+        {name: header for name, header in libraries.items() if "x86_64" in name},
+        dict.fromkeys(libraries, b"not an ELF library"),
+        dict.fromkeys(libraries, libraries["lib/arm64-v8a/libreins_core.so"]),
+    ]
+    for files in invalid_native:
+        write_apk(files)
+        try:
+            apk_check.validate_native_libraries(apk)
+        except ValueError:
+            pass
+        else:
+            raise AssertionError("Accepted incomplete or mismatched native libraries")
+
+print("25 Android release checks passed")
