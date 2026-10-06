@@ -340,8 +340,8 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - { arch: aarch64, os: macos-15 }
-          - { arch: x86_64, os: macos-15-intel }
+          - { arch: aarch64, os: macos-15, cache: release-desktop-app-native-macOS }
+          - { arch: x86_64, os: macos-15-intel, cache: release-desktop-app-macOS }
     env:
       TARGET: ${{ matrix.arch }}-apple-darwin
       VERSION: ${{ needs.plan.outputs.version }}
@@ -357,8 +357,9 @@ jobs:
         run: rustup toolchain install && rustup target add "$TARGET"
       - uses: Swatinem/rust-cache@v2
         with:
-          # Rust's host architecture differentiates these caches; the Arm worker can restore the old macOS cache.
-          shared-key: release-desktop-app-${{ runner.os }}
+          # Start a native-only Arm cache: the old immutable universal cache also stores Intel/fat artifacts.
+          # The Intel worker's existing cache already contains only its native target.
+          shared-key: ${{ matrix.cache }}
       - name: Remove obsolete macOS cache outputs
         run: |
           # This worker builds one native target with release-app. The old universal job cached both
