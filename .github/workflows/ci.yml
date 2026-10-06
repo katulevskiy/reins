@@ -139,7 +139,7 @@ jobs:
       - name: Run all Rust tests
         env:
           REINS_TEST_SERVER_BINARY: ${{ github.workspace }}/target/debug/vaultwarden
-        run: cargo nextest run --locked --workspace --exclude reins-desktop-app --features sqlite --no-fail-fast
+        run: cargo nextest run --locked --workspace --exclude reins-desktop-app --features sqlite --no-fail-fast --test-threads 8
       # Nextest does not run doctests; retain Cargo's separate documentation test pass.
       - name: Documentation tests
         run: cargo test --locked --workspace --exclude reins-desktop-app --features sqlite --doc
@@ -160,7 +160,9 @@ jobs:
         with:
           shared-key: linux-server-core-clippy
           save-if: ${{ github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository }}
-      - run: cargo clippy --locked --workspace --exclude reins-desktop-app --features sqlite --all-targets -- -D warnings
+      # Preserve the existing lint coverage: all core targets and the production server target.
+      - run: cargo clippy --locked --workspace --exclude vaultwarden --exclude reins-desktop-app --all-targets -- -D warnings
+      - run: cargo clippy --locked --features sqlite -- -D warnings
 
   desktop-linux:
     name: Desktop UI on Linux (clippy + tests)

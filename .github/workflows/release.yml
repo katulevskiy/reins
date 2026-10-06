@@ -163,9 +163,6 @@ jobs:
         include:
           - { target: x86_64-unknown-linux-musl, os: ubuntu-24.04, zig: true, native: true, optional: false }
           - { target: aarch64-unknown-linux-musl, os: ubuntu-24.04, zig: true, native: false, optional: false }
-          - { target: aarch64-apple-darwin, os: macos-15, zig: false, native: true, optional: false }
-          - { target: x86_64-apple-darwin, os: macos-15, zig: false, native: false, optional: false }
-          - { target: x86_64-pc-windows-msvc, os: windows-2025, zig: false, native: true, optional: false }
           - { target: aarch64-pc-windows-msvc, os: windows-2025, zig: false, native: false, optional: true }
     env:
       TARGET: ${{ matrix.target }}
@@ -221,23 +218,11 @@ jobs:
       # A tar.gz with reins on Linux and macOS, a zip with reins.exe on Windows (what Windows opens, and what
       # scripts/install.ps1 unpacks); the same layout inside.
       - name: Package
-        run: |
-          name="reins-desktop-$VERSION-$TARGET"
-          mkdir -p "dist/$name"
-          if [[ "$TARGET" == *-windows-* ]]; then
-            cp "target/$TARGET/release/reins.exe" LICENSE LICENSE-AGPL LICENSING.md NOTICE README.md "dist/$name/"
-            (cd dist && 7z a -tzip -bso0 -bsp0 "$name.zip" "$name")
-          else
-            cp "target/$TARGET/release/reins" LICENSE LICENSE-AGPL LICENSING.md NOTICE README.md "dist/$name/"
-            tar -C dist -czf "dist/$name.tar.gz" "$name"
-          fi
-          rm -rf "dist/${name:?}"
-          # The same archive without the version, for https://github.com/<repo>/releases/latest/download/<name> links.
-          for f in dist/"$name".*; do cp "$f" "dist/reins-desktop-$TARGET.${f#dist/"$name".}"; done
-          ls -l dist
+        run: scripts/package-cli.sh "$TARGET" "$VERSION"
       - uses: actions/upload-artifact@v7
         with:
           name: dist-desktop-${{ matrix.target }}
+          compression-level: 0
           path: |
             dist/*.tar.gz
             dist/*.zip
@@ -361,12 +346,31 @@ jobs:
             target/package/Reins-*.tar.gz dist/ 2>/dev/null || true
           ls -l dist
           [[ -n "$(ls dist)" ]] || { echo "::error::no installer was made"; exit 1; }
+      # macOS/Windows CLI archives reuse the exact binaries already built for the installers.
+      # This removes three redundant build jobs and their dependency caches.
+      - name: CLI archives from installer binaries
+        if: runner.os != 'Linux'
+        run: |
+          if [[ "$RUNNER_OS" == macOS ]]; then
+            targets=(aarch64-apple-darwin x86_64-apple-darwin)
+            native=aarch64-apple-darwin
+            suffix=""
+          else
+            targets=(x86_64-pc-windows-msvc)
+            native=x86_64-pc-windows-msvc
+            suffix=.exe
+          fi
+          out="$("target/$native/release-app/reins$suffix" --version)"
+          echo "$out"
+          [[ "$out" == *"$VERSION ($REINS_BUILD)"* ]] || { echo "::error::unexpected CLI version: $out"; exit 1; }
+          for target in "${targets[@]}"; do scripts/package-cli.sh "$target" "$VERSION" release-app; done
       - name: Remove signing material
         if: always()
         run: rm -f "$RUNNER_TEMP/notary.p8" "$RUNNER_TEMP/cert.pfx"
       - uses: actions/upload-artifact@v7
         with:
           name: dist-app-${{ matrix.platform }}
+          compression-level: 0
           path: dist/*
           if-no-files-found: error
           retention-days: 7
@@ -416,6 +420,7 @@ jobs:
       - uses: actions/upload-artifact@v7
         with:
           name: dist-server
+          compression-level: 0
           path: dist/*.tar.gz
           if-no-files-found: error
           retention-days: 7
@@ -694,6 +699,7 @@ jobs:
       - uses: actions/upload-artifact@v7
         with:
           name: dist-android
+          compression-level: 0
           path: dist/*.apk
           if-no-files-found: error
           retention-days: 7

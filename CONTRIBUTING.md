@@ -63,7 +63,8 @@ cargo test -p reins-e2e
 
 # Lints, as CI runs them
 cargo fmt --all -- --check
-cargo clippy --workspace --exclude reins-desktop-app --features sqlite --all-targets -- -D warnings
+cargo clippy --workspace --exclude vaultwarden --exclude reins-desktop-app --all-targets -- -D warnings
+cargo clippy --features sqlite -- -D warnings
 cargo clippy -p reins-desktop-app --all-targets -- -D warnings
 cargo deny --workspace check licenses bans      # https://github.com/EmbarkStudios/cargo-deny
 scripts/check-doc-links.py                      # relative links in README.md, the top-level *.md and docs/
@@ -153,7 +154,8 @@ version/latest tags. Build caches are refreshed, including the per-architecture 
 
 Routine release builds use Thin LTO and 16 codegen units. `cargo build --profile release-fat` retains the previous fat
 LTO/one-codegen-unit configuration for explicit optimization benchmarks. Installers compile the GUI and bundled CLI
-under one profile to share dependencies. Android builds each ABI and the Kotlin bindings on separate workers; native
+under one profile to share dependencies; macOS/Windows CLI downloads reuse those binaries instead of rebuilding
+them in separate jobs. Android builds each ABI and the Kotlin bindings on separate workers; native
 outputs are reused only for an exact native source/configuration hash. Every packaged APK verifies both ELF
 architectures as well as the production signing certificate and installed identity.
 

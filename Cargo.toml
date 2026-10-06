@@ -352,6 +352,20 @@ opt-level = 3
 [profile.dev.package.num-bigint-dig]
 opt-level = 3
 
+# Keep the full randomized policy cases and production-strength PBKDF2 iterations in tests.
+# Optimize their regex/PBKDF2 engines instead of spending CI time in unoptimized dependency loops.
+[profile.dev.package.regex]
+opt-level = 3
+
+[profile.dev.package.regex-automata]
+opt-level = 3
+
+[profile.dev.package.regex-syntax]
+opt-level = 3
+
+[profile.dev.package.ring]
+opt-level = 3
+
 # Linting config
 # https://doc.rust-lang.org/rustc/lints/groups.html
 [workspace.lints.rust]
