@@ -134,10 +134,8 @@ jobs:
       - uses: taiki-e/install-action@v2
         with:
           tool: nextest@0.9.146
-      # Use one workspace feature set for both commands. Separate package-level Cargo invocations
-      # serialized on the target lock and recompiled the same crates with different feature unions.
-      - name: Build the E2E server and workspace binaries
-        run: cargo build --locked --workspace --exclude reins-desktop-app --features sqlite --bins
+      # Cargo builds the normal server binary for tests/reins_server (CARGO_BIN_EXE_vaultwarden).
+      # Nextest compiles all targets before starting E2E tests, so a separate server build is redundant.
       - name: Run all Rust tests
         env:
           REINS_TEST_SERVER_BINARY: ${{ github.workspace }}/target/debug/vaultwarden

@@ -21,7 +21,7 @@ on: # zizmor: ignore[dangerous-triggers]
         options: [auto, patch, minor, major]
         default: auto
       verify_only:
-        description: Build and verify all assets without publishing (allows CI-tested branches)
+        description: Build assets without creating a release or updating version/latest tags (CI-tested branches)
         type: boolean
         default: false
 
@@ -462,7 +462,7 @@ jobs:
           outputs: ${{ inputs.verify_only && 'type=cacheonly' || format('type=image,name={0},push-by-digest=true,name-canonical=true,push=true', steps.image.outputs.name) }}
           # Docker layers were evicting Rust/Gradle caches from the repository's shared cache quota.
           cache-from: type=registry,ref=${{ steps.image.outputs.name }}:buildcache-${{ matrix.arch }}
-          cache-to: ${{ inputs.verify_only && 'type=inline' || format('type=registry,ref={0}:buildcache-{1},mode=max', steps.image.outputs.name, matrix.arch) }}
+          cache-to: type=registry,ref=${{ steps.image.outputs.name }}:buildcache-${{ matrix.arch }},mode=max
           build-args: |
             VW_VERSION=${{ needs.plan.outputs.version }}
           labels: |

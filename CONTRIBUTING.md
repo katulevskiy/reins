@@ -63,8 +63,8 @@ cargo test -p reins-e2e
 
 # Lints, as CI runs them
 cargo fmt --all -- --check
-cargo clippy --workspace --exclude vaultwarden --all-targets -- -D warnings
-cargo clippy --features sqlite --all-targets -- -D warnings
+cargo clippy --workspace --exclude reins-desktop-app --features sqlite --all-targets -- -D warnings
+cargo clippy -p reins-desktop-app --all-targets -- -D warnings
 cargo deny --workspace check licenses bans      # https://github.com/EmbarkStudios/cargo-deny
 scripts/check-doc-links.py                      # relative links in README.md, the top-level *.md and docs/
 ```
@@ -86,7 +86,9 @@ function (paths, quoting, the PE header, `reg` output) lives in `src/win.rs` wit
 
 CI (`.github/workflows/ci.yml`) runs once per pull request update and on every push to `main`, not on pushes
 to other branches; `gh workflow run ci.yml --ref <branch>` runs it on a branch without a pull request. Pull requests that
-only touch the docs skip the Rust jobs. The Rust build caches are written by `main` only and read everywhere.
+only touch the docs skip the Rust jobs. Rust build caches are written by `main`, manual branch runs and same-repository pull requests; fork pull requests only
+restore them. Server/core tests use Nextest's prebuilt binary and one workspace feature set, with doctests retained
+in a separate Cargo pass. Clippy runs on its own runner to avoid Cargo's build-directory lock.
 
 Android (needs the Android SDK and NDK; see [android/README.md](android/README.md)):
 
@@ -143,6 +145,17 @@ Try it locally: `scripts/next-version.sh --describe` (what would be released fro
 
 Maintainers can release by hand from the Actions tab: run **Release** on `main` and pick a bump level (`auto` uses the
 commits). It releases the tip of `main` if CI passed on it.
+
+To measure the complete release pipeline before merging, run **Release** on a CI-tested branch with `verify_only`
+enabled (`gh workflow run release.yml --ref <branch> -f verify_only=true`). It builds and verifies the signed APK,
+installers, archives and both server image architectures, but creates no GitHub release and does not update image
+version/latest tags. Build caches are refreshed, including the per-architecture GHCR caches.
+
+Routine release builds use Thin LTO and 16 codegen units. `cargo build --profile release-fat` retains the previous fat
+LTO/one-codegen-unit configuration for explicit optimization benchmarks. Installers compile the GUI and bundled CLI
+under one profile to share dependencies. Android builds each ABI and the Kotlin bindings on separate workers; native
+outputs are reused only for an exact native source/configuration hash. Every packaged APK verifies both ELF
+architectures as well as the production signing certificate and installed identity.
 
 ## Pull requests
 
