@@ -294,11 +294,11 @@ lto = "thin"
 codegen-units = 16
 debug = false
 
-# Keep the desktop packaging profile name stable. Both bundled programs use this profile so their
-# shared dependencies are compiled once.
+# Keep normal release optimization for desktop installers, without GPUI's expensive whole-program link.
+# Both bundled programs use this profile so their shared dependencies are compiled once.
 [profile.release-app]
 inherits = "release"
-lto = "thin"
+lto = "off"
 codegen-units = 16
 
 # Opt-in exhaustive optimization for profiling/benchmarks, outside the routine release path.

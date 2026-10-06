@@ -154,8 +154,9 @@ enabled (`gh workflow run release.yml --ref <branch> -f verify_only=true`). It b
 installers, archives and both server image architectures, but creates no GitHub release and does not update image
 version/latest tags. Build caches are refreshed, including the per-architecture GHCR caches.
 
-Routine release builds use Thin LTO and 16 codegen units. `cargo build --profile release-fat` retains the previous fat
-LTO/one-codegen-unit configuration for explicit optimization benchmarks. Installers compile the GUI and bundled CLI
+Server, CLI and Android release builds use Thin LTO and 16 codegen units. `cargo build --profile release-fat` retains the previous fat
+LTO/one-codegen-unit configuration for explicit optimization benchmarks. The installer profile keeps optimization
+level 3 with LTO disabled to avoid long GPUI links and large bitcode caches. Installers compile the GUI and bundled CLI
 under one profile to share dependencies; Windows CLI downloads reuse the installer binary. macOS GUI architectures
 compile on separate native runners before universal bundling and signing. Standalone macOS CLI
 builds remain separate to preserve macOS 11 support (the GUI requires macOS 12). Android builds each ABI and the Kotlin bindings on separate workers; native
