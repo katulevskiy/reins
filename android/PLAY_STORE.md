@@ -20,7 +20,7 @@ registers the phone again; grants, history and Autopilot's training stay on the 
 separate id (`com.reins2fa.app.play`) would let both coexist, but would need a second Firebase app, a second Android
 OAuth client and its own redirect scheme for no real benefit: one person needs one approval phone.
 
-The historical Rewarden APK used `dev.rewarden.android`. That package rename prevents an in-place update.
+Historical APKs used a different application id. The package rename prevents an in-place update.
 Existing `com.reins2fa.app` test/direct builds signed with the old debug certificate also require an explicit
 migration/reinstall before using the new production key. Verify recovery first; uninstalling erases local phone data.
 
