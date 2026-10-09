@@ -266,4 +266,8 @@ numbers and codes are never written to the phone's activity log, the ledger or a
   permission you gave; it cannot exceed them.
 - The desktop bridge relies on you typing the phone's key in once (`reins payments-trust`); a key typed from anywhere
   but the phone's screen could be anyone's.
+- Sealing keeps card details from a dishonest server, for an honest agent on your computer. It does not protect them
+  from a program that runs as you and ignores the harness hooks: such a program can read the desktop app's own key,
+  and trust a key of its own. The hooks ask your phone about `reins payments-trust` and about `*.key` files, but, as
+  everywhere in Reins, [hooks are guard rails, not a sandbox](security-model.md).
 - Lithic and other virtual card providers can be added behind the same interface; Privacy.com is the first.

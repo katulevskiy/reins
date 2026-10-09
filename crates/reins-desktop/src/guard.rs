@@ -838,10 +838,20 @@ mod tests {
     }
 
     #[test]
+    fn the_payment_key_this_computer_trusts_is_a_guarded_file() {
+        let g = GuardConfig::default();
+        for f in ["/home/me/.local/state/reins/phone-payments.key", "/home/me/.local/state/reins/identity.key"] {
+            assert!(g.check_file(f).is_some(), "{f}");
+        }
+        assert!(g.check_command("echo abc > ~/.local/state/reins/phone-payments.key").is_some());
+    }
+
+    #[test]
     fn the_default_rules_catch_the_dangerous_commands() {
         for (c, rule) in [
             ("reins payments-trust", "reins payments-trust"),
             ("/usr/local/bin/reins payments-trust", "reins payments-trust"),
+            ("sh -c 'reins payments-trust'", "reins payments-trust"),
             ("git push --force origin main", "git push --force*"),
             ("git -C repo push -fu origin x", "git push -f"),
             ("git push --force-with-lease", "git push --force*"),

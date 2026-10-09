@@ -8,6 +8,10 @@
 //! payment key, which the user confirmed once with `reins payments-trust` (the server could otherwise seal a forged
 //! card to the app's public key, signed by a key of its own). Answers fetched later with `reins_get_result` are opened
 //! the same way.
+//!
+//! This protects card details from a dishonest server, for an honest local agent. It does not protect them from a
+//! program that runs as the user and ignores the harness hooks: such a program can read this app's own key, and trust
+//! a key of its own (the hooks ask about `reins payments-trust` and about `*.key` files, as guard rails).
 
 use std::collections::HashSet;
 use std::path::PathBuf;
