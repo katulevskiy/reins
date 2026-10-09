@@ -14,7 +14,10 @@ struct UnlockScreen: View {
     @State private var vm = UnlockModel()
     @FocusState private var codeFocused: Bool
 
-    var body: some View {
+    // The code, the unlock form, the passkeys: hidden in the app switcher and while the screen is recorded.
+    var body: some View { screen.privacyCover() }
+
+    @ViewBuilder private var screen: some View {
         GeometryReader { geo in
             ScrollView {
                 VStack(spacing: 0) {
