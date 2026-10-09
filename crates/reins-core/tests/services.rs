@@ -226,6 +226,7 @@ async fn the_catalogue_lists_every_integration_and_what_this_build_lacks() {
             ("device_contacts", "device", false),
             ("sms", "device", false),
             ("vault", "vault", true),
+            ("payments", "payments", true),
         ]
     );
     assert!(services.iter().find(|s| s.service == "sms").unwrap().note.is_some());
