@@ -79,13 +79,13 @@ pub(super) fn tools() -> Vec<ToolSpec> {
             "secret_store",
             Effect::Write,
             "Save a secret from the computer",
-            "Saves a value typed on the computer (`reins vault add`) in a vault item, sealed to the phone's key: the \
-             server cannot read it. Creates the item, or changes the field of the item with that exact name.",
+            "Saves a value typed on the computer (`reins vault add`) in a vault item, boxed from the desktop app's key \
+             to the phone's key: the server cannot read or change it. Creates the item, or changes the field of the item with that exact name.",
             vec![
                 str_p("name", 300, true, "The item's exact name."),
                 str_p("kind", 20, true, "`api-key`, `login`, `note` or `ssh`."),
                 str_p("field", 100, true, "`password`, `username`, `notes`, `private_key`, or a custom field's name."),
-                text_p("sealed", 40_000, true, "The value, sealed to the phone's key (base64url)."),
+                text_p("sealed", 40_000, true, "The value, boxed to the phone's key (base64url of nonce and ciphertext)."),
                 str_p("phone_key", 64, true, "The phone key the value is sealed to (base64url)."),
                 CLIENT_KEY,
                 NONCE,

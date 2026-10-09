@@ -37,6 +37,22 @@ pub(crate) fn seal<T: Serialize>(key: [u8; 32], value: &T) -> Result<String, Cor
     Ok(BASE64URL_NOPAD.encode(&sealed))
 }
 
+/// Opens a box the desktop app made from its key (`client_key`) to `secret` (base64url of `nonce || ciphertext`).
+/// Only the holder of the app's private key could have made it.
+pub(crate) fn open_from(client_key: [u8; 32], secret: &[u8; 32], boxed: &str) -> Option<Zeroizing<Vec<u8>>> {
+    use crypto_box::aead::Aead as _;
+    const NONCE: usize = 24;
+    let bytes = BASE64URL_NOPAD.decode(boxed.as_bytes()).ok()?;
+    if bytes.len() <= NONCE {
+        return None;
+    }
+    let (nonce, ciphertext) = bytes.split_at(NONCE);
+    let nonce = crypto_box::Nonce::from(<[u8; NONCE]>::try_from(nonce).ok()?);
+    let cipher =
+        crypto_box::SalsaBox::new(&crypto_box::PublicKey::from(client_key), &crypto_box::SecretKey::from(*secret));
+    cipher.decrypt(&nonce, ciphertext).ok().map(Zeroizing::new)
+}
+
 #[cfg(test)]
 mod tests {
     use reins_proto::desktop::AskAnswer;

@@ -92,6 +92,19 @@ impl Identity {
         self.secret.unseal(&bytes).map(Zeroizing::new).map_err(|_| IdentityError::Unseal)
     }
 
+    /// `plaintext` in a box from this app's key to `public_key` (base64url of `nonce || ciphertext`): only that key
+    /// opens it, and whoever opens it knows this app made it.
+    #[must_use]
+    pub fn box_to(&self, public_key: &str, plaintext: &[u8]) -> Option<String> {
+        use crypto_box::aead::{Aead as _, AeadCore as _};
+        let public = crypto_box::PublicKey::from(reins_proto::desktop::decode_key(public_key)?);
+        let cipher = crypto_box::SalsaBox::new(&public, &self.secret);
+        let nonce = crypto_box::SalsaBox::generate_nonce(&mut OsRng);
+        let mut out = nonce.to_vec();
+        out.extend(cipher.encrypt(&nonce, plaintext).ok()?);
+        Some(BASE64URL_NOPAD.encode(&out))
+    }
+
     /// Opens the credential the phone sealed to this app.
     pub fn open_grant(&self, sealed: &str) -> Result<CredentialGrant, IdentityError> {
         let plain = self.unseal(sealed)?;

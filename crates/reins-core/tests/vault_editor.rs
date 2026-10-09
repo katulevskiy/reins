@@ -5,8 +5,8 @@
 mod common;
 
 use common::desktop::{DESK, Desk, REFUSED, call, choice, desk_with, mount_reins};
-use crypto_box::PublicKey;
-use crypto_box::aead::OsRng;
+use crypto_box::aead::{Aead as _, AeadCore as _, OsRng};
+use crypto_box::{PublicKey, SalsaBox, SecretKey};
 use data_encoding::BASE64URL_NOPAD;
 use reins_core::crypto::{Kdf, VaultKey, master_key};
 use reins_core::vault_editor::{VaultFieldInput, VaultItemInput, VaultItemKind};
@@ -258,26 +258,36 @@ async fn phone_key(desk: &Desk) -> String {
     answer.public_key
 }
 
-fn seal_to(phone: &str, nonce: &str, value: &str) -> String {
+/// The value in a box from `from` (the app's key, or a forger's) to the phone's key, as `reins vault add` sends it.
+fn box_from(from: &SecretKey, phone: &str, nonce: &str, name: &str, field: &str, value: &str) -> String {
     let secret = SecretToStore {
         v: 1,
         nonce: nonce.to_owned(),
+        name: name.to_owned(),
+        field: field.to_owned(),
         value: value.to_owned(),
     };
-    let sealed =
-        PublicKey::from(decode_key(phone).unwrap()).seal(&mut OsRng, &serde_json::to_vec(&secret).unwrap()).unwrap();
-    BASE64URL_NOPAD.encode(&sealed)
+    let cipher = SalsaBox::new(&PublicKey::from(decode_key(phone).unwrap()), from);
+    let nonce = SalsaBox::generate_nonce(&mut OsRng);
+    let mut out = nonce.to_vec();
+    out.extend(cipher.encrypt(&nonce, serde_json::to_vec(&secret).unwrap().as_slice()).unwrap());
+    BASE64URL_NOPAD.encode(&out)
 }
 
 fn store(desk: &Desk, id: &str, phone: &str, name: &str, kind: &str, field: &str, value: &str) -> Value {
     let nonce = format!("nonce-{id}");
+    let boxed = box_from(&desk.key, phone, &nonce, name, field, value);
+    store_boxed(desk, id, phone, name, kind, field, &boxed)
+}
+
+fn store_boxed(desk: &Desk, id: &str, phone: &str, name: &str, kind: &str, field: &str, boxed: &str) -> Value {
     call(
         id,
         DESK,
         "vault",
         "secret_store",
-        &json!({"name": name, "kind": kind, "field": field, "sealed": seal_to(phone, &nonce, value),
-            "phone_key": phone, "client_key": desk.public(), "nonce": nonce}),
+        &json!({"name": name, "kind": kind, "field": field, "sealed": boxed,
+            "phone_key": phone, "client_key": desk.public(), "nonce": format!("nonce-{id}")}),
     )
 }
 
@@ -316,7 +326,7 @@ async fn a_secret_typed_on_the_computer_is_saved_without_the_server_seeing_it() 
 #[tokio::test]
 async fn a_value_for_another_key_or_request_or_an_unpaired_app_is_refused() {
     let desk = desk().await;
-    let stranger = PublicKey::from(crypto_box::SecretKey::generate(&mut OsRng).public_key().to_bytes());
+    let stranger = PublicKey::from(SecretKey::generate(&mut OsRng).public_key().to_bytes());
     let other = reins_proto::desktop::encode_key(stranger.as_bytes());
     desk.send(&[store(&desk, "u1", &other, "X", "api-key", "password", "v")]).await;
     assert_eq!(desk.error("u1").await, REFUSED);
@@ -333,6 +343,18 @@ async fn a_value_for_another_key_or_request_or_an_unpaired_app_is_refused() {
         ("w5", store(&desk, "w5", &phone, "K", "ssh", "private_key", "not a key"), "not an OpenSSH private key"),
         ("w6", store(&desk, "w6", &phone, "N", "note", "password", "v"), "has no password"),
     ];
+    // The server knows both public keys: what it boxes itself, or a box moved to another item, does not open.
+    let server_key = SecretKey::generate(&mut OsRng);
+    let forged = box_from(&server_key, &phone, "nonce-w7", "X", "password", "attacker-key");
+    let moved = box_from(&desk.key, &phone, "nonce-w8", "Other", "password", "v");
+    let cases = [
+        cases.to_vec(),
+        vec![
+            ("w7", store_boxed(&desk, "w7", &phone, "X", "api-key", "password", &forged), "could not be opened"),
+            ("w8", store_boxed(&desk, "w8", &phone, "X", "api-key", "password", &moved), "another item or field"),
+        ],
+    ]
+    .concat();
     let requests: Vec<Value> = cases.iter().map(|(_, r, _)| r.clone()).collect();
     desk.send(&requests).await;
     for (id, _, says) in cases {

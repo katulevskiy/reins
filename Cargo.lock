@@ -8335,6 +8335,7 @@ dependencies = [
  "reins-proto",
  "reqwest",
  "ring",
+ "rpassword",
  "rustix 1.1.4",
  "rustls 0.23.44",
  "serde",

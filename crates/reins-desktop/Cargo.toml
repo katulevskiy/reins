@@ -49,6 +49,8 @@ url = "2.5.8"
 webpki-roots = "1.0.9"
 zeroize = "1.9.0"
 qrcode = { version = "0.14.1", default-features = false }
+# `reins vault add` reads the secret without echo.
+rpassword = "7.5.4"
 
 # The user id, signals and the non-dumpable flag. Windows has none of these; see src/win.rs for what it does instead.
 [target.'cfg(unix)'.dependencies]

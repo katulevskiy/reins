@@ -4,14 +4,14 @@
 //! - `phone_key`: the public half of this phone's inbox key ([`Store::inbox_key`]). The user approves it once, and the
 //!   computer then shows its eight digits ([`phone_key_fingerprint`]) to compare with the ones the approval showed, and
 //!   keeps the key. A server that swapped the key would make the digits differ.
-//! - `secret_store`: the value, sealed by the computer to that key, so the server cannot read it. The phone opens it,
+//! - `secret_store`: the value, in a box from the computer's pinned key to that key, so the server can neither read
+//!   nor replace it. The phone opens it,
 //!   shows what will be saved (never the value) and, once approved, creates the item or changes the field of the item
 //!   with that name, encrypted with the vault key like any change.
 //! - `names`: the items' names and kinds, sealed to the computer.
 //!
 //! [`Store::inbox_key`]: crate::store::Store::inbox_key
 
-use data_encoding::BASE64URL_NOPAD;
 use reins_proto::connector::ConnectorCall;
 use reins_proto::desktop::{
     PHONE_KEY_CHANGED, PhoneKey, SEALED_FIELD, SecretToStore, VaultNames, phone_key_fingerprint,
@@ -23,7 +23,7 @@ use super::super::editor::{inbox_public_key, public_of_private};
 use super::super::model::{Entry, Kind, Snapshot, State};
 use super::super::write::{carry_out, plan_with};
 use super::bad;
-use crate::connector::sealed::{client_key, nonce_arg, seal};
+use crate::connector::sealed::{client_key, nonce_arg, open_from, seal};
 use crate::connector::vault::Vault;
 use crate::connector::{Item, Preview};
 use crate::vault_editor::{VaultFieldInput, VaultItemInput, VaultItemKind};
@@ -116,15 +116,20 @@ fn open(vault: &Vault, call: &ConnectorCall) -> Result<Store, CoreError> {
     if field.is_empty() || field.chars().any(char::is_control) {
         return Err(bad("`field` must name a field."));
     }
+    // A box from the app's key, which the flow checked is the one pinned for this connection: the server can neither
+    // read the value nor put another one in its place.
     let unreadable = || bad("The value could not be opened on the phone. Run reins vault add again.");
-    let sealed =
-        BASE64URL_NOPAD.decode(call.str_arg("sealed").unwrap_or_default().as_bytes()).map_err(|_| unreadable())?;
-    let secret = crypto_box::SecretKey::from(*vault.store.inbox_key()?);
-    let plain = Zeroizing::new(secret.unseal(&sealed).map_err(|_| unreadable())?);
+    let plain = open_from(client_key(call)?, &*vault.store.inbox_key()?, call.str_arg("sealed").unwrap_or_default())
+        .ok_or_else(unreadable)?;
     let opened: SecretToStore = serde_json::from_slice(&plain).map_err(|_| unreadable())?;
     let value = Zeroizing::new(opened.value);
     if opened.nonce != nonce {
         return Err(bad("The value was sealed for another request; refused."));
+    }
+    if text::one_line(&opened.name).trim() != name
+        || opened.field.trim() != call.str_arg("field").unwrap_or_default().trim()
+    {
+        return Err(bad("The value was sealed for another item or field; refused."));
     }
     if value.is_empty() {
         return Err(bad("The value is empty."));

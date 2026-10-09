@@ -379,12 +379,16 @@ pub struct SshSignature {
 /// forgets the key it kept and asks for the phone's key again (a new phone, or the app reinstalled).
 pub const PHONE_KEY_CHANGED: &str = "This was sealed to another phone's key.";
 
-/// What the desktop app seals to the phone's own key for `vault_secret_store` (`reins vault add`): the value to keep,
-/// bound to the request's nonce. The server relays it without being able to open it.
+/// What the desktop app sends the phone for `vault_secret_store` (`reins vault add`): the value to keep, bound to the
+/// request's nonce, the item's name and the field. It travels in a box from the app's key to the phone's key
+/// (X25519, XSalsa20-Poly1305, `nonce || ciphertext`): the server relays it without being able to open it, and the
+/// phone, which pinned the app's key, knows the paired app wrote it.
 #[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct SecretToStore {
     pub v: u32,
     pub nonce: String,
+    pub name: String,
+    pub field: String,
     pub value: String,
 }
 

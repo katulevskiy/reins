@@ -141,6 +141,12 @@ enum Cmd {
     #[command(display_order = 13)]
     /// Run a command with secrets from the vault on your phone as environment variables.
     Run(reins_desktop::run::RunArgs),
+    #[command(display_order = 14)]
+    /// Save a secret in the vault on your phone (typed here, never shown or kept), or list the items' names.
+    Vault {
+        #[command(subcommand)]
+        action: reins_desktop::vault_cli::VaultCmd,
+    },
     #[command(display_order = 20)]
     /// The SSH agent whose keys stay on your phone.
     Ssh {
@@ -457,6 +463,14 @@ async fn run(cmd: Cmd) -> Result<(), String> {
         Cmd::Run(args) => {
             let code = reins_desktop::run::main(&paths, &config, &args).await;
             std::process::exit(i32::from(code));
+        }
+        Cmd::Vault {
+            action,
+        } => {
+            for line in reins_desktop::vault_cli::run(&action, &paths, &config).await? {
+                out!("{line}");
+            }
+            Ok(())
         }
         Cmd::Ssh {
             action,
