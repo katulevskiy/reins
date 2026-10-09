@@ -12,15 +12,15 @@ use crate::store::Store;
 
 const CONFIG_KEY: &str = "payments.config";
 const LEDGER_KEY: &str = "payments.ledger";
-/// Purchases kept; older ones are dropped.
+/// Settled purchases kept beyond [`SPEND_WINDOW`]; nothing that can still count, or still needs the user, is dropped.
 pub const LEDGER_RETENTION: usize = 1_000;
 pub const DAY: i64 = 86_400;
 /// The longest a spend limit may last.
 pub const MAX_LIMIT_SECS: i64 = 90 * DAY;
 /// How long a virtual card made for a completed purchase stays open (split shipments), unless closed by hand.
 pub const VIRTUAL_CARD_DAYS: i64 = 30;
-/// How long a virtual card stays open when the AI never says how checkout went.
-pub const UNREPORTED_CARD_SECS: i64 = DAY;
+/// The longest window budgets and limits look back over (30 days), and a day more.
+pub const SPEND_WINDOW: i64 = 31 * DAY;
 
 pub const VIRTUAL_CARD: &str = "virtual_card";
 pub const MERCHANT_ACCOUNT: &str = "merchant_account";
@@ -223,8 +223,11 @@ pub struct CardRef {
 /// One approved purchase.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Purchase {
-    /// The request id: the `purchase_id` the AI got.
+    /// The `purchase_id` the AI got: made by the phone, never the relay's request id.
     pub id: String,
+    /// The request it answered; a request is paid for once.
+    #[serde(default)]
+    pub request_id: String,
     pub at: i64,
     pub connection_id: String,
     pub connection_label: String,
@@ -259,9 +262,15 @@ pub struct Purchase {
     /// Who charged the virtual card, as the card network names them…
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub charged_by: Vec<String>,
-    /// …once the provider was asked.
+    /// …once the provider was asked…
     #[serde(default)]
     pub charges_read: bool,
+    /// …and what it says was charged in all, in cents.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub provider_charged: Option<i64>,
+    /// The user said a purchase that did not pay with a virtual card went through for nothing: it stops counting.
+    #[serde(default)]
+    pub cleared: bool,
     /// A charge by someone who does not look like the store that was approved; spend limits for this AI stop until
     /// the user has seen it.
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -279,21 +288,69 @@ impl Purchase {
 }
 
 impl Purchase {
-    /// What it counts for in budgets and limits: the approved total, or what the AI says was charged when that is
-    /// more. What the AI reports never lowers it: a purchase it calls failed or cancelled stops counting only when it
-    /// did not pay with a virtual card, or when the provider says that card was never charged.
+    /// What it counts for in budgets and limits. Nothing the AI reports lowers it:
+    ///
+    /// - a virtual card counts its cap (the most it can be charged) while it is open, or once closed while its charges
+    ///   are unknown, and once closed what the provider says was charged;
+    /// - anything else counts the approved total (or a higher reported charge) until the user clears it, whatever the
+    ///   AI says happened: only the user knows nothing was charged.
     #[must_use]
     pub fn spent(&self) -> i64 {
-        let counted = self.charged.unwrap_or(0).max(self.total);
-        let unpaid = match &self.card {
-            Some(_) => self.charges_read && self.charged_by.is_empty(),
-            None => true,
-        };
-        if self.status.spends() || !unpaid {
-            counted
-        } else {
-            0
+        let reported = self.charged.unwrap_or(0);
+        match &self.card {
+            Some(card) if card.closed_at.is_some() && self.charges_read => {
+                self.provider_charged.unwrap_or(0).max(reported)
+            }
+            Some(card) => card.limit.max(reported),
+            None if self.cleared => 0,
+            None => self.total.max(reported),
         }
+    }
+
+    /// A card made for a purchase that then failed on the phone, and could not be closed: kept so that it counts its
+    /// cap and is closed later.
+    pub(super) fn unfinished(
+        cart: &reins_proto::payments::Cart,
+        approval: &super::Approval<'_>,
+        purchase_id: &str,
+        made: CardRef,
+        now: i64,
+    ) -> Self {
+        Self {
+            id: purchase_id.to_owned(),
+            request_id: approval.request_id.to_owned(),
+            at: now,
+            connection_id: approval.connection_id.to_owned(),
+            connection_label: crate::text::one_line(approval.connection_label),
+            merchant: cart.merchant.clone(),
+            domain: cart.domain.clone(),
+            lines: cart.items.iter().map(|i| format!("{} \u{d7} {}", i.quantity, i.name)).collect(),
+            currency: cart.currency.clone(),
+            total: cart.total,
+            method_kind: VIRTUAL_CARD.to_owned(),
+            method_label: format!("Card \u{2022}\u{2022} {}", made.last4),
+            ship_to: None,
+            approved_by: approval.approved_by.to_owned(),
+            status: PurchaseStatus::Cancelled,
+            order_id: None,
+            charged: None,
+            receipt_url: None,
+            report_note: Some("Not handed over: the phone could not finish the purchase.".to_owned()),
+            reported_at: None,
+            card: Some(made),
+            charged_by: Vec::new(),
+            charges_read: false,
+            provider_charged: None,
+            cleared: false,
+            mismatch: None,
+            mismatch_seen: false,
+        }
+    }
+
+    /// Whether it may leave the ledger: older than every window, with its card closed and nothing for the user to see.
+    #[must_use]
+    pub fn settled_before(&self, cutoff: i64) -> bool {
+        self.at < cutoff && self.card.as_ref().is_none_or(|c| c.closed_at.is_some()) && self.unseen_mismatch().is_none()
     }
 }
 
@@ -335,9 +392,20 @@ pub(super) fn load_ledger(store: &Store) -> Result<Vec<Purchase>, CoreError> {
     }
 }
 
+/// Saves the ledger, newest first. Only settled purchases older than [`SPEND_WINDOW`] are ever dropped, beyond
+/// [`LEDGER_RETENTION`] of them: what can still count against a window, an open card and a charge the user has not
+/// seen always stay.
 pub(super) fn save_ledger(store: &Store, ledger: &mut Vec<Purchase>) -> Result<(), CoreError> {
     ledger.sort_by_key(|p| std::cmp::Reverse(p.at));
-    ledger.truncate(LEDGER_RETENTION);
+    let cutoff = crate::store::unix_now() - SPEND_WINDOW;
+    let mut kept_old = 0usize;
+    ledger.retain(|p| {
+        if !p.settled_before(cutoff) {
+            return true;
+        }
+        kept_old += 1;
+        kept_old <= LEDGER_RETENTION
+    });
     let json = serde_json::to_string(ledger).map_err(|_| CoreError::storage("cannot encode purchase history"))?;
     store.meta_set(LEDGER_KEY, &json)
 }
@@ -349,6 +417,7 @@ mod tests {
     fn purchase(id: &str, at: i64, connection: &str, domain: &str, total: i64, status: PurchaseStatus) -> Purchase {
         Purchase {
             id: id.to_owned(),
+            request_id: format!("r-{id}"),
             at,
             connection_id: connection.to_owned(),
             connection_label: connection.to_owned(),
@@ -357,7 +426,7 @@ mod tests {
             lines: Vec::new(),
             currency: "USD".to_owned(),
             total,
-            method_kind: VIRTUAL_CARD.to_owned(),
+            method_kind: "merchant_account".to_owned(),
             method_label: String::new(),
             ship_to: None,
             approved_by: "you".to_owned(),
@@ -370,44 +439,106 @@ mod tests {
             card: None,
             charged_by: Vec::new(),
             charges_read: false,
+            provider_charged: None,
+            cleared: false,
             mismatch: None,
             mismatch_seen: false,
         }
     }
 
-    #[test]
-    fn spending_counts_what_was_approved_or_charged_in_the_window() {
-        let mut charged = purchase("c", 900, "claude", "amazon.com", 1_000, PurchaseStatus::Completed);
-        charged.charged = Some(1_200);
-        let mut underreported = purchase("u", 900, "gpt", "amazon.com", 1_000, PurchaseStatus::Completed);
-        underreported.charged = Some(1);
-        let mut failed_but_charged = purchase("fc", 900, "gpt", "amazon.com", 400, PurchaseStatus::Failed);
-        failed_but_charged.card = Some(CardRef {
+    fn card(limit: i64, closed: bool) -> CardRef {
+        CardRef {
             provider: "privacy".into(),
             sandbox: false,
             token: "t".into(),
             last4: "1234".into(),
-            limit: 500,
-            closed_at: None,
-        });
-        assert_eq!(underreported.spent(), 1_000, "a lower charge never lowers what counts");
-        assert_eq!(failed_but_charged.spent(), 400, "the provider has not said the card went unused");
-        failed_but_charged.charges_read = true;
-        failed_but_charged.charged_by = vec!["AMZN".into()];
-        assert_eq!(failed_but_charged.spent(), 400, "charged after all");
-        failed_but_charged.charged_by.clear();
-        assert_eq!(failed_but_charged.spent(), 0, "never charged");
+            limit,
+            closed_at: closed.then_some(5),
+        }
+    }
+
+    #[test]
+    fn a_virtual_card_counts_its_cap_until_the_provider_says_what_was_charged() {
+        let mut p = purchase("v", 900, "claude", "amazon.com", 1, PurchaseStatus::Failed);
+        p.method_kind = VIRTUAL_CARD.to_owned();
+        p.card = Some(card(101, false));
+        assert_eq!(p.spent(), 101, "a 0.01 cart with a 1.01 card counts 1.01 while the card is open");
+        p.card = Some(card(101, true));
+        assert_eq!(p.spent(), 101, "closed, charges unknown: still the cap");
+        p.charges_read = true;
+        p.provider_charged = Some(0);
+        p.charged = Some(0);
+        assert_eq!(p.spent(), 0, "the provider says it was never charged");
+        p.provider_charged = Some(99);
+        assert_eq!(p.spent(), 99);
+        p.charged = Some(1);
+        assert_eq!(p.spent(), 99, "a lower report never lowers it");
+    }
+
+    #[test]
+    fn what_did_not_pay_with_a_virtual_card_counts_until_the_user_clears_it() {
+        let mut p = purchase("m", 900, "claude", "amazon.com", 1_000, PurchaseStatus::Failed);
+        assert_eq!(p.spent(), 1_000, "the AI calling it failed changes nothing");
+        p.charged = Some(1);
+        assert_eq!(p.spent(), 1_000);
+        p.charged = Some(1_300);
+        assert_eq!(p.spent(), 1_300, "a higher reported charge counts");
+        p.cleared = true;
+        assert_eq!(p.spent(), 0, "the user said nothing was charged");
+    }
+
+    #[test]
+    fn spending_counts_by_ai_store_currency_and_window() {
         let ledger = vec![
             purchase("a", 1_000, "claude", "smile.amazon.com", 500, PurchaseStatus::Approved),
-            charged,
             purchase("f", 950, "claude", "amazon.com", 9_999, PurchaseStatus::Failed),
             purchase("o", 990, "gpt", "amazon.com", 300, PurchaseStatus::Approved),
             purchase("old", 10, "claude", "amazon.com", 7_000, PurchaseStatus::Completed),
         ];
-        assert_eq!(spent_since(&ledger, 100, "USD", Some("claude"), |d| in_domain(d, "amazon.com")), 1_700);
-        assert_eq!(spent_since(&ledger, 100, "USD", None, |_| true), 2_000);
+        assert_eq!(spent_since(&ledger, 100, "USD", Some("claude"), |d| in_domain(d, "amazon.com")), 10_499);
+        assert_eq!(spent_since(&ledger, 100, "USD", None, |_| true), 10_799);
         assert_eq!(spent_since(&ledger, 100, "EUR", None, |_| true), 0);
-        assert_eq!(spent_since(&ledger, 0, "USD", Some("claude"), |_| true), 8_700);
+        assert_eq!(spent_since(&ledger, 0, "USD", Some("claude"), |_| true), 17_499);
+    }
+
+    #[test]
+    fn the_ledger_never_drops_what_can_still_count_or_needs_the_user() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = crate::store::tests::open(dir.path());
+        let now = crate::store::unix_now();
+        let mut ledger: Vec<Purchase> = (0..LEDGER_RETENTION + 50)
+            .map(|i| {
+                purchase(
+                    &format!("old{i}"),
+                    1_000 + i64::try_from(i).unwrap(),
+                    "c",
+                    "a.com",
+                    1,
+                    PurchaseStatus::Completed,
+                )
+            })
+            .collect();
+        ledger.extend((0..LEDGER_RETENTION + 10).map(|i| {
+            purchase(&format!("new{i}"), now - i64::try_from(i).unwrap(), "c", "a.com", 1, PurchaseStatus::Approved)
+        }));
+        let mut open = purchase("open", 500, "c", "a.com", 1, PurchaseStatus::Completed);
+        open.card = Some(card(5, false));
+        let mut flagged = purchase("flagged", 400, "c", "a.com", 1, PurchaseStatus::Completed);
+        flagged.mismatch = Some("ELSEWHERE".into());
+        ledger.extend([open, flagged]);
+        save_ledger(&store, &mut ledger).unwrap();
+        let kept = load_ledger(&store).unwrap();
+        assert_eq!(
+            kept.iter().filter(|p| p.id.starts_with("new")).count(),
+            LEDGER_RETENTION + 10,
+            "the whole window stays"
+        );
+        assert_eq!(
+            kept.iter().filter(|p| p.id.starts_with("old")).count(),
+            LEDGER_RETENTION,
+            "settled old ones are capped"
+        );
+        assert!(kept.iter().any(|p| p.id == "open") && kept.iter().any(|p| p.id == "flagged"));
     }
 
     #[test]

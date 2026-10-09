@@ -88,10 +88,11 @@ async fn an_ai_buys_a_cart_the_user_approved_with_a_virtual_card() {
         phone.core.approve_purchase(item.id.clone(), choice).await.unwrap();
         item.id
     };
-    let (result, purchase_id) = tokio::join!(buying, user);
+    let (result, request_id) = tokio::join!(buying, user);
     assert_eq!(result["isError"], false, "{result}");
     let data: &Value = &result["structuredContent"];
-    assert_eq!(data["purchase_id"], purchase_id);
+    let purchase_id = data["purchase_id"].as_str().unwrap().to_owned();
+    assert_ne!(purchase_id, request_id, "the phone makes its own purchase id");
     assert_eq!(
         (data["payment"]["kind"].as_str(), data["payment"]["number"].as_str()),
         (Some("virtual_card"), Some(PAN))
@@ -110,7 +111,9 @@ async fn an_ai_buys_a_cart_the_user_approved_with_a_virtual_card() {
     let (reported, _) = tokio::join!(ai.tool("payments_purchase_complete", &report), phone.core.sync(10));
     assert_eq!(reported["isError"], false, "{reported}");
     let spending = phone.core.payments_spending(0).await.unwrap();
-    assert_eq!((spending.purchases[0].status.as_str(), spending.totals[0].text.as_str()), ("completed", "$12.00"));
+    // The card is still open (split shipments): it counts what it can still be charged, its cap.
+    assert_eq!((spending.purchases[0].status.as_str(), spending.totals[0].text.as_str()), ("completed", "$13.20"));
+    assert_eq!(spending.purchases[0].charged_text.as_deref(), Some("$12.00"));
     assert_eq!(spending.by_ai[0].connection_label, "My Claude");
     assert!(!server.log().contains("panicked"), "server log: {}", server.log());
     assert!(!server.log().contains(PAN), "the server never logs a card number");

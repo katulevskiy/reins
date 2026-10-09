@@ -40,8 +40,16 @@ pub trait CardIssuer: Send + Sync {
     async fn create(&self, key: &str, card: &CardRequest) -> Result<IssuedCard, CoreError>;
     /// Closes a card for good.
     async fn close(&self, key: &str, token: &str) -> Result<(), CoreError>;
-    /// Who charged the card, as the card network names them ("AMZN Mktp US"), for the approved charges.
-    async fn charged_by(&self, key: &str, token: &str) -> Result<Vec<String>, CoreError>;
+    /// The approved charges of a card: who made them, as the card network names them ("AMZN Mktp US"), and how much.
+    async fn charges(&self, key: &str, token: &str) -> Result<Vec<Charge>, CoreError>;
+}
+
+/// One approved charge of a virtual card.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Charge {
+    pub descriptor: String,
+    /// Cents.
+    pub amount: i64,
 }
 
 /// A card id as providers make them (a UUID), before it goes into a path or a query.
@@ -68,6 +76,9 @@ struct Transactions {
 struct Transaction {
     #[serde(default)]
     result: String,
+    /// The authorization amount, in cents.
+    #[serde(default)]
+    amount: i64,
     #[serde(default)]
     merchant: Option<Merchant>,
 }
@@ -164,7 +175,7 @@ impl CardIssuer for Privacy {
         })
     }
 
-    async fn charged_by(&self, key: &str, token: &str) -> Result<Vec<String>, CoreError> {
+    async fn charges(&self, key: &str, token: &str) -> Result<Vec<Charge>, CoreError> {
         card_token(token)?;
         let req = self.http.get(format!("{}/transactions", self.base)).query(&[
             ("card_token", token),
@@ -174,14 +185,18 @@ impl CardIssuer for Privacy {
         let bytes = self.send(req, key).await?;
         let list: Transactions = serde_json::from_slice(&bytes)
             .map_err(|_| CoreError::service("Privacy.com sent an answer Reins does not understand."))?;
-        let mut names: Vec<String> = Vec::new();
-        for t in list.data.into_iter().filter(|t| t.result.eq_ignore_ascii_case("APPROVED")) {
-            let name = text::truncate_chars(&text::one_line(&t.merchant.map(|m| m.descriptor).unwrap_or_default()), 80);
-            if !name.is_empty() && !names.contains(&name) {
-                names.push(name);
-            }
-        }
-        Ok(names)
+        Ok(list
+            .data
+            .into_iter()
+            .filter(|t| t.result.eq_ignore_ascii_case("APPROVED"))
+            .map(|t| Charge {
+                descriptor: text::truncate_chars(
+                    &text::one_line(&t.merchant.map(|m| m.descriptor).unwrap_or_default()),
+                    80,
+                ),
+                amount: t.amount.max(0),
+            })
+            .collect())
     }
 
     async fn close(&self, key: &str, token: &str) -> Result<(), CoreError> {

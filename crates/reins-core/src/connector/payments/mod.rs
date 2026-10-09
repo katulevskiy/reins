@@ -45,6 +45,13 @@ pub const PAYMENTS_ACCOUNT: &str = PHONE_ACCOUNT;
 const PROVIDER_SECRET: &str = "payments.provider";
 /// Approved by the user (in the ledger and the mandate).
 const BY_USER: &str = "you";
+/// The most purchases spend limits approve for one AI in an hour, and in a day; more ask the user.
+pub const LIMIT_APPROVALS_PER_HOUR: usize = 3;
+pub const LIMIT_APPROVALS_PER_DAY: usize = 10;
+/// A request older than this (the relay keeps them 10 minutes) is never approved by a spend limit.
+pub const MAX_REQUEST_AGE: i64 = 600;
+/// The most cards whose charges are read before a spend limit may approve; with more unread, it asks.
+const MAX_CHARGE_READS: usize = 8;
 
 fn bad(message: impl Into<String>) -> CoreError {
     CoreError::service(message)
@@ -166,6 +173,19 @@ impl ShipAddress {
             label: self.label.clone(),
             lines: self.lines(),
             masked: self.masked(),
+        }
+    }
+
+    /// The address as the mandate binds it: its label and country, and a salted hash of the whole address.
+    fn bound(&self) -> MandateShipTo {
+        let salt = data_encoding::BASE64URL_NOPAD.encode(&crate::crypto::random_bytes::<16>().unwrap_or([0; 16]));
+        let text = format!("{salt}\n{}", self.lines().join("\n"));
+        let digest = ring::digest::digest(&ring::digest::SHA256, text.as_bytes());
+        MandateShipTo {
+            label: self.label.clone(),
+            country: self.country.clone(),
+            address_sha256: data_encoding::BASE64URL_NOPAD.encode(digest.as_ref()),
+            salt,
         }
     }
 
@@ -298,15 +318,27 @@ pub fn limit_may_use(method: &str) -> bool {
 /// Proof that the caller holds [`Payments::purchases`]: what changes the ledger takes one.
 pub(crate) type Held<'a> = tokio::sync::MutexGuard<'a, ()>;
 
+/// How card details may leave the phone for one purchase.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) enum Seal {
+    /// An ordinary AI connection: in the answer.
+    Plain,
+    /// The paired desktop app asked: sealed to its key (and its nonce), and signed by this phone.
+    To([u8; 32], String),
+    /// The connection is the paired desktop app's but the call did not ask for sealing: card details are refused, so
+    /// that a server that strips the request's key gets nothing.
+    Refused,
+}
+
 /// Who approved a purchase, for [`Payments::perform`].
 pub(crate) struct Approval<'a> {
-    pub purchase_id: &'a str,
+    /// The relay request it answers (a request is paid for once).
+    pub request_id: &'a str,
     pub connection_id: &'a str,
     pub connection_label: &'a str,
     /// [`BY_USER`] or the spend limit's id.
     pub approved_by: &'a str,
-    /// The desktop app's key, when it asked for card details sealed to it, and its nonce.
-    pub seal_to: Option<([u8; 32], String)>,
+    pub seal: Seal,
 }
 
 pub struct Payments {
@@ -368,17 +400,42 @@ fn days_from_civil(y: i64, m: i64) -> i64 {
     era * 146_097 + doe - 719_468
 }
 
-/// Whether the store's name fits its domain ("Best Buy" on bestbuy.com does, "Apple" on amazon.com does not).
-fn name_fits_domain(merchant: &str, domain: &str) -> bool {
-    let squash = |s: &str| s.chars().filter(char::is_ascii_alphanumeric).collect::<String>().to_ascii_lowercase();
-    let host = squash(domain);
-    let whole = squash(merchant);
-    (!whole.is_empty() && host.contains(&whole))
-        || merchant.split(|c: char| !c.is_alphanumeric()).map(squash).any(|w| w.len() >= 4 && host.contains(&w))
+/// The registrable domain of a host, by the public suffix list: `amazon.co.uk` for `smile.amazon.co.uk`, `evil.shop`
+/// for `amazon.com.evil.shop`. The host itself when it has none.
+pub(crate) fn registrable(host: &str) -> String {
+    let host = host.trim_end_matches('.').to_ascii_lowercase();
+    psl::domain_str(&host).map_or_else(|| host.clone(), str::to_owned)
 }
 
-/// The store's page and its checkout as a browser reads them (WHATWG URL parsing, as the `url` crate does): their hosts
-/// must be the ones the cart was checked with, so that the domain the user approves is the one the phone opens.
+/// The brand of a host: the first label of its registrable domain (`amazon` for `smile.amazon.co.uk`).
+fn brand(host: &str) -> String {
+    registrable(host).split('.').next().unwrap_or_default().to_owned()
+}
+
+/// The letters and digits of any script, lower case: a Cyrillic "А" stays Cyrillic, so "Аmazon" never reads as
+/// "amazon".
+fn squash(s: &str) -> String {
+    s.chars().filter(|c| c.is_alphanumeric()).flat_map(char::to_lowercase).collect()
+}
+
+/// Whether a name fits a host's brand: the whole name, one of its words, or (for brands of five letters or more) a
+/// part of it is the brand. "Amazon" fits smile.amazon.com and amazon.co.uk, "Best Buy" bestbuy.com, "The Home Depot"
+/// homedepot.com; "Amazon" does not fit amazon.com.evil.shop or evilamazon.com.
+fn name_fits_domain(name: &str, host: &str) -> bool {
+    let brand = brand(host);
+    if brand.chars().count() < 2 {
+        return false;
+    }
+    let whole = squash(name);
+    whole == brand
+        || name.split(|c: char| !c.is_alphanumeric()).any(|w| squash(w) == brand)
+        || (brand.chars().count() >= 5 && whole.contains(&brand))
+}
+
+/// The store's page, its checkout and the items' pages as a browser reads them (WHATWG URL parsing, as the `url` crate
+/// does). The store's host must be the one the cart was checked with, so that the domain the user approves is the one
+/// shown; the checkout and every item page must be on the store's own site (its registrable domain), so that "Pay on
+/// this phone" opens the store's checkout and no link leads elsewhere.
 fn check_urls(cart: &Cart) -> Result<(), CoreError> {
     let host = |u: &str| {
         url::Url::parse(u)
@@ -386,27 +443,28 @@ fn check_urls(cart: &Cart) -> Result<(), CoreError> {
             .filter(|u| u.scheme() == "https" && u.username().is_empty() && u.password().is_none())
             .and_then(|u| u.host_str().map(|h| h.trim_end_matches('.').to_ascii_lowercase()))
     };
-    let merchant = host(&cart.merchant_url).is_some_and(|h| reins_proto::payments::store_domain(&h) == cart.domain);
-    let checkout = host(&cart.checkout_url).is_some_and(|h| h == cart.checkout_host);
-    let items = cart.items.iter().filter_map(|i| i.url.as_deref()).all(|u| host(u).is_some());
-    if merchant && checkout && items {
-        Ok(())
-    } else {
-        Err(bad(
-            "A store address in this purchase is not a plain https address. Send each page as the browser shows it.",
-        ))
+    let Some(merchant) = host(&cart.merchant_url).filter(|h| reins_proto::payments::store_domain(h) == cart.domain)
+    else {
+        return Err(bad("The store's page is not a plain https address. Send it as the browser shows it."));
+    };
+    let site = registrable(&merchant);
+    if host(&cart.checkout_url).filter(|h| *h == cart.checkout_host).is_none_or(|h| registrable(&h) != site) {
+        return Err(bad(format!("`checkout_url` must be a page of {site}, the store's own site.")));
     }
+    if cart.items.iter().filter_map(|i| i.url.as_deref()).any(|u| host(u).is_none_or(|h| registrable(&h) != site)) {
+        return Err(bad(format!("Item pages must be on {site}, the store's own site.")));
+    }
+    Ok(())
 }
 
-/// Whether a charge's merchant name ("AMZN Mktp US*2K3", "SQ *BLUE BOTTLE") plausibly is the approved store: a word of
-/// it is in the store's domain. Never the store's name, which the AI gave. Card networks shorten names; Amazon's are
-/// "AMZN".
-fn charge_fits(descriptor: &str, domain: &str) -> bool {
-    let lower = descriptor.to_ascii_lowercase();
-    if domain.split('.').any(|label| label == "amazon") && (lower.contains("amzn") || lower.contains("amazon")) {
+/// Whether a charge's merchant name ("AMZN Mktp US*2K3", "SQ *BLUE BOTTLE") looks like the approved store's brand.
+/// Only a hint: the store chooses the name its charges carry. Amazon's read "AMZN".
+fn charge_fits(descriptor: &str, host: &str) -> bool {
+    let brand = brand(host);
+    if brand == "amazon" && squash(descriptor).contains("amzn") {
         return true;
     }
-    name_fits_domain(descriptor, domain)
+    name_fits_domain(descriptor, host)
 }
 
 impl Payments {
@@ -434,6 +492,18 @@ impl Payments {
 
     pub(crate) fn config(&self) -> Result<Config, CoreError> {
         settings::load_config(&self.store)
+    }
+
+    /// The settings as this phone can use them: the virtual card provider only when its key is on this phone (the key
+    /// stays on the phone that connected it; the rest of the settings travel with the account). Never saved back.
+    fn config_here(&self) -> Result<Config, CoreError> {
+        let mut config = self.config()?;
+        if let Some(p) = &config.provider
+            && self.store.secret_get(PROVIDER_SECRET, &p.kind)?.is_none()
+        {
+            config.provider = None;
+        }
+        Ok(config)
     }
 
     pub(crate) fn save(&self, config: &Config) -> Result<(), CoreError> {
@@ -686,7 +756,7 @@ impl Payments {
     ) -> Result<Plan, CoreError> {
         let cart = Cart::from_call(call).map_err(bad)?;
         check_urls(&cart)?;
-        let config = self.config()?;
+        let config = self.config_here()?;
         let needs_vault = cart.ship_to != ShipTo::Nothing || !config.cards.is_empty();
         let wallet = if needs_vault {
             self.wallet().await
@@ -756,10 +826,12 @@ impl Payments {
             }
         };
         if !name_fits_domain(&cart.merchant, &cart.domain) {
-            warnings.push(format!("The store calls itself {}, but the page is on {}.", cart.merchant, cart.domain));
-        }
-        if cart.checkout_host != cart.domain && !in_domain(&cart.checkout_host, &cart.domain) {
-            warnings.push(format!("Its checkout page is on {}.", cart.checkout_host));
+            warnings.push(format!(
+                "The store calls itself {}, but the page is on {} ({}).",
+                cart.merchant,
+                cart.domain,
+                registrable(&cart.domain)
+            ));
         }
         let ledger = self.ledger()?;
         if let Some(p) = ledger.iter().find(|p| p.connection_id == connection_id && p.unseen_mismatch().is_some()) {
@@ -802,9 +874,17 @@ impl Payments {
         })
     }
 
-    /// Why the user's budgets refuse this cart, if they do.
-    pub(crate) fn refusal(&self, cart: &Cart, connection_id: &str, now: i64) -> Result<Option<String>, CoreError> {
+    /// Why the user's budgets refuse this cart, if they do. `extra` is what more than the total the payment can be
+    /// charged (a virtual card's tolerance): budgets count the most it can cost.
+    pub(crate) fn refusal(
+        &self,
+        cart: &Cart,
+        connection_id: &str,
+        extra: i64,
+        now: i64,
+    ) -> Result<Option<String>, CoreError> {
         let config = self.config()?;
+        let most = cart.total + extra;
         let ledger = self.ledger()?;
         for b in applicable(&config.budgets, connection_id) {
             let who = if b.connection_id.is_empty() {
@@ -823,10 +903,15 @@ impl Payments {
                 continue;
             }
             let amount = |m: i64| display_amount(m, &b.currency);
-            if let Some(max) = b.per_purchase.filter(|max| cart.total > *max) {
+            if let Some(max) = b.per_purchase.filter(|max| most > *max) {
                 return Ok(Some(format!(
-                    "The total {} is over the {} per purchase the user allows ({who}).",
-                    amount(cart.total),
+                    "This can cost up to {} (the total{}), over the {} per purchase the user allows ({who}).",
+                    amount(most),
+                    if extra > 0 {
+                        " and its card's margin"
+                    } else {
+                        ""
+                    },
                     amount(max)
                 )));
             }
@@ -836,7 +921,7 @@ impl Payments {
                     continue;
                 };
                 let spent = spent_since(&ledger, now - window, &b.currency, by, |_| true);
-                if spent + cart.total > max {
+                if spent + most > max {
                     return Ok(Some(format!(
                         "This would go over the {} {word} the user allows ({who}): {} spent already.",
                         amount(max),
@@ -849,11 +934,14 @@ impl Payments {
     }
 
     /// The spend limit that approves this purchase without asking, if one does. The request must name the method and
-    /// the address itself.
+    /// the address itself, and be fresh. What counts is the card's cap (the total plus the tolerance), against both
+    /// the per-purchase amount and the period, and no AI gets more than [`LIMIT_APPROVALS_PER_HOUR`] (and
+    /// [`LIMIT_APPROVALS_PER_DAY`]) purchases approved this way.
     pub(crate) fn covering_limit(
         &self,
         plan: &Plan,
         connection_id: &str,
+        created_at: i64,
         now: i64,
     ) -> Result<Option<SpendLimit>, CoreError> {
         let cart = &plan.cart;
@@ -863,11 +951,25 @@ impl Payments {
         if !limit_may_use(method) || !plan.methods.iter().any(|m| &m.id == method && m.unavailable.is_none()) {
             return Ok(None);
         }
-        let config = self.config()?;
+        // An old request relayed again is never approved on its own.
+        if !(now - MAX_REQUEST_AGE..=now + 60).contains(&created_at) {
+            return Ok(None);
+        }
+        let config = self.config_here()?;
         let ledger = self.ledger()?;
         if ledger.iter().any(|p| p.connection_id == connection_id && p.unseen_mismatch().is_some()) {
             return Ok(None);
         }
+        let by_limit = |since: i64| {
+            ledger
+                .iter()
+                .filter(|p| p.connection_id == connection_id && p.approved_by != BY_USER && p.at >= since)
+                .count()
+        };
+        if by_limit(now - 3_600) >= LIMIT_APPROVALS_PER_HOUR || by_limit(now - DAY) >= LIMIT_APPROVALS_PER_DAY {
+            return Ok(None);
+        }
+        let cap = cart.total + plan.tolerance;
         Ok(config
             .limits
             .iter()
@@ -877,10 +979,10 @@ impl Payments {
                     && &l.method == method
                     && l.currency == cart.currency
                     && l.covers_merchant(&cart.domain)
-                    && cart.total <= l.per_purchase
+                    && cap <= l.per_purchase
                     && spent_since(&ledger, now - l.period.secs(), &l.currency, Some(connection_id), |d| {
                         l.covers_merchant(d)
-                    }) + cart.total
+                    }) + cap
                         <= l.per_period
             })
             .cloned())
@@ -897,7 +999,7 @@ impl Payments {
         approval: &Approval<'_>,
     ) -> Result<Value, CoreError> {
         let cart = &plan.cart;
-        let config = self.config()?;
+        let config = self.config_here()?;
         let method_id = method
             .map(str::to_owned)
             .or_else(|| plan.method_id.clone())
@@ -937,11 +1039,18 @@ impl Payments {
         };
         let now = unix_now();
         let mut ledger = self.ledger()?;
-        // Approved again after an answer that did not reach the server: the card made then is closed first.
-        if let Some(old) = ledger.iter().find(|p| p.id == approval.purchase_id).and_then(|p| p.card.clone()) {
-            self.close_card_ref(&old).await.ok();
+        // A request is paid for once: the ledger keeps every purchase (nothing within a window is ever dropped).
+        if ledger.iter().any(|p| p.request_id == approval.request_id) {
+            return Err(CoreError::invalid("This request was already paid for."));
         }
-        ledger.retain(|p| p.id != approval.purchase_id);
+        let pays_with_card = matches!(chosen.kind.as_str(), VIRTUAL_CARD | "card");
+        if pays_with_card && approval.seal == Seal::Refused {
+            return Err(CoreError::invalid(
+                "This is the Reins desktop app's connection: card details go to it sealed only, and this request did \
+                 not ask for that. Update the desktop app, or pay another way.",
+            ));
+        }
+        let purchase_id = uuid::Uuid::new_v4().to_string();
 
         let mut card_ref = None;
         let mut payment_info = MandatePayment {
@@ -958,7 +1067,7 @@ impl Payments {
                     .ok_or_else(|| CoreError::invalid("No virtual card provider is connected."))?;
                 let key = self.provider_key(&provider.kind)?;
                 let limit = cart.total + plan.tolerance;
-                let short_id: String = approval.purchase_id.chars().take(8).collect();
+                let short_id: String = purchase_id.chars().take(8).collect();
                 let made = self
                     .issuer(provider.sandbox)
                     .create(
@@ -1010,19 +1119,30 @@ impl Payments {
                 "instructions": "The checkout page is open on the user's phone and they pay there. Do not place the order yourself.",
             }),
         };
+        // Something failed after a card was made: it is closed, or, when that fails too, kept in the ledger as
+        // cancelled so that it counts its cap and is closed later.
+        let pid = purchase_id.as_str();
         let undo = |made: &Option<CardRef>| {
             let made = made.clone();
             async move {
-                if let Some(made) = made {
-                    self.close_card_ref(&made).await.ok();
+                let Some(made) = made else {
+                    return;
+                };
+                if self.close_card_ref(&made).await.is_err() {
+                    log::warn!("a virtual card made for a failed purchase could not be closed yet");
+                    if let Ok(mut kept) = self.ledger() {
+                        kept.push(Purchase::unfinished(cart, approval, pid, made, now));
+                        settings::save_ledger(&self.store, &mut kept).ok();
+                    }
                 }
             }
         };
-        if let Some((key, nonce)) = &approval.seal_to
-            && matches!(chosen.kind.as_str(), VIRTUAL_CARD | "card")
-        {
-            let opened = json!({"v": 1, "nonce": nonce, "purchase_id": approval.purchase_id, "payment": payment});
-            match super::sealed::seal(*key, &opened) {
+        if pays_with_card && let Seal::To(key, nonce) = &approval.seal {
+            // Signed by this phone, so that the desktop app can tell it from anything the server could seal to it.
+            let inner = json!({"v": 2, "nonce": nonce, "purchase_id": purchase_id, "payment": payment});
+            let sealed = mandate::sign_json(&self.store, mandate::SEALED_JWS_TYPE, &inner)
+                .and_then(|jws| super::sealed::seal(*key, &json!({"jws": jws})));
+            match sealed {
                 Ok(sealed) => payment = json!({"kind": chosen.kind, "sealed": sealed}),
                 Err(e) => {
                     undo(&card_ref).await;
@@ -1037,11 +1157,8 @@ impl Payments {
         };
         let mandate = CartMandate::new(
             cart,
-            approval.purchase_id,
-            ship_to.as_ref().map(|a| MandateShipTo {
-                label: a.label.clone(),
-                country: a.country.clone(),
-            }),
+            &purchase_id,
+            ship_to.as_ref().map(ShipAddress::bound),
             payment_info,
             &text::one_line(approval.connection_label),
             approved_by,
@@ -1056,7 +1173,8 @@ impl Payments {
             }
         };
         ledger.push(Purchase {
-            id: approval.purchase_id.to_owned(),
+            id: purchase_id.clone(),
+            request_id: approval.request_id.to_owned(),
             at: now,
             connection_id: approval.connection_id.to_owned(),
             connection_label: text::one_line(approval.connection_label),
@@ -1081,6 +1199,8 @@ impl Payments {
             card: card_ref.clone(),
             charged_by: Vec::new(),
             charges_read: false,
+            provider_charged: None,
+            cleared: false,
             mismatch: None,
             mismatch_seen: false,
         });
@@ -1095,7 +1215,7 @@ impl Payments {
         };
         Ok(json!({
             "status": "approved",
-            "purchase_id": approval.purchase_id,
+            "purchase_id": purchase_id,
             "approved_by": approved_by,
             "merchant": {"name": cart.merchant, "domain": cart.domain},
             "total": format_minor(cart.total, &cart.currency),
@@ -1140,7 +1260,14 @@ impl Payments {
         purchase.charged = charged.or(purchase.charged);
         purchase.order_id =
             call.str_arg("order_id").map(text::one_line).filter(|s| !s.is_empty()).or(purchase.order_id.take());
-        purchase.receipt_url = call.str_arg("receipt_url").map(str::to_owned).or(purchase.receipt_url.take());
+        // A receipt on the store's own site only: the user may open it.
+        if let Some(receipt) = call.str_arg("receipt_url") {
+            let host = url::Url::parse(receipt).ok().and_then(|u| u.host_str().map(str::to_owned));
+            if host.is_none_or(|h| registrable(&h) != registrable(&purchase.domain)) {
+                return Err(bad(format!("`receipt_url` must be a page of {}.", registrable(&purchase.domain))));
+            }
+            purchase.receipt_url = Some(receipt.to_owned());
+        }
         purchase.report_note = call.str_arg("note").map(text::one_line).filter(|s| !s.is_empty());
         purchase.reported_at = Some(unix_now());
         if purchase.card.is_some() && self.check_card(purchase, unix_now()).await.is_err() {
@@ -1200,17 +1327,26 @@ impl Payments {
         self.issuer(card.sandbox).close(&key, &card.token).await
     }
 
-    /// Reads who charged a purchase's virtual card. A charge by someone who does not look like the approved store is
-    /// flagged (spend limits for that AI wait until the user has seen it) and the card is closed at once. `Ok(true)`
-    /// when the purchase changed; an error when the charges could not be read.
+    /// Reads the charges of a purchase's virtual card: what was charged in all (what the purchase counts once its card
+    /// is closed) and who charged it. A name that does not look like the approved store is flagged (spend limits for
+    /// that AI wait until the user has seen it) and the card is closed at once; the names are a hint, the store picks
+    /// its own. `Ok(true)` when the purchase changed; an error when the charges could not be read.
     async fn check_card(&self, p: &mut Purchase, now: i64) -> Result<bool, CoreError> {
         let Some(card) = p.card.clone() else {
             return Ok(false);
         };
         let key = self.provider_key(&card.provider)?;
-        let names = self.issuer(card.sandbox).charged_by(&key, &card.token).await?;
+        let charges = self.issuer(card.sandbox).charges(&key, &card.token).await?;
+        let total: i64 = charges.iter().map(|c| c.amount).sum();
+        let mut names: Vec<String> = Vec::new();
+        for c in charges {
+            if !c.descriptor.is_empty() && !names.contains(&c.descriptor) {
+                names.push(c.descriptor);
+            }
+        }
         let other = names.iter().find(|n| !charge_fits(n, &p.domain)).filter(|_| p.mismatch.is_none());
-        let changed = names != p.charged_by || other.is_some();
+        let changed = names != p.charged_by || other.is_some() || p.provider_charged != Some(total);
+        p.provider_charged = Some(total);
         if let Some(other) = other {
             p.mismatch = Some(other.clone());
             p.mismatch_seen = false;
@@ -1237,11 +1373,24 @@ impl Payments {
         };
         let mut changed = false;
         let mut all_read = true;
+        let mut reads = 0usize;
         for p in &mut ledger {
             let recent = p.at + (VIRTUAL_CARD_DAYS + 1) * DAY > now;
-            if p.card.is_none() || !recent || connection.is_some_and(|c| c != p.connection_id) {
+            let Some(card) = &p.card else {
+                continue;
+            };
+            // A closed card whose charges are known has nothing more to read.
+            let settled = card.closed_at.is_some() && p.charges_read;
+            if settled || !recent || connection.is_some_and(|c| c != p.connection_id) {
                 continue;
             }
+            // A bounded number of reads per check, so that many cards cannot hold everything up; the rest wait, and
+            // limits do not approve meanwhile.
+            if reads >= MAX_CHARGE_READS {
+                all_read = false;
+                continue;
+            }
+            reads += 1;
             if let Ok(c) = self.check_card(p, now).await {
                 changed |= c;
             } else {
@@ -1282,6 +1431,17 @@ impl Payments {
         Ok(self.tidy(one, Some(connection_id), now).await)
     }
 
+    /// The user says a purchase that did not pay with a virtual card went through for nothing: it stops counting.
+    pub(crate) fn clear_purchase(&self, _one: &Held<'_>, purchase_id: &str) -> Result<(), CoreError> {
+        let mut ledger = self.ledger()?;
+        let p = ledger.iter_mut().find(|p| p.id == purchase_id).ok_or(CoreError::NotFound)?;
+        if p.card.is_some() {
+            return Err(CoreError::invalid("A virtual card's charges come from the provider."));
+        }
+        p.cleared = true;
+        settings::save_ledger(&self.store, &mut ledger)
+    }
+
     /// The user has seen a charge by another store.
     pub(crate) fn acknowledge_charge(&self, _one: &Held<'_>, purchase_id: &str) -> Result<(), CoreError> {
         let mut ledger = self.ledger()?;
@@ -1293,7 +1453,7 @@ impl Payments {
     // ---- the user's settings --------------------------------------------------------------------------------------
 
     pub(crate) async fn overview(&self, enabled: bool, now: i64) -> Result<PaymentsOverview, CoreError> {
-        let config = self.config()?;
+        let config = self.config_here()?;
         let wallet = self.wallet().await;
         let ledger = self.ledger()?;
         Ok(PaymentsOverview {
@@ -1386,7 +1546,53 @@ impl Payments {
         self.save(&config)
     }
 
-    pub(crate) fn disconnect_provider(&self) -> Result<(), CoreError> {
+    /// Closes every virtual card still open; returns how many could not be closed (they stay open in the ledger).
+    async fn close_open_cards(&self, _one: &Held<'_>) -> usize {
+        let Ok(mut ledger) = self.ledger() else {
+            return usize::MAX;
+        };
+        let now = unix_now();
+        let mut failed = 0;
+        for card in ledger.iter_mut().filter_map(|p| p.card.as_mut()).filter(|c| c.closed_at.is_none()) {
+            if self.close_card_ref(card).await.is_ok() {
+                card.closed_at = Some(now);
+            } else {
+                failed += 1;
+            }
+        }
+        if settings::save_ledger(&self.store, &mut ledger).is_err() {
+            return usize::MAX;
+        }
+        failed
+    }
+
+    /// Disconnects the virtual card provider: its open cards are closed first (the key is kept until they are), then
+    /// the key and the spend limits that paid with its cards go.
+    pub(crate) async fn disconnect_provider(&self, one: &Held<'_>) -> Result<(), CoreError> {
+        match self.close_open_cards(one).await {
+            0 => {}
+            usize::MAX => return Err(CoreError::storage("the purchase history could not be read")),
+            n => {
+                return Err(CoreError::service(format!(
+                    "{n} virtual card{} could not be closed at the provider, so the key stays until {}. Try again.",
+                    if n == 1 {
+                        ""
+                    } else {
+                        "s"
+                    },
+                    if n == 1 {
+                        "it is"
+                    } else {
+                        "they are"
+                    }
+                )));
+            }
+        }
+        self.drop_provider()
+    }
+
+    /// Forgets the provider's key, its spend limits and its being picked first.
+    fn drop_provider(&self) -> Result<(), CoreError> {
         let _edit = self.edit_config();
         let mut config = self.config()?;
         if let Some(p) = config.provider.take() {
@@ -1685,6 +1891,8 @@ fn record_view(p: &Purchase) -> PurchaseRecordView {
         card_last4: p.card.as_ref().map(|c| c.last4.clone()),
         charged_by: p.charged_by.clone(),
         mismatch: p.unseen_mismatch().map(str::to_owned),
+        counted_text: display_amount(p.spent(), &p.currency),
+        clearable: p.card.is_none() && !p.cleared,
     }
 }
 
@@ -1722,13 +1930,16 @@ impl Connector for Payments {
     }
 
     /// Payments is switched off: the provider's key goes; the settings and the history stay.
+    /// Payments is switched off: open virtual cards are closed (as far as the provider answers), then the provider's
+    /// key and the spend limits that paid with its cards go. The other settings and the history stay.
     async fn forget(&self, _account: &str) {
-        if let Ok(Some(p)) = self.config().map(|c| c.provider) {
-            self.store.secret_delete(PROVIDER_SECRET, &p.kind).ok();
-            let _edit = self.edit_config();
-            let mut config = self.config().unwrap_or_default();
-            config.provider = None;
-            self.save(&config).ok();
+        let one = self.purchases.lock().await;
+        let failed = self.close_open_cards(&one).await;
+        if failed > 0 {
+            log::warn!("virtual cards could not be closed when Payments was switched off");
+        }
+        if self.drop_provider().is_err() {
+            log::warn!("the virtual card provider could not be forgotten");
         }
     }
 }
@@ -1752,20 +1963,32 @@ mod tests {
     }
 
     #[test]
-    fn store_names_are_checked_against_their_domains() {
+    fn store_names_are_checked_against_their_registrable_domains() {
         assert!(name_fits_domain("Amazon", "amazon.com"));
-        assert!(name_fits_domain("Best Buy", "bestbuy.com"));
+        assert!(name_fits_domain("Amazon", "smile.amazon.co.uk"), "a multi-part public suffix");
         assert!(name_fits_domain("Amazon.com, Inc.", "smile.amazon.com"));
+        assert!(name_fits_domain("Best Buy", "bestbuy.com"));
         assert!(name_fits_domain("The Home Depot", "homedepot.com"));
         assert!(!name_fits_domain("Apple", "amazon.com"));
+        assert!(!name_fits_domain("Amazon", "amazon.com.evil.shop"), "the registrable domain is evil.shop");
+        assert!(!name_fits_domain("Amazon", "amazon-support.evil.shop"));
+        assert!(!name_fits_domain("Amazon", "evilamazon.com"));
+        assert!(!name_fits_domain("\u{410}mazon", "amazon.com"), "a Cyrillic A is not an A");
         assert!(!name_fits_domain("Amazon", "amaz0n-deals.shop"));
+        assert_eq!(registrable("smile.amazon.co.uk"), "amazon.co.uk");
+        assert_eq!(registrable("shop.example.github.io"), "example.github.io", "a private suffix");
+        // Charge names are only a hint, against the domain's brand, never the name the AI gave.
+        assert!(charge_fits("AMZN Mktp US*2K3", "amazon.com"));
+        assert!(charge_fits("SQ *BLUE BOTTLE", "bluebottle.com"));
+        assert!(!charge_fits("CHEAP WATCHES LTD", "amazon.com"));
+        assert!(!charge_fits("AMAZON PAYMENTS", "amazon.com.evil.shop"));
     }
 
     #[test]
-    fn store_addresses_are_read_the_way_a_browser_reads_them() {
-        let cart = |merchant: &str, checkout: &str| {
+    fn checkouts_and_item_pages_must_be_on_the_stores_own_site() {
+        let cart = |merchant: &str, checkout: &str, item: Option<&str>| {
             let args = json!({"merchant": "Amazon", "merchant_url": merchant, "checkout_url": checkout,
-                "items": [{"name": "x", "unit_price": "1.00"}], "currency": "USD", "total": "1.00"});
+                "items": [{"name": "x", "unit_price": "1.00", "url": item}], "currency": "USD", "total": "1.00"});
             Cart::from_call(&ConnectorCall {
                 service: PAYMENTS.to_owned(),
                 op: PURCHASE_REQUEST_OP.to_owned(),
@@ -1773,9 +1996,83 @@ mod tests {
             })
             .unwrap()
         };
-        assert!(check_urls(&cart("https://www.amazon.com/dp/1", "https://www.amazon.com/checkout")).is_ok());
-        assert!(check_urls(&cart("https://www.Amazon.com./dp/1", "https://checkout.stripe.com/c/1")).is_ok());
-        assert!(check_urls(&cart("https://www.amazon.com/dp/1", "https://www.amazon.com:99999/pay")).is_err());
+        assert!(check_urls(&cart("https://www.amazon.com/dp/1", "https://www.amazon.com/checkout", None)).is_ok());
+        assert!(
+            check_urls(&cart(
+                "https://smile.amazon.com/dp/1",
+                "https://pay.amazon.com/c",
+                Some("https://www.amazon.com/dp/2")
+            ))
+            .is_ok()
+        );
+        assert!(check_urls(&cart("https://www.Amazon.com./dp/1", "https://www.amazon.com/c", None)).is_ok());
+        for checkout in [
+            "https://checkout.stripe.com/c/1",
+            "https://www.paypal.com/paypalme/someone",
+            "https://amazon.com.evil.shop/pay",
+        ] {
+            let refused = check_urls(&cart("https://www.amazon.com/dp/1", checkout, None)).unwrap_err().to_string();
+            assert!(refused.contains("amazon.com, the store's own site"), "{checkout}: {refused}");
+        }
+        assert!(
+            check_urls(&cart(
+                "https://www.amazon.com/dp/1",
+                "https://www.amazon.com/c",
+                Some("https://phish.example/x")
+            ))
+            .is_err()
+        );
+        assert!(check_urls(&cart("https://www.amazon.com/dp/1", "https://www.amazon.com:99999/pay", None)).is_err());
+    }
+
+    #[tokio::test]
+    async fn a_request_is_paid_for_once_and_the_ledger_keeps_it() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = Arc::new(crate::store::tests::open(dir.path()));
+        let vault = Arc::new(Vault::new(Arc::new(std::sync::Mutex::new(None)), Arc::clone(&store)));
+        let nowhere = "http://127.0.0.1:9";
+        let payments = Payments::new(vault, Arc::clone(&store), crate::http::client().unwrap(), nowhere, nowhere);
+        let args = json!({"merchant": "Shop", "merchant_url": "https://shop.example.com/c", "ship_to": "none",
+            "items": [{"name": "x", "unit_price": "5.00"}], "currency": "USD", "total": "5.00"});
+        let cart = Cart::from_call(&ConnectorCall {
+            service: PAYMENTS.to_owned(),
+            op: PURCHASE_REQUEST_OP.to_owned(),
+            args: args.as_object().unwrap().clone(),
+        })
+        .unwrap();
+        let plan = Plan {
+            cart,
+            methods: vec![MethodOption {
+                id: MERCHANT_ACCOUNT.to_owned(),
+                kind: MERCHANT_ACCOUNT.to_owned(),
+                name: "Saved at shop.example.com".to_owned(),
+                brand: None,
+                last4: None,
+                expiry: None,
+                detail: String::new(),
+                unavailable: None,
+            }],
+            addresses: Vec::new(),
+            method_id: Some(MERCHANT_ACCOUNT.to_owned()),
+            address_id: None,
+            warnings: Vec::new(),
+            budget_lines: Vec::new(),
+            tolerance: 100,
+        };
+        let approval = Approval {
+            request_id: "r1",
+            connection_id: "c1",
+            connection_label: "Claude",
+            approved_by: BY_USER,
+            seal: Seal::Plain,
+        };
+        let one = payments.purchases.lock().await;
+        let paid = payments.perform(&one, &plan, None, None, &approval).await.unwrap();
+        assert_ne!(paid["purchase_id"], "r1", "the purchase id is the phone's own");
+        let again = payments.perform(&one, &plan, None, None, &approval).await.unwrap_err();
+        assert!(again.to_string().contains("already paid"), "{again}");
+        let ledger = payments.ledger().unwrap();
+        assert_eq!((ledger.len(), ledger[0].request_id.as_str()), (1, "r1"), "the first one stays, counted");
     }
 
     #[test]

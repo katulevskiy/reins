@@ -1,6 +1,8 @@
 //! Cart mandates: what the user approved, signed on the phone. A compact JWS (RFC 7515) with `EdDSA` (Ed25519, RFC
-//! 8037) whose header carries the public key as a JWK, so that anyone can check it, and its RFC 7638 thumbprint as
-//! `kid`, which the Payments screen shows. The key is made once per account and kept with its secrets.
+//! 8037) whose header carries the public key as a JWK and its RFC 7638 thumbprint as `kid`. The embedded key only
+//! says which key signed: a verifier must compare the thumbprint with the one the Payments screen shows (the desktop
+//! app pins it the first time). The key is made once per account and kept with the account's encrypted state, so the
+//! user's phones sign with the same key; the server holds it only encrypted with the account key.
 
 use data_encoding::BASE64URL_NOPAD;
 use reins_proto::payments::{CartMandate, MANDATE_JWS_TYPE, MANDATE_TYPE};
@@ -45,21 +47,41 @@ pub fn key_thumbprint(store: &Store) -> Result<String, CoreError> {
     Ok(thumbprint(keypair(store)?.public_key().as_ref()))
 }
 
+/// The `typ` of the signed card details sealed to the desktop app.
+pub const SEALED_JWS_TYPE: &str = "reins-sealed-payment+jws";
+
 /// Signs `mandate`.
 pub fn sign(store: &Store, mandate: &CartMandate) -> Result<String, CoreError> {
+    sign_json(store, MANDATE_JWS_TYPE, mandate)
+}
+
+/// Signs any JSON with the account's key, as a compact JWS of type `typ`.
+pub fn sign_json<T: serde::Serialize>(store: &Store, typ: &str, value: &T) -> Result<String, CoreError> {
     let pair = keypair(store)?;
     let public = pair.public_key().as_ref();
-    let header = json!({"alg": "EdDSA", "typ": MANDATE_JWS_TYPE, "kid": thumbprint(public), "jwk": jwk(public)});
+    let header = json!({"alg": "EdDSA", "typ": typ, "kid": thumbprint(public), "jwk": jwk(public)});
     let encode = |v: &[u8]| BASE64URL_NOPAD.encode(v);
-    let payload = serde_json::to_vec(mandate).map_err(|_| CoreError::storage("cannot encode the mandate"))?;
+    let payload =
+        Zeroizing::new(serde_json::to_vec(value).map_err(|_| CoreError::storage("cannot encode what is signed"))?);
     let signing_input = format!("{}.{}", encode(header.to_string().as_bytes()), encode(&payload));
     let signature = pair.sign(signing_input.as_bytes());
     Ok(format!("{signing_input}.{}", encode(signature.as_ref())))
 }
 
-/// Checks a mandate's signature against the key in its own header and returns it with that key's thumbprint. Whether
-/// the key is the one you expect is up to you (compare the thumbprint).
+/// Checks a mandate's signature against the key in its own header and returns it with that key's thumbprint. The key
+/// in the header proves nothing by itself: compare the thumbprint with the one the Payments screen shows.
 pub fn verify(jws: &str) -> Result<(CartMandate, String), String> {
+    let (payload, thumbprint) = verify_json(jws, MANDATE_JWS_TYPE)?;
+    let mandate: CartMandate = serde_json::from_value(payload).map_err(|_| "unreadable payload".to_owned())?;
+    if mandate.typ != MANDATE_TYPE {
+        return Err("not a cart mandate".to_owned());
+    }
+    Ok((mandate, thumbprint))
+}
+
+/// Checks a compact JWS of type `typ` signed with Ed25519 by the key in its header: its payload and that key's
+/// thumbprint.
+pub fn verify_json(jws: &str, typ: &str) -> Result<(Value, String), String> {
     let parts: Vec<&str> = jws.trim().split('.').collect();
     let [header, payload, signature] = parts.as_slice() else {
         return Err("not a compact JWS".to_owned());
@@ -69,16 +91,15 @@ pub fn verify(jws: &str) -> Result<(CartMandate, String), String> {
     if head["alg"] != "EdDSA" || head["jwk"]["kty"] != "OKP" || head["jwk"]["crv"] != "Ed25519" {
         return Err("not an Ed25519 signature".to_owned());
     }
+    if head["typ"] != typ {
+        return Err(format!("not a {typ}"));
+    }
     let public = decode(head["jwk"]["x"].as_str().unwrap_or_default())?;
     UnparsedPublicKey::new(&ED25519, &public)
         .verify(format!("{header}.{payload}").as_bytes(), &decode(signature)?)
         .map_err(|_| "the signature does not match".to_owned())?;
-    let mandate: CartMandate =
-        serde_json::from_slice(&decode(payload)?).map_err(|_| "unreadable payload".to_owned())?;
-    if mandate.typ != MANDATE_TYPE {
-        return Err("not a cart mandate".to_owned());
-    }
-    Ok((mandate, thumbprint(&public)))
+    let value: Value = serde_json::from_slice(&decode(payload)?).map_err(|_| "unreadable payload".to_owned())?;
+    Ok((value, thumbprint(&public)))
 }
 
 #[cfg(test)]

@@ -29,6 +29,7 @@ struct Env {
     privacy: MockServer,
     core: Arc<ReinsCore>,
     counter: AtomicU32,
+    notes: Arc<RecordingNotifier>,
     _dir: tempfile::TempDir,
 }
 
@@ -91,7 +92,8 @@ async fn env() -> Env {
 
     let dir = tempfile::tempdir().unwrap();
     let google: Arc<dyn GoogleTokenProvider> = Arc::new(FakeGoogle::new());
-    let notifier: Arc<dyn Notifier> = Arc::new(RecordingNotifier::default());
+    let notes = Arc::new(RecordingNotifier::default());
+    let notifier: Arc<dyn Notifier> = Arc::<RecordingNotifier>::clone(&notes);
     let cfg = CoreConfig {
         privacy_base: privacy.uri(),
         privacy_sandbox_base: format!("{}/sandbox", privacy.uri()),
@@ -112,6 +114,7 @@ async fn env() -> Env {
         privacy,
         core,
         counter: AtomicU32::new(0),
+        notes,
         _dir: dir,
     }
 }
@@ -158,8 +161,16 @@ fn charges(descriptor: &str) -> ResponseTemplate {
         "amount": 2497, "merchant": {"descriptor": descriptor, "city": "SEATTLE", "country": "USA", "mcc": "5942"}}]}))
 }
 
+fn now() -> i64 {
+    i64::try_from(std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_secs()).unwrap()
+}
+
 fn request(id: &str, connection: &str, op: &str, args: &Value) -> Value {
-    json!({"v": 1, "id": id, "connection_id": connection, "connection_label": "Claude", "created_at": 100,
+    request_at(id, connection, op, args, now())
+}
+
+fn request_at(id: &str, connection: &str, op: &str, args: &Value, created_at: i64) -> Value {
+    json!({"v": 1, "id": id, "connection_id": connection, "connection_label": "Claude", "created_at": created_at,
            "call": {"tool": "connector", "service": "payments", "op": op, "args": args}})
 }
 
@@ -345,6 +356,15 @@ async fn a_purchase_shows_like_a_receipt_and_pays_with_the_vault_card_once_appro
         )
         .await;
     assert!(standing.unwrap_err().to_string().contains("every time"));
+    // A plain approval (an older app, a generic button) never pays with defaults: the purchase screen does.
+    let plain = env.core.approve(
+        id.clone(),
+        ApprovalChoice {
+            selected_message_ids: vec![],
+            standing: None,
+        },
+    );
+    assert!(plain.await.unwrap_err().to_string().contains("Open the purchase"));
     env.core.approve_purchase(id.clone(), choose("card:card1")).await.unwrap();
     let data = answer(&env, &id).await["result"]["data"].clone();
     assert_eq!(data["status"], "approved");
@@ -354,14 +374,25 @@ async fn a_purchase_shows_like_a_receipt_and_pays_with_the_vault_card_once_appro
         (Some(VAULT_CARD), Some(VAULT_CODE))
     );
     assert_eq!(data["ship_to"]["line1"], "12 Harbour Street");
-    assert_eq!(data["purchase_id"], id);
+    let pid = data["purchase_id"].as_str().unwrap().to_owned();
+    assert_ne!(pid, id, "the phone makes its own purchase id");
     let (mandate, kid) = mandate::verify(data["mandate"].as_str().unwrap()).unwrap();
+    assert_eq!(mandate.purchase_id, pid);
+    // The mandate binds the whole address with a salted hash.
+    let bound = mandate.ship_to.clone().unwrap();
+    let text = format!("{}\n{}", bound.salt, ["Anna Lee", "12 Harbour Street", "0150 Oslo", "NO"].join("\n"));
+    let digest = ring::digest::digest(&ring::digest::SHA256, text.as_bytes());
+    assert_eq!(bound.address_sha256, data_encoding::BASE64URL_NOPAD.encode(digest.as_ref()));
+    assert_eq!((bound.label.as_str(), bound.country.as_str()), ("Home", "NO"));
     assert_eq!((mandate.amounts["total"].as_str(), mandate.payment.last4.as_deref()), (Some("24.97"), Some("1111")));
     assert_eq!((mandate.agent.as_str(), mandate.approved_by.as_str()), ("Claude", "you"));
     assert_eq!(kid, env.core.payments_overview().await.unwrap().mandate_key);
 
     // The AI reports the order; the ledger has it, the activity too, and neither has the number.
-    let report = json!({"purchase_id": id, "status": "completed", "order_id": "111-222", "charged_total": "24.97",
+    let elsewhere = json!({"purchase_id": pid, "status": "completed", "receipt_url": "https://phish.example/r"});
+    let (rid, _) = ask(&env, "purchase_complete", &elsewhere).await;
+    assert!(answer(&env, &rid).await["message"].as_str().unwrap().contains("must be a page of amazon.com"));
+    let report = json!({"purchase_id": pid, "status": "completed", "order_id": "111-222", "charged_total": "24.97",
         "currency": "USD", "receipt_url": "https://www.amazon.com/gp/your-account/order-details?orderID=111-222"});
     let (rid, parked) = ask(&env, "purchase_complete", &report).await;
     assert!(!parked, "a report never asks");
@@ -415,7 +446,8 @@ async fn a_virtual_card_is_made_for_the_cart_capped_and_closed_when_the_purchase
         .with_priority(1)
         .mount(&env.privacy)
         .await;
-    let (rid, _) = ask(&env, "purchase_complete", &json!({"purchase_id": id, "status": "failed"})).await;
+    let pid = data["purchase_id"].clone();
+    let (rid, _) = ask(&env, "purchase_complete", &json!({"purchase_id": pid, "status": "failed"})).await;
     assert_eq!(answer(&env, &rid).await["result"]["data"]["virtual_card"], "closed");
     assert_eq!(privacy_requests(&env, "PATCH").await, [json!({"state": "CLOSED"})]);
     let spending = env.core.payments_spending(0).await.unwrap();
@@ -473,7 +505,7 @@ async fn a_spend_limit_approves_what_it_covers_and_asks_about_the_rest() {
         method: "virtual_card".into(),
         currency: "USD".into(),
         per_purchase: 3_000,
-        per_period: 5_000,
+        per_period: 6_000,
         period: LimitPeriod::Day,
         duration_secs: 7 * 86_400,
     };
@@ -497,8 +529,8 @@ async fn a_spend_limit_approves_what_it_covers_and_asks_about_the_rest() {
     env.core.approve_purchase(first, with_limit).await.unwrap();
     let limits = env.core.payments_overview().await.unwrap().limits;
     assert_eq!(limits.len(), 1);
-    assert_eq!(limits[0].summary, "Up to $30.00 a purchase and $50.00 a day at amazon.com");
-    assert_eq!(limits[0].spent, 2_497);
+    assert_eq!(limits[0].summary, "Up to $30.00 a purchase and $60.00 a day at amazon.com");
+    assert_eq!(limits[0].spent, 2_747, "an open card counts its cap: the total and the tolerance");
 
     // The second one fits ($24.97 + $24.97 <= $50): approved without asking.
     let (second, parked) = ask(&env, "purchase_request", &cart_with(&named)).await;
@@ -578,6 +610,7 @@ async fn bad_carts_and_unknown_choices_are_refused_with_a_reason() {
     for (args, says) in [
         (cart_with(&json!({"ship_to": "nowhere"})), "not one of the user's addresses"),
         (cart_with(&json!({"payment_method": "card:card1"})), "not one the user allows"),
+        (cart_with(&json!({"client_key": "AAAA", "nonce": "n"})), "desktop app"),
     ] {
         let (id, parked) = ask(&env, "purchase_request", &args).await;
         assert!(!parked);
@@ -605,6 +638,7 @@ async fn a_card_charged_by_another_store_pauses_limits_until_the_user_has_seen_i
         duration_secs: 86_400,
     });
     env.core.approve_purchase(first.clone(), with_limit).await.unwrap();
+    let first = answer(&env, &first).await["result"]["data"]["purchase_id"].as_str().unwrap().to_owned();
 
     // The card made for amazon.com is charged by someone else: the next purchase asks, and says why.
     Mock::given(method("GET"))
@@ -662,8 +696,22 @@ async fn card_details_for_the_desktop_app_are_sealed_to_its_pinned_key() {
     assert_eq!(data["payment"]["kind"], "virtual_card");
     assert!(data["payment"].get("number").is_none(), "the server never sees the number: {data}");
     let opened: Value = desk.open(&data["payment"]["sealed"]);
-    assert_eq!((opened["nonce"].as_str(), opened["purchase_id"].as_str()), (Some("n-1"), Some("s1")));
-    assert_eq!(opened["payment"]["number"], VIRTUAL_PAN);
+    // Signed by the phone's payment key, so that the server cannot seal a card of its own to the app.
+    let (inner, kid) = mandate::verify_json(opened["jws"].as_str().unwrap(), mandate::SEALED_JWS_TYPE).unwrap();
+    assert_eq!(kid, desk.core.payments_overview().await.unwrap().mandate_key);
+    assert_eq!((inner["nonce"].as_str(), &inner["purchase_id"]), (Some("n-1"), &data["purchase_id"]));
+    assert_eq!(inner["payment"]["number"], VIRTUAL_PAN);
+
+    // The desktop app's connection without a key: card details are refused (a server that strips the key gets
+    // nothing); paying at the store still works.
+    let mut stripped = digital.clone();
+    stripped.as_object_mut().unwrap().remove("client_key");
+    stripped.as_object_mut().unwrap().remove("nonce");
+    desk.send(&[request("s3", common::desktop::DESK, "purchase_request", &stripped)]).await;
+    let refused = desk.core.approve_purchase("s3".into(), choose("virtual_card")).await.unwrap_err();
+    assert!(refused.to_string().contains("sealed only"), "{refused}");
+    desk.core.approve_purchase("s3".into(), choose("merchant_account")).await.unwrap();
+    assert_eq!(desk.data("s3").await["payment"]["kind"], "merchant_account");
 
     // Another key on the desktop app's connection is refused.
     let mut wrong = digital.clone();
@@ -697,4 +745,141 @@ async fn a_spend_limit_approves_nothing_while_the_cards_charges_cannot_be_read()
         .mount(&env.privacy)
         .await;
     assert!(ask(&env, "purchase_request", &named).await.1, "it asks when Privacy.com cannot say who charged");
+}
+
+/// A spend limit for Claude with a virtual card, made alongside a first purchase approved by hand.
+async fn limit_for(env: &Env, per_purchase: i64, per_period: i64, merchants: Vec<String>) {
+    let named = cart_with(&json!({"payment_method": "virtual_card", "ship_to": "home"}));
+    let (first, _) = ask(env, "purchase_request", &named).await;
+    let mut with_limit = choose("virtual_card");
+    with_limit.limit = Some(SpendLimitInput {
+        connection_id: String::new(),
+        merchants,
+        method: "virtual_card".into(),
+        currency: "USD".into(),
+        per_purchase,
+        per_period,
+        period: LimitPeriod::Day,
+        duration_secs: 86_400,
+    });
+    env.core.approve_purchase(first, with_limit).await.unwrap();
+}
+
+fn tiny() -> Value {
+    cart_with(&json!({"items": [{"name": "Sticker", "unit_price": "0.01"}], "shipping": "0", "total": "0.01",
+        "payment_method": "virtual_card", "ship_to": "home"}))
+}
+
+#[tokio::test]
+async fn tiny_carts_count_their_cards_cap_and_limits_approve_a_few_an_hour_at_most() {
+    let env = env().await;
+    env.core.payments_connect_provider("privacy".into(), PRIVACY_KEY.into(), false, false).await.unwrap();
+    limit_for(&env, 5_000, 1_000_000, vec![]).await;
+    let made_before = privacy_requests(&env, "POST").await.len();
+    let mut approved = 0;
+    for _ in 0..6 {
+        if !ask(&env, "purchase_request", &tiny()).await.1 {
+            approved += 1;
+        }
+    }
+    assert_eq!(approved, 3, "a spend limit approves at most three purchases an hour for one AI");
+    assert_eq!(privacy_requests(&env, "POST").await.len() - made_before, 3);
+    let limits = env.core.payments_overview().await.unwrap().limits;
+    // The first card (24.97 + 2.50) and three 0.01 carts, each on a card that can be charged 1.01.
+    assert_eq!(limits[0].spent, 2_747 + 3 * 101, "every open card counts its cap, not the cart's total");
+    let told = env.notes.decided.lock().unwrap().clone();
+    assert_eq!(told.len(), 3, "the user is told of every purchase a limit approves");
+    assert!(told.iter().all(|d| d.decided_by == "spend limit" && d.title.starts_with("Bought 1 item at amazon.com")));
+
+    // A limit counts the card's cap against the amount a purchase: 24.97 + 2.50 is over 26.00.
+    let env = self::env().await;
+    env.core.payments_connect_provider("privacy".into(), PRIVACY_KEY.into(), false, false).await.unwrap();
+    limit_for(&env, 2_600, 1_000_000, vec![]).await;
+    assert!(
+        ask(&env, "purchase_request", &cart_with(&json!({"payment_method": "virtual_card", "ship_to": "home"})))
+            .await
+            .1
+    );
+}
+
+#[tokio::test]
+async fn an_old_request_is_never_approved_by_a_limit_and_a_paid_one_never_twice() {
+    let env = env().await;
+    env.core.payments_connect_provider("privacy".into(), PRIVACY_KEY.into(), false, false).await.unwrap();
+    limit_for(&env, 5_000, 1_000_000, vec![]).await;
+    // Relayed again an hour after it was made: it asks.
+    let id = "stale-1";
+    Mock::given(method("GET"))
+        .and(path("/reins/api/pending"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(
+            json!({"requests": [request_at(id, "c1", "purchase_request", &tiny(), now() - 3_600)], "pairings": []}),
+        ))
+        .up_to_n_times(1)
+        .with_priority(1)
+        .mount(&env.server)
+        .await;
+    assert!(env.core.sync(0).await.unwrap().iter().any(|p| p.id == id), "an old request waits for the user");
+    // Approved once, the same request is refused if it is ever relayed again (the ledger keeps it).
+    env.core.approve_purchase(id.into(), choose("virtual_card")).await.unwrap();
+    assert!(env.core.approve_purchase(id.into(), choose("virtual_card")).await.is_err());
+}
+
+#[tokio::test]
+async fn a_purchase_not_paid_with_a_virtual_card_counts_until_the_user_clears_it() {
+    let env = env().await;
+    let (id, _) = ask(&env, "purchase_request", &cart()).await;
+    env.core.approve_purchase(id.clone(), choose("merchant_account")).await.unwrap();
+    let pid = answer(&env, &id).await["result"]["data"]["purchase_id"].as_str().unwrap().to_owned();
+    let (rid, _) = ask(&env, "purchase_complete", &json!({"purchase_id": pid, "status": "failed"})).await;
+    assert_eq!(answer(&env, &rid).await["result"]["data"]["recorded"], true);
+    let spending = env.core.payments_spending(0).await.unwrap();
+    assert_eq!(spending.totals[0].minor, 2_497, "the AI saying it failed does not take it off the budget");
+    assert!(spending.purchases[0].clearable);
+    env.core.payments_clear_purchase(pid.clone()).await.unwrap();
+    let spending = env.core.payments_spending(0).await.unwrap();
+    assert_eq!(spending.totals[0].minor, 0, "the user said nothing was charged");
+    assert!(!spending.purchases[0].clearable);
+}
+
+#[tokio::test]
+async fn many_open_cards_make_a_limit_ask_rather_than_hold_everything_up() {
+    let env = env().await;
+    env.core.payments_connect_provider("privacy".into(), PRIVACY_KEY.into(), false, false).await.unwrap();
+    limit_for(&env, 5_000, 10_000_000, vec![]).await;
+    // Eight more cards approved by hand: nine open cards, more than are read before a limit may approve.
+    let mut by_hand = tiny();
+    by_hand.as_object_mut().unwrap().remove("ship_to");
+    for _ in 0..8 {
+        let (id, parked) = ask(&env, "purchase_request", &by_hand).await;
+        assert!(parked, "the address is left to the user");
+        env.core.approve_purchase(id, choose("virtual_card")).await.unwrap();
+    }
+    let reads_before =
+        env.privacy.received_requests().await.unwrap().iter().filter(|r| r.url.path() == "/transactions").count();
+    assert!(ask(&env, "purchase_request", &tiny()).await.1, "with charges left unread, it asks");
+    let reads =
+        env.privacy.received_requests().await.unwrap().iter().filter(|r| r.url.path() == "/transactions").count();
+    assert!(reads - reads_before <= 8, "{} reads", reads - reads_before);
+}
+
+#[tokio::test]
+async fn disconnecting_the_provider_closes_its_cards_first() {
+    let env = env().await;
+    env.core.payments_connect_provider("privacy".into(), PRIVACY_KEY.into(), false, false).await.unwrap();
+    limit_for(&env, 5_000, 10_000, vec![]).await;
+    // Privacy.com does not answer: the cards stay open, so the key stays.
+    Mock::given(method("PATCH"))
+        .and(path_regex(r"^/cards/.+$"))
+        .respond_with(ResponseTemplate::new(503))
+        .up_to_n_times(1)
+        .with_priority(1)
+        .mount(&env.privacy)
+        .await;
+    assert!(env.core.payments_disconnect_provider().await.unwrap_err().to_string().contains("could not be closed"));
+    assert!(env.core.payments_overview().await.unwrap().provider.is_some());
+    // Next time it does: closed, then the key and the limit go.
+    env.core.payments_disconnect_provider().await.unwrap();
+    let overview = env.core.payments_overview().await.unwrap();
+    assert!(overview.provider.is_none() && overview.limits.is_empty());
+    assert!(!env.core.payments_spending(0).await.unwrap().purchases[0].card_open);
 }

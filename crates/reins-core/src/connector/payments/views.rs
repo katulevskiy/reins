@@ -201,6 +201,10 @@ pub struct PurchaseRecordView {
     /// A charge by someone who does not look like the approved store: shown until the user has seen it, and spend
     /// limits for this AI wait until then.
     pub mismatch: Option<String>,
+    /// What it counts for in budgets and limits now ("$27.47": an open card counts its cap).
+    pub counted_text: String,
+    /// It did not pay with a virtual card and still counts: the user can say nothing was charged.
+    pub clearable: bool,
 }
 
 /// What was spent in one currency.

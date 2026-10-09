@@ -421,6 +421,8 @@ mod tests {
         fill(&a);
         a.secret_put("github", "person", b"token").unwrap();
         a.secret_put("reins.account-secret", "a", b"account secret").unwrap();
+        a.secret_put("payments.provider", "privacy", b"virtual card key").unwrap();
+        a.secret_put("payments.mandate-key", "this", b"mandate seed").unwrap();
         let sealed = a.seal_account(1, &a.export_account().unwrap()).unwrap();
         let b = open_account(&root_b, second.path(), owner("a"), &key);
         assert!(b.unseal_account(2, &sealed).is_err(), "the server cannot relabel an old revision");
@@ -428,6 +430,15 @@ mod tests {
         assert_eq!(b.activity(50).unwrap().len(), 1);
         assert_eq!(b.secret_get("github", "person").unwrap().unwrap(), b"token");
         assert_eq!(b.secret_get("reins.account-secret", "a").unwrap(), None);
+        assert_eq!(
+            b.secret_get("payments.provider", "privacy").unwrap(),
+            None,
+            "a card provider key stays on its phone"
+        );
+        assert!(
+            b.secret_get("payments.mandate-key", "this").unwrap().is_some(),
+            "the account signs mandates with one key"
+        );
         assert_eq!(b.pending_rows(super::super::unix_now()).unwrap().len(), 0);
         assert_ne!(a.device_id().unwrap(), b.device_id().unwrap());
     }

@@ -52,9 +52,17 @@ impl Engine {
         self.payments.connect_provider(kind, api_key, sandbox, single_use).await
     }
 
-    /// Forgets the provider's key; the limits that paid with its cards go too.
-    pub fn payments_disconnect_provider(&self) -> Result<(), CoreError> {
-        self.payments.disconnect_provider()
+    /// Closes the provider's open cards, then forgets its key and the limits that paid with its cards.
+    pub async fn payments_disconnect_provider(&self) -> Result<(), CoreError> {
+        let one = self.payments.purchases.lock().await;
+        self.payments.disconnect_provider(&one).await
+    }
+
+    /// The user says a purchase that did not pay with a virtual card went through for nothing: it stops counting
+    /// against budgets and limits.
+    pub async fn payments_clear_purchase(&self, purchase_id: &str) -> Result<(), CoreError> {
+        let one = self.payments.purchases.lock().await;
+        self.payments.clear_purchase(&one, purchase_id)
     }
 
     pub fn payments_set_card_options(&self, tolerance_pct: u32, single_use: bool) -> Result<(), CoreError> {

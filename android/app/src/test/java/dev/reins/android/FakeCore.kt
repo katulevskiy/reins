@@ -180,6 +180,10 @@ class FakeCore : ReinsCoreInterface {
         paymentsCalls += "acknowledge $purchaseId"
     }
 
+    override suspend fun paymentsClearPurchase(purchaseId: String) {
+        paymentsCalls += "clear $purchaseId"
+    }
+
     override suspend fun paymentsCloseCard(purchaseId: String) {
         paymentsCalls += "close $purchaseId"
     }

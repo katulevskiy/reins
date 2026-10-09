@@ -7,7 +7,7 @@ use reins_proto::connector::ConnectorCall;
 use reins_proto::payments::{PURCHASE_COMPLETE_OP, PURCHASE_REQUEST_OP};
 use reins_proto::relay::{RelayOutcome, RelayRequest, ToolResult};
 
-use super::{Approval, BY_USER, Plan, PurchaseChoice, limit_may_use};
+use super::{Approval, BY_USER, Plan, PurchaseChoice, Seal, VIRTUAL_CARD, limit_may_use};
 use crate::autopilot::context::{Decision, deciding};
 use crate::autopilot::{AutopilotMode, Verdict};
 use crate::connector::flow::{DESKTOP_ONLY, action_of};
@@ -19,22 +19,31 @@ use crate::views::{ParkedConnector, ParkedRequest};
 use crate::{CoreError, text};
 
 impl Engine {
-    /// The desktop app's key and nonce when a purchase asks for card details sealed to it (`reins mcp` does). A key
-    /// for a connection with no desktop app pinned is ignored: the answer is what any AI gets. A key other than the one
-    /// pinned is an error.
-    fn seal_target(&self, request: &RelayRequest, call: &ConnectorCall) -> Result<Option<([u8; 32], String)>, ()> {
-        if call.str_arg("client_key").is_none() {
-            return Ok(None);
-        }
-        match self.store.desktop_key(&request.connection_id.0) {
-            Ok(None) => Ok(None),
-            Ok(Some(_)) if self.desktop_key_matches(&request.connection_id, call) => {
+    /// How card details may leave for this purchase. Fail closed: the paired desktop app's connection gets them sealed
+    /// to its pinned key and signed, or not at all (a server that strips the key gets nothing); an ordinary AI gets
+    /// them in the answer; a key without a pinned desktop app, or another key than the one pinned, is an error.
+    fn seal_target(&self, request: &RelayRequest, call: &ConnectorCall) -> Result<Seal, ()> {
+        let pinned = self.store.desktop_key(&request.connection_id.0).map_err(|_| ())?;
+        match (call.str_arg("client_key"), pinned) {
+            (None, None) => Ok(Seal::Plain),
+            (None, Some(_)) => Ok(Seal::Refused),
+            (Some(_), Some(_)) if self.desktop_key_matches(&request.connection_id, call) => {
                 match (client_key(call), nonce_arg(call)) {
-                    (Ok(key), Ok(nonce)) => Ok(Some((key, nonce))),
+                    (Ok(key), Ok(nonce)) => Ok(Seal::To(key, nonce)),
                     _ => Err(()),
                 }
             }
-            _ => Err(()),
+            // A key without a paired desktop app, or another key than the one pinned.
+            (Some(_), _) => Err(()),
+        }
+    }
+
+    /// What more than the total the method can be charged: a virtual card's tolerance.
+    fn margin(plan: &Plan, method: Option<&str>) -> i64 {
+        if method == Some(VIRTUAL_CARD) {
+            plan.tolerance
+        } else {
+            0
         }
     }
 
@@ -62,11 +71,16 @@ impl Engine {
         if call.op != PURCHASE_REQUEST_OP {
             return self.fail_connector_text(session, request, call, "Payments cannot do that.").await;
         }
-        let Ok(seal_to) = self.seal_target(request, call) else {
+        let Ok(seal) = self.seal_target(request, call) else {
             return self.fail_connector_text(session, request, call, DESKTOP_ONLY).await;
         };
         let now = unix_now();
         let one = self.payments.purchases.lock().await;
+        // A request is paid for once: one relayed again is refused, whatever has happened since.
+        if self.payments.ledger()?.iter().any(|p| p.request_id == request.id.0) {
+            drop(one);
+            return self.fail_connector_text(session, request, call, "This request was already paid for.").await;
+        }
         // Lockdown stops spend limits too; the waiting request is then denied with everything else. Before a limit
         // may approve, what this AI's earlier cards were charged with is read again (and shown with the plan).
         let locked = self.ap_mode_for(connection, now)? == AutopilotMode::Lockdown;
@@ -75,7 +89,8 @@ impl Engine {
             Ok(plan) => plan,
             Err(e) => return self.fail_connector(session, request, call, &e).await,
         };
-        if let Some(why) = self.payments.refusal(&plan.cart, connection, now)? {
+        let margin = Self::margin(&plan, plan.cart.payment_method.as_deref());
+        if let Some(why) = self.payments.refusal(&plan.cart, connection, margin, now)? {
             drop(one);
             let detail = format!("refused by your budget: {}", plan.cart.summary());
             let audit = self.audit_connector(request, call, action_of(call), "denied", &detail, None, &[]);
@@ -91,13 +106,17 @@ impl Engine {
                 )
                 .await;
         }
-        if limits && let Some(limit) = self.payments.covering_limit(&plan, connection, now)? {
+        if limits
+            && let Some(limit) = self.payments.covering_limit(&plan, connection, request.created_at, unix_now())?
+            // Lockdown may have been switched on while the charges were read.
+            && self.ap_mode_for(connection, unix_now())? != AutopilotMode::Lockdown
+        {
             let approval = Approval {
-                purchase_id: &request.id.0,
+                request_id: &request.id.0,
                 connection_id: connection,
                 connection_label: &request.connection_label,
                 approved_by: &limit.id,
-                seal_to,
+                seal,
             };
             let done = self.payments.perform(&one, &plan, None, None, &approval).await;
             drop(one);
@@ -106,6 +125,19 @@ impl Engine {
                     let detail = format!("approved by your spend limit: {}", plan.cart.summary());
                     let mut audit = self.audit_connector(request, call, action_of(call), "sent", &detail, None, &[]);
                     audit.info.note = Some(format!("Within the spend limit: {}", limit_summary(&limit)));
+                    // Every purchase a limit approves is told to the user, like Autopilot's own decisions.
+                    self.notifier.auto_decided(crate::autopilot::AutoDecisionView {
+                        request_id: request.id.0.clone(),
+                        kind: crate::types::PendingKind::Request,
+                        connection_id: connection.to_owned(),
+                        connection_label: text::one_line(&request.connection_label),
+                        title: format!("Bought {}", plan.cart.summary()),
+                        verdict: Verdict::Approve,
+                        decided_by: "spend limit".to_owned(),
+                        p_approve: 1.0,
+                        confidence: 1.0,
+                        activity_id: None,
+                    });
                     self.finish(session, request, audit, connector_result(data)).await
                 }
                 Err(e) => self.fail_connector(session, request, call, &e).await,
@@ -144,15 +176,20 @@ impl Engine {
             .and_then(|h| h.purchase.as_ref())
             .ok_or_else(|| CoreError::invalid("not a purchase"))?;
         let request = &parked.request;
-        let Ok(seal_to) = self.seal_target(request, call) else {
+        let Ok(seal) = self.seal_target(request, call) else {
             return Err(CoreError::invalid(
                 "The desktop app that asked is no longer paired with this key. Deny this purchase.",
             ));
         };
+        // A purchase is approved on its purchase screen, with what pays and where it goes in view: a plain approval
+        // (an older app, a generic button) is refused rather than paying with defaults.
+        let Some(choice) = choice else {
+            return Err(CoreError::invalid("Open the purchase to choose how to pay, then approve it there."));
+        };
         let now = unix_now();
         let connection = request.connection_id.0.as_str();
         // A limit to create alongside: checked before anything is paid.
-        if let Some(limit) = choice.and_then(|c| c.limit.as_ref())
+        if let Some(limit) = choice.limit.as_ref()
             && (!limit_may_use(&limit.method) || !plan.methods.iter().any(|m| m.id == limit.method))
         {
             return Err(CoreError::invalid(
@@ -160,30 +197,23 @@ impl Engine {
             ));
         }
         let approval = Approval {
-            purchase_id: request_id,
+            request_id,
             connection_id: connection,
             connection_label: &request.connection_label,
             approved_by: BY_USER,
-            seal_to,
+            seal,
         };
+        let method = choice.method_id.as_deref().or(plan.method_id.as_deref());
         let data = {
             let one = self.payments.purchases.lock().await;
-            // The budgets may have changed while it waited.
-            if let Some(why) = self.payments.refusal(&plan.cart, connection, now)? {
+            // The budgets may have changed while it waited, and count what the chosen method can cost.
+            if let Some(why) = self.payments.refusal(&plan.cart, connection, Self::margin(plan, method), now)? {
                 return Err(CoreError::invalid(format!("{why} Change the budget in Payments, or deny this.")));
             }
-            self.payments
-                .perform(
-                    &one,
-                    plan,
-                    choice.and_then(|c| c.method_id.as_deref()),
-                    choice.and_then(|c| c.address_id.as_deref()),
-                    &approval,
-                )
-                .await?
+            self.payments.perform(&one, plan, method, choice.address_id.as_deref(), &approval).await?
         };
         let mut note = None;
-        if let Some(limit) = choice.and_then(|c| c.limit.as_ref()) {
+        if let Some(limit) = choice.limit.as_ref() {
             match self.payments.add_limit(limit, connection, &request.connection_label, now) {
                 Ok(made) => note = Some(format!("Spend limit added: {}", made.summary)),
                 Err(e) => note = Some(format!("The spend limit was not added: {e}")),

@@ -30,10 +30,6 @@ pub const MAX_NOTE: usize = 500;
 /// The largest amount anything may have, in minor units (a billion cents).
 pub const MAX_MINOR: i64 = 100_000_000_000;
 
-/// Hosted payment pages a store may send its checkout to, besides its own site: Pay on phone may open them.
-pub const HOSTED_CHECKOUTS: &[&str] =
-    &["checkout.stripe.com", "pay.shopify.com", "shop.app", "paypal.com", "checkout.square.site", "pay.amazon.com"];
-
 /// How many decimals a currency's amounts have (ISO 4217). Most have two.
 #[must_use]
 pub fn currency_exponent(currency: &str) -> u32 {
@@ -251,13 +247,23 @@ fn one_line(s: &str) -> String {
     s.split_whitespace().collect::<Vec<_>>().join(" ")
 }
 
+/// Characters that change how text around them is laid out or hide in it (bidirectional controls, zero-width
+/// characters): never in what the user reads on a purchase.
+#[must_use]
+pub fn is_format_char(c: char) -> bool {
+    matches!(c, '\u{00AD}' | '\u{061C}' | '\u{180E}' | '\u{200B}'..='\u{200F}' | '\u{202A}'..='\u{202E}' | '\u{2060}'..='\u{206F}' | '\u{FEFF}')
+}
+
 fn text_field(v: Option<&Value>, name: &str, max: usize, required: bool) -> Result<Option<String>, String> {
     match v {
         None | Some(Value::Null) if !required => Ok(None),
         None | Some(Value::Null) => Err(format!("`{name}` is required.")),
         Some(Value::String(s)) => {
             let s = one_line(s);
-            if s.chars().any(char::is_control) || s.chars().count() > max || (required && s.is_empty()) {
+            if s.chars().any(|c| c.is_control() || is_format_char(c)) {
+                return Err(format!("`{name}` may not contain control, direction or zero-width characters."));
+            }
+            if s.chars().count() > max || (required && s.is_empty()) {
                 return Err(format!("`{name}` must be 1..={max} characters on one line."));
             }
             Ok((!s.is_empty()).then_some(s))
@@ -331,14 +337,9 @@ impl Cart {
         let (merchant_url, host) = url_field(call.str_arg("merchant_url"), "merchant_url")?
             .ok_or_else(|| "`merchant_url` is required: the store's page for this purchase.".to_owned())?;
         let domain = store_domain(&host);
+        // Whether the checkout is on the store's own site needs the public suffix list: the phone checks it.
         let (checkout_url, checkout_host) =
             url_field(call.str_arg("checkout_url"), "checkout_url")?.unwrap_or_else(|| (merchant_url.clone(), host));
-        if !in_domain(&checkout_host, &domain) && !HOSTED_CHECKOUTS.iter().any(|h| in_domain(&checkout_host, h)) {
-            return Err(format!(
-                "`checkout_url` must be on {domain} (or a hosted payment page such as checkout.stripe.com), not \
-                 {checkout_host}."
-            ));
-        }
         let items = parse_items(a.get("items"), &currency)?;
         let amount = |name: &str| -> Result<i64, String> {
             match a.get(name) {
@@ -454,11 +455,15 @@ pub struct MandatePayment {
     pub last4: Option<String>,
 }
 
-/// Where an approved purchase goes, as the mandate names it: the label and the country, not the street.
+/// Where an approved purchase goes, as the mandate names it: the label, the country, and the whole address bound by a
+/// salted hash (`address_sha256` is SHA-256 of `salt`, a newline, and the address lines joined by newlines, base64url),
+/// so the mandate proves the address without spelling out the street.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct MandateShipTo {
     pub label: String,
     pub country: String,
+    pub address_sha256: String,
+    pub salt: String,
 }
 
 /// The payload of a cart mandate: exactly what the user (or their spend limit) approved. Field order is fixed, so the
@@ -618,10 +623,19 @@ mod tests {
 
         let mut elsewhere = cart_args();
         elsewhere["checkout_url"] = json!("https://amazon.com.evil.example/pay");
-        assert!(Cart::from_call(&call(&elsewhere)).unwrap_err().contains("must be on amazon.com"));
-        let mut stripe = cart_args();
-        stripe["checkout_url"] = json!("https://checkout.stripe.com/c/pay/cs_test_1");
-        assert_eq!(Cart::from_call(&call(&stripe)).unwrap().checkout_host, "checkout.stripe.com");
+        assert_eq!(
+            Cart::from_call(&call(&elsewhere)).unwrap().checkout_host,
+            "amazon.com.evil.example",
+            "the phone refuses it"
+        );
+        for (field, text) in [("merchant", "Ama\u{202e}nozA"), ("note", "fine\u{200b}print")] {
+            let mut hidden = cart_args();
+            hidden[field] = json!(text);
+            assert!(Cart::from_call(&call(&hidden)).unwrap_err().contains("zero-width"), "{field}");
+        }
+        let mut item = cart_args();
+        item["items"][0]["name"] = json!("Cable \u{2066}x10\u{2069}");
+        assert!(Cart::from_call(&call(&item)).is_err());
 
         let mut extra = cart_args();
         extra["items"][0]["price"] = json!("1");

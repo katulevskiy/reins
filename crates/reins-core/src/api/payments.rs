@@ -62,7 +62,7 @@ impl ReinsCore {
     }
 
     pub async fn payments_disconnect_provider(&self) -> Result<(), CoreError> {
-        on_engine!(self, |engine| engine.payments_disconnect_provider())
+        on_engine!(self, |engine| engine.payments_disconnect_provider().await)
     }
 
     pub async fn payments_set_card_options(&self, tolerance_pct: u32, single_use: bool) -> Result<(), CoreError> {
@@ -83,6 +83,10 @@ impl ReinsCore {
 
     pub async fn payments_spending(&self, since: i64) -> Result<SpendingView, CoreError> {
         on_engine!(self, |engine| engine.payments_spending(since).await)
+    }
+
+    pub async fn payments_clear_purchase(&self, purchase_id: String) -> Result<(), CoreError> {
+        on_engine!(self, |engine| engine.payments_clear_purchase(&purchase_id).await)
     }
 
     pub async fn payments_acknowledge_charge(&self, purchase_id: String) -> Result<(), CoreError> {

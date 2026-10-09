@@ -260,6 +260,8 @@ class MainSafeCore(
 
     override suspend fun paymentsAcknowledgeCharge(purchaseId: String) = io { paymentsAcknowledgeCharge(purchaseId) }
 
+    override suspend fun paymentsClearPurchase(purchaseId: String) = io { paymentsClearPurchase(purchaseId) }
+
     override suspend fun paymentsCloseCard(purchaseId: String) = io { paymentsCloseCard(purchaseId) }
 
     // ---- Autopilot ----------------------------------------------------------------------------------------------
