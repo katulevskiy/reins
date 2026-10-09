@@ -176,7 +176,8 @@ virtual card is kept as the provider's card id and its last four digits only.
 
 Disconnecting Privacy.com closes its open cards first. If the provider does not answer, the key stays until it does,
 so that no card is left open that nothing could close; the spend limits that paid with its cards go with the key.
-Turning Payments off does the same as far as the provider answers.
+Turning Payments off removes every spend limit with a virtual card and closes the open cards; the key goes once
+they are all closed, and stays until then so that Spending can still close them.
 
 ## Autopilot and standing permissions
 
@@ -191,7 +192,8 @@ Every approved purchase carries a mandate: a compact JWS (RFC 7515, `EdDSA` with
 makes once for your account. The key is kept with the account's encrypted state, so your phones sign with the same
 key; the server holds it only encrypted with your account key. The header holds the public key (`jwk`) and its
 thumbprint (`kid`). The key in the header only says which key signed: to rely on a mandate, compare the thumbprint with
-the one shown under Integrations → Payments. The payload is the cart as approved:
+the one shown under Integrations → Payments (the desktop app does, once you confirm it with `reins payments-trust`).
+The payload is the cart as approved:
 
 ```json
 {
@@ -242,9 +244,10 @@ which you pinned on the phone when you paired it:
 - the bridge opens sealed card details only when they carry a nonce it issued, once, and the phone's signature,
   including answers fetched later with `reins_get_result`; card details that come back in the clear are withheld.
 
-The bridge pins the phone's mandate key the first time it opens card details (`phone-payments.key` in its state
-folder, and it says so on its error output); compare it with the thumbprint shown on the phone. Card numbers and codes
-are never written to the phone's activity log, the ledger or any log.
+The bridge opens card details only once you have confirmed the phone's key on that computer: the first purchase
+through it says which key it was offered and is withheld; if Integrations → Payments on the phone shows the same key,
+run `reins payments-trust <key>` and ask again. From then on, card details signed by any other key are withheld. Card
+numbers and codes are never written to the phone's activity log, the ledger or any log.
 
 ## Limits of this design
 
@@ -258,6 +261,6 @@ are never written to the phone's activity log, the ledger or any log.
 - Spend limits act without you, on the requests the Reins server relays. A server that forged requests could spend
   within your limits (at most 3 purchases an hour per AI, within their amounts), as it could use any standing
   permission you gave; it cannot exceed them.
-- The desktop bridge trusts the phone key it sees first. A server that controlled that very first purchase could pin
-  its own key; comparing the thumbprint with the phone's catches it.
+- The desktop bridge relies on you comparing the phone's key once (`reins payments-trust`); a key you trust without
+  comparing could be anyone's.
 - Lithic and other virtual card providers can be added behind the same interface; Privacy.com is the first.

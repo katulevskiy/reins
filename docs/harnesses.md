@@ -44,8 +44,10 @@ each file byte for byte, as long as nobody edited around the entry in the meanti
 already exists with a different value, `add` stops and says so. It does not overwrite.
 
 The MCP server entry runs `reins mcp --via "<Harness name>"`, a stdio MCP server that forwards to
-`<server>/mcp` with the desktop app's session. The name is shown on your phone ("Laptop · Claude Code"). The hook
-entry runs `reins hook <harness>` with a timeout 30 s longer than the guard's own.
+`<server>/mcp` with the desktop app's session. The name is shown on your phone ("Laptop · Claude Code"). Card details
+of purchases come to it sealed and signed by your phone; it opens them once you have confirmed the phone's key with
+`reins payments-trust` ([Payments](payments.md#what-leaves-the-phone-and-when)). The hook entry runs `reins hook
+<harness>` with a timeout 30 s longer than the guard's own.
 
 ### Windows
 
