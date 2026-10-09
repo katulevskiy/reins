@@ -1,7 +1,7 @@
 //! The tray (Windows, Linux) or menu bar (macOS) icon: the Reins shield, with a check while Reins is on, pause bars
 //! while paused and an exclamation mark while it needs the user (not paired, or the background service is not
-//! running). Its menu: the state (opens the status
-//! window), Pause for 1 hour, Resume, Open Reins, Quit Reins.
+//! running). Its menu: the state (opens the status window), a Pause submenu (15 minutes, 1 hour, 4 hours, 24 hours,
+//! Until I resume), Resume, Open Reins, Quit Reins.
 //!
 //! macOS and Windows use the `tray-icon` crate (an `NSStatusItem`, a `Shell_NotifyIcon` icon). Linux uses `ksni`, a
 //! StatusNotifierItem on D-Bus (KDE, and GNOME with the AppIndicator extension), which needs no GTK.
@@ -13,20 +13,30 @@ pub enum Look {
     Attention,
 }
 
+use crate::pause::PauseFor;
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Action {
     Status,
-    PauseHour,
+    Pause(PauseFor),
     Resume,
     Open,
     Quit,
 }
 
 impl Action {
+    /// Every action, the pause lengths in menu order.
+    #[cfg_attr(target_os = "linux", allow(dead_code))]
+    fn all() -> impl Iterator<Item = Self> {
+        [Self::Status, Self::Resume, Self::Open, Self::Quit]
+            .into_iter()
+            .chain(PauseFor::ALL.into_iter().map(Self::Pause))
+    }
+
     fn id(self) -> &'static str {
         match self {
             Self::Status => "status",
-            Self::PauseHour => "pause",
+            Self::Pause(length) => length.id(),
             Self::Resume => "resume",
             Self::Open => "open",
             Self::Quit => "quit",
@@ -35,9 +45,12 @@ impl Action {
 
     #[cfg_attr(target_os = "linux", allow(dead_code))]
     fn from_id(id: &str) -> Option<Self> {
-        [Self::Status, Self::PauseHour, Self::Resume, Self::Open, Self::Quit].into_iter().find(|a| a.id() == id)
+        Self::all().find(|a| a.id() == id)
     }
 }
+
+/// The Pause submenu's title.
+const PAUSE_MENU: &str = "Pause git";
 
 /// What the tray shows.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -96,15 +109,15 @@ pub use imp::Tray;
 #[cfg(any(target_os = "macos", windows))]
 mod imp {
     use futures::channel::mpsc::UnboundedSender;
-    use tray_icon::menu::{Menu, MenuEvent, MenuItem, PredefinedMenuItem};
+    use tray_icon::menu::{Menu, MenuEvent, MenuItem, PredefinedMenuItem, Submenu};
     use tray_icon::{Icon, TrayIcon, TrayIconBuilder};
 
-    use super::{Action, Look, Shown, pixels};
+    use super::{Action, Look, PAUSE_MENU, PauseFor, Shown, pixels};
 
     pub struct Tray {
         icon: TrayIcon,
         status: MenuItem,
-        pause: MenuItem,
+        pause: Submenu,
         resume: MenuItem,
         shown: Option<Shown>,
     }
@@ -118,7 +131,10 @@ mod imp {
         /// Must run on the main thread, after the app finished launching.
         pub fn new(actions: UnboundedSender<Action>, _runtime: &tokio::runtime::Handle) -> Result<Self, String> {
             let status = MenuItem::with_id(Action::Status.id(), "Reins", true, None);
-            let pause = MenuItem::with_id(Action::PauseHour.id(), "Pause for 1 hour", true, None);
+            let [quarter, hour, four, day, manual] =
+                PauseFor::ALL.map(|p| MenuItem::with_id(Action::Pause(p).id(), p.label(), true, None));
+            let pause = Submenu::with_items(PAUSE_MENU, true, &[&quarter, &hour, &four, &day, &manual])
+                .map_err(|e| e.to_string())?;
             let resume = MenuItem::with_id(Action::Resume.id(), "Resume", false, None);
             let open = MenuItem::with_id(Action::Open.id(), "Open Reins", true, None);
             let quit = MenuItem::with_id(Action::Quit.id(), "Quit Reins", true, None);
@@ -189,7 +205,7 @@ mod imp {
     use futures::channel::mpsc::UnboundedSender;
     use ksni::TrayMethods as _;
 
-    use super::{Action, Look, Shown, pixels};
+    use super::{Action, Look, PAUSE_MENU, PauseFor, Shown, pixels};
 
     struct Item {
         shown: Shown,
@@ -238,7 +254,7 @@ mod imp {
         }
 
         fn menu(&self) -> Vec<ksni::MenuItem<Self>> {
-            use ksni::menu::StandardItem;
+            use ksni::menu::{StandardItem, SubMenu};
             let item = |label: &str, action: Action, enabled: bool| -> ksni::MenuItem<Self> {
                 StandardItem {
                     label: label.to_owned(),
@@ -251,7 +267,13 @@ mod imp {
             vec![
                 item(&self.shown.status, Action::Status, true),
                 ksni::MenuItem::Separator,
-                item("Pause for 1 hour", Action::PauseHour, self.shown.can_pause),
+                SubMenu {
+                    label: PAUSE_MENU.to_owned(),
+                    enabled: self.shown.can_pause,
+                    submenu: PauseFor::ALL.into_iter().map(|p| item(p.label(), Action::Pause(p), true)).collect(),
+                    ..SubMenu::default()
+                }
+                .into(),
                 item("Resume", Action::Resume, self.shown.can_resume),
                 ksni::MenuItem::Separator,
                 item("Open Reins", Action::Open, true),
@@ -335,8 +357,12 @@ mod tests {
 
     #[test]
     fn menu_ids_round_trip() {
-        for a in [Action::Status, Action::PauseHour, Action::Resume, Action::Open, Action::Quit] {
+        let all: Vec<Action> = Action::all().collect();
+        assert_eq!(all.len(), 4 + PauseFor::ALL.len());
+        for a in all {
             assert_eq!(Action::from_id(a.id()), Some(a));
         }
+        assert_eq!(Action::from_id("pause-manual"), Some(Action::Pause(PauseFor::Manual)));
+        assert_eq!(Action::from_id("pause"), None);
     }
 }

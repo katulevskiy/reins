@@ -1,22 +1,25 @@
 //! Everything the app does to the computer, through the `reins_desktop` library: the session, the harnesses'
-//! settings, the background service, git's routing, the daemon's control API, the update feed and installing what it
-//! offers.
+//! settings, the background service, git's routing, the daemon's control API (status and overview), this computer's
+//! activity log, the settings in `config.toml`, the update feed and installing what it offers.
 //!
 //! The service runs the `reins` program that ships with the app (next to it in the bundle or install directory).
 //! Where no service manager is available, or with `REINS_DAEMON=in-app`, the daemon runs inside the app instead, for
 //! as long as the app runs.
 
 use std::path::{Path, PathBuf};
-
-use std::time::{Duration, Instant};
+use std::sync::{Arc, Mutex, PoisonError};
+use std::time::{Duration, Instant, SystemTime};
 
 use reins_desktop::config::{Config, Paths};
-use reins_desktop::control::{Client, ClientError};
+use reins_desktop::control::{self, Client, ClientError, Overview};
 use reins_desktop::daemon::{Daemon, Options};
+use reins_desktop::guard::OnNoAnswer;
 use reins_desktop::harness::{self, Harness, detect};
 use reins_desktop::identity::Identity;
+use reins_desktop::journal::{self, Entry};
 use reins_desktop::server::oauth;
 use reins_desktop::service;
+use reins_desktop::settings::{self, Change, GuardList};
 use reins_desktop::setup::{Git, Scope};
 use reins_desktop::update::{self, Check};
 
@@ -32,6 +35,10 @@ const CLI_NAME: &str = if cfg!(windows) {
 
 /// How long starting the service may take before the app says it did not start.
 const SERVICE_START: Duration = Duration::from_secs(15);
+/// The most activity entries read.
+const ACTIVITY_LIMIT: usize = 500;
+/// A request still "waiting" after this long was cut off (its process ended without writing the end).
+const STALE_AFTER: i64 = 3_600;
 
 /// One harness as the app shows it.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -65,7 +72,48 @@ pub struct Snapshot {
     pub harnesses: Vec<HarnessRow>,
     /// This computer's key, as the phone shows it when pairing.
     pub fingerprint: Option<String>,
+    /// `config.toml` as read, or why it could not be.
+    pub config: Result<Arc<Config>, String>,
+    /// The daemon's own status, while it runs.
+    pub status: Option<control::Status>,
+    /// What the daemon did and holds since it started (empty while it is not running).
+    pub overview: Arc<Overview>,
+    /// This computer's activity log, newest first.
+    pub activity: Arc<Vec<Entry>>,
 }
+
+impl Snapshot {
+    /// The daemon's address (`127.0.0.1:7457`): as it says, else as the settings say.
+    #[must_use]
+    pub fn listen(&self) -> String {
+        self.status.as_ref().map_or_else(
+            || self.config.as_ref().map_or_else(|_| "127.0.0.1:7457".to_owned(), |c| c.listen.to_string()),
+            |s| s.listen.clone(),
+        )
+    }
+}
+
+/// One setting the window changes in `config.toml`.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum Setting {
+    /// A group of built-in hook rules asks the phone (`true`) or goes through.
+    GuardGroup(String, bool),
+    GuardList(GuardList, Vec<String>),
+    OnNoAnswer(OnNoAnswer),
+    GuardTimeout(u64),
+    ApprovalTimeout(u64),
+    Notify {
+        phone: bool,
+        sound: bool,
+    },
+    Ssh(bool),
+    /// git for this host goes through Reins.
+    Host(String, bool),
+}
+
+/// The activity log as last read, and what its files looked like then.
+type JournalCache = Option<(JournalKey, Arc<Vec<Entry>>)>;
+type JournalKey = (Option<(u64, SystemTime)>, Option<(u64, SystemTime)>, i64);
 
 /// A newer Reins.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -91,6 +139,7 @@ pub struct Backend {
     git: Git,
     /// The daemon, when it runs inside the app.
     in_app: tokio::sync::Mutex<Option<tokio::task::JoinHandle<()>>>,
+    journal: Mutex<JournalCache>,
 }
 
 /// A copy of the app that will not be at this path next time: inside a disk image, moved aside by Gatekeeper
@@ -116,6 +165,7 @@ impl Backend {
                 git: Git::default().env("HOME", &home).env("XDG_CONFIG_HOME", home.join(".config")),
                 home,
                 in_app: tokio::sync::Mutex::new(None),
+                journal: Mutex::new(None),
             });
         }
         Ok(Self {
@@ -123,6 +173,7 @@ impl Backend {
             home: reins_desktop::config::home_dir()?,
             git: Git::default(),
             in_app: tokio::sync::Mutex::new(None),
+            journal: Mutex::new(None),
         })
     }
 
@@ -138,6 +189,7 @@ impl Backend {
             home: root.to_path_buf(),
             git: Git::default().env("HOME", root),
             in_app: tokio::sync::Mutex::new(None),
+            journal: Mutex::new(None),
         }
     }
 
@@ -283,25 +335,64 @@ impl Backend {
     }
 
     async fn daemon_status(&self, config: &Config) -> DaemonState {
+        self.daemon(config, false).await.0
+    }
+
+    /// The daemon's state and, while it runs (and `overview`), its status and overview.
+    async fn daemon(&self, config: &Config, overview: bool) -> (DaemonState, Option<control::Status>, Overview) {
         let client = match Client::new(&self.paths, config.listen) {
             Ok(c) => c,
-            Err(ClientError::NotRunning) => return DaemonState::Stopped,
-            Err(e) => return DaemonState::Unknown(e.to_string()),
+            Err(ClientError::NotRunning) => return (DaemonState::Stopped, None, Overview::default()),
+            Err(e) => return (DaemonState::Unknown(e.to_string()), None, Overview::default()),
         };
         match client.status().await {
-            Ok(s) => DaemonState::Running {
-                pending: s.pending,
-            },
-            Err(ClientError::NotRunning) => DaemonState::Stopped,
-            Err(e) => DaemonState::Unknown(e.to_string()),
+            Ok(s) => {
+                let seen = if overview {
+                    client.overview().await.unwrap_or_else(|e| {
+                        log::info!("overview: {e}");
+                        Overview::default()
+                    })
+                } else {
+                    Overview::default()
+                };
+                (
+                    DaemonState::Running {
+                        pending: s.pending,
+                    },
+                    Some(s),
+                    seen,
+                )
+            }
+            Err(ClientError::NotRunning) => (DaemonState::Stopped, None, Overview::default()),
+            Err(e) => (DaemonState::Unknown(e.to_string()), None, Overview::default()),
         }
+    }
+
+    /// This computer's activity log, newest first (read again only when its files changed, or a minute passed for
+    /// requests that were cut off).
+    pub fn activity(&self) -> Arc<Vec<Entry>> {
+        let file = journal::Journal::file(&self.paths);
+        let mut old = file.as_os_str().to_owned();
+        old.push(".old");
+        let look =
+            |p: &Path| std::fs::metadata(p).ok().map(|m| (m.len(), m.modified().unwrap_or(SystemTime::UNIX_EPOCH)));
+        let key = (look(&file), look(Path::new(&old)), reins_desktop::now_unix() / 60);
+        let mut cache = self.journal.lock().unwrap_or_else(PoisonError::into_inner);
+        if let Some((seen, entries)) = cache.as_ref()
+            && *seen == key
+        {
+            return Arc::clone(entries);
+        }
+        let entries = Arc::new(journal::read(&self.paths, ACTIVITY_LIMIT, STALE_AFTER));
+        *cache = Some((key, Arc::clone(&entries)));
+        entries
     }
 
     pub async fn snapshot(&self) -> Snapshot {
         let config = self.config();
-        let daemon = match &config {
-            Ok(c) => self.daemon_status(c).await,
-            Err(e) => DaemonState::Unknown(e.clone()),
+        let (daemon, status, overview) = match &config {
+            Ok(c) => self.daemon(c, true).await,
+            Err(e) => (DaemonState::Unknown(e.clone()), None, Overview::default()),
         };
         let git_routed = config
             .as_ref()
@@ -312,6 +403,10 @@ impl Backend {
             git_routed,
             harnesses: self.harnesses(),
             fingerprint: self.paths.identity_file().exists().then(|| self.fingerprint().ok()).flatten(),
+            config: config.map(Arc::new),
+            status,
+            overview: Arc::new(overview),
+            activity: self.activity(),
         }
     }
 
@@ -407,6 +502,71 @@ impl Backend {
         let config = self.config()?;
         self.git.unsetup_hosts(&Scope::Global, &config)?;
         Ok(())
+    }
+
+    /// Writes one setting to `config.toml`. When the daemon only sees it after a restart (and `restart`), restarts the
+    /// background service (or the daemon inside the app) and, for a git host, routes git again (unless `paused`).
+    /// Says anything the user should know (`None`: nothing to say).
+    pub async fn change(&self, setting: Setting, paused: bool, restart: bool) -> Result<Option<String>, String> {
+        let host = matches!(setting, Setting::Host(..));
+        let change = match &setting {
+            Setting::GuardGroup(id, on) => settings::set_guard_group(&self.paths, id, *on),
+            Setting::GuardList(list, items) => settings::set_guard_list(&self.paths, *list, items),
+            Setting::OnNoAnswer(n) => settings::set_guard_on_no_answer(&self.paths, *n),
+            Setting::GuardTimeout(secs) => settings::set_guard_timeout(&self.paths, *secs),
+            Setting::ApprovalTimeout(secs) => settings::set_approval_timeout(&self.paths, *secs),
+            Setting::Notify {
+                phone,
+                sound,
+            } => settings::set_notify(&self.paths, *phone, *sound),
+            Setting::Ssh(on) => settings::set_ssh_enabled(&self.paths, *on),
+            Setting::Host(h, on) => settings::set_host_enabled(&self.paths, h, *on),
+        }?;
+        if change == Change::Live || !restart {
+            return Ok(None);
+        }
+        let note = self.restart_service().await?;
+        if host && !paused {
+            let config = self.config()?;
+            self.git.setup_hosts(&Scope::Global, &config)?;
+        }
+        Ok(note)
+    }
+
+    /// Restarts the daemon so it reads `config.toml` again: the one inside the app, or the installed service.
+    async fn restart_service(&self) -> Result<Option<String>, String> {
+        let config = self.config()?;
+        {
+            let mut running = self.in_app.lock().await;
+            if let Some(task) = running.take().filter(|t| !t.is_finished()) {
+                if let Ok(client) = Client::new(&self.paths, config.listen) {
+                    client.shutdown(Duration::from_secs(5)).await.map_err(|e| e.to_string())?;
+                }
+                if tokio::time::timeout(Duration::from_secs(5), task).await.is_err() {
+                    log::warn!("the app's daemon did not stop in time");
+                }
+            }
+        }
+        if Self::daemon_in_app() {
+            if matches!(self.daemon_status(&config).await, DaemonState::Running { .. }) {
+                return Ok(Some("Restart `reins daemon` so it uses the new settings.".to_owned()));
+            }
+            self.start_in_app(config).await?;
+            return Ok(None);
+        }
+        #[cfg(windows)]
+        let restarted = service::windows::restart_if_installed(&self.paths, &config, &self.cli()?).await?;
+        #[cfg(not(windows))]
+        let restarted = service::Manager::current().and_then(|m| service::restart_if_installed(m, &self.home))?;
+        match restarted {
+            Some(done) => log::info!("{done}"),
+            // Started some other way (`reins daemon` in a terminal).
+            None if matches!(self.daemon_status(&config).await, DaemonState::Running { .. }) => {
+                return Ok(Some("Restart `reins daemon` so it uses the new settings.".to_owned()));
+            }
+            None => {}
+        }
+        Ok(None)
     }
 
     /// Where installers are downloaded to.
@@ -566,6 +726,48 @@ mod tests {
         assert!(done.starts_with("Updated to "), "{done}");
         assert!(!backend.update_marker().exists());
         assert_eq!(backend.after_update(false).await.unwrap(), None);
+    }
+
+    #[tokio::test]
+    async fn live_settings_are_written_without_a_restart() {
+        let root = tempfile::tempdir().unwrap();
+        let backend = Backend::under(root.path());
+        let note = backend
+            .change(
+                Setting::Notify {
+                    phone: false,
+                    sound: false,
+                },
+                false,
+                true,
+            )
+            .await
+            .unwrap();
+        assert_eq!(note, None);
+        backend.change(Setting::GuardGroup("publishing".to_owned(), false), false, true).await.unwrap();
+        backend
+            .change(Setting::GuardList(GuardList::AllowCommands, vec!["make test".to_owned()]), false, true)
+            .await
+            .unwrap();
+        // A change for after a restart, without restarting (as in the demo).
+        backend.change(Setting::Host("gitlab.com".to_owned(), true), true, false).await.unwrap();
+        let config = backend.config().unwrap();
+        assert!(!config.notify.phone && config.guard.group_off("publishing"));
+        assert_eq!(config.guard.allow_commands, vec!["make test"]);
+        assert!(config.git_hosts().unwrap().iter().any(|h| h.host == "gitlab.com" && h.enabled));
+        assert!(backend.change(Setting::GuardTimeout(1), false, true).await.is_err(), "out of range");
+    }
+
+    #[test]
+    fn the_activity_log_is_read_again_when_it_changes() {
+        let root = tempfile::tempdir().unwrap();
+        let backend = Backend::under(root.path());
+        backend.paths().ensure().unwrap();
+        assert!(backend.activity().is_empty());
+        journal::Journal::new(backend.paths()).record(&Entry::new(journal::Kind::Ask, "Deploy now?"));
+        let read = backend.activity();
+        assert_eq!(read.len(), 1);
+        assert!(Arc::ptr_eq(&read, &backend.activity()), "unchanged: the same list");
     }
 
     #[test]

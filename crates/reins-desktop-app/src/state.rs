@@ -1,5 +1,5 @@
 //! What the app remembers between runs (`app.json` in the state directory): who approved the pairing, whether the
-//! first-time setup ran, a pause with its end, and a server other than the default one.
+//! first-time setup ran, a pause (with its end, or until the user resumes), and a server other than the default one.
 
 use std::path::{Path, PathBuf};
 
@@ -14,8 +14,10 @@ pub struct Saved {
     pub account: Option<String>,
     /// The first-time setup (harnesses, service, git) ran once; later starts open the status window.
     pub setup_done: bool,
-    /// Unix seconds: git goes through Reins again then.
+    /// Unix seconds: git goes through Reins again then (a timed pause).
     pub paused_until: Option<i64>,
+    /// Paused until the user resumes (no end).
+    pub paused_manual: bool,
     /// A self-hosted server picked under "Use another server".
     pub server: Option<String>,
 }
@@ -58,11 +60,16 @@ mod tests {
             phone: Some("Pixel 9".to_owned()),
             setup_done: true,
             paused_until: Some(1_900_000_000),
+            paused_manual: true,
             ..Saved::default()
         };
         saved.save(dir.path()).unwrap();
         assert_eq!(Saved::load(dir.path()), saved);
         std::fs::write(Saved::file(dir.path()), b"{not json").unwrap();
         assert_eq!(Saved::load(dir.path()), Saved::default());
+        // A file from before manual pauses reads as not paused manually.
+        std::fs::write(Saved::file(dir.path()), br#"{"setup_done":true,"paused_until":5}"#).unwrap();
+        let old = Saved::load(dir.path());
+        assert!(old.setup_done && !old.paused_manual && old.paused_until == Some(5));
     }
 }

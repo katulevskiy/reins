@@ -27,6 +27,8 @@ gpui = { git = "https://github.com/katulevskiy/zui", rev = "667d0aaf9531d2d1b2d0
 gpui_platform = { git = "https://github.com/katulevskiy/zui", rev = "667d0aaf9531d2d1b2d0674a5e55f977df1b09f6", features = ["font-kit", "runtime_shaders", "wayland", "x11"] }
 gpui_tokio = { git = "https://github.com/katulevskiy/zui", rev = "667d0aaf9531d2d1b2d0674a5e55f977df1b09f6" }
 async-trait = "0.1.92"
+# Local clock times in the activity log ("14:32", "Oct 3").
+chrono = { version = "0.4.45", default-features = false, features = ["clock", "std"] }
 futures = "0.3.34"
 log = "0.4.34"
 png = "0.18.1"

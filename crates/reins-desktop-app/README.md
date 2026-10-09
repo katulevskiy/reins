@@ -1,8 +1,9 @@
 # Reins desktop app
 
 The app for people who never open a terminal: a window that pairs this computer with the phone (a QR code), adds
-Reins to every AI harness it finds, starts the background service and sends git through it, and afterwards a shield
-in the menu bar (macOS) or tray (Windows, Linux) with Pause for 1 hour, Resume, Open Reins and Quit. It is built with
+Reins to every AI harness it finds, starts the background service and sends git through it, and afterwards a status
+window and a shield in the menu bar (macOS) or tray (Windows, Linux) with a Pause submenu, Resume, Open Reins and
+Quit. It is built with
 [GPUI](https://gpui.rs) through Zeron's fork ([zui](https://github.com/katulevskiy/zui)), in the phone apps' look: Geist,
 cool neutrals, one violet accent.
 
@@ -14,11 +15,52 @@ window's "Install command line tool" links it to `~/.local/bin`.
 | Module | What |
 | --- | --- |
 | `pairing` | the device flow (`reins_desktop::server::device`, feature `device-flow`), the browser sign-in, `--demo` |
-| `backend` | harness detection and setup, the service (or the daemon inside the app), pause and resume, updates |
-| `model`, `ui` | the screens: onboarding, first-time setup, status |
+| `backend` | harness detection and setup, the service (or the daemon inside the app), pause and resume, the daemon's status and overview, the activity log, settings changes (restarting the service when the daemon needs it), updates |
+| `model` | the app's state: screen and section, pairing, setup, pausing, the actions the window and tray take |
+| `pause` | the pause lengths and how a pause reads ("Paused for 3 h 12 min more", "Paused until you resume") |
+| `format` | times as the window says them: "2 min ago", "3 h 12 min", "14:32" |
+| `demo` | `--demo` only: made-up activity, connections, keys and AI tools where this computer has none |
+| `ui/mod.rs` | the window: one column before setup, sidebar and sections afterwards |
+| `ui/parts.rs` | building blocks: cards, rows, buttons, toggles, chips, segmented controls, outcome badges |
+| `ui/field.rs` | one-line text fields typed by hand (the server, the Rules lists) |
+| `ui/onboarding.rs`, `ui/setup.rs` | pairing with the phone; the first-time setup |
+| `ui/sidebar.rs` | the mark and state, the sections, pausing |
+| `ui/overview.rs`, `ui/activity.rs`, `ui/connections.rs`, `ui/keys.rs`, `ui/rules.rs`, `ui/settings.rs` | the sections |
 | `tray` | `tray-icon` on macOS and Windows, `ksni` (StatusNotifierItem) on Linux |
 | `autostart` | open at login: a launch agent, the `Run` key (`Reins app`), an XDG autostart entry |
 | `upgrade` | "Restart to update": the new installer in place of the running copy |
+
+## The status window
+
+After pairing and setup the window (resizable, 1000 × 680 at first) has a sidebar with the state (On, Paused, Needs
+you), the sections and the pause control, and these sections. Everything is read again every 3 seconds: the daemon's
+status and overview (`control::Client::overview`), and this computer's activity log (`reins_desktop::journal`, the
+newest 500).
+
+- **Overview**: the state in a sentence and what fixes it, what waits for the phone now (and for how long), today's
+  approved, denied, timed out and failed requests, pausing, the latest requests, the update banner.
+- **Activity**: every request on this computer (git, SSH, API keys, `reins run` secrets, hook commands and files,
+  `reins ask`, MCP tool calls), filtered by outcome and kind; a row opens to its detail, the reason and its times.
+- **Connections**: the AI tools Reins is in (toggles), the git hosts sent through Reins (a toggle each, with the
+  repositories reached), the APIs called with keys from the phone, SSH sign-ins, and MCP tool calls by AI tool.
+- **Keys & secrets**: the `[[api]]` entries (vault reference, how long a key is held, whether one is held now), the
+  `reins run` profiles (variable names and vault references; values are never on this computer), the SSH agent (on or
+  off, its socket, the keys the phone listed), and how to use them with the daemon's address.
+- **Rules** ("What asks your phone"): the built-in groups of hook rules, each asking the phone or going through; your
+  own commands and files to ask about, and to never ask about; what happens when nobody answers; how long hooks and
+  approvals wait. They are checked on this computer; approving always happens on the phone.
+- **Settings**: notifications ("Check your phone" here, with or without a sound), open at login, the command line tool,
+  the background service, the account and pairing, the version, Quit.
+
+Settings are written to `config.toml` with `reins_desktop::settings`, keeping its comments. A change the daemon reads
+only when it starts (a git host, the SSH agent, the approval wait) restarts the background service (or the daemon
+inside the app), and a git host change routes git again unless paused.
+
+### Pausing
+
+Pause (sidebar, Overview or the tray's Pause submenu) offers 15 minutes, 1 hour, 4 hours, 24 hours and Until I resume.
+Pausing stops sending git through Reins (it talks to the hosts directly); hooks and MCP tools still ask the phone. A
+timed pause ends by itself (`paused_until` in `app.json`); "Until I resume" (`paused_manual`) lasts until Resume.
 
 ## Updates
 
@@ -46,7 +88,14 @@ build from source), the app says "Reins X is available" with a link to the downl
 ```sh
 cargo build -p reins-desktop -p reins-desktop-app     # reins next to reins-app, as in the bundle
 target/debug/reins-app --demo                                # a pretend pairing; nothing is sent
+REINS_HOME=$(mktemp -d) REINS_DEMO_SCREEN=status REINS_DEMO_SECTION=activity target/debug/reins-app --demo
 ```
+
+`--demo` pretends to pair and, where this computer has none yet, shows made-up activity, connections, API keys, a run
+profile and AI tools; nothing is sent anywhere, pausing changes nothing on the computer and no service is restarted.
+`REINS_DEMO_SCREEN=status` opens the status window straight away, and `REINS_DEMO_SECTION` (`overview`, `activity`,
+`connections`, `keys`, `rules`, `settings`) picks its section. The demo changes settings only under `REINS_HOME`.
+`REINS_APPEARANCE=light` or `dark` overrides the system's appearance (for screenshots of both).
 
 `REINS_HOME=/tmp/somewhere` makes the app treat that directory as the home directory (harness settings, git's global
 config, login items, its own settings and state), to try it without touching the real ones. `REINS_DAEMON=in-app` runs

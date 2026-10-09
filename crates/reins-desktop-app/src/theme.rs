@@ -37,6 +37,10 @@ fn hex(rgb: u32) -> Hsla {
 #[derive(Clone, Copy, Debug)]
 pub struct Palette {
     pub background: Hsla,
+    /// The status window's sidebar.
+    pub sidebar: Hsla,
+    /// The selected sidebar item.
+    pub selected: Hsla,
     pub elevated: Hsla,
     pub text: Hsla,
     pub secondary: Hsla,
@@ -56,6 +60,8 @@ impl Palette {
     pub fn light() -> Self {
         Self {
             background: hex(0x00F3_F3F5),
+            sidebar: hex(0x00EA_EAEE),
+            selected: hex(0x00FF_FFFF),
             elevated: hex(0x00FF_FFFF),
             text: hex(0x0027_272C),
             secondary: hex(0x0062_626A),
@@ -75,6 +81,8 @@ impl Palette {
     pub fn dark() -> Self {
         Self {
             background: hex(0x0006_0606),
+            sidebar: hex(0x000C_0C0E),
+            selected: hex(0x001A_1A1E),
             elevated: hex(0x0011_1113),
             text: hex(0x00E8_E8EA),
             secondary: hex(0x00A9_A9AE),
@@ -90,9 +98,15 @@ impl Palette {
         }
     }
 
-    /// For the window's appearance (light or dark).
+    /// For the window's appearance (light or dark), unless `REINS_APPEARANCE` says `light` or `dark` (for
+    /// screenshots of both).
     #[must_use]
     pub fn of(window: &Window) -> Self {
+        match std::env::var("REINS_APPEARANCE").as_deref() {
+            Ok("light") => return Self::light(),
+            Ok("dark") => return Self::dark(),
+            _ => {}
+        }
         match window.appearance() {
             WindowAppearance::Dark | WindowAppearance::VibrantDark => Self::dark(),
             WindowAppearance::Light | WindowAppearance::VibrantLight => Self::light(),
