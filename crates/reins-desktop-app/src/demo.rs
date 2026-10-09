@@ -363,7 +363,13 @@ impl Demo {
             overview.apis = self.api_info();
         }
         if overview.ssh_socket.is_none() {
-            overview.ssh_socket = Some("/run/user/1000/reins/ssh-agent.sock".to_owned());
+            // Where the agent's socket is on this kind of computer (macOS has no runtime directory: the state one).
+            let socket = if cfg!(target_os = "macos") {
+                "/Users/dana/.local/state/reins/ssh-agent.sock"
+            } else {
+                "/run/user/1000/reins/ssh-agent.sock"
+            };
+            overview.ssh_socket = Some(socket.to_owned());
         }
         if overview.ssh_keys.is_empty() {
             overview.ssh_keys = Self::ssh_keys();
@@ -371,11 +377,12 @@ impl Demo {
         if overview.started_at == 0 {
             overview.started_at = self.base - 5 * 3_600;
         }
-        // Reins in no AI tool yet: as if it were in two of them.
+        // Reins in no AI tool yet: as if it were in two of them, and Cursor installed beside them (the health card's
+        // sample "Installed but not connected").
         if !s.harnesses.iter().any(|h| h.added) {
             for row in &mut s.harnesses {
                 let sample = matches!(row.harness, Harness::ClaudeCode | Harness::Codex);
-                row.found |= sample;
+                row.found |= sample || row.harness == Harness::Cursor;
                 row.added = sample;
                 row.complete = sample;
             }

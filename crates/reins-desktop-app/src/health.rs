@@ -184,21 +184,16 @@ pub fn demo_checks(fixed: &[String]) -> Vec<Check> {
         detail: detail.to_owned(),
         fix: fix.map(str::to_owned),
     };
-    let gemini = if fixed.iter().any(|f| f == "harness:gemini") {
-        check(
-            "harness:gemini",
-            "Gemini CLI",
-            Level::Ok,
-            "Connected: its tools and risky commands reach your phone",
-            None,
-        )
+    // Cursor, as the demo's Connections and AI tools step have it: installed, not connected yet.
+    let cursor = if fixed.iter().any(|f| f == "harness:cursor") {
+        check("harness:cursor", "Cursor", Level::Ok, "Connected: its tools and risky commands reach your phone", None)
     } else {
         check(
-            "harness:gemini",
-            "Gemini CLI",
+            "harness:cursor",
+            "Cursor",
             Level::Warn,
             "Installed but not connected",
-            Some("Run `reins harness add gemini` (or connect it in the Reins app)."),
+            Some("Run `reins harness add cursor` (or connect it in the Reins app)."),
         )
     };
     vec![
@@ -217,7 +212,7 @@ pub fn demo_checks(fixed: &[String]) -> Vec<Check> {
             None,
         ),
         check("harness:codex", "Codex", Level::Ok, "Connected: its tools and risky commands reach your phone", None),
-        gemini,
+        cursor,
         check("notify", "\"Check your phone\" notifications", Level::Ok, "On", None),
     ]
 }
@@ -324,7 +319,7 @@ mod tests {
     fn the_demo_has_one_thing_to_look_at_until_it_is_fixed() {
         let checks = demo_checks(&[]);
         assert_eq!(summary(&checks).title, "1 thing to look at");
-        assert_eq!(fix_for(to_look_at(&checks)[0]), Some(Fix::Connect(Harness::Gemini)));
-        assert_eq!(summary(&demo_checks(&["harness:gemini".to_owned()])).title, "All good");
+        assert_eq!(fix_for(to_look_at(&checks)[0]), Some(Fix::Connect(Harness::Cursor)));
+        assert_eq!(summary(&demo_checks(&["harness:cursor".to_owned()])).title, "All good");
     }
 }
