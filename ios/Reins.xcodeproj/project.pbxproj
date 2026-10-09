@@ -342,6 +342,7 @@
 				"1A23664401A58596753ED23B",
 				"8F1C8925CF17215F28DD53EB",
 				DF28D1961EC010042FC5B422,
+				"97C3AE5C49CCBBD8FD351252",
 			);
 			buildRules = (
 			);
@@ -474,6 +475,22 @@
 			runOnlyForDeploymentPostprocessing = "0";
 			shellPath = /bin/sh;
 			shellScript = "exec \"$SRCROOT/scripts/build-core.sh\"\n";
+			showEnvVarsInLog = "0";
+		};
+		97C3AE5C49CCBBD8FD351252 = {
+			isa = PBXShellScriptBuildPhase;
+			alwaysOutOfDate = "1";
+			buildActionMask = "2147483647";
+			files = (
+			);
+			inputPaths = (
+			);
+			name = "Embedded frameworks' Info.plist";
+			outputPaths = (
+			);
+			runOnlyForDeploymentPostprocessing = "0";
+			shellPath = /bin/sh;
+			shellScript = "exec \"$SRCROOT/scripts/fix-embedded-frameworks.sh\"\n";
 			showEnvVarsInLog = "0";
 		};
 		FAFB70DA2F195F25CCA8FDA7 = {

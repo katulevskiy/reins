@@ -46,6 +46,7 @@ TARGETS = [
         "core": True,
         "embed": ["ReinsWidgets", "ReinsNotifications"],
         "packages": ["onnxruntime"],
+        "fix_frameworks": True,
         "swift_includes": [ORT_C],
         "settings": {
             "INFOPLIST_FILE": "Reins/Info.plist",
@@ -306,6 +307,23 @@ def main() -> None:
                 "runOnlyForDeploymentPostprocessing": "0",
             }
             phases.append(cp)
+        if t.get("fix_frameworks"):
+            # Last, once the package frameworks are embedded: scripts/fix-embedded-frameworks.sh says why.
+            sh = oid("phase", name, "fix-frameworks")
+            objects[sh] = {
+                "isa": "PBXShellScriptBuildPhase",
+                "alwaysOutOfDate": "1",
+                "buildActionMask": "2147483647",
+                "files": [],
+                "inputPaths": [],
+                "name": "Embedded frameworks' Info.plist",
+                "outputPaths": [],
+                "runOnlyForDeploymentPostprocessing": "0",
+                "shellPath": "/bin/sh",
+                "shellScript": 'exec "$SRCROOT/scripts/fix-embedded-frameworks.sh"\n',
+                "showEnvVarsInLog": "0",
+            }
+            phases.append(sh)
         if t.get("host"):
             deps.append(oid("dep", name, t["host"]))
         for dep_target in [*(t.get("embed") or []), *([t["host"]] if t.get("host") else [])]:
