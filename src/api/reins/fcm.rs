@@ -122,12 +122,39 @@ struct TokenResponse {
 
 struct CachedToken {
     token: String,
+    /// From here on a push asks for a new token in the background and keeps using this one.
     refresh_at: Instant,
+    /// From here on this one is no longer used.
+    expires_at: Instant,
 }
+
+/// What a push does about the access token.
+#[derive(Debug, PartialEq, Eq)]
+enum TokenUse {
+    /// Use the cached one.
+    Cached,
+    /// Use the cached one, and renew it in the background (half its life is over).
+    CachedRenewing,
+    /// Fetch one first: none yet, or it expired.
+    Fetch,
+}
+
+fn token_use(cached: Option<(Instant, Instant)>, now: Instant) -> TokenUse {
+    match cached {
+        Some((refresh_at, _)) if now < refresh_at => TokenUse::Cached,
+        Some((_, expires_at)) if now + EXPIRY_MARGIN < expires_at => TokenUse::CachedRenewing,
+        _ => TokenUse::Fetch,
+    }
+}
+
+/// A token closer than this to its expiry is not used.
+const EXPIRY_MARGIN: Duration = Duration::from_secs(60);
 
 pub struct FcmSender {
     account: ServiceAccount,
     cached: tokio::sync::Mutex<Option<CachedToken>>,
+    /// A background renewal is running.
+    renewing: std::sync::atomic::AtomicBool,
 }
 
 impl FcmSender {
@@ -135,16 +162,37 @@ impl FcmSender {
         Self {
             account,
             cached: tokio::sync::Mutex::new(None),
+            renewing: std::sync::atomic::AtomicBool::new(false),
         }
     }
 
-    async fn access_token(&self) -> Result<String, String> {
-        let mut cached = self.cached.lock().await;
-        if let Some(c) = cached.as_ref()
-            && Instant::now() < c.refresh_at
-        {
-            return Ok(c.token.clone());
+    /// An access token for a push. Once half its life is over a fresh one is fetched in the background, so a push
+    /// waits for Google's token endpoint only when there is no usable token at all (the first push after a start
+    /// that [`prewarm`] did not cover, or after a long pause).
+    async fn access_token(&'static self) -> Result<String, String> {
+        let decision = {
+            let cached = self.cached.lock().await;
+            let token = cached.as_ref().map(|c| c.token.clone());
+            (token_use(cached.as_ref().map(|c| (c.refresh_at, c.expires_at)), Instant::now()), token)
+        };
+        match decision {
+            (TokenUse::Cached, Some(token)) => Ok(token),
+            (TokenUse::CachedRenewing, Some(token)) => {
+                if !self.renewing.swap(true, std::sync::atomic::Ordering::AcqRel) {
+                    tokio::spawn(async move {
+                        if let Err(e) = self.fetch_token().await {
+                            warn!("Could not renew the FCM access token: {e}");
+                        }
+                        self.renewing.store(false, std::sync::atomic::Ordering::Release);
+                    });
+                }
+                Ok(token)
+            }
+            _ => self.fetch_token().await,
         }
+    }
+
+    async fn fetch_token(&self) -> Result<String, String> {
         let assertion = sign_assertion(&self.account, chrono::Utc::now().timestamp())?;
         let response = make_http_request(reqwest::Method::POST, &self.account.token_uri)
             .map_err(|e| e.to_string())?
@@ -159,14 +207,16 @@ impl FcmSender {
             return Err(format!("token endpoint answered {status}: {excerpt}"));
         }
         let token: TokenResponse = response.json().await.map_err(|e| format!("invalid token response: {e}"))?;
-        *cached = Some(CachedToken {
+        let now = Instant::now();
+        *self.cached.lock().await = Some(CachedToken {
             token: token.access_token.clone(),
-            refresh_at: refresh_at(Instant::now(), token.expires_in),
+            refresh_at: refresh_at(now, token.expires_in),
+            expires_at: now + Duration::from_secs(u64::try_from(token.expires_in).unwrap_or(0)),
         });
         Ok(token.access_token)
     }
 
-    pub async fn send(&self, fcm_token: &str, push: &PushMessage) -> Result<SendOutcome, String> {
+    pub async fn send(&'static self, fcm_token: &str, push: &PushMessage) -> Result<SendOutcome, String> {
         let access_token = self.access_token().await?;
         let url = format!("https://fcm.googleapis.com/v1/projects/{}/messages:send", self.account.project_id);
         let response = make_http_request(reqwest::Method::POST, &url)
@@ -203,6 +253,17 @@ static SENDER: LazyLock<Option<FcmSender>> = LazyLock::new(|| {
 /// The FCM sender, when `REINS_FCM_SERVICE_ACCOUNT` is configured.
 pub fn sender() -> Option<&'static FcmSender> {
     SENDER.as_ref()
+}
+
+/// Fetches the first access token at startup, so the first push does not wait for Google's token endpoint.
+pub fn prewarm() {
+    if let Some(sender) = sender() {
+        tokio::spawn(async move {
+            if let Err(e) = sender.fetch_token().await {
+                warn!("Could not fetch the FCM access token at startup (pushes will try again): {e}");
+            }
+        });
+    }
 }
 
 #[cfg(test)]
@@ -324,5 +385,24 @@ mod tests {
         };
         let error = sender.send("not-a-real-device-token", &push).await.expect_err("a bogus token must not be sent");
         assert!(error.contains("400") && error.contains("INVALID_ARGUMENT"), "unexpected answer: {error}");
+    }
+
+    #[test]
+    fn a_push_waits_for_a_token_only_when_none_is_usable() {
+        let now = Instant::now();
+        let mins = |m: u64| Duration::from_secs(m * 60);
+        assert_eq!(token_use(None, now), TokenUse::Fetch, "the first one");
+        assert_eq!(token_use(Some((now + mins(10), now + mins(40))), now), TokenUse::Cached);
+        assert_eq!(
+            token_use(Some((now - mins(1), now + mins(29))), now),
+            TokenUse::CachedRenewing,
+            "half its life is over: used while a new one comes"
+        );
+        assert_eq!(
+            token_use(Some((now - mins(31), now + Duration::from_secs(30))), now),
+            TokenUse::Fetch,
+            "about to expire"
+        );
+        assert_eq!(token_use(Some((now - mins(40), now - mins(10))), now), TokenUse::Fetch, "expired");
     }
 }

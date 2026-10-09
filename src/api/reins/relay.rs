@@ -72,6 +72,9 @@ struct RequestState {
     delivered: bool,
     /// The phone's answer (A4), kept until the entry expires.
     outcome: Option<RelayOutcome>,
+    /// Nothing can wake the phone (no push, the app not open) or the push failed: the first wait need not wait for
+    /// the offline threshold.
+    unreachable: bool,
 }
 
 struct RequestEntry {
@@ -146,7 +149,10 @@ impl RelayHub {
 
     /// Queues a normalized tool call for `user`'s approval device and wakes long-polls. Refused when the relay is full,
     /// or when `user` already has as many unanswered requests as an account may (a phone that is away should not let
-    /// one account fill the relay for everyone).
+    /// one account fill the relay for everyone). The same call from the same connection while an earlier one is still
+    /// unanswered (a client retrying after a timeout) is that earlier request: the phone shows it once, and both
+    /// callers get its answer.
+    #[cfg(test)]
     pub fn submit(
         &self,
         user: &str,
@@ -156,13 +162,30 @@ impl RelayHub {
         account: Option<String>,
         now_unix: i64,
     ) -> Result<RelayRequest, QueueFull> {
+        self.submit_waiting(user, connection_id, connection_label, call, account, now_unix, None)
+    }
+
+    /// Like [`RelayHub::submit`] for a caller that keeps asking for up to `waits` (the desktop app waits longer than
+    /// one relay wait, polling again): the phone counts down that instead, never past the request's lifetime.
+    #[allow(clippy::too_many_arguments, reason = "a request is described by this many independent facts")]
+    pub fn submit_waiting(
+        &self,
+        user: &str,
+        connection_id: &ConnectionId,
+        connection_label: &str,
+        call: ToolCall,
+        account: Option<String>,
+        now_unix: i64,
+        waits: Option<std::time::Duration>,
+    ) -> Result<RelayRequest, QueueFull> {
+        let wait = waits.map_or(self.timing.relay_wait, |w| w.clamp(self.timing.relay_wait, ITEM_TTL));
         let request = RelayRequest {
             v: PROTOCOL_VERSION,
             id: RequestId(get_uuid()),
             connection_id: connection_id.clone(),
             connection_label: connection_label.to_owned(),
             created_at: now_unix,
-            wait_until: Some(now_unix.saturating_add(i64::try_from(self.timing.relay_wait.as_secs()).unwrap_or(0))),
+            wait_until: Some(now_unix.saturating_add(i64::try_from(wait.as_secs()).unwrap_or(0))),
             account,
             call,
         };
@@ -173,6 +196,19 @@ impl RelayHub {
         };
         {
             let mut map = self.lock();
+            let same = map.values().find(|e| {
+                e.user == user
+                    && e.request.connection_id == request.connection_id
+                    && e.request.account == request.account
+                    && e.request.call == request.call
+                    && e.state.borrow().outcome.is_none()
+            });
+            if let Some(earlier) = same {
+                let earlier = earlier.request.clone();
+                drop(map);
+                self.signal.notify();
+                return Ok(earlier);
+            }
             if self.max_queued != 0 {
                 let queued = map.values().filter(|e| e.user == user && e.state.borrow().outcome.is_none()).count();
                 if queued >= self.max_queued {
@@ -225,10 +261,32 @@ impl RelayHub {
         }
     }
 
+    /// Nothing can reach the phone for `id` right now (see [`RequestState::unreachable`]): a first wait on it says
+    /// `Offline` at once.
+    pub fn mark_unreachable(&self, id: &RequestId) {
+        if let Some(entry) = self.lock().get(id) {
+            entry.state.send_if_modified(|s| {
+                let changed = !s.unreachable && !s.delivered;
+                s.unreachable = true;
+                changed
+            });
+        }
+    }
+
+    /// The first wait after submitting: like [`RelayHub::wait`], and `Offline` at once when the phone cannot be
+    /// reached ([`RelayHub::mark_unreachable`]), even while waiting.
+    pub async fn wait_first(&self, id: &RequestId, connection_id: &ConnectionId) -> WaitResult {
+        self.wait_inner(id, connection_id, true).await
+    }
+
     /// Waits for the phone per spec §4.3, measured from now: `Offline` if the request is still
     /// undelivered after `timing.offline`, `Pending` after `timing.relay_wait`, else the answer.
     /// Only the connection that created the request may wait on it.
     pub async fn wait(&self, id: &RequestId, connection_id: &ConnectionId) -> WaitResult {
+        self.wait_inner(id, connection_id, false).await
+    }
+
+    async fn wait_inner(&self, id: &RequestId, connection_id: &ConnectionId, quick_offline: bool) -> WaitResult {
         let start = Instant::now();
         let receiver = {
             let map = self.lock();
@@ -240,15 +298,15 @@ impl RelayHub {
         let offline_at = start + self.timing.offline;
         let pending_at = start + self.timing.relay_wait;
         loop {
-            let (delivered, outcome) = {
+            let (delivered, outcome, unreachable) = {
                 let state = rx.borrow_and_update();
-                (state.delivered, state.outcome.clone())
+                (state.delivered, state.outcome.clone(), state.unreachable)
             };
             if let Some(outcome) = outcome {
                 return WaitResult::Answered(outcome);
             }
             let now = Instant::now();
-            if !delivered && now >= offline_at {
+            if !delivered && (now >= offline_at || (quick_offline && unreachable)) {
                 return WaitResult::Offline;
             }
             if now >= pending_at {
@@ -305,9 +363,11 @@ mod tests {
         "conn-1".into()
     }
 
+    /// A search no other test call repeats (identical unanswered calls are one request).
     fn search() -> ToolCall {
+        static N: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
         ToolCall::GmailSearch {
-            query: "from:bank".to_owned(),
+            query: format!("from:bank {}", N.fetch_add(1, std::sync::atomic::Ordering::Relaxed)),
             max_results: 10,
         }
     }
@@ -461,5 +521,62 @@ mod tests {
         for _ in 0..10 {
             unlimited.submit(USER, &conn(), "ChatGPT", search(), None, 0).unwrap();
         }
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn a_retried_call_is_the_same_request_until_it_is_answered() {
+        let h = hub();
+        let call = search();
+        let first = h.submit(USER, &conn(), "ChatGPT", call.clone(), None, 0).unwrap();
+        let again = h.submit(USER, &conn(), "ChatGPT", call.clone(), None, 5).unwrap();
+        assert_eq!(again.id, first.id, "the phone shows it once");
+        assert_eq!(h.take_undelivered(USER).len(), 1);
+        let other_ai = h.submit(USER, &"conn-2".into(), "Claude", call.clone(), None, 5).unwrap();
+        assert_ne!(other_ai.id, first.id, "another connection asks for itself");
+        let other_account = h.submit(USER, &conn(), "ChatGPT", call.clone(), Some("b@x.com".to_owned()), 5).unwrap();
+        assert_ne!(other_account.id, first.id);
+        h.answer(USER, &first.id, found()).unwrap();
+        let after = h.submit(USER, &conn(), "ChatGPT", call, None, 9).unwrap();
+        assert_ne!(after.id, first.id, "once answered, the same call is a new request");
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn an_unreachable_phone_is_reported_at_once_on_the_first_wait_only() {
+        let h = hub();
+        let req = h.submit(USER, &conn(), "ChatGPT", search(), None, 0).unwrap();
+        h.mark_unreachable(&req.id);
+        let start = Instant::now();
+        assert_eq!(h.wait_first(&req.id, &conn()).await, WaitResult::Offline);
+        assert_eq!(start.elapsed(), Duration::ZERO);
+        assert_eq!(h.wait(&req.id, &conn()).await, WaitResult::Offline);
+        assert_eq!(start.elapsed(), secs(10), "a later wait gives the phone the usual time");
+        // A push failing while the first wait runs ends it too.
+        let req = h.submit(USER, &conn(), "ChatGPT", search(), None, 0).unwrap();
+        let start = Instant::now();
+        let cid = conn();
+        let (res, ()) = tokio::join!(h.wait_first(&req.id, &cid), async {
+            sleep(secs(2)).await;
+            h.mark_unreachable(&req.id);
+        });
+        assert_eq!((res, start.elapsed()), (WaitResult::Offline, secs(2)));
+        // Once the phone has it, nothing about reachability matters.
+        let req = h.submit(USER, &conn(), "ChatGPT", search(), None, 0).unwrap();
+        h.fetch(USER, &req.id).unwrap();
+        h.mark_unreachable(&req.id);
+        let start = Instant::now();
+        assert_eq!(h.wait_first(&req.id, &conn()).await, WaitResult::Pending);
+        assert_eq!(start.elapsed(), secs(45));
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn a_caller_that_waits_longer_shows_its_own_deadline_never_past_the_lifetime() {
+        let h = hub();
+        let wait = |w: Option<u64>| {
+            h.submit_waiting(USER, &conn(), "Desktop", search(), None, 1_000, w.map(secs)).unwrap().wait_until
+        };
+        assert_eq!(wait(None), Some(1_045));
+        assert_eq!(wait(Some(120)), Some(1_120));
+        assert_eq!(wait(Some(5)), Some(1_045), "never shorter than one relay wait");
+        assert_eq!(wait(Some(3_600)), Some(1_600), "never past the request's lifetime");
     }
 }

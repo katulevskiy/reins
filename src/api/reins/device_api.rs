@@ -200,7 +200,10 @@ pub fn is_caller(row: &ReinsDevice, headers: &Headers, key: &DeviceKey) -> bool 
 
 pub async fn require_approval_device(headers: &Headers, key: &DeviceKey, conn: &DbConn) -> PhoneResult<()> {
     match ReinsDevice::find_by_user(&headers.user.uuid, conn).await {
-        Some(device) if is_caller(&device, headers, key) => Ok(()),
+        Some(device) if is_caller(&device, headers, key) => {
+            HUB.presence.seen(&user_key(headers), now_unix());
+            Ok(())
+        }
         _ => Err(api_err(
             Status::Forbidden,
             codes::NOT_APPROVAL_DEVICE,
