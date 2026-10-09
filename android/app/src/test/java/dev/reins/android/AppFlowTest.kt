@@ -699,9 +699,8 @@ class AppFlowTest {
         launch()
         awaitTag("noActivity")
         Foreground.focused = true
+        // The foreground poll (FakeCore.sync) brings it in, as on a phone.
         core.pending = listOf(TestData.pending())
-        val container = (context.applicationContext as ReinsApp).container
-        rule.runOnUiThread { kotlinx.coroutines.runBlocking { container.refreshPending() } }
         awaitTag("approve")
         tap("closeSheet")
         awaitGone("approve")
@@ -1156,9 +1155,8 @@ class AppFlowTest {
         awaitTag("noGrants")
         rule.onNodeWithText("No active grants").assertExists()
         awaitTag("expiredHeader")
+        // The foreground poll re-reads the lists.
         core.grants = emptyList()
-        val container = (context.applicationContext as ReinsApp).container
-        kotlinx.coroutines.runBlocking { container.refreshPending() }
         awaitGone("expiredHeader")
         rule.onNodeWithText("No grants").assertExists()
     }

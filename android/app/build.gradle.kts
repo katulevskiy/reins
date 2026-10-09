@@ -1,4 +1,6 @@
+import java.time.Duration
 import javax.inject.Inject
+import org.gradle.api.tasks.testing.logging.TestExceptionFormat
 
 plugins {
     alias(libs.plugins.android.application)
@@ -158,7 +160,27 @@ android {
         unitTests.isReturnDefaultValues = true
         unitTests.isIncludeAndroidResources = true
         // -Dreins.screenshots=/dir renders the design-review screenshots (see ScreenshotsTest).
-        unitTests.all { test -> System.getProperty("reins.screenshots")?.let { test.systemProperty("reins.screenshots", it) } }
+        unitTests.all { test ->
+            System.getProperty("reins.screenshots")?.let { test.systemProperty("reins.screenshots", it) }
+            // Robolectric with Compose fills most of Gradle's default 512 MB test heap. Classes are independent, so
+            // they spread over a JVM per core (up to four), and a stuck test fails the task in minutes instead of
+            // running into the CI job's limit.
+            test.maxHeapSize = "2g"
+            test.maxParallelForks = Runtime.getRuntime().availableProcessors().coerceIn(1, 4)
+            test.timeout.set(Duration.ofMinutes(5))
+            test.testLogging {
+                events("failed")
+                exceptionFormat = TestExceptionFormat.FULL
+            }
+            // The shared suite (src/test) does not depend on the distribution, so it runs once, under `full`; `play`
+            // runs what src/testPlay adds (screenshots included, for play/graphics/render.sh).
+            if (test.name.startsWith("testPlay")) {
+                val playTests = file("src/testPlay/java")
+                fileTree(playTests) { include("**/*.kt") }.forEach { source ->
+                    test.filter.includeTestsMatching(source.relativeTo(playTests).path.removeSuffix(".kt").replace('/', '.'))
+                }
+            }
+        }
     }
 }
 

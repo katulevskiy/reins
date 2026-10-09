@@ -343,11 +343,17 @@ jobs:
           retention-days: 1
 
   android:
-    name: Android unit tests + debug APK
+    name: Android ${{ matrix.flavor }} unit tests${{ matrix.flavor == 'full' && ' + debug APK' || '' }}
     needs: [changes, android-native]
     if: needs.changes.outputs.android == 'true'
     runs-on: ubuntu-24.04
-    timeout-minutes: 15
+    timeout-minutes: 30
+    # One distribution per runner: each compiles only its own variant. The shared suite runs under `full`; `play`
+    # runs its own tests (see testOptions in android/app/build.gradle.kts).
+    strategy:
+      fail-fast: false
+      matrix:
+        flavor: [full, play]
     steps:
       - uses: actions/checkout@v7
         with:
@@ -365,14 +371,29 @@ jobs:
         with:
           cache-provider: basic
           cache-read-only: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name != github.repository }}
-      # Both flavor test suites and the APK use exact-source debug native outputs from the parallel workers.
-      - name: Unit tests and debug APK
+      # The tests and the APK use exact-source debug native outputs from the parallel workers.
+      - name: Unit tests${{ matrix.flavor == 'full' && ' and debug APK' || '' }}
         working-directory: android
+        env:
+          TASKS: ${{ matrix.flavor == 'full' && ':app:testFullDebugUnitTest :app:assembleFullDebug' || ':app:testPlayDebugUnitTest' }}
         run: |
-          ./gradlew --no-daemon --parallel --no-configuration-cache \
-            :app:testFullDebugUnitTest :app:testPlayDebugUnitTest :app:assembleFullDebug \
+          # A test JVM still running after four minutes is stuck: print its threads before Gradle's test timeout
+          # stops it, so the log says where.
+          (
+            while sleep 30; do
+              for pid in $(pgrep -f 'java.*Gradle Test Executor'); do
+                if (( $(ps -o etimes= -p "$pid" || echo 0) > 240 )) && [[ ! -e "$RUNNER_TEMP/dumped-$pid" ]]; then
+                  touch "$RUNNER_TEMP/dumped-$pid"
+                  jcmd "$pid" Thread.print || true
+                fi
+              done
+            done
+          ) &
+          # shellcheck disable=SC2086
+          ./gradlew --no-daemon --parallel --no-configuration-cache $TASKS \
             "-Preins.prebuiltNativeDir=$GITHUB_WORKSPACE/native"
       - name: Verify debug APK native architectures
+        if: matrix.flavor == 'full'
         run: |
           python3 - <<'PYTHON'
           import importlib.util
@@ -385,6 +406,6 @@ jobs:
         if: failure()
         uses: actions/upload-artifact@v7
         with:
-          name: android-test-reports
+          name: android-test-reports-${{ matrix.flavor }}
           path: android/app/build/reports/tests/
           if-no-files-found: ignore

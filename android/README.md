@@ -110,6 +110,7 @@ library's own golden corpus (1000 names plus backdrops, by SHA-256 of the markup
 
 ```bash
 ./gradlew testFullDebugUnitTest      # JVM: policy/logic tests + Robolectric Compose flow tests (no device needed)
+./gradlew testPlayDebugUnitTest      # only src/testPlay: the shared suite does not depend on the distribution
 ./gradlew connectedFullDebugAndroidTest -Pandroid.testInstrumentationRunnerArguments.class=dev.reins.android.RealCoreTest
 scripts/device-smoke.sh          # real server + simulated AI on this machine, real core on the emulator
 ```
