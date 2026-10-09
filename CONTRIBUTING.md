@@ -252,6 +252,15 @@ feed into `/srv/reins-releases` every 15 minutes and publishes only files the ve
 release reaches `reins2fa.com/releases`, `/install.sh` and `/install.ps1` without anyone logging in to the server.
 `scripts/release-feed.sh` also builds a feed by hand from a directory of release assets.
 
+## Maintainers: the Homebrew cask
+
+`brew install --cask katulevskiy/tap/reins` comes from https://github.com/katulevskiy/homebrew-tap (`Casks/reins.rb`).
+After each release the `homebrew` job writes the cask from the release's `SHA256SUMS`
+(`scripts/package/homebrew-cask.sh`: the versioned `.dmg`, its SHA-256, the `reins` command linked from the app) and
+pushes it with the tap's deploy key, which can write to that repository only (Infisical reins-release prod
+`/signing/homebrew`: `HOMEBREW_TAP_DEPLOY_KEY`; master copy in 1Password, "Reins Homebrew tap deploy key"). The cask
+says `auto_updates true`, as the app updates itself. A failure there does not block the release; rerun the job.
+
 ## Maintainers: Linux packages, their repositories and the AUR
 
 Every release also carries `reins_<version>_{amd64,arm64}.deb`, `reins-<version>-1.{x86_64,aarch64}.rpm` (the static

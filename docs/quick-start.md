@@ -68,6 +68,8 @@ it first offers the **Reins app** instead, which does the same with a window: a 
 checklist of your AI tools, and afterwards a shield in the menu bar (macOS) or tray (Windows, Linux) with Pause and
 Resume. The app is also a download of its own: `Reins-macOS.dmg`, `Reins-Windows-x64.msi` or
 `Reins-Linux-x86_64.AppImage` from the [latest release](https://github.com/katulevskiy/reins/releases/latest).
+On macOS, Homebrew installs it too: `brew install --cask katulevskiy/tap/reins` (the app, and the `reins` command
+that comes with it).
 
 On Debian and Ubuntu, Fedora and Arch Linux, Reins also comes as packages, which the system keeps up to date: `reins`
 (the command-line program) and `reins-app` (the app) from signed APT and RPM repositories, and `reins-bin` on the

@@ -1344,3 +1344,90 @@ jobs:
           git -c user.name="Daniil Katulevskiy" -c user.email=support@reins2fa.com commit --quiet -m "Update to $VERSION"
           git push --quiet origin HEAD:master
           echo "::notice::Pushed reins-bin $VERSION to https://aur.archlinux.org/packages/reins-bin"
+
+  # The Homebrew cask (katulevskiy/homebrew-tap, Casks/reins.rb: `brew install --cask katulevskiy/tap/reins`), written
+  # from the published release's SHA256SUMS (scripts/package/homebrew-cask.sh) and pushed with that repository's deploy
+  # key (Infisical reins-release prod /signing/homebrew: HOMEBREW_TAP_DEPLOY_KEY; else the repository secret of that
+  # name). Optional: it runs after the release is public, and without the key it only says so.
+  homebrew:
+    name: Homebrew cask
+    needs: [plan, publish]
+    if: needs.publish.result == 'success' && inputs.verify_only != true
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    continue-on-error: true
+    permissions:
+      contents: read
+      id-token: write # Infisical OIDC (the tap's deploy key)
+    env:
+      VERSION: ${{ needs.plan.outputs.version }}
+      TAG: ${{ needs.plan.outputs.tag }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ needs.plan.outputs.sha }}
+          persist-credentials: false
+      - name: Cask
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          gh release download "$TAG" --pattern SHA256SUMS --dir "$RUNNER_TEMP"
+          scripts/package/homebrew-cask.sh --version "$VERSION" --sums "$RUNNER_TEMP/SHA256SUMS" --out cask/reins.rb
+          ruby -c cask/reins.rb
+          cat cask/reins.rb
+      - name: Fetch the tap's deploy key from Infisical
+        if: vars.INFISICAL_RELEASE_IDENTITY_ID != ''
+        continue-on-error: true
+        uses: ./.github/actions/release-secrets # zizmor: ignore[self-repository] use the exact release checkout
+        with:
+          identity-id: ${{ vars.INFISICAL_RELEASE_IDENTITY_ID }}
+          environment: ${{ vars.INFISICAL_RELEASE_ENVIRONMENT || 'prod' }}
+          secret-path: /signing/homebrew
+          export-type: file
+          file-output-path: /.homebrew-key.env
+      - name: Push to the tap
+        env:
+          HOMEBREW_TAP_DEPLOY_KEY: ${{ secrets.HOMEBREW_TAP_DEPLOY_KEY }}
+          # github.com's host key, as GitHub publishes it (api.github.com/meta; SHA256:+DiY3wvvV6TuJJhbpZisF/zLDA0zPMSvHdkr4UvCOqU)
+          GITHUB_HOST_KEY: github.com ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIOMqqnkVzrm0SdG6UOoqKLsabgH5C9okWi0dh2l9GKJl
+        run: |
+          umask 077
+          key_env="$GITHUB_WORKSPACE/.homebrew-key.env"
+          ssh_dir="$RUNNER_TEMP/tap-ssh"
+          trap 'rm -rf "$key_env" "$ssh_dir"' EXIT
+          # Infisical (/signing/homebrew) first; the repository secret of the same name is the fallback.
+          if [[ -s "$key_env" ]]; then
+            eval "$(python3 - "$key_env" <<'PY'
+          import re, shlex, sys
+          text = open(sys.argv[1]).read()
+          for key, value in re.findall(r"^([A-Z0-9_]+)='(.*?)'$", text, re.M | re.S):
+              if key == "HOMEBREW_TAP_DEPLOY_KEY" and value:
+                  for line in value.splitlines():
+                      if line.strip():
+                          print(f"echo {shlex.quote('::add-mask::' + line)}")
+                  print(f"{key}={shlex.quote(value)}")
+          PY
+          )"
+            rm -f "$key_env"
+          fi
+          if [[ -z "${HOMEBREW_TAP_DEPLOY_KEY:-}" ]]; then
+            echo "::notice::The Homebrew cask was not updated: HOMEBREW_TAP_DEPLOY_KEY is not configured (Infisical /signing/homebrew)"
+            exit 0
+          fi
+          mkdir -p "$ssh_dir"
+          printf '%s\n' "$HOMEBREW_TAP_DEPLOY_KEY" > "$ssh_dir/key"
+          printf '%s\n' "$GITHUB_HOST_KEY" > "$ssh_dir/known_hosts"
+          export GIT_SSH_COMMAND="ssh -i $ssh_dir/key -o IdentitiesOnly=yes -o UserKnownHostsFile=$ssh_dir/known_hosts -o StrictHostKeyChecking=yes"
+          git clone --quiet git@github.com:katulevskiy/homebrew-tap.git "$ssh_dir/tap"
+          mkdir -p "$ssh_dir/tap/Casks"
+          cp cask/reins.rb "$ssh_dir/tap/Casks/reins.rb"
+          cd "$ssh_dir/tap"
+          git add Casks/reins.rb
+          if git diff --cached --quiet; then
+            echo "::notice::The Homebrew cask is already $VERSION"
+            exit 0
+          fi
+          git -c user.name="Daniil Katulevskiy" -c user.email=support@reins2fa.com commit --quiet -m "Reins $VERSION"
+          git push --quiet origin HEAD:main
+          echo "::notice::Updated https://github.com/katulevskiy/homebrew-tap to Reins $VERSION"
