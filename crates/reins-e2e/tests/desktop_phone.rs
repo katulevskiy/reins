@@ -151,6 +151,13 @@ async fn the_phone_approves_git_reads_and_pushes_and_refuses_a_force_push() {
     let (logged_in, (), ()) = tokio::join!(login, browser, user);
     assert_eq!(logged_in.unwrap(), server.base);
 
+    // ---- reins doctor's view of the phone: it polled while approving the pairing ----
+    let seen = reins_desktop::server::client::DesktopClient::new(&paths).unwrap().phone().await.unwrap();
+    let last = seen.last_seen.expect("the phone polled");
+    assert!((0..120).contains(&(seen.server_time - last)), "{seen:?}");
+    let doctor = reins_desktop::doctor::phone_check(seen.last_seen, seen.server_time);
+    assert_eq!(doctor.level, reins_desktop::doctor::Level::Ok, "{doctor:?}");
+
     // ---- the daemon, deciding with the phone ----
     let mut config = Config {
         listen: "127.0.0.1:0".parse().unwrap(),

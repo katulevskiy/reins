@@ -1,6 +1,7 @@
 //! The server's desktop API: `POST /reins/desktop/calls` submits a desktop tool call to the phone, `GET
 //! /reins/desktop/calls/<id>` waits for its answer again. Both wait on the server side (like MCP calls) and answer
-//! `answered` with the phone's outcome, or `pending` / `offline` to be polled again.
+//! `answered` with the phone's outcome, or `pending` / `offline` to be polled again. `GET /reins/desktop/phone` says when
+//! the approval phone last asked the server for work (for `reins doctor`).
 
 use std::time::Duration;
 
@@ -32,6 +33,14 @@ pub struct CallAnswer {
     pub status: CallStatus,
 }
 
+/// When the approval phone last polled the server, and the server's clock.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Deserialize)]
+pub struct PhoneSeen {
+    /// Unix seconds; `None`: not since the server started.
+    pub last_seen: Option<i64>,
+    pub server_time: i64,
+}
+
 pub struct DesktopClient {
     http: reqwest::Client,
     tokens: SessionTokens,
@@ -59,8 +68,19 @@ impl DesktopClient {
         self.send(|server| self.http.get(format!("{server}/reins/desktop/calls/{id}"))).await
     }
 
-    /// Sends with the access token; on 401 renews the token and tries once more.
+    /// When the approval phone last asked the server for work. `LinkError::NotFound` from a server too old to say.
+    pub async fn phone(&self) -> Result<PhoneSeen, LinkError> {
+        let body = self.send_raw(|server| self.http.get(format!("{server}/reins/desktop/phone"))).await?;
+        serde_json::from_slice(&body)
+            .map_err(|e| LinkError::Failed(format!("unexpected answer from the Reins server: {e}")))
+    }
+
     async fn send(&self, build: impl Fn(&str) -> reqwest::RequestBuilder) -> Result<CallAnswer, LinkError> {
+        parse_answer(&self.send_raw(build).await?)
+    }
+
+    /// Sends with the access token; on 401 renews the token and tries once more. The body of a successful answer.
+    async fn send_raw(&self, build: impl Fn(&str) -> reqwest::RequestBuilder) -> Result<Vec<u8>, LinkError> {
         let access = self.tokens.access().await?;
         let resp = Self::attempt(&build, &access).await?;
         let resp = if resp.status() == reqwest::StatusCode::UNAUTHORIZED {
@@ -85,7 +105,7 @@ impl DesktopClient {
         if !status.is_success() {
             return Err(LinkError::Failed(format!("the Reins server answered {}", super::error_text(status, &body))));
         }
-        parse_answer(&body)
+        Ok(body)
     }
 
     async fn attempt(

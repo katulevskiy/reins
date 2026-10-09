@@ -31,6 +31,24 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Cmd {
+    /// Set everything up: pair with your phone, start the service, route git, connect your AI tools.
+    ///
+    /// Pairs only when this computer is not paired yet; connects every AI tool found (Claude Code, Codex, Gemini CLI,
+    /// Cursor) that is not connected already.
+    Setup {
+        /// The server your phone signed in to; a self-hosted one needs its address here.
+        #[arg(default_value = reins_proto::DEFAULT_SERVER)]
+        server_url: String,
+        /// Sign in in the browser instead of scanning a QR code.
+        #[arg(long)]
+        browser: bool,
+    },
+    /// Check that everything works, and say how to fix what does not.
+    ///
+    /// Exit code 1 when something needs fixing.
+    Doctor,
+    /// Send a test request to your phone, to see the whole loop work.
+    Test,
     /// Run the daemon in the foreground (what the service runs).
     Daemon {
         /// Also append the log to this file (the Windows background service has no other place for it).
@@ -338,26 +356,22 @@ async fn run(cmd: Cmd) -> Result<(), String> {
             browser,
             no_browser,
         } => {
-            paths.ensure().map_err(|e| e.to_string())?;
-            let identity = Identity::load_or_create(&paths.identity_file()).map_err(|e| e.to_string())?;
-            let server = if browser || no_browser {
-                server::oauth::login(&paths, &identity, &server_url, !no_browser).await?
-            } else {
-                match server::device::DevicePairing::start(&identity, &server_url).await {
-                    Ok(mut pairing) => {
-                        show_pairing(&pairing);
-                        pairing.wait(&paths).await?
-                    }
-                    Err(server::device::StartError::Unsupported) => {
-                        out!("This server cannot pair by QR code; signing in through the browser instead.\n");
-                        server::oauth::login(&paths, &identity, &server_url, true).await?
-                    }
-                    Err(server::device::StartError::Failed(e)) => return Err(e),
-                }
-            };
+            let server = login(&paths, &server_url, browser, no_browser).await?;
             out!("Logged in to {server}. Your phone decides from now on.");
             Ok(())
         }
+        Cmd::Setup {
+            server_url,
+            browser,
+        } => setup(&paths, &config, &server_url, browser).await,
+        Cmd::Doctor => {
+            let ok = doctor(&paths, &config).await?;
+            if !ok {
+                std::process::exit(1);
+            }
+            Ok(())
+        }
+        Cmd::Test => test(&paths, &config).await,
         Cmd::Logout => {
             if server::oauth::logout(&paths)? {
                 out!("Logged out.");
@@ -410,6 +424,136 @@ async fn run(cmd: Cmd) -> Result<(), String> {
             }
             Ok(())
         }
+    }
+}
+
+/// Pairs with the phone: the QR code (device flow), or the browser sign-in. Returns the server.
+async fn login(paths: &Paths, server_url: &str, browser: bool, no_browser: bool) -> Result<String, String> {
+    paths.ensure().map_err(|e| e.to_string())?;
+    let identity = Identity::load_or_create(&paths.identity_file()).map_err(|e| e.to_string())?;
+    if browser || no_browser {
+        return server::oauth::login(paths, &identity, server_url, !no_browser).await;
+    }
+    match server::device::DevicePairing::start(&identity, server_url).await {
+        Ok(mut pairing) => {
+            show_pairing(&pairing);
+            pairing.wait(paths).await
+        }
+        Err(server::device::StartError::Unsupported) => {
+            out!("This server cannot pair by QR code; signing in through the browser instead.\n");
+            server::oauth::login(paths, &identity, server_url, true).await
+        }
+        Err(server::device::StartError::Failed(e)) => Err(e),
+    }
+}
+
+/// `reins setup`: pair (if needed), start the service and route git, connect every AI tool found; then a summary.
+async fn setup(paths: &Paths, config: &Config, server_url: &str, browser: bool) -> Result<(), String> {
+    let mut summary: Vec<String> = Vec::new();
+    match server::oauth::logged_in_server(paths) {
+        Some(server) => summary.push(format!("✓ Paired with your phone through {server}")),
+        None if config.mode == reins_desktop::config::Mode::Local => {
+            summary.push("– Local mode: this computer decides (no phone)".to_owned());
+        }
+        None => {
+            out!("Step 1 of 3: pair this computer with your phone.\n");
+            let server = login(paths, server_url, browser, false).await?;
+            summary.push(format!("✓ Paired with your phone through {server}"));
+        }
+    }
+    out!("\nStep 2 of 3: the background service and git.");
+    if !daemon_running(paths, config).await {
+        let exe = update::current_executable()?;
+        install_service(paths, config, &exe).await?;
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+        while !daemon_running(paths, config).await {
+            if std::time::Instant::now() > deadline {
+                return Err("the background service did not start; `reins daemon` shows why".to_owned());
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+        }
+    }
+    summary.push(format!("✓ Background service running on {}", config.listen));
+    Git::default().setup_hosts(&Scope::Global, config)?;
+    summary.push(format!("✓ git for {} goes through Reins", enabled_hosts(config)?));
+    out!("\nStep 3 of 3: your AI tools.");
+    let s = reins_desktop::harness::Setup {
+        home: home()?,
+        exe: update::current_executable()?,
+        hook_timeout_secs: config.guard.timeout_secs,
+    };
+    let found = reins_desktop::harness::detect::all_found(&s.home);
+    if found.is_empty() {
+        summary.push(
+            "– No AI tool found (Claude Code, Codex, Gemini CLI, Cursor); `reins harness add <name>` later".to_owned(),
+        );
+    }
+    for h in found {
+        let before = reins_desktop::harness::registered(paths, &s, h).is_ok_and(|r| r.complete());
+        if before {
+            summary.push(format!("✓ {} was already connected", h.label()));
+            continue;
+        }
+        match reins_desktop::harness::add(paths, &s, h) {
+            Ok(_) => summary.push(format!("✓ {} connected. {}", h.label(), reins_desktop::harness::after_add_note(h))),
+            Err(e) => summary.push(format!("✗ {}: {e}", h.label())),
+        }
+    }
+    out!("\nDone:");
+    for line in &summary {
+        out!("  {line}");
+    }
+    out!("\nTry it: `reins test` sends a test to your phone. `reins doctor` checks everything any time.");
+    Ok(())
+}
+
+/// `reins doctor`: every check with its fix. `Ok(false)` when something fails.
+async fn doctor(paths: &Paths, config: &Config) -> Result<bool, String> {
+    let d = reins_desktop::doctor::Doctor {
+        paths: paths.clone(),
+        config: config.clone(),
+        home: home()?,
+        exe: update::current_executable()?,
+        git: Git::default(),
+    };
+    let checks = d.run().await;
+    let width = checks.iter().map(|c| c.label.chars().count()).max().unwrap_or(0);
+    for c in &checks {
+        out!("{} {:width$}  {}", c.level.mark(), c.label, c.detail);
+        if let Some(fix) = &c.fix {
+            out!("  {:width$}  → {fix}", "");
+        }
+    }
+    let worst = reins_desktop::doctor::overall(&checks);
+    out!(
+        "\n{}",
+        match worst {
+            reins_desktop::doctor::Level::Fail => "Something needs fixing (✗ above).",
+            reins_desktop::doctor::Level::Warn => "Working; a few things are worth a look (! above).",
+            _ => "Everything works.",
+        }
+    );
+    Ok(worst != reins_desktop::doctor::Level::Fail)
+}
+
+/// `reins test`: a test question to the phone; prints how it ended.
+async fn test(paths: &Paths, config: &Config) -> Result<(), String> {
+    out!("Sent a test to your phone. Open Reins there and approve or deny it…");
+    let (answer, timed_out) = reins_desktop::ask::send_test(paths, config, &reins_desktop::ask::DesktopAsk).await;
+    match answer {
+        reins_desktop::ask::Answer::Yes => {
+            out!("✓ Approved on your phone. Reins works end to end.");
+            Ok(())
+        }
+        reins_desktop::ask::Answer::No(_) => {
+            out!("✓ Denied on your phone. Reins works end to end (a denial stops the agent the same way).");
+            Ok(())
+        }
+        reins_desktop::ask::Answer::Unanswered(why) if timed_out => Err(format!(
+            "no answer within {} s ({why}); `reins doctor` checks the phone and the server",
+            reins_desktop::ask::TEST_TIMEOUT.as_secs()
+        )),
+        reins_desktop::ask::Answer::Unanswered(why) => Err(format!("{why}; `reins doctor` says what to fix")),
     }
 }
 
