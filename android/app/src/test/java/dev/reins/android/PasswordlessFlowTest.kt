@@ -137,6 +137,16 @@ class PasswordlessFlowTest : FlowHarness() {
         awaitCore { core.syncStarts.get() > stopped }
     }
 
+    @Test
+    fun aPollRefusedBeforeThePhoneRegisteredKeepsPolling() {
+        // Right after a sign-in the first poll can reach the server before the phone registers as the approval device.
+        core.syncRefusals.set(1)
+        core.session = dev.reins.core.SessionInfo(server, "me@example.com")
+        launch()
+        awaitCore { core.syncStarts.get() >= 3 }
+        assertFalse(container.state.deviceReplaced.value)
+    }
+
     // ---- "Continue" --------------------------------------------------------------------------------------------------
 
     @Test

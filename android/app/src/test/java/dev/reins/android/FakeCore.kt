@@ -322,6 +322,7 @@ class FakeCore : ReinsCoreInterface {
         unlockAttempts.clear()
         recoveryCodeReads.set(0)
         syncStarts.set(0)
+        syncRefusals.set(0)
         joinWaits = 2
         joinAnswer = JoinProgress.JOINED
         joinBeginError = null
@@ -522,8 +523,13 @@ class FakeCore : ReinsCoreInterface {
     override suspend fun sync(waitSecs: UInt): List<PendingItem> {
         syncStarts.incrementAndGet()
         kotlinx.coroutines.delay(250)
+        // The server refuses phones that are not the approval device (yet).
+        if (syncRefusals.getAndUpdate { (it - 1).coerceAtLeast(0) } > 0) throw CoreException.Server(403u, "not the approval device")
         return pending
     }
+
+    /** How many of the next polls the server refuses with 403. */
+    val syncRefusals = java.util.concurrent.atomic.AtomicInteger()
 
     // ---- uploads ------------------------------------------------------------------------------------------------
 
