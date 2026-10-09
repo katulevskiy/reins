@@ -167,7 +167,8 @@ harness. For Codex, also trust the new hook once with `/hooks`. See [harnesses.m
 written where and how to undo it.
 
 Now ask the agent to do something with a connected service ("list my open pull requests"), or to run a command the
-guard watches (`git push --force`). The request appears on your phone.
+guard watches (`git push --force`). The request appears on your phone. If it does not, see
+[troubleshooting](troubleshooting.md).
 
 ## 5. Answer requests quickly
 

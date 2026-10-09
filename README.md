@@ -230,8 +230,8 @@ commands; [docs/self-hosting.md](docs/self-hosting.md) covers running the server
 
 ## Documentation
 
-[docs/README.md](docs/README.md) lists every page: quick start, harnesses, self-hosting, security model, Autopilot,
-architecture.
+[docs/README.md](docs/README.md) lists every page: quick start, troubleshooting, harnesses, self-hosting, security
+model, Autopilot, architecture.
 
 ## License
 

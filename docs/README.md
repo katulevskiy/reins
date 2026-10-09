@@ -8,6 +8,7 @@
   Arch Linux.
 - [Harnesses](harnesses.md): Claude Code, Codex, Gemini CLI, Cursor and cloud AIs. What `reins harness add`
   changes, and the guard rules for hooks.
+- [Troubleshooting](troubleshooting.md): a request that never arrives, a failing git push, a new or lost phone.
 - [Autopilot](autopilot.md): automatic approvals on the phone. Modes, the hard floor, learning, privacy, and the
   model's limits.
 
