@@ -1,0 +1,9 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 108 108" width="512" height="512">
+  <!-- Google Play's 512 x 512 icon: the launcher icon (res/mipmap-anydpi/ic_launcher.xml) full-bleed; Play rounds the
+       corners itself. -->
+  <rect width="108" height="108" fill="#170B33"/>
+  <g transform="translate(27 27) scale(2.25)" fill="none" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M12,3l7.5,3v5.5c0,4.6 -3.1,8.4 -7.5,9.5 -4.4,-1.1 -7.5,-4.9 -7.5,-9.5V6z" stroke="#C9C1FB" stroke-width="1.5"/>
+    <path d="M8.7,12l2.4,2.4 4.2,-4.6" stroke="#FFFFFF" stroke-width="1.7"/>
+  </g>
+</svg>

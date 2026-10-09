@@ -130,7 +130,8 @@ scripts/device-smoke.sh          # real server + simulated AI on this machine, r
 ./gradlew testFullDebugUnitTest --tests '*Screenshots*' -Dreins.screenshots=/tmp/shots   # dark and light PNGs of every screen
 ```
 
-Rendered through Robolectric with frozen clocks, so they are reproducible. `FLAG_SECURE` (no screenshots of the
+Rendered through Robolectric with frozen clocks, so they are reproducible. The Google Play listing's screenshots are the
+`play` build's (`PlayStoreScreenshots`, 1215 × 2160), made by `play/graphics/render.sh` (see [Google Play](PLAY_STORE.md)). `FLAG_SECURE` (no screenshots of the
 screens that show secrets) is off in debug builds, which the tests use, and on in release builds;
 `-Preins.secureScreens=true|false` overrides it for either.
 

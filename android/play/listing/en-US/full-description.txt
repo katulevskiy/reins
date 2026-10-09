@@ -1,0 +1,35 @@
+Give your AI agents real power without handing them control of your accounts.
+
+AI agents can write code, push it, answer email, book meetings and run commands for you. To do that they usually need your GitHub token, your inbox and your shell. Reins puts your phone in between: the agent asks, your phone shows you exactly what will happen, you decide, and the phone does the work with keys the agent never sees.
+
+NOTHING IMPORTANT HAPPENS WITHOUT YOUR OK
+Every request shows up on your phone first, exactly as it will happen: the email with its recipients and text, the commits a git push will send, the arguments of a tool call, the files attached. One tap approves it, one tap stops it. Approving needs your screen lock or biometrics.
+
+AGENTS NEVER GET YOUR KEYS
+The credentials for your connected services stay on your phone, encrypted with a key protected by Android's Keystore. When you approve, the phone makes the call itself and hands the agent only the result.
+
+IT DOESN'T NAG YOU
+Allow routine things for a while ("read my email for the next hour", "up to 5 uses"), limited by target, time and number of uses. Vault secrets, deletions and history rewrites are asked every time.
+
+AUTOPILOT, ON YOUR PHONE (OPTIONAL)
+A small AI model that runs entirely on your phone learns from your own decisions. It can suggest what you would do, approve what you would clearly approve and deny what you would clearly deny, and it asks you about everything else. Modes: Manual, Assisted, Auto, Bypass (time-limited) and Lockdown. The model is downloaded once (a few hundred MB) and what it learns never leaves the phone.
+
+YOU CAN ALWAYS SEE WHAT HAPPENED
+Every request, approval and denial is in the activity log on your phone.
+
+WHAT YOUR AGENTS CAN REACH, WITH YOUR APPROVAL
+- Gmail (several accounts), Google Calendar and Google Contacts
+- GitHub: repositories, files, branches, issues, pull requests, releases, Actions and more
+- Git pushes from your computer, shown commit by commit before they go out
+- Your phone's own calendar and contacts
+- Telegram, as your own account
+- Your password vault: one field at a time, only after you approve
+- Any remote MCP server you add on the phone
+
+WORKS WITH
+Claude.ai and ChatGPT (add Reins as a custom connector), and, through the Reins desktop app for Linux, macOS and Windows, Claude Code, Codex, Cursor and Gemini CLI. The desktop app also holds risky shell commands until you approve them.
+
+GETTING STARTED
+Sign in with a passkey or email (no password needed), write down your recovery code, and this phone becomes your approval device. Use the hosted server or run your own: the server is open source and you can self-host it.
+
+Reins is in early release. It is open source: https://github.com/katulevskiy/reins

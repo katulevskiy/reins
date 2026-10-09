@@ -124,4 +124,112 @@ with tempfile.TemporaryDirectory(prefix="reins-apk-native-") as directory:
         else:
             raise AssertionError("Accepted incomplete or mismatched native libraries")
 
-print("25 Android release checks passed")
+    # 16 KB pages: every loadable segment of every 64-bit library.
+    def elf(align, phoff=64):
+        header = bytearray(phoff)
+        header[:6] = b"\x7fELF\x02\x01"
+        header[0x20:0x28] = phoff.to_bytes(8, "little")
+        header[0x36:0x38] = (56).to_bytes(2, "little")
+        header[0x38:0x3A] = (2).to_bytes(2, "little")
+        segments = b""
+        for kind, value in ((6, 8), (1, align)):  # PT_PHDR (any alignment), PT_LOAD
+            entry = bytearray(56)
+            entry[0:4] = kind.to_bytes(4, "little")
+            entry[0x30:0x38] = value.to_bytes(8, "little")
+            segments += entry
+        return bytes(header) + segments
+
+    write_apk({"lib/arm64-v8a/libreins_core.so": elf(16384), "lib/x86_64/libonnxruntime.so": elf(65536)})
+    apk_check.validate_page_alignment(apk)
+    for files in (
+        {"lib/arm64-v8a/libreins_core.so": elf(4096)},
+        {"lib/x86_64/libonnxruntime.so": elf(16384)[:40]},
+        {"lib/arm64-v8a/libjnidispatch.so": b"not an ELF library"},
+    ):
+        write_apk(files)
+        try:
+            apk_check.validate_page_alignment(apk)
+        except ValueError:
+            pass
+        else:
+            raise AssertionError(f"Accepted a library without 16 KB alignment: {list(files)}")
+
+# The Play build: no restricted permission, only the declared foreground-service type, a current targetSdk.
+play_badging = badging + """targetSdkVersion:'36'
+uses-permission: name='android.permission.INTERNET'
+uses-permission: name='android.permission.FOREGROUND_SERVICE'
+uses-permission: name='android.permission.FOREGROUND_SERVICE_DATA_SYNC'
+uses-permission: name='android.permission.READ_CONTACTS'
+"""
+apk_check.validate_play_badging(play_badging)
+invalid_play = [
+    play_badging + "uses-permission: name='android.permission.READ_SMS'\n",
+    play_badging + "uses-permission: name='android.permission.SEND_SMS'\n",
+    play_badging + "uses-permission: name='android.permission.REQUEST_INSTALL_PACKAGES'\n",
+    play_badging + "uses-permission: name='com.google.android.gms.permission.AD_ID'\n",
+    play_badging + "uses-permission-sdk-23: name='android.permission.QUERY_ALL_PACKAGES'\n",
+    play_badging + "uses-permission: name='android.permission.FOREGROUND_SERVICE_SPECIAL_USE'\n",
+    play_badging.replace("targetSdkVersion:'36'", "targetSdkVersion:'35'"),
+    play_badging.replace("targetSdkVersion:'36'\n", ""),
+]
+for value in invalid_play:
+    try:
+        apk_check.validate_play_badging(value)
+    except ValueError:
+        pass
+    else:
+        raise AssertionError(f"Accepted a Play build Google Play would refuse: {value.splitlines()[-1]}")
+
+manifest = """E: application (line=44)
+  A: http://schemas.android.com/apk/res/android:usesCleartextTraffic(0x010104ec)=false
+  E: service (line=161)
+    A: http://schemas.android.com/apk/res/android:foregroundServiceType(0x01010599)=0x00000001
+"""
+apk_check.validate_play_manifest(manifest)
+apk_check.validate_play_manifest(manifest.replace("=false", "=0x0"))
+for value in (
+    manifest.replace("=false", "=true"),
+    manifest.replace("=false", "=0xffffffff"),
+    manifest.replace("=0x00000001", "=0x00000009"),
+    manifest.replace("=0x00000001", "=0x40000000"),
+):
+    try:
+        apk_check.validate_play_manifest(value)
+    except ValueError:
+        pass
+    else:
+        raise AssertionError(f"Accepted a Play manifest Google Play would refuse: {value}")
+
+# The upload signature: one signer, its first certificate's SHA-256; jarsigner covers every entry.
+pinned = (ROOT / "android/release-signing.sha256").read_text().strip()
+digest = ":".join(pinned[i:i + 2] for i in range(0, 64, 2)).upper()  # keytool's format
+printcert = f"Signer #1:\n\nCertificate #1:\nOwner: CN=Reins\n\t SHA1: 00:11\n\t SHA256: {digest}\n"
+assert apk_check.bundle_signer_sha256(printcert) == pinned
+for value in ("", printcert + printcert.replace("#1", "#2"), "Signer #1:\n"):
+    try:
+        apk_check.bundle_signer_sha256(value)
+    except ValueError:
+        pass
+    else:
+        raise AssertionError(f"Accepted a bundle signature: {value!r}")
+apk_check.validate_jarsigner("jar verified.\n\nWarning:\nThis jar contains entries whose signer certificate is self-signed.")
+for value in (
+    "jar is unsigned.",
+    "jar verified.\n\nWarning:\nThis jar contains unsigned entries which have not been integrity-checked.",
+    "jarsigner: java.lang.SecurityException: SHA-256 digest error for classes.dex",
+):
+    try:
+        apk_check.validate_jarsigner(value)
+    except ValueError:
+        pass
+    else:
+        raise AssertionError(f"Accepted a broken bundle signature: {value}")
+
+# The release builds, checks and publishes the Play bundle next to the APK.
+android_job = workflow.split("  android:\n", 1)[1].split("\n  play:\n", 1)[0]
+assert ":app:bundlePlayRelease" in android_job
+assert 'REINS_UPLOAD_KEYSTORE="$RUNNER_TEMP/release.keystore"' in android_job
+assert '--cert-sha256 "$(cat android/release-signing.sha256)"' in android_job
+assert '[[ -s "reins-$VERSION-play.aab" ]]' in workflow
+
+print("56 Android release checks passed")

@@ -99,5 +99,5 @@ for field in ("name", "path", "compression-level", "retention-days"):
 desktop = workflow.split("  desktop:\n", 1)[1].split("  desktop-app:\n", 1)[0]
 assert "fail-fast: false" in desktop
 assert "uses: actions/upload-artifact@" not in workflow
-assert workflow.count("uses: ./.github/actions/upload-artifact") == 8
+assert workflow.count("uses: ./.github/actions/upload-artifact") == 9
 print("31 release CI gate and artifact retry checks passed")

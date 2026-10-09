@@ -26,7 +26,9 @@
 #   REINS_RELEASE_KEY_ALIAS, REINS_RELEASE_KEY_PASSWORD   required for an explicit local keystore
 #   REINS_RELEASE_KEEP          APKs kept on the server (5)
 #
-# The Google Play build is the `play` flavor, an app bundle this script does not make or upload (android/PLAY_STORE.md):
+# The Google Play build is the `play` flavor, an app bundle this script does not make or upload: the release workflow
+# builds it, attaches it to the GitHub release and uploads it with scripts/play-upload.py (android/PLAY_STORE.md). By
+# hand:
 #
 #   (cd android && ./gradlew bundlePlayRelease -Preins.versionCode=N -Preins.versionName=0.1.0 \
 #       -Preins.build=0.1.0-N)   # app/build/outputs/bundle/playRelease/app-play-release.aab

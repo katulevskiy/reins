@@ -231,6 +231,14 @@ removes it; repository secrets of the same names are the fallback. The master co
 Developer ID Application certificate" and "Reins App Store Connect API key". The server's APNs key ("Reins APNs key" in
 1Password) is `/etc/reins/AuthKey_<key id>.p8` on the server, configured by `REINS_APNS_*` in the `reins` project.
 
+The same identity reads `/signing/play` for Google Play: `PLAY_SERVICE_ACCOUNT_JSON`, a Google Cloud service
+account's JSON key (the whole file as the value) with the Play Console permission to release com.reins2fa.app to
+testing tracks. The `play` job (after the release is published) uploads `reins-<version>-play.aab` to the track in the
+repository variable `PLAY_TRACK` (default `internal`) with the status in `PLAY_RELEASE_STATUS` (default
+`completed`; `draft` until the app's first release is rolled out) through `scripts/play-upload.py`, and skips the
+upload with a notice while the folder or the secret is missing; a repository secret of the same name is the fallback.
+`INFISICAL_PLAY_PATH` overrides the folder. Set up and first upload: `android/PLAY_STORE.md`.
+
 ## Maintainers: the update feed
 
 Every release carries `reins-feed-<version>.tar.gz` (listed in `SHA256SUMS`): the signed `latest.json` and

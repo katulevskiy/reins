@@ -22,7 +22,7 @@ interface UpdateFetcher {
  */
 class HttpUpdateFetcher(private val manifestUrl: String) : UpdateFetcher {
     override fun manifest(): String = open(URL(manifestUrl), MANIFEST_READ_TIMEOUT).use { stream ->
-        val bytes = stream.readNBytes(MAX_MANIFEST + 1)
+        val bytes = stream.readUpTo(MAX_MANIFEST + 1)
         if (bytes.size > MAX_MANIFEST) throw UpdateException.BadManifest("larger than $MAX_MANIFEST bytes")
         bytes.decodeToString()
     }
@@ -61,4 +61,16 @@ class HttpUpdateFetcher(private val manifestUrl: String) : UpdateFetcher {
         const val APK_READ_TIMEOUT = 30_000
         const val MAX_MANIFEST = 16 * 1024
     }
+}
+
+/** At most [limit] bytes of this stream (`InputStream.readNBytes(Int)` is API 33; the app runs from 31). */
+private fun InputStream.readUpTo(limit: Int): ByteArray {
+    val out = java.io.ByteArrayOutputStream()
+    val buffer = ByteArray(8192)
+    while (out.size() < limit) {
+        val n = read(buffer, 0, minOf(buffer.size, limit - out.size()))
+        if (n < 0) break
+        out.write(buffer, 0, n)
+    }
+    return out.toByteArray()
 }
