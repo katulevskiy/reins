@@ -91,6 +91,11 @@ impl ReinsConnection {
         conn.run(move |c| q_find_by_user(c, user_uuid)).await
     }
 
+    /// Whether `touch` would write anything now: `last_used_at` is kept to the minute.
+    pub fn needs_touch(&self, now: i64) -> bool {
+        self.last_used_at.is_none_or(|at| at < now - TOUCH_INTERVAL_SECS)
+    }
+
     pub async fn touch(uuid: &str, now: i64, conn: &DbConn) -> EmptyResult {
         conn.run(move |c| q_touch(c, uuid, now)).await.map_res("Error updating Reins connection")
     }

@@ -256,6 +256,7 @@ class AppContainer(private val context: Context) {
         val epoch = state.accountEpoch.value
         try {
             // Independent reads: ask for them all at once.
+            val readAt = System.currentTimeMillis()
             coroutineScope {
                 val pending = async { core.pending() }
                 val activity = async { core.activity(ACTIVITY_LIMIT) }
@@ -268,6 +269,7 @@ class AppContainer(private val context: Context) {
                 if (!state.isCurrent(epoch)) return@coroutineScope
                 val waiting = pending.await()
                 state.setPending(waiting)
+                notifier.dropStale(waiting.map { it.id }.toSet(), readAt)
                 appScope.launch { approvalViews.prefetch(core, waiting) }
                 state.setActivity(activity.await())
                 state.setGrants(loaded)

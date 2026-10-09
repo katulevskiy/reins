@@ -136,9 +136,15 @@ sequenceDiagram
     S-->>AI: result
 ```
 
-If the phone has not fetched the request within `REINS_OFFLINE_SECS`, the AI is told the device is offline. If
-nobody decided within `REINS_RELAY_WAIT_SECS`, it is told to call `reins_get_result` later. The request stays
-answerable for 10 minutes, and a late answer is kept for `reins_get_result`.
+If the phone has not fetched the request within `REINS_OFFLINE_SECS`, the AI is told the device is offline. When
+nothing can wake the phone (no push token, push not configured, or the push service refused) and its app has not
+polled in the last 10 seconds, it is told at once instead. The message says when the phone was last heard from ("last
+seen 2 hours ago") and that the request waits up to 10 minutes. If nobody decided within `REINS_RELAY_WAIT_SECS`, it
+is told to call `reins_get_result` later. The request stays answerable for 10 minutes, and a late answer is kept for
+`reins_get_result`. The same call from the same connection while the first is still unanswered (a client retrying
+after a timeout) is that first request: the phone shows it once and both callers get its answer. The desktop app
+sends how long it keeps asking (`X-Reins-Wait`, for `reins ask`, hooks and git): the phone counts that down instead
+of one relay wait, up to the 10 minutes.
 
 For reads, the phone runs the search itself and checks each result against the grants. The AI's query is only a
 prefilter, so query syntax cannot widen what a grant allows.

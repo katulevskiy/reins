@@ -57,7 +57,13 @@ pub struct McpRequest {
     pub headers: McpHeaders,
     /// `X-Reins-Via`, sanitized: which app on the connection's machine is asking ("Claude Code").
     pub via: Option<String>,
+    /// `X-Reins-Wait`: how long the caller keeps asking for the answer (the desktop app polls past one relay wait);
+    /// the phone counts that down. Capped by the relay to the request's lifetime.
+    pub waits: Option<Duration>,
 }
+
+/// The header a caller states its own deadline in, in seconds (see [`McpRequest::waits`]).
+pub const WAIT_HEADER: &str = "X-Reins-Wait";
 
 #[rocket::async_trait]
 impl<'r> FromRequest<'r> for McpRequest {
@@ -74,6 +80,12 @@ impl<'r> FromRequest<'r> for McpRequest {
                 name: get("Mcp-Name"),
             },
             via: request.headers().get_one(VIA_HEADER).and_then(sanitize_via),
+            waits: request
+                .headers()
+                .get_one(WAIT_HEADER)
+                .and_then(|v| v.trim().parse::<u64>().ok())
+                .filter(|&s| s > 0)
+                .map(Duration::from_secs),
         })
     }
 }
@@ -272,32 +284,60 @@ pub async fn submit_to_phone(
     conn: &DbConn,
     pool: &DbPool,
 ) -> Result<RequestId, SubmitError> {
+    submit_to_phone_waiting(connection, via, call, account, conn, pool, None).await
+}
+
+/// Like [`submit_to_phone`] for a caller that keeps asking for up to `waits` (the desktop app); the phone shows that
+/// deadline. When nothing can wake the phone (no push, its app not open) or the push fails, the first wait says so
+/// at once instead of after the offline threshold.
+pub async fn submit_to_phone_waiting(
+    connection: &ReinsConnection,
+    via: Option<&str>,
+    call: ToolCall,
+    account: Option<String>,
+    conn: &DbConn,
+    pool: &DbPool,
+    waits: Option<Duration>,
+) -> Result<RequestId, SubmitError> {
     let user = connection.user_uuid.to_string();
     limits::ACCOUNT_CALLS.check(&user).map_err(SubmitError::RateLimited)?;
     let request = HUB
         .relay
-        .submit(
+        .submit_waiting(
             &user,
             &ConnectionId(connection.uuid.clone()),
             &label_with_via(&connection.label, via),
             call,
             account,
             now_unix(),
+            waits,
         )
         .map_err(|full| match full {
             QueueFull::Server => SubmitError::Busy,
             QueueFull::Account => SubmitError::Queued,
         })?;
-    if let Some(device) = ReinsDevice::find_by_user(&connection.user_uuid, conn).await {
-        push::spawn_push(
-            pool.clone(),
-            connection.user_uuid.clone(),
-            device.fcm_token,
-            PushMessage {
-                t: PushKind::Req,
-                id: request.id.0.clone(),
-            },
-        );
+    let pushing = match ReinsDevice::find_by_user(&connection.user_uuid, conn).await {
+        Some(device) => {
+            let (id, user) = (request.id.clone(), user.clone());
+            push::spawn_push_then(
+                pool.clone(),
+                connection.user_uuid.clone(),
+                device.fcm_token,
+                PushMessage {
+                    t: PushKind::Req,
+                    id: request.id.0.clone(),
+                },
+                move || {
+                    if !HUB.presence.status(&user, now_unix()).recent() {
+                        HUB.relay.mark_unreachable(&id);
+                    }
+                },
+            )
+        }
+        None => false,
+    };
+    if !pushing && !HUB.presence.status(&user, now_unix()).recent() {
+        HUB.relay.mark_unreachable(&request.id);
     }
     Ok(request.id)
 }
@@ -341,11 +381,11 @@ async fn run_tool(
         Ok(place) => place,
         Err(wait) => return ok(tools::failure(&rate_limited_text(CONNECTION_WAITING_LIMITED, wait))),
     };
-    let request_id = match invocation {
-        ToolInvocation::GetResult(request_id) => request_id,
+    let (request_id, first) = match invocation {
+        ToolInvocation::GetResult(request_id) => (request_id, false),
         ToolInvocation::Relay(call, account) => {
             match submit_to_phone(&connection, via.as_deref(), call, account, &conn, pool.inner()).await {
-                Ok(request_id) => request_id,
+                Ok(request_id) => (request_id, true),
                 Err(SubmitError::Busy) => {
                     return ok(tools::failure("Reins is busy right now. Try again in a minute."));
                 }
@@ -358,8 +398,13 @@ async fn run_tool(
     };
     // Never hold a pooled DB connection while waiting for the phone.
     drop(conn);
-    let waited = HUB.relay.wait(&request_id, &connection_id).await;
-    ok(tools::render_wait(&waited, &request_id))
+    let waited = if first {
+        HUB.relay.wait_first(&request_id, &connection_id).await
+    } else {
+        HUB.relay.wait(&request_id, &connection_id).await
+    };
+    let seen = HUB.presence.status(&connection.user_uuid.to_string(), now_unix());
+    ok(tools::render_wait(&waited, &request_id, seen))
 }
 
 #[post("/mcp", data = "<data>")]
@@ -395,7 +440,11 @@ async fn mcp_post(data: Data<'_>, request: McpRequest, conn: DbConn, pool: &Stat
     if !notification && let Err(wait) = check_connection_rate(&connection) {
         return rate_limited_reply(action, wait);
     }
-    if let Err(e) = ReinsConnection::touch(&connection.uuid, now_unix(), &conn).await {
+    // Written at most once a minute: a recent use needs no write before the call goes to the phone.
+    let now = now_unix();
+    if connection.needs_touch(now)
+        && let Err(e) = ReinsConnection::touch(&connection.uuid, now, &conn).await
+    {
         warn!("Could not record Reins connection use: {e:?}");
     }
     match action {

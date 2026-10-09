@@ -26,9 +26,10 @@ use super::{
     limits::{rate_limited_text, retry_secs},
     mcp_routes::{
         ACCOUNT_CALLS_LIMITED, CONNECTION_REQUESTS_LIMITED, CONNECTION_WAITING_LIMITED, McpRequest, QUEUED_TEXT,
-        SubmitError, Unauthorized, authenticate, check_connection_rate, enter_waiting, submit_to_phone,
+        SubmitError, Unauthorized, authenticate, check_connection_rate, enter_waiting, submit_to_phone_waiting,
     },
     now_unix,
+    presence::PhoneSeen,
     relay::WaitResult,
 };
 use crate::db::{DbConn, DbPool, models::ReinsConnection};
@@ -119,18 +120,25 @@ impl<'r> Responder<'r, 'static> for DesktopResponse {
 }
 
 /// The answer to one wait on a relay request: answered (with the outcome as the relay serializes it), pending or
-/// offline. `None` for an unknown or expired request, or another connection's.
-pub fn wait_body(wait: &WaitResult, id: &RequestId) -> Option<Value> {
+/// offline (with when the phone was last seen, "2 hours ago", when known). `None` for an unknown or expired request,
+/// or another connection's.
+pub fn wait_body(wait: &WaitResult, id: &RequestId, seen: PhoneSeen) -> Option<Value> {
     match wait {
         WaitResult::Answered(outcome) => Some(json!({"request_id": id.0, "status": "answered", "outcome": outcome})),
         WaitResult::Pending => Some(json!({"request_id": id.0, "status": "pending"})),
-        WaitResult::Offline => Some(json!({"request_id": id.0, "status": "offline"})),
+        WaitResult::Offline => {
+            let mut body = json!({"request_id": id.0, "status": "offline"});
+            if let Some(phrase) = seen.phrase() {
+                body["last_seen"] = json!(phrase);
+            }
+            Some(body)
+        }
         WaitResult::NotFound => None,
     }
 }
 
-fn wait_response(wait: &WaitResult, id: &RequestId) -> DesktopResponse {
-    wait_body(wait, id).map_or_else(DesktopResponse::not_found, |body| DesktopResponse::json(Status::Ok, body))
+fn wait_response(wait: &WaitResult, id: &RequestId, seen: PhoneSeen) -> DesktopResponse {
+    wait_body(wait, id, seen).map_or_else(DesktopResponse::not_found, |body| DesktopResponse::json(Status::Ok, body))
 }
 
 // ---------------------------------------------------------------------------------------
@@ -219,7 +227,10 @@ async fn authenticated(request: &McpRequest, conn: &DbConn) -> Result<ReinsConne
         authenticate(request.authorization.as_deref(), conn).await.map_err(DesktopResponse::unauthorized)?;
     check_connection_rate(&connection)
         .map_err(|wait| DesktopResponse::rate_limited(CONNECTION_REQUESTS_LIMITED, wait))?;
-    if let Err(e) = ReinsConnection::touch(&connection.uuid, now_unix(), conn).await {
+    let now = now_unix();
+    if connection.needs_touch(now)
+        && let Err(e) = ReinsConnection::touch(&connection.uuid, now, conn).await
+    {
         warn!("Could not record Reins connection use: {e:?}");
     }
     Ok(connection)
@@ -252,29 +263,26 @@ async fn post_call(data: Data<'_>, request: McpRequest, conn: DbConn, pool: &Sta
         Ok(place) => place,
         Err(wait) => return DesktopResponse::rate_limited(CONNECTION_WAITING_LIMITED, wait),
     };
-    let request_id =
-        match submit_to_phone(&connection, None, ToolCall::Connector(call.call), call.account, &conn, pool.inner())
-            .await
-        {
-            Ok(request_id) => request_id,
-            Err(SubmitError::Queued) => {
-                return DesktopResponse::error(Status::TooManyRequests, "rate_limited", QUEUED_TEXT);
-            }
-            Err(SubmitError::Busy) => {
-                return DesktopResponse::error(
-                    Status::ServiceUnavailable,
-                    "busy",
-                    "Reins is busy. Try again in a minute.",
-                );
-            }
-            Err(SubmitError::RateLimited(wait)) => {
-                return DesktopResponse::rate_limited(ACCOUNT_CALLS_LIMITED, wait);
-            }
-        };
+    let account = call.account;
+    let call = ToolCall::Connector(call.call);
+    let request_id = match submit_to_phone_waiting(&connection, None, call, account, &conn, pool.inner(), request.waits)
+        .await
+    {
+        Ok(request_id) => request_id,
+        Err(SubmitError::Queued) => {
+            return DesktopResponse::error(Status::TooManyRequests, "rate_limited", QUEUED_TEXT);
+        }
+        Err(SubmitError::Busy) => {
+            return DesktopResponse::error(Status::ServiceUnavailable, "busy", "Reins is busy. Try again in a minute.");
+        }
+        Err(SubmitError::RateLimited(wait)) => {
+            return DesktopResponse::rate_limited(ACCOUNT_CALLS_LIMITED, wait);
+        }
+    };
     // Never hold a pooled DB connection while waiting for the phone.
     drop(conn);
-    let waited = HUB.relay.wait(&request_id, &ConnectionId(connection.uuid)).await;
-    wait_response(&waited, &request_id)
+    let waited = HUB.relay.wait_first(&request_id, &ConnectionId(connection.uuid.clone())).await;
+    wait_response(&waited, &request_id, HUB.presence.status(&connection.user_uuid.to_string(), now_unix()))
 }
 
 /// Waits again on an earlier call of the same connection (an approval can come after the first wait ran out).
@@ -293,8 +301,8 @@ async fn get_call(id: &str, request: McpRequest, conn: DbConn) -> DesktopRespons
         Err(wait) => return DesktopResponse::rate_limited(CONNECTION_WAITING_LIMITED, wait),
     };
     let request_id = RequestId::from(id);
-    let waited = HUB.relay.wait(&request_id, &ConnectionId(connection.uuid)).await;
-    wait_response(&waited, &request_id)
+    let waited = HUB.relay.wait(&request_id, &ConnectionId(connection.uuid.clone())).await;
+    wait_response(&waited, &request_id, HUB.presence.status(&connection.user_uuid.to_string(), now_unix()))
 }
 
 /// When the approval phone last asked this server for work (`null`: not since the server started), the integrations
@@ -455,7 +463,7 @@ mod tests {
             },
         };
         assert_eq!(
-            wait_body(&WaitResult::Answered(outcome), &id),
+            wait_body(&WaitResult::Answered(outcome), &id, PhoneSeen::Never),
             Some(json!({"request_id": "req-1", "status": "answered",
                 "outcome": {"outcome": "result", "result": {"kind": "connector", "data": {"sealed": "abc"}}}}))
         );
@@ -463,12 +471,20 @@ mod tests {
             reason: Some("no".into()),
         };
         assert_eq!(
-            wait_body(&WaitResult::Answered(denied), &id).unwrap()["outcome"],
+            wait_body(&WaitResult::Answered(denied), &id, PhoneSeen::Never).unwrap()["outcome"],
             json!({"outcome": "denied", "reason": "no"})
         );
-        assert_eq!(wait_body(&WaitResult::Pending, &id), Some(json!({"request_id": "req-1", "status": "pending"})));
-        assert_eq!(wait_body(&WaitResult::Offline, &id), Some(json!({"request_id": "req-1", "status": "offline"})));
-        assert_eq!(wait_body(&WaitResult::NotFound, &id), None);
-        assert_eq!(wait_response(&WaitResult::NotFound, &id).status, Status::NotFound);
+        let seen = PhoneSeen::Ago(7_200);
+        assert_eq!(
+            wait_body(&WaitResult::Pending, &id, seen),
+            Some(json!({"request_id": "req-1", "status": "pending"}))
+        );
+        assert_eq!(
+            wait_body(&WaitResult::Offline, &id, seen),
+            Some(json!({"request_id": "req-1", "status": "offline", "last_seen": "2 hours ago"}))
+        );
+        assert_eq!(wait_body(&WaitResult::Offline, &id, PhoneSeen::Listening).unwrap()["last_seen"], Value::Null);
+        assert_eq!(wait_body(&WaitResult::NotFound, &id, seen), None);
+        assert_eq!(wait_response(&WaitResult::NotFound, &id, seen).status, Status::NotFound);
     }
 }

@@ -39,9 +39,10 @@ fn tools_list(id: u64) -> Value {
     json!({"jsonrpc": "2.0", "id": id, "method": "tools/list", "params": {}})
 }
 
+/// A search of its own: the same call repeated while unanswered would be the same request.
 fn search(id: u64) -> Value {
     json!({"jsonrpc": "2.0", "id": id, "method": "tools/call",
-        "params": {"name": "gmail_search", "arguments": {"query": "from:bank"}}})
+        "params": {"name": "gmail_search", "arguments": {"query": format!("from:bank {id}")}}})
 }
 
 /// The text of a tool result that must be an error.

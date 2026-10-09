@@ -238,7 +238,7 @@ async fn an_absent_phone_is_reported_as_offline_after_the_short_threshold() {
     let elapsed = start.elapsed();
     assert_eq!(result["isError"], true);
     let text = text_of(&result);
-    assert!(text.starts_with("Reins: your approval device is offline. Ask the user to open the Reins app; the request is waiting there. Then call reins_get_result with request_id="), "{text}");
+    assert!(text.starts_with("Reins: your approval device is offline (last seen less than a minute ago). Ask the user to open the Reins app; the request waits there for up to 10 minutes. Then call reins_get_result with request_id="), "{text}");
     assert!(
         elapsed >= Duration::from_millis(1800) && elapsed < Duration::from_millis(3900),
         "offline after {elapsed:?}, not after the full wait"

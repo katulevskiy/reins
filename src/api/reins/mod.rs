@@ -23,6 +23,7 @@ pub mod oauth_state;
 pub mod outbound;
 pub mod pages;
 pub mod pairing;
+pub mod presence;
 pub mod proxy_call;
 pub mod push;
 pub mod relay;
@@ -95,8 +96,8 @@ pub struct Hub {
     services: std::sync::Mutex<std::collections::HashMap<String, Vec<String>>>,
     /// Per user: the MCP servers added on the phone, as last reported (validated).
     mcp_servers: std::sync::Mutex<std::collections::HashMap<String, Arc<Vec<McpServerReport>>>>,
-    /// Per user: when the approval phone last asked for work (Unix seconds), for the desktop app's health check.
-    phone_seen: std::sync::Mutex<std::collections::HashMap<String, i64>>,
+    /// When each account's approval device was last heard from.
+    pub presence: presence::Presence,
 }
 
 impl Hub {
@@ -117,13 +118,13 @@ impl Hub {
             signal,
             services: std::sync::Mutex::default(),
             mcp_servers: std::sync::Mutex::default(),
-            phone_seen: std::sync::Mutex::default(),
+            presence: presence::Presence::default(),
         }
     }
 
-    /// When `user`'s approval phone last polled (Unix seconds), since this server started.
+    /// When `user`'s approval phone last asked this server for anything (Unix seconds), since this server started.
     pub fn phone_seen(&self, user: &str) -> Option<i64> {
-        self.phone_seen.lock().unwrap_or_else(std::sync::PoisonError::into_inner).get(user).copied()
+        self.presence.last_seen(user)
     }
 
     pub fn set_services(&self, user: &str, services: Vec<String>) {
@@ -155,8 +156,9 @@ impl Hub {
     /// `wait` and returns as soon as one appears. Returned items are marked delivered.
     pub async fn pending(&self, user: &str, wait: Duration) -> Pending {
         let deadline = tokio::time::Instant::now() + wait;
-        self.phone_seen.lock().unwrap_or_else(std::sync::PoisonError::into_inner).insert(user.to_owned(), now_unix());
         let mut rx = self.signal.subscribe();
+        // The phone is listening while this poll is open: requests reach it without a push.
+        let _listening = self.presence.listen(user, now_unix());
         // The phone polls often: a cheap moment to delete expired files between the hourly purges.
         self.blobs.purge(now_unix());
         loop {
@@ -181,8 +183,8 @@ impl Hub {
     pub fn forget_user(&self, user: &str) {
         self.services.lock().unwrap_or_else(std::sync::PoisonError::into_inner).remove(user);
         self.mcp_servers.lock().unwrap_or_else(std::sync::PoisonError::into_inner).remove(user);
-        self.phone_seen.lock().unwrap_or_else(std::sync::PoisonError::into_inner).remove(user);
         self.relay.forget_user(user);
+        self.presence.forget(user);
         self.pairings.forget_user(user);
         self.joins.forget_user(user);
         self.blobs.remove_user(user);

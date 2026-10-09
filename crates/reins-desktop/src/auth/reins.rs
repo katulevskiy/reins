@@ -124,7 +124,12 @@ impl ReinsAuthorizer {
         } else {
             let nonce = crate::server::random_token(16);
             let account = self.accounts.get(&q.host).map(String::as_str);
-            let a = self.client.call(&q.tool, &arguments(&nonce), account).await.map_err(link_refusal)?;
+            let waits = deadline.saturating_duration_since(Instant::now());
+            let a = self
+                .client
+                .call_waiting(&q.tool, &arguments(&nonce), account, Some(waits))
+                .await
+                .map_err(link_refusal)?;
             log::info!("{} {}: asked the phone, request {}", q.tool, q.repo, a.request_id);
             let f = InFlight {
                 request_id: a.request_id.clone(),

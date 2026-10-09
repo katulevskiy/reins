@@ -76,6 +76,8 @@ abstract class FlowHarness {
         core.approvals.clear()
         core.quickApprovals.clear()
         core.startingPolicy = null
+        core.pushes.clear()
+        core.pushFailure = null
         core.denials.clear()
         core.blobs.clear()
         core.blobAnswers.clear()

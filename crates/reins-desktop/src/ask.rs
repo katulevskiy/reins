@@ -247,11 +247,12 @@ pub async fn ask_phone(paths: &Paths, identity: &Identity, q: &Question, timeout
     let nonce = crate::server::random_token(16);
     let args = q.arguments(&identity.public_key(), &nonce);
     let late = || Answer::Unanswered(format!("No answer on your phone within {} s.", timeout.as_secs()));
-    let mut answer = match tokio::time::timeout(timeout, client.call(ASK_TOOL, &args, None)).await {
-        Ok(Ok(a)) => a,
-        Ok(Err(e)) => return link_failure(e),
-        Err(_) => return late(),
-    };
+    let mut answer =
+        match tokio::time::timeout(timeout, client.call_waiting(ASK_TOOL, &args, None, Some(timeout))).await {
+            Ok(Ok(a)) => a,
+            Ok(Err(e)) => return link_failure(e),
+            Err(_) => return late(),
+        };
     loop {
         let CallAnswer {
             request_id,

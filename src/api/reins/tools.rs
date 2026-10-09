@@ -16,7 +16,7 @@ use reins_proto::{
 };
 use serde_json::{Map, Value, json};
 
-use super::{mcp_tools, relay::WaitResult};
+use super::{mcp_tools, presence::PhoneSeen, relay::WaitResult};
 
 /// Applied by the server when the AI omits `max_results` (contracts C).
 pub const DEFAULT_MAX_RESULTS: u32 = 10;
@@ -25,10 +25,13 @@ pub const UPLOAD_TOOL: &str = "reins_upload";
 
 pub const DENIED_TEXT: &str = "Denied by the user on their Reins device.";
 
-pub fn offline_text(id: &RequestId) -> String {
+/// The phone did not pick the request up: when it was last heard from, and how long the request waits for it.
+pub fn offline_text(id: &RequestId, seen: PhoneSeen) -> String {
+    let when = seen.phrase().map(|p| format!(" (last seen {p})")).unwrap_or_default();
+    let minutes = super::ITEM_TTL.as_secs() / 60;
     format!(
-        "Reins: your approval device is offline. Ask the user to open the Reins app; the request is waiting \
-there. Then call reins_get_result with request_id={id}."
+        "Reins: your approval device is offline{when}. Ask the user to open the Reins app; the request waits there \
+for up to {minutes} minutes. Then call reins_get_result with request_id={id}."
     )
 }
 
@@ -617,10 +620,10 @@ pub fn render_outcome(outcome: &RelayOutcome) -> Value {
 }
 
 /// The tool result for one wait on a relay request (spec §4.3).
-pub fn render_wait(wait: &WaitResult, id: &RequestId) -> Value {
+pub fn render_wait(wait: &WaitResult, id: &RequestId, seen: PhoneSeen) -> Value {
     match wait {
         WaitResult::Answered(outcome) => render_outcome(outcome),
-        WaitResult::Offline => failure(&offline_text(id)),
+        WaitResult::Offline => failure(&offline_text(id, seen)),
         WaitResult::Pending => failure(&pending_text(id)),
         WaitResult::NotFound => failure("Unknown or expired request_id. Start the request again."),
     }
@@ -913,18 +916,20 @@ mod tests {
         let id = RequestId("req-9".into());
         assert_eq!(DENIED_TEXT, "Denied by the user on their Reins device.");
         assert_eq!(
-            offline_text(&id),
-            "Reins: your approval device is offline. Ask the user to open the Reins app; the request is waiting there. Then call reins_get_result with request_id=req-9."
+            offline_text(&id, PhoneSeen::Ago(2 * 3_600)),
+            "Reins: your approval device is offline (last seen 2 hours ago). Ask the user to open the Reins app; the request waits there for up to 10 minutes. Then call reins_get_result with request_id=req-9."
         );
+        assert!(offline_text(&id, PhoneSeen::Never).contains("(last seen not since the Reins server last restarted)"));
         assert_eq!(
             pending_text(&id),
             "Waiting for the user to approve on their phone. When they confirm (the user can approve even after this message), call reins_get_result with request_id=req-9, or repeat the same request: a one-time approval may already cover it."
         );
+        let seen = PhoneSeen::Ago(90);
         for wait in [WaitResult::Offline, WaitResult::Pending, WaitResult::NotFound] {
-            assert_eq!(render_wait(&wait, &id)["isError"], true);
+            assert_eq!(render_wait(&wait, &id, seen)["isError"], true);
         }
-        assert_eq!(render_wait(&WaitResult::Offline, &id)["content"][0]["text"], offline_text(&id));
-        assert_eq!(render_wait(&WaitResult::Pending, &id)["content"][0]["text"], pending_text(&id));
+        assert_eq!(render_wait(&WaitResult::Offline, &id, seen)["content"][0]["text"], offline_text(&id, seen));
+        assert_eq!(render_wait(&WaitResult::Pending, &id, seen)["content"][0]["text"], pending_text(&id));
     }
 
     #[test]

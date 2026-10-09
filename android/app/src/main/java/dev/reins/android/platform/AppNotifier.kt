@@ -161,9 +161,27 @@ class AppNotifier(
             .setAutoCancel(true)
             .setContentIntent(openItem(item))
             .setWhen(item.createdAt * 1000)
+            // Gone when the server lets the request go; a refresh takes it away sooner if it was answered elsewhere.
+            .setTimeoutAfter(lifetimeMillis(item))
+            .addExtras(android.os.Bundle().apply { putString(EXTRA_ITEM, item.id) })
             .build()
         manager.notify(notificationId(item.id), notification)
     }
+
+    /**
+     * Takes away the notifications of items that no longer wait ([waiting] are the ids that do): answered from the
+     * notification, on another device, by a grant or Autopilot, or expired while the phone was asleep. Only what was
+     * posted before [readAt] (when the list was read): anything newer is not in the list yet.
+     */
+    fun dropStale(waiting: Set<String>, readAt: Long) {
+        manager.activeNotifications
+            .filter { n -> n.postTime < readAt && n.notification.extras.getString(EXTRA_ITEM)?.let { it !in waiting } == true }
+            .forEach { manager.cancel(it.id) }
+    }
+
+    /** How long an item's notification may stay: until the server lets it go ([ITEM_LIFETIME_SECS] after it was made). */
+    private fun lifetimeMillis(item: PendingItem, nowMillis: Long = System.currentTimeMillis()): Long =
+        ((item.createdAt + ITEM_LIFETIME_SECS) * 1000 - nowMillis).coerceIn(MIN_LIFETIME_MS, ITEM_LIFETIME_SECS * 1000)
 
     override fun autoDecided(decision: AutoDecisionView) {
         onChanged()
@@ -436,6 +454,15 @@ class AppNotifier(
 
         /** The unversioned channels of builds without chimes. */
         private val LEGACY_CHANNELS = setOf("approvals", "grants", "status")
+
+        /** The server holds a request this long; the phone's core the same. */
+        const val ITEM_LIFETIME_SECS = 600L
+
+        /** A clock far off the server's never hides a notification at once. */
+        private const val MIN_LIFETIME_MS = 60_000L
+
+        /** The item a notification is about, in its extras (see [dropStale]). */
+        const val EXTRA_ITEM = "dev.reins.android.ITEM"
 
         const val ACTION_OPEN_ITEM = "dev.reins.android.OPEN_ITEM"
         const val EXTRA_KIND = "kind"

@@ -609,6 +609,11 @@ async fn launch_rocket(pool: db::DbPool, extra_debug: bool) -> Result<(), Error>
         api::reins::workos_sync::spawn(pool.clone());
     }
 
+    // The first push of the day should not wait for Google's token endpoint.
+    if api::reins::enabled() {
+        api::reins::fcm::prewarm();
+    }
+
     spawn_shutdown_signal_handler();
 
     #[cfg(all(unix, sqlite))]
