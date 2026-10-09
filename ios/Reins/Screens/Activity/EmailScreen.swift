@@ -122,6 +122,8 @@ private struct HeaderLine: View {
     }
 }
 
+#if DEBUG
 #Preview {
     PreviewHost { NavigationStack { EmailScreen(entryId: 10, index: 0) } }
 }
+#endif

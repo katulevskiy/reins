@@ -331,6 +331,8 @@ private struct CardPressStyle: ButtonStyle {
     }
 }
 
+#if DEBUG
 #Preview {
     PreviewHost { NavigationStack { ActivityScreen() } }
 }
+#endif

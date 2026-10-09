@@ -243,6 +243,8 @@ private struct DesktopKeyCard: View {
     }
 }
 
+#if DEBUG
 #Preview("Desktop app") {
     PreviewHost { PairingSheet(pairingId: "pair2") }
 }
+#endif

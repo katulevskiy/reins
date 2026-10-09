@@ -153,6 +153,8 @@ private struct UploadContent: View {
     }
 }
 
+#if DEBUG
 #Preview("Upload") {
     PreviewHost { UploadSheet(blobId: "blob_q3numbers") }
 }
+#endif

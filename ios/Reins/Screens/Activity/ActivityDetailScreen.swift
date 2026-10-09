@@ -205,6 +205,8 @@ private struct MessageLine: View {
     }
 }
 
+#if DEBUG
 #Preview {
     PreviewHost { NavigationStack { ActivityDetailScreen(entryId: 14) } }
 }
+#endif

@@ -212,14 +212,20 @@ private struct WaitLine: View {
     }
 }
 
+#if DEBUG
 #Preview("Search") {
     PreviewHost { ApprovalSheet(requestId: "req1") }
 }
+#endif
 
+#if DEBUG
 #Preview("Push") {
     PreviewHost { ApprovalSheet(requestId: "req20") }
 }
+#endif
 
+#if DEBUG
 #Preview("Permission") {
     PreviewHost { ApprovalSheet(requestId: "req3") }
 }
+#endif
