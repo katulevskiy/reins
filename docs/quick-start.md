@@ -244,16 +244,24 @@ GitHub → Settings → SSH and GPG keys); the private key stays in the vault an
 reins vault add OpenAI                          # asks for the value without echo; saved as vault:OpenAI/password
 pbpaste | reins vault add Groq                  # or piped in
 reins vault add Stripe --kind note              # vault:Stripe/notes
-reins vault add AWS --field "Secret key"        # a custom field: vault:AWS/Secret key
+reins vault add AWS --field "Secret key"        # a custom field (hidden): vault:AWS/Secret key
 reins vault add deploy --kind ssh < ~/.ssh/id_ed25519
-reins vault list                                # the items' names, never a value
+reins vault add OpenAI --replace                # change an item that exists; its earlier value is kept
+reins vault list                                # the items' names, never a value (asked on the phone each time)
 ```
 
 The value is encrypted on this computer so that only your phone can open it, and the phone asks "Save a new API key
-OpenAI in your vault?" before keeping it. An item with that name gets the field changed instead. The first time,
-the phone hands the computer its key: approve it, note the eight digits the phone shows (also at the bottom of
-the Vault page), and type them in the terminal. A server in the middle could not produce those digits. After a new phone,
-`reins vault add` asks for the new phone's key the same way.
+OpenAI in your vault?" before keeping it. The terminal prints four check digits (`Check: 4821`) and the phone shows
+the same ones: approve only if they match, so that a value an AI sent in your place does not pass for yours. An item
+that already has that name is changed only with `--replace`; a login's earlier password goes to its password history,
+anything else to a hidden field such as "Notes before 2026-10-09". An SSH key is never replaced: add the new one
+under another name.
+
+The first time, the phone hands the computer its key: approve it, note the twelve digits the phone shows (also at the
+bottom of the Vault page, written like `4821-9930-1274`), and type them in the
+terminal. They are not the eight digits of the computer's own key that `reins status` shows. After a new phone, or
+installing Reins again, `reins vault add` says the phone could not open the value; run it with `--new-phone` to check
+the new phone's key the same way.
 
 ### Run a program with secrets from the vault
 
