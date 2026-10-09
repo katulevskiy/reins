@@ -11,6 +11,8 @@ extend-exclude = [
     "ios/ReinsTests/Fixtures/",
     "ios/Reins.xcodeproj/",
     "tools/laya/gen_data.py",
+    # Armored OpenPGP keys (the Linux package repositories' public key)
+    "*.asc",
 ]
 ignore-hidden = false
 

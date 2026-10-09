@@ -53,9 +53,23 @@ trap 'rm -rf "$stage"' EXIT
 changelog() { # <package> <dest>
     {
         printf '%s (%s) stable; urgency=medium\n\n' "$1" "$version"
-        printf '  * Reins %s (%s): https://github.com/katulevskiy/reins/releases/tag/v%s\n\n' "$version" "$build" "$version"
+        printf '  * Reins %s (%s), release notes:\n    https://github.com/katulevskiy/reins/releases/tag/v%s\n\n' \
+            "$version" "$build" "$version"
         printf ' -- Daniil Katulevskiy <support@reins2fa.com>  %s\n' "$(LC_ALL=C date -u -R -d "@$build_time")"
     } | gzip -9n >"$2"
+}
+
+# strip_binary <arch> <file>: symbols out (the release profiles keep the symbol table; Debian wants packaged programs
+# stripped). llvm-strip handles both architectures; otherwise binutils' strip for the build machine's own, and
+# aarch64-linux-gnu-strip (binutils-aarch64-linux-gnu) for arm64 on an x86_64 machine.
+strip_binary() {
+    local tool
+    tool="$(command -v llvm-strip || compgen -c llvm-strip- | sort -V | tail -1 || true)"
+    if [[ -z "$tool" ]]; then
+        if [[ "$1" == "$(uname -m)" ]]; then tool=strip; else tool="$1-linux-gnu-strip"; fi
+    fi
+    command -v "$tool" >/dev/null || die "no strip for $1 (install llvm or binutils-$1-linux-gnu)"
+    "$tool" --strip-unneeded --remove-section=.comment --remove-section=.note "$2"
 }
 
 # docs <package> <dir>: the files under /usr/share/doc/<package> (and the license, for the .rpm).
@@ -99,6 +113,7 @@ for t in x86_64:amd64 aarch64:arm64; do
     tar -xzf "$dist/$dir.tar.gz" -C "$stage" "$dir/reins" "$dir/README.md" || die "$dir.tar.gz has no $dir/reins"
     mv "$stage/$dir/reins" "$files/reins"
     grep -qaF "$version ($build)" "$files/reins" || die "$dir.tar.gz: reins does not carry the build id $build"
+    strip_binary "$arch" "$files/reins"
     docs reins "$files"
     mv "$stage/$dir/README.md" "$files/doc/README.md"
     package "$spec/reins.yaml" "$deb_arch" "$files" "reins_${version}_$deb_arch.deb" "reins-$version-1.$rpm_arch.rpm"
@@ -114,7 +129,7 @@ mkdir -p "$files"
 mv "$stage/$dir/reins-app" "$stage/$dir/reins.desktop" "$stage/$dir/reins.png" "$files/"
 grep -qaF "$version ($build)" "$files/reins-app" || die "$dir.tar.gz: reins-app does not carry the build id $build"
 # Symbols out, as linuxdeploy does for the AppImage (the release-app profile keeps them).
-strip --strip-unneeded --remove-section=.comment --remove-section=.note "$files/reins-app"
+strip_binary x86_64 "$files/reins-app"
 docs reins-app "$files"
 mv "$stage/$dir/FONTS-NOTICE.txt" "$files/doc/"
 package "$spec/reins-app.yaml" amd64 "$files" "reins-app_${version}_amd64.deb" "reins-app-$version-1.x86_64.rpm"
