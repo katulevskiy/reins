@@ -119,6 +119,8 @@ final class AppModel {
     /// Everything that happened, newest first.
     private(set) var activity: [ActivityEntry] = []
     private(set) var grants: [GrantView] = []
+    /// What a newly connected AI may do at first; nil until the user chose (it then asks for everything).
+    private(set) var startingPolicy: StartingPolicy?
     private(set) var accounts: [AccountView] = []
     private(set) var services: [ServiceView] = []
     private(set) var connections: [ConnectionView] = []
@@ -266,6 +268,7 @@ final class AppModel {
         pending = []
         activity = []
         grants = []
+        startingPolicy = nil
         accounts = []
         services = []
         connections = []
@@ -451,12 +454,14 @@ final class AppModel {
             async let accountsRead = core.accounts()
             async let servicesRead = core.services()
             async let serversRead = core.mcpServers()
+            async let startingRead = core.startingPolicy()
             let newPending = try await pendingRead
             let newActivity = try await activityRead
             let newGrants = try await grantsRead
             let newAccounts = try await accountsRead
             let newServices = try await servicesRead.filter { $0.service != "sms" }
             let newServers = try await serversRead
+            let newStarting = try? await startingRead
             guard epoch == accountEpoch else { return }
             guard edits == listEdits else {
                 // Read before a change shown ahead of the core: read once more instead.
@@ -467,6 +472,7 @@ final class AppModel {
             if pending != newPending { pending = newPending }
             if activity != newActivity { activity = newActivity }
             if grants != newGrants { grants = newGrants }
+            if startingPolicy != newStarting { startingPolicy = newStarting }
             if accounts != newAccounts { accounts = newAccounts }
             if services != newServices { services = newServices }
             if mcpServers != newServers { setMcpServers(newServers) }
@@ -551,6 +557,18 @@ final class AppModel {
               let t = mcpServers[s].tools.firstIndex(where: { $0.name == tool }) else { return }
         listEdits += 1
         mcpServers[s].tools[t].heavy = heavy
+    }
+
+    /// Sets the starting rule for connections made from now on; the screen follows at once.
+    func chooseStartingPolicy(_ policy: StartingPolicy) {
+        startingPolicy = policy
+        Task {
+            do {
+                try await core.setStartingPolicy(policy: policy)
+            } catch {
+                startingPolicy = try? await core.startingPolicy()
+            }
+        }
     }
 
     /// An item the user just answered leaves the list now; the re-read that follows confirms it.

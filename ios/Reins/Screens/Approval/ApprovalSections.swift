@@ -61,8 +61,9 @@ struct MessagesSection: View {
                         if i > 0 { Hairline(inset: 52) }
                         MessageRow(
                             message: message,
-                            checked: message.coveredByGrant || draft.selected.contains(message.id) || draft.allMail != nil,
-                            enabled: !message.coveredByGrant && draft.allMail == nil
+                            // "All mail" ticks everything but what looks like a code, which stays the user's own pick.
+                            checked: message.coveredByGrant || draft.selected.contains(message.id) || (draft.allMail != nil && !message.sensitive),
+                            enabled: !message.coveredByGrant && (draft.allMail == nil || message.sensitive)
                         ) { on in
                             if on { vm.draft.selected.insert(message.id) } else { vm.draft.selected.remove(message.id) }
                         }

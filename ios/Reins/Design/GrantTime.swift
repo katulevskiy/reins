@@ -139,6 +139,7 @@ enum GrantText {
         case "ai_request": "\(untrusted(label)) asked and you allowed it"
         case "user": "Created by you in advance"
         case "retry": "A one-time pass after you approved late"
+        case "starter": "Your starting rule, when you connected \(untrusted(label))"
         default: "Chosen while approving a request"
         }
     }

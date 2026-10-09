@@ -167,6 +167,15 @@ private struct PairingContent: View {
                     .padding(.horizontal, 16)
                     .accessibilityLabel("Name this connection")
                     .accessibilityIdentifier("label")
+                if let note = StartingRuleText.onPairing(model.startingPolicy) {
+                    Text(note)
+                        .font(RFont.sans(13.5))
+                        .foregroundStyle(Palette.tertiary)
+                        .fixedSize(horizontal: false, vertical: true)
+                        .padding(.horizontal, 24)
+                        .padding(.top, 12)
+                        .accessibilityIdentifier("startingRuleNote")
+                }
                 if let error = vm.error {
                     Banner(error, kind: .error).padding(16).accessibilityIdentifier("pairingError")
                 }

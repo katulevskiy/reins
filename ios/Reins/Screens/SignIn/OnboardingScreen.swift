@@ -88,6 +88,8 @@ private struct ComputerStep: View {
                     .padding(.vertical, 6)
             }
             .accessibilityIdentifier("downloadDesktop")
+            // How a new AI starts (the computer included); someone who just installed Reins starts with the recommended rule.
+            StartingRuleChooser().padding(.top, 8)
             Button("Next", action: onNext)
                 .buttonStyle(CapsuleButtonStyle(kind: .secondary))
                 .padding(.top, 8)
@@ -95,6 +97,7 @@ private struct ComputerStep: View {
         }
         // The connections the account had once they are read, not the empty list from before.
         .task {
+            if (try? await model.core.startingPolicy()) == nil { model.chooseStartingPolicy(.readsForADay) }
             await model.refreshConnections()
             if known == nil { known = Set(model.connections.map(\.id)) }
         }
