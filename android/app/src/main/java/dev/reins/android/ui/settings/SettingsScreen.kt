@@ -194,31 +194,31 @@ fun SettingsScreen(
         }
 
         Group(header = "AI apps") {
-            if (aiApps.isEmpty()) {
-                // The address to paste, not a description of it: tapping copies it.
-                val mcpUrl = (session as? SessionState.SignedIn)?.info?.serverUrl?.let(AccountRules::mcpUrl)
-                ListRow(
-                    "No AI app is connected yet",
-                    Modifier.testTag("copyMcpUrl"),
-                    subtitle = if (mcpUrl != null) {
-                        "In Claude.ai or ChatGPT, add a custom connector with $mcpUrl. Tap to copy."
-                    } else {
-                        "Add Reins to Claude.ai or ChatGPT as a custom connector."
-                    },
-                    trailing = mcpUrl?.let { { GlyphIcon(Glyph.Copy, c.tertiary, size = 17.dp) } },
-                    onClick = mcpUrl?.let { url ->
-                        {
-                            copyText(context, "Reins MCP address", url)
-                            feedback.play(Event.Copied)
-                            if (Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU) viewModel.notice("MCP address copied.")
-                        }
-                    },
-                )
-            }
             aiApps.forEachIndexed { i, connection ->
                 if (i > 0) Hairline(inset = 68.dp)
                 ConnectionRow(connection) { onConnection(connection.id) }
             }
+            if (aiApps.isNotEmpty()) Hairline(inset = 16.dp)
+            // Always there, as "Connect a computer" is: the address to paste, not a description of it, so a second
+            // AI app needs no typing. Tapping copies it.
+            val mcpUrl = (session as? SessionState.SignedIn)?.info?.serverUrl?.let(AccountRules::mcpUrl)
+            ListRow(
+                if (aiApps.isEmpty()) "No AI app is connected yet" else "Connect another AI app",
+                Modifier.testTag("copyMcpUrl"),
+                subtitle = if (mcpUrl != null) {
+                    "In Claude.ai or ChatGPT, add a custom connector with $mcpUrl. Tap to copy."
+                } else {
+                    "Add Reins to Claude.ai or ChatGPT as a custom connector."
+                },
+                trailing = mcpUrl?.let { { GlyphIcon(Glyph.Copy, c.tertiary, size = 17.dp) } },
+                onClick = mcpUrl?.let { url ->
+                    {
+                        copyText(context, "Reins MCP address", url)
+                        feedback.play(Event.Copied)
+                        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU) viewModel.notice("MCP address copied.")
+                    }
+                },
+            )
         }
 
         Group(header = "Integrations") {

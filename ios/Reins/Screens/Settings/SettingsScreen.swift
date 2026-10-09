@@ -233,23 +233,26 @@ private struct ConnectionsGroup: View {
             GroupHeader("Computers")
         }
         Section {
-            if aiApps.isEmpty {
-                // The address to paste, not a description of it: tapping copies it.
-                let address = model.mcpAddress
-                Button {
-                    UIPasteboard.general.string = address
-                    feedback.play(.copied)
-                } label: {
-                    InfoRow(
-                        "No AI app is connected yet",
-                        subtitle: "In Claude.ai or ChatGPT, add a custom connector with \(address). Tap to copy."
-                    )
-                }
-                .buttonStyle(.plain)
-                .accessibilityIdentifier("copyMcpUrl")
-                .cardRow()
-            }
             ForEach(aiApps, id: \.id) { connectionRow($0) }
+            // Always there, as "Connect a computer" is above: the address to paste, not a description of it, so a
+            // second AI app needs no typing. Tapping copies it.
+            let address = model.mcpAddress
+            Button {
+                UIPasteboard.general.string = address
+                feedback.play(.copied)
+                model.notice = "MCP address copied."
+            } label: {
+                InfoRow(
+                    title: aiApps.isEmpty ? "No AI app is connected yet" : "Connect another AI app",
+                    subtitle: "In Claude.ai or ChatGPT, add a custom connector with \(address). Tap to copy.",
+                    symbol: "link", tint: Palette.accent, ltrSubtitle: false
+                ) {
+                    Image(systemName: "doc.on.doc").foregroundStyle(Palette.tertiary).accessibilityHidden(true)
+                }
+            }
+            .buttonStyle(.plain)
+            .accessibilityIdentifier("copyMcpUrl")
+            .cardRow()
         } header: {
             GroupHeader("AI apps")
         }

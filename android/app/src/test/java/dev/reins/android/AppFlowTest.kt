@@ -1306,8 +1306,8 @@ class AppFlowTest {
         awaitTag("connection:d1")
         rule.onNodeWithTag("connectionDetail:d1", useUnmergedTree = true).assertTextContains("Key 4821 9930", substring = true)
         rule.onNodeWithTag("connectionDetail:c1", useUnmergedTree = true).assertTextContains("claude.ai", substring = true)
-        // An AI app is connected: no "No AI app is connected yet".
-        assertFalse(has("copyMcpUrl"))
+        // An AI app is connected: the address is still there to copy, for the next one.
+        awaitText("Connect another AI app")
     }
 
     @Test
