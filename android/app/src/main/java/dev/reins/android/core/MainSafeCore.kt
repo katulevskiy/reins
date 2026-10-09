@@ -1,6 +1,12 @@
 package dev.reins.android.core
 
 import dev.reins.core.AccountKeys
+import dev.reins.core.BudgetView
+import dev.reins.core.PaymentsOverview
+import dev.reins.core.PurchaseChoice
+import dev.reins.core.SpendLimitInput
+import dev.reins.core.SpendLimitView
+import dev.reins.core.SpendingView
 import dev.reins.core.AccountView
 import dev.reins.core.StartingPolicy
 import dev.reins.core.AutopilotMode
@@ -224,6 +230,37 @@ class MainSafeCore(
     override suspend fun mcpRemove(id: String) = io { mcpRemove(id) }
 
     override suspend fun mcpSetHeavy(id: String, tool: String, heavy: Boolean) = io { mcpSetHeavy(id, tool, heavy) }
+
+    // ---- Payments ---------------------------------------------------------------------------------------------
+
+    override suspend fun approvePurchase(requestId: String, choice: PurchaseChoice) = io { approvePurchase(requestId, choice) }
+
+    override suspend fun paymentsOverview(): PaymentsOverview = io { paymentsOverview() }
+
+    override suspend fun paymentsSetMethod(methodId: String, enabled: Boolean) = io { paymentsSetMethod(methodId, enabled) }
+
+    override suspend fun paymentsSetNickname(methodId: String, nickname: String?) = io { paymentsSetNickname(methodId, nickname) }
+
+    override suspend fun paymentsSetDefaults(methodId: String?, addressId: String?) = io { paymentsSetDefaults(methodId, addressId) }
+
+    override suspend fun paymentsConnectProvider(kind: String, apiKey: String, sandbox: Boolean, singleUse: Boolean) =
+        io { paymentsConnectProvider(kind, apiKey, sandbox, singleUse) }
+
+    override suspend fun paymentsDisconnectProvider() = io { paymentsDisconnectProvider() }
+
+    override suspend fun paymentsSetCardOptions(tolerancePct: UInt, singleUse: Boolean) = io { paymentsSetCardOptions(tolerancePct, singleUse) }
+
+    override suspend fun paymentsSetBudget(budget: BudgetView) = io { paymentsSetBudget(budget) }
+
+    override suspend fun paymentsAddLimit(limit: SpendLimitInput): SpendLimitView = io { paymentsAddLimit(limit) }
+
+    override suspend fun paymentsRemoveLimit(limitId: String) = io { paymentsRemoveLimit(limitId) }
+
+    override suspend fun paymentsSpending(since: Long): SpendingView = io { paymentsSpending(since) }
+
+    override suspend fun paymentsAcknowledgeCharge(purchaseId: String) = io { paymentsAcknowledgeCharge(purchaseId) }
+
+    override suspend fun paymentsCloseCard(purchaseId: String) = io { paymentsCloseCard(purchaseId) }
 
     // ---- Autopilot ----------------------------------------------------------------------------------------------
 
