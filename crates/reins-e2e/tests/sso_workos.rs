@@ -356,7 +356,7 @@ async fn signing_a_phone_out_ends_its_workos_session_and_it_cannot_sign_back_in(
     assert!(first.core.sign_out_device(other.id.clone(), "AAAA-BBBB".to_owned()).await.is_err(), "a wrong code");
     first.core.sign_out_device(other.id, code).await.unwrap();
     assert_eq!(workos.revoked_sessions(), [lost_session], "only the lost phone's session ends");
-    assert!(matches!(lost.core.account_keys().await, Err(_)), "its sign-in is over");
+    assert!(lost.core.account_keys().await.is_err(), "its sign-in is over");
     let back = lost.sso_sign_in(&server.base).await;
     assert!(format!("{back:?}").contains("signed out of the account"), "{back:?}");
     first.core.sync(0).await.expect("the approval phone still works");
