@@ -152,7 +152,7 @@ async fn an_absent_phone_is_offline_then_pending_and_a_late_answer_is_fetched_by
     assert_eq!(offline["status"], "offline");
     assert!(elapsed >= Duration::from_millis(1800) && elapsed < Duration::from_millis(3900), "{elapsed:?}");
     let request_id = offline["request_id"].as_str().expect("request_id").to_owned();
-    assert_eq!(offline, json!({"request_id": request_id, "status": "offline"}));
+    assert_eq!(offline, json!({"request_id": request_id, "status": "offline", "last_seen": "less than a minute ago"}));
 
     // The phone opens the request but does not decide: pending after the full relay wait.
     let (status, _) = phone.get(&format!("/requests/{request_id}")).await;
