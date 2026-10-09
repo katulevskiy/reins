@@ -236,6 +236,7 @@ final class AppModel {
         }
         setSession(info.map(SessionState.signedIn) ?? .signedOut)
         if let info {
+            if !demo { LastServer.value = info.serverUrl }
             DeviceStatus.selectAccount(info)
             seenActivityId = DeviceStatus.seenActivityId
             approvalDevice = DeviceStatus.approvalDevice && !DeviceStatus.replaced

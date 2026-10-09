@@ -122,6 +122,7 @@ struct ActivityScreen: View {
                 .padding(16)
                 .accessibilityIdentifier("registrationBanner")
         }
+        ScreenLockBanner().padding(.horizontal, 16).padding(.vertical, 6)
     }
 
     @ViewBuilder private var waiting: some View {
@@ -162,6 +163,30 @@ struct ActivityScreen: View {
         if automaticOnly {
             EmptyState(symbol: "sparkles", title: "Nothing automatic yet", message: "What Autopilot, a bypass or Lockdown decides for you shows up here.")
                 .accessibilityIdentifier("noAutomatic")
+        } else if model.connections.isEmpty {
+            // A new account: nothing can ask yet, so say how to connect something.
+            VStack(spacing: 10) {
+                EmptyState(symbol: "list.bullet", title: "Nothing yet", message: "Connect your computer or an AI app. What they ask for shows up here, and waits for you.")
+                    .accessibilityIdentifier("noActivity")
+                Button {
+                    model.openSheet(.connectComputer)
+                } label: {
+                    Label("Connect a computer", systemImage: "desktopcomputer")
+                }
+                .buttonStyle(CapsuleButtonStyle(kind: .primary, height: 48))
+                .accessibilityIdentifier("emptyConnectComputer")
+                Button {
+                    let address = model.mcpAddress
+                    UIPasteboard.general.string = address
+                    model.notice = "Copied \(address). In Claude.ai or ChatGPT: Settings, Connectors, add a custom connector and paste it."
+                    feedback.play(.copied)
+                } label: {
+                    Label("Connect Claude.ai or ChatGPT", systemImage: "link")
+                }
+                .buttonStyle(CapsuleButtonStyle(kind: .secondary, height: 48))
+                .accessibilityIdentifier("emptyConnectAi")
+            }
+            .padding(.horizontal, 32)
         } else {
             EmptyState(symbol: "list.bullet", title: "Nothing yet", message: "When an AI searches, reads or sends on your behalf, it shows up here.")
                 .accessibilityIdentifier("noActivity")

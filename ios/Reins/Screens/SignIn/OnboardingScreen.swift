@@ -66,6 +66,8 @@ private struct ComputerStep: View {
                 .foregroundStyle(Palette.secondary)
                 .fixedSize(horizontal: false, vertical: true)
             PhoneStatus().padding(.vertical, 4)
+            // Approving needs the passcode: better found out here than at the first request.
+            ScreenLockBanner()
             if let added {
                 FormBanner(text: "\(untrusted(added.label)) is connected.", kind: .info)
                     .accessibilityIdentifier("computerConnected")

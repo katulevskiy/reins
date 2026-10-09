@@ -60,6 +60,20 @@ final class SettingsTextTests: XCTestCase {
         var never = c
         never.lastUsedAt = nil
         XCTAssertEqual(SettingsText.connectionLine(never, now: 10_000), "claude.ai · never used")
+        // A computer shows the key it paired with instead of an address.
+        var computer = c
+        computer.keyFingerprint = "4821 9930"
+        XCTAssertEqual(SettingsText.connectionLine(computer, now: 10_000), "Key 4821 9930 · used 5 min ago")
+    }
+
+    func testTheApprovalFooterSaysHowRequestsArrive() {
+        XCTAssertTrue(SettingsText.approvalFooter(approvalDevice: false, appPush: true, serverPush: true).hasPrefix("Only one phone"))
+        XCTAssertTrue(SettingsText.approvalFooter(approvalDevice: true, appPush: false, serverPush: true).hasPrefix("Push notifications are not set up"))
+        XCTAssertEqual(
+            SettingsText.approvalFooter(approvalDevice: true, appPush: true, serverPush: false),
+            "This server sends no push notifications: requests arrive only while Reins is open."
+        )
+        XCTAssertTrue(SettingsText.approvalFooter(approvalDevice: true, appPush: true, serverPush: nil).hasPrefix("Requests reach this phone by push"))
     }
 
     func testTheVersionShowsItsBuild() {

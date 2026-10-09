@@ -87,7 +87,19 @@ enum SettingsText {
 
     /// "claude.ai · used 5 min ago".
     static func connectionLine(_ c: ConnectionView, now: Int64 = nowSeconds()) -> String {
-        untrusted(c.clientHost) + " · " + (c.lastUsedAt.map { "used \(GrantText.relative($0, now: now))" } ?? "never used")
+        let used = c.lastUsedAt.map { "used \(GrantText.relative($0, now: now))" } ?? "never used"
+        // A computer: the key compared when it paired says more than the address the server saw.
+        if let key = c.keyFingerprint { return "Key \(key) · " + used }
+        return untrusted(c.clientHost) + " · " + used
+    }
+
+    /// How requests reach this phone: by push when both this app and the server can send it (`serverPush` nil: the
+    /// server does not say), otherwise only while the app is open.
+    static func approvalFooter(approvalDevice: Bool, appPush: Bool, serverPush: Bool?) -> String {
+        if !approvalDevice { return "Only one phone at a time approves requests. Use this one to take over." }
+        if !appPush { return "Push notifications are not set up yet. Requests arrive while the app is open." }
+        if serverPush == false { return "This server sends no push notifications: requests arrive only while Reins is open." }
+        return "Requests reach this phone by push notification and while the app is open."
     }
 
     /// "42 min left", "1 min left" (the last minute counts as one).

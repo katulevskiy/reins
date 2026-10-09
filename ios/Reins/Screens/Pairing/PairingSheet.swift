@@ -95,6 +95,10 @@ final class PairingModel {
                 try await app.core.answerPairing(pairingId: pairingId, approve: true, chosenCode: code, label: trimmed.isEmpty ? nil : trimmed)
                 await app.refreshPending()
                 await app.refreshConnections()
+                // A computer: say it worked, since the sheet that connected it closes now.
+                if view?.keyFingerprint != nil {
+                    app.notice = "\(trimmed.isEmpty ? name : untrusted(trimmed)) is connected."
+                }
                 busy = false
                 finished = true
             } catch {
