@@ -37,6 +37,24 @@ pub(crate) fn seal<T: Serialize>(key: [u8; 32], value: &T) -> Result<String, Cor
     Ok(BASE64URL_NOPAD.encode(&sealed))
 }
 
+/// `value` as JSON in a box from this phone's inbox key (`secret`) to the desktop app's key, base64url of
+/// `nonce || ciphertext`: the app, which pinned the phone's key, knows the phone wrote it (the server cannot).
+pub(crate) fn box_from_phone<T: Serialize>(
+    client_key: [u8; 32],
+    secret: &[u8; 32],
+    value: &T,
+) -> Result<String, CoreError> {
+    use crypto_box::aead::{Aead as _, AeadCore as _};
+    let unsealable = || bad("The answer could not be sealed for the desktop app.");
+    let plain = Zeroizing::new(serde_json::to_vec(value).map_err(|_| unsealable())?);
+    let cipher =
+        crypto_box::SalsaBox::new(&crypto_box::PublicKey::from(client_key), &crypto_box::SecretKey::from(*secret));
+    let nonce = crypto_box::SalsaBox::generate_nonce(&mut crypto_box::aead::OsRng);
+    let mut out = nonce.to_vec();
+    out.extend(cipher.encrypt(&nonce, plain.as_slice()).map_err(|_| unsealable())?);
+    Ok(BASE64URL_NOPAD.encode(&out))
+}
+
 /// Opens a box the desktop app made from its key (`client_key`) to `secret` (base64url of `nonce || ciphertext`).
 /// Only the holder of the app's private key could have made it.
 pub(crate) fn open_from(client_key: [u8; 32], secret: &[u8; 32], boxed: &str) -> Option<Zeroizing<Vec<u8>>> {

@@ -57,11 +57,8 @@ pub(in crate::connector::vault) async fn fetch(
     account: &str,
     call: &ConnectorCall,
 ) -> Option<Result<Vec<Item>, CoreError>> {
-    Some(match call.op.as_str() {
-        "ssh_keys" => ssh_keys(vault, account).await,
-        "names" => store::names(vault, account, call).await,
-        _ => return None,
-    })
+    (call.op == "ssh_keys").then_some(())?;
+    Some(ssh_keys(vault, account).await)
 }
 
 /// What a write would do. `None` when the operation is not one of this area's.
@@ -75,6 +72,7 @@ pub(in crate::connector::vault) async fn preview(
         "ssh_sign" => preview_sign(vault, account, call).await,
         "phone_key" => store::preview_phone_key(vault, call),
         "secret_store" => store::preview_store(vault, account, call).await,
+        "names" => store::preview_names(vault, account, call).await,
         _ => return None,
     })
 }
@@ -90,6 +88,7 @@ pub(in crate::connector::vault) async fn perform(
         "ssh_sign" => perform_sign(vault, account, call).await,
         "phone_key" => store::perform_phone_key(vault, call),
         "secret_store" => store::perform_store(vault, account, call).await,
+        "names" => store::perform_names(vault, account, call).await,
         _ => return None,
     })
 }

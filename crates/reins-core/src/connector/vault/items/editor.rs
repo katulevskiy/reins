@@ -247,6 +247,10 @@ pub(crate) async fn detail(vault: &Vault, account: &str, id: &str) -> Result<Vau
 
 /// One field's value, for the user who asked to see or copy it.
 pub(crate) async fn reveal(vault: &Vault, account: &str, id: &str, key: &str) -> Result<String, CoreError> {
+    if key == "private_key" {
+        // The phone signs with it; it is shown nowhere, so it never leaves the vault through Reins.
+        return Err(CoreError::service("An SSH key's private key is not shown."));
+    }
     let snap = Snapshot::load(vault, account).await?;
     let entry = active(&snap, id)?;
     let missing = || CoreError::service("That item has no such field.");

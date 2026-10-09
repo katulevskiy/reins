@@ -409,9 +409,11 @@ fn read_field(entry: &Entry, field: &str, custom: Option<&str>) -> Result<Field,
             expect(entry, Kind::Identity, "license number")?;
             Field::secret("Driver's license number", need(entry, "/identity/licenseNumber", "license number")?)
         }
+        // The SSH agent of the desktop app has the phone sign; the private key itself never leaves the vault.
         "ssh_private_key" => {
-            expect(entry, Kind::SshKey, "private key")?;
-            Field::secret("SSH private key", need(entry, "/sshKey/privateKey", "private key")?)
+            return Err(CoreError::service(
+                "An SSH key's private key is never given out. Use the Reins desktop app's SSH agent: the phone signs.",
+            ));
         }
         "ssh_public_key" => {
             expect(entry, Kind::SshKey, "public key")?;

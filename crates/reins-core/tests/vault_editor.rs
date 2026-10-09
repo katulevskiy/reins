@@ -11,7 +11,9 @@ use data_encoding::BASE64URL_NOPAD;
 use reins_core::crypto::{Kdf, VaultKey, master_key};
 use reins_core::vault_editor::{VaultFieldInput, VaultItemInput, VaultItemKind};
 use reins_core::{ApprovalKind, CoreConfig};
-use reins_proto::desktop::{PHONE_KEY_CHANGED, PhoneKey, SecretToStore, VaultNames, decode_key, phone_key_fingerprint};
+use reins_proto::desktop::{
+    PHONE_KEY_CHANGED, PhoneKey, SecretToStore, StoreAck, VaultNames, decode_key, phone_key_fingerprint, value_check,
+};
 use serde_json::{Value, json};
 use ssh_key::PrivateKey;
 use wiremock::matchers::{header_exists, method, path, path_regex};
@@ -117,7 +119,7 @@ async fn desk() -> Desk {
 }
 
 /// The bodies sent with `verb` to `on`.
-async fn sent(desk: &Desk, verb: &str, on: &str) -> Vec<Value> {
+async fn sent_bodies(desk: &Desk, verb: &str, on: &str) -> Vec<Value> {
     desk.server
         .received_requests()
         .await
@@ -198,7 +200,7 @@ async fn items_are_created_changed_and_deleted_encrypted() {
         fields: vec![field("password", "sk-ant-1"), field("uris", "https://console.example.com")],
     };
     assert_eq!(desk.core.vault_create(input).await.unwrap(), "new-item");
-    let created = &sent(&desk, "POST", "/api/ciphers").await[0];
+    let created = &sent_bodies(&desk, "POST", "/api/ciphers").await[0];
     assert_eq!(created["type"], 1);
     assert_eq!(dec(&created["name"]), "Anthropic");
     assert_eq!(dec(&created["login"]["password"]), "sk-ant-1");
@@ -211,7 +213,7 @@ async fn items_are_created_changed_and_deleted_encrypted() {
         fields: vec![field("password", "n3w"), field("custom:PIN", "4321")],
     };
     desk.core.vault_update("bank".to_owned(), change).await.unwrap();
-    let updated = &sent(&desk, "PUT", "/api/ciphers/bank").await[0];
+    let updated = &sent_bodies(&desk, "PUT", "/api/ciphers/bank").await[0];
     assert_eq!(dec(&updated["name"]), "Bank of Anna");
     assert_eq!(dec(&updated["login"]["password"]), "n3w");
     assert_eq!(dec(&updated["login"]["username"]), "anna", "what was not given stays");
@@ -219,7 +221,7 @@ async fn items_are_created_changed_and_deleted_encrypted() {
     assert_eq!((dec(&updated["fields"][0]["name"]).as_str(), updated["fields"][0]["type"].as_i64()), ("PIN", Some(1)));
 
     desk.core.vault_delete("note".to_owned()).await.unwrap();
-    assert_eq!(sent(&desk, "DELETE", "/api/ciphers/note").await.len(), 1);
+    assert_eq!(sent_bodies(&desk, "DELETE", "/api/ciphers/note").await.len(), 1);
     assert!(desk.core.vault_delete("old".to_owned()).await.is_err(), "already in the trash");
     let nameless = VaultItemInput {
         kind: VaultItemKind::Note,
@@ -235,12 +237,15 @@ async fn an_ssh_key_is_made_on_the_phone_and_only_its_public_half_comes_back() {
     let made = desk.core.vault_generate_ssh_key("Deploy".to_owned()).await.unwrap();
     assert!(made.public_key.starts_with("ssh-ed25519 AAAA") && made.public_key.ends_with(" Deploy"));
     assert!(made.fingerprint.starts_with("SHA256:"));
-    let body = &sent(&desk, "POST", "/api/ciphers").await[0];
+    let body = &sent_bodies(&desk, "POST", "/api/ciphers").await[0];
     assert_eq!(body["type"], 5);
     let private = PrivateKey::from_openssh(dec(&body["sshKey"]["privateKey"])).unwrap();
     assert_eq!(private.public_key().to_openssh().unwrap(), made.public_key);
     assert_eq!(dec(&body["sshKey"]["publicKey"]), made.public_key);
     assert_eq!(dec(&body["sshKey"]["keyFingerprint"]), made.fingerprint);
+    // The phone signs with it; nothing hands the private key out, not even to the phone's own screens.
+    let refused = desk.core.vault_reveal(made.id, "private_key".to_owned()).await.unwrap_err();
+    assert!(refused.to_string().contains("not shown"), "{refused}");
 }
 
 // ---- reins vault add / list ------------------------------------------------------------------------------------------
@@ -258,14 +263,45 @@ async fn phone_key(desk: &Desk) -> String {
     answer.public_key
 }
 
+/// What `reins vault add` puts in the box.
+struct Sent<'a> {
+    name: &'a str,
+    field: &'a str,
+    kind: &'a str,
+    replace: bool,
+    value: &'a str,
+    created_at: i64,
+}
+
+impl<'a> Sent<'a> {
+    fn new(name: &'a str, kind: &'a str, field: &'a str, value: &'a str) -> Self {
+        Self {
+            name,
+            field,
+            kind,
+            replace: false,
+            value,
+            created_at: reins_core::store::unix_now(),
+        }
+    }
+
+    fn replace(mut self) -> Self {
+        self.replace = true;
+        self
+    }
+}
+
 /// The value in a box from `from` (the app's key, or a forger's) to the phone's key, as `reins vault add` sends it.
-fn box_from(from: &SecretKey, phone: &str, nonce: &str, name: &str, field: &str, value: &str) -> String {
+fn box_from(from: &SecretKey, phone: &str, nonce: &str, sent: &Sent<'_>) -> String {
     let secret = SecretToStore {
         v: 1,
         nonce: nonce.to_owned(),
-        name: name.to_owned(),
-        field: field.to_owned(),
-        value: value.to_owned(),
+        created_at: sent.created_at,
+        name: sent.name.to_owned(),
+        field: sent.field.to_owned(),
+        kind: sent.kind.to_owned(),
+        replace: sent.replace,
+        value: sent.value.to_owned(),
     };
     let cipher = SalsaBox::new(&PublicKey::from(decode_key(phone).unwrap()), from);
     let nonce = SalsaBox::generate_nonce(&mut OsRng);
@@ -274,86 +310,193 @@ fn box_from(from: &SecretKey, phone: &str, nonce: &str, name: &str, field: &str,
     BASE64URL_NOPAD.encode(&out)
 }
 
-fn store(desk: &Desk, id: &str, phone: &str, name: &str, kind: &str, field: &str, value: &str) -> Value {
-    let nonce = format!("nonce-{id}");
-    let boxed = box_from(&desk.key, phone, &nonce, name, field, value);
-    store_boxed(desk, id, name, kind, field, &boxed)
+fn store(desk: &Desk, id: &str, phone: &str, sent: &Sent<'_>) -> Value {
+    let boxed = box_from(&desk.key, phone, &format!("nonce-{id}"), sent);
+    store_boxed(desk, id, &format!("nonce-{id}"), sent, &boxed)
 }
 
-fn store_boxed(desk: &Desk, id: &str, name: &str, kind: &str, field: &str, boxed: &str) -> Value {
+fn store_boxed(desk: &Desk, id: &str, nonce: &str, sent: &Sent<'_>, boxed: &str) -> Value {
     call(
         id,
         DESK,
         "vault",
         "secret_store",
-        &json!({"name": name, "kind": kind, "field": field, "sealed": boxed,
-            "client_key": desk.public(), "nonce": format!("nonce-{id}")}),
+        &json!({"name": sent.name, "kind": sent.kind, "field": sent.field, "sealed": boxed,
+            "client_key": desk.public(), "nonce": nonce}),
     )
 }
 
+/// Opens what the phone boxed for the app from its own key (an acknowledgement, the names).
+fn open_from_phone<T: serde::de::DeserializeOwned>(desk: &Desk, phone: &str, boxed: &Value) -> T {
+    let bytes = BASE64URL_NOPAD.decode(boxed.as_str().unwrap().as_bytes()).unwrap();
+    let (nonce, ciphertext) = bytes.split_at(24);
+    let nonce = crypto_box::Nonce::from(<[u8; 24]>::try_from(nonce).unwrap());
+    let plain = SalsaBox::new(&PublicKey::from(decode_key(phone).unwrap()), &desk.key)
+        .decrypt(&nonce, ciphertext)
+        .expect("boxed by the pinned phone");
+    serde_json::from_slice(&plain).unwrap()
+}
+
 #[tokio::test]
-async fn a_secret_typed_on_the_computer_is_saved_without_the_server_seeing_it() {
+async fn a_secret_sent_from_the_computer_is_saved_without_the_server_seeing_it() {
     let desk = desk().await;
     desk.pair().await;
     let phone = phone_key(&desk).await;
-    desk.send(&[store(&desk, "s1", &phone, "Groq", "api-key", "password", "gsk_typed_42")]).await;
+    assert_eq!(phone_key_fingerprint(&phone).unwrap().len(), 14, "twelve digits in three groups");
+    let sent = Sent::new("Groq", "api-key", "password", "gsk_typed_42");
+    desk.send(&[store(&desk, "s1", &phone, &sent)]).await;
     let view = desk.core.approval_view("s1".to_owned()).await.unwrap();
     assert_eq!(view.kind, ApprovalKind::Write);
     assert_eq!(
         view.preview,
         [
-            "Save a new API key \u{201c}Groq\u{201d} in your vault",
-            "The password: 12 characters, typed on the computer (not shown)",
-            "Use it as vault:Groq/password",
+            "Save a new API key \u{201c}Groq\u{201d} in your vault".to_owned(),
+            "The password: 12 characters, sent by reins vault add on the computer (typed or piped in; not shown)"
+                .to_owned(),
+            format!(
+                "Check: {}. The terminal shows the same four digits; deny if it does not.",
+                value_check("gsk_typed_42")
+            ),
+            "Use it as vault:Groq/password".to_owned(),
         ]
     );
     desk.core.approve("s1".to_owned(), choice(&[], None)).await.unwrap();
-    let data = desk.data("s1").await;
-    assert_eq!((data["saved"].as_bool(), data["created"].as_bool()), (Some(true), Some(true)));
-    let created = &sent(&desk, "POST", "/api/ciphers").await[0];
+    let ack: StoreAck = open_from_phone(&desk, &phone, &desk.data("s1").await["sealed"]);
+    assert_eq!((ack.nonce.as_str(), ack.name.as_str(), ack.created, ack.kept), ("nonce-s1", "Groq", true, None));
+    let created = &sent_bodies(&desk, "POST", "/api/ciphers").await[0];
     assert_eq!((dec(&created["name"]).as_str(), created["type"].as_i64()), ("Groq", Some(1)));
     assert_eq!(dec(&created["login"]["password"]), "gsk_typed_42");
     let shown = desk.everything_shown(&["k1", "s1"]).await;
     assert!(!shown.contains("gsk_typed_42"), "never in the clear");
     assert!(!shown.contains(&phone), "the phone's key travels sealed only, so nobody can aim for its digits");
 
-    // The same name again changes that item's field.
-    desk.send(&[store(&desk, "s2", &phone, "Bank", "api-key", "password", "rotated")]).await;
-    let view = desk.core.approval_view("s2".to_owned()).await.unwrap();
-    assert_eq!(view.preview[0], "Change the password of \u{201c}Bank\u{201d} in your vault");
-    desk.core.approve("s2".to_owned(), choice(&[], None)).await.unwrap();
-    assert_eq!(dec(&sent(&desk, "PUT", "/api/ciphers/bank").await[0]["login"]["password"]), "rotated");
+    // The same request again (the server keeps a copy) is never saved twice.
+    desk.send(&[store_boxed(&desk, "s1b", "nonce-s1", &sent, &box_from(&desk.key, &phone, "nonce-s1", &sent))]).await;
+    assert!(desk.error("s1b").await.contains("never saved twice"));
 }
 
 #[tokio::test]
-async fn a_value_for_another_key_or_request_or_an_unpaired_app_is_refused() {
+async fn an_existing_item_is_changed_only_when_asked_and_its_earlier_value_is_kept() {
+    let desk = desk().await;
+    desk.pair().await;
+    let phone = phone_key(&desk).await;
+    // Without --replace an item that exists is refused before the user is asked.
+    desk.send(&[store(&desk, "r1", &phone, &Sent::new("Bank", "api-key", "password", "attacker"))]).await;
+    let told = desk.error("r1").await;
+    assert!(told.contains("Bank is already in your vault") && told.contains("--replace"), "{told}");
+
+    desk.send(&[store(&desk, "r2", &phone, &Sent::new("Bank", "api-key", "password", "rotated").replace())]).await;
+    let view = desk.core.approval_view("r2".to_owned()).await.unwrap();
+    assert_eq!(view.preview[0], "Replace the password of \u{201c}Bank\u{201d} in your vault");
+    assert!(view.preview.contains(&"The earlier value is kept in the item's password history".to_owned()));
+    desk.core.approve("r2".to_owned(), choice(&[], None)).await.unwrap();
+    let ack: StoreAck = open_from_phone(&desk, &phone, &desk.data("r2").await["sealed"]);
+    assert!(!ack.created);
+    let put = &sent_bodies(&desk, "PUT", "/api/ciphers/bank").await[0];
+    assert_eq!(dec(&put["login"]["password"]), "rotated");
+    assert_eq!(dec(&put["passwordHistory"][0]["password"]), "s3cret");
+
+    // A note or a custom field keeps the earlier value in a hidden field; the new value is hidden too.
+    desk.send(&[
+        store(&desk, "r3", &phone, &Sent::new("Stripe", "note", "notes", "rk_new").replace()),
+        store(&desk, "r4", &phone, &Sent::new("OpenAI", "api-key", "Org", "org-new").replace()),
+    ])
+    .await;
+    for id in ["r3", "r4"] {
+        desk.core.approve(id.to_owned(), choice(&[], None)).await.unwrap();
+    }
+    let note = &sent_bodies(&desk, "PUT", "/api/ciphers/note").await[0];
+    assert_eq!(dec(&note["notes"]), "rk_new");
+    let kept = &note["fields"][0];
+    assert!(dec(&kept["name"]).starts_with("Notes before "), "{kept}");
+    assert_eq!((dec(&kept["value"]).as_str(), kept["type"].as_i64()), ("rk_live_456", Some(1)));
+    let openai = &sent_bodies(&desk, "PUT", "/api/ciphers/openai").await[0];
+    let fields: Vec<(String, String, i64)> = openai["fields"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|f| (dec(&f["name"]), dec(&f["value"]), f["type"].as_i64().unwrap()))
+        .collect();
+    assert_eq!(fields[0], ("Org".to_owned(), "org-new".to_owned(), 1));
+    assert!(fields[1].0.starts_with("Org before ") && fields[1].1 == "org-9" && fields[1].2 == 1, "{fields:?}");
+}
+
+#[tokio::test]
+async fn the_vault_changing_between_the_approval_and_the_save_saves_nothing() {
+    let desk = desk().await;
+    desk.pair().await;
+    let phone = phone_key(&desk).await;
+    desk.send(&[store(&desk, "c1", &phone, &Sent::new("Bank", "api-key", "password", "rotated").replace())]).await;
+    assert_eq!(desk.waiting().await, ["c1"]);
+    // Before the user approves, the item changes (another device saved it).
+    let user = user_key();
+    let mut changed = ciphers(&user);
+    changed[1]["revisionDate"] = json!("2026-10-09T00:00:00Z");
+    Mock::given(method("GET"))
+        .and(path("/api/sync"))
+        .and(header_exists("Bitwarden-Client-Version"))
+        .respond_with(
+            ResponseTemplate::new(200)
+                .set_body_json(json!({"profile": {"key": "x"}, "ciphers": changed, "folders": []})),
+        )
+        .with_priority(1)
+        .mount(&desk.server)
+        .await;
+    let refused = desk.core.approve("c1".to_owned(), choice(&[], None)).await.unwrap_err();
+    assert!(refused.to_string().contains("The vault changed since you were asked"), "{refused}");
+    assert!(sent_bodies(&desk, "PUT", "/api/ciphers/bank").await.is_empty());
+}
+
+#[tokio::test]
+async fn a_value_for_another_key_request_time_or_kind_or_an_unpaired_app_is_refused() {
     let desk = desk().await;
     let stranger = PublicKey::from(SecretKey::generate(&mut OsRng).public_key().to_bytes());
     let other = reins_proto::desktop::encode_key(stranger.as_bytes());
-    desk.send(&[store(&desk, "u1", &other, "X", "api-key", "password", "v")]).await;
+    let x = Sent::new("X", "api-key", "password", "v");
+    desk.send(&[store(&desk, "u1", &other, &x)]).await;
     assert_eq!(desk.error("u1").await, REFUSED);
 
     desk.pair().await;
     let phone = phone_key(&desk).await;
-    let mut replayed = store(&desk, "w2", &phone, "X", "api-key", "password", "v");
-    replayed["call"]["args"]["nonce"] = json!("another");
+    let mut renonced = store(&desk, "w2", &phone, &x);
+    renonced["call"]["args"]["nonce"] = json!("another");
+    let mut rekinded = store(&desk, "w9", &phone, &x);
+    rekinded["call"]["args"]["kind"] = json!("note");
+    let old = Sent {
+        created_at: reins_core::store::unix_now() - 3_600,
+        ..Sent::new("X", "api-key", "password", "v")
+    };
     let cases = [
-        ("w1", store(&desk, "w1", &other, "X", "api-key", "password", "v"), PHONE_KEY_CHANGED),
-        ("w2", replayed, "another request"),
-        ("w3", store(&desk, "w3", &phone, "Twin", "api-key", "password", "v"), "Several vault items are named Twin"),
-        ("w4", store(&desk, "w4", &phone, "Stripe", "api-key", "password", "v"), "which has no password"),
-        ("w5", store(&desk, "w5", &phone, "K", "ssh", "private_key", "not a key"), "not an OpenSSH private key"),
-        ("w6", store(&desk, "w6", &phone, "N", "note", "password", "v"), "has no password"),
+        ("w1", store(&desk, "w1", &other, &x), PHONE_KEY_CHANGED),
+        ("w2", renonced, "another request"),
+        (
+            "w3",
+            store(&desk, "w3", &phone, &Sent::new("Twin", "api-key", "password", "v").replace()),
+            "Several vault items are named Twin",
+        ),
+        (
+            "w4",
+            store(&desk, "w4", &phone, &Sent::new("Stripe", "api-key", "password", "v").replace()),
+            "which has no password",
+        ),
+        (
+            "w5",
+            store(&desk, "w5", &phone, &Sent::new("K", "ssh", "private_key", "not a key")),
+            "not an OpenSSH private key",
+        ),
+        ("w6", store(&desk, "w6", &phone, &Sent::new("N", "note", "password", "v")), "has no password"),
+        ("w9", rekinded, "another item, field or kind"),
+        ("w10", store(&desk, "w10", &phone, &old), "too long ago"),
     ];
     // The server knows both public keys: what it boxes itself, or a box moved to another item, does not open.
     let server_key = SecretKey::generate(&mut OsRng);
-    let forged = box_from(&server_key, &phone, "nonce-w7", "X", "password", "attacker-key");
-    let moved = box_from(&desk.key, &phone, "nonce-w8", "Other", "password", "v");
+    let forged = box_from(&server_key, &phone, "nonce-w7", &Sent::new("X", "api-key", "password", "attacker-key"));
+    let moved = box_from(&desk.key, &phone, "nonce-w8", &Sent::new("Other", "api-key", "password", "v"));
     let cases = [
         cases.to_vec(),
         vec![
-            ("w7", store_boxed(&desk, "w7", "X", "api-key", "password", &forged), PHONE_KEY_CHANGED),
-            ("w8", store_boxed(&desk, "w8", "X", "api-key", "password", &moved), "another item or field"),
+            ("w7", store_boxed(&desk, "w7", "nonce-w7", &x, &forged), PHONE_KEY_CHANGED),
+            ("w8", store_boxed(&desk, "w8", "nonce-w8", &x, &moved), "another item, field or kind"),
         ],
     ]
     .concat();
@@ -367,18 +510,16 @@ async fn a_value_for_another_key_or_request_or_an_unpaired_app_is_refused() {
 }
 
 #[tokio::test]
-async fn the_computer_lists_names_only_sealed_to_it() {
+async fn the_computer_lists_names_only_when_asked_each_time_boxed_by_the_phone() {
     let desk = desk().await;
     desk.pair().await;
+    let phone = phone_key(&desk).await;
     desk.send(&[call("n1", DESK, "vault", "names", &json!({"client_key": desk.public(), "nonce": "nn"}))]).await;
     let view = desk.core.approval_view("n1".to_owned()).await.unwrap();
-    let ids: Vec<String> = view.messages.iter().map(|m| m.id.clone()).collect();
-    desk.core
-        .approve("n1".to_owned(), choice(&ids.iter().map(String::as_str).collect::<Vec<_>>(), None))
-        .await
-        .unwrap();
+    assert!(view.no_standing, "asked for every time");
+    desk.core.approve("n1".to_owned(), choice(&[], None)).await.unwrap();
     let data = desk.data("n1").await;
-    let names: VaultNames = desk.open(&data["items"][0]["sealed"]);
+    let names: VaultNames = open_from_phone(&desk, &phone, &data["sealed"]);
     assert_eq!(names.nonce, "nn");
     let listed: Vec<(&str, &str)> = names.items.iter().map(|(n, k)| (n.as_str(), k.as_str())).collect();
     assert_eq!(
@@ -392,5 +533,5 @@ async fn the_computer_lists_names_only_sealed_to_it() {
             ("Visa", "card")
         ]
     );
-    assert!(!data.to_string().contains("OpenAI"), "the names travel sealed");
+    assert!(!data.to_string().contains("OpenAI"), "the names travel boxed");
 }

@@ -79,8 +79,9 @@ pub(super) fn tools() -> Vec<ToolSpec> {
             "secret_store",
             Effect::Write,
             "Save a secret from the computer",
-            "Saves a value typed on the computer (`reins vault add`) in a vault item, boxed from the desktop app's key \
-             to the phone's key: the server cannot read or change it. Creates the item, or changes the field of the item with that exact name.",
+            "Saves a value sent by `reins vault add` in a vault item, boxed from the desktop app's key to the phone's \
+             key: the server cannot read or change it. Makes a new item; changes the field of the item with that \
+             name only when the box says to replace it.",
             vec![
                 str_p("name", 300, true, "The item's exact name."),
                 str_p("kind", 20, true, "`api-key`, `login`, `note` or `ssh`."),
@@ -98,12 +99,13 @@ pub(super) fn tools() -> Vec<ToolSpec> {
             "vault_names",
             VAULT,
             "names",
-            Effect::Read,
-            "List vault item names for the computer",
-            "The names and kinds of the vault's items (never a value), for `reins vault list`.",
+            Effect::Write,
+            "Show the vault item names on the computer",
+            "The names and kinds of the vault's items (never a value), for `reins vault list`. Asked every time.",
             vec![CLIENT_KEY, NONCE],
             None,
         )
+        .once()
         .desktop(),
     ]
 }

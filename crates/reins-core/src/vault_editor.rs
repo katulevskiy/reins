@@ -1,7 +1,8 @@
 //! The vault on the phone itself: the list, an item's fields, and adding, changing and deleting items. This is the
-//! user's own hand on their vault, so nothing here is asked for: the screens behind it unlock with the phone's screen
-//! lock. The work is done by the same code as the vault tools ([`crate::connector::vault`]), which encrypts every string
-//! on the phone before it reaches the server.
+//! user's own hand on their vault, so nothing here is relayed or approved: the app asks for the screen lock before it
+//! shows a secret or changes anything. The work is done by the same code as the vault tools
+//! ([`crate::connector::vault`]), which encrypts every string on the phone before it reaches the server. An SSH key's
+//! private half is never shown, here or to an AI: the phone signs with it.
 //!
 //! Each item also says how the desktop app refers to it (`vault:OpenAI/password` for `reins run` and the API proxy, the
 //! SSH agent for SSH keys), so that people know what to name things.
