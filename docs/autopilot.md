@@ -33,7 +33,10 @@ These always wait for you, in every mode (Lockdown denies them):
 - MCP tools their server marks destructive;
 - git pushes that rewrite or delete history, or whose history could not be checked;
 - uploaded files that may hold something to run (executables, scripts, archives, unknown binary types);
-- anything from a connection paired less than 10 minutes ago.
+- anything from a connection paired less than 10 minutes ago;
+- a harness hook's or `reins ask` question about a command that deletes, rewrites history or wipes something (force
+  or deleting pushes, `reset --hard`, recursive deletes, `terraform destroy`, `DROP TABLE`, ...), or about reading a
+  secret file such as `.env` or a private key.
 
 The same floor decides what you can answer without opening a request: requests on it never get Approve on the
 notification, Approve all or "Approve and allow for 1 hour" ([quick start](quick-start.md#5-answer-requests-quickly)).
