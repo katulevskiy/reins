@@ -126,7 +126,7 @@ impl Engine {
         self.register_account(VAULT, email).map(drop)
     }
 
-    fn secret_of(&self, user_id: &str) -> Result<Option<AccountSecret>, CoreError> {
+    pub(crate) fn secret_of(&self, user_id: &str) -> Result<Option<AccountSecret>, CoreError> {
         self.store.secret_get(SECRET_SERVICE, user_id)?.map(|raw| AccountSecret::from_bytes(&raw)).transpose()
     }
 

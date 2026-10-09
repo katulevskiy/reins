@@ -205,12 +205,16 @@ struct EntryAutopilotSection: View {
             .accessibilityContainer("entryAutopilot")
         }
         .alert(should == .deny ? "Should this have been denied?" : "Should this have been approved?", isPresented: $asking) {
-            Button(should == .deny ? "Deny next time" : "Approve next time") { Task { await correct(should) } }
+            Button(should == .deny ? "Deny next time" : "Approve next time") {
+                feedback.quietClose()
+                Task { await correct(should) }
+            }
             Button("Cancel", role: .cancel) {}
         } message: {
             Text((should == .deny ? "Autopilot remembers it as a denial" : "Autopilot remembers it as an approval")
                 + ", more strongly than an ordinary answer, and asks you about this kind of request again until it has learned more. What was done stays done.")
         }
+        .presentationFeedback(asking)
     }
 
     private func correct(_ verdict: Verdict) async {

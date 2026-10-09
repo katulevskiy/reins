@@ -53,7 +53,7 @@ class NewGrantViewModel(private val container: AppContainer) : ViewModel() {
                     AuthResult.Success -> {
                         container.feedback.play(Event.GrantCreated)
                         container.core.createGrant(built.connectionId, built.account, built.kind, built.standing)
-                        container.refreshPending()
+                        container.refreshAfterAnswer()
                         _ui.update { it.copy(busy = false, finished = true) }
                     }
                     AuthResult.Cancelled -> _ui.update { it.copy(busy = false) }

@@ -3,6 +3,10 @@
     xmlns:tools="http://schemas.android.com/tools">
 
     <uses-permission android:name="android.permission.INTERNET" />
+    <!-- Autopilot's Wi-Fi-only model download waits for an unmetered network (WorkManager also merges this in). -->
+    <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
+    <!-- In-app haptics: VibrationEffect compositions and waveforms throw without it (performHapticFeedback does not). -->
+    <uses-permission android:name="android.permission.VIBRATE" />
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
     <!-- Haptic feedback on approvals (feedback/AndroidFeedback.kt). -->
     <uses-permission android:name="android.permission.VIBRATE" />

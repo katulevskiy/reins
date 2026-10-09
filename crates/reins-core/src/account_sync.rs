@@ -3,6 +3,7 @@ use crate::{CoreError, engine::Engine};
 use data_encoding::{BASE64URL_NOPAD, HEXLOWER};
 use reins_proto::account_state::{AccountState, AccountStateUpdate, MAX_CIPHERTEXT_BYTES};
 use ring::digest;
+use std::sync::{Arc, atomic::Ordering};
 use zeroize::Zeroizing;
 const REVISION: &str = "account-state.revision";
 const SYNCED: &str = "account-state.synced";
@@ -87,15 +88,40 @@ impl Engine {
         self.store.meta_set(REVISION, &state.revision.to_string())?;
         self.store.flush()
     }
+    /// Uploads the account state in the background, so a call that wrote returns as soon as the change is on disk
+    /// instead of after a network round trip. Writes in a row share one upload: at most one waits behind a running one.
+    /// Failures are retried by the next call that finishes (the local encrypted copy is already durable).
+    pub(crate) fn schedule_account_sync(self: &Arc<Self>) {
+        if self.store.owner.is_none() || self.synced_writes.load(Ordering::Acquire) == self.store.write_count() {
+            return;
+        }
+        if self.sync_queued.swap(true, Ordering::AcqRel) {
+            return;
+        }
+        let engine = Arc::clone(self);
+        crate::rt::spawn(async move {
+            // Wait out an upload already running; writes from here on queue the next one, as this one carries them.
+            drop(engine.account_sync.lock().await);
+            engine.sync_queued.store(false, Ordering::Release);
+            drop(engine.run_account(engine.sync_account_state()).await);
+        });
+    }
     pub(crate) async fn sync_account_state(&self) -> Result<(), CoreError> {
         if self.store.owner.is_none() {
             return Ok(());
         }
+        // Nothing written since the last sync (most calls only read): skip exporting and hashing everything.
+        let writes = self.store.write_count();
+        if self.synced_writes.load(Ordering::Acquire) == writes {
+            return Ok(());
+        }
         let _guard = self.account_sync.lock().await;
         self.ensure_active()?;
+        let writes = self.store.write_count();
         let plain = self.store.export_account()?;
         let fingerprint = hash(&plain);
         if self.store.meta_get(SYNCED)?.as_deref() == Some(&fingerprint) {
+            self.synced_writes.store(writes, Ordering::Release);
             return Ok(());
         }
         let revision = self.store.meta_get(REVISION)?.and_then(|s| s.parse::<u64>().ok()).unwrap_or(0);

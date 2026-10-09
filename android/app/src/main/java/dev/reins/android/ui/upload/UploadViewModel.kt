@@ -86,7 +86,7 @@ class UploadViewModel(private val container: AppContainer, private val id: Strin
 
     private suspend fun answer(approve: Boolean) {
         container.core.answerBlob(id, approve)
-        container.refreshPending()
+        container.refreshAfterAnswer(id)
         _ui.update { it.copy(busy = false, finished = true) }
     }
 }

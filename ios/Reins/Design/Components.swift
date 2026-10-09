@@ -173,10 +173,19 @@ struct CountBadge: View {
 }
 
 /// Big capsule buttons: Approve (the strong one), Deny (quiet), and destructive confirmations.
-struct CapsuleButtonStyle: ButtonStyle {
+struct CapsuleButtonStyle: PrimitiveButtonStyle {
     enum Kind { case primary, secondary, accent, danger }
     var kind: Kind = .primary
     var height: CGFloat = 54
+
+    func makeBody(configuration: Configuration) -> some View {
+        DefaultTapStyle(look: CapsuleLook(kind: kind, height: height)).makeBody(configuration: configuration)
+    }
+}
+
+private struct CapsuleLook: ButtonStyle {
+    var kind: CapsuleButtonStyle.Kind
+    var height: CGFloat
 
     func makeBody(configuration: Configuration) -> some View {
         let (fg, bg): (Color, Color) = switch kind {
@@ -197,8 +206,16 @@ struct CapsuleButtonStyle: ButtonStyle {
 }
 
 /// A compact pill button on a row ("Review").
-struct PillButtonStyle: ButtonStyle {
+struct PillButtonStyle: PrimitiveButtonStyle {
     var tint: Color = Palette.accent
+
+    func makeBody(configuration: Configuration) -> some View {
+        DefaultTapStyle(look: PillLook(tint: tint)).makeBody(configuration: configuration)
+    }
+}
+
+private struct PillLook: ButtonStyle {
+    var tint: Color
 
     func makeBody(configuration: Configuration) -> some View {
         configuration.label
@@ -218,8 +235,13 @@ struct GlassIconButton: View {
     var label: String
     var action: () -> Void
 
+    @Environment(\.feedback) private var feedback
+
     var body: some View {
-        Button(action: action) {
+        Button {
+            action()
+            feedback.defaultTap()
+        } label: {
             Image(systemName: symbol)
                 .font(.system(size: size * 0.4, weight: .semibold))
                 .foregroundStyle(Palette.text)
@@ -238,8 +260,13 @@ struct GlassPill: View {
     var tint: Color? = nil
     var action: () -> Void
 
+    @Environment(\.feedback) private var feedback
+
     var body: some View {
-        Button(action: action) {
+        Button {
+            action()
+            feedback.defaultTap()
+        } label: {
             HStack(spacing: 7) {
                 if let symbol { Image(systemName: symbol).font(.system(size: 14, weight: .semibold)) }
                 Text(text).font(RFont.sans(15, .medium)).lineLimit(1)
@@ -324,9 +351,12 @@ extension View {
         background(Palette.background.ignoresSafeArea())
     }
 
-    /// Plays a tap's feedback alongside a control's own action.
+    /// Plays a tap's feedback alongside a control's own action; `.tap` is the default tap, which gives way to what the
+    /// action plays itself (the Open of the page it pushes).
     func feedbackTap(_ event: FeedbackEvent = .tap, _ feedback: Feedback) -> some View {
-        simultaneousGesture(TapGesture().onEnded { feedback.play(event) })
+        simultaneousGesture(TapGesture().onEnded {
+            if event == .tap { feedback.defaultTap() } else { feedback.play(event) }
+        })
     }
 }
 

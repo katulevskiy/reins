@@ -79,10 +79,20 @@ enum NotificationSoundFile {
     static let attention = "reins_attention.caf"
     /// The soft click of an automatic denial (Android's `fx_close`).
     static let denied = "reins_denied.caf"
+    /// A tenth of a second of silence. A notification without a sound neither sounds nor vibrates; one with a sound
+    /// gets the system's alert haptic, as Settings > Sounds & Haptics sets it for the ring and silent modes. So with
+    /// the sound off and haptics on, this is the sound: the phone vibrates and nothing is heard.
+    static let silent = "reins_silent.caf"
 
-    /// The sound under its in-app switch: nil (silent) when Sounds & haptics, Sounds or the category is off.
+    /// The file under the in-app switches: the chime when its sound is on, else the silence when haptics are on, else
+    /// nothing (Sounds & haptics off silences and stills everything).
+    static func file(_ file: String, _ category: CueCategory, _ settings: FeedbackSettings) -> String? {
+        if settings.allows(category) { return file }
+        return settings.hapticsOn ? silent : nil
+    }
+
     static func sound(_ file: String, _ category: CueCategory, _ settings: FeedbackSettings) -> UNNotificationSound? {
-        settings.allows(category) ? UNNotificationSound(named: UNNotificationSoundName(file)) : nil
+        self.file(file, category, settings).map { UNNotificationSound(named: UNNotificationSoundName($0)) }
     }
 }
 

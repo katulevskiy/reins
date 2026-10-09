@@ -58,33 +58,45 @@ struct ProfileScreen: View {
         .sheet(isPresented: $rename) {
             if let profile {
                 ProfileEditorSheet(title: "Rename profile", initialName: profile.name, initialIcon: profile.icon, confirmLabel: "Save") { name, icon in
+                    feedback.quietClose()
                     Task { await ap.renameProfile(profile.id, name: name, icon: icon) }
                 }
             }
         }
+        .presentationFeedback(rename)
         .alert(profile.map { "Forget what \(untrusted($0.name)) learned?" } ?? "", isPresented: $reset) {
             Button("Cancel", role: .cancel) {}
-            Button("Forget", role: .destructive) { Task { await ap.resetProfile(profileId) } }
+            Button("Forget", role: .destructive) {
+                feedback.quietClose()
+                Task { await ap.resetProfile(profileId) }
+            }
         } message: {
             Text("Its \(profile?.memoryCount ?? 0) remembered decisions go, every kind of request is locked again, and Autopilot starts learning from your next answer.")
         }
+        .presentationFeedback(reset)
         .alert(profile.map { "Delete \(untrusted($0.name))?" } ?? "", isPresented: $delete) {
             Button("Cancel", role: .cancel) {}
             Button("Delete", role: .destructive) {
+                feedback.quietClose()
                 Task { if await ap.deleteProfile(profileId) { model.back() } }
             }
         } message: {
             Text("What it learned is gone. AIs that used it move to the default profile.")
         }
+        .presentationFeedback(delete)
         .alert(unlocking.map { "Let Auto approve \($0.label)?" } ?? "", isPresented: Binding(get: { unlocking != nil }, set: { if !$0 { unlocking = nil } })) {
             Button("Cancel", role: .cancel) { unlocking = nil }
             Button("Unlock") {
-                if let cls = unlocking { Task { await ap.setClassLock(profileId, cls.classKey, locked: false) } }
+                if let cls = unlocking {
+                    feedback.quietClose()
+                    Task { await ap.setClassLock(profileId, cls.classKey, locked: false) }
+                }
                 unlocking = nil
             }
         } message: {
             Text("Autopilot will approve these on its own when it is sure enough, before it has learned enough to unlock them by itself. The riskiest requests still wait for you.")
         }
+        .presentationFeedback(unlocking != nil)
     }
 
     private func content(_ profile: ProfileView) -> some View {

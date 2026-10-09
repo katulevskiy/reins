@@ -1,0 +1,8 @@
+# Ahead-of-time compiled at install, also for the APK that updates itself (no Play cloud profiles there): without it,
+# every update runs the app's own code interpreted until the phone's idle dexopt, and scrolling and taps stutter. The
+# Compose and AndroidX libraries ship their own rules; these cover the app and the generated core bindings, whose
+# record lifting runs on every refresh.
+HSPLdev/reins/android/**->**(**)**
+Ldev/reins/android/**;
+HSPLdev/reins/core/**->**(**)**
+Ldev/reins/core/**;

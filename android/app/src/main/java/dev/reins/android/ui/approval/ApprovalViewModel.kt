@@ -102,7 +102,7 @@ class ApprovalViewModel(private val container: AppContainer, private val request
                         val standing = choice.standing != null || view.kind == ApprovalKind.GRANT
                         container.feedback.play(if (standing) Event.GrantCreated else Event.Approved)
                         container.core.approve(requestId, choice)
-                        container.refreshPending()
+                        container.refreshAfterAnswer(requestId)
                         _ui.update { it.copy(busy = false, finished = true) }
                     }
                     AuthResult.Cancelled -> _ui.update { it.copy(busy = false) }
@@ -127,7 +127,7 @@ class ApprovalViewModel(private val container: AppContainer, private val request
         viewModelScope.launch {
             try {
                 container.core.deny(requestId)
-                container.refreshPending()
+                container.refreshAfterAnswer(requestId)
                 _ui.update { it.copy(busy = false, finished = true) }
             } catch (e: CancellationException) {
                 throw e

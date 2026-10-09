@@ -1,11 +1,23 @@
 import CryptoKit
 import Foundation
+import os
 import Security
 
 /// Widget data is sensitive too. Its key stays in this device's shared keychain, outside preferences and backups.
 enum SealedSnapshot {
     private static let marker = Data("RSC1".utf8)
-    private static func key(create: Bool) throws -> SymmetricKey {
+    /// The key's bytes once read: every widget update and device-status read seals or opens, and the keychain is slow.
+    private static let cachedKey = OSAllocatedUnfairLock<Data?>(initialState: nil)
+
+    /// The cached key, else the keychain's (`fresh` always asks the keychain).
+    private static func key(create: Bool, fresh: Bool = false) throws -> SymmetricKey {
+        if !fresh, let bytes = cachedKey.withLock({ $0 }) { return SymmetricKey(data: bytes) }
+        let key = try storedKey(create: create)
+        let bytes = key.withUnsafeBytes { Data($0) }
+        cachedKey.withLock { $0 = bytes }
+        return key
+    }
+    private static func storedKey(create: Bool) throws -> SymmetricKey {
         var query: [String: Any] = [
             kSecClass as String: kSecClassGenericPassword,
             kSecAttrService as String: "com.reins2fa.app.widget-cache",
@@ -24,7 +36,7 @@ enum SealedSnapshot {
         query[kSecValueData as String] = key.withUnsafeBytes { Data($0) }
         query[kSecAttrAccessible as String] = kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly
         let added = SecItemAdd(query as CFDictionary, nil)
-        if added == errSecDuplicateItem { return try self.key(create: false) }
+        if added == errSecDuplicateItem { return try storedKey(create: false) }
         guard added == errSecSuccess else { throw CocoaError(.fileWriteNoPermission) }
         return key
     }
@@ -35,6 +47,12 @@ enum SealedSnapshot {
     }
     static func open(_ data: Data) throws -> Data {
         guard data.starts(with: marker) else { throw CocoaError(.fileReadCorruptFile) }
-        return try AES.GCM.open(AES.GCM.SealedBox(combined: data.dropFirst(marker.count)), using: key(create: false), authenticating: marker)
+        let box = try AES.GCM.SealedBox(combined: data.dropFirst(marker.count))
+        if let cached = cachedKey.withLock({ $0 }),
+           let plain = try? AES.GCM.open(box, using: SymmetricKey(data: cached), authenticating: marker) {
+            return plain
+        }
+        // Not cached yet, or the keychain's key is not the one cached (another process made it first): read it again.
+        return try AES.GCM.open(box, using: key(create: false, fresh: true), authenticating: marker)
     }
 }

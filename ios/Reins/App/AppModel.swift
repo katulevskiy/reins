@@ -109,6 +109,8 @@ final class AppModel {
     let authenticator: Authenticating
     /// True for the `-demo` fake core (screenshots, UI tests, a look around without a server).
     let demo: Bool
+    /// The passkey sheet for the passkeys that open the vault; the demo's answers by itself, tests put a fake here.
+    @ObservationIgnored var passkeys: PasskeyPrompting
 
     // MARK: State read from the core
 
@@ -135,6 +137,11 @@ final class AppModel {
     private(set) var recoveryCodeAvailable = false
     /// Normal screens remain behind the mandatory acknowledgement, also after the app restarts.
     private(set) var recoveryToRecord: String?
+    /// Before the recovery code, for an account without a passkey for its vault: the offer of one
+    /// (`PasskeyOfferScreen`). The code follows either way.
+    private(set) var passkeyOffer = false
+    /// "Use the recovery code only" for this sign-in: the offer does not come back until the next one.
+    private var passkeyDeclined = false
     private(set) var recoveryLoadError: String?
     /// How the last MCP sign-in ended, shown on that server's page until it is left.
     var mcpNotice: McpNotice?
@@ -191,6 +198,7 @@ final class AppModel {
         self.feedback = feedback
         self.authenticator = authenticator
         self.demo = demo
+        self.passkeys = demo ? DemoPasskeys() : PlatformPasskeys()
         self.modelDownloads = modelDownloads ?? ModelDownloads(core: core, feedback: feedback)
         self.modelDownloads.onFinished = { [weak self] failure in
             await self?.refreshAutopilot()
@@ -213,6 +221,11 @@ final class AppModel {
             catch CoreError.Invalid { /* Password accounts have no recovery secret. */ }
             catch { recoveryFailure = error.userMessage }
         }
+        // Before the code: a passkey that opens the vault, unless the account has one or the offer was declined.
+        var offerPasskey = false
+        if let info, let code, !passkeyDeclined, !RecoveryRecord.confirmed(server: info.serverUrl, code: code) {
+            offerPasskey = await hasNoVaultPasskey()
+        }
         let current = await core.session()
         guard epoch == accountEpoch, current == info else { return }
         if let info, !demo, KeysLock.matches(info) || keys != .unlocked {
@@ -226,6 +239,7 @@ final class AppModel {
             approvalDevice = DeviceStatus.approvalDevice && !DeviceStatus.replaced
             recoveryCodeAvailable = code != nil
             recoveryToRecord = code.flatMap { RecoveryRecord.confirmed(server: info.serverUrl, code: $0) ? nil : $0 }
+            passkeyOffer = offerPasskey && recoveryToRecord != nil
             recoveryLoadError = recoveryFailure
             onSignedIn?()
             await refreshPending()
@@ -260,6 +274,8 @@ final class AppModel {
         approvalDevice = false
         recoveryCodeAvailable = false
         recoveryToRecord = nil
+        passkeyOffer = false
+        passkeyDeclined = false
         recoveryLoadError = nil
         onboarding = false
         autopilot = nil
@@ -269,6 +285,13 @@ final class AppModel {
         onPendingChanged?([])
         onGrantsChanged?([])
         publish()
+    }
+
+    /// The server ended the session (signed out elsewhere, the account removed): back to the sign-in screen, with the
+    /// alert, since nothing the user did here explains it.
+    private func sessionEnded() {
+        if case .signedIn = session { feedback.play(.alert) }
+        setSession(.signedOut)
     }
 
     func signedIn(_ info: SessionInfo) async {
@@ -329,6 +352,22 @@ final class AppModel {
         onboarding = false
     }
 
+    /// Whether the account has no passkey for its vault yet. Unknown (offline) counts as having one: never a block.
+    private func hasNoVaultPasskey() async -> Bool {
+        (try? await core.vaultPasskeys().isEmpty) ?? false
+    }
+
+    /// "Use the recovery code only": the code shows next, and the offer does not come back for this sign-in.
+    func declinePasskeyOffer() {
+        passkeyDeclined = true
+        passkeyOffer = false
+    }
+
+    /// A passkey opens the vault now: the offer is done, and the recovery code follows.
+    func vaultPasskeyAdded() {
+        passkeyOffer = false
+    }
+
     func confirmRecoveryRecord() {
         guard case let .signedIn(info) = session, let code = recoveryToRecord else { return }
         RecoveryRecord.confirm(server: info.serverUrl, code: code)
@@ -371,28 +410,71 @@ final class AppModel {
 
     // MARK: Refreshing
 
-    /// Re-reads everything held on the phone: what waits, what happened, which permissions exist.
+    /// The re-read running now, and whether another was asked for while it ran.
+    @ObservationIgnored private var refreshing: Task<Void, Never>?
+    @ObservationIgnored private var refreshAgain = false
+    /// Count the changes shown before the core confirmed them (lists, Autopilot): a read that began before one of
+    /// them may predate it, so it is not shown.
+    @ObservationIgnored private var listEdits = 0
+    @ObservationIgnored private var autopilotEdits = 0
+
+    /// Re-reads everything held on the phone: what waits, what happened, which permissions exist. Calls that come
+    /// while a re-read runs (a burst of core callbacks, the sync loop) share one more pass after it, so each caller
+    /// still sees state read after it asked.
     func refreshPending() async {
+        if let running = refreshing {
+            refreshAgain = true
+            await running.value
+            return
+        }
+        let task = Task { [weak self] in
+            guard let self else { return }
+            repeat {
+                self.refreshAgain = false
+                await self.readPending()
+            } while self.refreshAgain
+            self.refreshing = nil
+        }
+        refreshing = task
+        await task.value
+    }
+
+    private func readPending() async {
         let epoch = accountEpoch
+        let edits = listEdits
+        let core = self.core
         do {
-            let newPending = try await core.pending()
-            let newActivity = try await core.activity(limit: 300)
-            let newGrants = try await core.grants()
-            let newAccounts = try await core.accounts()
-            let newServices = try await core.services().filter { $0.service != "sms" }
-            let newServers = try await core.mcpServers()
+            // Independent reads: side by side rather than one after another.
+            async let pendingRead = core.pending()
+            async let activityRead = core.activity(limit: 300)
+            async let grantsRead = core.grants()
+            async let accountsRead = core.accounts()
+            async let servicesRead = core.services()
+            async let serversRead = core.mcpServers()
+            let newPending = try await pendingRead
+            let newActivity = try await activityRead
+            let newGrants = try await grantsRead
+            let newAccounts = try await accountsRead
+            let newServices = try await servicesRead.filter { $0.service != "sms" }
+            let newServers = try await serversRead
             guard epoch == accountEpoch else { return }
-            pending = newPending
-            activity = newActivity
-            grants = newGrants
-            accounts = newAccounts
-            services = newServices
-            setMcpServers(newServers)
+            guard edits == listEdits else {
+                // Read before a change shown ahead of the core: read once more instead.
+                refreshAgain = true
+                return
+            }
+            // Unchanged lists are left alone, so the screens reading them do not draw again.
+            if pending != newPending { pending = newPending }
+            if activity != newActivity { activity = newActivity }
+            if grants != newGrants { grants = newGrants }
+            if accounts != newAccounts { accounts = newAccounts }
+            if services != newServices { services = newServices }
+            if mcpServers != newServers { setMcpServers(newServers) }
             await refreshAutopilot()
             guard epoch == accountEpoch else { return }
             onGrantsChanged?(grants)
         } catch CoreError.NotLoggedIn {
-            if epoch == accountEpoch { setSession(.signedOut) }
+            if epoch == accountEpoch { sessionEnded() }
         } catch {
             // Offline: the current account keeps its last decrypted view.
         }
@@ -407,11 +489,23 @@ final class AppModel {
     @discardableResult
     func refreshAutopilot() async -> AutopilotSettings? {
         let epoch = accountEpoch
+        let edits = autopilotEdits
         guard let settings = try? await core.autopilotSettings(), epoch == accountEpoch else { return nil }
-        autopilot = settings
+        // Read before a change shown ahead of the core: the read after that change shows it.
+        guard edits == autopilotEdits else { return settings }
+        if autopilot != settings { autopilot = settings }
         onAutopilotChanged?(settings)
         publish()
         return settings
+    }
+
+    /// Shows a change to Autopilot's settings at once, before the core has it: the next `refreshAutopilot` puts what
+    /// the core holds in its place (the same, or the old value back after a refusal).
+    func patchAutopilot(_ change: (inout AutopilotSettings) -> Void) {
+        guard var s = autopilot else { return }
+        change(&s)
+        autopilotEdits += 1
+        if s != autopilot { autopilot = s }
     }
 
     /// Ends every bypass now: each goes back to the mode it interrupted.
@@ -441,6 +535,44 @@ final class AppModel {
         McpNames.update(Dictionary(uniqueKeysWithValues: list.map {
             ($0.id, McpNames.Server(name: $0.name, tools: Dictionary($0.tools.map { ($0.name, $0.title) }, uniquingKeysWith: { a, _ in a })))
         }))
+    }
+
+    /// Re-reads only the MCP servers (after a change to one of them; `refreshPending` reads everything).
+    func refreshMcpServers() async {
+        let epoch = accountEpoch
+        let edits = listEdits
+        guard let list = try? await core.mcpServers(), epoch == accountEpoch, edits == listEdits, list != mcpServers else { return }
+        setMcpServers(list)
+    }
+
+    /// Shows a tool's "large results" switch flipped at once, before the core has it.
+    func patchMcpTool(serverId: String, tool: String, heavy: Bool) {
+        guard let s = mcpServers.firstIndex(where: { $0.id == serverId }),
+              let t = mcpServers[s].tools.firstIndex(where: { $0.name == tool }) else { return }
+        listEdits += 1
+        mcpServers[s].tools[t].heavy = heavy
+    }
+
+    /// An item the user just answered leaves the list now; the re-read that follows confirms it.
+    func dropPending(_ id: String) {
+        listEdits += 1
+        pending.removeAll { $0.id == id }
+    }
+
+    /// A grant the user just ended or deleted shows that now; the re-read that follows confirms it.
+    func grantChanged(_ id: String, deleted: Bool) {
+        listEdits += 1
+        if deleted {
+            grants.removeAll { $0.id == id }
+        } else if let i = grants.firstIndex(where: { $0.id == id }) {
+            grants[i].active = false
+            grants[i].state = "revoked"
+        }
+    }
+
+    /// Re-reads everything without the caller waiting for it.
+    func refreshPendingSoon() {
+        Task { await refreshPending() }
     }
 
     /// The user looked at the activity list up to `id`.
@@ -575,7 +707,7 @@ final class AppModel {
                     failures = 0
                 } catch CoreError.NotLoggedIn {
                     if Task.isCancelled { return }
-                    self.setSession(.signedOut)
+                    self.sessionEnded()
                 } catch let CoreError.Server(status, _) where status == 403 && self.approvalDevice {
                     if Task.isCancelled { return }
                     // Only a phone that held the role was replaced. One whose registration has not gone through yet
@@ -758,14 +890,26 @@ final class AppModel {
             s.anyBypassUntil = a.lastBypassEnd
         }
         s.activeGrants = activeGrants
-        let previous = Snapshot.load()
+        // What this process wrote last, while it is still what is stored (the notification extension writes it too):
+        // no keychain read and no decryption for the common case of nothing new.
+        let stored = AppGroup.defaults.data(forKey: Snapshot.key)
+        let previous: Snapshot
+        if let published, stored != nil, stored == published.sealed {
+            previous = published.snapshot
+        } else {
+            previous = Snapshot.load()
+        }
         s.updatedAt = previous.updatedAt
         guard s != previous || s.updatedAt == 0 else { return }
         s.updatedAt = Int64(Date().timeIntervalSince1970)
         s.save()
+        published = AppGroup.defaults.data(forKey: Snapshot.key).map { (snapshot: s, sealed: $0) }
         WidgetCenter.shared.reloadAllTimelines()
         ControlCenter.shared.reloadAllControls()
     }
+
+    /// The snapshot `publish` saved last, and the sealed bytes it stored.
+    @ObservationIgnored private var published: (snapshot: Snapshot, sealed: Data)?
 }
 
 /// Which accounts have been through the onboarding steps on this phone: they show once per account (server and

@@ -3,6 +3,7 @@ package dev.reins.android.ui.autopilot
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import dev.reins.android.AppContainer
+import dev.reins.android.autopilot.AutopilotDraft
 import dev.reins.android.autopilot.AutopilotText
 import dev.reins.android.autopilot.DownloadJob
 import dev.reins.android.feedback.Event
@@ -26,6 +27,8 @@ import kotlinx.coroutines.launch
 
 data class AutopilotUi(
     val profiles: List<ProfileView> = emptyList(),
+    /** [profiles] were read at least once (until then an empty list says nothing). */
+    val profilesLoaded: Boolean = false,
     /** The model as last read; while it downloads this is polled. */
     val model: ModelStatus? = null,
     val job: DownloadJob = DownloadJob.Idle,
@@ -71,15 +74,23 @@ class AutopilotViewModel(private val container: AppContainer) : ViewModel() {
         viewModelScope.launch {
             val settings = container.refreshAutopilot()
             settings?.let { s -> _ui.update { it.copy(model = s.model) } }
-            loadProfiles()
             if (settings?.model?.state == ModelState.DOWNLOADING) pollModel()
         }
+    }
+
+    /**
+     * A page that shows profiles opened: they are read now, each time (they change as Autopilot learns), not at
+     * sign-in, where reading every remembered decision would compete with the first refresh for someone who may never
+     * open Autopilot.
+     */
+    fun showingProfiles() {
+        viewModelScope.launch { loadProfiles() }
     }
 
     private suspend fun loadProfiles() {
         try {
             val profiles = container.core.autopilotProfiles()
-            _ui.update { it.copy(profiles = profiles) }
+            _ui.update { it.copy(profiles = profiles, profilesLoaded = true) }
         } catch (e: CancellationException) {
             throw e
         } catch (e: Exception) {
@@ -109,8 +120,10 @@ class AutopilotViewModel(private val container: AppContainer) : ViewModel() {
         val new = mode ?: settings.value?.mode ?: AutopilotMode.MANUAL
         val restart = mode == AutopilotMode.BYPASS && old == AutopilotMode.BYPASS
         (if (restart) Event.BypassOn else AutopilotText.modeChangeEvent(old, new))?.let { container.feedback.play(it) }
+        val forMinutes = if (mode == AutopilotMode.BYPASS) minutes ?: AutopilotText.bypassMinutes.first() else null
+        draft { AutopilotDraft.withMode(it, connectionId, mode, forMinutes, System.currentTimeMillis() / 1000) }
         run {
-            container.core.setAutopilotMode(connectionId, mode, if (mode == AutopilotMode.BYPASS) minutes ?: AutopilotText.bypassMinutes.first() else null)
+            container.core.setAutopilotMode(connectionId, mode, forMinutes)
             container.refreshAutopilot()
         }
     }
@@ -119,6 +132,7 @@ class AutopilotViewModel(private val container: AppContainer) : ViewModel() {
     fun stopBypass(connectionId: String? = null) {
         val s = settings.value ?: return
         container.feedback.play(Event.BypassOff)
+        draft { AutopilotDraft.withoutBypass(it, connectionId) }
         run {
             if (connectionId == null) {
                 container.core.setAutopilotMode(null, s.baseMode, null)
@@ -132,6 +146,7 @@ class AutopilotViewModel(private val container: AppContainer) : ViewModel() {
 
     /** Which profile a connection's decisions train (null = the default profile). */
     fun assignProfile(connectionId: String, profileId: String?) {
+        draft { AutopilotDraft.withProfile(it, connectionId, profileId) }
         run {
             container.core.assignProfile(connectionId, profileId)
             container.refreshAutopilot()
@@ -163,6 +178,7 @@ class AutopilotViewModel(private val container: AppContainer) : ViewModel() {
     }
 
     fun setWifiOnly(on: Boolean) {
+        draft { it.copy(wifiOnly = on) }
         run {
             container.core.setAutopilotWifiOnly(on)
             container.refreshAutopilot()
@@ -218,6 +234,8 @@ class AutopilotViewModel(private val container: AppContainer) : ViewModel() {
 
     fun makeDefault(id: String) {
         container.feedback.play(Event.Selection)
+        draft { AutopilotDraft.withDefaultProfile(it, id) }
+        _ui.update { ui -> ui.copy(profiles = ui.profiles.map { it.copy(isDefault = it.id == id) }) }
         run {
             container.core.setDefaultProfile(id)
             loadProfiles()
@@ -228,6 +246,8 @@ class AutopilotViewModel(private val container: AppContainer) : ViewModel() {
     }
 
     fun setPreset(id: String, preset: Preset) {
+        // Shown at once; the reload after the core's answer settles it (a refusal reloads the old one).
+        editProfile(id) { it.copy(preset = preset) }
         run {
             container.core.setPreset(id, preset)
             loadProfiles()
@@ -238,6 +258,7 @@ class AutopilotViewModel(private val container: AppContainer) : ViewModel() {
     fun setClassLock(id: String, classKey: String, locked: Boolean?) {
         // The chips sound their own choice; unlocking (after its warning) is felt as more autonomy.
         if (locked == false) container.feedback.play(Event.AutopilotOn)
+        editProfile(id) { p -> p.copy(classes = p.classes.map { if (it.classKey == classKey) it.copy(manual = locked?.not(), autoApprove = locked?.not() ?: it.autoApprove) else it }) }
         run {
             container.core.setClassLock(id, classKey, locked)
             loadProfiles()
@@ -286,6 +307,15 @@ class AutopilotViewModel(private val container: AppContainer) : ViewModel() {
         _ui.update { it.copy(evaluation = null) }
     }
 
+    /** Shows a change to the shared settings at once; the re-read after the core's answer (or its refusal) settles it. */
+    private fun draft(edit: (AutopilotSettings) -> AutopilotSettings) {
+        settings.value?.let { container.state.setAutopilot(edit(it)) }
+    }
+
+    private fun editProfile(id: String, edit: (ProfileView) -> ProfileView) {
+        _ui.update { ui -> ui.copy(profiles = ui.profiles.map { if (it.id == id) edit(it) else it }) }
+    }
+
     private fun run(block: suspend () -> Unit) {
         _ui.update { it.copy(busy = true, error = null, notice = null) }
         viewModelScope.launch {
@@ -298,6 +328,7 @@ class AutopilotViewModel(private val container: AppContainer) : ViewModel() {
                 container.feedback.play(Event.Error)
                 _ui.update { it.copy(busy = false, error = e.userMessage()) }
                 container.refreshAutopilot()
+                loadProfiles()
             }
         }
     }

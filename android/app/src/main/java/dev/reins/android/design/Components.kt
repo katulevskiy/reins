@@ -1,13 +1,15 @@
 package dev.reins.android.design
 
 import androidx.compose.animation.animateColorAsState
+import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.spring
+import androidx.compose.foundation.IndicationNodeFactory
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
-import androidx.compose.foundation.clickable
-import androidx.compose.foundation.interaction.MutableInteractionSource
-import androidx.compose.foundation.interaction.collectIsPressedAsState
+import androidx.compose.foundation.interaction.InteractionSource
+import androidx.compose.foundation.interaction.PressInteraction
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -38,16 +40,24 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.draw.drawWithContent
-import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.composed
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Shape
+import androidx.compose.ui.geometry.toRect
+import androidx.compose.ui.graphics.Paint
 import androidx.compose.ui.graphics.SolidColor
+import androidx.compose.ui.graphics.drawOutline
+import androidx.compose.ui.graphics.drawscope.ContentDrawScope
 import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.graphics.lerp
+import androidx.compose.ui.node.CompositionLocalConsumerModifierNode
+import androidx.compose.ui.node.DelegatableNode
+import androidx.compose.ui.node.DrawModifierNode
+import androidx.compose.ui.node.ModifierNodeElement
+import androidx.compose.ui.node.currentValueOf
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.contentDescription
@@ -62,13 +72,18 @@ import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
 import dev.reins.android.feedback.DialogFeedback
 import dev.reins.android.feedback.Event
+import dev.reins.android.feedback.Feedback
 import dev.reins.android.feedback.LocalFeedback
 import dev.reins.android.feedback.defaultTap
 import dev.reins.android.feedback.play
+import kotlinx.coroutines.launch
 
 /**
  * Press feedback without Material ripples: the element dims (or a fill appears behind it) while the finger is down, and
  * the click answers with the default tap unless [onClick] asked for feedback of its own.
+ *
+ * Built from modifier nodes, not a composition of its own: a list has one per row, and a row scrolling into view should
+ * cost no more than its layout.
  */
 fun Modifier.pressable(
     enabled: Boolean = true,
@@ -77,19 +92,100 @@ fun Modifier.pressable(
     dim: Float = 0.55f,
     label: String? = null,
     onClick: () -> Unit,
-): Modifier = composed {
-    val feedback = LocalFeedback.current
-    val source = remember { MutableInteractionSource() }
-    val pressed by source.collectIsPressedAsState()
-    val alpha by animateFloatAsState(if (pressed && highlight == null) dim else 1f, label = "press")
-    val fill by animateColorAsState(if (pressed && highlight != null) highlight else Color.Transparent, label = "fill")
-    this
-        .graphicsLayer { this.alpha = alpha }
-        .background(fill, shape)
-        .clickable(interactionSource = source, indication = null, enabled = enabled, role = Role.Button, onClickLabel = label) {
-            onClick()
-            feedback.defaultTap()
+): Modifier {
+    val click = PressClick(onClick)
+    return this
+        .then(PressClickElement(click))
+        .clickable(
+            interactionSource = null,
+            indication = PressIndication(highlight, shape, dim),
+            enabled = enabled,
+            onClickLabel = label,
+            role = Role.Button,
+            onClick = click,
+        )
+}
+
+/**
+ * A [pressable]'s click: the caller's action, then the default tap from the [LocalFeedback] of the node it is wired to
+ * ([PressClickElement]). Equal when the action is, so an unchanged row updates nothing.
+ */
+private class PressClick(val onClick: () -> Unit) : () -> Unit {
+    var node: PressClickNode? = null
+
+    override fun invoke() {
+        onClick()
+        node?.feedback()?.defaultTap()
+    }
+
+    override fun equals(other: Any?) = other is PressClick && other.onClick == onClick
+
+    override fun hashCode() = onClick.hashCode()
+}
+
+private data class PressClickElement(val click: PressClick) : ModifierNodeElement<PressClickNode>() {
+    override fun create() = PressClickNode(click)
+
+    override fun update(node: PressClickNode) {
+        node.click = click
+        click.node = node
+    }
+}
+
+private class PressClickNode(var click: PressClick) : Modifier.Node(), CompositionLocalConsumerModifierNode {
+    fun feedback(): Feedback? = if (isAttached) currentValueOf(LocalFeedback) else null
+
+    override fun onAttach() {
+        click.node = this
+    }
+}
+
+/** The look of a press: the content dims, or [highlight] fills [shape] behind it. */
+private data class PressIndication(val highlight: Color?, val shape: Shape, val dim: Float) : IndicationNodeFactory {
+    override fun create(interactionSource: InteractionSource): DelegatableNode = PressIndicationNode(interactionSource, highlight, shape, dim)
+}
+
+private class PressIndicationNode(
+    private val source: InteractionSource,
+    private val highlight: Color?,
+    private val shape: Shape,
+    private val dim: Float,
+) : Modifier.Node(), DrawModifierNode {
+    /** 0 at rest, 1 while pressed; read only while drawing, so a press redraws and recomposes nothing. */
+    private val pressed = Animatable(0f)
+    private val layer = Paint()
+
+    override fun onAttach() {
+        coroutineScope.launch {
+            val presses = mutableListOf<PressInteraction.Press>()
+            source.interactions.collect { interaction ->
+                when (interaction) {
+                    is PressInteraction.Press -> presses += interaction
+                    is PressInteraction.Release -> presses -= interaction.press
+                    is PressInteraction.Cancel -> presses -= interaction.press
+                }
+                val target = if (presses.isEmpty()) 0f else 1f
+                if (pressed.targetValue != target) launch { pressed.animateTo(target, spring()) }
+            }
         }
+    }
+
+    override fun ContentDrawScope.draw() {
+        val p = pressed.value
+        when {
+            p == 0f -> drawContent()
+            highlight != null -> {
+                drawOutline(shape.createOutline(size, layoutDirection, this), lerp(Color.Transparent, highlight, p))
+                drawContent()
+            }
+            else -> {
+                layer.alpha = 1f - (1f - dim) * p
+                drawContext.canvas.saveLayer(size.toRect(), layer)
+                drawContent()
+                drawContext.canvas.restore()
+            }
+        }
+    }
 }
 
 /** Floating chrome surface (dialogs, toasts). */

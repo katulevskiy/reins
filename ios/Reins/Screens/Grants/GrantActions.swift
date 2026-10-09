@@ -23,12 +23,13 @@ extension AppModel {
         }
     }
 
-    /// Removes an ended grant for good.
+    /// Removes an ended grant for good. The list shows it as soon as the core has it; the full re-read follows.
     func deleteGrant(_ grantId: String) async -> String? {
         do {
             feedback.play(.revoked)
             try await core.deleteGrant(grantId: grantId)
-            await refreshPending()
+            grantChanged(grantId, deleted: true)
+            refreshPendingSoon()
             return nil
         } catch {
             feedback.play(.error)
@@ -36,12 +37,14 @@ extension AppModel {
         }
     }
 
-    /// Ends a running grant now; it can be resumed later from the Expired list.
+    /// Ends a running grant now; it can be resumed later from the Expired list. The list shows it as soon as the core
+    /// has it; the full re-read follows.
     func revokeGrant(_ grantId: String) async -> String? {
         do {
             feedback.play(.revoked)
             try await core.revokeGrant(grantId: grantId)
-            await refreshPending()
+            grantChanged(grantId, deleted: false)
+            refreshPendingSoon()
             return nil
         } catch {
             feedback.play(.error)

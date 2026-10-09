@@ -19,6 +19,7 @@ use crate::types::{
     GmailStatus, GrantView, JoinProgress, JoinStart, JoinView, PairingView, PendingItem, ServiceView, SessionInfo,
     SsoOutcome, SsoStart, StandingGrant,
 };
+use crate::vault_passkey::{VaultPasskeyOptions, VaultPasskeyView};
 use crate::{CoreError, GoogleTokenProvider, KeyWrapper, Notifier, rt};
 
 #[derive(uniffi::Object)]
@@ -192,6 +193,83 @@ impl ReinsCore {
         .await
     }
 
+    /// What the app hands the platform's passkey UI to make a vault passkey or use one (see `vault_passkey`).
+    pub async fn vault_passkey_options(&self) -> Result<VaultPasskeyOptions, CoreError> {
+        let runtime = Arc::clone(&self.runtime);
+        let generation = runtime.generation();
+        rt::run(async move {
+            let engine = runtime.prepare(generation).await?;
+            let options = engine.run_account(engine.vault_passkey_options()).await?;
+            runtime.check_engine(&engine)?;
+            Ok(options)
+        })
+        .await
+    }
+
+    /// The passkeys that open the account's vault.
+    pub async fn vault_passkeys(&self) -> Result<Vec<VaultPasskeyView>, CoreError> {
+        let runtime = Arc::clone(&self.runtime);
+        let generation = runtime.generation();
+        rt::run(async move {
+            let engine = runtime.prepare(generation).await?;
+            let list = engine.run_account(engine.vault_passkeys()).await?;
+            runtime.check_engine(&engine)?;
+            Ok(list)
+        })
+        .await
+    }
+
+    /// The passkey just made (its credential id and PRF output) opens the vault from now on. Only on a phone whose
+    /// vault is open.
+    pub async fn add_vault_passkey(
+        &self,
+        credential_id: Vec<u8>,
+        prf_output: Vec<u8>,
+        name: String,
+    ) -> Result<Vec<VaultPasskeyView>, CoreError> {
+        let runtime = Arc::clone(&self.runtime);
+        let prf = Zeroizing::new(prf_output);
+        let generation = runtime.generation();
+        rt::run(async move {
+            let engine = runtime.prepare(generation).await?;
+            let list = engine.run_account(engine.add_vault_passkey(&credential_id, &prf, &name)).await?;
+            runtime.check_engine(&engine)?;
+            Ok(list)
+        })
+        .await
+    }
+
+    pub async fn remove_vault_passkey(&self, credential_id: Vec<u8>) -> Result<Vec<VaultPasskeyView>, CoreError> {
+        let runtime = Arc::clone(&self.runtime);
+        let generation = runtime.generation();
+        rt::run(async move {
+            let engine = runtime.prepare(generation).await?;
+            let list = engine.run_account(engine.remove_vault_passkey(&credential_id)).await?;
+            runtime.check_engine(&engine)?;
+            Ok(list)
+        })
+        .await
+    }
+
+    /// Opens a `Locked` account with a passkey it added for its vault (the credential id and PRF output the
+    /// platform's passkey UI returned), as the recovery code does.
+    pub async fn unlock_with_vault_passkey(
+        &self,
+        credential_id: Vec<u8>,
+        prf_output: Vec<u8>,
+    ) -> Result<(), CoreError> {
+        let runtime = Arc::clone(&self.runtime);
+        let prf = Zeroizing::new(prf_output);
+        let generation = runtime.generation();
+        rt::run(async move {
+            let engine = runtime.prepare(generation).await?;
+            engine.run_account(engine.unlock_with_vault_passkey(&credential_id, &prf)).await?;
+            runtime.check_engine(&engine)?;
+            runtime.activate_unlocked().await
+        })
+        .await
+    }
+
     /// The account's recovery code (`ABCD-EFGH-...`, 13 groups), when this phone keeps its secret. Ask for biometrics
     /// before showing it.
     pub async fn account_recovery_code(&self) -> Result<String, CoreError> {
@@ -253,7 +331,7 @@ impl ReinsCore {
             let engine = runtime.prepare(generation).await?;
             engine.ensure_active()?;
             let result = engine.run_account(async { engine.join_view(&id) }).await;
-            runtime.finish(&engine, result).await
+            runtime.finish(&engine, result)
         })
         .await
     }
@@ -267,7 +345,7 @@ impl ReinsCore {
             let engine = runtime.prepare(generation).await?;
             engine.ensure_active()?;
             let result = engine.run_account(async { engine.answer_join(&id, approve).await }).await;
-            runtime.finish(&engine, result).await
+            runtime.finish(&engine, result)
         })
         .await
     }
@@ -315,7 +393,7 @@ impl ReinsCore {
             let engine = runtime.prepare(generation).await?;
             engine.ensure_active()?;
             let result = engine.run_account(async { engine.register_device(fcm_token).await }).await;
-            runtime.finish(&engine, result).await
+            runtime.finish(&engine, result)
         })
         .await
     }
@@ -328,7 +406,7 @@ impl ReinsCore {
             let engine = runtime.prepare(generation).await?;
             engine.ensure_active()?;
             let result = engine.run_account(async { engine.handle_push(&kind, &id).await }).await;
-            runtime.finish(&engine, result).await
+            runtime.finish_synced(&engine, result).await
         })
         .await
     }
@@ -342,7 +420,7 @@ impl ReinsCore {
             let engine = runtime.prepare(generation).await?;
             engine.ensure_active()?;
             let result = engine.run_account(async { engine.handle_push_deferring_autopilot(&kind, &id).await }).await;
-            runtime.finish(&engine, result).await
+            runtime.finish_synced(&engine, result).await
         })
         .await
     }
@@ -355,7 +433,7 @@ impl ReinsCore {
             let engine = runtime.prepare(generation).await?;
             engine.ensure_active()?;
             let result = engine.run_account(async { engine.sync(wait_secs).await }).await;
-            runtime.finish(&engine, result).await
+            runtime.finish(&engine, result)
         })
         .await
     }
@@ -368,7 +446,7 @@ impl ReinsCore {
             let engine = runtime.prepare(generation).await?;
             engine.ensure_active()?;
             let result = engine.run_account(async { engine.pending() }).await;
-            runtime.finish(&engine, result).await
+            runtime.finish(&engine, result)
         })
         .await
     }
@@ -380,7 +458,7 @@ impl ReinsCore {
             let engine = runtime.prepare(generation).await?;
             engine.ensure_active()?;
             let result = engine.run_account(async { engine.approval_view(&request_id) }).await;
-            runtime.finish(&engine, result).await
+            runtime.finish(&engine, result)
         })
         .await
     }
@@ -392,7 +470,7 @@ impl ReinsCore {
             let engine = runtime.prepare(generation).await?;
             engine.ensure_active()?;
             let result = engine.run_account(async { engine.approve(&request_id, choice).await }).await;
-            runtime.finish(&engine, result).await
+            runtime.finish(&engine, result)
         })
         .await
     }
@@ -404,7 +482,7 @@ impl ReinsCore {
             let engine = runtime.prepare(generation).await?;
             engine.ensure_active()?;
             let result = engine.run_account(async { engine.deny(&request_id).await }).await;
-            runtime.finish(&engine, result).await
+            runtime.finish(&engine, result)
         })
         .await
     }
@@ -416,7 +494,7 @@ impl ReinsCore {
             let engine = runtime.prepare(generation).await?;
             engine.ensure_active()?;
             let result = engine.run_account(async { engine.pairing_view(&pairing_id) }).await;
-            runtime.finish(&engine, result).await
+            runtime.finish(&engine, result)
         })
         .await
     }
@@ -431,7 +509,7 @@ impl ReinsCore {
             let engine = runtime.prepare(generation).await?;
             engine.ensure_active()?;
             let result = engine.run_account(async { engine.pairing_by_code(&user_code).await }).await;
-            runtime.finish(&engine, result).await
+            runtime.finish(&engine, result)
         })
         .await
     }
@@ -451,7 +529,7 @@ impl ReinsCore {
             let result = engine
                 .run_account(async { engine.answer_pairing(&pairing_id, approve, chosen_code, label).await })
                 .await;
-            runtime.finish(&engine, result).await
+            runtime.finish(&engine, result)
         })
         .await
     }
@@ -463,7 +541,7 @@ impl ReinsCore {
             let engine = runtime.prepare(generation).await?;
             engine.ensure_active()?;
             let result = engine.run_account(async { engine.grants() }).await;
-            runtime.finish(&engine, result).await
+            runtime.finish(&engine, result)
         })
         .await
     }
@@ -475,7 +553,7 @@ impl ReinsCore {
             let engine = runtime.prepare(generation).await?;
             engine.ensure_active()?;
             let result = engine.run_account(async { engine.revoke_grant(&grant_id) }).await;
-            runtime.finish(&engine, result).await
+            runtime.finish(&engine, result)
         })
         .await
     }
@@ -487,7 +565,7 @@ impl ReinsCore {
             let engine = runtime.prepare(generation).await?;
             engine.ensure_active()?;
             let result = engine.run_account(async { engine.connections().await }).await;
-            runtime.finish(&engine, result).await
+            runtime.finish(&engine, result)
         })
         .await
     }
@@ -499,7 +577,7 @@ impl ReinsCore {
             let engine = runtime.prepare(generation).await?;
             engine.ensure_active()?;
             let result = engine.run_account(async { engine.revoke_connection(&connection_id).await }).await;
-            runtime.finish(&engine, result).await
+            runtime.finish(&engine, result)
         })
         .await
     }
@@ -512,7 +590,7 @@ impl ReinsCore {
             let engine = runtime.prepare(generation).await?;
             engine.ensure_active()?;
             let result = engine.run_account(async { engine.set_connection_icon(&connection_id, icon) }).await;
-            runtime.finish(&engine, result).await
+            runtime.finish(&engine, result)
         })
         .await
     }
@@ -532,7 +610,7 @@ impl ReinsCore {
             engine.ensure_active()?;
             let result =
                 engine.run_account(async { engine.create_grant(&connection_id, &account, kind, standing).await }).await;
-            runtime.finish(&engine, result).await
+            runtime.finish(&engine, result)
         })
         .await
     }
@@ -545,7 +623,7 @@ impl ReinsCore {
             let engine = runtime.prepare(generation).await?;
             engine.ensure_active()?;
             let result = engine.run_account(async { engine.resume_grant(&grant_id, duration_secs) }).await;
-            runtime.finish(&engine, result).await
+            runtime.finish(&engine, result)
         })
         .await
     }
@@ -558,7 +636,7 @@ impl ReinsCore {
             let engine = runtime.prepare(generation).await?;
             engine.ensure_active()?;
             let result = engine.run_account(async { engine.resume_grant_edited(&grant_id, &standing) }).await;
-            runtime.finish(&engine, result).await
+            runtime.finish(&engine, result)
         })
         .await
     }
@@ -571,7 +649,7 @@ impl ReinsCore {
             let engine = runtime.prepare(generation).await?;
             engine.ensure_active()?;
             let result = engine.run_account(async { engine.fetch_email(account.as_deref(), &message_id).await }).await;
-            runtime.finish(&engine, result).await
+            runtime.finish(&engine, result)
         })
         .await
     }
@@ -584,7 +662,7 @@ impl ReinsCore {
             let engine = runtime.prepare(generation).await?;
             engine.ensure_active()?;
             let result = engine.run_account(async { engine.delete_grant(&grant_id) }).await;
-            runtime.finish(&engine, result).await
+            runtime.finish(&engine, result)
         })
         .await
     }
@@ -597,7 +675,7 @@ impl ReinsCore {
             let engine = runtime.prepare(generation).await?;
             engine.ensure_active()?;
             let result = engine.run_account(async { engine.accounts() }).await;
-            runtime.finish(&engine, result).await
+            runtime.finish(&engine, result)
         })
         .await
     }
@@ -610,7 +688,7 @@ impl ReinsCore {
             let engine = runtime.prepare(generation).await?;
             engine.ensure_active()?;
             let result = engine.run_account(async { engine.add_account(&hint).await }).await;
-            runtime.finish(&engine, result).await
+            runtime.finish(&engine, result)
         })
         .await
     }
@@ -623,7 +701,7 @@ impl ReinsCore {
             let engine = runtime.prepare(generation).await?;
             engine.ensure_active()?;
             let result = engine.run_account(async { engine.remove_account(&account).await }).await;
-            runtime.finish(&engine, result).await
+            runtime.finish(&engine, result)
         })
         .await
     }
@@ -643,7 +721,7 @@ impl ReinsCore {
             let engine = runtime.prepare(generation).await?;
             engine.ensure_active()?;
             let result = engine.run_account(async { engine.services() }).await;
-            runtime.finish(&engine, result).await
+            runtime.finish(&engine, result)
         })
         .await
     }
@@ -657,7 +735,7 @@ impl ReinsCore {
             let engine = runtime.prepare(generation).await?;
             engine.ensure_active()?;
             let result = engine.run_account(async { engine.add_service_account(&service, &hint).await }).await;
-            runtime.finish(&engine, result).await
+            runtime.finish(&engine, result)
         })
         .await
     }
@@ -671,7 +749,7 @@ impl ReinsCore {
             let engine = runtime.prepare(generation).await?;
             engine.ensure_active()?;
             let result = engine.run_account(async { engine.add_token_account(&service, &token).await }).await;
-            runtime.finish(&engine, result).await
+            runtime.finish(&engine, result)
         })
         .await
     }
@@ -684,7 +762,7 @@ impl ReinsCore {
             let engine = runtime.prepare(generation).await?;
             engine.ensure_active()?;
             let result = engine.run_account(async { engine.login_begin(&service, &phone).await }).await;
-            runtime.finish(&engine, result).await
+            runtime.finish(&engine, result)
         })
         .await
     }
@@ -697,7 +775,7 @@ impl ReinsCore {
             let engine = runtime.prepare(generation).await?;
             engine.ensure_active()?;
             let result = engine.run_account(async { engine.login_code(&service, &code).await }).await;
-            runtime.finish(&engine, result).await
+            runtime.finish(&engine, result)
         })
         .await
     }
@@ -711,7 +789,7 @@ impl ReinsCore {
             let engine = runtime.prepare(generation).await?;
             engine.ensure_active()?;
             let result = engine.run_account(async { engine.login_password(&service, &password).await }).await;
-            runtime.finish(&engine, result).await
+            runtime.finish(&engine, result)
         })
         .await
     }
@@ -724,7 +802,7 @@ impl ReinsCore {
             let engine = runtime.prepare(generation).await?;
             engine.ensure_active()?;
             let result = engine.run_account(async { engine.remove_service_account(&service, &account).await }).await;
-            runtime.finish(&engine, result).await
+            runtime.finish(&engine, result)
         })
         .await
     }
@@ -743,7 +821,7 @@ impl ReinsCore {
             let engine = runtime.prepare(generation).await?;
             engine.ensure_active()?;
             let result = engine.run_account(async { engine.activity(limit) }).await;
-            runtime.finish(&engine, result).await
+            runtime.finish(&engine, result)
         })
         .await
     }
@@ -763,7 +841,7 @@ impl ReinsCore {
             let engine = runtime.prepare(generation).await?;
             engine.ensure_active()?;
             let result = engine.run_account(async { engine.blob_view(&id) }).await;
-            runtime.finish(&engine, result).await
+            runtime.finish(&engine, result)
         })
         .await
     }
@@ -776,7 +854,7 @@ impl ReinsCore {
             let engine = runtime.prepare(generation).await?;
             engine.ensure_active()?;
             let result = engine.run_account(async { engine.answer_blob(&id, approve).await }).await;
-            runtime.finish(&engine, result).await
+            runtime.finish(&engine, result)
         })
         .await
     }
@@ -797,7 +875,7 @@ impl ReinsCore {
             let engine = runtime.prepare(generation).await?;
             engine.ensure_active()?;
             let result = engine.run_account(async { engine.autopilot_settings() }).await;
-            runtime.finish(&engine, result).await
+            runtime.finish(&engine, result)
         })
         .await
     }
@@ -818,7 +896,7 @@ impl ReinsCore {
             engine.ensure_active()?;
             let result =
                 engine.run_account(async { engine.set_autopilot_mode(connection_id, mode, minutes).await }).await;
-            runtime.finish(&engine, result).await
+            runtime.finish(&engine, result)
         })
         .await
     }
@@ -831,7 +909,7 @@ impl ReinsCore {
             let engine = runtime.prepare(generation).await?;
             engine.ensure_active()?;
             let result = engine.run_account(async { engine.set_autopilot_wifi_only(wifi_only) }).await;
-            runtime.finish(&engine, result).await
+            runtime.finish(&engine, result)
         })
         .await
     }
@@ -844,7 +922,7 @@ impl ReinsCore {
             let engine = runtime.prepare(generation).await?;
             engine.ensure_active()?;
             let result = engine.run_account(async { engine.autopilot_profiles() }).await;
-            runtime.finish(&engine, result).await
+            runtime.finish(&engine, result)
         })
         .await
     }
@@ -856,7 +934,7 @@ impl ReinsCore {
             let engine = runtime.prepare(generation).await?;
             engine.ensure_active()?;
             let result = engine.run_account(async { engine.create_profile(&name, icon) }).await;
-            runtime.finish(&engine, result).await
+            runtime.finish(&engine, result)
         })
         .await
     }
@@ -873,7 +951,7 @@ impl ReinsCore {
             let engine = runtime.prepare(generation).await?;
             engine.ensure_active()?;
             let result = engine.run_account(async { engine.rename_profile(&profile_id, &name, icon) }).await;
-            runtime.finish(&engine, result).await
+            runtime.finish(&engine, result)
         })
         .await
     }
@@ -886,7 +964,7 @@ impl ReinsCore {
             let engine = runtime.prepare(generation).await?;
             engine.ensure_active()?;
             let result = engine.run_account(async { engine.delete_profile(&profile_id) }).await;
-            runtime.finish(&engine, result).await
+            runtime.finish(&engine, result)
         })
         .await
     }
@@ -899,7 +977,7 @@ impl ReinsCore {
             let engine = runtime.prepare(generation).await?;
             engine.ensure_active()?;
             let result = engine.run_account(async { engine.reset_profile(&profile_id) }).await;
-            runtime.finish(&engine, result).await
+            runtime.finish(&engine, result)
         })
         .await
     }
@@ -912,7 +990,7 @@ impl ReinsCore {
             let engine = runtime.prepare(generation).await?;
             engine.ensure_active()?;
             let result = engine.run_account(async { engine.set_default_profile(&profile_id) }).await;
-            runtime.finish(&engine, result).await
+            runtime.finish(&engine, result)
         })
         .await
     }
@@ -925,7 +1003,7 @@ impl ReinsCore {
             let engine = runtime.prepare(generation).await?;
             engine.ensure_active()?;
             let result = engine.run_account(async { engine.assign_profile(&connection_id, profile_id) }).await;
-            runtime.finish(&engine, result).await
+            runtime.finish(&engine, result)
         })
         .await
     }
@@ -944,7 +1022,7 @@ impl ReinsCore {
             let engine = runtime.prepare(generation).await?;
             engine.ensure_active()?;
             let result = engine.run_account(async { engine.set_class_lock(&profile_id, &class_key, locked) }).await;
-            runtime.finish(&engine, result).await
+            runtime.finish(&engine, result)
         })
         .await
     }
@@ -956,7 +1034,7 @@ impl ReinsCore {
             let engine = runtime.prepare(generation).await?;
             engine.ensure_active()?;
             let result = engine.run_account(async { engine.set_preset(&profile_id, preset) }).await;
-            runtime.finish(&engine, result).await
+            runtime.finish(&engine, result)
         })
         .await
     }
@@ -969,7 +1047,7 @@ impl ReinsCore {
             let engine = runtime.prepare(generation).await?;
             engine.ensure_active()?;
             let result = engine.run_account(async { engine.autopilot_suggestion(&request_id) }).await;
-            runtime.finish(&engine, result).await
+            runtime.finish(&engine, result)
         })
         .await
     }
@@ -982,7 +1060,7 @@ impl ReinsCore {
             let engine = runtime.prepare(generation).await?;
             engine.ensure_active()?;
             let result = engine.run_account(async { engine.correct_decision(activity_id, should_have).await }).await;
-            runtime.finish(&engine, result).await
+            runtime.finish(&engine, result)
         })
         .await
     }
@@ -1001,7 +1079,7 @@ impl ReinsCore {
             let engine = runtime.prepare(generation).await?;
             engine.ensure_active()?;
             let result = engine.run_account(async { engine.download_model(progress).await }).await;
-            runtime.finish(&engine, result).await
+            runtime.finish(&engine, result)
         })
         .await
     }
@@ -1013,7 +1091,7 @@ impl ReinsCore {
             let engine = runtime.prepare(generation).await?;
             engine.ensure_active()?;
             let result = engine.run_account(async { engine.delete_model() }).await;
-            runtime.finish(&engine, result).await
+            runtime.finish(&engine, result)
         })
         .await
     }
@@ -1030,7 +1108,7 @@ impl ReinsCore {
             let engine = runtime.prepare(generation).await?;
             engine.ensure_active()?;
             let result = engine.run_account(async { engine.autopilot_evaluate(profile_id, situation).await }).await;
-            runtime.finish(&engine, result).await
+            runtime.finish(&engine, result)
         })
         .await
     }

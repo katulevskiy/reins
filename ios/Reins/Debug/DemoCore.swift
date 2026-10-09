@@ -30,7 +30,9 @@ enum DemoCore {
             modelInstalled: !args.contains("-demoNoModel"),
             keysLocked: args.contains("-demoLocked"),
             joinWaiting: args.contains("-demoJoin"),
-            approvalElsewhere: otherPhone
+            approvalElsewhere: otherPhone,
+            passkeys: !args.contains("-demoNoPasskeys"),
+            passkeysOffline: args.contains("-demoPasskeysOffline")
         )
     }
 }
@@ -82,7 +84,16 @@ final class DemoReinsCore: ReinsCoreProtocol, @unchecked Sendable {
         var hasAccountSecret = true
         /// What opens the account's keys; a reset makes a new one (`resetRecoveryCode`).
         var recoveryCode = DemoData.recoveryCode
+        /// The passkeys that open the vault (one, "iPhone 16", unless `-demoNoPasskeys`).
+        var passkeys: [VaultPasskeyView] = []
+        /// `vaultPasskeys` fails as if offline (`-demoPasskeysOffline`).
+        var passkeysOffline = false
     }
+
+    /// The passkey the demo account starts with.
+    static let demoPasskey = VaultPasskeyView(credentialId: Data("demo-passkey-1".utf8), name: "iPhone 16", createdAt: 1_760_000_000)
+    /// What every passkey's PRF answers with in the demo: 32 bytes, like the real output.
+    static let demoPrfOutput = Data(repeating: 7, count: 32)
 
     /// The recovery code a reset vault gets.
     static let resetRecoveryCode = "HV3N-Q8RT-ZL2K-M7WD-PX4C-BJ9F-E6YS-NA5G-UT3R-KC8M-WQ2H-FD7L-YP4X"
@@ -94,7 +105,7 @@ final class DemoReinsCore: ReinsCoreProtocol, @unchecked Sendable {
 
     init(
         signedIn: Bool = true, arriveAfter: Int64? = nil, modelInstalled: Bool = true, syncCap: Double = 5, keysLocked: Bool = false,
-        joinWaiting: Bool = false, approvalElsewhere: Bool = false
+        joinWaiting: Bool = false, approvalElsewhere: Bool = false, passkeys: Bool = true, passkeysOffline: Bool = false
     ) {
         let now = Self.now()
         let seeded = DemoData.pending(now)
@@ -117,6 +128,8 @@ final class DemoReinsCore: ReinsCoreProtocol, @unchecked Sendable {
         s.arriveAt = arriveAfter.map { now + $0 }
         s.keys = keysLocked ? .locked : .created
         s.approvalElsewhere = approvalElsewhere
+        s.passkeys = passkeys ? [Self.demoPasskey] : []
+        s.passkeysOffline = passkeysOffline
         if joinWaiting {
             let join = DemoData.join(now)
             s.joins[join.id] = join
@@ -262,6 +275,63 @@ final class DemoReinsCore: ReinsCoreProtocol, @unchecked Sendable {
             guard s.hasAccountSecret else { throw CoreError.Invalid(reason: "This account has no recovery code: it was made with a master password.") }
             guard s.keys != .locked else { throw CoreError.Invalid(reason: "This phone cannot open the account yet.") }
             return s.recoveryCode
+        }
+    }
+
+    // ---- vault passkeys --------------------------------------------------------------------------------------------
+
+    func vaultPasskeyOptions() async throws -> VaultPasskeyOptions {
+        try await latency(0.2)
+        return try locked { s in
+            guard let session = s.session else { throw CoreError.NotLoggedIn }
+            return VaultPasskeyOptions(
+                rpId: "app.reins2fa.com", userHandle: Data("demo-user".utf8), userName: session.email,
+                challenge: Data((0..<32).map { _ in UInt8.random(in: 0...255) }), prfSalt: Data(repeating: 1, count: 32),
+                credentialIds: s.passkeys.map(\.credentialId)
+            )
+        }
+    }
+
+    func vaultPasskeys() async throws -> [VaultPasskeyView] {
+        try await latency(0.2)
+        return try locked { s in
+            guard s.session != nil else { throw CoreError.NotLoggedIn }
+            if s.passkeysOffline { throw CoreError.Network(reason: "offline") }
+            return s.passkeys
+        }
+    }
+
+    /// Like the core: only where the vault is open, and only with a 32-byte PRF output.
+    func addVaultPasskey(credentialId: Data, prfOutput: Data, name: String) async throws -> [VaultPasskeyView] {
+        try await latency(0.4)
+        return try locked { s in
+            guard s.session != nil else { throw CoreError.NotLoggedIn }
+            guard s.keys != .locked else { throw CoreError.Invalid(reason: "This phone cannot open the account yet.") }
+            guard prfOutput.count == 32 else { throw CoreError.Invalid(reason: "The passkey did not answer as expected.") }
+            s.passkeys.removeAll { $0.credentialId == credentialId }
+            s.passkeys.append(VaultPasskeyView(credentialId: credentialId, name: name, createdAt: Self.now()))
+            return s.passkeys
+        }
+    }
+
+    func removeVaultPasskey(credentialId: Data) async throws -> [VaultPasskeyView] {
+        try await latency(0.3)
+        return try locked { s in
+            guard s.passkeys.contains(where: { $0.credentialId == credentialId }) else { throw CoreError.NotFound }
+            s.passkeys.removeAll { $0.credentialId == credentialId }
+            return s.passkeys
+        }
+    }
+
+    /// Opens a locked account like `unlockAccount`: any of the account's passkeys with the demo's PRF output.
+    func unlockWithVaultPasskey(credentialId: Data, prfOutput: Data) async throws {
+        try await latency(0.5)
+        try locked { s in
+            guard s.passkeys.contains(where: { $0.credentialId == credentialId }), prfOutput == Self.demoPrfOutput else {
+                throw CoreError.Invalid(reason: "That passkey does not open this account.")
+            }
+            s.keys = .unlocked
+            s.approvalElsewhere = false
         }
     }
 

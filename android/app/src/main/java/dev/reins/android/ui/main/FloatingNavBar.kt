@@ -29,7 +29,17 @@ import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
+import dev.reins.android.autopilot.AutopilotText
 import dev.reins.android.design.CountPill
+import dev.reins.android.design.GlyphIcon
+import dev.reins.android.design.rememberNowState
+import dev.reins.android.ui.autopilot.PulseDot
+import dev.reins.android.ui.autopilot.modeGlyph
+import dev.reins.android.ui.autopilot.modeTint
+import dev.reins.core.AutopilotMode
+import dev.reins.core.AutopilotSettings
 import dev.reins.android.design.LocalColors
 import dev.reins.android.design.RText
 import dev.reins.android.design.RType
@@ -37,14 +47,18 @@ import dev.reins.android.design.glass
 import dev.reins.android.design.pressable
 import dev.reins.android.ui.nav.Tab
 
-/** The bottom bar: a floating capsule with the two tabs, and a separate round button for settings. */
+/**
+ * The bottom bar: a floating capsule with the two tabs, and beside it a round button in the colour of the Autopilot
+ * mode, with that mode's icon (a live countdown while a bypass runs). It opens Autopilot.
+ */
 @Composable
 fun FloatingNavBar(
     selected: Tab,
     activityCount: Int,
     grantCount: Int,
+    autopilot: AutopilotSettings?,
     onSelect: (Tab) -> Unit,
-    onSettings: () -> Unit,
+    onAutopilot: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
     val c = LocalColors.current
@@ -64,15 +78,70 @@ fun FloatingNavBar(
                 onSelect(Tab.Grants)
             }
         }
-        Box(
-            Modifier
-                .size(60.dp)
-                .glass(c, CircleShape, 8.dp)
-                .pressable(shape = CircleShape, label = "Settings", onClick = onSettings)
-                .testTag("openSettings"),
-            contentAlignment = Alignment.Center,
-        ) { Icon(Icons.Rounded.Settings, "Settings", Modifier.size(26.dp), tint = c.text) }
+        ModeButton(autopilot, onAutopilot)
     }
+}
+
+/** The Autopilot mode at a glance: its icon on a wash of its colour; solid red with the time left during a bypass. */
+@Composable
+private fun ModeButton(settings: AutopilotSettings?, onClick: () -> Unit) {
+    val c = LocalColors.current
+    val mode = settings?.mode ?: AutopilotMode.MANUAL
+    val tint = modeTint(mode, c)
+    val bypass = mode == AutopilotMode.BYPASS
+    val wash by animateColorAsState(
+        when {
+            bypass -> c.danger
+            mode == AutopilotMode.MANUAL -> Color.Transparent
+            else -> tint.copy(alpha = 0.16f)
+        },
+        label = "modeWash",
+    )
+    val fg by animateColorAsState(if (bypass) Color.White else if (mode == AutopilotMode.MANUAL) c.text else tint, label = "modeFg")
+    Box(
+        Modifier
+            .size(60.dp)
+            .glass(c, CircleShape, 8.dp)
+            .clip(CircleShape)
+            .background(wash)
+            .pressable(shape = CircleShape, label = "Autopilot", onClick = onClick)
+            .semantics { contentDescription = "Autopilot: ${AutopilotText.name(mode)}" }
+            .testTag("modePill"),
+        contentAlignment = Alignment.Center,
+    ) {
+        val until = settings?.bypassUntil
+        if (bypass && until != null) {
+            Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                PulseDot(Color.White, size = 6.dp)
+                Spacer(Modifier.height(3.dp))
+                BypassTime(until, fg)
+            }
+        } else {
+            GlyphIcon(modeGlyph(mode), fg, size = 26.dp, weight = 2f)
+        }
+    }
+}
+
+/** The time a bypass has left. Its clock lives here, and only while a bypass runs, so the bar around it stays still. */
+@Composable
+private fun BypassTime(until: Long, color: Color) {
+    val now = rememberNowState(1_000, untilMillis = until * 1000).value / 1000
+    RText(AutopilotText.clock(until, now), RType.mono(12.5f, FontWeight.SemiBold), color, maxLines = 1)
+}
+
+/** The round Settings button at the top right of the two tabs. */
+@Composable
+fun SettingsButton(onClick: () -> Unit) {
+    val c = LocalColors.current
+    Box(
+        Modifier
+            .size(40.dp)
+            .clip(CircleShape)
+            .background(c.controlFill.copy(alpha = if (c.dark) 0.14f else 0.08f))
+            .pressable(shape = CircleShape, label = "Settings", onClick = onClick)
+            .testTag("openSettings"),
+        contentAlignment = Alignment.Center,
+    ) { Icon(Icons.Rounded.Settings, "Settings", Modifier.size(22.dp), tint = c.text) }
 }
 
 @Composable

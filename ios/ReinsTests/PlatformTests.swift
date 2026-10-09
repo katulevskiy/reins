@@ -104,6 +104,7 @@ final class PlatformTests: XCTestCase {
         XCTAssertNotNil(c.sound)
         var quiet = FeedbackSettings()
         quiet.alertSounds = false
+        quiet.haptics = false
         XCTAssertNil(GrantReminders.content(r, now: now, settings: quiet).sound)
     }
 
@@ -149,13 +150,34 @@ final class PlatformTests: XCTestCase {
         XCTAssertNotNil(NotificationContent.pending(item(), settings: FeedbackSettings()).sound)
         var s = FeedbackSettings()
         s.requestSounds = false
+        s.haptics = false
         XCTAssertNil(NotificationContent.pending(item(), settings: s).sound)
         s = FeedbackSettings()
         s.master = false
         XCTAssertNil(NotificationContent.pending(item(), settings: s).sound, "the master switch silences notifications too")
         s = FeedbackSettings()
         s.sounds = false
+        s.haptics = false
         XCTAssertNil(NotificationContent.pending(item(), settings: s).sound)
+    }
+
+    func testWithTheSoundOffAndHapticsOnANotificationOnlyVibrates() {
+        let request = NotificationSoundFile.request
+        XCTAssertEqual(NotificationSoundFile.file(request, .requests, FeedbackSettings()), request)
+        var s = FeedbackSettings()
+        s.sounds = false
+        XCTAssertEqual(NotificationSoundFile.file(request, .requests, s), NotificationSoundFile.silent)
+        XCTAssertNotNil(NotificationContent.pending(item(), settings: s).sound)
+        s = FeedbackSettings()
+        s.requestSounds = false
+        XCTAssertEqual(NotificationSoundFile.file(request, .requests, s), NotificationSoundFile.silent)
+        s.haptics = false
+        XCTAssertNil(NotificationSoundFile.file(request, .requests, s))
+        s = FeedbackSettings()
+        s.master = false
+        XCTAssertNil(NotificationSoundFile.file(request, .requests, s), "the master switch stills them too")
+        // The silence ships with the app, where the system looks for notification sounds.
+        XCTAssertNotNil(Bundle.main.url(forResource: "reins_silent", withExtension: "caf"))
     }
 
     private func decision(_ verdict: Verdict, by: String = "autopilot", activity: Int64? = 14) -> AutoDecisionView {
@@ -183,6 +205,9 @@ final class PlatformTests: XCTestCase {
         XCTAssertEqual(c.interruptionLevel, .active)
         var s = FeedbackSettings()
         s.autopilotSounds = false
+        // Still felt under Haptics, like the Android channel's short tick.
+        XCTAssertEqual(NotificationSoundFile.file(NotificationSoundFile.denied, .autopilot, s), NotificationSoundFile.silent)
+        s.haptics = false
         XCTAssertNil(NotificationContent.decision(decision(.deny), settings: s).sound)
     }
 

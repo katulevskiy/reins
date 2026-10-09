@@ -48,3 +48,4 @@ macro_rules! default_server {
 pub const DEFAULT_SERVER: &str = default_server!();
 
 pub mod account_state;
+pub mod vault_passkey;

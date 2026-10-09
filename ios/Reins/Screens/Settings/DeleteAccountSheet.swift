@@ -65,10 +65,8 @@ struct DeleteAccountSheet: View {
                 .buttonStyle(CapsuleButtonStyle(kind: .danger))
                 .disabled(busy || !confirmed)
                 .accessibilityIdentifier("confirmDeleteAccount")
-                Button("Cancel") {
-                    feedback.play(.tap)
-                    onClose()
-                }
+                // The sheet's Close is the sound (the style plays the default tap).
+                Button("Cancel", action: onClose)
                 .buttonStyle(CapsuleButtonStyle(kind: .secondary))
                 .disabled(busy)
                 .accessibilityIdentifier("cancelDeleteAccount")

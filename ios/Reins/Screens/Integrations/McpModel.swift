@@ -89,11 +89,14 @@ final class McpModel {
         }
     }
 
+    /// The switch moves at once; only the servers are read again (the old value comes back after a refusal).
     func setHeavy(_ id: String, tool: String, heavy: Bool) async {
+        guard !busy else { return }
+        model.patchMcpTool(serverId: id, tool: tool, heavy: heavy)
         await operation {
             try await model.core.mcpSetHeavy(id: id, tool: tool, heavy: heavy)
-            await model.refreshPending()
         }
+        await model.refreshMcpServers()
     }
 
     /// Removes the server; true once it is gone.

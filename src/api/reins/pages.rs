@@ -194,12 +194,15 @@ The download page shows availability for your phone.</p>",
 }
 
 /// `/.well-known/apple-app-site-association`: pairing links under `{domain_path}/pair` open the iOS app of `team_id`
-/// (none when it is empty). `bitwarden_credentials` keeps what the web vault serves there (the Bitwarden apps'
+/// (none when it is empty), and the app may make and use passkeys for this domain (the vault's passkeys,
+/// `reins_proto::vault_passkey`). `bitwarden_credentials` keeps what the web vault serves there (the Bitwarden apps'
 /// shared web credentials).
 pub fn apple_app_site_association(team_id: &str, domain_path: &str, bitwarden_credentials: bool) -> serde_json::Value {
     let team = team_id.trim();
     let mut doc = serde_json::json!({});
+    let mut credential_apps = Vec::new();
     if !team.is_empty() {
+        credential_apps.push(format!("{team}.{APP_ID}"));
         let path = format!("{}/pair", domain_path.trim_end_matches('/'));
         doc["applinks"] = serde_json::json!({
             "details": [{
@@ -209,8 +212,11 @@ pub fn apple_app_site_association(team_id: &str, domain_path: &str, bitwarden_cr
         });
     }
     if bitwarden_credentials {
-        doc["webcredentials"] =
-            serde_json::json!({"apps": ["LTZ2PFU5D6.com.8bit.bitwarden", "LTZ2PFU5D6.com.8bit.bitwarden.beta"]});
+        credential_apps
+            .extend(["LTZ2PFU5D6.com.8bit.bitwarden".to_owned(), "LTZ2PFU5D6.com.8bit.bitwarden.beta".to_owned()]);
+    }
+    if !credential_apps.is_empty() {
+        doc["webcredentials"] = serde_json::json!({"apps": credential_apps});
     }
     doc
 }
@@ -232,14 +238,15 @@ pub fn android_cert_fingerprints(raw: &str) -> (Vec<String>, Vec<String>) {
     (good, bad)
 }
 
-/// `/.well-known/assetlinks.json`: pairing links open the Android app signed with one of `fingerprints` (an empty
-/// list when there are none: links then open the page).
+/// `/.well-known/assetlinks.json`: pairing links open the Android app signed with one of `fingerprints`, and that app
+/// may make and use passkeys for this domain (the vault's passkeys); an empty list when there are none (links then
+/// open the page).
 pub fn asset_links(fingerprints: &[String]) -> serde_json::Value {
     if fingerprints.is_empty() {
         return serde_json::json!([]);
     }
     serde_json::json!([{
-        "relation": ["delegate_permission/common.handle_all_urls"],
+        "relation": ["delegate_permission/common.handle_all_urls", "delegate_permission/common.get_login_creds"],
         "target": {"namespace": "android_app", "package_name": APP_ID, "sha256_cert_fingerprints": fingerprints}
     }])
 }
@@ -380,11 +387,20 @@ S.browser_fallback_url=https%3A%2F%2Fapp.reins2fa.com%2Fget;end\""
         let aasa = apple_app_site_association("DEF123GHIJ", "", false);
         assert_eq!(aasa["applinks"]["details"][0]["appIDs"], serde_json::json!(["DEF123GHIJ.com.reins2fa.app"]));
         assert_eq!(aasa["applinks"]["details"][0]["components"][0]["/"], "/pair");
-        assert!(aasa.get("webcredentials").is_none());
+        assert_eq!(aasa["webcredentials"]["apps"], serde_json::json!(["DEF123GHIJ.com.reins2fa.app"]), "passkeys");
         let under = apple_app_site_association(" T ", "/vw/", true);
         assert_eq!(under["applinks"]["details"][0]["components"][0]["/"], "/vw/pair");
-        assert!(under["webcredentials"]["apps"][0].as_str().unwrap().ends_with("com.8bit.bitwarden"));
-        assert!(apple_app_site_association("", "", false).get("applinks").is_none(), "no team id, no app links");
+        assert_eq!(
+            under["webcredentials"]["apps"],
+            serde_json::json!([
+                "T.com.reins2fa.app",
+                "LTZ2PFU5D6.com.8bit.bitwarden",
+                "LTZ2PFU5D6.com.8bit.bitwarden.beta"
+            ])
+        );
+        let none = apple_app_site_association("", "", false);
+        assert!(none.get("applinks").is_none(), "no team id, no app links");
+        assert!(none.get("webcredentials").is_none(), "nor passkeys");
 
         let hex = "146de983c5730650d8eeb9952f34fc6416a08342e61dbea88a0496b23fcf44e5";
         let colons = "14:6D:E9:83:C5:73:06:50:D8:EE:B9:95:2F:34:FC:64:16:A0:83:42:E6:1D:BE:A8:8A:04:96:B2:3F:CF:44:E5";
@@ -394,7 +410,13 @@ S.browser_fallback_url=https%3A%2F%2Fapp.reins2fa.com%2Fget;end\""
         let links = asset_links(&good[..1]);
         assert_eq!(links[0]["target"]["package_name"], "com.reins2fa.app");
         assert_eq!(links[0]["target"]["sha256_cert_fingerprints"], serde_json::json!([colons]));
-        assert_eq!(links[0]["relation"], serde_json::json!(["delegate_permission/common.handle_all_urls"]));
+        assert_eq!(
+            links[0]["relation"],
+            serde_json::json!([
+                "delegate_permission/common.handle_all_urls",
+                "delegate_permission/common.get_login_creds"
+            ])
+        );
         assert_eq!(asset_links(&[]), serde_json::json!([]));
     }
 

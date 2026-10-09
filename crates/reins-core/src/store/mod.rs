@@ -261,6 +261,9 @@ pub struct Store {
     control_owner: Mutex<Option<Owner>>,
     pub(crate) owner: Option<Owner>,
     dek_was_reset: bool,
+    /// Bumped whenever the data changes (a write, or a newer copy loaded from disk), so account sync can skip
+    /// exporting and hashing everything after calls that only read.
+    writes: std::sync::atomic::AtomicU64,
 }
 
 impl fmt::Debug for Store {
@@ -334,12 +337,8 @@ impl Store {
             conn: Mutex::new(Some(conn)),
             dek: Mutex::new(Some(dek)),
             dek_was_reset,
-            persistence: Some(protected::Persistence {
-                path: protected_path,
-                aad: "reins.device-store.v1".to_owned(),
-                stamp: Mutex::new(None),
-                failure: Mutex::new(None),
-            }),
+            writes: std::sync::atomic::AtomicU64::new(0),
+            persistence: Some(protected::Persistence::new(protected_path, "reins.device-store.v1".to_owned())),
             control: None,
             control_owner: Mutex::new(None),
             owner: None,

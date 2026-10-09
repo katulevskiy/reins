@@ -37,28 +37,40 @@ struct AutopilotScreen: View {
         }
         .sheet(isPresented: $bypassAsk) {
             BypassSheet(who: nil) { minutes in
+                feedback.quietClose()
                 Task { await ap.setMode(.bypass, minutes: minutes) }
             }
         }
+        .presentationFeedback(bypassAsk)
         .sheet(isPresented: $newProfile) {
             ProfileEditorSheet(title: "New profile", initialName: "", initialIcon: AutopilotText.icons[2], confirmLabel: "Create") { name, icon in
+                feedback.quietClose()
                 Task {
                     if let id = await ap.createProfile(name: name, icon: icon) { model.openFromAutopilot(.autopilotProfile(id)) }
                 }
             }
         }
+        .presentationFeedback(newProfile)
         .alert("Lock down?", isPresented: $lockdownAsk) {
             Button("Cancel", role: .cancel) {}
-            Button("Lock down", role: .destructive) { Task { await ap.setMode(.lockdown) } }
+            Button("Lock down", role: .destructive) {
+                feedback.quietClose()
+                Task { await ap.setMode(.lockdown) }
+            }
         } message: {
             Text("Every request is denied at once, the ones waiting now included. New connections still reach you. Switch back any time.")
         }
+        .presentationFeedback(lockdownAsk)
         .alert("Delete the model?", isPresented: $deleteAsk) {
             Button("Cancel", role: .cancel) {}
-            Button("Delete", role: .destructive) { Task { await ap.deleteModel() } }
+            Button("Delete", role: .destructive) {
+                feedback.quietClose()
+                Task { await ap.deleteModel() }
+            }
         } message: {
             Text("Assisted and Auto stop until you download it again; requests wait for you. What your profiles learned stays.")
         }
+        .presentationFeedback(deleteAsk)
         .confirmationDialog("You are on mobile data", isPresented: $mobileDataAsk, titleVisibility: .visible) {
             Button("Download on mobile data") { ap.downloadNow() }
             Button("Wait for Wi-Fi") { ap.download() }
@@ -66,6 +78,7 @@ struct AutopilotScreen: View {
         } message: {
             Text("The model is \(ap.model.map(AutopilotText.modelSize) ?? "a few hundred MB"). Download it now over mobile data, or wait until this phone is on Wi-Fi?")
         }
+        .presentationFeedback(mobileDataAsk)
     }
 
     private func content(_ s: AutopilotSettings) -> some View {

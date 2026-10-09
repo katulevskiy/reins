@@ -12,6 +12,8 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 
 /** Opens a web page; false when nothing on the phone can. */
 typealias PageOpener = (String) -> Boolean
@@ -106,7 +108,7 @@ class McpViewModel(private val container: AppContainer) : ViewModel() {
                     _error.value = "This server's sign-in page is not a web page, so it was not opened."
                     return
                 }
-                container.mcpSignIn.begin(step.serverId)
+                withContext(Dispatchers.IO) { container.mcpSignIn.begin(step.serverId) }
                 if (open(step.authorizeUrl)) {
                     _signingIn.value = step.serverId
                 } else {
@@ -117,16 +119,30 @@ class McpViewModel(private val container: AppContainer) : ViewModel() {
         }
     }
 
-    fun setHeavy(id: String, tool: String, heavy: Boolean) = operation {
-        container.core.mcpSetHeavy(id, tool, heavy)
-        reload()
+    /** Shown at once, and a second switch flipped meanwhile is not dropped; a refusal brings back what the core has. */
+    fun setHeavy(id: String, tool: String, heavy: Boolean) {
+        val servers = container.state.mcpServers.value
+        container.state.setMcpServers(
+            servers.map { s -> if (s.id != id) s else s.copy(tools = s.tools.map { if (it.name == tool) it.copy(heavy = heavy) else it }) },
+        )
+        viewModelScope.launch {
+            try {
+                container.core.mcpSetHeavy(id, tool, heavy)
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                container.feedback.play(Event.Error)
+                _error.value = e.userMessage()
+                try { reload() } catch (e: CancellationException) { throw e } catch (_: Exception) {}
+            }
+        }
     }
 
     fun remove(id: String, onDone: () -> Unit) = operation {
         container.feedback.play(Event.Revoked)
         container.core.mcpRemove(id)
         reload()
-        container.refreshPending()
+        container.refreshAfterAnswer()
         onDone()
     }
 }

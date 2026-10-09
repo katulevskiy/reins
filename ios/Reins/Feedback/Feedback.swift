@@ -144,9 +144,21 @@ protocol Feedback: AnyObject {
     /// Plays `cue` unless the same cue sounded within the last moment (a page closing right after the action that
     /// closed it).
     func cueUnlessRecent(_ cue: Cue)
+    /// A press was released inside its target: the tap, unless the action it ran played its own haptic or cue.
+    func defaultTap()
+    /// A sheet or dialog appeared: the Open cue, unless a request's chime just announced what it shows.
+    func sheetOpened()
+    /// A choice was made whose own sound comes later (after the core answers): the close that follows stays silent.
+    func quietClose()
 }
 
 extension Feedback {
+    func defaultTap() { play(.tap) }
+
+    func sheetOpened() { cue(.open) }
+
+    func quietClose() {}
+
     func cue(_ cue: Cue) { self.cue(cue, step: 0) }
 
     /// Sound first: it is the channel perceived late.
@@ -166,6 +178,93 @@ final class NoFeedback: Feedback {
     func haptic(_ haptic: Haptic) {}
     func cue(_ cue: Cue, step: Int) {}
     func cueUnlessRecent(_ cue: Cue) {}
+}
+
+/// A button look that answers every press with the default tap (the Android app's `pressable`): the shared button
+/// styles are made of one, so their actions only play what is particular to them. The press runs the action first,
+/// then `Feedback.defaultTap`, which gives way to whatever the action played itself.
+///
+/// A primitive style around a `Button` of the look, not a tap gesture on the label: a gesture there stops the button's
+/// own action.
+struct DefaultTapStyle<Look: ButtonStyle>: PrimitiveButtonStyle {
+    var look: Look
+
+    func makeBody(configuration: Configuration) -> some View {
+        DefaultTapButton(configuration: configuration, look: look)
+    }
+}
+
+private struct DefaultTapButton<Look: ButtonStyle>: View {
+    var configuration: PrimitiveButtonStyleConfiguration
+    var look: Look
+    @Environment(\.feedback) private var feedback
+
+    var body: some View {
+        Button(role: configuration.role) {
+            configuration.trigger()
+            feedback.defaultTap()
+        } label: {
+            configuration.label
+        }
+        .buttonStyle(look)
+    }
+}
+
+extension View {
+    /// For a sheet, alert or dialog shown while `shown`: the Open cue as it appears, and the Close cue as it goes,
+    /// unless the choice that closed it just sounded (the Android app's `DialogFeedback`). `opens: false` where the
+    /// presented content plays its own Open.
+    func presentationFeedback(_ shown: Bool, opens: Bool = true) -> some View {
+        modifier(PresentationFeedback(shown: shown, opens: opens))
+    }
+}
+
+extension View {
+    /// For a navigation stack `depth` pages deep: a page pushed opens with the Open cue, going back closes with the
+    /// Close cue, quiet when the action that left just sounded (the Android app's `PageFeedback`). Where one view
+    /// shows several stacks in turn (the detail column), `stack` says which: changing to another is not a page.
+    func pageFeedback(_ depth: Int, in stack: AnyHashable = 0) -> some View {
+        modifier(PageFeedback(position: PagePosition(stack: stack, depth: depth)))
+    }
+}
+
+private struct PagePosition: Equatable {
+    var stack: AnyHashable
+    var depth: Int
+}
+
+private struct PageFeedback: ViewModifier {
+    var position: PagePosition
+    @Environment(\.feedback) private var feedback
+
+    func body(content: Content) -> some View {
+        content.onChange(of: position) { old, new in
+            guard old.stack == new.stack else { return }
+            if new.depth > old.depth {
+                feedback.cue(.open)
+            } else if new.depth < old.depth {
+                feedback.cueUnlessRecent(.close)
+            }
+        }
+    }
+}
+
+private struct PresentationFeedback: ViewModifier {
+    var shown: Bool
+    var opens: Bool
+    @Environment(\.feedback) private var feedback
+
+    func body(content: Content) -> some View {
+        // On the change itself rather than `onDismiss`: a close button, a swipe and a choice all end it here, before
+        // the dismissal's animation, so a choice's own sound is still recent.
+        content.onChange(of: shown) { _, now in
+            if now {
+                if opens { feedback.sheetOpened() }
+            } else {
+                feedback.cueUnlessRecent(.close)
+            }
+        }
+    }
 }
 
 private struct FeedbackKey: EnvironmentKey {

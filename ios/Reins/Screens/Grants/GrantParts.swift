@@ -266,9 +266,17 @@ struct EndedGrantRow: View {
 }
 
 /// A compact capsule button on a row ("Resume", "Delete", "New grant").
-struct SmallCapsuleStyle: ButtonStyle {
+struct SmallCapsuleStyle: PrimitiveButtonStyle {
     enum Kind { case primary, secondary, danger }
     var kind: Kind = .secondary
+
+    func makeBody(configuration: Configuration) -> some View {
+        DefaultTapStyle(look: SmallCapsuleLook(kind: kind)).makeBody(configuration: configuration)
+    }
+}
+
+private struct SmallCapsuleLook: ButtonStyle {
+    var kind: SmallCapsuleStyle.Kind
 
     func makeBody(configuration: Configuration) -> some View {
         let (fg, bg): (Color, Color) = switch kind {

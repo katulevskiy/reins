@@ -43,11 +43,18 @@ class SettingsViewModel(private val container: AppContainer) : ViewModel() {
     private val _hasRecoveryCode = MutableStateFlow(false)
     val hasRecoveryCode: StateFlow<Boolean> = _hasRecoveryCode.asStateFlow()
 
+    /** How many passkeys open the account's vault (shown where the recovery code is); null while unknown. */
+    private val _vaultPasskeys = MutableStateFlow<Int?>(null)
+    val vaultPasskeys: StateFlow<Int?> = _vaultPasskeys.asStateFlow()
+
     /** The recovery code while its sheet is open; only ever read after biometrics. */
     private val _recoveryCode = MutableStateFlow<String?>(null)
     val recoveryCode: StateFlow<String?> = _recoveryCode.asStateFlow()
 
-    /** Settings opened: offer the recovery code only when the core can give it (the code itself is not kept). */
+    /**
+     * Settings opened: offer the recovery code only when the core can give it (the code itself is not kept), and with
+     * it the vault's passkeys, which only a phone that keeps the account secret can add.
+     */
     fun checkRecoveryCode() {
         viewModelScope.launch {
             _hasRecoveryCode.value = try {
@@ -56,6 +63,14 @@ class SettingsViewModel(private val container: AppContainer) : ViewModel() {
                 throw e
             } catch (e: Exception) {
                 false
+            }
+            if (!_hasRecoveryCode.value) return@launch
+            _vaultPasskeys.value = try {
+                container.core.vaultPasskeys().size
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                null
             }
         }
     }
@@ -152,7 +167,7 @@ class SettingsViewModel(private val container: AppContainer) : ViewModel() {
         run(null) {
             container.core.revokeConnection(connectionId)
             container.refreshConnections()
-            container.refreshPending()
+            container.refreshAfterAnswer()
             onDone()
         }
     }

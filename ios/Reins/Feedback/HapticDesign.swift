@@ -78,6 +78,21 @@ struct HapticNote: Equatable {
     var intensity: Float
     var sharpness: Float
     var envelope: [Point] = []
+    /// Continuous notes whose sharpness moves: here `level` is the sharpness itself (0...1), in place of `sharpness`.
+    var sharpnessPath: [Point] = []
+
+    /// A shape's value at `at` (0...1 of the note), straight between its points and level beyond them.
+    static func value(_ points: [Point], at: Double) -> Float {
+        guard let first = points.first, let last = points.last else { return 1 }
+        if at <= first.at { return first.level }
+        if at >= last.at { return last.level }
+        for (a, b) in zip(points, points.dropFirst()) where at <= b.at {
+            let span = b.at - a.at
+            guard span > 0 else { return b.level }
+            return a.level + (b.level - a.level) * Float((at - a.at) / span)
+        }
+        return last.level
+    }
 }
 
 /// What UIKit plays where Core Haptics cannot (no Taptic Engine API on this device).
@@ -162,19 +177,20 @@ enum HapticTable {
             HapticSpec(haptic: haptic, steps: [HapticStep(.click, 0.85), HapticStep(.lowTick, 0.55, 40)],
                        underlay: [HapticNote(kind: .continuous, time: 0.010, duration: 0.07, intensity: 0.28, sharpness: 0.2, envelope: fade(1, 0))],
                        fallback: .impact(.rigid, 0.9), priority: 1, minGapMs: 200)
-        // Bypass on: five ticks that firm up and bunch together over a swell, then a hard crack with a thud under it,
-        // about 250 ms.
+        // Bypass on: five ticks that firm up and bunch together over a swell that grows and sharpens, then a hard crack
+        // with a thud under it, about 250 ms.
         case .surge:
             HapticSpec(haptic: haptic, steps: surge(finish: HapticStep(.click, 0.9, 24), closer: HapticStep(.thud, 1, 8)),
                        underlay: [HapticNote(kind: .continuous, time: 0, duration: 0.24, intensity: 0.4, sharpness: 0.25,
-                                             envelope: [.init(at: 0, level: 0.1), .init(at: 0.7, level: 0.5), .init(at: 1, level: 1)])],
+                                             envelope: [.init(at: 0, level: 0.1), .init(at: 0.7, level: 0.5), .init(at: 1, level: 1)],
+                                             sharpnessPath: [.init(at: 0, level: 0.12), .init(at: 0.7, level: 0.3), .init(at: 1, level: 0.6)])],
                        fallback: .impact(.heavy, 1), priority: 2, minGapMs: 500)
         // Bypass off: a very short, sharp double tick.
         case .zip:
             HapticSpec(haptic: haptic, steps: [HapticStep(.tick, 0.9), HapticStep(.tick, 0.9, 28)],
                        fallback: .impact(.rigid, 0.9), priority: 1, minGapMs: 100)
-        // Autopilot up: an irregular crackle of micro-pulses (uneven strength and gaps) over a ragged buzz, ending in a
-        // firm crack, about 180 ms.
+        // Autopilot up: an irregular crackle of micro-pulses (uneven strength and gaps) over a ragged buzz that flickers
+        // between bright and dull, ending in a firm crack, about 180 ms.
         case .lightning:
             HapticSpec(
                 haptic: haptic,
@@ -182,7 +198,9 @@ enum HapticTable {
                         HapticStep(.tick, 0.90, 44), HapticStep(.click, 1, 52)],
                 underlay: [HapticNote(kind: .continuous, time: 0, duration: 0.16, intensity: 0.2, sharpness: 0.95,
                                       envelope: [.init(at: 0, level: 0.6), .init(at: 0.2, level: 0.1), .init(at: 0.35, level: 0.9),
-                                                 .init(at: 0.55, level: 0.2), .init(at: 0.85, level: 1), .init(at: 1, level: 0)])],
+                                                 .init(at: 0.55, level: 0.2), .init(at: 0.85, level: 1), .init(at: 1, level: 0)],
+                                      sharpnessPath: [.init(at: 0, level: 0.95), .init(at: 0.2, level: 0.55), .init(at: 0.35, level: 1),
+                                                      .init(at: 0.55, level: 0.5), .init(at: 0.85, level: 1), .init(at: 1, level: 0.7)])],
                 fallback: .impact(.heavy, 0.9), priority: 2, minGapMs: 400
             )
         }

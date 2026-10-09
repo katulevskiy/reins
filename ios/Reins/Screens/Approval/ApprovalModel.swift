@@ -73,9 +73,7 @@ final class ApprovalModel {
             app.feedback.play(standing ? .grantCreated : .approved)
             do {
                 try await app.core.approve(requestId: requestId, choice: choice)
-                await app.refreshPending()
-                busy = false
-                finished = true
+                answered(app)
             } catch {
                 app.feedback.play(.error)
                 busy = false
@@ -98,14 +96,20 @@ final class ApprovalModel {
         app.feedback.play(.denied)
         do {
             try await app.core.deny(requestId: requestId)
-            await app.refreshPending()
-            busy = false
-            finished = true
+            answered(app)
         } catch {
             app.feedback.play(.error)
             busy = false
             self.error = decisionErrorMessage(error)
         }
+    }
+
+    /// The core has the answer: the sheet closes and the item leaves the list now; the full re-read follows.
+    private func answered(_ app: AppModel) {
+        busy = false
+        finished = true
+        app.dropPending(requestId)
+        app.refreshPendingSoon()
     }
 }
 

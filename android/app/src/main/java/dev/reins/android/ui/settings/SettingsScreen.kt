@@ -48,6 +48,7 @@ import dev.reins.android.feedback.LocalFeedback
 import dev.reins.android.feedback.play
 import dev.reins.android.platform.Authenticator
 import dev.reins.android.platform.FirebaseSupport
+import dev.reins.android.platform.rememberNotificationState
 import dev.reins.android.state.AppState
 import dev.reins.android.state.SessionState
 import dev.reins.android.ui.common.ConnectionIcon
@@ -62,8 +63,10 @@ fun SettingsScreen(
     onConnection: (String) -> Unit,
     onIntegrations: () -> Unit,
     onSounds: () -> Unit,
+    onTour: () -> Unit = {},
     onAutopilot: () -> Unit = {},
     onConnectComputer: () -> Unit = {},
+    onVaultPasskeys: () -> Unit = {},
     authenticator: Authenticator,
 ) {
     val c = LocalColors.current
@@ -72,6 +75,7 @@ fun SettingsScreen(
     val ui by viewModel.ui.collectAsStateWithLifecycle()
     val sounds by viewModel.sounds.collectAsStateWithLifecycle()
     val session by state.session.collectAsStateWithLifecycle()
+    val notifications = rememberNotificationState()
     val connections by state.connections.collectAsStateWithLifecycle()
     val approvalDevice by state.approvalDevice.collectAsStateWithLifecycle()
     val accounts by state.accounts.collectAsStateWithLifecycle()
@@ -79,6 +83,7 @@ fun SettingsScreen(
     val hasRecoveryCode by viewModel.hasRecoveryCode.collectAsStateWithLifecycle()
     val recoveryCode by viewModel.recoveryCode.collectAsStateWithLifecycle()
     val deletion by viewModel.deletion.collectAsStateWithLifecycle()
+    val vaultPasskeys by viewModel.vaultPasskeys.collectAsStateWithLifecycle()
     var confirmSignOut by remember { mutableStateOf(false) }
     val pushAvailable = FirebaseSupport.available(LocalContext.current)
     LaunchedEffect(session) { viewModel.checkRecoveryCode() }
@@ -110,6 +115,15 @@ fun SettingsScreen(
                         glyph = Glyph.Key,
                         chevron = true,
                     ) { viewModel.showRecoveryCode(authenticator) }
+                    Hairline(inset = 51.dp)
+                    ListRow(
+                        "Vault passkeys",
+                        Modifier.testTag("vaultPasskeysRow"),
+                        subtitle = vaultPasskeysSummary(vaultPasskeys),
+                        glyph = Glyph.ShieldCheck,
+                        chevron = true,
+                        onClick = onVaultPasskeys,
+                    )
                 }
             }
         }
@@ -217,6 +231,18 @@ fun SettingsScreen(
             )
         }
 
+        Group(header = "Notifications") {
+            ListRow(
+                "Approval notifications",
+                subtitle = if (notifications.enabled) "On" else "Off: requests can't reach you while Reins is closed",
+                glyph = Glyph.Bell,
+                tint = if (notifications.enabled) c.success else c.warning,
+                chevron = !notifications.enabled,
+                modifier = Modifier.testTag("notificationsRow"),
+                onClick = { if (!notifications.enabled) notifications.request() },
+            )
+        }
+
         Group(header = "Sounds & haptics") {
             ListRow(
                 "Sounds & haptics",
@@ -226,6 +252,18 @@ fun SettingsScreen(
                 chevron = true,
                 modifier = Modifier.testTag("openSounds"),
                 onClick = onSounds,
+            )
+        }
+
+        Group(header = "Help") {
+            ListRow(
+                "Take the tour",
+                subtitle = "How Reins works, integrations and the private model",
+                glyph = Glyph.Navigate,
+                tint = c.accent,
+                chevron = true,
+                modifier = Modifier.testTag("takeTour"),
+                onClick = onTour,
             )
         }
 
@@ -314,6 +352,14 @@ internal fun autopilotSummary(s: dev.reins.core.AutopilotSettings?): String {
         else -> "no model yet"
     }
     return "$mode · $model"
+}
+
+/** What the Vault passkeys row says: how many there are ([count] null while unknown). */
+internal fun vaultPasskeysSummary(count: Int?): String = when (count) {
+    null -> "Unlock your vault on a new phone"
+    0 -> "None: add one to unlock on a new phone"
+    1 -> "1 passkey"
+    else -> "$count passkeys"
 }
 
 /** What the Sounds & haptics row says about the switches behind it. */

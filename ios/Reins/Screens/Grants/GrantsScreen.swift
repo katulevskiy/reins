@@ -57,20 +57,18 @@ struct GrantsScreen: View {
                     Button {
                         model.show(.grantDetail(grant.id))
                     } label: {
-                        TimelineView(.periodic(from: .now, by: 1)) { ctx in
-                            GrantTile(grant: grant, now: nowSeconds(ctx.date))
-                        }
+                        LiveGrantTile(grant: grant)
                     }
                     .buttonStyle(.plain)
                     .feedbackTap(.tap, feedback)
                     .accessibilityIdentifier("grant:\(grant.id)")
                     .swipeActions(edge: .trailing, allowsFullSwipe: false) {
-                        Button { revoking = grant } label: { Label("Delete", systemImage: "trash") }
+                        Button { tapped { revoking = grant } } label: { Label("Delete", systemImage: "trash") }
                             .tint(Palette.danger)
                     }
                     .contextMenu {
-                        Button { model.show(.grantDetail(grant.id)) } label: { Label("Open", systemImage: "key.horizontal") }
-                        Button(role: .destructive) { revoking = grant } label: { Label("Delete grant", systemImage: "trash") }
+                        Button { tapped { model.show(.grantDetail(grant.id)) } } label: { Label("Open", systemImage: "key.horizontal") }
+                        Button(role: .destructive) { tapped { revoking = grant } } label: { Label("Delete grant", systemImage: "trash") }
                     }
                     .plainRow(EdgeInsets(top: 6, leading: 16, bottom: 6, trailing: 16))
                 }
@@ -109,11 +107,13 @@ struct GrantsScreen: View {
             let grant = pick.grant
             ResumeSheet(grant: grant) { seconds, standing in
                 error = nil
+                feedback.quietClose()
                 Task { error = await model.resumeGrant(grant.id, seconds: seconds, standing: standing) }
             }
             .environment(model)
             .environment(\.feedback, feedback)
         }
+        .presentationFeedback(resuming != nil)
         .confirmationDialog(
             "Delete this grant for good?",
             isPresented: Binding(get: { deleting != nil }, set: { if !$0 { deleting = nil } }),
@@ -122,11 +122,13 @@ struct GrantsScreen: View {
         ) { grant in
             Button("Delete", role: .destructive) {
                 error = nil
+                feedback.quietClose()
                 Task { error = await model.deleteGrant(grant.id) }
             }
         } message: { grant in
             Text(untrusted(grant.summary) + "\n\nIt cannot be resumed afterwards.")
         }
+        .presentationFeedback(deleting != nil)
         .confirmationDialog(
             "Delete this grant?",
             isPresented: Binding(get: { revoking != nil }, set: { if !$0 { revoking = nil } }),
@@ -135,11 +137,19 @@ struct GrantsScreen: View {
         ) { grant in
             Button("Delete", role: .destructive) {
                 error = nil
+                feedback.quietClose()
                 Task { error = await model.revokeGrant(grant.id) }
             }
         } message: { grant in
             Text(untrusted(grant.summary) + "\n\nYou can resume it later from the Expired list.")
         }
+        .presentationFeedback(revoking != nil)
+    }
+
+    /// A menu or swipe item: its action, then the default tap (the page or dialog it opens has the sound).
+    private func tapped(_ action: () -> Void) {
+        action()
+        feedback.defaultTap()
     }
 
     private func toggleExpired() {
@@ -183,16 +193,16 @@ struct GrantsScreen: View {
                     EndedGrantRow(
                         grant: grant,
                         onOpen: {
-                            feedback.play(.tap)
                             model.show(.grantDetail(grant.id))
+                            feedback.defaultTap()
                         },
                         onResume: { resuming = GrantPick(grant) },
                         onDelete: { deleting = grant }
                     )
                     .contextMenu {
-                        Button { model.show(.grantDetail(grant.id)) } label: { Label("Open", systemImage: "key.horizontal") }
-                        Button { resuming = GrantPick(grant) } label: { Label("Resume", systemImage: "arrow.clockwise") }
-                        Button(role: .destructive) { deleting = grant } label: { Label("Delete for good", systemImage: "trash") }
+                        Button { tapped { model.show(.grantDetail(grant.id)) } } label: { Label("Open", systemImage: "key.horizontal") }
+                        Button { tapped { resuming = GrantPick(grant) } } label: { Label("Resume", systemImage: "arrow.clockwise") }
+                        Button(role: .destructive) { tapped { deleting = grant } } label: { Label("Delete for good", systemImage: "trash") }
                     }
                 }
             }
@@ -209,6 +219,34 @@ struct GrantsScreen: View {
         .padding(.horizontal, 16)
         .padding(.bottom, 8)
         .accessibilityIdentifier("expiredList")
+    }
+}
+
+/// A running grant's tile, following its clock: every second in its last two minutes (the seconds show), every 10 s
+/// before, and not at all for a grant that never ends by itself.
+private struct LiveGrantTile: View {
+    var grant: GrantView
+    /// Two minutes or less left.
+    @State private var close = false
+
+    var body: some View {
+        Group {
+            if grant.expiresAt == nil {
+                GrantTile(grant: grant, now: nowSeconds())
+            } else {
+                TimelineView(.periodic(from: .now, by: close ? 1 : 10)) { ctx in
+                    GrantTile(grant: grant, now: nowSeconds(ctx.date))
+                }
+            }
+        }
+        .task(id: grant.expiresAt) {
+            guard let end = grant.expiresAt else { return }
+            let wait = end - 120 - nowSeconds()
+            close = wait <= 0
+            guard wait > 0 else { return }
+            try? await Task.sleep(for: .seconds(wait))
+            if !Task.isCancelled { close = true }
+        }
     }
 }
 

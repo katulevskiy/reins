@@ -62,7 +62,10 @@ private struct AccountGroup: View {
                 .accessibilityHint("Copies the server address")
                 .accessibilityIdentifier("copyServer")
                 .cardRow()
-                if model.recoveryCodeAvailable { RecoveryCodeRow() }
+                if model.recoveryCodeAvailable {
+                    RecoveryCodeRow()
+                    VaultPasskeysRow()
+                }
             } header: {
                 GroupHeader("Account")
             } footer: {
@@ -71,6 +74,20 @@ private struct AccountGroup: View {
                 }
             }
         }
+    }
+}
+
+/// Settings > Account > Vault passkeys: how many open the vault, read again each time Settings shows.
+private struct VaultPasskeysRow: View {
+    @Environment(AppModel.self) private var model
+    @State private var count: Int?
+
+    var body: some View {
+        SettingsLinkRow(
+            title: "Vault passkeys", subtitle: SettingsText.passkeysSummary(count), symbol: "person.badge.key", tint: Palette.accent,
+            id: "vaultPasskeysRow"
+        ) { model.show(.vaultPasskeys) }
+        .task { count = try? await model.core.vaultPasskeys().count }
     }
 }
 
@@ -173,7 +190,10 @@ private struct SettingsAutopilotGroup: View {
 /// Integrations and Sounds & haptics: one row each, opening their pages.
 private struct NavigationGroups: View {
     @Environment(AppModel.self) private var model
-    @State private var sounds = FeedbackSettings.load()
+    @Environment(\.feedback) private var feedback
+
+    /// The switches as the Sounds page keeps them (in memory, observed), so the summary follows them.
+    private var sounds: FeedbackSettings { ((feedback as? FeedbackPreviewing)?.store ?? .shared).settings }
 
     var body: some View {
         Section {
@@ -192,9 +212,6 @@ private struct NavigationGroups: View {
         } header: {
             GroupHeader("Sounds & haptics")
         }
-        // Back from the Sounds page: read the switches again.
-        .onChange(of: model.path(.settings).isEmpty) { sounds = FeedbackSettings.load() }
-        .onAppear { sounds = FeedbackSettings.load() }
     }
 }
 
@@ -210,8 +227,8 @@ private struct ConnectionsGroup: View {
             }
             ForEach(model.connections, id: \.id) { connection in
                 Button {
-                    feedback.play(.tap)
                     model.show(.connection(connection.id))
+                    feedback.defaultTap()
                 } label: {
                     ConnectionRow(connection: connection)
                 }
@@ -305,9 +322,9 @@ private struct SessionGroup: View {
             } message: {
                 Text("This phone stops receiving approval requests until you sign in again.")
             }
+            .presentationFeedback(confirm)
             if case let .signedIn(info) = model.session {
                 Button(role: .destructive) {
-                    feedback.play(.tap)
                     deleting = AccountToDelete(email: info.email)
                 } label: {
                     Label("Delete account", systemImage: "trash")
@@ -320,6 +337,7 @@ private struct SessionGroup: View {
                 .sheet(item: $deleting) { shown in
                     DeleteAccountSheet(email: shown.email) { deleting = nil }
                 }
+                .presentationFeedback(deleting != nil)
             }
         } header: {
             GroupHeader("Session")
@@ -352,8 +370,9 @@ struct SettingsLinkRow: View {
 
     var body: some View {
         Button {
-            feedback.play(.tap)
             action()
+            // The page or sheet it opens has the sound.
+            feedback.defaultTap()
         } label: {
             InfoRow(title: title, subtitle: subtitle, symbol: symbol, tint: tint) { Chevron() }
                 .contentShape(Rectangle())

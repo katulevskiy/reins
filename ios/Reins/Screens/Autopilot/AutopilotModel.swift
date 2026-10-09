@@ -124,10 +124,12 @@ final class AutopilotModel {
         if let event = restart ? .bypassOn : AutopilotFeedback.modeChange(from: old, to: new) {
             app.feedback.play(event)
         }
+        let length = minutes ?? AutopilotText.bypassMinutes[0]
+        app.patchAutopilot { $0.applyMode(mode, minutes: length, connectionId: connectionId) }
         await run {
             try await app.core.setAutopilotMode(
                 connectionId: connectionId, mode: mode,
-                minutes: mode == .bypass ? (minutes ?? AutopilotText.bypassMinutes[0]) : nil
+                minutes: mode == .bypass ? length : nil
             )
             await app.refreshAutopilot()
         }
@@ -137,13 +139,15 @@ final class AutopilotModel {
     func stopBypass(_ connectionId: String? = nil) async {
         guard let app, let s = settings else { return }
         app.feedback.play(.bypassOff)
+        let back: AutopilotMode?
+        if let connectionId {
+            back = s.connections.first { $0.connectionId == connectionId }?.baseMode
+        } else {
+            back = s.baseMode
+        }
+        app.patchAutopilot { $0.applyMode(back, minutes: 0, connectionId: connectionId) }
         await run {
-            if let connectionId {
-                let own = s.connections.first { $0.connectionId == connectionId }?.baseMode
-                try await app.core.setAutopilotMode(connectionId: connectionId, mode: own, minutes: nil)
-            } else {
-                try await app.core.setAutopilotMode(connectionId: nil, mode: s.baseMode, minutes: nil)
-            }
+            try await app.core.setAutopilotMode(connectionId: connectionId, mode: back, minutes: nil)
             await app.refreshAutopilot()
         }
     }
@@ -158,6 +162,7 @@ final class AutopilotModel {
     func assignProfile(_ connectionId: String, _ profileId: String?) async {
         guard let app else { return }
         app.feedback.play(.selection)
+        app.patchAutopilot { $0.applyProfile(profileId, connectionId: connectionId) }
         await run {
             try await app.core.assignProfile(connectionId: connectionId, profileId: profileId)
             await app.refreshAutopilot()
@@ -203,6 +208,7 @@ final class AutopilotModel {
         guard let app else { return }
         app.feedback.play(.toggle(on))
         app.modelDownloads.setWifiOnly(on)
+        app.patchAutopilot { $0.wifiOnly = on }
         await run {
             try await app.core.setAutopilotWifiOnly(wifiOnly: on)
             await app.refreshAutopilot()
@@ -248,23 +254,39 @@ final class AutopilotModel {
         }
     }
 
+    /// Shown at once; a refusal reads the profiles back.
     func setPreset(_ id: String, _ preset: Preset) async {
         guard let app else { return }
-        await run {
+        patchProfile(id) { $0.preset = preset }
+        let done = await run {
             try await app.core.setPreset(profileId: id, preset: preset)
             await self.loadProfiles()
         }
+        if !done { await loadProfiles() }
     }
 
-    /// `locked`: true always asks, false lets Auto approve now, nil lets the numbers decide.
+    /// `locked`: true always asks, false lets Auto approve now, nil lets the numbers decide. Shown at once; a refusal
+    /// reads the profiles back.
     func setClassLock(_ id: String, _ classKey: String, locked: Bool?) async {
         guard let app else { return }
         // The chips sound their own choice; unlocking (after its warning) is felt as more autonomy.
         if locked == false { app.feedback.play(.autopilotOn) }
-        await run {
+        patchProfile(id) { profile in
+            guard let i = profile.classes.firstIndex(where: { $0.classKey == classKey }) else { return }
+            // `manual`: false locked by hand, true unlocked by hand, nil automatic.
+            profile.classes[i].manual = locked.map { !$0 }
+            if let locked { profile.classes[i].autoApprove = !locked }
+        }
+        let done = await run {
             try await app.core.setClassLock(profileId: id, classKey: classKey, locked: locked)
             await self.loadProfiles()
         }
+        if !done { await loadProfiles() }
+    }
+
+    private func patchProfile(_ id: String, _ change: (inout ProfileView) -> Void) {
+        guard let i = profiles.firstIndex(where: { $0.id == id }) else { return }
+        change(&profiles[i])
     }
 
     func resetProfile(_ id: String) async {
@@ -317,18 +339,22 @@ final class AutopilotModel {
 
     // MARK: Running
 
-    private func run(_ block: () async throws -> Void) async {
+    /// True when `block` went through.
+    @discardableResult
+    private func run(_ block: () async throws -> Void) async -> Bool {
         busy = true
         error = nil
         notice = nil
+        defer { busy = false }
         do {
             try await block()
+            return true
         } catch {
             app?.feedback.play(.error)
             self.error = Self.sentence(error.userMessage)
             await app?.refreshAutopilot()
+            return false
         }
-        busy = false
     }
 
     /// The core's reasons start in lower case and end without a full stop ("a connection paired ... in bypass").
@@ -337,6 +363,63 @@ final class AutopilotModel {
         guard let first = t.first else { return t }
         let s = first.uppercased() + t.dropFirst()
         return s.hasSuffix(".") || s.hasSuffix("?") || s.hasSuffix("!") ? s : s + "."
+    }
+}
+
+/// The core's rules for a mode change, applied to the settings in memory so the screens show it before the core
+/// answers (the core's `set_autopilot_mode` and `modes::effective`). The next read replaces it with the real thing.
+extension AutopilotSettings {
+    /// `mode` for `connectionId` (nil = the global mode); `mode` nil goes back to the default (global) or to following
+    /// the global mode (a connection). A bypass lasts `minutes`.
+    mutating func applyMode(_ mode: AutopilotMode?, minutes: UInt32, connectionId: String?,
+                            now: Int64 = Int64(Date().timeIntervalSince1970)) {
+        let until = now + Int64(minutes) * 60
+        if let connectionId {
+            let i = ownIndex(connectionId)
+            if mode == .bypass {
+                if connections[i].baseMode == .lockdown { connections[i].baseMode = nil }
+                connections[i].bypassUntil = until
+            } else {
+                connections[i].baseMode = mode
+                connections[i].bypassUntil = nil
+            }
+        } else {
+            // A mode never picked: Assisted once the model is installed, Manual before.
+            let fallback: AutopilotMode = model.state == .installed ? .assisted : .manual
+            if mode == .bypass {
+                if baseMode == .lockdown { baseMode = fallback }
+                bypassUntil = until
+            } else {
+                baseMode = mode ?? fallback
+                bypassUntil = nil
+            }
+            self.mode = baseMode == .lockdown ? .lockdown : (bypassUntil ?? 0) > now ? .bypass : baseMode
+        }
+        for i in connections.indices {
+            let c = connections[i]
+            if self.mode == .lockdown || c.baseMode == .lockdown {
+                connections[i].mode = .lockdown
+            } else if (c.bypassUntil ?? 0) > now {
+                connections[i].mode = .bypass
+            } else {
+                connections[i].mode = c.baseMode ?? self.mode
+            }
+        }
+    }
+
+    /// The profile `connectionId` learns into (nil = the default profile).
+    mutating func applyProfile(_ profileId: String?, connectionId: String) {
+        let i = ownIndex(connectionId)
+        connections[i].profileId = profileId ?? defaultProfileId
+    }
+
+    /// The index of `connectionId`'s own settings, added (following the global mode) when it has none yet.
+    private mutating func ownIndex(_ connectionId: String) -> Int {
+        if let i = connections.firstIndex(where: { $0.connectionId == connectionId }) { return i }
+        connections.append(ConnectionAutopilot(
+            connectionId: connectionId, baseMode: nil, bypassUntil: nil, mode: mode, profileId: defaultProfileId
+        ))
+        return connections.count - 1
     }
 }
 

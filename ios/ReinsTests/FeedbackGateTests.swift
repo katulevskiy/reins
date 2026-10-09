@@ -176,6 +176,43 @@ final class FeedbackGateTests: XCTestCase {
         XCTAssertTrue(claims.cueWithin(250))
     }
 
+    // MARK: Claims (the default tap)
+
+    func testThePressesOwnFeedbackTakesThePlaceOfTheDefaultTap() {
+        let claims = ClaimTracker { [unowned self] in now }
+        let released = now
+        XCTAssertFalse(claims.hapticClaimed(releasedAt: released))
+        XCTAssertFalse(claims.cueClaimed(releasedAt: released))
+        // The action opened a sheet: its Open cue is the sound; the tap's haptic stays.
+        now += 5
+        claims.claimCue()
+        now += ClaimTracker.deferMs - 5
+        XCTAssertTrue(claims.cueClaimed(releasedAt: released))
+        XCTAssertFalse(claims.hapticClaimed(releasedAt: released))
+        // Played just ahead of the release (the action runs first) still counts; long before it does not.
+        let next = now
+        now += 1
+        XCTAssertTrue(claims.cueClaimed(releasedAt: next))
+        now += 1000
+        XCTAssertFalse(claims.cueClaimed(releasedAt: now))
+        claims.claimHaptic()
+        XCTAssertTrue(claims.hapticClaimed(releasedAt: now + ClaimTracker.windowBeforeMs))
+        XCTAssertFalse(claims.hapticClaimed(releasedAt: now + ClaimTracker.windowBeforeMs + 1))
+    }
+
+    func testASheetRightAfterARequestsChimeOpensQuietly() {
+        let claims = ClaimTracker { [unowned self] in now }
+        XCTAssertFalse(claims.chimeWithin(ClaimTracker.arrivalMs))
+        // Any other cue leaves the sheet its Open.
+        claims.claimCue()
+        XCTAssertFalse(claims.chimeWithin(ClaimTracker.arrivalMs))
+        claims.claimChime()
+        now += ClaimTracker.arrivalMs - 1
+        XCTAssertTrue(claims.chimeWithin(ClaimTracker.arrivalMs))
+        now += 1
+        XCTAssertFalse(claims.chimeWithin(ClaimTracker.arrivalMs))
+    }
+
     // MARK: Keeping the output awake
 
     func testTheOutputStaysAwakeForAWhileAfterTheLastTouch() {

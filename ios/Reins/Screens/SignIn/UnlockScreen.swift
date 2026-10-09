@@ -32,6 +32,8 @@ struct UnlockScreen: View {
         .pageBackground()
         .animation(.smooth(duration: 0.25), value: vm.stage)
         .animation(.smooth(duration: 0.25), value: vm.error)
+        .animation(.smooth(duration: 0.25), value: vm.passkeyUnlock)
+        .task { await vm.loadPasskeys(model) }
         .onDisappear { vm.stopWaiting() }
     }
 
@@ -84,26 +86,45 @@ struct UnlockScreen: View {
         }
     }
 
+    private var reason: String {
+        if takeover { return CoreError.OtherApprovalDevice.userMessage }
+        return vm.passkeyUnlock
+            ? "This account's vault is encrypted with keys that only your other phone, your passkeys and your recovery code can open. Unlock with your passkey, ask that phone, or enter the code."
+            : "This account's vault is encrypted with keys that only your other phone and your recovery code can open. Ask that phone, or enter the code."
+    }
+
     private var choose: some View {
         VStack(alignment: .leading, spacing: 12) {
-            Text(takeover
-                ? CoreError.OtherApprovalDevice.userMessage
-                : "This account's vault is encrypted with keys that only your other phone and your recovery code can open. Ask that phone, or enter the code.")
+            Text(reason)
                 .font(RFont.sans(15.5))
                 .foregroundStyle(Palette.secondary)
                 .fixedSize(horizontal: false, vertical: true)
                 .padding(.bottom, 10)
                 .accessibilityIdentifier("unlockReason")
+            if vm.passkeyUnlock {
+                // A passkey added for the vault comes first: no other phone or code needed.
+                Button {
+                    Task { await vm.unlockWithPasskey(model) }
+                } label: {
+                    HStack(spacing: 10) {
+                        if vm.passkeyBusy { ProgressView().tint(Palette.background) } else { Image(systemName: "person.badge.key.fill") }
+                        Text("Unlock with passkey")
+                    }
+                }
+                .buttonStyle(CapsuleButtonStyle(kind: .primary))
+                .disabled(vm.busy)
+                .accessibilityIdentifier("unlockWithPasskey")
+            }
             Button {
                 feedback.play(.tap)
                 Task { await vm.ask(model) }
             } label: {
                 HStack(spacing: 10) {
-                    if vm.busy { ProgressView().tint(Palette.background) }
+                    if vm.busy && !vm.passkeyBusy { ProgressView().tint(vm.passkeyUnlock ? Palette.text : Palette.background) }
                     Text("Ask my other phone")
                 }
             }
-            .buttonStyle(CapsuleButtonStyle(kind: .primary))
+            .buttonStyle(CapsuleButtonStyle(kind: vm.passkeyUnlock ? .secondary : .primary))
             .disabled(vm.busy)
             .accessibilityIdentifier("askOtherPhone")
             Button("Enter recovery code") {
@@ -265,6 +286,10 @@ final class UnlockModel {
 
     private(set) var stage = Stage.choose
     private(set) var busy = false
+    /// What `busy` waits for is the passkey (its button shows it).
+    private(set) var passkeyBusy = false
+    /// The account has a passkey for its vault: "Unlock with passkey" comes first. Unknown (offline) counts as none.
+    private(set) var passkeyUnlock = false
     var error: String?
     var code = ""
     /// How long between two looks at the other phone's answer.
@@ -370,6 +395,32 @@ final class UnlockModel {
             await model.finishUnlock()
         } catch {
             busy = false
+            model.feedback.play(.error)
+            self.error = error.userMessage
+        }
+    }
+
+    func loadPasskeys(_ model: AppModel) async {
+        passkeyUnlock = !((try? await model.core.vaultPasskeys()) ?? []).isEmpty
+    }
+
+    /// "Unlock with passkey": one of the account's passkeys opens the copy of the vault's key kept for it, and the
+    /// sign-in finishes as with the recovery code. Closing the sheet changes nothing.
+    func unlockWithPasskey(_ model: AppModel) async {
+        guard !busy else { return }
+        busy = true
+        passkeyBusy = true
+        error = nil
+        do {
+            let opened = try await VaultPasskeys.unlock(core: model.core, prompt: model.passkeys)
+            busy = false
+            passkeyBusy = false
+            guard opened else { return }
+            model.feedback.play(.connected)
+            await model.finishUnlock()
+        } catch {
+            busy = false
+            passkeyBusy = false
             model.feedback.play(.error)
             self.error = error.userMessage
         }

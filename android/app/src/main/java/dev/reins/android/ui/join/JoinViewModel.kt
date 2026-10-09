@@ -59,7 +59,7 @@ class JoinViewModel(private val container: AppContainer, private val joinId: Str
                     AuthResult.Success -> {
                         container.feedback.play(Event.Connected)
                         container.core.answerJoin(joinId, true)
-                        container.refreshPending()
+                        container.refreshAfterAnswer(joinId)
                         _ui.update {
                             it.copy(busy = false, finished = true, notice = "$device can open your account now. It approves from now on once it's set up.")
                         }
@@ -86,7 +86,7 @@ class JoinViewModel(private val container: AppContainer, private val joinId: Str
         viewModelScope.launch {
             try {
                 container.core.answerJoin(joinId, false)
-                container.refreshPending()
+                container.refreshAfterAnswer(joinId)
                 _ui.update { it.copy(busy = false, finished = true) }
             } catch (e: CancellationException) {
                 throw e

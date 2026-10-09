@@ -328,6 +328,9 @@ dependencies {
     implementation(libs.androidsvg)
     // Custom Tabs for MCP servers' sign-in pages.
     implementation(libs.androidx.browser)
+    // Credential Manager for the passkey that opens the vault (Google Password Manager and other providers).
+    implementation(libs.androidx.credentials)
+    implementation(libs.androidx.credentials.play.services)
     implementation(libs.jna) { artifact { type = "aar" } }
     // Autopilot's model runs on the phone (the core does everything else; see autopilot/OnnxModelRuntime).
     implementation(libs.onnxruntime.android)

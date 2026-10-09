@@ -50,6 +50,7 @@ struct ConnectionAutopilotContent: View {
     static let footer = "Its own mode wins over the global one, except a global Lockdown. A bypass is not possible in an AI's first 10 minutes."
 
     @Environment(AppModel.self) private var model
+    @Environment(\.feedback) private var feedback
     @State private var ap = AutopilotModel()
     @State private var bypassAsk = false
     @State private var lockdownAsk = false
@@ -70,17 +71,21 @@ struct ConnectionAutopilotContent: View {
         }
         .sheet(isPresented: $bypassAsk) {
             BypassSheet(who: name) { minutes in
+                feedback.quietClose()
                 Task { await ap.setMode(.bypass, minutes: minutes, connectionId: connectionId, label: name) }
             }
         }
+        .presentationFeedback(bypassAsk)
         .alert("Lock down \(untrusted(name))?", isPresented: $lockdownAsk) {
             Button("Cancel", role: .cancel) {}
             Button("Lock down", role: .destructive) {
+                feedback.quietClose()
                 Task { await ap.setMode(.lockdown, connectionId: connectionId, label: name) }
             }
         } message: {
             Text("Everything it asks for is denied at once, what waits now included. Other AIs are not affected.")
         }
+        .presentationFeedback(lockdownAsk)
     }
 
     private func rows(_ s: AutopilotSettings) -> some View {
@@ -94,12 +99,13 @@ struct ConnectionAutopilotContent: View {
                 IconTile(symbol: AutopilotText.symbol(mode), tint: AutopilotStyle.tint(mode), size: 44, filled: true)
                 VStack(alignment: .leading, spacing: 2) {
                     Text(AutopilotText.name(mode)).font(RFont.sans(17, .semibold)).foregroundStyle(Palette.text)
-                    TimelineView(.periodic(from: .now, by: 1)) { context in
-                        Text(modeLine(s, own: own, mode: mode, chosen: chosen, now: Int64(context.date.timeIntervalSince1970)))
-                            .font(RFont.sans(13))
-                            .foregroundStyle(bypassUntil != nil ? Palette.danger : Palette.secondary)
-                            .fixedSize(horizontal: false, vertical: true)
-                            .accessibilityIdentifier("connectionModeLine")
+                    // Only a bypass counts down; otherwise the line does not change with time.
+                    if bypassUntil != nil {
+                        TimelineView(.periodic(from: .now, by: 1)) { context in
+                            modeText(modeLine(s, own: own, mode: mode, chosen: chosen, now: Int64(context.date.timeIntervalSince1970)), bypass: true)
+                        }
+                    } else {
+                        modeText(modeLine(s, own: own, mode: mode, chosen: chosen, now: Int64(Date().timeIntervalSince1970)), bypass: false)
                     }
                 }
                 Spacer(minLength: 8)
@@ -152,6 +158,14 @@ struct ConnectionAutopilotContent: View {
                     .accessibilityIdentifier("connAutopilotError")
             }
         }
+    }
+
+    private func modeText(_ line: String, bypass: Bool) -> some View {
+        Text(line)
+            .font(RFont.sans(13))
+            .foregroundStyle(bypass ? Palette.danger : Palette.secondary)
+            .fixedSize(horizontal: false, vertical: true)
+            .accessibilityIdentifier("connectionModeLine")
     }
 
     private func modeLine(_ s: AutopilotSettings, own: ConnectionAutopilot?, mode: AutopilotMode, chosen: AutopilotMode?, now: Int64) -> String {

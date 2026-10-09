@@ -67,7 +67,7 @@ class PairingViewModel(private val container: AppContainer, private val pairingI
                     AuthResult.Success -> {
                         container.feedback.play(Event.Connected)
                         container.core.answerPairing(pairingId, true, code.toUByte(), current.label.trim().ifEmpty { null })
-                        container.refreshPending()
+                        container.refreshAfterAnswer(pairingId)
                         _ui.update { it.copy(busy = false, finished = true) }
                     }
                     AuthResult.Cancelled -> _ui.update { it.copy(busy = false) }
@@ -92,7 +92,7 @@ class PairingViewModel(private val container: AppContainer, private val pairingI
         viewModelScope.launch {
             try {
                 container.core.answerPairing(pairingId, false, null, null)
-                container.refreshPending()
+                container.refreshAfterAnswer(pairingId)
                 _ui.update { it.copy(busy = false, finished = true) }
             } catch (e: CancellationException) {
                 throw e

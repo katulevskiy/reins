@@ -167,7 +167,10 @@ private struct ApprovalContent: View {
         // A question from the desktop app is answered, not approved.
         return Group {
             if gone {
-                Button("Close") { model.closeSheet() }
+                Button("Close") {
+                    model.closeSheet()
+                    model.feedback.defaultTap()
+                }
                     .buttonStyle(.glass)
                     .font(RFont.sans(17, .semibold))
                     .frame(maxWidth: .infinity)
@@ -192,9 +195,9 @@ private struct WaitLine: View {
     var view: ApprovalView
 
     var body: some View {
-        LiveClock { now in
+        UrgencyClock(createdAt: view.createdAt, waitUntil: view.waitUntil) { urgency in
             let label = untrusted(view.connectionLabel)
-            if let u = Urgency.of(createdAt: view.createdAt, waitUntil: view.waitUntil, now: now) {
+            if let u = urgency {
                 if u.stale {
                     Banner("\(label) stopped waiting. You can still approve; then ask \(label) to try again and it will go through.", kind: .warning)
                         .padding(.top, 14)

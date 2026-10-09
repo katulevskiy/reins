@@ -10,6 +10,7 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -33,7 +34,7 @@ import dev.reins.android.design.LocalColors
 import dev.reins.android.design.RText
 import dev.reins.android.design.RType
 import dev.reins.android.design.SelectChip
-import dev.reins.android.design.rememberNowMillis
+import dev.reins.android.design.rememberNowState
 import dev.reins.android.ui.common.untrusted
 import dev.reins.core.AutopilotMode
 
@@ -47,6 +48,7 @@ fun ConnectionAutopilotSection(connectionId: String, label: String, viewModel: A
     val c = LocalColors.current
     val settings by viewModel.settings.collectAsStateWithLifecycle()
     val ui by viewModel.ui.collectAsStateWithLifecycle()
+    LaunchedEffect(viewModel) { viewModel.showingProfiles() }
     val s = settings ?: return
     val own = s.connections.firstOrNull { it.connectionId == connectionId }
     val mode = own?.mode ?: s.mode
@@ -56,7 +58,6 @@ fun ConnectionAutopilotSection(connectionId: String, label: String, viewModel: A
     val profileId = own?.profileId ?: s.defaultProfileId
     var bypassAsk by remember { mutableStateOf(false) }
     var lockdownAsk by remember { mutableStateOf(false) }
-    val now = rememberNowMillis(1_000) / 1000
 
     Group(
         header = "Autopilot",
@@ -67,18 +68,15 @@ fun ConnectionAutopilotSection(connectionId: String, label: String, viewModel: A
             Spacer(Modifier.width(14.dp))
             Column(Modifier.weight(1f)) {
                 RText(AutopilotText.name(mode), RType.sans(17f, FontWeight.SemiBold), c.text, maxLines = 1)
-                RText(
+                val lockedDown = mode == AutopilotMode.LOCKDOWN && s.mode == AutopilotMode.LOCKDOWN && own?.baseMode != AutopilotMode.LOCKDOWN
+                ModeLine(bypassUntil) { now ->
                     when {
-                        mode == AutopilotMode.LOCKDOWN && s.mode == AutopilotMode.LOCKDOWN && own?.baseMode != AutopilotMode.LOCKDOWN -> "Every AI is locked down"
+                        lockedDown -> "Every AI is locked down"
                         bypassUntil != null -> "Bypass for this AI · " + AutopilotText.minutesLeft(bypassUntil, now)
                         chosen == null -> "Like every AI (Settings, then Autopilot)"
                         else -> "Its own mode"
-                    },
-                    RType.sans(13f),
-                    if (bypassUntil != null) c.danger else c.secondary,
-                    Modifier.padding(top = 2.dp).testTag("connectionModeLine"),
-                    maxLines = 2,
-                )
+                    }
+                }
             }
             if (bypassUntil != null) {
                 CapsuleButton("Stop", Modifier.testTag("stopConnectionBypass"), style = ButtonStyle.Destructive, compact = true, glyph = Glyph.Stop) {
@@ -147,4 +145,21 @@ fun ConnectionAutopilotSection(connectionId: String, label: String, viewModel: A
             onDismiss = { lockdownAsk = false },
         )
     }
+}
+
+/**
+ * The line under an AI's mode. A bypass that runs ([bypassUntil]) gives it a clock of its own, so the countdown
+ * recomposes this line and not the section; [text] gets the time in unix seconds.
+ */
+@Composable
+private fun ModeLine(bypassUntil: Long?, text: (nowSeconds: Long) -> String) {
+    val c = LocalColors.current
+    val now = rememberNowState(1_000, untilMillis = bypassUntil?.let { it * 1000 }).value / 1000
+    RText(
+        text(now),
+        RType.sans(13f),
+        if (bypassUntil != null) c.danger else c.secondary,
+        Modifier.padding(top = 2.dp).testTag("connectionModeLine"),
+        maxLines = 2,
+    )
 }

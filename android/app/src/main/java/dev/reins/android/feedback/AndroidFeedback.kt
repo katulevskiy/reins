@@ -110,9 +110,13 @@ class AndroidFeedback(
     private val amplitudeControl: Boolean by lazy { vibrator?.hasAmplitudeControl() == true }
 
     init {
-        // Resource lookups and decoding stay off the main thread; SoundPool.load itself returns at once.
-        Thread({ bank.load() }, "feedback-load").start()
-        log("ready: vibrator=${vibrator?.hasVibrator()} outputRate=${bank.outputRate} resampled=${OutputPath.needsResampling(bank.outputRate)}")
+        // Resource lookups and decoding stay off the main thread; SoundPool.load itself returns at once. The motor's
+        // capabilities too (a binder call per primitive), which the first haptic would otherwise ask on the tap.
+        Thread({
+            bank.load()
+            caps(hasView = false)
+        }, "feedback-load").start()
+        log { "ready: vibrator=${vibrator?.hasVibrator()} outputRate=${bank.outputRate} resampled=${OutputPath.needsResampling(bank.outputRate)}" }
     }
 
     /** The window's view, for `performHapticFeedback` (OEM-tuned effects). */
@@ -130,7 +134,7 @@ class AndroidFeedback(
             bank.keepWarm(false)
             warming = false
         }
-        log("foreground=$foreground")
+        log { "foreground=$foreground" }
     }
 
     /**
@@ -168,15 +172,15 @@ class AndroidFeedback(
         main.postDelayed({
             claims.quiet() // a press just answered: a dialog closing around it stays silent
             // The sound first: the vibrator service is a binder call, and the sound is the part perceived late.
-            if (claims.cueClaimed(released)) log("cue Tap skip default tap: claimed") else play(Cue.Tap, 0)
-            if (claims.hapticClaimed(released)) log("haptic Select skip default tap: claimed") else play(Haptic.Select)
+            if (claims.cueClaimed(released)) log { "cue Tap skip default tap: claimed" } else play(Cue.Tap, 0)
+            if (claims.hapticClaimed(released)) log { "haptic Select skip default tap: claimed" } else play(Haptic.Select)
         }, ClaimTracker.DEFER_MS)
     }
 
     override fun quietClose() = claims.quiet()
 
     override fun cueUnlessRecent(cue: Cue, windowMs: Long) {
-        if (claims.cueWithin(windowMs)) log("cue $cue skip: another cue just played") else cue(cue)
+        if (claims.cueWithin(windowMs)) log { "cue $cue skip: another cue just played" } else cue(cue)
     }
 
     /** The Settings page auditioning a moment: ignores rate limits and category switches, nothing else. */
@@ -185,19 +189,23 @@ class AndroidFeedback(
         haptic?.let { claims.claimHaptic(); play(it, preview = true) }
     }
 
-    /** How richly this vibration motor renders haptics, for the Settings page. */
-    fun hapticTier(): String = when {
-        vibrator?.hasVibrator() != true -> "This phone has no vibration motor"
-        VibrationEffect.Composition.PRIMITIVE_CLICK in primitives && VibrationEffect.Composition.PRIMITIVE_TICK in primitives -> "Rich haptics: precise clicks and ticks"
-        amplitudeControl -> "Standard haptics: adjustable vibration"
-        else -> "Basic haptics: a simple on/off motor"
+    /** How richly this vibration motor renders haptics, for the Settings page. Asked once: it never changes. */
+    fun hapticTier(): String = tier
+
+    private val tier: String by lazy {
+        when {
+            vibrator?.hasVibrator() != true -> "This phone has no vibration motor"
+            VibrationEffect.Composition.PRIMITIVE_CLICK in primitives && VibrationEffect.Composition.PRIMITIVE_TICK in primitives -> "Rich haptics: precise clicks and ticks"
+            amplitudeControl -> "Standard haptics: adjustable vibration"
+            else -> "Basic haptics: a simple on/off motor"
+        }
     }
 
     // ── haptics ────────────────────────────────────────────────────────────
 
     private fun play(haptic: Haptic, preview: Boolean = false) {
         when (val d = gate.haptic(haptic, preview)) {
-            is Decision.Skip -> log("haptic $haptic skip: ${d.why.label}")
+            is Decision.Skip -> log { "haptic $haptic skip: ${d.why.label}" }
             Decision.Play -> {
                 val view = viewRef.get()?.takeIf { it.isAttachedToWindow }
                 val strength = store.current.strength
@@ -207,7 +215,7 @@ class AndroidFeedback(
                     plan = HapticPlanner.plan(haptic, strength, caps(false))
                     ok = perform(plan, null)
                 }
-                log("haptic $haptic ${if (ok) "play" else "skip"} $plan")
+                log { "haptic $haptic ${if (ok) "play" else "skip"} $plan" }
             }
         }
     }
@@ -249,22 +257,23 @@ class AndroidFeedback(
 
     private fun play(cue: Cue, step: Int, preview: Boolean = false) {
         when (val d = gate.cue(cue, preview)) {
-            is Decision.Skip -> log("cue $cue skip: ${d.why.label}")
+            is Decision.Skip -> log { "cue $cue skip: ${d.why.label}" }
             Decision.Play -> {
                 val spec = CueTable.spec(cue)
                 val volume = CueTable.volume(spec, store.current.gain)
                 val rate = if (cue == Cue.Detent) DetentLadder.rate(step) else 1f
                 val started = bank.play(cue, volume, rate, spec.priority)
-                log(
+                log {
                     if (started) "cue $cue play vol=${"%.2f".format(volume)} rate=${"%.2f".format(rate)}${if (cue == Cue.Detent) " step=$step" else ""}"
-                    else "cue $cue skip: ${Skipped.NotLoaded.label}",
-                )
+                    else "cue $cue skip: ${Skipped.NotLoaded.label}"
+                }
             }
         }
     }
 
-    private fun log(message: String) {
-        if (debug) Log.d(TAG, message)
+    /** Built only in debug builds: some messages ask the vibrator (a binder call) or format numbers. */
+    private inline fun log(message: () -> String) {
+        if (debug) Log.d(TAG, message())
     }
 
     companion object {

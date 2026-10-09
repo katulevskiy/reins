@@ -1,6 +1,8 @@
 package dev.reins.android.ui.signin
 
 import androidx.activity.compose.BackHandler
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.browser.auth.AuthTabIntent
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -108,6 +110,10 @@ private fun WelcomePage(
     val c = LocalColors.current
     val context = LocalContext.current
     val ui by viewModel.ui.collectAsStateWithLifecycle()
+    // The sign-in page in an Auth Tab comes back here; closing it without signing in changes nothing.
+    val authTab = rememberLauncherForActivityResult(AuthTabIntent.AuthenticateUserResultContract()) { result ->
+        if (result.resultCode == AuthTabIntent.RESULT_OK) result.resultUri?.let { viewModel.authTabReturned(it.toString()) }
+    }
     val valid = AccountRules.serverUrl(server) != null
     // Passwords are for servers people run themselves; the hosted server signs in through "Continue" only.
     val passwordForms = custom && valid && !AccountRules.isDefaultServer(server, BuildConfig.DEFAULT_SERVER)
@@ -136,7 +142,7 @@ private fun WelcomePage(
                 style = ButtonStyle.Primary,
                 enabled = valid,
                 busy = ui.busy,
-            ) { viewModel.continueWithSso(server) { Browser.open(context, it) } }
+            ) { viewModel.continueWithSso(server) { Browser.openSignIn(context, it, AccountRules.SSO_CALLBACK_SCHEME, authTab) } }
             if (!passwordForms) {
                 RText(
                     "Sign in or create an account on the secure sign-in page.",

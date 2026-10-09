@@ -121,6 +121,104 @@ final class HapticDesignTests: XCTestCase {
         XCTAssertEqual(FeedbackEvent.autoDenied.haptic.map { HapticTable.spec($0).priority }, 0)
     }
 
+    // MARK: Textures and clicks
+
+    /// The pattern as Core Haptics holds it: each entry keyed by the raw `CHHapticPattern.Key` names.
+    private func exported(_ h: Haptic, _ s: HapticStrength) throws -> [[String: Any]] {
+        let dict = try HapticPlayer.pattern(notes(h, s)).exportDictionary()
+        let entries = dict[.pattern] as? [Any] ?? []
+        return entries.compactMap(keyed)
+    }
+
+    private func keyed(_ any: Any) -> [String: Any]? {
+        if let d = any as? [CHHapticPattern.Key: Any] { return Dictionary(uniqueKeysWithValues: d.map { ($0.key.rawValue, $0.value) }) }
+        return any as? [String: Any]
+    }
+
+    /// The intensity control at `time`: 1 unless a curve set it (a curve keeps its last value after its end).
+    private func intensityControl(_ entries: [[String: Any]], at time: Double) -> Double {
+        var level = 1.0
+        for entry in entries {
+            guard let curve = entry[CHHapticPattern.Key.parameterCurve.rawValue].flatMap(keyed),
+                  curve[CHHapticPattern.Key.parameterID.rawValue] as? String == CHHapticDynamicParameter.ID.hapticIntensityControl.rawValue,
+                  let start = curve[CHHapticPattern.Key.time.rawValue] as? Double else { continue }
+            let points = (curve[CHHapticPattern.Key.parameterCurveControlPoints.rawValue] as? [Any] ?? []).compactMap(keyed).compactMap { p -> (Double, Double)? in
+                guard let t = p[CHHapticPattern.Key.time.rawValue] as? Double, let v = p[CHHapticPattern.Key.parameterValue.rawValue] as? Double else { return nil }
+                return (start + t, v)
+            }
+            guard let first = points.first, time >= first.0 else { continue }
+            level = points.last { $0.0 <= time }?.1 ?? level
+        }
+        return level
+    }
+
+    func testTheControlCurveCheckSeesACurve() throws {
+        // A thud's body shaped the way it used to be, with a control curve, and a click after it: the click is muted.
+        let body = CHHapticEvent(eventType: .hapticContinuous, parameters: [], relativeTime: 0, duration: 0.035)
+        let click = CHHapticEvent(eventType: .hapticTransient, parameters: [], relativeTime: 0.065)
+        let fade = CHHapticParameterCurve(parameterID: .hapticIntensityControl,
+                                          controlPoints: [.init(relativeTime: 0, value: 1), .init(relativeTime: 0.035, value: 0)],
+                                          relativeTime: 0)
+        let dict = try CHHapticPattern(events: [body, click], parameterCurves: [fade]).exportDictionary()
+        let entries = (dict[.pattern] as? [Any] ?? []).compactMap(keyed)
+        XCTAssertEqual(intensityControl(entries, at: 0), 1, accuracy: 1e-6)
+        XCTAssertEqual(intensityControl(entries, at: 0.065), 0, accuracy: 1e-6)
+    }
+
+    func testTexturesLeaveTheIntensityControlAtFullWhereverAClickLands() throws {
+        for h in Haptic.allCases {
+            for strength in HapticStrength.allCases {
+                let entries = try exported(h, strength)
+                XCTAssertEqual(entries.filter { $0[CHHapticPattern.Key.event.rawValue] != nil }.count,
+                               HapticPlayer.events(notes(h, strength)).count, "\(h) \(strength) exported")
+                for note in notes(h, strength) where note.kind == .transient {
+                    XCTAssertEqual(intensityControl(entries, at: note.time), 1, accuracy: 1e-6, "\(h) \(strength) at \(note.time)")
+                }
+            }
+        }
+    }
+
+    func testClicksKeepTheirDesignedStrengthNextToATexture() {
+        for h in Haptic.allCases {
+            let n = notes(h)
+            let transients = HapticPlayer.events(n).filter { $0.kind == .transient }
+            XCTAssertEqual(transients.map(\.intensity), n.filter { $0.kind == .transient }.map(\.intensity), "\(h)")
+        }
+        // The ones that were lost: Heavy's click after its thud, Lightning's last crack, Surge's first tick.
+        XCTAssertEqual(HapticPlayer.events(notes(.heavy)).last { $0.kind == .transient }?.intensity, HapticComposer.scaled(0.5, .standard))
+        XCTAssertEqual(HapticPlayer.events(notes(.lightning)).last { $0.kind == .transient }?.intensity, 1)
+        XCTAssertEqual(HapticPlayer.events(notes(.surge)).first { $0.kind == .transient }?.intensity, HapticComposer.scaled(0.2 * 0.8, .standard))
+    }
+
+    func testAShapedTextureIsPlayedAsShortStepsFollowingItsShape() {
+        let swell = notes(.surge).first { $0.kind == .continuous && $0.time == 0 }!
+        let steps = HapticPlayer.events([swell])
+        XCTAssertGreaterThan(steps.count, 10)
+        XCTAssertTrue(steps.allSatisfy { $0.kind == .continuous && $0.duration <= HapticPlayer.textureStep + 1e-9 })
+        XCTAssertEqual(steps.first!.time, 0)
+        XCTAssertEqual(steps.last!.time + steps.last!.duration, swell.duration, accuracy: 1e-9)
+        // It grows and sharpens towards the crack.
+        XCTAssertEqual(steps.map(\.intensity), steps.map(\.intensity).sorted())
+        XCTAssertEqual(steps.map(\.sharpness), steps.map(\.sharpness).sorted())
+        XCTAssertLessThan(steps.first!.sharpness, steps.last!.sharpness)
+        // Lightning's buzz flickers in sharpness, not only in strength.
+        let buzz = HapticPlayer.events(notes(.lightning).filter { $0.kind == .continuous })
+        let sharpness = buzz.map(\.sharpness)
+        XCTAssertNotEqual(sharpness, sharpness.sorted())
+        XCTAssertNotEqual(sharpness, sharpness.sorted(by: >))
+        // A flat texture stays one event.
+        let flat = HapticNote(kind: .continuous, time: 0.1, duration: 0.2, intensity: 0.5, sharpness: 0.3)
+        XCTAssertEqual(HapticPlayer.events([flat]), [HapticPlayer.Event(kind: .continuous, time: 0.1, duration: 0.2, intensity: 0.5, sharpness: 0.3)])
+    }
+
+    func testAShapeIsStraightBetweenItsPointsAndLevelBeyondThem() {
+        let shape: [HapticNote.Point] = [.init(at: 0.2, level: 0.2), .init(at: 0.6, level: 1), .init(at: 1, level: 0)]
+        XCTAssertEqual(HapticNote.value(shape, at: 0), 0.2)
+        XCTAssertEqual(HapticNote.value(shape, at: 0.4), 0.6, accuracy: 1e-6)
+        XCTAssertEqual(HapticNote.value(shape, at: 0.8), 0.5, accuracy: 1e-6)
+        XCTAssertEqual(HapticNote.value(shape, at: 1), 0)
+    }
+
     func testDetentTicksAreOneCheapEvent() {
         // A slider drag plays this many times a second: one transient, nothing continuous.
         XCTAssertEqual(notes(.tick).count, 1)

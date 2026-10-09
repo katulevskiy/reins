@@ -7,7 +7,7 @@ import UIKit
 @MainActor
 enum PushReceiver {
     static func handle(_ userInfo: [AnyHashable: Any], host: AppHost) async -> UIBackgroundFetchResult {
-        guard let payload = PushPayload(userInfo: userInfo), let model = host.model else { return .noData }
+        guard let payload = PushPayload(userInfo: userInfo), let model = await host.ready() else { return .noData }
         if payload.kind == "replaced" {
             model.markReplaced()
             host.notifier.deviceReplaced()
@@ -61,7 +61,8 @@ enum BackgroundRefresh {
         schedule()
         let done = Once()
         let work = Task { @MainActor in
-            if let model = host.model, case .signedIn = model.session, !model.deviceReplaced {
+            // The refresh may be why the app launched: the store may still be opening.
+            if let model = await host.ready(), case .signedIn = model.session, !model.deviceReplaced {
                 do {
                     _ = try await model.core.sync(waitSecs: 0)
                 } catch let CoreError.Server(status, _) where status == 403 {

@@ -143,6 +143,7 @@ struct McpServerScreen: View {
         .animation(.smooth, value: mcp?.error)
         .confirmationDialog("Remove \(untrusted(server.name))?", isPresented: $removing, titleVisibility: .visible) {
             Button("Remove", role: .destructive) {
+                feedback.quietClose()
                 Task {
                     guard await mcp?.remove(serverId) == true else { return }
                     if model.path(model.section).last == .mcpServer(serverId) { model.back() }
@@ -152,6 +153,7 @@ struct McpServerScreen: View {
         } message: {
             Text("Your AIs lose its tools, its sign-in is forgotten on this phone, and the permissions given for it are deleted.")
         }
+        .presentationFeedback(removing)
     }
 }
 

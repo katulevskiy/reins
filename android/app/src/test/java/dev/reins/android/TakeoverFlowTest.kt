@@ -80,7 +80,7 @@ class TakeoverFlowTest : FlowHarness() {
         )
         assertTrue(has("askOtherPhone"))
         assertTrue(has("enterRecoveryCode"))
-        assertFalse(has("setupComputer"))
+        assertFalse(has("setup"))
         assertEquals(1, core.refusedRegistrations.get())
         assertTrue(core.registrations.isEmpty())
         assertFalse(container.state.approvalDevice.value)
@@ -108,7 +108,7 @@ class TakeoverFlowTest : FlowHarness() {
         tap("recoveryRecorded")
 
         tap("recoveryCodeDone")
-        awaitTag("setupComputer")
+        awaitTag("setup")
         assertEquals(FakeCore.RECOVERY_CODE, core.unlockAttempts.single())
         awaitCore { container.state.approvalDevice.value }
         assertEquals(1, core.registrations.size)
@@ -127,7 +127,7 @@ class TakeoverFlowTest : FlowHarness() {
         tap("recoveryRecorded")
 
         tap("recoveryCodeDone")
-        awaitTag("setupComputer")
+        awaitTag("setup")
         awaitCore { core.registrations.size == 1 }
         assertTrue(container.state.approvalDevice.value)
         assertFalse(container.deviceStatus.needsTakeover())

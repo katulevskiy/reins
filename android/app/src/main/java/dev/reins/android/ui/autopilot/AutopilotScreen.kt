@@ -17,6 +17,7 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -36,6 +37,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
@@ -71,6 +73,7 @@ import dev.reins.core.AutopilotSettings
 import dev.reins.core.ModelState
 import dev.reins.core.ModelStatus
 import dev.reins.core.ProfileView
+import kotlin.math.roundToInt
 
 /**
  * Settings > Autopilot: the global mode, the model that runs on this phone, and the profiles that learn from the
@@ -85,6 +88,7 @@ fun AutopilotScreen(
 ) {
     val c = LocalColors.current
     val ui by viewModel.ui.collectAsStateWithLifecycle()
+    LaunchedEffect(viewModel) { viewModel.showingProfiles() }
     val settings by viewModel.settings.collectAsStateWithLifecycle()
     var bypassAsk by remember { mutableStateOf(false) }
     var lockdownAsk by remember { mutableStateOf(false) }
@@ -286,7 +290,7 @@ fun BypassClock(until: Long, size: androidx.compose.ui.unit.Dp = 112.dp) {
 
 /** The on-device model: what it is, whether it is here, getting it and removing it. */
 @Composable
-private fun ModelCard(
+internal fun ModelCard(
     model: ModelStatus?,
     job: DownloadJob,
     wifiOnly: Boolean,
@@ -376,15 +380,16 @@ private fun ModelCard(
 private fun IndeterminateBar(modifier: Modifier = Modifier) {
     val c = LocalColors.current
     val live = dev.reins.android.design.LocalLiveTimers.current
+    // Read only where the band is placed: the sweep moves it every frame without recomposing or measuring anything.
     val phase = if (live) {
         androidx.compose.animation.core.rememberInfiniteTransition(label = "sweep").animateFloat(
             0f,
             1f,
             androidx.compose.animation.core.infiniteRepeatable(tween(1300)),
             label = "sweepPhase",
-        ).value
+        )
     } else {
-        0.35f
+        null
     }
     androidx.compose.foundation.layout.BoxWithConstraints(
         modifier.fillMaxWidth().height(8.dp).clip(CircleShape).background(c.controlFill.copy(alpha = if (c.dark) 0.12f else 0.09f)),
@@ -392,7 +397,7 @@ private fun IndeterminateBar(modifier: Modifier = Modifier) {
         val band = maxWidth * 0.35f
         Box(
             Modifier
-                .padding(start = (maxWidth + band) * phase - band)
+                .offset { IntOffset((((maxWidth + band) * (phase?.value ?: 0.35f) - band).toPx()).roundToInt(), 0) }
                 .width(band)
                 .height(8.dp)
                 .clip(CircleShape)

@@ -92,7 +92,6 @@ struct BypassSheet: View {
     var onConfirm: (UInt32) -> Void
     @State private var minutes = AutopilotText.bypassMinutes[0]
     @Environment(\.dismiss) private var dismiss
-    @Environment(\.feedback) private var feedback
 
     var body: some View {
         ScrollView {
@@ -131,7 +130,6 @@ struct BypassSheet: View {
                 HStack(spacing: 10) {
                     ActionButton(title: "Cancel", kind: .secondary) { dismiss() }
                     Button {
-                        feedback.play(.tap)
                         dismiss()
                         onConfirm(minutes)
                     } label: {
@@ -149,7 +147,6 @@ struct BypassSheet: View {
         .presentationDetents([.medium, .large])
         .presentationDragIndicator(.visible)
         .presentationSizing(.form)
-        .onAppear { feedback.cue(.open) }
         .accessibilityIdentifier("bypassDialog")
     }
 }
@@ -220,7 +217,6 @@ struct ProfileEditorSheet: View {
             name = initialName
             icon = initialIcon
             focused = true
-            feedback.cue(.open)
         }
         .accessibilityIdentifier("profileDialog")
     }
