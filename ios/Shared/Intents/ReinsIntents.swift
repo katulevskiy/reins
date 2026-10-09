@@ -64,6 +64,74 @@ struct EndLockdownIntent: LiveActivityIntent {
     }
 }
 
+/// The Autopilot modes Siri, Shortcuts and Focus can set. Bypass is left out: it approves nearly everything, so it is
+/// switched on in the app, for a set time, after Face ID.
+enum AutopilotModeOption: String, AppEnum {
+    case manual, assisted, auto, lockdown
+
+    static var typeDisplayRepresentation: TypeDisplayRepresentation = "Autopilot mode"
+    static var caseDisplayRepresentations: [AutopilotModeOption: DisplayRepresentation] = [
+        .manual: "Manual",
+        .assisted: "Assisted",
+        .auto: "Auto",
+        .lockdown: "Lockdown",
+    ]
+
+    var title: String {
+        switch self {
+        case .manual: "Manual"
+        case .assisted: "Assisted"
+        case .auto: "Auto"
+        case .lockdown: "Lockdown"
+        }
+    }
+}
+
+/// "Set Reins to Assisted": Autopilot's mode for every AI, from Siri or Shortcuts. A looser mode lets requests
+/// through, so it needs an unlocked phone.
+struct SetAutopilotModeIntent: LiveActivityIntent {
+    static var title: LocalizedStringResource = "Set Autopilot mode"
+    static var description = IntentDescription("Sets Autopilot's mode for every AI: Manual, Assisted, Auto or Lockdown.")
+    static var authenticationPolicy: IntentAuthenticationPolicy = .requiresAuthentication
+
+    @Parameter(title: "Mode")
+    var mode: AutopilotModeOption
+
+    init() {}
+
+    init(mode: AutopilotModeOption) {
+        self.mode = mode
+    }
+
+    func perform() async throws -> some IntentResult & ProvidesDialog {
+        #if REINS_APP
+        try await IntentBridge.setMode(mode)
+        #endif
+        return .result(dialog: "Autopilot is set to \(mode.title).")
+    }
+}
+
+#if REINS_APP
+/// A Focus filter: while the Focus is on (Sleep, Driving, Work, ...), Autopilot is in the mode picked here; when it
+/// ends, the mode from before comes back. The system runs it again with no mode when the Focus ends.
+struct ReinsFocusFilter: SetFocusFilterIntent {
+    static var title: LocalizedStringResource = "Set Autopilot mode"
+    static var description: IntentDescription? = IntentDescription("While this Focus is on, Reins uses the Autopilot mode you pick. When it ends, the mode from before comes back.")
+
+    @Parameter(title: "Mode")
+    var mode: AutopilotModeOption?
+
+    var displayRepresentation: DisplayRepresentation {
+        DisplayRepresentation(title: mode.map { "Autopilot: \($0.title)" } ?? "Autopilot unchanged")
+    }
+
+    func perform() async throws -> some IntentResult {
+        try await IntentBridge.applyFocus(mode)
+        return .result()
+    }
+}
+#endif
+
 /// Ends every running bypass: the Bypass Live Activity's Stop, the Autopilot widget, the control, Siri.
 struct StopBypassIntent: LiveActivityIntent {
     static var title: LocalizedStringResource = "Stop the bypass"
@@ -226,6 +294,12 @@ struct ReinsShortcuts: AppShortcutsProvider {
             phrases: ["Resume \(.applicationName)", "End \(.applicationName) lockdown"],
             shortTitle: "Resume",
             systemImageName: "lock.open.fill"
+        )
+        AppShortcut(
+            intent: SetAutopilotModeIntent(),
+            phrases: ["Set \(.applicationName) to \(\.$mode)", "Switch \(.applicationName) to \(\.$mode)"],
+            shortTitle: "Autopilot mode",
+            systemImageName: "dial.medium"
         )
         AppShortcut(
             intent: StopBypassIntent(),

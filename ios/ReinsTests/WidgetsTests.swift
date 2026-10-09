@@ -111,6 +111,31 @@ final class WidgetsTests: XCTestCase {
         XCTAssertNotEqual(model.autopilot?.mode, .lockdown)
     }
 
+    func testIntentsSetEveryModeButBypass() {
+        for option in [AutopilotModeOption.manual, .assisted, .auto, .lockdown] {
+            XCTAssertEqual(AutopilotModeOption(option.mode), option)
+        }
+        XCTAssertNil(AutopilotModeOption(AutopilotMode.bypass))
+    }
+
+    @MainActor
+    func testAFocusSetsTheModeAndPutsTheOldOneBack() async throws {
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: "focus-tests"))
+        defaults.removePersistentDomain(forName: "focus-tests")
+        defer { defaults.removePersistentDomain(forName: "focus-tests") }
+        let model = AppModel(core: DemoReinsCore(signedIn: true, syncCap: 0.3), feedback: NoFeedback.shared, authenticator: TrustingAuthenticator(), demo: true)
+        await model.refreshSession()
+        IntentBridge.model = model
+        defer { IntentBridge.model = nil }
+        try await IntentBridge.setMode(.assisted)
+        try await IntentBridge.applyFocus(.lockdown, defaults: defaults)
+        XCTAssertEqual(model.autopilot?.mode, .lockdown)
+        // A second Focus while the first is on keeps the mode from before both.
+        try await IntentBridge.applyFocus(.manual, defaults: defaults)
+        try await IntentBridge.applyFocus(nil, defaults: defaults)
+        XCTAssertEqual(model.autopilot?.mode, .assisted)
+    }
+
     // MARK: Activity
 
     func testAgo() {

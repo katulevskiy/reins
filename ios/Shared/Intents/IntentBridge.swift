@@ -54,6 +54,36 @@ enum IntentBridge {
         return on
     }
 
+    /// Autopilot's mode for every AI ("Set Reins to Assisted").
+    static func setMode(_ option: AutopilotModeOption) async throws {
+        let model = try await signedIn()
+        do {
+            try await model.core.setAutopilotMode(connectionId: nil, mode: option.mode, minutes: nil)
+        } catch {
+            throw ReinsIntentError.failed(error.userMessage)
+        }
+        await model.refreshAutopilot()
+        await model.refreshPending()
+    }
+
+    private static let focusKey = "focus.previousMode"
+
+    /// A Focus filter: `option` while the Focus is on, remembering the mode before it; nil (the Focus ended) puts that
+    /// mode back. A bypass that ran when the Focus began comes back as the mode under it, not as a bypass.
+    static func applyFocus(_ option: AutopilotModeOption?, defaults: UserDefaults = AppGroup.defaults) async throws {
+        let model = try await signedIn()
+        if let option {
+            if defaults.string(forKey: focusKey) == nil, let s = await model.refreshAutopilot() {
+                let before = AutopilotModeOption(s.mode) ?? AutopilotModeOption(s.baseMode) ?? .manual
+                defaults.set(before.rawValue, forKey: focusKey)
+            }
+            try await setMode(option)
+        } else if let raw = defaults.string(forKey: focusKey) {
+            defaults.removeObject(forKey: focusKey)
+            if let previous = AutopilotModeOption(rawValue: raw) { try await setMode(previous) }
+        }
+    }
+
     /// Ends every bypass; false when none ran.
     static func stopBypass() async throws -> Bool {
         let model = try await signedIn()
@@ -95,6 +125,28 @@ enum IntentBridge {
     static func open(_ link: DeepLink) async {
         guard let model = await ready() else { return }
         await model.handle(link)
+    }
+}
+
+extension AutopilotModeOption {
+    /// The core's mode; nil for Bypass, which intents do not set.
+    init?(_ mode: AutopilotMode) {
+        switch mode {
+        case .manual: self = .manual
+        case .assisted: self = .assisted
+        case .auto: self = .auto
+        case .lockdown: self = .lockdown
+        case .bypass: return nil
+        }
+    }
+
+    var mode: AutopilotMode {
+        switch self {
+        case .manual: .manual
+        case .assisted: .assisted
+        case .auto: .auto
+        case .lockdown: .lockdown
+        }
     }
 }
 #endif
