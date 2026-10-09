@@ -191,6 +191,38 @@ impl Engine {
         let account = request.account.clone().unwrap_or_default();
         let now = unix_now();
 
+        // Ending a work session only takes access away: done at once, never asked.
+        if call.service == reins_proto::connector::DESKTOP && call.op == reins_proto::connector::SESSION_END_OP {
+            let ids: Vec<String> = call
+                .args
+                .get("grants")
+                .and_then(serde_json::Value::as_array)
+                .map(|a| a.iter().filter_map(serde_json::Value::as_str).map(str::to_owned).collect())
+                .unwrap_or_default();
+            let ended = self.end_work_session(&request.connection_id, &ids)?;
+            let audit = self.audit_connector(
+                &request,
+                call,
+                action_of(call),
+                "revoked",
+                &format!("ended a work session ({ended} permission(s))"),
+                None,
+                &[],
+            );
+            return self
+                .finish(
+                    session,
+                    &request,
+                    audit,
+                    RelayOutcome::Result {
+                        result: ToolResult::Connector {
+                            data: serde_json::json!({"ended": ended}),
+                        },
+                    },
+                )
+                .await;
+        }
+
         if effect == Effect::Write {
             // A file the write needs: asked for as an upload, or checked and shown with the preview.
             let Some(file) = self.file_input(session, &request, call).await? else {
@@ -388,8 +420,15 @@ impl Engine {
                     )
                 })
                 .transpose()?;
-            // The action happens first; if it fails the request stays parked.
-            let data = connector.perform(&account, call).await?;
+            // The action happens first; if it fails the request stays parked. A work session's action is creating
+            // its grants.
+            let data =
+                if call.service == reins_proto::connector::DESKTOP && call.op == reins_proto::connector::SESSION_OP {
+                    let plan = crate::work_session::plan(call)?;
+                    self.start_work_session(&request.connection_id, &parked.label(), &plan, now)?
+                } else {
+                    connector.perform(&account, call).await?
+                };
             if let Some(grant) = &new_grant {
                 self.store.insert_grant_from(grant, &parked.label(), "approval")?;
             }

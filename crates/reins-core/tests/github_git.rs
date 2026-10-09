@@ -800,3 +800,40 @@ async fn a_fast_forward_is_one_tap_and_a_force_push_never_is() {
     assert_eq!((grant.nonce.as_str(), grant.digest.as_deref()), ("nonce-r1", Some(DIGEST)));
     assert_eq!(env.core.grants().await.unwrap().len(), 0);
 }
+
+#[tokio::test]
+async fn a_work_session_covers_pushes_to_its_branch_but_not_main_or_a_force_push() {
+    let env = env().await;
+    let key = env.public();
+    pair(&env, "p1", Some(&key), Some(DESK), true).await;
+    let session = json!({"v": 1, "id": "s1", "connection_id": DESK, "connection_label": "Reins desktop app",
+        "created_at": 100, "call": {"tool": "connector", "service": "desktop", "op": "session", "args": {
+            "duration_secs": 3600, "reason": "Work on dev", "push": ["github:me/app@dev"],
+            "client_key": key, "nonce": "nonce-s1"}}});
+    serve(&env, &[session], &[]).await;
+    env.core.sync(0).await.unwrap();
+    env.core.approve("s1".to_owned(), choice(&[], None)).await.unwrap();
+    assert_eq!(answer(&env, "s1").await.unwrap()["outcome"], "result");
+
+    let dev = summary(vec![update("refs/heads/dev", &oid('b'), &oid('c'), Some(true))]);
+    let dev_force = summary(vec![update("refs/heads/dev", &oid('c'), &oid('d'), Some(false))]);
+    serve(
+        &env,
+        &[
+            push("r1", &key, "git_push", &dev),
+            push("r2", &key, "git_push", &fast_forward()),
+            push("r3", &key, "git_push", &dev_force),
+            fetch("r4", DESK, &key, "me/app"),
+        ],
+        &[],
+    )
+    .await;
+    env.core.sync(0).await.unwrap();
+    assert_eq!(
+        waiting(&env).await,
+        ["r2", "r3"],
+        "the session's branch and its reads go through; main and force do not"
+    );
+    assert_eq!(answer(&env, "r1").await.unwrap()["outcome"], "result");
+    assert_eq!(answer(&env, "r4").await.unwrap()["outcome"], "result");
+}

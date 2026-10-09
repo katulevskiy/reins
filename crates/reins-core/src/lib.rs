@@ -41,6 +41,7 @@ pub mod vault;
 pub mod vault_editor;
 pub mod vault_passkey;
 pub mod views;
+pub mod work_session;
 
 pub use api::ReinsCore;
 pub use autopilot::{
