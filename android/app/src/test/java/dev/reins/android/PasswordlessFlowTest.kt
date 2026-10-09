@@ -400,7 +400,7 @@ class PasswordlessFlowTest : FlowHarness() {
         relaunch(callbackIntent())
         awaitTag("recoveryRecorded")
         assertEquals(FakeCore.RESET_RECOVERY_CODE, container.state.recoveryToRecord.value)
-        assertTrue(showsText("NEWC ODEA FTER RESE", substring = true))
+        assertTrue(showsText("HV3N Q8RT ZL2K M7WD", substring = true))
         recordRecovery()
         awaitTag("setupComputer")
         assertEquals(listOf(server, callback, FakeCore.SSO_STATE, FakeCore.SSO_VERIFIER), core.resets.single())

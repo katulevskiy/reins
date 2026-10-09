@@ -748,6 +748,6 @@ class FakeCore : ReinsCoreInterface {
         const val SSO_VERIFIER = "v3rifier"
         const val RECOVERY_CODE = "ABCD-EFGH-IJKL-MNOP-QRST-UVWX-YZ23-4567-ABCD-EFGH-IJKL-MNOP-QRST"
         /** The code a reset vault gets. */
-        const val RESET_RECOVERY_CODE = "NEWC-ODEA-FTER-RESE-TQRS-UVWX-YZ23-4567-ABCD-EFGH-IJKL-MNOP-QRST"
+        const val RESET_RECOVERY_CODE = "HV3N-Q8RT-ZL2K-M7WD-PX4C-BJ9F-E6YS-NA5G-UT3R-KC8M-WQ2H-FD7L-YP4X"
     }
 }
