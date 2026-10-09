@@ -563,6 +563,19 @@ final class DemoReinsCore: ReinsCoreProtocol, @unchecked Sendable {
         }
     }
 
+    /// As the core: what the sheet approves untouched, refused for what is asked every time.
+    func approveQuick(requestId: String) async throws {
+        let view: ApprovalView? = locked { s in s.views[requestId] }
+        guard let v = view else { throw CoreError.NotFound }
+        guard v.quick != nil else { throw CoreError.Invalid(reason: "Open this request to decide.") }
+        let selected = switch v.kind {
+        case .search, .read: v.messages.map(\.id)
+        case .fetch: v.messages.filter { !$0.sensitive }.map(\.id)
+        default: [String]()
+        }
+        try await approve(requestId: requestId, choice: ApprovalChoice(selectedMessageIds: selected, standing: nil))
+    }
+
     func deny(requestId: String) async throws {
         try locked { s in
             guard let v = s.views[requestId], s.pending.contains(where: { $0.id == requestId }) else { throw CoreError.NotFound }

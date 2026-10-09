@@ -48,7 +48,7 @@ private struct ApprovalContent: View {
             } recap: {
                 VStack(alignment: .leading, spacing: 4) {
                     Text(untrusted(view.connectionLabel)).font(RFont.sans(14, .medium)).foregroundStyle(Palette.secondary)
-                    Text(view.headline).font(RFont.sans(22, .semibold)).foregroundStyle(Palette.text).lineLimit(3)
+                    Text(view.titleLine).font(RFont.sans(22, .semibold)).foregroundStyle(Palette.text).lineLimit(3)
                     if let error = vm.error { Banner(error, kind: .error).padding(.top, 8) }
                 }
             } decision: {
@@ -76,8 +76,17 @@ private struct ApprovalContent: View {
                 subtitle: TimeText.dateTime(view.createdAt),
                 kind: view.actionKind,
                 count: view.actionKind == .grant ? 1 : view.shownCount,
-                title: view.headline
+                title: view.titleLine
             ) {
+                // What approving does, in one sentence, before any detail.
+                if !view.headline.isEmpty {
+                    Text(untrusted(view.headline))
+                        .font(RFont.sans(16))
+                        .foregroundStyle(Palette.text)
+                        .lineLimit(4)
+                        .padding(.top, 12)
+                        .accessibilityIdentifier("headline")
+                }
                 ConnectorTags(service: view.service, account: view.account, name: view.mcp.map { untrusted($0.serverName) })
                     .padding(.top, 12)
                 if let query = view.query {
@@ -177,16 +186,86 @@ private struct ApprovalContent: View {
                     .padding(.horizontal, 16)
                     .padding(.vertical, 10)
             } else {
-                DecisionBar(
-                    denyTitle: view.isQuestion ? "No" : "Deny",
-                    approveTitle: view.isQuestion ? "Yes" : (allow ? "Allow" : "Approve"),
-                    accent: allow,
-                    busy: vm.busy,
-                    onDeny: { Task { await vm.deny(model) } },
-                    onApprove: { Task { await vm.approve(model) } }
-                )
+                VStack(spacing: 0) {
+                    // "More options" says how long itself; the shortcut would only contradict it.
+                    if !vm.moreOpen { QuickAllow(view: view, busy: vm.busy) { Task { await vm.approve(model, allow: true) } } }
+                    DecisionBar(
+                        denyTitle: view.isQuestion ? "No" : "Deny",
+                        approveTitle: view.isQuestion ? "Yes" : (allow ? "Allow" : "Approve"),
+                        accent: allow,
+                        busy: vm.busy,
+                        onDeny: { Task { await vm.deny(model) } },
+                        onApprove: { Task { await vm.approve(model) } }
+                    )
+                }
             }
         }
+    }
+}
+
+/// "Approve and allow for 1 hour": the approval plus a permission for the same AI, the same kind of request and the same
+/// target, which the core works out (never offered for what is asked every time). After a few identical approvals it
+/// says so and offers a longer period (the Android app's QuickAllow).
+private struct QuickAllow: View {
+    var view: ApprovalView
+    var busy: Bool
+    var onAllow: () -> Void
+
+    var body: some View {
+        if let quick = view.quick, let secs = quick.allow?.durationSecs {
+            let repeated = quick.repeats >= QuickAllowText.repeatsForHint
+            VStack(alignment: .leading, spacing: 6) {
+                if repeated {
+                    Label(QuickAllowText.repeatHint(quick.repeats), systemImage: "sparkles")
+                        .font(RFont.sans(13.5, .medium))
+                        .foregroundStyle(Palette.accent)
+                        .accessibilityIdentifier("repeatHint")
+                }
+                Button(action: onAllow) {
+                    Text(QuickAllowText.button(secs))
+                        .font(RFont.sans(16, .semibold))
+                        .foregroundStyle(repeated ? Color.white : Palette.text)
+                        .frame(maxWidth: .infinity, minHeight: 36)
+                }
+                .buttonStyle(.glassProminent)
+                .tint(repeated ? Palette.accent : Palette.controlFill)
+                .disabled(busy)
+                .accessibilityIdentifier("approveAllow")
+                Text(QuickAllowText.caption(label: view.connectionLabel, what: quick.allowWhat))
+                    .font(RFont.sans(12.5))
+                    .foregroundStyle(Palette.tertiary)
+                    .lineLimit(3)
+                    .padding(.horizontal, 4)
+                    .accessibilityIdentifier("allowWhat")
+            }
+            .padding(.horizontal, 16)
+            .padding(.top, 10)
+            .accessibilityElement(children: .contain)
+            .accessibilityIdentifier("quickAllow")
+        }
+    }
+}
+
+/// The words of "Approve and allow for a while", kept apart so they can be tested.
+enum QuickAllowText {
+    /// How many earlier identical approvals make the sheet point them out (the core then offers 8 hours).
+    static let repeatsForHint: UInt32 = 2
+
+    static func repeatHint(_ repeats: UInt32) -> String { "You approved this \(repeats) times in the last 24 hours." }
+
+    /// 3600 → "Approve and allow for 1 hour", 28800 → "… for 8 hours".
+    static func button(_ secs: UInt64) -> String {
+        let period = switch secs {
+        case 3_600: "1 hour"
+        case let s where s % 3_600 == 0 && s < 86_400: "\(s / 3_600) hours"
+        case let s where s % 86_400 == 0: s == 86_400 ? "24 hours" : "\(s / 86_400) days"
+        default: "\(max(secs / 60, 1)) min"
+        }
+        return "Approve and allow for \(period)"
+    }
+
+    static func caption(label: String, what: String) -> String {
+        "\(untrusted(label)) can then do the same without asking: \(untrusted(what)). Revoke it any time in Grants."
     }
 }
 

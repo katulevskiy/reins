@@ -50,10 +50,14 @@ final class ApprovalModel {
 
     var preview: BuildResult? { view.map { buildChoice($0, draft) } }
 
-    /// Approving needs the owner's Face ID, Touch ID or passcode first; anything but a confirmation does nothing.
-    func approve(_ app: AppModel) async {
+    /// Approving needs the owner's Face ID, Touch ID or passcode first; anything but a confirmation does nothing. With
+    /// `allow`, the core's "allow for a while" permission (same AI, same kind of request, same target) is made
+    /// alongside, in place of whatever "More options" says.
+    func approve(_ app: AppModel, allow quickAllow: Bool = false) async {
         guard let view, !busy else { return }
-        let choice: ApprovalChoice
+        let standing = view.quick?.allow
+        if quickAllow && standing == nil { return }
+        var choice: ApprovalChoice
         switch buildChoice(view, draft) {
         case let .invalid(message):
             app.feedback.play(.error)
@@ -62,6 +66,7 @@ final class ApprovalModel {
         case let .ok(c):
             choice = c
         }
+        if quickAllow { choice.standing = standing }
         busy = true
         error = nil
         let allow = view.kind == .grant || view.kind == .accounts
@@ -140,8 +145,8 @@ extension ApprovalView {
         }
     }
 
-    /// "Search Gmail", "Push with git", "Create issue".
-    var headline: String {
+    /// "Search Gmail", "Push with git", "Create issue" (the core's `headline` is the sentence of what approving does).
+    var titleLine: String {
         let title = mcp.map { untrusted($0.title) } ?? opTitle
         return operationTitle(action: actionKind.rawValue, count: shownCount, service: service, title: title, op: op)
     }

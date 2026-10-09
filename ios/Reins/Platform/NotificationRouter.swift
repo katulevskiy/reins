@@ -62,6 +62,14 @@ final class NotificationRouter: NSObject, UNUserNotificationCenterDelegate {
             options: [.destructive, .authenticationRequired],
             icon: UNNotificationActionIcon(systemImageName: "xmark")
         )
+        // Approve needs an unlocked phone (as on Android, the unlock is the check) and does not open the app. It is only
+        // on `quickRequest`, and approves exactly what the sheet would approve untouched.
+        let approve = UNNotificationAction(
+            identifier: NotificationAction.approve,
+            title: "Approve",
+            options: [.authenticationRequired],
+            icon: UNNotificationActionIcon(systemImageName: "checkmark")
+        )
         // "Report" opens the entry, where "This was wrong" teaches Autopilot (an approval cannot be taken back).
         let report = UNNotificationAction(
             identifier: NotificationAction.report,
@@ -71,6 +79,7 @@ final class NotificationRouter: NSObject, UNUserNotificationCenterDelegate {
         )
         return [
             category(.request, [deny]),
+            category(.quickRequest, [deny, approve]),
             category(.pairing),
             category(.blob),
             category(.join),
@@ -101,7 +110,7 @@ final class NotificationRouter: NSObject, UNUserNotificationCenterDelegate {
     /// Takes away item notifications whose item no longer waits (a safety net under `itemResolved`). A push whose
     /// item the extension could not read yet is left alone for a minute, until the app fetched it.
     private func dropStale(keeping waiting: Set<String>) {
-        let items = Set([NotificationCategory.request, .pairing, .blob].map(\.rawValue))
+        let items = Set([NotificationCategory.request, .quickRequest, .pairing, .blob].map(\.rawValue))
         center.getDeliveredNotifications { delivered in
             let cutoff = Date().addingTimeInterval(-60)
             let stale = delivered.filter { n in
@@ -128,7 +137,7 @@ final class NotificationRouter: NSObject, UNUserNotificationCenterDelegate {
         DispatchQueue.main.async {
             MainActor.assumeIsolated {
                 switch category {
-                case .request, .pairing, .blob, .join:
+                case .request, .quickRequest, .pairing, .blob, .join:
                     if let payload, payload.itemKind != nil, let host = self.host {
                         Task {
                             guard let model = await host.ready() else { return }
@@ -170,7 +179,10 @@ final class NotificationRouter: NSObject, UNUserNotificationCenterDelegate {
             return
         case NotificationAction.deny:
             guard let payload, payload.itemKind == .request else { return }
-            await deny(payload, remote: remote, model: model)
+            await answer(payload, approve: false, remote: remote, model: model)
+        case NotificationAction.approve:
+            guard let payload, payload.itemKind == .request else { return }
+            await answer(payload, approve: true, remote: remote, model: model)
         default:
             guard let link else { return }
             await waitForSession(model)
@@ -182,11 +194,11 @@ final class NotificationRouter: NSObject, UNUserNotificationCenterDelegate {
         }
     }
 
-    /// "Deny" from the notification: the app runs in the background for it and plays nothing.
-    private func deny(_ payload: PushPayload, remote: Bool, model: AppModel) async {
+    /// "Deny" or "Approve" from the notification: the app runs in the background for it and plays nothing.
+    private func answer(_ payload: PushPayload, approve: Bool, remote: Bool, model: AppModel) async {
         let app = UIApplication.shared
         var task = UIBackgroundTaskIdentifier.invalid
-        task = app.beginBackgroundTask(withName: "deny") {
+        task = app.beginBackgroundTask(withName: approve ? "approve" : "deny") {
             app.endBackgroundTask(task)
             task = .invalid
         }
@@ -194,11 +206,19 @@ final class NotificationRouter: NSObject, UNUserNotificationCenterDelegate {
         await waitForSession(model)
         do {
             if remote { try? await model.core.handlePush(kind: payload.kind, id: payload.id) }
-            try await model.core.deny(requestId: payload.id)
+            if approve {
+                try await model.core.approveQuick(requestId: payload.id)
+            } else {
+                try await model.core.deny(requestId: payload.id)
+            }
         } catch CoreError.NotFound {
-            // Already answered or expired: nothing left to deny.
+            // Already answered or expired: nothing left to answer.
         } catch {
-            host?.notifier.denyFailed(error.userMessage)
+            if approve {
+                host?.notifier.approveFailed(error.userMessage, requestId: payload.id)
+            } else {
+                host?.notifier.denyFailed(error.userMessage)
+            }
         }
         center.removeDeliveredNotifications(withIdentifiers: [payload.id])
         await model.refreshPending()

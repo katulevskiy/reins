@@ -969,7 +969,8 @@ extension PendingItem {
 
     var expiresAt: Int64 { waitUntil ?? (createdAt + Self.answerWindow) }
 
-    var headline: String {
+    /// "Claude: Search Gmail" (the core's `headline` is the sentence of what approving does).
+    var listTitle: String {
         switch kind {
         case .pairing, .join: untrusted(title)
         case .blob: "\(untrusted(connectionLabel)): Share a file"
@@ -981,7 +982,7 @@ extension PendingItem {
         Snapshot.Item(
             id: id,
             kind: snapshotKind,
-            title: headline,
+            title: listTitle,
             subtitle: untrusted(subtitle),
             connection: untrusted(connectionLabel),
             service: service,

@@ -2536,6 +2536,12 @@ public protocol ReinsCoreProtocol: AnyObject, Sendable {
     func approve(requestId: String, choice: ApprovalChoice) async throws 
     
     /**
+     * Approves a request as the approval sheet would untouched, without opening it (a notification's Approve, "Approve
+     * all"). Refused for what is asked every time (`ApprovalView.quick` is `None` for those).
+     */
+    func approveQuick(requestId: String) async throws 
+    
+    /**
      * The profile a connection's decisions train (`None` = the default profile).
      */
     func assignProfile(connectionId: String, profileId: String?) async throws 
@@ -3186,6 +3192,26 @@ open func approve(requestId: String, choice: ApprovalChoice)async throws   {
             rustFutureFunc: {
                 uniffi_reins_core_fn_method_reinscore_approve(
                         self.uniffiCloneHandle(),FfiConverterString.lower(requestId),FfiConverterTypeApprovalChoice_lower(choice)
+                )
+            },
+            pollFunc: ffi_reins_core_rust_future_poll_void,
+            completeFunc: ffi_reins_core_rust_future_complete_void,
+            freeFunc: ffi_reins_core_rust_future_free_void,
+            liftFunc: { $0 },
+            errorHandler: FfiConverterTypeCoreError_lift
+        )
+}
+    
+    /**
+     * Approves a request as the approval sheet would untouched, without opening it (a notification's Approve, "Approve
+     * all"). Refused for what is asked every time (`ApprovalView.quick` is `None` for those).
+     */
+open func approveQuick(requestId: String)async throws   {
+    return
+        try  await uniffiRustCallAsync(
+            rustFutureFunc: {
+                uniffi_reins_core_fn_method_reinscore_approve_quick(
+                        self.uniffiCloneHandle(),FfiConverterString.lower(requestId)
                 )
             },
             pollFunc: ffi_reins_core_rust_future_poll_void,
@@ -5086,6 +5112,15 @@ public struct ApprovalView: Equatable, Hashable {
      * An SSH sign-in the desktop app's SSH agent asks the phone to sign.
      */
     public var ssh: SshSignView?
+    /**
+     * What approving does, in one sentence ("Claude gets the 3 emails found for \"from:bank\"."). It may quote
+     * what the AI sent or a service returned.
+     */
+    public var headline: String
+    /**
+     * One-tap answers; `None` for what is asked every time (the hard floor).
+     */
+    public var quick: QuickApproval?
 
     // Default memberwise initializers are never public by default, so we
     // declare one manually.
@@ -5140,7 +5175,14 @@ public struct ApprovalView: Equatable, Hashable {
          */secrets: SecretReleaseView?, 
         /**
          * An SSH sign-in the desktop app's SSH agent asks the phone to sign.
-         */ssh: SshSignView?) {
+         */ssh: SshSignView?, 
+        /**
+         * What approving does, in one sentence ("Claude gets the 3 emails found for \"from:bank\"."). It may quote
+         * what the AI sent or a service returned.
+         */headline: String = "", 
+        /**
+         * One-tap answers; `None` for what is asked every time (the hard floor).
+         */quick: QuickApproval? = nil) {
         self.requestId = requestId
         self.connectionId = connectionId
         self.connectionLabel = connectionLabel
@@ -5170,6 +5212,8 @@ public struct ApprovalView: Equatable, Hashable {
         self.ask = ask
         self.secrets = secrets
         self.ssh = ssh
+        self.headline = headline
+        self.quick = quick
     }
 
     
@@ -5216,7 +5260,9 @@ public struct FfiConverterTypeApprovalView: FfiConverterRustBuffer {
                 mcp: FfiConverterOptionTypeMcpCallView.read(from: &buf), 
                 ask: FfiConverterOptionTypeAskView.read(from: &buf), 
                 secrets: FfiConverterOptionTypeSecretReleaseView.read(from: &buf), 
-                ssh: FfiConverterOptionTypeSshSignView.read(from: &buf)
+                ssh: FfiConverterOptionTypeSshSignView.read(from: &buf), 
+                headline: FfiConverterString.read(from: &buf), 
+                quick: FfiConverterOptionTypeQuickApproval.read(from: &buf)
         )
     }
 
@@ -5250,6 +5296,8 @@ public struct FfiConverterTypeApprovalView: FfiConverterRustBuffer {
         FfiConverterOptionTypeAskView.write(value.ask, into: &buf)
         FfiConverterOptionTypeSecretReleaseView.write(value.secrets, into: &buf)
         FfiConverterOptionTypeSshSignView.write(value.ssh, into: &buf)
+        FfiConverterString.write(value.headline, into: &buf)
+        FfiConverterOptionTypeQuickApproval.write(value.quick, into: &buf)
     }
 }
 
@@ -8342,6 +8390,15 @@ public struct PendingItem: Equatable, Hashable {
      * did not judge (Manual mode, no model).
      */
     public var suggestion: String?
+    /**
+     * What approving does, in one sentence (see [`ApprovalView::headline`]); empty for pairings and other phones.
+     */
+    public var headline: String
+    /**
+     * Can be approved without opening it, from the notification or with "Approve all" (`approve_quick`): it is not
+     * asked every time and nothing in it needs a closer look.
+     */
+    public var quick: Bool
 
     // Default memberwise initializers are never public by default, so we
     // declare one manually.
@@ -8370,7 +8427,14 @@ public struct PendingItem: Equatable, Hashable {
         /**
          * What Autopilot would do, in one line for the notification ("Autopilot would approve · 97%"); `None` when it
          * did not judge (Manual mode, no model).
-         */suggestion: String?) {
+         */suggestion: String?, 
+        /**
+         * What approving does, in one sentence (see [`ApprovalView::headline`]); empty for pairings and other phones.
+         */headline: String = "", 
+        /**
+         * Can be approved without opening it, from the notification or with "Approve all" (`approve_quick`): it is not
+         * asked every time and nothing in it needs a closer look.
+         */quick: Bool = false) {
         self.kind = kind
         self.id = id
         self.title = title
@@ -8386,6 +8450,8 @@ public struct PendingItem: Equatable, Hashable {
         self.op = op
         self.opTitle = opTitle
         self.suggestion = suggestion
+        self.headline = headline
+        self.quick = quick
     }
 
     
@@ -8418,7 +8484,9 @@ public struct FfiConverterTypePendingItem: FfiConverterRustBuffer {
                 waitUntil: FfiConverterOptionInt64.read(from: &buf), 
                 op: FfiConverterString.read(from: &buf), 
                 opTitle: FfiConverterString.read(from: &buf), 
-                suggestion: FfiConverterOptionString.read(from: &buf)
+                suggestion: FfiConverterOptionString.read(from: &buf), 
+                headline: FfiConverterString.read(from: &buf), 
+                quick: FfiConverterBool.read(from: &buf)
         )
     }
 
@@ -8438,6 +8506,8 @@ public struct FfiConverterTypePendingItem: FfiConverterRustBuffer {
         FfiConverterString.write(value.op, into: &buf)
         FfiConverterString.write(value.opTitle, into: &buf)
         FfiConverterOptionString.write(value.suggestion, into: &buf)
+        FfiConverterString.write(value.headline, into: &buf)
+        FfiConverterBool.write(value.quick, into: &buf)
     }
 }
 
@@ -8563,6 +8633,101 @@ public func FfiConverterTypeProfileView_lift(_ buf: RustBuffer) throws -> Profil
 #endif
 public func FfiConverterTypeProfileView_lower(_ value: ProfileView) -> RustBuffer {
     return FfiConverterTypeProfileView.lower(value)
+}
+
+
+/**
+ * One-tap answers to a request that is not asked every time (see `crate::quick`).
+ */
+public struct QuickApproval: Equatable, Hashable {
+    /**
+     * Nothing needs a closer look or a choice, so it can be approved from the notification or with "Approve all"
+     * (`approve_quick`). False when something found looks like a code or a password.
+     */
+    public var fromNotification: Bool
+    /**
+     * What "Approve and allow for a while" adds to the approval: a permission for this connection, this kind of
+     * request and this target (the account, the chats, the repository, the tool, the question's topic), for
+     * `duration_secs`. `None` when the request cannot be remembered.
+     */
+    public var allow: StandingGrant?
+    /**
+     * What `allow` covers, in a few words ("searching and reading me@gmail.com"); empty without `allow`.
+     */
+    public var allowWhat: String
+    /**
+     * How often the user approved the same thing from this connection in the last 24 hours.
+     */
+    public var repeats: UInt32
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(
+        /**
+         * Nothing needs a closer look or a choice, so it can be approved from the notification or with "Approve all"
+         * (`approve_quick`). False when something found looks like a code or a password.
+         */fromNotification: Bool, 
+        /**
+         * What "Approve and allow for a while" adds to the approval: a permission for this connection, this kind of
+         * request and this target (the account, the chats, the repository, the tool, the question's topic), for
+         * `duration_secs`. `None` when the request cannot be remembered.
+         */allow: StandingGrant?, 
+        /**
+         * What `allow` covers, in a few words ("searching and reading me@gmail.com"); empty without `allow`.
+         */allowWhat: String, 
+        /**
+         * How often the user approved the same thing from this connection in the last 24 hours.
+         */repeats: UInt32) {
+        self.fromNotification = fromNotification
+        self.allow = allow
+        self.allowWhat = allowWhat
+        self.repeats = repeats
+    }
+
+    
+
+    
+}
+
+#if compiler(>=6)
+extension QuickApproval: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeQuickApproval: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> QuickApproval {
+        return
+            try QuickApproval(
+                fromNotification: FfiConverterBool.read(from: &buf), 
+                allow: FfiConverterOptionTypeStandingGrant.read(from: &buf), 
+                allowWhat: FfiConverterString.read(from: &buf), 
+                repeats: FfiConverterUInt32.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: QuickApproval, into buf: inout [UInt8]) {
+        FfiConverterBool.write(value.fromNotification, into: &buf)
+        FfiConverterOptionTypeStandingGrant.write(value.allow, into: &buf)
+        FfiConverterString.write(value.allowWhat, into: &buf)
+        FfiConverterUInt32.write(value.repeats, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeQuickApproval_lift(_ buf: RustBuffer) throws -> QuickApproval {
+    return try FfiConverterTypeQuickApproval.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeQuickApproval_lower(_ value: QuickApproval) -> RustBuffer {
+    return FfiConverterTypeQuickApproval.lower(value)
 }
 
 
@@ -11333,6 +11498,30 @@ fileprivate struct FfiConverterOptionTypeMcpCallView: FfiConverterRustBuffer {
 #if swift(>=5.8)
 @_documentation(visibility: private)
 #endif
+fileprivate struct FfiConverterOptionTypeQuickApproval: FfiConverterRustBuffer {
+    typealias SwiftType = QuickApproval?
+
+    public static func write(_ value: SwiftType, into buf: inout [UInt8]) {
+        guard let value = value else {
+            writeInt(&buf, Int8(0))
+            return
+        }
+        writeInt(&buf, Int8(1))
+        FfiConverterTypeQuickApproval.write(value, into: &buf)
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> SwiftType {
+        switch try readInt(&buf) as Int8 {
+        case 0: return nil
+        case 1: return try FfiConverterTypeQuickApproval.read(from: &buf)
+        default: throw UniffiInternalError.unexpectedOptionalTag
+        }
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
 fileprivate struct FfiConverterOptionTypeSecretReleaseView: FfiConverterRustBuffer {
     typealias SwiftType = SecretReleaseView?
 
@@ -12367,6 +12556,9 @@ private let initializationResult: InitializationResult = {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_reins_core_checksum_method_reinscore_approve() != 62035) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_reins_core_checksum_method_reinscore_approve_quick() != 48007) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_reins_core_checksum_method_reinscore_assign_profile() != 6030) {

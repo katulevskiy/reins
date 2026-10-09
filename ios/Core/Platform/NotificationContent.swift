@@ -6,6 +6,9 @@ import UserNotifications
 enum NotificationCategory: String, CaseIterable {
     /// A request waits: "Deny" from the notification, a tap opens the approval sheet.
     case request
+    /// A routine request waits (`PendingItem.quick`): "Deny" and "Approve" from the notification. Never one that is
+    /// asked every time; the core refuses `approveQuick` for those anyway.
+    case quickRequest
     /// A new AI connection waits.
     case pairing
     /// A file an AI uploaded waits.
@@ -22,7 +25,7 @@ enum NotificationCategory: String, CaseIterable {
     /// What the lock screen says instead of the text while previews are hidden (the Android app's public versions).
     var hiddenPlaceholder: String {
         switch self {
-        case .request, .pairing, .blob, .join: NotificationText.genericBody
+        case .request, .quickRequest, .pairing, .blob, .join: NotificationText.genericBody
         case .autopilot: "Open Reins to see what it was"
         case .grant: "A grant ends soon"
         case .status: "Open Reins to see more"
@@ -31,7 +34,7 @@ enum NotificationCategory: String, CaseIterable {
 
     var thread: String {
         switch self {
-        case .request, .pairing, .blob, .join: "requests"
+        case .request, .quickRequest, .pairing, .blob, .join: "requests"
         case .autopilot: "autopilot"
         case .grant: "grants"
         case .status: "status"
@@ -60,6 +63,7 @@ enum NotificationCategory: String, CaseIterable {
 /// Action identifiers of the categories.
 enum NotificationAction {
     static let deny = "deny"
+    static let approve = "approve"
     static let report = "report"
 }
 
@@ -117,12 +121,11 @@ enum NotificationText {
         return fullTitle(label: item.connectionLabel, action: item.action, count: Int(item.count), service: item.service, title: item.opTitle, op: item.op)
     }
 
-    /// The headline, and under it what Autopilot would do (Assisted).
-    /// What waits, then its detail (the account, the query) and Autopilot's suggestion, one per line. The detail is
-    /// not the notification's subtitle: iOS sets that in bold above the body, which would put the query before what
-    /// the AI wants to do.
+    /// What waits, then what approving does (the core's sentence), its detail (the account, the query) and Autopilot's
+    /// suggestion, one per line. The detail is not the notification's subtitle: iOS sets that in bold above the body,
+    /// which would put the query before what the AI wants to do.
     static func body(_ item: PendingItem) -> String {
-        [headline(item), untrusted(item.subtitle), item.suggestion.map(untrusted) ?? ""]
+        [headline(item), untrusted(item.headline), untrusted(item.subtitle), item.suggestion.map(untrusted) ?? ""]
             .filter { !$0.isEmpty }
             .joined(separator: "\n")
     }
@@ -169,7 +172,8 @@ enum NotificationContent {
     /// An item that waits for the user.
     static func pending(_ item: PendingItem, settings: FeedbackSettings) -> UNMutableNotificationContent {
         let c = UNMutableNotificationContent()
-        let category = NotificationCategory(item.kind)
+        // Routine requests get Approve beside Deny; what is asked every time only opens.
+        let category: NotificationCategory = item.kind == .request && item.quick ? .quickRequest : NotificationCategory(item.kind)
         c.title = NotificationText.title(item)
         c.body = NotificationText.body(item)
         c.categoryIdentifier = category.rawValue
