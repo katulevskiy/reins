@@ -63,7 +63,9 @@ class PairingViewModel(private val container: AppContainer, private val pairingI
         _ui.update { it.copy(busy = true, error = null) }
         viewModelScope.launch {
             try {
-                when (authenticator.authenticate("Connect this AI", current.view?.clientName.orEmpty())) {
+                // A desktop app brings its key; an AI client (Claude.ai, ChatGPT) does not.
+                val title = if (current.view?.keyFingerprint != null) "Connect this computer" else "Connect this AI"
+                when (authenticator.authenticate(title, current.view?.clientName.orEmpty())) {
                     AuthResult.Success -> {
                         container.feedback.play(Event.Connected)
                         container.core.answerPairing(pairingId, true, code.toUByte(), current.label.trim().ifEmpty { null })

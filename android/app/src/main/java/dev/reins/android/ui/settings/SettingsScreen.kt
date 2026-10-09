@@ -350,7 +350,7 @@ fun SettingsScreen(
     if (confirmSignOut) {
         ConfirmDialog(
             title = "Sign out?",
-            text = "This phone stops receiving approval requests until you sign in again.",
+            text = "This phone stops receiving approval requests until you sign in again: your AIs' requests wait and then fail. Your computers, AI connections and integrations stay with your account.",
             confirmLabel = "Sign out",
             onConfirm = {
                 confirmSignOut = false
