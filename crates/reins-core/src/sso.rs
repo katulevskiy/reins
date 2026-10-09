@@ -336,6 +336,34 @@ pub async fn set_keys(
     })
 }
 
+/// Wipes the signed-in account's vault and keys on the server (`POST /reins/api/account/reset`), so that it takes new
+/// ones as a new account does. The server allows it only right after this device signed in (`access_token` is from
+/// that sign-in), once per sign-in.
+pub async fn reset_vault(http: &reqwest::Client, server: &ServerUrl, access_token: &str) -> Result<(), CoreError> {
+    let resp = http
+        .post(server.join("/reins/api/account/reset"))
+        .bearer_auth(access_token)
+        .header(ACCEPT, "application/json")
+        .send()
+        .await?;
+    let status = resp.status();
+    if status.is_success() {
+        return Ok(());
+    }
+    let (code, message) = error_text(status, &resp.text().await?);
+    Err(match status.as_u16() {
+        403 if code == reins_proto::device::codes::REAUTH_REQUIRED => {
+            CoreError::invalid("The sign-in that confirms the reset ran out. Try again.")
+        }
+        404 => CoreError::invalid("This server cannot reset a vault yet."),
+        409 => CoreError::invalid(message),
+        status => CoreError::Server {
+            status,
+            reason: message,
+        },
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

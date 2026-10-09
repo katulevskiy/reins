@@ -2,6 +2,7 @@
 //! phone API and in-memory relay (spec §4, contracts §A and §C).
 
 pub mod account_delete;
+pub mod account_reset;
 pub mod account_state;
 pub mod apns;
 pub mod blob;
@@ -234,6 +235,7 @@ pub fn routes() -> Vec<Route> {
     let mut routes = device_api::routes();
     routes.extend(account_state::routes());
     routes.extend(account_delete::routes());
+    routes.extend(account_reset::routes());
     routes.extend(oauth_routes::routes());
     routes.extend(mcp_routes::routes());
     routes.extend(desktop_routes::routes());

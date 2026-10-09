@@ -436,3 +436,70 @@ async fn deleting_the_account_in_the_app_deletes_its_workos_user_too() {
     tokio::time::sleep(Duration::from_secs(3)).await;
     assert!(!server.log().contains("WorkOS sync failed"), "{}", server.log());
 }
+
+/// Grace reinstalls the app and has neither her old phone nor her recovery code: signing in again to the same account
+/// resets the vault, the reinstalled phone makes new keys and takes the approval role, and the old phone is out.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_fresh_sign_in_resets_a_vault_nothing_can_open() {
+    let workos = FakeWorkos::start().await;
+    let server = Server::start_with_env(5, 3, &workos.server_env()).await;
+    let grace = User {
+        id: "user_01GRACE".to_owned(),
+        email: "grace@example.com".to_owned(),
+    };
+    workos.sign_in_as(&grace);
+    let old = Phone::signed_out(|_| {}).await;
+    assert_eq!(old.sso_sign_in(&server.base).await.unwrap().keys, AccountKeys::Created);
+    old.core.register_device(None).await.unwrap();
+    let old_code = old.core.account_recovery_code().await.unwrap();
+    // Its account state is on the server, sealed with the keys that are about to be lost.
+    old.core.engine().register_account("github", "grace-integration").unwrap();
+    let states = server.database_path().with_file_name("reins-account-state");
+    let saved = || {
+        std::fs::read_dir(&states)
+            .map_or(0, |d| d.flatten().filter(|e| e.path().extension().is_some_and(|x| x == "json")).count())
+    };
+    eventually("the account state upload", async || {
+        old.core.accounts().await.unwrap();
+        saved() == 1
+    })
+    .await;
+
+    let reinstalled = Phone::signed_out(|_| {}).await;
+    assert_eq!(reinstalled.sso_sign_in(&server.base).await.unwrap().keys, AccountKeys::Locked);
+    assert_eq!(reinstalled.core.register_device(None).await.unwrap_err(), CoreError::OtherApprovalDevice);
+
+    // Signing in to another account does not confirm the reset of this one.
+    workos.sign_in_as(&User {
+        id: "user_01MALLORY".to_owned(),
+        email: "mallory@example.com".to_owned(),
+    });
+    let start = reinstalled.core.sso_begin(server.base.clone()).await.unwrap();
+    let callback = reins_e2e::workos::browse_to_callback(&start.url, &start.callback_scheme).await;
+    let refused = reinstalled.core.reset_account(server.base.clone(), callback, start.state, start.verifier).await;
+    assert!(
+        matches!(&refused, Err(CoreError::Invalid { reason }) if reason.contains("mallory@example.com")),
+        "{refused:?}"
+    );
+    assert_eq!(saved(), 1, "nothing was reset");
+
+    workos.sign_in_as(&grace);
+    let start = reinstalled.core.sso_begin(server.base.clone()).await.unwrap();
+    let callback = reins_e2e::workos::browse_to_callback(&start.url, &start.callback_scheme).await;
+    let outcome = reinstalled.core.reset_account(server.base.clone(), callback, start.state, start.verifier).await;
+    let outcome = outcome.expect("the reset");
+    assert_eq!((outcome.session.email.as_str(), outcome.keys), ("grace@example.com", AccountKeys::Created));
+    let new_code = reinstalled.core.account_recovery_code().await.unwrap();
+    assert_ne!(new_code, old_code, "new keys, a new recovery code");
+    assert_eq!(reinstalled.core.account_keys().await.unwrap(), AccountKeys::Unlocked);
+    assert!(!reinstalled.core.accounts().await.unwrap().iter().any(|a| a.account == "grace-integration"));
+    reinstalled.core.register_device(None).await.expect("the approval role is free");
+    reinstalled.core.sync(0).await.expect("the reinstalled phone approves");
+    assert!(matches!(old.core.register_device(None).await, Err(CoreError::NotLoggedIn)), "the old phone is out");
+
+    // The new keys are the account's: another phone opens them with the new code only.
+    let next = Phone::signed_out(|_| {}).await;
+    assert_eq!(next.sso_sign_in(&server.base).await.unwrap().keys, AccountKeys::Locked);
+    assert!(next.core.unlock_account(old_code).await.is_err());
+    next.core.unlock_account(new_code).await.expect("the new code opens the new keys");
+}

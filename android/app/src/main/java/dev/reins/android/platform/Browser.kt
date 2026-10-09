@@ -11,8 +11,11 @@ import androidx.browser.customtabs.CustomTabsService
 
 /** Web pages the user has to visit (an MCP server's sign-in): a Custom Tab where the phone has one, else the browser. */
 object Browser {
-    /** False when nothing on the phone can show [url]. */
-    fun open(context: Context, url: String): Boolean {
+    /**
+     * False when nothing on the phone can show [url]. [ephemeral]: in a tab that neither reuses nor keeps the browser's
+     * cookies, where the browser has such tabs (elsewhere an ordinary one).
+     */
+    fun open(context: Context, url: String, ephemeral: Boolean = false): Boolean {
         val uri = Uri.parse(url)
         return try {
             // A default browser without Custom Tabs otherwise opens a full browser even when another installed
@@ -25,6 +28,7 @@ object Browser {
             val tab = CustomTabsIntent.Builder()
                 .setShowTitle(true)
                 .setShareState(CustomTabsIntent.SHARE_STATE_OFF)
+                .apply { if (ephemeral && ephemeralSupported(context, provider)) setEphemeralBrowsingEnabled(true) }
                 .build()
             provider?.let { tab.intent.setPackage(it) }
             if (context !is Activity) tab.intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
@@ -41,4 +45,11 @@ object Browser {
             }
         }
     }
+
+    private fun ephemeralSupported(context: Context, provider: String?): Boolean =
+        provider != null && try {
+            CustomTabsClient.isEphemeralBrowsingSupported(context, provider)
+        } catch (e: RuntimeException) {
+            false
+        }
 }

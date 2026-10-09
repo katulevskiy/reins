@@ -144,6 +144,28 @@ impl ReinsCore {
         rt::run(async move { runtime.sso_finish(&server_url, &callback_url, &state, verifier).await }).await
     }
 
+    /// "Reset the vault" on the Unlock screen, for a `Locked` account whose other phone and recovery code are both
+    /// lost: everything in the vault is deleted and the account gets new keys, as a new account does (`keys` is
+    /// `Created`; record the new recovery code). Start a sign-in with `sso_begin` and open it in a browser session that
+    /// does not reuse the last one (the person signs in again to confirm), then hand its callback here. An `Invalid`
+    /// error (a sign-in to another account, or one that ran out) leaves the account as it was.
+    pub async fn reset_account(
+        &self,
+        server_url: String,
+        callback_url: String,
+        state: String,
+        verifier: String,
+    ) -> Result<SsoOutcome, CoreError> {
+        let runtime = Arc::clone(&self.runtime);
+        let verifier = Zeroizing::new(verifier);
+        let generation = runtime.generation();
+        rt::run(async move {
+            runtime.prepare(generation).await?;
+            runtime.reset_account(&server_url, &callback_url, &state, verifier).await
+        })
+        .await
+    }
+
     /// Whether this phone can open the signed-in account's vault.
     pub async fn account_keys(&self) -> Result<AccountKeys, CoreError> {
         let runtime = Arc::clone(&self.runtime);

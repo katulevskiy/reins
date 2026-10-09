@@ -71,6 +71,13 @@ has Bitwarden's end-to-end encryption; only what protects its key changes:
 - **The recovery code** is the secret in base32, in thirteen groups of four. Settings > Account shows it after
   biometrics. Whoever has it and can sign in to the account can open the vault; without it and without a phone that
   keeps the secret, the vault cannot be opened by anyone, including the server.
+- **Resetting the vault** is the way out when both are lost (the Unlock screen's "Lost both? Reset the vault"). The
+  phone signs in again (the server makes WorkOS ask for the sign-in method again: `prompt=login`, `max_age=0`), checks
+  it is the same account, and calls `POST /reins/api/account/reset`. The server allows that only within 10 minutes of
+  an SSO sign-in by the same device, once per sign-in. It deletes the vault (items, folders, Sends), the keys, the
+  encrypted account state, emergency access and organization memberships, the approval device, every other device's
+  sign-in, and the AI and desktop connections; the phone then makes new keys and a new recovery code as for a new
+  account. Nothing of the old vault is readable afterwards, by anyone.
 - **Another phone** gets the secret from the approval device ("Add another phone"): the new phone makes an X25519 key
   and asks through the server; both phones show a six-digit code derived from that key; you compare them and approve
   with biometrics; the approval device seals the secret to the key (a sealed box naming the request), and the server
@@ -79,7 +86,9 @@ has Bitwarden's end-to-end encryption; only what protects its key changes:
 **What changes in trust.** WorkOS (and whoever controls the Google, Apple, GitHub or email account you sign in with)
 can now sign in to your Reins account. That gets them the server-side account, not the vault: opening it takes the
 account secret. Nor does it get them the approval role: once the account has an approval device, another device takes
-it only with the recovery code or your phone's yes ([which device approves](#which-device-approves)). The server
+it only with the recovery code or your phone's yes ([which device approves](#which-device-approves)). It does let
+them reset the vault: that destroys its contents and signs your phones and AIs out (you would notice), but reveals
+nothing of it, and the AIs you connected do not send their requests to the phone that reset. The server
 refuses WorkOS impersonation sessions, follows WorkOS when it revokes a session or deletes a user, and takes an email
 change only once WorkOS has verified the new address.
 
@@ -116,7 +125,8 @@ One device per account approves: it gets the AIs' requests and new connections. 
     for one takeover, and only for the device key that asked.
 
 Without a proof the server answers `403 proof_required`, and the apps say "This account already has a phone for
-approvals. Approve this phone from it, or enter your recovery code.", with exactly those two ways on. The phone that
+approvals. Approve this phone from it, or enter your recovery code.", with exactly those two ways on (a reset of the
+vault also frees the role, by deleting everything the role protected). The phone that
 loses the role is told by push. The phone's core attaches the proof itself when it has one, so a phone that just got
 the secret, or signed in with the master password, moves the role without asking again.
 

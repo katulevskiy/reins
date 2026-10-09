@@ -211,8 +211,19 @@ impl AccountRuntime {
         {
             store.secret_put(sso::SECRET_SERVICE, &owner.user_id, &raw)?;
         }
+        self.finish_sso_in(store, &server, owner, signed).await
+    }
+    /// The account behind a [`sso::SignedIn`] becomes the current one: unlocked with the keys it has or makes, or
+    /// waiting for them (`Locked`) on an engine without an account store.
+    async fn finish_sso_in(
+        &self,
+        store: Arc<Store>,
+        server: &crate::http::ServerUrl,
+        owner: Owner,
+        signed: sso::SignedIn,
+    ) -> Result<SsoOutcome, CoreError> {
         let source = self.build(store)?;
-        let outcome = source.finish_sso(&server, signed).await?;
+        let outcome = source.finish_sso(server, signed).await?;
         if let Some(raw) = source.store.secret_get(VAULT, &outcome.session.email)? {
             self.activate(&source, owner, &VaultKey::from_bytes(&raw)?).await?;
         } else {
@@ -225,6 +236,53 @@ impl AccountRuntime {
             previous.retire()?;
         }
         Ok(outcome)
+    }
+    /// Resets the signed-in account's vault, for when nothing can open its keys any more: `callback_url` is a sign-in
+    /// started for this (the server allows a reset only right after one) and must be to the same account. The server
+    /// wipes the vault and the keys, this phone forgets what it kept of them, and the account takes new keys as a new
+    /// account does (`Created`: its new recovery code is to be recorded).
+    pub async fn reset_account(
+        &self,
+        server_url: &str,
+        callback_url: &str,
+        state: &str,
+        verifier: Zeroizing<String>,
+    ) -> Result<SsoOutcome, CoreError> {
+        let _guard = self.transition.lock().await;
+        let current = self.engine();
+        let session = current.session()?;
+        let user_id = session.account_user_id().await?;
+        let server = crate::http::ServerUrl::parse(server_url)?;
+        if server.as_str() != session.server.as_str() {
+            return Err(CoreError::invalid("Reset the vault on the server this account is on."));
+        }
+        let code = sso::callback_code(callback_url, state)?;
+        let http = crate::http::client()?;
+        let mut signed = sso::exchange(&http, &server, &code, &verifier, &self.control.device_id()?).await?;
+        if signed.user_id != user_id {
+            return Err(CoreError::invalid(format!(
+                "You signed in as {}. Sign in as {} to reset its vault.",
+                signed.email,
+                session.email()
+            )));
+        }
+        let owner = Self::owner(&session, user_id);
+        let reset = sso::reset_vault(&http, &server, signed.tokens.access_token.as_str()).await;
+        self.generation.fetch_add(1, std::sync::atomic::Ordering::AcqRel);
+        if let Err(e) = reset {
+            // The sign-in replaced this device's tokens: keep its session, still waiting for the keys.
+            let store = Arc::new(Store::ephemeral(Some(Arc::clone(&self.control)))?);
+            self.finish_sso_in(store, &server, owner, signed).await?;
+            return Err(e);
+        }
+
+        // What this phone kept of the old keys opens nothing now; the account's data here was sealed with them.
+        self.forget_account(&owner)?;
+
+        // The keys the sign-in reported are the wiped ones: on as a new account, which makes new keys.
+        signed.key = None;
+        let store = Arc::new(Store::ephemeral(Some(Arc::clone(&self.control)))?);
+        self.finish_sso_in(store, &server, owner, signed).await
     }
     pub async fn login(
         &self,

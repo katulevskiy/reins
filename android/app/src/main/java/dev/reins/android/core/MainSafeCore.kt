@@ -127,6 +127,9 @@ class MainSafeCore(
     override suspend fun ssoFinish(serverUrl: String, callbackUrl: String, state: String, verifier: String): SsoOutcome =
         io { ssoFinish(serverUrl, callbackUrl, state, verifier) }
 
+    override suspend fun resetAccount(serverUrl: String, callbackUrl: String, state: String, verifier: String): SsoOutcome =
+        io { resetAccount(serverUrl, callbackUrl, state, verifier) }
+
     override suspend fun accountKeys(): AccountKeys = io { accountKeys() }
 
     override suspend fun unlockAccount(codeOrPassword: String) = io { unlockAccount(codeOrPassword) }

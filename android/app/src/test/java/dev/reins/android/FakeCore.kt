@@ -272,6 +272,9 @@ class FakeCore : ReinsCoreInterface {
     val ssoBegins = CopyOnWriteArrayList<String>()
     /** Server, callback, state, verifier of each `ssoFinish`. */
     val ssoFinishes = CopyOnWriteArrayList<List<String>>()
+    /** Thrown by `resetAccount`; server, callback, state, verifier of each. */
+    @Volatile var resetError: CoreException? = null
+    val resets = CopyOnWriteArrayList<List<String>>()
 
     /** The signed-in account's keys on this phone, and its recovery code (null: an account made with a master password). */
     @Volatile var keys: AccountKeys = AccountKeys.UNLOCKED
@@ -300,6 +303,8 @@ class FakeCore : ReinsCoreInterface {
         ssoFinishError = null
         ssoBegins.clear()
         ssoFinishes.clear()
+        resetError = null
+        resets.clear()
         keys = AccountKeys.UNLOCKED
         recoveryCode = null
         unlockAttempts.clear()
@@ -334,6 +339,17 @@ class FakeCore : ReinsCoreInterface {
         keys = ssoKeys
         recoveryCode = if (ssoKeys == AccountKeys.LOCKED) null else RECOVERY_CODE
         return SsoOutcome(info, ssoKeys)
+    }
+
+    /** Like the core: the signed-in account's vault starts over with new keys and a new recovery code. */
+    override suspend fun resetAccount(serverUrl: String, callbackUrl: String, state: String, verifier: String): SsoOutcome {
+        resets += listOf(serverUrl, callbackUrl, state, verifier)
+        resetError?.let { throw it }
+        if ("state=$state" !in callbackUrl) throw CoreException.Invalid("The sign-in did not come back as expected. Try again.")
+        val info = session ?: throw CoreException.NotLoggedIn()
+        keys = AccountKeys.CREATED
+        recoveryCode = RESET_RECOVERY_CODE
+        return SsoOutcome(info, AccountKeys.CREATED)
     }
 
     override suspend fun accountKeys(): AccountKeys = keys
@@ -731,5 +747,7 @@ class FakeCore : ReinsCoreInterface {
         const val SSO_STATE = "st4te"
         const val SSO_VERIFIER = "v3rifier"
         const val RECOVERY_CODE = "ABCD-EFGH-IJKL-MNOP-QRST-UVWX-YZ23-4567-ABCD-EFGH-IJKL-MNOP-QRST"
+        /** The code a reset vault gets. */
+        const val RESET_RECOVERY_CODE = "NEWC-ODEA-FTER-RESE-TQRS-UVWX-YZ23-4567-ABCD-EFGH-IJKL-MNOP-QRST"
     }
 }

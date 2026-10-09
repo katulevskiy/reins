@@ -143,7 +143,9 @@ Google Calendar and Google Contacts use the same Android client. Additionally en
 
 * **Telegram** (the user's own account through MTProto): needs an `api_id` / `api_hash` from <https://my.telegram.org>. Put
   them in `~/.gradle/gradle.properties` as `reins.telegramApiId` and `reins.telegramApiHash`; they are compiled into
-  the app and identify the app, not the user. The login (phone number, code, optional 2-step password) happens on the phone
+  the app and identify the app, not the user. Release builds in CI read them from the repository secrets
+  `TELEGRAM_API_ID` and `TELEGRAM_API_HASH` (and Firebase's `google-services.json` from `GOOGLE_SERVICES_JSON`); without
+  them the APK still builds, with a warning, and Telegram shows "needs setup". The login (phone number, code, optional 2-step password) happens on the phone
   and the session is stored sealed there; the server never sees it. Telegram may limit accounts driven by automation.
 * **GitHub**: the user creates a token on GitHub (the app opens the page prefilled: fine-grained for chosen repositories, or
   classic for everything including gists and notifications) and the app picks it up from the clipboard; it is kept sealed
@@ -254,7 +256,10 @@ The apps require users to record their recovery code and transcribe its final gr
 code opens the encrypted vault or authorizes a replacement phone; it is separate from a WorkOS passkey and cannot
 recover a WorkOS identity by itself. Users should keep it offline. Neither identity providers nor the server receive
 the account secret. Platform passkey providers manage passkey synchronization; Reins transfers vault keys to another
-phone only through a confirmed encrypted join or the recovery code.
+phone only through a confirmed encrypted join or the recovery code. A user who has lost both the recovery code and
+every phone that keeps the account secret can reset the vault from the Unlock screen after signing in to WorkOS again:
+the vault, its keys, the account's other sign-ins and its AI connections are deleted, and the account starts over with
+new keys ([security model](security-model.md#accounts-without-a-master-password)).
 
 Verify the deployment checklist in [release-readiness.md](release-readiness.md). The headless WorkOS live check uses
 a disposable staging user and Magic Auth and does not prove native passkey signup or production social login works.

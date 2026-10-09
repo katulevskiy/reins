@@ -44,7 +44,12 @@ pub mod codes {
     pub const LAST_OWNER: &str = "last_owner";
     /// 502: the identity provider (WorkOS) could not be reached or refused; nothing was deleted, retry later.
     pub const PROVIDER_UNAVAILABLE: &str = "provider_unavailable";
+    /// 403 to `POST /account/reset`: this device has not just signed in (or its sign-in was already spent on a reset).
+    pub const REAUTH_REQUIRED: &str = "reauth_required";
 }
+
+/// How long after a sign-in the device may reset its account's vault (`POST /reins/api/account/reset`).
+pub const RESET_SIGN_IN_TTL_SECS: i64 = 600;
 
 /// The header every phone-API call of a phone carries: its device key, 32 random bytes in base64url that never leave
 /// the phone otherwise. The server keeps a hash of the approval device's key with its row: the Vaultwarden device id
