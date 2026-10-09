@@ -6,14 +6,17 @@ use std::time::Duration;
 
 use gpui::prelude::FluentBuilder as _;
 use gpui::{
-    Animation, AnimationExt as _, Div, ElementId, FontWeight, Hsla, Image, ImageFormat, InteractiveElement as _,
-    IntoElement, ParentElement as _, SharedString, Stateful, Styled as _, div, img, pulsating_between, px,
+    Animation, AnimationExt as _, AnyElement, Div, ElementId, FontWeight, Hsla, Image, ImageFormat,
+    InteractiveElement as _, IntoElement, ParentElement as _, PathBuilder, SharedString, Stateful, Styled as _, canvas,
+    div, img, point, pulsating_between, px,
 };
+use reins_desktop::doctor::Level;
 use reins_desktop::journal::Outcome;
 
 use crate::model::Step;
 use crate::theme::{MONO, Palette};
 use crate::tray::Look;
+use crate::welcome::Stage;
 
 static MARK: LazyLock<Arc<Image>> = LazyLock::new(|| {
     Arc::new(Image::from_bytes(ImageFormat::Png, include_bytes!("../../assets/icons/app-256.png").to_vec()))
@@ -21,6 +24,40 @@ static MARK: LazyLock<Arc<Image>> = LazyLock::new(|| {
 
 pub fn mark(side: f32) -> impl IntoElement {
     img(MARK.clone()).size(px(side)).flex_none()
+}
+
+/// A check mark, drawn (Geist has no ✓, and fallback fonts draw it in every style).
+pub fn check(side: f32, color: Hsla) -> impl IntoElement {
+    canvas(
+        |_, _, _| {},
+        move |bounds, (), window, _| {
+            let s = bounds.size.width.as_f32().min(bounds.size.height.as_f32());
+            let o = bounds.origin;
+            let at = |x: f32, y: f32| point(o.x + px(x * s), o.y + px(y * s));
+            let mut path = PathBuilder::stroke(px((s * 0.15).max(1.4)));
+            path.move_to(at(0.17, 0.54));
+            path.line_to(at(0.40, 0.76));
+            path.line_to(at(0.84, 0.27));
+            if let Ok(path) = path.build() {
+                window.paint_path(path, color);
+            }
+        },
+    )
+    .size(px(side))
+    .flex_none()
+}
+
+/// A check in a soft circle of `color`: something went well.
+pub fn check_circle(side: f32, color: Hsla) -> Div {
+    div()
+        .flex()
+        .flex_none()
+        .items_center()
+        .justify_center()
+        .size(px(side))
+        .rounded_full()
+        .bg(color.opacity(0.14))
+        .child(check(side * 0.5, color))
 }
 
 pub fn card(pal: Palette) -> Div {
@@ -141,20 +178,6 @@ pub fn labelled(label: impl Into<SharedString>, detail: Option<String>, pal: Pal
         .when_some(detail.filter(|d| !d.is_empty()), |d, text| d.child(caption(text, pal)))
 }
 
-pub fn checkbox(checked: bool, enabled: bool, pal: Palette) -> Div {
-    let b = div().flex().flex_none().items_center().justify_center().size(px(18.0)).rounded(px(5.0));
-    let b = if checked {
-        b.bg(pal.accent).text_color(pal.on_accent).text_size(px(12.0)).child("✓")
-    } else {
-        b.border_1().border_color(pal.tertiary)
-    };
-    if enabled {
-        b
-    } else {
-        b.opacity(0.4)
-    }
-}
-
 pub fn toggle(on: bool, pal: Palette) -> Div {
     let knob = div().size(px(16.0)).rounded_full().bg(gpui::white()).shadow_sm();
     div()
@@ -178,6 +201,7 @@ pub fn look_color(look: Look, pal: Palette) -> Hsla {
     match look {
         Look::On => pal.success,
         Look::Paused => pal.warning,
+        Look::Waiting => pal.accent,
         Look::Attention => pal.danger,
     }
 }
@@ -410,14 +434,19 @@ pub fn tag(text: impl Into<SharedString>, pal: Palette) -> Div {
 }
 
 pub fn step_line(label: &str, step: &Step, pal: Palette, first: bool) -> Div {
-    let (icon, color, detail) = match step {
-        Step::Running => ("…", pal.accent, String::new()),
-        Step::Done(d) => ("✓", pal.success, d.clone()),
-        Step::Failed(e) => ("!", pal.danger, e.clone()),
+    let (icon, detail): (AnyElement, String) = match step {
+        Step::Running => (
+            waiting_dot(SharedString::from(format!("step-{label}")), pal.accent, 7.0).into_any_element(),
+            String::new(),
+        ),
+        Step::Done(d) => (check(15.0, pal.success).into_any_element(), d.clone()),
+        Step::Failed(e) => {
+            (div().text_color(pal.danger).font_weight(FontWeight::BOLD).child("!").into_any_element(), e.clone())
+        }
     };
     row(pal, first)
         .items_start()
-        .child(div().w(px(14.0)).text_color(color).font_weight(FontWeight::SEMIBOLD).child(icon))
+        .child(div().flex().flex_none().items_center().justify_center().w(px(16.0)).h(px(18.0)).child(icon))
         .child(
             div()
                 .flex()
@@ -452,4 +481,183 @@ pub fn phone_qr(pal: Palette) -> Div {
             .flex_1()
             .min_w(px(0.0)),
         )
+}
+
+/// A bigger button, for the one thing a screen is for.
+pub fn big(b: Stateful<Div>) -> Stateful<Div> {
+    b.h(px(40.0)).px(px(20.0)).rounded(px(10.0)).text_size(px(14.0))
+}
+
+/// The colour of a health check's level.
+pub fn level_color(level: Level, pal: Palette) -> Hsla {
+    match level {
+        Level::Ok => pal.success,
+        Level::Warn => pal.warning,
+        Level::Fail => pal.danger,
+        Level::Skip => pal.tertiary,
+    }
+}
+
+/// A check's mark in a soft circle of its colour: a check, "!", "×".
+pub fn level_mark(level: Level, side: f32, pal: Palette) -> Div {
+    let color = level_color(level, pal);
+    if level == Level::Ok {
+        return check_circle(side, color);
+    }
+    div()
+        .flex()
+        .flex_none()
+        .items_center()
+        .justify_center()
+        .size(px(side))
+        .rounded_full()
+        .bg(color.opacity(0.14))
+        .text_color(color)
+        .text_size(px(side * 0.55))
+        .font_weight(FontWeight::BOLD)
+        .child(match level {
+            Level::Fail => "×",
+            Level::Skip => "–",
+            Level::Ok | Level::Warn => "!",
+        })
+}
+
+/// The welcome flow's steps: "1 Pair · 2 AI tools · 3 Turn on · Done", the ones behind ticked.
+pub fn step_indicator(current: Stage, pal: Palette) -> Div {
+    let mut bar = div().flex().items_center().justify_center().gap(px(10.0));
+    for (i, stage) in Stage::ALL.into_iter().enumerate() {
+        if i > 0 {
+            let reached = stage <= current;
+            bar = bar.child(div().w(px(36.0)).h(px(1.5)).rounded_full().bg(if reached {
+                pal.accent.opacity(0.6)
+            } else {
+                pal.hairline
+            }));
+        }
+        let (behind, here) = (stage < current || current == Stage::Done, stage == current);
+        let mark: AnyElement = match stage.number() {
+            _ if behind || (here && stage == Stage::Done) => check(11.0, pal.on_accent).into_any_element(),
+            Some(n) => n.to_string().into_any_element(),
+            // Done, not reached yet: an empty circle.
+            None => div().into_any_element(),
+        };
+        let circle = div()
+            .flex()
+            .flex_none()
+            .items_center()
+            .justify_center()
+            .size(px(22.0))
+            .rounded_full()
+            .text_size(px(11.5))
+            .font_weight(FontWeight::SEMIBOLD)
+            .when_else(
+                behind || (here && stage == Stage::Done),
+                |c| c.bg(pal.accent).text_color(pal.on_accent),
+                |c| {
+                    c.border_1().when_else(
+                        here,
+                        |c| c.border_color(pal.accent).bg(pal.accent_soft).text_color(pal.accent),
+                        |c| c.border_color(pal.tertiary.opacity(0.6)).text_color(pal.tertiary),
+                    )
+                },
+            )
+            .child(mark);
+        bar = bar.child(
+            div().flex().items_center().gap(px(7.0)).child(circle).child(
+                div()
+                    .text_size(px(12.5))
+                    .whitespace_nowrap()
+                    .when_else(
+                        here,
+                        |t| t.text_color(pal.text).font_weight(FontWeight::SEMIBOLD),
+                        |t| {
+                            t.text_color(if behind {
+                                pal.secondary
+                            } else {
+                                pal.tertiary
+                            })
+                        },
+                    )
+                    .child(stage.label()),
+            ),
+        );
+    }
+    bar
+}
+
+/// A titled screen of the welcome flow: the title and what it is for.
+pub fn welcome_title(title: impl Into<SharedString>, about: impl Into<SharedString>, pal: Palette) -> Div {
+    div()
+        .flex()
+        .flex_col()
+        .items_center()
+        .gap(px(6.0))
+        .child(
+            div()
+                .text_size(px(24.0))
+                .line_height(px(30.0))
+                .font_weight(FontWeight::SEMIBOLD)
+                .text_center()
+                .child(title.into()),
+        )
+        .child(
+            div()
+                .max_w(px(540.0))
+                .text_size(px(13.5))
+                .line_height(px(20.0))
+                .text_color(pal.secondary)
+                .text_center()
+                .child(about.into()),
+        )
+}
+
+/// Three dots: nothing yet, something to wait for (as on the tray icon while a request waits).
+pub fn dots(color: Hsla) -> Div {
+    div().flex().items_center().gap(px(3.0)).children((0..3).map(|_| div().size(px(4.5)).rounded_full().bg(color)))
+}
+
+/// A glyph for an empty state ("+", "→").
+pub fn glyph(text: &'static str, color: Hsla) -> Div {
+    div().text_size(px(18.0)).line_height(px(18.0)).text_color(color).child(text)
+}
+
+/// A card's empty state: an icon in a soft circle, a title and what to do; the caller adds an action.
+pub fn empty_state(
+    icon: impl IntoElement,
+    title: impl Into<SharedString>,
+    body: impl Into<SharedString>,
+    pal: Palette,
+) -> Div {
+    div()
+        .flex()
+        .flex_col()
+        .items_center()
+        .gap(px(8.0))
+        .px(px(28.0))
+        .py(px(28.0))
+        .child(
+            div().flex().items_center().justify_center().size(px(40.0)).rounded_full().bg(pal.accent_soft).child(icon),
+        )
+        .child(
+            div().pt(px(2.0)).text_size(px(14.0)).font_weight(FontWeight::SEMIBOLD).text_center().child(title.into()),
+        )
+        .child(caption(body, pal).max_w(px(460.0)).text_center())
+}
+
+/// A key on the keyboard ("Ctrl+1").
+pub fn kbd(text: impl Into<SharedString>, pal: Palette) -> Div {
+    div()
+        .flex_none()
+        .px(px(7.0))
+        .py(px(1.0))
+        .rounded(px(5.0))
+        .border_1()
+        .border_color(pal.hairline)
+        .bg(pal.control_fill)
+        .font_family(MONO)
+        .text_size(px(11.5))
+        .line_height(px(17.0))
+        .text_color(pal.secondary)
+        .whitespace_nowrap()
+        .child(text.into())
 }

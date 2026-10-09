@@ -12,7 +12,9 @@ use reins_desktop::harness::Harness;
 use reins_desktop::journal::{Entry, Kind};
 use reins_desktop::stats::Connection;
 
-use super::parts::{caption, card, empty, fine, group, labelled, link, one_line, page_header, row, toggle};
+use super::parts::{
+    caption, card, empty, empty_state, fine, glyph, group, labelled, link, one_line, page_header, row, toggle,
+};
 use super::{Data, Root};
 use crate::backend::Setting;
 use crate::format;
@@ -128,6 +130,18 @@ impl Root {
                 }
                 tools = tools.child(line);
             }
+            if !s.harnesses.iter().any(|r| r.found || r.added) {
+                tools = tools.child(
+                    row(pal, false).child(
+                        caption(
+                            "None of these is installed here. Install one, then turn it on here: Reins adds itself \
+                             to its settings.",
+                            pal,
+                        )
+                        .flex_1(),
+                    ),
+                );
+            }
             page = page.child(group(
                 "AI tools",
                 Some("Reins adds itself to each one: an MCP server for its tools and a hook before risky commands."),
@@ -198,7 +212,18 @@ impl Root {
 
         // APIs.
         let apis: Vec<&Connection> = conns.iter().filter(|c| c.kind == "api").collect();
-        let api_body = if apis.is_empty() {
+        let api_body = if apis.is_empty() && d.config().is_none_or(|c| c.api.is_empty()) {
+            card(pal).child(
+                empty_state(
+                    glyph("→", pal.accent),
+                    "No APIs through Reins yet",
+                    "A program can call an API (OpenAI, Anthropic, …) through Reins with a key that stays in the vault \
+                     on your phone: Reins adds it on the way, after you approve.",
+                    pal,
+                )
+                .child(link("to-keys", "Set up an API key", pal).on_click(Self::go(cx, Section::Keys))),
+            )
+        } else if apis.is_empty() {
             card(pal).child(
                 div()
                     .flex()
@@ -206,7 +231,7 @@ impl Root {
                     .gap(px(12.0))
                     .pr(px(16.0))
                     .child(empty("No API calls through Reins since the background service started.", pal).flex_1())
-                    .child(link("to-keys", "Set up API keys", pal).on_click(Self::go(cx, Section::Keys))),
+                    .child(link("to-keys", "API keys", pal).on_click(Self::go(cx, Section::Keys))),
             )
         } else {
             let mut list = card(pal);
@@ -231,7 +256,25 @@ impl Root {
 
         // SSH.
         let ssh: Vec<&Connection> = conns.iter().filter(|c| c.kind == "ssh").collect();
-        let ssh_body = if ssh.is_empty() {
+        let ssh_on = d.config().is_some_and(|c| c.ssh.enabled);
+        let ssh_body = if ssh.is_empty() && !ssh_on {
+            card(pal).child(
+                div()
+                    .flex()
+                    .items_center()
+                    .gap(px(12.0))
+                    .pr(px(16.0))
+                    .child(
+                        empty(
+                            "The SSH agent is off. Turn it on to sign ssh logins with keys from your phone, each one \
+                             approved there.",
+                            pal,
+                        )
+                        .flex_1(),
+                    )
+                    .child(link("to-ssh", "Turn on", pal).on_click(Self::go(cx, Section::Keys))),
+            )
+        } else if ssh.is_empty() {
             card(pal).child(empty("No SSH sign-ins through Reins since the background service started.", pal))
         } else {
             let mut list = card(pal);
@@ -257,7 +300,11 @@ impl Root {
         // MCP tools.
         let mcp = mcp_by_source(d.activity());
         let mcp_body = if mcp.is_empty() {
-            card(pal).child(empty("No MCP tool calls through Reins yet.", pal))
+            card(pal).child(empty(
+                "No MCP tool calls yet. When an AI tool connected above uses Reins's tools (your Gmail, calendar, \
+                 GitHub, …), the calls and your answers show up here.",
+                pal,
+            ))
         } else {
             let mut list = card(pal);
             let mut mcp: Vec<(String, ToolCalls)> = mcp.into_iter().collect();

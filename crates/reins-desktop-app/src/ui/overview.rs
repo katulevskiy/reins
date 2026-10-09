@@ -1,4 +1,5 @@
-//! Overview: the state in a sentence, what waits for the phone now, today's answers, pausing, the latest requests.
+//! Overview: the state in a sentence, what waits for the phone now, the health checks and a test to the phone,
+//! today's answers, pausing, the latest requests.
 
 use gpui::prelude::FluentBuilder as _;
 use gpui::{
@@ -80,12 +81,19 @@ impl Root {
                 );
             }
             page = page.child(group(
-                "Waiting on your phone",
+                if d.look == Look::Waiting {
+                    "Waiting now"
+                } else {
+                    "Waiting on your phone"
+                },
                 Some("Open Reins on your phone to approve or deny. Nothing goes ahead until you answer."),
                 list,
                 pal,
             ));
         }
+
+        // Health and the test.
+        page = page.child(Self::health_card(d, pal, cx));
 
         // Today.
         let t = today(d.activity(), d.now);
@@ -141,8 +149,18 @@ impl Root {
     /// The state in a sentence, with what fixes it.
     fn hero(d: &Data, pal: Palette, cx: &mut Context<'_, Self>) -> AnyElement {
         let color = look_color(d.look, pal);
+        let waiting = d.waiting().count();
+        let title = if d.look == Look::Waiting {
+            "Waiting on your phone".to_owned()
+        } else {
+            d.line.clone()
+        };
         let sub = match d.look {
             Look::On => "Your phone approves what your AI agents do on this computer.",
+            Look::Waiting if waiting == 1 => {
+                "An agent waits for your answer. Approve or deny it in Reins on your phone."
+            }
+            Look::Waiting => "Agents wait for your answers. Approve or deny them in Reins on your phone.",
             Look::Paused if d.pause == Pause::Manual => {
                 "git goes straight to the hosts until you resume. Hooks and MCP tools still ask your phone."
             }
@@ -164,7 +182,7 @@ impl Root {
                 button("hero-start", "Start service", pal, true, true)
                     .on_click(Self::on_model(cx, Model::start_service)),
             ),
-            Look::On => None,
+            Look::On | Look::Waiting => None,
         };
         // The buttons go under the sentence when the window is narrow.
         card(pal)
@@ -190,7 +208,11 @@ impl Root {
                             .size(px(40.0))
                             .rounded_full()
                             .bg(color.opacity(0.12))
-                            .child(div().size(px(14.0)).rounded_full().bg(color)),
+                            .child(if d.look == Look::Waiting {
+                                waiting_dot("hero-waiting", color, 14.0).into_any_element()
+                            } else {
+                                div().size(px(14.0)).rounded_full().bg(color).into_any_element()
+                            }),
                     )
                     .child(
                         div()
@@ -204,7 +226,7 @@ impl Root {
                                     .text_size(px(20.0))
                                     .line_height(px(26.0))
                                     .font_weight(FontWeight::SEMIBOLD)
-                                    .child(d.line.clone()),
+                                    .child(title),
                             )
                             .child(caption(sub, pal).text_size(px(12.5))),
                     ),

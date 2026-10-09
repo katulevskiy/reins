@@ -9,7 +9,8 @@ use gpui::{
 use reins_desktop::control::ApiInfo;
 
 use super::parts::{
-    caption, card, code_block, empty, fine, group, labelled, mono, one_line, page_header, row, tag, toggle,
+    button, caption, card, code_block, empty, empty_state, fine, glyph, group, labelled, mono, one_line, page_header,
+    row, tag, toggle,
 };
 use super::{Data, Root};
 use crate::backend::Setting;
@@ -77,14 +78,31 @@ impl Root {
         ));
 
         // APIs.
+        let config_file = std::path::PathBuf::from(&d.config_file);
+        let open_config = |id: &'static str| {
+            let file = config_file.clone();
+            button(id, "Open config.toml", pal, false, true).on_click(move |_, _, cx| cx.open_with_system(&file))
+        };
         let apis = if config.api.is_empty() {
-            card(pal).child(empty(
-                format!(
-                    "No APIs yet. Add an [[api]] entry (name, base, secret = \"vault:Item/field\") to {}.",
-                    d.config_file
-                ),
-                pal,
-            ))
+            card(pal).child(
+                empty_state(
+                    glyph("+", pal.accent),
+                    "No API keys yet",
+                    "Give a program an API without giving it the key: it calls the API through Reins, and the key \
+                     comes from the vault on your phone after you approve. Add an [[api]] entry to config.toml:",
+                    pal,
+                )
+                .child(div().w_full().max_w(px(460.0)).pt(px(4.0)).child(code_block(
+                    &[
+                        "[[api]]".to_owned(),
+                        "name = \"openai\"".to_owned(),
+                        "base = \"https://api.openai.com/v1\"".to_owned(),
+                        "secret = \"vault:OpenAI/api key\"".to_owned(),
+                    ],
+                    pal,
+                )))
+                .child(div().pt(px(4.0)).child(open_config("open-config-api"))),
+            )
         } else {
             let mut list = card(pal);
             for (i, a) in config.api.iter().enumerate() {
@@ -154,13 +172,23 @@ impl Root {
 
         // Run profiles.
         let profiles = if config.run.profiles.is_empty() {
-            card(pal).child(empty(
-                format!(
-                    "No profiles yet. Add [run.profiles.<name>] with env = {{ VAR = \"vault:Item/field\" }} to {}.",
-                    d.config_file
-                ),
-                pal,
-            ))
+            card(pal).child(
+                empty_state(
+                    glyph("+", pal.accent),
+                    "No run profiles yet",
+                    "A profile names the secrets a program gets in its environment for one run (`reins run --profile \
+                     deploy -- ./deploy.sh`), each from your vault after you approve. Add one to config.toml:",
+                    pal,
+                )
+                .child(div().w_full().max_w(px(460.0)).pt(px(4.0)).child(code_block(
+                    &[
+                        "[run.profiles.deploy]".to_owned(),
+                        "env = { AWS_SECRET_ACCESS_KEY = \"vault:AWS deploy/password\" }".to_owned(),
+                    ],
+                    pal,
+                )))
+                .child(div().pt(px(4.0)).child(open_config("open-config-run"))),
+            )
         } else {
             let mut list = card(pal);
             for (i, (name, p)) in config.run.profiles.iter().enumerate() {

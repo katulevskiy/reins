@@ -1,6 +1,7 @@
 //! The tray (Windows, Linux) or menu bar (macOS) icon: the Reins shield, with a check while Reins is on, pause bars
-//! while paused and an exclamation mark while it needs the user (not paired, or the background service is not
-//! running). Its menu: the state (opens the status window), a Pause submenu (15 minutes, 1 hour, 4 hours, 24 hours,
+//! while paused, three dots and an amber dot while a request waits on the phone, and an exclamation mark while it
+//! needs the user (not paired, or the background service is not running). Its menu: the state (opens the status
+//! window; "Waiting on your phone: …" while something waits), a Pause submenu (15 minutes, 1 hour, 4 hours, 24 hours,
 //! Until I resume), Resume, Open Reins, Quit Reins.
 //!
 //! macOS and Windows use the `tray-icon` crate (an `NSStatusItem`, a `Shell_NotifyIcon` icon). Linux uses `ksni`, a
@@ -10,7 +11,14 @@
 pub enum Look {
     On,
     Paused,
+    /// A request waits for an answer on the phone.
+    Waiting,
     Attention,
+}
+
+impl Look {
+    #[cfg(test)]
+    pub const ALL: [Self; 4] = [Self::On, Self::Paused, Self::Waiting, Self::Attention];
 }
 
 use crate::pause::PauseFor;
@@ -96,9 +104,11 @@ fn pixels(look: Look) -> Result<Pixels, String> {
     let bytes: &[u8] = match (cfg!(target_os = "macos"), look) {
         (true, Look::On) => include_bytes!("../assets/icons/tray-on.png"),
         (true, Look::Paused) => include_bytes!("../assets/icons/tray-paused.png"),
+        (true, Look::Waiting) => include_bytes!("../assets/icons/tray-waiting.png"),
         (true, Look::Attention) => include_bytes!("../assets/icons/tray-pair.png"),
         (false, Look::On) => include_bytes!("../assets/icons/tray-color-on.png"),
         (false, Look::Paused) => include_bytes!("../assets/icons/tray-color-paused.png"),
+        (false, Look::Waiting) => include_bytes!("../assets/icons/tray-color-waiting.png"),
         (false, Look::Attention) => include_bytes!("../assets/icons/tray-color-pair.png"),
     };
     decode(bytes)
@@ -343,15 +353,45 @@ mod imp {
 mod tests {
     use super::*;
 
+    /// Both sets, whatever this computer shows: the macOS template images and the coloured ones.
+    const PNGS: [(&str, &[u8]); 8] = [
+        ("tray-on", include_bytes!("../assets/icons/tray-on.png")),
+        ("tray-paused", include_bytes!("../assets/icons/tray-paused.png")),
+        ("tray-waiting", include_bytes!("../assets/icons/tray-waiting.png")),
+        ("tray-pair", include_bytes!("../assets/icons/tray-pair.png")),
+        ("tray-color-on", include_bytes!("../assets/icons/tray-color-on.png")),
+        ("tray-color-paused", include_bytes!("../assets/icons/tray-color-paused.png")),
+        ("tray-color-waiting", include_bytes!("../assets/icons/tray-color-waiting.png")),
+        ("tray-color-pair", include_bytes!("../assets/icons/tray-color-pair.png")),
+    ];
+
     #[test]
     fn every_icon_decodes() {
-        for look in [Look::On, Look::Paused, Look::Attention] {
+        for look in Look::ALL {
             let p = pixels(look).unwrap();
             assert_eq!(p.rgba.len(), (p.width * p.height * 4) as usize);
             assert!(p.width >= 32 && p.width == p.height);
             // Something is drawn, and the corners are see-through (or the plate's rounded corner).
             assert!(p.rgba.chunks(4).any(|c| c[3] > 200));
             assert!(p.rgba[3] < 128);
+        }
+        // Every set's icons have the same size, and the waiting ones differ from the others.
+        let decoded: Vec<(&str, Pixels)> = PNGS.iter().map(|(name, bytes)| (*name, decode(bytes).unwrap())).collect();
+        for (name, p) in &decoded {
+            let set = if name.contains("color") {
+                "tray-color-on"
+            } else {
+                "tray-on"
+            };
+            let reference = &decoded.iter().find(|(n, _)| *n == set).unwrap().1;
+            assert_eq!((p.width, p.height), (reference.width, reference.height), "{name}");
+            if name.ends_with("waiting") {
+                assert_ne!(p.rgba, reference.rgba, "{name}");
+            }
+        }
+        // The template images are one colour (the menu bar colours them): only their alpha differs.
+        for (name, p) in decoded.iter().filter(|(n, _)| !n.contains("color")) {
+            assert!(p.rgba.chunks(4).filter(|c| c[3] > 0).all(|c| c[..3] == [0, 0, 0]), "{name}");
         }
     }
 

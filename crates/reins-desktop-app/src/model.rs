@@ -1,28 +1,32 @@
-//! The app's state and what it does: which screen (and, in the status window, which section) the window shows, the
-//! pairing in progress, the first-time setup, the status the window and the tray icon show, pausing, and the
-//! settings the window changes. One [`Model`] per app (a GPUI global); the window and the tray
-//! are views of it.
+//! The app's state and what it does: which screen (a step of the welcome flow, or the status window and its
+//! section) the window shows, the pairing in progress, the first-time setup, the health checks and the test to the
+//! phone, the status the window and the tray icon show, pausing, and the settings the window changes. One [`Model`]
+//! per app (a GPUI global); the window and the tray are views of it.
 
 use std::sync::Arc;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use futures::StreamExt as _;
 use gpui::{
-    App, AppContext as _, Bounds, Context, Entity, Global, Task, TitlebarOptions, WindowBounds, WindowHandle,
+    App, AppContext as _, Bounds, Context, Entity, Global, Pixels, Task, TitlebarOptions, WindowBounds, WindowHandle,
     WindowKind, WindowOptions, point, px, size,
 };
 use gpui_tokio::Tokio;
+use reins_desktop::ask::Answer;
+use reins_desktop::doctor::Check;
 use reins_desktop::harness::Harness;
-
+use reins_desktop::journal::{Entry, Outcome};
 use reins_desktop::settings::GuardList;
 
 use crate::backend::{Backend, DaemonState, Setting, Snapshot, Update};
 use crate::demo::Demo;
+use crate::health::{self, Fix, Health, Test};
 use crate::pairing::{self, Approved, DemoFlow, DeviceCode, DeviceFlow, Poll, ServerFlow};
 use crate::pause::{Pause, PauseFor};
 use crate::single::Instance;
-use crate::state::Saved;
+use crate::state::{Place, Rect, Saved};
 use crate::tray::{Action, Look, Shown, Tray};
+use crate::welcome::{self, Stage, ToolRow};
 use crate::{Args, autostart, ui, upgrade};
 
 /// How often the status is read again.
@@ -31,11 +35,19 @@ const REFRESH: Duration = Duration::from_secs(3);
 const UPDATE_CHECK: Duration = Duration::from_hours(6);
 /// How long "Approved on …" stays before the setup screen.
 const APPROVED_PAUSE: Duration = Duration::from_millis(1600);
+/// How long the ticked steps of "Turn on Reins" stay before "Reins is on".
+const TURNED_ON_PAUSE: Duration = Duration::from_millis(900);
+/// How often the health checks look whether they are due.
+const HEALTH_TICK: Duration = Duration::from_secs(5);
+/// `--demo`: how long the phone takes to answer the test.
+const DEMO_ANSWER: Duration = Duration::from_secs(4);
+/// The longest "what" the tray's first line quotes.
+const TRAY_WHAT: usize = 60;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Screen {
-    Onboarding,
-    Setup,
+    /// The welcome flow, at this step.
+    Welcome(Stage),
     Status,
 }
 
@@ -100,41 +112,29 @@ pub enum Pairing {
     Unavailable,
 }
 
-/// One line of the first-time setup's checklist.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct SetupItem {
-    pub what: SetupWhat,
-    pub checked: bool,
-    /// Can be ticked (a harness that is not installed cannot).
-    pub available: bool,
+/// The tray's first line while requests wait on the phone (newest first): "Waiting on your phone: <what>", and how
+/// many more.
+#[must_use]
+pub fn waiting_line(activity: &[Entry]) -> Option<String> {
+    let mut waiting = activity.iter().filter(|e| e.outcome == Outcome::Waiting);
+    let first = waiting.next()?;
+    let what = first.what.trim();
+    let what = if what.chars().count() > TRAY_WHAT {
+        format!("{}…", what.chars().take(TRAY_WHAT - 1).collect::<String>().trim_end())
+    } else {
+        what.to_owned()
+    };
+    Some(match waiting.count() {
+        0 => format!("Waiting on your phone: {what}"),
+        more => format!("Waiting on your phone: {what} (+{more} more)"),
+    })
 }
 
+/// What "Turn on Reins" does besides starting the background service.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum SetupWhat {
-    Harness(Harness),
+pub enum TurnOn {
     Git,
     Autostart,
-}
-
-impl SetupItem {
-    #[must_use]
-    pub fn label(&self) -> String {
-        match self.what {
-            SetupWhat::Harness(h) => h.label().to_owned(),
-            SetupWhat::Git => "Send git through Reins".to_owned(),
-            SetupWhat::Autostart => "Open Reins when you log in".to_owned(),
-        }
-    }
-
-    #[must_use]
-    pub fn detail(&self) -> &'static str {
-        match self.what {
-            SetupWhat::Harness(_) if !self.available => "Not installed on this computer",
-            SetupWhat::Harness(_) => "Its tools reach your phone; risky commands wait for you",
-            SetupWhat::Git => "Pushes and clones of GitHub wait for your OK; agents never see your token",
-            SetupWhat::Autostart => "A shield in the menu bar shows that Reins is on",
-        }
-    }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -156,9 +156,18 @@ pub struct Model {
     pub section: Section,
     pub pairing: Pairing,
     pub fingerprint: Option<String>,
-    pub setup_items: Vec<SetupItem>,
+    /// The AI tools step's rows.
+    pub tools: Vec<ToolRow>,
+    /// "Turn on Reins" sends git through Reins too.
+    pub turn_git: bool,
+    /// "Turn on Reins" opens Reins at login too.
+    pub turn_autostart: bool,
     pub setup_steps: Vec<(String, Step)>,
     pub setup_running: bool,
+    /// The health checks (`reins doctor`).
+    pub health: Health,
+    /// "Send a test to my phone".
+    pub test: Test,
     pub update: Option<Update>,
     /// "Restart to update" is installing it.
     pub updating: bool,
@@ -176,6 +185,12 @@ pub struct Model {
     demo_paired: bool,
     /// `--demo`: the made-up activity and connections.
     demo: Option<Demo>,
+    /// `--demo`: the checks fixed with the health card's buttons.
+    demo_fixed: Vec<String>,
+    /// The window is open (the health checks run only then).
+    window_open: bool,
+    /// The window moved or changed size since `app.json` was written.
+    place_dirty: bool,
     /// The minute the window last showed (relative times change with it).
     minute: i64,
     pairing_task: Option<Task<()>>,
@@ -209,10 +224,11 @@ fn show_in_dock(_visible: bool) {}
 impl Model {
     pub fn init(backend: Arc<Backend>, args: Args, instance: Instance, cx: &mut App) {
         let mut saved = Saved::load(&backend.paths().state_dir);
-        // `--demo` with `REINS_DEMO_SCREEN=status`: straight to the status window, as if paired and set up.
-        let demo_status = args.demo && std::env::var("REINS_DEMO_SCREEN").is_ok_and(|v| v.trim() == "status");
-        if demo_status {
-            saved.setup_done = true;
+        // `--demo` with `REINS_DEMO_SCREEN`: straight to a screen, as if paired (and set up, for the status window).
+        let demo_screen = std::env::var("REINS_DEMO_SCREEN").ok().filter(|_| args.demo).and_then(|s| demo_screen(&s));
+        let demo_paired = demo_screen.is_some_and(|s| s != Screen::Welcome(Stage::Pair));
+        if demo_paired {
+            saved.setup_done = matches!(demo_screen, Some(Screen::Status | Screen::Welcome(Stage::Done)));
             saved.account.get_or_insert_with(|| "dana@acme.dev".to_owned());
             saved.phone.get_or_insert_with(|| "Dana's iPhone".to_owned());
         }
@@ -221,17 +237,21 @@ impl Model {
             .filter(|_| args.demo)
             .and_then(|s| Section::from_id(&s))
             .unwrap_or(Section::Overview);
-        let paired = demo_status || backend.paired_server().is_some();
-        let screen = if !paired {
-            Screen::Onboarding
-        } else if !saved.setup_done {
-            Screen::Setup
-        } else {
-            Screen::Status
-        };
+        let paired = demo_paired || backend.paired_server().is_some();
+        let screen = demo_screen.filter(|_| demo_paired).unwrap_or_else(|| {
+            Stage::resume(paired, saved.setup_done, saved.setup_step).map_or(Screen::Status, Screen::Welcome)
+        });
         let home = backend.home().to_path_buf();
         let runtime = Tokio::handle(cx);
-        let demo = args.demo.then(|| Demo::new(reins_desktop::now_unix()));
+        let demo = args.demo.then(|| {
+            let demo = Demo::new(reins_desktop::now_unix());
+            if std::env::var_os("REINS_DEMO_EMPTY").is_some_and(|v| !v.is_empty() && v != "0") {
+                demo.empty()
+            } else {
+                demo
+            }
+        });
+        let demo_test = args.demo && std::env::var_os("REINS_DEMO_TEST").is_some_and(|v| !v.is_empty() && v != "0");
         let model = cx.new(|cx| {
             let mut model = Self {
                 fingerprint: backend.fingerprint().ok(),
@@ -245,9 +265,13 @@ impl Model {
                 screen,
                 section,
                 pairing: Pairing::Starting,
-                setup_items: Vec::new(),
+                tools: Vec::new(),
+                turn_git: true,
+                turn_autostart: true,
                 setup_steps: Vec::new(),
                 setup_running: false,
+                health: Health::default(),
+                test: Test::Idle,
                 update: None,
                 updating: false,
                 notice: None,
@@ -255,8 +279,11 @@ impl Model {
                 show_phone_qr: false,
                 show_server: false,
                 autostart: autostart::enabled(&home),
-                demo_paired: demo_status,
+                demo_paired,
                 demo,
+                demo_fixed: Vec::new(),
+                window_open: false,
+                place_dirty: false,
                 minute: 0,
                 pairing_task: None,
                 window: None,
@@ -266,9 +293,17 @@ impl Model {
             model.start_tray(cx);
             model.start_loops(cx);
             match screen {
-                Screen::Onboarding => model.start_pairing(cx),
-                Screen::Setup => model.prepare_setup(),
+                Screen::Welcome(Stage::Pair) => model.start_pairing(cx),
+                Screen::Welcome(stage) => {
+                    model.prepare_setup();
+                    if model.args.demo {
+                        model.demo_setup(stage, cx);
+                    }
+                }
                 Screen::Status => {}
+            }
+            if demo_test {
+                model.send_test(cx);
             }
             model
         });
@@ -311,8 +346,16 @@ impl Model {
             }
             Action::Pause(length) => self.pause_for(length, cx),
             Action::Resume => self.resume(cx),
-            Action::Quit => cx.quit(),
+            Action::Quit => self.quit(cx),
         }
+    }
+
+    /// Quits Reins (the background service keeps running), writing where the window was first.
+    pub fn quit(&mut self, cx: &mut Context<'_, Self>) {
+        if self.place_dirty {
+            self.persist();
+        }
+        cx.quit();
     }
 
     fn start_loops(&mut self, cx: &mut Context<'_, Self>) {
@@ -330,12 +373,28 @@ impl Model {
                         if model.instance.take_show_request() {
                             cx.defer(Self::show_window);
                         }
+                        if model.place_dirty {
+                            model.persist();
+                        }
                     })
                     .is_err();
                 if gone {
                     break;
                 }
                 cx.background_executor().timer(REFRESH).await;
+            }
+        }));
+        // The health checks: on the status window while it is open, once a minute (and on demand).
+        self.tasks.push(cx.spawn(async move |this, cx| {
+            loop {
+                let Ok(()) = this.update(cx, |m, cx| {
+                    if m.screen == Screen::Status && m.window_open && m.health.due(reins_desktop::now_unix()) {
+                        m.run_checks(cx);
+                    }
+                }) else {
+                    break;
+                };
+                cx.background_executor().timer(HEALTH_TICK).await;
             }
         }));
         self.tasks.push(cx.spawn(async move |this, cx| {
@@ -386,8 +445,8 @@ impl Model {
             demo.fill(&mut snapshot, self.pause().on());
         }
         // Signed out elsewhere (`reins logout`, or the phone removed the connection).
-        if snapshot.server.is_none() && !self.demo_paired && self.screen != Screen::Onboarding {
-            self.screen = Screen::Onboarding;
+        if snapshot.server.is_none() && !self.demo_paired && self.screen != Screen::Welcome(Stage::Pair) {
+            self.screen = Screen::Welcome(Stage::Pair);
             self.start_pairing(cx);
         }
         if self.snapshot.as_deref() != Some(&snapshot) {
@@ -435,19 +494,28 @@ impl Model {
         if !self.paired() {
             return (Look::Attention, "Not connected to your phone".to_owned());
         }
-        if let Some(line) = self.pause().line(reins_desktop::now_unix()) {
+        let paused = self.pause().line(reins_desktop::now_unix());
+        let daemon = match self.snapshot.as_ref().map(|s| &s.daemon) {
+            Some(DaemonState::Stopped) if self.saved.setup_done => Some("The background service is not running"),
+            Some(DaemonState::Unknown(_)) => Some("Cannot reach the background service"),
+            _ => None,
+        };
+        // A request left "waiting" by a service that stopped must not hide that it stopped.
+        if paused.is_none()
+            && let Some(problem) = daemon
+        {
+            return (Look::Attention, problem.to_owned());
+        }
+        if let Some(line) = self.snapshot.as_ref().and_then(|s| waiting_line(&s.activity)) {
+            return (Look::Waiting, line);
+        }
+        if let Some(line) = paused {
             return (Look::Paused, line);
         }
-        match self.snapshot.as_ref().map(|s| &s.daemon) {
-            Some(DaemonState::Stopped) if self.saved.setup_done => {
-                (Look::Attention, "The background service is not running".to_owned())
-            }
-            Some(DaemonState::Unknown(_)) => (Look::Attention, "Cannot reach the background service".to_owned()),
-            _ if self.snapshot.as_ref().is_some_and(|s| s.git_routed.is_empty()) && self.saved.setup_done => {
-                (Look::Paused, "Paused: git goes to GitHub directly".to_owned())
-            }
-            _ => (Look::On, "Reins is on".to_owned()),
+        if self.snapshot.as_ref().is_some_and(|s| s.git_routed.is_empty()) && self.saved.setup_done {
+            return (Look::Paused, "Paused: git goes to GitHub directly".to_owned());
         }
+        (Look::On, "Reins is on".to_owned())
     }
 
     fn refresh_tray(&mut self) {
@@ -478,7 +546,7 @@ impl Model {
             cx.activate(true);
             return;
         }
-        let bounds = Bounds::centered(None, size(px(ui::WIDTH), px(ui::HEIGHT)), cx);
+        let bounds = Self::window_bounds(model.read(cx).saved.window, cx);
         let min = size(px(ui::MIN_WIDTH), px(ui::MIN_HEIGHT));
         let options = WindowOptions {
             window_bounds: Some(WindowBounds::Windowed(bounds)),
@@ -497,11 +565,20 @@ impl Model {
         let window_model = model.clone();
         match cx.open_window(options, |window, cx| cx.new(|cx| ui::Root::new(window_model, window, cx))) {
             Ok(handle) => {
-                model.update(cx, |m, _| m.window = Some(handle));
+                model.update(cx, |m, _| {
+                    m.window = Some(handle);
+                    m.window_open = true;
+                });
                 let id = handle.window_id();
-                cx.on_window_closed(move |_, closed| {
+                cx.on_window_closed(move |cx, closed| {
                     if closed == id {
                         show_in_dock(false);
+                        model.update(cx, |m, _| {
+                            m.window_open = false;
+                            if m.place_dirty {
+                                m.persist();
+                            }
+                        });
                     }
                 })
                 .detach();
@@ -509,6 +586,47 @@ impl Model {
             Err(e) => log::warn!("cannot open the window: {e}"),
         }
         cx.activate(true);
+    }
+
+    /// Where the window opens: where it was (fitted to the displays there are now), else centred at its first size.
+    fn window_bounds(place: Option<Place>, cx: &App) -> Bounds<Pixels> {
+        let Some(place) = place else {
+            return Bounds::centered(None, size(px(ui::WIDTH), px(ui::HEIGHT)), cx);
+        };
+        let displays: Vec<Rect> = cx
+            .displays()
+            .iter()
+            .map(|d| {
+                let b = d.visible_bounds();
+                (b.origin.x.as_f32(), b.origin.y.as_f32(), b.size.width.as_f32(), b.size.height.as_f32())
+            })
+            .collect();
+        let (origin, (w, h)) = place.fit(&displays, (ui::MIN_WIDTH, ui::MIN_HEIGHT));
+        match origin {
+            Some((x, y)) => Bounds {
+                origin: point(px(x), px(y)),
+                size: size(px(w), px(h)),
+            },
+            None => Bounds::centered(None, size(px(w), px(h)), cx),
+        }
+    }
+
+    /// The window moved or changed size: remembered (written to `app.json` with the next refresh, or on close).
+    pub fn note_window(&mut self, bounds: Bounds<Pixels>) {
+        let place = Place {
+            x: bounds.origin.x.as_f32(),
+            y: bounds.origin.y.as_f32(),
+            width: bounds.size.width.as_f32(),
+            height: bounds.size.height.as_f32(),
+        };
+        // JSON cannot hold NaN or infinity, and a window this small is one being created or minimised.
+        let sane = [place.x, place.y, place.width, place.height].iter().all(|v| v.is_finite())
+            && place.width >= 200.0
+            && place.height >= 200.0;
+        if sane && self.saved.window != Some(place) {
+            self.saved.window = Some(place);
+            self.place_dirty = true;
+        }
     }
 
     // Pairing.
@@ -552,7 +670,7 @@ impl Model {
                 }
                 loop {
                     cx.background_executor().timer(code.interval).await;
-                    if std::time::Instant::now() >= code.expires_at {
+                    if Instant::now() >= code.expires_at {
                         break;
                     }
                     let poll_flow = Arc::clone(&flow);
@@ -616,6 +734,7 @@ impl Model {
         self.saved.phone.clone_from(&approved.phone);
         self.saved.account.clone_from(&approved.account);
         self.saved.setup_done = false;
+        self.saved.setup_step = Stage::Tools;
         self.persist();
         self.set_pairing(
             Pairing::Approved {
@@ -632,7 +751,7 @@ impl Model {
         self.pairing_task = Some(cx.spawn(async move |this, cx| {
             cx.background_executor().timer(APPROVED_PAUSE).await;
             let _gone = this.update(cx, |m, cx| {
-                m.screen = Screen::Setup;
+                m.screen = Screen::Welcome(Stage::Tools);
                 m.prepare_setup();
                 cx.notify();
             });
@@ -669,42 +788,149 @@ impl Model {
 
     // The first-time setup.
 
+    /// The AI tools step's rows, as this computer has them (in the demo, as if three were installed).
     fn prepare_setup(&mut self) {
-        let mut items: Vec<SetupItem> = self
+        let demo = self.args.demo;
+        let mut rows: Vec<ToolRow> = self
             .backend
             .harnesses()
             .into_iter()
-            .map(|row| SetupItem {
-                what: SetupWhat::Harness(row.harness),
-                checked: row.found,
-                available: row.found,
+            .map(|r| {
+                let sample = demo && matches!(r.harness, Harness::ClaudeCode | Harness::Codex | Harness::Cursor);
+                ToolRow::new(r.harness, r.found || sample, r.complete)
             })
             .collect();
-        // Installed ones first.
-        items.sort_by_key(|i| !i.available);
-        items.push(SetupItem {
-            what: SetupWhat::Git,
-            checked: true,
-            available: true,
-        });
-        items.push(SetupItem {
-            what: SetupWhat::Autostart,
-            checked: true,
-            available: true,
-        });
-        self.setup_items = items;
+        welcome::sort(&mut rows);
+        self.tools = rows;
         self.setup_steps.clear();
         self.setup_running = false;
     }
 
-    pub fn toggle_item(&mut self, index: usize, cx: &mut Context<'_, Self>) {
-        if let Some(item) = self.setup_items.get_mut(index)
-            && item.available
+    /// `--demo` straight at a later step: what the earlier ones would have done.
+    fn demo_setup(&mut self, stage: Stage, cx: &mut Context<'_, Self>) {
+        let connected = std::env::var("REINS_DEMO_SCREEN").is_ok_and(|v| v.trim() == "tools-connected");
+        if (stage > Stage::Tools || connected)
+            && let Some(row) = self.tools.iter_mut().find(|r| r.harness == Harness::ClaudeCode)
+        {
+            row.connected = true;
+            row.undoable = connected;
+        }
+        if stage > Stage::Tools
+            && let Some(row) = self.tools.iter_mut().find(|r| r.harness == Harness::Codex)
+        {
+            row.connected = true;
+        }
+        if stage == Stage::Done {
+            self.autostart = true;
+        }
+        if std::env::var("REINS_DEMO_SCREEN").is_ok_and(|v| v.trim() == "turning-on") {
+            self.run_setup(cx);
+        }
+        cx.notify();
+    }
+
+    /// Moves the welcome flow to `stage`, remembering it.
+    fn go_to(&mut self, stage: Stage, cx: &mut Context<'_, Self>) {
+        self.screen = Screen::Welcome(stage);
+        if matches!(stage, Stage::Tools | Stage::TurnOn) {
+            self.saved.setup_step = stage;
+            self.persist();
+        }
+        self.notice = None;
+        cx.notify();
+    }
+
+    /// Connects one AI tool (adds Reins to its settings) right away.
+    pub fn connect_tool(&mut self, h: Harness, cx: &mut Context<'_, Self>) {
+        let demo = self.args.demo;
+        let Some(row) = self.tools.iter_mut().find(|r| r.harness == h) else {
+            return;
+        };
+        if !row.can_connect() {
+            return;
+        }
+        row.error = None;
+        if demo {
+            // Nothing changes on the computer in the demo; it takes a moment all the same.
+            row.busy = true;
+            cx.notify();
+            cx.spawn(async move |this, cx| {
+                cx.background_executor().timer(Duration::from_millis(450)).await;
+                let _gone = this.update(cx, |m, cx| {
+                    if let Some(row) = m.tools.iter_mut().find(|r| r.harness == h) {
+                        row.busy = false;
+                        row.connected = true;
+                        row.undoable = true;
+                    }
+                    cx.notify();
+                });
+            })
+            .detach();
+            return;
+        }
+        match self.backend.set_harness(h, true) {
+            Ok(()) => {
+                row.connected = true;
+                row.undoable = true;
+            }
+            Err(e) => row.error = Some(e),
+        }
+        cx.notify();
+    }
+
+    /// Undo: takes Reins out of an AI tool connected on this step.
+    pub fn undo_tool(&mut self, h: Harness, cx: &mut Context<'_, Self>) {
+        let demo = self.args.demo;
+        let Some(row) = self.tools.iter_mut().find(|r| r.harness == h && r.connected && !r.busy) else {
+            return;
+        };
+        row.error = None;
+        let removed = if demo {
+            Ok(())
+        } else {
+            self.backend.set_harness(h, false)
+        };
+        match removed {
+            Ok(()) => {
+                row.connected = false;
+                row.undoable = false;
+            }
+            Err(e) => row.error = Some(e),
+        }
+        cx.notify();
+    }
+
+    pub fn connect_all(&mut self, cx: &mut Context<'_, Self>) {
+        for h in welcome::connectable(&self.tools) {
+            self.connect_tool(h, cx);
+        }
+    }
+
+    /// From the AI tools to "Turn on Reins".
+    pub fn tools_continue(&mut self, cx: &mut Context<'_, Self>) {
+        self.go_to(Stage::Tools.next(), cx);
+    }
+
+    /// Back to the AI tools (not while turning on).
+    pub fn setup_back(&mut self, cx: &mut Context<'_, Self>) {
+        if let Screen::Welcome(stage) = self.screen
+            && let Some(back) = stage.back()
             && !self.setup_running
         {
-            item.checked = !item.checked;
-            cx.notify();
+            self.setup_steps.clear();
+            self.go_to(back, cx);
         }
+    }
+
+    pub fn toggle_turn_on(&mut self, what: TurnOn, cx: &mut Context<'_, Self>) {
+        if self.setup_running {
+            return;
+        }
+        match what {
+            TurnOn::Git => self.turn_git = !self.turn_git,
+            TurnOn::Autostart => self.turn_autostart = !self.turn_autostart,
+        }
+        cx.notify();
     }
 
     /// Whether the setup ran and ended (successfully or not).
@@ -713,6 +939,8 @@ impl Model {
         !self.setup_running && !self.setup_steps.is_empty()
     }
 
+    /// "Turn on Reins": starts the background service, sends git through it, opens Reins at login; each step shows
+    /// as it goes. When all went well, "Reins is on".
     pub fn run_setup(&mut self, cx: &mut Context<'_, Self>) {
         if self.setup_running {
             return;
@@ -721,96 +949,248 @@ impl Model {
         self.setup_steps.clear();
         self.notice = None;
         cx.notify();
-        let items = self.setup_items.clone();
+        let (git, login) = (self.turn_git, self.turn_autostart);
         let backend = Arc::clone(&self.backend);
         let home = self.backend.home().to_path_buf();
+        let demo = self.args.demo;
         self.tasks.push(cx.spawn(async move |this, cx| {
-            let step = |this: &gpui::WeakEntity<Self>, cx: &mut gpui::AsyncApp, label: String, state: Step| {
+            let step = |this: &gpui::WeakEntity<Self>, cx: &mut gpui::AsyncApp, label: &str, state: Step| {
                 let _gone = this.update(cx, |m, cx| {
-                    match m.setup_steps.iter_mut().find(|(l, _)| *l == label) {
+                    match m.setup_steps.iter_mut().find(|(l, _)| l == label) {
                         Some(entry) => entry.1 = state,
-                        None => m.setup_steps.push((label, state)),
+                        None => m.setup_steps.push((label.to_owned(), state)),
                     }
                     cx.notify();
                 });
             };
+            // The demo shows the steps going by; nothing changes on the computer.
+            let pause = async |cx: &mut gpui::AsyncApp| {
+                if demo {
+                    cx.background_executor().timer(Duration::from_millis(700)).await;
+                }
+            };
             // An AppImage's own path changes every run: the command line tool goes to ~/.local/bin first.
-            if std::env::var_os("APPIMAGE").is_some() {
-                let label = "Install the command line tool".to_owned();
-                step(&this, cx, label.clone(), Step::Running);
+            if std::env::var_os("APPIMAGE").is_some() && !demo {
+                let label = "Install the command line tool";
+                step(&this, cx, label, Step::Running);
                 let state = match backend.install_cli() {
                     Ok(p) => Step::Done(p.display().to_string()),
                     Err(e) => Step::Failed(e),
                 };
                 step(&this, cx, label, state);
             }
-            for item in items.iter().filter(|i| i.checked && i.available) {
-                match item.what {
-                    SetupWhat::Harness(h) => {
-                        let label = format!("Add Reins to {}", h.label());
-                        step(&this, cx, label.clone(), Step::Running);
-                        let state = match backend.set_harness(h, true) {
-                            Ok(()) => Step::Done(reins_desktop::harness::after_add_note(h).to_owned()),
-                            Err(e) => Step::Failed(e),
-                        };
-                        step(&this, cx, label, state);
-                    }
-                    SetupWhat::Autostart => {
-                        let label = "Open Reins when you log in".to_owned();
-                        let state = match autostart::set(&home, true) {
-                            Ok(()) => Step::Done(String::new()),
-                            Err(e) => Step::Failed(e),
-                        };
-                        let _gone = this.update(cx, |m, _| m.autostart = matches!(state, Step::Done(_)));
-                        step(&this, cx, label, state);
-                    }
-                    SetupWhat::Git => {}
-                }
-            }
-            let label = "Start the background service".to_owned();
-            step(&this, cx, label.clone(), Step::Running);
-            let service_backend = Arc::clone(&backend);
-            let started = Tokio::spawn(cx, async move { service_backend.start_service().await })
-                .await
-                .unwrap_or_else(|e| Err(e.to_string()));
+            let label = "Start the background service";
+            step(&this, cx, label, Step::Running);
+            pause(cx).await;
+            let started = if demo {
+                Ok("The background service runs at login.".to_owned())
+            } else {
+                let service_backend = Arc::clone(&backend);
+                Tokio::spawn(cx, async move { service_backend.start_service().await })
+                    .await
+                    .unwrap_or_else(|e| Err(e.to_string()))
+            };
             let service_ok = started.is_ok();
             step(&this, cx, label, started.map_or_else(Step::Failed, Step::Done));
-            if service_ok && items.iter().any(|i| i.what == SetupWhat::Git && i.checked) {
-                let label = "Send git through Reins".to_owned();
-                step(&this, cx, label.clone(), Step::Running);
-                let git_backend = Arc::clone(&backend);
-                let routed = Tokio::spawn(cx, async move { git_backend.resume().await })
-                    .await
-                    .unwrap_or_else(|e| Err(e.to_string()));
+            if service_ok && git {
+                let label = "Send git through Reins";
+                step(&this, cx, label, Step::Running);
+                pause(cx).await;
+                let routed = if demo {
+                    Ok(String::new())
+                } else {
+                    let git_backend = Arc::clone(&backend);
+                    Tokio::spawn(cx, async move { git_backend.resume().await })
+                        .await
+                        .unwrap_or_else(|e| Err(e.to_string()))
+                        .map(Option::unwrap_or_default)
+                };
                 step(
                     &this,
                     cx,
                     label,
-                    routed.map_or_else(Step::Failed, |()| {
-                        Step::Done("GitHub pushes and clones ask your phone".to_owned())
+                    routed.map_or_else(Step::Failed, |direct| {
+                        Step::Done(if direct.is_empty() {
+                            "GitHub pushes and clones ask your phone".to_owned()
+                        } else {
+                            direct
+                        })
                     }),
                 );
             }
-            let _gone = this.update(cx, |m, cx| {
-                m.setup_running = false;
-                let failed = m.setup_steps.iter().any(|(_, s)| matches!(s, Step::Failed(_)));
-                if !failed {
-                    m.saved.setup_done = true;
-                    m.saved.unpause();
-                    m.persist();
-                }
-                m.refresh_now(cx);
-                cx.notify();
-            });
+            if login {
+                let label = "Open Reins when you log in";
+                step(&this, cx, label, Step::Running);
+                pause(cx).await;
+                let state = match if demo {
+                    Ok(())
+                } else {
+                    autostart::set(&home, true)
+                } {
+                    Ok(()) => Step::Done("The shield in the menu bar or tray shows that Reins is on".to_owned()),
+                    Err(e) => Step::Failed(e),
+                };
+                let _gone = this.update(cx, |m, _| m.autostart |= matches!(state, Step::Done(_)));
+                step(&this, cx, label, state);
+            }
+            let ok = this
+                .update(cx, |m, cx| {
+                    m.setup_running = false;
+                    let failed = m.setup_steps.iter().any(|(_, s)| matches!(s, Step::Failed(_)));
+                    if !failed {
+                        m.saved.setup_done = true;
+                        m.saved.setup_step = Stage::Done;
+                        m.saved.unpause();
+                        m.persist();
+                    }
+                    m.refresh_now(cx);
+                    cx.notify();
+                    !failed
+                })
+                .unwrap_or(false);
+            if ok {
+                cx.background_executor().timer(TURNED_ON_PAUSE).await;
+                let _gone = this.update(cx, |m, cx| m.go_to(Stage::Done, cx));
+            }
         }));
     }
 
+    /// "Open Reins" (or "Continue anyway"): the status window.
     pub fn finish_setup(&mut self, cx: &mut Context<'_, Self>) {
         self.saved.setup_done = true;
+        self.saved.setup_step = Stage::Done;
         self.persist();
         self.screen = Screen::Status;
         self.section = Section::Overview;
+        self.notice = None;
         cx.notify();
+    }
+
+    // The health checks and the test.
+
+    /// Runs the health checks (`reins doctor`) now, unless they are running.
+    pub fn run_checks(&mut self, cx: &mut Context<'_, Self>) {
+        if self.health.running {
+            return;
+        }
+        self.health.running = true;
+        cx.notify();
+        if self.args.demo {
+            let fixed = self.demo_fixed.clone();
+            cx.spawn(async move |this, cx| {
+                cx.background_executor().timer(Duration::from_millis(700)).await;
+                let _gone = this.update(cx, |m, cx| m.set_checks(Ok(health::demo_checks(&fixed)), cx));
+            })
+            .detach();
+            return;
+        }
+        let doctor = match self.backend.doctor() {
+            Ok(d) => d,
+            Err(e) => {
+                self.set_checks(Err(e), cx);
+                return;
+            }
+        };
+        cx.spawn(async move |this, cx| {
+            let checks = Tokio::spawn(cx, async move { doctor.run().await }).await.map_err(|e| e.to_string());
+            let _gone = this.update(cx, |m, cx| m.set_checks(checks, cx));
+        })
+        .detach();
+    }
+
+    fn set_checks(&mut self, checks: Result<Vec<Check>, String>, cx: &mut Context<'_, Self>) {
+        self.health.running = false;
+        self.health.at = Some(reins_desktop::now_unix());
+        match checks {
+            Ok(checks) => {
+                self.health.checks = Some(checks);
+                self.health.error = None;
+            }
+            Err(e) => self.health.error = Some(e),
+        }
+        cx.notify();
+    }
+
+    /// Ctrl/Cmd+R: reads the status again and runs the checks.
+    pub fn refresh_all(&mut self, cx: &mut Context<'_, Self>) {
+        self.refresh_now(cx);
+        if self.screen == Screen::Status {
+            self.run_checks(cx);
+        }
+    }
+
+    /// A health card button: does the fix, then checks again.
+    pub fn fix(&mut self, fix: Fix, cx: &mut Context<'_, Self>) {
+        if self.args.demo {
+            if let Fix::Connect(h) = fix {
+                self.demo_fixed.push(format!("harness:{}", h.id()));
+                self.note = Some(reins_desktop::harness::after_add_note(h).to_owned());
+            }
+            self.run_checks(cx);
+            return;
+        }
+        let backend = Arc::clone(&self.backend);
+        match fix {
+            Fix::Start => self.act_with(async move { backend.start_service().await.map(Some) }, true, cx),
+            Fix::Restart => self.act_with(async move { backend.restart_service().await }, true, cx),
+            Fix::Resume => {
+                self.saved.unpause();
+                self.persist();
+                self.act_with(async move { backend.resume().await }, true, cx);
+            }
+            Fix::Connect(h) => self.act_with(
+                async move {
+                    backend.set_harness(h, true).map(|()| Some(reins_desktop::harness::after_add_note(h).to_owned()))
+                },
+                true,
+                cx,
+            ),
+            Fix::PairAgain => self.sign_out(cx),
+        }
+    }
+
+    /// "Send a test to my phone" (`reins test`): a harmless question; the answer shows where the button was.
+    pub fn send_test(&mut self, cx: &mut Context<'_, Self>) {
+        if matches!(self.test, Test::Waiting(_)) || !self.paired() {
+            return;
+        }
+        let sent = Instant::now();
+        self.test = Test::Waiting(sent);
+        cx.notify();
+        // The countdown.
+        cx.spawn(async move |this, cx| {
+            loop {
+                cx.background_executor().timer(Duration::from_secs(1)).await;
+                let waiting = this.update(cx, |m, cx| {
+                    let waiting = m.test == Test::Waiting(sent);
+                    if waiting {
+                        cx.notify();
+                    }
+                    waiting
+                });
+                if !waiting.unwrap_or(false) {
+                    break;
+                }
+            }
+        })
+        .detach();
+        let demo = self.args.demo;
+        let backend = Arc::clone(&self.backend);
+        cx.spawn(async move |this, cx| {
+            let ended = if demo {
+                cx.background_executor().timer(DEMO_ANSWER).await;
+                Ok((Answer::Yes, false))
+            } else {
+                Tokio::spawn(cx, async move { backend.send_test().await }).await.unwrap_or_else(|e| Err(e.to_string()))
+            };
+            let _gone = this.update(cx, |m, cx| {
+                let (answer, timed_out) = ended.unwrap_or_else(|e| (Answer::Unanswered(e), false));
+                m.test = Test::Ended(answer, timed_out);
+                m.refresh_now(cx);
+                cx.notify();
+            });
+        })
+        .detach();
     }
 
     pub fn show_section(&mut self, section: Section, cx: &mut Context<'_, Self>) {
@@ -854,6 +1234,14 @@ impl Model {
     where
         F: Future<Output = Result<Option<String>, String>> + Send + 'static,
     {
+        self.act_with(work, false, cx);
+    }
+
+    /// [`Self::act_noting`], running the health checks again afterwards when `recheck`.
+    fn act_with<F>(&mut self, work: F, recheck: bool, cx: &mut Context<'_, Self>)
+    where
+        F: Future<Output = Result<Option<String>, String>> + Send + 'static,
+    {
         self.notice = None;
         self.note = None;
         cx.spawn(async move |this, cx| {
@@ -864,6 +1252,9 @@ impl Model {
                     Err(e) => m.notice = Some(e),
                 }
                 m.refresh_now(cx);
+                if recheck {
+                    m.run_checks(cx);
+                }
                 cx.notify();
             });
         })
@@ -892,7 +1283,7 @@ impl Model {
             self.refresh_now(cx);
         } else {
             let backend = Arc::clone(&self.backend);
-            self.act(async move { backend.resume().await }, cx);
+            self.act_noting(async move { backend.resume().await }, cx);
         }
         self.refresh_tray();
         cx.notify();
@@ -974,16 +1365,21 @@ impl Model {
     }
 
     pub fn sign_out(&mut self, cx: &mut Context<'_, Self>) {
-        if let Err(e) = self.backend.sign_out() {
-            self.notice = Some(e);
+        if !self.args.demo {
+            let backend = Arc::clone(&self.backend);
+            self.act_noting(async move { backend.sign_out().await }, cx);
         }
         self.demo_paired = false;
         self.saved.setup_done = false;
+        self.saved.setup_step = Stage::Pair;
         self.saved.unpause();
         self.saved.phone = None;
         self.saved.account = None;
         self.persist();
-        self.screen = Screen::Onboarding;
+        self.health = Health::default();
+        self.test = Test::Idle;
+        self.tools.clear();
+        self.screen = Screen::Welcome(Stage::Pair);
         self.start_pairing(cx);
         self.refresh_now(cx);
     }
@@ -1033,9 +1429,23 @@ impl Look {
         match self {
             Self::On => "On",
             Self::Paused => "Paused",
+            Self::Waiting => "Waiting",
             Self::Attention => "Needs you",
         }
     }
+}
+
+/// `REINS_DEMO_SCREEN`: `pair`, `tools` (`tools-connected`: one connected just now), `turn-on` (`turning-on`: and
+/// turning on), `done` or `status`.
+fn demo_screen(name: &str) -> Option<Screen> {
+    Some(match name.trim().to_ascii_lowercase().replace('_', "-").as_str() {
+        "status" => Screen::Status,
+        "pair" | "onboarding" => Screen::Welcome(Stage::Pair),
+        "tools" | "tools-connected" | "setup" => Screen::Welcome(Stage::Tools),
+        "turn-on" | "turning-on" => Screen::Welcome(Stage::TurnOn),
+        "done" => Screen::Welcome(Stage::Done),
+        _ => return None,
+    })
 }
 
 #[cfg(test)]
@@ -1050,5 +1460,36 @@ mod tests {
         }
         assert_eq!(Section::from_id(" Rules "), Some(Section::Rules));
         assert_eq!(Section::from_id("nope"), None);
+    }
+
+    #[test]
+    fn the_tray_says_what_waits_on_the_phone() {
+        let waiting = |what: &str| {
+            let mut e = Entry::new(reins_desktop::journal::Kind::Command, what);
+            e.outcome = Outcome::Waiting;
+            e
+        };
+        let mut done = Entry::new(reins_desktop::journal::Kind::Git, "push");
+        done.outcome = Outcome::Approved;
+        assert_eq!(waiting_line(std::slice::from_ref(&done)), None);
+        assert_eq!(
+            waiting_line(&[done.clone(), waiting("Deploy now?")]).as_deref(),
+            Some("Waiting on your phone: Deploy now?")
+        );
+        assert_eq!(
+            waiting_line(&[waiting("a"), done, waiting("b"), waiting("c")]).as_deref(),
+            Some("Waiting on your phone: a (+2 more)")
+        );
+        let long = waiting_line(&[waiting(&"x".repeat(200))]).unwrap();
+        assert!(long.ends_with('…') && long.chars().count() < 100, "{long}");
+    }
+
+    #[test]
+    fn demo_screens_by_name() {
+        assert_eq!(demo_screen("status"), Some(Screen::Status));
+        assert_eq!(demo_screen(" Turn_On "), Some(Screen::Welcome(Stage::TurnOn)));
+        assert_eq!(demo_screen("tools-connected"), Some(Screen::Welcome(Stage::Tools)));
+        assert_eq!(demo_screen("done"), Some(Screen::Welcome(Stage::Done)));
+        assert_eq!(demo_screen("nope"), None);
     }
 }

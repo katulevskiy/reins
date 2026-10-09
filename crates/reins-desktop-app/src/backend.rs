@@ -10,9 +10,11 @@ use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex, PoisonError};
 use std::time::{Duration, Instant, SystemTime};
 
+use reins_desktop::ask::{self, Answer};
 use reins_desktop::config::{Config, Paths};
 use reins_desktop::control::{self, Client, ClientError, Overview};
 use reins_desktop::daemon::{Daemon, Options};
+use reins_desktop::doctor::Doctor;
 use reins_desktop::guard::OnNoAnswer;
 use reins_desktop::harness::{self, Harness, detect};
 use reins_desktop::identity::Identity;
@@ -48,6 +50,8 @@ pub struct HarnessRow {
     pub found: bool,
     /// Reins is in its settings.
     pub added: bool,
+    /// Reins is fully in its settings (its MCP server and its hook, for this copy of `reins`).
+    pub complete: bool,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -308,13 +312,14 @@ impl Backend {
         let setup = self.config().and_then(|c| self.harness_setup(&c)).ok();
         Harness::ALL
             .into_iter()
-            .map(|h| HarnessRow {
-                harness: h,
-                found: detect::found(h, &self.home),
-                added: setup
-                    .as_ref()
-                    .and_then(|s| harness::registered(&self.paths, s, h).ok())
-                    .is_some_and(|r| r.any()),
+            .map(|h| {
+                let registered = setup.as_ref().and_then(|s| harness::registered(&self.paths, s, h).ok());
+                HarnessRow {
+                    harness: h,
+                    found: detect::found(h, &self.home),
+                    added: registered.as_ref().is_some_and(harness::Registered::any),
+                    complete: registered.as_ref().is_some_and(harness::Registered::complete),
+                }
             })
             .collect()
     }
@@ -489,12 +494,15 @@ impl Backend {
         Ok(())
     }
 
-    /// Sends the enabled git hosts through Reins (starting the service first if needed).
-    pub async fn resume(&self) -> Result<(), String> {
+    /// Sends the enabled git hosts through Reins (starting the service first if needed), except those the phone has
+    /// no account for yet (they stay direct, so the user's own git keeps working). Says which stayed direct, if any.
+    pub async fn resume(&self) -> Result<Option<String>, String> {
         self.start_service().await?;
         let config = self.config()?;
-        self.git.setup_hosts(&Scope::Global, &config)?;
-        Ok(())
+        let (routed, direct) = reins_desktop::setup::routable(&self.paths, &config).await;
+        self.git.setup_hosts(&Scope::Global, &routed)?;
+        Ok((!direct.is_empty())
+            .then(|| direct.iter().map(reins_desktop::setup::unserved_note).collect::<Vec<_>>().join(" ")))
     }
 
     /// git talks to the hosts directly again.
@@ -528,13 +536,17 @@ impl Backend {
         let note = self.restart_service().await?;
         if host && !paused {
             let config = self.config()?;
-            self.git.setup_hosts(&Scope::Global, &config)?;
+            let (routed, direct) = reins_desktop::setup::routable(&self.paths, &config).await;
+            self.git.setup_hosts(&Scope::Global, &routed)?;
+            if let Some(h) = direct.first() {
+                return Ok(Some(reins_desktop::setup::unserved_note(h)));
+            }
         }
         Ok(note)
     }
 
     /// Restarts the daemon so it reads `config.toml` again: the one inside the app, or the installed service.
-    async fn restart_service(&self) -> Result<Option<String>, String> {
+    pub async fn restart_service(&self) -> Result<Option<String>, String> {
         let config = self.config()?;
         {
             let mut running = self.in_app.lock().await;
@@ -676,15 +688,40 @@ impl Backend {
         Ok(Some(format!("Updated to {}.", update::LONG_VERSION)))
     }
 
+    /// `reins doctor`'s checks for this computer, as the app sets it up (its `reins`, its home and git).
+    pub fn doctor(&self) -> Result<Doctor, String> {
+        Ok(Doctor {
+            paths: self.paths.clone(),
+            config: self.config()?,
+            home: self.home.clone(),
+            // Without the program, the AI tools' entries cannot match it: the checks say so.
+            exe: self.cli().unwrap_or_else(|_| PathBuf::from(CLI_NAME)),
+            git: self.git.clone(),
+        })
+    }
+
+    /// "Send a test to my phone" (`reins test`): the answer, and whether the wait ran out. Logged in the activity log.
+    pub async fn send_test(&self) -> Result<(Answer, bool), String> {
+        let config = self.config()?;
+        Ok(ask::send_test(&self.paths, &config, &ask::DesktopAsk).await)
+    }
+
     /// Signs in through the browser (`reins login`'s way). Returns the server.
     pub async fn sign_in_with_browser(&self, server: &str) -> Result<String, String> {
         let identity = self.identity()?;
         oauth::login(&self.paths, &identity, server, true).await
     }
 
-    /// Forgets the session (the phone keeps the connection until it is removed there).
-    pub fn sign_out(&self) -> Result<(), String> {
-        oauth::logout(&self.paths).map(drop)
+    /// Ends this computer's connection on the server (the phone's list drops it) and forgets the session. Says when
+    /// the server could not be told.
+    pub async fn sign_out(&self) -> Result<Option<String>, String> {
+        Ok(match oauth::sign_out(&self.paths).await? {
+            oauth::SignedOut::LocalOnly(why) => Some(format!(
+                "Signed out here, but the server was not told ({why}): remove this computer in the Reins app on your \
+                 phone (Settings, AI connections)."
+            )),
+            oauth::SignedOut::NotLoggedIn | oauth::SignedOut::Revoked => None,
+        })
     }
 }
 
