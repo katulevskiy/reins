@@ -188,6 +188,8 @@ final class PasswordlessTests: XCTestCase {
     }
 
     func testAPhoneThatHeldTheRoleShowsAsReplacedUntilItAsksForTheRoleAgain() async {
+        // The role was this account's: the status is kept per account and dropped for any other.
+        DeviceStatus.selectAccount(SessionInfo(serverUrl: DemoData.server, email: DemoData.email))
         DeviceStatus.approvalDevice = true
         let core = DemoReinsCore(syncCap: 0.3, approvalElsewhere: true)
         let app = model(core)

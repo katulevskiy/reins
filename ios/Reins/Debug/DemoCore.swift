@@ -187,10 +187,11 @@ final class DemoReinsCore: ReinsCoreProtocol, @unchecked Sendable {
         return SsoOutcome(session: info, keys: keys)
     }
 
+    /// Like the real core: a phone that keeps the keys is `unlocked` (`created` only ever answers the sign-in).
     func accountKeys() async throws -> AccountKeys {
         try locked { s in
             guard s.session != nil else { throw CoreError.NotLoggedIn }
-            return s.keys
+            return s.keys == .locked ? .locked : .unlocked
         }
     }
 
