@@ -1247,6 +1247,17 @@ class AppFlowTest {
     }
 
     @Test
+    fun aNewGrantOffersOnlyMailAccountsNotTheVault() {
+        // A new account has its vault and no Gmail yet: the mail grant has no account to offer.
+        core.accounts = listOf(dev.reins.core.AccountView("vault", "me@example.com", 1_700_000_000))
+        launch()
+        tap("tabGrants")
+        tap("newGrant")
+        awaitTag("noAccounts")
+        assertFalse(has("acct:me@example.com"))
+    }
+
+    @Test
     fun aGrantCanBeCreatedInAdvanceAndOneTimeIsAnOption() {
         launch()
         tap("tabGrants")
