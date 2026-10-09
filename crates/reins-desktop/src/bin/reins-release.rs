@@ -7,7 +7,7 @@ use std::process::ExitCode;
 
 use clap::Parser;
 use data_encoding::{BASE64URL_NOPAD, HEXLOWER};
-use reins_desktop::update::{self, Asset, Manifest, SIGNING_CONTEXT, Signed};
+use reins_desktop::update::{self, APP_SIGNING_CONTEXT, Asset, Manifest, SIGNING_CONTEXT, Signed};
 use ring::signature::{Ed25519KeyPair, KeyPair as _};
 use sha2::{Digest, Sha256};
 
@@ -84,6 +84,7 @@ fn sign(
     build: String,
     time: i64,
     assets: &[String],
+    context: &[u8],
     open: fn(&[u8], &[u8]) -> Result<Manifest, String>,
 ) -> Result<(Manifest, Vec<u8>), String> {
     let pair = load(key)?;
@@ -108,7 +109,7 @@ fn sign(
         assets: by_platform,
     };
     let text = serde_json::to_string(&m).map_err(|e| e.to_string())?;
-    let mut message = SIGNING_CONTEXT.to_vec();
+    let mut message = context.to_vec();
     message.extend_from_slice(text.as_bytes());
     let signed = Signed {
         signature: BASE64URL_NOPAD.encode(pair.sign(&message).as_ref()),
@@ -127,7 +128,7 @@ fn manifest(
     out: &Path,
     assets: &[String],
 ) -> Result<(), String> {
-    let (m, json) = sign(key, version, build, time, assets, update::open)?;
+    let (m, json) = sign(key, version, build, time, assets, SIGNING_CONTEXT, update::open)?;
     std::fs::create_dir_all(out).map_err(|e| e.to_string())?;
     std::fs::write(out.join("latest.json"), json).map_err(|e| e.to_string())?;
     for (platform, asset) in &m.assets {
@@ -152,7 +153,7 @@ fn app_manifest(
             return Err(format!("{platform}: not an app platform (one of {})", update::APP_PLATFORMS.join(", ")));
         }
     }
-    let (_, json) = sign(key, version, build, time, assets, update::open_app)?;
+    let (_, json) = sign(key, version, build, time, assets, APP_SIGNING_CONTEXT, update::open_app)?;
     std::fs::create_dir_all(out).map_err(|e| e.to_string())?;
     std::fs::write(out.join("app.json"), json).map_err(|e| e.to_string())
 }

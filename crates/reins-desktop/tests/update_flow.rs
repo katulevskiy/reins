@@ -4,7 +4,7 @@
 use std::collections::BTreeMap;
 
 use data_encoding::{BASE64URL_NOPAD, HEXLOWER};
-use reins_desktop::update::{Asset, Check, Manifest, SIGNING_CONTEXT, Signed, Updater};
+use reins_desktop::update::{APP_SIGNING_CONTEXT, Asset, Check, Manifest, SIGNING_CONTEXT, Signed, Updater};
 use ring::signature::{Ed25519KeyPair, KeyPair as _};
 use sha2::{Digest, Sha256};
 use wiremock::matchers::{method, path};
@@ -123,7 +123,7 @@ fn signed_app(key: &Ed25519KeyPair, build_time: i64, sha256: &str) -> Vec<u8> {
         )]),
     };
     let text = serde_json::to_string(&manifest).unwrap();
-    let mut message = SIGNING_CONTEXT.to_vec();
+    let mut message = APP_SIGNING_CONTEXT.to_vec();
     message.extend_from_slice(text.as_bytes());
     serde_json::to_vec(&Signed {
         signature: BASE64URL_NOPAD.encode(key.sign(&message).as_ref()),

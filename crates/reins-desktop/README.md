@@ -29,7 +29,8 @@ The release feed (`<releases>/`): every release carries it as `reins-feed-<versi
 | `app.json` | the desktop app's installers: `macos-universal` (`.dmg`), `windows-x86_64` (`.msi`), `linux-x86_64` (`.AppImage`), up to 512 MiB each | `reins-release app-manifest` |
 | `files/<file>` | the files both lists name | |
 
-Both lists are `{"manifest": …, "signature": …}`, Ed25519 over `reins-release/1\n` and the manifest, with the same key:
+Both lists are `{"manifest": …, "signature": …}`, Ed25519 with the same key over the manifest prefixed with
+`reins-release/1\n` (`latest.json`) or `reins-app/1\n` (`app.json`), so neither can be served as the other:
 
 ```sh
 reins-release app-manifest --key release.key --version 0.2.0 --build 0.2.0-202610081200-abcdef12 \

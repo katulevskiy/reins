@@ -27,6 +27,9 @@ pub const RELEASE_KEY: &str = "dec78a718eb46f7f3b676ddc692d1844fbd169a945b88a02d
 /// Prefixed to the manifest before signing, so the key signs nothing else by accident.
 pub const SIGNING_CONTEXT: &[u8] = b"reins-release/1\n";
 
+/// The same for `app.json`, so that neither list can be passed off as the other (both name `linux-x86_64`, ...).
+pub const APP_SIGNING_CONTEXT: &[u8] = b"reins-app/1\n";
+
 /// Largest binary `reins update` downloads.
 const MAX_BINARY: u64 = 64 << 20;
 
@@ -111,19 +114,19 @@ fn file_name_ok(name: &str) -> bool {
 
 /// Opens `latest.json`: the signature must verify with `public_key` and the manifest must be well formed.
 pub fn open(signed_json: &[u8], public_key: &[u8]) -> Result<Manifest, String> {
-    open_limited(signed_json, public_key, MAX_BINARY)
+    open_limited(signed_json, public_key, SIGNING_CONTEXT, MAX_BINARY)
 }
 
 /// Opens `app.json`: as [`open`], with installers up to [`MAX_APP`].
 pub fn open_app(signed_json: &[u8], public_key: &[u8]) -> Result<Manifest, String> {
-    open_limited(signed_json, public_key, MAX_APP)
+    open_limited(signed_json, public_key, APP_SIGNING_CONTEXT, MAX_APP)
 }
 
-fn open_limited(signed_json: &[u8], public_key: &[u8], max_size: u64) -> Result<Manifest, String> {
+fn open_limited(signed_json: &[u8], public_key: &[u8], context: &[u8], max_size: u64) -> Result<Manifest, String> {
     let signed: Signed = serde_json::from_slice(signed_json).map_err(|_| "the release list is malformed".to_owned())?;
     let signature =
         BASE64URL_NOPAD.decode(signed.signature.as_bytes()).map_err(|_| "the release signature is malformed")?;
-    let mut message = SIGNING_CONTEXT.to_vec();
+    let mut message = context.to_vec();
     message.extend_from_slice(signed.manifest.as_bytes());
     ring::signature::UnparsedPublicKey::new(&ring::signature::ED25519, public_key)
         .verify(&message, &signature)
@@ -455,8 +458,16 @@ mod tests {
     }
 
     pub(crate) fn sign(k: &ring::signature::Ed25519KeyPair, m: &Manifest) -> Vec<u8> {
+        sign_with(k, m, SIGNING_CONTEXT)
+    }
+
+    fn sign_app(k: &ring::signature::Ed25519KeyPair, m: &Manifest) -> Vec<u8> {
+        sign_with(k, m, APP_SIGNING_CONTEXT)
+    }
+
+    fn sign_with(k: &ring::signature::Ed25519KeyPair, m: &Manifest, context: &[u8]) -> Vec<u8> {
         let manifest = serde_json::to_string(m).unwrap();
-        let mut message = SIGNING_CONTEXT.to_vec();
+        let mut message = context.to_vec();
         message.extend_from_slice(manifest.as_bytes());
         let signature = BASE64URL_NOPAD.encode(k.sign(&message).as_ref());
         serde_json::to_vec(&Signed {
@@ -531,21 +542,31 @@ mod tests {
             },
         )]);
         let pk = k.public_key().as_ref();
-        assert_eq!(open_app(&sign(&k, &dmg), pk).unwrap(), dmg);
+        assert_eq!(open_app(&sign_app(&k, &dmg), pk).unwrap(), dmg);
         assert_eq!(open(&sign(&k, &dmg), pk).unwrap(), dmg, "30 MB is within the binary limit too");
-        let big = |size| {
+        let big = |size, app: bool| {
             let mut m = dmg.clone();
             m.assets.get_mut("macos-universal").unwrap().size = size;
-            sign(&k, &m)
+            if app {
+                sign_app(&k, &m)
+            } else {
+                sign(&k, &m)
+            }
         };
-        assert!(open(&big(MAX_BINARY + 1), pk).unwrap_err().contains("malformed"), "latest.json keeps its limit");
-        assert!(open_app(&big(MAX_BINARY + 1), pk).is_ok());
-        assert!(open_app(&big(MAX_APP), pk).is_ok());
-        assert!(open_app(&big(MAX_APP + 1), pk).unwrap_err().contains("malformed"));
-        assert!(open_app(&sign(&k, &dmg), key().public_key().as_ref()).unwrap_err().contains("not signed"));
+        assert!(
+            open(&big(MAX_BINARY + 1, false), pk).unwrap_err().contains("malformed"),
+            "latest.json keeps its limit"
+        );
+        assert!(open_app(&big(MAX_BINARY + 1, true), pk).is_ok());
+        assert!(open_app(&big(MAX_APP, true), pk).is_ok());
+        assert!(open_app(&big(MAX_APP + 1, true), pk).unwrap_err().contains("malformed"));
+        assert!(open_app(&sign_app(&k, &dmg), key().public_key().as_ref()).unwrap_err().contains("not signed"));
         let mut bad_file = dmg.clone();
         bad_file.assets.get_mut("macos-universal").unwrap().file = ".hidden.dmg".into();
-        assert!(open_app(&sign(&k, &bad_file), pk).is_err());
+        assert!(open_app(&sign_app(&k, &bad_file), pk).is_err());
+        // Each list is signed for its own purpose: one cannot be served as the other.
+        assert!(open_app(&sign(&k, &dmg), pk).unwrap_err().contains("not signed"), "latest.json as app.json");
+        assert!(open(&sign_app(&k, &dmg), pk).unwrap_err().contains("not signed"), "app.json as latest.json");
     }
 
     #[test]

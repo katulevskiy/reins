@@ -14,8 +14,9 @@
 #   feed.json                             the signed index: every file above (fetched ones included) with its SHA-256;
 #                                         the server publishes nothing it does not list
 #
-# Both manifests are signed with the release key (Ed25519, PKCS#8 DER) over the same context as
-# `reins-release manifest`, the index over its own context (reins-feed/1), and all are checked against the key the
+# The manifests are signed with the release key (Ed25519, PKCS#8 DER): latest.json over the context of
+# `reins-release manifest` (reins-release/1), app.json over reins-app/1 and the index over reins-feed/1, so none can
+# pass for another; and all are checked against the key the
 # apps pin (crates/reins-desktop/src/update.rs) before anything is written.
 #
 #   scripts/release-feed.sh --version 0.2.5 --build 0.2.5-202610090300-fad997a6 --time 1791515000 \
@@ -138,7 +139,7 @@ for t in "macos-universal:Reins-$version-macOS.dmg:Reins-$build-macOS.dmg" \
 done
 manifest="$(jq -c -n --arg v "$version" --arg b "$build" --argjson t "$build_time" --argjson a "$app_assets" \
     '{version: $v, build: $b, build_time: $t, assets: $a}')"
-sign_manifest "$manifest" app.json
+sign_json "$manifest" app.json manifest reins-app/1
 
 apk="reins-$version-android.apk"
 fetch "android/files/reins-$build.apk" "$apk"
