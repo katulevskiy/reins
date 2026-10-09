@@ -161,6 +161,11 @@ How it fits together:
   signed in with it. Point a WorkOS webhook at `https://<domain>/reins/workos/webhook` with
   `REINS_WORKOS_WEBHOOK_SECRET` set to make this immediate; the webhook only wakes the sync, which still reads the
   events API.
+- **Deleting an account in the app** (Settings → Delete account) deletes the WorkOS user too
+  (`DELETE /user_management/users/<id>` with `REINS_WORKOS_API_KEY`, else `SSO_CLIENT_SECRET`), before the account
+  itself; while WorkOS cannot, nothing is deleted and the app says to try again. Without WorkOS (password accounts, or
+  another SSO provider) the account is deleted on the server alone. See the
+  [security model](security-model.md#accounts-without-a-master-password) for what the request needs.
 - `SSO_ONLY=true` turns password sign-in off for everyone, including accounts made with a password before; they get
   in through AuthKit with the same email (`SSO_SIGNUPS_MATCH_EMAIL=true`) and open their vault with their master
   password once. Without it, password sign-in stays available (the apps show it under **Use another server**).

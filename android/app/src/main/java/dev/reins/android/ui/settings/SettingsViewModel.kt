@@ -18,6 +18,8 @@ import kotlinx.coroutines.launch
 
 data class SettingsUi(val busy: Boolean = false, val message: String? = null, val error: String? = null)
 
+data class DeleteAccountUi(val busy: Boolean = false, val error: String? = null)
+
 class SettingsViewModel(private val container: AppContainer) : ViewModel() {
     private val _ui = MutableStateFlow(SettingsUi())
     val ui: StateFlow<SettingsUi> = _ui.asStateFlow()
@@ -96,6 +98,37 @@ class SettingsViewModel(private val container: AppContainer) : ViewModel() {
             _hasRecoveryCode.value = false
             _recoveryCode.value = null
             container.signOut()
+        }
+    }
+
+    /** The "Delete account" sheet while it is open (null when closed); its error stays in the sheet. */
+    private val _deletion = MutableStateFlow<DeleteAccountUi?>(null)
+    val deletion: StateFlow<DeleteAccountUi?> = _deletion.asStateFlow()
+
+    fun openDeletion() {
+        if (!_ui.value.busy) _deletion.value = DeleteAccountUi()
+    }
+
+    fun closeDeletion() {
+        if (_deletion.value?.busy != true) _deletion.value = null
+    }
+
+    /** Deletes the account once [typed] is its email; a refusal (a typo, another phone approves, offline) is shown. */
+    fun deleteAccount(typed: String) {
+        if (_deletion.value?.busy != false) return
+        _deletion.value = DeleteAccountUi(busy = true)
+        viewModelScope.launch {
+            _deletion.value = try {
+                container.deleteAccount(typed)
+                _hasRecoveryCode.value = false
+                _recoveryCode.value = null
+                null
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                container.feedback.play(Event.Error)
+                DeleteAccountUi(error = e.userMessage())
+            }
         }
     }
 

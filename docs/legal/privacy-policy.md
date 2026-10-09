@@ -103,8 +103,10 @@ the desktop app and the Autopilot model are logged like any other request.
 | Web server logs | [N] days |
 | Backups | [N] days |
 
-Deleting your account (in the web vault: Settings → My account → Delete account) deletes your account, vault,
-approval-phone registration, AI connections and tokens. Copies in backups are deleted within [N] days.
+Deleting your account (in the Reins app: Settings → Delete account; or in the web vault: Settings → My account →
+Delete account) deletes your account, vault, approval-phone registration, AI and computer connections and tokens, and
+the encrypted app state stored for it. The app deletes it at once, together with your sign-in at our identity
+provider (WorkOS), and removes the account's data from the phone. Copies in backups are deleted within [N] days.
 
 ## Your rights
 

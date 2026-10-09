@@ -4,6 +4,7 @@ import android.content.ClipData
 import android.content.ClipboardManager
 import android.content.Context
 import android.os.Build
+import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -77,6 +78,7 @@ fun SettingsScreen(
     val autopilot by state.autopilot.collectAsStateWithLifecycle()
     val hasRecoveryCode by viewModel.hasRecoveryCode.collectAsStateWithLifecycle()
     val recoveryCode by viewModel.recoveryCode.collectAsStateWithLifecycle()
+    val deletion by viewModel.deletion.collectAsStateWithLifecycle()
     var confirmSignOut by remember { mutableStateOf(false) }
     val pushAvailable = FirebaseSupport.available(LocalContext.current)
     LaunchedEffect(session) { viewModel.checkRecoveryCode() }
@@ -241,8 +243,12 @@ fun SettingsScreen(
             VersionSection()
         }
 
-        Group(header = "Session") {
-            Column(Modifier.padding(16.dp)) {
+        val signedIn = session is SessionState.SignedIn
+        Group(
+            header = "Session",
+            footer = if (signedIn) "Deleting your account removes it and everything in it from the server for good." else null,
+        ) {
+            Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
                 CapsuleButton(
                     "Sign out",
                     Modifier.fillMaxWidth().testTag("signOut"),
@@ -251,6 +257,16 @@ fun SettingsScreen(
                     glyph = Glyph.SignOut,
                     onClick = { confirmSignOut = true },
                 )
+                if (signedIn) {
+                    CapsuleButton(
+                        "Delete account",
+                        Modifier.fillMaxWidth().testTag("deleteAccount"),
+                        style = ButtonStyle.Destructive,
+                        enabled = !ui.busy,
+                        glyph = Glyph.Trash,
+                        onClick = viewModel::openDeletion,
+                    )
+                }
             }
         }
         Spacer(Modifier.height(32.dp))
@@ -265,6 +281,13 @@ fun SettingsScreen(
             },
             onDone = viewModel::hideRecoveryCode,
         )
+    }
+
+    val signedInEmail = (session as? SessionState.SignedIn)?.info?.email
+    deletion?.let { d ->
+        if (signedInEmail != null) {
+            DeleteAccountSheet(signedInEmail, d, onDelete = viewModel::deleteAccount, onDismiss = viewModel::closeDeletion)
+        }
     }
 
     if (confirmSignOut) {

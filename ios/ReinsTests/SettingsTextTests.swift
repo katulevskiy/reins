@@ -73,6 +73,38 @@ final class SettingsTextTests: XCTestCase {
         XCTAssertTrue(SignInState.canSubmit(server: "https://s.example.com", email: "me@example.com", password: "hunter2"))
     }
 
+    func testDeletingTheAccountNeedsItsEmailTyped() {
+        XCTAssertTrue(SettingsText.deletionConfirmed("me@example.com", email: "me@example.com"))
+        XCTAssertTrue(SettingsText.deletionConfirmed("  Me@Example.COM \n", email: "me@example.com"))
+        XCTAssertFalse(SettingsText.deletionConfirmed("", email: ""))
+        XCTAssertFalse(SettingsText.deletionConfirmed("me@example.co", email: "me@example.com"))
+        XCTAssertFalse(SettingsText.deletionConfirmed("DELETE", email: "me@example.com"))
+    }
+
+    @MainActor
+    func testDeletingTheAccountSignsOutAndForgetsTheAccountOnlyOnceTheCoreDeletedIt() async throws {
+        DeviceStatus.clear()
+        defer { DeviceStatus.clear() }
+        let core = DemoReinsCore(signedIn: true, modelInstalled: true, syncCap: 0.3)
+        let model = AppModel(core: core, feedback: NoFeedback.shared, authenticator: TrustingAuthenticator(), demo: true)
+        await model.refreshSession()
+        guard case let .signedIn(info) = model.session else { return XCTFail("signed in: \(model.session)") }
+        DeviceStatus.approvalDevice = true
+        do {
+            try await model.deleteAccount(confirmEmail: "someone@else.example")
+            XCTFail("a wrong email deletes nothing")
+        } catch {
+            XCTAssertEqual(error.userMessage, "The email you typed is not this account's email.")
+        }
+        XCTAssertEqual(model.session, .signedIn(info))
+        XCTAssertTrue(DeviceStatus.approvalDevice)
+        try await model.deleteAccount(confirmEmail: " \(info.email.uppercased()) ")
+        XCTAssertEqual(model.session, .signedOut)
+        XCTAssertFalse(DeviceStatus.approvalDevice)
+        let session = await core.session()
+        XCTAssertNil(session)
+    }
+
     @MainActor
     func testAnIconPickIsFoundByLabelOnlyWhenTheIdIsMissingAndUnambiguous() async {
         let core = DemoReinsCore(signedIn: true, modelInstalled: true, syncCap: 0.3)

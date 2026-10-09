@@ -67,6 +67,12 @@ impl<K: Eq + Hash, V> TtlMap<K, V> {
         self.entries.retain(|_, (expires, _)| now < *expires);
     }
 
+    /// Drops every entry `keep` says no to (and the expired ones).
+    pub fn retain(&mut self, mut keep: impl FnMut(&V) -> bool) {
+        let now = Instant::now();
+        self.entries.retain(|_, (expires, value)| now < *expires && keep(value));
+    }
+
     /// Number of live entries.
     #[cfg(test)]
     pub fn len(&self) -> usize {

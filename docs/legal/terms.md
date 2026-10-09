@@ -83,8 +83,8 @@ last 12 months or [AMOUNT]]. [Some jurisdictions do not allow these limits. Adju
 
 ## 11. Ending
 
-You can stop using the service and delete your account at any time (in the web vault: Settings → My account →
-Delete account). We may end or suspend the service, or your access to it, with [reasonable notice / [N] days'
+You can stop using the service and delete your account at any time (in the Reins app: Settings → Delete account; or
+in the web vault: Settings → My account → Delete account). We may end or suspend the service, or your access to it, with [reasonable notice / [N] days'
 notice], or immediately for breaches of section 6. Sections 4, 9, 10 and 12 survive termination.
 
 ## 12. Changes and law

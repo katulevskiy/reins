@@ -371,3 +371,68 @@ async fn a_phone_signed_in_to_the_identity_does_not_get_the_approval_role() {
     phone.core.register_device(None).await.expect("its secret proves it");
     phone.core.sync(0).await.unwrap();
 }
+
+fn sealed_accounts(dir: &std::path::Path) -> usize {
+    std::fs::read_dir(dir.join("accounts"))
+        .map_or(0, |d| d.filter(|e| e.as_ref().unwrap().path().extension().is_some_and(|x| x == "sealed")).count())
+}
+
+/// "Delete account" in the app: the account and its WorkOS user go together, only from a phone that may approve for
+/// it, and not at all while WorkOS cannot delete the user.
+#[tokio::test(flavor = "multi_thread")]
+async fn deleting_the_account_in_the_app_deletes_its_workos_user_too() {
+    let workos = FakeWorkos::start().await;
+    let server = Server::start_with_env(5, 3, &workos.server_env()).await;
+    let hedy = User {
+        id: "user_01HEDY".to_owned(),
+        email: "hedy@example.com".to_owned(),
+    };
+    workos.sign_in_as(&hedy);
+    let phone = Phone::signed_out(|_| {}).await;
+    assert_eq!(phone.sso_sign_in(&server.base).await.unwrap().keys, AccountKeys::Created);
+    phone.core.register_device(None).await.unwrap();
+    assert_eq!(sealed_accounts(phone.data_dir()), 1);
+
+    // A phone signed in to the identity alone (its keys locked) cannot delete the account.
+    let other = Phone::signed_out(|_| {}).await;
+    assert_eq!(other.sso_sign_in(&server.base).await.unwrap().keys, AccountKeys::Locked);
+    let refused = other.core.delete_account(hedy.email.clone()).await.unwrap_err();
+    assert!(
+        matches!(&refused, CoreError::Invalid { reason } if reason.contains("Another phone approves")),
+        "{refused:?}"
+    );
+
+    // A typo, and WorkOS being down, change nothing.
+    let typo = phone.core.delete_account("hedy@example.org".to_owned()).await.unwrap_err();
+    assert!(matches!(&typo, CoreError::Invalid { reason } if reason.contains("not this account's email")), "{typo:?}");
+    workos.fail_deletes(true);
+    let down = phone.core.delete_account(hedy.email.clone()).await.unwrap_err();
+    assert!(matches!(&down, CoreError::Invalid { reason } if reason.contains("nothing was deleted")), "{down:?}");
+    assert_eq!(workos.deleted_users(), Vec::<String>::new());
+    assert_eq!(prelogin_iterations(&server, &hedy.email).await, 100_000, "the account is still there");
+    assert!(phone.core.session().await.is_some());
+    phone.core.sync(0).await.expect("still the approval device");
+
+    workos.fail_deletes(false);
+    phone.core.delete_account(" Hedy@Example.com ".to_owned()).await.expect("deleted");
+    assert_eq!(workos.deleted_users(), [hedy.id.as_str()]);
+    assert_eq!(prelogin_iterations(&server, &hedy.email).await, 600_000, "the account is gone");
+    assert!(phone.core.session().await.is_none());
+    assert_eq!(sealed_accounts(phone.data_dir()), 0, "and so is the phone's encrypted copy");
+    assert!(matches!(other.core.register_device(None).await, Err(CoreError::NotLoggedIn)));
+    let db = rusqlite::Connection::open(server.database_path()).unwrap();
+    for table in ["sso_users", "reins_devices", "reins_sso_sessions", "devices"] {
+        let rows: i64 = db.query_row(&format!("SELECT COUNT(*) FROM {table}"), [], |row| row.get(0)).unwrap();
+        assert_eq!(rows, 0, "{table}");
+    }
+    let pending: i64 = db
+        .query_row("SELECT COUNT(*) FROM reins_settings WHERE name LIKE 'workos.delete.%'", [], |row| row.get(0))
+        .unwrap();
+    assert_eq!(pending, 0);
+    assert!(server.log().contains("was deleted at its owner's request"), "audit log");
+
+    // WorkOS reports the deletion it made; the sync finds nothing left to do.
+    workos.emit("user.deleted", json!({"id": hedy.id}));
+    tokio::time::sleep(Duration::from_secs(3)).await;
+    assert!(!server.log().contains("WorkOS sync failed"), "{}", server.log());
+}

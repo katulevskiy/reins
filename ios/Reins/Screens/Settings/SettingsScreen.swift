@@ -2,7 +2,7 @@ import SwiftUI
 import UIKit
 
 /// The Settings section: the account, whether this phone approves requests, Autopilot, the AI connections, the
-/// integrations, sounds and haptics, the version, and signing out.
+/// integrations, sounds and haptics, the version, signing out and deleting the account.
 ///
 /// Each group is its own small view: one `List` body holding all of them miscompiles with Xcode 27.1 beta (the app
 /// crashes destroying the list value), and small views also redraw only what changed.
@@ -269,11 +269,18 @@ private struct VersionGroup: View {
     }
 }
 
-/// Signing out, after a confirmation.
+/// Signing out, after a confirmation, and deleting the account, after its own sheet.
 private struct SessionGroup: View {
     @Environment(AppModel.self) private var model
+    @Environment(\.feedback) private var feedback
     @State private var confirm = false
     @State private var busy = false
+    @State private var deleting: AccountToDelete?
+
+    private struct AccountToDelete: Identifiable {
+        var email: String
+        var id: String { email }
+    }
 
     var body: some View {
         Section {
@@ -298,8 +305,28 @@ private struct SessionGroup: View {
             } message: {
                 Text("This phone stops receiving approval requests until you sign in again.")
             }
+            if case let .signedIn(info) = model.session {
+                Button(role: .destructive) {
+                    feedback.play(.tap)
+                    deleting = AccountToDelete(email: info.email)
+                } label: {
+                    Label("Delete account", systemImage: "trash")
+                }
+                .buttonStyle(CapsuleButtonStyle(kind: .danger, height: 50))
+                .disabled(busy)
+                .accessibilityIdentifier("deleteAccount")
+                .listRowBackground(Color.clear)
+                .listRowInsets(EdgeInsets())
+                .sheet(item: $deleting) { shown in
+                    DeleteAccountSheet(email: shown.email) { deleting = nil }
+                }
+            }
         } header: {
             GroupHeader("Session")
+        } footer: {
+            if case .signedIn = model.session {
+                GroupFooter("Deleting your account removes it and everything in it from the server for good.")
+            }
         }
     }
 }

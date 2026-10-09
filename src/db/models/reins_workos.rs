@@ -127,6 +127,19 @@ pub async fn user_id_by_identifier(identifier: &str, conn: &DbConn) -> Result<Op
     .await
 }
 
+/// The SSO identity account `uuid` signs in with, if any (an account deleting itself deletes its WorkOS user too).
+pub async fn identifier_of(uuid: &UserId, conn: &DbConn) -> Result<Option<String>, crate::Error> {
+    conn.run(move |c| {
+        sso_users::table
+            .filter(sso_users::user_uuid.eq(uuid))
+            .select(sso_users::identifier)
+            .first::<String>(c)
+            .optional()
+            .map_res("Error finding the account's SSO identity")
+    })
+    .await
+}
+
 /// A missing user and a database failure must remain distinguishable while applying lifecycle events.
 pub async fn user_by_id(uuid: &UserId, conn: &DbConn) -> Result<Option<super::User>, crate::Error> {
     conn.run(move |c| {

@@ -73,7 +73,9 @@ recovery code" (`unlockAccount`, which also takes the master password of an acco
 is kept in `state/DeviceStatusStore`, so a relaunch comes back to the Unlock screen; unlocking or signing out clears it.
 On the approval device the request is a `PendingKind.JOIN` item (push `t=join`): its sheet shows the code the new
 phone shows, and approving asks for biometrics first. Settings > Account shows the recovery code (after biometrics)
-when the core has one for the account. Before normal app screens can appear, every passwordless account must
+when the core has one for the account. Settings > Session > Delete account explains what is deleted, asks for the
+account's email and calls the core's `deleteAccount` (the server account, its WorkOS user and the phone's encrypted
+copy go); the app then forgets the account as signing out does, without the browser page. Before normal app screens can appear, every passwordless account must
 record its recovery code, check the acknowledgement, and type the final group from its written copy. Back, outside
 taps, and copying the code cannot skip this gate. Restarting resumes it; only a server/secret fingerprint is persisted
 in `state/RecoveryRecord`, so a WorkOS email change does not repeat the step and a new recovery code does. The core
@@ -112,6 +114,8 @@ scripts/device-smoke.sh          # real server + simulated AI on this machine, r
 * `PasswordlessFlowTest` covers "Continue" (the Custom Tab, the callback, a callback nobody waits for), the Unlock
   screen (asking the other phone, the recovery code, relaunching while locked), the approval device's side of "Add
   another phone" and the recovery code in Settings.
+* `SettingsDeleteAccountFlowTest` covers Settings > Delete account: the typed email, a refusal shown in the sheet,
+  cancelling, and the welcome screen after a deletion.
 * `AppFlowTest` (Robolectric) drives every screen against an in-memory `FakeCore`: sign-in, 2FA, approvals (once,
   standing, public-domain warning), biometric fail-closed paths, pairing, deep-link spoofing, `FLAG_SECURE`, grants,
   activity.

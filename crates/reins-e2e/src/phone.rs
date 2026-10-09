@@ -63,7 +63,7 @@ pub struct Phone {
     pub core: Arc<ReinsCore>,
     pub gmail: MockServer,
     pub notes: Arc<Notes>,
-    _dir: tempfile::TempDir,
+    dir: tempfile::TempDir,
 }
 
 /// A Gmail message as the REST API returns it.
@@ -157,8 +157,13 @@ impl Phone {
             core,
             gmail,
             notes,
-            _dir: dir,
+            dir,
         }
+    }
+
+    /// The core's data directory (its encrypted stores).
+    pub fn data_dir(&self) -> &std::path::Path {
+        self.dir.path()
     }
 
     /// Connects the fake Gmail account [`GMAIL_ACCOUNT`].

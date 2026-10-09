@@ -100,9 +100,12 @@ Other policy points:
   Check that the service screens' texts meet that, or add a disclosure dialog. **[legal review]**
 - **Privacy policy** (required: the app handles personal and sensitive data): a public URL, linked in the listing and
   reachable from the app. **[legal review]**
-- **Account deletion.** Accounts are created on the Reins (Vaultwarden) server, not in the app, so the in-app
-  deletion requirement may not apply; Play still asks for a web link where users can request deletion of their account
-  and data. Provide one for app.reins2fa.com. **[legal review]**
+- **Account deletion.** The app creates accounts ("Continue", or "Create account" on another server), so it also
+  deletes them: Settings → Delete account explains what goes, asks for the account's email and deletes the account
+  on the server at once (with its WorkOS user on app.reins2fa.com), then signs out and deletes the phone's copy. No
+  email or support request is involved. Play also asks for a web link for people who no longer have the app: it should
+  say to delete the account in the app (or, without it, in the web vault: Settings → My account → Delete account).
+  **[legal review]**
 - **App access for review.** Everything is behind sign-in: give the reviewers a demo server account (email, password,
   no two-step) and instructions to pair an AI, in Play Console > App content > App access.
 - **New developer accounts** (personal, created after 2023-11-13) must run a closed test with at least 12 testers for
@@ -125,8 +128,9 @@ worst case (the user uses app.reins2fa.com). **[legal review]** for the whole se
 **Is all data encrypted in transit?** Yes: the core only talks to `https://` servers (plain `http://` is accepted for
 localhost only); Google, Telegram and the git hosts are HTTPS/MTProto.
 
-**Can users request deletion?** Yes: signing out deletes the phone's copy; uninstalling deletes everything on the phone;
-the server account and its data are deleted on request (link above). **[legal review]**
+**Can users request deletion?** Yes: Settings → Delete account deletes the server account and all its data at once,
+in the app, and the phone's copy with it; signing out deletes the phone's copy; uninstalling deletes everything on the
+phone. The web link above says how to do it without the app. **[legal review]**
 
 **Shared with third parties?** No. Everything leaves the phone at the user's request to the user's own server and from
 there to the AI the user paired; Play counts user-initiated transfers as not shared. Google (Firebase Cloud Messaging)

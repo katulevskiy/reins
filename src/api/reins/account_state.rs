@@ -56,6 +56,20 @@ fn save(directory: &Path, user: &str, update: AccountStateUpdate) -> Result<Acco
     fs::File::open(directory).and_then(|f| f.sync_all()).map_err(|_| Status::InternalServerError)?;
     Ok(next)
 }
+/// Deletes `user`'s stored state and its lock file (a deleted account); nothing stored is no error.
+pub fn forget(user: &str) -> std::io::Result<()> {
+    remove_state(&directory(), user)
+}
+fn remove_state(directory: &Path, user: &str) -> std::io::Result<()> {
+    let path = path(directory, user);
+    for file in [path.with_extension("tmp"), path.clone(), path.with_extension("lock")] {
+        match fs::remove_file(file) {
+            Err(e) if e.kind() != std::io::ErrorKind::NotFound => return Err(e),
+            _ => {}
+        }
+    }
+    Ok(())
+}
 #[get("/reins/api/account-state")]
 async fn get_state(headers: Headers) -> PhoneResult<Json<AccountState>> {
     let path = path(&directory(), &headers.user.uuid.to_string());
@@ -125,6 +139,10 @@ mod tests {
             Status::Conflict
         );
         assert_eq!(load(&path(&dir, "a")).unwrap().ciphertext.as_deref(), Some("opaque-a"));
+        remove_state(&dir, "a").unwrap();
+        remove_state(&dir, "a").unwrap();
+        assert!(load(&path(&dir, "a")).unwrap().ciphertext.is_none());
+        assert_eq!(fs::read_dir(&dir).unwrap().count(), 0, "the lock file goes too");
         fs::remove_dir_all(dir).unwrap();
     }
 }

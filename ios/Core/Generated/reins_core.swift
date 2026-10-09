@@ -2581,6 +2581,15 @@ public protocol ReinsCoreProtocol: AnyObject, Sendable {
     func createProfile(name: String, icon: String?) async throws  -> ProfileView
     
     /**
+     * Deletes the signed-in account for good: on the server its vault, devices, approval device, AI and desktop
+     * connections, files and stored state (and its WorkOS user, on a server that signs in through WorkOS); then signs
+     * out and removes this phone's encrypted copy of the account. `confirm_email` is the account's email as the user
+     * typed it. Errors leave everything as it was: `Invalid` carries a message for the user (a wrong email, another
+     * phone approves for the account, the last owner of an organization, try again later).
+     */
+    func deleteAccount(confirmEmail: String) async throws 
+    
+    /**
      * Removes an ended (expired, used-up or revoked) grant for good.
      */
     func deleteGrant(grantId: String) async throws 
@@ -3335,6 +3344,29 @@ open func createProfile(name: String, icon: String?)async throws  -> ProfileView
             completeFunc: ffi_reins_core_rust_future_complete_rust_buffer,
             freeFunc: ffi_reins_core_rust_future_free_rust_buffer,
             liftFunc: FfiConverterTypeProfileView_lift,
+            errorHandler: FfiConverterTypeCoreError_lift
+        )
+}
+    
+    /**
+     * Deletes the signed-in account for good: on the server its vault, devices, approval device, AI and desktop
+     * connections, files and stored state (and its WorkOS user, on a server that signs in through WorkOS); then signs
+     * out and removes this phone's encrypted copy of the account. `confirm_email` is the account's email as the user
+     * typed it. Errors leave everything as it was: `Invalid` carries a message for the user (a wrong email, another
+     * phone approves for the account, the last owner of an organization, try again later).
+     */
+open func deleteAccount(confirmEmail: String)async throws   {
+    return
+        try  await uniffiRustCallAsync(
+            rustFutureFunc: {
+                uniffi_reins_core_fn_method_reinscore_delete_account(
+                        self.uniffiCloneHandle(),FfiConverterString.lower(confirmEmail)
+                )
+            },
+            pollFunc: ffi_reins_core_rust_future_poll_void,
+            completeFunc: ffi_reins_core_rust_future_complete_void,
+            freeFunc: ffi_reins_core_rust_future_free_void,
+            liftFunc: { $0 },
             errorHandler: FfiConverterTypeCoreError_lift
         )
 }
@@ -11993,6 +12025,9 @@ private let initializationResult: InitializationResult = {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_reins_core_checksum_method_reinscore_create_profile() != 4955) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_reins_core_checksum_method_reinscore_delete_account() != 17250) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_reins_core_checksum_method_reinscore_delete_grant() != 24211) {

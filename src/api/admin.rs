@@ -421,7 +421,7 @@ async fn delete_user(user_id: UserId, token: AdminToken, conn: DbConn) -> EmptyR
 
     // Get the membership records before deleting the actual user
     let memberships = Membership::find_any_state_by_user(&user_id, &conn).await;
-    let res = user.delete(&conn).await;
+    let res = crate::api::reins::account_delete::delete_user(user, &conn).await;
 
     for membership in memberships {
         log_event(

@@ -83,6 +83,18 @@ it only with the recovery code or your phone's yes ([which device approves](#whi
 refuses WorkOS impersonation sessions, follows WorkOS when it revokes a session or deletes a user, and takes an email
 change only once WorkOS has verified the new address.
 
+**Deleting the account.** Settings → Delete account in either app deletes the account in-app
+(`POST /reins/api/account/delete`), so that someone who controls only your identity cannot delete it either. The
+request carries the account's email, typed by you; an access token issued in the last five minutes (the phone
+refreshes its token first, so a copied bearer token is not enough for long); and the approval device's device key, or
+from any other device the same proof as for taking the approval role. An account with no approval device yet needs
+only the email. Wrong emails and proofs count against the account like wrong proofs. The last owner of an
+organization is refused before anything is deleted. On a WorkOS server the WorkOS user is deleted first (which ends its
+sessions, so the identity cannot sign in to a new, empty account by itself); if WorkOS cannot delete it, nothing is
+deleted. Then the server deletes the vault, devices and their push tokens, the approval device, AI and desktop
+connections with their tokens, SSO sessions and identity, the encrypted account state, waiting requests and files, and
+logs the deletion; the phone signs out and deletes its encrypted copy of the account and its cached keys.
+
 ## Which device approves
 
 One device per account approves: it gets the AIs' requests and new connections. The server decides which

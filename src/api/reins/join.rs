@@ -244,6 +244,11 @@ impl JoinHub {
         // Kept a little past the deadline, so the asking phone still learns that it expired.
         self.lock().retain(|_, e| e.expires_at + ttl_secs() > now);
     }
+
+    /// Drops `user`'s requests with any sealed secret they carry (a deleted account).
+    pub fn forget_user(&self, user: &str) {
+        self.lock().retain(|_, e| e.user != user);
+    }
 }
 
 /// Step 1: a phone of the account asks for the secret.

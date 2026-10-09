@@ -7,7 +7,7 @@ use std::path::Path;
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 use std::time::Duration;
 
-use reins_proto::device::{DeviceRegistration, codes};
+use reins_proto::device::{AccountDeletion, DELETION_REFUSED, DeviceRegistration, codes};
 use reins_proto::ids::{ConnectionId, GrantId};
 use zeroize::Zeroizing;
 
@@ -555,6 +555,43 @@ impl Engine {
         }
     }
 
+    /// Deletes the signed-in account on the server, with its vault and everything Reins keeps there, and its WorkOS
+    /// user on a server that signs in through WorkOS. `confirm_email` is the account's email as the user typed it.
+    /// The approval device needs no more; another phone proves itself like [`Engine::register_device`] does.
+    /// Signing out and forgetting the phone's copy is the caller's (`AccountRuntime::delete_account`).
+    pub(crate) async fn delete_server_account(&self, confirm_email: &str) -> Result<(), CoreError> {
+        let session = self.session()?;
+        let mut deletion = AccountDeletion {
+            confirm_email: confirm_email.trim().to_owned(),
+            master_password_hash: None,
+        };
+        match Self::send_deletion(&session, &deletion).await {
+            Ok(()) => return Ok(()),
+            Err(e) if !is_takeover_refusal(&e) => return Err(deletion_error(e)),
+            Err(_) => {}
+        }
+        let Some(proof) = self.takeover_proof(&session).await? else {
+            return Err(CoreError::invalid(DELETION_REFUSED));
+        };
+        deletion.master_password_hash = Some(proof.to_string());
+        let result = Self::send_deletion(&session, &deletion).await;
+        if let Some(sent) = deletion.master_password_hash.take() {
+            drop(Zeroizing::new(sent));
+        }
+        result.map_err(deletion_error)
+    }
+
+    /// Sends the deletion with an access token the server finds fresh enough: an older one is refreshed once.
+    async fn send_deletion(session: &Session, deletion: &AccountDeletion) -> Result<(), ApiFailure> {
+        match api_call!(session, |api| api.delete_account(deletion)) {
+            Err(e) if is_stale_token(&e) => {
+                session.invalidate().await;
+                api_call!(session, |api| api.delete_account(deletion))
+            }
+            result => result,
+        }
+    }
+
     /// The master password hash that lets this phone take the approval role: of the password this session signed in
     /// or unlocked with, else of the account secret this phone keeps.
     async fn takeover_proof(&self, session: &Session) -> Result<Option<Zeroizing<String>>, CoreError> {
@@ -883,4 +920,37 @@ impl Engine {
 /// `PUT /device` refused: another device approves for the account, and this one's proof was missing or wrong.
 fn is_takeover_refusal(e: &ApiFailure) -> bool {
     matches!(e, ApiFailure::Status { status: 403, code, .. } if code == codes::PROOF_REQUIRED || code == codes::WRONG_PROOF)
+}
+
+/// `POST /account/delete` refused the access token as too old to delete the account with.
+fn is_stale_token(e: &ApiFailure) -> bool {
+    matches!(e, ApiFailure::Status { status: 403, code, .. } if code == codes::FRESH_TOKEN_REQUIRED)
+}
+
+/// Why the server did not delete the account, in words for the user; anything else as usual.
+fn deletion_error(e: ApiFailure) -> CoreError {
+    let ApiFailure::Status {
+        status,
+        code,
+        message,
+    } = &e
+    else {
+        return e.into_core();
+    };
+    match (*status, code.as_str()) {
+        (_, codes::CONFIRMATION_MISMATCH) => CoreError::invalid("The email you typed is not this account's email."),
+        (_, codes::PROOF_REQUIRED | codes::WRONG_PROOF) => CoreError::invalid(DELETION_REFUSED),
+        (_, codes::LAST_OWNER) => CoreError::invalid(
+            "This account is the only owner of an organization. Give it another owner or delete it in the web vault \
+             first.",
+        ),
+        (_, codes::PROVIDER_UNAVAILABLE) => {
+            CoreError::invalid("Your account could not be deleted right now; nothing was deleted. Try again later.")
+        }
+        (_, codes::RATE_LIMITED) => CoreError::invalid(message.clone()),
+        (404, _) => CoreError::invalid(
+            "This server cannot delete accounts from the app. Ask its administrator to delete your account.",
+        ),
+        _ => e.into_core(),
+    }
 }

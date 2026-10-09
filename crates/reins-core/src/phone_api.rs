@@ -4,7 +4,7 @@
 use std::time::Duration;
 
 use reins_proto::device::{
-    Connections, DEVICE_KEY_HEADER, DeviceRegistered, DeviceRegistration, PairingResult, Pending,
+    AccountDeletion, Connections, DEVICE_KEY_HEADER, DeviceRegistered, DeviceRegistration, PairingResult, Pending,
 };
 use reins_proto::pairing::{PairingClaim, PairingRequest, PairingResponse};
 use reins_proto::relay::{RelayRequest, RelayResponse};
@@ -173,6 +173,11 @@ impl<'a> PhoneApi<'a> {
             }
         }
         Ok(answer.browser_url)
+    }
+
+    /// `POST /account/delete`: deletes the signed-in account on the server (204).
+    pub async fn delete_account(&self, deletion: &AccountDeletion) -> Result<(), ApiFailure> {
+        Self::send(self.request(Method::POST, "/account/delete").json(deletion)).await.map(drop)
     }
 
     /// `PUT /services`: which integrations have an account on this phone.

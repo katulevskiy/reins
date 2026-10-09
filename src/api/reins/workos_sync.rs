@@ -206,12 +206,16 @@ async fn reins_user(workos_user_id: &str, conn: &DbConn) -> Option<User> {
     SsoUser::find_by_identifier(&sso_workos::identifier(workos_user_id), conn).await.map(|(user, _)| user)
 }
 
+/// The `reins_settings` row that keeps the id of an account whose deletion is not finished yet (a WorkOS
+/// `user.deleted`, or the account deleting itself in the app); each sync retries it.
+pub fn pending_deletion(uuid: &crate::db::models::UserId) -> String {
+    format!("workos.delete.{uuid}")
+}
+
 async fn finish_deletion(uuid: &crate::db::models::UserId, pending: &str, conn: &DbConn) -> Result<(), String> {
-    // Drop AI/desktop connections too, even when organization ownership prevents deleting the vault account.
-    reins_workos::delete_reins_data(uuid, conn).await.map_err(|e| e.to_string())?;
-    if let Some(user) = reins_workos::user_by_id(uuid, conn).await.map_err(|e| e.to_string())? {
-        user.delete(conn).await.map_err(|e| e.to_string())?;
-    }
+    // Reins data goes first, so AI/desktop connections are dropped even when organization ownership prevents
+    // deleting the vault account.
+    super::account_delete::erase(uuid, conn).await.map_err(|e| e.to_string())?;
     ReinsSetting::remove(pending, conn).await.map_err(|e| e.to_string())
 }
 
@@ -270,9 +274,8 @@ async fn apply(action: &Action, conn: &DbConn) -> Result<(), String> {
             }
             // Persist the account id before advancing the cursor or removing its SSO identity. One blocked
             // deletion cannot stall other users.
-            let pending = format!("workos.delete.{uuid}");
+            let pending = pending_deletion(&uuid);
             ReinsSetting::set(&pending, uuid.as_ref(), conn).await.map_err(|e| e.to_string())?;
-            super::HUB.forget_user(uuid.as_ref());
             if let Err(e) = finish_deletion(&uuid, &pending, conn).await {
                 warn!("WorkOS sync: account {uuid} cleanup deferred: {e}");
             }

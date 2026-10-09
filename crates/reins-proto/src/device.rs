@@ -35,6 +35,15 @@ pub mod codes {
     pub const PROOF_REQUIRED: &str = "proof_required";
     /// 403 to `PUT /device`: the proof does not match the account (counted; too many → `rate_limited`).
     pub const WRONG_PROOF: &str = "wrong_proof";
+    /// 400 to `POST /account/delete`: the typed email is not the account's (counted like a wrong proof).
+    pub const CONFIRMATION_MISMATCH: &str = "confirmation_mismatch";
+    /// 403 to `POST /account/delete`: the access token is older than [`super::DELETION_TOKEN_MAX_AGE_SECS`]; refresh
+    /// it and send the request again.
+    pub const FRESH_TOKEN_REQUIRED: &str = "fresh_token_required";
+    /// 409 to `POST /account/delete`: the account is the last owner of an organization.
+    pub const LAST_OWNER: &str = "last_owner";
+    /// 502: the identity provider (WorkOS) could not be reached or refused; nothing was deleted, retry later.
+    pub const PROVIDER_UNAVAILABLE: &str = "provider_unavailable";
 }
 
 /// The header every phone-API call of a phone carries: its device key, 32 random bytes in base64url that never leave
@@ -76,6 +85,36 @@ impl std::fmt::Debug for DeviceRegistration {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("DeviceRegistration")
             .field("fcm_token", &self.fcm_token)
+            .field("master_password_hash", &self.master_password_hash.as_ref().map(|_| "<redacted>"))
+            .finish()
+    }
+}
+
+/// How old (seconds) the access token of `POST /account/delete` may be: the phone refreshes it first, so a token
+/// copied from somewhere cannot delete the account for long.
+pub const DELETION_TOKEN_MAX_AGE_SECS: i64 = 300;
+
+/// What `POST /account/delete` answers when another device approves for the account and this one brought no proof.
+pub const DELETION_REFUSED: &str = "Another phone approves requests for this account. Delete the account from that \
+                                    phone, or make this phone the approval device first.";
+
+/// `POST /account/delete` body: deletes the caller's account, its vault and everything Reins keeps for it, and its
+/// WorkOS user when the server signs in through WorkOS.
+///
+/// `confirm_email` is the account's email as the user typed it (case and surrounding spaces do not count). The
+/// approval device needs nothing else, nor does any device of an account without one; another device brings
+/// `master_password_hash`, the same proof as in [`DeviceRegistration`].
+#[derive(Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct AccountDeletion {
+    pub confirm_email: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub master_password_hash: Option<String>,
+}
+
+impl std::fmt::Debug for AccountDeletion {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("AccountDeletion")
+            .field("confirm_email", &self.confirm_email)
             .field("master_password_hash", &self.master_password_hash.as_ref().map(|_| "<redacted>"))
             .finish()
     }

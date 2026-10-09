@@ -840,6 +840,17 @@ impl BlobHub {
         Ok(())
     }
 
+    /// Deletes every file `user` holds (a deleted account).
+    pub fn remove_user(&self, user: &str) {
+        let files = {
+            let mut state = self.lock();
+            let ids: Vec<String> =
+                state.blobs.iter().filter(|(_, e)| e.user == user).map(|(id, _)| id.clone()).collect();
+            ids.iter().filter_map(|id| state.remove(id)).map(|e| e.file).collect()
+        };
+        delete_files(files);
+    }
+
     /// Uploads that arrived and wait for the user, each handed out once (`Pending.blobs`).
     pub fn take_undelivered(&self, user: &str, now: i64) -> Vec<BlobInfo> {
         let mut state = self.lock();
@@ -1092,6 +1103,20 @@ mod tests {
         h.remove("u1", &s.id.0).unwrap();
         assert!(!file.exists());
         assert_eq!(h.remove("u1", &s.id.0), Err(BlobError::NotFound));
+        std::fs::remove_dir_all(dir).ok();
+    }
+
+    #[test]
+    fn a_deleted_account_loses_all_its_files_and_only_its_own() {
+        let (h, dir) = hub();
+        let mine = [uploaded(&h, "u1", 3), uploaded(&h, "u1", 4)];
+        let files: Vec<PathBuf> = mine.iter().map(|s| h.readable("u1", &s.id.0, NOW).unwrap().file).collect();
+        let theirs = uploaded(&h, "u2", 5);
+        h.remove_user("u1");
+        assert!(files.iter().all(|f| !f.exists()));
+        assert!(mine.iter().all(|s| h.info("u1", &s.id.0, NOW).is_none()));
+        assert!(h.begin_download(mine[0].download_secret.as_ref().unwrap(), NOW).is_err());
+        assert!(h.readable("u2", &theirs.id.0, NOW).unwrap().file.exists());
         std::fs::remove_dir_all(dir).ok();
     }
 

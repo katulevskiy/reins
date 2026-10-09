@@ -264,6 +264,23 @@ final class DemoReinsCore: ReinsCoreProtocol, @unchecked Sendable {
     func logout() async throws { locked { $0.session = nil } }
     func logoutWithBrowser() async throws -> String? { try await logout(); return nil }
 
+    /// Like the server: the typed email must be the account's, and with `-demoOtherPhone` this phone may not until
+    /// it has the role. Nothing is kept anyway, so deleting is signing out.
+    func deleteAccount(confirmEmail: String) async throws {
+        try await latency()
+        try locked { s in
+            guard let email = s.session?.email else { throw CoreError.NotLoggedIn }
+            let typed = confirmEmail.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !typed.isEmpty, typed.lowercased() == email.lowercased() else {
+                throw CoreError.Invalid(reason: "The email you typed is not this account's email.")
+            }
+            if s.approvalElsewhere {
+                throw CoreError.Invalid(reason: "Another phone approves requests for this account. Delete the account from that phone, or make this phone the approval device first.")
+            }
+            s.session = nil
+        }
+    }
+
     /// Refused with `-demoOtherPhone` until the recovery code or the other phone's approval, like the server, which
     /// wants the proof the core attaches.
     func registerDevice(fcmToken: String?) async throws {

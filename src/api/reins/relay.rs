@@ -269,6 +269,11 @@ impl RelayHub {
     pub fn purge(&self) {
         self.lock().purge();
     }
+
+    /// Drops `user`'s requests (a deleted account); calls still waiting on one see it gone.
+    pub fn forget_user(&self, user: &str) {
+        self.lock().retain(|e| e.user != user);
+    }
 }
 
 #[cfg(test)]

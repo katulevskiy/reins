@@ -11,6 +11,8 @@
 //!   code_verifier}`; the answer carries `user {id, email, email_verified}` and an access token whose `sid` names the
 //!   WorkOS session (kept so that a revoked session signs the device out, see `api::reins::workos_sync`).
 //! - refresh: the same endpoint with `grant_type: refresh_token` (only used with `SSO_AUTH_ONLY_NOT_SESSION=false`).
+//! - delete: `DELETE {base}/user_management/users/<user id>` with the API key, when a user deletes their account in
+//!   the app (`api::reins::account_delete`), so the identity cannot sign in to a new, empty account by itself.
 //!
 //! The answer comes straight from WorkOS over TLS, authenticated with the client secret, so its `user` is the
 //! identity; there is no id token to verify. `{base}` is `SSO_AUTHORITY` without `/user_management/<client id>`.
@@ -259,6 +261,38 @@ fn parse_authenticated(text: &str, require_passkey: bool, require_session: bool)
     })
 }
 
+/// The WorkOS user id in an identifier this server made ([`identifier`]); `None` for another provider's.
+pub fn user_id_of(identifier: &str) -> Option<&str> {
+    user_id_in(identifier, &CONFIG.sso_authority())
+}
+
+fn user_id_in<'a>(identifier: &'a str, authority: &str) -> Option<&'a str> {
+    let id = identifier.strip_prefix(authority)?.strip_prefix('/')?;
+    (!id.is_empty() && id.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'_' || b == b'-')).then_some(id)
+}
+
+/// Deletes a WorkOS user (`DELETE {base}/user_management/users/<id>`), which also ends its sessions. A user WorkOS no
+/// longer has counts as deleted, so a retry after a lost answer succeeds.
+pub async fn delete_user(user_id: &str) -> ApiResult<()> {
+    let mut url = match Url::parse(&format!("{}/user_management/users", api_base()?)) {
+        Ok(url) => url,
+        Err(e) => err!(format!("Invalid WorkOS users URL: {e}")),
+    };
+    if let Ok(mut segments) = url.path_segments_mut() {
+        segments.push(user_id);
+    }
+    let response = match http_client()?.delete(url).bearer_auth(api_key()).send().await {
+        Ok(r) => r,
+        Err(e) => err!(format!("Failed to contact WorkOS: {e}")),
+    };
+    let status = response.status();
+    if status.is_success() || status == reqwest::StatusCode::NOT_FOUND {
+        return Ok(());
+    }
+    let text = response.text().await.unwrap_or_default();
+    err!(format!("WorkOS refused to delete the user ({})", refusal(status, &text)))
+}
+
 /// A new access token (and the rotated refresh token) for a WorkOS session.
 pub async fn exchange_refresh_token(refresh_token: String) -> ApiResult<RefreshTokenResponse> {
     let body = json!({
@@ -297,6 +331,17 @@ mod tests {
         assert_eq!(api_base_of("http://127.0.0.1:9000/user_management/c1").as_deref(), Some("http://127.0.0.1:9000"));
         assert_eq!(api_base_of("https://api.workos.com/user_management/"), None);
         assert_eq!(api_base_of("https://api.workos.com/sso/c1"), None);
+    }
+
+    #[test]
+    fn user_ids_come_only_from_this_authoritys_identifiers() {
+        let authority = "https://api.workos.com/user_management/client_01ABC";
+        assert_eq!(user_id_in(&format!("{authority}/user_01XYZ"), authority), Some("user_01XYZ"));
+        assert_eq!(user_id_in("https://auth.example.com/realms/reins/user_01XYZ", authority), None);
+        assert_eq!(user_id_in(&format!("{authority}user_01XYZ"), authority), None);
+        assert_eq!(user_id_in(&format!("{authority}/"), authority), None);
+        assert_eq!(user_id_in(&format!("{authority}/../users/other"), authority), None);
+        assert_eq!(user_id_in(&format!("{authority}/user_01?x=1"), authority), None);
     }
 
     fn token(claims: &Value) -> String {

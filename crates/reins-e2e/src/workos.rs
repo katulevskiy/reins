@@ -1,12 +1,12 @@
-//! A fake WorkOS User Management API (AuthKit authorize, `authenticate`, the Events API), and a browser that runs
-//! the server's SSO sign-in against it the way ASWebAuthenticationSession or a Custom Tab would.
+//! A fake WorkOS User Management API (AuthKit authorize, `authenticate`, deleting users, the Events API), and a
+//! browser that runs the server's SSO sign-in against it the way ASWebAuthenticationSession or a Custom Tab would.
 
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 
 use data_encoding::BASE64URL_NOPAD;
 use serde_json::{Value, json};
-use wiremock::matchers::{method, path};
+use wiremock::matchers::{method, path, path_regex};
 use wiremock::{Mock, MockServer, Request, Respond, ResponseTemplate};
 
 /// The fake application's client id and secret (the API key).
@@ -31,6 +31,10 @@ struct State {
     sessions: Vec<String>,
     events: Vec<Value>,
     serial: u32,
+    /// Users deleted through the User Management API, in order.
+    deleted: Vec<String>,
+    /// Deleting users fails (WorkOS is down).
+    deletes_fail: bool,
 }
 
 pub struct FakeWorkos {
@@ -138,6 +142,29 @@ impl Respond for Events {
     }
 }
 
+/// `DELETE /user_management/users/<id>`: 202, or 404 for a user deleted before.
+struct DeleteUser(Arc<Mutex<State>>);
+
+impl Respond for DeleteUser {
+    fn respond(&self, req: &Request) -> ResponseTemplate {
+        let auth = req.headers.get("authorization").and_then(|v| v.to_str().ok());
+        if auth != Some(&format!("Bearer {API_KEY}")) {
+            return ResponseTemplate::new(401).set_body_json(json!({"message": "Unauthorized"}));
+        }
+        let mut st = self.0.lock().expect("state");
+        if st.deletes_fail {
+            return ResponseTemplate::new(503).set_body_json(json!({"message": "Service Unavailable"}));
+        }
+        let id = req.url.path().trim_start_matches("/user_management/users/").to_owned();
+        if st.deleted.contains(&id) {
+            return ResponseTemplate::new(404)
+                .set_body_json(json!({"code": "entity_not_found", "message": "User not found"}));
+        }
+        st.deleted.push(id);
+        ResponseTemplate::new(202)
+    }
+}
+
 impl FakeWorkos {
     pub async fn start() -> Self {
         let server = MockServer::start().await;
@@ -153,6 +180,11 @@ impl FakeWorkos {
             .mount(&server)
             .await;
         Mock::given(method("GET")).and(path("/events")).respond_with(Events(Arc::clone(&state))).mount(&server).await;
+        Mock::given(method("DELETE"))
+            .and(path_regex("^/user_management/users/[A-Za-z0-9_-]+$"))
+            .respond_with(DeleteUser(Arc::clone(&state)))
+            .mount(&server)
+            .await;
         Self {
             server,
             state,
@@ -195,6 +227,16 @@ impl FakeWorkos {
     /// The WorkOS sessions handed out so far, oldest first.
     pub fn sessions(&self) -> Vec<String> {
         self.state.lock().expect("state").sessions.clone()
+    }
+
+    /// The users deleted through the User Management API so far.
+    pub fn deleted_users(&self) -> Vec<String> {
+        self.state.lock().expect("state").deleted.clone()
+    }
+
+    /// Makes deleting users fail (or work again).
+    pub fn fail_deletes(&self, fail: bool) {
+        self.state.lock().expect("state").deletes_fail = fail;
     }
 
     /// Adds an event to the Events API (`kind` such as `user.updated`).

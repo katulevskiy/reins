@@ -276,6 +276,16 @@ impl ReinsCore {
         rt::run(async move { runtime.logout_with_browser(true).await }).await
     }
 
+    /// Deletes the signed-in account for good: on the server its vault, devices, approval device, AI and desktop
+    /// connections, files and stored state (and its WorkOS user, on a server that signs in through WorkOS); then signs
+    /// out and removes this phone's encrypted copy of the account. `confirm_email` is the account's email as the user
+    /// typed it. Errors leave everything as it was: `Invalid` carries a message for the user (a wrong email, another
+    /// phone approves for the account, the last owner of an organization, try again later).
+    pub async fn delete_account(&self, confirm_email: String) -> Result<(), CoreError> {
+        let runtime = Arc::clone(&self.runtime);
+        rt::run(async move { runtime.delete_account(&confirm_email).await }).await
+    }
+
     pub async fn register_device(&self, fcm_token: Option<String>) -> Result<(), CoreError> {
         let runtime = Arc::clone(&self.runtime);
         let generation = runtime.generation();

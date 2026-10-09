@@ -100,6 +100,22 @@ enum SettingsText {
         return p.name.lowercased() == "work" ? "💼" : "🙂"
     }
 
+    /// What "Delete account" deletes, line by line, before it asks for the email.
+    static let deletionItems = [
+        "Your account and its vault on the server",
+        "Your AI and computer connections, and their access",
+        "Your approval phone, permissions, activity and files",
+        "Your sign-in: this email would start a new, empty account",
+        "Everything Reins keeps for this account on this phone",
+    ]
+
+    /// Whether the typed text names the account's email (case and surrounding spaces do not count), as the server
+    /// checks it.
+    static func deletionConfirmed(_ typed: String, email: String) -> Bool {
+        let typed = typed.trimmingCharacters(in: .whitespacesAndNewlines)
+        return !typed.isEmpty && typed.lowercased() == email.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+    }
+
     /// "1.4 (27)": the version and build of this app.
     static func version(_ info: [String: Any]? = Bundle.main.infoDictionary) -> String {
         let version = info?["CFBundleShortVersionString"] as? String ?? "?"

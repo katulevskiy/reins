@@ -1259,7 +1259,7 @@ async fn post_delete_recover_token(data: Json<DeleteRecoverTokenData>, conn: DbC
     if claims.sub != *user.uuid {
         err!("Invalid claim");
     }
-    user.delete(&conn).await
+    crate::api::reins::account_delete::delete_user(user, &conn).await
 }
 
 #[post("/accounts/delete", data = "<data>")]
@@ -1274,7 +1274,7 @@ async fn delete_account(data: Json<PasswordOrOtpData>, headers: Headers, conn: D
 
     data.validate(&user, true, &conn).await?;
 
-    user.delete(&conn).await
+    crate::api::reins::account_delete::delete_user(user, &conn).await
 }
 
 #[expect(clippy::needless_pass_by_value, reason = "Not beneficial for Headers")]

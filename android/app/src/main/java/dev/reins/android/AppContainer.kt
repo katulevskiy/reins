@@ -376,6 +376,18 @@ class AppContainer(private val context: Context) {
         logoutUrl?.let { dev.reins.android.platform.Browser.open(context, it) }
     }
 
+    /**
+     * "Delete account": the core deletes the account on the server for good (with its WorkOS user, whose sessions end
+     * with it, so no browser page follows) and this phone's encrypted copy; then the phone forgets it like signing
+     * out. A refusal throws and changes nothing.
+     */
+    suspend fun deleteAccount(confirmEmail: String) {
+        core.deleteAccount(confirmEmail)
+        forgetAccount()
+        ssoSignIn.clear()
+        state.setSession(SessionState.SignedOut)
+    }
+
     /** Forgets what belongs to the signed-in account. */
     suspend fun forgetAccount() {
         withContext(Dispatchers.IO) {

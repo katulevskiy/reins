@@ -252,6 +252,15 @@ class FakeCore : ReinsCoreInterface {
         return browserLogoutUrl
     }
 
+    /** The emails `deleteAccount` deleted the account with; [deleteAccountError] is thrown instead when set. */
+    val deletedAccounts = java.util.concurrent.CopyOnWriteArrayList<String>()
+    @Volatile var deleteAccountError: Exception? = null
+    override suspend fun deleteAccount(confirmEmail: String) {
+        deleteAccountError?.let { throw it }
+        deletedAccounts += confirmEmail
+        session = null
+    }
+
     // ---- passwordless sign-in and "Add another phone" ------------------------------------------------------------
 
     /** What "Continue" finds: a new account (keys made silently), one this phone opens, or one locked on another phone. */

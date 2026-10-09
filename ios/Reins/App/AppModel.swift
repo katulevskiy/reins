@@ -343,17 +343,30 @@ final class AppModel {
             notice = error.userMessage
             return
         }
+        forgetSignedInAccount()
+        if let logoutUrl, let url = URL(string: logoutUrl) {
+            // Use the authentication sheet's shared cookie store, like sign-in. Cancelling it never unlocks
+            // the account again; subsequent mobile sign-in requires fresh authentication on the server.
+            _ = try? await WebAuth.run(url, callbackScheme: "com.reins2fa.app")
+        }
+    }
+
+    /// "Delete account": the core deletes the account on the server for good (with its WorkOS user) and this phone's
+    /// encrypted copy, then the phone forgets it as signing out does. A refusal throws and changes nothing. The
+    /// demo core only signs out.
+    func deleteAccount(confirmEmail: String) async throws {
+        try await core.deleteAccount(confirmEmail: confirmEmail)
+        forgetSignedInAccount()
+    }
+
+    /// What signing out and deleting the account both forget on this phone besides the core's own data.
+    private func forgetSignedInAccount() {
         KeysLock.clear()
         DeviceStatus.clear()
         approvalDevice = false
         deviceReplaced = false
         onboardingAfterUnlock = false
         setSession(.signedOut)
-        if let logoutUrl, let url = URL(string: logoutUrl) {
-            // Use the authentication sheet's shared cookie store, like sign-in. Cancelling it never unlocks
-            // the account again; subsequent mobile sign-in requires fresh authentication on the server.
-            _ = try? await WebAuth.run(url, callbackScheme: "com.reins2fa.app")
-        }
     }
 
     // MARK: Refreshing

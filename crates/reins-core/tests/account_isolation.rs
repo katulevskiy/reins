@@ -174,3 +174,130 @@ async fn logout_cancels_an_in_flight_accounts_response() {
     assert_eq!(result.unwrap_err(), CoreError::NotLoggedIn);
     assert_eq!(app.accounts().await.unwrap().len(), 0);
 }
+
+/// Identity that issues a new access token (`n` counts them) for every sign-in and refresh of Alice.
+#[derive(Clone, Default)]
+struct CountingIdentity(Arc<Mutex<u32>>);
+impl Respond for CountingIdentity {
+    fn respond(&self, _: &Request) -> ResponseTemplate {
+        let mut n = self.0.lock().unwrap();
+        *n += 1;
+        let claims = json!({"sub": "alice@example.com", "email": "alice@example.com", "n": *n});
+        let token = format!("h.{}.s", BASE64URL_NOPAD.encode(claims.to_string().as_bytes()));
+        ResponseTemplate::new(200)
+            .set_body_json(json!({"access_token": token, "refresh_token": "REFRESH", "expires_in": 7200}))
+    }
+}
+
+/// Alice signed in on a fresh phone, with an integration kept in her encrypted account file.
+async fn alice(server: &MockServer, dir: &std::path::Path) -> Arc<ReinsCore> {
+    Mock::given(method("POST"))
+        .and(path("/identity/accounts/prelogin"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({"kdf":0,"kdfIterations":5000})))
+        .mount(server)
+        .await;
+    Mock::given(method("POST"))
+        .and(path("/identity/connect/token"))
+        .respond_with(CountingIdentity::default())
+        .mount(server)
+        .await;
+    Mock::given(method("GET")).and(path("/api/sync")).respond_with(VaultProfile).mount(server).await;
+    Mock::given(path("/reins/api/account-state")).respond_with(Cloud::default()).mount(server).await;
+    let app = core(dir);
+    app.login(server.uri(), "alice@example.com".to_owned(), "pw".to_owned(), None).await.unwrap();
+    app.engine().register_account("github", "alice-private-integration").unwrap();
+    app.accounts().await.unwrap();
+    app
+}
+
+fn sealed_accounts(dir: &std::path::Path) -> usize {
+    std::fs::read_dir(dir.join("accounts"))
+        .map_or(0, |d| d.filter(|e| e.as_ref().unwrap().path().extension().is_some_and(|x| x == "sealed")).count())
+}
+
+async fn uploads(server: &MockServer) -> usize {
+    server.received_requests().await.unwrap().iter().filter(|r| r.method.as_str() == "PUT").count()
+}
+
+#[tokio::test]
+async fn deleting_the_account_refreshes_an_old_token_then_signs_out_and_forgets_the_phones_copy() {
+    let server = MockServer::start().await;
+    let dir = tempfile::tempdir().unwrap();
+    let app = alice(&server, dir.path()).await;
+    assert_eq!(sealed_accounts(dir.path()), 1);
+    let tokens = Arc::new(Mutex::new(Vec::<String>::new()));
+    let seen = Arc::clone(&tokens);
+    Mock::given(method("POST"))
+        .and(path("/reins/api/account/delete"))
+        .respond_with(move |request: &Request| {
+            let body: Value = serde_json::from_slice(&request.body).unwrap();
+            assert_eq!(body, json!({"confirm_email": "Alice@Example.com"}), "trimmed, and no proof needed");
+            let mut seen = seen.lock().unwrap();
+            seen.push(request.headers.get("authorization").unwrap().to_str().unwrap().to_owned());
+            if seen.len() == 1 {
+                ResponseTemplate::new(403).set_body_json(json!({"error": "fresh_token_required", "message": "m"}))
+            } else {
+                ResponseTemplate::new(204)
+            }
+        })
+        .expect(2)
+        .mount(&server)
+        .await;
+    let old = app.engine();
+    let uploaded = uploads(&server).await;
+    app.delete_account("  Alice@Example.com ".to_owned()).await.unwrap();
+    let tokens = tokens.lock().unwrap().clone();
+    assert_ne!(tokens[0], tokens[1], "the second attempt carries a newly issued token");
+    assert!(app.session().await.is_none());
+    assert_eq!(old.register_account("github", "late").unwrap_err(), CoreError::NotLoggedIn);
+    assert_eq!(sealed_accounts(dir.path()), 0, "the encrypted account file is gone");
+    assert_eq!(app.accounts().await.unwrap().len(), 0);
+    assert_eq!(uploads(&server).await, uploaded, "nothing is uploaded for a deleted account");
+}
+
+#[tokio::test]
+async fn a_refused_deletion_leaves_the_account_signed_in_and_says_why() {
+    let server = MockServer::start().await;
+    let dir = tempfile::tempdir().unwrap();
+    let app = alice(&server, dir.path()).await;
+    for (status, code, says) in [
+        (400, "confirmation_mismatch", "not this account's email"),
+        (409, "last_owner", "only owner of an organization"),
+        (502, "provider_unavailable", "nothing was deleted"),
+        (404, "not_found", "cannot delete accounts from the app"),
+    ] {
+        Mock::given(method("POST"))
+            .and(path("/reins/api/account/delete"))
+            .respond_with(ResponseTemplate::new(status).set_body_json(json!({"error": code, "message": "m"})))
+            .up_to_n_times(1)
+            .mount(&server)
+            .await;
+        let error = app.delete_account("alice@example.com".to_owned()).await.unwrap_err();
+        assert!(matches!(&error, CoreError::Invalid { reason } if reason.contains(says)), "{code}: {error:?}");
+        assert!(app.session().await.is_some(), "{code}: still signed in");
+        assert!(app.accounts().await.unwrap().iter().any(|a| a.account == "alice-private-integration"));
+    }
+    assert_eq!(sealed_accounts(dir.path()), 1);
+}
+
+#[tokio::test]
+async fn another_phone_proves_itself_with_the_password_it_signed_in_with() {
+    let server = MockServer::start().await;
+    let dir = tempfile::tempdir().unwrap();
+    let app = alice(&server, dir.path()).await;
+    Mock::given(method("POST"))
+        .and(path("/reins/api/account/delete"))
+        .respond_with(|request: &Request| {
+            let body: Value = serde_json::from_slice(&request.body).unwrap();
+            if body["master_password_hash"].as_str().is_some_and(|h| !h.is_empty()) {
+                ResponseTemplate::new(204)
+            } else {
+                ResponseTemplate::new(403).set_body_json(json!({"error": "proof_required", "message": "m"}))
+            }
+        })
+        .expect(2)
+        .mount(&server)
+        .await;
+    app.delete_account("alice@example.com".to_owned()).await.unwrap();
+    assert!(app.session().await.is_none());
+}

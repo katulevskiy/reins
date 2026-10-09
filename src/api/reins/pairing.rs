@@ -338,6 +338,11 @@ impl PairingHub {
     pub fn purge(&self) {
         self.lock().purge();
     }
+
+    /// Drops the pairings waiting for `user`'s phone (a deleted account).
+    pub fn forget_user(&self, user: &str) {
+        self.lock().retain(|e| e.user.as_deref() != Some(user));
+    }
 }
 
 #[cfg(test)]

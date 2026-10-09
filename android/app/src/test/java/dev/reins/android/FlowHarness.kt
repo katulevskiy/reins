@@ -82,6 +82,8 @@ abstract class FlowHarness {
         core.mcpHeavy.clear()
         core.resetAutopilot()
         core.resetSso()
+        core.deletedAccounts.clear()
+        core.deleteAccountError = null
         container.ssoSignIn.clear()
         authResult = AuthResult.Success
         prompts.set(0)

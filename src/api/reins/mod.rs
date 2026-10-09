@@ -1,6 +1,7 @@
 //! Reins server: MCP endpoint, OAuth 2.1 authorization server for AI clients,
 //! phone API and in-memory relay (spec §4, contracts §A and §C).
 
+pub mod account_delete;
 pub mod account_state;
 pub mod apns;
 pub mod blob;
@@ -164,10 +165,15 @@ impl Hub {
         }
     }
 
-    /// Drops what the hub remembers about a deleted account (its reported integrations and MCP servers).
+    /// Drops what the hub remembers about a deleted account: its reported integrations and MCP servers, the requests,
+    /// pairings and "add another phone" requests waiting for it, and its files (deleted from disk).
     pub fn forget_user(&self, user: &str) {
         self.services.lock().unwrap_or_else(std::sync::PoisonError::into_inner).remove(user);
         self.mcp_servers.lock().unwrap_or_else(std::sync::PoisonError::into_inner).remove(user);
+        self.relay.forget_user(user);
+        self.pairings.forget_user(user);
+        self.joins.forget_user(user);
+        self.blobs.remove_user(user);
     }
 
     pub fn purge(&self) {
@@ -227,6 +233,7 @@ pub fn routes() -> Vec<Route> {
     warn_about_public_settings();
     let mut routes = device_api::routes();
     routes.extend(account_state::routes());
+    routes.extend(account_delete::routes());
     routes.extend(oauth_routes::routes());
     routes.extend(mcp_routes::routes());
     routes.extend(desktop_routes::routes());
@@ -465,6 +472,24 @@ mod hub_tests {
         assert_eq!(p.requests.len(), 1);
         assert!(p.pairings.is_empty());
         assert_eq!(start.elapsed(), Duration::from_secs(5));
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn a_forgotten_user_has_nothing_waiting_and_others_keep_theirs() {
+        let hub = test_hub();
+        for user in ["u1", "u2"] {
+            hub.pairings.start(user, client(), 0).unwrap();
+            hub.relay.submit(user, &"c1".into(), "Work AI", read_call(), None, 0).unwrap();
+            hub.set_services(user, vec!["gmail".to_owned()]);
+        }
+        let request = hub.relay.submit("u1", &"c1".into(), "Work AI", read_call(), None, 0).unwrap();
+        hub.forget_user("u1");
+        assert!(hub.pending("u1", Duration::ZERO).await.is_empty());
+        assert!(hub.relay.fetch("u1", &request.id).is_none());
+        assert_eq!(hub.services_of("u1"), None);
+        let p = hub.pending("u2", Duration::ZERO).await;
+        assert_eq!((p.requests.len(), p.pairings.len()), (1, 1));
+        assert!(hub.services_of("u2").is_some());
     }
 
     #[tokio::test(start_paused = true)]

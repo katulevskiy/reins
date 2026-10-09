@@ -308,6 +308,48 @@ impl AccountRuntime {
         *self.current.lock().unwrap_or_else(PoisonError::into_inner) = fresh;
         Ok(browser_url)
     }
+    /// Deletes the signed-in account on the server, then signs out like `logout` and forgets this phone's copy of
+    /// it: the encrypted account data and the cached vault key and account secret. Nothing is uploaded first, since
+    /// no one can open the account again. A refusal (or no network) leaves everything as it was; once the server
+    /// has deleted the account, the local cleanup is best effort and never reported as a failure.
+    pub async fn delete_account(&self, confirm_email: &str) -> Result<(), CoreError> {
+        let _guard = self.transition.lock().await;
+        let previous = self.engine();
+        previous.ensure_active()?;
+        previous.run_account(previous.delete_server_account(confirm_email)).await?;
+        self.generation.fetch_add(1, std::sync::atomic::Ordering::AcqRel);
+        let owner = previous.store.bound_owner();
+        if let Err(e) = self.control.clear_session_for(owner.as_ref()) {
+            log::warn!("deleted account: could not clear its session: {e}");
+        }
+        if let Err(e) = previous.retire() {
+            log::warn!("deleted account: could not close its store: {e}");
+        }
+        if let Some(owner) = &owner
+            && let Err(e) = self.forget_account(owner)
+        {
+            log::warn!("deleted account: could not remove its local data: {e}");
+        }
+        let fresh = self.build(Arc::new(Store::ephemeral(Some(Arc::clone(&self.control)))?))?;
+        *self.current.lock().unwrap_or_else(PoisonError::into_inner) = fresh;
+        Ok(())
+    }
+    /// Removes what this installation keeps for `owner`: its cached keys and its encrypted account file.
+    fn forget_account(&self, owner: &Owner) -> Result<(), CoreError> {
+        self.control.secret_delete(KEY_CACHE, &owner.id())?;
+        self.control.secret_delete(SECRET_CACHE, &owner.id())?;
+        self.control.secret_delete(sso::SECRET_SERVICE, &owner.user_id)?;
+        let sealed = self.directory.join("accounts").join(format!("{}.sealed", owner.id()));
+        for path in [sealed.with_extension("tmp"), sealed.clone(), sealed.with_extension("lock")] {
+            match std::fs::remove_file(&path) {
+                Err(e) if e.kind() != std::io::ErrorKind::NotFound => {
+                    return Err(CoreError::storage("cannot remove the account's data"));
+                }
+                _ => {}
+            }
+        }
+        Ok(())
+    }
     pub fn check_engine(&self, engine: &Arc<Engine>) -> Result<(), CoreError> {
         engine.ensure_active()?;
         if !Arc::ptr_eq(&self.engine(), engine) {

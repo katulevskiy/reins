@@ -54,6 +54,9 @@ step. The gate resumes after an app restart. Only a fingerprint acknowledgement 
 so WorkOS email changes do not repeat the step and a replaced recovery code does. The authenticated account id is
 cached by the core, allowing recovery-code access offline after subsequent restarts; an older installation may need
 one online token refresh. Settings shows the recovery code again after Face ID, Touch ID or the passcode.
+Settings > Session > Delete account explains what is deleted, asks for the account's email and calls the core's
+`deleteAccount`, which deletes the account on the server (with its WorkOS user) and the phone's encrypted copy; the
+app then forgets the account as signing out does. With `-demo` it only signs out.
 
 ## Targets
 
