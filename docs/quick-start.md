@@ -262,7 +262,7 @@ anything else to a hidden field such as "Notes before 2026-10-09". An SSH key is
 under another name.
 
 The first time, the phone hands the computer its key: approve it, note the twelve digits the phone shows (also at the
-bottom of the Vault page, written like `4821-9930-1274`), and type them in the
+bottom of the Vault page and under Settings → Devices, written like `4821-9930-1274`), and type them in the
 terminal. They are not the eight digits of the computer's own key that `reins status` shows. After a new phone, or
 installing Reins again, `reins vault add` says the phone could not open the value; run it with `--new-phone` to check
 the new phone's key the same way.

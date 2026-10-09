@@ -131,6 +131,12 @@ vault also frees the role, by deleting everything the role protected). The phone
 loses the role is told by push. The phone's core attaches the proof itself when it has one, so a phone that just got
 the secret, or signed in with the master password, moves the role without asking again.
 
+**Signing a device out** (Settings → Devices, `DELETE /reins/api/devices/{id}`). Only the approval device may do it,
+and not to itself. The server deletes the device's Vaultwarden sign-in and its WorkOS session together: the next call
+with its access token is refused and its refresh token no longer exists, so a lost phone can neither read the vault
+nor answer for the account. A phone that was lost while it held the role first loses the role to the new phone (with
+the proofs above), which then signs it out.
+
 - Approving needs the phone's screen lock or biometrics. Denying is one tap. A routine request can also be approved
   from its notification, which works only once the phone is unlocked; that approves exactly what its screen would approve untouched (never an item that looks like a
   code or a password) and creates no permission. Requests that are asked every time, and everything on Autopilot's

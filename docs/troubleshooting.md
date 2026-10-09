@@ -58,10 +58,19 @@ digits), or **Enter recovery code**.
 
 1. Install Reins on the new phone and sign in to the same account.
 2. Open the vault with **Unlock with passkey**, or **Enter recovery code**. The new phone becomes the approval
-   device. The computers and AI apps you connected stay connected to the account.
-3. Your integrations' tokens were kept encrypted on the lost phone, behind its screen lock. If someone else may have
-   it, revoke them at the source (GitHub's personal access tokens, Google account → Security → third-party access,
-   Telegram → Devices) and connect them again on the new phone.
+   device: requests come to it, and the lost phone no longer gets any. The computers and AI apps you connected stay
+   connected to the account.
+3. On the new phone, **Settings → Devices** lists every device signed in to the account. Tap **Sign out** next to the
+   lost phone. Its sign-in ends at once: it can no longer open your vault, sync or answer requests, even if someone
+   unlocks it. (Only the approval phone can sign others out, which is why step 2 comes first.)
+4. What stays on the lost phone: your integrations' tokens and the vault's key, encrypted in the app's storage and
+   usable only behind its screen lock. The vault's items are not kept there; the phone reads them from the server,
+   which it can no longer do. If someone else may have the phone and its screen lock, revoke the tokens at the source
+   (GitHub's personal access tokens, Google account → Security → third-party access, Telegram → Devices) and connect
+   them again on the new phone.
+5. `reins vault add` on your computers asks for the new phone's key the first time (type the eight digits it shows).
+
+<img src="assets/vault/devices-dark.png" width="200" alt="Settings, Devices: this phone, a lost Pixel 7 with Sign out, a computer">
 
 Lost the phone, the recovery code and every passkey? **Lost both? Reset the vault** on the new phone starts the
 account over with an empty vault: saved items, integrations and their grants are deleted, and your AIs and computers
