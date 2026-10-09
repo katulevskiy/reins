@@ -92,6 +92,37 @@ impl Identity {
         self.secret.unseal(&bytes).map(Zeroizing::new).map_err(|_| IdentityError::Unseal)
     }
 
+    /// `plaintext` in a box from this app's key to `public_key` (base64url of `nonce || ciphertext`): only that key
+    /// opens it, and whoever opens it knows this app made it.
+    #[must_use]
+    pub fn box_to(&self, public_key: &str, plaintext: &[u8]) -> Option<String> {
+        use crypto_box::aead::{Aead as _, AeadCore as _};
+        let public = crypto_box::PublicKey::from(reins_proto::desktop::decode_key(public_key)?);
+        let cipher = crypto_box::SalsaBox::new(&public, &self.secret);
+        let nonce = crypto_box::SalsaBox::generate_nonce(&mut OsRng);
+        let mut out = nonce.to_vec();
+        out.extend(cipher.encrypt(&nonce, plaintext).ok()?);
+        Some(BASE64URL_NOPAD.encode(&out))
+    }
+
+    /// Opens a box made from `public_key` to this app (base64url of `nonce || ciphertext`): only the holder of that
+    /// key's private half (the phone this app pinned) can have made it.
+    pub fn open_box_from(&self, public_key: &str, boxed: &str) -> Result<Zeroizing<Vec<u8>>, IdentityError> {
+        use crypto_box::aead::Aead as _;
+        const NONCE: usize = 24;
+        let from = reins_proto::desktop::decode_key(public_key).ok_or(IdentityError::Malformed)?;
+        let bytes = BASE64URL_NOPAD.decode(boxed.trim().as_bytes()).map_err(|_| IdentityError::Malformed)?;
+        if bytes.len() <= NONCE {
+            return Err(IdentityError::Malformed);
+        }
+        let (nonce, ciphertext) = bytes.split_at(NONCE);
+        let nonce = crypto_box::Nonce::from(<[u8; NONCE]>::try_from(nonce).map_err(|_| IdentityError::Malformed)?);
+        crypto_box::SalsaBox::new(&crypto_box::PublicKey::from(from), &self.secret)
+            .decrypt(&nonce, ciphertext)
+            .map(Zeroizing::new)
+            .map_err(|_| IdentityError::Unseal)
+    }
+
     /// Opens the credential the phone sealed to this app.
     pub fn open_grant(&self, sealed: &str) -> Result<CredentialGrant, IdentityError> {
         let plain = self.unseal(sealed)?;

@@ -20,7 +20,6 @@ const FIELDS: &[&str] = &[
     "identity_ssn",
     "identity_passport",
     "identity_license",
-    "ssh_private_key",
     "ssh_public_key",
     "ssh_fingerprint",
     "custom",
@@ -110,8 +109,8 @@ pub(super) fn tools() -> Vec<ToolSpec> {
             "Get a field from the password vault",
             "Fetches one field of one item: a login's username, password, one-time code or website; the notes; a \
              card's number, security code, holder or expiry; an identity as text or its social security, passport or \
-             license number; an SSH key's private key, public key or fingerprint; custom fields; the old passwords. \
-             The user approves every time on their phone and sees which field, not its value, and secrets are never \
+             license number; an SSH key's public key or fingerprint (its private key is never given out: the desktop \
+             app's SSH agent has the phone sign); custom fields; the old passwords. The user approves every time on their phone and sees which field, not its value, and secrets are never \
              covered by a standing permission. Only the website, the SSH public key and fingerprint, the card holder \
              and the card expiry are ordinary reads.",
             vec![

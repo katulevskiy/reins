@@ -90,6 +90,11 @@ import dev.reins.android.ui.signin.SignInViewModel
 import dev.reins.android.ui.signin.UnlockScreen
 import dev.reins.android.ui.signin.UnlockViewModel
 import dev.reins.android.ui.update.UpdatePromptHost
+import dev.reins.android.ui.vault.VaultAddScreen
+import dev.reins.android.ui.vault.VaultEditScreen
+import dev.reins.android.ui.vault.VaultItemScreen
+import dev.reins.android.ui.vault.VaultScreen
+import dev.reins.android.ui.vault.VaultViewModel
 import kotlin.coroutines.cancellation.CancellationException
 import kotlinx.coroutines.launch
 
@@ -186,6 +191,8 @@ private fun SignedInContent(
     val settings = viewModel(key = "settings") { SettingsViewModel(container) }
     val mcp = viewModel(key = "mcp") { McpViewModel(container) }
     val autopilot = viewModel(key = "autopilot") { AutopilotViewModel(container) }
+    val vault = viewModel(key = "vault") { VaultViewModel(container) }
+    val vaultItem by vault.item.collectAsStateWithLifecycle()
     val scope = rememberCoroutineScope()
     val context = androidx.compose.ui.platform.LocalContext.current
     // The setup can open an integration's page over itself; Back returns to the same setup page.
@@ -286,6 +293,36 @@ private fun SignedInContent(
                     viewModel(key = "service:${route.id}") { ServiceViewModel(container, route.id) },
                     state,
                     onBack = { app.back() },
+                    onOpenVault = { app.open(Route.Vault) },
+                )
+                Route.Vault -> VaultScreen(
+                    vault,
+                    onBack = { app.back() },
+                    onOpen = { app.open(Route.VaultItem(it)) },
+                    onAdd = { app.open(Route.VaultAdd) },
+                )
+                Route.VaultAdd -> VaultAddScreen(onBack = { app.back() }, onPick = { app.open(Route.VaultEdit(null, it)) })
+                is Route.VaultItem -> VaultItemScreen(
+                    vault,
+                    route.id,
+                    authenticator,
+                    onBack = { app.back() },
+                    onEdit = { app.open(Route.VaultEdit(route.id, null)) },
+                )
+                is Route.VaultEdit -> VaultEditScreen(
+                    vault,
+                    newItem = route.newItem,
+                    existing = vaultItem?.takeIf { it.id == route.id },
+                    authenticator = authenticator,
+                    onBack = { app.back() },
+                    onSaved = { id ->
+                        // An edited item goes back to its page; a new one opens in place of "Add" and the form.
+                        app.back()
+                        if (route.id == null) {
+                            app.back()
+                            app.open(Route.VaultItem(id))
+                        }
+                    },
                 )
                 Route.Gmail -> GmailScreen(gmail, state, onBack = { app.back() })
                 is Route.ActivityDetail -> ActivityDetailScreen(

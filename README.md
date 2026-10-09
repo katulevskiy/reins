@@ -131,7 +131,8 @@ or ChatGPT. The full walkthrough is in [docs/quick-start.md](docs/quick-start.md
 - GitHub: about 200 tools (repositories, files, branches, issues, pull requests, releases, Actions, settings, security
   alerts, gists), plus generic `github_api_read` / `github_api_write`.
 - The phone's own calendar, contacts and SMS. Telegram, as your own account.
-- The password vault of your account: items, folders, attachments, Sends, the generator.
+- The password vault of your account: items, folders, attachments, Sends, the generator. The phone app lists and
+  edits it too, and makes SSH keys whose private half never leaves it.
 - Any remote MCP server you add on the phone. The phone is the MCP client, so its tokens stay on the phone.
 - Large files go through one-time upload and download links that the phone controls.
 
@@ -141,7 +142,8 @@ or ChatGPT. The full walkthrough is in [docs/quick-start.md](docs/quick-start.md
 - Harness hooks that send risky commands and secret files to your phone (force pushes, `rm -r`, `terraform apply`,
   `.env`, private keys, ...).
 - `reins ask`: a yes/no question to your phone from any script.
-- `reins run`: start a program with API keys released from your vault for that run.
+- `reins run`: start a program with API keys released from your vault for that run. `reins vault add NAME` puts a
+  key in the vault, typed on the computer and sealed to the phone.
 - Local API proxy that adds a vault key to requests. SSH agent whose private keys stay on the phone.
 - `reins mcp`: a stdio MCP bridge for local harnesses. `pause`/`resume`, signed self-update.
 - Without a phone, a local policy with desktop prompts decides about git instead.

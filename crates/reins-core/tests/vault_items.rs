@@ -598,7 +598,6 @@ async fn every_field_is_fetched_as_a_secret_except_the_ordinary_ones() {
         ("ident", "identity_ssn", None, "078-05-1120", true),
         ("ident", "identity_passport", None, "P1234567", true),
         ("ident", "identity_license", None, "D9876543", true),
-        ("ssh", "ssh_private_key", None, PRIVATE_KEY, true),
         ("ssh", "ssh_public_key", None, PUBLIC_KEY, false),
         ("ssh", "ssh_fingerprint", None, FINGERPRINT, false),
         ("arch", "password", None, "shop-pw", true),
@@ -626,6 +625,12 @@ async fn every_field_is_fetched_as_a_secret_except_the_ordinary_ones() {
         let told = answers(&env).await.last().unwrap().clone();
         assert_eq!(told["result"]["data"]["items"][0]["text"], *expected, "{item} {field}");
     }
+    // The private half of an SSH key is never handed out, approved or not: the desktop app's SSH agent has the phone
+    // sign instead.
+    // (The field is not one the tool offers, so the call is refused before anything is read.)
+    let told = refused(&env, "get", json!({"item": "ssh", "field": "ssh_private_key"})).await;
+    assert!(told.contains("malformed") || told.contains("never given out"), "{told}");
+    no_secrets("the refusal", &told);
     let identity = read(&env, "get", json!({"item": "ident", "field": "identity"})).await;
     let block = identity[0]["text"].as_str().unwrap();
     for line in [

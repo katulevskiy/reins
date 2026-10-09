@@ -60,5 +60,52 @@ pub(super) fn tools() -> Vec<ToolSpec> {
         )
         .in_class("ssh")
         .desktop(),
+        tool(
+            "vault_phone_key",
+            VAULT,
+            "phone_key",
+            Effect::Write,
+            "Let the computer save secrets to the vault",
+            "The phone's own public key, which `reins vault add` seals a secret to so that only the phone can open it. \
+             The user compares its fingerprint on both screens once.",
+            vec![CLIENT_KEY, NONCE],
+            None,
+        )
+        .once()
+        .desktop(),
+        tool(
+            "vault_secret_store",
+            VAULT,
+            "secret_store",
+            Effect::Write,
+            "Save a secret from the computer",
+            "Saves a value sent by `reins vault add` in a vault item, boxed from the desktop app's key to the phone's \
+             key: the server cannot read or change it. Makes a new item; changes the field of the item with that \
+             name only when the box says to replace it.",
+            vec![
+                str_p("name", 300, true, "The item's exact name."),
+                str_p("kind", 20, true, "`api-key`, `login`, `note` or `ssh`."),
+                str_p("field", 100, true, "`password`, `username`, `notes`, `private_key`, or a custom field's name."),
+                text_p("sealed", 40_000, true, "The value, boxed to the phone's key (base64url of nonce and ciphertext)."),
+                CLIENT_KEY,
+                NONCE,
+            ],
+            Some("name"),
+        )
+        .in_class("items")
+        .once()
+        .desktop(),
+        tool(
+            "vault_names",
+            VAULT,
+            "names",
+            Effect::Write,
+            "Show the vault item names on the computer",
+            "The names and kinds of the vault's items (never a value), for `reins vault list`. Asked every time.",
+            vec![CLIENT_KEY, NONCE],
+            None,
+        )
+        .once()
+        .desktop(),
     ]
 }

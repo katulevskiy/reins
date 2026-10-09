@@ -36,8 +36,12 @@ import dev.reins.core.ServerInfo
 import dev.reins.core.SessionInfo
 import dev.reins.core.SsoOutcome
 import dev.reins.core.SsoStart
+import dev.reins.core.VaultItemDetail
+import dev.reins.core.VaultItemInput
+import dev.reins.core.VaultItemSummary
 import dev.reins.core.VaultPasskeyOptions
 import dev.reins.core.VaultPasskeyView
+import dev.reins.core.VaultSshKey
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
@@ -73,6 +77,22 @@ class MainSafeCore(
     override suspend fun setStartingPolicy(policy: StartingPolicy) = io { setStartingPolicy(policy) }
 
     override suspend fun connections(): List<ConnectionView> = io { connections() }
+
+    override suspend fun vaultItems(query: String): List<VaultItemSummary> = io { vaultItems(query) }
+
+    override suspend fun vaultItem(id: String): VaultItemDetail = io { vaultItem(id) }
+
+    override suspend fun vaultReveal(id: String, key: String): String = io { vaultReveal(id, key) }
+
+    override suspend fun vaultCreate(input: VaultItemInput): String = io { vaultCreate(input) }
+
+    override suspend fun vaultUpdate(id: String, input: VaultItemInput) = io { vaultUpdate(id, input) }
+
+    override suspend fun vaultDelete(id: String) = io { vaultDelete(id) }
+
+    override suspend fun vaultGenerateSshKey(name: String): VaultSshKey = io { vaultGenerateSshKey(name) }
+
+    override suspend fun phoneKeyFingerprint(): String = io { phoneKeyFingerprint() }
 
     override suspend fun createGrant(connectionId: String, account: String, kind: ApprovalKind, standing: StandingGrant) =
         io { createGrant(connectionId, account, kind, standing) }

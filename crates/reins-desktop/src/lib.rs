@@ -33,6 +33,7 @@ pub mod setup;
 pub mod ssh_agent;
 pub mod stats;
 pub mod update;
+pub mod vault_cli;
 pub mod win;
 
 /// Unix seconds.

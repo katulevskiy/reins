@@ -14,6 +14,7 @@ use crate::CoreError;
 use crate::connector::{Item, Preview};
 
 pub(super) mod desktop;
+pub(crate) mod editor;
 mod model;
 mod read;
 mod write;

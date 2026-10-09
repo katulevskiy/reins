@@ -179,6 +179,35 @@ cannot open it. The desktop app accepts an answer only if:
 So a server that is compromised cannot read the credential, cannot substitute its own key (the key was pinned when
 you compared fingerprints), and cannot replay an older answer.
 
+**The other way: `reins vault add`.** A secret sent from the computer goes to the phone in a box from the app's pinned
+key to the phone's own key (X25519, XSalsa20-Poly1305), with the request's nonce, the time it was made, the item's
+name, the field, the kind of a new item and whether an existing item may be changed. The phone opens it only if the
+app's pinned key made it, only for the item, field and kind the request names, only within 15 minutes, and only once
+(it remembers the nonces it saw), so the server can neither read the value, nor put another one in its place, nor send
+an old request again. The approval is bound to the item as it was when the phone asked: if the vault changed before
+you approved, nothing is saved. An existing item changes only when the computer asked for it (`--replace`), and keeps
+the earlier value; the terminal and the phone show the same four check digits of the value, so that a value an AI on
+the computer sent in your place does not pass for yours.
+
+The phone's key (one per installation, never copied to another phone) reaches the computer once, sealed to the app,
+after you approve it on the phone; you then type the twelve digits the phone shows, and the computer keeps the key.
+The key never travels in the clear, so a server that answered with its own key could not know which digits to aim
+for; the computer never shows the digits it received, and refuses its own eight. What the phone sends back afterwards
+(that it saved the value, the item names for `reins vault list`) is boxed from the phone's key, so only that phone can
+have written it. A phone that cannot open a box (a new phone) makes the computer say so; it asks for the new key only
+when you run `reins vault add --new-phone`.
+
+What the server learns: the item's name, the field and the kind (they travel beside the box so the phone can show the
+request), the value's length (from the box's size), and the phone's refusals, which are not boxed: one may say that
+an item with that name exists and what kind it is. The boxes use the two long-term keys, without forward secrecy:
+whoever gets either one, the computer's key file (readable by any program running as you) or the phone's key, can
+open every box recorded between them, the phone's key answer included. There is no way to make new keys yet other
+than pairing the computer again or installing the app again. On the phone the value passes through ordinary memory
+while it is saved. An SSH key's private half is never given out by the phone, to an AI or on its own screens (the
+phone signs instead), though a Bitwarden app signed in to the same account (not possible for an account without a
+master password) can show it. Text the phone sends back through the server is printed by `reins` labelled as such and
+without control characters, since the server could have written it.
+
 **Git pushes.** The desktop app reads the pack git is about to send and works out what it does: which branches or
 tags it touches, whether each update is a fast-forward (asking the host's API when needed), the commits, the files,
 and the line counts. That summary is what the phone shows. The digest is computed over the repository, the ref

@@ -7,6 +7,7 @@ import androidx.compose.ui.test.junit4.v2.createEmptyComposeRule
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
+import androidx.compose.ui.test.performTextInput
 import androidx.compose.ui.test.performScrollTo
 import androidx.compose.ui.test.performScrollToIndex
 import androidx.compose.ui.test.performTextReplacement
@@ -1106,6 +1107,45 @@ abstract class ScreenshotsBase(private val suffix: String) {
         launch()
         await("burst")
         shoot("92-activity-burst")
+    }
+
+    private fun openVault() {
+        core.resetVault()
+        core.accounts = listOf(dev.reins.core.AccountView("vault", "me@example.com", now))
+        launch()
+        tap("integrations")
+        tap("service:vault")
+        await("openVault")
+    }
+
+    @Test
+    fun vault() {
+        openVault()
+        shoot("93-vault-service")
+        tap("openVault")
+        await("vaultItem:openai")
+        shoot("94-vault-list")
+        tap("vaultItem:openai")
+        await("vaultUse:vault:OpenAI/password")
+        shoot("95-vault-item")
+        tap("vaultEdit")
+        await("vaultInput:password")
+        shoot("96-vault-edit")
+    }
+
+    @Test
+    fun vaultAdd() {
+        openVault()
+        tap("openVault")
+        tap("vaultAdd")
+        await("newItem:ApiKey")
+        shoot("97-vault-add")
+        tap("newItem:SshKey")
+        await("vaultName")
+        rule.onNodeWithTag("vaultName").performTextInput("Laptop")
+        tap("vaultGenerate")
+        await("sshMade")
+        shoot("98-vault-ssh-made")
     }
 
     companion object {

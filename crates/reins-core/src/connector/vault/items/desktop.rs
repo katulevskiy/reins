@@ -5,6 +5,7 @@
 //!   app as a [`SecretGrant`] sealed to its key, to be forgotten when the lease ends. Permissions: the item, or
 //!   `secrets` when several items are named.
 //! - `ssh_keys`: the public halves of the vault's SSH keys, for the app's SSH agent.
+//! - `phone_key`, `secret_store`, `names`: `reins vault add` and `reins vault list` ([`store`]).
 //! - `ssh_sign`: one SSH sign-in, signed here with the vault's private key (which never leaves the phone) and sealed to
 //!   the app as an [`SshSignature`]. Only an SSH user authentication request is signed, and only with the key it names,
 //!   so that "Sign in to <host> with <key>" is exactly what happens. Permissions: `<fingerprint>@<host>`, within
@@ -28,6 +29,8 @@ use crate::connector::{Item, Preview};
 use crate::store::unix_now;
 use crate::types::{SecretReleaseView, SshSignView};
 use crate::{CoreError, text};
+
+mod store;
 
 /// The resource of a release that names several items.
 const SECRETS: &str = "secrets";
@@ -67,6 +70,9 @@ pub(in crate::connector::vault) async fn preview(
     Some(match call.op.as_str() {
         "secret_release" => preview_release(vault, account, call).await,
         "ssh_sign" => preview_sign(vault, account, call).await,
+        "phone_key" => store::preview_phone_key(vault, call),
+        "secret_store" => store::preview_store(vault, account, call).await,
+        "names" => store::preview_names(vault, account, call).await,
         _ => return None,
     })
 }
@@ -80,6 +86,9 @@ pub(in crate::connector::vault) async fn perform(
     Some(match call.op.as_str() {
         "secret_release" => perform_release(vault, account, call).await,
         "ssh_sign" => perform_sign(vault, account, call).await,
+        "phone_key" => store::perform_phone_key(vault, call),
+        "secret_store" => store::perform_store(vault, account, call).await,
+        "names" => store::perform_names(vault, account, call).await,
         _ => return None,
     })
 }

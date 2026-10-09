@@ -8335,6 +8335,7 @@ dependencies = [
  "reins-proto",
  "reqwest",
  "ring",
+ "rpassword",
  "rustix 1.1.4",
  "rustls 0.23.44",
  "serde",
@@ -8437,6 +8438,7 @@ dependencies = [
  "serde_json",
  "sha2 0.10.9",
  "thiserror 2.0.20",
+ "zeroize",
 ]
 
 [[package]]

@@ -39,6 +39,10 @@ import dev.reins.core.PendingKind
 import dev.reins.core.ResourceView
 import dev.reins.core.SecretReleaseView
 import dev.reins.core.SshSignView
+import dev.reins.core.VaultField
+import dev.reins.core.VaultItemDetail
+import dev.reins.core.VaultItemKind
+import dev.reins.core.VaultUse
 
 /** Builders for the records the UI shows, with sensible defaults. */
 object TestData {
@@ -527,4 +531,56 @@ object TestData {
         decidedBy: String = "autopilot",
         activityId: Long? = 42,
     ) = AutoDecisionView(id, PendingKind.REQUEST, "c1", "Claude Code", "Push to a branch · dkat/reins", verdict, decidedBy, 0.97f, 0.91f, activityId)
+
+    // ---- the vault ----
+
+    fun vaultItems() = listOf(
+        VaultItemDetail(
+            "openai", "OpenAI", VaultItemKind.LOGIN,
+            listOf(
+                VaultField("password", "Password", null, true, false),
+                VaultField("uris", "Website", "https://platform.openai.com", false, false),
+            ),
+            listOf(VaultUse("vault:OpenAI/password", "reins run --env, and secret = in an [[api]] block")),
+            null, true,
+        ),
+        VaultItemDetail(
+            "github", "GitHub", VaultItemKind.LOGIN,
+            listOf(
+                VaultField("username", "Username", "octo", false, false),
+                VaultField("password", "Password", null, true, false),
+            ),
+            listOf(
+                VaultUse("vault:GitHub/password", "reins run --env, and secret = in an [[api]] block"),
+                VaultUse("vault:GitHub/username", "reins run --env, and secret = in an [[api]] block"),
+            ),
+            null, false,
+        ),
+        VaultItemDetail(
+            "deploy", "Deploy key", VaultItemKind.SSH_KEY,
+            listOf(
+                VaultField("private_key", "Private key", null, true, true),
+                VaultField("public_key", "Public key", "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIOk8f2xQ Deploy key", false, true),
+                VaultField("fingerprint", "Fingerprint", "SHA256:59UqiUdGtW4OqO6NNXeMEo3goCDvszgSgq1R0tab5n0", false, false),
+            ),
+            listOf(VaultUse("SHA256:59UqiUdGtW4OqO6NNXeMEo3goCDvszgSgq1R0tab5n0", "Offered by the SSH agent of the desktop app (reins ssh setup); the private key stays on the phone")),
+            null, false,
+        ),
+        VaultItemDetail(
+            "visa", "Visa", VaultItemKind.CARD,
+            listOf(
+                VaultField("holder", "Holder", "Anna Smith", false, false),
+                VaultField("number", "Number", null, true, false),
+                VaultField("exp_month", "Expiry month", "4", false, false),
+                VaultField("exp_year", "Expiry year", "2030", false, false),
+            ),
+            emptyList(), null, false,
+        ),
+    )
+
+    fun vaultSecrets() = mapOf(
+        "openai/password" to "sk-test-0000",
+        "github/password" to "hunter2",
+        "visa/number" to "4111111111111111",
+    )
 }

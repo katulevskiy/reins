@@ -105,11 +105,20 @@ fun RecoveryCodeSheet(code: String, onCopy: () -> Unit, onDone: () -> Unit, requ
     }
 }
 
-/** Copies [text] marked as sensitive, so Android 13 and later do not preview it on screen. */
+/** Copies [text] marked as sensitive, so Android 13 and later do not preview it on screen, and clears it after a minute. */
 internal fun copySecret(context: Context, label: String, text: String) {
     val clip = ClipData.newPlainText(label, text)
     if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
         clip.description.extras = PersistableBundle().apply { putBoolean(ClipDescription.EXTRA_IS_SENSITIVE, true) }
     }
-    context.getSystemService(ClipboardManager::class.java)?.setPrimaryClip(clip)
+    val clipboard = context.getSystemService(ClipboardManager::class.java) ?: return
+    clipboard.setPrimaryClip(clip)
+    // Gone from the clipboard after a minute. (Android 10 and later do not let an app in the background read the
+    // clipboard to check it is still this, so it is cleared whatever it holds then.)
+    android.os.Handler(android.os.Looper.getMainLooper()).postDelayed({
+        runCatching { clipboard.clearPrimaryClip() }
+    }, SECRET_CLIP_MILLIS)
 }
+
+/** How long a copied secret stays on the clipboard. */
+internal const val SECRET_CLIP_MILLIS = 60_000L

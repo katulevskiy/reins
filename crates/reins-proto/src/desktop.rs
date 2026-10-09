@@ -375,6 +375,128 @@ pub struct SshSignature {
     pub signature_base64: String,
 }
 
+/// How the phone's refusal of a `vault_secret_store` it cannot open starts (a box for another phone's key, after a new
+/// phone or the app reinstalled). The server could send it too, so the desktop app never acts on it by itself: it tells
+/// the user, who checks the new phone's key with `reins vault add --new-phone`.
+pub const PHONE_KEY_CHANGED: &str = "This was sealed to another phone's key.";
+
+/// The direction a box between the desktop app and the phone goes (its `dir`). Both directions use the same
+/// X25519 key pair, so a box is refused when it was made for the other direction.
+pub const TO_PHONE: &str = "desktop-to-phone";
+pub const TO_DESKTOP: &str = "phone-to-desktop";
+
+/// Text the phone or the server sent, made safe to print in a terminal: control characters (escape sequences) and
+/// bidirectional overrides become spaces, and it is cut to 300 characters. The server can write any such text, so the
+/// desktop app also says where it came from.
+#[must_use]
+pub fn printable(text: &str) -> String {
+    let bidi =
+        |c: char| matches!(c, '\u{202a}'..='\u{202e}' | '\u{2066}'..='\u{2069}' | '\u{200e}' | '\u{200f}' | '\u{061c}');
+    let clean: String = text
+        .chars()
+        .map(|c| {
+            if c.is_control() || bidi(c) {
+                ' '
+            } else {
+                c
+            }
+        })
+        .collect();
+    let clean = clean.split_whitespace().collect::<Vec<_>>().join(" ");
+    if clean.chars().count() > 300 {
+        format!("{}…", clean.chars().take(299).collect::<String>())
+    } else {
+        clean
+    }
+}
+
+/// How long a `vault_secret_store` box is good for after the desktop app made it (seconds): the phone refuses an older
+/// one, and remembers the nonces it saw for as long, so a captured request cannot be sent again.
+pub const SECRET_STORE_TTL_SECS: i64 = 15 * 60;
+
+/// What the desktop app sends the phone for `vault_secret_store` (`reins vault add`): the value to keep, bound to the
+/// request's nonce, when it was made, the item's name, the field, the kind of a new item and whether an existing item
+/// may be changed. It travels in a box from the app's key to the phone's key (X25519, XSalsa20-Poly1305,
+/// `nonce || ciphertext`): the server relays it without being able to open or alter it, and the phone, which pinned the
+/// app's key, knows the paired app wrote it. The value is wiped when this is dropped.
+#[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SecretToStore {
+    pub v: u32,
+    /// [`TO_PHONE`]: the two directions share one key, so each box says which way it goes.
+    pub dir: String,
+    pub nonce: String,
+    /// Unix seconds, on the computer.
+    pub created_at: i64,
+    pub name: String,
+    pub field: String,
+    /// `api-key`, `login`, `note` or `ssh`: the kind of a new item.
+    pub kind: String,
+    /// The user asked to change an existing item (`--replace`); without it the phone only makes new items.
+    pub replace: bool,
+    pub value: String,
+}
+
+impl Drop for SecretToStore {
+    fn drop(&mut self) {
+        zeroize::Zeroize::zeroize(&mut self.value);
+    }
+}
+
+impl std::fmt::Debug for SecretToStore {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("SecretToStore").field("nonce", &self.nonce).field("name", &self.name).finish_non_exhaustive()
+    }
+}
+
+/// Four digits both the terminal and the phone show for a value (`reins vault add`), so that the user can see the
+/// phone got the value they meant, not one an AI on the computer sent in its place. Not a secret on its own: about
+/// 13 bits of a hash of the value.
+#[must_use]
+pub fn value_check(value: &str) -> String {
+    let mut h = Sha256::new();
+    h.update(b"reins-vault-value/1");
+    h.update(value.as_bytes());
+    let d = h.finalize();
+    format!("{:04}", u16::from_be_bytes([d[0], d[1]]) % 10_000)
+}
+
+/// What the phone seals to the desktop app for `vault_phone_key`: the public key secrets for the vault are sealed to.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct PhoneKey {
+    pub v: u32,
+    pub nonce: String,
+    /// X25519, base64url without padding.
+    pub public_key: String,
+}
+
+/// What the phone answers a `vault_secret_store` it carried out, in a box from its inbox key to the desktop app's key:
+/// only the phone the app pinned can have written it.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct StoreAck {
+    pub v: u32,
+    /// [`TO_DESKTOP`].
+    pub dir: String,
+    pub nonce: String,
+    pub name: String,
+    pub field: String,
+    /// A new item was made (else the field of an existing one changed).
+    pub created: bool,
+    /// Where the earlier value was kept, when one was replaced ("the password history", "the hidden field ...").
+    pub kept: Option<String>,
+}
+
+/// What the phone answers `vault_names`, in a box from its inbox key to the desktop app's key: the names of the vault's
+/// items, by kind.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct VaultNames {
+    pub v: u32,
+    /// [`TO_DESKTOP`].
+    pub dir: String,
+    pub nonce: String,
+    /// `(name, kind)`, the kind as the vault tools name it (`login`, `note`, `card`, `identity`, `ssh_key`).
+    pub items: Vec<(String, String)>,
+}
+
 /// SHA-256 (lowercase hex) binding an approval to exactly what git sends: the repository, every `old new ref`
 /// command in order, the pack bytes and the push options.
 #[must_use]
@@ -420,9 +542,27 @@ pub fn encode_key(key: &[u8; 32]) -> String {
 /// Eight digits the user compares on the computer and on the phone when pairing the desktop app ("4821 9930").
 #[must_use]
 pub fn key_fingerprint(key: &str) -> Option<String> {
+    eight_digits(b"reins-desktop-key/1", key)
+}
+
+/// Twelve digits the user types on the computer before it first seals a secret to the phone's key (`reins vault add`):
+/// "4821-9930-1274". Longer than [`key_fingerprint`] and written with dashes, so that the desktop app's own eight
+/// digits are never taken for it; the key only travels sealed, so a server cannot know which twelve to aim for.
+#[must_use]
+pub fn phone_key_fingerprint(key: &str) -> Option<String> {
     let raw = decode_key(key)?;
     let mut h = Sha256::new();
-    h.update(b"reins-desktop-key/1");
+    h.update(b"reins-phone-key/2");
+    h.update(raw);
+    let d = h.finalize();
+    let n = u64::from_be_bytes([0, 0, d[0], d[1], d[2], d[3], d[4], d[5]]) % 1_000_000_000_000;
+    Some(format!("{:04}-{:04}-{:04}", n / 100_000_000, n / 10_000 % 10_000, n % 10_000))
+}
+
+fn eight_digits(domain: &[u8], key: &str) -> Option<String> {
+    let raw = decode_key(key)?;
+    let mut h = Sha256::new();
+    h.update(domain);
     h.update(raw);
     let d = h.finalize();
     let n = u64::from_be_bytes([0, 0, 0, d[0], d[1], d[2], d[3], d[4]]) % 100_000_000;
@@ -560,6 +700,13 @@ mod tests {
         assert_ne!(d, push_digest("o/r", &cmds, "ab", &["ci.skip".to_owned()]));
         let other = vec![(A.to_owned(), B.to_owned(), "refs/heads/dev".to_owned())];
         assert_ne!(d, push_digest("o/r", &other, "ab", &[]));
+    }
+
+    #[test]
+    fn relayed_text_cannot_steer_the_terminal() {
+        assert_eq!(printable("ok\u{1b}[2J\u{1b}]0;title\u{7}done"), "ok [2J ]0;title done");
+        assert_eq!(printable("a\u{202e}b\nc"), "a b c");
+        assert_eq!(printable(&"x".repeat(400)).chars().count(), 300);
     }
 
     #[test]
