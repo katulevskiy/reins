@@ -20,6 +20,7 @@ pub mod http;
 pub mod identity;
 pub mod journal;
 pub mod mcp_bridge;
+pub mod mcp_payments;
 pub mod notice;
 pub mod notify;
 pub mod phone;
