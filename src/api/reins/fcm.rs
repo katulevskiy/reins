@@ -378,7 +378,9 @@ mod tests {
         };
         // main() installs the process-wide TLS provider; a test process has to do it itself.
         rustls::crypto::ring::default_provider().install_default().ok();
-        let sender = FcmSender::new(ServiceAccount::from_file(&path).expect("service account"));
+        // A push may renew its token in the background, so a sender lives as long as the server (here: the test).
+        let sender: &'static FcmSender =
+            Box::leak(Box::new(FcmSender::new(ServiceAccount::from_file(&path).expect("service account"))));
         let push = PushMessage {
             t: PushKind::Req,
             id: "live-check".to_owned(),
