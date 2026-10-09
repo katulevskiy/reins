@@ -1,8 +1,8 @@
 package dev.reins.android
 
-import androidx.compose.ui.test.hasText
-import androidx.compose.ui.test.onLast
-import androidx.compose.ui.test.performClick
+import androidx.compose.ui.test.onNodeWithTag
+import androidx.compose.ui.test.performTextInput
+import androidx.compose.ui.test.performTextReplacement
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import dev.reins.core.CoreException
 import org.junit.Assert.assertEquals
@@ -39,7 +39,7 @@ class DevicesFlowTest : FlowHarness() {
     fun thisPhoneTheOthersAndTheComputersAreListed() {
         openDevices()
         awaitText("Your approval device", substring = true)
-        assertTrue(showsText("Key for reins vault add: 4821 9930", substring = true))
+        assertTrue(showsText("Key for reins vault add: 4821-9930-1274", substring = true))
         assertTrue(has("device:d-old") && has("device:d-web"))
         assertFalse("this phone is not offered for signing out", has("signOutDevice:d-this"))
         assertTrue(showsText("Android · last seen", substring = true))
@@ -50,13 +50,20 @@ class DevicesFlowTest : FlowHarness() {
     }
 
     @Test
-    fun aLostPhoneIsSignedOutAfterAConfirmation() {
+    fun aLostPhoneIsSignedOutWithTheRecoveryCodeTypedThen() {
         openDevices()
         tap("signOutDevice:d-old")
-        awaitText("Sign out Pixel 7?")
+        awaitTag("signOutDialog")
+        assertTrue(showsText("Sign out Pixel 7?"))
+        assertTrue("two phones may share a name: the dialog says which", showsText("Android · signed in", substring = true))
+        rule.onNodeWithTag("signOutProof").performTextInput("wrong code")
+        tap("confirmSignOut")
+        awaitTag("signOutError")
         assertTrue(core.signedOutDevices.isEmpty())
-        rule.onAllNodes(hasText("Sign out")).onLast().performClick()
+        rule.onNodeWithTag("signOutProof").performTextReplacement(FakeCore.RECOVERY_CODE)
+        tap("confirmSignOut")
         awaitCore { core.signedOutDevices.toList() == listOf("d-old") }
+        awaitGone("signOutDialog")
         awaitTag("devicesMessage")
         assertTrue(showsText("Pixel 7 is signed out", substring = true))
         awaitGone("device:d-old")
@@ -68,6 +75,6 @@ class DevicesFlowTest : FlowHarness() {
         core.devicesError = CoreException.Server(403u, "not the approval device")
         openDevices()
         awaitTag("devicesError")
-        assertTrue(showsText("Only your approval phone lists and signs out devices", substring = true))
+        assertTrue(showsText("Devices are listed and signed out from your approval phone", substring = true))
     }
 }

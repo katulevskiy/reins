@@ -1118,6 +1118,9 @@ abstract class ScreenshotsBase(private val suffix: String) {
         tap("devicesRow")
         await("device:d-old")
         shoot("99-devices")
+        tap("signOutDevice:d-old")
+        await("signOutDialog")
+        shoot("99-devices-sign-out", dialogs = true)
     }
 
     private fun openVault() {

@@ -858,7 +858,11 @@ class FakeCore : ReinsCoreInterface {
         return devices
     }
 
-    override suspend fun signOutDevice(deviceId: String) {
+    /** The proof `signOutDevice` takes (the recovery code or master password typed then). */
+    @Volatile var signOutProof = RECOVERY_CODE
+
+    override suspend fun signOutDevice(deviceId: String, codeOrPassword: String) {
+        if (codeOrPassword != signOutProof) throw CoreException.Invalid("That is neither the recovery code nor the master password.")
         signedOutDevices += deviceId
         devices = devices.filterNot { it.id == deviceId }
     }

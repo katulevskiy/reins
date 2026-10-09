@@ -25,7 +25,6 @@ import dev.reins.android.design.Banner
 import dev.reins.android.design.BannerKind
 import dev.reins.android.design.ButtonStyle
 import dev.reins.android.design.CapsuleButton
-import dev.reins.android.design.ConfirmDialog
 import dev.reins.android.design.Glyph
 import dev.reins.android.design.GlyphIcon
 import dev.reins.android.design.Group
@@ -36,6 +35,7 @@ import dev.reins.android.design.RText
 import dev.reins.android.design.RType
 import dev.reins.android.design.Screen
 import dev.reins.android.design.Tag
+import dev.reins.android.design.glass
 import dev.reins.android.feedback.Event
 import dev.reins.android.feedback.play
 import dev.reins.android.state.AppState
@@ -87,20 +87,26 @@ class DevicesViewModel(private val container: AppContainer) : ViewModel() {
         }
     }
 
-    fun signOut(device: DeviceView) {
+    /** Signs [device] out with the recovery code or master password the user typed now (never one the phone keeps). */
+    fun signOut(device: DeviceView, codeOrPassword: String, onDone: (Boolean) -> Unit = {}) {
         if (_ui.value.busy) return
         _ui.value = DevicesUi(busy = true)
         viewModelScope.launch {
             try {
-                container.core.signOutDevice(device.id)
+                container.core.signOutDevice(device.id, codeOrPassword)
                 container.feedback.play(Event.Revoked)
                 _devices.value = container.core.devices()
-                _ui.value = DevicesUi(message = "${device.name} is signed out. It can no longer open your vault or answer requests.")
+                _ui.value = DevicesUi(
+                    message = "${device.name} is signed out. It can no longer open your vault or answer requests, and " +
+                        "cannot sign in again as it is.",
+                )
+                onDone(true)
             } catch (e: CancellationException) {
                 throw e
             } catch (e: Exception) {
                 container.feedback.play(Event.Error)
                 _ui.value = DevicesUi(error = devicesError(e))
+                onDone(false)
             }
         }
     }
@@ -109,7 +115,7 @@ class DevicesViewModel(private val container: AppContainer) : ViewModel() {
 /** Only the approval phone sees and signs out the account's devices. */
 private fun devicesError(e: Exception): String =
     if (e is CoreException.Server && e.status.toInt() == 403) {
-        "Only your approval phone lists and signs out devices. Use this phone for approvals first (Settings, Approval device)."
+        "Devices are listed and signed out from your approval phone, the one that receives the requests."
     } else {
         e.userMessage()
     }
@@ -135,6 +141,8 @@ fun DevicesScreen(
     val connections by state.connections.collectAsStateWithLifecycle()
     var signingOut by remember { mutableStateOf<DeviceView?>(null) }
     LaunchedEffect(viewModel) { viewModel.load() }
+    // This phone's key digits, and the recovery code typed to sign a phone out.
+    dev.reins.android.ui.common.SecureWindow()
 
     Screen(title = "Devices", onBack = onBack) {
         Column(Modifier.padding(horizontal = 16.dp)) {
@@ -202,16 +210,77 @@ fun DevicesScreen(
     }
 
     signingOut?.let { device ->
-        ConfirmDialog(
-            title = "Sign out ${untrusted(device.name)}?",
-            text = "It can no longer open your vault, sync or answer requests. If you find it, sign in on it again.",
-            confirmLabel = "Sign out",
-            onConfirm = {
-                signingOut = null
-                viewModel.signOut(device)
-            },
+        SignOutDialog(
+            device = device,
+            busy = ui.busy,
+            error = ui.error,
+            onConfirm = { typed -> viewModel.signOut(device, typed) { ok -> if (ok) signingOut = null } },
             onDismiss = { signingOut = null },
         )
+    }
+}
+
+/**
+ * "Sign out <device>?": what it is (two phones may share a name), what signing out does, and the recovery code or master
+ * password typed now, the proof the server asks for.
+ */
+@Composable
+private fun SignOutDialog(device: DeviceView, busy: Boolean, error: String?, onConfirm: (String) -> Unit, onDismiss: () -> Unit) {
+    val c = LocalColors.current
+    var typed by remember { mutableStateOf("") }
+    androidx.compose.ui.window.Dialog(
+        onDismissRequest = onDismiss,
+        properties = androidx.compose.ui.window.DialogProperties(usePlatformDefaultWidth = false),
+    ) {
+        dev.reins.android.feedback.DialogFeedback()
+        Column(
+            Modifier
+                .padding(horizontal = 28.dp)
+                .fillMaxWidth()
+                .glass(c, androidx.compose.foundation.shape.RoundedCornerShape(26.dp), 16.dp)
+                .padding(22.dp)
+                .testTag("signOutDialog"),
+        ) {
+            RText("Sign out ${untrusted(device.name)}?", RType.sans(19f, FontWeight.SemiBold), c.text)
+            RText(
+                "${device.platform} · signed in ${relativeTime(device.createdAt)} · last seen ${relativeTime(device.lastSeenAt)}",
+                RType.sans(13.5f),
+                c.secondary,
+                Modifier.padding(top = 4.dp),
+            )
+            RText(
+                "It can no longer open your vault, sync or answer requests, and cannot sign in again as it is. " +
+                    "Type your recovery code (or master password) to confirm.",
+                RType.sans(15f, lineHeight = 21f),
+                c.secondary,
+                Modifier.padding(top = 10.dp),
+            )
+            dev.reins.android.design.RTextField(
+                typed,
+                { typed = it },
+                "Recovery code or master password",
+                Modifier.padding(top = 14.dp),
+                tag = "signOutProof",
+                enabled = !busy,
+                mono = true,
+                password = true,
+                keyboardOptions = androidx.compose.foundation.text.KeyboardOptions(
+                    keyboardType = androidx.compose.ui.text.input.KeyboardType.Password,
+                    autoCorrectEnabled = false,
+                ),
+            )
+            error?.let { Banner(it, Modifier.padding(top = 10.dp), BannerKind.Error, tag = "signOutError") }
+            Row(Modifier.padding(top = 18.dp), horizontalArrangement = androidx.compose.foundation.layout.Arrangement.spacedBy(10.dp)) {
+                CapsuleButton("Cancel", Modifier.weight(1f), style = ButtonStyle.Secondary, onClick = onDismiss)
+                CapsuleButton(
+                    "Sign out",
+                    Modifier.weight(1f).testTag("confirmSignOut"),
+                    style = ButtonStyle.Destructive,
+                    enabled = typed.isNotBlank(),
+                    busy = busy,
+                ) { onConfirm(typed) }
+            }
+        }
     }
 }
 

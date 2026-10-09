@@ -132,10 +132,18 @@ loses the role is told by push. The phone's core attaches the proof itself when 
 the secret, or signed in with the master password, moves the role without asking again.
 
 **Signing a device out** (Settings → Devices, `DELETE /reins/api/devices/{id}`). Only the approval device may do it,
-and not to itself. The server deletes the device's Vaultwarden sign-in and its WorkOS session together: the next call
-with its access token is refused and its refresh token no longer exists, so a lost phone can neither read the vault
-nor answer for the account. A phone that was lost while it held the role first loses the role to the new phone (with
-the proofs above), which then signs it out.
+not to itself, and with the master password hash of the recovery code or master password typed then (counted with
+the takeover proofs; the app never sends one it keeps). In one transaction the server deletes the device's Vaultwarden
+sign-in, its SSO session mappings and any approval role naming it, and records the sign-out; it ends the device's
+WorkOS sessions at WorkOS, drops its push registration and its "add another phone" requests, and logs who signed out
+what. The next call with its access token is refused, its refresh token no longer exists, the browser sign-in it kept
+no longer works, and a sign-in with its device id is refused (sign-ins must use ids the phone API can name, so every
+device signed in can be signed out). A phone that was lost while it held the role first loses the role to the new
+phone (with the proofs above), which then signs it out. Limits: what the lost phone keeps (integration tokens, the
+vault key, the account secret) stays encrypted behind its screen lock, and whoever has both can dig it out; a phone
+that keeps the account secret can take the approval role and sign the others out, so the remedy for a phone in the
+wrong hands that has the secret is resetting the vault. Vaultwarden's own device list (`GET /api/devices`) shows any
+signed-in device the same list.
 
 - Approving needs the phone's screen lock or biometrics. Denying is one tap. A routine request can also be approved
   from its notification, which works only once the phone is unlocked; that approves exactly what its screen would approve untouched (never an item that looks like a
