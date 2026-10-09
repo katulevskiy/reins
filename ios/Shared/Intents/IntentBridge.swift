@@ -82,6 +82,8 @@ enum IntentBridge {
                 throw ReinsIntentError.failed("A Focus can make Autopilot stricter, not set it to Auto.")
             }
             let settings = await model.refreshAutopilot()
+            // Already as strict or stricter (Lockdown the user turned on): left as it is, and nothing to put back.
+            if let current = settings?.mode, strictness(current) > strictness(option.mode) { return }
             let before = defaults.string(forKey: focusBeforeKey)
                 ?? settings.flatMap { AutopilotModeOption($0.mode) ?? AutopilotModeOption($0.baseMode) }?.rawValue
             try await setMode(option)
@@ -96,6 +98,17 @@ enum IntentBridge {
             guard let before, let set else { return }
             let now = await model.refreshAutopilot()?.mode
             if now == set.mode { try await setMode(before) }
+        }
+    }
+
+    /// How much a mode holds back: Lockdown denies everything, Manual and Assisted ask about everything, Auto decides
+    /// some, a bypass approves nearly everything.
+    nonisolated static func strictness(_ mode: AutopilotMode) -> Int {
+        switch mode {
+        case .lockdown: 3
+        case .manual, .assisted: 2
+        case .auto: 1
+        case .bypass: 0
         }
     }
 

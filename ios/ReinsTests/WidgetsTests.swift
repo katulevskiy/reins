@@ -158,6 +158,11 @@ final class WidgetsTests: XCTestCase {
         try await IntentBridge.setMode(.lockdown)
         try await IntentBridge.applyFocus(nil, defaults: defaults)
         XCTAssertEqual(model.autopilot?.mode, .lockdown)
+        // Locked down already: a Focus asking for Manual does not loosen it, and its end changes nothing.
+        try await IntentBridge.applyFocus(.manual, defaults: defaults)
+        XCTAssertEqual(model.autopilot?.mode, .lockdown)
+        try await IntentBridge.applyFocus(nil, defaults: defaults)
+        XCTAssertEqual(model.autopilot?.mode, .lockdown)
     }
 
     // MARK: Activity
