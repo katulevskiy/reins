@@ -111,6 +111,17 @@ impl ReinsRefreshToken {
         conn.run(move |c| q_take_token(c, token_hash, now)).await
     }
 
+    /// The token, without consuming it (revocation looks up whose it is).
+    pub async fn find(token_hash: &str, conn: &DbConn) -> Option<Self> {
+        conn.run(move |c| {
+            reins_refresh_tokens::table
+                .filter(reins_refresh_tokens::token_hash.eq(token_hash))
+                .first::<ReinsRefreshToken>(c)
+                .ok()
+        })
+        .await
+    }
+
     pub async fn delete_expired(now: i64, conn: &DbConn) -> EmptyResult {
         conn.run(move |c| q_delete_expired_tokens(c, now)).await.map_res("Error purging Reins refresh tokens")
     }

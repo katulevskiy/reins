@@ -10,6 +10,7 @@ pub mod auth;
 pub mod config;
 pub mod control;
 pub mod daemon;
+pub mod doctor;
 pub mod git;
 pub mod guard;
 pub mod harden;
@@ -40,4 +41,15 @@ pub fn now_unix() -> i64 {
     std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .map_or(0, |d| i64::try_from(d.as_secs()).unwrap_or(i64::MAX))
+}
+
+/// A duration in seconds, short and rounded down: `12 s`, `5 min`, `3 h`, `2 d`.
+#[must_use]
+pub fn ago(secs: i64) -> String {
+    match secs.max(0) {
+        s @ 0..60 => format!("{s} s"),
+        s @ 60..3_600 => format!("{} min", s / 60),
+        s @ 3_600..86_400 => format!("{} h", s / 3_600),
+        s => format!("{} d", s / 86_400),
+    }
 }

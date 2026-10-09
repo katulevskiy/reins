@@ -335,9 +335,39 @@ fn the_command_line_uses_home_and_this_program() {
     assert!(said.contains("~/.cursor/mcp.json") && said.contains("Restart Cursor"), "{said}");
     let exe = reins_desktop::win::strip_verbatim(&std::fs::canonicalize(env!("CARGO_BIN_EXE_reins")).unwrap());
     assert_eq!(env.json(".cursor/mcp.json")["mcpServers"]["reins"]["command"], exe.display().to_string());
+    // All harnesses: one line each; one harness: its parts and files.
     let listed = run(&["harness", "list"]);
-    assert!(listed.contains("cursor") && listed.contains("MCP server: yes (~/.cursor/mcp.json)"), "{listed}");
-    assert!(listed.contains("claude-code"), "{listed}");
+    let cursor = listed.lines().find(|l| l.starts_with("cursor")).unwrap_or_default();
+    assert!(cursor.ends_with("set up") && !cursor.contains("not"), "{listed}");
+    assert!(listed.lines().any(|l| l.starts_with("claude-code")), "{listed}");
+    let one = run(&["harness", "list", "cursor"]);
+    assert!(one.contains("MCP server: yes (~/.cursor/mcp.json)"), "{one}");
     run(&["harness", "remove", "cursor"]);
     assert!(env.snapshot().is_empty());
+}
+
+// On Windows the service step would edit this user's real `Run` key.
+#[cfg(not(windows))]
+#[test]
+fn uninstall_undoes_the_harnesses_and_git_and_says_each_step() {
+    let env = Env::new();
+    let run = |args: &[&str]| {
+        std::process::Command::new(env!("CARGO_BIN_EXE_reins"))
+            .args(args)
+            .env("HOME", env.home.path())
+            .env("REINS_CONFIG_DIR", env.state.path().join("config"))
+            .env("REINS_STATE_DIR", env.state.path().join("state"))
+            .output()
+            .unwrap()
+    };
+    assert!(run(&["harness", "add", "cursor"]).status.success());
+    assert!(!env.snapshot().is_empty());
+    let out = run(&["uninstall"]);
+    let said = String::from_utf8_lossy(&out.stdout).into_owned();
+    assert!(out.status.success(), "{said}{}", String::from_utf8_lossy(&out.stderr));
+    assert!(said.contains("✓ Take Reins out of Cursor"), "{said}");
+    assert!(said.contains("✓ Send git directly again"), "{said}");
+    assert!(said.contains("✓ Background service: was not installed"), "{said}");
+    assert!(said.contains("✓ Sign out: was not paired"), "{said}");
+    assert!(env.snapshot().is_empty(), "every file the harness add made is gone");
 }

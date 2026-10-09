@@ -23,7 +23,13 @@ macro_rules! out {
 }
 
 #[derive(Parser)]
-#[command(name = "reins", version = update::LONG_VERSION, about = "Reins desktop app: git for AI agents, allowed from your phone")]
+#[command(
+    name = "reins",
+    version = update::LONG_VERSION,
+    about = "Reins: your phone approves what AI agents do on this computer (commands, git, MCP tools, secrets, SSH)",
+    after_help = "New here? `reins setup` pairs your phone and connects your AI tools, `reins test` shows the whole \
+                  loop, `reins doctor` says what to fix.\nMore: https://github.com/katulevskiy/reins/blob/main/docs/quick-start.md"
+)]
 struct Cli {
     #[command(subcommand)]
     command: Cmd,
@@ -31,29 +37,57 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Cmd {
+    #[command(display_order = 1)]
+    /// Set everything up: pair with your phone, start the service, route git, connect your AI tools.
+    ///
+    /// Pairs only when this computer is not paired yet; connects every AI tool found (Claude Code, Codex, Gemini CLI,
+    /// Cursor) that is not connected already.
+    Setup {
+        /// The server your phone signed in to; a self-hosted one needs its address here.
+        #[arg(default_value = reins_proto::DEFAULT_SERVER)]
+        server_url: String,
+        /// Sign in in the browser instead of scanning a QR code.
+        #[arg(long)]
+        browser: bool,
+    },
+    #[command(display_order = 3)]
+    /// Check that everything works, and say how to fix what does not.
+    ///
+    /// Exit code 1 when something needs fixing.
+    Doctor,
+    #[command(display_order = 2)]
+    /// Send a test request to your phone, to see the whole loop work.
+    Test,
     /// Run the daemon in the foreground (what the service runs).
+    #[command(hide = true)]
     Daemon {
         /// Also append the log to this file (the Windows background service has no other place for it).
         #[arg(long, value_name = "FILE")]
         log_file: Option<PathBuf>,
     },
+    #[command(display_order = 4)]
     /// Whether the daemon runs, who decides, the listen address, the server and this app's key fingerprint.
     Status,
+    #[command(display_order = 21)]
     /// Route the enabled git hosts' remotes (`[[git.hosts]]`) through the proxy, or stop doing so.
     Git {
         #[command(subcommand)]
         action: GitCmd,
     },
+    #[command(display_order = 23)]
     /// Local approvals waiting for an answer.
     Pending,
+    #[command(display_order = 24)]
     /// Allow a pending local approval.
     Approve {
         id: String,
     },
+    #[command(display_order = 25)]
     /// Refuse a pending local approval.
     Deny {
         id: String,
     },
+    #[command(display_order = 5)]
     /// Pair with your phone: scan the QR code shown here with the Reins app. Your phone decides from then on.
     Login {
         /// The server your phone signed in to; a self-hosted one needs its address here.
@@ -66,30 +100,48 @@ enum Cmd {
         #[arg(long)]
         no_browser: bool,
     },
-    /// Forget the Reins server session.
+    #[command(display_order = 26)]
+    /// Sign this computer out: ends its connection on the server and forgets the session here.
     Logout,
+    #[command(display_order = 22)]
     /// Run the daemon at login (systemd user unit, launchd agent, or on Windows the user's Run key).
     Service {
         #[command(subcommand)]
         action: ServiceCmd,
     },
+    #[command(display_order = 10)]
     /// Stop sending git through Reins: git talks to the git hosts directly again (undo with `reins resume`).
     #[command(alias = "disable")]
     Pause,
+    #[command(display_order = 9)]
     /// Send git through Reins: starts the background service if needed, then routes the enabled hosts' remotes
     /// through it.
     #[command(alias = "enable")]
     Resume,
+    #[command(display_order = 12)]
     /// Install the latest release (signed by the Reins release key) and restart the service.
     Update {
         /// Only say whether a newer release exists.
         #[arg(long)]
         check: bool,
     },
+    /// Undo everything Reins did on this computer and end its connection to your phone.
+    ///
+    /// Takes Reins out of every AI tool, sends git directly again, removes the SSH agent block from ~/.ssh/config,
+    /// stops and removes the background service, and signs this computer out (the phone's list no longer shows
+    /// it). `--purge` also deletes this computer's key, activity log and settings. The `reins` program itself stays.
+    #[command(display_order = 30)]
+    Uninstall {
+        /// Also delete this computer's key, the activity log and config.toml.
+        #[arg(long)]
+        purge: bool,
+    },
     #[command(flatten)]
     Agents(reins_desktop::agents_cli::Command),
+    #[command(display_order = 13)]
     /// Run a command with secrets from the vault on your phone as environment variables.
     Run(reins_desktop::run::RunArgs),
+    #[command(display_order = 20)]
     /// The SSH agent whose keys stay on your phone.
     Ssh {
         #[command(subcommand)]
@@ -338,34 +390,38 @@ async fn run(cmd: Cmd) -> Result<(), String> {
             browser,
             no_browser,
         } => {
-            paths.ensure().map_err(|e| e.to_string())?;
-            let identity = Identity::load_or_create(&paths.identity_file()).map_err(|e| e.to_string())?;
-            let server = if browser || no_browser {
-                server::oauth::login(&paths, &identity, &server_url, !no_browser).await?
-            } else {
-                match server::device::DevicePairing::start(&identity, &server_url).await {
-                    Ok(mut pairing) => {
-                        show_pairing(&pairing);
-                        pairing.wait(&paths).await?
-                    }
-                    Err(server::device::StartError::Unsupported) => {
-                        out!("This server cannot pair by QR code; signing in through the browser instead.\n");
-                        server::oauth::login(&paths, &identity, &server_url, true).await?
-                    }
-                    Err(server::device::StartError::Failed(e)) => return Err(e),
-                }
-            };
+            let server = login(&paths, &server_url, browser, no_browser).await?;
             out!("Logged in to {server}. Your phone decides from now on.");
             Ok(())
         }
-        Cmd::Logout => {
-            if server::oauth::logout(&paths)? {
-                out!("Logged out.");
-            } else {
-                out!("Not logged in.");
+        Cmd::Setup {
+            server_url,
+            browser,
+        } => setup(&paths, &config, &server_url, browser).await,
+        Cmd::Doctor => {
+            let ok = doctor(&paths, &config).await?;
+            if !ok {
+                std::process::exit(1);
             }
             Ok(())
         }
+        Cmd::Test => test(&paths, &config).await,
+        Cmd::Logout => {
+            match server::oauth::sign_out(&paths).await? {
+                server::oauth::SignedOut::NotLoggedIn => out!("Not logged in."),
+                server::oauth::SignedOut::Revoked => {
+                    out!("Logged out. Your phone no longer lists this computer.");
+                }
+                server::oauth::SignedOut::LocalOnly(why) => out!(
+                    "Logged out here; the server was not told ({why}). Remove this computer in the Reins app on your \
+                     phone (Settings, AI connections)."
+                ),
+            }
+            Ok(())
+        }
+        Cmd::Uninstall {
+            purge,
+        } => uninstall(&paths, &config, purge).await,
         Cmd::Service {
             action,
         } => {
@@ -413,6 +469,232 @@ async fn run(cmd: Cmd) -> Result<(), String> {
     }
 }
 
+/// Pairs with the phone: the QR code (device flow), or the browser sign-in. Returns the server.
+async fn login(paths: &Paths, server_url: &str, browser: bool, no_browser: bool) -> Result<String, String> {
+    paths.ensure().map_err(|e| e.to_string())?;
+    let identity = Identity::load_or_create(&paths.identity_file()).map_err(|e| e.to_string())?;
+    if browser || no_browser {
+        return server::oauth::login(paths, &identity, server_url, !no_browser).await;
+    }
+    match server::device::DevicePairing::start(&identity, server_url).await {
+        Ok(mut pairing) => {
+            show_pairing(&pairing);
+            pairing.wait(paths).await
+        }
+        Err(server::device::StartError::Unsupported) => {
+            out!("This server cannot pair by QR code; signing in through the browser instead.\n");
+            server::oauth::login(paths, &identity, server_url, true).await
+        }
+        Err(server::device::StartError::Failed(e)) => Err(e),
+    }
+}
+
+/// `reins setup`: pair (if needed), start the service and route git, connect every AI tool found; then a summary.
+async fn setup(paths: &Paths, config: &Config, server_url: &str, browser: bool) -> Result<(), String> {
+    let mut summary: Vec<String> = Vec::new();
+    match server::oauth::logged_in_server(paths) {
+        Some(server) => summary.push(format!("✓ Paired with your phone through {server}")),
+        None if config.mode == reins_desktop::config::Mode::Local => {
+            summary.push("– Local mode: this computer decides (no phone)".to_owned());
+        }
+        None => {
+            out!("Step 1 of 3: pair this computer with your phone.\n");
+            let server = login(paths, server_url, browser, false).await?;
+            summary.push(format!("✓ Paired with your phone through {server}"));
+        }
+    }
+    out!("\nStep 2 of 3: the background service and git.");
+    if !daemon_running(paths, config).await {
+        let exe = update::current_executable()?;
+        install_service(paths, config, &exe).await?;
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+        while !daemon_running(paths, config).await {
+            if std::time::Instant::now() > deadline {
+                return Err("the background service did not start; `reins daemon` shows why".to_owned());
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+        }
+    }
+    summary.push(format!("✓ Background service running on {}", config.listen));
+    let (routed, direct) = reins_desktop::setup::routable(paths, config).await;
+    Git::default().setup_hosts(&Scope::Global, &routed)?;
+    let hosts = enabled_hosts(&routed)?;
+    if !hosts.is_empty() {
+        summary.push(format!("✓ git for {hosts} goes through Reins"));
+    }
+    let mut next: Vec<String> = direct.iter().map(reins_desktop::setup::unserved_note).collect();
+    out!("\nStep 3 of 3: your AI tools.");
+    let s = reins_desktop::harness::Setup {
+        home: home()?,
+        exe: update::current_executable()?,
+        hook_timeout_secs: config.guard.timeout_secs,
+    };
+    let found = reins_desktop::harness::detect::all_found(&s.home);
+    if found.is_empty() {
+        summary.push(
+            "– No AI tool found (Claude Code, Codex, Gemini CLI, Cursor); `reins harness add <name>` later".to_owned(),
+        );
+    }
+    for h in found {
+        let before = reins_desktop::harness::registered(paths, &s, h).is_ok_and(|r| r.complete());
+        if before {
+            summary.push(format!("✓ {} was already connected", h.label()));
+            continue;
+        }
+        match reins_desktop::harness::add(paths, &s, h) {
+            Ok(_) => {
+                summary.push(format!("✓ {} connected", h.label()));
+                next.push(format!("{}: {}", h.label(), reins_desktop::harness::after_add_note(h)));
+            }
+            Err(e) => summary.push(format!("✗ {}: {e}", h.label())),
+        }
+    }
+    out!("\nDone:");
+    for line in &summary {
+        out!("  {line}");
+    }
+    if !next.is_empty() {
+        out!("\nStill to do:");
+        for line in &next {
+            out!("  → {line}");
+        }
+    }
+    out!("\nTry it: `reins test` sends a test to your phone. `reins doctor` checks everything any time.");
+    Ok(())
+}
+
+/// `reins uninstall`: every undo step, each reported; failures do not stop the others.
+async fn uninstall(paths: &Paths, config: &Config, purge: bool) -> Result<(), String> {
+    let mut failed = false;
+    let mut step = |what: &str, r: Result<String, String>| match r {
+        Ok(done) => out!("✓ {what}: {done}"),
+        Err(e) => {
+            failed = true;
+            out!("✗ {what}: {e}");
+        }
+    };
+    let home = home()?;
+    let s = reins_desktop::harness::Setup {
+        home: home.clone(),
+        exe: update::current_executable()?,
+        hook_timeout_secs: config.guard.timeout_secs,
+    };
+    for h in reins_desktop::harness::Harness::ALL {
+        if !reins_desktop::harness::registered(paths, &s, h).is_ok_and(|r| r.any()) {
+            continue;
+        }
+        step(
+            &format!("Take Reins out of {}", h.label()),
+            reins_desktop::harness::remove(paths, &s, h).map(|lines| format!("{} change(s)", lines.len())),
+        );
+    }
+    step(
+        "Send git directly again",
+        Git::default().unsetup_hosts(&Scope::Global, config).map(|n| format!("removed {n} rule(s)")),
+    );
+    step(
+        "SSH agent",
+        reins_desktop::ssh_agent::setup::unsetup(&reins_desktop::ssh_agent::setup::config_file(&home)).map(|removed| {
+            if removed {
+                "removed its block from ~/.ssh/config".to_owned()
+            } else {
+                "nothing to remove".to_owned()
+            }
+        }),
+    );
+    #[cfg(windows)]
+    let service = service::windows::uninstall(paths, config, true).await;
+    #[cfg(not(windows))]
+    let service = service::Manager::current().and_then(|m| service::uninstall(m, &home, true));
+    step(
+        "Background service",
+        service.map(|removed| {
+            if removed {
+                "stopped and removed"
+            } else {
+                "was not installed"
+            }
+            .to_owned()
+        }),
+    );
+    step(
+        "Sign out",
+        server::oauth::sign_out(paths).await.map(|r| match r {
+            server::oauth::SignedOut::NotLoggedIn => "was not paired".to_owned(),
+            server::oauth::SignedOut::Revoked => "your phone no longer lists this computer".to_owned(),
+            server::oauth::SignedOut::LocalOnly(why) => {
+                format!("signed out here; remove this computer in the Reins app on your phone ({why})")
+            }
+        }),
+    );
+    if purge {
+        for dir in [&paths.state_dir, &paths.config_dir] {
+            let r = match std::fs::remove_dir_all(dir) {
+                Ok(()) => Ok("deleted".to_owned()),
+                Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok("nothing there".to_owned()),
+                Err(e) => Err(e.to_string()),
+            };
+            step(&dir.display().to_string(), r);
+        }
+    }
+    let exe = update::current_executable().map_or_else(|_| "reins".to_owned(), |e| e.display().to_string());
+    out!("\nThe program itself is still at {exe}; delete it to finish (the Reins app: uninstall it like any app).");
+    if failed {
+        return Err("some steps failed (✗ above)".to_owned());
+    }
+    Ok(())
+}
+
+/// `reins doctor`: every check with its fix. `Ok(false)` when something fails.
+async fn doctor(paths: &Paths, config: &Config) -> Result<bool, String> {
+    let d = reins_desktop::doctor::Doctor {
+        paths: paths.clone(),
+        config: config.clone(),
+        home: home()?,
+        exe: update::current_executable()?,
+        git: Git::default(),
+    };
+    let checks = d.run().await;
+    let width = checks.iter().map(|c| c.label.chars().count()).max().unwrap_or(0);
+    for c in &checks {
+        out!("{} {:width$}  {}", c.level.mark(), c.label, c.detail);
+        if let Some(fix) = &c.fix {
+            out!("  {:width$}  → {fix}", "");
+        }
+    }
+    let worst = reins_desktop::doctor::overall(&checks);
+    out!(
+        "\n{}",
+        match worst {
+            reins_desktop::doctor::Level::Fail => "Something needs fixing (✗ above).",
+            reins_desktop::doctor::Level::Warn => "Working; a few things are worth a look (! above).",
+            _ => "Everything works.",
+        }
+    );
+    Ok(worst != reins_desktop::doctor::Level::Fail)
+}
+
+/// `reins test`: a test question to the phone; prints how it ended.
+async fn test(paths: &Paths, config: &Config) -> Result<(), String> {
+    out!("Sent a test to your phone. Open Reins there and approve or deny it…");
+    let (answer, timed_out) = reins_desktop::ask::send_test(paths, config, &reins_desktop::ask::DesktopAsk).await;
+    match answer {
+        reins_desktop::ask::Answer::Yes => {
+            out!("✓ Approved on your phone. Reins works end to end.");
+            Ok(())
+        }
+        reins_desktop::ask::Answer::No(_) => {
+            out!("✓ Denied on your phone. Reins works end to end (a denial stops the agent the same way).");
+            Ok(())
+        }
+        reins_desktop::ask::Answer::Unanswered(why) if timed_out => Err(format!(
+            "no answer within {} s ({why}); `reins doctor` checks the phone and the server",
+            reins_desktop::ask::TEST_TIMEOUT.as_secs()
+        )),
+        reins_desktop::ask::Answer::Unanswered(why) => Err(format!("{why}; `reins doctor` says what to fix")),
+    }
+}
+
 async fn daemon_running(paths: &Paths, config: &Config) -> bool {
     match Client::new(paths, config.listen) {
         Ok(client) => client.status().await.is_ok(),
@@ -444,8 +726,15 @@ async fn resume(paths: &Paths, config: &Config) -> Result<(), String> {
             tokio::time::sleep(std::time::Duration::from_millis(200)).await;
         }
     }
-    Git::default().setup_hosts(&Scope::Global, config)?;
-    out!("git sends {} through Reins (http://{}/).", enabled_hosts(config)?, config.listen);
+    let (routed, direct) = reins_desktop::setup::routable(paths, config).await;
+    Git::default().setup_hosts(&Scope::Global, &routed)?;
+    let hosts = enabled_hosts(&routed)?;
+    if !hosts.is_empty() {
+        out!("git sends {hosts} through Reins (http://{}/).", config.listen);
+    }
+    for h in &direct {
+        out!("{}", reins_desktop::setup::unserved_note(h));
+    }
     if server::oauth::logged_in_server(paths).is_none() {
         out!("Not logged in: the local policy decides. `reins login` to decide on your phone.");
     }

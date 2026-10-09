@@ -120,7 +120,16 @@ unpack the zip yourself and put `reins.exe` anywhere on your `PATH`. Windows sup
 GitHub's Windows runners, not yet field-tested end to end on a real PC; see the
 [desktop app README](../crates/reins-desktop/README.md#windows-alpha) for what differs.
 
-Pair it with your phone:
+All of the setup in one command (it pairs, starts the background service, sends git through Reins and connects every
+AI tool it finds, then sums up what it did):
+
+```sh
+reins setup
+reins test      # a harmless question on your phone: approve or deny it to see the whole loop
+reins doctor    # checks everything, with a fix for each problem
+```
+
+Or step by step. Pair it with your phone:
 
 ```sh
 reins login
@@ -279,16 +288,23 @@ mistakes, not against a hostile agent (see [security-model.md](security-model.md
 ## Undo everything
 
 ```sh
+reins uninstall            # every step below, and ends this computer's connection on the server
+reins uninstall --purge    # also deletes this computer's key, the activity log and config.toml
+rm ~/.local/bin/reins
+```
+
+`reins uninstall` does, one by one (and says how each went):
+
+```sh
 reins harness remove claude-code   # each harness you added
 reins ssh unsetup
 reins pause                        # git talks to the hosts directly again
 reins service uninstall
-reins logout
-rm ~/.local/bin/reins
+reins logout                       # also removes this computer from the phone's list (on an up-to-date server)
 ```
 
 On Windows the last step is deleting `%LOCALAPPDATA%\Programs\Reins` and taking it out of your user `PATH` (Settings →
 System → About → Advanced system settings → Environment Variables).
 
 Settings live in `~/.config/reins/` and state (the app's key, the session) in `~/.local/state/reins/` (on
-Windows `%APPDATA%\reins\` and `%LOCALAPPDATA%\reins\`). Delete both to forget everything. On the phone, remove the connection under Settings to revoke the computer's access.
+Windows `%APPDATA%\reins\` and `%LOCALAPPDATA%\reins\`). Delete both to forget everything (`reins uninstall --purge` does). With an older server, `reins logout` only forgets the session here: remove the connection on the phone under Settings to revoke the computer's access.

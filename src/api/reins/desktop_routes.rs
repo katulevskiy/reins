@@ -41,7 +41,7 @@ const MAX_REQUEST_ID_BYTES: usize = 64;
 const MAX_ECHOED_TOOL_CHARS: usize = 64;
 
 pub fn routes() -> Vec<Route> {
-    routes![post_call, get_call]
+    routes![post_call, get_call, get_phone]
 }
 
 // ---------------------------------------------------------------------------------------
@@ -295,6 +295,23 @@ async fn get_call(id: &str, request: McpRequest, conn: DbConn) -> DesktopRespons
     let request_id = RequestId::from(id);
     let waited = HUB.relay.wait(&request_id, &ConnectionId(connection.uuid)).await;
     wait_response(&waited, &request_id)
+}
+
+/// When the approval phone last asked this server for work (`null`: not since the server started), the integrations
+/// it reported having an account for (`null`: not reported since the server started), and the server's clock: for
+/// `reins doctor`, and for `reins setup`/`resume`, which leave git direct for a host the phone cannot serve yet. A
+/// phone asleep in a pocket polls rarely; push wakes it, so an old time is no fault.
+#[get("/reins/desktop/phone")]
+async fn get_phone(request: McpRequest, conn: DbConn) -> DesktopResponse {
+    let connection = match authenticated(&request, &conn).await {
+        Ok(c) => c,
+        Err(response) => return response,
+    };
+    drop(conn);
+    let user = connection.user_uuid.to_string();
+    let services = HUB.services_of(&user);
+    let last_seen = HUB.phone_seen(&user);
+    DesktopResponse::json(Status::Ok, json!({"last_seen": last_seen, "services": services, "server_time": now_unix()}))
 }
 
 #[cfg(test)]

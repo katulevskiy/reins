@@ -57,7 +57,7 @@ const MAX_EMAIL_BYTES: usize = 254;
 pub const CLIENT_KEY_PARAM: &str = "reins_client_key";
 
 pub fn routes() -> Vec<Route> {
-    routes![authorize_get, authorize_post, authorize_wait, token, register, device_authorization]
+    routes![authorize_get, authorize_post, authorize_wait, token, revoke, register, device_authorization]
 }
 
 pub fn well_known_routes() -> Vec<Route> {
@@ -612,6 +612,41 @@ async fn token(data: Data<'_>, ip: ClientIp, conn: DbConn) -> JsonResponse {
         Ok(tokens) => JsonResponse(Status::Ok, tokens),
         Err(e) => oauth_error(&e),
     }
+}
+
+/// RFC 7009 token revocation: `token` (a refresh or an access token of this server) ends its connection, so every
+/// token of that grant dies with it (the phone's list of connections drops it too). `client_id`, when given, must be
+/// the connection's client. Always 200, also for a token that is unknown, expired or already revoked (RFC 7009 2.2),
+/// so the answer tells nobody whether a guessed token existed.
+#[post("/reins/oauth/revoke", data = "<data>")]
+async fn revoke(data: Data<'_>, ip: ClientIp, conn: DbConn) -> JsonResponse {
+    if ratelimit::check_limit_unauthenticated(&ip.ip).is_err() {
+        return JsonResponse(Status::TooManyRequests, json!({"error": "slow_down"}));
+    }
+    let Some(body) = read_limited(data, MAX_FORM_BYTES).await else {
+        return oauth_error(&OAuthError::invalid_request("request body too large"));
+    };
+    let form = parse_form(&body);
+    let Some(token) = form.get("token").map(String::as_str).filter(|t| !t.is_empty() && t.len() <= 4096) else {
+        return oauth_error(&OAuthError::invalid_request("`token` is required"));
+    };
+    let connection = match ReinsRefreshToken::find(&hash_token(token), &conn).await {
+        Some(row) => ReinsConnection::find_by_uuid(&row.connection_uuid, &conn).await,
+        None => super::mcp_routes::authenticate(Some(&format!("Bearer {token}")), &conn).await.ok(),
+    };
+    if let Some(connection) = connection {
+        let client_ok = form.get("client_id").is_none_or(|c| *c == connection.client_id);
+        if client_ok {
+            match connection.delete(&conn).await {
+                Ok(()) => info!("Reins connection {} revoked by its client", connection.uuid),
+                Err(e) => {
+                    warn!("Could not revoke Reins connection: {e:?}");
+                    return JsonResponse(Status::ServiceUnavailable, json!({"error": "temporarily_unavailable"}));
+                }
+            }
+        }
+    }
+    JsonResponse(Status::Ok, json!({}))
 }
 
 #[cfg(test)]

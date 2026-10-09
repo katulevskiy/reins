@@ -210,6 +210,33 @@ pub async fn ask_logged(
     (answer, outcome == Outcome::TimedOut)
 }
 
+/// How long "Send a test to my phone" waits.
+pub const TEST_TIMEOUT: Duration = Duration::from_secs(90);
+
+/// The test question (`reins test`, the desktop app's "Send a test to my phone"): the whole loop, phone included,
+/// with nothing happening either way. Logged like any other question.
+#[must_use]
+pub fn test_question() -> Question {
+    let host = hostname::get().ok().map(|h| h.to_string_lossy().into_owned()).filter(|h| !h.is_empty());
+    let from = host.unwrap_or_else(|| "this computer".to_owned());
+    Question {
+        question: cut(&format!("Test from {from}: tap Approve (or Deny) to see Reins work"), MAX_QUESTION),
+        detail: Some(
+            "A test from the Reins desktop app. Nothing happens either way: the answer only shows up on the computer."
+                .to_owned(),
+        ),
+        topic: None,
+    }
+}
+
+/// Sends [`test_question`] and waits up to [`TEST_TIMEOUT`]. Returns the answer and whether it timed out.
+pub async fn send_test(paths: &Paths, config: &Config, prompter: &dyn Prompter) -> (Answer, bool) {
+    let q = test_question();
+    let entry =
+        Entry::new(crate::journal::Kind::Ask, &q.question).source(Some("Reins test")).detail(q.detail.as_deref());
+    ask_logged(paths, config, &q, TEST_TIMEOUT, false, prompter, entry, None).await
+}
+
 /// Asks the phone through the Reins server and waits up to `timeout` for its sealed answer.
 pub async fn ask_phone(paths: &Paths, identity: &Identity, q: &Question, timeout: Duration) -> Answer {
     let client = match DesktopClient::new(paths) {

@@ -151,6 +151,13 @@ async fn the_phone_approves_git_reads_and_pushes_and_refuses_a_force_push() {
     let (logged_in, (), ()) = tokio::join!(login, browser, user);
     assert_eq!(logged_in.unwrap(), server.base);
 
+    // ---- reins doctor's view of the phone: it polled while approving the pairing ----
+    let seen = reins_desktop::server::client::DesktopClient::new(&paths).unwrap().phone().await.unwrap();
+    let last = seen.last_seen.expect("the phone polled");
+    assert!((0..120).contains(&(seen.server_time - last)), "{seen:?}");
+    let doctor = reins_desktop::doctor::phone_check(seen.last_seen, seen.server_time);
+    assert_eq!(doctor.level, reins_desktop::doctor::Level::Ok, "{doctor:?}");
+
     // ---- the daemon, deciding with the phone ----
     let mut config = Config {
         listen: "127.0.0.1:0".parse().unwrap(),
@@ -315,5 +322,14 @@ async fn the_phone_approves_git_reads_and_pushes_and_refuses_a_force_push() {
             (_, other) => panic!("approve={approve} answered {other:?}"),
         }
     }
+    // ---- reins logout / uninstall: the connection ends on the server, not just here ----
+    let kept = std::fs::read(paths.session_file()).unwrap();
+    let out = reins_desktop::server::oauth::sign_out(&paths).await.unwrap();
+    assert_eq!(out, reins_desktop::server::oauth::SignedOut::Revoked);
+    assert!(reins_desktop::server::oauth::logged_in_server(&paths).is_none());
+    // A copy of the old session is worthless now: its access and refresh tokens died with the connection.
+    reins_desktop::config::write_private(&paths.session_file(), &kept).unwrap();
+    let revoked = reins_desktop::server::client::DesktopClient::new(&paths).unwrap().phone().await;
+    assert!(matches!(revoked, Err(reins_desktop::server::LinkError::LoggedOut(_))), "{revoked:?}");
     assert!(!server.log().contains("panicked"), "server log: {}", server.log());
 }

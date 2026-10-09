@@ -86,7 +86,19 @@ fn push_what(repo: &Repo, summary: &reins_proto::desktop::PushSummary) -> String
 }
 
 fn refused(r: &Refusal) -> Response<Body> {
-    text(StatusCode::FORBIDDEN, r.message())
+    text(StatusCode::FORBIDDEN, &with_hint(r.message()))
+}
+
+/// The phone's refusal, plus what to do when the host is not connected there (the phone words it for an AI).
+fn with_hint(message: &str) -> String {
+    if message.contains("is not connected") {
+        format!(
+            "{message}\nConnect it in the Reins app on your phone (Integrations), then try again; `reins pause` lets \
+             git talk to the host directly meanwhile."
+        )
+    } else {
+        message.to_owned()
+    }
 }
 
 /// One word for a refusal, for logs and the connection list.
@@ -515,7 +527,7 @@ impl Proxy {
             Ok(c) => c,
             Err(r) => {
                 log::info!("POST {who} {suffix}: read {}", refusal_kind(&r));
-                return Ok(reject(r.message(), r.message()));
+                return Ok(reject(r.message(), &with_hint(r.message())));
             }
         };
         let commands: Vec<(String, String, String)> =
@@ -562,7 +574,7 @@ impl Proxy {
             Ok(c) => c,
             Err(r) => {
                 log::info!("POST {who} {suffix}: push {}", refusal_kind(&r));
-                return Ok(reject(r.message(), r.message()));
+                return Ok(reject(r.message(), &with_hint(r.message())));
             }
         };
         let resp = self.send(Method::POST, repo, &suffix, &parts.headers, Out::Held(&raw), Some(&credential)).await?;

@@ -56,6 +56,8 @@ pub fn authorization_server_metadata(domain: &str) -> Value {
         "authorization_endpoint": format!("{iss}/reins/oauth/authorize"),
         "token_endpoint": format!("{iss}/reins/oauth/token"),
         "registration_endpoint": format!("{iss}/reins/oauth/register"),
+        "revocation_endpoint": format!("{iss}/reins/oauth/revoke"),
+        "revocation_endpoint_auth_methods_supported": ["none"],
         "device_authorization_endpoint": format!("{iss}/reins/oauth/device_authorization"),
         "response_types_supported": ["code"],
         "grant_types_supported": ["authorization_code", "refresh_token", DEVICE_CODE_GRANT],
@@ -595,6 +597,7 @@ mod tests {
         let asm = authorization_server_metadata("https://rw.example.com/");
         assert_eq!(asm["issuer"], DOMAIN);
         assert_eq!(asm["token_endpoint"], "https://rw.example.com/reins/oauth/token");
+        assert_eq!(asm["revocation_endpoint"], "https://rw.example.com/reins/oauth/revoke");
         assert_eq!(asm["code_challenge_methods_supported"], json!(["S256"]));
         assert_eq!(asm["token_endpoint_auth_methods_supported"], json!(["none"]));
         assert_eq!(asm["client_id_metadata_document_supported"], json!(true));

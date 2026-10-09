@@ -84,6 +84,48 @@ pub fn logout(paths: &Paths) -> Result<bool, String> {
     }
 }
 
+/// How signing out went.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum SignedOut {
+    /// Was not logged in.
+    NotLoggedIn,
+    /// The server ended this computer's connection, and the session is gone here.
+    Revoked,
+    /// The session is gone here; the server could not be told (the reason). The connection stays listed on the phone
+    /// until it is removed there.
+    LocalOnly(String),
+}
+
+/// Ends this computer's connection on the server (RFC 7009 revocation of its refresh token, else its access token)
+/// when it can be reached, then forgets the session here.
+pub async fn sign_out(paths: &Paths) -> Result<SignedOut, String> {
+    let Some(session) = load_session(paths)? else {
+        return Ok(SignedOut::NotLoggedIn);
+    };
+    let revoked = revoke(&session).await;
+    logout(paths)?;
+    Ok(match revoked {
+        Ok(()) => SignedOut::Revoked,
+        Err(why) => SignedOut::LocalOnly(why),
+    })
+}
+
+async fn revoke(session: &Session) -> Result<(), String> {
+    let http = crate::http::client(Some(Duration::from_secs(15)))?;
+    let token = session.refresh_token.as_deref().unwrap_or(&session.access_token);
+    let resp = http
+        .post(format!("{}/reins/oauth/revoke", session.server))
+        .form(&[("token", token), ("client_id", session.client_id.as_str())])
+        .send()
+        .await
+        .map_err(|e| format!("cannot reach {}: {}", session.server, e.without_url()))?;
+    match resp.status() {
+        s if s.is_success() => Ok(()),
+        reqwest::StatusCode::NOT_FOUND => Err("this server cannot revoke connections yet".to_owned()),
+        s => Err(format!("the server answered {s}")),
+    }
+}
+
 /// The server the app is logged in to, if any.
 #[must_use]
 pub fn logged_in_server(paths: &Paths) -> Option<String> {
