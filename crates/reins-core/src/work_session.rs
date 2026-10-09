@@ -146,10 +146,9 @@ pub fn preview(plan: &Plan) -> Preview {
         lines.push(format!("Push with git: {} {}, branch {}", views::service_name(&p.service), p.repo, p.branch));
     }
     lines.push(
-        "Still asked every time: force pushes and deleted branches, deleting anything, the vault, purchases, \
-         sending messages"
-            .to_owned(),
+        "Still asked every time: force pushes and deleted branches, deleting anything, the vault, purchases".to_owned(),
     );
+    lines.push("Not part of the session (asked as usual): sending messages, and anything not listed above".to_owned());
     lines.push("For the AI tools on this computer; ends by itself, or earlier from the desktop app.".to_owned());
     Preview {
         resource: ORIGIN.to_owned(),

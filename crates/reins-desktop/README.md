@@ -238,7 +238,8 @@ asked) and is asked every time. On approval it becomes ordinary grants of this c
 Grants with origin "session" and ending together: a read of each integration named (`--read`), and for a branch a
 push to exactly that branch plus reads of its repository. It covers every AI tool on this computer (they share its
 connection). It never covers the hard floor: force pushes, deleted branches and moved tags, deleting anything, the
-vault, purchases, sending messages and the desktop app's own questions and secrets are asked every time as before.
+vault and purchases, and the desktop app's own questions and secrets are asked every time as before; anything else
+the session does not name (sending messages, writing elsewhere) is asked as usual.
 Ending a session (`reins session end`, or End now in the app) is done at once without a question, since it only takes
 access away. Under the hood: the desktop-only tools `desktop_session` and `desktop_session_end`; the running session is
 kept in `work-session.json` in the state directory.
