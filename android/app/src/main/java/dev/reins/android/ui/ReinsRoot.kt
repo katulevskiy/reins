@@ -37,6 +37,7 @@ import dev.reins.android.feedback.ProvideFeedback
 import dev.reins.android.feedback.cueUnlessRecent
 import dev.reins.android.feedback.play
 import dev.reins.android.platform.Authenticator
+import dev.reins.android.platform.PasskeyPrompt
 import dev.reins.android.state.SessionState
 import dev.reins.android.ui.activity.ActivityDetailScreen
 import dev.reins.android.ui.activity.ActivityScreen
@@ -76,10 +77,13 @@ import dev.reins.android.ui.settings.ConnectionDetailScreen
 import dev.reins.android.ui.settings.SettingsScreen
 import dev.reins.android.ui.settings.SettingsViewModel
 import dev.reins.android.ui.settings.SoundsScreen
+import dev.reins.android.ui.settings.VaultPasskeysScreen
+import dev.reins.android.ui.settings.VaultPasskeysViewModel
 import dev.reins.android.ui.sheet.SheetHost
 import dev.reins.android.ui.services.ServiceScreen
 import dev.reins.android.ui.services.ServiceViewModel
 import dev.reins.android.ui.signin.OnboardingScreen
+import dev.reins.android.ui.signin.PasskeyOfferScreen
 import dev.reins.android.ui.signin.SetupScreen
 import dev.reins.android.ui.signin.SignInViewModel
 import dev.reins.android.ui.signin.UnlockScreen
@@ -89,24 +93,24 @@ import kotlin.coroutines.cancellation.CancellationException
 import kotlinx.coroutines.launch
 
 @Composable
-fun ReinsRoot(container: AppContainer, app: AppViewModel, authenticator: Authenticator) {
+fun ReinsRoot(container: AppContainer, app: AppViewModel, authenticator: Authenticator, passkeys: PasskeyPrompt) {
     ReinsTheme {
-        ProvideFeedback(container.feedback) { RootContent(container, app, authenticator) }
+        ProvideFeedback(container.feedback) { RootContent(container, app, authenticator, passkeys) }
     }
 }
 
 @Composable
-private fun RootContent(container: AppContainer, app: AppViewModel, authenticator: Authenticator) {
+private fun RootContent(container: AppContainer, app: AppViewModel, authenticator: Authenticator, passkeys: PasskeyPrompt) {
     val epoch by container.state.accountEpoch.collectAsStateWithLifecycle()
     val owner = remember(epoch) { object : ViewModelStoreOwner { override val viewModelStore = ViewModelStore() } }
     DisposableEffect(owner) { onDispose { owner.viewModelStore.clear() } }
     CompositionLocalProvider(LocalViewModelStoreOwner provides owner) {
-        AccountContent(container, app, authenticator)
+        AccountContent(container, app, authenticator, passkeys)
     }
 }
 
 @Composable
-private fun AccountContent(container: AppContainer, app: AppViewModel, authenticator: Authenticator) {
+private fun AccountContent(container: AppContainer, app: AppViewModel, authenticator: Authenticator, passkeys: PasskeyPrompt) {
     val context = androidx.compose.ui.platform.LocalContext.current
     val session by container.state.session.collectAsStateWithLifecycle()
     when (session) {
@@ -129,12 +133,14 @@ private fun AccountContent(container: AppContainer, app: AppViewModel, authentic
             val locked by container.state.keysLocked.collectAsStateWithLifecycle()
             val takeover by container.state.approvalTakeover.collectAsStateWithLifecycle()
             val recovery by container.state.recoveryToRecord.collectAsStateWithLifecycle()
+            val passkeyOffer by container.state.vaultPasskeyOffer.collectAsStateWithLifecycle()
             val recoveryError by container.state.recoveryLoadError.collectAsStateWithLifecycle()
             val recoveryScope = rememberCoroutineScope()
             if (locked || takeover) {
                 UnlockScreen(
                     viewModel(key = "unlock") { UnlockViewModel(container, deviceName = Build.MODEL) },
                     info.email,
+                    passkeys,
                     takeover = takeover && !locked,
                 )
             } else if (recoveryError != null) {
@@ -144,6 +150,9 @@ private fun AccountContent(container: AppContainer, app: AppViewModel, authentic
                         dev.reins.android.design.CapsuleButton("Try again", onClick = { recoveryScope.launch { container.refreshSession() } })
                     }
                 }
+            } else if (recovery != null && passkeyOffer) {
+                BackHandler { /* The offer is answered with its own buttons, then the recovery code follows. */ }
+                PasskeyOfferScreen(viewModel(key = "passkeyOffer") { VaultPasskeysViewModel(container, deviceName = Build.MODEL) }, passkeys)
             } else if (recovery != null) {
                 BackHandler { /* Recording recovery is required; Back cannot skip it. */ }
                 dev.reins.android.ui.settings.RecoveryCodeSheet(
@@ -153,20 +162,23 @@ private fun AccountContent(container: AppContainer, app: AppViewModel, authentic
                     onDone = { recoveryScope.launch { container.confirmRecoveryRecord() } },
                 )
             } else {
-                SignedInContent(container, app, authenticator, info.serverUrl)
+                SignedInContent(container, app, authenticator, passkeys, info.serverUrl)
             }
         }
     }
 }
 
 @Composable
-private fun SignedInContent(container: AppContainer, app: AppViewModel, authenticator: Authenticator, serverUrl: String) {
+private fun SignedInContent(
+    container: AppContainer,
+    app: AppViewModel,
+    authenticator: Authenticator,
+    passkeys: PasskeyPrompt,
+    serverUrl: String,
+) {
     val state = container.state
     val setup by state.setupPending.collectAsStateWithLifecycle()
     val connections by state.connections.collectAsStateWithLifecycle()
-    val entries by state.activity.collectAsStateWithLifecycle()
-    val grants by state.grants.collectAsStateWithLifecycle()
-    val seen by state.seenActivityId.collectAsStateWithLifecycle()
     val sheet by app.sheet.collectAsStateWithLifecycle()
     val notice by app.notice.collectAsStateWithLifecycle()
     val gmail = viewModel(key = "gmail") { GmailViewModel(container) }
@@ -174,13 +186,14 @@ private fun SignedInContent(container: AppContainer, app: AppViewModel, authenti
     val mcp = viewModel(key = "mcp") { McpViewModel(container) }
     val autopilot = viewModel(key = "autopilot") { AutopilotViewModel(container) }
     val scope = rememberCoroutineScope()
-    val route = if (setup) null else app.current
-    BackHandler(enabled = !setup && app.stack.isNotEmpty()) { app.back() }
+    // The setup can open an integration's page over itself; Back returns to the same setup page.
+    val route = app.current
+    BackHandler(enabled = app.stack.isNotEmpty()) { app.back() }
     PageFeedback(app.stack.size)
 
     CompositionLocalProvider(LocalConnections provides connections) {
         Box(Modifier.fillMaxSize().background(LocalColors.current.background)) {
-            if (setup) SetupScreen(app, serverUrl) else when (route) {
+            if (setup && route == null) SetupScreen(app, container, autopilot, serverUrl) else when (route) {
                 null -> when (app.tab) {
                     Tab.Activity -> ActivityScreen(
                         container = container,
@@ -189,10 +202,11 @@ private fun SignedInContent(container: AppContainer, app: AppViewModel, authenti
                         onOpenPending = { app.openSheet(it.toTarget()) },
                         onOpenEntry = { app.open(Route.ActivityDetail(it)) },
                         onIntegrations = { app.open(Route.Integrations) },
-                        onAutopilot = { app.open(Route.Autopilot) },
+                        onSettings = { app.open(Route.Settings) },
                     )
                     Tab.Grants -> GrantsScreen(
                         state = state,
+                        onSettings = { app.open(Route.Settings) },
                         expiredOpen = app.expiredOpen,
                         onToggleExpired = app::toggleExpired,
                         onOpen = { app.open(Route.GrantDetail(it)) },
@@ -208,9 +222,16 @@ private fun SignedInContent(container: AppContainer, app: AppViewModel, authenti
                     onConnection = { app.open(Route.Connection(it)) },
                     onIntegrations = { app.open(Route.Integrations) },
                     onSounds = { app.open(Route.Sounds) },
+                    onTour = app::replaySetup,
                     onAutopilot = { app.open(Route.Autopilot) },
                     onConnectComputer = { app.open(Route.ConnectComputer) },
+                    onVaultPasskeys = { app.open(Route.VaultPasskeys) },
                     authenticator = authenticator,
+                )
+                Route.VaultPasskeys -> VaultPasskeysScreen(
+                    viewModel(key = "vaultPasskeys") { VaultPasskeysViewModel(container, deviceName = Build.MODEL) },
+                    passkeys,
+                    onBack = { app.back() },
                 )
                 Route.ConnectComputer -> ConnectComputerScreen(app, onBack = { app.back() })
                 Route.Sounds -> SoundsScreen(container.feedback, onBack = { app.back() })
@@ -312,13 +333,7 @@ private fun SignedInContent(container: AppContainer, app: AppViewModel, authenti
                 Column(Modifier.align(Alignment.BottomCenter).windowInsetsPadding(WindowInsets.navigationBars)) {
                     // Above the tab bar, and never while an approval sheet is up.
                     container.updates?.let { UpdatePromptHost(it, allowed = sheet == null, modifier = Modifier.padding(top = 10.dp)) }
-                    FloatingNavBar(
-                        selected = app.tab,
-                        activityCount = entries.count { it.id > seen },
-                        grantCount = grants.count { it.active },
-                        onSelect = app::selectTab,
-                        onSettings = { app.open(Route.Settings) },
-                    )
+                    NavBar(container, app)
                 }
             }
             SheetHost(sheet, onClose = app::closeSheet) { target ->
@@ -350,6 +365,26 @@ private fun SignedInContent(container: AppContainer, app: AppViewModel, authenti
             }
         }
     }
+}
+
+/**
+ * The tab bar. It reads the lists for its badges itself, so a refresh that changes them redraws the bar, not the whole
+ * screen.
+ */
+@Composable
+private fun NavBar(container: AppContainer, app: AppViewModel) {
+    val entries by container.state.activity.collectAsStateWithLifecycle()
+    val grants by container.state.grants.collectAsStateWithLifecycle()
+    val seen by container.state.seenActivityId.collectAsStateWithLifecycle()
+    val autopilot by container.state.autopilot.collectAsStateWithLifecycle()
+    FloatingNavBar(
+        selected = app.tab,
+        activityCount = entries.count { it.id > seen },
+        grantCount = grants.count { it.active },
+        autopilot = autopilot,
+        onSelect = app::selectTab,
+        onAutopilot = { app.open(Route.Autopilot) },
+    )
 }
 
 /** A page pushed opens with [Cue.Open], going back closes with [Cue.Close] (quiet when the action that left just sounded). */

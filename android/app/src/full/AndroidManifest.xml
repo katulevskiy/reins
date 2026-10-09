@@ -4,6 +4,8 @@
 
     <!-- In-app updates: installs a downloaded, verified release over this app (the user allows it once). -->
     <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES" />
+    <!-- Lets an update to this same app install without a confirmation (AppInstaller asks for USER_ACTION_NOT_REQUIRED). -->
+    <uses-permission android:name="android.permission.UPDATE_PACKAGES_WITHOUT_USER_ACTION" />
     <!-- Only asked for when the user connects that service: the phone's own text messages. -->
     <uses-permission android:name="android.permission.READ_SMS" />
     <uses-permission android:name="android.permission.SEND_SMS" />

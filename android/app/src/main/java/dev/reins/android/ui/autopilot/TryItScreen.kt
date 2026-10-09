@@ -60,6 +60,7 @@ import dev.reins.core.Verdict
 fun TryItScreen(viewModel: AutopilotViewModel, initialProfileId: String?, onBack: () -> Unit) {
     val c = LocalColors.current
     val ui by viewModel.ui.collectAsStateWithLifecycle()
+    LaunchedEffect(viewModel) { viewModel.showingProfiles() }
     val settings by viewModel.settings.collectAsStateWithLifecycle()
     var text by rememberSaveable { mutableStateOf(AutopilotText.examples.first().situation) }
     var example by rememberSaveable { mutableStateOf(AutopilotText.examples.first().title) }

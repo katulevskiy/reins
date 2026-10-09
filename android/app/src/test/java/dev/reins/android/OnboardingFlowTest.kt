@@ -167,7 +167,7 @@ class OnboardingFlowTest : FlowHarness() {
         rule.onNodeWithTag("create").assertIsEnabled()
         tap("create")
 
-        awaitTag("setupComputer")
+        awaitTag("setup")
         assertEquals(listOf(server, "new@example.com", password), core.createdAccounts.single())
         assertTrue(core.logins.isEmpty())
         awaitCore { container.state.approvalDevice.value }
@@ -183,20 +183,31 @@ class OnboardingFlowTest : FlowHarness() {
         tap("create")
         awaitText("An account with this email already exists. Sign in instead.")
         assertTrue(has("create"))
-        assertFalse(has("setupComputer"))
+        assertFalse(has("setup"))
         assertTrue(core.registrations.isEmpty())
     }
 
     // ---- the setup after signing in ------------------------------------------------------------------------------------
 
     @Test
-    fun theSetupShowsTheMcpAddressAndOnlyOnce() {
+    fun theSetupWalksThroughEveryPageAndShowsOnlyOnce() {
         core.session = null
         launch()
         fillCreateForm()
         tap("create")
-        awaitTag("setupComputer")
-        rule.onNodeWithTag("setupStep").assertTextEquals("STEP 1 OF 2")
+        awaitTag("setupWelcome")
+        assertTrue(has("requestFlow"))
+        tap("setupNext")
+        awaitTag("setupNotifications")
+        if (has("notificationsLater")) tap("notificationsLater") else tap("setupNext")
+        awaitTag("setupIntegrations")
+        assertTrue(has("setupService:gmail"))
+        assertTrue(has("setupService:mcp"))
+        tap("setupNext")
+        awaitTag("setupAutopilot")
+        assertTrue(has("modelCard"))
+        tap("setupNext")
+        awaitTag("setup")
         rule.onNodeWithTag("computerHowTo").assertTextContains("reins login", substring = true)
         assertTrue(has("desktopDownload"))
         tap("setupNext")
@@ -206,12 +217,38 @@ class OnboardingFlowTest : FlowHarness() {
         tap("copyMcp")
         val clip = context.getSystemService(ClipboardManager::class.java).primaryClip
         assertEquals(mcp, clip?.getItemAt(0)?.text?.toString())
+        tap("setupNext")
+        awaitTag("setupFinished")
         tap("setupDone")
         awaitTag("noActivity")
 
         relaunch(Intent(context, MainActivity::class.java))
         awaitTag("noActivity")
-        assertFalse(has("setupComputer"))
+        assertFalse(has("setup"))
+    }
+
+    @Test
+    fun anIntegrationOpenedFromTheSetupComesBackToTheSamePage() {
+        core.session = null
+        launch()
+        fillCreateForm()
+        tap("create")
+        setupTo("setupIntegrations")
+        tap("setupService:gmail")
+        awaitGone("setup")
+        pressBack()
+        awaitTag("setupIntegrations")
+    }
+
+    @Test
+    fun theTourCanBeTakenAgainFromSettings() {
+        launch()
+        awaitTag("noActivity")
+        tap("openSettings")
+        tap("takeTour")
+        awaitTag("setupWelcome")
+        tap("setupSkip")
+        awaitTag("noActivity")
     }
 
     @Test
@@ -219,7 +256,7 @@ class OnboardingFlowTest : FlowHarness() {
         core.session = null
         launch()
         signInFromWelcome()
-        awaitTag("setupComputer")
+        awaitTag("setup")
         tap("setupSkip")
         awaitTag("noActivity")
         tap("openSettings")
@@ -228,7 +265,7 @@ class OnboardingFlowTest : FlowHarness() {
         awaitTag("welcome")
         signInFromWelcome()
         awaitTag("noActivity")
-        assertFalse(has("setupComputer"))
+        assertFalse(has("setup"))
         assertEquals(2, core.logins.size)
     }
 
@@ -236,7 +273,7 @@ class OnboardingFlowTest : FlowHarness() {
     fun peopleWhoWereAlreadySignedInNeverSeeTheSetup() {
         launch()
         awaitTag("noActivity")
-        assertFalse(has("setupComputer"))
+        assertFalse(has("setup"))
         assertFalse(has("welcome"))
     }
 
@@ -247,7 +284,7 @@ class OnboardingFlowTest : FlowHarness() {
         launch()
         fillCreateForm()
         tap("create")
-        awaitTag("setupComputer")
+        setupTo("setupComputer")
         tap("scanQr")
         awaitTag("keyFingerprint")
         assertEquals(1, scans.get())
@@ -339,7 +376,7 @@ class OnboardingFlowTest : FlowHarness() {
         awaitTag("keyFingerprint")
         assertEquals(listOf("BCDF-GHJK"), core.pairingCodes.toList())
         // Behind the sheet: the setup of a fresh sign-in.
-        assertTrue(has("setupComputer"))
+        assertTrue(has("setup"))
     }
 
     @Test

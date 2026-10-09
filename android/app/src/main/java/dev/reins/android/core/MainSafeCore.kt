@@ -34,6 +34,8 @@ import dev.reins.core.ReinsCoreInterface
 import dev.reins.core.SessionInfo
 import dev.reins.core.SsoOutcome
 import dev.reins.core.SsoStart
+import dev.reins.core.VaultPasskeyOptions
+import dev.reins.core.VaultPasskeyView
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
@@ -135,6 +137,18 @@ class MainSafeCore(
     override suspend fun unlockAccount(codeOrPassword: String) = io { unlockAccount(codeOrPassword) }
 
     override suspend fun accountRecoveryCode(): String = io { accountRecoveryCode() }
+
+    override suspend fun vaultPasskeyOptions(): VaultPasskeyOptions = io { vaultPasskeyOptions() }
+
+    override suspend fun vaultPasskeys(): List<VaultPasskeyView> = io { vaultPasskeys() }
+
+    override suspend fun addVaultPasskey(credentialId: ByteArray, prfOutput: ByteArray, name: String): List<VaultPasskeyView> =
+        io { addVaultPasskey(credentialId, prfOutput, name) }
+
+    override suspend fun removeVaultPasskey(credentialId: ByteArray): List<VaultPasskeyView> = io { removeVaultPasskey(credentialId) }
+
+    override suspend fun unlockWithVaultPasskey(credentialId: ByteArray, prfOutput: ByteArray) =
+        io { unlockWithVaultPasskey(credentialId, prfOutput) }
 
     override suspend fun joinBegin(deviceName: String): JoinStart = io { joinBegin(deviceName) }
 

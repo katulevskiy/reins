@@ -238,7 +238,7 @@ class AppFlowTest {
 
     /** The setup after a fresh sign-in, skipped. */
     private fun skipSetup() {
-        awaitTag("setupComputer")
+        awaitTag("setup")
         tap("setupSkip")
     }
 

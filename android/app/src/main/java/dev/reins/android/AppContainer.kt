@@ -42,6 +42,11 @@ import kotlin.coroutines.cancellation.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.async
+import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
+import java.util.concurrent.atomic.AtomicLong
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
@@ -147,6 +152,8 @@ class AppContainer(private val context: Context) {
                 null
             }
             val needsRecording = code != null && withContext(Dispatchers.IO) { !recoveryRecord.confirmed(info.serverUrl, code) }
+            // Before the code: a passkey that opens the vault, unless the account has one or the offer was declined.
+            val offerPasskey = needsRecording && !state.vaultPasskeyDeclined && hasNoVaultPasskey()
             val device = withContext(Dispatchers.IO) {
                 deviceStatus.selectAccount(info)
                 deviceStatus.setKeysLocked(!keysOpen)
@@ -157,6 +164,7 @@ class AppContainer(private val context: Context) {
             if (!state.isCurrent(epoch) || core.session() != info || !state.isCurrent(epoch)) return
             state.setSession(SessionState.SignedIn(info)) {
                 state.setRecoveryToRecord(if (needsRecording) code else null)
+                state.setVaultPasskeyOffer(offerPasskey)
                 state.setRecoveryLoadError(recoveryFailure)
                 state.setSeenActivityId(device.seen)
                 state.setApprovalDevice(device.approval)
@@ -174,33 +182,88 @@ class AppContainer(private val context: Context) {
         }
     }
 
+    /** Whether the account has no passkey for its vault yet. Unknown (offline) counts as having one: never a block. */
+    private suspend fun hasNoVaultPasskey(): Boolean = try {
+        core.vaultPasskeys().isEmpty()
+    } catch (e: CancellationException) {
+        throw e
+    } catch (e: Exception) {
+        false
+    }
+
     private data class DeviceGate(val seen: Long, val approval: Boolean, val setup: Boolean, val takeover: Boolean)
 
-    /** Re-reads everything held on the phone: what waits, what happened, which permissions exist. */
+    /** Refreshes asked for so far, and how many of them a finished refresh has covered (see [refreshPending]). */
+    private val refreshRequested = AtomicLong()
+    private var refreshCovered = 0L
+    private val refreshLock = Mutex()
+
+    /**
+     * Re-reads everything held on the phone: what waits, what happened, which permissions exist. Coming back to the
+     * app, a push and an action finishing often ask at the same moment; callers then share one refresh that started
+     * after they asked instead of queueing a full one each, so the screen catches up once.
+     */
     suspend fun refreshPending() {
+        val ticket = refreshRequested.incrementAndGet()
+        refreshLock.withLock {
+            if (refreshCovered >= ticket) return
+            val covers = refreshRequested.get()
+            // Off the main thread: holding the lock never waits for it, and the lists are compared off it too.
+            withContext(Dispatchers.Default) { refreshOnce() }
+            refreshCovered = covers
+            refreshedAt = android.os.SystemClock.uptimeMillis()
+        }
+    }
+
+    @Volatile private var refreshedAt = Long.MIN_VALUE / 2
+
+    /**
+     * The window got its focus back. A dialog, the biometric prompt or the notification shade closing does that too,
+     * often right after an action that refreshed already; only a list older than [FOCUS_REFRESH_MS] is read again.
+     */
+    suspend fun refreshIfStale() {
+        if (android.os.SystemClock.uptimeMillis() - refreshedAt >= FOCUS_REFRESH_MS) refreshPending()
+    }
+
+    /**
+     * After an answer that closes its sheet: the answered item ([id]) leaves the list at once and everything else
+     * catches up in the background, so the sheet never waits for a full re-read.
+     */
+    fun refreshAfterAnswer(id: String? = null) {
+        id?.let(state::removePending)
+        appScope.launch { refreshPending() }
+    }
+
+    private suspend fun refreshOnce() {
         val epoch = state.accountEpoch.value
         try {
-            val pending = core.pending()
-            val activity = core.activity(ACTIVITY_LIMIT)
-            val grants = core.grants()
-            val accounts = core.accounts()
-            val services = core.services()
-            val servers = core.mcpServers()
-            if (!state.isCurrent(epoch)) return
-            state.setPending(pending)
-            state.setActivity(activity)
-            state.setGrants(grants)
-            state.setAccounts(accounts)
-            state.setServices(services)
-            state.setMcpServers(servers)
-            refreshAutopilot()
-            withContext(Dispatchers.IO) {
-                if (state.isCurrent(epoch)) GrantReminders.sync(context, grants)
+            // Independent reads: ask for them all at once.
+            coroutineScope {
+                val pending = async { core.pending() }
+                val activity = async { core.activity(ACTIVITY_LIMIT) }
+                val grants = async { core.grants() }
+                val accounts = async { core.accounts() }
+                val services = async { core.services() }
+                val servers = async { core.mcpServers() }
+                val loaded = grants.await()
+                if (!state.isCurrent(epoch)) return@coroutineScope
+                state.setPending(pending.await())
+                state.setActivity(activity.await())
+                state.setGrants(loaded)
+                state.setAccounts(accounts.await())
+                state.setServices(services.await())
+                state.setMcpServers(servers.await())
+                refreshAutopilot()
+                withContext(Dispatchers.IO) {
+                    if (state.isCurrent(epoch)) GrantReminders.sync(context, loaded)
+                }
             }
         } catch (e: CoreException) {
             if (state.isCurrent(epoch) && e is CoreException.NotLoggedIn) state.setSession(SessionState.SignedOut)
         }
-        if (state.isCurrent(epoch)) state.setDeviceReplaced(deviceStatus.isReplaced())
+        // A Keystore decrypt behind it: never on the main thread.
+        val replaced = withContext(Dispatchers.IO) { deviceStatus.isReplaced() }
+        if (state.isCurrent(epoch)) state.setDeviceReplaced(replaced)
     }
 
     /**
@@ -371,7 +434,7 @@ class AppContainer(private val context: Context) {
     suspend fun signOut() {
         val logoutUrl = core.logoutWithBrowser()
         forgetAccount()
-        ssoSignIn.clear()
+        withContext(Dispatchers.IO) { ssoSignIn.clear() }
         state.setSession(SessionState.SignedOut)
         logoutUrl?.let { dev.reins.android.platform.Browser.open(context, it) }
     }
@@ -406,6 +469,7 @@ class AppContainer(private val context: Context) {
 
     private companion object {
         const val ACTIVITY_LIMIT = 300u
+        const val FOCUS_REFRESH_MS = 2_000L
     }
 
     /** Runs [block] and lets cancellation through; every other failure is reported to [onError]. */

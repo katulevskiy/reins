@@ -24,6 +24,7 @@ import dev.reins.core.CoreException
 import dev.reins.core.PendingItem
 import dev.reins.core.PendingKind
 import kotlin.coroutines.cancellation.CancellationException
+import dev.reins.android.ui.signin.SetupPage
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -311,13 +312,27 @@ class AppViewModel(private val container: AppContainer) : ViewModel() {
         _connect.update { it.copy(busy = false, error = message, manual = it.manual || openField) }
     }
 
+    /**
+     * Which page of the setup after signing in shows. Kept here rather than in the screen, so opening an integration
+     * from the setup and coming back lands on the same page.
+     */
+    var setupPage by mutableStateOf(SetupPage.Welcome)
+
     /** The setup after signing in was finished or skipped. */
     fun finishSetup() {
         viewModelScope.launch {
             container.finishOnboarding()
             _connect.value = ConnectUi()
+            setupPage = SetupPage.Welcome
             home()
         }
+    }
+
+    /** Settings > "Take the tour": the setup once more, from its first page. */
+    fun replaySetup() {
+        setupPage = SetupPage.Welcome
+        home()
+        container.state.setSetupPending(true)
     }
 
     private companion object {

@@ -37,6 +37,8 @@ import dev.reins.core.ReinsCoreInterface
 import dev.reins.core.SessionInfo
 import dev.reins.core.SsoOutcome
 import dev.reins.core.SsoStart
+import dev.reins.core.VaultPasskeyOptions
+import dev.reins.core.VaultPasskeyView
 import java.util.concurrent.CopyOnWriteArrayList
 
 /** In-memory core for UI tests: holds state, records the calls that matter. */
@@ -321,6 +323,7 @@ class FakeCore : ReinsCoreInterface {
         otherApprovalDevice = false
         takeoverProof = false
         refusedRegistrations.set(0)
+        resetVaultPasskeys()
     }
 
     override suspend fun ssoBegin(serverUrl: String): SsoStart {
@@ -368,6 +371,68 @@ class FakeCore : ReinsCoreInterface {
     override suspend fun accountRecoveryCode(): String {
         recoveryCodeReads.incrementAndGet()
         return recoveryCode ?: throw CoreException.Invalid("This account has no recovery code: it was made with a master password.")
+    }
+
+    // ---- passkeys that open the vault -----------------------------------------------------------------------------
+
+    /**
+     * The account's vault passkeys. By default it has one already ([existingPasskey]), so the sign-ins of the other
+     * tests go straight to the recovery code; the passkey tests start from none.
+     */
+    @Volatile var vaultPasskeys: List<VaultPasskeyView> = listOf(existingPasskey())
+    /** Thrown by `vaultPasskeys` and `vaultPasskeyOptions` (offline: `Network`). */
+    @Volatile var vaultPasskeysError: CoreException? = null
+    /** Name, credential id and PRF output of each `addVaultPasskey`. */
+    val passkeyAdds = CopyOnWriteArrayList<Triple<String, ByteArray, ByteArray>>()
+    val passkeyRemovals = CopyOnWriteArrayList<ByteArray>()
+    val passkeyUnlocks = CopyOnWriteArrayList<ByteArray>()
+
+    fun resetVaultPasskeys() {
+        vaultPasskeys = listOf(existingPasskey())
+        vaultPasskeysError = null
+        passkeyAdds.clear()
+        passkeyRemovals.clear()
+        passkeyUnlocks.clear()
+    }
+
+    override suspend fun vaultPasskeyOptions(): VaultPasskeyOptions {
+        vaultPasskeysError?.let { throw it }
+        val email = session?.email ?: throw CoreException.NotLoggedIn()
+        return VaultPasskeyOptions(
+            "127.0.0.1", "user-1".toByteArray(), email, ByteArray(32) { 7 }, ByteArray(32) { 1 }, vaultPasskeys.map { it.credentialId },
+        )
+    }
+
+    override suspend fun vaultPasskeys(): List<VaultPasskeyView> {
+        vaultPasskeysError?.let { throw it }
+        return vaultPasskeys
+    }
+
+    /** Like the core: only where the vault is open (this phone keeps the account secret). */
+    override suspend fun addVaultPasskey(credentialId: ByteArray, prfOutput: ByteArray, name: String): List<VaultPasskeyView> {
+        if (recoveryCode == null) throw CoreException.Invalid("Open the vault on this phone first: a passkey can only be added where the vault is open.")
+        if (prfOutput.size != 32) throw CoreException.Invalid("This passkey did not give the secret Reins needs. Try another passkey.")
+        passkeyAdds += Triple(name, credentialId, prfOutput)
+        vaultPasskeys = vaultPasskeys + VaultPasskeyView(credentialId, name, 1_700_000_050)
+        return vaultPasskeys
+    }
+
+    override suspend fun removeVaultPasskey(credentialId: ByteArray): List<VaultPasskeyView> {
+        passkeyRemovals += credentialId
+        vaultPasskeys = vaultPasskeys.filterNot { it.credentialId.contentEquals(credentialId) }
+        return vaultPasskeys
+    }
+
+    /** Opens the vault like the recovery code when the passkey is one of the account's and gives [PASSKEY_PRF]. */
+    override suspend fun unlockWithVaultPasskey(credentialId: ByteArray, prfOutput: ByteArray) {
+        passkeyUnlocks += credentialId
+        if (vaultPasskeys.none { it.credentialId.contentEquals(credentialId) }) {
+            throw CoreException.Invalid("This passkey was not added to open this account's vault.")
+        }
+        if (!prfOutput.contentEquals(PASSKEY_PRF)) throw CoreException.Invalid("This passkey does not open this account's vault.")
+        keys = AccountKeys.UNLOCKED
+        recoveryCode = RECOVERY_CODE
+        takeoverProof = true
     }
 
     override suspend fun joinBegin(deviceName: String): JoinStart {
@@ -741,7 +806,13 @@ class FakeCore : ReinsCoreInterface {
             ServiceView("vault", "Password vault", "vault", true, null, emptyList()),
         )
 
-        /** One instance per test process; tests reset it. */
+        /** The PRF output of every passkey of the fake account (its vault's copy opens with it). */
+        val PASSKEY_PRF = ByteArray(32) { 42 }
+        val EXISTING_PASSKEY_ID = byteArrayOf(1, 2, 3, 4)
+
+        fun existingPasskey() = VaultPasskeyView(EXISTING_PASSKEY_ID, "Pixel 8", 1_699_000_000)
+
+        /** One instance per test process; tests reset it. Built after the values above, which it uses. */
         val shared = FakeCore()
 
         const val SSO_STATE = "st4te"

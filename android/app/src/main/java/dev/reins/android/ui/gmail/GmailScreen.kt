@@ -99,6 +99,7 @@ fun GmailScreen(viewModel: GmailViewModel, state: AppState, onBack: () -> Unit) 
                 "Add account",
                 Modifier.fillMaxWidth().testTag("addAccount"),
                 enabled = !busy,
+                busy = busy,
                 glyph = Glyph.Plus,
             ) { chooser.launch(GoogleAuthorizer.chooseAccountIntent()) }
             error?.let { Banner(untrusted(it), Modifier.padding(top = 12.dp), BannerKind.Error, tag = "accountError") }

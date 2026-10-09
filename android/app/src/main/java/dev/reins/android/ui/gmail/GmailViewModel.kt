@@ -12,6 +12,7 @@ import kotlin.coroutines.cancellation.CancellationException
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 
 /** The Gmail accounts: how each one is doing, adding one, removing one. */
@@ -33,44 +34,14 @@ class GmailViewModel(private val container: AppContainer) : ViewModel() {
         _error.value = null
     }
 
-    /** Checks every connected account (a network call each). */
-    fun refresh() {
-        viewModelScope.launch {
-            val accounts = try {
-                container.core.accounts().also { container.state.setAccounts(it) }
-            } catch (e: CancellationException) {
-                throw e
-            } catch (e: Exception) {
-                _error.value = e.userMessage()
-                return@launch
-            }
-            for (account in accounts) {
-                val status = try {
-                    container.core.accountStatus(account.account)
-                } catch (e: CancellationException) {
-                    throw e
-                } catch (e: Exception) {
-                    GmailStatus.Unavailable(e.userMessage())
-                }
-                _statuses.value = _statuses.value + (account.account to status)
-            }
-        }
-    }
-
-    /** The user picked [account] in Google's account picker: ask for consent if needed, then connect it. */
-    fun accountChosen(account: String, launchConsent: (PendingIntent) -> Unit) {
+    /** Runs [block] as one operation: no second one starts meanwhile, the buttons show it, and failures are shown. */
+    private fun operation(block: suspend () -> Unit) {
         if (_busy.value) return
         _busy.value = true
         _error.value = null
         viewModelScope.launch {
             try {
-                val intent = container.google.consentIntent(account, "gmail")
-                if (intent != null) {
-                    awaitingConsent = account
-                    launchConsent(intent)
-                } else {
-                    connect(account)
-                }
+                block()
             } catch (e: CancellationException) {
                 throw e
             } catch (e: Exception) {
@@ -82,28 +53,61 @@ class GmailViewModel(private val container: AppContainer) : ViewModel() {
         }
     }
 
+    /** Checks every connected account (a network call each, all at once). */
+    fun refresh() {
+        viewModelScope.launch {
+            val accounts = try {
+                container.core.accounts().also { container.state.setAccounts(it) }
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                _error.value = e.userMessage()
+                return@launch
+            }
+            for (account in accounts) {
+                launch {
+                    val status = try {
+                        container.core.accountStatus(account.account)
+                    } catch (e: CancellationException) {
+                        throw e
+                    } catch (e: Exception) {
+                        GmailStatus.Unavailable(e.userMessage())
+                    }
+                    _statuses.update { it + (account.account to status) }
+                }
+            }
+        }
+    }
+
+    /** The user picked [account] in Google's account picker: ask for consent if needed, then connect it. */
+    fun accountChosen(account: String, launchConsent: (PendingIntent) -> Unit) = operation {
+        val intent = container.google.consentIntent(account, "gmail")
+        if (intent != null) {
+            awaitingConsent = account
+            launchConsent(intent)
+        } else {
+            connect(account)
+        }
+    }
+
     /** Back from Google's consent screen. */
     fun consentFinished() {
         val account = awaitingConsent ?: return
         awaitingConsent = null
-        viewModelScope.launch { connect(account) }
+        operation { connect(account) }
     }
 
     /** Asks again for the consent of an account that lost it. */
     fun reconnect(account: String, launchConsent: (PendingIntent) -> Unit) = accountChosen(account, launchConsent)
 
-    /** Registers [account] in the core (which checks with Gmail that the permission works). */
+    /**
+     * Registers [account] in the core (which checks with Gmail that the permission works). The button is free again
+     * as soon as that answers; the lists catch up in the background.
+     */
     suspend fun connect(account: String) {
-        try {
-            container.core.addAccount(account)
-            container.feedback.play(Event.Connected)
-            container.refreshPending()
-        } catch (e: CancellationException) {
-            throw e
-        } catch (e: Exception) {
-            container.feedback.play(Event.Error)
-            _error.value = e.userMessage()
-        }
+        container.core.addAccount(account)
+        container.feedback.play(Event.Connected)
+        viewModelScope.launch { container.refreshPending() }
         refresh()
     }
 

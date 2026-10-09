@@ -19,6 +19,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -74,6 +75,7 @@ fun ProfileScreen(
 ) {
     val c = LocalColors.current
     val ui by viewModel.ui.collectAsStateWithLifecycle()
+    LaunchedEffect(viewModel) { viewModel.showingProfiles() }
     val connections by state.connections.collectAsStateWithLifecycle()
     val profile = ui.profiles.firstOrNull { it.id == profileId }
     var rename by remember { mutableStateOf(false) }
@@ -89,7 +91,7 @@ fun ProfileScreen(
         },
     ) {
         if (profile == null) {
-            EmptyState(Glyph.People, "Not found", "This profile no longer exists.", tag = "profileGone")
+            if (ui.profilesLoaded) EmptyState(Glyph.People, "Not found", "This profile no longer exists.", tag = "profileGone")
             return@Screen
         }
         ProfileHeader(profile, connections.filter { it.id in profile.connections }.map { untrusted(it.label) })

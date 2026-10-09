@@ -1,5 +1,6 @@
 package dev.reins.android
 
+import dev.reins.android.ui.signin.SetupPage
 import android.content.Context
 import android.content.Intent
 import androidx.compose.ui.test.hasTestTag
@@ -18,6 +19,7 @@ import dev.reins.android.platform.AuthResult
 import dev.reins.android.platform.Authenticator
 import dev.reins.android.platform.AuthenticatorProvider
 import dev.reins.android.platform.Foreground
+import dev.reins.android.platform.PasskeyPromptProvider
 import dev.reins.android.platform.update.FakeInstaller
 import dev.reins.android.platform.update.FakeUpdateServer
 import dev.reins.android.platform.update.UpdateProvider
@@ -42,6 +44,9 @@ abstract class FlowHarness {
 
     @Volatile protected var authResult: AuthResult = AuthResult.Success
     protected val prompts = java.util.concurrent.atomic.AtomicInteger()
+
+    /** The passkey prompt the app gets; tests set its answers. */
+    protected val passkeys = FakePasskeys()
 
     @Before
     fun resetCore() {
@@ -96,6 +101,8 @@ abstract class FlowHarness {
                 authResult
             }
         }
+        passkeys.reset()
+        PasskeyPromptProvider.factory = { passkeys }
         container.state.setSession(SessionState.Loading)
         container.state.setRegistrationError(null)
     }
@@ -153,6 +160,21 @@ abstract class FlowHarness {
         } catch (_: AssertionError) {
         }
         node.performClick()
+    }
+
+    protected fun pressBack() {
+        scenario!!.onActivity { it.onBackPressedDispatcher.onBackPressed() }
+        settle()
+    }
+
+    /** Pages forward through the setup after signing in until the page tagged [tag] shows. */
+    protected fun setupTo(tag: String) {
+        awaitTag("setup")
+        repeat(SetupPage.entries.size) {
+            if (has(tag)) return
+            if (has("notificationsLater")) tap("notificationsLater") else tap("setupNext")
+        }
+        awaitTag(tag)
     }
 
     protected fun awaitCore(condition: () -> Boolean) {

@@ -11,6 +11,7 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.itemsIndexed
@@ -22,6 +23,7 @@ import androidx.compose.material.icons.rounded.KeyboardArrowUp
 import androidx.compose.material3.Icon
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.State
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
@@ -55,17 +57,24 @@ import dev.reins.android.design.RType
 import dev.reins.android.design.ConnectorTags
 import dev.reins.android.design.glass
 import dev.reins.android.design.pressable
-import dev.reins.android.design.rememberNowMillis
+import dev.reins.android.design.rememberNowState
 import dev.reins.android.design.urgency
+import dev.reins.android.platform.NotificationAccess
+import dev.reins.android.platform.rememberNotificationState
 import dev.reins.android.state.AppState
 import dev.reins.android.ui.common.ActivityRow
 import dev.reins.android.ui.common.ConnectionIcon
 import dev.reins.android.ui.common.fullTitle
 import dev.reins.android.ui.common.relativeTime
 import dev.reins.android.ui.common.untrusted
+import dev.reins.android.ui.main.SettingsButton
 import dev.reins.core.PendingItem
 import dev.reins.core.PendingKind
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 
 /** The first tab: what waits for you, then everything your AIs did, newest first. */
 @Composable
@@ -76,7 +85,7 @@ fun ActivityScreen(
     onOpenPending: (PendingItem) -> Unit,
     onOpenEntry: (Long) -> Unit,
     onIntegrations: () -> Unit,
-    onAutopilot: () -> Unit = {},
+    onSettings: () -> Unit = {},
 ) {
     val c = LocalColors.current
     val state: AppState = container.state
@@ -85,17 +94,26 @@ fun ActivityScreen(
     val seen by state.seenActivityId.collectAsStateWithLifecycle()
     val replaced by state.deviceReplaced.collectAsStateWithLifecycle()
     val registrationError by state.registrationError.collectAsStateWithLifecycle()
-    val autopilot by state.autopilot.collectAsStateWithLifecycle()
     // "Automatic": only what Autopilot, a bypass or Lockdown decided.
     var automaticOnly by androidx.compose.runtime.saveable.rememberSaveable { mutableStateOf(false) }
-    val automaticCount = entries.count { it.decidedBy.isNotEmpty() }
+    val automaticCount = remember(entries) { entries.count { it.decidedBy.isNotEmpty() } }
     val showFilters = automaticCount > 0 || automaticOnly
-    val shown = if (automaticOnly) entries.filter { it.decidedBy.isNotEmpty() } else entries
+    val shown = remember(entries, automaticOnly) { if (automaticOnly) entries.filter { it.decidedBy.isNotEmpty() } else entries }
+    // The "new above" marker sits over the oldest entry you have not seen.
+    val newMarkerAt = remember(shown, seen) { shown.indexOfLast { it.id > seen } }
     val listState = rememberLazyListState()
     val scope = rememberCoroutineScope()
+    val context = androidx.compose.ui.platform.LocalContext.current
+    val notifications = rememberNotificationState()
+    // People who never went through the setup (signed in before it existed) are asked once here.
+    LaunchedEffect(Unit) {
+        val ask = withContext(Dispatchers.Default) { !NotificationAccess.enabled(context) && !NotificationAccess.asked(context) }
+        if (ask) notifications.request()
+    }
 
     // Header rows above the entries: notices and the waiting section.
     val headerCount = 1 + (if (pending.isEmpty()) 0 else 1 + pending.size) + (if (notice != null) 1 else 0) +
+        (if (notifications.enabled) 0 else 1) +
         (if (replaced) 1 else 0) + (if (registrationError != null) 1 else 0) + (if (showFilters) 1 else 0)
 
     // Opening the tab lands where you stopped reading: at the oldest entry you have not seen, unless something is waiting.
@@ -108,9 +126,11 @@ fun ActivityScreen(
             listState.scrollToItem((headerCount + oldestUnseen - 1).coerceAtLeast(0))
         }
     }
-    // What is on screen counts as seen: scroll up to the newest and the badge clears.
+    // What is on screen counts as seen: scroll up to the newest and the badge clears. Recorded once the list comes to
+    // rest, not on every frame of a fling.
     LaunchedEffect(shown, headerCount) {
-        snapshotFlow { listState.layoutInfo.visibleItemsInfo.map { it.index } }.collect { visible ->
+        snapshotFlow { listState.layoutInfo.visibleItemsInfo.map { it.index } }.collectLatest { visible ->
+            delay(SEEN_SETTLE_MS)
             val firstEntry = visible.filter { it >= headerCount }.minOrNull()?.minus(headerCount)
             val newest = when {
                 firstEntry != null -> shown.getOrNull(firstEntry)?.id
@@ -130,9 +150,12 @@ fun ActivityScreen(
         ) {
             item(key = "title") {
                 LargeTitle("Activity") {
-                    if (autopilot != null) dev.reins.android.ui.autopilot.ModePill(autopilot, Modifier.testTag("modePill"), onClick = onAutopilot)
                     CapsuleButton("Integrations", Modifier.testTag("integrations"), compact = true, glyph = Glyph.Apps, onClick = onIntegrations)
+                    SettingsButton(onSettings)
                 }
+            }
+            if (!notifications.enabled) {
+                item(key = "notifications") { NotificationsOffCard(Modifier.padding(horizontal = 16.dp, vertical = 6.dp), notifications::request) }
             }
             notice?.let {
                 item(key = "notice") {
@@ -158,7 +181,7 @@ fun ActivityScreen(
             }
             if (pending.isNotEmpty()) {
                 item(key = "waiting-label") { SectionTitle("Waiting for you") }
-                itemsIndexed(pending, key = { _, item -> "p:${item.id}" }) { _, item ->
+                itemsIndexed(pending, key = { _, item -> "p:${item.id}" }, contentType = { _, _ -> "pending" }) { _, item ->
                     PendingCard(item, Modifier.padding(horizontal = 16.dp, vertical = 5.dp)) { onOpenPending(item) }
                 }
             }
@@ -189,9 +212,9 @@ fun ActivityScreen(
                     }
                 }
             } else {
-                itemsIndexed(shown, key = { _, e -> "e:${e.id}" }) { index, entry ->
+                itemsIndexed(shown, key = { _, e -> "e:${e.id}" }, contentType = { _, _ -> "entry" }) { index, entry ->
                     if (index == 0) SectionTitle(if (automaticOnly) "Decided for you" else "Latest")
-                    if (entry.id > seen && index == shown.indexOfLast { it.id > seen }) NewMarker()
+                    if (index == newMarkerAt) NewMarker()
                     Box(Modifier.testTag("entry:${entry.id}")) {
                         ActivityRow(entry) { onOpenEntry(entry.id) }
                     }
@@ -217,6 +240,36 @@ fun ActivityScreen(
                 }
             }
         }
+    }
+}
+
+/** Approvals cannot reach a phone that shows no notifications: said first, until they are on. */
+@Composable
+private fun NotificationsOffCard(modifier: Modifier, onTurnOn: () -> Unit) {
+    val c = LocalColors.current
+    Row(
+        modifier
+            .fillMaxWidth()
+            .background(c.warning.copy(alpha = 0.12f), RoundedCornerShape(18.dp))
+            .padding(14.dp)
+            .testTag("notificationsOff"),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Box(Modifier.size(40.dp).background(c.warning.copy(alpha = 0.18f), CircleShape), contentAlignment = Alignment.Center) {
+            dev.reins.android.design.GlyphIcon(Glyph.Bell, c.warning, size = 20.dp)
+        }
+        Spacer(Modifier.width(12.dp))
+        Column(Modifier.weight(1f)) {
+            RText("Notifications are off", RType.sans(15.5f, FontWeight.SemiBold), c.text)
+            RText(
+                "Requests from your AIs can't reach you while Reins is closed, so they wait and time out.",
+                RType.sans(13f, lineHeight = 18f),
+                c.secondary,
+                Modifier.padding(top = 2.dp),
+            )
+        }
+        Spacer(Modifier.width(10.dp))
+        CapsuleButton("Turn on", Modifier.testTag("turnOnNotifications"), style = ButtonStyle.Accent, compact = true, onClick = onTurnOn)
     }
 }
 
@@ -246,15 +299,15 @@ private fun NewMarker() {
 private fun PendingCard(item: PendingItem, modifier: Modifier = Modifier, onClick: () -> Unit) {
     val c = LocalColors.current
     val action = ActionKind.of(item.action)
-    val now = rememberNowMillis()
     // An upload waits until the server deletes it (an hour or so), not for an AI that is holding on: no countdown.
     val waitUntil = if (item.kind == PendingKind.BLOB) null else item.waitUntil
-    val u = urgency(item.createdAt, waitUntil, now)
+    // One clock for the border and the seconds left; it stops once the AI has stopped waiting.
+    val now = rememberNowState(untilMillis = waitUntil?.let { it * 1000 })
     val pairing = item.kind == PendingKind.PAIRING
     val join = item.kind == PendingKind.JOIN
     // Neither comes from an AI connection: no connection icon, no integration tags.
     val fromAi = !pairing && !join
-    CountdownFrame(item.createdAt, waitUntil, modifier.testTag("pending:${item.id}")) {
+    CountdownFrame(item.createdAt, waitUntil, modifier.testTag("pending:${item.id}"), now = now) {
         Row(
             Modifier
                 .fillMaxWidth()
@@ -295,24 +348,32 @@ private fun PendingCard(item: PendingItem, modifier: Modifier = Modifier, onClic
                         RText(line, RType.sans(12.5f, FontWeight.Medium), c.accent, maxLines = 1)
                     }
                 }
-                RText(
-                    when {
-                        u == null -> relativeTime(item.createdAt)
-                        u.stale -> "Stopped waiting · you can still approve"
-                        u.urgent -> "${u.remainingSeconds} s left"
-                        else -> "${u.remainingSeconds} s · waiting for you"
-                    },
-                    RType.sans(13f, FontWeight.Medium),
-                    when {
-                        u == null -> c.tertiary
-                        u.stale -> c.warning
-                        u.urgent -> c.danger
-                        else -> c.secondary
-                    },
-                )
+                WaitLine(item.createdAt, waitUntil, now)
             }
             Spacer(Modifier.width(8.dp))
             CapsuleButton("Review", style = ButtonStyle.Accent, compact = true, onClick = onClick)
         }
     }
 }
+
+/** How long the AI keeps waiting, in its own scope: the clock's ticks recompose this line and nothing else on the card. */
+@Composable
+private fun WaitLine(createdAt: Long, waitUntil: Long?, now: State<Long>) {
+    val c = LocalColors.current
+    // The clock ticks four times a second; the line changes once a second.
+    val line by remember(createdAt, waitUntil, now, c) {
+        derivedStateOf {
+            val u = urgency(createdAt, waitUntil, now.value)
+            when {
+                u == null -> relativeTime(createdAt) to c.tertiary
+                u.stale -> "Stopped waiting · you can still approve" to c.warning
+                u.urgent -> "${u.remainingSeconds} s left" to c.danger
+                else -> "${u.remainingSeconds} s · waiting for you" to c.secondary
+            }
+        }
+    }
+    RText(line.first, RType.sans(13f, FontWeight.Medium), line.second)
+}
+
+/** How long the list must stay still before what it shows counts as seen. */
+private const val SEEN_SETTLE_MS = 300L

@@ -1040,6 +1040,18 @@ abstract class ScreenshotsBase(private val suffix: String) {
         rule.onNodeWithTag("email").performTextReplacement("me@example.com")
         rule.onNodeWithTag("password").performTextReplacement("correct horse battery")
         tap("signIn")
+        await("setupWelcome")
+        shoot("14a-setup-welcome")
+        tap("setupNext")
+        await("setupNotifications")
+        shoot("14b-setup-notifications")
+        if (rule.onAllNodes(hasTestTag("notificationsLater")).fetchSemanticsNodes().isNotEmpty()) tap("notificationsLater") else tap("setupNext")
+        await("setupIntegrations")
+        shoot("14b2-setup-integrations")
+        tap("setupNext")
+        await("setupAutopilot")
+        shoot("14b3-setup-autopilot")
+        tap("setupNext")
         await("setupComputer")
         shoot("14c-setup-computer")
         tap("typeCode")
@@ -1048,6 +1060,9 @@ abstract class ScreenshotsBase(private val suffix: String) {
         tap("setupNext")
         await("setupAi")
         shoot("14e-setup-ai")
+        tap("setupNext")
+        await("setupFinished")
+        shoot("14f-setup-done")
     }
 
     @Test

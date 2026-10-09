@@ -13,6 +13,7 @@ import dev.reins.core.SessionInfo
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.update
 
 sealed interface SessionState {
     data object Loading : SessionState
@@ -131,6 +132,26 @@ class AppState {
         _recoveryToRecord.value = code
     }
 
+    /**
+     * Before the recovery code, an account without a passkey for its vault is offered one: it opens the vault on a new
+     * phone without the other phone or the code. Never persisted.
+     */
+    private val _vaultPasskeyOffer = MutableStateFlow(false)
+    val vaultPasskeyOffer: StateFlow<Boolean> = _vaultPasskeyOffer.asStateFlow()
+
+    /** "Use the recovery code only": the offer stays away until the account changes or the app restarts. */
+    @Volatile var vaultPasskeyDeclined = false
+        private set
+
+    fun setVaultPasskeyOffer(value: Boolean) {
+        _vaultPasskeyOffer.value = value && !vaultPasskeyDeclined
+    }
+
+    fun declineVaultPasskey() {
+        vaultPasskeyDeclined = true
+        _vaultPasskeyOffer.value = false
+    }
+
     private val _recoveryLoadError = MutableStateFlow<String?>(null)
     val recoveryLoadError: StateFlow<String?> = _recoveryLoadError.asStateFlow()
     fun setRecoveryLoadError(error: String?) { _recoveryLoadError.value = error }
@@ -154,6 +175,8 @@ class AppState {
             _registrationError.value = null
             _recoveryToRecord.value = null
             _recoveryLoadError.value = null
+            _vaultPasskeyOffer.value = false
+            vaultPasskeyDeclined = false
             _setupPending.value = false
             _pending.value = emptyList()
             _activity.value = emptyList()
@@ -173,7 +196,23 @@ class AppState {
     }
 
     fun setPending(items: List<PendingItem>) {
-        _pending.value = items
+        val gone = synchronized(answered) { answered.toSet() }
+        _pending.value = if (gone.isEmpty()) items else items.filter { it.id !in gone }
+    }
+
+    /**
+     * Answered items, kept out of [pending] even by a refresh that read the list just before the answer, so an
+     * approved card never comes back for a moment. The last few are enough: the core forgets an item once answered.
+     */
+    private val answered = LinkedHashSet<String>()
+
+    /** The user answered [id]: its card goes at once, without waiting for the refresh behind it. */
+    fun removePending(id: String) {
+        synchronized(answered) {
+            answered += id
+            if (answered.size > ANSWERED_KEPT) answered.remove(answered.first())
+        }
+        _pending.update { items -> items.filter { it.id != id } }
     }
 
     fun setActivity(items: List<ActivityEntry>) {
@@ -213,6 +252,10 @@ class AppState {
     fun unseenActivity(): Int {
         val seen = _seenActivityId.value
         return _activity.value.count { it.id > seen }
+    }
+
+    private companion object {
+        const val ANSWERED_KEPT = 64
     }
 }
 

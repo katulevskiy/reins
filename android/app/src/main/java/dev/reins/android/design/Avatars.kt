@@ -132,23 +132,37 @@ fun ProviderAvatar(provider: Provider, modifier: Modifier = Modifier, size: Dp =
 /** A blobatar: the deterministic figure the library draws for [seedText], on the same round plate as the logos. */
 @Composable
 fun BlobAvatar(seedText: String, modifier: Modifier = Modifier, size: Dp = 40.dp) {
-    val figure = remember(seedText) { Blobatar.figure(seedText.ifBlank { "?" }, Blobatar.Backdrop.NONE) }
-    val parser = remember { PathParser() }
-    val drawn = remember(figure) {
-        figure.marks.map { mark ->
-            when (mark) {
-                is Blobatar.Mark.Path -> Triple(parser.parsePathString(mark.d).toPath(), null as Offset?, mark)
-                is Blobatar.Mark.Circle -> Triple(Path(), Offset(mark.cx.toFloat(), mark.cy.toFloat()), mark)
-            }
-        }
-    }
+    val marks = remember(seedText) { Blobs.marks(seedText.ifBlank { "?" }) }
     AvatarPlate(size, modifier) {
         Canvas(Modifier.size(size * 0.92f)) {
             scale(this.size.minDimension / 100f, pivot = Offset.Zero) {
-                for ((path, center, mark) in drawn) {
-                    val color = Color(android.graphics.Color.parseColor(mark.fill))
-                    if (mark is Blobatar.Mark.Circle) drawCircle(color, mark.r.toFloat(), center!!) else drawPath(path, color)
+                for (mark in marks) {
+                    if (mark.path != null) drawPath(mark.path, mark.color) else drawCircle(mark.color, mark.radius, mark.center)
                 }
+            }
+        }
+    }
+}
+
+/** One mark of a blobatar, ready to draw in its 100 × 100 box: a path, or a circle when [path] is null. */
+private class BlobMark(val path: Path?, val center: Offset, val radius: Float, val color: Color)
+
+/**
+ * Blobatars by seed, generated, parsed and coloured once and shared by every avatar that shows them: a list that
+ * scrolls a row back into view draws it straight away. The paths are never changed after they are built.
+ */
+private object Blobs {
+    private val cache = LruCache<String, List<BlobMark>>(128)
+
+    fun marks(seed: String): List<BlobMark> = cache.get(seed) ?: build(seed).also { cache.put(seed, it) }
+
+    private fun build(seed: String): List<BlobMark> {
+        val parser = PathParser()
+        return Blobatar.figure(seed, Blobatar.Backdrop.NONE).marks.map { mark ->
+            val color = Color(android.graphics.Color.parseColor(mark.fill))
+            when (mark) {
+                is Blobatar.Mark.Path -> BlobMark(parser.parsePathString(mark.d).toPath(), Offset.Zero, 0f, color)
+                is Blobatar.Mark.Circle -> BlobMark(null, Offset(mark.cx.toFloat(), mark.cy.toFloat()), mark.r.toFloat(), color)
             }
         }
     }

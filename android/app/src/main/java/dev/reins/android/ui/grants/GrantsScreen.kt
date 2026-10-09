@@ -58,6 +58,7 @@ import dev.reins.android.state.AppState
 import dev.reins.android.ui.common.EndedGrantRow
 import dev.reins.android.ui.common.GrantTile
 import dev.reins.android.ui.common.untrusted
+import dev.reins.android.ui.main.SettingsButton
 import dev.reins.core.GrantView
 import dev.reins.core.StandingGrant
 import kotlinx.coroutines.launch
@@ -79,11 +80,12 @@ fun GrantsScreen(
     onNew: () -> Unit,
     onResume: suspend (grantId: String, seconds: Long, standing: StandingGrant?) -> String?,
     onDelete: suspend (grantId: String) -> String? = { null },
+    onSettings: () -> Unit = {},
 ) {
     val c = LocalColors.current
     val grants by state.grants.collectAsStateWithLifecycle()
-    val running = grants.filter { it.active }.sortedByDescending { it.createdAt }
-    val ended = grants.filterNot { it.active }.sortedByDescending { it.createdAt }
+    val running = remember(grants) { grants.filter { it.active }.sortedByDescending { it.createdAt } }
+    val ended = remember(grants) { grants.filterNot { it.active }.sortedByDescending { it.createdAt } }
     var resuming by remember { mutableStateOf<GrantView?>(null) }
     var deleting by remember { mutableStateOf<GrantView?>(null) }
     var error by remember { mutableStateOf<String?>(null) }
@@ -97,6 +99,7 @@ fun GrantsScreen(
             item(key = "title") {
                 LargeTitle("Grants") {
                     CapsuleButton("New grant", Modifier.testTag("newGrant"), compact = true, glyph = Glyph.Plus, onClick = onNew)
+                    SettingsButton(onSettings)
                 }
             }
             error?.let {
@@ -116,7 +119,7 @@ fun GrantsScreen(
                     )
                 }
             }
-            items(running, key = { "g:${it.id}" }) { grant ->
+            items(running, key = { "g:${it.id}" }, contentType = { "grant" }) { grant ->
                 Box(Modifier.testTag("grant:${grant.id}")) { GrantTile(grant) { onOpen(grant.id) } }
             }
         }

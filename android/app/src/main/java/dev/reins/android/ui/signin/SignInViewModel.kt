@@ -79,6 +79,11 @@ class SignInViewModel(private val container: AppContainer) : ViewModel() {
         }
     }
 
+    /** The Auth Tab ended at [url] (the sign-in page's way back, as the redirect activity would have received it). */
+    fun authTabReturned(url: String) {
+        container.ssoSignIn.deliver(url)
+    }
+
     /**
      * Hands the callback to the core for the waiting sign-in; nothing happens when none waits. A vault reset's callback
      * is the Unlock screen's ([UnlockViewModel]).

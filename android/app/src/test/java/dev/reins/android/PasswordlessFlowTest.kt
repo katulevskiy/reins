@@ -107,7 +107,7 @@ class PasswordlessFlowTest : FlowHarness() {
         tapContinue()
         relaunch(callbackIntent())
         awaitTag("recoveryRecorded")
-        assertFalse(has("setupComputer"))
+        assertFalse(has("setup"))
         assertEquals("Recovery setup must finish before foreground polling starts", 0, core.syncStarts.get())
         rule.onNodeWithTag("recoveryCodeDone").assertIsNotEnabled()
         tap("copyRecoveryCode")
@@ -115,9 +115,9 @@ class PasswordlessFlowTest : FlowHarness() {
         relaunch(Intent(context, MainActivity::class.java))
         awaitTag("recoveryRecorded")
         recordRecovery()
-        awaitTag("setupComputer")
+        awaitTag("setup")
         relaunch(Intent(context, MainActivity::class.java))
-        awaitTag("setupComputer")
+        awaitTag("setup")
         assertFalse(has("recoveryRecorded"))
     }
 
@@ -149,7 +149,7 @@ class PasswordlessFlowTest : FlowHarness() {
 
         relaunch(callbackIntent())
         recordRecovery()
-        awaitTag("setupComputer")
+        awaitTag("setup")
         assertEquals(listOf(server, callback, FakeCore.SSO_STATE, FakeCore.SSO_VERIFIER), core.ssoFinishes.single())
         awaitCore { container.state.approvalDevice.value }
         assertEquals(1, core.registrations.size)
@@ -164,7 +164,7 @@ class PasswordlessFlowTest : FlowHarness() {
         tapContinue()
         relaunch(callbackIntent())
         recordRecovery()
-        awaitTag("setupComputer")
+        awaitTag("setup")
         awaitCore { core.registrations.size == 1 }
         assertFalse(has("unlock"))
     }
@@ -219,7 +219,7 @@ class PasswordlessFlowTest : FlowHarness() {
         assertEquals(listOf("https://reins.example.com"), core.ssoBegins.toList())
         relaunch(callbackIntent())
         recordRecovery()
-        awaitTag("setupComputer")
+        awaitTag("setup")
         assertEquals("https://reins.example.com", core.ssoFinishes.single()[0])
     }
 
@@ -251,7 +251,7 @@ class PasswordlessFlowTest : FlowHarness() {
         signInLocked()
         rule.onNodeWithTag("unlockText").assertTextContains("me@example.com", substring = true)
         assertTrue(container.deviceStatus.keysLocked())
-        assertFalse(has("setupComputer"))
+        assertFalse(has("setup"))
 
         // A relaunch comes back to it, still without taking the approval role from the other phone.
         relaunch(Intent(context, MainActivity::class.java))
@@ -272,7 +272,7 @@ class PasswordlessFlowTest : FlowHarness() {
         assertTrue(core.registrations.isEmpty())
         repeat(3) { pollOnce() }
         recordRecovery()
-        awaitTag("setupComputer")
+        awaitTag("setup")
         assertEquals(3, core.joinPolls.get())
         awaitCore { core.registrations.size == 1 }
         assertFalse(container.deviceStatus.keysLocked())
@@ -343,7 +343,7 @@ class PasswordlessFlowTest : FlowHarness() {
         rule.onNodeWithTag("recoveryCode").performTextReplacement(typed)
         tap("unlockAccount")
         recordRecovery()
-        awaitTag("setupComputer")
+        awaitTag("setup")
         assertEquals(typed, core.unlockAttempts.last())
         awaitCore { core.registrations.size == 1 }
         assertFalse(container.deviceStatus.keysLocked())
@@ -402,7 +402,7 @@ class PasswordlessFlowTest : FlowHarness() {
         assertEquals(FakeCore.RESET_RECOVERY_CODE, container.state.recoveryToRecord.value)
         assertTrue(showsText("HV3N Q8RT ZL2K M7WD", substring = true))
         recordRecovery()
-        awaitTag("setupComputer")
+        awaitTag("setup")
         assertEquals(listOf(server, callback, FakeCore.SSO_STATE, FakeCore.SSO_VERIFIER), core.resets.single())
         assertEquals("Only the first sign-in went to ssoFinish", 1, core.ssoFinishes.size)
         assertFalse(container.deviceStatus.keysLocked())

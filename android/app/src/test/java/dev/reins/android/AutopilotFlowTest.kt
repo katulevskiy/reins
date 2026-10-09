@@ -1,5 +1,6 @@
 package dev.reins.android
 
+import androidx.compose.ui.test.onNodeWithContentDescription
 import androidx.compose.ui.test.assertTextContains
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
@@ -64,7 +65,7 @@ class AutopilotFlowTest : FlowHarness() {
         installModel()
         launch()
         awaitTag("modePill")
-        awaitText("Assisted")
+        rule.onNodeWithContentDescription("Autopilot: Assisted").assertExists()
         tap("modePill")
         awaitTag("modeHero")
         rule.onNodeWithTag("heroMode").assertTextContains("Assisted")

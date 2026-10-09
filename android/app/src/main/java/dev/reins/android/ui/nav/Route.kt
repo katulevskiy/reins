@@ -10,6 +10,9 @@ sealed interface Route {
     /** Settings > Sounds & haptics. */
     data object Sounds : Route
 
+    /** Settings > Account > Vault passkeys: the passkeys that open the vault on a new phone. */
+    data object VaultPasskeys : Route
+
     /** Settings > Autopilot (also the header's mode pill). */
     data object Autopilot : Route
 

@@ -179,9 +179,9 @@ private fun AddAccount(
     val c = LocalColors.current
     Column(Modifier.padding(horizontal = 16.dp, vertical = 16.dp), verticalArrangement = androidx.compose.foundation.layout.Arrangement.spacedBy(10.dp)) {
         when (service.kind) {
-            "google" -> CapsuleButton("Add account", Modifier.fillMaxWidth().testTag("addAccount"), enabled = !busy, glyph = Glyph.Plus, onClick = onChooseGoogle)
+            "google" -> CapsuleButton("Add account", Modifier.fillMaxWidth().testTag("addAccount"), enabled = !busy, busy = busy, glyph = Glyph.Plus, onClick = onChooseGoogle)
             "device" -> if (service.accounts.isEmpty()) {
-                CapsuleButton("Allow on this phone", Modifier.fillMaxWidth().testTag("allowDevice"), enabled = !busy, glyph = Glyph.Phone, onClick = onAllowDevice)
+                CapsuleButton("Allow on this phone", Modifier.fillMaxWidth().testTag("allowDevice"), enabled = !busy, busy = busy, glyph = Glyph.Phone, onClick = onAllowDevice)
             }
             "token" -> when (val host = GitHosts.of(service.service)) {
                 null -> GithubConnect(busy) { viewModel.addSecret(it) }

@@ -1,6 +1,8 @@
 package dev.reins.android.ui.signin
 
 import androidx.activity.compose.BackHandler
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.browser.auth.AuthTabIntent
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.Arrangement
@@ -43,20 +45,28 @@ import dev.reins.android.design.RType
 import dev.reins.android.design.Screen
 import dev.reins.android.design.Spinner
 import dev.reins.android.platform.Browser
+import dev.reins.android.platform.PasskeyPrompt
 import dev.reins.android.ui.common.OTHER_APPROVAL_DEVICE
 import dev.reins.android.ui.common.SecureWindow
 
 /**
- * Signed in through "Continue" to an account whose keys are on another phone: ask that phone, enter the recovery code,
- * reset the vault when both are lost, or sign out. Shown instead of the app until the keys are open (also after a
- * relaunch). With [takeover], the server refused to make this phone the approval device because another phone
- * approves for the account: the same two ways let it take over, and "Not now" goes back to the app.
+ * Signed in through "Continue" to an account whose keys are on another phone: unlock with a passkey added for the vault
+ * ([passkeys] shows the platform's prompt), ask that phone, enter the recovery code, reset the vault when all are lost,
+ * or sign out. Shown instead of the app until the keys are open (also after a relaunch). With [takeover], the server
+ * refused to make this phone the approval device because another phone approves for the account: the same two ways
+ * let it take over, and "Not now" goes back to the app.
  */
 @Composable
-fun UnlockScreen(viewModel: UnlockViewModel, email: String, takeover: Boolean = false) {
+fun UnlockScreen(viewModel: UnlockViewModel, email: String, passkeys: PasskeyPrompt, takeover: Boolean = false) {
     val c = LocalColors.current
     val context = LocalContext.current
     val ui by viewModel.ui.collectAsStateWithLifecycle()
+    val passkeyUnlock by viewModel.passkeyUnlock.collectAsStateWithLifecycle()
+    // The reset's sign-in page in an Auth Tab comes back here (registered on every step, so the answer still arrives
+    // when Android recreated the screen meanwhile); closing it without signing in changes nothing.
+    val authTab = rememberLauncherForActivityResult(AuthTabIntent.AuthenticateUserResultContract()) { result ->
+        if (result.resultCode == AuthTabIntent.RESULT_OK) result.resultUri?.let { viewModel.authTabReturned(it.toString()) }
+    }
     BackHandler(enabled = ui.step != UnlockStep.Choose) {
         if (ui.step == UnlockStep.Asking) viewModel.cancelAsk() else viewModel.back()
     }
@@ -74,11 +84,14 @@ fun UnlockScreen(viewModel: UnlockViewModel, email: String, takeover: Boolean = 
                 c.text,
             )
             RText(
-                if (takeover) {
-                    OTHER_APPROVAL_DEVICE
-                } else {
-                    "You're signed in as $email, but its vault opens on the phone you set it up with. Approve this " +
-                        "phone from there, or enter your recovery code."
+                when {
+                    takeover -> OTHER_APPROVAL_DEVICE
+                    passkeyUnlock ->
+                        "You're signed in as $email, but its vault opens on the phone you set it up with. Unlock it " +
+                            "with your passkey, approve this phone from there, or enter your recovery code."
+                    else ->
+                        "You're signed in as $email, but its vault opens on the phone you set it up with. Approve this " +
+                            "phone from there, or enter your recovery code."
                 },
                 RType.sans(16f, lineHeight = 22f),
                 c.secondary,
@@ -86,12 +99,12 @@ fun UnlockScreen(viewModel: UnlockViewModel, email: String, takeover: Boolean = 
             )
             Spacer(Modifier.height(20.dp))
             when (ui.step) {
-                UnlockStep.Choose -> Choose(viewModel, ui, takeover)
+                UnlockStep.Choose -> Choose(viewModel, ui, takeover, passkeyUnlock) { viewModel.unlockWithPasskey(passkeys) }
                 UnlockStep.Asking -> Asking(viewModel, ui)
                 UnlockStep.Recovery -> Recovery(viewModel, ui)
                 UnlockStep.Reset -> Reset(viewModel, ui) {
                     // A tab that does not reuse the browser's last session: the person really signs in again.
-                    Browser.open(context, it, ephemeral = true)
+                    Browser.openSignIn(context, it, AccountRules.SSO_CALLBACK_SCHEME, authTab, ephemeral = true)
                 }
             }
             Spacer(Modifier.height(24.dp))
@@ -99,15 +112,28 @@ fun UnlockScreen(viewModel: UnlockViewModel, email: String, takeover: Boolean = 
     }
 }
 
+/** The ways in; with a passkey for the vault ([passkey]), [onPasskey] comes first and the other phone second. */
 @Composable
-private fun Choose(viewModel: UnlockViewModel, ui: UnlockUi, takeover: Boolean) {
+private fun Choose(viewModel: UnlockViewModel, ui: UnlockUi, takeover: Boolean, passkey: Boolean, onPasskey: () -> Unit) {
     ui.ended?.let { Banner(it, kind = BannerKind.Warning, tag = "joinEnded") }
     ui.error?.let { Banner(it, kind = BannerKind.Error, tag = "unlockError") }
+    if (passkey) {
+        CapsuleButton(
+            "Unlock with passkey",
+            Modifier.fillMaxWidth().testTag("unlockWithPasskey"),
+            style = ButtonStyle.Primary,
+            enabled = !ui.busy || ui.passkeyBusy,
+            busy = ui.passkeyBusy,
+            glyph = Glyph.Unlock,
+            onClick = onPasskey,
+        )
+    }
     CapsuleButton(
         "Ask my other phone",
         Modifier.fillMaxWidth().testTag("askOtherPhone"),
-        style = ButtonStyle.Primary,
-        busy = ui.busy,
+        style = if (passkey) ButtonStyle.Secondary else ButtonStyle.Primary,
+        enabled = !ui.busy || !ui.passkeyBusy,
+        busy = ui.busy && !ui.passkeyBusy,
         glyph = Glyph.Phone,
         onClick = viewModel::askOtherPhone,
     )

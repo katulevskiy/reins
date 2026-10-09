@@ -5,6 +5,8 @@ import androidx.lifecycle.viewModelScope
 import dev.reins.android.AppContainer
 import dev.reins.android.feedback.Event
 import dev.reins.android.feedback.play
+import dev.reins.android.platform.PasskeyPrompt
+import dev.reins.android.platform.PasskeyResult
 import dev.reins.android.platform.SsoPurpose
 import dev.reins.android.state.SessionState
 import dev.reins.android.ui.common.userMessage
@@ -37,7 +39,12 @@ data class UnlockUi(
     val error: String? = null,
     /** How the last request to the other phone ended (refused, expired), shown with the two choices. */
     val ended: String? = null,
+    /** What [busy] waits for is the passkey (its button shows it). */
+    val passkeyBusy: Boolean = false,
 )
+
+/** The passkey prompt found none of the account's passkeys, or one without PRF. */
+const val NO_PASSKEY_HERE = "No passkey on this phone opens your vault. Ask your other phone, or enter your recovery code."
 
 /** How often the new phone asks whether the other phone answered. */
 const val JOIN_POLL_MILLIS = 2_000L
@@ -68,6 +75,9 @@ suspend fun awaitJoin(poll: suspend () -> JoinProgress, pause: suspend () -> Uni
  * approves for the account ([dev.reins.android.state.AppState.approvalTakeover]): the other phone's yes, or the
  * recovery code, is the proof the next registration brings.
  *
+ * A passkey the account added for its vault opens it too ("Unlock with passkey", first when the account has one), as the
+ * recovery code does.
+ *
  * With neither (keys locked only): "Reset the vault" deletes everything in it and gives the account new keys, as a new
  * account gets, confirmed by signing in again through the server's SSO ([SsoPurpose.Reset]).
  */
@@ -81,7 +91,20 @@ class UnlockViewModel(
 
     private var asking: Job? = null
 
+    /** Whether the account has a passkey for its vault; unknown (offline) counts as none. */
+    private val _passkeyUnlock = MutableStateFlow(false)
+    val passkeyUnlock: StateFlow<Boolean> = _passkeyUnlock.asStateFlow()
+
     init {
+        viewModelScope.launch {
+            _passkeyUnlock.value = try {
+                container.core.vaultPasskeys().isNotEmpty()
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                false
+            }
+        }
         // The browser came back from the sign-in that confirms a reset (also after Android restarted the app meanwhile).
         viewModelScope.launch { container.ssoSignIn.callback.filterNotNull().collect { finishReset() } }
     }
@@ -168,6 +191,11 @@ class UnlockViewModel(
         }
     }
 
+    /** The Auth Tab ended at [url] (the sign-in page's way back, as the redirect activity would have received it). */
+    fun authTabReturned(url: String) {
+        container.ssoSignIn.deliver(url)
+    }
+
     /**
      * Hands the callback of the sign-in that confirms the reset to the core; nothing happens when none waits (a
      * "Continue" callback is the sign-in screen's). The vault is new then, as a new account's: this phone finishes the
@@ -210,6 +238,43 @@ class UnlockViewModel(
                 _ui.update { it.copy(busy = false, error = e.userMessage()) }
             }
         }
+    }
+
+    /**
+     * "Unlock with passkey": one of the account's passkeys gives the PRF output that opens the copy of the vault's key
+     * kept for it, and the sign-in finishes as with the recovery code. Closing the prompt changes nothing.
+     */
+    fun unlockWithPasskey(passkeys: PasskeyPrompt) {
+        if (_ui.value.busy) return
+        _ui.update { it.copy(busy = true, passkeyBusy = true, error = null, ended = null) }
+        viewModelScope.launch {
+            try {
+                val options = container.core.vaultPasskeyOptions()
+                when (val result = passkeys.get(options, options.credentialIds)) {
+                    is PasskeyResult.Passkey -> {
+                        val prf = result.prf
+                        if (prf == null) {
+                            failPasskey(NO_PASSKEY_HERE)
+                        } else {
+                            container.core.unlockWithVaultPasskey(result.credentialId, prf)
+                            unlocked()
+                        }
+                    }
+                    PasskeyResult.Cancelled -> _ui.update { it.copy(busy = false, passkeyBusy = false) }
+                    PasskeyResult.Unsupported -> failPasskey(NO_PASSKEY_HERE)
+                    is PasskeyResult.Failed -> failPasskey(result.message)
+                }
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                failPasskey(e.userMessage())
+            }
+        }
+    }
+
+    private fun failPasskey(message: String) {
+        container.feedback.play(Event.Error)
+        _ui.value = UnlockUi(error = message)
     }
 
     /** "Not now" while taking over: the app shows again, this phone not approving; Settings offers it again. */

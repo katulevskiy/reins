@@ -187,50 +187,18 @@ fun NeighbourRow(n: NeighbourView, modifier: Modifier = Modifier) {
     }
 }
 
-/**
- * The home header's Autopilot pill: the global mode at a glance. Red with a live countdown while a bypass runs,
- * amber in Lockdown, quiet otherwise. Opens Settings > Autopilot.
- */
-@Composable
-fun ModePill(settings: AutopilotSettings?, modifier: Modifier = Modifier, onClick: () -> Unit) {
-    val c = LocalColors.current
-    val mode = settings?.mode ?: AutopilotMode.MANUAL
-    val tint = modeTint(mode, c)
-    val strong = mode == AutopilotMode.BYPASS
-    val bg by animateColorAsState(if (strong) c.danger else tint.copy(alpha = if (mode == AutopilotMode.MANUAL) 0.08f else 0.13f), label = "pillBg")
-    val fg by animateColorAsState(if (strong) Color.White else if (mode == AutopilotMode.MANUAL) c.secondary else tint, label = "pillFg")
-    val now = rememberNowMillis(1_000) / 1000
-    val label = when {
-        strong && settings?.bypassUntil != null -> AutopilotText.clock(settings.bypassUntil!!, now)
-        else -> AutopilotText.name(mode)
-    }
-    Row(
-        modifier
-            .height(34.dp)
-            .clip(CircleShape)
-            .background(bg)
-            .pressable(shape = CircleShape, label = "Autopilot", onClick = onClick)
-            .semantics { contentDescription = "Autopilot: ${AutopilotText.name(mode)}" }
-            .padding(start = 11.dp, end = 13.dp),
-        verticalAlignment = Alignment.CenterVertically,
-    ) {
-        if (strong) PulseDot(Color.White) else GlyphIcon(modeGlyph(mode), fg, size = 15.dp, weight = 2f)
-        Spacer(Modifier.width(6.dp))
-        RText(label, if (strong) RType.mono(13.5f, FontWeight.SemiBold) else RType.sans(13.5f, FontWeight.SemiBold), fg, maxLines = 1)
-    }
-}
-
 /** A dot that breathes, for something running now. Still when clocks are frozen (screenshots). */
 @Composable
 fun PulseDot(color: Color, size: Dp = 8.dp) {
     val live = LocalLiveTimers.current
+    // Read only in the layer: the breathing never recomposes the dot.
     val alpha = if (live) {
         val t = rememberInfiniteTransition(label = "pulse")
-        t.animateFloat(1f, 0.35f, infiniteRepeatable(tween(900, easing = LinearEasing), RepeatMode.Reverse), label = "pulseAlpha").value
+        t.animateFloat(1f, 0.35f, infiniteRepeatable(tween(900, easing = LinearEasing), RepeatMode.Reverse), label = "pulseAlpha")
     } else {
-        1f
+        null
     }
-    Box(Modifier.size(size).graphicsLayer { this.alpha = alpha }.clip(CircleShape).background(color))
+    Box(Modifier.size(size).graphicsLayer { this.alpha = alpha?.value ?: 1f }.clip(CircleShape).background(color))
 }
 
 /**

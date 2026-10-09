@@ -10,6 +10,7 @@ import dev.reins.android.ui.common.userMessage
 import dev.reins.core.GmailStatus
 import dev.reins.core.LoginProgress
 import kotlin.coroutines.cancellation.CancellationException
+import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -74,15 +75,20 @@ class ServiceViewModel(private val container: AppContainer, val service: String)
         }
     }
 
-    /** An account was added: it sounds, and the lists catch up. */
-    private suspend fun connected() {
+    /**
+     * An account was added: it sounds and the button is free again at once; the lists and every account's status
+     * catch up in the background rather than holding the screen.
+     */
+    private fun connected() {
         container.feedback.play(Event.Connected)
         refreshed()
     }
 
-    private suspend fun refreshed() {
-        container.refreshPending()
-        refreshNow()
+    private fun refreshed() {
+        viewModelScope.launch {
+            launch { container.refreshPending() }
+            refreshNow()
+        }
     }
 
     fun refresh() {
@@ -98,15 +104,20 @@ class ServiceViewModel(private val container: AppContainer, val service: String)
             _error.value = e.userMessage()
             return
         }
-        for (account in accounts) {
-            val status = try {
-                container.core.serviceAccountStatus(service, account.account)
-            } catch (e: CancellationException) {
-                throw e
-            } catch (e: Exception) {
-                GmailStatus.Unavailable(e.userMessage())
+        // One network check per account: all at once, each shown as it comes back.
+        coroutineScope {
+            for (account in accounts) {
+                launch {
+                    val status = try {
+                        container.core.serviceAccountStatus(service, account.account)
+                    } catch (e: CancellationException) {
+                        throw e
+                    } catch (e: Exception) {
+                        GmailStatus.Unavailable(e.userMessage())
+                    }
+                    _statuses.update { it + (account.account to status) }
+                }
             }
-            _statuses.update { it + (account.account to status) }
         }
     }
 

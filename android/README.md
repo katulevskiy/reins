@@ -49,7 +49,8 @@ Activity → Integrations lists every service. Telegram (own account: phone numb
 (pasted token), Google Calendar / Contacts (like Gmail), the phone's own calendar, contacts and text messages (Android
 permissions) and the password vault (master password once) are each added from their own screen; see
 `docs/deployment.md` for what each needs. Telegram's credentials come from `reins.telegramApiId` /
-`reins.telegramApiHash` in `~/.gradle/gradle.properties`.
+`reins.telegramApiHash` in `~/.gradle/gradle.properties`; release builds in CI take them from the `TELEGRAM_API_ID` /
+`TELEGRAM_API_HASH` repository secrets, and `google-services.json` from `GOOGLE_SERVICES_JSON`.
 
 ### Onboarding, pairing codes and links
 
@@ -82,9 +83,13 @@ in `state/RecoveryRecord`, so a WorkOS email change does not repeat the step and
 remembers the authenticated account id to read the encrypted recovery secret offline after subsequent restarts.
 Older installations may need one online refresh for that migration; a failure shows a retry screen.
 
-A fresh sign-in from these screens then shows a short setup once per account (`state/OnboardingStore`):
-notifications, "connect your computer" and the `/mcp` address for Claude.ai or ChatGPT. People who were signed in
-before it existed never see it.
+A fresh sign-in from these screens then shows a guided setup once per account (`state/OnboardingStore`,
+`ui/signin/SetupScreen`): how a request travels from an AI through this phone to an app, notifications, the integrations
+(each opens its own page over the setup and Back returns to the same page), Autopilot's modes and the optional on-device
+model, "connect your computer", the `/mcp` address for Claude.ai or ChatGPT, and a summary. Settings > Help > "Take the
+tour" shows it again. Notification access is checked on every return to the app (`platform/NotificationAccess`): while
+it is off the Activity tab says so first with "Turn on", which asks Android or, once Android stops asking, opens the
+app's notification settings. People who never saw the setup are asked once from the Activity tab.
 
 A computer pairs by the code it shows ("BCDF-GHJK", as a QR code of `https://app.reins2fa.com/pair?code=...`, or
 `reins://pair?code=...`). The phone scans it with Google's code scanner (`play-services-code-scanner`: Play services shows

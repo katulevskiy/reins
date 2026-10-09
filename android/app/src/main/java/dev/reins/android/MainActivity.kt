@@ -19,6 +19,7 @@ import dev.reins.android.platform.McpRedirectActivity
 import dev.reins.android.platform.SsoRedirectActivity
 import dev.reins.android.ui.mcp.isMcpRedirect
 import dev.reins.android.platform.AuthenticatorProvider
+import dev.reins.android.platform.PasskeyPromptProvider
 import dev.reins.android.platform.update.UpdateNotifier
 import dev.reins.android.platform.update.UpdateWorker
 import dev.reins.android.state.SessionState
@@ -42,8 +43,10 @@ class MainActivity : FragmentActivity() {
         enableEdgeToEdge()
         super.onCreate(savedInstanceState)
         val authenticator = AuthenticatorProvider.factory(this)
+        // Credential Manager shows its passkey sheet over this activity.
+        val passkeys = PasskeyPromptProvider.factory(this)
         setContent {
-            ReinsRoot(container, app, authenticator)
+            ReinsRoot(container, app, authenticator, passkeys)
         }
         if (savedInstanceState == null) handleIntent(intent)
         if (container.updates != null) UpdateWorker.schedule(applicationContext)
@@ -86,7 +89,7 @@ class MainActivity : FragmentActivity() {
         Foreground.focused = hasFocus && lifecycle.currentState.isAtLeast(Lifecycle.State.RESUMED)
         if (Foreground.focused) {
             app.onForeground()
-            lifecycleScope.launch { container.refreshPending() }
+            lifecycleScope.launch { container.refreshIfStale() }
         }
     }
 

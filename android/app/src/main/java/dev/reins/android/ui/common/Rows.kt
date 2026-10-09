@@ -12,6 +12,10 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.State
+import androidx.compose.runtime.derivedStateOf
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -23,13 +27,14 @@ import dev.reins.android.design.ActionTile
 import dev.reins.android.design.ButtonStyle
 import dev.reins.android.design.CapsuleButton
 import dev.reins.android.design.ExpiryPie
+import dev.reins.android.design.GrantClock
 import dev.reins.android.design.Glyph
 import dev.reins.android.design.GlyphIcon
 import dev.reins.android.design.TimeBarFrame
 import dev.reins.android.design.UsesMeter
 import dev.reins.android.design.clockColor
 import dev.reins.android.design.grantClock
-import dev.reins.android.design.rememberNowMillis
+import dev.reins.android.design.rememberNowState
 import dev.reins.android.design.ConnectorTags
 import dev.reins.android.design.LocalColors
 import dev.reins.android.design.RText
@@ -90,17 +95,22 @@ fun OutcomeTag(outcome: String) {
     }
 }
 
-/** A running permission: the time left as a pie and as a bar along the border, how much it was used, who and what. */
+/**
+ * A running permission: the time left as a pie and as a bar along the border, how much it was used, who and what.
+ * The clock's ticks reach only the pie and the border's drawing; the rest of the tile recomposes when the grant does.
+ */
 @Composable
 fun GrantTile(grant: GrantView, modifier: Modifier = Modifier, onClick: () -> Unit) {
     val c = LocalColors.current
     val action = ActionKind.of(grant.action)
-    val now = rememberNowMillis(1_000)
-    val clock = grantClock(grant, now / 1000)
+    // A grant without an end has nothing to count down; one that ended stops its clock.
+    val now = rememberNowState(1_000, untilMillis = grant.expiresAt?.let { it * 1000 })
+    val clock = remember(grant, now) { derivedStateOf { grantClock(grant, now.value / 1000) } }
+    val soon by remember(grant, now) { derivedStateOf { clock.value.soon } }
     Box(modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 6.dp)) {
         TimeBarFrame(
-            fraction = clock.fraction,
-            color = clockColor(clock, c),
+            fraction = { clock.value.fraction },
+            color = { clockColor(clock.value, c) },
             modifier = Modifier
                 .fillMaxWidth()
                 .clip(RoundedCornerShape(18.dp))
@@ -108,7 +118,7 @@ fun GrantTile(grant: GrantView, modifier: Modifier = Modifier, onClick: () -> Un
                 .pressable(highlight = c.controlFill, shape = RoundedCornerShape(18.dp), onClick = onClick),
         ) {
             Row(Modifier.fillMaxWidth().padding(start = 14.dp, end = 14.dp, top = 14.dp, bottom = 14.dp), verticalAlignment = Alignment.CenterVertically) {
-                ExpiryPie(clock, size = 54.dp)
+                GrantPie(clock)
                 Spacer(Modifier.width(14.dp))
                 Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(5.dp)) {
                     RText(untrusted(grant.summary), RType.sans(16f, FontWeight.SemiBold), c.text, maxLines = 2)
@@ -122,13 +132,19 @@ fun GrantTile(grant: GrantView, modifier: Modifier = Modifier, onClick: () -> Un
                     UsesMeter(grant.uses.toInt(), grant.maxUses?.toInt())
                     ConnectorTags(grant.service, grant.account, Modifier.padding(top = 1.dp))
                 }
-                if (clock.soon) {
+                if (soon) {
                     Spacer(Modifier.width(8.dp))
                     Tag("Ends soon", Modifier.testTag("endsSoon"), tint = c.danger)
                 }
             }
         }
     }
+}
+
+/** The pie of a [GrantTile], in a scope of its own so the tile's clock recomposes only this. */
+@Composable
+private fun GrantPie(clock: State<GrantClock>) {
+    ExpiryPie(clock.value, size = 54.dp)
 }
 
 /** A permission that ended, with the ways to start it again or to get rid of it. */
