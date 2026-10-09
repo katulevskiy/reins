@@ -115,6 +115,17 @@ final class AppNotifier: Notifier, @unchecked Sendable {
         ))
     }
 
+    /// An Approve from the notification did not go through: the request still waits, one tap away.
+    func approveFailed(_ message: String, requestId: String) {
+        post("approve-failed", NotificationContent.status(
+            title: "Not approved yet",
+            body: "\(message) Open it to try again.",
+            link: .item(kind: .request, id: requestId),
+            settings: settings(),
+            silent: false
+        ))
+    }
+
     func post(_ id: String, _ content: UNNotificationContent) {
         center.add(UNNotificationRequest(identifier: id, content: content, trigger: nil)) { _ in
             // Not allowed or not possible: the app shows it all the next time it is opened.

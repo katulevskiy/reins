@@ -130,6 +130,11 @@ struct ActivityScreen: View {
                 .padding(.leading, 16)
                 .padding(.top, 18)
                 .padding(.bottom, 6)
+            ForEach(Burst.of(model.pending), id: \.connectionId) { burst in
+                BurstBar(burst: burst)
+                    .padding(.horizontal, 16)
+                    .padding(.vertical, 5)
+            }
             ForEach(model.pending, id: \.id) { item in
                 PendingCard(item: item) {
                     model.openSheet(item.sheetTarget)
@@ -279,7 +284,7 @@ private struct PendingCard: View {
                     VStack(alignment: .leading, spacing: 4) {
                         HStack(spacing: 8) {
                             if !pairing { ConnectionIcon(connectionId: item.connectionId, label: item.connectionLabel, size: 20) }
-                            Text(joining ? "\(untrusted(item.connectionLabel)) asks to join your account" : pairing ? "\(untrusted(item.connectionLabel)): wants to connect" : item.headline)
+                            Text(joining ? "\(untrusted(item.connectionLabel)) asks to join your account" : pairing ? "\(untrusted(item.connectionLabel)): wants to connect" : item.listTitle)
                                 .font(RFont.sans(16, .semibold))
                                 .foregroundStyle(Palette.text)
                                 .lineLimit(2)
@@ -325,7 +330,7 @@ private struct PendingCard: View {
         .contextMenu {
             Button("Review", systemImage: "checkmark.shield", action: onOpen)
             Button("Copy", systemImage: "doc.on.doc") {
-                UIPasteboard.general.string = item.headline
+                UIPasteboard.general.string = item.listTitle
                 feedback.play(.copied)
             }
         }

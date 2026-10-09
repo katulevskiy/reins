@@ -123,6 +123,17 @@ final class PlatformTests: XCTestCase {
         )
     }
 
+    func testARoutineRequestCanBeApprovedFromTheNotificationAndSaysWhatHappens() {
+        var routine = item(action: "search")
+        routine.quick = true
+        routine.headline = "Claude gets the 2 emails found for \"from:bank\"."
+        let c = NotificationContent.pending(routine, settings: FeedbackSettings())
+        XCTAssertEqual(c.categoryIdentifier, "quickRequest")
+        XCTAssertEqual(c.threadIdentifier, "requests")
+        XCTAssertEqual(c.body, "Claude: Search Gmail\nClaude gets the 2 emails found for \"from:bank\".\nme@gmail.com")
+        XCTAssertEqual(NotificationContent.pending(item(), settings: FeedbackSettings()).categoryIdentifier, "request", "not routine: Deny only")
+    }
+
     func testARequestSaysWhoWantsWhat() {
         let c = NotificationContent.pending(item(), settings: FeedbackSettings())
         XCTAssertEqual(c.title, "Approval needed")
@@ -253,6 +264,11 @@ final class PlatformTests: XCTestCase {
         let categories = NotificationRouter.categories()
         XCTAssertEqual(Set(categories.map(\.identifier)), Set(NotificationCategory.allCases.map(\.rawValue)))
         for c in categories { XCTAssertFalse(c.hiddenPreviewsBodyPlaceholder.isEmpty, c.identifier) }
+        let quick = categories.first { $0.identifier == "quickRequest" }
+        XCTAssertEqual(quick?.actions.map(\.identifier), ["deny", "approve"])
+        let approve = quick?.actions.last
+        XCTAssertEqual(approve?.options.contains(.authenticationRequired), true, "only on an unlocked phone")
+        XCTAssertEqual(approve?.options.contains(.foreground), false, "answered without opening the app")
         let request = categories.first { $0.identifier == "request" }
         XCTAssertEqual(request?.actions.map(\.identifier), ["deny"])
         XCTAssertEqual(request?.actions.first?.options.contains(.destructive), true)
