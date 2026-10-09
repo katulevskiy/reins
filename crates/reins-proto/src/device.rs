@@ -194,6 +194,30 @@ pub struct Connections {
     pub connections: Vec<ConnectionInfo>,
 }
 
+/// One device signed in to the account (a phone, a Bitwarden app or the web vault), as listed by A9.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct DeviceInfo {
+    pub id: String,
+    /// The name the device gave when it signed in ("Pixel 9", "iPhone").
+    pub name: String,
+    /// Bitwarden's device type (0 Android, 1 iOS, 8 Linux desktop, 9 Chrome, ...).
+    pub kind: i32,
+    /// Unix seconds of the sign-in.
+    pub created_at: i64,
+    /// Unix seconds it last signed in or renewed its sign-in.
+    pub last_seen_at: i64,
+    /// The account's approval device.
+    pub approval: bool,
+    /// The device that asked.
+    pub this_device: bool,
+}
+
+/// A9 response.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Devices {
+    pub devices: Vec<DeviceInfo>,
+}
+
 /// Error body of every phone API error response.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ApiError {

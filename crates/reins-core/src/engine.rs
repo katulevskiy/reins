@@ -882,6 +882,44 @@ impl Engine {
             .collect())
     }
 
+    /// The devices signed in to the account: this phone first, then the approval device, then by last use.
+    pub async fn devices(&self) -> Result<Vec<crate::types::DeviceView>, CoreError> {
+        let session = self.session()?;
+        let list = api_call!(&session, |api| api.devices()).map_err(ApiFailure::into_core)?;
+        Ok(list
+            .devices
+            .into_iter()
+            .map(|d| {
+                let (kind, platform) = crate::types::DeviceView::kind_of(d.kind);
+                crate::types::DeviceView {
+                    name: crate::text::truncate_chars(&crate::text::one_line(&d.name), 64),
+                    id: d.id,
+                    kind,
+                    platform: platform.to_owned(),
+                    created_at: d.created_at,
+                    last_seen_at: d.last_seen_at,
+                    approval: d.approval,
+                    this_device: d.this_device,
+                }
+            })
+            .collect())
+    }
+
+    /// Signs another device of the account out at the server: its sign-in ends at once, so it can no longer sync the
+    /// vault or answer for the account. Already gone is fine.
+    pub async fn sign_out_device(&self, device_id: &str) -> Result<(), CoreError> {
+        check_id(device_id)?;
+        let session = self.session()?;
+        match api_call!(&session, |api| api.delete_device(device_id)) {
+            Ok(())
+            | Err(ApiFailure::Status {
+                status: 404,
+                ..
+            }) => Ok(()),
+            Err(e) => Err(e.into_core()),
+        }
+    }
+
     /// Remembers the icon the user picked for a connection (`None` = automatic).
     pub fn set_connection_icon(&self, connection_id: &str, icon: Option<String>) -> Result<(), CoreError> {
         check_id(connection_id)?;
