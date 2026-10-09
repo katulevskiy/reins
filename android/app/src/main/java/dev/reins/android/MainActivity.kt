@@ -49,14 +49,22 @@ class MainActivity : FragmentActivity() {
             ReinsRoot(container, app, authenticator, passkeys)
         }
         if (savedInstanceState == null) handleIntent(intent)
-        if (container.updates != null) UpdateWorker.schedule(applicationContext)
+        // WorkManager starts on first use: here, off the main thread and after the first frame is under way.
+        if (container.updates != null) lifecycleScope.launch(kotlinx.coroutines.Dispatchers.IO) { UpdateWorker.schedule(applicationContext) }
 
         // Long-poll only while the screen is on and someone is signed in whose keys this phone can open (a phone
         // waiting on the Unlock screen is not the approval device).
         lifecycleScope.launch {
             repeatOnLifecycle(Lifecycle.State.STARTED) {
-                combine(container.state.session, container.state.keysLocked, container.state.recoveryToRecord, container.state.recoveryLoadError) { session, locked, recovery, recoveryError ->
-                    session is SessionState.SignedIn && !locked && recovery == null && recoveryError == null
+                combine(
+                    container.state.session,
+                    container.state.keysLocked,
+                    container.state.recoveryToRecord,
+                    container.state.recoveryLoadError,
+                    container.state.sessionChecked,
+                ) { session, locked, recovery, recoveryError, checked ->
+                    // Not on the snapshot alone: the core confirms the session first (it opens meanwhile).
+                    checked && session is SessionState.SignedIn && !locked && recovery == null && recoveryError == null
                 }.distinctUntilChanged().collectLatest { eligible ->
                     if (eligible) {
                         container.refreshPending()

@@ -48,6 +48,10 @@ import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import java.util.concurrent.atomic.AtomicLong
 import kotlinx.coroutines.launch
+import dev.reins.android.feedback.play
+import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.combine
+import dev.reins.android.state.StartupSnapshot
 import kotlinx.coroutines.withContext
 
 /** Process singletons. No DI framework: the app has one of everything. */
@@ -55,6 +59,9 @@ class AppContainer(private val context: Context) {
     val appScope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
 
     val state = AppState()
+
+    /** The last settled session: the first frame shows it while the core opens ([StartupSnapshot]). */
+    private val startup = StartupSnapshot(context).also { snapshot -> snapshot.read()?.let { state.setSession(it) } }
     val google = GoogleAuthorizer(context)
 
     /** The Sounds & haptics switches; the notification channels follow them too. */
@@ -106,6 +113,28 @@ class AppContainer(private val context: Context) {
 
     /** Every call runs on `Dispatchers.IO`; the Rust core is built there too. */
     val core: ReinsCoreInterface = CoreProvider.factory.create(this) ?: MainSafeCore { createRealCore() }
+
+    init {
+        // Keep the snapshot in step with what the core settles on, off the main thread.
+        appScope.launch {
+            combine(
+                state.session,
+                state.keysLocked,
+                state.recoveryToRecord,
+                state.recoveryLoadError,
+                state.vaultPasskeyOffer,
+                state.approvalTakeover,
+                state.setupPending,
+            ) { values ->
+                val session = values[0] as SessionState
+                val plain = values[1] == false && values[2] == null && values[3] == null && values[4] == false &&
+                    values[5] == false && values[6] == false
+                session to plain
+            }.distinctUntilChanged().collect { (session, plain) ->
+                if (session != SessionState.Loading) withContext(Dispatchers.IO) { startup.write(session, plain) }
+            }
+        }
+    }
 
     /** The MCP server sign-in that waits for its browser page to come back. */
     val mcpSignIn = McpSignIn(context, { core }, state)
@@ -177,6 +206,7 @@ class AppContainer(private val context: Context) {
             if (!state.isCurrent(epoch) || core.session() != null || !state.isCurrent(epoch)) return
             state.setSession(SessionState.SignedOut)
         }
+        state.markSessionChecked()
         if (info != null && !state.keysLocked.value) {
             refreshPending()
             refreshConnections()
@@ -218,6 +248,27 @@ class AppContainer(private val context: Context) {
         }
     }
 
+    /**
+     * An answer the screen has already moved on from: [id]'s card goes now and [work] runs in the background, where
+     * leaving the screen does not stop it. If it fails, the card comes back and the bottom of the screen says
+     * "[failed]: why" for a moment.
+     */
+    fun answerInBackground(id: String, failed: String, work: suspend () -> Unit) {
+        state.removePending(id)
+        appScope.launch {
+            try {
+                work()
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                state.restorePending(id)
+                feedback.play(dev.reins.android.feedback.Event.Error)
+                state.flash("$failed: ${e.userMessage()}")
+            }
+            refreshPending()
+        }
+    }
+
     /** Approval sheets read ahead, so that they open without a spinner. */
     val approvalViews = dev.reins.android.ui.approval.ApprovalViews()
 
@@ -253,6 +304,8 @@ class AppContainer(private val context: Context) {
     }
 
     private suspend fun refreshOnce() {
+        // A snapshot on screen is not a session yet: [refreshSession] reads the lists once the core confirmed it.
+        if (!state.sessionChecked.value) return
         val epoch = state.accountEpoch.value
         try {
             // Independent reads: ask for them all at once.
@@ -276,6 +329,7 @@ class AppContainer(private val context: Context) {
                 state.setAccounts(accounts.await())
                 state.setServices(services.await())
                 state.setMcpServers(servers.await())
+                state.markLoaded()
                 state.setStartingPolicy(starting.await())
                 refreshAutopilot()
                 withContext(Dispatchers.IO) {
@@ -454,6 +508,24 @@ class AppContainer(private val context: Context) {
         withContext(Dispatchers.IO) { deviceStatus.setReplaced(true) }
         state.setDeviceReplaced(true)
         state.setApprovalDevice(false)
+    }
+
+    /**
+     * "Sign out" from Settings: the screen is signed out at once (nothing more of the account is read or shown), and
+     * the core locks the account, uploads its state and ends the browser session in the background ([signOut]).
+     */
+    fun signOutInBackground() {
+        state.setSession(SessionState.SignedOut)
+        appScope.launch {
+            try {
+                signOut()
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                state.flash("Sign-out did not finish: ${e.userMessage()}")
+                refreshSession()
+            }
+        }
     }
 
     /** Lock the account first, then end AuthKit's session in the same browser used by Continue. */

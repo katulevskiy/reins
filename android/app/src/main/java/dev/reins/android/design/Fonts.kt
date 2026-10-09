@@ -31,4 +31,18 @@ object Fonts {
             Font("fonts/GeistMono-SemiBold.ttf", a, FontWeight.SemiBold),
         )
     }
+
+    /**
+     * Loads every face into Compose's shared font cache, off the main thread at process start, so the first screen's
+     * text does not read the font files while it draws.
+     */
+    fun warm() {
+        val resolver = androidx.compose.ui.text.font.createFontFamilyResolver(app)
+        for (weight in listOf(FontWeight.Normal, FontWeight.Medium, FontWeight.SemiBold, FontWeight.Bold)) {
+            runCatching { resolver.resolve(sans, weight) }
+        }
+        for (weight in listOf(FontWeight.Normal, FontWeight.Medium, FontWeight.SemiBold)) {
+            runCatching { resolver.resolve(mono, weight) }
+        }
+    }
 }

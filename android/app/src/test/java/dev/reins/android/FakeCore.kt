@@ -88,7 +88,11 @@ class FakeCore : ReinsCoreInterface {
 
     override suspend fun approvalView(requestId: String) = approval ?: throw CoreException.NotFound()
 
+    /** Makes approving fail (after the sheet has already closed: the app answers in the background). */
+    @Volatile var approveFailure: CoreException? = null
+
     override suspend fun approve(requestId: String, choice: ApprovalChoice) {
+        approveFailure?.let { throw it }
         approvals += requestId to choice
         pending = pending.filterNot { it.id == requestId }
     }

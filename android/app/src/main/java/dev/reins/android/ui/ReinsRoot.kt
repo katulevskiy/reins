@@ -96,7 +96,17 @@ import kotlinx.coroutines.launch
 @Composable
 fun ReinsRoot(container: AppContainer, app: AppViewModel, authenticator: Authenticator, passkeys: PasskeyPrompt) {
     ReinsTheme {
-        ProvideFeedback(container.feedback) { RootContent(container, app, authenticator, passkeys) }
+        ProvideFeedback(container.feedback) {
+            Box(Modifier.fillMaxSize()) {
+                RootContent(container, app, authenticator, passkeys)
+                // What did not work in the background, for a moment, above the tab bar.
+                container.updates?.let { dev.reins.android.ui.update.InstallPermissionHost(it) }
+                dev.reins.android.ui.common.FlashHost(
+                    container.state,
+                    Modifier.align(Alignment.BottomCenter).windowInsetsPadding(WindowInsets.navigationBars).padding(bottom = 96.dp),
+                )
+            }
+        }
     }
 }
 
@@ -178,6 +188,9 @@ private fun SignedInContent(
     serverUrl: String,
 ) {
     val state = container.state
+    // The main screen is up and usable: what startup is measured to (`Fully drawn` in the log, Macrobenchmark).
+    val host = androidx.compose.ui.platform.LocalContext.current as? androidx.activity.ComponentActivity
+    androidx.compose.runtime.LaunchedEffect(Unit) { host?.reportFullyDrawn() }
     val setup by state.setupPending.collectAsStateWithLifecycle()
     val connections by state.connections.collectAsStateWithLifecycle()
     val sheet by app.sheet.collectAsStateWithLifecycle()

@@ -19,6 +19,8 @@ import dev.reins.core.DownloadProgress
 import kotlin.coroutines.cancellation.CancellationException
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.flow.flowOn
+import kotlinx.coroutines.flow.emitAll
 
 /** Where the model download stands as far as the job goes (the bytes come from `modelStatus()`). */
 enum class DownloadJob {
@@ -57,14 +59,17 @@ class WorkModelDownloads(private val context: Context) : ModelDownloads {
         WorkManager.getInstance(context).cancelUniqueWork(NAME)
     }
 
+    // WorkManager starts on first use; that happens here off the main thread, not while the first screen draws.
     override val job: Flow<DownloadJob>
-        get() = WorkManager.getInstance(context).getWorkInfosForUniqueWorkFlow(NAME).map { infos ->
-            when {
-                infos.any { it.state == WorkInfo.State.RUNNING } -> DownloadJob.Running
-                infos.any { it.state == WorkInfo.State.ENQUEUED || it.state == WorkInfo.State.BLOCKED } -> DownloadJob.Waiting
-                else -> DownloadJob.Idle
+        get() = kotlinx.coroutines.flow.flow { emitAll(WorkManager.getInstance(context).getWorkInfosForUniqueWorkFlow(NAME)) }
+            .flowOn(kotlinx.coroutines.Dispatchers.IO)
+            .map { infos ->
+                when {
+                    infos.any { it.state == WorkInfo.State.RUNNING } -> DownloadJob.Running
+                    infos.any { it.state == WorkInfo.State.ENQUEUED || it.state == WorkInfo.State.BLOCKED } -> DownloadJob.Waiting
+                    else -> DownloadJob.Idle
+                }
             }
-        }
 
     companion object {
         const val NAME = "autopilot-model"
