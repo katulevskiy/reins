@@ -122,7 +122,7 @@ struct ActivityScreen: View {
                 .padding(16)
                 .accessibilityIdentifier("registrationBanner")
         }
-        ScreenLockBanner().padding(.horizontal, 16).padding(.vertical, 6)
+        ScreenLockBanner(padding: EdgeInsets(top: 6, leading: 16, bottom: 6, trailing: 16))
     }
 
     @ViewBuilder private var waiting: some View {

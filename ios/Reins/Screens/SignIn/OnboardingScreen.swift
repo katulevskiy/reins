@@ -65,9 +65,11 @@ private struct ComputerStep: View {
                 .font(RFont.sans(15.5))
                 .foregroundStyle(Palette.secondary)
                 .fixedSize(horizontal: false, vertical: true)
-            PhoneStatus().padding(.vertical, 4)
-            // Approving needs the passcode: better found out here than at the first request.
-            ScreenLockBanner()
+            VStack(alignment: .leading, spacing: 0) {
+                PhoneStatus().padding(.vertical, 4)
+                // Approving needs the passcode: better found out here than at the first request.
+                ScreenLockBanner(padding: EdgeInsets(top: 12, leading: 0, bottom: 4, trailing: 0))
+            }
             if let added {
                 FormBanner(text: "\(untrusted(added.label)) is connected.", kind: .info)
                     .accessibilityIdentifier("computerConnected")
