@@ -34,6 +34,11 @@ class OnboardingStore(context: Context) {
         putBoolean(DONE + key, true)
     }
 
+    /** The server of the latest sign-in: the welcome screen offers it again after signing out (a self-hosted one). */
+    var lastServer: String?
+        get() = prefs.getString(LAST_SERVER, null)
+        set(value) = prefs.edit { if (value == null) remove(LAST_SERVER) else putString(LAST_SERVER, value) }
+
     private fun key(account: SessionInfo): String {
         val value = account.serverUrl.trim().trimEnd('/').lowercase(java.util.Locale.ROOT) + " " + account.email.trim().lowercase(java.util.Locale.ROOT)
         return java.security.MessageDigest.getInstance("SHA-256").digest(value.toByteArray()).joinToString("") { "%02x".format(it) }
@@ -42,5 +47,6 @@ class OnboardingStore(context: Context) {
     private companion object {
         const val PENDING = "pending:"
         const val DONE = "done:"
+        const val LAST_SERVER = "last-server"
     }
 }

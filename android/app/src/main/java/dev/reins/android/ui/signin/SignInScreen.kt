@@ -18,6 +18,7 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -52,6 +53,10 @@ import dev.reins.android.feedback.LocalFeedback
 import dev.reins.android.feedback.cueUnlessRecent
 import dev.reins.android.platform.Browser
 import dev.reins.android.ui.common.ReinsLinks
+import kotlinx.coroutines.delay
+
+/** How long the address must stay unchanged before the server is asked what it offers. */
+private const val SERVER_CHECK_DELAY_MS = 400L
 
 /** The pages of the signed-out app. */
 enum class OnboardingPage { Welcome, Create, SignIn }
@@ -70,6 +75,15 @@ fun OnboardingScreen(viewModel: SignInViewModel, linkWaiting: Boolean = false) {
     // A build without a usable default shows the field from the start.
     var customServer by rememberSaveable { mutableStateOf(AccountRules.serverUrl(BuildConfig.DEFAULT_SERVER) == null) }
     var email by rememberSaveable { mutableStateOf("") }
+    // After signing out of a self-hosted server, the welcome page offers that server again.
+    val lastServer by viewModel.lastServer.collectAsStateWithLifecycle()
+    LaunchedEffect(lastServer) {
+        val last = lastServer ?: return@LaunchedEffect
+        if (!customServer && server == BuildConfig.DEFAULT_SERVER && !AccountRules.isDefaultServer(last, BuildConfig.DEFAULT_SERVER)) {
+            customServer = true
+            server = last
+        }
+    }
     val go = { next: OnboardingPage ->
         viewModel.clearError()
         if (next == OnboardingPage.Welcome) feedback.cueUnlessRecent(Cue.Close) else feedback.cue(Cue.Open)
@@ -114,9 +128,17 @@ private fun WelcomePage(
     val authTab = rememberLauncherForActivityResult(AuthTabIntent.AuthenticateUserResultContract()) { result ->
         if (result.resultCode == AuthTabIntent.RESULT_OK) result.resultUri?.let { viewModel.authTabReturned(it.toString()) }
     }
-    val valid = AccountRules.serverUrl(server) != null
+    val url = AccountRules.serverUrl(server)
+    val valid = url != null
+    // Asked once the address stops changing: whether "Continue" works there at all.
+    val serverInfo by viewModel.serverInfo.collectAsStateWithLifecycle()
+    LaunchedEffect(server) {
+        delay(SERVER_CHECK_DELAY_MS)
+        viewModel.checkServer(server)
+    }
+    val noBrowserSignIn = serverInfo?.let { (asked, info) -> asked == url && info.browserSignIn == false } == true
     // Passwords are for servers people run themselves; the hosted server signs in through "Continue" only.
-    val passwordForms = custom && valid && !AccountRules.isDefaultServer(server, BuildConfig.DEFAULT_SERVER)
+    val passwordForms = (custom && valid && !AccountRules.isDefaultServer(server, BuildConfig.DEFAULT_SERVER)) || noBrowserSignIn
     Screen(title = null, modifier = Modifier.testTag("welcome")) {
         Column(Modifier.padding(horizontal = 24.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
             Spacer(Modifier.height(72.dp))
@@ -136,13 +158,16 @@ private fun WelcomePage(
             }
             Spacer(Modifier.height(36.dp))
             ui.error?.let { Banner(it, kind = BannerKind.Error, tag = "signInError") }
-            CapsuleButton(
-                "Continue",
-                Modifier.fillMaxWidth().testTag("continue"),
-                style = ButtonStyle.Primary,
-                enabled = valid,
-                busy = ui.busy,
-            ) { viewModel.continueWithSso(server) { Browser.openSignIn(context, it, AccountRules.SSO_CALLBACK_SCHEME, authTab) } }
+            // A server without SSO would only answer "Continue" with an error page: it is not offered there.
+            if (!noBrowserSignIn) {
+                CapsuleButton(
+                    "Continue",
+                    Modifier.fillMaxWidth().testTag("continue"),
+                    style = ButtonStyle.Primary,
+                    enabled = valid,
+                    busy = ui.busy,
+                ) { viewModel.continueWithSso(server) { Browser.openSignIn(context, it, AccountRules.SSO_CALLBACK_SCHEME, authTab) } }
+            }
             if (!passwordForms) {
                 RText(
                     "Sign in or create an account on the secure sign-in page.",
@@ -153,12 +178,18 @@ private fun WelcomePage(
             ServerChoice(server, onServer, custom, onCustom, enabled = !ui.busy)
             if (passwordForms) {
                 RText(
-                    "Or with email and master password on this server:",
+                    if (noBrowserSignIn) "This server signs in with an email address and a master password." else "Or with email and master password on this server:",
                     RType.sans(13.5f, lineHeight = 19f),
                     c.secondary,
-                    Modifier.padding(start = 4.dp, top = 8.dp),
+                    Modifier.padding(start = 4.dp, top = 8.dp).testTag("passwordFormsNote"),
                 )
-                CapsuleButton("Sign in", Modifier.fillMaxWidth().testTag("startSignIn"), style = ButtonStyle.Secondary, enabled = !ui.busy, onClick = onSignIn)
+                CapsuleButton(
+                    "Sign in",
+                    Modifier.fillMaxWidth().testTag("startSignIn"),
+                    style = if (noBrowserSignIn) ButtonStyle.Primary else ButtonStyle.Secondary,
+                    enabled = !ui.busy,
+                    onClick = onSignIn,
+                )
                 CapsuleButton(
                     "Create account",
                     Modifier.fillMaxWidth().testTag("createAccount"),

@@ -69,7 +69,8 @@ class OnboardingFlowTest : FlowHarness() {
 
     /** "Use another server" on the welcome page, with [server] typed in. */
     private fun useOwnServer() {
-        tap("useAnotherServer")
+        // After a sign-out the welcome page already shows the last server's address.
+        if (has("useAnotherServer")) tap("useAnotherServer")
         awaitTag("server")
         rule.onNodeWithTag("server").performTextReplacement(server)
     }
@@ -135,6 +136,32 @@ class OnboardingFlowTest : FlowHarness() {
         tap("defaultServer")
         awaitGone("server")
         assertFalse(has("startSignIn"))
+    }
+
+    @Test
+    fun aServerWithoutBrowserSignInOffersOnlyTheMasterPassword() {
+        core.session = null
+        core.serverInfos[server] = dev.reins.core.ServerInfo(false, false, false)
+        launch()
+        useOwnServer()
+        // Asked once the address settles: no "Continue", which would end on an error page there.
+        awaitGone("continue")
+        awaitText("This server signs in with an email address and a master password.")
+        assertTrue(has("startSignIn") && has("createAccount"))
+        // A server that says nothing (an older one) keeps every way in.
+        rule.onNodeWithTag("server").performTextReplacement("https://old.example.com")
+        awaitTag("continue")
+        assertTrue(has("startSignIn"))
+    }
+
+    @Test
+    fun afterSigningOutTheWelcomePageOffersTheSameServerAgain() {
+        core.session = null
+        container.onboarding.lastServer = server
+        launch()
+        awaitTag("server")
+        rule.onNodeWithTag("server").assertTextContains(server)
+        awaitTag("startSignIn")
     }
 
     @Test

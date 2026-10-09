@@ -155,6 +155,7 @@ class AppContainer(private val context: Context) {
             // Before the code: a passkey that opens the vault, unless the account has one or the offer was declined.
             val offerPasskey = needsRecording && !state.vaultPasskeyDeclined && hasNoVaultPasskey()
             val device = withContext(Dispatchers.IO) {
+                onboarding.lastServer = info.serverUrl
                 deviceStatus.selectAccount(info)
                 deviceStatus.setKeysLocked(!keysOpen)
                 DeviceGate(deviceStatus.seenActivityId(), deviceStatus.isApprovalDevice() && !deviceStatus.isReplaced(),

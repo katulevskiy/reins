@@ -324,6 +324,7 @@ class FakeCore : ReinsCoreInterface {
         ssoBeginError = null
         ssoFinishError = null
         ssoBegins.clear()
+        serverInfos.clear()
         ssoFinishes.clear()
         resetError = null
         resets.clear()
@@ -346,6 +347,11 @@ class FakeCore : ReinsCoreInterface {
         refusedRegistrations.set(0)
         resetVaultPasskeys()
     }
+
+    /** What `serverInfo` answers per server; unknown servers say nothing (an older server). */
+    val serverInfos = java.util.concurrent.ConcurrentHashMap<String, dev.reins.core.ServerInfo>()
+
+    override suspend fun serverInfo(serverUrl: String) = serverInfos[serverUrl] ?: dev.reins.core.ServerInfo(null, null, null)
 
     override suspend fun ssoBegin(serverUrl: String): SsoStart {
         ssoBegins += serverUrl
