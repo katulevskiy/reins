@@ -160,7 +160,9 @@ impl<F: Forge> GitHost<F> {
     fn explain(status: StatusCode) -> CoreError {
         let name = F::NAME;
         match status {
-            StatusCode::UNAUTHORIZED => CoreError::needs_attention(format!("{name} no longer accepts the token")),
+            StatusCode::UNAUTHORIZED => CoreError::needs_attention(format!(
+                "{name} does not accept the token: it is mistyped, expired or revoked"
+            )),
             StatusCode::FORBIDDEN => CoreError::service(format!(
                 "{name} refused: the token may lack a permission for that, or the rate limit is used up"
             )),
