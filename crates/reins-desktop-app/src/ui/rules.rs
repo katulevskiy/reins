@@ -12,7 +12,8 @@ use reins_desktop::settings::GuardList;
 
 use super::field::{Field, slot};
 use super::parts::{
-    button, caption, card, empty, fine, group, labelled, mono, page_header, row, segment, segmented, toggle,
+    button, caption, card, empty, fine, group, help, labelled, labelled_help, mono, page_header, row, segment,
+    segmented, toggle,
 };
 use super::{Data, Root};
 use crate::backend::Setting;
@@ -48,9 +49,14 @@ impl Root {
     ) -> AnyElement {
         let mut page = div().flex().flex_col().gap(px(22.0)).child(page_header(
             "What asks your phone",
-            "Checked on this computer, before an AI tool runs a command or opens a file. When a rule matches, your \
-             phone is asked, and approving always happens there. Anything else goes through.",
-            pal,
+            Some(help(
+                "rules",
+                "Checked on this computer, before an AI tool runs a command or opens a file. When a rule matches, \
+                 your phone is asked, and approving always happens there. Anything else goes through.",
+                d,
+                pal,
+                cx,
+            )),
         ));
         page = page.when_some(d.notice.clone(), |p, n| p.child(caption(n, pal).text_color(pal.danger)));
         page = page.when_some(d.note.clone(), |p, n| p.child(caption(n, pal)));
@@ -67,18 +73,7 @@ impl Root {
             let id = g.id;
             let mut r = row(pal, i == 0)
                 .id(SharedString::from(format!("group-{id}")))
-                .child(labelled(g.label, Some(g.detail.to_owned()), pal))
-                .child(
-                    fine(
-                        if on {
-                            "Asks"
-                        } else {
-                            "Goes through"
-                        },
-                        pal,
-                    )
-                    .flex_none(),
-                )
+                .child(labelled_help(g.label, None, Some(help(g.id, g.detail, d, pal, cx)), pal))
                 .child(toggle(on, pal));
             if guard.defaults {
                 r = r
@@ -94,20 +89,44 @@ impl Root {
         } else {
             "The built-in rules are off in config.toml (`guard.defaults = false`); only your own lists below count."
         };
-        page = page.child(group("Built-in rules", Some(about), groups, pal));
+        page = page.child(group("Built-in rules", Some(help("rules-builtin", about, d, pal, cx)), groups));
 
         // Own lists.
         page = page.child(group(
             "Also ask about",
-            Some("Commands match from the start of the command, and * matches anything (make deploy*). Files are paths or globs (~/secrets/**)."),
+            Some(help(
+                "rules-also",
+                "Commands match from the start of the command, and * matches anything (make deploy*). Files are \
+                 paths or globs (~/secrets/**).",
+                d,
+                pal,
+                cx,
+            )),
             card(pal)
-                .child(self.list_editor(GuardList::Commands, "Commands", "make deploy*", &guard.commands, true, pal, window, cx))
-                .child(self.list_editor(GuardList::Files, "Files", "~/secrets/**", &guard.files, false, pal, window, cx)),
-            pal,
+                .child(self.list_editor(
+                    GuardList::Commands,
+                    "Commands",
+                    "make deploy*",
+                    &guard.commands,
+                    true,
+                    pal,
+                    window,
+                    cx,
+                ))
+                .child(self.list_editor(
+                    GuardList::Files,
+                    "Files",
+                    "~/secrets/**",
+                    &guard.files,
+                    false,
+                    pal,
+                    window,
+                    cx,
+                )),
         ));
         page = page.child(group(
             "Never ask about",
-            Some("Exceptions to every rule above: these go through without asking."),
+            Some(help("rules-never", "Exceptions to every rule above: these go through without asking.", d, pal, cx)),
             card(pal)
                 .child(self.list_editor(
                     GuardList::AllowCommands,
@@ -129,13 +148,12 @@ impl Root {
                     window,
                     cx,
                 )),
-            pal,
         ));
 
         // No answer.
         let mut answer = segmented(pal);
         for (i, (choice, label)) in
-            [(OnNoAnswer::Deny, "Deny it"), (OnNoAnswer::Ask, "Leave it to the AI tool")].into_iter().enumerate()
+            [(OnNoAnswer::Deny, "Deny"), (OnNoAnswer::Ask, "AI tool decides")].into_iter().enumerate()
         {
             answer = answer.child(
                 segment(("no-answer", i), label, guard.on_no_answer == choice, pal)
@@ -144,9 +162,16 @@ impl Root {
         }
         page = page.child(group(
             "When nobody answers",
-            Some("If your phone does not answer in time: refuse the command (the AI tool is told why), or let the AI tool's own permission prompt decide."),
-            card(pal).child(row(pal, true).child(div().flex_1().child(fine("Then", pal).text_size(px(12.5)))).child(answer)),
-            pal,
+            Some(help(
+                "rules-no-answer",
+                "If your phone does not answer in time: refuse the command (the AI tool is told why), or let the AI \
+                 tool's own permission prompt decide.",
+                d,
+                pal,
+                cx,
+            )),
+            card(pal)
+                .child(row(pal, true).child(div().flex_1().child(fine("Then", pal).text_size(px(12.5)))).child(answer)),
         ));
 
         // Waits.
@@ -163,24 +188,13 @@ impl Root {
         let hook_wait = waits("hook-wait", guard.timeout_secs, Setting::GuardTimeout, cx);
         let approval_wait = waits("approval-wait", approval, Setting::ApprovalTimeout, cx);
         page = page.child(group(
-            "How long to wait for your phone",
+            "Wait for your phone",
             None,
-            card(pal)
-                .child(
-                    row(pal, true)
-                        .child(labelled("Commands and files", Some("Before an AI tool goes ahead".to_owned()), pal))
-                        .child(hook_wait),
-                )
-                .child(
-                    row(pal, false)
-                        .child(labelled(
-                            "git, SSH, API keys and secrets",
-                            Some("Changing it restarts the background service".to_owned()),
-                            pal,
-                        ))
-                        .child(approval_wait),
-                ),
-            pal,
+            card(pal).child(row(pal, true).child(labelled("Commands and files", None, pal)).child(hook_wait)).child(
+                row(pal, false)
+                    .child(labelled("git, SSH, secrets", Some("Restarts the service".to_owned()), pal))
+                    .child(approval_wait),
+            ),
         ));
         page.into_any_element()
     }

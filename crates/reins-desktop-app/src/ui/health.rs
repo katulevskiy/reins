@@ -1,5 +1,5 @@
 //! The health card (`reins doctor` in the window: the overall state, what to look at and a button where the window
-//! can fix it) and "Send a test to my phone" (`reins test`), on Overview, in the welcome flow's last step and in an
+//! can fix it) and "Send a test" (`reins test`), on Overview, in the welcome flow's last step and in an
 //! empty Activity.
 
 use gpui::prelude::FluentBuilder as _;
@@ -9,7 +9,7 @@ use gpui::{
 };
 use reins_desktop::doctor::Level;
 
-use super::parts::{big, button, caption, card, check, fine, group, level_mark, row, waiting_dot};
+use super::parts::{big, button, caption, card, check, fine, group, help, level_mark, row, waiting_dot};
 use super::{Data, Root};
 use crate::format;
 use crate::health::{self, Test};
@@ -47,11 +47,7 @@ impl Root {
                 let s = health::summary(c);
                 (s.level, s.title, s.detail)
             }
-            (None, None) => (
-                Level::Skip,
-                "Checking…".to_owned(),
-                "Is everything set up so your agents reach your phone?".to_owned(),
-            ),
+            (None, None) => (Level::Skip, "Checking…".to_owned(), String::new()),
         };
         let mark = if checks.is_none() && d.health.error.is_none() {
             div()
@@ -77,9 +73,8 @@ impl Root {
                     .min_w(px(0.0))
                     .gap(px(1.0))
                     .child(div().text_size(px(15.0)).font_weight(FontWeight::SEMIBOLD).child(title))
-                    .child(caption(detail, pal)),
+                    .when(!detail.is_empty(), |c| c.child(caption(detail, pal))),
             )
-            .when_some(checked(d), |r, at| r.child(fine(at, pal).flex_none()))
             .child(Self::check_again("check-again", "Check again", d, pal, cx));
 
         let mut body = card(pal).child(head);
@@ -116,31 +111,39 @@ impl Root {
         body = body.child(div().border_t_1().border_color(pal.hairline).child(Self::test_panel(d, true, pal, cx)));
         group(
             "Health",
-            Some(&format!(
-                "Reins checks every minute that your agents reach your phone ({} checks now).",
-                shortcuts::hint("r")
+            Some(help(
+                "health",
+                format!(
+                    "Reins checks every minute that your agents reach your phone ({} checks now).",
+                    shortcuts::hint("r")
+                ),
+                d,
+                pal,
+                cx,
             )),
             body,
-            pal,
         )
         .into_any_element()
     }
 
-    /// "Send a test to my phone" and how it went. `checks_above`: the health checks are above it on the page.
+    /// "Send a test" and how it went. `checks_above`: the health checks are above it on the page.
     pub(super) fn test_panel(d: &Data, checks_above: bool, pal: Palette, cx: &mut Context<'_, Self>) -> Div {
         let (line, button_label, enabled): (AnyElement, &str, bool) = match &d.test {
             Test::Idle => (
                 div()
                     .flex()
-                    .flex_col()
-                    .gap(px(2.0))
+                    .items_center()
+                    .gap(px(6.0))
                     .child(div().font_weight(FontWeight::MEDIUM).child("See it work"))
-                    .child(caption(
+                    .child(help(
+                        "test",
                         "Sends a harmless question to your phone. Approve or deny it; nothing happens either way.",
+                        d,
                         pal,
+                        cx,
                     ))
                     .into_any_element(),
-                "Send a test to my phone",
+                "Send a test",
                 d.paired,
             ),
             Test::Waiting(sent) => {
@@ -156,11 +159,7 @@ impl Root {
                                 .flex()
                                 .flex_col()
                                 .gap(px(2.0))
-                                .child(
-                                    div()
-                                        .font_weight(FontWeight::MEDIUM)
-                                        .child("Sent. Open Reins on your phone and approve or deny it…"),
-                                )
+                                .child(div().font_weight(FontWeight::MEDIUM).child("Check your phone…"))
                                 .child(fine(format!("{left} s left"), pal)),
                         )
                         .into_any_element(),
@@ -222,11 +221,8 @@ impl Root {
     pub(super) fn checks_row(d: &Data, pal: Palette, cx: &mut Context<'_, Self>) -> AnyElement {
         let line = match (&d.health.checks, &d.health.error) {
             (_, Some(e)) => e.clone(),
-            (Some(c), None) => {
-                let s = health::summary(c);
-                format!("{}. {}", s.title, s.detail)
-            }
-            (None, None) => "Not checked yet.".to_owned(),
+            (Some(c), None) => health::summary(c).title,
+            (None, None) => "Not checked yet".to_owned(),
         };
         let level = d.health.checks.as_deref().map(reins_desktop::doctor::overall);
         card(pal)

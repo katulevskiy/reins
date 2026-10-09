@@ -8,7 +8,7 @@ use gpui::{
 use reins_desktop::journal::{Decider, Entry, Kind, Outcome};
 
 use super::parts::{
-    button, caption, card, chip, dots, empty, empty_state, fine, one_line, outcome_badge, page_header, phone_qr,
+    button, caption, card, chip, dots, empty, empty_state, fine, help, one_line, outcome_badge, page_header, phone_qr,
 };
 use super::{Data, ROWS, Root};
 use crate::format;
@@ -31,16 +31,15 @@ pub fn matches(e: &Entry, outcome: Option<Outcome>, kind: Option<Kind>) -> bool 
     outcome.is_none_or(|o| e.outcome == o) && kind.is_none_or(|k| e.kind == k)
 }
 
-/// Who decided, in a few words.
+/// Who decided, in a few words; nothing when the phone answered (the usual, and the badge says how).
 #[must_use]
-pub fn decided(e: &Entry) -> &'static str {
+pub fn decided(e: &Entry) -> Option<&'static str> {
     match (e.decider, e.outcome) {
-        (Decider::Settings, _) => "by your rules",
-        (Decider::Local, _) => "on this computer",
-        (Decider::Phone, Outcome::Waiting) => "asking your phone",
-        (Decider::Phone, Outcome::TimedOut) => "no answer from your phone",
-        (Decider::Phone, Outcome::Failed) => "could not ask your phone",
-        (Decider::Phone, _) => "on your phone",
+        (Decider::Settings, _) => Some("by your rules"),
+        (Decider::Local, _) => Some("on this computer"),
+        (Decider::Phone, Outcome::TimedOut) => Some("no answer"),
+        (Decider::Phone, Outcome::Failed) => Some("couldn't ask"),
+        (Decider::Phone, _) => None,
     }
 }
 
@@ -93,8 +92,7 @@ impl Root {
                     .flex_1()
                     .min_w(px(0.0))
                     .gap(px(1.0))
-                    .child(one_line(e.what.clone()).font_weight(FontWeight::MEDIUM))
-                    .child(one_line(meta(e)).text_size(px(12.0)).text_color(pal.secondary)),
+                    .child(one_line(e.what.clone()).font_weight(FontWeight::MEDIUM)),
             )
             .child(
                 div()
@@ -104,7 +102,7 @@ impl Root {
                     .items_end()
                     .gap(px(1.0))
                     .child(div().text_size(px(12.0)).text_color(pal.secondary).child(format::ago(d.now, e.at)))
-                    .child(fine(decided(e), pal)),
+                    .when_some(decided(e), |c, who| c.child(fine(who, pal))),
             )
             .on_click(cx.listener(move |this, _, _, cx| {
                 if scope == "activity" {
@@ -131,7 +129,8 @@ impl Root {
     }
 
     fn entry_detail(e: &Entry, now: i64, pal: Palette) -> AnyElement {
-        let mut facts = vec![format!("Asked {}", format::when(now, e.at))];
+        // What kind, who asked and the rule: in the detail, the row says what was asked.
+        let mut facts = vec![meta(e), format!("asked {}", format::when(now, e.at))];
         match e.ended_at {
             Some(end) => {
                 facts.push(format!("ended {}", format::when(now, end)));
@@ -183,7 +182,7 @@ impl Root {
             )));
         }
         let mut kinds = div().flex().flex_wrap().gap(px(6.0)).child(
-            chip("kind-all", "Every kind", None, kind.is_none(), pal).on_click(Self::on_view(cx, |this, _| {
+            chip("kind-all", "All kinds", None, kind.is_none(), pal).on_click(Self::on_view(cx, |this, _| {
                 this.kind_filter = None;
                 this.rows_shown = ROWS;
             })),
@@ -206,13 +205,19 @@ impl Root {
                 .child(empty_state(
                     dots(pal.accent),
                     "Nothing asked yet",
-                    "When an AI agent, git or ssh on this computer asks for something, it shows up here: what it \
-                     was, who asked, and how your phone answered. Send a test to see one arrive.",
+                    Some(help(
+                        "activity-empty",
+                        "When an AI agent, git or ssh on this computer asks for something, it shows up here: what it \
+                         was, who asked, and how your phone answered. Send a test to see one arrive.",
+                        d,
+                        pal,
+                        cx,
+                    )),
                     pal,
                 ))
                 .child(div().border_t_1().border_color(pal.hairline).child(Self::test_panel(d, false, pal, cx)))
         } else if total == 0 {
-            card(pal).child(empty("Nothing matches these filters.", pal))
+            card(pal).child(empty("No matches", pal))
         } else {
             let mut list = card(pal);
             for (i, e) in shown.iter().take(self.rows_shown).enumerate() {
@@ -228,14 +233,19 @@ impl Root {
             .child(
                 div()
                     .flex()
-                    .items_start()
+                    .items_center()
                     .gap(px(16.0))
                     .child(
                         page_header(
                             "Activity",
-                            "Everything asked for on this computer, and how it ended. Approving always happens on \
-                             your phone; Reins only keeps the record here.",
-                            pal,
+                            Some(help(
+                                "activity",
+                                "Everything asked for on this computer, and how it ended. Approving always happens \
+                                 on your phone; Reins only keeps the record here, the newest 500.",
+                                d,
+                                pal,
+                                cx,
+                            )),
                         )
                         .flex_1()
                         .min_w(px(0.0)),
@@ -271,10 +281,7 @@ impl Root {
                     ),
             );
         } else if total > 0 {
-            page = page.child(fine(
-                format!("{} · the newest 500 are kept here", format::count(total as u64, "request", "requests")),
-                pal,
-            ));
+            page = page.child(fine(format::count(total as u64, "request", "requests"), pal));
         }
         page.into_any_element()
     }
@@ -310,12 +317,13 @@ mod tests {
     fn rows_say_who_decided_and_what_for() {
         let mut e = entry(Kind::Command, Outcome::Denied).source(Some("Claude Code"));
         e.service = Some("command:rm -r".to_owned());
-        assert_eq!(decided(&e), "on your phone");
+        assert_eq!(decided(&e), None);
         assert_eq!(service_text(&e).as_deref(), Some("rm -r"));
         assert_eq!(meta(&e), "Command · Claude Code · rm -r");
         let rules = entry(Kind::Command, Outcome::Allowed).decider(Decider::Settings);
-        assert_eq!(decided(&rules), "by your rules");
-        assert_eq!(decided(&entry(Kind::Ask, Outcome::Waiting)), "asking your phone");
+        assert_eq!(decided(&rules), Some("by your rules"));
+        assert_eq!(decided(&entry(Kind::Ask, Outcome::Waiting)), None);
+        assert_eq!(decided(&entry(Kind::Ask, Outcome::TimedOut)), Some("no answer"));
         // A source that is also the kind or the service is said once.
         let ssh = entry(Kind::Ssh, Outcome::Approved).source(Some("ssh")).service(Some("github.com"));
         assert_eq!(meta(&ssh), "SSH · github.com");

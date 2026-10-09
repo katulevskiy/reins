@@ -1,4 +1,4 @@
-//! One-line text fields: the server under "Use another server", the inputs of the Rules lists, and the work session
+//! One-line text fields: the server under "Other server", the inputs of the Rules lists, and the work session
 //! form's reason and branches. Typed by hand (key presses, backspace, Enter, paste with cmd/ctrl+V): the window has no
 //! text input widget.
 

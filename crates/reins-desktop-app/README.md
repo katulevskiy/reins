@@ -25,10 +25,10 @@ window's "Install command line tool" links it to `~/.local/bin`.
 | `format` | times as the window says them: "2 min ago", "3 h 12 min", "14:32" |
 | `demo` | `--demo` only: made-up activity, connections, keys and AI tools where this computer has none |
 | `ui/mod.rs` | the window: one column before setup, sidebar and sections afterwards |
-| `ui/parts.rs` | building blocks: cards, rows, buttons, toggles, chips, segmented controls, outcome badges |
+| `ui/parts.rs` | building blocks: cards, rows, buttons, toggles, chips, segmented controls, outcome badges, the (?) help |
 | `ui/field.rs` | one-line text fields typed by hand (the server, the Rules lists, the work session's reason and branches) |
 | `ui/onboarding.rs`, `ui/setup.rs` | the welcome flow: pairing with the phone; the AI tools, turning on, done |
-| `ui/health.rs` | the health card, "Send a test to my phone", Settings' "Run checks" |
+| `ui/health.rs` | the health card, "Send a test", Settings' "Run checks" |
 | `ui/work.rs` | Overview's work session card: the form, waiting for the phone, the session running |
 | `ui/sidebar.rs` | the mark and state, the sections, pausing |
 | `ui/overview.rs`, `ui/activity.rs`, `ui/connections.rs`, `ui/keys.rs`, `ui/rules.rs`, `ui/settings.rs` | the sections |
@@ -42,7 +42,7 @@ The first start walks through four steps, shown at the top as **1 Pair · 2 AI t
 
 1. **Pair**: the QR code (the device flow) and its code beside the three things to do: open Reins on the phone, scan
    the code, tap the number the window shows. This computer's key is there to compare with the one the phone shows.
-   "Sign in with browser instead" and "Use another server" are the quieter ways.
+   "Use the browser" and "Other server" are the quieter ways.
 2. **Connect your AI tools**: every harness Reins knows (Claude Code, Codex, Gemini CLI, Cursor), installed or not. A
    **Connect** button adds Reins to an installed one right away (`harness::add`) and turns into "Connected" with
    **Undo** (`harness::remove`), with the note to restart that tool; **Connect all** connects the rest. Errors show
@@ -50,10 +50,18 @@ The first start walks through four steps, shown at the top as **1 Pair · 2 AI t
    restart): the step says to install Reins first.
 3. **Turn on Reins**: starts the background service, sends git through it and opens Reins at login (the last two can
    be left out), each step ticked as it goes. When something fails: **Try again** or **Continue anyway**.
-4. **Reins is on**: what was set up, **Send a test to my phone**, and **Open Reins** for the status window.
+4. **Reins is on**: what was set up, **Send a test**, and **Open Reins** for the status window.
 
 `app.json` keeps the step reached (`setup_step`): quitting half-way opens the same step next time. Pairing again
 starts over at step 2.
+
+## Few words
+
+The window says things in a few words, buttons and toggles; whoever wants the longer explanation of a title, a row or
+an empty state clicks its (?) (`parts::help`): it opens in a bubble under it, and a click elsewhere, Esc or another
+page closes it. What matters for safety stays in sight, in a few words ("Approve only if your phone shows the same
+key", "Force push, delete, vault, purchases: still asked", "Hooks and MCP tools still ask" while git is paused), and so
+do errors with their reason.
 
 ## The status window
 
@@ -63,7 +71,7 @@ and these sections. Everything is read again every 3 seconds: the daemon's
 status and overview (`control::Client::overview`), and this computer's activity log (`reins_desktop::journal`, the
 newest 500).
 
-- **Overview**: the state in a sentence and what fixes it, what waits for the phone now (and for how long), the work
+- **Overview**: the state in a few words and what fixes it, what waits for the phone now (and for how long), the work
   session card, the health card and the test to the phone, today's approved, denied, timed out and failed requests, pausing, the latest
   requests, the update banner.
 - **Activity**: every request on this computer (git, SSH, API keys, `reins run` secrets, hook commands and files,
@@ -72,7 +80,7 @@ newest 500).
   repositories reached), the APIs called with keys from the phone, SSH sign-ins, and MCP tool calls by AI tool.
 - **Keys & secrets**: the `[[api]]` entries (vault reference, how long a key is held, whether one is held now), the
   `reins run` profiles (variable names and vault references; values are never on this computer), the SSH agent (on or
-  off, its socket, the keys the phone listed), and how to use them with the daemon's address.
+  off, its socket, the keys the phone listed), and how to use them with the daemon's address (in the title's (?)).
 - **Rules** ("What asks your phone"): the built-in groups of hook rules, each asking the phone or going through; your
   own commands and files to ask about, and to never ask about; what happens when nobody answers; how long hooks and
   approvals wait. They are checked on this computer; approving always happens on the phone.
@@ -80,7 +88,8 @@ newest 500).
   the background service, the account and pairing, the health checks ("Run checks"), the keyboard shortcuts, the
   version, Quit.
 
-Empty sections say what they are for and how to start: an empty Activity offers the test to the phone, Keys & secrets
+Empty sections say so in a few words (what they are for is in their (?)) and how to start: an empty Activity offers
+the test to the phone, Keys & secrets
 shows the `config.toml` entries to add (with "Open config.toml"), Connections points to where the APIs and the SSH
 agent are set up.
 
@@ -98,10 +107,9 @@ to look at, Needs fixing) and every check that is not OK with what was found. Wh
 does: **Start** or **Restart** the service, **Resume** git, **Connect** an AI tool, **Pair again**; the checks run again
 afterwards. Otherwise it says what to do.
 
-**Send a test to my phone** (Overview, the welcome flow's last step, an empty Activity) sends `reins test`'s harmless
-question (`ask::send_test`, logged in the activity log like any other) and waits up to 90 seconds with a countdown:
-"Approved on your phone. Reins works end to end.", "Denied on your phone — that's how a denial stops an agent.", "No
-answer within 90 s — run the checks above", or why it could not ask.
+**Send a test** (Overview, the welcome flow's last step, an empty Activity) sends `reins test`'s harmless question
+(`ask::send_test`, logged in the activity log like any other) and waits up to 90 seconds with a countdown: "Approved.
+It works.", "Denied. It works.", "No answer in 90 s. See the checks above.", or why it could not ask.
 
 ### Work sessions
 
@@ -109,7 +117,7 @@ Before focused work the user approves on the phone, once, a time-boxed bundle (`
 `reins allow` does): reading chosen integrations and git pushes to named branches. The phone turns it into ordinary
 grants that end together; force pushes, deleting, the vault and purchases still ask every time.
 
-Overview's **Work session** card says so in a line, with **Start a work session**. Its form:
+Overview's **Work session** card says so in a few words, with **Start**. Its form:
 
 - **How long**: 30 min, 1 hour, 2 hours (the default), 4 hours, 8 hours.
 - **What it's for**: one line; empty is "Focused work".
@@ -118,15 +126,15 @@ Overview's **Work session** card says so in a line, with **Start a work session*
 - **Push with git**: the repositories this computer reached with git lately (the daemon's connections and the
   activity log's git requests, newest first, on the git hosts `config.toml` knows, which name the service), each with
   a branch field. Only rows with a branch are included; a default branch (`main`, `master`, ...) is refused on the row
-  ("pushes to main still ask; name a feature branch"). Without any, the form says that `reins allow 2h` in a
-  repository adds its branch.
+  ("pushes to main still ask; name a feature branch"). Without any, the form says "No repositories yet", and its (?)
+  that `reins allow 2h` in a repository adds its branch.
 
 **Ask my phone** (enabled once something is chosen and nothing is refused; Enter in a field does the same) runs
 `work_session::start` on the tokio runtime and shows "Approve it on your phone…" with the
 approval wait's countdown (`approval_timeout_secs`). A refusal, a timeout or a missing pairing shows on the card with
 **Try again** and **Change**. Once approved, the card shows the session: what it is for, the time left ("1 h 12 min
 left", moving on with the refresh), until when on this computer's clock, what it allows and what was left out, and
-**End now**, which asks first ("End the session now?" **End** / **Keep**) and
+**End now**, which asks first ("End it now?" **End** / **Keep**) and
 then runs `work_session::end`. The running session is read with every refresh (`work_session::current`,
 `work-session.json`); when it runs out the card offers a new one.
 
@@ -199,7 +207,7 @@ showing), `turn-on` (`turning-on`: turning on as it opens), `done` or `status`; 
 `activity`, `connections`, `keys`, `rules`, `settings`) picks the status window's section. `REINS_DEMO_TEST=1` sends
 the test as the app opens, `REINS_DEMO_EMPTY=1` leaves the samples out (the empty states). `REINS_DEMO_SESSION=1`
 starts with a work session running ("Fix the login bug", 1 h 12 min left), `form` with the form open and filled in,
-`waiting` with it sent; in the demo the pretend phone approves a session after 3 seconds (a minute with `waiting`) and
+`waiting` with it sent; `REINS_DEMO_HELP=<id>` opens that (?) (`hero`, `keys`, `rules`, …); in the demo the pretend phone approves a session after 3 seconds (a minute with `waiting`) and
 **End now** ends it, without sending or writing anything. The demo changes settings
 only under `REINS_HOME`. `REINS_APPEARANCE=light` or `dark` overrides the system's appearance (for screenshots of
 both).

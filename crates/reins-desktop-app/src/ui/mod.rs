@@ -67,6 +67,9 @@ pub struct Root {
     rows_shown: usize,
     /// The sidebar's pause lengths are showing.
     pause_menu: bool,
+    /// The (?) open now ([`parts::help`]), and the page it is on: another page closes it.
+    help: Option<&'static str>,
+    help_page: (Screen, Section),
     _subscriptions: Vec<Subscription>,
 }
 
@@ -94,6 +97,8 @@ struct Data {
     test: Test,
     work: Work,
     now: i64,
+    /// The (?) open now.
+    help: Option<&'static str>,
 }
 
 impl Data {
@@ -120,6 +125,7 @@ impl Data {
             test: m.test.clone(),
             work: m.work.clone(),
             now: reins_desktop::now_unix(),
+            help: None,
         }
     }
 
@@ -165,6 +171,15 @@ impl Root {
         ];
         let focus = cx.focus_handle();
         window.focus(&focus, cx);
+        let (help_page, demo) = {
+            let m = model.read(cx);
+            ((m.screen, m.section), m.demo())
+        };
+        // `--demo` with `REINS_DEMO_HELP=<id>`: that (?) open, for screenshots.
+        let help = std::env::var("REINS_DEMO_HELP")
+            .ok()
+            .filter(|h| demo && !h.is_empty())
+            .map(|h| &*Box::leak(h.into_boxed_str()));
         Self {
             model,
             focus,
@@ -178,6 +193,8 @@ impl Root {
             expanded: HashSet::new(),
             rows_shown: ROWS,
             pause_menu: false,
+            help,
+            help_page,
             _subscriptions: subscriptions,
         }
     }
@@ -214,7 +231,7 @@ impl Root {
             Shortcut::Close => window.remove_window(),
             Shortcut::Quit => self.model.update(cx, Model::quit),
             Shortcut::Escape => {
-                if self.expanded.is_empty() && !self.pause_menu {
+                if self.expanded.is_empty() && !self.pause_menu && self.help.is_none() {
                     // Nothing open here: the phone's QR code, if it shows.
                     self.model.update(cx, |m, cx| {
                         if m.show_phone_qr {
@@ -224,6 +241,7 @@ impl Root {
                 }
                 self.expanded.clear();
                 self.pause_menu = false;
+                self.help = None;
                 // Out of a text field, so the next shortcuts are not typed into it.
                 window.focus(&self.focus, cx);
             }
@@ -275,12 +293,18 @@ impl Root {
 impl Render for Root {
     fn render(&mut self, window: &mut Window, cx: &mut Context<'_, Self>) -> impl IntoElement {
         let pal = Palette::of(window);
-        let d = Data::of(self.model.read(cx));
         let screen = self.model.read(cx).screen;
+        let page = (screen, self.model.read(cx).section);
+        if page != self.help_page {
+            self.help_page = page;
+            self.help = None;
+        }
+        let mut d = Data::of(self.model.read(cx));
+        d.help = self.help;
         let body = match screen {
-            Screen::Welcome(Stage::Pair) => Some((Stage::Pair, self.onboarding(pal, window, cx))),
-            Screen::Welcome(Stage::Tools) => Some((Stage::Tools, self.tools_step(pal, cx))),
-            Screen::Welcome(Stage::TurnOn) => Some((Stage::TurnOn, self.turn_on_step(pal, cx))),
+            Screen::Welcome(Stage::Pair) => Some((Stage::Pair, self.onboarding(&d, pal, window, cx))),
+            Screen::Welcome(Stage::Tools) => Some((Stage::Tools, self.tools_step(&d, pal, cx))),
+            Screen::Welcome(Stage::TurnOn) => Some((Stage::TurnOn, self.turn_on_step(&d, pal, cx))),
             Screen::Welcome(Stage::Done) => Some((Stage::Done, self.done_step(&d, pal, cx))),
             Screen::Status => None,
         };

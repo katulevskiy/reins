@@ -1,4 +1,4 @@
-//! The health card (`reins doctor` in the window) and "Send a test to my phone" (`reins test`): how the checks add up,
+//! The health card (`reins doctor` in the window) and "Send a test" (`reins test`): how the checks add up,
 //! what the window can fix itself, and how a test ended, in words.
 
 use std::time::Duration;
@@ -61,9 +61,8 @@ pub fn summary(checks: &[Check]) -> Summary {
     };
     if fails > 0 {
         let detail = match warns {
-            0 if fails == 1 => "1 thing stops your agents from reaching your phone.".to_owned(),
-            0 => format!("{fails} things stop your agents from reaching your phone."),
-            _ => format!("{} to fix, {} to look at.", things(fails), things(warns)),
+            0 => format!("{} to fix", things(fails)),
+            _ => format!("{} to fix, {} to look at", things(fails), things(warns)),
         };
         Summary {
             level: Level::Fail,
@@ -74,16 +73,16 @@ pub fn summary(checks: &[Check]) -> Summary {
         Summary {
             level: Level::Warn,
             title: format!("{} to look at", things(warns)),
-            detail: "Reins works; these are worth a look.".to_owned(),
+            detail: String::new(),
         }
     } else {
         Summary {
             level: Level::Ok,
             title: "All good".to_owned(),
             detail: if passed == 1 {
-                "1 check passed.".to_owned()
+                "1 check passed".to_owned()
             } else {
-                format!("{passed} checks passed: your agents reach your phone.")
+                format!("{passed} checks passed")
             },
         }
     }
@@ -135,7 +134,7 @@ pub fn fix_for(check: &Check) -> Option<Fix> {
     }
 }
 
-/// "Send a test to my phone".
+/// "Send a test".
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub enum Test {
     #[default]
@@ -150,16 +149,16 @@ pub enum Test {
 #[must_use]
 pub fn test_result(answer: &Answer, timed_out: bool, checks_above: bool) -> (bool, String) {
     match answer {
-        Answer::Yes => (true, "✓ Approved on your phone. Reins works end to end.".to_owned()),
-        Answer::No(_) => (true, "✓ Denied on your phone — that's how a denial stops an agent.".to_owned()),
+        Answer::Yes => (true, "✓ Approved. It works.".to_owned()),
+        Answer::No(_) => (true, "✓ Denied. It works.".to_owned()),
         Answer::Unanswered(_) if timed_out => {
             let secs = TEST_TIMEOUT.as_secs();
             (
                 false,
                 if checks_above {
-                    format!("No answer within {secs} s — run the checks above.")
+                    format!("No answer in {secs} s. See the checks above.")
                 } else {
-                    format!("No answer within {secs} s — the checks in Overview show what is wrong.")
+                    format!("No answer in {secs} s. See Health in Overview.")
                 },
             )
         }
@@ -236,7 +235,7 @@ mod tests {
         let ok = [check("a", Level::Ok), check("b", Level::Ok), check("c", Level::Skip)];
         let s = summary(&ok);
         assert_eq!((s.level, s.title.as_str()), (Level::Ok, "All good"));
-        assert_eq!(s.detail, "2 checks passed: your agents reach your phone.");
+        assert_eq!(s.detail, "2 checks passed");
 
         let one_warn = [check("a", Level::Ok), check("b", Level::Warn)];
         assert_eq!(summary(&one_warn).title, "1 thing to look at");
@@ -247,9 +246,9 @@ mod tests {
         let fail = [check("a", Level::Fail), check("b", Level::Ok)];
         let s = summary(&fail);
         assert_eq!((s.level, s.title.as_str()), (Level::Fail, "Needs fixing"));
-        assert_eq!(s.detail, "1 thing stops your agents from reaching your phone.");
+        assert_eq!(s.detail, "1 thing to fix");
         let mixed = [check("a", Level::Fail), check("b", Level::Warn), check("c", Level::Warn)];
-        assert_eq!(summary(&mixed).detail, "1 thing to fix, 2 things to look at.");
+        assert_eq!(summary(&mixed).detail, "1 thing to fix, 2 things to look at");
         assert_eq!(summary(&[]).title, "All good");
     }
 
@@ -280,15 +279,12 @@ mod tests {
 
     #[test]
     fn test_results_read_as_sentences() {
-        assert_eq!(
-            test_result(&Answer::Yes, false, true),
-            (true, "✓ Approved on your phone. Reins works end to end.".to_owned())
-        );
+        assert_eq!(test_result(&Answer::Yes, false, true), (true, "✓ Approved. It works.".to_owned()));
         let (ok, text) = test_result(&Answer::No("Denied on your phone.".to_owned()), false, true);
-        assert!(ok && text.starts_with("✓ Denied on your phone"));
+        assert!(ok && text.starts_with("✓ Denied"));
         let (ok, text) = test_result(&Answer::Unanswered("late".to_owned()), true, true);
         assert!(!ok);
-        assert_eq!(text, "No answer within 90 s — run the checks above.");
+        assert_eq!(text, "No answer in 90 s. See the checks above.");
         assert!(test_result(&Answer::Unanswered("late".to_owned()), true, false).1.contains("Overview"));
         assert_eq!(
             test_result(&Answer::Unanswered("Cannot ask your phone: offline".to_owned()), false, true).1,

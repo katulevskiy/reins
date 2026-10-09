@@ -173,7 +173,7 @@ pub struct Model {
     pub setup_running: bool,
     /// The health checks (`reins doctor`).
     pub health: Health,
-    /// "Send a test to my phone".
+    /// "Send a test".
     pub test: Test,
     pub update: Option<Update>,
     /// "Restart to update" is installing it.
@@ -184,7 +184,7 @@ pub struct Model {
     pub note: Option<String>,
     /// The QR code that opens Activity on the phone is showing.
     pub show_phone_qr: bool,
-    /// "Use another server" is open.
+    /// "Other server" is open.
     pub show_server: bool,
     pub server_input: String,
     pub autostart: bool,
@@ -552,6 +552,12 @@ impl Model {
             || self.snapshot.as_ref().map_or_else(|| self.backend.paired_server().is_some(), |s| s.server.is_some())
     }
 
+    /// Whether this is `--demo`.
+    #[must_use]
+    pub fn demo(&self) -> bool {
+        self.demo.is_some()
+    }
+
     /// The server shown and paired with.
     #[must_use]
     pub fn server(&self) -> String {
@@ -568,12 +574,12 @@ impl Model {
     #[must_use]
     pub fn status_line(&self) -> (Look, String) {
         if !self.paired() {
-            return (Look::Attention, "Not connected to your phone".to_owned());
+            return (Look::Attention, "Not paired".to_owned());
         }
         let paused = self.pause().line(reins_desktop::now_unix());
         let daemon = match self.snapshot.as_ref().map(|s| &s.daemon) {
-            Some(DaemonState::Stopped) if self.saved.setup_done => Some("The background service is not running"),
-            Some(DaemonState::Unknown(_)) => Some("Cannot reach the background service"),
+            Some(DaemonState::Stopped) if self.saved.setup_done => Some("Service not running"),
+            Some(DaemonState::Unknown(_)) => Some("Service unreachable"),
             _ => None,
         };
         // A request left "waiting" by a service that stopped must not hide that it stopped.
@@ -589,7 +595,7 @@ impl Model {
             return (Look::Paused, line);
         }
         if self.snapshot.as_ref().is_some_and(|s| s.git_routed.is_empty()) && self.saved.setup_done {
-            return (Look::Paused, "Paused: git goes to GitHub directly".to_owned());
+            return (Look::Paused, "Paused: git goes direct".to_owned());
         }
         (Look::On, "Reins is on".to_owned())
     }
@@ -824,7 +830,7 @@ impl Model {
         cx.show_system_notification(gpui::SystemNotification {
             tag: "reins-paired".into(),
             title: "Reins is connected".into(),
-            body: "Your phone approves what your AI agents do from now on.".into(),
+            body: "Your phone now approves your AI agents.".into(),
             actions: Vec::new(),
         });
         self.pairing_task = Some(cx.spawn(async move |this, cx| {
@@ -842,7 +848,7 @@ impl Model {
         cx.notify();
     }
 
-    /// Pairs with the server typed under "Use another server" (empty: the default one).
+    /// Pairs with the server typed under "Other server" (empty: the default one).
     pub fn use_server(&mut self, cx: &mut Context<'_, Self>) {
         let typed = self.server_input.trim();
         if typed.is_empty() {
@@ -1058,11 +1064,11 @@ impl Model {
                 };
                 step(&this, cx, label, state);
             }
-            let label = "Start the background service";
+            let label = "Start the service";
             step(&this, cx, label, Step::Running);
             pause(cx).await;
             let started = if demo {
-                Ok("The background service runs at login.".to_owned())
+                Ok("Runs at login".to_owned())
             } else {
                 let service_backend = Arc::clone(&backend);
                 Tokio::spawn(cx, async move { service_backend.start_service().await })
@@ -1090,7 +1096,7 @@ impl Model {
                     label,
                     routed.map_or_else(Step::Failed, |direct| {
                         Step::Done(if direct.is_empty() {
-                            "GitHub pushes and clones ask your phone".to_owned()
+                            "Pushes ask your phone".to_owned()
                         } else {
                             direct
                         })
@@ -1098,7 +1104,7 @@ impl Model {
                 );
             }
             if login {
-                let label = "Open Reins when you log in";
+                let label = "Open at login";
                 step(&this, cx, label, Step::Running);
                 pause(cx).await;
                 let state = match if demo {
@@ -1106,7 +1112,7 @@ impl Model {
                 } else {
                     autostart::set(&home, true)
                 } {
-                    Ok(()) => Step::Done("The shield in the menu bar or tray shows that Reins is on".to_owned()),
+                    Ok(()) => Step::Done(String::new()),
                     Err(e) => Step::Failed(e),
                 };
                 let _gone = this.update(cx, |m, _| m.autostart |= matches!(state, Step::Done(_)));
@@ -1228,7 +1234,7 @@ impl Model {
         }
     }
 
-    /// "Send a test to my phone" (`reins test`): a harmless question; the answer shows where the button was.
+    /// "Send a test" (`reins test`): a harmless question; the answer shows where the button was.
     pub fn send_test(&mut self, cx: &mut Context<'_, Self>) {
         if matches!(self.test, Test::Waiting(_)) || !self.paired() {
             return;

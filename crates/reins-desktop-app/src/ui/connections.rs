@@ -13,7 +13,7 @@ use reins_desktop::journal::{Entry, Kind};
 use reins_desktop::stats::Connection;
 
 use super::parts::{
-    caption, card, empty, empty_state, fine, glyph, group, labelled, link, one_line, page_header, row, toggle,
+    caption, card, empty, empty_state, fine, glyph, group, help, labelled, link, one_line, page_header, row, toggle,
 };
 use super::{Data, Root};
 use crate::backend::Setting;
@@ -62,9 +62,9 @@ pub fn repos_of<'a>(connections: &'a [Connection], host: &str) -> Vec<(&'a str, 
         .collect()
 }
 
-/// "14 requests · last 2 min ago".
+/// "14 requests · 2 min ago".
 fn usage(count: u64, last_at: i64, now: i64, one: &str, many: &str) -> String {
-    format!("{} · last {}", format::count(count, one, many), format::ago(now, last_at))
+    format!("{} · {}", format::count(count, one, many), format::ago(now, last_at))
 }
 
 /// A connection: what, a line about it, and when.
@@ -96,8 +96,13 @@ impl Root {
         let conns = d.overview().map_or(&empty_conns, |o| &o.connections);
         let mut page = div().flex().flex_col().gap(px(22.0)).child(page_header(
             "Connections",
-            "What reaches the outside through Reins on this computer, and the AI tools it watches over.",
-            pal,
+            Some(help(
+                "connections",
+                "What reaches the outside through Reins on this computer, and the AI tools it watches over.",
+                d,
+                pal,
+                cx,
+            )),
         ));
         page = page.when_some(d.notice.clone(), |p, n| p.child(caption(n, pal).text_color(pal.danger)));
         page = page.when_some(d.note.clone(), |p, n| p.child(caption(n, pal)));
@@ -109,14 +114,11 @@ impl Root {
             rows.sort_by_key(|r| !(r.found || r.added));
             for (i, r) in rows.into_iter().enumerate() {
                 let h: Harness = r.harness;
-                let detail = match (r.found, r.added) {
-                    (_, true) => "Its tools reach your phone; risky commands wait for you",
-                    (true, false) => "Installed; Reins is not in its settings",
-                    (false, false) => "Not installed on this computer",
-                };
+                // The toggle says connected or not; a line only for what has none.
+                let detail = (!r.found && !r.added).then(|| "Not installed".to_owned());
                 let mut line = row(pal, i == 0).id(SharedString::from(format!("harness-{}", h.id()))).child(labelled(
                     h.label(),
-                    Some(detail.to_owned()),
+                    detail,
                     pal,
                 ));
                 if r.found || r.added {
@@ -131,22 +133,19 @@ impl Root {
                 tools = tools.child(line);
             }
             if !s.harnesses.iter().any(|r| r.found || r.added) {
-                tools = tools.child(
-                    row(pal, false).child(
-                        caption(
-                            "None of these is installed here. Install one, then turn it on here: Reins adds itself \
-                             to its settings.",
-                            pal,
-                        )
-                        .flex_1(),
-                    ),
-                );
+                tools = tools.child(row(pal, false).child(caption("None installed", pal).flex_1()));
             }
             page = page.child(group(
                 "AI tools",
-                Some("Reins adds itself to each one: an MCP server for its tools and a hook before risky commands."),
+                Some(help(
+                    "conn-tools",
+                    "Reins adds itself to each one: an MCP server for its tools and a hook before risky commands. \
+                     Install one, then turn it on here.",
+                    d,
+                    pal,
+                    cx,
+                )),
                 tools,
-                pal,
             ));
         }
 
@@ -158,11 +157,11 @@ impl Root {
                 let repos = repos_of(conns, &h.host);
                 let total: u64 = repos.iter().map(|(_, c)| c.count).sum();
                 let last = repos.iter().map(|(_, c)| c.last_at).max();
-                let mut about = vec![reins_desktop::config::service_label(&h.service).to_owned()];
+                let mut about = Vec::new();
                 match last {
                     Some(at) => about.push(usage(total, at, d.now, "request", "requests")),
-                    None if h.enabled => about.push("nothing yet".to_owned()),
-                    None => about.push("git talks to it directly".to_owned()),
+                    None if h.enabled => about.push("Nothing yet".to_owned()),
+                    None => about.push("Direct".to_owned()),
                 }
                 if h.enabled && !d.pause.on() && !routed.is_empty() && !routed.contains(&h.host) {
                     about.push("not set up in git yet".to_owned());
@@ -172,7 +171,7 @@ impl Root {
                     row(pal, i == 0)
                         .id(SharedString::from(format!("host-{}", h.host)))
                         .cursor_pointer()
-                        .child(labelled(format!("Send git for {} through Reins", h.host), Some(about.join(" · ")), pal))
+                        .child(labelled(h.host.clone(), Some(about.join(" · ")), pal))
                         .child(toggle(on, pal))
                         .on_click(Self::on_model(cx, move |m, cx| m.change(Setting::Host(host.clone(), !on), cx))),
                 );
@@ -204,24 +203,18 @@ impl Root {
             let about = if d.pause.on() {
                 "Paused: git goes straight to the hosts for now. Pushes wait for your phone again when you resume."
             } else {
-                "Clones, fetches and pushes for these hosts go through Reins: pushes wait for your phone, and AI agents \
-                 never see your token. Changing a host restarts the background service."
+                "Clones, fetches and pushes for the hosts turned on go through Reins: pushes wait for your phone, and AI \
+                 agents never see your token. Changing a host restarts the background service."
             };
-            page = page.child(group("git", Some(about), hosts, pal));
+            page = page.child(group("git", Some(help("conn-git", about, d, pal, cx)), hosts));
         }
 
         // APIs.
         let apis: Vec<&Connection> = conns.iter().filter(|c| c.kind == "api").collect();
         let api_body = if apis.is_empty() && d.config().is_none_or(|c| c.api.is_empty()) {
             card(pal).child(
-                empty_state(
-                    glyph("→", pal.accent),
-                    "No APIs through Reins yet",
-                    "A program can call an API (OpenAI, Anthropic, …) through Reins with a key that stays in the vault \
-                     on your phone: Reins adds it on the way, after you approve.",
-                    pal,
-                )
-                .child(link("to-keys", "Set up an API key", pal).on_click(Self::go(cx, Section::Keys))),
+                empty_state(glyph("→", pal.accent), "No APIs yet", None, pal)
+                    .child(link("to-keys", "Add an API key", pal).on_click(Self::go(cx, Section::Keys))),
             )
         } else if apis.is_empty() {
             card(pal).child(
@@ -230,7 +223,7 @@ impl Root {
                     .items_center()
                     .gap(px(12.0))
                     .pr(px(16.0))
-                    .child(empty("No API calls through Reins since the background service started.", pal).flex_1())
+                    .child(empty("No calls yet", pal).flex_1())
                     .child(link("to-keys", "API keys", pal).on_click(Self::go(cx, Section::Keys))),
             )
         } else {
@@ -238,7 +231,7 @@ impl Root {
             for (i, c) in apis.iter().enumerate() {
                 list = list.child(conn_row(
                     c.target.clone(),
-                    format!("{} through /api/{}", format::count(c.count, "call", "calls"), c.target),
+                    format::count(c.count, "call", "calls"),
                     c.last.clone(),
                     format::ago(d.now, c.last_at),
                     pal,
@@ -249,9 +242,15 @@ impl Root {
         };
         page = page.child(group(
             "APIs",
-            Some("Calls to APIs whose key stays with your phone: the key is asked for once, then held for a while."),
+            Some(help(
+                "conn-apis",
+                "A program can call an API (OpenAI, Anthropic, …) through Reins with a key that stays in the vault on \
+                 your phone: the key is asked for once, then held for a while.",
+                d,
+                pal,
+                cx,
+            )),
             api_body,
-            pal,
         ));
 
         // SSH.
@@ -264,18 +263,11 @@ impl Root {
                     .items_center()
                     .gap(px(12.0))
                     .pr(px(16.0))
-                    .child(
-                        empty(
-                            "The SSH agent is off. Turn it on to sign ssh logins with keys from your phone, each one \
-                             approved there.",
-                            pal,
-                        )
-                        .flex_1(),
-                    )
+                    .child(empty("SSH agent off", pal).flex_1())
                     .child(link("to-ssh", "Turn on", pal).on_click(Self::go(cx, Section::Keys))),
             )
         } else if ssh.is_empty() {
-            card(pal).child(empty("No SSH sign-ins through Reins since the background service started.", pal))
+            card(pal).child(empty("No sign-ins yet", pal))
         } else {
             let mut list = card(pal);
             for (i, c) in ssh.iter().enumerate() {
@@ -292,19 +284,20 @@ impl Root {
         };
         page = page.child(group(
             "SSH sign-ins",
-            Some("Servers ssh signed in to with a key from your phone."),
+            Some(help(
+                "conn-ssh",
+                "Servers ssh signed in to with a key from your phone, each sign-in approved there.",
+                d,
+                pal,
+                cx,
+            )),
             ssh_body,
-            pal,
         ));
 
         // MCP tools.
         let mcp = mcp_by_source(d.activity());
         let mcp_body = if mcp.is_empty() {
-            card(pal).child(empty(
-                "No MCP tool calls yet. When an AI tool connected above uses Reins's tools (your Gmail, calendar, \
-                 GitHub, …), the calls and your answers show up here.",
-                pal,
-            ))
+            card(pal).child(empty("No calls yet", pal))
         } else {
             let mut list = card(pal);
             let mut mcp: Vec<(String, ToolCalls)> = mcp.into_iter().collect();
@@ -312,7 +305,7 @@ impl Root {
             for (i, (source, t)) in mcp.iter().enumerate() {
                 let mut tools = t.tools.iter().take(4).cloned().collect::<Vec<_>>().join(", ");
                 if t.tools.len() > 4 {
-                    tools = format!("{tools} and {} more", t.tools.len() - 4);
+                    tools = format!("{tools} +{}", t.tools.len() - 4);
                 }
                 list = list.child(conn_row(
                     source.clone(),
@@ -327,19 +320,19 @@ impl Root {
         };
         page = page.child(group(
             "MCP tool calls",
-            Some("Tools your AI agents called through Reins, from this computer's activity log."),
+            Some(help(
+                "conn-mcp",
+                "Tools your AI agents called through Reins (your Gmail, calendar, GitHub, …), from this computer's \
+                 activity log.",
+                d,
+                pal,
+                cx,
+            )),
             mcp_body,
-            pal,
         ));
 
         if let Some(started) = d.overview().map(|o| o.started_at).filter(|&s| s > 0) {
-            page = page.child(fine(
-                format!(
-                    "git, API and SSH counts are since the background service started, {}.",
-                    format::ago(d.now, started)
-                ),
-                pal,
-            ));
+            page = page.child(fine(format!("Counts since service start, {}", format::ago(d.now, started)), pal));
         }
         page.into_any_element()
     }

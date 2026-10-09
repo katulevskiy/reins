@@ -1,4 +1,4 @@
-//! Overview: the state in a sentence, what waits for the phone now, the work session, the health checks and a test to
+//! Overview: the state in a few words, what waits for the phone now, the work session, the health checks and a test to
 //! the phone, today's answers, pausing, the latest requests.
 
 use gpui::prelude::FluentBuilder as _;
@@ -9,13 +9,13 @@ use gpui::{
 use reins_desktop::journal::{Entry, Tally};
 
 use super::parts::{
-    button, caption, card, fine, group, link, look_color, one_line, phone_qr, segment, segmented, stat_tile,
+    button, caption, card, group, help, link, look_color, one_line, phone_qr, segment, segmented, stat_tile,
     waiting_dot,
 };
 use super::{Data, Root};
 use crate::format;
 use crate::model::{Model, Section};
-use crate::pause::{Pause, PauseFor};
+use crate::pause::PauseFor;
 use crate::theme::Palette;
 use crate::tray::Look;
 
@@ -92,9 +92,14 @@ impl Root {
                 } else {
                     "Waiting on your phone"
                 },
-                Some("Open Reins on your phone to approve or deny. Nothing goes ahead until you answer."),
+                Some(help(
+                    "waiting",
+                    "Open Reins on your phone to approve or deny. Nothing goes ahead until you answer.",
+                    d,
+                    pal,
+                    cx,
+                )),
                 list,
-                pal,
             ));
         }
 
@@ -107,7 +112,7 @@ impl Root {
         // Today.
         let t = today(d.activity(), d.now);
         page = page.child(group(
-            "Today on this computer",
+            "Today",
             None,
             div()
                 .flex()
@@ -116,7 +121,6 @@ impl Root {
                 .child(stat_tile(t.denied, "Denied", pal.danger, pal))
                 .child(stat_tile(t.timed_out, "Timed out", pal.warning, pal))
                 .child(stat_tile(t.failed, "Failed", pal.tertiary, pal)),
-            pal,
         ));
 
         page = page.child(Self::pause_card(d, pal, cx));
@@ -124,10 +128,7 @@ impl Root {
         // The latest requests.
         let recent: Vec<&Entry> = d.activity().iter().take(RECENT).collect();
         let body = if recent.is_empty() {
-            card(pal).child(super::parts::empty(
-                "Nothing asked yet. Requests from your AI tools, git and ssh on this computer show up here.",
-                pal,
-            ))
+            card(pal).child(super::parts::empty("Nothing asked yet", pal))
         } else {
             let mut list = card(pal);
             for (i, e) in recent.iter().enumerate() {
@@ -147,7 +148,7 @@ impl Root {
                         .px(px(2.0))
                         .child(div().flex_1().text_size(px(13.5)).font_weight(FontWeight::SEMIBOLD).child("Latest"))
                         .when(!recent.is_empty(), |r| {
-                            r.child(link("see-all", "See all activity", pal).on_click(Self::go(cx, Section::Activity)))
+                            r.child(link("see-all", "See all", pal).on_click(Self::go(cx, Section::Activity)))
                         }),
                 )
                 .child(body),
@@ -155,28 +156,24 @@ impl Root {
         page.into_any_element()
     }
 
-    /// The state in a sentence, with what fixes it.
+    /// The state in a few words, with what fixes it.
     fn hero(d: &Data, pal: Palette, cx: &mut Context<'_, Self>) -> AnyElement {
         let color = look_color(d.look, pal);
-        let waiting = d.waiting().count();
         let title = if d.look == Look::Waiting {
             "Waiting on your phone".to_owned()
         } else {
             d.line.clone()
         };
+        // A line only where it matters: what still asks while git is paused, where to answer.
         let sub = match d.look {
+            Look::Paused if d.pause.on() => Some("Hooks and MCP tools still ask"),
+            Look::Paused => Some("Resume to send git through Reins"),
+            Look::On | Look::Waiting | Look::Attention => None,
+        };
+        let about = match d.look {
             Look::On => "Your phone approves what your AI agents do on this computer.",
-            Look::Waiting if waiting == 1 => {
-                "An agent waits for your answer. Approve or deny it in Reins on your phone."
-            }
-            Look::Waiting => "Agents wait for your answers. Approve or deny them in Reins on your phone.",
-            Look::Paused if d.pause == Pause::Manual => {
-                "git goes straight to the hosts until you resume. Hooks and MCP tools still ask your phone."
-            }
-            Look::Paused if d.pause.on() => {
-                "git goes straight to the hosts until the pause ends. Hooks and MCP tools still ask your phone."
-            }
-            Look::Paused => "git goes straight to the hosts. Resume to send it through Reins again.",
+            Look::Waiting => "Nothing goes ahead until you approve or deny it on your phone.",
+            Look::Paused => "git goes straight to GitHub and the other hosts until the pause ends or you resume.",
             Look::Attention if !d.paired => "Pair this computer with your phone again.",
             Look::Attention => "Start the background service so git and your agents reach your phone.",
         };
@@ -232,12 +229,19 @@ impl Root {
                             .gap(px(3.0))
                             .child(
                                 div()
-                                    .text_size(px(20.0))
-                                    .line_height(px(26.0))
-                                    .font_weight(FontWeight::SEMIBOLD)
-                                    .child(title),
+                                    .flex()
+                                    .items_center()
+                                    .gap(px(8.0))
+                                    .child(
+                                        div()
+                                            .text_size(px(20.0))
+                                            .line_height(px(26.0))
+                                            .font_weight(FontWeight::SEMIBOLD)
+                                            .child(title),
+                                    )
+                                    .child(help("hero", about, d, pal, cx)),
                             )
-                            .child(caption(sub, pal).text_size(px(12.5))),
+                            .when_some(sub, |c, sub| c.child(caption(sub, pal).text_size(px(12.5)))),
                     ),
             )
             .child(
@@ -247,7 +251,7 @@ impl Root {
                         if d.show_qr {
                             "Hide code"
                         } else {
-                            "Activity on phone"
+                            "Open on phone"
                         },
                         pal,
                         false,
@@ -260,17 +264,15 @@ impl Root {
     }
 
     fn pause_card(d: &Data, pal: Palette, cx: &mut Context<'_, Self>) -> AnyElement {
-        let (title, about, label) = if d.pause.on() {
+        let (title, about) = if d.pause.on() {
             (
                 "Change the pause",
                 "A new length starts now and replaces the pause. Resume sends git through Reins again.",
-                "Pause instead for",
             )
         } else {
             (
                 "Pause git",
                 "Pausing sends git straight to GitHub and the other hosts. Hooks and MCP tools still ask your phone.",
-                "Pause for",
             )
         };
         let mut choices = segmented(pal);
@@ -282,16 +284,9 @@ impl Root {
                 s.opacity(0.45)
             });
         }
-        let body = card(pal)
-            .flex_row()
-            .flex_wrap()
-            .items_center()
-            .gap(px(12.0))
-            .px(px(16.0))
-            .py(px(12.0))
-            .child(div().flex_1().min_w(px(120.0)).child(fine(label, pal).text_size(px(12.5))))
-            .child(choices);
-        group(title, Some(about), body, pal).into_any_element()
+        let body =
+            card(pal).flex_row().flex_wrap().items_center().gap(px(12.0)).px(px(16.0)).py(px(12.0)).child(choices);
+        group(title, Some(help("pause", about, d, pal, cx)), body).into_any_element()
     }
 
     fn update_banner(d: &Data, pal: Palette, cx: &mut Context<'_, Self>) -> Option<AnyElement> {

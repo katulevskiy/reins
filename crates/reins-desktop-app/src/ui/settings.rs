@@ -7,7 +7,7 @@ use gpui::{
     StatefulInteractiveElement as _, Styled as _, div, px,
 };
 
-use super::parts::{button, caption, card, fine, group, info_row, kbd, labelled, link, page_header, row, toggle};
+use super::parts::{button, caption, card, group, help, info_row, kbd, labelled, link, page_header, row, toggle};
 use super::{Data, Root};
 use crate::backend::{DaemonState, Setting};
 use crate::format::host;
@@ -17,11 +17,7 @@ use crate::theme::{MONO, Palette};
 
 impl Root {
     pub(super) fn settings(d: &Data, pal: Palette, cx: &mut Context<'_, Self>) -> AnyElement {
-        let mut page = div().flex().flex_col().gap(px(22.0)).child(page_header(
-            "Settings",
-            "How Reins behaves on this computer, and the phone it answers to.",
-            pal,
-        ));
+        let mut page = div().flex().flex_col().gap(px(22.0)).child(page_header("Settings", None));
         page = page.when_some(d.notice.clone(), |p, n| p.child(caption(n, pal).text_color(pal.danger)));
         page = page.when_some(d.note.clone(), |p, n| p.child(caption(n, pal)));
 
@@ -36,11 +32,7 @@ impl Root {
                     row(pal, true)
                         .id("notify-phone")
                         .cursor_pointer()
-                        .child(labelled(
-                            "Notify me on this computer when my phone needs me",
-                            Some("A notification here whenever a request waits for your phone".to_owned()),
-                            pal,
-                        ))
+                        .child(labelled("Notify me here", None, pal))
                         .child(toggle(phone, pal))
                         .on_click(Self::on_model(cx, move |m, cx| {
                             m.change(
@@ -55,7 +47,7 @@ impl Root {
                 .child(
                     row(pal, false)
                         .id("notify-sound")
-                        .child(labelled("Play a sound", Some("A short chime with the notification".to_owned()), pal))
+                        .child(labelled("Play a sound", None, pal))
                         .child(toggle(sound && phone, pal))
                         .when_else(
                             phone,
@@ -73,7 +65,6 @@ impl Root {
                             |r| r.opacity(0.5),
                         ),
                 ),
-            pal,
         ));
 
         // This computer.
@@ -86,28 +77,19 @@ impl Root {
                     row(pal, true)
                         .id("autostart")
                         .cursor_pointer()
-                        .child(labelled(
-                            "Open Reins when you log in",
-                            Some("The shield in the menu bar or tray shows that Reins is on".to_owned()),
-                            pal,
-                        ))
+                        .child(labelled("Open at login", None, pal))
                         .child(toggle(autostart, pal))
                         .on_click(Self::on_model(cx, Model::toggle_autostart)),
                 )
                 .child(
                     row(pal, false)
-                        .child(labelled(
-                            "Command line tool",
-                            Some("reins in ~/.local/bin, for reins run and your scripts".to_owned()),
-                            pal,
-                        ))
+                        .child(labelled("Command line tool", Some("~/.local/bin/reins".to_owned()), pal))
                         .child(
                             button("cli", "Install", pal, false, true).on_click(Self::on_model(cx, Model::install_cli)),
                         ),
                 )
                 .child(Self::service_row(d, pal, cx))
                 .child(info_row("git", Self::git_line(d), pal, false)),
-            pal,
         ));
 
         // Account.
@@ -128,16 +110,29 @@ impl Root {
         acct = acct.child(
             row(pal, false)
                 .child(
-                    caption(
-                        if d.paired {
-                            "Disconnecting forgets the session here; remove the computer on your phone too."
-                        } else {
-                            "This computer is not paired with your phone."
-                        },
-                        pal,
-                    )
-                    .flex_1()
-                    .min_w(px(0.0)),
+                    div()
+                        .flex()
+                        .flex_1()
+                        .min_w(px(0.0))
+                        .items_center()
+                        .gap(px(6.0))
+                        .child(caption(
+                            if d.paired {
+                                "Paired"
+                            } else {
+                                "Not paired"
+                            },
+                            pal,
+                        ))
+                        .when(d.paired, |r| {
+                            r.child(help(
+                                "disconnect",
+                                "Disconnecting forgets the session here; remove the computer on your phone too.",
+                                d,
+                                pal,
+                                cx,
+                            ))
+                        }),
                 )
                 .child(
                     button(
@@ -154,14 +149,19 @@ impl Root {
                     .on_click(Self::on_model(cx, Model::sign_out)),
                 ),
         );
-        page = page.child(group("Account", None, acct, pal));
+        page = page.child(group("Account", None, acct));
 
         // Health.
         page = page.child(group(
             "Health",
-            Some("The checks `reins doctor` runs: pairing, the server, the clock, the service, git and your AI tools."),
+            Some(help(
+                "settings-health",
+                "The checks `reins doctor` runs: pairing, the server, the clock, the service, git and your AI tools.",
+                d,
+                pal,
+                cx,
+            )),
             Self::checks_row(d, pal, cx),
-            pal,
         ));
 
         // Keyboard shortcuts, two columns.
@@ -188,7 +188,6 @@ impl Root {
                 .child(column(&list[..half]))
                 .child(div().w(px(1.0)).bg(pal.hairline))
                 .child(column(&list[half..])),
-            pal,
         ));
 
         // Version and quit.
@@ -203,8 +202,17 @@ impl Root {
                         .flex_col()
                         .flex_1()
                         .min_w(px(0.0))
+                        .flex_row()
+                        .items_center()
+                        .gap(px(6.0))
                         .child(caption(format!("Reins {}", reins_desktop::update::LONG_VERSION), pal))
-                        .child(fine("Quitting hides the shield; the background service keeps running.", pal)),
+                        .child(help(
+                            "quit",
+                            "Quitting hides the shield; the background service keeps running.",
+                            d,
+                            pal,
+                            cx,
+                        )),
                 )
                 .when(d.update.is_none(), |r| {
                     r.child(
@@ -223,12 +231,14 @@ impl Root {
             }) => ("Running".to_owned(), true),
             Some(DaemonState::Running {
                 pending,
-            }) => (format!("Running, {pending} waiting for you here"), true),
+            }) => (format!("Running, {pending} waiting"), true),
             Some(DaemonState::Stopped) => ("Not running".to_owned(), false),
             Some(DaemonState::Unknown(e)) => (e.clone(), false),
             None => ("Checking…".to_owned(), true),
         };
-        let r = row(pal, false).child(labelled("Background service", Some(state), pal));
+        // "On" says it runs; the line only says more.
+        let detail = (state != "Running").then_some(state);
+        let r = row(pal, false).child(labelled("Background service", detail, pal));
         if running {
             r.child(
                 div()
@@ -252,8 +262,8 @@ impl Root {
     fn git_line(d: &Data) -> String {
         match d.snapshot.as_ref() {
             Some(s) if !s.git_routed.is_empty() => format!("{} through Reins", s.git_routed.join(", ")),
-            Some(_) if d.pause.on() => "Paused: straight to the hosts".to_owned(),
-            Some(_) => "Straight to the hosts".to_owned(),
+            Some(_) if d.pause.on() => "Paused: direct".to_owned(),
+            Some(_) => "Direct".to_owned(),
             None => String::new(),
         }
     }

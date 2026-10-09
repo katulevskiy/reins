@@ -132,16 +132,11 @@ pub fn tools_line(rows: &[ToolRow]) -> String {
     let installed = rows.iter().filter(|r| r.installed || r.connected).count();
     let connected = rows.iter().filter(|r| r.connected).count();
     match (installed, connected) {
-        (0, _) => "No AI tool found on this computer. Install one later and connect it under Connections.".to_owned(),
-        (n, c) if c == n => {
-            if n == 1 {
-                "Connected. Reins watches over it from now on.".to_owned()
-            } else {
-                format!("All {n} connected. Reins watches over them from now on.")
-            }
-        }
-        (n, 0) => format!("{n} found. Connect the ones Reins should watch over."),
-        (n, c) => format!("{c} of {n} connected."),
+        (0, _) => "No AI tool found here".to_owned(),
+        (1, 1) => "Connected".to_owned(),
+        (n, c) if c == n => format!("All {n} connected"),
+        (n, 0) => format!("{n} found"),
+        (n, c) => format!("{c} of {n} connected"),
     }
 }
 
@@ -205,11 +200,11 @@ mod tests {
         let order: Vec<_> = rows.iter().map(|r| r.harness).collect();
         assert_eq!(order, vec![Harness::Codex, Harness::Gemini, Harness::ClaudeCode, Harness::Cursor]);
         assert_eq!(connectable(&rows), vec![Harness::Gemini]);
-        assert_eq!(tools_line(&rows), "1 of 2 connected.");
+        assert_eq!(tools_line(&rows), "1 of 2 connected");
         assert_eq!(connected_names(&rows).as_deref(), Some("Codex"));
         rows[1].connected = true;
         assert!(connectable(&rows).is_empty());
-        assert_eq!(tools_line(&rows), "All 2 connected. Reins watches over them from now on.");
+        assert_eq!(tools_line(&rows), "All 2 connected");
         assert_eq!(connected_names(&rows).as_deref(), Some("Codex and Gemini CLI"));
         rows[1].connected = false;
         rows[1].busy = true;
@@ -224,6 +219,6 @@ mod tests {
         let mut rows = rows;
         rows[0].installed = true;
         rows[1].installed = true;
-        assert_eq!(tools_line(&rows), "2 found. Connect the ones Reins should watch over.");
+        assert_eq!(tools_line(&rows), "2 found");
     }
 }
