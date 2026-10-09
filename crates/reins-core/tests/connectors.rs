@@ -658,7 +658,7 @@ async fn a_message_to_send_says_what_happens_and_can_be_allowed_for_its_chat() {
     let env = env().await;
     serve_pending(&env, &[call_request("r1", "c1", "send", &json!({"chat": "Family", "text": "On my way"}))]).await;
     let items = env.core.sync(0).await.unwrap();
-    assert_eq!(items[0].headline, "To Family: On my way.");
+    assert_eq!(items[0].headline, "To Family: \"On my way\".");
     assert!(items[0].quick);
     let quick = env.core.approval_view("r1".to_owned()).await.unwrap().quick.unwrap();
     assert_eq!(quick.allow_what, "send a Telegram message: Family");
@@ -668,4 +668,16 @@ async fn a_message_to_send_says_what_happens_and_can_be_allowed_for_its_chat() {
     serve_pending(&env, &[call_request("r2", "c1", "send", &json!({"chat": "Family", "text": "Here"}))]).await;
     env.core.sync(0).await.unwrap();
     assert_eq!(env.core.approval_view("r2".to_owned()).await.unwrap().quick.unwrap().repeats, 1);
+}
+
+#[tokio::test]
+async fn a_message_too_long_to_show_whole_in_a_notification_is_opened_first() {
+    let env = env().await;
+    let long = "word ".repeat(80);
+    serve_pending(&env, &[call_request("r1", "c1", "send", &json!({"chat": "Family", "text": long.trim()}))]).await;
+    let items = env.core.sync(0).await.unwrap();
+    assert!(!items[0].quick, "a notification would cut it short");
+    assert!(items[0].headline.ends_with('…'), "{}", items[0].headline);
+    let quick = env.core.approval_view("r1".to_owned()).await.unwrap().quick.unwrap();
+    assert!(!quick.from_notification && quick.allow.is_some(), "the sheet shows it all and still offers one tap");
 }

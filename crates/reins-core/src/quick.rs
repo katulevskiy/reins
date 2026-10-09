@@ -69,7 +69,9 @@ fn quick_view(parked: &ParkedRequest, view: &ApprovalView, repeats: u32) -> Opti
         None => (None, String::new()),
     };
     Some(QuickApproval {
-        from_notification: !view.messages.iter().any(|m| m.sensitive) && !too_many_to_show(parked),
+        from_notification: !view.messages.iter().any(|m| m.sensitive)
+            && !too_many_to_show(parked)
+            && headline_fits(parked, view),
         allow,
         allow_what,
         repeats,
@@ -174,6 +176,21 @@ fn allow_scope(parked: &ParkedRequest, view: &ApprovalView) -> Option<(GrantScop
 
 /// What approving does, in one sentence, from the AI's point of view.
 pub fn headline(parked: &ParkedRequest, view: &ApprovalView) -> String {
+    let full = full_headline(parked, view);
+    if full.chars().count() <= MAX_HEADLINE_CHARS {
+        full
+    } else {
+        // Visibly cut: the sheet has the rest.
+        format!("{}…", text::truncate_chars(&full, MAX_HEADLINE_CHARS - 1))
+    }
+}
+
+/// The whole sentence fits the headline: a notification that shows it shows everything an Approve there does.
+fn headline_fits(parked: &ParkedRequest, view: &ApprovalView) -> bool {
+    full_headline(parked, view).chars().count() <= MAX_HEADLINE_CHARS
+}
+
+fn full_headline(parked: &ParkedRequest, view: &ApprovalView) -> String {
     let who = parked.label();
     let line = match &parked.request.call {
         ToolCall::GmailSearch {
@@ -218,7 +235,7 @@ pub fn headline(parked: &ParkedRequest, view: &ApprovalView) -> String {
         } => format!("{who} shares a file."),
         ToolCall::Connector(_) => connector_headline(&who, view),
     };
-    text::truncate_chars(&text::one_line(&line), MAX_HEADLINE_CHARS)
+    text::one_line(&line)
 }
 
 fn connector_headline(who: &str, view: &ApprovalView) -> String {
@@ -246,7 +263,8 @@ fn connector_headline(who: &str, view: &ApprovalView) -> String {
         return match (lines.next(), lines.next()) {
             (None, _) => format!("{who} makes a change in {}.", service_name(&view.service)),
             (Some(first), None) => with_period(&first),
-            (Some(first), Some(second)) => with_period(&format!("{}: {second}", first.trim_end_matches([':', '.']))),
+            // What the AI wrote is quoted: it cannot pass for the rest of the sentence.
+            (Some(first), Some(second)) => format!("{}: \"{second}\".", first.trim_end_matches([':', '.'])),
         };
     }
     let place = {

@@ -116,23 +116,41 @@ pub fn destructive_ask(topic: Option<&str>, question: &str, detail: &str) -> boo
     if topic.is_some_and(|t| t.trim_start().to_lowercase().starts_with("file:")) {
         return true;
     }
-    let text = format!("{}\n{question}\n{detail}", topic.unwrap_or_default()).to_lowercase();
+    let raw = format!("{}\n{question}\n{detail}", topic.unwrap_or_default()).to_lowercase();
     // Spacing as typed does not matter: `rm  -rf` is `rm -rf`.
-    let text = text.split_whitespace().collect::<Vec<_>>().join(" ");
-    DESTRUCTIVE.iter().any(|needle| text.contains(needle)) || rewriting_refspec(&text)
+    let text = raw.split_whitespace().collect::<Vec<_>>().join(" ");
+    DESTRUCTIVE.iter().any(|needle| text.contains(needle)) || dangerous_flags(&raw)
 }
 
-/// `git push origin +main` (forced) or `git push origin :old` (deleted): a refspec after `push` that starts with `+` or
-/// `:`, up to the end of that command.
-fn rewriting_refspec(text: &str) -> bool {
-    text.match_indices("push ").any(|(at, _)| {
-        text[at..]
-            .split(['\n', ';', '&', '|'])
-            .next()
-            .unwrap_or_default()
-            .split_whitespace()
-            .skip(1)
-            .any(|word| word.starts_with('+') || word.starts_with(':'))
+/// A command whose flags make it destructive wherever they stand (`git push origin main --force`, `rm build -rf`):
+/// each command up to `;`, `&`, `|` or the end of the line, word by word.
+fn dangerous_flags(text: &str) -> bool {
+    text.split(['\n', ';', '&', '|']).any(|command| {
+        let words: Vec<&str> = command.split_whitespace().collect();
+        words.iter().enumerate().any(|(i, word)| {
+            let rest = &words[i + 1..];
+            // `-fu`: single-letter flags together.
+            let short = |w: &&str, letters: &[char]| {
+                w.starts_with('-') && !w.starts_with("--") && w.chars().skip(1).any(|c| letters.contains(&c))
+            };
+            match word.rsplit('/').next().unwrap_or(word) {
+                "push" => rest.iter().any(|w| {
+                    w.starts_with('+')
+                        || w.starts_with(':')
+                        || w.starts_with("--force")
+                        || matches!(*w, "--delete" | "--mirror" | "--prune")
+                        || short(w, &['f', 'd'])
+                }),
+                "rm" | "rmdir" => rest.iter().any(|w| matches!(*w, "--recursive" | "--force") || short(w, &['r', 'f'])),
+                "reset" => rest.contains(&"--hard"),
+                "clean" => rest.iter().any(|w| *w == "--force" || short(w, &['f'])),
+                "branch" => rest.iter().any(|w| *w == "--delete" || short(w, &['d'])),
+                "checkout" | "switch" => {
+                    rest.iter().any(|w| matches!(*w, "--force" | "--discard-changes") || short(w, &['f']))
+                }
+                _ => false,
+            }
+        })
     })
 }
 
@@ -246,6 +264,26 @@ mod tests {
         assert!(ask(None, "Clean up?", "git push origin :old-branch"));
         assert!(ask(None, "Push?", "git push origin +main"));
         assert!(!ask(None, "Push?", "git push origin main && echo +ok"), "another command's words");
+        for command in [
+            "git push origin main --force",
+            "git push origin main -f",
+            "git push -uf origin main",
+            "git push origin --force-with-lease main",
+            "git push origin --delete old",
+            "rm build -rf",
+            "/bin/rm -R dist",
+            "git reset HEAD~3 --hard",
+            "git clean -xdf",
+            "git branch old -D",
+            "git checkout . --force",
+        ] {
+            assert!(ask(None, "Run this?", command), "{command}");
+        }
+        for command in
+            ["git push origin main", "git push -u origin feature", "rm notes.txt", "git branch -v", "git reset HEAD~1"]
+        {
+            assert!(!ask(None, "Run this?", command), "{command}");
+        }
         for topic in ["command:cargo test", "command:npm publish", "command:make deploy", "ask"] {
             assert!(!ask(Some(topic), "Run the tests?", "cargo test --all"), "{topic}");
         }
