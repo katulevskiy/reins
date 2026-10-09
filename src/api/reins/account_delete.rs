@@ -47,7 +47,7 @@ pub fn routes() -> Vec<Route> {
 }
 
 /// When the request's access token was issued (its `nbf`); `0` when there is none to read (`Headers` refuses those).
-pub struct TokenIssuedAt(i64);
+pub struct TokenIssuedAt(pub i64);
 
 #[rocket::async_trait]
 impl<'r> FromRequest<'r> for TokenIssuedAt {

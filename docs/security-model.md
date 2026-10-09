@@ -74,7 +74,8 @@ has Bitwarden's end-to-end encryption; only what protects its key changes:
 - **Resetting the vault** is the way out when both are lost (the Unlock screen's "Lost both? Reset the vault"). The
   phone signs in again (the server makes WorkOS ask for the sign-in method again: `prompt=login`, `max_age=0`), checks
   it is the same account, and calls `POST /reins/api/account/reset`. The server allows that only within 10 minutes of
-  an SSO sign-in by the same device, once per sign-in. It deletes the vault (items, folders, Sends), the keys, the
+  a phone app's WorkOS sign-in by the same device, with an access token from that sign-in (not one the device held
+  before), once per sign-in. It deletes the vault (items, folders, Sends), the keys, the
   encrypted account state, emergency access and organization memberships, the approval device, every other device's
   sign-in, and the AI and desktop connections; the phone then makes new keys and a new recovery code as for a new
   account. Nothing of the old vault is readable afterwards, by anyone.

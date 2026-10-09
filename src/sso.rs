@@ -367,8 +367,12 @@ pub async fn redeem(
         user_sso.save(conn).await?;
     }
 
-    // A fresh sign-in is what lets this device reset the account's vault (api::reins::account_reset).
-    crate::api::reins::account_reset::note_sign_in(&user.uuid, &device.uuid);
+    // A fresh sign-in is what lets this device reset the account's vault (api::reins::account_reset). Only the phone
+    // apps' WorkOS sign-ins count: `identity::authorize` makes WorkOS ask for the sign-in method again for those
+    // (`prompt=login`), where another client's sign-in may silently reuse the browser's session.
+    if client_id.as_deref() == Some("mobile") && crate::sso_workos::enabled() {
+        crate::api::reins::account_reset::note_sign_in(&user.uuid, &device.uuid);
+    }
 
     // Remembered so that the provider revoking this session signs the device out (api::reins::workos_sync).
     if let Some(session_id) = auth_user.session_id.clone() {
