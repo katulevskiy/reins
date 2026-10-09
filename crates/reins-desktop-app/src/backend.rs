@@ -494,12 +494,15 @@ impl Backend {
         Ok(())
     }
 
-    /// Sends the enabled git hosts through Reins (starting the service first if needed).
-    pub async fn resume(&self) -> Result<(), String> {
+    /// Sends the enabled git hosts through Reins (starting the service first if needed), except those the phone has
+    /// no account for yet (they stay direct, so the user's own git keeps working). Says which stayed direct, if any.
+    pub async fn resume(&self) -> Result<Option<String>, String> {
         self.start_service().await?;
         let config = self.config()?;
-        self.git.setup_hosts(&Scope::Global, &config)?;
-        Ok(())
+        let (routed, direct) = reins_desktop::setup::routable(&self.paths, &config).await;
+        self.git.setup_hosts(&Scope::Global, &routed)?;
+        Ok((!direct.is_empty())
+            .then(|| direct.iter().map(reins_desktop::setup::unserved_note).collect::<Vec<_>>().join(" ")))
     }
 
     /// git talks to the hosts directly again.
@@ -533,7 +536,11 @@ impl Backend {
         let note = self.restart_service().await?;
         if host && !paused {
             let config = self.config()?;
-            self.git.setup_hosts(&Scope::Global, &config)?;
+            let (routed, direct) = reins_desktop::setup::routable(&self.paths, &config).await;
+            self.git.setup_hosts(&Scope::Global, &routed)?;
+            if let Some(h) = direct.first() {
+                return Ok(Some(reins_desktop::setup::unserved_note(h)));
+            }
         }
         Ok(note)
     }
@@ -705,9 +712,16 @@ impl Backend {
         oauth::login(&self.paths, &identity, server, true).await
     }
 
-    /// Forgets the session (the phone keeps the connection until it is removed there).
-    pub fn sign_out(&self) -> Result<(), String> {
-        oauth::logout(&self.paths).map(drop)
+    /// Ends this computer's connection on the server (the phone's list drops it) and forgets the session. Says when
+    /// the server could not be told.
+    pub async fn sign_out(&self) -> Result<Option<String>, String> {
+        Ok(match oauth::sign_out(&self.paths).await? {
+            oauth::SignedOut::LocalOnly(why) => Some(format!(
+                "Signed out here, but the server was not told ({why}): remove this computer in the Reins app on your \
+                 phone (Settings, AI connections)."
+            )),
+            oauth::SignedOut::NotLoggedIn | oauth::SignedOut::Revoked => None,
+        })
     }
 }
 

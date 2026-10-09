@@ -997,19 +997,24 @@ impl Model {
                 step(&this, cx, label, Step::Running);
                 pause(cx).await;
                 let routed = if demo {
-                    Ok(())
+                    Ok(String::new())
                 } else {
                     let git_backend = Arc::clone(&backend);
                     Tokio::spawn(cx, async move { git_backend.resume().await })
                         .await
                         .unwrap_or_else(|e| Err(e.to_string()))
+                        .map(Option::unwrap_or_default)
                 };
                 step(
                     &this,
                     cx,
                     label,
-                    routed.map_or_else(Step::Failed, |()| {
-                        Step::Done("GitHub pushes and clones ask your phone".to_owned())
+                    routed.map_or_else(Step::Failed, |direct| {
+                        Step::Done(if direct.is_empty() {
+                            "GitHub pushes and clones ask your phone".to_owned()
+                        } else {
+                            direct
+                        })
                     }),
                 );
             }
@@ -1131,7 +1136,7 @@ impl Model {
             Fix::Resume => {
                 self.saved.unpause();
                 self.persist();
-                self.act_with(async move { backend.resume().await.map(|()| None) }, true, cx);
+                self.act_with(async move { backend.resume().await }, true, cx);
             }
             Fix::Connect(h) => self.act_with(
                 async move {
@@ -1278,7 +1283,7 @@ impl Model {
             self.refresh_now(cx);
         } else {
             let backend = Arc::clone(&self.backend);
-            self.act(async move { backend.resume().await }, cx);
+            self.act_noting(async move { backend.resume().await }, cx);
         }
         self.refresh_tray();
         cx.notify();
@@ -1360,8 +1365,9 @@ impl Model {
     }
 
     pub fn sign_out(&mut self, cx: &mut Context<'_, Self>) {
-        if let Err(e) = self.backend.sign_out() {
-            self.notice = Some(e);
+        if !self.args.demo {
+            let backend = Arc::clone(&self.backend);
+            self.act_noting(async move { backend.sign_out().await }, cx);
         }
         self.demo_paired = false;
         self.saved.setup_done = false;
