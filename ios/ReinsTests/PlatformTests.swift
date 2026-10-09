@@ -265,7 +265,7 @@ final class PlatformTests: XCTestCase {
     }
 
     func testGoogleScopesPerService() {
-        XCTAssertEqual(GoogleScopes.of("gmail"), [GoogleScopes.gmailReadonly, GoogleScopes.gmailSend])
+        XCTAssertEqual(GoogleScopes.of("gmail"), [GoogleScopes.gmailModify, GoogleScopes.gmailSettings])
         XCTAssertEqual(GoogleScopes.of("gcalendar"), [GoogleScopes.calendarEvents, GoogleScopes.calendarReadonly])
         XCTAssertEqual(GoogleScopes.of("gcontacts"), [GoogleScopes.contactsReadonly])
         XCTAssertFalse(GoogleConfig(clientId: "", redirectScheme: "x").isConfigured)

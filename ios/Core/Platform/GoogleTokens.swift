@@ -34,8 +34,10 @@ struct GoogleConfig: Equatable {
 /// The OAuth scopes each Google service needs (the core's `GoogleTokenProvider` contract; the same lists as the
 /// Android app's `GoogleAuthorizer.scopesOf`).
 enum GoogleScopes {
-    static let gmailReadonly = "https://www.googleapis.com/auth/gmail.readonly"
-    static let gmailSend = "https://www.googleapis.com/auth/gmail.send"
+    /// Read, search, send, drafts, labels, archive, spam and Trash (never deleting for good).
+    static let gmailModify = "https://www.googleapis.com/auth/gmail.modify"
+    /// Filters (never forwarding) and the vacation reply.
+    static let gmailSettings = "https://www.googleapis.com/auth/gmail.settings.basic"
     static let calendarEvents = "https://www.googleapis.com/auth/calendar.events"
     static let calendarReadonly = "https://www.googleapis.com/auth/calendar.readonly"
     static let contactsReadonly = "https://www.googleapis.com/auth/contacts.readonly"
@@ -46,7 +48,7 @@ enum GoogleScopes {
         switch service {
         case "gcalendar": [calendarEvents, calendarReadonly]
         case "gcontacts": [contactsReadonly]
-        default: [gmailReadonly, gmailSend]
+        default: [gmailModify, gmailSettings]
         }
     }
 

@@ -14,8 +14,9 @@ pub const LEGACY_VERSION: &str = "2025-11-25";
 /// Legacy revisions we answer `initialize` for.
 pub const LEGACY_VERSIONS: [&str; 3] = ["2025-11-25", "2025-06-18", "2025-03-26"];
 pub const SERVER_NAME: &str = "reins";
-pub const INSTRUCTIONS: &str = "Reins gives you access to the user's Gmail through their phone. Every request may need \
-the user's approval in the Reins app: if a result says the request is waiting or the device is offline, tell the user \
+pub const INSTRUCTIONS: &str = "Reins gives you access to the user's Gmail through their phone: search, read and send, \
+and organizing the mailbox (archive, labels, spam, Trash, drafts, attachments, filters). Every request may need the \
+user's approval in the Reins app: if a result says the request is waiting or the device is offline, tell the user \
 and call reins_get_result with the given request_id after they confirm.";
 
 const META_VERSION: &str = "io.modelcontextprotocol/protocolVersion";

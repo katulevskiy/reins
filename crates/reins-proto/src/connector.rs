@@ -1,4 +1,5 @@
-//! The tools of every integration besides Gmail (Telegram, calendars, contacts, SMS, GitHub, the vault).
+//! The tools of every integration (Telegram, calendars, contacts, SMS, GitHub, the vault, and Gmail besides its search,
+//! read and send, which are `ToolCall`s of their own).
 //!
 //! Each tool is described once, as data: its name, what it does to the integration (list, read, search or write),
 //! and its parameters with their limits. The server turns that into the MCP tool list and validates arguments with it;
@@ -9,6 +10,7 @@ use std::sync::OnceLock;
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value, json};
 
+pub const GMAIL: &str = "gmail";
 pub const TELEGRAM: &str = "telegram";
 pub const GCALENDAR: &str = "gcalendar";
 pub const GCONTACTS: &str = "gcontacts";
@@ -29,6 +31,7 @@ pub const MAX_ACCOUNT_LEN: usize = 100;
 
 mod desktop;
 mod github;
+pub mod gmail;
 mod vault;
 
 /// What a call does to the integration, which decides how it is approved.
@@ -216,6 +219,7 @@ pub struct ClassInfo {
 #[must_use]
 pub fn classes(service: &str) -> &'static [ClassInfo] {
     match service {
+        GMAIL => gmail::CLASSES,
         GITHUB => github::CLASSES,
         VAULT => vault::CLASSES,
         GITLAB | CODEBERG | BITBUCKET => desktop::HOST_CLASSES,
@@ -801,6 +805,7 @@ fn build_specs() -> Vec<ToolSpec> {
             Some("to"),
         ),
     ];
+    all.extend(gmail::tools());
     all.extend(github::tools());
     all.extend(vault::tools());
     all.extend(desktop::tools());

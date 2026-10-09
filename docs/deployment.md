@@ -126,8 +126,9 @@ The phone asks Google Play services for Gmail tokens. That needs, in the same pr
 1. **Google Auth Platform → Branding**: app name, support and developer emails.
 2. **Audience**: External. *Testing* mode limits sign-in to listed test users and expires grants after 7 days; publish to
    *In production* for anyone else.
-3. **Data access**: add `gmail.readonly` and `gmail.send`. Both are *restricted* scopes: more than 100 users requires
-   Google's verification and a third-party security assessment.
+3. **Data access**: add `gmail.modify` (search, read, send, drafts, labels, archive, spam and Trash; never deleting
+   for good) and `gmail.settings.basic` (filters, which never forward, and the vacation reply). Both are *restricted*
+   scopes: more than 100 users requires Google's verification and a third-party security assessment.
 4. **Clients → Create client → Android**: package `com.reins2fa.app`, SHA-1 of the signing certificate. Register
    the SHA-1 of every key you sign with, debug and release
    (`keytool -list -v -keystore release.jks`).
@@ -168,8 +169,12 @@ Google Calendar and Google Contacts use the same Android client. Additionally en
 * **Claude** (claude.ai → Settings → Connectors → Add custom connector): URL `https://reins.example.com/mcp`.
 * **ChatGPT** (Settings → Connectors → developer mode): the same URL.
 
-The AI gets four Gmail-related tools: `gmail_search`, `gmail_read`, `gmail_send` and `reins_get_result`, plus
-`reins_request_access`, with which it can ask for a narrow, time-limited permission in advance (named senders or
+The AI gets the Gmail tools `gmail_search`, `gmail_read` and `gmail_send`, and for organizing the mailbox
+`gmail_organize` (archive, labels, read/unread, star, important, spam), `gmail_trash` (to Trash and back), the label
+tools, `gmail_create_draft` (with one file), `gmail_list_attachments`/`gmail_get_attachment`, the filter tools (a filter
+never forwards) and `gmail_get_vacation`/`gmail_set_vacation`. Each write is approved on the phone with what it changes
+and examples; filters, the vacation reply and deleting a label are asked for every time. It also gets
+`reins_get_result` and `reins_request_access`, with which it can ask for a narrow, time-limited permission in advance (named senders or
 recipients, the shortest duration it needs). The phone shows that as a highlighted permission request; the user can
 allow it, allow it for less time, or refuse. If the AI's wait for an approval runs out (about 45 seconds), the user can
 still approve later: the answer is kept for `reins_get_result`, and an approved read leaves a one-time pass so that

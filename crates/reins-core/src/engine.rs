@@ -170,6 +170,12 @@ impl Engine {
         let session: crate::connector::vault::SessionSlot = Arc::new(Mutex::new(session));
         let mut connectors = crate::connector::Registry::default();
         connectors.add(Arc::new(crate::connector::vault::Vault::new(Arc::clone(&session), Arc::clone(&store))));
+        connectors.add(Arc::new(crate::connector::gmail::GmailTools::new(
+            http.clone(),
+            &cfg.gmail_base,
+            Arc::clone(&google),
+            cfg.backoff_base,
+        )));
         connectors.add(Arc::new(crate::connector::calendar::GoogleCalendar::new(
             http.clone(),
             &cfg.calendar_base,

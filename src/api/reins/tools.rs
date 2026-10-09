@@ -62,7 +62,8 @@ pub fn tool_definitions_for(services: Option<&[String]>) -> Vec<Value> {
             "name": "gmail_read",
             "title": "Read Gmail messages",
             "description": "Reads the full text of specific Gmail messages by id (ids come from gmail_search). \
-        The user may have to approve on their phone.",
+        Attached files are not included: list them with gmail_list_attachments. The user may have to approve on their \
+        phone.",
             "inputSchema": {
                 "type": "object",
                 "properties": {

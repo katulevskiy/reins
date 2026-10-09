@@ -177,7 +177,7 @@ Merged `play` release manifest (dependencies included), checked on a built bundl
 | Autopilot model download (~400 MB ONNX from reins2fa.com/models) | app | OK: data, not executable code; pinned by SHA-256 in the core | kept |
 | ONNX Runtime telemetry (`ai.onnxruntime.TelemetryInitializer`) | onnxruntime-android | removed from the manifest (`tools:node="remove"`) | removed |
 | Google code scanner (ML Kit, through Play services) | play-services-code-scanner | Collects device information, identifiers and diagnostics for Google's usage analytics (ML Kit data disclosure): declared in Data safety | kept |
-| Gmail restricted scopes (`gmail.readonly`, `gmail.send`) | Google sign-in | Not a Play rule, but Google OAuth verification of restricted scopes, including a yearly security assessment (CASA) because the content reaches a server | owner action |
+| Gmail restricted scopes (`gmail.modify`, `gmail.settings.basic`) | Google sign-in | Not a Play rule, but Google OAuth verification of restricted scopes, including a yearly security assessment (CASA) because the content reaches a server | owner action |
 
 Other policy points:
 

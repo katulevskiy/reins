@@ -61,8 +61,10 @@ class GoogleAuthorizer(context: Context) : GoogleTokenProvider {
     }
 
     companion object {
-        const val GMAIL_READONLY = "https://www.googleapis.com/auth/gmail.readonly"
-        const val GMAIL_SEND = "https://www.googleapis.com/auth/gmail.send"
+        /** Read, search, send, drafts, labels, archive, spam and Trash (never deleting for good). */
+        const val GMAIL_MODIFY = "https://www.googleapis.com/auth/gmail.modify"
+        /** Filters (never forwarding) and the vacation reply. */
+        const val GMAIL_SETTINGS = "https://www.googleapis.com/auth/gmail.settings.basic"
         const val CALENDAR_EVENTS = "https://www.googleapis.com/auth/calendar.events"
         const val CALENDAR_READONLY = "https://www.googleapis.com/auth/calendar.readonly"
         const val CONTACTS_READONLY = "https://www.googleapis.com/auth/contacts.readonly"
@@ -74,7 +76,7 @@ class GoogleAuthorizer(context: Context) : GoogleTokenProvider {
         fun scopesOf(service: String): List<String> = when (service) {
             "gcalendar" -> listOf(CALENDAR_EVENTS, CALENDAR_READONLY)
             "gcontacts" -> listOf(CONTACTS_READONLY)
-            else -> listOf(GMAIL_READONLY, GMAIL_SEND)
+            else -> listOf(GMAIL_MODIFY, GMAIL_SETTINGS)
         }
 
         private fun nameOf(service: String) = when (service) {

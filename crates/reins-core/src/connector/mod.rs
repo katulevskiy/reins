@@ -1,4 +1,4 @@
-//! Integrations besides Gmail. Each one turns the validated call of a tool into a list of [`Item`]s (to read, list or
+//! Integrations (and Gmail beyond its search, read and send). Each one turns the validated call of a tool into a list of [`Item`]s (to read, list or
 //! search) or into a [`Preview`] and then an action (to write); the engine does the rest the same way for all of them:
 //! it checks the grants, asks the user, records the activity and answers the AI.
 
@@ -9,6 +9,7 @@ pub mod flow;
 pub(crate) mod git;
 pub mod githost;
 pub mod github;
+pub mod gmail;
 pub(crate) mod sealed;
 pub mod telegram;
 pub mod telegram_client;

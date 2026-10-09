@@ -4,7 +4,8 @@
 //! `OutgoingEmail::normalized` (bare ASCII addresses, no control characters) or
 //! that are re-encoded here (subject → RFC 2047, body → base64), so no input can
 //! start a new header line. There is no `From` header: Gmail fills in the
-//! authenticated sender.
+//! authenticated sender. A draft may carry one file: the message is then
+//! `multipart/mixed`, with the file's name and type cleaned the same way.
 
 use data_encoding::{BASE64, BASE64URL};
 use reins_proto::gmail::OutgoingEmail;
@@ -72,12 +73,71 @@ fn crlf(text: &str) -> String {
 }
 
 fn wrapped_base64(text: &str) -> String {
-    let encoded = BASE64.encode(text.as_bytes());
+    wrapped_bytes(text.as_bytes())
+}
+
+fn wrapped_bytes(data: &[u8]) -> String {
+    let encoded = BASE64.encode(data);
     encoded.as_bytes().chunks(76).map(|c| String::from_utf8_lossy(c).into_owned()).collect::<Vec<_>>().join("\r\n")
+}
+
+/// A file attached to a draft.
+pub struct Attachment {
+    pub name: String,
+    pub content_type: String,
+    pub data: Vec<u8>,
+}
+
+/// Separates the parts. Base64 lines never start with `-`, so no part can contain it.
+const BOUNDARY: &str = "=_reins_part";
+
+/// A MIME type as given, when it is one (`application/pdf`), else the generic one.
+fn clean_type(raw: &str) -> String {
+    let t = raw.trim().to_ascii_lowercase();
+    let token =
+        |s: &str| !s.is_empty() && s.bytes().all(|b| b.is_ascii_alphanumeric() || matches!(b, b'.' | b'+' | b'-'));
+    match t.split_once('/') {
+        Some((a, b)) if token(a) && token(b) && t.len() <= 100 => t,
+        _ => "application/octet-stream".to_owned(),
+    }
+}
+
+/// The file name for `filename="..."`: plain when it is plain ASCII, else one RFC 2047 encoded word (what Gmail itself
+/// writes). Control characters and path separators never reach the header.
+fn filename_param(name: &str) -> String {
+    let cleaned: String = name
+        .chars()
+        .filter(|c| !c.is_control())
+        .map(|c| {
+            if matches!(c, '/' | '\\') {
+                '_'
+            } else {
+                c
+            }
+        })
+        .collect();
+    let cleaned: String = cleaned.trim().chars().take(200).collect();
+    if cleaned.is_empty() {
+        return "file".to_owned();
+    }
+    if cleaned.bytes().all(|b| b == b' ' || (b.is_ascii_graphic() && b != b'"')) && !cleaned.contains("=?") {
+        cleaned
+    } else {
+        format!("=?UTF-8?B?{}?=", BASE64.encode(cleaned.as_bytes()))
+    }
 }
 
 /// The RFC 2822 text of `email`, ready to be base64url encoded.
 pub fn rfc822(email: &OutgoingEmail, reply: Option<&ReplyContext>) -> Result<String, CoreError> {
+    rfc822_with(email, reply, None)
+}
+
+/// The RFC 2822 text of `email` with an optional file attached.
+pub fn rfc822_with(
+    email: &OutgoingEmail,
+    reply: Option<&ReplyContext>,
+    attachment: Option<&Attachment>,
+) -> Result<String, CoreError> {
     // Defense in depth: never build headers from an unvalidated email.
     let email = email.clone().normalized().map_err(|e| CoreError::invalid(e.to_string()))?;
     let mut headers = vec!["MIME-Version: 1.0".to_owned(), format!("To: {}", email.to.join(", "))];
@@ -95,19 +155,41 @@ pub fn rfc822(email: &OutgoingEmail, reply: Option<&ReplyContext>) -> Result<Str
         }
         headers.push(format!("References: {}", refs.join(" ")));
     }
-    headers.push("Content-Type: text/plain; charset=UTF-8".to_owned());
-    headers.push("Content-Transfer-Encoding: base64".to_owned());
-    Ok(format!("{}\r\n\r\n{}\r\n", headers.join("\r\n"), wrapped_base64(&crlf(&email.body))))
+    let text = wrapped_base64(&crlf(&email.body));
+    let Some(file) = attachment else {
+        headers.push("Content-Type: text/plain; charset=UTF-8".to_owned());
+        headers.push("Content-Transfer-Encoding: base64".to_owned());
+        return Ok(format!("{}\r\n\r\n{text}\r\n", headers.join("\r\n")));
+    };
+    headers.push(format!("Content-Type: multipart/mixed; boundary=\"{BOUNDARY}\""));
+    let content_type = clean_type(&file.content_type);
+    let name = filename_param(&file.name);
+    Ok(format!(
+        "{}\r\n\r\n--{BOUNDARY}\r\nContent-Type: text/plain; charset=UTF-8\r\nContent-Transfer-Encoding: base64\r\n\r\n\
+         {text}\r\n--{BOUNDARY}\r\nContent-Type: {content_type}; name=\"{name}\"\r\nContent-Disposition: attachment; filename=\"{name}\"\r\n\
+         Content-Transfer-Encoding: base64\r\n\r\n{}\r\n--{BOUNDARY}--\r\n",
+        headers.join("\r\n"),
+        wrapped_bytes(&file.data)
+    ))
 }
 
 /// The `raw` field of `messages.send`: the whole message, base64url (padded).
 pub fn raw(email: &OutgoingEmail, reply: Option<&ReplyContext>) -> Result<String, CoreError> {
-    Ok(BASE64URL.encode(rfc822(email, reply)?.as_bytes()))
+    raw_with(email, reply, None)
+}
+
+/// [`raw`] with an optional file attached.
+pub fn raw_with(
+    email: &OutgoingEmail,
+    reply: Option<&ReplyContext>,
+    attachment: Option<&Attachment>,
+) -> Result<String, CoreError> {
+    Ok(BASE64URL.encode(rfc822_with(email, reply, attachment)?.as_bytes()))
 }
 
 #[cfg(test)]
 mod tests {
-    use mail_parser::MessageParser;
+    use mail_parser::{MessageParser, MimeHeaders};
 
     use super::*;
 
@@ -197,6 +279,31 @@ mod tests {
         assert!(raw.bytes().all(|b| b.is_ascii_alphanumeric() || matches!(b, b'-' | b'_' | b'=')));
         let decoded = BASE64URL.decode(raw.as_bytes()).unwrap();
         assert!(String::from_utf8(decoded).unwrap().contains("Subject: Hi"));
+    }
+
+    #[test]
+    fn a_file_rides_along_as_a_second_part() {
+        let file = Attachment {
+            name: "Rechnung März \"final\"/../x.pdf".to_owned(),
+            content_type: "Application/PDF".to_owned(),
+            data: b"%PDF-1.4 bytes".to_vec(),
+        };
+        let text = rfc822_with(&email("Invoice", "See attached"), Some(&reply()), Some(&file)).unwrap();
+        assert!(text.contains("In-Reply-To: <orig@mail.example.com>"));
+        let parsed = MessageParser::default().parse(text.as_bytes()).unwrap();
+        assert_eq!(parsed.body_text(0).unwrap().trim_end(), "See attached");
+        let attached = parsed.attachment(0).unwrap();
+        assert_eq!(attached.contents(), b"%PDF-1.4 bytes");
+        assert_eq!(attached.attachment_name(), Some("Rechnung März \"final\"_.._x.pdf"));
+        assert!(text.contains("Content-Type: application/pdf;"));
+        let odd = Attachment {
+            name: "a\r\nBcc: eve@evil.com".to_owned(),
+            content_type: "text/html\r\nBcc: x".to_owned(),
+            data: Vec::new(),
+        };
+        let text = rfc822_with(&email("x", "y"), None, Some(&odd)).unwrap();
+        assert!(!text.contains("\r\nBcc") && text.contains("application/octet-stream"), "{text}");
+        assert!(MessageParser::default().parse(text.as_bytes()).unwrap().header("Bcc").is_none());
     }
 
     #[test]

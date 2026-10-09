@@ -35,8 +35,8 @@ notifications, and relies on the foreground long-poll.
 
 ### Gmail
 
-The app asks Google Play services for Gmail tokens (`gmail.readonly`, `gmail.send`). That needs an **Android OAuth
-client** for package `com.reins2fa.app` and the signing certificate's SHA-1 in the Google Cloud project, plus a
+The app asks Google Play services for Gmail tokens (`gmail.modify`, `gmail.settings.basic`). That needs an **Android
+OAuth client** for package `com.reins2fa.app` and the signing certificate's SHA-1 in the Google Cloud project, plus a
 configured consent screen. Until then the app shows "Gmail needs setup" and everything else works.
 
 Any number of Google accounts can be added (Activity → Integrations → Gmail → Add account, which uses Android's own

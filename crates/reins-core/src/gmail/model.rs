@@ -31,6 +31,9 @@ pub struct GmailMessage {
 
 #[derive(Debug, Default, Deserialize)]
 pub struct Part {
+    /// "0", "1", "1.2": stable for a message, unlike `attachmentId`, which Gmail makes anew for every fetch.
+    #[serde(rename = "partId", default)]
+    pub part_id: String,
     #[serde(rename = "mimeType", default)]
     pub mime_type: String,
     #[serde(default)]
@@ -56,6 +59,9 @@ pub struct PartBody {
     pub data: Option<String>,
     #[serde(rename = "attachmentId", default)]
     pub attachment_id: Option<String>,
+    /// Bytes, as Gmail counts them.
+    #[serde(default)]
+    pub size: u64,
 }
 
 #[derive(Debug, Deserialize)]

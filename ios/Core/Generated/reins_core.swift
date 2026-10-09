@@ -1387,8 +1387,8 @@ public protocol GoogleTokenProvider: AnyObject, Sendable {
     
     /**
      * Fresh access token for `account` (an address; empty = the phone's default Google account) with the scopes of
-     * `service` ("gmail": gmail.readonly + gmail.send; "gcalendar": calendar; "gcontacts": contacts.readonly), or
-     * NeedsUserInteraction.
+     * `service` ("gmail": gmail.modify + gmail.settings.basic; "gcalendar": calendar; "gcontacts":
+     * contacts.readonly), or NeedsUserInteraction.
      */
     func accessToken(account: String, service: String) async throws  -> String
     
@@ -1448,8 +1448,8 @@ open class GoogleTokenProviderImpl: GoogleTokenProvider, @unchecked Sendable {
     
     /**
      * Fresh access token for `account` (an address; empty = the phone's default Google account) with the scopes of
-     * `service` ("gmail": gmail.readonly + gmail.send; "gcalendar": calendar; "gcontacts": contacts.readonly), or
-     * NeedsUserInteraction.
+     * `service` ("gmail": gmail.modify + gmail.settings.basic; "gcalendar": calendar; "gcontacts":
+     * contacts.readonly), or NeedsUserInteraction.
      */
 open func accessToken(account: String, service: String)async throws  -> String  {
     return
@@ -12263,7 +12263,7 @@ private let initializationResult: InitializationResult = {
     if (uniffi_reins_core_checksum_method_devicebridge_sms_send() != 18382) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_reins_core_checksum_method_googletokenprovider_access_token() != 35733) {
+    if (uniffi_reins_core_checksum_method_googletokenprovider_access_token() != 46941) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_reins_core_checksum_method_keywrapper_wrap() != 35710) {

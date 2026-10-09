@@ -106,7 +106,7 @@ fn recipients(headers: &[Header], name: &str) -> Vec<String> {
     out
 }
 
-fn decode_data(data: &str) -> Option<Vec<u8>> {
+pub(crate) fn decode_data(data: &str) -> Option<Vec<u8>> {
     BASE64URL_NOPAD.decode(data.trim_end_matches('=').as_bytes()).ok()
 }
 

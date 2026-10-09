@@ -280,6 +280,11 @@ fn file_tool(call: &ConnectorCall) -> Option<(&'static str, FileTool)> {
             content: &["content_base64"],
             max: MAX_READ_BYTES,
         },
+        // A draft carries a file only when it names one.
+        "gmail_create_draft" if call.args.contains_key("file_name") => FileTool {
+            content: &["content_base64"],
+            max: reins_proto::connector::gmail::MAX_DRAFT_FILE_BYTES,
+        },
         // A text Send takes no file (and text given for a file Send is a mistake the vault explains).
         "vault_send_create"
             if call.str_arg("type") == Some("file")

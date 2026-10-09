@@ -15,8 +15,8 @@ pub trait KeyWrapper: Send + Sync {
 #[async_trait::async_trait]
 pub trait GoogleTokenProvider: Send + Sync {
     /// Fresh access token for `account` (an address; empty = the phone's default Google account) with the scopes of
-    /// `service` ("gmail": gmail.readonly + gmail.send; "gcalendar": calendar; "gcontacts": contacts.readonly), or
-    /// NeedsUserInteraction.
+    /// `service` ("gmail": gmail.modify + gmail.settings.basic; "gcalendar": calendar; "gcontacts":
+    /// contacts.readonly), or NeedsUserInteraction.
     async fn access_token(&self, account: String, service: String) -> Result<String, ForeignError>;
 }
 

@@ -264,8 +264,8 @@ but it gets no push. Requests then reach the phone only while the app is open. B
 Gmail, Google Calendar and Google Contacts are reached by the phone through Google Play services. They depend on the
 Google Cloud OAuth client registered for the APK's package and signing certificate, not on the server. If you build
 your own APK, register an Android OAuth client for your signing key, and enable the Gmail, Calendar and People APIs
-with the scopes `gmail.readonly`, `gmail.send`, `calendar.events`, `calendar.readonly` and `contacts.readonly`. The
-Gmail scopes are *restricted*: beyond 100 users Google requires verification and a security assessment. Telegram needs
+with the scopes `gmail.modify`, `gmail.settings.basic`, `calendar.events`, `calendar.readonly` and `contacts.readonly`.
+The Gmail scopes are *restricted*: beyond 100 users Google requires verification and a security assessment. Telegram needs
 an `api_id`/`api_hash` from <https://my.telegram.org>, compiled into the app (`reins.telegramApiId`,
 `reins.telegramApiHash` in `~/.gradle/gradle.properties`).
 
