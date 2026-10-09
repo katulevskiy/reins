@@ -576,7 +576,15 @@ fun SectionLabel(text: String, modifier: Modifier = Modifier) {
 
 /** Empty-state block: glyph, title, detail. */
 @Composable
-fun EmptyState(glyph: Glyph, title: String, detail: String?, modifier: Modifier = Modifier, tag: String? = null) {
+fun EmptyState(
+    glyph: Glyph,
+    title: String,
+    detail: String?,
+    modifier: Modifier = Modifier,
+    tag: String? = null,
+    /** What to do about it: buttons under the text. */
+    actions: (@Composable ColumnScope.() -> Unit)? = null,
+) {
     val c = LocalColors.current
     Column(
         modifier.fillMaxWidth().padding(32.dp).then(if (tag != null) Modifier.testTag(tag) else Modifier),
@@ -588,6 +596,10 @@ fun EmptyState(glyph: Glyph, title: String, detail: String?, modifier: Modifier 
         if (detail != null) {
             Spacer(Modifier.height(6.dp))
             RText(detail, RType.sans(14f), c.secondary, align = TextAlign.Center)
+        }
+        if (actions != null) {
+            Spacer(Modifier.height(18.dp))
+            Column(horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(10.dp), content = actions)
         }
     }
 }

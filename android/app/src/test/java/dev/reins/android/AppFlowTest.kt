@@ -1247,6 +1247,46 @@ class AppFlowTest {
     }
 
     @Test
+    fun withNothingConnectedTheEmptyActivityOffersToConnect() {
+        core.connections = emptyList()
+        launch()
+        awaitTag("noActivity")
+        tap("emptyConnectAi")
+        val clipboard = context.getSystemService(android.content.ClipboardManager::class.java)
+        assertEquals("http://127.0.0.1:8000/mcp", clipboard.primaryClip?.getItemAt(0)?.text?.toString())
+        awaitTextContaining("Copied http://127.0.0.1:8000/mcp")
+        tap("emptyConnectComputer")
+        awaitTag("scanQr")
+    }
+
+    @Test
+    fun withAnAiConnectedTheEmptyActivityHasNoConnectButtons() {
+        launch()
+        awaitTag("noActivity")
+        assertFalse(has("emptyConnectComputer"))
+    }
+
+    @Test
+    fun settingsListsComputersWithTheirKeyApartFromAiApps() {
+        core.connections = listOf(TestData.computer(), TestData.connection())
+        launch()
+        tap("openSettings")
+        awaitTag("connection:d1")
+        rule.onNodeWithTag("connectionDetail:d1", useUnmergedTree = true).assertTextContains("Key 4821 9930", substring = true)
+        rule.onNodeWithTag("connectionDetail:c1", useUnmergedTree = true).assertTextContains("claude.ai", substring = true)
+        // An AI app is connected: no "No AI app is connected yet".
+        assertFalse(has("copyMcpUrl"))
+    }
+
+    @Test
+    fun theIntegrationsCountLeavesOutTheVault() {
+        core.accounts = listOf(dev.reins.core.AccountView("vault", "me@example.com", 1_700_000_000))
+        launch()
+        tap("openSettings")
+        awaitText("Connect Gmail and more")
+    }
+
+    @Test
     fun aNewGrantOffersOnlyMailAccountsNotTheVault() {
         // A new account has its vault and no Gmail yet: the mail grant has no account to offer.
         core.accounts = listOf(dev.reins.core.AccountView("vault", "me@example.com", 1_700_000_000))

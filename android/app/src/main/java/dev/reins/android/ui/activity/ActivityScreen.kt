@@ -88,6 +88,9 @@ fun ActivityScreen(
     onSettings: () -> Unit = {},
     /** "Approve all" (true) or "Deny all" (false) for a burst of requests from one AI. */
     onAnswerBurst: (Burst, Boolean) -> Unit = { _, _ -> },
+    /** With nothing connected yet: pair a computer, or get the address for Claude.ai / ChatGPT. */
+    onConnectComputer: () -> Unit = {},
+    onConnectAi: () -> Unit = {},
 ) {
     val c = LocalColors.current
     val state: AppState = container.state
@@ -96,6 +99,7 @@ fun ActivityScreen(
     val seen by state.seenActivityId.collectAsStateWithLifecycle()
     val replaced by state.deviceReplaced.collectAsStateWithLifecycle()
     val registrationError by state.registrationError.collectAsStateWithLifecycle()
+    val connections by state.connections.collectAsStateWithLifecycle()
     // "Automatic": only what Autopilot, a bypass or Lockdown decided.
     var automaticOnly by androidx.compose.runtime.saveable.rememberSaveable { mutableStateOf(false) }
     val automaticCount = remember(entries) { entries.count { it.decidedBy.isNotEmpty() } }
@@ -210,6 +214,23 @@ fun ActivityScreen(
                             "What Autopilot, a bypass or Lockdown decides for you shows up here.",
                             tag = "noAutomatic",
                         )
+                    } else if (connections.isEmpty()) {
+                        // A new account: nothing can ask yet, so say how to connect something.
+                        EmptyState(
+                            Glyph.List,
+                            "Nothing yet",
+                            "Connect your computer or an AI app. What they ask for shows up here, and waits for you.",
+                            tag = "noActivity",
+                        ) {
+                            CapsuleButton("Connect a computer", Modifier.testTag("emptyConnectComputer"), glyph = Glyph.Laptop, onClick = onConnectComputer)
+                            CapsuleButton(
+                                "Connect Claude.ai or ChatGPT",
+                                Modifier.testTag("emptyConnectAi"),
+                                style = ButtonStyle.Secondary,
+                                glyph = Glyph.Link,
+                                onClick = onConnectAi,
+                            )
+                        }
                     } else {
                         EmptyState(
                             Glyph.List,
