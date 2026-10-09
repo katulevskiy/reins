@@ -710,7 +710,7 @@ fn tilde(s: &Setup, p: &Path) -> String {
 /// Registers the MCP server and the hook in `h`'s settings; returns what it did, one line each.
 pub fn add(paths: &Paths, s: &Setup, h: Harness) -> Result<Vec<String>, String> {
     let mut manifest = load_manifest(paths)?;
-    let mut report = Vec::new();
+    let mut report: Vec<(Role, bool, String)> = Vec::new();
     for (role, target) in targets(h, s) {
         let file = target.file().to_path_buf();
         let shown = tilde(s, &file);
@@ -763,11 +763,7 @@ pub fn add(paths: &Paths, s: &Setup, h: Harness) -> Result<Vec<String>, String> 
             } => add_toml(existing.as_deref().unwrap_or_default(), &shown, header, body)?,
         };
         let Some((text, change)) = change else {
-            match role {
-                Role::Mcp => report.push(format!("MCP server already in {shown}")),
-                Role::Hook => report.push(format!("hook already in {shown}")),
-                Role::Support => {}
-            }
+            report.push((role, false, shown));
             continue;
         };
         let created_dirs = match file.parent() {
@@ -785,13 +781,36 @@ pub fn add(paths: &Paths, s: &Setup, h: Harness) -> Result<Vec<String>, String> 
         });
         // Saved after every file, so a failure half way can still be undone.
         save_manifest(paths, &manifest)?;
-        match role {
-            Role::Mcp => report.push(format!("added the MCP server `{SERVER_NAME}` to {shown}")),
-            Role::Hook => report.push(format!("added the hook to {shown}")),
-            Role::Support => {}
+        report.push((role, true, shown));
+    }
+    Ok(add_report(&report))
+}
+
+/// What `add` did, one line per file: a harness with several hook entries in one file (Cursor) reads "added 3 hooks
+/// to ~/.cursor/hooks.json", not the same line three times.
+fn add_report(parts: &[(Role, bool, String)]) -> Vec<String> {
+    let mut lines: Vec<((Role, bool, &str), usize)> = Vec::new();
+    for (role, added, shown) in parts {
+        if *role == Role::Support {
+            continue;
+        }
+        let key = (*role, *added, shown.as_str());
+        match lines.iter_mut().find(|(k, _)| *k == key) {
+            Some((_, n)) => *n += 1,
+            None => lines.push((key, 1)),
         }
     }
-    Ok(report)
+    lines
+        .into_iter()
+        .map(|((role, added, shown), n)| match (role, added, n) {
+            (Role::Mcp, true, _) => format!("added the MCP server `{SERVER_NAME}` to {shown}"),
+            (Role::Mcp, false, _) => format!("MCP server already in {shown}"),
+            (_, true, 1) => format!("added the hook to {shown}"),
+            (_, true, n) => format!("added {n} hooks to {shown}"),
+            (_, false, 1) => format!("hook already in {shown}"),
+            (_, false, n) => format!("{n} hooks already in {shown}"),
+        })
+        .collect()
 }
 
 /// Undoes what `add` did for `h` (or, with no record of it, takes out this app's entries by name).
@@ -1065,6 +1084,24 @@ pub fn after_add_note(h: Harness) -> &'static str {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn several_hooks_in_one_file_are_one_line() {
+        let f = |role, added, shown: &str| (role, added, shown.to_owned());
+        let parts = [
+            f(Role::Mcp, true, "~/.cursor/mcp.json"),
+            f(Role::Support, true, "~/.cursor/hooks.json"),
+            f(Role::Hook, true, "~/.cursor/hooks.json"),
+            f(Role::Hook, true, "~/.cursor/hooks.json"),
+            f(Role::Hook, true, "~/.cursor/hooks.json"),
+        ];
+        assert_eq!(
+            add_report(&parts),
+            ["added the MCP server `reins` to ~/.cursor/mcp.json", "added 3 hooks to ~/.cursor/hooks.json"]
+        );
+        let again = [f(Role::Hook, false, "~/.claude/settings.json")];
+        assert_eq!(add_report(&again), ["hook already in ~/.claude/settings.json"]);
+    }
 
     #[test]
     fn names_and_quoting() {
