@@ -11,6 +11,8 @@
 - [Troubleshooting](troubleshooting.md): a request that never arrives, a failing git push, a new or lost phone.
 - [Autopilot](autopilot.md): automatic approvals on the phone. Modes, the hard floor, learning, privacy, and the
   model's limits.
+- [Payments](payments.md): an agent buys something you approve on the phone. Payment methods, spend limits, budgets,
+  the ledger and the signed mandate.
 
 **Understanding it**
 

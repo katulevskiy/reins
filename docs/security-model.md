@@ -49,12 +49,22 @@ The agent **cannot**:
 | Desktop app session (OAuth tokens for the server) | `~/.local/state/reins/session.json`, 0600 | readable by your OS user. |
 | Released git credentials, API keys, `reins run` secrets | desktop app memory | until the lease ends (git fetch 1 h, push 10 min, API proxy as configured). `reins run` wipes the values once the command starts. |
 | SSH private keys | phone (vault) | signatures are made on the phone. The key never leaves it. |
+| Virtual card provider key (Privacy.com) | phone, encrypted store | sent to the provider only, to make and close cards. |
+| Payment settings, purchase ledger, the mandate signing key | phone, encrypted store | travel with the account state like the grants. The ledger keeps a virtual card's id and last four digits, never a card number. |
 
 Vault secrets an AI asks to see (passwords, one-time codes, notes, card numbers, SSH private keys) are asked for
 every time. They can never be covered by a standing permission, and their values are not written to the activity log.
 Secrets released to the desktop app (`reins run`, the API proxy) and SSH signatures can be covered by a standing
 permission for one item, or for one key on one server, if you choose to give one. Autopilot never releases them on its
 own.
+
+Purchases ([Payments](payments.md)) are approved by you each time, or by a spend limit you set for one AI, one
+payment method and an amount; never by a standing permission or Autopilot. What pays leaves the phone only with an
+approved purchase, for that cart: a virtual card made for it and capped at its total (the safest), a card from the
+vault (always asked for, never by a spend limit), or nothing at all (the store's saved payment method, or you pay on
+the phone). The server relays card details in memory like any answer and never writes them down; through the desktop
+app's MCP bridge they are sealed to its key. Every approval carries a mandate signed on the phone, so the cart you
+approved can be proved later. [What leaves the phone, and when](payments.md#what-leaves-the-phone-and-when).
 
 ## Accounts without a master password
 
