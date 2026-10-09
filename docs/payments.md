@@ -22,21 +22,21 @@ Agent payments are new, and the big standards need the store to take part:
 So Reins does what works without a partnership with the store: it decides on the phone, hands over a payment method
 only for the one cart you approved, prefers capped virtual cards over real card numbers, and lets you pay on the
 phone yourself when you would rather not hand over anything. It attaches an AP2-style signed mandate to every
-approval so that the agent, the store or you can later prove exactly what was approved.
+approval, so that you can later prove exactly what you approved.
 
 ## Payment methods
 
 Choose which of these an agent may use (Integrations → Payments):
 
-- **Virtual card (Privacy.com).** Paste your Privacy.com API key; it stays on the phone, encrypted like your other
-  tokens. For each approved purchase the phone creates a new card, locked to the first store that charges it, with a
-  spending limit of the approved total plus a small tolerance you set (default 10%, at least 1.00, for shipping or
-  tax that changes at checkout). The agent gets that card's number. It cannot be charged more than the limit, and
-  after its first charge it works only at that store. The phone closes it when the agent reports that the purchase
-  failed or was cancelled, when you close it from Spending, or 30 days after the purchase (later charges for split
-  shipments still go through until then). In Payments you can choose single-use cards instead, which close after the
-  first charge. This is the safest way to let an agent pay, and the only card that a spend limit can approve on its
-  own.
+- **Virtual card (Privacy.com).** Paste your Privacy.com API key. It is kept encrypted on this phone only: it is not
+  copied to your other phones with the rest of the account (connect it there too if you want to use it there). For
+  each approved purchase the phone creates a new card, locked to the first store that charges it, with a spending
+  limit of the approved total plus a small tolerance you set (default 10%, at least 1.00, for shipping or tax that
+  changes at checkout). The agent gets that card's number. It cannot be charged more than that cap, and after its
+  first charge it works only at that store. The phone closes it when the agent reports that the purchase failed or
+  was cancelled, when you close it from Spending, or 30 days after the purchase (later charges for split shipments
+  still go through until then). In Payments you can choose single-use cards instead, which close after the first
+  charge. This is the safest way to let an agent pay, and the only one a spend limit can approve on its own.
 - **A card from your vault.** Cards you saved in the vault (type Card), switched on one by one. When you approve a
   purchase, the agent gets the card's number, expiry, security code and holder name, for that purchase. A real card
   number cannot be taken back once handed over, so a card from the vault is always asked for; no spend limit and no
@@ -47,8 +47,9 @@ Choose which of these an agent may use (Integrations → Payments):
 - **Pay on this phone.** The agent prepares the cart and gives its checkout page. When you approve, the phone opens
   that page in the browser and you pay there yourself, with Google Pay, Apple Pay or anything else the store offers.
   The agent is told the purchase was handed to you, and gets nothing to pay with. The page must be on the store's own
-  site (the domain the approval shows) or a well-known hosted payment page (Stripe Checkout, Shopify, PayPal, Square,
-  Amazon Pay), which the approval names.
+  site: its registrable domain, by the [public suffix list](https://publicsuffix.org) (`pay.amazon.com` for
+  `www.amazon.com`, never `checkout.stripe.com` or `paypal.com`). Stores whose checkout is elsewhere need another
+  method.
 
 ## Shipping addresses
 
@@ -63,11 +64,13 @@ purchase, for that purchase. Purchases that are not shipped (a download, a booki
 | `payments_methods_list` | The payment methods you switched on: an id, the kind, a nickname, the card brand, the last four digits and the expiry. Never a full number. | Like any list: you tick what to show, or a standing permission covers it. |
 | `payments_addresses_list` | Your shipping addresses, masked as above. | The same. |
 | `payments_purchase_request` | The store's name and page, the items (name, quantity, unit price), shipping, tax, discount, the total and its currency, the address and the payment method (both optional: left out, you pick them on the phone), and a note. | Always, unless a spend limit you set covers it. |
-| `payments_purchase_complete` | After checkout: the order number, the amount charged and the receipt link, or that it failed. Recorded in the ledger; a virtual card is closed. | No. It only records what happened. |
+| `payments_purchase_complete` | After checkout: the order number, the amount charged and the receipt page (on the store's own site), or that it failed. Recorded in the ledger; a virtual card is closed when it failed. | No. It only records what happened, and never lowers what a purchase counts for. |
 
-The phone checks a purchase request before you see it: the total must be exactly the items plus shipping and tax
-minus the discount, amounts are in the currency's own decimals, at most 50 lines, every page address is `https`, and
-the checkout page is on the store's domain, one of its subdomains, or a hosted payment page.
+The server checks a purchase request before relaying it, and the phone again: the total must be exactly the items
+plus shipping and tax minus the discount, amounts are in the currency's own decimals, at most 50 lines, every page is
+`https`, and no text the user reads (the store's name, the items, the note) may hold control, direction or zero-width
+characters. The phone also reads every page as a browser reads it, and refuses a checkout or an item page that is not
+on the store's own site.
 
 ### What an approved purchase returns
 
@@ -88,16 +91,21 @@ the checkout page is on the store's domain, one of its subdomains, or a hosted p
 }
 ```
 
-`payment` is one of `virtual_card`, `card`, `merchant_account` (nothing to pay with: use what the store has on file)
-or `pay_on_phone` (`"status": "handed_off"`: do not place the order; the user pays on their phone).
+`purchase_id` is made by the phone. `payment` is one of `virtual_card`, `card`, `merchant_account` (nothing to pay
+with: use what the store has on file) or `pay_on_phone` (`"status": "handed_off"`: do not place the order; the user
+pays on their phone). Through the desktop app's bridge, card details arrive sealed and are opened there
+([below](#what-leaves-the-phone-and-when)).
 
 ## The approval on the phone
 
 A purchase gets its own screen, laid out like a receipt: the store and the domain it is on, each item with its
 quantity and price, shipping, tax, discount and the total, then the address, the payment method and which AI asked,
 with its note. You can change the address and the payment method there. Approving needs the phone's screen lock or
-biometrics, as every approval does. Warnings are shown above the total: the store's name does not match its domain,
-the total is over a budget, the agent has not bought here before.
+biometrics, as every approval does, and happens on that screen only: a plain approval (an older app, a notification
+button) is refused rather than paying with defaults. Warnings are shown above the total: the store's name does not
+match its registrable domain (`Amazon` on `amazon.com.evil.shop`, a Cyrillic `А` in `Аmazon`), the agent has not
+bought there before, an earlier card of this agent was charged by someone else, the purchase is in a currency your
+budget does not count.
 
 From the approval you can also create a spend limit for purchases like this one (below).
 
@@ -112,43 +120,63 @@ cap the card itself enforces. A limit names:
 - the most per purchase, and the most per day, week or month (the last 24 hours, 7 days or 30 days);
 - the currency, and when it ends (at most 90 days).
 
-A purchase is approved on its own only when a limit covers all of it: the AI, the store, the virtual card, the
-currency, the per-purchase amount, and what this AI already spent at those stores in the period plus this purchase.
-The request must name the address (or say nothing is shipped) and the virtual card. Anything else, or anything above a
-limit, asks you. Lockdown stops limits too.
+A purchase is approved on its own only when a limit covers all of it:
 
-What counts as spent is the approved total, or what the agent reports was charged when that is more. A report never
-lowers it: a purchase the agent calls failed stops counting only when Privacy.com says its card was never charged.
+- the request names the virtual card and the address (or that nothing is shipped), and it is fresh: a request older
+  than 10 minutes, or relayed again after it was paid for, never is;
+- what the new card can be charged (the total plus the tolerance) fits the amount per purchase, and fits what is
+  left of the period after everything this AI already spent at those stores;
+- this AI had fewer than 3 purchases approved by a limit in the last hour, and fewer than 10 in the last day;
+- Lockdown is off, checked again right before paying.
 
-The store a limit names is the one the agent says it buys from. A virtual card locks to whichever store charges it
-first, so before a limit approves anything the phone reads who charged that AI's earlier cards. A charge by a name
-that does not look like the approved store's domain ("CHEAP WATCHES LTD" on a card made for amazon.com; Amazon's own
-charges read "AMZN") closes the card at once, shows on the next approval and in Spending, and stops that AI's limits
-until you have looked at it. When the charges cannot be read, limits approve nothing. The amounts are what the card
-itself enforces.
+Anything else, or anything above a limit, asks you. Every purchase a limit approves is shown in a notification, like
+Autopilot's own decisions.
+
+Before a limit approves anything, the phone reads from Privacy.com what that AI's earlier cards were charged, and by
+whom (up to 8 cards at a time). If that cannot be read, or more cards are waiting, the limit approves nothing and the
+purchase asks you. A charge whose name does not look like the approved store's domain ("CHEAP WATCHES LTD" on a card
+made for amazon.com; Amazon's own read "AMZN") closes the card at once, shows on the next approval and in Spending,
+and stops that AI's limits until you have looked at it. The name is a hint only, since the store chooses it; the
+amounts are what the card enforces.
 
 ## Budgets
 
-Budgets refuse a purchase before it reaches you. In Payments → Budgets:
+Budgets refuse a purchase before it reaches you. In Payments → Budget:
 
-- **Most per purchase**: a request above it is refused, and the agent is told why.
-- **Most in 30 days** (and in 24 hours), for every AI together and for each AI: what you approved plus the request.
+- **Most per purchase**: a request that can cost more (its total, plus a virtual card's tolerance) is refused, and
+  the agent is told why.
+- **Most in 30 days** (and in 24 hours), for every AI together and for each AI: what is counted already plus what the
+  request can cost.
 - **Only these stores**: when set, a request from any other domain is refused.
 
 They count purchases in their own currency only. A purchase in another currency is not refused by the amounts; its
 approval says that your budget does not count it.
 
+## What counts as spent
+
+Nothing the agent reports lowers it:
+
+- A virtual card counts its cap (the most it can be charged) while it is open, and also once closed while Privacy.com
+  has not said what was charged; after that, what Privacy.com says was charged.
+- Anything else counts the approved total, or a higher amount the agent reports, whatever the agent says happened,
+  until you clear it in Spending ("Nothing was charged"): only you know nothing was.
+
 ## Spending and the ledger
 
 **Payments → Spending** lists every approved purchase: when, which AI, the store, the total, the method (masked),
-the address label, what the agent reported afterwards (the order number, the amount charged and the receipt link), and
-for virtual cards who actually charged them. It shows what was spent this month, overall and per AI, and lets you
-close a virtual card that is still open.
+the address label, what the agent reported afterwards (the order number, the amount charged and the receipt link),
+what it counts for now, and for virtual cards who actually charged them. It shows what was spent this month, overall
+and per AI, and lets you close a virtual card that is still open and clear a purchase that went through for nothing.
 Each purchase is also in **Activity**, like every other request.
 
-The ledger stays on the phone, in its encrypted store, and travels with the account to your other phones like the
-rest of the account state. It never holds a card number or a security code: a virtual card is kept as the
-provider's card id and its last four digits only.
+The ledger stays in the phone's encrypted store and travels with the account to your other phones like the rest of
+the account state. It never drops a purchase from the last 31 days, one whose card is still open, or a charge you have
+not looked at; older settled purchases are kept up to 1,000. It never holds a card number or a security code: a
+virtual card is kept as the provider's card id and its last four digits only.
+
+Disconnecting Privacy.com closes its open cards first. If the provider does not answer, the key stays until it does,
+so that no card is left open that nothing could close; the spend limits that paid with its cards go with the key.
+Turning Payments off does the same as far as the provider answers.
 
 ## Autopilot and standing permissions
 
@@ -160,8 +188,10 @@ ordinary list.
 ## The signed mandate
 
 Every approved purchase carries a mandate: a compact JWS (RFC 7515, `EdDSA` with Ed25519) signed by a key the phone
-makes once for your account. The header holds the public key (`jwk`), so anyone can check the signature; the key's
-thumbprint is shown in Payments so you can recognize it. The payload is the cart as approved:
+makes once for your account. The key is kept with the account's encrypted state, so your phones sign with the same
+key; the server holds it only encrypted with your account key. The header holds the public key (`jwk`) and its
+thumbprint (`kid`). The key in the header only says which key signed: to rely on a mandate, compare the thumbprint with
+the one shown under Integrations → Payments. The payload is the cart as approved:
 
 ```json
 {
@@ -171,7 +201,7 @@ thumbprint is shown in Payments so you can recognize it. The payload is the cart
   "items": [{"name": "USB-C cable", "quantity": 2, "unit_price": "9.99"}],
   "amounts": {"subtotal": "19.98", "shipping": "4.99", "tax": "0.00", "discount": "0.00", "total": "24.97"},
   "currency": "USD",
-  "ship_to": {"label": "Home", "country": "GB"},
+  "ship_to": {"label": "Home", "country": "GB", "address_sha256": "Qm9...", "salt": "x3F..."},
   "payment": {"kind": "virtual_card", "brand": "Visa", "last4": "1111"},
   "agent": "Claude",
   "approved_by": "you",
@@ -180,8 +210,10 @@ thumbprint is shown in Payments so you can recognize it. The payload is the cart
 }
 ```
 
-It follows the idea of AP2's cart mandate (the exact cart, signed when approved) without its credential format,
-which needs a wallet the store trusts. It proves what you approved; it does not move money.
+`address_sha256` binds the whole address without spelling out the street: SHA-256 (base64url) of the salt, a
+newline, and the address's lines (name, company, street lines, postal code with city and region, country) joined by
+newlines. The mandate follows the idea of AP2's cart mandate (the exact cart, signed when approved) without its
+credential format, which needs a wallet the store trusts. It proves what you approved; it does not move money.
 
 ## What leaves the phone, and when
 
@@ -190,25 +222,42 @@ which needs a wallet the store trusts. It proves what you approved; it does not 
 | Masked methods (kind, nickname, brand, last four, expiry) | A list you allowed | The AI, through the server |
 | Masked addresses (label, city, region, country) | A list you allowed | The AI, through the server |
 | The full address | An approved purchase that ships | The AI, through the server |
-| A virtual card's number, expiry and code | An approved purchase paid with it | The AI, through the server; Privacy.com made it |
+| A virtual card's number, expiry and code | An approved purchase paid with it | The AI, through the server, or sealed to the desktop app (below); Privacy.com made it |
 | A vault card's number, expiry, code and holder | An approved purchase paid with it | The AI, through the server, or sealed to the desktop app (below) |
-| Your Privacy.com API key | Creating and closing cards | Privacy.com only |
+| Your Privacy.com API key | Creating, reading and closing cards | Privacy.com only; never to the server or your other phones |
 | The mandate | Every approved purchase | The AI, through the server |
 
-The server relays answers in memory only and forgets them after 10 minutes at most; it never writes them to disk
-or logs them. When the purchase comes through the Reins desktop app's MCP bridge (`reins mcp`), the bridge sends its
-key and the phone seals the card details to it, so the server cannot read them; the bridge opens them for the local
-agent. Card numbers and codes are never written to the phone's activity log, the ledger or any log.
+The server relays answers in memory only and forgets them after 10 minutes at most; it never writes them to disk or
+logs them. For an AI connected directly (Claude.ai, ChatGPT) it does see card details as they pass, like any answer.
+
+The Reins desktop app's MCP bridge (`reins mcp`) keeps them from the server. Its connection carries the app's key,
+which you pinned on the phone when you paired it:
+
+- the bridge adds that key and a fresh nonce to every purchase request (one alone or in a batch); without its key it
+  sends no purchase;
+- the phone seals the card details to the pinned key and signs them with the mandate key; for the desktop app's
+  connection it hands card details over sealed or not at all, so a server that strips the key from a request gets
+  nothing (paying at the store, or on the phone, still works); a key other than the pinned one, or a key on a
+  connection without a desktop app, is refused;
+- the bridge opens sealed card details only when they carry a nonce it issued, once, and the phone's signature,
+  including answers fetched later with `reins_get_result`; card details that come back in the clear are withheld.
+
+The bridge pins the phone's mandate key the first time it opens card details (`phone-payments.key` in its state
+folder, and it says so on its error output); compare it with the thumbprint shown on the phone. Card numbers and codes
+are never written to the phone's activity log, the ledger or any log.
 
 ## Limits of this design
 
 - Without a store that verifies mandates, a store cannot tell an agent's order from yours. The protection is on your
-  side: you approve each cart, and a virtual card cannot be charged more than you approved.
+  side: you approve each cart, and a virtual card cannot be charged more than its cap.
 - The store is the one the agent names. A virtual card enforces the amount, not the store: the phone checks the
   charges afterwards (above), but cannot stop the first one.
-- Spend limits act without you, on the requests the Reins server relays. A server that forged requests could spend
-  within your limits, as it could use any standing permission you gave; it still cannot exceed them.
 - A card number from the vault, once handed over, can be used again by whoever has it. Prefer virtual cards.
-- With "saved at the store", the store's own account settings decide what the agent can buy once it is signed in;
-  Reins only records and signs what it asked for.
+- With "saved at the store", the store's own account decides what the agent can buy once it is signed in; Reins
+  only records and signs what it asked for.
+- Spend limits act without you, on the requests the Reins server relays. A server that forged requests could spend
+  within your limits (at most 3 purchases an hour per AI, within their amounts), as it could use any standing
+  permission you gave; it cannot exceed them.
+- The desktop bridge trusts the phone key it sees first. A server that controlled that very first purchase could pin
+  its own key; comparing the thumbprint with the phone's catches it.
 - Lithic and other virtual card providers can be added behind the same interface; Privacy.com is the first.
