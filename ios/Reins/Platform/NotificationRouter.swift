@@ -102,6 +102,8 @@ final class NotificationRouter: NSObject, UNUserNotificationCenterDelegate {
             granted = [.authorized, .provisional, .ephemeral].contains(status)
         }
         if granted { UIApplication.shared.registerForRemoteNotifications() }
+        // Activity's card and the Settings row follow the answer at once.
+        await NotificationAccess.shared.refresh()
         return granted
     }
 

@@ -122,6 +122,7 @@ struct ActivityScreen: View {
                 .padding(16)
                 .accessibilityIdentifier("registrationBanner")
         }
+        NotificationsOffCard()
         ScreenLockBanner(padding: EdgeInsets(top: 6, leading: 16, bottom: 6, trailing: 16))
     }
 

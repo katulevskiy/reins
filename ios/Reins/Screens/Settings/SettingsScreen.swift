@@ -21,6 +21,7 @@ struct SettingsScreen: View {
             ApprovalDeviceGroup()
             SettingsAutopilotGroup()
             ConnectionsGroup()
+            NotificationsGroup()
             NavigationGroups()
             VersionGroup()
             SessionGroup()
@@ -210,6 +211,32 @@ private struct NavigationGroups: View {
             ) { model.show(.sounds) }
         } header: {
             GroupHeader("Sounds & haptics")
+        }
+    }
+}
+
+/// Whether requests can ring this phone: "On", or what is wrong and a tap to turn them on (the system prompt while it
+/// can still show, else this app's page in the Settings app).
+private struct NotificationsGroup: View {
+    @Environment(\.openURL) private var openURL
+    @Environment(\.scenePhase) private var scenePhase
+    private var access: NotificationAccess { .shared }
+
+    var body: some View {
+        let state = access.state
+        Section {
+            SettingsLinkRow(
+                title: "Approval notifications", subtitle: state.summary, symbol: state.needsAttention ? "bell.slash" : "bell",
+                tint: state.needsAttention ? Palette.warning : Palette.success, id: "notificationsRow"
+            ) {
+                Task { await access.turnOn(openURL: openURL) }
+            }
+        } header: {
+            GroupHeader("Notifications")
+        }
+        .task { await access.refresh() }
+        .onChange(of: scenePhase) { _, phase in
+            if phase == .active { Task { await access.refresh() } }
         }
     }
 }
