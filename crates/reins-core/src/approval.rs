@@ -19,9 +19,7 @@ use crate::phone_api::ApiFailure;
 use crate::phone_api::check_id;
 use crate::session::api_call;
 use crate::store::{AuditInfo, AuditRecord, PendingRow, unix_now};
-use crate::types::{
-    ApprovalChoice, ApprovalKind, ApprovalView, GrantScopeChoice, PairingView, PendingKind, StandingGrant,
-};
+use crate::types::{ApprovalChoice, ApprovalKind, GrantScopeChoice, PairingView, PendingKind, StandingGrant};
 use crate::views::{self, ParkedRequest};
 use crate::{CoreError, text};
 
@@ -149,7 +147,7 @@ pub fn grant_from_request(
 }
 
 impl Engine {
-    fn parked(&self, request_id: &str) -> Result<(PendingRow, ParkedRequest), CoreError> {
+    pub(crate) fn parked(&self, request_id: &str) -> Result<(PendingRow, ParkedRequest), CoreError> {
         let row = self.store.pending_item(request_id, unix_now())?.ok_or(CoreError::NotFound)?;
         if row.kind != PendingKind::Request {
             return Err(CoreError::NotFound);
@@ -165,10 +163,6 @@ impl Engine {
             parked.request.account = Some(account);
         }
         Ok(())
-    }
-
-    pub fn approval_view(&self, request_id: &str) -> Result<ApprovalView, CoreError> {
-        Ok(views::approval_view(&self.parked(request_id)?.1))
     }
 
     /// The user approved. The action runs first; on a Gmail failure the request stays parked. A request Autopilot

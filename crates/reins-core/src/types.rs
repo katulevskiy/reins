@@ -105,6 +105,13 @@ pub struct PendingItem {
     /// What Autopilot would do, in one line for the notification ("Autopilot would approve · 97%"); `None` when it
     /// did not judge (Manual mode, no model).
     pub suggestion: Option<String>,
+    /// What approving does, in one sentence (see [`ApprovalView::headline`]); empty for pairings and other phones.
+    #[uniffi(default)]
+    pub headline: String,
+    /// Can be approved without opening it, from the notification or with "Approve all" (`approve_quick`): it is not
+    /// asked every time and nothing in it needs a closer look.
+    #[uniffi(default)]
+    pub quick: bool,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, uniffi::Enum)]
@@ -200,6 +207,29 @@ pub struct ApprovalView {
     pub secrets: Option<SecretReleaseView>,
     /// An SSH sign-in the desktop app's SSH agent asks the phone to sign.
     pub ssh: Option<SshSignView>,
+    /// What approving does, in one sentence ("Claude gets the 3 emails found for \"from:bank\"."). It may quote
+    /// what the AI sent or a service returned.
+    #[uniffi(default)]
+    pub headline: String,
+    /// One-tap answers; `None` for what is asked every time (the hard floor).
+    #[uniffi(default)]
+    pub quick: Option<QuickApproval>,
+}
+
+/// One-tap answers to a request that is not asked every time (see `crate::quick`).
+#[derive(Clone, Debug, PartialEq, Eq, uniffi::Record)]
+pub struct QuickApproval {
+    /// Nothing needs a closer look or a choice, so it can be approved from the notification or with "Approve all"
+    /// (`approve_quick`). False when something found looks like a code or a password.
+    pub from_notification: bool,
+    /// What "Approve and allow for a while" adds to the approval: a permission for this connection, this kind of
+    /// request and this target (the account, the chats, the repository, the tool, the question's topic), for
+    /// `duration_secs`. `None` when the request cannot be remembered.
+    pub allow: Option<StandingGrant>,
+    /// What `allow` covers, in a few words ("searching and reading me@gmail.com"); empty without `allow`.
+    pub allow_what: String,
+    /// How often the user approved the same thing from this connection in the last 24 hours.
+    pub repeats: u32,
 }
 
 /// A question from the desktop app; approving it answers yes.

@@ -77,6 +77,10 @@ pub struct AuditInfo {
     pub decided_by: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub autopilot: Option<AuditAutopilot>,
+    /// Another integration: the things the request touched (chats, calendars, a repository), sorted; how an approval
+    /// is matched with earlier ones of the same thing (`crate::quick`).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub targets: Vec<String>,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -137,15 +141,23 @@ impl Store {
 
     /// One entry by its row number.
     pub fn audit_entry(&self, seq: i64) -> Result<Option<AuditRecord>, CoreError> {
-        Ok(self.audit_rows("WHERE seq = ?1", seq)?.pop())
+        Ok(self.audit_rows("WHERE seq = ?1", params![seq])?.pop())
     }
 
     /// Newest first, at most `limit` rows.
     pub fn activity(&self, limit: u32) -> Result<Vec<AuditRecord>, CoreError> {
-        self.audit_rows("ORDER BY seq DESC LIMIT ?1", i64::from(limit))
+        self.audit_rows("ORDER BY seq DESC LIMIT ?1", params![i64::from(limit)])
     }
 
-    fn audit_rows(&self, clause: &str, param: i64) -> Result<Vec<AuditRecord>, CoreError> {
+    /// One connection's entries logged at or after `since`, newest first (at most 500).
+    pub fn audit_since(&self, connection_id: &str, since: i64) -> Result<Vec<AuditRecord>, CoreError> {
+        self.audit_rows(
+            "WHERE connection_id = ?1 AND at >= ?2 ORDER BY seq DESC LIMIT 500",
+            params![connection_id, since],
+        )
+    }
+
+    fn audit_rows(&self, clause: &str, param: impl rusqlite::Params) -> Result<Vec<AuditRecord>, CoreError> {
         struct Row {
             seq: i64,
             at: i64,
@@ -167,7 +179,7 @@ impl Store {
              item_count, info, op FROM audit {clause}"
         ))?;
         let rows = stmt
-            .query_map(params![param], |r| {
+            .query_map(param, |r| {
                 Ok(Row {
                     seq: r.get(0)?,
                     at: r.get(1)?,

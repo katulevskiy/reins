@@ -132,7 +132,7 @@ async fn a_passkey_added_on_one_phone_opens_the_vault_on_a_fresh_install() {
     assert_eq!(options.rp_id, "127.0.0.1");
     assert_eq!(options.user_handle, USER_ID.as_bytes());
     assert_eq!(options.prf_salt.len(), 32);
-    assert!(options.credential_ids.is_empty());
+    assert_eq!(options.credential_ids.len(), 0);
     let list = phone.add_vault_passkey(CREDENTIAL.to_vec(), PRF.to_vec(), "Pixel 9".to_owned()).await.unwrap();
     assert_eq!(list.len(), 1);
     assert_eq!((list[0].credential_id.as_slice(), list[0].name.as_str()), (CREDENTIAL, "Pixel 9"));
@@ -151,8 +151,8 @@ async fn a_passkey_added_on_one_phone_opens_the_vault_on_a_fresh_install() {
     assert_eq!(fresh.account_recovery_code().await.unwrap(), secret.recovery_code().to_string(), "as with the code");
 
     // The phone that opened it may manage them too; removing it leaves nothing to unlock with.
-    assert!(fresh.remove_vault_passkey(CREDENTIAL.to_vec()).await.unwrap().is_empty());
-    assert!(phone.vault_passkeys().await.unwrap().is_empty());
+    assert_eq!(fresh.remove_vault_passkey(CREDENTIAL.to_vec()).await.unwrap().len(), 0);
+    assert_eq!(phone.vault_passkeys().await.unwrap().len(), 0);
 }
 
 #[tokio::test]

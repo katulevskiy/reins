@@ -125,3 +125,25 @@ async fn questions_and_topics_are_checked() {
     assert!(desk.error("r2").await.contains("nonce"));
     assert_eq!(desk.waiting().await.len(), 0);
 }
+
+#[tokio::test]
+async fn a_hook_question_says_what_yes_means_and_repeats_count_per_topic() {
+    let desk = desk().await;
+    desk.pair().await;
+    desk.send(&[ask(&desk, "r1", "Run the tests?", Some("command:cargo test"))]).await;
+    let view = desk.core.approval_view("r1".to_owned()).await.unwrap();
+    assert_eq!(view.headline, "The desktop app gets a yes to: Run the tests?");
+    let quick = view.quick.unwrap();
+    assert_eq!(quick.allow_what, "questions about command:cargo test");
+    desk.core.approve_quick("r1".to_owned()).await.unwrap();
+    let answer: AskAnswer = desk.open(&desk.data("r1").await["sealed"]);
+    assert!(answer.approved);
+
+    desk.send(&[
+        ask(&desk, "r2", "Run the tests again?", Some("command:cargo test")),
+        ask(&desk, "r3", "Publish?", Some("command:cargo publish")),
+    ])
+    .await;
+    assert_eq!(desk.core.approval_view("r2".to_owned()).await.unwrap().quick.unwrap().repeats, 1);
+    assert_eq!(desk.core.approval_view("r3".to_owned()).await.unwrap().quick.unwrap().repeats, 0);
+}

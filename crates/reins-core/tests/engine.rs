@@ -1308,3 +1308,85 @@ async fn an_email_in_the_activity_can_be_opened_in_full_from_gmail() {
     );
     assert!(matches!(env.core.fetch_email(None, "../x".to_owned()).await, Err(CoreError::Invalid { .. })));
 }
+
+#[tokio::test]
+async fn a_search_is_one_tap_and_repeats_offer_a_longer_permission_for_the_same_account() {
+    let env = env().await;
+    serve_gmail_search(&env, &[("m1", "Bank <alerts@bank.com>"), ("m2", "Friend <pal@example.org>")]).await;
+    serve_pending(&env, &[search_request("r1", "c1", "Claude", "from:bank")], &[]).await;
+    let items = env.core.sync(0).await.unwrap();
+    assert!(items[0].quick, "a search can be approved from the notification");
+    assert_eq!(items[0].headline, "Claude gets the 2 emails found for \"from:bank\".");
+    let view = env.core.approval_view("r1".to_owned()).await.unwrap();
+    assert_eq!(view.headline, items[0].headline);
+    let quick = view.quick.unwrap();
+    assert!(quick.from_notification);
+    assert_eq!((quick.repeats, quick.allow_what.as_str()), (0, "searching and reading me@gmail.com"));
+    let allow = quick.allow.unwrap();
+    assert_eq!((allow.duration_secs, allow.scope.all_mail), (Some(3_600), true));
+
+    // From the notification: everything found is released, nothing is remembered.
+    env.core.approve_quick("r1".to_owned()).await.unwrap();
+    let sent = answers(&env).await;
+    assert_eq!(sent[0].1["result"]["messages"].as_array().unwrap().len(), 2);
+    assert_eq!(env.core.grants().await.unwrap().len(), 0);
+
+    // The same again: counted; the third time offers eight hours.
+    serve_pending(&env, &[search_request("r2", "c1", "Claude", "from:bank")], &[]).await;
+    env.core.sync(0).await.unwrap();
+    assert_eq!(env.core.approval_view("r2".to_owned()).await.unwrap().quick.unwrap().repeats, 1);
+    env.core.approve_quick("r2".to_owned()).await.unwrap();
+    serve_pending(&env, &[search_request("r3", "c1", "Claude", "in:inbox")], &[]).await;
+    env.core.sync(0).await.unwrap();
+    let quick = env.core.approval_view("r3".to_owned()).await.unwrap().quick.unwrap();
+    assert_eq!(quick.repeats, 2, "a different query to the same account is the same thing");
+    assert_eq!(quick.allow.as_ref().unwrap().duration_secs, Some(8 * 3_600));
+    // Another AI's approvals do not count for this one.
+    serve_pending(&env, &[search_request("r4", "c2", "ChatGPT", "from:bank")], &[]).await;
+    env.core.sync(0).await.unwrap();
+    assert_eq!(env.core.approval_view("r4".to_owned()).await.unwrap().quick.unwrap().repeats, 0);
+
+    // "Approve and allow for 8 hours": the next search by this AI is answered without asking.
+    env.core.approve("r3".to_owned(), choice(&["m1", "m2"], quick.allow)).await.unwrap();
+    let grant = &env.core.grants().await.unwrap()[0];
+    assert_eq!((grant.summary.as_str(), grant.account.as_deref()), ("Read any email", Some("me@gmail.com")));
+    serve_pending(&env, &[search_request("r5", "c1", "Claude", "anything")], &[]).await;
+    assert_eq!(env.core.sync(0).await.unwrap().len(), 1, "only ChatGPT's request still waits");
+}
+
+#[tokio::test]
+async fn a_send_offers_to_allow_exactly_its_recipients() {
+    let env = env().await;
+    Mock::given(method("POST"))
+        .and(path("/users/me/messages/send"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({"id": "sent1", "threadId": "t1"})))
+        .mount(&env.gmail)
+        .await;
+    serve_pending(&env, &[send_request("s1", "c1", "Boss@Work.com")], &[]).await;
+    let items = env.core.sync(0).await.unwrap();
+    assert_eq!(items[0].headline, "An email to boss@work.com goes out from me@gmail.com.");
+    let quick = env.core.approval_view("s1".to_owned()).await.unwrap().quick.unwrap();
+    assert_eq!(quick.allow_what, "emails to boss@work.com");
+    let allow = quick.allow.unwrap();
+    assert_eq!(allow.scope.recipient_addresses, ["boss@work.com"]);
+    assert!(allow.scope.recipient_domains.is_empty(), "never a whole domain");
+    env.core.approve("s1".to_owned(), choice(&[], Some(allow))).await.unwrap();
+
+    serve_pending(&env, &[send_request("s2", "c1", "boss@work.com")], &[]).await;
+    assert!(env.core.sync(0).await.unwrap().is_empty(), "the same recipient is covered");
+    serve_pending(&env, &[send_request("s3", "c1", "peer@work.com")], &[]).await;
+    assert_eq!(env.core.sync(0).await.unwrap().len(), 1, "a colleague is not");
+}
+
+#[tokio::test]
+async fn a_permission_request_is_never_answered_in_one_tap() {
+    let env = env().await;
+    serve_pending(&env, &[grant_request("g1", "c1", "Claude", &bank_ask(3_600))], &[]).await;
+    let items = env.core.sync(0).await.unwrap();
+    assert!(!items[0].quick);
+    assert!(items[0].headline.starts_with("Claude may read emails from"), "{}", items[0].headline);
+    assert!(env.core.approval_view("g1".to_owned()).await.unwrap().quick.is_none());
+    assert!(matches!(env.core.approve_quick("g1".to_owned()).await, Err(CoreError::Invalid { .. })));
+    assert!(answers(&env).await.is_empty() && env.core.grants().await.unwrap().is_empty());
+    assert_eq!(env.core.pending().await.unwrap().len(), 1, "it still waits for the user");
+}

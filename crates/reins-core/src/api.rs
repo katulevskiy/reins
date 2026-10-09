@@ -475,6 +475,20 @@ impl ReinsCore {
         .await
     }
 
+    /// Approves a request as the approval sheet would untouched, without opening it (a notification's Approve, "Approve
+    /// all"). Refused for what is asked every time (`ApprovalView.quick` is `None` for those).
+    pub async fn approve_quick(&self, request_id: String) -> Result<(), CoreError> {
+        let runtime = Arc::clone(&self.runtime);
+        let generation = runtime.generation();
+        rt::run(async move {
+            let engine = runtime.prepare(generation).await?;
+            engine.ensure_active()?;
+            let result = engine.run_account(async { engine.approve_quick(&request_id).await }).await;
+            runtime.finish(&engine, result)
+        })
+        .await
+    }
+
     pub async fn deny(&self, request_id: String) -> Result<(), CoreError> {
         let runtime = Arc::clone(&self.runtime);
         let generation = runtime.generation();
