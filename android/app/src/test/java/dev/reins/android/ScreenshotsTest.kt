@@ -57,6 +57,8 @@ abstract class ScreenshotsBase(private val suffix: String) {
         dev.reins.android.TestNativeKeys.install()
         assumeTrue(System.getProperty("reins.screenshots") != null)
         shadowOf(context as android.app.Application).grantPermissions(android.Manifest.permission.POST_NOTIFICATIONS)
+        // Robolectric has no screen lock; the tests that need none set it.
+        dev.reins.android.platform.ScreenLock.check = { true }
         Timers.live = false
         Timers.frozenNowMillis = now * 1000
         Foreground.focused = false

@@ -101,6 +101,10 @@ fun PairingSheet(viewModel: PairingViewModel, authenticator: Authenticator, onDo
                 RText(it, RType.sans(13.5f, lineHeight = 19f), c.tertiary, Modifier.padding(start = 24.dp, end = 24.dp, top = 12.dp).testTag("startingRuleNote"))
             }
             ui.error?.let { Banner(it, Modifier.padding(16.dp), BannerKind.Error) }
+            if (ui.needsScreenLock) {
+                val context = androidx.compose.ui.platform.LocalContext.current
+                dev.reins.android.ui.common.ScreenLockCard(Modifier.padding(16.dp)) { dev.reins.android.platform.ScreenLock.openSettings(context) }
+            }
         }
         Row(
             Modifier

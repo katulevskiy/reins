@@ -77,6 +77,8 @@ class AppFlowTest {
     fun setUp() {
         dev.reins.android.TestNativeKeys.install()
         shadowOf(context as android.app.Application).grantPermissions(android.Manifest.permission.POST_NOTIFICATIONS)
+        // Robolectric has no screen lock; the tests that need none set it.
+        dev.reins.android.platform.ScreenLock.check = { true }
         Timers.live = false
         Timers.frozenNowMillis = 1_700_000_100_000
         Foreground.focused = false
@@ -735,6 +737,36 @@ class AppFlowTest {
     }
 
     @Test
+    fun withoutAScreenLockPairingOffersAndroidsSettingsForOne() {
+        authResult = AuthResult.Unavailable
+        core.pending = listOf(TestData.pairingItem("pair1"))
+        core.pairing = PairingView("pair1", "Claude", "claude.ai", byteArrayOf(7, 42, 99), 1_700_000_200, null)
+        launch()
+        awaitTag("pending:pair1")
+        if (!has("sheet")) tap("pending:pair1")
+        tap("code:42")
+        tap("approve")
+        awaitTag("screenLockOff")
+        assertTrue(core.pairingAnswers.isEmpty())
+        tap("setScreenLock")
+        assertEquals(android.provider.Settings.ACTION_BIOMETRIC_ENROLL, shadowOf(context as android.app.Application).nextStartedActivity?.action)
+    }
+
+    @Test
+    fun activitySaysWhenThePhoneHasNoScreenLock() {
+        dev.reins.android.platform.ScreenLock.check = { false }
+        launch()
+        awaitTag("screenLockOff")
+        tap("setScreenLock")
+        assertEquals(android.provider.Settings.ACTION_BIOMETRIC_ENROLL, shadowOf(context as android.app.Application).nextStartedActivity?.action)
+        // Set in Android's settings, back in the app: the card is gone.
+        dev.reins.android.platform.ScreenLock.check = { true }
+        scenario!!.moveToState(androidx.lifecycle.Lifecycle.State.STARTED)
+        scenario!!.moveToState(androidx.lifecycle.Lifecycle.State.RESUMED)
+        awaitGone("screenLockOff")
+    }
+
+    @Test
     fun theDesktopAppsKeyIsShownToCompareBeforeConnecting() {
         core.pending = listOf(TestData.pairingItem("pair1"))
         core.pairing = TestData.pairingView(name = "Reins desktop app on laptop", host = "laptop", keyFingerprint = "4821 9930")
@@ -1247,6 +1279,46 @@ class AppFlowTest {
     }
 
     @Test
+    fun withNothingConnectedTheEmptyActivityOffersToConnect() {
+        core.connections = emptyList()
+        launch()
+        awaitTag("noActivity")
+        tap("emptyConnectAi")
+        val clipboard = context.getSystemService(android.content.ClipboardManager::class.java)
+        assertEquals("http://127.0.0.1:8000/mcp", clipboard.primaryClip?.getItemAt(0)?.text?.toString())
+        awaitTextContaining("Copied http://127.0.0.1:8000/mcp")
+        tap("emptyConnectComputer")
+        awaitTag("scanQr")
+    }
+
+    @Test
+    fun withAnAiConnectedTheEmptyActivityHasNoConnectButtons() {
+        launch()
+        awaitTag("noActivity")
+        assertFalse(has("emptyConnectComputer"))
+    }
+
+    @Test
+    fun settingsListsComputersWithTheirKeyApartFromAiApps() {
+        core.connections = listOf(TestData.computer(), TestData.connection())
+        launch()
+        tap("openSettings")
+        awaitTag("connection:d1")
+        rule.onNodeWithTag("connectionDetail:d1", useUnmergedTree = true).assertTextContains("Key 4821 9930", substring = true)
+        rule.onNodeWithTag("connectionDetail:c1", useUnmergedTree = true).assertTextContains("claude.ai", substring = true)
+        // An AI app is connected: no "No AI app is connected yet".
+        assertFalse(has("copyMcpUrl"))
+    }
+
+    @Test
+    fun theIntegrationsCountLeavesOutTheVault() {
+        core.accounts = listOf(dev.reins.core.AccountView("vault", "me@example.com", 1_700_000_000))
+        launch()
+        tap("openSettings")
+        awaitText("Connect Gmail and more")
+    }
+
+    @Test
     fun aNewGrantOffersOnlyMailAccountsNotTheVault() {
         // A new account has its vault and no Gmail yet: the mail grant has no account to offer.
         core.accounts = listOf(dev.reins.core.AccountView("vault", "me@example.com", 1_700_000_000))
@@ -1357,6 +1429,23 @@ class AppFlowTest {
         tap("service:gmail")
         awaitTag("noAccounts")
         awaitTag("addAccount")
+    }
+
+    @Test
+    fun addingAGoogleAccountSaysWhatGoogleWillShow() {
+        launch()
+        tap("integrations")
+        tap("service:gmail")
+        awaitTag("googleSignInNote")
+        rule.onNodeWithTag("googleSignInNote").assertTextContains("Google hasn't verified this app", substring = true)
+    }
+
+    @Test
+    fun calendarSaysWhatGoogleWillShowToo() {
+        launch()
+        tap("integrations")
+        tap("service:gcalendar")
+        awaitTag("googleSignInNote")
     }
 
     @Test

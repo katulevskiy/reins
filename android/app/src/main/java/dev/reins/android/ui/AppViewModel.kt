@@ -61,6 +61,11 @@ class AppViewModel(private val container: AppContainer) : ViewModel() {
     private val _connect = MutableStateFlow(ConnectUi())
     val connect: StateFlow<ConnectUi> = _connect.asStateFlow()
 
+    /** The computer just paired from a "Connect a computer" page; that page clears it when it closes. */
+    val justPaired: StateFlow<String?> get() = container.state.justPaired
+
+    fun clearJustPaired() = container.state.setJustPaired(null)
+
     /** A pairing link opened while signed out: it is used as soon as someone signs in. */
     private val _waitingCode = MutableStateFlow<String?>(null)
     val waitingCode: StateFlow<String?> = _waitingCode.asStateFlow()

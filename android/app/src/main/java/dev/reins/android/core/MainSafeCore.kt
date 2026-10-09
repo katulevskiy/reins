@@ -32,6 +32,7 @@ import dev.reins.core.ServiceView
 import dev.reins.core.PairingView
 import dev.reins.core.PendingItem
 import dev.reins.core.ReinsCoreInterface
+import dev.reins.core.ServerInfo
 import dev.reins.core.SessionInfo
 import dev.reins.core.SsoOutcome
 import dev.reins.core.SsoStart
@@ -132,6 +133,7 @@ class MainSafeCore(
     override suspend fun deleteAccount(confirmEmail: String) = io { deleteAccount(confirmEmail) }
 
     override suspend fun ssoBegin(serverUrl: String): SsoStart = io { ssoBegin(serverUrl) }
+    override suspend fun serverInfo(serverUrl: String): ServerInfo = io { serverInfo(serverUrl) }
 
     override suspend fun ssoFinish(serverUrl: String, callbackUrl: String, state: String, verifier: String): SsoOutcome =
         io { ssoFinish(serverUrl, callbackUrl, state, verifier) }

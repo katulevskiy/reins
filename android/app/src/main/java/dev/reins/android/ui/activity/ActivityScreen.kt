@@ -59,6 +59,8 @@ import dev.reins.android.design.glass
 import dev.reins.android.design.pressable
 import dev.reins.android.design.rememberNowState
 import dev.reins.android.design.urgency
+import dev.reins.android.platform.rememberScreenLockState
+import dev.reins.android.ui.common.ScreenLockCard
 import dev.reins.android.platform.NotificationAccess
 import dev.reins.android.platform.rememberNotificationState
 import dev.reins.android.state.AppState
@@ -88,6 +90,9 @@ fun ActivityScreen(
     onSettings: () -> Unit = {},
     /** "Approve all" (true) or "Deny all" (false) for a burst of requests from one AI. */
     onAnswerBurst: (Burst, Boolean) -> Unit = { _, _ -> },
+    /** With nothing connected yet: pair a computer, or get the address for Claude.ai / ChatGPT. */
+    onConnectComputer: () -> Unit = {},
+    onConnectAi: () -> Unit = {},
 ) {
     val c = LocalColors.current
     val state: AppState = container.state
@@ -96,6 +101,7 @@ fun ActivityScreen(
     val seen by state.seenActivityId.collectAsStateWithLifecycle()
     val replaced by state.deviceReplaced.collectAsStateWithLifecycle()
     val registrationError by state.registrationError.collectAsStateWithLifecycle()
+    val connections by state.connections.collectAsStateWithLifecycle()
     // "Automatic": only what Autopilot, a bypass or Lockdown decided.
     var automaticOnly by androidx.compose.runtime.saveable.rememberSaveable { mutableStateOf(false) }
     val automaticCount = remember(entries) { entries.count { it.decidedBy.isNotEmpty() } }
@@ -108,6 +114,7 @@ fun ActivityScreen(
     val scope = rememberCoroutineScope()
     val context = androidx.compose.ui.platform.LocalContext.current
     val notifications = rememberNotificationState()
+    val screenLock = rememberScreenLockState()
     // People who never went through the setup (signed in before it existed) are asked once here.
     LaunchedEffect(Unit) {
         val ask = withContext(Dispatchers.Default) { !NotificationAccess.enabled(context) && !NotificationAccess.asked(context) }
@@ -116,7 +123,7 @@ fun ActivityScreen(
 
     // Header rows above the entries: notices and the waiting section.
     val headerCount = 1 + (if (pending.isEmpty()) 0 else 1 + pending.size + burstList.size) + (if (notice != null) 1 else 0) +
-        (if (notifications.enabled) 0 else 1) +
+        (if (notifications.enabled) 0 else 1) + (if (screenLock.set) 0 else 1) +
         (if (replaced) 1 else 0) + (if (registrationError != null) 1 else 0) + (if (showFilters) 1 else 0)
 
     // Opening the tab lands where you stopped reading: at the oldest entry you have not seen, unless something is waiting.
@@ -159,6 +166,9 @@ fun ActivityScreen(
             }
             if (!notifications.enabled) {
                 item(key = "notifications") { NotificationsOffCard(Modifier.padding(horizontal = 16.dp, vertical = 6.dp), notifications::request) }
+            }
+            if (!screenLock.set) {
+                item(key = "screenLock") { ScreenLockCard(Modifier.padding(horizontal = 16.dp, vertical = 6.dp), screenLock::openSettings) }
             }
             notice?.let {
                 item(key = "notice") {
@@ -210,6 +220,23 @@ fun ActivityScreen(
                             "What Autopilot, a bypass or Lockdown decides for you shows up here.",
                             tag = "noAutomatic",
                         )
+                    } else if (connections.isEmpty()) {
+                        // A new account: nothing can ask yet, so say how to connect something.
+                        EmptyState(
+                            Glyph.List,
+                            "Nothing yet",
+                            "Connect your computer or an AI app. What they ask for shows up here, and waits for you.",
+                            tag = "noActivity",
+                        ) {
+                            CapsuleButton("Connect a computer", Modifier.testTag("emptyConnectComputer"), glyph = Glyph.Laptop, onClick = onConnectComputer)
+                            CapsuleButton(
+                                "Connect Claude.ai or ChatGPT",
+                                Modifier.testTag("emptyConnectAi"),
+                                style = ButtonStyle.Secondary,
+                                glyph = Glyph.Link,
+                                onClick = onConnectAi,
+                            )
+                        }
                     } else {
                         EmptyState(
                             Glyph.List,

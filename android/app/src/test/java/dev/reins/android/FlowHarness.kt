@@ -56,6 +56,8 @@ abstract class FlowHarness {
         Timers.frozenNowMillis = 1_700_000_100_000
         Foreground.focused = false
         Foreground.autoPopup = true
+        // Robolectric has no screen lock; the tests that need none set it.
+        dev.reins.android.platform.ScreenLock.check = { true }
         core.session = SessionInfo("http://127.0.0.1:8000", "me@example.com")
         core.loginError = null
         core.pending = emptyList()

@@ -76,6 +76,7 @@ import dev.reins.android.ui.pairing.PairingViewModel
 import dev.reins.android.ui.settings.ConnectionDetailScreen
 import dev.reins.android.ui.settings.SettingsScreen
 import dev.reins.android.ui.settings.SettingsViewModel
+import dev.reins.android.ui.signin.AccountRules
 import dev.reins.android.ui.settings.SoundsScreen
 import dev.reins.android.ui.settings.VaultPasskeysScreen
 import dev.reins.android.ui.settings.VaultPasskeysViewModel
@@ -186,6 +187,7 @@ private fun SignedInContent(
     val mcp = viewModel(key = "mcp") { McpViewModel(container) }
     val autopilot = viewModel(key = "autopilot") { AutopilotViewModel(container) }
     val scope = rememberCoroutineScope()
+    val context = androidx.compose.ui.platform.LocalContext.current
     // The setup can open an integration's page over itself; Back returns to the same setup page.
     val route = app.current
     BackHandler(enabled = app.stack.isNotEmpty()) { app.back() }
@@ -207,6 +209,13 @@ private fun SignedInContent(
                             scope.launch {
                                 dev.reins.android.ui.activity.answerBurst(container, authenticator, burst, approve)?.let(app::showNotice)
                             }
+                        },
+                        onConnectComputer = { app.open(Route.ConnectComputer) },
+                        onConnectAi = {
+                            val url = AccountRules.mcpUrl(serverUrl)
+                            context.getSystemService(android.content.ClipboardManager::class.java)
+                                ?.setPrimaryClip(android.content.ClipData.newPlainText("Reins MCP address", url))
+                            app.showNotice("Copied $url. In Claude.ai or ChatGPT: Settings, Connectors, add a custom connector and paste it.")
                         },
                     )
                     Tab.Grants -> GrantsScreen(

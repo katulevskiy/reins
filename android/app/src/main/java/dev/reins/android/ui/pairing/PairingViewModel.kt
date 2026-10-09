@@ -24,6 +24,8 @@ data class PairingUi(
     val label: String = "",
     val busy: Boolean = false,
     val error: String? = null,
+    /** Approving failed because the phone has no screen lock: the sheet offers Android's settings for one. */
+    val needsScreenLock: Boolean = false,
     val finished: Boolean = false,
 ) {
     /** Codes as unsigned values (the UniFFI `ByteArray` is signed). */
@@ -63,7 +65,7 @@ class PairingViewModel(private val container: AppContainer, private val pairingI
             _ui.update { it.copy(error = "Tap the code your computer or browser shows.") }
             return
         }
-        _ui.update { it.copy(busy = true, error = null) }
+        _ui.update { it.copy(busy = true, error = null, needsScreenLock = false) }
         viewModelScope.launch {
             try {
                 // A desktop app brings its key; an AI client (Claude.ai, ChatGPT) does not.
@@ -72,13 +74,19 @@ class PairingViewModel(private val container: AppContainer, private val pairingI
                     AuthResult.Success -> {
                         container.feedback.play(Event.Connected)
                         container.core.answerPairing(pairingId, true, code.toUByte(), current.label.trim().ifEmpty { null })
+                        // A computer: the page that connects computers says it worked.
+                        if (current.view?.keyFingerprint != null) {
+                            container.state.setJustPaired(current.label.trim().ifEmpty { current.view.clientName })
+                        }
                         container.refreshAfterAnswer(pairingId)
+                        // The new computer or AI app shows up in Settings and Activity right away.
+                        container.refreshConnections()
                         _ui.update { it.copy(busy = false, finished = true) }
                     }
                     AuthResult.Cancelled -> _ui.update { it.copy(busy = false) }
                     AuthResult.Unavailable -> {
                         container.feedback.play(Event.Error)
-                        _ui.update { it.copy(busy = false, error = "Set a screen lock or fingerprint on this phone to approve.") }
+                        _ui.update { it.copy(busy = false, needsScreenLock = true) }
                     }
                 }
             } catch (e: CancellationException) {

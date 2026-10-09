@@ -9,6 +9,7 @@ import dev.reins.android.feedback.play
 import dev.reins.android.platform.AuthResult
 import dev.reins.android.platform.Authenticator
 import dev.reins.android.platform.update.UpdateController
+import dev.reins.android.state.SessionState
 import dev.reins.android.ui.common.userMessage
 import kotlin.coroutines.cancellation.CancellationException
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -35,8 +36,22 @@ class SettingsViewModel(private val container: AppContainer) : ViewModel() {
         _ui.value = SettingsUi(message = message)
     }
 
+    /** Whether the signed-in server can wake this app (false: requests arrive only while it is open); null unknown. */
+    private val _serverPush = MutableStateFlow<Boolean?>(null)
+    val serverPush: StateFlow<Boolean?> = _serverPush.asStateFlow()
+
     init {
         viewModelScope.launch { container.refreshConnections() }
+        viewModelScope.launch {
+            val server = (container.state.session.value as? SessionState.SignedIn)?.info?.serverUrl ?: return@launch
+            _serverPush.value = try {
+                container.core.serverInfo(server).pushAndroid
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                null
+            }
+        }
     }
 
     /** Whether this phone keeps the account's recovery code (accounts made with a master password have none). */

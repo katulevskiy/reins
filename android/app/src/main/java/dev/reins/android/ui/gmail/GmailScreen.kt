@@ -95,6 +95,7 @@ fun GmailScreen(viewModel: GmailViewModel, state: AppState, onBack: () -> Unit) 
             }
         }
         Column(Modifier.padding(horizontal = 16.dp, vertical = 16.dp)) {
+            dev.reins.android.ui.common.GoogleSignInNote(Modifier.padding(bottom = 12.dp))
             CapsuleButton(
                 "Add account",
                 Modifier.fillMaxWidth().testTag("addAccount"),

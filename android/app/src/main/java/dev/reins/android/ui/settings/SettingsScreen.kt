@@ -42,6 +42,7 @@ import dev.reins.android.design.RText
 import dev.reins.android.design.RType
 import dev.reins.android.design.Screen
 import dev.reins.android.design.pressable
+import dev.reins.core.ConnectionView
 import dev.reins.android.feedback.Event
 import dev.reins.android.feedback.FeedbackSettings
 import dev.reins.android.feedback.LocalFeedback
@@ -87,6 +88,7 @@ fun SettingsScreen(
     val vaultPasskeys by viewModel.vaultPasskeys.collectAsStateWithLifecycle()
     var confirmSignOut by remember { mutableStateOf(false) }
     val pushAvailable = FirebaseSupport.available(LocalContext.current)
+    val serverPush by viewModel.serverPush.collectAsStateWithLifecycle()
     LaunchedEffect(session) { viewModel.checkRecoveryCode() }
 
     Screen(title = "Settings", onBack = onBack) {
@@ -131,11 +133,7 @@ fun SettingsScreen(
 
         Group(
             header = "Approval device",
-            footer = when {
-                approvalDevice && pushAvailable -> "Requests reach this phone by push notification and while the app is open."
-                approvalDevice -> "Push notifications are not set up in this build. Requests arrive while the app is open."
-                else -> "Only one phone at a time approves requests. Use this one to take over."
-            },
+            footer = approvalDeviceFooter(approvalDevice, pushAvailable, serverPush),
         ) {
             Column(Modifier.padding(16.dp)) {
                 if (approvalDevice) {
@@ -175,12 +173,32 @@ fun SettingsScreen(
             )
         }
 
-        Group(header = "AI connections") {
-            if (connections.isEmpty()) {
+        // Computers pinned their key when they paired; Claude.ai, ChatGPT and other AI apps have none.
+        val computers = connections.filter { it.keyFingerprint != null }
+        val aiApps = connections.filter { it.keyFingerprint == null }
+        Group(header = "Computers") {
+            computers.forEachIndexed { i, connection ->
+                if (i > 0) Hairline(inset = 68.dp)
+                ConnectionRow(connection) { onConnection(connection.id) }
+            }
+            if (computers.isNotEmpty()) Hairline(inset = 68.dp)
+            ListRow(
+                "Connect a computer",
+                Modifier.testTag("connectComputer"),
+                subtitle = "Scan the QR code the desktop app or reins login shows",
+                glyph = Glyph.Qr,
+                tint = c.accent,
+                chevron = true,
+                onClick = onConnectComputer,
+            )
+        }
+
+        Group(header = "AI apps") {
+            if (aiApps.isEmpty()) {
                 // The address to paste, not a description of it: tapping copies it.
                 val mcpUrl = (session as? SessionState.SignedIn)?.info?.serverUrl?.let(AccountRules::mcpUrl)
                 ListRow(
-                    "No AI is connected yet",
+                    "No AI app is connected yet",
                     Modifier.testTag("copyMcpUrl"),
                     subtitle = if (mcpUrl != null) {
                         "In Claude.ai or ChatGPT, add a custom connector with $mcpUrl. Tap to copy."
@@ -197,47 +215,17 @@ fun SettingsScreen(
                     },
                 )
             }
-            connections.forEachIndexed { i, connection ->
+            aiApps.forEachIndexed { i, connection ->
                 if (i > 0) Hairline(inset = 68.dp)
-                Row(
-                    Modifier
-                        .fillMaxWidth()
-                        .testTag("connection:${connection.id}")
-                        .pressable(highlight = c.controlFill, shape = RoundedCornerShape(0.dp)) { onConnection(connection.id) }
-                        .padding(horizontal = 16.dp, vertical = 12.dp),
-                    verticalAlignment = Alignment.CenterVertically,
-                ) {
-                    ConnectionIcon(connection.id, connection.label, size = 40.dp)
-                    Spacer(Modifier.width(14.dp))
-                    Column(Modifier.weight(1f)) {
-                        RText(untrusted(connection.label), RType.sans(16f, FontWeight.Medium), c.text, maxLines = 1)
-                        RText(
-                            untrusted(connection.clientHost) + " · " + (connection.lastUsedAt?.let { "used ${relativeTime(it)}" } ?: "never used"),
-                            RType.sans(13f),
-                            c.secondary,
-                            maxLines = 1,
-                            ltr = true,
-                        )
-                    }
-                    GlyphIcon(Glyph.ChevronRight, c.tertiary, size = 14.dp)
-                }
+                ConnectionRow(connection) { onConnection(connection.id) }
             }
-            Hairline(inset = if (connections.isEmpty()) 16.dp else 68.dp)
-            ListRow(
-                "Connect a computer",
-                Modifier.testTag("connectComputer"),
-                subtitle = "Scan the QR code the desktop app or reins login shows",
-                glyph = Glyph.Qr,
-                tint = c.accent,
-                chevron = true,
-                onClick = onConnectComputer,
-            )
         }
 
         Group(header = "Integrations") {
             ListRow(
                 "Integrations",
-                subtitle = when (val n = accounts.size) {
+                // The vault comes with the account: it is not something the user connected.
+                subtitle = when (val n = accounts.count { it.service != "vault" }) {
                     0 -> "Connect Gmail and more"
                     1 -> "1 account connected"
                     else -> "$n accounts connected"
@@ -392,4 +380,45 @@ internal fun soundsSummary(s: FeedbackSettings): String = when {
 
 private fun copyText(context: Context, label: String, text: String) {
     context.getSystemService(ClipboardManager::class.java)?.setPrimaryClip(ClipData.newPlainText(label, text))
+}
+
+/**
+ * How requests reach this phone: by push when both this build and the server can send it ([serverPush] null: the
+ * server does not say), otherwise only while the app is open.
+ */
+internal fun approvalDeviceFooter(approvalDevice: Boolean, appPush: Boolean, serverPush: Boolean?): String = when {
+    !approvalDevice -> "Only one phone at a time approves requests. Use this one to take over."
+    !appPush -> "Push notifications are not set up in this build. Requests arrive while the app is open."
+    serverPush == false -> "This server sends no push notifications: requests arrive only while Reins is open."
+    else -> "Requests reach this phone by push notification and while the app is open."
+}
+
+/** A connected computer or AI app: its icon, name, and for a computer its key, else where it connects from. */
+@Composable
+private fun ConnectionRow(connection: ConnectionView, onClick: () -> Unit) {
+    val c = LocalColors.current
+    val used = connection.lastUsedAt?.let { "used ${relativeTime(it)}" } ?: "never used"
+    Row(
+        Modifier
+            .fillMaxWidth()
+            .testTag("connection:${connection.id}")
+            .pressable(highlight = c.controlFill, shape = RoundedCornerShape(0.dp), onClick = onClick)
+            .padding(horizontal = 16.dp, vertical = 12.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        ConnectionIcon(connection.id, connection.label, size = 40.dp)
+        Spacer(Modifier.width(14.dp))
+        Column(Modifier.weight(1f)) {
+            RText(untrusted(connection.label), RType.sans(16f, FontWeight.Medium), c.text, maxLines = 1)
+            RText(
+                connection.keyFingerprint?.let { "Key $it · $used" } ?: (untrusted(connection.clientHost) + " · " + used),
+                RType.sans(13f),
+                c.secondary,
+                Modifier.testTag("connectionDetail:${connection.id}"),
+                maxLines = 1,
+                ltr = true,
+            )
+        }
+        GlyphIcon(Glyph.ChevronRight, c.tertiary, size = 14.dp)
+    }
 }

@@ -179,7 +179,10 @@ private fun AddAccount(
     val c = LocalColors.current
     Column(Modifier.padding(horizontal = 16.dp, vertical = 16.dp), verticalArrangement = androidx.compose.foundation.layout.Arrangement.spacedBy(10.dp)) {
         when (service.kind) {
-            "google" -> CapsuleButton("Add account", Modifier.fillMaxWidth().testTag("addAccount"), enabled = !busy, busy = busy, glyph = Glyph.Plus, onClick = onChooseGoogle)
+            "google" -> {
+                dev.reins.android.ui.common.GoogleSignInNote()
+                CapsuleButton("Add account", Modifier.fillMaxWidth().testTag("addAccount"), enabled = !busy, busy = busy, glyph = Glyph.Plus, onClick = onChooseGoogle)
+            }
             "device" -> if (service.accounts.isEmpty()) {
                 CapsuleButton("Allow on this phone", Modifier.fillMaxWidth().testTag("allowDevice"), enabled = !busy, busy = busy, glyph = Glyph.Phone, onClick = onAllowDevice)
             }

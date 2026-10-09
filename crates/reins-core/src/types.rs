@@ -16,6 +16,17 @@ pub struct SsoStart {
     pub verifier: String,
 }
 
+/// What a server offers, read before signing in (`/api/config`). `None`: the server does not say (an older one).
+#[derive(Clone, Debug, Default, PartialEq, Eq, uniffi::Record)]
+pub struct ServerInfo {
+    /// "Continue" (sign-in in the browser, SSO) works here; when false, only email and master password do.
+    pub browser_sign_in: Option<bool>,
+    /// The server can wake the Android app; when false, requests show up only while the app is open.
+    pub push_android: Option<bool>,
+    /// The server can wake the iOS app.
+    pub push_ios: Option<bool>,
+}
+
 impl std::fmt::Debug for SsoStart {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("SsoStart").field("url", &self.url).finish_non_exhaustive()
@@ -460,6 +471,8 @@ pub struct ConnectionView {
     pub last_used_at: Option<i64>,
     /// The icon the user picked (`None` = derived from the name by the app).
     pub icon: Option<String>,
+    /// A computer (the Reins desktop app): the eight digits of the key pinned when it paired. `None` for an AI app.
+    pub key_fingerprint: Option<String>,
 }
 
 #[derive(Clone, Debug, PartialEq, uniffi::Record)]

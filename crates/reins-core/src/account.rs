@@ -14,8 +14,22 @@ use crate::http::ServerUrl;
 use crate::session::Session;
 use crate::sso::{self, AccountSecret, SECRET_SERVICE};
 use crate::store::StoredSession;
-use crate::types::{AccountKeys, SessionInfo, SsoOutcome, SsoStart};
+use crate::types::{AccountKeys, ServerInfo, SessionInfo, SsoOutcome, SsoStart};
 use crate::vault::VaultClient;
+
+/// How long the sign-in screen waits for a server's `/api/config`.
+const SERVER_INFO_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(5);
+
+/// The `reins` block of a server's `/api/config`.
+fn server_info_from(config: Option<&Value>) -> ServerInfo {
+    let reins = config.map(|c| &c["reins"]);
+    let flag = |name: &str| reins.and_then(|r| r[name].as_bool());
+    ServerInfo {
+        browser_sign_in: flag("browserSignIn"),
+        push_android: flag("pushAndroid"),
+        push_ios: flag("pushIos"),
+    }
+}
 
 fn interrupted(_: tokio::task::JoinError) -> CoreError {
     CoreError::storage("key derivation was interrupted")
@@ -33,6 +47,21 @@ impl Engine {
             state: start.state,
             verifier: start.verifier.to_string(),
         })
+    }
+
+    /// What `server_url` offers before anyone signs in: browser sign-in and push. A server that does not say, or
+    /// cannot be reached, gives `None`s, never an error: the sign-in screen then shows everything, as before.
+    pub async fn server_info(&self, server_url: &str) -> Result<ServerInfo, CoreError> {
+        let server = ServerUrl::parse(server_url)?;
+        let config: Option<Value> = async {
+            let r = self.http.get(server.join("/api/config")).timeout(SERVER_INFO_TIMEOUT).send().await.ok()?;
+            if !r.status().is_success() {
+                return None;
+            }
+            r.json().await.ok()
+        }
+        .await;
+        Ok(server_info_from(config.as_ref()))
     }
 
     /// Finishes the sign-in with the URL the browser came back with, keeps the session like `login`, and then makes
@@ -234,5 +263,32 @@ impl Engine {
         self.store.secret_put(SECRET_SERVICE, &user_id, &raw)?;
         self.keep_vault_key(&session.email(), &key)?;
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use serde_json::json;
+
+    use super::*;
+
+    #[test]
+    fn server_info_reads_the_reins_block_and_tolerates_older_servers() {
+        let config = json!({"reins": {"browserSignIn": false, "pushAndroid": true, "pushIos": false}});
+        assert_eq!(
+            server_info_from(Some(&config)),
+            ServerInfo {
+                browser_sign_in: Some(false),
+                push_android: Some(true),
+                push_ios: Some(false),
+            }
+        );
+        // An older server, Reins off, or no answer at all: nothing is known.
+        for config in
+            [json!({"version": "2026.6.0"}), json!({"reins": null}), json!({"reins": {"browserSignIn": "yes"}})]
+        {
+            assert_eq!(server_info_from(Some(&config)), ServerInfo::default(), "{config}");
+        }
+        assert_eq!(server_info_from(None), ServerInfo::default());
     }
 }

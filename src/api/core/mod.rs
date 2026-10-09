@@ -254,12 +254,27 @@ fn config() -> Json<Value> {
           "vapidPublicKey": null
         },
         "featureStates": feature_states,
+        // What the Reins apps adapt to before anyone signs in: whether "Continue" (SSO in the browser) works here,
+        // and whether this server can wake each phone app or the phone has to be open to see requests.
+        "reins": reins_capabilities(),
         // Not supported right now
         // Used for by clients to learn if the server requires extra work to establish a connection.
         // See: https://github.com/bitwarden/server/pull/6892 | https://github.com/bitwarden/server/commit/52955d1860b4dfb905f67bbe39d9b10bbd61ded0
         "communication": null,
         "object": "config",
     }))
+}
+
+/// `null` when Reins is off on this server.
+fn reins_capabilities() -> Value {
+    if !CONFIG.reins_enabled() {
+        return Value::Null;
+    }
+    json!({
+        "browserSignIn": CONFIG.sso_enabled(),
+        "pushAndroid": crate::api::reins::fcm::sender().is_some(),
+        "pushIos": crate::api::reins::apns::sender().is_some(),
+    })
 }
 
 pub fn catchers() -> Vec<Catcher> {

@@ -291,8 +291,12 @@ object TestData {
         classes = emptyList(),
     )
 
-    fun connection(id: String = "c1", label: String = "Claude", icon: String? = null) =
-        ConnectionView(id, label, "claude.ai", 1_700_000_000, 1_700_000_100, icon)
+    fun connection(id: String = "c1", label: String = "Claude", icon: String? = null, keyFingerprint: String? = null) =
+        ConnectionView(id, label, "claude.ai", 1_700_000_000, 1_700_000_100, icon, keyFingerprint)
+
+    /** A computer: the Reins desktop app, paired with its key. */
+    fun computer(id: String = "d1", label: String = "Laptop", fingerprint: String = "4821 9930") =
+        ConnectionView(id, label, "203.0.113.7", 1_700_000_000, 1_700_000_100, null, fingerprint)
 
     /**
      * A grant. Active ones were made [ageSeconds] ago and end in [leftSeconds]; ended ones expired long ago

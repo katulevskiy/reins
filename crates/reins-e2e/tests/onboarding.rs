@@ -157,7 +157,10 @@ async fn the_desktop_app_pairs_by_a_qr_code_the_phone_scans() {
     // The next poll logs the app in; the key is pinned: the phone answers its question, sealed to that key.
     let logged_in = tokio::time::timeout(Duration::from_secs(30), pairing.wait(&paths)).await.unwrap();
     assert_eq!(logged_in.unwrap(), server.base);
-    assert!(phone.core.connections().await.unwrap().iter().any(|c| c.label == "Laptop"));
+    let connections = phone.core.connections().await.unwrap();
+    let laptop = connections.iter().find(|c| c.label == "Laptop").expect("the computer's connection");
+    // A computer is told apart from an AI app by the key it pinned.
+    assert_eq!(laptop.key_fingerprint.as_deref(), Some(identity.fingerprint().as_str()));
     let question = reins_desktop::ask::Question {
         question: "Deploy to prod?".to_owned(),
         detail: None,
@@ -198,4 +201,18 @@ async fn a_server_without_sso_explains_the_browser_sign_in_in_words() {
     let page = r.text().await.unwrap();
     assert!(page.contains("No browser sign-in on this server"), "{page}");
     assert!(page.contains("master password"), "{page}");
+}
+
+/// The sign-in screen learns what the server offers before anyone signs in: this one has no SSO and no push.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn the_phone_learns_that_a_server_has_no_browser_sign_in_and_no_push() {
+    let server = Server::start(30, 10).await;
+    let phone = Phone::signed_out(|_| {}).await;
+    let info = phone.core.server_info(server.base.clone()).await.unwrap();
+    assert_eq!(info.browser_sign_in, Some(false));
+    assert_eq!(info.push_android, Some(false));
+    assert_eq!(info.push_ios, Some(false));
+    // A server that cannot be reached is no error: the screen shows everything, as before.
+    let gone = phone.core.server_info("http://127.0.0.1:9".to_owned()).await.unwrap();
+    assert_eq!(gone, reins_core::ServerInfo::default());
 }

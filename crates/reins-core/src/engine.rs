@@ -861,6 +861,13 @@ impl Engine {
             .into_iter()
             .map(|c| ConnectionView {
                 icon: self.store.connection_icon(&c.id.0).ok().flatten(),
+                key_fingerprint: self
+                    .store
+                    .desktop_key(&c.id.0)
+                    .ok()
+                    .flatten()
+                    .as_deref()
+                    .and_then(reins_proto::desktop::key_fingerprint),
                 id: c.id.0,
                 label: crate::text::truncate_chars(&crate::text::one_line(&c.label), 64),
                 client_host: crate::text::one_line(&c.client_host),

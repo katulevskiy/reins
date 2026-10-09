@@ -10,6 +10,7 @@ import dev.reins.android.ui.common.userMessage
 import dev.reins.android.ui.mcp.webPage
 import dev.reins.core.AccountKeys
 import dev.reins.core.CoreException
+import dev.reins.core.ServerInfo
 import dev.reins.core.SessionInfo
 import dev.reins.core.SsoOutcome
 import kotlin.coroutines.cancellation.CancellationException
@@ -19,6 +20,7 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.filterNotNull
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 
 data class SignInUi(
     val busy: Boolean = false,
@@ -35,9 +37,37 @@ class SignInViewModel(private val container: AppContainer) : ViewModel() {
     private val _ui = MutableStateFlow(SignInUi())
     val ui: StateFlow<SignInUi> = _ui.asStateFlow()
 
+    /** What the server on the welcome screen offers, by its address (only the latest one asked about). */
+    private val _serverInfo = MutableStateFlow<Pair<String, ServerInfo>?>(null)
+    val serverInfo: StateFlow<Pair<String, ServerInfo>?> = _serverInfo.asStateFlow()
+
+    /** The server of the latest sign-in, to offer again after signing out; null until read. */
+    private val _lastServer = MutableStateFlow<String?>(null)
+    val lastServer: StateFlow<String?> = _lastServer.asStateFlow()
+
     init {
         // The browser came back from the sign-in page (also after Android restarted the app meanwhile).
         viewModelScope.launch { container.ssoSignIn.callback.filterNotNull().collect { finishSso() } }
+        viewModelScope.launch { _lastServer.value = withContext(Dispatchers.IO) { container.onboarding.lastServer } }
+    }
+
+    /**
+     * Asks [server] what it offers (browser sign-in, push). Nothing is known for an address that is not one yet, or a
+     * server that does not answer: the welcome page then shows every way in, as before.
+     */
+    fun checkServer(server: String) {
+        val url = AccountRules.serverUrl(server) ?: return
+        if (_serverInfo.value?.first == url) return
+        viewModelScope.launch {
+            val info = try {
+                container.core.serverInfo(url)
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                return@launch
+            }
+            _serverInfo.value = url to info
+        }
     }
 
     /** The form on screen changed (welcome, create, sign in): its predecessor's error does not carry over. */
