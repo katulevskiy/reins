@@ -1,11 +1,15 @@
 package dev.reins.android.ui.pairing
 
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicText
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.runtime.Composable
@@ -16,6 +20,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
@@ -36,6 +41,7 @@ import dev.reins.android.design.Glyph
 import dev.reins.android.design.Group
 import dev.reins.android.design.ListRow
 import dev.reins.android.design.LocalColors
+import dev.reins.android.design.RText
 import dev.reins.android.design.RTextField
 import dev.reins.android.design.RType
 import dev.reins.android.design.Screen
@@ -44,6 +50,8 @@ import dev.reins.android.platform.QrScannerProvider
 import dev.reins.android.platform.ScanResult
 import dev.reins.android.ui.AppViewModel
 import dev.reins.android.ui.common.ReinsLinks
+import dev.reins.android.ui.autopilot.IconTile
+import dev.reins.android.ui.common.untrusted
 import kotlinx.coroutines.launch
 
 /** Settings > AI connections > Connect a computer. */
@@ -80,9 +88,12 @@ fun ComputerHowTo(modifier: Modifier = Modifier) {
 @Composable
 fun ConnectComputerPanel(app: AppViewModel, modifier: Modifier = Modifier) {
     val ui by app.connect.collectAsStateWithLifecycle()
+    val justPaired by app.justPaired.collectAsStateWithLifecycle()
     val scan = rememberScan(app)
     var typed by rememberSaveable { mutableStateOf("") }
+    DisposableEffect(Unit) { onDispose { app.clearJustPaired() } }
     Column(modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+        justPaired?.let { ConnectedCard(it) }
         CapsuleButton(
             "Scan QR code",
             Modifier.fillMaxWidth().testTag("scanQr"),
@@ -162,3 +173,24 @@ private fun rememberScan(app: AppViewModel): () -> Unit {
 
 /** "BCDF-GHJK" with room for spaces. */
 private const val MAX_TYPED = 20
+
+/** The computer that just paired: the result of this page, before anything else on it. */
+@Composable
+private fun ConnectedCard(name: String) {
+    val c = LocalColors.current
+    Row(
+        Modifier
+            .fillMaxWidth()
+            .background(c.success.copy(alpha = 0.12f), RoundedCornerShape(18.dp))
+            .padding(14.dp)
+            .testTag("computerConnected"),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        IconTile(Glyph.Check, c.success, size = 30.dp, filled = true)
+        Spacer(Modifier.width(12.dp))
+        Column(Modifier.weight(1f)) {
+            RText("Connected", RType.sans(15.5f, FontWeight.SemiBold), c.text)
+            RText(untrusted(name), RType.sans(13.5f), c.secondary, maxLines = 1)
+        }
+    }
+}

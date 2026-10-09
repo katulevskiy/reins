@@ -389,6 +389,23 @@ class OnboardingFlowTest : FlowHarness() {
     }
 
     @Test
+    fun aComputerThatPairedIsConfirmedOnThePage() {
+        scan = ScanResult.Unavailable("module not installed")
+        openConnectComputer()
+        tap("scanQr")
+        rule.onNodeWithTag("pairCode").performTextReplacement("bcdf ghjk")
+        tap("submitCode")
+        awaitTag("keyFingerprint")
+        tap("code:42")
+        rule.onNodeWithTag("label").performTextReplacement("Work laptop")
+        tap("approve")
+        awaitCore { core.pairingAnswers.isNotEmpty() }
+        // Back on the page that started it: the result, with the name.
+        awaitTag("computerConnected")
+        awaitText("Work laptop")
+    }
+
+    @Test
     fun aCancelledScanDoesNothing() {
         openConnectComputer()
         tap("scanQr")

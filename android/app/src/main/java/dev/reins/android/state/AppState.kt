@@ -116,6 +116,14 @@ class AppState {
         _approvalTakeover.value = value
     }
 
+    /** The computer this phone just paired (its name), for the "Connect a computer" page to confirm; null after. */
+    private val _justPaired = MutableStateFlow<String?>(null)
+    val justPaired: StateFlow<String?> = _justPaired.asStateFlow()
+
+    fun setJustPaired(name: String?) {
+        _justPaired.value = name
+    }
+
     /** Why registering this phone as the approval device failed, until it succeeds. */
     private val _registrationError = MutableStateFlow<String?>(null)
     val registrationError: StateFlow<String?> = _registrationError.asStateFlow()

@@ -74,6 +74,10 @@ class PairingViewModel(private val container: AppContainer, private val pairingI
                     AuthResult.Success -> {
                         container.feedback.play(Event.Connected)
                         container.core.answerPairing(pairingId, true, code.toUByte(), current.label.trim().ifEmpty { null })
+                        // A computer: the page that connects computers says it worked.
+                        if (current.view?.keyFingerprint != null) {
+                            container.state.setJustPaired(current.label.trim().ifEmpty { current.view.clientName })
+                        }
                         container.refreshAfterAnswer(pairingId)
                         _ui.update { it.copy(busy = false, finished = true) }
                     }
