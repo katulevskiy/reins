@@ -1,0 +1,7 @@
+/target
+/assets
+/out
+/frames
+*.png
+*.mp4
+*.wav
