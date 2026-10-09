@@ -343,17 +343,26 @@ jobs:
           retention-days: 1
 
   android:
-    name: Android ${{ matrix.flavor }} unit tests${{ matrix.flavor == 'full' && ' + debug APK' || '' }}
+    name: Android ${{ matrix.lane }}
     needs: [changes, android-native]
     if: needs.changes.outputs.android == 'true'
     runs-on: ubuntu-24.04
     timeout-minutes: 30
-    # One distribution per runner: each compiles only its own variant. The shared suite runs under `full`; `play`
-    # runs its own tests (see testOptions in android/app/build.gradle.kts).
+    # Three runners, so no lane waits on another's compiling or dexing. The shared suite runs under `full`; `play`
+    # runs only its own tests (see testOptions in android/app/build.gradle.kts).
     strategy:
       fail-fast: false
       matrix:
-        flavor: [full, play]
+        include:
+          - lane: full unit tests
+            id: full
+            tasks: :app:testFullDebugUnitTest
+          - lane: play unit tests
+            id: play
+            tasks: :app:testPlayDebugUnitTest
+          - lane: debug APK
+            id: apk
+            tasks: :app:assembleFullDebug
     steps:
       - uses: actions/checkout@v7
         with:
@@ -371,11 +380,19 @@ jobs:
         with:
           cache-provider: basic
           cache-read-only: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name != github.repository }}
+      # Robolectric downloads its Android framework jar outside Gradle's cache.
+      - name: Restore Robolectric's Android jar
+        if: matrix.id != 'apk'
+        id: robolectric
+        uses: actions/cache/restore@v5
+        with:
+          path: ~/.m2/repository/org/robolectric
+          key: robolectric-${{ hashFiles('android/gradle/libs.versions.toml') }}
       # The tests and the APK use exact-source debug native outputs from the parallel workers.
-      - name: Unit tests${{ matrix.flavor == 'full' && ' and debug APK' || '' }}
+      - name: Gradle
         working-directory: android
         env:
-          TASKS: ${{ matrix.flavor == 'full' && ':app:testFullDebugUnitTest :app:assembleFullDebug' || ':app:testPlayDebugUnitTest' }}
+          TASKS: ${{ matrix.tasks }}
         run: |
           # A test JVM still running after four minutes is stuck: print its threads before Gradle's test timeout
           # stops it, so the log says where.
@@ -389,11 +406,16 @@ jobs:
               done
             done
           ) &
-          # shellcheck disable=SC2086
-          ./gradlew --no-daemon --parallel --no-configuration-cache $TASKS \
+          ./gradlew --no-daemon --parallel --no-configuration-cache "$TASKS" \
             "-Preins.prebuiltNativeDir=$GITHUB_WORKSPACE/native"
+      - name: Save Robolectric's Android jar
+        if: matrix.id == 'full' && github.event_name == 'push' && steps.robolectric.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v5
+        with:
+          path: ~/.m2/repository/org/robolectric
+          key: ${{ steps.robolectric.outputs.cache-primary-key }}
       - name: Verify debug APK native architectures
-        if: matrix.flavor == 'full'
+        if: matrix.id == 'apk'
         run: |
           python3 - <<'PYTHON'
           import importlib.util
@@ -403,9 +425,9 @@ jobs:
           checker.validate_native_libraries("android/app/build/outputs/apk/full/debug/app-full-debug.apk")
           PYTHON
       - name: Upload test reports
-        if: failure()
+        if: failure() && matrix.id != 'apk'
         uses: actions/upload-artifact@v7
         with:
-          name: android-test-reports-${{ matrix.flavor }}
+          name: android-test-reports-${{ matrix.id }}
           path: android/app/build/reports/tests/
           if-no-files-found: ignore
