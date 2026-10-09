@@ -211,8 +211,13 @@ elif [ "${REINS_NO_SETUP:-}" = 1 ] || [ "$interactive" = false ]; then
 else
     say ""
     if "$reins" status 2>/dev/null | grep -q '^Server: *not logged in'; then
-        say "Pair this computer with your phone (open Reins on the phone and scan the code, or follow the link):"
-        "$reins" login "$PAIR_SERVER" </dev/tty || fail "not paired; run \`reins login $PAIR_SERVER\` to try again"
+        say "Pair this computer with your phone (open Reins on the phone and scan the code, or follow the link)."
+        say "No Reins app on your phone yet? Get it from https://reins2fa.com/app and sign in first; Ctrl-C here skips"
+        say "pairing for now (run \`reins login $PAIR_SERVER\` later)."
+        # Ctrl-C ends the pairing, not this script.
+        trap ':' INT
+        "$reins" login "$PAIR_SERVER" </dev/tty || say "Not paired yet: run \`reins login $PAIR_SERVER\` when the phone app is ready."
+        trap - INT
     fi
     say ""
     "$reins" harness add --all || say "Could not add Reins to every harness; see \`reins harness list\`."
@@ -220,4 +225,6 @@ else
     "$reins" resume || fail "the background service did not start; see \`reins status\`"
     say ""
     say "Done. Restart your AI tools so they pick up Reins."
+    say "git to GitHub now goes through Reins: connect GitHub in the phone app (Integrations, GitHub) before you"
+    say "push. \`reins pause\` sends git directly again."
 fi
