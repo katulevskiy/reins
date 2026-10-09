@@ -17,7 +17,7 @@ use crate::engine::{CoreConfig, Engine};
 use crate::types::{
     AccountKeys, AccountView, ActivityEntry, ApprovalChoice, ApprovalKind, ApprovalView, ConnectionView, EmailContent,
     GmailStatus, GrantView, JoinProgress, JoinStart, JoinView, PairingView, PendingItem, ServiceView, SessionInfo,
-    SsoOutcome, SsoStart, StandingGrant,
+    SsoOutcome, SsoStart, StandingGrant, StartingPolicy,
 };
 use crate::vault_passkey::{VaultPasskeyOptions, VaultPasskeyView};
 use crate::{CoreError, GoogleTokenProvider, KeyWrapper, Notifier, rt};
@@ -484,6 +484,32 @@ impl ReinsCore {
             let engine = runtime.prepare(generation).await?;
             engine.ensure_active()?;
             let result = engine.run_account(async { engine.approve_quick(&request_id).await }).await;
+            runtime.finish(&engine, result)
+        })
+        .await
+    }
+
+    /// What a newly connected AI may do before it asked for anything; `None` until the user chose (acts as asking).
+    pub async fn starting_policy(&self) -> Result<Option<StartingPolicy>, CoreError> {
+        let runtime = Arc::clone(&self.runtime);
+        let generation = runtime.generation();
+        rt::run(async move {
+            let engine = runtime.prepare(generation).await?;
+            engine.ensure_active()?;
+            let result = engine.starting_policy();
+            runtime.finish(&engine, result)
+        })
+        .await
+    }
+
+    /// Chosen during setup and changed under Grants; applies to connections made from then on.
+    pub async fn set_starting_policy(&self, policy: StartingPolicy) -> Result<(), CoreError> {
+        let runtime = Arc::clone(&self.runtime);
+        let generation = runtime.generation();
+        rt::run(async move {
+            let engine = runtime.prepare(generation).await?;
+            engine.ensure_active()?;
+            let result = engine.set_starting_policy(policy);
             runtime.finish(&engine, result)
         })
         .await

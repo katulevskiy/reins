@@ -224,10 +224,28 @@ impl Store {
         facts: &[MessageFacts],
         now: i64,
     ) -> Result<ReadDecision, CoreError> {
+        self.evaluate_read_holding(connection, account, facts, &[], now)
+    }
+
+    /// Like [`Store::evaluate_read_and_reserve`], with the messages `held[i]` marks (a login code, a password) never
+    /// covered by any grant: they always wait for the user.
+    pub fn evaluate_read_holding(
+        &self,
+        connection: &ConnectionId,
+        account: Option<&str>,
+        facts: &[MessageFacts],
+        held: &[bool],
+        now: i64,
+    ) -> Result<ReadDecision, CoreError> {
         let mut conn = self.lock()?;
         let tx = conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
         let mut grants = connection_grants(&tx, connection, account)?;
-        let decision = evaluate_read(&grants, connection, facts, now);
+        let mut decision = evaluate_read(&grants, connection, facts, now);
+        let is_held = |i: usize| held.get(i).copied().unwrap_or(false);
+        let (kept, withheld): (Vec<_>, Vec<_>) = decision.allowed.into_iter().partition(|(i, _)| !is_held(*i));
+        decision.allowed = kept;
+        decision.needs_approval.extend(withheld.into_iter().map(|(i, _)| i));
+        decision.needs_approval.sort_unstable();
         if decision.fully_allowed() {
             let used = decision.grants_used();
             record_uses(&mut grants, &used);

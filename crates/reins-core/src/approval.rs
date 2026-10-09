@@ -660,11 +660,25 @@ impl Engine {
                 ..AuditInfo::default()
             },
         })?;
+        // The starting rule: a new AI may read for a day. The pairing itself stands whatever happens here.
+        if let Some(connection) = new_connection
+            && self.starting_policy()? == Some(crate::types::StartingPolicy::ReadsForADay)
+        {
+            let label = label_for_grants(&pairing.client_name, response.label.as_deref());
+            if let Err(e) = self.grant_starter_reads(&connection.0, &label, now) {
+                log::warn!("could not give the new connection its starting grants: {e}");
+            }
+        }
         self.store.remove_pending(id)?;
         self.store.mark_handled(id, now)?;
         self.notifier.item_resolved(id.to_owned());
         result.map(drop).map_err(ApiFailure::into_core)
     }
+}
+
+/// The name grants show for a new connection: the one the user gave it, else the client's.
+fn label_for_grants(client_name: &str, given: Option<&str>) -> String {
+    given.filter(|l| !l.is_empty()).unwrap_or(client_name).to_owned()
 }
 
 fn call_recipients(call: &ToolCall) -> usize {

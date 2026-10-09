@@ -354,7 +354,12 @@ mod tests {
         assert_eq!(allows(Some("+1555"), "telegram", "read", "chat-2", 50), Some("s1".into()));
         assert_eq!(allows(Some("+1555"), "telegram", "read", "chat-3", 50), None, "another chat");
         assert_eq!(allows(Some("+1555"), "telegram", "write", "chat-1", 50), None, "reading is not writing");
-        assert_eq!(allows(Some("+1555"), "telegram", "list", "chat-1", 50), None, "reading is not listing");
+        assert_eq!(
+            allows(Some("+1555"), "telegram", "list", "chat-1", 50),
+            Some("s1".into()),
+            "reading includes listing"
+        );
+        assert_eq!(allows(Some("+1555"), "telegram", "list", "chat-3", 50), None, "but only of the same things");
         assert_eq!(allows(Some("+1555"), "github", "read", "chat-1", 50), None, "another integration");
         assert_eq!(allows(Some("+1999"), "telegram", "read", "chat-1", 50), None, "another account");
         assert_eq!(allows(Some("+1555"), "telegram", "read", "chat-1", 100), None, "expired");

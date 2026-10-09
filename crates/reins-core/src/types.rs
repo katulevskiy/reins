@@ -216,6 +216,16 @@ pub struct ApprovalView {
     pub quick: Option<QuickApproval>,
 }
 
+/// What a newly connected AI may do before it asked for anything (see `crate::starter`).
+#[derive(Clone, Copy, Debug, PartialEq, Eq, uniffi::Enum)]
+pub enum StartingPolicy {
+    /// Everything it asks waits for the user.
+    AskEveryTime,
+    /// It may search and read the connected integrations for 24 hours (grants under Grants); sending, changing,
+    /// the vault, codes and passwords, and the hard floor still ask.
+    ReadsForADay,
+}
+
 /// One-tap answers to a request that is not asked every time (see `crate::quick`).
 #[derive(Clone, Debug, PartialEq, Eq, uniffi::Record)]
 pub struct QuickApproval {

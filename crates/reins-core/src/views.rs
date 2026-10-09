@@ -477,8 +477,13 @@ pub fn message_view(m: &MessageSummary, covered: bool) -> MessageView {
         date: m.date,
         snippet: m.snippet.clone(),
         covered_by_grant: covered,
-        sensitive: false,
+        sensitive: looks_sensitive(m),
     }
+}
+
+/// An email that looks like it carries a login code or a password: never released by a grant, never ticked for the user.
+pub fn looks_sensitive(m: &MessageSummary) -> bool {
+    crate::connector::looks_like_code(&format!("{}\n{}", m.subject, m.snippet))
 }
 
 fn item_view(item: &Item, covered: bool) -> MessageView {
