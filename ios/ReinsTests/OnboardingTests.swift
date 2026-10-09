@@ -154,4 +154,17 @@ final class OnboardingTests: XCTestCase {
         model.finishOnboarding()
         XCTAssertFalse(model.onboarding)
     }
+
+    func testTheTourOpensAgainFromSettingsOnlyWhenSignedIn() async {
+        let signedOut = AppModel(core: DemoReinsCore(signedIn: false, syncCap: 0.3), feedback: NoFeedback.shared, authenticator: TrustingAuthenticator(), demo: true)
+        await signedOut.refreshSession()
+        signedOut.startTour()
+        XCTAssertFalse(signedOut.onboarding)
+
+        let model = AppModel(core: DemoReinsCore(signedIn: true, syncCap: 0.3), feedback: NoFeedback.shared, authenticator: TrustingAuthenticator(), demo: true)
+        await model.refreshSession()
+        XCTAssertFalse(model.onboarding)
+        model.startTour()
+        XCTAssertTrue(model.onboarding)
+    }
 }

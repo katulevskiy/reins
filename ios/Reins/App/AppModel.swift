@@ -305,7 +305,7 @@ final class AppModel {
 
     /// Signing in or creating an account on the sign-in screen: the session, the approval role (taken even from a
     /// phone another one took it from), and the onboarding steps the first time this account signs in on this phone.
-    /// Notifications are asked for once the session is there (`onSignedIn`).
+    /// Notifications are asked for on the setup's notifications page, or once the session is there (`onSignedIn`).
     func finishSignIn(_ info: SessionInfo) async {
         registrationError = nil
         // The demo core keeps nothing across launches, so it shows the steps every time.
@@ -354,6 +354,12 @@ final class AppModel {
     func finishOnboarding() {
         guard recoveryToRecord == nil else { return }
         onboarding = false
+    }
+
+    /// Settings > Take the tour: the setup pages again, from the start.
+    func startTour() {
+        guard case .signedIn = session else { return }
+        onboarding = true
     }
 
     /// Whether the account has no passkey for its vault yet. Unknown (offline) counts as having one: never a block.
