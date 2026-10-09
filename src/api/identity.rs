@@ -1347,8 +1347,27 @@ struct AuthorizeData {
 }
 
 // The `redirect_uri` will change depending of the client (web, android, ios ..)
+/// What `/connect/authorize` answers: the identity provider's sign-in page, or a page saying this server has none.
+type AuthorizeResponse = rocket::Either<Redirect, (rocket::http::Status, rocket::response::content::RawHtml<String>)>;
+
 #[get("/connect/authorize?<data..>")]
-async fn authorize(data: AuthorizeData, cookies: &CookieJar<'_>, secure: Secure, conn: DbConn) -> ApiResult<Redirect> {
+async fn authorize(
+    data: AuthorizeData,
+    cookies: &CookieJar<'_>,
+    secure: Secure,
+    conn: DbConn,
+) -> ApiResult<AuthorizeResponse> {
+    // The apps open this page in a browser: a server without SSO says so in words, not as a JSON error.
+    if !CONFIG.sso_enabled() {
+        return Ok(rocket::Either::Right((
+            rocket::http::Status::NotFound,
+            rocket::response::content::RawHtml(crate::api::reins::pages::error_page(
+                "No browser sign-in on this server",
+                "This server signs in with an email and a master password. Close this page and, in the app, use \
+                 Sign in or Create account.",
+            )),
+        )));
+    }
     let AuthorizeData {
         client_id,
         redirect_uri,
@@ -1389,5 +1408,5 @@ async fn authorize(data: AuthorizeData, cookies: &CookieJar<'_>, secure: Secure,
             .build(),
     );
 
-    Ok(Redirect::temporary(String::from(auth_url)))
+    Ok(rocket::Either::Left(Redirect::temporary(String::from(auth_url))))
 }
