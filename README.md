@@ -113,6 +113,9 @@ or ChatGPT. The full walkthrough is in [docs/quick-start.md](docs/quick-start.md
 
 **Approvals on the phone**
 - One-time approvals, or standing permissions limited by target, time and number of uses.
+- Routine requests in one tap: Approve and Deny on the notification, "Approve and allow for 1 hour" for the same
+  thing from the same AI, and Approve all for a burst from one agent run. Each request says what approving does in
+  one sentence.
 - Previews of exactly what runs: full emails, git pushes (commits, files, line counts, force pushes), MCP arguments,
   attached files.
 - Approving needs the phone's screen lock or biometrics. Activity log on the phone.

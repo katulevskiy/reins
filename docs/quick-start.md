@@ -166,6 +166,25 @@ written where and how to undo it.
 Now ask the agent to do something with a connected service ("list my open pull requests"), or to run a command the
 guard watches (`git push --force`). The request appears on your phone.
 
+## 5. Answer requests quickly
+
+Most requests take one tap:
+
+- **From the notification.** Routine requests (a search, reading a calendar, a fast-forward push, a hook's question)
+  have **Approve** and **Deny** buttons. Approve works once the phone is unlocked. It approves exactly what the
+  request's screen would approve without changes; anything that looks like a code or a password is never included.
+  Requests that are asked every time (below) have no buttons: tap the notification to open them.
+- **On the request's screen.** The first line says what approving does ("Claude gets the 3 emails found for
+  "from:bank"."). **Approve and allow for 1 hour** approves and lets the same AI do the same thing (the same account,
+  chats, repository branch, tool or command topic) without asking for an hour. After you approve the same thing a few
+  times in a day, the screen says so and offers 8 hours. The permission shows up under **Grants**, where you can end
+  it.
+- **Several at once.** When one AI asks for several routine things at once, **Activity** shows **Approve N** (one
+  screen lock or biometric check for all of them) and **Deny all**. What needs a closer look stays in the list.
+
+Some requests are always asked for and never have a shortcut: vault secrets an AI wants to see, destructive changes,
+history rewrites, new connections and permission requests ([security model](security-model.md#which-device-approves)).
+
 ## More from the desktop app
 
 ### Ask a question from a script
