@@ -57,6 +57,85 @@ pub fn ask_view(call: &ConnectorCall) -> Option<AskView> {
     })
 }
 
+/// What in a command or a question means it deletes, rewrites history or wipes something: never routine. Matched in
+/// lower case anywhere in the topic, the question and the detail (the command), so a harness hook's built-in rules and
+/// the same command typed into `reins ask` are treated alike. Publishing is irreversible too, but routine: it stays
+/// allowed for a while.
+const DESTRUCTIVE: [&str; 46] = [
+    "push -f",
+    "push --force",
+    "push +",
+    "push -d",
+    "push --delete",
+    "push --mirror",
+    "push --prune",
+    "push :",
+    "force-push",
+    "force push",
+    "reset --hard",
+    "clean -f",
+    "clean --force",
+    "branch -d",
+    "branch --delete",
+    "checkout -f",
+    "filter-branch",
+    "filter-repo",
+    "rm -r",
+    "rm -f",
+    "rm --recursive",
+    "rm --force",
+    "terraform apply",
+    "terraform destroy",
+    "tofu apply",
+    "tofu destroy",
+    "kubectl apply",
+    "kubectl delete",
+    "helm uninstall",
+    "helm delete",
+    "drop table",
+    "drop database",
+    "drop schema",
+    "truncate table",
+    "repo delete",
+    "release delete",
+    "mkfs",
+    "dd of=",
+    "-recurse",
+    "rd /s",
+    "rmdir /s",
+    "del /s",
+    "erase /s",
+    "format-volume",
+    "clear-disk",
+    "format c:",
+];
+
+/// A question that is asked every time: about a destructive command, or about reading a secret file (`file:` topics,
+/// such as `.env` or a private key, which would show a secret to the AI).
+pub fn destructive_ask(topic: Option<&str>, question: &str, detail: &str) -> bool {
+    if topic.is_some_and(|t| t.trim_start().to_lowercase().starts_with("file:")) {
+        return true;
+    }
+    let text = format!("{}\n{question}\n{detail}", topic.unwrap_or_default()).to_lowercase();
+    // Spacing as typed does not matter: `rm  -rf` is `rm -rf`.
+    let text = text.split_whitespace().collect::<Vec<_>>().join(" ");
+    DESTRUCTIVE.iter().any(|needle| text.contains(needle)) || rewriting_refspec(&text)
+}
+
+/// `git push origin +main` (forced) or `git push origin :old` (deleted): a refspec after `push` that starts with `+` or
+/// `:`, up to the end of that command.
+fn rewriting_refspec(text: &str) -> bool {
+    text.match_indices("push ").any(|(at, _)| {
+        text[at..]
+            .split(['\n', ';', '&', '|'])
+            .next()
+            .unwrap_or_default()
+            .split_whitespace()
+            .skip(1)
+            .any(|word| word.starts_with('+') || word.starts_with(':'))
+    })
+}
+
 #[derive(Default)]
 pub struct Desktop;
 
@@ -74,6 +153,9 @@ impl Connector for Desktop {
         nonce_arg(call)?;
         let question = question(call)?;
         let topic = topic(call)?;
+        // A question about something that cannot be undone, or about a secret file, is asked every time: never
+        // answered from a notification, with "Approve all" or by a standing answer, and never by Autopilot.
+        let once_only = destructive_ask(topic.as_deref(), &question, call.str_arg("detail").unwrap_or_default());
         let mut lines = vec![question];
         if let Some(t) = &topic {
             lines.push(format!("About: {t}"));
@@ -87,7 +169,7 @@ impl Connector for Desktop {
             resource_label,
             lines,
             parents: Vec::new(),
-            once_only: false,
+            once_only,
             ..Preview::default()
         })
     }
@@ -138,5 +220,35 @@ mod tests {
         assert!(topic(&call(&json!({"topic": "a\nb"}))).is_err());
         assert!(topic(&call(&json!({"topic": "x".repeat(101)}))).is_err());
         assert_eq!(topic(&call(&json!({"topic": " "}))).unwrap(), None);
+    }
+
+    #[test]
+    fn destructive_commands_and_secret_files_are_never_routine() {
+        let ask = |topic: Option<&str>, question: &str, detail: &str| destructive_ask(topic, question, detail);
+        for topic in [
+            "command:git push --force*",
+            "command:git push -f",
+            "command:git reset --hard",
+            "command:git branch -D",
+            "command:rm -r",
+            "command:terraform destroy",
+            "command:kubectl delete",
+            "command:text:drop table",
+            "command:gh repo delete",
+            "command:Remove-Item -Recurse",
+            "file:.env",
+            "file:**/id_ed25519",
+        ] {
+            assert!(ask(Some(topic), "Run it?", ""), "{topic}");
+        }
+        assert!(ask(None, "Force-push main?", ""), "said in the question");
+        assert!(ask(None, "Run this?", "rm  -rf build"), "said in the command, spacing as typed");
+        assert!(ask(None, "Clean up?", "git push origin :old-branch"));
+        assert!(ask(None, "Push?", "git push origin +main"));
+        assert!(!ask(None, "Push?", "git push origin main && echo +ok"), "another command's words");
+        for topic in ["command:cargo test", "command:npm publish", "command:make deploy", "ask"] {
+            assert!(!ask(Some(topic), "Run the tests?", "cargo test --all"), "{topic}");
+        }
+        assert!(!ask(None, "Format the code?", "cargo fmt"), "formatting code is not formatting a disk");
     }
 }

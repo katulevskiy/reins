@@ -1364,7 +1364,7 @@ async fn a_send_offers_to_allow_exactly_its_recipients() {
         .await;
     serve_pending(&env, &[send_request("s1", "c1", "Boss@Work.com")], &[]).await;
     let items = env.core.sync(0).await.unwrap();
-    assert_eq!(items[0].headline, "An email to boss@work.com goes out from me@gmail.com.");
+    assert_eq!(items[0].headline, "An email to boss@work.com goes out from me@gmail.com: \"Hello\".");
     let quick = env.core.approval_view("s1".to_owned()).await.unwrap().quick.unwrap();
     assert_eq!(quick.allow_what, "emails to boss@work.com");
     let allow = quick.allow.unwrap();
@@ -1478,4 +1478,25 @@ async fn reads_for_a_day_lets_a_new_ai_read_but_never_send_or_see_codes() {
     // Another AI connected before has nothing.
     serve_pending(&env, &[search_request("r2", "c1", "ChatGPT", "anything")], &[]).await;
     assert_eq!(env.core.sync(0).await.unwrap().len(), 2);
+}
+
+#[tokio::test]
+async fn an_email_to_more_people_than_a_notification_can_name_is_opened_first() {
+    let env = env().await;
+    let to = |n: usize| (0..n).map(|i| format!("p{i}@work.com")).collect::<Vec<_>>();
+    let send = |id: &str, n: usize| {
+        json!({"v": 1, "id": id, "connection_id": "c1", "connection_label": "ChatGPT", "created_at": 100,
+               "call": {"tool": "gmail_send", "email": {"to": to(n), "subject": "Plan", "body": "Body"}}})
+    };
+    serve_pending(&env, &[send("s3", 3), send("s4", 4)], &[]).await;
+    let items = env.core.sync(0).await.unwrap();
+    let item = |id: &str| items.iter().find(|i| i.id == id).unwrap().clone();
+    assert!(item("s3").quick, "three are named in the notification");
+    assert_eq!(
+        item("s3").headline,
+        "An email to p0@work.com, p1@work.com, p2@work.com goes out from me@gmail.com: \"Plan\"."
+    );
+    assert!(!item("s4").quick, "four are not: it is opened before it is sent");
+    let quick = env.core.approval_view("s4".to_owned()).await.unwrap().quick.unwrap();
+    assert!(!quick.from_notification && quick.allow.is_some(), "the sheet still offers one tap");
 }
