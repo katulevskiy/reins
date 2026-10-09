@@ -313,6 +313,7 @@ private fun SignedInContent(
                     vault,
                     newItem = route.newItem,
                     existing = vaultItem?.takeIf { it.id == route.id },
+                    authenticator = authenticator,
                     onBack = { app.back() },
                     onSaved = { id ->
                         // An edited item goes back to its page; a new one opens in place of "Add" and the form.

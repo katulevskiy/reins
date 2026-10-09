@@ -112,6 +112,7 @@ fun VaultEditScreen(
     viewModel: VaultViewModel,
     newItem: NewItem?,
     existing: VaultItemDetail?,
+    authenticator: dev.reins.android.platform.Authenticator,
     onBack: () -> Unit,
     onSaved: (String) -> Unit,
 ) {
@@ -162,7 +163,7 @@ fun VaultEditScreen(
                         enabled = name.isNotBlank(),
                         busy = ui.busy,
                         glyph = Glyph.Key,
-                    ) { viewModel.generateSshKey(name.trim(), onSaved) }
+                    ) { viewModel.generateSshKey(authenticator, name.trim(), onSaved) }
                     RText(
                         "An Ed25519 key. You get its public half to put on servers; the private half never leaves your vault.",
                         RType.sans(13f, lineHeight = 18f),
@@ -181,7 +182,7 @@ fun VaultEditScreen(
                     }
                     val ready = name.isNotBlank() && (existing != null || send.isNotEmpty() || kind == VaultItemKind.IDENTITY)
                     CapsuleButton("Save", Modifier.fillMaxWidth().padding(top = 6.dp).testTag("vaultSave"), enabled = ready, busy = ui.busy) {
-                        viewModel.save(existing?.id, VaultItemInput(kind, name.trim(), send), onSaved)
+                        viewModel.save(authenticator, existing?.id, VaultItemInput(kind, name.trim(), send), onSaved)
                     }
                 }
             }
@@ -213,7 +214,8 @@ private fun FieldInput(field: FormField, value: String, editing: Boolean, enable
         singleLine = !field.multiline,
         password = field.secret && !field.multiline,
         keyboardOptions = KeyboardOptions(
-            keyboardType = if (field.secret && !field.multiline) KeyboardType.Password else field.keyboard,
+            // A password keyboard learns nothing, whether the secret is one line or a pasted key.
+            keyboardType = if (field.secret) KeyboardType.Password else field.keyboard,
             autoCorrectEnabled = false,
         ),
     )

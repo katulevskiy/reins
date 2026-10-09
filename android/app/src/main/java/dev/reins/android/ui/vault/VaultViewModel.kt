@@ -154,38 +154,55 @@ class VaultViewModel(private val container: AppContainer) : ViewModel() {
         _revealed.update { it - key }
     }
 
-    /** Creates the item ([id] null) or changes it; [onDone] gets its id. */
-    fun save(id: String?, input: VaultItemInput, onDone: (String) -> Unit) = run(onDone) {
-        if (id == null) {
-            container.core.vaultCreate(input)
-        } else {
-            container.core.vaultUpdate(id, input)
+    /** Creates the item ([id] null) or changes it, after the screen lock; [onDone] gets its id. */
+    fun save(authenticator: Authenticator, id: String?, input: VaultItemInput, onDone: (String) -> Unit) =
+        run(authenticator, if (id == null) "Save ${input.name} in your vault" else "Change ${input.name}", onDone) {
+            if (id == null) {
+                container.core.vaultCreate(input)
+            } else {
+                container.core.vaultUpdate(id, input)
+                id
+            }
+        }
+
+    /** Makes an Ed25519 key on the phone and keeps it in the vault, after the screen lock; [onDone] gets its id. */
+    fun generateSshKey(authenticator: Authenticator, name: String, onDone: (String) -> Unit) =
+        run(authenticator, "Make the SSH key $name", onDone) {
+            val key = container.core.vaultGenerateSshKey(name)
+            _madeKey.value = key
+            key.id
+        }
+
+    /** Deletes the item for good, after the screen lock. */
+    fun delete(authenticator: Authenticator, id: String, name: String, onDone: () -> Unit) =
+        run(authenticator, "Delete $name for good", { onDone() }) {
+            container.core.vaultDelete(id)
+            _item.value = null
             id
         }
-    }
-
-    /** Makes an Ed25519 key on the phone and keeps it in the vault; [onDone] gets the new item's id. */
-    fun generateSshKey(name: String, onDone: (String) -> Unit) = run(onDone) {
-        val key = container.core.vaultGenerateSshKey(name)
-        _madeKey.value = key
-        key.id
-    }
-
-    fun delete(id: String, onDone: () -> Unit) = run({ onDone() }) {
-        container.core.vaultDelete(id)
-        _item.value = null
-        id
-    }
 
     fun clearError() {
         _ui.update { it.copy(error = null) }
     }
 
-    private fun run(onDone: (String) -> Unit, block: suspend () -> String) {
+    /** A change to the vault: only after the screen lock, like approving one from the computer. */
+    private fun run(authenticator: Authenticator, title: String, onDone: (String) -> Unit, block: suspend () -> String) {
         if (_ui.value.busy) return
         _ui.value = VaultUi(busy = true)
         viewModelScope.launch {
             try {
+                when (authenticator.authenticate(title, "Your vault")) {
+                    AuthResult.Success -> Unit
+                    AuthResult.Cancelled -> {
+                        _ui.value = VaultUi()
+                        return@launch
+                    }
+                    AuthResult.Unavailable -> {
+                        container.feedback.play(Event.Error)
+                        _ui.value = VaultUi(error = "Set a screen lock or fingerprint on this phone to change your vault.")
+                        return@launch
+                    }
+                }
                 val id = block()
                 container.feedback.play(Event.GrantCreated)
                 _ui.value = VaultUi()

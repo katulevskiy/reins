@@ -154,7 +154,7 @@ fun VaultItemScreen(
             confirmLabel = "Delete",
             onConfirm = {
                 deleting = false
-                viewModel.delete(current.id, onBack)
+                viewModel.delete(authenticator, current.id, current.name, onBack)
             },
             onDismiss = { deleting = false },
         )

@@ -51,7 +51,7 @@ class VaultFlowTest : FlowHarness() {
     fun theListShowsEveryItemAndSearches() {
         openVault()
         assertTrue(has("vaultItem:github") && has("vaultItem:deploy") && has("vaultItem:visa"))
-        awaitText("This phone's key for reins vault add: 4821 9930")
+        awaitText("This phone's key for reins vault add: 4821-9930-1274")
         type("vaultSearch", "git")
         awaitGone("vaultItem:openai")
         assertTrue(has("vaultItem:github"))
@@ -142,6 +142,32 @@ class VaultFlowTest : FlowHarness() {
         val (id, input) = core.vaultUpdated.single()
         assertEquals("github", id)
         assertEquals("the password was left as it was", listOf("username" to "octo-cat"), input.fields.map { it.key to it.value })
+    }
+
+    @Test
+    fun changesNeedTheScreenLock() {
+        openVault()
+        tap("vaultAdd")
+        tap("newItem:ApiKey")
+        type("vaultName", "Groq")
+        type("vaultInput:password", "gsk_123")
+        authResult = AuthResult.Cancelled
+        tap("vaultSave")
+        settle()
+        assertTrue("nothing is saved without the screen lock", core.vaultCreated.isEmpty())
+        authResult = AuthResult.Unavailable
+        tap("vaultSave")
+        awaitTag("vaultFormError")
+        assertTrue(core.vaultCreated.isEmpty())
+        pressBack()
+        pressBack()
+        tap("vaultItem:visa")
+        authResult = AuthResult.Cancelled
+        tap("vaultDelete")
+        awaitText("Delete Visa?")
+        rule.onAllNodes(hasText("Delete")).onLast().performClick()
+        settle()
+        assertTrue("nothing is deleted without the screen lock", core.vaultDeleted.isEmpty())
     }
 
     @Test

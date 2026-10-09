@@ -74,6 +74,8 @@ fun VaultScreen(viewModel: VaultViewModel, onBack: () -> Unit, onOpen: (String) 
     val ui by viewModel.ui.collectAsStateWithLifecycle()
     val phoneKey by viewModel.phoneKey.collectAsStateWithLifecycle()
     LaunchedEffect(viewModel) { viewModel.load() }
+    // Names, usernames, card digits and this phone's key: not for screenshots or the recent apps.
+    dev.reins.android.ui.common.SecureWindow()
 
     Screen(
         title = "Vault",

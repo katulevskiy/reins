@@ -916,7 +916,7 @@ class FakeCore : ReinsCoreInterface {
         return VaultSshKey(id, public, fingerprint)
     }
 
-    @Volatile var phoneKeyDigits = "4821 9930"
+    @Volatile var phoneKeyDigits = "4821-9930-1274"
 
     override suspend fun phoneKeyFingerprint() = phoneKeyDigits
 
