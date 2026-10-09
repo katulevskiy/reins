@@ -3,14 +3,18 @@
 //!
 //! The value is read here without echo (or from stdin when piped), put in a box from this app's key to the phone's
 //! own key, and sent to the phone, which shows "Save NAME in your vault?" and stores it encrypted with the vault key
-//! once approved. The server relays the box without being able to open or replace it, and nothing here keeps the
-//! value.
+//! once approved. The box also carries when it was made (the phone refuses an old or repeated one), the item, the
+//! field, the kind and whether an existing item may be changed (`--replace`; the phone keeps the earlier value).
+//! The terminal and the phone show the same four check digits of the value. The server relays the box without being
+//! able to open or replace it, and nothing here keeps the value.
 //!
 //! The phone's key comes from the phone the first time (`vault_phone_key`, sealed to this app): the approval shows its
-//! eight digits, the user types them here, and the key is kept (`phone-key.json`) only when they match the key that
-//! arrived. The key never travels in the clear, so a server that answered with its own key could not know which digits
-//! to aim for. A new phone, or the app reinstalled, has a new key: the phone then cannot open the box, and the key is
-//! asked for and checked again.
+//! twelve digits, the user types them here, and the key is kept (`phone-key.json`) only when they match the key that
+//! arrived; the digits that arrived are never shown, and this app's own pairing digits are refused. The key never
+//! travels in the clear, so a server that answered with its own key could not know which digits to aim for. What the
+//! phone sends back afterwards (that it saved, the names) is boxed from that key, so only the pinned phone can have
+//! written it. A new phone, or the app reinstalled, cannot open the box; this app then says so and the user checks the
+//! new key with `--new-phone`, never by itself.
 
 use std::io::{IsTerminal as _, Read as _, Write as _};
 use std::path::PathBuf;
@@ -18,7 +22,11 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use clap::{Subcommand, ValueEnum};
-use reins_proto::desktop::{PHONE_KEY_CHANGED, PhoneKey, SecretToStore, VaultNames, decode_key, phone_key_fingerprint};
+use reins_proto::desktop::{
+    PHONE_KEY_CHANGED, PhoneKey, SEALED_FIELD, SecretToStore, StoreAck, VaultNames, decode_key, phone_key_fingerprint,
+    value_check,
+};
+use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use zeroize::Zeroizing;
@@ -27,19 +35,19 @@ use crate::auth::Refusal;
 use crate::config::{Config, Mode, Paths};
 use crate::identity::Identity;
 use crate::journal::{Entry, Journal, Kind};
-use crate::phone::{Phone, awaiting, teller, unavailable};
+use crate::phone::{Phone, awaiting, teller};
 
 pub const KEY_TOOL: &str = "vault_phone_key";
 pub const STORE_TOOL: &str = "vault_secret_store";
 pub const NAMES_TOOL: &str = "vault_names";
 /// The largest value read (an RSA private key is a few kilobytes).
-const MAX_VALUE: u64 = 32 * 1024;
+const MAX_VALUE: usize = 32 * 1024;
 
 #[derive(Clone, Debug, Subcommand)]
 pub enum VaultCmd {
     /// Save a secret in the vault on your phone. It is typed here without echo (or piped in), sealed so that only
-    /// your phone can open it, and saved once you approve on the phone. An item with that name gets the field
-    /// changed; otherwise a new item is made.
+    /// your phone can open it, and saved once you approve on the phone. An item that exists is changed only with
+    /// --replace (its earlier value is kept).
     Add {
         /// The item's name: what `vault:NAME/password` refers to.
         name: String,
@@ -47,15 +55,25 @@ pub enum VaultCmd {
         #[arg(long, value_enum, default_value_t = ItemKind::ApiKey)]
         kind: ItemKind,
         /// The field to set (default: password; notes for a note; the private key for ssh). Any other name makes a
-        /// custom field.
+        /// custom field (hidden).
         #[arg(long)]
         field: Option<String>,
-        /// The eight digits your phone showed for its key, when this terminal cannot ask (the first time only).
+        /// Change the field of the item with this name if there is one (its earlier value is kept in the item).
+        #[arg(long)]
+        replace: bool,
+        /// Your phone is new (or Reins was installed again): check its key again.
+        #[arg(long)]
+        new_phone: bool,
+        /// The twelve digits your phone shows for its key, when this terminal cannot ask (the first time only).
         #[arg(long, value_name = "DIGITS")]
         phone_key: Option<String>,
     },
-    /// The names of the items in the vault on your phone (never a value).
-    List,
+    /// The names of the items in the vault on your phone (never a value). Asked on the phone every time.
+    List {
+        /// The twelve digits your phone shows for its key, when this terminal cannot ask (the first time only).
+        #[arg(long, value_name = "DIGITS")]
+        phone_key: Option<String>,
+    },
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, ValueEnum)]
@@ -118,10 +136,30 @@ fn unpin(paths: &Paths) {
     std::fs::remove_file(pin_file(paths)).ok();
 }
 
-/// Digits as typed ("4821 9930", "48219930") and as shown, compared without spaces.
-fn same_digits(typed: &str, shown: &str) -> bool {
-    let digits = |s: &str| s.chars().filter(|c| !c.is_whitespace()).collect::<String>();
-    digits(typed) == digits(shown)
+/// Only the digits of what was typed ("4821-9930-1274", "4821 9930 1274", "482199301274").
+fn digits_of(s: &str) -> String {
+    s.chars().filter(char::is_ascii_digit).collect()
+}
+
+/// Whether the typed digits are the phone key's. This app's own pairing digits are refused outright: they are the
+/// other number a user may find (in `reins status`, on the phone's computer list), and the one a server could aim for.
+fn check_typed(typed: &str, phone_digits: &str, own_digits: &str) -> Result<(), String> {
+    let typed = digits_of(typed);
+    if !own_digits.is_empty() && typed == digits_of(own_digits) {
+        return Err("Those are this computer's own key digits, not your phone's. Type the twelve digits your phone \
+                    shows for its key (the bottom of the Vault page in the Reins app)."
+            .to_owned());
+    }
+    if typed != digits_of(phone_digits) {
+        // The digits that arrived are not shown: whoever sent them would only have the user copy them.
+        return Err(
+            "Not saved: the key this computer received is not the one your phone shows. Something between your \
+                    phone and this computer changed it. Check that you typed your phone's twelve digits, and which \
+                    Reins server you are logged in to (reins status)."
+                .to_owned(),
+        );
+    }
+    Ok(())
 }
 
 /// A line typed by the user at the terminal, even when stdin is piped (`None` without one).
@@ -139,10 +177,11 @@ fn ask_terminal(prompt: &str) -> Option<String> {
     Some(line.trim().to_owned())
 }
 
-/// Asks the phone for its key and keeps it once the user has compared the digits.
+/// Asks the phone for its key and keeps it once the user has typed its digits.
 async fn check_phone_key(phone: &Phone, paths: &Paths, given: Option<&str>) -> Result<String, String> {
     eprintln!(
-        "First, your phone hands this computer its key: approve \"Let the computer save secrets\" on your phone."
+        "First, your phone hands this computer its key. Approve \"Let the computer save secrets\" on your phone, and \
+         note the twelve digits it shows."
     );
     let answer = phone
         .ask(KEY_TOOL, None, |_| json!({}), "No answer from your phone in time. Approve it, then run again.")
@@ -157,46 +196,49 @@ async fn check_phone_key(phone: &Phone, paths: &Paths, given: Option<&str>) -> R
     let typed = match given {
         Some(typed) => typed.to_owned(),
         None => ask_terminal(
-            "Type the eight digits your phone showed for its key (also at the bottom of the Vault page in the Reins app): ",
+            "Type the twelve digits your phone shows for its key (also at the bottom of the Vault page in the Reins app): ",
         )
         .ok_or(
-            "Check your phone's key once: run reins vault add in a terminal, or pass --phone-key with the eight digits \
-             your phone showed.",
+            "Check your phone's key once: run reins vault add in a terminal, or pass --phone-key with the twelve \
+             digits your phone shows.",
         )?,
     };
-    if !same_digits(&typed, &digits) {
-        return Err(format!(
-            "Not saved: this computer received a key with the digits {digits}, not the ones you typed. If your phone \
-             shows {digits}, run reins vault add again and type them; if it does not, something between your phone \
-             and this computer changed the key (check the server: reins status)."
-        ));
-    }
+    check_typed(&typed, &digits, &phone.identity().fingerprint())?;
     pin(paths, phone.server(), &key.public_key)?;
     eprintln!("Your phone's key is kept on this computer; it is not asked for again.");
     Ok(key.public_key)
 }
 
-/// The value to save: piped in on stdin, or typed at the terminal without echo.
+/// The value to save: piped in on stdin, or typed at the terminal without echo. Read into a buffer that is wiped and
+/// never grows (so no copy is left behind).
 fn read_value(name: &str, field: &str, kind: ItemKind) -> Result<Zeroizing<String>, String> {
-    let mut value = Zeroizing::new(String::new());
-    if std::io::stdin().is_terminal() {
+    let mut value = if std::io::stdin().is_terminal() {
         if kind == ItemKind::Ssh {
             return Err("pipe the private key in: reins vault add NAME --kind ssh < ~/.ssh/id_ed25519".to_owned());
         }
-        let typed = rpassword::prompt_password(format!("{field} for {name} (not shown, Enter to finish): "))
-            .map_err(|e| format!("reading from the terminal: {e}"))?;
-        value.push_str(&typed);
-        drop(Zeroizing::new(typed));
+        let typed = Zeroizing::new(
+            rpassword::prompt_password(format!("{field} for {name} (not shown, Enter to finish): "))
+                .map_err(|e| format!("reading from the terminal: {e}"))?,
+        );
+        Zeroizing::new(typed.to_string())
     } else {
-        std::io::stdin().take(MAX_VALUE + 1).read_to_string(&mut value).map_err(|e| format!("reading stdin: {e}"))?;
-        if value.len() as u64 > MAX_VALUE {
+        let mut bytes = Zeroizing::new(Vec::with_capacity(MAX_VALUE + 1));
+        std::io::stdin()
+            .take(MAX_VALUE as u64 + 1)
+            .read_to_end(&mut bytes)
+            .map_err(|e| format!("reading stdin: {e}"))?;
+        if bytes.len() > MAX_VALUE {
             return Err(format!("the value is longer than {} KB", MAX_VALUE / 1024));
         }
-        // What `echo` and editors add, not part of the value; a key keeps its own layout.
-        if kind != ItemKind::Ssh {
-            let kept = value.trim_end_matches(['\n', '\r']).len();
-            value.truncate(kept);
-        }
+        let text = std::str::from_utf8(&bytes).map_err(|_| "the value is not text (UTF-8)".to_owned())?;
+        let mut value = Zeroizing::new(String::with_capacity(text.len()));
+        value.push_str(text);
+        value
+    };
+    // What `echo` and editors add, not part of the value; a key keeps its own layout.
+    if kind != ItemKind::Ssh {
+        let kept = value.trim_end_matches(['\n', '\r']).len();
+        value.truncate(kept);
     }
     if value.trim().is_empty() {
         return Err("nothing to save: the value is empty".to_owned());
@@ -204,50 +246,52 @@ fn read_value(name: &str, field: &str, kind: ItemKind) -> Result<Zeroizing<Strin
     Ok(value)
 }
 
-/// What is sent: the value with the request's nonce, the name and the field, in a box from this app's key to the
-/// phone's.
-fn box_value(
-    identity: &Identity,
-    phone_key: &str,
-    nonce: &str,
-    name: &str,
-    field: &str,
-    value: &str,
-) -> Option<String> {
-    let plain = Zeroizing::new(
-        serde_json::to_vec(&SecretToStore {
-            v: 1,
-            nonce: nonce.to_owned(),
-            name: name.to_owned(),
-            field: field.to_owned(),
-            value: value.to_owned(),
-        })
-        .ok()?,
-    );
+/// What is sent, in a box from this app's key to the phone's.
+struct Outgoing<'a> {
+    name: &'a str,
+    field: &'a str,
+    kind: ItemKind,
+    replace: bool,
+    value: &'a str,
+}
+
+fn box_value(identity: &Identity, phone_key: &str, nonce: &str, out: &Outgoing<'_>, now: i64) -> Option<String> {
+    let secret = SecretToStore {
+        v: 1,
+        nonce: nonce.to_owned(),
+        created_at: now,
+        name: out.name.to_owned(),
+        field: out.field.to_owned(),
+        kind: out.kind.arg().to_owned(),
+        replace: out.replace,
+        value: out.value.to_owned(),
+    };
+    let plain = Zeroizing::new(serde_json::to_vec(&secret).ok()?);
     identity.box_to(phone_key, &plain)
 }
 
-/// Sends the boxed value; what the phone answered.
-async fn store(
-    phone: &Phone,
-    phone_key: &str,
-    name: &str,
-    kind: ItemKind,
-    field: &str,
-    value: &Zeroizing<String>,
-) -> Result<Value, Refusal> {
+/// Opens what the pinned phone boxed for this app, and checks it answers this request.
+fn open_from_phone<T: DeserializeOwned>(phone: &Phone, phone_key: &str, data: &Value) -> Result<T, String> {
+    let refused = || "The answer is not from the phone this computer knows; refused.".to_owned();
+    let boxed = data.get(SEALED_FIELD).and_then(Value::as_str).ok_or_else(refused)?;
+    let plain = phone.identity().open_box_from(phone_key, boxed).map_err(|_| refused())?;
+    serde_json::from_slice(&plain).map_err(|_| refused())
+}
+
+/// Sends the boxed value; what the phone answered, and the nonce the request carried.
+async fn store(phone: &Phone, phone_key: &str, out: &Outgoing<'_>) -> Result<(Value, String), Refusal> {
     let answer = phone
         .ask(
             STORE_TOOL,
             None,
             |nonce| {
-                json!({"name": name, "kind": kind.arg(), "field": field,
-                    "sealed": box_value(phone.identity(), phone_key, nonce, name, field, value).unwrap_or_default()})
+                json!({"name": out.name, "kind": out.kind.arg(), "field": out.field,
+                    "sealed": box_value(phone.identity(), phone_key, nonce, out, crate::now_unix()).unwrap_or_default()})
             },
             "No answer from your phone in time. Approve it, then run again.",
         )
         .await?;
-    Ok(answer.data)
+    Ok((answer.data, answer.nonce))
 }
 
 fn logged_in(paths: &Paths, config: &Config) -> Result<Phone, String> {
@@ -259,60 +303,86 @@ fn logged_in(paths: &Paths, config: &Config) -> Result<Phone, String> {
     if crate::server::oauth::logged_in_server(paths).is_none() {
         return Err("the vault is on your phone: run `reins login` to pair this app with it".to_owned());
     }
+    // The value passes through this process: no other process of the user may read its memory.
+    crate::harden::harden()?;
     let identity = Arc::new(Identity::load_or_create(&paths.identity_file()).map_err(|e| e.to_string())?);
     Phone::new(paths, identity, Duration::from_secs(config.approval_timeout_secs))
 }
 
-async fn add(
-    paths: &Paths,
-    config: &Config,
-    name: &str,
+/// The pinned phone key, asking for it the first time (or again with `new_phone`).
+async fn phone_key_for(phone: &Phone, paths: &Paths, given: Option<&str>, new_phone: bool) -> Result<String, String> {
+    if new_phone {
+        unpin(paths);
+    }
+    match pinned(paths, phone.server()) {
+        Some(key) => Ok(key),
+        None => check_phone_key(phone, paths, given).await,
+    }
+}
+
+struct AddArgs<'a> {
+    name: &'a str,
     kind: ItemKind,
-    field: Option<&str>,
-    given: Option<&str>,
-) -> Result<Vec<String>, String> {
-    let name = name.trim();
+    field: Option<&'a str>,
+    replace: bool,
+    new_phone: bool,
+    given: Option<&'a str>,
+}
+
+async fn add(paths: &Paths, config: &Config, args: &AddArgs<'_>) -> Result<Vec<String>, String> {
+    let name = args.name.trim();
     if name.is_empty() || name.chars().any(char::is_control) {
         return Err("give the item a name: reins vault add NAME".to_owned());
     }
-    let field = field.map_or(kind.default_field(), str::trim);
+    let kind = args.kind;
+    let field = args.field.map_or(kind.default_field(), str::trim);
     let phone = logged_in(paths, config)?;
-    let mut phone_key = match pinned(paths, phone.server()) {
-        Some(key) => key,
-        None => check_phone_key(&phone, paths, given).await?,
-    };
+    let phone_key = phone_key_for(&phone, paths, args.given, args.new_phone).await?;
     let value = read_value(name, field, kind)?;
+    eprintln!("Check: {}. Your phone shows the same four digits; approve only if it does.", value_check(&value));
     let journal = Journal::new(paths);
     let timeout = Duration::from_secs(config.approval_timeout_secs);
     let what = format!("save {name} in the vault");
-    let mut retried = false;
-    let data = loop {
-        let entry = Entry::new(Kind::Secrets, &what).source(Some("reins vault add"));
-        let tell = teller(|line: &str| eprintln!("{line}"));
-        let sent = awaiting(&journal, entry, Some(tell), timeout, store(&phone, &phone_key, name, kind, field, &value));
-        match sent.await {
-            Ok(data) => break data,
-            Err(Refusal::Unavailable(m)) if m.starts_with(PHONE_KEY_CHANGED) && !retried => {
-                retried = true;
-                unpin(paths);
-                eprintln!("Your phone has a new key (a new phone, or the app was installed again).");
-                phone_key = check_phone_key(&phone, paths, None).await?;
-            }
-            Err(r) => return Err(r.message().to_owned()),
-        }
+    let entry = Entry::new(Kind::Secrets, &what).source(Some("reins vault add"));
+    let tell = teller(|line: &str| eprintln!("{line}"));
+    let out = Outgoing {
+        name,
+        field,
+        kind,
+        replace: args.replace,
+        value: &value,
     };
+    let sent = awaiting(&journal, entry, Some(tell), timeout, store(&phone, &phone_key, &out)).await;
     drop(value);
-    let created = data.get("created").and_then(Value::as_bool).unwrap_or(false);
+    let (data, nonce) = match sent {
+        Ok(answer) => answer,
+        // Never acted on by itself: the server could send this too. The user checks a new phone's key on purpose.
+        Err(Refusal::Unavailable(m)) if m.starts_with(PHONE_KEY_CHANGED) => {
+            return Err(format!(
+                "Your phone could not open it: it is not the phone this computer knows. If you have a new phone or \
+                 installed Reins again, run reins vault add {name} --new-phone. Otherwise something between your \
+                 phone and this computer is interfering; nothing was saved."
+            ));
+        }
+        Err(r) => return Err(r.message().to_owned()),
+    };
+    let ack: StoreAck = open_from_phone(&phone, &phone_key, &data)?;
+    if ack.nonce != nonce || ack.name != name {
+        return Err("The phone's answer is for another request; refused.".to_owned());
+    }
     let shown_field = if field == "private_key" {
         "private key"
     } else {
         field
     };
-    let mut lines = vec![if created {
+    let mut lines = vec![if ack.created {
         format!("Saved {name} in your vault.")
     } else {
-        format!("Changed the {shown_field} of {name} in your vault.")
+        format!("Replaced the {shown_field} of {name} in your vault.")
     }];
+    if let Some(kept) = &ack.kept {
+        lines.push(format!("The earlier value is kept in {kept}."));
+    }
     lines.push(if kind == ItemKind::Ssh {
         "The SSH agent offers it (reins ssh setup); signing happens on your phone.".to_owned()
     } else {
@@ -321,8 +391,9 @@ async fn add(
     Ok(lines)
 }
 
-async fn list(paths: &Paths, config: &Config) -> Result<Vec<String>, String> {
+async fn list(paths: &Paths, config: &Config, given: Option<&str>) -> Result<Vec<String>, String> {
     let phone = logged_in(paths, config)?;
+    let phone_key = phone_key_for(&phone, paths, given, false).await?;
     let journal = Journal::new(paths);
     let entry = Entry::new(Kind::Secrets, "the names of the vault items").source(Some("reins vault list"));
     let tell = teller(|line: &str| eprintln!("{line}"));
@@ -330,10 +401,9 @@ async fn list(paths: &Paths, config: &Config) -> Result<Vec<String>, String> {
         phone.ask(NAMES_TOOL, None, |_| json!({}), "No answer from your phone in time. Approve it, then run again.");
     let timeout = Duration::from_secs(config.approval_timeout_secs);
     let answer = awaiting(&journal, entry, Some(tell), timeout, asked).await.map_err(|r| r.message().to_owned())?;
-    let item = answer.data.get("items").and_then(|i| i.get(0)).ok_or("The phone's answer is empty.")?;
-    let names: VaultNames = phone.open(item).map_err(|r| r.message().to_owned())?;
+    let names: VaultNames = open_from_phone(&phone, &phone_key, &answer.data)?;
     if names.nonce != answer.nonce {
-        return Err(unavailable("The phone's answer is for another request; refused.").message().to_owned());
+        return Err("The phone's answer is for another request; refused.".to_owned());
     }
     Ok(listing(&names.items))
 }
@@ -371,9 +441,23 @@ pub async fn run(cmd: &VaultCmd, paths: &Paths, config: &Config) -> Result<Vec<S
             name,
             kind,
             field,
+            replace,
+            new_phone,
             phone_key,
-        } => add(paths, config, name, *kind, field.as_deref(), phone_key.as_deref()).await,
-        VaultCmd::List => list(paths, config).await,
+        } => {
+            let args = AddArgs {
+                name,
+                kind: *kind,
+                field: field.as_deref(),
+                replace: *replace,
+                new_phone: *new_phone,
+                given: phone_key.as_deref(),
+            };
+            add(paths, config, &args).await
+        }
+        VaultCmd::List {
+            phone_key,
+        } => list(paths, config, phone_key.as_deref()).await,
     }
 }
 
@@ -385,11 +469,17 @@ mod tests {
     use super::*;
 
     #[test]
-    fn digits_are_compared_without_spaces() {
-        assert!(same_digits("48219930", "4821 9930"));
-        assert!(same_digits(" 4821 9930 ", "4821 9930"));
-        assert!(!same_digits("4821 9931", "4821 9930"));
-        assert!(!same_digits("", "4821 9930"));
+    fn the_typed_digits_must_be_the_phones_and_never_this_computers_own() {
+        assert!(check_typed("4821-9930-1274", "4821-9930-1274", "1111 2222").is_ok());
+        assert!(check_typed("4821 9930 1274", "4821-9930-1274", "1111 2222").is_ok());
+        assert!(check_typed("482199301274", "4821-9930-1274", "1111 2222").is_ok());
+        // The other number the user may find: refused, and said why.
+        let own = check_typed("1111 2222", "1111-2222-0000", "1111 2222").unwrap_err();
+        assert!(own.contains("this computer's own key"), "{own}");
+        // A mismatch never shows the digits that arrived, so the user is not led to type them.
+        let wrong = check_typed("4821-9930-1275", "9999-8888-7777", "1111 2222").unwrap_err();
+        assert!(!wrong.contains("9999") && !wrong.contains("8888") && !wrong.contains("7777"), "{wrong}");
+        assert!(check_typed("", "4821-9930-1274", "").is_err());
     }
 
     #[test]
@@ -398,7 +488,14 @@ mod tests {
         let app = Identity::generate();
         let phone = crypto_box::SecretKey::generate(&mut OsRng);
         let public = reins_proto::desktop::encode_key(phone.public_key().as_bytes());
-        let boxed = box_value(&app, &public, "n1", "OpenAI", "password", "sk-123").unwrap();
+        let out = Outgoing {
+            name: "OpenAI",
+            field: "password",
+            kind: ItemKind::ApiKey,
+            replace: true,
+            value: "sk-123",
+        };
+        let boxed = box_value(&app, &public, "n1", &out, 1_700_000_000).unwrap();
         assert!(!boxed.contains("sk-123"));
         let bytes = BASE64URL_NOPAD.decode(boxed.as_bytes()).unwrap();
         let (nonce, ciphertext) = bytes.split_at(24);
@@ -407,9 +504,31 @@ mod tests {
         let plain = crypto_box::SalsaBox::new(&app_key, &phone).decrypt(&nonce, ciphertext).unwrap();
         let opened: SecretToStore = serde_json::from_slice(&plain).unwrap();
         assert_eq!((opened.nonce.as_str(), opened.name.as_str(), opened.value.as_str()), ("n1", "OpenAI", "sk-123"));
+        assert_eq!((opened.created_at, opened.kind.as_str(), opened.replace), (1_700_000_000, "api-key", true));
         let other_app = crypto_box::PublicKey::from(decode_key(&Identity::generate().public_key()).unwrap());
         assert!(crypto_box::SalsaBox::new(&other_app, &phone).decrypt(&nonce, ciphertext).is_err());
-        assert!(box_value(&app, "short", "n1", "x", "y", "z").is_none());
+        assert!(box_value(&app, "short", "n1", &out, 0).is_none());
+    }
+
+    #[test]
+    fn only_the_pinned_phone_can_write_an_answer() {
+        use crypto_box::aead::{Aead as _, AeadCore as _};
+        let app = Identity::generate();
+        let app_key = crypto_box::PublicKey::from(decode_key(&app.public_key()).unwrap());
+        let phone = crypto_box::SecretKey::generate(&mut OsRng);
+        let phone_public = reins_proto::desktop::encode_key(phone.public_key().as_bytes());
+        let boxed_by = |key: &crypto_box::SecretKey| {
+            let nonce = crypto_box::SalsaBox::generate_nonce(&mut OsRng);
+            let mut out = nonce.to_vec();
+            out.extend(crypto_box::SalsaBox::new(&app_key, key).encrypt(&nonce, &b"{\"ok\":true}"[..]).unwrap());
+            BASE64URL_NOPAD.encode(&out)
+        };
+        assert_eq!(&*app.open_box_from(&phone_public, &boxed_by(&phone)).unwrap(), b"{\"ok\":true}");
+        // Anyone else (the server knows both public keys) cannot write one, nor can a sealed box pass for one.
+        let server = crypto_box::SecretKey::generate(&mut OsRng);
+        assert!(app.open_box_from(&phone_public, &boxed_by(&server)).is_err());
+        let sealed = crate::identity::seal_to(&app.public_key(), b"{\"ok\":true}").unwrap();
+        assert!(app.open_box_from(&phone_public, &sealed).is_err());
     }
 
     #[test]
