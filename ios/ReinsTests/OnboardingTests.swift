@@ -7,6 +7,20 @@ import XCTest
 final class OnboardingTests: XCTestCase {
     // MARK: Pairing codes
 
+    func testStrengthFollowsLengthVarietyAndRepetition() {
+        XCTAssertEqual(NewAccountRules.strength(""), .weak)
+        XCTAssertEqual(NewAccountRules.strength("Sh0rt!"), .weak)
+        XCTAssertEqual(NewAccountRules.strength("aaaaaaaaaaaaaaaaaaaaaaaa"), .weak)
+        XCTAssertEqual(NewAccountRules.strength("abababababab"), .weak)
+        XCTAssertEqual(NewAccountRules.strength("elevenchars1"), .fair)
+        XCTAssertEqual(NewAccountRules.strength(String("onlylowercaseletters".prefix(15))), .fair)
+        XCTAssertEqual(NewAccountRules.strength("Tr0ub4dor&3xyzQ!"), .strong)
+        XCTAssertEqual(NewAccountRules.strength("correct horse battery staple"), .strong)
+        XCTAssertEqual(NewAccountRules.strengthHint("short"), "Use at least 12 characters.")
+        XCTAssertEqual(NewAccountRules.strengthHint("abababababab"), "Too repetitive. Mix in other characters.")
+        XCTAssertEqual(NewAccountRules.strengthHint("correct horse battery staple"), "Hard to guess. Remember it, or write it down.")
+    }
+
     func testACodeIsNormalizedWhateverItsCaseSpacesAndDashes() {
         XCTAssertEqual(PairingCode.normalize("BCDF-GHJK"), "BCDF-GHJK")
         XCTAssertEqual(PairingCode.normalize("bcdfghjk"), "BCDF-GHJK")
