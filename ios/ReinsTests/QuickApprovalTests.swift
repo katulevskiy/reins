@@ -28,8 +28,9 @@ final class QuickApprovalTests: XCTestCase {
             item("r4", conn: "c2", label: "Codex", quick: true), item("r5", conn: "c2", label: "Codex", quick: true),
         ]
         let bar = Burst.bar(pending)
-        XCTAssertEqual(bar, Burst(connectionId: "", label: "", quick: ["r1", "r2", "r4", "r5"], all: ["r1", "r2", "r4", "r5"], ais: 2))
-        XCTAssertEqual(bar?.title, "4 routine · 2 AIs")
+        XCTAssertEqual(bar, Burst(connectionId: "", label: "Claude and Codex", quick: ["r1", "r2", "r4", "r5"], all: ["r1", "r2", "r4", "r5"], ais: 2))
+        XCTAssertEqual(bar?.title, "4 routine · Claude and Codex", "says who asks")
+        XCTAssertEqual(Burst.names(["A", "B", "C", "D"]), "A, B and 2 more")
         XCTAssertNil(bar?.heldNote, "what needs a look is not in it")
         XCTAssertEqual(Burst.bar(Array(pending.prefix(3)))?.connectionId, "c1", "one AI: its own bar")
         XCTAssertNil(Burst.bar([item("r1", quick: true)]))

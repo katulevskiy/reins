@@ -16,7 +16,17 @@ struct Burst: Equatable {
         let bursts = of(pending)
         guard bursts.count > 1 else { return bursts.first }
         let quick = bursts.flatMap(\.quick)
-        return Burst(connectionId: "", label: "", quick: quick, all: quick, ais: bursts.count)
+        return Burst(connectionId: "", label: names(bursts.map(\.label)), quick: quick, all: quick, ais: bursts.count)
+    }
+
+    /// "Claude", "Claude and Codex", "Claude, Codex and 2 more".
+    static func names(_ labels: [String]) -> String {
+        switch labels.count {
+        case 0: ""
+        case 1: labels[0]
+        case 2: "\(labels[0]) and \(labels[1])"
+        default: "\(labels[0]), \(labels[1]) and \(labels.count - 2) more"
+        }
     }
 
     static func of(_ pending: [PendingItem]) -> [Burst] {
@@ -34,7 +44,8 @@ struct Burst: Equatable {
         }
     }
 
-    var title: String { ais > 1 ? "\(quick.count) routine · \(ais) AIs" : "\(untrusted(label)) · \(all.count) waiting" }
+    /// Says who asks: one AI's name, or for several their names.
+    var title: String { ais > 1 ? "\(quick.count) routine · \(untrusted(label))" : "\(untrusted(label)) · \(all.count) waiting" }
 
     /// What stays in the list for a closer look, or nil.
     var heldNote: String? {
@@ -49,8 +60,7 @@ struct Burst: Equatable {
     func answer(_ app: AppModel, approve: Bool) async {
         let ids = approve ? quick : all
         if approve {
-            let from = ais > 1 ? "\(ais) AIs" : untrusted(label)
-            switch await OwnerCheck.confirm(app, reason: "Approve \(ids.count) requests from \(from)") {
+            switch await OwnerCheck.confirm(app, reason: "Approve \(ids.count) requests from \(untrusted(label))") {
             case .confirmed: break
             case .cancelled: return
             case .unavailable:
