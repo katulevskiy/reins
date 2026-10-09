@@ -27,4 +27,12 @@ class PushHandler(
             }
         }
     }
+
+    companion object {
+        /** The app's handler: a "replaced" push marks this phone as no longer approving and says so. */
+        fun of(container: dev.reins.android.AppContainer) = PushHandler(container.core) {
+            container.markReplaced()
+            container.notifier.deviceReplaced()
+        }
+    }
 }

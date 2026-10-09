@@ -249,7 +249,14 @@ class FakeCore : ReinsCoreInterface {
 
     override suspend fun grants() = grants
 
-    override suspend fun handlePush(kind: String, id: String) = Unit
+    /** Pushes handled, as `kind:id`; [pushFailure] makes the next ones fail. */
+    val pushes = CopyOnWriteArrayList<String>()
+    @Volatile var pushFailure: CoreException? = null
+
+    override suspend fun handlePush(kind: String, id: String) {
+        pushFailure?.let { throw it }
+        pushes += "$kind:$id"
+    }
 
     override suspend fun handlePushDeferringAutopilot(kind: String, id: String) = Unit
 

@@ -19,11 +19,7 @@ class PushWorker(context: Context, params: WorkerParameters) : CoroutineWorker(c
             mapOf("t" to (inputData.getString(KEY_KIND) ?: ""), "id" to (inputData.getString(KEY_ID) ?: "")),
         ) ?: return Result.failure()
         val container = (applicationContext as ReinsApp).container
-        val handler = PushHandler(container.core) {
-            container.markReplaced()
-            container.notifier.deviceReplaced()
-        }
-        val outcome = handler.handle(payload)
+        val outcome = PushHandler.of(container).handle(payload)
         container.refreshPending()
         return when (outcome) {
             PushOutcome.DONE -> Result.success()
