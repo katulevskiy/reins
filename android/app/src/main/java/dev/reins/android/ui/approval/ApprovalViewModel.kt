@@ -62,8 +62,7 @@ class ApprovalViewModel(private val container: AppContainer, private val request
             ApprovalKind.GRANT, ApprovalKind.SEND, ApprovalKind.WRITE -> emptySet()
             ApprovalKind.ACCOUNTS -> shareableAccounts(view).toSet()
             // A code or a password is never ticked for the user.
-            ApprovalKind.FETCH -> view.messages.filter { !it.sensitive }.map { it.id }.toSet()
-            else -> view.messages.map { it.id }.toSet()
+            else -> view.messages.filter { !it.sensitive }.map { it.id }.toSet()
         }
         // Showing the accounts is remembered for a month unless the user says otherwise.
         val lifetime = if (view.kind == ApprovalKind.ACCOUNTS) LifetimeKind.MONTH else LifetimeKind.ONCE

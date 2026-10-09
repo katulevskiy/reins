@@ -39,6 +39,14 @@ class AppState {
     val grants: StateFlow<List<GrantView>> = _grants.asStateFlow()
 
     /** The accounts the user connected (Gmail addresses), oldest first. */
+    /** What a newly connected AI may do at first; null until the user chose (it then asks for everything). */
+    private val _startingPolicy = MutableStateFlow<dev.reins.core.StartingPolicy?>(null)
+    val startingPolicy: StateFlow<dev.reins.core.StartingPolicy?> = _startingPolicy.asStateFlow()
+
+    fun setStartingPolicy(policy: dev.reins.core.StartingPolicy?) {
+        _startingPolicy.value = policy
+    }
+
     private val _services = MutableStateFlow<List<ServiceView>>(emptyList())
     val services: StateFlow<List<ServiceView>> = _services.asStateFlow()
 
@@ -183,6 +191,7 @@ class AppState {
             _grants.value = emptyList()
             _accounts.value = emptyList()
             _services.value = emptyList()
+            _startingPolicy.value = null
             _connections.value = emptyList()
             setMcpServers(emptyList())
             _mcpNotice.value = null

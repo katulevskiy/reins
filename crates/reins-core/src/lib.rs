@@ -32,6 +32,7 @@ pub mod rt;
 pub mod services;
 pub mod session;
 pub mod sso;
+pub mod starter;
 pub mod store;
 pub mod text;
 pub mod traits;
@@ -57,6 +58,6 @@ pub use types::{
     AccountView, ActivityEntry, ActivityInfo, ActivityMessage, ApprovalChoice, ApprovalKind, ApprovalView, BlobView,
     ConnectionView, EmailContent, EmailView, GitCommitView, GitFileView, GitPushView, GitRefView, GmailStatus,
     GrantRequestView, GrantScopeChoice, GrantView, MessageView, PairingView, PendingItem, PendingKind, QuickApproval,
-    ResourceView, ServiceView, SessionInfo, StandingGrant,
+    ResourceView, ServiceView, SessionInfo, StandingGrant, StartingPolicy,
 };
 pub use types::{AskView, SecretReleaseView, SshSignView};

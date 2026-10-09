@@ -40,6 +40,7 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.saveable.rememberSaveable
@@ -97,7 +98,7 @@ import dev.reins.core.ModelState
 import dev.reins.core.ServiceView
 
 /** The pages of the setup after signing in, in order. */
-enum class SetupPage { Welcome, Notifications, Integrations, Autopilot, Computer, Ai, Done }
+enum class SetupPage { Welcome, Notifications, Integrations, Rules, Autopilot, Computer, Ai, Done }
 
 /**
  * Right after signing in or creating an account (once per account, and again from Settings > Take the tour): what
@@ -154,6 +155,7 @@ fun SetupScreen(app: AppViewModel, container: AppContainer, autopilot: Autopilot
                             },
                         )
                     }
+                    SetupPage.Rules -> RulesPage(container)
                     SetupPage.Autopilot -> AutopilotPage(autopilot)
                     SetupPage.Computer -> ComputerPage(app)
                     SetupPage.Ai -> AiPage(AccountRules.mcpUrl(serverUrl))
@@ -486,6 +488,26 @@ private fun IntegrationTile(
     }
 }
 
+// ---- 3. How much to ask -------------------------------------------------------------------------------------------
+
+@Composable
+private fun RulesPage(container: AppContainer) {
+    val policy by container.state.startingPolicy.collectAsStateWithLifecycle()
+    // Someone who just installed Reins starts with the recommended rule; a choice made before stays.
+    LaunchedEffect(Unit) {
+        if (container.core.startingPolicy() == null) container.chooseStartingPolicy(dev.reins.core.StartingPolicy.READS_FOR_A_DAY)
+    }
+    Column(Modifier.testTag("setupRules")) {
+        PageHeader(
+            "Step 3 · How much to ask",
+            Glyph.ShieldCheck,
+            "Fewer questions, same control",
+            "Reading is where most requests come from. Pick how a new AI starts; you can change it any time under Grants.",
+        )
+        dev.reins.android.ui.grants.StartingRuleChooser(policy, Modifier.padding(top = 20.dp), container::chooseStartingPolicy)
+    }
+}
+
 // ---- 4. Autopilot -----------------------------------------------------------------------------------------------
 
 @Composable
@@ -495,7 +517,7 @@ private fun AutopilotPage(viewModel: AutopilotViewModel) {
     val settings by viewModel.settings.collectAsStateWithLifecycle()
     Column(Modifier.testTag("setupAutopilot")) {
         PageHeader(
-            "Step 3 · Autopilot",
+            "Step 4 · Autopilot",
             Glyph.Chip,
             "A private model that learns your rules",
             "Optionally, a small model on this phone learns from your answers and suggests, or takes, the easy decisions. " +
@@ -533,7 +555,7 @@ private fun AutopilotPage(viewModel: AutopilotViewModel) {
 private fun ComputerPage(app: AppViewModel) {
     Column(Modifier.testTag("setupComputer")) {
         PageHeader(
-            "Step 4 · Your computer",
+            "Step 5 · Your computer",
             Glyph.Laptop,
             "Connect your computer",
             "Coding agents and desktop AI apps on your computer go through Reins too: they ask, this phone answers.",
@@ -554,7 +576,7 @@ private fun AiPage(mcpUrl: String) {
     var copied by rememberSaveable { mutableStateOf(false) }
     Column(Modifier.testTag("setupAi")) {
         PageHeader(
-            "Step 5 · Your AI app",
+            "Step 6 · Your AI app",
             Glyph.Sparkle,
             "Connect Claude.ai or ChatGPT",
             "Add Reins to your AI app with this address. Whatever it then wants to read or send asks this phone first.",

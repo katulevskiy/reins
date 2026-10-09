@@ -211,6 +211,7 @@ private fun SignedInContent(
                     )
                     Tab.Grants -> GrantsScreen(
                         state = state,
+                        onStartingPolicy = container::chooseStartingPolicy,
                         onSettings = { app.open(Route.Settings) },
                         expiredOpen = app.expiredOpen,
                         onToggleExpired = app::toggleExpired,

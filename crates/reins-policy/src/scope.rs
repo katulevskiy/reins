@@ -94,7 +94,8 @@ impl AccountsScope {
 pub struct ServiceScope {
     /// "telegram", "gcalendar", ...
     pub service: String,
-    /// "list", "read" or "write". Reading does not imply listing, and neither implies writing.
+    /// "list", "read" or "write". Reading implies listing (a list shows less of the same things); neither implies
+    /// writing.
     pub access: String,
     /// The chats, calendars, repositories, ... it covers (their ids). Empty together with `any`.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
@@ -166,8 +167,9 @@ impl ServiceScope {
     /// operation has none): a scope that names kinds covers only those.
     #[must_use]
     pub fn covers(&self, service: &str, access: &str, class: &str, resource: &str) -> bool {
+        // Reading includes listing: a list shows less of the same things than reading them does.
         self.service == service
-            && self.access == access
+            && (self.access == access || (self.access == "read" && access == "list"))
             && (self.classes.is_empty() || class.is_empty() || self.classes.iter().any(|c| c == class))
             && (self.any || self.resources.iter().any(|r| resource_covers(r, resource)))
     }
@@ -469,5 +471,22 @@ mod tests {
         assert!(serde_json::from_value::<Scope>(send).is_err());
         let ok = json!({"action": "read", "from": [{"kind": "domain", "value": "bank.com"}]});
         assert!(serde_json::from_value::<Scope>(ok).is_ok());
+    }
+
+    #[test]
+    fn reading_covers_listing_but_nothing_covers_writing() {
+        let scope = |access: &str| ServiceScope {
+            service: "telegram".to_owned(),
+            access: access.to_owned(),
+            resources: vec!["100".to_owned()],
+            labels: vec!["Family".to_owned()],
+            any: false,
+            classes: vec![],
+        };
+        assert!(scope("read").covers("telegram", "list", "", "100"));
+        assert!(scope("read").covers("telegram", "read", "", "100"));
+        assert!(!scope("read").covers("telegram", "write", "", "100"));
+        assert!(!scope("list").covers("telegram", "read", "", "100"), "a list does not open what it lists");
+        assert!(!scope("read").covers("telegram", "list", "", "200"));
     }
 }

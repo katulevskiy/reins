@@ -96,6 +96,10 @@ fun PairingSheet(viewModel: PairingViewModel, authenticator: Authenticator, onDo
             }
             RText("NAME THIS CONNECTION", RType.sans(12.5f, FontWeight.Medium), c.secondary, Modifier.padding(start = 24.dp, bottom = 8.dp))
             RTextField(ui.label, viewModel::setLabel, "Name", Modifier.padding(horizontal = 16.dp), tag = "label")
+            val policy by viewModel.startingPolicy.collectAsStateWithLifecycle()
+            dev.reins.android.ui.grants.StartingRuleText.onPairing(policy)?.let {
+                RText(it, RType.sans(13.5f, lineHeight = 19f), c.tertiary, Modifier.padding(start = 24.dp, end = 24.dp, top = 12.dp).testTag("startingRuleNote"))
+            }
             ui.error?.let { Banner(it, Modifier.padding(16.dp), BannerKind.Error) }
         }
         Row(

@@ -63,6 +63,7 @@ abstract class ScreenshotsBase(private val suffix: String) {
         Foreground.autoPopup = false
         core.session = SessionInfo("https://app.reins2fa.com", "me@example.com")
         core.pending = emptyList()
+        core.startingPolicy = null
         core.approval = null
         core.pairing = null
         core.grants = emptyList()
@@ -1048,6 +1049,9 @@ abstract class ScreenshotsBase(private val suffix: String) {
         if (rule.onAllNodes(hasTestTag("notificationsLater")).fetchSemanticsNodes().isNotEmpty()) tap("notificationsLater") else tap("setupNext")
         await("setupIntegrations")
         shoot("14b2-setup-integrations")
+        tap("setupNext")
+        await("setupRules")
+        shoot("14b25-setup-rules")
         tap("setupNext")
         await("setupAutopilot")
         shoot("14b3-setup-autopilot")

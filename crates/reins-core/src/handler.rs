@@ -284,10 +284,13 @@ impl Engine {
         build: impl FnOnce(Vec<MessageSummary>, Vec<reins_proto::gmail::MessageFull>) -> ToolResult,
     ) -> Result<(), CoreError> {
         let facts: Vec<MessageFacts> = parsed.iter().map(|p| p.facts.clone()).collect();
-        let decision = self.store.evaluate_read_and_reserve(
+        // A login code or a password is never released by a grant: it always waits for the user's tick.
+        let held: Vec<bool> = parsed.iter().map(|p| views::looks_sensitive(&p.summary)).collect();
+        let decision = self.store.evaluate_read_holding(
             &request.connection_id,
             request.account.as_deref(),
             &facts,
+            &held,
             unix_now(),
         )?;
         let summaries: Vec<MessageSummary> = parsed.iter().map(|p| p.summary.clone()).collect();

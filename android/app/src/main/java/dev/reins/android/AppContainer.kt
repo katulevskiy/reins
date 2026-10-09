@@ -203,6 +203,20 @@ class AppContainer(private val context: Context) {
      * app, a push and an action finishing often ask at the same moment; callers then share one refresh that started
      * after they asked instead of queueing a full one each, so the screen catches up once.
      */
+    /** Sets the starting rule for connections made from now on; the screen follows at once. */
+    fun chooseStartingPolicy(policy: dev.reins.core.StartingPolicy) {
+        state.setStartingPolicy(policy)
+        appScope.launch {
+            try {
+                core.setStartingPolicy(policy)
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                state.setStartingPolicy(runCatching { core.startingPolicy() }.getOrNull())
+            }
+        }
+    }
+
     /** Approval sheets read ahead, so that they open without a spinner. */
     val approvalViews = dev.reins.android.ui.approval.ApprovalViews()
 
@@ -248,6 +262,7 @@ class AppContainer(private val context: Context) {
                 val accounts = async { core.accounts() }
                 val services = async { core.services() }
                 val servers = async { core.mcpServers() }
+                val starting = async { core.startingPolicy() }
                 val loaded = grants.await()
                 if (!state.isCurrent(epoch)) return@coroutineScope
                 val waiting = pending.await()
@@ -258,6 +273,7 @@ class AppContainer(private val context: Context) {
                 state.setAccounts(accounts.await())
                 state.setServices(services.await())
                 state.setMcpServers(servers.await())
+                state.setStartingPolicy(starting.await())
                 refreshAutopilot()
                 withContext(Dispatchers.IO) {
                     if (state.isCurrent(epoch)) GrantReminders.sync(context, loaded)

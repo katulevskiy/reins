@@ -137,6 +137,12 @@ the secret, or signed in with the master password, moves the role without asking
   [hard floor](#autopilot), have no such button, and the phone's core refuses to approve them that way.
 - "Approve and allow for 1 hour" (8 hours after repeated identical approvals) creates an ordinary standing permission
   for the same connection, kind of request and target, shown under Grants.
+- The starting rule (chosen during setup, "ask every time" until then): "reads for a day" gives a connection you just
+  approved standing read permissions for 24 hours, one per connected integration (never the vault or the desktop app)
+  and per MCP server's read-only tools. They are ordinary grants: listed, logged, revocable. A read permission
+  includes listing the same things, never writing.
+- No standing permission releases an email or message that looks like a login code or a password; it always waits
+  for the user's tick.
 - One-time approvals execute exactly what was shown and create no permission. Standing permissions are limited to one
   connection and can be narrowed by target (sender, recipient, repository, branch, kind of change), time and number of
   uses.

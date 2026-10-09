@@ -32,11 +32,12 @@ pub fn quick_floor(view: &ApprovalView) -> Option<&'static str> {
     request_floor(view)
 }
 
-/// What approving untouched releases: every email found; every item except what looks like a code or a password.
+/// What approving untouched releases: everything found except what looks like a code or a password.
 pub fn default_selection(view: &ApprovalView) -> Vec<String> {
     match view.kind {
-        ApprovalKind::Search | ApprovalKind::Read => view.messages.iter().map(|m| m.id.clone()).collect(),
-        ApprovalKind::Fetch => view.messages.iter().filter(|m| !m.sensitive).map(|m| m.id.clone()).collect(),
+        ApprovalKind::Search | ApprovalKind::Read | ApprovalKind::Fetch => {
+            view.messages.iter().filter(|m| !m.sensitive).map(|m| m.id.clone()).collect()
+        }
         _ => Vec::new(),
     }
 }
@@ -170,13 +171,18 @@ pub fn headline(parked: &ParkedRequest, view: &ApprovalView) -> String {
         ToolCall::GmailSearch {
             query,
             ..
-        } => match view.messages.len() {
-            0 => format!("{who} is told that nothing matched \"{}\".", text::one_line(query)),
-            n => format!("{who} gets the {} found for \"{}\".", plural(n, "email", "emails"), text::one_line(query)),
+        } => match shared(view) {
+            _ if view.messages.is_empty() => {
+                format!("{who} is told that nothing matched \"{}\".", text::one_line(query))
+            }
+            n => {
+                format!("{who} gets the {} found for \"{}\".", plural(n, "email", "emails"), text::one_line(query))
+                    + held_note(view)
+            }
         },
         ToolCall::GmailRead {
             ..
-        } => format!("{who} gets the full text of {}.", plural(view.messages.len(), "email", "emails")),
+        } => format!("{who} gets the full text of {}.", plural(shared(view), "email", "emails")) + held_note(view),
         ToolCall::GmailSend {
             email,
         } => {
@@ -240,19 +246,25 @@ fn connector_headline(who: &str, view: &ApprovalView) -> String {
             list(&narrow)
         }
     };
-    let held = view.messages.iter().filter(|m| m.sensitive).count();
-    let shared = view.messages.len() - held;
-    let mut line = if view.messages.is_empty() {
+    if view.messages.is_empty() {
         format!("{who} is told that nothing was found in {place}.")
     } else {
-        format!("{who} gets {} from {place}.", plural(shared, "item", "items"))
-    };
-    if held == 1 {
-        line.push_str(" One that looks like a code or a password stays private unless you tick it.");
-    } else if held > 1 {
-        line.push_str(" Some that look like a code or a password stay private unless you tick them.");
+        format!("{who} gets {} from {place}.", plural(shared(view), "item", "items")) + held_note(view)
     }
-    line
+}
+
+/// How many of the things found are released untouched: all but what looks like a code or a password.
+fn shared(view: &ApprovalView) -> usize {
+    view.messages.iter().filter(|m| !m.sensitive).count()
+}
+
+/// What stays back unless the user ticks it, as a sentence after the headline (empty when nothing does).
+fn held_note(view: &ApprovalView) -> &'static str {
+    match view.messages.iter().filter(|m| m.sensitive).count() {
+        0 => "",
+        1 => " One that looks like a code or a password stays private unless you tick it.",
+        _ => " Some that look like a code or a password stay private unless you tick them.",
+    }
 }
 
 fn git_headline(git: &GitPushView) -> String {

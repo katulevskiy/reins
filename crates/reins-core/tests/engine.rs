@@ -10,7 +10,7 @@ use std::time::Duration;
 use common::{FakeGoogle, FakeKeys, RecordingNotifier, TOKEN_NEEDS_CONSENT, gmail_message};
 use reins_core::{
     ApprovalChoice, ApprovalKind, CoreConfig, CoreError, GmailStatus, GoogleTokenProvider, GrantScopeChoice, Notifier,
-    ReinsCore, StandingGrant,
+    ReinsCore, StandingGrant, StartingPolicy,
 };
 use serde_json::{Value, json};
 use wiremock::matchers::{method, path, path_regex, query_param};
@@ -1389,4 +1389,93 @@ async fn a_permission_request_is_never_answered_in_one_tap() {
     assert!(matches!(env.core.approve_quick("g1".to_owned()).await, Err(CoreError::Invalid { .. })));
     assert!(answers(&env).await.is_empty() && env.core.grants().await.unwrap().is_empty());
     assert_eq!(env.core.pending().await.unwrap().len(), 1, "it still waits for the user");
+}
+
+/// Answers the pairing `id` with a new connection `connection`.
+async fn pair_as(env: &Env, id: &str, connection: &str) {
+    let pairing = json!({"v": 1, "id": id, "client_name": "Claude", "client_host": "claude.ai", "choices": [12, 47, 83],
+        "created_at": 50});
+    serve_pending(env, &[], &[pairing]).await;
+    env.core.sync(0).await.unwrap();
+    Mock::given(method("POST"))
+        .and(path(format!("/reins/api/pairings/{id}/response")))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({"connection_id": connection})))
+        .with_priority(1)
+        .mount(&env.server)
+        .await;
+    env.core.answer_pairing(id.to_owned(), true, Some(47), Some("Claude".to_owned())).await.unwrap();
+}
+
+#[tokio::test]
+async fn a_new_ai_asks_for_everything_until_the_starting_rule_says_otherwise() {
+    let env = env().await;
+    env.core.engine().register_account("gmail", "me@gmail.com").unwrap();
+    assert_eq!(env.core.starting_policy().await.unwrap(), None, "not chosen yet");
+    pair_as(&env, "p1", "c8").await;
+    assert!(env.core.grants().await.unwrap().is_empty(), "nothing is given without the user's choice");
+}
+
+#[tokio::test]
+async fn reads_for_a_day_lets_a_new_ai_read_but_never_send_or_see_codes() {
+    let env = env().await;
+    env.core.engine().register_account("gmail", "me@gmail.com").unwrap();
+    env.core.engine().register_account("telegram", "+15550100").unwrap();
+    env.core.engine().register_account("vault", "me@example.com").unwrap();
+    env.core.set_starting_policy(StartingPolicy::ReadsForADay).await.unwrap();
+    assert_eq!(env.core.starting_policy().await.unwrap(), Some(StartingPolicy::ReadsForADay));
+    let before = reins_core::store::unix_now();
+    pair_as(&env, "p1", "c9").await;
+
+    let grants = env.core.grants().await.unwrap();
+    let mut shown: Vec<(&str, &str, &str)> =
+        grants.iter().map(|g| (g.service.as_str(), g.action.as_str(), g.origin.as_str())).collect();
+    shown.sort_unstable();
+    assert_eq!(shown, [("gmail", "read", "starter"), ("telegram", "read", "starter")], "never the vault");
+    for g in &grants {
+        assert_eq!(g.connection_id, "c9");
+        let left = g.expires_at.unwrap() - before;
+        assert!((86_000..=86_500).contains(&left), "a day: {left}");
+    }
+    let logged = &env.core.activity(1).await.unwrap()[0];
+    assert_eq!((logged.action.as_str(), logged.outcome.as_str()), ("grant", "granted"));
+
+    // A search is answered without asking, except the email that looks like a login code.
+    let ids = json!({"messages": [{"id": "m1"}, {"id": "m2"}]});
+    Mock::given(method("GET"))
+        .and(path("/users/me/messages"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(ids))
+        .mount(&env.gmail)
+        .await;
+    for (id, subject) in [("m1", "Lunch on Friday"), ("m2", "Your sign in code is 481516")] {
+        Mock::given(method("GET"))
+            .and(path(format!("/users/me/messages/{id}")))
+            .respond_with(ResponseTemplate::new(200).set_body_json(gmail_message(
+                id,
+                "a@example.com",
+                subject,
+                Some("x"),
+            )))
+            .mount(&env.gmail)
+            .await;
+    }
+    serve_pending(&env, &[search_request("r1", "c9", "Claude", "anything")], &[]).await;
+    let waiting = env.core.sync(0).await.unwrap();
+    assert_eq!(waiting.len(), 1, "the code waits for the user");
+    let view = env.core.approval_view("r1".to_owned()).await.unwrap();
+    let messages: Vec<_> = view.messages.iter().map(|m| (m.id.as_str(), m.covered_by_grant, m.sensitive)).collect();
+    assert_eq!(messages, [("m1", true, false), ("m2", false, true)]);
+    assert!(!waiting[0].quick, "a code needs a look, not a notification button");
+    // Approving untouched releases what the grant covers, never the code.
+    env.core.approve_quick("r1".to_owned()).await.unwrap();
+    let sent = answers(&env).await;
+    let released: Vec<_> =
+        sent[0].1["result"]["messages"].as_array().unwrap().iter().map(|m| m["id"].clone()).collect();
+    assert_eq!(released, [json!("m1")]);
+
+    // Sending still asks.
+    serve_pending(&env, &[send_request("s1", "c9", "boss@work.com")], &[]).await;
+    assert_eq!(env.core.sync(0).await.unwrap().len(), 1);
+    // Another AI connected before has nothing.
+    serve_pending(&env, &[search_request("r2", "c1", "ChatGPT", "anything")], &[]).await;
+    assert_eq!(env.core.sync(0).await.unwrap().len(), 2);
 }

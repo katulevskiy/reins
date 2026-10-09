@@ -226,5 +226,6 @@ fun originText(origin: String, label: String): String = when (origin) {
     "ai_request" -> "${untrusted(label)} asked and you allowed it"
     "user" -> "Created by you in advance"
     "retry" -> "A one-time pass after you approved late"
+    "starter" -> "Your starting rule, when you connected ${untrusted(label)}"
     else -> "Chosen while approving a request"
 }

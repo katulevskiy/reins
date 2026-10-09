@@ -81,9 +81,12 @@ fun GrantsScreen(
     onResume: suspend (grantId: String, seconds: Long, standing: StandingGrant?) -> String?,
     onDelete: suspend (grantId: String) -> String? = { null },
     onSettings: () -> Unit = {},
+    /** The starting rule for new AIs, changed at the end of the list. */
+    onStartingPolicy: (dev.reins.core.StartingPolicy) -> Unit = {},
 ) {
     val c = LocalColors.current
     val grants by state.grants.collectAsStateWithLifecycle()
+    val startingPolicy by state.startingPolicy.collectAsStateWithLifecycle()
     val running = remember(grants) { grants.filter { it.active }.sortedByDescending { it.createdAt } }
     val ended = remember(grants) { grants.filterNot { it.active }.sortedByDescending { it.createdAt } }
     var resuming by remember { mutableStateOf<GrantView?>(null) }
@@ -121,6 +124,9 @@ fun GrantsScreen(
             }
             items(running, key = { "g:${it.id}" }, contentType = { "grant" }) { grant ->
                 Box(Modifier.testTag("grant:${grant.id}")) { GrantTile(grant) { onOpen(grant.id) } }
+            }
+            item(key = "startingRule") {
+                StartingRuleChooser(startingPolicy, Modifier.padding(top = 18.dp).testTag("startingRule"), onStartingPolicy)
             }
         }
         if (ended.isNotEmpty()) {

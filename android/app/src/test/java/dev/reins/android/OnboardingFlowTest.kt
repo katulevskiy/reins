@@ -204,6 +204,10 @@ class OnboardingFlowTest : FlowHarness() {
         assertTrue(has("setupService:gmail"))
         assertTrue(has("setupService:mcp"))
         tap("setupNext")
+        awaitTag("setupRules")
+        // Someone who just installed Reins starts with the recommended rule.
+        awaitCore { core.startingPolicy == dev.reins.core.StartingPolicy.READS_FOR_A_DAY }
+        tap("setupNext")
         awaitTag("setupAutopilot")
         assertTrue(has("modelCard"))
         tap("setupNext")
