@@ -22,8 +22,8 @@ use std::collections::BTreeMap;
 
 use reins_proto::connector::ConnectorCall;
 use reins_proto::desktop::{
-    PHONE_KEY_CHANGED, PhoneKey, SEALED_FIELD, SECRET_STORE_TTL_SECS, SecretToStore, StoreAck, VaultNames,
-    phone_key_fingerprint, value_check,
+    PHONE_KEY_CHANGED, PhoneKey, SEALED_FIELD, SECRET_STORE_TTL_SECS, SecretToStore, StoreAck, TO_DESKTOP, TO_PHONE,
+    VaultNames, phone_key_fingerprint, value_check,
 };
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value, json};
@@ -141,7 +141,7 @@ fn open(vault: &Vault, call: &ConnectorCall, now: i64) -> Result<Request, CoreEr
     let plain = open_from(desktop, &*vault.store.inbox_key()?, call.str_arg("sealed").unwrap_or_default())
         .ok_or_else(unreadable)?;
     let opened: SecretToStore = serde_json::from_slice(&plain).map_err(|_| unreadable())?;
-    if opened.nonce != nonce {
+    if opened.dir != TO_PHONE || opened.nonce != nonce {
         return Err(bad("The value was sealed for another request; refused."));
     }
     if opened.created_at < now - SECRET_STORE_TTL_SECS || opened.created_at > now + CLOCK_SKEW_SECS {
@@ -188,7 +188,7 @@ fn seen_save(store: &Store, all: &BTreeMap<String, Seen>) -> Result<(), CoreErro
 }
 
 const ALREADY: &str =
-    "This request was carried out already; a request is never saved twice. Run reins vault add again.";
+    "This request was seen already; a request is never shown or saved twice. Run reins vault add again.";
 
 /// The one item in use with this exact name, if any.
 fn existing<'a>(snap: &'a Snapshot, name: &str) -> Result<Option<&'a Entry>, CoreError> {
@@ -393,7 +393,8 @@ pub(super) async fn preview_store(vault: &Vault, account: &str, call: &Connector
     let now = unix_now();
     let req = open(vault, call, now)?;
     let mut seen = seen_all(&vault.store, now)?;
-    if seen.get(&req.nonce).is_some_and(|s| s.done) {
+    // One preview per request: a box sent again must not move what the approval is about.
+    if seen.contains_key(&req.nonce) {
         return Err(bad(ALREADY));
     }
     let snap = Snapshot::load(vault, account).await?;
@@ -441,6 +442,7 @@ pub(super) async fn perform_store(vault: &Vault, account: &str, call: &Connector
     seen_save(&vault.store, &seen)?;
     let ack = StoreAck {
         v: 1,
+        dir: TO_DESKTOP.to_owned(),
         nonce: req.nonce,
         name: req.name,
         field: req.field,
@@ -483,6 +485,7 @@ pub(super) async fn preview_names(vault: &Vault, account: &str, call: &Connector
 pub(super) async fn perform_names(vault: &Vault, account: &str, call: &ConnectorCall) -> Result<Value, CoreError> {
     let answer = VaultNames {
         v: 1,
+        dir: TO_DESKTOP.to_owned(),
         nonce: nonce_arg(call)?,
         items: names_of(vault, account).await?,
     };
@@ -505,5 +508,22 @@ mod tests {
         assert!(holds(Kind::SshKey, "private_key") && !holds(Kind::Login, "private_key"));
         assert_eq!(shell_word("OpenAI"), "OpenAI");
         assert_eq!(shell_word("AWS prod"), "'AWS prod'");
+    }
+
+    #[test]
+    fn the_requests_seen_survive_a_restart_until_they_expire() {
+        let dir = tempfile::tempdir().unwrap();
+        let seen = Seen {
+            target: "bank@2026-01-01".to_owned(),
+            until: 2_000,
+            done: true,
+        };
+        {
+            let store = crate::store::tests::open(dir.path());
+            seen_save(&store, &BTreeMap::from([("n1".to_owned(), seen.clone())])).unwrap();
+        }
+        let store = crate::store::tests::open(dir.path());
+        assert_eq!(seen_all(&store, 1_000).unwrap().get("n1"), Some(&seen), "kept across a restart");
+        assert!(seen_all(&store, 2_001).unwrap().is_empty(), "forgotten once it could no longer be used");
     }
 }

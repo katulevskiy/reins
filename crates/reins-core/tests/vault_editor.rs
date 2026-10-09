@@ -55,9 +55,15 @@ fn ciphers(user: &VaultKey) -> Vec<Value> {
         "brand": null, "expMonth": t(user, "4"), "expYear": t(user, "2030"), "code": t(user, "123")});
     let mut old = login(user, "old", "Old", "x", "old-pw");
     old["deletedDate"] = json!("2026-03-01T00:00:00.000000Z");
+    let mut bank = login(user, "bank", "Bank", "anna", "s3cret");
+    bank["fields"] = json!([{"name": t(user, "Region"), "value": t(user, "eu"), "type": 0, "linkedId": null}]);
+    let mut ssh = cipher(user, "ssh", 5, "Deploy key");
+    ssh["sshKey"] = json!({"privateKey": t(user, "-----BEGIN OPENSSH PRIVATE KEY-----"),
+        "publicKey": t(user, "ssh-ed25519 AAAA"), "keyFingerprint": t(user, "SHA256:x")});
     vec![
         openai,
-        login(user, "bank", "Bank", "anna", "s3cret"),
+        bank,
+        ssh,
         note,
         card,
         login(user, "twin1", "Twin", "a", "pw-a"),
@@ -148,7 +154,7 @@ async fn the_list_is_searchable_by_name_and_leaves_the_trash_out() {
     let desk = desk().await;
     let all = desk.core.vault_items(String::new()).await.unwrap();
     let names: Vec<&str> = all.iter().map(|i| i.name.as_str()).collect();
-    assert_eq!(names, ["Bank", "OpenAI", "Stripe", "Twin", "Twin", "Visa"]);
+    assert_eq!(names, ["Bank", "Deploy key", "OpenAI", "Stripe", "Twin", "Twin", "Visa"]);
     let visa = all.iter().find(|i| i.name == "Visa").unwrap();
     assert_eq!((visa.kind, visa.subtitle.as_str()), (VaultItemKind::Card, "Anna Smith · •••• 1234"));
     assert_eq!(all.iter().find(|i| i.name == "OpenAI").unwrap().subtitle, "platform.openai.com");
@@ -218,7 +224,7 @@ async fn items_are_created_changed_and_deleted_encrypted() {
     assert_eq!(dec(&updated["login"]["password"]), "n3w");
     assert_eq!(dec(&updated["login"]["username"]), "anna", "what was not given stays");
     assert_eq!(dec(&updated["passwordHistory"][0]["password"]), "s3cret");
-    assert_eq!((dec(&updated["fields"][0]["name"]).as_str(), updated["fields"][0]["type"].as_i64()), ("PIN", Some(1)));
+    assert_eq!((dec(&updated["fields"][1]["name"]).as_str(), updated["fields"][1]["type"].as_i64()), ("PIN", Some(1)));
 
     desk.core.vault_delete("note".to_owned()).await.unwrap();
     assert_eq!(sent_bodies(&desk, "DELETE", "/api/ciphers/note").await.len(), 1);
@@ -295,6 +301,7 @@ impl<'a> Sent<'a> {
 fn box_from(from: &SecretKey, phone: &str, nonce: &str, sent: &Sent<'_>) -> String {
     let secret = SecretToStore {
         v: 1,
+        dir: reins_proto::desktop::TO_PHONE.to_owned(),
         nonce: nonce.to_owned(),
         created_at: sent.created_at,
         name: sent.name.to_owned(),
@@ -372,7 +379,8 @@ async fn a_secret_sent_from_the_computer_is_saved_without_the_server_seeing_it()
 
     // The same request again (the server keeps a copy) is never saved twice.
     desk.send(&[store_boxed(&desk, "s1b", "nonce-s1", &sent, &box_from(&desk.key, &phone, "nonce-s1", &sent))]).await;
-    assert!(desk.error("s1b").await.contains("never saved twice"));
+    let again = desk.error("s1b").await;
+    assert!(again.contains("seen already"), "{again}");
 }
 
 #[tokio::test]
@@ -419,6 +427,18 @@ async fn an_existing_item_is_changed_only_when_asked_and_its_earlier_value_is_ke
         .collect();
     assert_eq!(fields[0], ("Org".to_owned(), "org-new".to_owned(), 1));
     assert!(fields[1].0.starts_with("Org before ") && fields[1].1 == "org-9" && fields[1].2 == 1, "{fields:?}");
+
+    // A text field that receives a secret becomes hidden, and keeps its earlier value hidden too.
+    desk.send(&[store(&desk, "r5", &phone, &Sent::new("Bank", "api-key", "Region", "secret-region").replace())]).await;
+    desk.core.approve("r5".to_owned(), choice(&[], None)).await.unwrap();
+    let bank = sent_bodies(&desk, "PUT", "/api/ciphers/bank").await.pop().unwrap();
+    let region = &bank["fields"][0];
+    assert_eq!((dec(&region["name"]).as_str(), region["type"].as_i64()), ("Region", Some(1)), "{region}");
+
+    // An SSH key is never replaced, even when asked.
+    desk.send(&[store(&desk, "r6", &phone, &Sent::new("Deploy key", "ssh", "private_key", "x").replace())]).await;
+    let told = desk.error("r6").await;
+    assert!(told.contains("is an SSH key, which is not replaced"), "{told}");
 }
 
 #[tokio::test]
@@ -526,6 +546,7 @@ async fn the_computer_lists_names_only_when_asked_each_time_boxed_by_the_phone()
         listed,
         [
             ("Bank", "login"),
+            ("Deploy key", "ssh_key"),
             ("OpenAI", "login"),
             ("Stripe", "note"),
             ("Twin", "login"),

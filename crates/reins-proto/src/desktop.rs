@@ -380,6 +380,36 @@ pub struct SshSignature {
 /// the user, who checks the new phone's key with `reins vault add --new-phone`.
 pub const PHONE_KEY_CHANGED: &str = "This was sealed to another phone's key.";
 
+/// The direction a box between the desktop app and the phone goes (its `dir`). Both directions use the same
+/// X25519 key pair, so a box is refused when it was made for the other direction.
+pub const TO_PHONE: &str = "desktop-to-phone";
+pub const TO_DESKTOP: &str = "phone-to-desktop";
+
+/// Text the phone or the server sent, made safe to print in a terminal: control characters (escape sequences) and
+/// bidirectional overrides become spaces, and it is cut to 300 characters. The server can write any such text, so the
+/// desktop app also says where it came from.
+#[must_use]
+pub fn printable(text: &str) -> String {
+    let bidi =
+        |c: char| matches!(c, '\u{202a}'..='\u{202e}' | '\u{2066}'..='\u{2069}' | '\u{200e}' | '\u{200f}' | '\u{061c}');
+    let clean: String = text
+        .chars()
+        .map(|c| {
+            if c.is_control() || bidi(c) {
+                ' '
+            } else {
+                c
+            }
+        })
+        .collect();
+    let clean = clean.split_whitespace().collect::<Vec<_>>().join(" ");
+    if clean.chars().count() > 300 {
+        format!("{}…", clean.chars().take(299).collect::<String>())
+    } else {
+        clean
+    }
+}
+
 /// How long a `vault_secret_store` box is good for after the desktop app made it (seconds): the phone refuses an older
 /// one, and remembers the nonces it saw for as long, so a captured request cannot be sent again.
 pub const SECRET_STORE_TTL_SECS: i64 = 15 * 60;
@@ -392,6 +422,8 @@ pub const SECRET_STORE_TTL_SECS: i64 = 15 * 60;
 #[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct SecretToStore {
     pub v: u32,
+    /// [`TO_PHONE`]: the two directions share one key, so each box says which way it goes.
+    pub dir: String,
     pub nonce: String,
     /// Unix seconds, on the computer.
     pub created_at: i64,
@@ -442,6 +474,8 @@ pub struct PhoneKey {
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct StoreAck {
     pub v: u32,
+    /// [`TO_DESKTOP`].
+    pub dir: String,
     pub nonce: String,
     pub name: String,
     pub field: String,
@@ -456,6 +490,8 @@ pub struct StoreAck {
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct VaultNames {
     pub v: u32,
+    /// [`TO_DESKTOP`].
+    pub dir: String,
     pub nonce: String,
     /// `(name, kind)`, the kind as the vault tools name it (`login`, `note`, `card`, `identity`, `ssh_key`).
     pub items: Vec<(String, String)>,
@@ -664,6 +700,13 @@ mod tests {
         assert_ne!(d, push_digest("o/r", &cmds, "ab", &["ci.skip".to_owned()]));
         let other = vec![(A.to_owned(), B.to_owned(), "refs/heads/dev".to_owned())];
         assert_ne!(d, push_digest("o/r", &other, "ab", &[]));
+    }
+
+    #[test]
+    fn relayed_text_cannot_steer_the_terminal() {
+        assert_eq!(printable("ok\u{1b}[2J\u{1b}]0;title\u{7}done"), "ok [2J ]0;title done");
+        assert_eq!(printable("a\u{202e}b\nc"), "a b c");
+        assert_eq!(printable(&"x".repeat(400)).chars().count(), 300);
     }
 
     #[test]

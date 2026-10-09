@@ -168,6 +168,15 @@ class VaultFlowTest : FlowHarness() {
         rule.onAllNodes(hasText("Delete")).onLast().performClick()
         settle()
         assertTrue("nothing is deleted without the screen lock", core.vaultDeleted.isEmpty())
+        pressBack()
+        tap("vaultAdd")
+        tap("newItem:SshKey")
+        type("vaultName", "Laptop")
+        val before = core.vaultDetails.size
+        tap("vaultGenerate")
+        settle()
+        assertEquals("no key is made without the screen lock", before, core.vaultDetails.size)
+        assertFalse(has("sshMade"))
     }
 
     @Test

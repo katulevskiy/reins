@@ -113,10 +113,10 @@ internal fun copySecret(context: Context, label: String, text: String) {
     }
     val clipboard = context.getSystemService(ClipboardManager::class.java) ?: return
     clipboard.setPrimaryClip(clip)
-    // Gone from the clipboard after a minute, unless something else was copied since.
+    // Gone from the clipboard after a minute. (Android 10 and later do not let an app in the background read the
+    // clipboard to check it is still this, so it is cleared whatever it holds then.)
     android.os.Handler(android.os.Looper.getMainLooper()).postDelayed({
-        val still = runCatching { clipboard.primaryClip?.getItemAt(0)?.text?.toString() }.getOrNull()
-        if (still == text) runCatching { clipboard.clearPrimaryClip() }
+        runCatching { clipboard.clearPrimaryClip() }
     }, SECRET_CLIP_MILLIS)
 }
 

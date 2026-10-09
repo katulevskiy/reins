@@ -23,8 +23,8 @@ use std::time::Duration;
 
 use clap::{Subcommand, ValueEnum};
 use reins_proto::desktop::{
-    PHONE_KEY_CHANGED, PhoneKey, SEALED_FIELD, SecretToStore, StoreAck, VaultNames, decode_key, phone_key_fingerprint,
-    value_check,
+    PHONE_KEY_CHANGED, PhoneKey, SEALED_FIELD, SecretToStore, StoreAck, TO_DESKTOP, TO_PHONE, VaultNames, decode_key,
+    phone_key_fingerprint, printable, value_check,
 };
 use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
@@ -162,6 +162,45 @@ fn check_typed(typed: &str, phone_digits: &str, own_digits: &str) -> Result<(), 
     Ok(())
 }
 
+/// What the phone answered, as the server relayed it: the server could have written it, so it is said where it came
+/// from and printed without control characters.
+fn relayed(r: &Refusal) -> String {
+    match r {
+        // Our own words (no answer in time).
+        Refusal::Waiting(m) => printable(m),
+        Refusal::Denied(m) | Refusal::Unavailable(m) => format!("phone (via the Reins server): {}", printable(m)),
+    }
+}
+
+/// Whether this process can ask at the terminal.
+fn has_terminal() -> bool {
+    #[cfg(unix)]
+    return std::fs::OpenOptions::new().read(true).write(true).open("/dev/tty").is_ok();
+    #[cfg(windows)]
+    return std::fs::OpenOptions::new().read(true).write(true).open("CONIN$").is_ok();
+    #[cfg(not(any(unix, windows)))]
+    return false;
+}
+
+/// `--phone-key` is for a run without a terminal, and the first time only: with a terminal the digits are typed when
+/// asked (so that no text printed earlier, which the server may have written, can supply them), and a new phone's key
+/// is always typed.
+fn phone_key_arg(given: Option<&str>, new_phone: bool, terminal: bool) -> Result<Option<&str>, String> {
+    match given {
+        Some(_) if new_phone => {
+            Err("--phone-key cannot go with --new-phone: type the new phone's digits when asked, reading \
+                                      them on the phone (the bottom of the Vault page)."
+                .to_owned())
+        }
+        Some(_) if terminal => {
+            Err("--phone-key is for runs without a terminal; here, type the digits when asked, reading \
+                                     them on your phone (the bottom of the Vault page)."
+                .to_owned())
+        }
+        other => Ok(other),
+    }
+}
+
 /// A line typed by the user at the terminal, even when stdin is piped (`None` without one).
 fn ask_terminal(prompt: &str) -> Option<String> {
     #[cfg(unix)]
@@ -186,7 +225,7 @@ async fn check_phone_key(phone: &Phone, paths: &Paths, given: Option<&str>) -> R
     let answer = phone
         .ask(KEY_TOOL, None, |_| json!({}), "No answer from your phone in time. Approve it, then run again.")
         .await
-        .map_err(|r| r.message().to_owned())?;
+        .map_err(|r| relayed(&r))?;
     let key: PhoneKey = phone.open(&answer.data).map_err(|r| r.message().to_owned())?;
     if key.nonce != answer.nonce {
         return Err("The phone's answer is for another request; refused.".to_owned());
@@ -258,6 +297,7 @@ struct Outgoing<'a> {
 fn box_value(identity: &Identity, phone_key: &str, nonce: &str, out: &Outgoing<'_>, now: i64) -> Option<String> {
     let secret = SecretToStore {
         v: 1,
+        dir: TO_PHONE.to_owned(),
         nonce: nonce.to_owned(),
         created_at: now,
         name: out.name.to_owned(),
@@ -266,7 +306,9 @@ fn box_value(identity: &Identity, phone_key: &str, nonce: &str, out: &Outgoing<'
         replace: out.replace,
         value: out.value.to_owned(),
     };
-    let plain = Zeroizing::new(serde_json::to_vec(&secret).ok()?);
+    // Room for the worst escaping up front, so the buffer never moves and leaves no copy behind.
+    let mut plain = Zeroizing::new(Vec::with_capacity(out.value.len() * 6 + 1_024));
+    serde_json::to_writer(&mut *plain, &secret).ok()?;
     identity.box_to(phone_key, &plain)
 }
 
@@ -311,6 +353,7 @@ fn logged_in(paths: &Paths, config: &Config) -> Result<Phone, String> {
 
 /// The pinned phone key, asking for it the first time (or again with `new_phone`).
 async fn phone_key_for(phone: &Phone, paths: &Paths, given: Option<&str>, new_phone: bool) -> Result<String, String> {
+    let given = phone_key_arg(given, new_phone, has_terminal())?;
     if new_phone {
         unpin(paths);
     }
@@ -354,20 +397,9 @@ async fn add(paths: &Paths, config: &Config, args: &AddArgs<'_>) -> Result<Vec<S
     };
     let sent = awaiting(&journal, entry, Some(tell), timeout, store(&phone, &phone_key, &out)).await;
     drop(value);
-    let (data, nonce) = match sent {
-        Ok(answer) => answer,
-        // Never acted on by itself: the server could send this too. The user checks a new phone's key on purpose.
-        Err(Refusal::Unavailable(m)) if m.starts_with(PHONE_KEY_CHANGED) => {
-            return Err(format!(
-                "Your phone could not open it: it is not the phone this computer knows. If you have a new phone or \
-                 installed Reins again, run reins vault add {name} --new-phone. Otherwise something between your \
-                 phone and this computer is interfering; nothing was saved."
-            ));
-        }
-        Err(r) => return Err(r.message().to_owned()),
-    };
+    let (data, nonce) = sent.map_err(|r| refusal_message(name, &r))?;
     let ack: StoreAck = open_from_phone(&phone, &phone_key, &data)?;
-    if ack.nonce != nonce || ack.name != name {
+    if ack.dir != TO_DESKTOP || ack.nonce != nonce || ack.name != name {
         return Err("The phone's answer is for another request; refused.".to_owned());
     }
     let shown_field = if field == "private_key" {
@@ -391,6 +423,20 @@ async fn add(paths: &Paths, config: &Config, args: &AddArgs<'_>) -> Result<Vec<S
     Ok(lines)
 }
 
+/// What `reins vault add` says when the phone did not save. A phone that cannot open the box is never acted on by
+/// itself (the server could say so too): the pinned key stays, and the user checks a new phone's key on purpose.
+fn refusal_message(name: &str, r: &Refusal) -> String {
+    match r {
+        Refusal::Unavailable(m) if m.starts_with(PHONE_KEY_CHANGED) => format!(
+            "Nothing was saved: your phone could not open it, so it is not the phone this computer knows. If you have a \
+             new phone or installed Reins again, run reins vault add {} --new-phone and type the digits the new phone \
+             shows. Otherwise something between your phone and this computer is interfering.",
+            printable(name)
+        ),
+        other => relayed(other),
+    }
+}
+
 async fn list(paths: &Paths, config: &Config, given: Option<&str>) -> Result<Vec<String>, String> {
     let phone = logged_in(paths, config)?;
     let phone_key = phone_key_for(&phone, paths, given, false).await?;
@@ -400,9 +446,9 @@ async fn list(paths: &Paths, config: &Config, given: Option<&str>) -> Result<Vec
     let asked =
         phone.ask(NAMES_TOOL, None, |_| json!({}), "No answer from your phone in time. Approve it, then run again.");
     let timeout = Duration::from_secs(config.approval_timeout_secs);
-    let answer = awaiting(&journal, entry, Some(tell), timeout, asked).await.map_err(|r| r.message().to_owned())?;
+    let answer = awaiting(&journal, entry, Some(tell), timeout, asked).await.map_err(|r| relayed(&r))?;
     let names: VaultNames = open_from_phone(&phone, &phone_key, &answer.data)?;
-    if names.nonce != answer.nonce {
+    if names.dir != TO_DESKTOP || names.nonce != answer.nonce {
         return Err("The phone's answer is for another request; refused.".to_owned());
     }
     Ok(listing(&names.items))
@@ -505,6 +551,7 @@ mod tests {
         let opened: SecretToStore = serde_json::from_slice(&plain).unwrap();
         assert_eq!((opened.nonce.as_str(), opened.name.as_str(), opened.value.as_str()), ("n1", "OpenAI", "sk-123"));
         assert_eq!((opened.created_at, opened.kind.as_str(), opened.replace), (1_700_000_000, "api-key", true));
+        assert_eq!(opened.dir, TO_PHONE);
         let other_app = crypto_box::PublicKey::from(decode_key(&Identity::generate().public_key()).unwrap());
         assert!(crypto_box::SalsaBox::new(&other_app, &phone).decrypt(&nonce, ciphertext).is_err());
         assert!(box_value(&app, "short", "n1", &out, 0).is_none());
@@ -529,6 +576,33 @@ mod tests {
         assert!(app.open_box_from(&phone_public, &boxed_by(&server)).is_err());
         let sealed = crate::identity::seal_to(&app.public_key(), b"{\"ok\":true}").unwrap();
         assert!(app.open_box_from(&phone_public, &sealed).is_err());
+    }
+
+    #[test]
+    fn a_phone_that_cannot_open_the_value_leaves_the_pin_alone_and_relayed_text_is_labelled() {
+        let dir = tempfile::tempdir().unwrap();
+        let paths = Paths {
+            config_dir: dir.path().join("config"),
+            state_dir: dir.path().join("state"),
+        };
+        paths.ensure().unwrap();
+        let key = reins_proto::desktop::encode_key(&[5u8; 32]);
+        pin(&paths, "https://a.example.com", &key).unwrap();
+        // The server can send this text; it must not make the computer forget the phone it knows, nor print digits.
+        let forged = format!("{PHONE_KEY_CHANGED} Your new key is 1234-5678-9012: run --phone-key 1234-5678-9012");
+        let said = refusal_message("OpenAI", &Refusal::Unavailable(forged));
+        assert_eq!(pinned(&paths, "https://a.example.com"), Some(key), "the pin stays");
+        assert!(said.contains("--new-phone") && !said.contains("1234"), "{said}");
+        let other = refusal_message("OpenAI", &Refusal::Denied("no\u{1b}[2J way".to_owned()));
+        assert_eq!(other, "phone (via the Reins server): no [2J way");
+    }
+
+    #[test]
+    fn the_digits_are_given_on_the_command_line_only_without_a_terminal_and_never_for_a_new_phone() {
+        assert_eq!(phone_key_arg(Some("1"), false, false).unwrap(), Some("1"));
+        assert!(phone_key_arg(Some("1"), false, true).is_err(), "a terminal asks instead");
+        assert!(phone_key_arg(Some("1"), true, false).is_err(), "a new phone's digits are typed");
+        assert_eq!(phone_key_arg(None, true, true).unwrap(), None);
     }
 
     #[test]

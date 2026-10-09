@@ -193,14 +193,18 @@ fn outcome_data(outcome: RelayOutcome) -> Result<Value, Refusal> {
         RelayOutcome::Result {
             ..
         } => Err(unavailable("The phone's answer has an unexpected kind.")),
+        // Text the server relays (and could have written): never printed with its control characters.
         RelayOutcome::Denied {
             reason,
         } => Err(Refusal::Denied(
-            reason.filter(|r| !r.trim().is_empty()).unwrap_or_else(|| "Denied on your phone.".to_owned()),
+            reason
+                .map(|r| reins_proto::desktop::printable(&r))
+                .filter(|r| !r.is_empty())
+                .unwrap_or_else(|| "Denied on your phone.".to_owned()),
         )),
         RelayOutcome::Error {
             message,
-        } => Err(Refusal::Unavailable(message)),
+        } => Err(Refusal::Unavailable(reins_proto::desktop::printable(&message))),
     }
 }
 

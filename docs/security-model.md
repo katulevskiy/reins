@@ -198,11 +198,15 @@ have written it. A phone that cannot open a box (a new phone) makes the computer
 when you run `reins vault add --new-phone`.
 
 What the server learns: the item's name, the field and the kind (they travel beside the box so the phone can show the
-request), the value's length (from the box's size), and, from the phone's answer to `reins vault list`, nothing but
-its size. The boxes use the two long-term keys, without forward secrecy: whoever later gets both the computer's key
-file and the phone's key could open boxes recorded before. An SSH key's private half is never given out by the phone,
-to an AI or on its own screens (the phone signs instead), though a Bitwarden app signed in to the same account (not
-possible for an account without a master password) can show it.
+request), the value's length (from the box's size), and the phone's refusals, which are not boxed: one may say that
+an item with that name exists and what kind it is. The boxes use the two long-term keys, without forward secrecy:
+whoever gets either one, the computer's key file (readable by any program running as you) or the phone's key, can
+open every box recorded between them, the phone's key answer included. There is no way to make new keys yet other
+than pairing the computer again or installing the app again. On the phone the value passes through ordinary memory
+while it is saved. An SSH key's private half is never given out by the phone, to an AI or on its own screens (the
+phone signs instead), though a Bitwarden app signed in to the same account (not possible for an account without a
+master password) can show it. Text the phone sends back through the server is printed by `reins` labelled as such and
+without control characters, since the server could have written it.
 
 **Git pushes.** The desktop app reads the pack git is about to send and works out what it does: which branches or
 tags it touches, whether each update is a fast-forward (asking the host's API when needed), the commits, the files,
