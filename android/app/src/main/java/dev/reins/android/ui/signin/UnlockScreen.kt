@@ -22,6 +22,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardCapitalization
@@ -41,18 +42,20 @@ import dev.reins.android.design.RTextField
 import dev.reins.android.design.RType
 import dev.reins.android.design.Screen
 import dev.reins.android.design.Spinner
+import dev.reins.android.platform.Browser
 import dev.reins.android.ui.common.OTHER_APPROVAL_DEVICE
 import dev.reins.android.ui.common.SecureWindow
 
 /**
  * Signed in through "Continue" to an account whose keys are on another phone: ask that phone, enter the recovery code,
- * or sign out. Shown instead of the app until the keys are open (also after a relaunch). With [takeover], the server
- * refused to make this phone the approval device because another phone approves for the account: the same two ways
- * let it take over, and "Not now" goes back to the app.
+ * reset the vault when both are lost, or sign out. Shown instead of the app until the keys are open (also after a
+ * relaunch). With [takeover], the server refused to make this phone the approval device because another phone
+ * approves for the account: the same two ways let it take over, and "Not now" goes back to the app.
  */
 @Composable
 fun UnlockScreen(viewModel: UnlockViewModel, email: String, takeover: Boolean = false) {
     val c = LocalColors.current
+    val context = LocalContext.current
     val ui by viewModel.ui.collectAsStateWithLifecycle()
     BackHandler(enabled = ui.step != UnlockStep.Choose) {
         if (ui.step == UnlockStep.Asking) viewModel.cancelAsk() else viewModel.back()
@@ -86,6 +89,10 @@ fun UnlockScreen(viewModel: UnlockViewModel, email: String, takeover: Boolean = 
                 UnlockStep.Choose -> Choose(viewModel, ui, takeover)
                 UnlockStep.Asking -> Asking(viewModel, ui)
                 UnlockStep.Recovery -> Recovery(viewModel, ui)
+                UnlockStep.Reset -> Reset(viewModel, ui) {
+                    // A tab that does not reuse the browser's last session: the person really signs in again.
+                    Browser.open(context, it, ephemeral = true)
+                }
             }
             Spacer(Modifier.height(24.dp))
         }
@@ -112,6 +119,12 @@ private fun Choose(viewModel: UnlockViewModel, ui: UnlockUi, takeover: Boolean) 
         glyph = Glyph.Key,
         onClick = viewModel::showRecovery,
     )
+    // Starting over is for a phone that cannot open the keys at all, not for taking the approval role over.
+    if (!takeover) {
+        Row(Modifier.fillMaxWidth().padding(top = 4.dp), horizontalArrangement = Arrangement.Center) {
+            TextLink("Lost both? Reset the vault", "resetVault", enabled = !ui.busy, onClick = viewModel::showReset)
+        }
+    }
     Row(
         Modifier.fillMaxWidth().padding(top = 4.dp),
         horizontalArrangement = Arrangement.spacedBy(24.dp, Alignment.CenterHorizontally),
@@ -155,6 +168,58 @@ private fun Asking(viewModel: UnlockViewModel, ui: UnlockUi) {
         )
     }
     CapsuleButton("Cancel", Modifier.fillMaxWidth().testTag("cancelJoin"), style = ButtonStyle.Secondary, onClick = viewModel::cancelAsk)
+}
+
+/**
+ * Neither the other phone nor the recovery code: what resetting the vault deletes and keeps, and the sign-in that
+ * confirms it, whose page [open] shows.
+ */
+@Composable
+private fun Reset(viewModel: UnlockViewModel, ui: UnlockUi, open: (String) -> Boolean) {
+    val c = LocalColors.current
+    Column(
+        Modifier
+            .fillMaxWidth()
+            .background(c.danger.copy(alpha = 0.07f), RoundedCornerShape(22.dp))
+            .border(1.5.dp, c.danger.copy(alpha = 0.4f), RoundedCornerShape(22.dp))
+            .padding(20.dp)
+            .testTag("resetText"),
+        verticalArrangement = Arrangement.spacedBy(10.dp),
+    ) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            GlyphIcon(Glyph.Warning, c.danger, size = 20.dp)
+            Spacer(Modifier.width(10.dp))
+            RText("Start over with an empty vault", RType.sans(17f, FontWeight.SemiBold, lineHeight = 22f), c.text)
+        }
+        RText(
+            "Resetting deletes everything in this account's vault: saved items, integrations and their grants, and " +
+                "the activity and settings kept for it. Any other phone signed in to it is signed out, and connected " +
+                "AIs must be connected again. This cannot be undone.",
+            RType.sans(15f, lineHeight = 21f),
+            c.secondary,
+        )
+        RText(
+            "The account itself stays: its email and its sign-in. You get a new recovery code to write down.",
+            RType.sans(15f, lineHeight = 21f),
+            c.secondary,
+        )
+        RText(
+            "To confirm, sign in again with this account.",
+            RType.sans(15f, FontWeight.Medium, lineHeight = 21f),
+            c.text,
+        )
+    }
+    ui.error?.let { Banner(it, kind = BannerKind.Error, tag = "unlockError") }
+    CapsuleButton(
+        "Sign in again and reset",
+        Modifier.fillMaxWidth().testTag("confirmReset"),
+        style = ButtonStyle.Destructive,
+        busy = ui.busy,
+        glyph = Glyph.Trash,
+    ) { viewModel.resetVault(open) }
+    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.Center) {
+        TextLink("Back", "resetBack", enabled = !ui.busy, onClick = viewModel::back)
+    }
 }
 
 /** The recovery code, or the master password of an account made with one. Kept only here and in the call. */

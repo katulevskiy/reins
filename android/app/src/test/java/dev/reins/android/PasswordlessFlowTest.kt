@@ -14,6 +14,7 @@ import androidx.compose.ui.test.performTextReplacement
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import dev.reins.android.platform.AuthResult
 import dev.reins.android.platform.Foreground
+import dev.reins.android.platform.SsoPurpose
 import dev.reins.android.platform.SsoRedirectActivity
 import dev.reins.android.ui.signin.AccountRules
 import dev.reins.core.AccountKeys
@@ -356,6 +357,95 @@ class PasswordlessFlowTest : FlowHarness() {
         assertNull(core.session)
         assertFalse(container.deviceStatus.keysLocked())
         assertTrue(core.registrations.isEmpty())
+    }
+
+    // ---- "Lost both? Reset the vault" --------------------------------------------------------------------------------
+
+    /** From the locked Unlock screen to the reset's sign-in page handed to the browser. */
+    private fun startReset() {
+        signInLocked()
+        while (nextStarted() != null) { /* the first sign-in's page */ }
+        tap("resetVault")
+        awaitTag("confirmReset")
+        tap("confirmReset")
+        rule.waitUntil(10_000) { container.ssoSignIn.pending()?.purpose == SsoPurpose.Reset }
+    }
+
+    @Test
+    fun aLockedAccountOffersTheResetAndBackLeavesItAlone() {
+        signInLocked()
+        tap("resetVault")
+        awaitTag("confirmReset")
+        assertTrue(showsText("Resetting deletes everything in this account's vault", substring = true))
+        assertTrue(showsText("connected AIs must be connected again", substring = true))
+        assertTrue(showsText("To confirm, sign in again with this account."))
+        tap("resetBack")
+        awaitTag("askOtherPhone")
+        assertFalse(has("confirmReset"))
+        assertTrue(core.ssoBegins.size == 1 && core.resets.isEmpty())
+        assertTrue(container.deviceStatus.keysLocked())
+    }
+
+    @Test
+    fun resettingSignsInAgainAndEndsSignedInWithTheNewCodeToRecord() {
+        startReset()
+        assertEquals(listOf(server, server), core.ssoBegins.toList())
+        assertEquals("$server/identity/connect/authorize?state=${FakeCore.SSO_STATE}", nextStarted()?.dataString)
+        // The tab was closed without signing in: the reset waits as it was.
+        settle()
+        assertTrue(has("confirmReset"))
+        rule.onNodeWithTag("resetBack").assertIsEnabled()
+        assertTrue(core.resets.isEmpty())
+
+        relaunch(callbackIntent())
+        awaitTag("recoveryRecorded")
+        assertEquals(FakeCore.RESET_RECOVERY_CODE, container.state.recoveryToRecord.value)
+        assertTrue(showsText("HV3N Q8RT ZL2K M7WD", substring = true))
+        recordRecovery()
+        awaitTag("setupComputer")
+        assertEquals(listOf(server, callback, FakeCore.SSO_STATE, FakeCore.SSO_VERIFIER), core.resets.single())
+        assertEquals("Only the first sign-in went to ssoFinish", 1, core.ssoFinishes.size)
+        assertFalse(container.deviceStatus.keysLocked())
+        assertFalse(container.state.keysLocked.value)
+        assertNull(container.ssoSignIn.pending())
+        awaitCore { core.registrations.size == 1 }
+    }
+
+    @Test
+    fun aResetCallbackGoesToResetAccountAlsoFromTheRestoredRecord() {
+        startReset()
+        // What a restarted app reads back: the start, and that it is a reset.
+        val restored = dev.reins.android.platform.SsoSignIn(context).pending()
+        assertEquals(SsoPurpose.Reset, restored?.purpose)
+        assertEquals(server, restored?.server)
+
+        // The sign-in screen's side never takes a reset's callback; the Unlock screen's does.
+        val signIn = dev.reins.android.platform.SsoSignIn(context)
+        assertTrue(signIn.deliver(callback))
+        assertNull(signIn.take(SsoPurpose.SignIn))
+        assertEquals(callback, signIn.callback.value)
+        assertNotNull(signIn.pending())
+
+        // A fresh Unlock screen (the activity was recreated) finishes it with resetAccount, not ssoFinish.
+        relaunch(callbackIntent())
+        awaitTag("recoveryRecorded")
+        assertEquals(1, core.resets.size)
+        assertEquals(1, core.ssoFinishes.size)
+    }
+
+    @Test
+    fun aRefusedResetSaysWhyAndLeavesTheAccountLocked() {
+        val reason = "You signed in as other@example.com. Sign in as me@example.com to reset its vault."
+        core.resetError = CoreException.Invalid(reason)
+        startReset()
+        relaunch(callbackIntent())
+        awaitTag("unlockError")
+        awaitText(reason)
+        assertTrue(has("confirmReset"))
+        assertEquals(1, core.resets.size)
+        assertTrue(container.deviceStatus.keysLocked())
+        assertTrue(core.registrations.isEmpty())
+        assertFalse(has("recoveryRecorded"))
     }
 
     // ---- the approval device: another phone asks -------------------------------------------------------------------

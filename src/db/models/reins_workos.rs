@@ -159,6 +159,36 @@ pub async fn delete_reins_data(user_uuid: &UserId, conn: &DbConn) -> EmptyResult
     conn.run(move |c| q_delete_reins_data(c, user_uuid)).await.map_res("Error deleting the user's Reins data")
 }
 
+/// What a vault reset (`api::reins::account_reset`) clears of the account's sign-ins: the approval device, every other
+/// device (its Vaultwarden device, which holds its refresh token, and its SSO session), and the AI and desktop
+/// connections with their refresh tokens (they would send their requests to whoever reset the vault). `keep`, the
+/// device that asked, stays signed in.
+pub async fn reset_devices(user_uuid: &UserId, keep: &DeviceId, conn: &DbConn) -> EmptyResult {
+    conn.run(move |c| q_reset_devices(c, user_uuid, keep)).await.map_res("Error signing out the account's devices")
+}
+
+fn q_reset_devices(c: &mut DbConnInner, user_uuid: &UserId, keep: &DeviceId) -> QueryResult<()> {
+    c.transaction(|c| {
+        let connections = reins_connections::table
+            .filter(reins_connections::user_uuid.eq(user_uuid))
+            .select(reins_connections::uuid)
+            .load::<String>(c)?;
+        diesel::delete(reins_refresh_tokens::table.filter(reins_refresh_tokens::connection_uuid.eq_any(&connections)))
+            .execute(c)?;
+        diesel::delete(reins_connections::table.filter(reins_connections::user_uuid.eq(user_uuid))).execute(c)?;
+        diesel::delete(reins_devices::table.filter(reins_devices::user_uuid.eq(user_uuid))).execute(c)?;
+        diesel::delete(devices::table.filter(devices::user_uuid.eq(user_uuid)).filter(devices::uuid.ne(keep)))
+            .execute(c)?;
+        diesel::delete(
+            reins_sso_sessions::table
+                .filter(reins_sso_sessions::user_uuid.eq(user_uuid))
+                .filter(reins_sso_sessions::device_uuid.ne(keep)),
+        )
+        .execute(c)?;
+        Ok(())
+    })
+}
+
 fn q_get_setting(c: &mut DbConnInner, name: &str) -> QueryResult<Option<String>> {
     reins_settings::table
         .filter(reins_settings::name.eq(name))
@@ -330,5 +360,68 @@ mod tests {
         let sessions: Vec<String> =
             reins_sso_sessions::table.select(reins_sso_sessions::session_id).load(&mut c).unwrap();
         assert_eq!(sessions, ["session-u2"]);
+    }
+
+    #[test]
+    fn a_reset_signs_out_every_other_device_and_frees_the_approval_role() {
+        use super::super::{Device, ReinsConnection, ReinsDevice, ReinsRefreshToken};
+        let mut c = test_db();
+        for user in ["u1", "u2"] {
+            let conn = ReinsConnection::new(
+                uid(user),
+                "client".to_owned(),
+                "Claude".to_owned(),
+                "claude.ai".to_owned(),
+                "Claude".to_owned(),
+                1,
+            );
+            diesel::insert_into(reins_connections::table).values(&conn).execute(&mut c).unwrap();
+            let token = ReinsRefreshToken {
+                token_hash: format!("hash-{user}"),
+                connection_uuid: conn.uuid.clone(),
+                expires_at: 99,
+            };
+            diesel::insert_into(reins_refresh_tokens::table).values(&token).execute(&mut c).unwrap();
+        }
+        for (user, dev) in [("u1", "keep"), ("u1", "old"), ("u2", "other")] {
+            let device = Device::new(DeviceId::from(dev.to_owned()), uid(user), "Phone".to_owned(), 0);
+            diesel::insert_into(devices::table).values(&device).execute(&mut c).unwrap();
+            q_save_session(
+                &mut c,
+                &ReinsSsoSession {
+                    session_id: format!("session-{dev}"),
+                    user_uuid: uid(user),
+                    device_uuid: device.uuid.clone(),
+                    created_at: 1,
+                },
+            )
+            .unwrap();
+            let approval = ReinsDevice {
+                user_uuid: uid(user),
+                device_uuid: device.uuid,
+                fcm_token: None,
+                updated_at: 1,
+                key_hash: None,
+            };
+            diesel::delete(reins_devices::table.filter(reins_devices::user_uuid.eq(user))).execute(&mut c).unwrap();
+            diesel::insert_into(reins_devices::table).values(&approval).execute(&mut c).unwrap();
+        }
+        q_reset_devices(&mut c, &uid("u1"), &DeviceId::from("keep".to_owned())).unwrap();
+        let left: Vec<String> = devices::table.select(devices::uuid).order(devices::uuid).load(&mut c).unwrap();
+        assert_eq!(left, ["keep", "other"]);
+        let sessions: Vec<String> = reins_sso_sessions::table
+            .select(reins_sso_sessions::session_id)
+            .order(reins_sso_sessions::session_id)
+            .load(&mut c)
+            .unwrap();
+        assert_eq!(sessions, ["session-keep", "session-other"]);
+        let approvals: Vec<String> = reins_devices::table.select(reins_devices::user_uuid).load(&mut c).unwrap();
+        assert_eq!(approvals, ["u2"]);
+        let connections: Vec<String> =
+            reins_connections::table.select(reins_connections::user_uuid).load(&mut c).unwrap();
+        assert_eq!(connections, ["u2"]);
+        let tokens: Vec<String> =
+            reins_refresh_tokens::table.select(reins_refresh_tokens::token_hash).load(&mut c).unwrap();
+        assert_eq!(tokens, ["hash-u2"]);
     }
 }

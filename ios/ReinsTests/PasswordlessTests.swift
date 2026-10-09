@@ -217,6 +217,97 @@ final class PasswordlessTests: XCTestCase {
         XCTAssertFalse(app.deviceReplaced)
     }
 
+    // MARK: Resetting the vault
+
+    /// A locked account on the Unlock screen, as after "Continue" on a reinstalled phone.
+    private func lockedAccount() async -> (DemoReinsCore, AppModel, SessionInfo)? {
+        let core = DemoReinsCore(signedIn: false, syncCap: 0.3, keysLocked: true)
+        let app = model(core, demo: false)
+        await app.refreshSession()
+        await signInLikeTheRealApp(app)
+        guard case let .keysLocked(info) = app.session else {
+            XCTFail("locked: \(app.session)")
+            return nil
+        }
+        return (core, app, info)
+    }
+
+    func testResettingTheVaultStartsOverAsANewAccountWithANewRecoveryCodeToRecord() async throws {
+        let key = RecoveryRecord.key(server: DemoData.server, code: DemoReinsCore.resetRecoveryCode)
+        AppGroup.defaults.removeObject(forKey: key)
+        defer { AppGroup.defaults.removeObject(forKey: key) }
+        guard let locked = await lockedAccount() else { return }
+        let (core, app, info) = locked
+        let unlock = UnlockModel()
+        var openedScheme: String?
+        unlock.browse = { _, scheme in
+            openedScheme = scheme
+            return URL(string: "\(scheme)://sso-callback?code=x&state=demo-state")!
+        }
+        unlock.showReset()
+        XCTAssertEqual(unlock.stage, .reset)
+        await unlock.reset(app)
+        XCTAssertNil(unlock.error)
+        XCTAssertFalse(unlock.busy)
+        XCTAssertEqual(unlock.stage, .choose)
+        XCTAssertEqual(openedScheme, "com.reins2fa.app", "the confirming sign-in opened")
+        XCTAssertEqual(app.session, .signedIn(info))
+        XCTAssertTrue(app.approvalDevice, "the phone took the approval role")
+        XCTAssertFalse(KeysLock.matches(info), "the lock is gone")
+        XCTAssertEqual(app.recoveryToRecord, DemoReinsCore.resetRecoveryCode, "the new code must be recorded")
+        let grants = try await core.grants()
+        XCTAssertTrue(grants.isEmpty, "the vault is empty")
+    }
+
+    func testAClosedResetPageLeavesTheResetOffered() async {
+        guard let locked = await lockedAccount() else { return }
+        let (_, app, info) = locked
+        let unlock = UnlockModel()
+        unlock.browse = { _, _ in throw WebAuth.Failure.cancelled }
+        unlock.showReset()
+        await unlock.reset(app)
+        XCTAssertNil(unlock.error)
+        XCTAssertFalse(unlock.busy)
+        XCTAssertEqual(unlock.stage, .reset)
+        XCTAssertEqual(app.session, .keysLocked(info))
+    }
+
+    func testARefusedResetSaysWhyAndKeepsTheAccountLocked() async {
+        guard let locked = await lockedAccount() else { return }
+        let (_, app, info) = locked
+        let unlock = UnlockModel()
+        unlock.showReset()
+        // An answer to another sign-in.
+        unlock.browse = { _, scheme in URL(string: "\(scheme)://sso-callback?code=x&state=other")! }
+        await unlock.reset(app)
+        XCTAssertEqual(unlock.error, "The sign-in did not come back as expected. Try again.")
+        XCTAssertEqual(unlock.stage, .reset)
+        XCTAssertEqual(app.session, .keysLocked(info))
+        XCTAssertTrue(KeysLock.matches(info))
+
+        // The web sheet failing shows its message; "Back" clears it.
+        unlock.browse = { _, _ in throw WebAuth.Failure.failed("The sign-in page could not be opened.") }
+        await unlock.reset(app)
+        XCTAssertEqual(unlock.error, "The sign-in page could not be opened.")
+        unlock.back()
+        XCTAssertNil(unlock.error)
+        XCTAssertEqual(unlock.stage, .choose)
+    }
+
+    func testATakeoverCannotResetTheVault() async {
+        let core = DemoReinsCore(syncCap: 0.3, approvalElsewhere: true)
+        let app = model(core)
+        await app.refreshSession()
+        guard case .otherApprovalDevice = app.session else { return XCTFail("refused: \(app.session)") }
+        let unlock = UnlockModel()
+        await unlock.reset(app)
+        guard case .otherApprovalDevice = app.session else { return XCTFail("unchanged: \(app.session)") }
+        XCTAssertNil(unlock.error)
+        XCTAssertEqual(unlock.stage, .choose)
+        let grants = try? await core.grants()
+        XCTAssertEqual(grants?.isEmpty, false, "the vault is untouched")
+    }
+
     // MARK: The approval side
 
     func testAnotherPhoneAsksAndTheApprovalDeviceAddsIt() async throws {

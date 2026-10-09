@@ -92,6 +92,13 @@ class TakeoverFlowTest : FlowHarness() {
     }
 
     @Test
+    fun takingOverOffersNoVaultReset() {
+        signInRefused()
+        assertTrue(has("askOtherPhone"))
+        assertFalse(has("resetVault"))
+    }
+
+    @Test
     fun theRecoveryCodeTakesOverAndTheSignInCarriesOn() {
         signInRefused()
         tap("enterRecoveryCode")

@@ -5,21 +5,28 @@ import androidx.lifecycle.viewModelScope
 import dev.reins.android.AppContainer
 import dev.reins.android.feedback.Event
 import dev.reins.android.feedback.play
+import dev.reins.android.platform.SsoPurpose
 import dev.reins.android.state.SessionState
 import dev.reins.android.ui.common.userMessage
+import dev.reins.android.ui.mcp.webPage
 import dev.reins.core.CoreException
 import dev.reins.core.JoinProgress
 import kotlin.coroutines.cancellation.CancellationException
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.filterNotNull
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 
-/** Where the Unlock screen is: the two ways to open the keys, waiting for the other phone, or the recovery code field. */
-enum class UnlockStep { Choose, Asking, Recovery }
+/**
+ * Where the Unlock screen is: the two ways to open the keys, waiting for the other phone, the recovery code field, or
+ * resetting the vault (both ways lost).
+ */
+enum class UnlockStep { Choose, Asking, Recovery, Reset }
 
 data class UnlockUi(
     val step: UnlockStep = UnlockStep.Choose,
@@ -60,6 +67,9 @@ suspend fun awaitJoin(poll: suspend () -> JoinProgress, pause: suspend () -> Uni
  * The same two ways let this phone take the approval role over when the server refused it because another phone
  * approves for the account ([dev.reins.android.state.AppState.approvalTakeover]): the other phone's yes, or the
  * recovery code, is the proof the next registration brings.
+ *
+ * With neither (keys locked only): "Reset the vault" deletes everything in it and gives the account new keys, as a new
+ * account gets, confirmed by signing in again through the server's SSO ([SsoPurpose.Reset]).
  */
 class UnlockViewModel(
     private val container: AppContainer,
@@ -70,6 +80,11 @@ class UnlockViewModel(
     val ui: StateFlow<UnlockUi> = _ui.asStateFlow()
 
     private var asking: Job? = null
+
+    init {
+        // The browser came back from the sign-in that confirms a reset (also after Android restarted the app meanwhile).
+        viewModelScope.launch { container.ssoSignIn.callback.filterNotNull().collect { finishReset() } }
+    }
 
     /** "Ask my other phone": sends the request, shows its code and waits for the answer. */
     fun askOtherPhone() {
@@ -107,10 +122,77 @@ class UnlockViewModel(
         _ui.value = UnlockUi(step = UnlockStep.Recovery)
     }
 
-    /** Back from the recovery code field to the two choices. */
+    /** "Lost both? Reset the vault": what a reset deletes, and the sign-in that confirms it. */
+    fun showReset() {
+        if (_ui.value.busy) return
+        _ui.value = UnlockUi(step = UnlockStep.Reset)
+    }
+
+    /** Back from the recovery code field or the reset to the two choices; a reset's sign-in still open is dropped. */
     fun back() {
         if (_ui.value.busy) return
+        if (_ui.value.step == UnlockStep.Reset && container.ssoSignIn.pending()?.purpose == SsoPurpose.Reset) {
+            container.ssoSignIn.clear()
+        }
         _ui.value = UnlockUi()
+    }
+
+    /**
+     * "Sign in again and reset": starts a sign-in to the signed-in account's server and opens its page with [open] (a
+     * Custom Tab that does not reuse the browser's last session where it can; false when nothing can show it). Closing
+     * the page without signing in changes nothing; its callback goes to [finishReset].
+     */
+    fun resetVault(open: (String) -> Boolean) {
+        if (_ui.value.busy) return
+        val server = (container.state.session.value as? SessionState.SignedIn)?.info?.serverUrl ?: return
+        _ui.value = UnlockUi(step = UnlockStep.Reset, busy = true)
+        viewModelScope.launch {
+            try {
+                val start = container.core.ssoBegin(server)
+                if (!webPage(start.url)) {
+                    failReset("The server's sign-in page is not a web address.")
+                    return@launch
+                }
+                container.ssoSignIn.begin(server, start, SsoPurpose.Reset)
+                if (!open(start.url)) {
+                    container.ssoSignIn.clear()
+                    failReset("No browser on this phone can show the sign-in page.")
+                    return@launch
+                }
+                _ui.value = UnlockUi(step = UnlockStep.Reset)
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                failReset(e.userMessage())
+            }
+        }
+    }
+
+    /**
+     * Hands the callback of the sign-in that confirms the reset to the core; nothing happens when none waits (a
+     * "Continue" callback is the sign-in screen's). The vault is new then, as a new account's: this phone finishes the
+     * sign-in like one, recording the new recovery code first. A refusal (another account, a sign-in that ran out)
+     * changes nothing and says why.
+     */
+    private fun finishReset() {
+        val (pending, callback) = container.ssoSignIn.take(SsoPurpose.Reset) ?: return
+        _ui.value = UnlockUi(step = UnlockStep.Reset, busy = true)
+        // Not the view model's scope: once the vault is reset, the sign-in finishes even if this screen goes away.
+        container.appScope.launch(Dispatchers.Main) {
+            try {
+                container.finishSsoSignIn(container.core.resetAccount(pending.server, callback, pending.state, pending.verifier))
+                _ui.value = UnlockUi()
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                failReset(e.userMessage())
+            }
+        }
+    }
+
+    private fun failReset(message: String) {
+        container.feedback.play(Event.Error)
+        _ui.value = UnlockUi(step = UnlockStep.Reset, error = message)
     }
 
     /** "Unlock": the recovery code (any case, spaces and dashes) or the master password; only passed through. */

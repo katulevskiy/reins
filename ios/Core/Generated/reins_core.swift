@@ -2706,6 +2706,15 @@ public protocol ReinsCoreProtocol: AnyObject, Sendable {
     func renameProfile(profileId: String, name: String, icon: String?) async throws 
     
     /**
+     * "Reset the vault" on the Unlock screen, for a `Locked` account whose other phone and recovery code are both
+     * lost: everything in the vault is deleted and the account gets new keys, as a new account does (`keys` is
+     * `Created`; record the new recovery code). Start a sign-in with `sso_begin` and open it in a browser session that
+     * does not reuse the last one (the person signs in again to confirm), then hand its callback here. An `Invalid`
+     * error (a sign-in to another account, or one that ran out) leaves the account as it was.
+     */
+    func resetAccount(serverUrl: String, callbackUrl: String, state: String, verifier: String) async throws  -> SsoOutcome
+    
+    /**
      * Forgets what a profile learned: memory, adapter, classes locked or unlocked by hand.
      */
     func resetProfile(profileId: String) async throws 
@@ -3877,6 +3886,29 @@ open func renameProfile(profileId: String, name: String, icon: String?)async thr
             completeFunc: ffi_reins_core_rust_future_complete_void,
             freeFunc: ffi_reins_core_rust_future_free_void,
             liftFunc: { $0 },
+            errorHandler: FfiConverterTypeCoreError_lift
+        )
+}
+    
+    /**
+     * "Reset the vault" on the Unlock screen, for a `Locked` account whose other phone and recovery code are both
+     * lost: everything in the vault is deleted and the account gets new keys, as a new account does (`keys` is
+     * `Created`; record the new recovery code). Start a sign-in with `sso_begin` and open it in a browser session that
+     * does not reuse the last one (the person signs in again to confirm), then hand its callback here. An `Invalid`
+     * error (a sign-in to another account, or one that ran out) leaves the account as it was.
+     */
+open func resetAccount(serverUrl: String, callbackUrl: String, state: String, verifier: String)async throws  -> SsoOutcome  {
+    return
+        try  await uniffiRustCallAsync(
+            rustFutureFunc: {
+                uniffi_reins_core_fn_method_reinscore_reset_account(
+                        self.uniffiCloneHandle(),FfiConverterString.lower(serverUrl),FfiConverterString.lower(callbackUrl),FfiConverterString.lower(state),FfiConverterString.lower(verifier)
+                )
+            },
+            pollFunc: ffi_reins_core_rust_future_poll_rust_buffer,
+            completeFunc: ffi_reins_core_rust_future_complete_rust_buffer,
+            freeFunc: ffi_reins_core_rust_future_free_rust_buffer,
+            liftFunc: FfiConverterTypeSsoOutcome_lift,
             errorHandler: FfiConverterTypeCoreError_lift
         )
 }
@@ -12112,6 +12144,9 @@ private let initializationResult: InitializationResult = {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_reins_core_checksum_method_reinscore_rename_profile() != 43478) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_reins_core_checksum_method_reinscore_reset_account() != 37395) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_reins_core_checksum_method_reinscore_reset_profile() != 9460) {

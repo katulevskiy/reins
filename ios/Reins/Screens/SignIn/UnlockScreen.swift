@@ -3,8 +3,10 @@ import UIKit
 
 /// After "Continue", for an account whose keys this phone cannot open yet: another phone has them (it approves this
 /// one, comparing a code), or the recovery code does. This phone takes the approval role only once it can open them.
-/// The same two ways let a phone take the approval role from another one when the server asks for a proof
-/// (`SessionState.otherApprovalDevice`).
+/// With neither, a third way out resets the vault: everything in it is deleted and the account starts over with new
+/// keys and a new recovery code, confirmed by signing in again (`UnlockModel.reset`).
+/// The first two ways (not the reset) let a phone take the approval role from another one when the server asks for a
+/// proof (`SessionState.otherApprovalDevice`).
 struct UnlockScreen: View {
     @Environment(AppModel.self) private var model
     @Environment(\.horizontalSizeClass) private var sizeClass
@@ -63,6 +65,7 @@ struct UnlockScreen: View {
             case .choose: choose
             case let .waiting(code): waiting(code)
             case .recovery: recovery
+            case .reset: resetting
             }
             if let error = vm.error {
                 FormBanner(text: error).transition(.opacity).accessibilityIdentifier("unlockError")
@@ -111,6 +114,19 @@ struct UnlockScreen: View {
             .buttonStyle(CapsuleButtonStyle(kind: .secondary))
             .disabled(vm.busy)
             .accessibilityIdentifier("enterRecoveryCode")
+            if !takeover {
+                // Neither the other phone nor the recovery code: start over.
+                Button("Lost both? Reset the vault") {
+                    feedback.play(.tap)
+                    vm.showReset()
+                }
+                .font(RFont.sans(14.5, .medium))
+                .foregroundStyle(Palette.secondary)
+                .frame(maxWidth: .infinity)
+                .padding(.top, 4)
+                .disabled(vm.busy)
+                .accessibilityIdentifier("resetVault")
+            }
         }
         .transition(.opacity)
     }
@@ -190,9 +206,51 @@ struct UnlockScreen: View {
         }
         .transition(.opacity)
     }
+
+    /// What a reset deletes and what it keeps; signing in again confirms it.
+    private var resetting: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Text("Resetting deletes everything in this account's vault: saved items, integrations and their grants, and the activity and settings kept for it. Any other phone signed in to it is signed out, and connected AIs must be connected again. This cannot be undone.")
+                .font(RFont.sans(15.5))
+                .foregroundStyle(Palette.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+            Text("The account itself stays: its email and its sign-in. You get a new recovery code to write down.")
+                .font(RFont.sans(15.5))
+                .foregroundStyle(Palette.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+            Text("To confirm, sign in again with this account.")
+                .font(RFont.sans(15.5))
+                .foregroundStyle(Palette.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+                .padding(.bottom, 10)
+            Button {
+                feedback.play(.tap)
+                Task { await vm.reset(model) }
+            } label: {
+                HStack(spacing: 10) {
+                    if vm.busy { ProgressView().tint(.white) }
+                    Text("Sign in again and reset")
+                }
+            }
+            .buttonStyle(CapsuleButtonStyle(kind: .danger))
+            .disabled(vm.busy)
+            .accessibilityIdentifier("confirmReset")
+            Button("Back") {
+                feedback.play(.tap)
+                vm.back()
+            }
+            .font(RFont.sans(14.5, .medium))
+            .foregroundStyle(Palette.secondary)
+            .frame(maxWidth: .infinity)
+            .disabled(vm.busy)
+            .accessibilityIdentifier("resetBack")
+        }
+        .transition(.opacity)
+    }
 }
 
-/// The Unlock screen's state: asking the other phone (and polling its answer), or the recovery code.
+/// The Unlock screen's state: asking the other phone (and polling its answer), the recovery code, or resetting the
+/// vault.
 @Observable
 @MainActor
 final class UnlockModel {
@@ -201,6 +259,8 @@ final class UnlockModel {
         /// Asked; the code both phones show.
         case waiting(String)
         case recovery
+        /// What a reset deletes, and the sign-in that confirms it.
+        case reset
     }
 
     private(set) var stage = Stage.choose
@@ -210,6 +270,11 @@ final class UnlockModel {
     /// How long between two looks at the other phone's answer.
     var pollInterval: Duration = .seconds(2)
     private var polling: Task<Void, Never>?
+    /// The web sheet for the sign-in that confirms a reset; tests put a fake in its place. It does not reuse the
+    /// browser's last sign-in, so the person really signs in again.
+    var browse: (URL, String) async throws -> URL = { url, scheme in
+        try await WebAuth.run(url, callbackScheme: scheme, ephemeral: true)
+    }
 
     /// The name the other phone shows ("Add iPhone?").
     static var deviceName: String { UIDevice.current.name }
@@ -305,6 +370,45 @@ final class UnlockModel {
             await model.finishUnlock()
         } catch {
             busy = false
+            model.feedback.play(.error)
+            self.error = error.userMessage
+        }
+    }
+
+    func showReset() {
+        error = nil
+        stage = .reset
+    }
+
+    /// "Sign in again and reset": a fresh sign-in to the same account (in a browser session that does not reuse the last
+    /// one) confirms it; the core deletes the vault and makes the account's keys anew (`resetAccount`). What follows is a
+    /// new account's: `finishSso` signs in, and the new recovery code must be recorded. A closed page is no error; only
+    /// a locked account (not a takeover) can be reset.
+    func reset(_ model: AppModel) async {
+        guard !busy, case let .keysLocked(info) = model.session else { return }
+        busy = true
+        error = nil
+        defer { busy = false }
+        do {
+            let start = try await model.core.ssoBegin(serverUrl: info.serverUrl)
+            guard let url = URL(string: start.url) else { throw WebAuth.Failure.failed("The server's sign-in address is not valid.") }
+            let callback = model.demo
+                ? URL(string: "\(start.callbackScheme)://sso-callback?code=demo&state=\(start.state)")!
+                : try await browse(url, start.callbackScheme)
+            let outcome = try await model.core.resetAccount(
+                serverUrl: info.serverUrl, callbackUrl: callback.absoluteString, state: start.state, verifier: start.verifier
+            )
+            model.feedback.play(.connected)
+            stage = .choose
+            await model.finishSso(outcome)
+        } catch WebAuth.Failure.cancelled {
+            // The person closed the page: the reset stays offered, nothing changed.
+        } catch let WebAuth.Failure.failed(message) {
+            model.feedback.play(.error)
+            error = message
+        } catch WebAuth.Failure.noWindow {
+            error = "Open Reins and try again."
+        } catch {
             model.feedback.play(.error)
             self.error = error.userMessage
         }

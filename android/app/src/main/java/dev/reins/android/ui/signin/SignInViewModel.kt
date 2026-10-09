@@ -5,11 +5,13 @@ import androidx.lifecycle.viewModelScope
 import dev.reins.android.AppContainer
 import dev.reins.android.feedback.Event
 import dev.reins.android.feedback.play
+import dev.reins.android.platform.SsoPurpose
 import dev.reins.android.ui.common.userMessage
 import dev.reins.android.ui.mcp.webPage
 import dev.reins.core.AccountKeys
 import dev.reins.core.CoreException
 import dev.reins.core.SessionInfo
+import dev.reins.core.SsoOutcome
 import kotlin.coroutines.cancellation.CancellationException
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -77,24 +79,16 @@ class SignInViewModel(private val container: AppContainer) : ViewModel() {
         }
     }
 
-    /** Hands the callback to the core for the waiting sign-in; nothing happens when none waits. */
+    /**
+     * Hands the callback to the core for the waiting sign-in; nothing happens when none waits. A vault reset's callback
+     * is the Unlock screen's ([UnlockViewModel]).
+     */
     private fun finishSso() {
-        val (pending, callback) = container.ssoSignIn.take() ?: return
+        val (pending, callback) = container.ssoSignIn.take(SsoPurpose.SignIn) ?: return
         _ui.value = _ui.value.copy(busy = true, error = null)
         container.appScope.launch(Dispatchers.Main) {
             try {
-                val outcome = container.core.ssoFinish(pending.server, callback, pending.state, pending.verifier)
-                when (outcome.keys) {
-                    AccountKeys.CREATED, AccountKeys.UNLOCKED -> {
-                        container.feedback.play(Event.Connected)
-                        container.finishSignIn(outcome.session)
-                    }
-                    // Not the approval device yet: the phone that has the keys has to approve this one first.
-                    AccountKeys.LOCKED -> {
-                        container.setKeysLocked(true)
-                        container.refreshSession()
-                    }
-                }
+                container.finishSsoSignIn(container.core.ssoFinish(pending.server, callback, pending.state, pending.verifier))
                 _ui.value = SignInUi()
             } catch (e: CancellationException) {
                 throw e
@@ -159,6 +153,25 @@ class SignInViewModel(private val container: AppContainer) : ViewModel() {
             } catch (e: Exception) {
                 fail(e.userMessage())
             }
+        }
+    }
+}
+
+/**
+ * Where a sign-in through the server's SSO ends: "Continue" (`ssoFinish`), or the sign-in that confirmed a vault reset
+ * (`resetAccount`, always [AccountKeys.CREATED]). Keys made or opened here: this phone finishes the sign-in like any
+ * other (a new account's recovery code is recorded first). Keys on another phone: the Unlock screen.
+ */
+internal suspend fun AppContainer.finishSsoSignIn(outcome: SsoOutcome) {
+    when (outcome.keys) {
+        AccountKeys.CREATED, AccountKeys.UNLOCKED -> {
+            feedback.play(Event.Connected)
+            finishSignIn(outcome.session)
+        }
+        // Not the approval device yet: the phone that has the keys has to approve this one first.
+        AccountKeys.LOCKED -> {
+            setKeysLocked(true)
+            refreshSession()
         }
     }
 }

@@ -7,7 +7,8 @@ import Foundation
 /// `-demoNoModel` starts with the Autopilot model not downloaded. Any pairing code pairs a desktop app, except those
 /// starting with "BBBB", which have expired. "Continue" (passwordless sign-in) makes a new account; `-demoLocked` finds
 /// one whose keys are on another phone instead (the recovery code is `DemoData.recoveryCode`; asking the other phone
-/// works after two polls, `-demoJoinDenied` refuses). `-demoJoin` has another phone ask this one for the keys.
+/// works after two polls, `-demoJoinDenied` refuses; resetting the vault starts it over as a new account).
+/// `-demoJoin` has another phone ask this one for the keys.
 /// `-demoOtherPhone`: another phone approves for the account, and registering this one is refused
 /// (`CoreError.OtherApprovalDevice`) until the recovery code or the other phone's approval gives it a proof.
 enum DemoCore {
@@ -79,7 +80,12 @@ final class DemoReinsCore: ReinsCoreProtocol, @unchecked Sendable {
         /// Another phone approves for the account: `registerDevice` is refused until this one brings a proof.
         var approvalElsewhere = false
         var hasAccountSecret = true
+        /// What opens the account's keys; a reset makes a new one (`resetRecoveryCode`).
+        var recoveryCode = DemoData.recoveryCode
     }
+
+    /// The recovery code a reset vault gets.
+    static let resetRecoveryCode = "HV3N-Q8RT-ZL2K-M7WD-PX4C-BJ9F-E6YS-NA5G-UT3R-KC8M-WQ2H-FD7L-YP4X"
 
     private let lock = NSLock()
     private var state: State
@@ -187,6 +193,45 @@ final class DemoReinsCore: ReinsCoreProtocol, @unchecked Sendable {
         return SsoOutcome(session: info, keys: keys)
     }
 
+    /// "Reset the vault": like the core, the confirming sign-in must answer this sign-in and be the locked account's
+    /// (the demo's sign-in is always `DemoData.email`). The vault empties (requests, integrations, grants, activity,
+    /// Autopilot's settings), the computers and AIs must be connected again, and the account gets new keys, as a new
+    /// one does, with a new recovery code (`resetRecoveryCode`). This phone keeps what opens them, and nobody else
+    /// approves.
+    func resetAccount(serverUrl: String, callbackUrl: String, state: String, verifier: String) async throws -> SsoOutcome {
+        try await latency(0.6)
+        let answered = URLComponents(string: callbackUrl)?.queryItems?.first { $0.name == "state" }?.value
+        guard state == "demo-state", answered == state, callbackUrl.hasPrefix("com.reins2fa.app://sso-callback") else {
+            throw CoreError.Invalid(reason: "The sign-in did not come back as expected. Try again.")
+        }
+        return try locked { s -> SsoOutcome in
+            guard let current = s.session else { throw CoreError.NotLoggedIn }
+            guard current.email.lowercased() == DemoData.email.lowercased() else {
+                throw CoreError.Invalid(reason: "You signed in as \(DemoData.email). Sign in as \(current.email) to reset its vault.")
+            }
+            s.pending = []
+            s.pendingVersion += 1
+            s.views = [:]
+            s.accounts = []
+            s.accountStatuses = [:]
+            s.emails = [:]
+            s.mcp = []
+            s.grants = []
+            s.activity = []
+            s.suggestions = [:]
+            s.apGlobal = ApRow()
+            s.apConnections = [:]
+            s.joins = [:]
+            s.joinPolls = nil
+            s.connections = []
+            s.keys = .unlocked
+            s.hasAccountSecret = true
+            s.approvalElsewhere = false
+            s.recoveryCode = DemoReinsCore.resetRecoveryCode
+            return SsoOutcome(session: current, keys: .created)
+        }
+    }
+
     /// Like the real core: a phone that keeps the keys is `unlocked` (`created` only ever answers the sign-in).
     func accountKeys() async throws -> AccountKeys {
         try locked { s in
@@ -195,11 +240,13 @@ final class DemoReinsCore: ReinsCoreProtocol, @unchecked Sendable {
         }
     }
 
-    /// The demo's recovery code is `DemoData.recoveryCode`; "correct horse battery staple" stands for a master password.
+    /// The demo's recovery code is `DemoData.recoveryCode` (`resetRecoveryCode` after a reset); "correct horse battery
+    /// staple" stands for a master password.
     func unlockAccount(codeOrPassword: String) async throws {
         try await latency(0.5)
         let clean = codeOrPassword.uppercased().filter { $0.isLetter || $0.isNumber }
-        guard clean == DemoData.recoveryCode.filter({ $0 != "-" }) || codeOrPassword == "correct horse battery staple" else {
+        let code = locked { $0.recoveryCode }
+        guard clean == code.filter({ $0 != "-" }) || codeOrPassword == "correct horse battery staple" else {
             throw CoreError.Invalid(reason: "That recovery code does not open this account.")
         }
         locked { s in
@@ -214,7 +261,7 @@ final class DemoReinsCore: ReinsCoreProtocol, @unchecked Sendable {
             guard s.session != nil else { throw CoreError.NotLoggedIn }
             guard s.hasAccountSecret else { throw CoreError.Invalid(reason: "This account has no recovery code: it was made with a master password.") }
             guard s.keys != .locked else { throw CoreError.Invalid(reason: "This phone cannot open the account yet.") }
-            return DemoData.recoveryCode
+            return s.recoveryCode
         }
     }
 
