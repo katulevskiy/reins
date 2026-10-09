@@ -96,6 +96,21 @@ final class WidgetsTests: XCTestCase {
         XCTAssertNil(IntentBridge.lockdownTarget(on: false, mode: .bypass, base: .auto), "off when not locked down changes nothing")
     }
 
+    @MainActor
+    func testPauseAndResumeAreLockdownOnAndOff() async throws {
+        let model = AppModel(core: DemoReinsCore(signedIn: true, syncCap: 0.3), feedback: NoFeedback.shared, authenticator: TrustingAuthenticator(), demo: true)
+        await model.refreshSession()
+        IntentBridge.model = model
+        defer { IntentBridge.model = nil }
+        let nothingToResume = try await IntentBridge.endLockdown()
+        XCTAssertFalse(nothingToResume, "not paused: nothing to resume")
+        try await IntentBridge.setLockdown(true)
+        XCTAssertEqual(model.autopilot?.mode, .lockdown)
+        let resumed = try await IntentBridge.endLockdown()
+        XCTAssertTrue(resumed)
+        XCTAssertNotEqual(model.autopilot?.mode, .lockdown)
+    }
+
     // MARK: Activity
 
     func testAgo() {
