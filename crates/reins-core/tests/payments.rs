@@ -317,7 +317,7 @@ async fn a_purchase_shows_like_a_receipt_and_pays_with_the_vault_card_once_appro
     assert_eq!(p.addresses[0].lines, ["Anna Lee", "12 Harbour Street", "0150 Oslo", "NO"]);
     assert!(p.methods.iter().any(|m| m.id == "card:card1" && m.last4.as_deref() == Some("1111")));
     assert!(p.warnings.iter().any(|w| w.contains("first purchase at amazon.com")), "{:?}", p.warnings);
-    assert_eq!(p.limit_methods, ["merchant_account"], "a vault card never goes in a spend limit");
+    assert!(p.limit_methods.is_empty(), "only a virtual card goes in a spend limit: {:?}", p.limit_methods);
 
     // A standing permission is refused; the purchase screen's approval pays.
     let standing = env
@@ -408,14 +408,19 @@ async fn a_virtual_card_is_made_for_the_cart_capped_and_closed_when_the_purchase
     assert!(open.purchases[0].card_open);
     assert_eq!(open.purchases[0].card_last4.as_deref(), Some("1234"));
 
+    // Privacy.com says the card was never charged.
+    Mock::given(method("GET"))
+        .and(path("/transactions"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({"data": []})))
+        .with_priority(1)
+        .mount(&env.privacy)
+        .await;
     let (rid, _) = ask(&env, "purchase_complete", &json!({"purchase_id": id, "status": "failed"})).await;
     assert_eq!(answer(&env, &rid).await["result"]["data"]["virtual_card"], "closed");
     assert_eq!(privacy_requests(&env, "PATCH").await, [json!({"state": "CLOSED"})]);
     let spending = env.core.payments_spending(0).await.unwrap();
     assert!(!spending.purchases[0].card_open);
-    assert_eq!(spending.purchases[0].charged_by, ["AMZN Mktp US*2K3AB1CD2"]);
-    assert_eq!(spending.purchases[0].mismatch, None, "Amazon's charges are AMZN");
-    assert_eq!(spending.totals[0].minor, 0, "a failed purchase spends nothing");
+    assert_eq!(spending.totals[0].minor, 0, "a failed purchase whose card was never charged spends nothing");
     nothing_kept_holds_a_card_number(&env).await;
 
     // A virtual card cannot pay in another currency: the AI is told at once.
@@ -478,6 +483,15 @@ async fn a_spend_limit_approves_what_it_covers_and_asks_about_the_rest() {
         ..limit.clone()
     });
     assert!(env.core.approve_purchase(first.clone(), with_card_limit).await.is_err(), "never a vault card");
+    let mut with_store_limit = choose("virtual_card");
+    with_store_limit.limit = Some(SpendLimitInput {
+        method: "merchant_account".into(),
+        ..limit.clone()
+    });
+    assert!(
+        env.core.approve_purchase(first.clone(), with_store_limit).await.is_err(),
+        "nothing caps the store's saved card"
+    );
     let mut with_limit = choose("virtual_card");
     with_limit.limit = Some(limit);
     env.core.approve_purchase(first, with_limit).await.unwrap();

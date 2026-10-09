@@ -97,7 +97,7 @@ pub struct SpendLimit {
     /// Store domains; empty: every store.
     #[serde(default)]
     pub merchants: Vec<String>,
-    /// `virtual_card` or `merchant_account`.
+    /// `virtual_card`: the only method whose cap the provider enforces.
     pub method: String,
     pub currency: String,
     pub per_purchase: i64,
@@ -256,9 +256,12 @@ pub struct Purchase {
     pub reported_at: Option<i64>,
     #[serde(default)]
     pub card: Option<CardRef>,
-    /// Who charged the virtual card, as the card network names them.
+    /// Who charged the virtual card, as the card network names them…
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub charged_by: Vec<String>,
+    /// …once the provider was asked.
+    #[serde(default)]
+    pub charges_read: bool,
     /// A charge by someone who does not look like the store that was approved; spend limits for this AI stop until
     /// the user has seen it.
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -276,11 +279,18 @@ impl Purchase {
 }
 
 impl Purchase {
-    /// What it counts for in budgets and limits.
+    /// What it counts for in budgets and limits: the approved total, or what the AI says was charged when that is
+    /// more. What the AI reports never lowers it: a purchase it calls failed or cancelled stops counting only when it
+    /// did not pay with a virtual card, or when the provider says that card was never charged.
     #[must_use]
     pub fn spent(&self) -> i64 {
-        if self.status.spends() {
-            self.charged.unwrap_or(self.total)
+        let counted = self.charged.unwrap_or(0).max(self.total);
+        let unpaid = match &self.card {
+            Some(_) => self.charges_read && self.charged_by.is_empty(),
+            None => true,
+        };
+        if self.status.spends() || !unpaid {
+            counted
         } else {
             0
         }
@@ -359,6 +369,7 @@ mod tests {
             reported_at: None,
             card: None,
             charged_by: Vec::new(),
+            charges_read: false,
             mismatch: None,
             mismatch_seen: false,
         }
@@ -368,6 +379,24 @@ mod tests {
     fn spending_counts_what_was_approved_or_charged_in_the_window() {
         let mut charged = purchase("c", 900, "claude", "amazon.com", 1_000, PurchaseStatus::Completed);
         charged.charged = Some(1_200);
+        let mut underreported = purchase("u", 900, "gpt", "amazon.com", 1_000, PurchaseStatus::Completed);
+        underreported.charged = Some(1);
+        let mut failed_but_charged = purchase("fc", 900, "gpt", "amazon.com", 400, PurchaseStatus::Failed);
+        failed_but_charged.card = Some(CardRef {
+            provider: "privacy".into(),
+            sandbox: false,
+            token: "t".into(),
+            last4: "1234".into(),
+            limit: 500,
+            closed_at: None,
+        });
+        assert_eq!(underreported.spent(), 1_000, "a lower charge never lowers what counts");
+        assert_eq!(failed_but_charged.spent(), 400, "the provider has not said the card went unused");
+        failed_but_charged.charges_read = true;
+        failed_but_charged.charged_by = vec!["AMZN".into()];
+        assert_eq!(failed_but_charged.spent(), 400, "charged after all");
+        failed_but_charged.charged_by.clear();
+        assert_eq!(failed_but_charged.spent(), 0, "never charged");
         let ledger = vec![
             purchase("a", 1_000, "claude", "smile.amazon.com", 500, PurchaseStatus::Approved),
             charged,

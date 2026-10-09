@@ -42,7 +42,8 @@ Choose which of these an agent may use (Integrations → Payments):
   number cannot be taken back once handed over, so a card from the vault is always asked for; no spend limit and no
   Autopilot mode approves it.
 - **Saved at the store.** You are signed in at the store and it has your card (Amazon, for example). The agent gets
-  your approval and the mandate, nothing else, and places the order with what the store has on file.
+  your approval and the mandate, nothing else, and places the order with what the store has on file. Nothing caps
+  what it then checks out, so a spend limit never approves this either.
 - **Pay on this phone.** The agent prepares the cart and gives its checkout page. When you approve, the phone opens
   that page in the browser and you pay there yourself, with Google Pay, Apple Pay or anything else the store offers.
   The agent is told the purchase was handed to you, and gets nothing to pay with. The page must be on the store's own
@@ -103,24 +104,28 @@ From the approval you can also create a spend limit for purchases like this one 
 ## Spend limits
 
 A spend limit lets one AI buy without asking you, within amounts you choose: for example "Claude may spend up to 25.00
-a day at amazon.com, with the Privacy.com card, for 7 days". A limit names:
+a day at amazon.com, with the Privacy.com card, for 7 days". It always pays with a virtual card, the only method whose
+cap the card itself enforces. A limit names:
 
 - the AI connection it is for (one connection, never every AI);
 - the stores it covers (domains; a subdomain counts as its domain), or every store;
-- the payment method: a virtual card or "saved at the store";
 - the most per purchase, and the most per day, week or month (the last 24 hours, 7 days or 30 days);
 - the currency, and when it ends (at most 90 days).
 
-A purchase is approved on its own only when a limit covers all of it: the AI, the store, the method, the currency,
-the per-purchase amount, and what this AI already spent at those stores in the period plus this purchase. The request
-must name the address (or say nothing is shipped) and the payment method. Anything else, or anything above a limit,
-asks you. Lockdown stops limits too.
+A purchase is approved on its own only when a limit covers all of it: the AI, the store, the virtual card, the
+currency, the per-purchase amount, and what this AI already spent at those stores in the period plus this purchase.
+The request must name the address (or say nothing is shipped) and the virtual card. Anything else, or anything above a
+limit, asks you. Lockdown stops limits too.
+
+What counts as spent is the approved total, or what the agent reports was charged when that is more. A report never
+lowers it: a purchase the agent calls failed stops counting only when Privacy.com says its card was never charged.
 
 The store a limit names is the one the agent says it buys from. A virtual card locks to whichever store charges it
 first, so before a limit approves anything the phone reads who charged that AI's earlier cards. A charge by a name
-that does not look like the approved store ("CHEAP WATCHES LTD" on a card made for amazon.com; Amazon's own charges
-read "AMZN") closes the card at once, shows on the next approval and in Spending, and stops that AI's limits until you
-have looked at it. The amounts are what the card itself enforces.
+that does not look like the approved store's domain ("CHEAP WATCHES LTD" on a card made for amazon.com; Amazon's own
+charges read "AMZN") closes the card at once, shows on the next approval and in Spending, and stops that AI's limits
+until you have looked at it. When the charges cannot be read, limits approve nothing. The amounts are what the card
+itself enforces.
 
 ## Budgets
 
@@ -148,8 +153,9 @@ provider's card id and its last four digits only.
 ## Autopilot and standing permissions
 
 Purchases are part of the [hard floor](autopilot.md#the-hard-floor): Autopilot never approves one in any mode
-(Bypass included) and a standing permission never covers one. The only approvals that do not come from you are
-those of a spend limit you set. Listing payment methods and addresses is an ordinary list.
+(Bypass included), one-tap approvals and "Approve all" skip them, and a standing permission never covers one. The only
+approvals that do not come from you are those of a spend limit you set. Listing payment methods and addresses is an
+ordinary list.
 
 ## The signed mandate
 

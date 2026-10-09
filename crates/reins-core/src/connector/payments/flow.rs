@@ -156,7 +156,7 @@ impl Engine {
             && (!limit_may_use(&limit.method) || !plan.methods.iter().any(|m| m.id == limit.method))
         {
             return Err(CoreError::invalid(
-                "A spend limit can pay with a virtual card or the store's saved payment method only.",
+                "A spend limit can pay with a virtual card only: its cap is enforced by the card.",
             ));
         }
         let approval = Approval {

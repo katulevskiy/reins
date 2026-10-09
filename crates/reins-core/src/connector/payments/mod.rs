@@ -286,11 +286,13 @@ impl Plan {
     }
 }
 
-/// Whether a spend limit may approve purchases paid this way: never with a card from the vault, whose number cannot
-/// be taken back or capped once handed over, nor on the phone, which needs the user anyway.
+/// Whether a spend limit may approve purchases paid this way: only with a virtual card, whose cap the provider enforces.
+/// Never with a card from the vault, whose number cannot be taken back or capped once handed over, nor with the
+/// store's saved payment method, which nothing caps (the agent could check out more than it asked for), nor on the
+/// phone, which needs the user anyway.
 #[must_use]
 pub fn limit_may_use(method: &str) -> bool {
-    matches!(method, VIRTUAL_CARD | MERCHANT_ACCOUNT)
+    method == VIRTUAL_CARD
 }
 
 /// Proof that the caller holds [`Payments::purchases`]: what changes the ledger takes one.
@@ -397,13 +399,14 @@ fn check_urls(cart: &Cart) -> Result<(), CoreError> {
 }
 
 /// Whether a charge's merchant name ("AMZN Mktp US*2K3", "SQ *BLUE BOTTLE") plausibly is the approved store: a word of
-/// it is in the store's domain or in the name it gave. Card networks shorten names; Amazon's are "AMZN".
-fn charge_fits(descriptor: &str, merchant: &str, domain: &str) -> bool {
+/// it is in the store's domain. Never the store's name, which the AI gave. Card networks shorten names; Amazon's are
+/// "AMZN".
+fn charge_fits(descriptor: &str, domain: &str) -> bool {
     let lower = descriptor.to_ascii_lowercase();
     if domain.split('.').any(|label| label == "amazon") && (lower.contains("amzn") || lower.contains("amazon")) {
         return true;
     }
-    name_fits_domain(descriptor, domain) || name_fits_domain(descriptor, merchant)
+    name_fits_domain(descriptor, domain)
 }
 
 impl Payments {
@@ -1077,6 +1080,7 @@ impl Payments {
             reported_at: None,
             card: card_ref.clone(),
             charged_by: Vec::new(),
+            charges_read: false,
             mismatch: None,
             mismatch_seen: false,
         });
@@ -1205,7 +1209,7 @@ impl Payments {
         };
         let key = self.provider_key(&card.provider)?;
         let names = self.issuer(card.sandbox).charged_by(&key, &card.token).await?;
-        let other = names.iter().find(|n| !charge_fits(n, &p.merchant, &p.domain)).filter(|_| p.mismatch.is_none());
+        let other = names.iter().find(|n| !charge_fits(n, &p.domain)).filter(|_| p.mismatch.is_none());
         let changed = names != p.charged_by || other.is_some();
         if let Some(other) = other {
             p.mismatch = Some(other.clone());
@@ -1220,6 +1224,7 @@ impl Payments {
                 _ => false,
             };
         p.charged_by = names;
+        p.charges_read = true;
         Ok(changed || closed)
     }
 
@@ -1452,7 +1457,7 @@ impl Payments {
     ) -> Result<SpendLimitView, CoreError> {
         if !limit_may_use(&input.method) {
             return Err(CoreError::invalid(
-                "A spend limit can pay with a virtual card or the store's saved payment method only.",
+                "A spend limit can pay with a virtual card only: its cap is enforced by the card.",
             ));
         }
         let currency = normalize_currency(&input.currency).map_err(CoreError::invalid)?;
@@ -1775,8 +1780,8 @@ mod tests {
 
     #[test]
     fn only_capped_methods_may_be_approved_by_a_limit() {
-        assert!(limit_may_use(VIRTUAL_CARD) && limit_may_use(MERCHANT_ACCOUNT));
-        assert!(!limit_may_use("card:abc") && !limit_may_use(PAY_ON_PHONE));
+        assert!(limit_may_use(VIRTUAL_CARD));
+        assert!(!limit_may_use(MERCHANT_ACCOUNT) && !limit_may_use("card:abc") && !limit_may_use(PAY_ON_PHONE));
     }
 
     #[test]

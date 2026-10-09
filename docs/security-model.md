@@ -58,8 +58,8 @@ Secrets released to the desktop app (`reins run`, the API proxy) and SSH signatu
 permission for one item, or for one key on one server, if you choose to give one. Autopilot never releases them on its
 own.
 
-Purchases ([Payments](payments.md)) are approved by you each time, or by a spend limit you set for one AI, one
-payment method and an amount; never by a standing permission or Autopilot. What pays leaves the phone only with an
+Purchases ([Payments](payments.md)) are approved by you each time, or by a spend limit you set for one AI, paying
+with a virtual card capped by its provider; never by a standing permission or Autopilot. What pays leaves the phone only with an
 approved purchase, for that cart: a virtual card made for it and capped at its total (the safest), a card from the
 vault (always asked for, never by a spend limit), or nothing at all (the store's saved payment method, or you pay on
 the phone). The server relays card details in memory like any answer and never writes them down; through the desktop
