@@ -96,25 +96,34 @@ pub enum SignedOut {
     LocalOnly(String),
 }
 
-/// Ends this computer's connection on the server (when it can be reached), then forgets the session here.
+/// Ends this computer's connection on the server (RFC 7009 revocation of its refresh token, else its access token)
+/// when it can be reached, then forgets the session here.
 pub async fn sign_out(paths: &Paths) -> Result<SignedOut, String> {
-    if logged_in_server(paths).is_none() {
+    let Some(session) = load_session(paths)? else {
         return Ok(SignedOut::NotLoggedIn);
-    }
-    let revoked = match super::client::DesktopClient::new(paths) {
-        Ok(client) => match tokio::time::timeout(Duration::from_secs(15), client.revoke()).await {
-            Ok(Ok(())) => Ok(()),
-            Ok(Err(LinkError::NotFound)) => Err("this server cannot remove connections yet".to_owned()),
-            Ok(Err(LinkError::LoggedOut(m) | LinkError::Failed(m))) => Err(m),
-            Err(_) => Err("the server did not answer".to_owned()),
-        },
-        Err(e) => Err(e),
     };
+    let revoked = revoke(&session).await;
     logout(paths)?;
     Ok(match revoked {
         Ok(()) => SignedOut::Revoked,
         Err(why) => SignedOut::LocalOnly(why),
     })
+}
+
+async fn revoke(session: &Session) -> Result<(), String> {
+    let http = crate::http::client(Some(Duration::from_secs(15)))?;
+    let token = session.refresh_token.as_deref().unwrap_or(&session.access_token);
+    let resp = http
+        .post(format!("{}/reins/oauth/revoke", session.server))
+        .form(&[("token", token), ("client_id", session.client_id.as_str())])
+        .send()
+        .await
+        .map_err(|e| format!("cannot reach {}: {}", session.server, e.without_url()))?;
+    match resp.status() {
+        s if s.is_success() => Ok(()),
+        reqwest::StatusCode::NOT_FOUND => Err("this server cannot revoke connections yet".to_owned()),
+        s => Err(format!("the server answered {s}")),
+    }
 }
 
 /// The server the app is logged in to, if any.

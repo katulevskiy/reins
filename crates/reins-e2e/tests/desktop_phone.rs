@@ -323,8 +323,13 @@ async fn the_phone_approves_git_reads_and_pushes_and_refuses_a_force_push() {
         }
     }
     // ---- reins logout / uninstall: the connection ends on the server, not just here ----
+    let kept = std::fs::read(paths.session_file()).unwrap();
     let out = reins_desktop::server::oauth::sign_out(&paths).await.unwrap();
     assert_eq!(out, reins_desktop::server::oauth::SignedOut::Revoked);
     assert!(reins_desktop::server::oauth::logged_in_server(&paths).is_none());
+    // A copy of the old session is worthless now: its access and refresh tokens died with the connection.
+    reins_desktop::config::write_private(&paths.session_file(), &kept).unwrap();
+    let revoked = reins_desktop::server::client::DesktopClient::new(&paths).unwrap().phone().await;
+    assert!(matches!(revoked, Err(reins_desktop::server::LinkError::LoggedOut(_))), "{revoked:?}");
     assert!(!server.log().contains("panicked"), "server log: {}", server.log());
 }

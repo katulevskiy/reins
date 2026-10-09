@@ -79,12 +79,6 @@ impl DesktopClient {
             .map_err(|e| LinkError::Failed(format!("unexpected answer from the Reins server: {e}")))
     }
 
-    /// Ends this computer's connection on the server (the phone's list no longer shows it). `LinkError::NotFound` from
-    /// a server too old to do it.
-    pub async fn revoke(&self) -> Result<(), LinkError> {
-        self.send_raw(|server| self.http.delete(format!("{server}/reins/desktop/connection"))).await.map(drop)
-    }
-
     async fn send(&self, build: impl Fn(&str) -> reqwest::RequestBuilder) -> Result<CallAnswer, LinkError> {
         parse_answer(&self.send_raw(build).await?)
     }
