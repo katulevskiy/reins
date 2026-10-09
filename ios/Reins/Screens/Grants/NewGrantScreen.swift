@@ -52,6 +52,9 @@ struct NewGrantScreen: View {
 
     private enum Field { case parties, subject }
 
+    /// A grant made here is for mail: the vault and the other services' accounts are not offered.
+    private var mailAccounts: [AccountView] { model.accounts.filter { $0.service == "gmail" } }
+
     var body: some View {
         let draft = form.draft
         ScrollView {
@@ -76,12 +79,12 @@ struct NewGrantScreen: View {
                 }
 
                 section("On which account?") {
-                    if model.accounts.isEmpty {
+                    if mailAccounts.isEmpty {
                         hint("No Gmail account is connected yet. Add one under Integrations.")
                             .accessibilityIdentifier("noAccounts")
                     }
                     ChipFlow {
-                        ForEach(model.accounts, id: \.account) { a in
+                        ForEach(mailAccounts, id: \.account) { a in
                             OptionChip(a.account, selected: draft.account == a.account) {
                                 form.edit { $0.account = a.account }
                             }
@@ -205,7 +208,7 @@ struct NewGrantScreen: View {
         .onChange(of: model.connections.map(\.id), initial: true) { _, ids in
             if form.draft.connectionId == nil, ids.count == 1 { form.edit { $0.connectionId = ids[0] } }
         }
-        .onChange(of: model.accounts.map(\.account), initial: true) { _, accounts in
+        .onChange(of: mailAccounts.map(\.account), initial: true) { _, accounts in
             if form.draft.account == nil, accounts.count == 1 { form.edit { $0.account = accounts[0] } }
         }
         .onChange(of: form.finished) { _, done in

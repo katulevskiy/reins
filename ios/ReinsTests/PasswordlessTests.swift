@@ -172,7 +172,7 @@ final class PasswordlessTests: XCTestCase {
         let core = DemoReinsCore(signedIn: false, syncCap: 0.3, approvalElsewhere: true)
         let app = model(core, demo: false)
         await app.refreshSession()
-        let info = try await core.login(serverUrl: DemoData.server, email: "takeover-\(UUID().uuidString)@example.com", password: "pw", totp: nil)
+        let info = try await core.login(serverUrl: DemoData.server, email: "takeover-\(Int.random(in: 100_000...999_999))@example.com", password: "pw", totp: nil)
         await app.finishSignIn(info)
         XCTAssertEqual(app.session, .otherApprovalDevice(info))
         XCTAssertFalse(app.onboarding)

@@ -237,6 +237,17 @@ enum ServiceCopy {
         }
     }
 
+    /// Whether Google has verified Reins's use of Gmail, Calendar and Contacts. Until it has, Google's consent screen
+    /// warns that the app is not verified; set this once the verification is through.
+    static let googleAppVerified = false
+
+    /// What adding a Google account looks like, said before the button so Google's screens surprise no one.
+    static var googleSignInNote: String {
+        googleAppVerified
+            ? "Google asks which account, then what Reins may do with it."
+            : "Google asks which account, then what Reins may do with it. While Google reviews Reins, it first warns \"Google hasn't verified this app\": tap Advanced, then Go to Reins."
+    }
+
     /// The small print at the bottom of a service's page; empty for none.
     static func fineprint(_ service: ServiceView) -> String {
         switch service.service {

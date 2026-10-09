@@ -19,6 +19,33 @@ struct SignInState: Equatable {
     }
 }
 
+/// The server of the latest sign-in: the welcome offers it again after signing out (a server of one's own).
+enum LastServer {
+    private static let key = "signin.lastServer"
+
+    static var value: String? {
+        get { AppGroup.defaults.string(forKey: key) }
+        set { AppGroup.defaults.set(newValue, forKey: key) }
+    }
+
+    /// The address to show on the welcome, when it is not the hosted server.
+    static var toOffer: String? {
+        guard let last = value?.trimmingCharacters(in: .whitespaces), !last.isEmpty,
+              last.trimmingCharacters(in: CharacterSet(charactersIn: "/")).lowercased() != SignInState.defaultServer else { return nil }
+        return last
+    }
+}
+
+extension AppModel {
+    /// `<server>/mcp`, the address AI clients connect to.
+    var mcpAddress: String {
+        guard case let .signedIn(info) = session else { return SignInState.defaultServer + "/mcp" }
+        var server = info.serverUrl
+        while server.hasSuffix("/") { server.removeLast() }
+        return server + "/mcp"
+    }
+}
+
 /// What creating an account checks before the server does (it checks the length again).
 enum NewAccountRules {
     static let minPasswordLength = 12
@@ -47,6 +74,8 @@ struct SignInScreen: View {
     @State private var sso = SsoSignIn()
     @State private var otherServer = false
     @State private var server = SignInState.defaultServer
+    /// The server said it has no sign-in page (no SSO): "Continue" would only end on an error.
+    @State private var noBrowserSignIn = false
     @FocusState private var serverFocused: Bool
 
     var body: some View {
@@ -76,6 +105,19 @@ struct SignInScreen: View {
         .animation(.smooth(duration: 0.25), value: sso.error)
         .onAppear {
             if model.demo && server == SignInState.defaultServer { server = DemoData.server }
+            // Signed out of a server of one's own: offer it again rather than the hosted one.
+            if !model.demo, server == SignInState.defaultServer, let last = LastServer.toOffer {
+                server = last
+                otherServer = true
+            }
+        }
+        // Asked once the address stops changing: whether "Continue" works there at all.
+        .task(id: serverUrl) {
+            try? await Task.sleep(for: .milliseconds(400))
+            guard !Task.isCancelled, serverUrl.count > "https://".count else { return }
+            let info = try? await model.core.serverInfo(serverUrl: serverUrl)
+            guard !Task.isCancelled else { return }
+            noBrowserSignIn = info?.browserSignIn == false
         }
     }
 
@@ -105,29 +147,37 @@ struct SignInScreen: View {
                     .accessibilityIdentifier("server")
                     .transition(.opacity.combined(with: .move(edge: .top)))
             }
-            Button {
-                serverFocused = false
-                Task { await sso.run(model, feedback: feedback, server: serverUrl) }
-            } label: {
-                HStack(spacing: 10) {
-                    if sso.busy { ProgressView().tint(Palette.background) }
-                    Text("Continue")
+            if noBrowserSignIn {
+                Text("This server signs in with an email address and a master password.")
+                    .font(RFont.sans(13.5))
+                    .foregroundStyle(Palette.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .accessibilityIdentifier("passwordFormsNote")
+            } else {
+                Button {
+                    serverFocused = false
+                    Task { await sso.run(model, feedback: feedback, server: serverUrl) }
+                } label: {
+                    HStack(spacing: 10) {
+                        if sso.busy { ProgressView().tint(Palette.background) }
+                        Text("Continue")
+                    }
                 }
+                .buttonStyle(CapsuleButtonStyle(kind: .primary))
+                .disabled(sso.busy || serverUrl.count <= "https://".count)
+                .accessibilityIdentifier("continue")
+                Text(customServer ? "Continue through your server's sign-in page." : "Sign in or create an account on the secure sign-in page.")
+                    .font(RFont.sans(13.5))
+                    .foregroundStyle(Palette.tertiary)
+                    .fixedSize(horizontal: false, vertical: true)
             }
-            .buttonStyle(CapsuleButtonStyle(kind: .primary))
-            .disabled(sso.busy || serverUrl.count <= "https://".count)
-            .accessibilityIdentifier("continue")
-            Text(customServer ? "Continue through your server's sign-in page." : "Sign in or create an account on the secure sign-in page.")
-                .font(RFont.sans(13.5))
-                .foregroundStyle(Palette.tertiary)
-                .fixedSize(horizontal: false, vertical: true)
             if let error = sso.error {
                 FormBanner(text: error).transition(.opacity)
             }
-            if customServer {
+            if customServer || noBrowserSignIn {
                 // A server of your own may have no sign-in page: its accounts use a master password.
                 Button("Sign in with a master password") { mode = .signIn }
-                    .buttonStyle(CapsuleButtonStyle(kind: .secondary))
+                    .buttonStyle(CapsuleButtonStyle(kind: noBrowserSignIn ? .primary : .secondary))
                     .disabled(sso.busy)
                     .padding(.top, 8)
                     .accessibilityIdentifier("signInChoice")

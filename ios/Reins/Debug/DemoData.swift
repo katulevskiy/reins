@@ -27,12 +27,12 @@ enum DemoData {
 
     static func connections(_ now: Int64) -> [ConnectionView] {
         [
-            ConnectionView(id: "c1", label: "Claude", clientHost: "claude.ai", createdAt: now - 86_400 * 40, lastUsedAt: now - 60, icon: "claude"),
-            ConnectionView(id: "c2", label: "My ChatGPT", clientHost: "chatgpt.com", createdAt: now - 86_400 * 21, lastUsedAt: now - 120, icon: "openai"),
-            ConnectionView(id: "c3", label: "Hermes agent", clientHost: "hermes.local", createdAt: now - 86_400 * 9, lastUsedAt: now - 7_200, icon: nil),
-            ConnectionView(id: "c4", label: "notes-bot", clientHost: "notes.example.com", createdAt: now - 86_400 * 5, lastUsedAt: now - 3_600, icon: nil),
-            ConnectionView(id: "c5", label: "Cursor", clientHost: "cursor.com", createdAt: now - 86_400 * 3, lastUsedAt: now - 1_800, icon: "cursor"),
-            ConnectionView(id: "c6", label: desktop, clientHost: "laptop", createdAt: now - 86_400 * 2, lastUsedAt: now - 300, icon: nil),
+            ConnectionView(id: "c1", label: "Claude", clientHost: "claude.ai", createdAt: now - 86_400 * 40, lastUsedAt: now - 60, icon: "claude", keyFingerprint: nil),
+            ConnectionView(id: "c2", label: "My ChatGPT", clientHost: "chatgpt.com", createdAt: now - 86_400 * 21, lastUsedAt: now - 120, icon: "openai", keyFingerprint: nil),
+            ConnectionView(id: "c3", label: "Hermes agent", clientHost: "hermes.local", createdAt: now - 86_400 * 9, lastUsedAt: now - 7_200, icon: nil, keyFingerprint: nil),
+            ConnectionView(id: "c4", label: "notes-bot", clientHost: "notes.example.com", createdAt: now - 86_400 * 5, lastUsedAt: now - 3_600, icon: nil, keyFingerprint: nil),
+            ConnectionView(id: "c5", label: "Cursor", clientHost: "cursor.com", createdAt: now - 86_400 * 3, lastUsedAt: now - 1_800, icon: "cursor", keyFingerprint: nil),
+            ConnectionView(id: "c6", label: desktop, clientHost: "laptop", createdAt: now - 86_400 * 2, lastUsedAt: now - 300, icon: nil, keyFingerprint: "4821 9930"),
         ]
     }
 
@@ -45,7 +45,56 @@ enum DemoData {
             kind: .request, id: view.requestId, title: title, subtitle: subtitle, createdAt: view.createdAt,
             connectionId: view.connectionId, connectionLabel: view.connectionLabel, action: view.action, count: view.count,
             service: view.service, account: view.account, waitUntil: view.waitUntil, op: view.op, opTitle: view.opTitle,
-            suggestion: suggestion
+            suggestion: suggestion, headline: view.headline, quick: view.quick?.fromNotification ?? false
+        )
+    }
+
+    /// The headline and the one-tap answers, as the core's `quick::decorate` words them for these samples: nothing for
+    /// what is asked every time, Approve from the notification unless something looks like a code, and "allow for a
+    /// while" for the same target (`repeats` earlier identical approvals offer 8 hours instead of 1).
+    static func decorated(_ v: ApprovalView, repeats: UInt32 = 0) -> ApprovalView {
+        var v = v
+        let shared = v.messages.filter { !$0.sensitive }.count
+        let held = v.messages.count - shared == 0 ? "" : " One that looks like a code or a password stays private unless you tick it."
+        let narrow = v.resources.filter { !$0.wider }.map(\.label)
+        let emails = shared == 1 ? "1 email" : "\(shared) emails"
+        v.headline = switch v.kind {
+        case .search: "\(v.connectionLabel) gets the \(emails) found for \"\(v.query ?? "")\".\(held)"
+        case .read: "\(v.connectionLabel) gets the full text of \(emails).\(held)"
+        case .send: "An email to \(v.email?.to.first ?? "") goes out from \(v.account ?? "your Gmail")."
+        case .grant: "\(v.connectionLabel) may \(v.grant?.summary ?? "") without asking you."
+        case .accounts: "\(v.connectionLabel) sees the Gmail addresses you tick, nothing in them."
+        case .fetch: "\(v.connectionLabel) gets \(shared == 1 ? "1 item" : "\(shared) items") from \(narrow.joined(separator: " and ")).\(held)"
+        case .write:
+            if let m = v.mcp { "\(v.connectionLabel) runs \(m.title) on \(m.serverName)." }
+            else if let a = v.ask { "The desktop app gets a yes to: \(a.question)" }
+            else { v.preview.first.map { $0.hasSuffix(".") ? $0 : $0 + "." } ?? "" }
+        }
+        let floor = v.kind == .grant || v.kind == .accounts || v.secrets != nil || v.ssh != nil || v.noStanding
+            || v.mcp?.destructive == true || v.git?.refs.contains { $0.force || $0.forceUnknown || $0.change == "delete" } == true
+        guard !floor else { return v }
+        let allow: (GrantScopeChoice, String)? = switch v.kind {
+        case .search, .read: (scope(allMail: true), "searching and reading \(v.account ?? "your Gmail")")
+        case .send: v.email.map { e in (scope(recipients: e.to + e.cc), "emails to \((e.to + e.cc).joined(separator: " and "))") }
+        case .fetch, .write:
+            narrow.isEmpty ? nil : (scope(resources: v.resources.filter { !$0.wider }.map(\.id)), v.kind == .fetch
+                ? "reading \(narrow.joined(separator: " and "))"
+                : v.mcp.map { "\($0.title) on \($0.serverName)" } ?? "\(v.opTitle.prefix(1).lowercased() + v.opTitle.dropFirst()): \(narrow.joined(separator: " and "))")
+        case .grant, .accounts: nil
+        }
+        v.quick = QuickApproval(
+            fromNotification: !v.messages.contains(where: \.sensitive),
+            allow: allow.map { StandingGrant(durationSecs: repeats >= 2 ? 28_800 : 3_600, maxUses: nil, scope: $0.0) },
+            allowWhat: allow?.1 ?? "",
+            repeats: repeats
+        )
+        return v
+    }
+
+    private static func scope(allMail: Bool = false, recipients: [String] = [], resources: [String] = []) -> GrantScopeChoice {
+        GrantScopeChoice(
+            allMail: allMail, selectedMessagesOnly: false, senderAddresses: [], senderDomains: [], subjectPattern: nil,
+            recipientAddresses: recipients, recipientDomains: [], resources: resources, classes: []
         )
     }
 
@@ -154,7 +203,8 @@ enum DemoData {
     static func pending(_ now: Int64) -> (items: [PendingItem], views: [String: ApprovalView], pairings: [String: PairingView], blobs: [String: BlobView]) {
         var items: [PendingItem] = []
         var views: [String: ApprovalView] = [:]
-        func add(_ v: ApprovalView, _ title: String, _ subtitle: String, suggestion: String? = nil) {
+        func add(_ v: ApprovalView, _ title: String, _ subtitle: String, suggestion: String? = nil, repeats: UInt32 = 0) {
+            let v = decorated(v, repeats: repeats)
             views[v.requestId] = v
             items.append(item(v, title: title, subtitle: subtitle, suggestion: suggestion))
         }
@@ -168,7 +218,7 @@ enum DemoData {
                 message("m2", "Friend <pal@gmail.com>", "Re: the bank thing", "Did you ever hear back from them about the fee?", now - 86_400 * 4),
                 message("m3", "old@bank.com", "Wire transfer receipt", "We received your transfer of $1,200.00.", now - 86_400 * 9, covered: true),
             ]
-        ), "Claude wants to search your emails", "from:bank newer_than:30d")
+        ), "Claude wants to search your emails", "from:bank newer_than:30d", repeats: 2)
 
         // An email to two people.
         add(view(
@@ -391,14 +441,14 @@ enum DemoData {
 
     /// The request `-demoArrive` delivers a few seconds after launch.
     static func arrival(_ now: Int64) -> (PendingItem, ApprovalView) {
-        let v = view(
+        let v = decorated(view(
             "req50", conn: "c1", label: "Claude", kind: .search, action: "search", service: "gmail", account: "me@gmail.com",
             createdAt: now, waitUntil: now + 60, count: 2, query: "invoice from:acme",
             messages: [
                 message("m50", "Acme Billing <billing@acme.example>", "Invoice #2291", "Your invoice for September is attached.", now - 86_400 * 3),
                 message("m51", "Acme Billing <billing@acme.example>", "Invoice #2207", "Your invoice for August is attached.", now - 86_400 * 33),
             ]
-        )
+        ))
         return (item(v, title: "Claude wants to search your emails", subtitle: "invoice from:acme"), v)
     }
 

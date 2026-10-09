@@ -98,10 +98,17 @@ private struct ApprovalDeviceGroup: View {
     @State private var busy = false
     @State private var message: String?
     @State private var error: String?
+    /// Whether the signed-in server can wake the app; nil while unknown or when it does not say.
+    @State private var serverPush: Bool?
 
     var body: some View {
         Section {
-            button.cardRow()
+            button
+                .cardRow()
+                .task {
+                    guard case let .signedIn(info) = model.session else { return }
+                    serverPush = (try? await model.core.serverInfo(serverUrl: info.serverUrl))?.pushIos
+                }
             if let message {
                 FormBanner(text: message, kind: .info).cardRow()
             }
@@ -111,7 +118,7 @@ private struct ApprovalDeviceGroup: View {
         } header: {
             GroupHeader("Approval device")
         } footer: {
-            GroupFooter(footer)
+            GroupFooter(SettingsText.approvalFooter(approvalDevice: model.approvalDevice, appPush: model.pushToken != nil, serverPush: serverPush))
         }
     }
 
@@ -139,15 +146,6 @@ private struct ApprovalDeviceGroup: View {
             .padding(.vertical, 6)
             .accessibilityIdentifier("registerPhone")
         }
-    }
-
-    private var footer: String {
-        if model.approvalDevice {
-            return model.pushToken != nil
-                ? "Requests reach this phone by push notification and while the app is open."
-                : "Push notifications are not set up yet. Requests arrive while the app is open."
-        }
-        return "Only one phone at a time approves requests. Use this one to take over."
     }
 
     private func register() {
@@ -198,7 +196,8 @@ private struct NavigationGroups: View {
     var body: some View {
         Section {
             SettingsLinkRow(
-                title: "Integrations", subtitle: SettingsText.accountsLine(model.accounts.count), symbol: "square.grid.2x2",
+                // The vault comes with the account: it is not something the user connected.
+                title: "Integrations", subtitle: SettingsText.accountsLine(model.accounts.filter { $0.service != "vault" }.count), symbol: "square.grid.2x2",
                 tint: Palette.read, id: "openIntegrations"
             ) { model.show(.integrations) }
         } header: {
@@ -221,28 +220,51 @@ private struct ConnectionsGroup: View {
     @Environment(\.feedback) private var feedback
 
     var body: some View {
+        // Computers pinned their key when they paired; Claude.ai, ChatGPT and other AI apps have none.
+        let computers = model.connections.filter { $0.keyFingerprint != nil }
+        let aiApps = model.connections.filter { $0.keyFingerprint == nil }
         Section {
-            if model.connections.isEmpty {
-                InfoRow("No AI is connected yet", subtitle: "Add Reins to Claude or ChatGPT with your server's /mcp address.").cardRow()
-            }
-            ForEach(model.connections, id: \.id) { connection in
-                Button {
-                    model.show(.connection(connection.id))
-                    feedback.defaultTap()
-                } label: {
-                    ConnectionRow(connection: connection)
-                }
-                .buttonStyle(.plain)
-                .accessibilityIdentifier("connection:\(connection.id)")
-                .cardRow()
-            }
+            ForEach(computers, id: \.id) { connectionRow($0) }
             SettingsLinkRow(
                 title: "Connect a computer", subtitle: "Scan the QR code from reins login or the desktop app", symbol: "qrcode.viewfinder",
                 tint: Palette.pair, id: "connectComputer"
             ) { model.openSheet(.connectComputer) }
         } header: {
-            GroupHeader("AI connections")
+            GroupHeader("Computers")
         }
+        Section {
+            if aiApps.isEmpty {
+                // The address to paste, not a description of it: tapping copies it.
+                let address = model.mcpAddress
+                Button {
+                    UIPasteboard.general.string = address
+                    feedback.play(.copied)
+                } label: {
+                    InfoRow(
+                        "No AI app is connected yet",
+                        subtitle: "In Claude.ai or ChatGPT, add a custom connector with \(address). Tap to copy."
+                    )
+                }
+                .buttonStyle(.plain)
+                .accessibilityIdentifier("copyMcpUrl")
+                .cardRow()
+            }
+            ForEach(aiApps, id: \.id) { connectionRow($0) }
+        } header: {
+            GroupHeader("AI apps")
+        }
+    }
+
+    private func connectionRow(_ connection: ConnectionView) -> some View {
+        Button {
+            model.show(.connection(connection.id))
+            feedback.defaultTap()
+        } label: {
+            ConnectionRow(connection: connection)
+        }
+        .buttonStyle(.plain)
+        .accessibilityIdentifier("connection:\(connection.id)")
+        .cardRow()
     }
 }
 
@@ -320,7 +342,7 @@ private struct SessionGroup: View {
                     }
                 }
             } message: {
-                Text("This phone stops receiving approval requests until you sign in again.")
+                Text("This phone stops receiving approval requests until you sign in again: your AIs' requests wait and then fail. Your computers, AI connections and integrations stay with your account.")
             }
             .presentationFeedback(confirm)
             if case let .signedIn(info) = model.session {

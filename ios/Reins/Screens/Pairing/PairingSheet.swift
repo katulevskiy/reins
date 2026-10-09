@@ -95,6 +95,10 @@ final class PairingModel {
                 try await app.core.answerPairing(pairingId: pairingId, approve: true, chosenCode: code, label: trimmed.isEmpty ? nil : trimmed)
                 await app.refreshPending()
                 await app.refreshConnections()
+                // A computer: say it worked, since the sheet that connected it closes now.
+                if view?.keyFingerprint != nil {
+                    app.notice = "\(trimmed.isEmpty ? name : untrusted(trimmed)) is connected."
+                }
                 busy = false
                 finished = true
             } catch {
@@ -167,6 +171,15 @@ private struct PairingContent: View {
                     .padding(.horizontal, 16)
                     .accessibilityLabel("Name this connection")
                     .accessibilityIdentifier("label")
+                if let note = StartingRuleText.onPairing(model.startingPolicy) {
+                    Text(note)
+                        .font(RFont.sans(13.5))
+                        .foregroundStyle(Palette.tertiary)
+                        .fixedSize(horizontal: false, vertical: true)
+                        .padding(.horizontal, 24)
+                        .padding(.top, 12)
+                        .accessibilityIdentifier("startingRuleNote")
+                }
                 if let error = vm.error {
                     Banner(error, kind: .error).padding(16).accessibilityIdentifier("pairingError")
                 }

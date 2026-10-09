@@ -183,6 +183,11 @@ final class DemoReinsCore: ReinsCoreProtocol, @unchecked Sendable {
 
     // ---- passwordless sign-in, the account's keys, another phone ----------------------------------------------------
 
+    /// The demo says nothing about its server: the sign-in shows every way in.
+    func serverInfo(serverUrl: String) async throws -> ServerInfo {
+        ServerInfo(browserSignIn: nil, pushAndroid: nil, pushIos: nil)
+    }
+
     /// "Continue": the browser part is skipped (`ssoBegin`'s URL is a data page the app never opens in the demo); the
     /// account is `Created`, or `Locked` with `-demoLocked` (another phone has its keys).
     func ssoBegin(serverUrl: String) async throws -> SsoStart {
@@ -563,6 +568,24 @@ final class DemoReinsCore: ReinsCoreProtocol, @unchecked Sendable {
         }
     }
 
+    private var starting: StartingPolicy?
+
+    func startingPolicy() async throws -> StartingPolicy? { locked { _ in starting } }
+
+    func setStartingPolicy(policy: StartingPolicy) async throws { locked { _ in starting = policy } }
+
+    /// As the core: what the sheet approves untouched, refused for what is asked every time.
+    func approveQuick(requestId: String) async throws {
+        let view: ApprovalView? = locked { s in s.views[requestId] }
+        guard let v = view else { throw CoreError.NotFound }
+        guard v.quick != nil else { throw CoreError.Invalid(reason: "Open this request to decide.") }
+        let selected = switch v.kind {
+        case .search, .read, .fetch: v.messages.filter { !$0.sensitive }.map(\.id)
+        default: [String]()
+        }
+        try await approve(requestId: requestId, choice: ApprovalChoice(selectedMessageIds: selected, standing: nil))
+    }
+
     func deny(requestId: String) async throws {
         try locked { s in
             guard let v = s.views[requestId], s.pending.contains(where: { $0.id == requestId }) else { throw CoreError.NotFound }
@@ -580,7 +603,7 @@ final class DemoReinsCore: ReinsCoreProtocol, @unchecked Sendable {
             guard approve else { return }
             s.nextConnection += 1
             let name = label.map { $0.trimmingCharacters(in: .whitespaces) }.flatMap { $0.isEmpty ? nil : $0 } ?? p.clientName
-            s.connections.append(ConnectionView(id: "c\(s.nextConnection)", label: name, clientHost: p.clientHost, createdAt: Self.now(), lastUsedAt: nil, icon: nil))
+            s.connections.append(ConnectionView(id: "c\(s.nextConnection)", label: name, clientHost: p.clientHost, createdAt: Self.now(), lastUsedAt: nil, icon: nil, keyFingerprint: p.keyFingerprint))
         }
     }
 

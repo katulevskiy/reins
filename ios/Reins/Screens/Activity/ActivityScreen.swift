@@ -122,6 +122,7 @@ struct ActivityScreen: View {
                 .padding(16)
                 .accessibilityIdentifier("registrationBanner")
         }
+        ScreenLockBanner(padding: EdgeInsets(top: 6, leading: 16, bottom: 6, trailing: 16))
     }
 
     @ViewBuilder private var waiting: some View {
@@ -130,6 +131,11 @@ struct ActivityScreen: View {
                 .padding(.leading, 16)
                 .padding(.top, 18)
                 .padding(.bottom, 6)
+            ForEach(Burst.of(model.pending), id: \.connectionId) { burst in
+                BurstBar(burst: burst)
+                    .padding(.horizontal, 16)
+                    .padding(.vertical, 5)
+            }
             ForEach(model.pending, id: \.id) { item in
                 PendingCard(item: item) {
                     model.openSheet(item.sheetTarget)
@@ -157,6 +163,30 @@ struct ActivityScreen: View {
         if automaticOnly {
             EmptyState(symbol: "sparkles", title: "Nothing automatic yet", message: "What Autopilot, a bypass or Lockdown decides for you shows up here.")
                 .accessibilityIdentifier("noAutomatic")
+        } else if model.connections.isEmpty {
+            // A new account: nothing can ask yet, so say how to connect something.
+            VStack(spacing: 10) {
+                EmptyState(symbol: "list.bullet", title: "Nothing yet", message: "Connect your computer or an AI app. What they ask for shows up here, and waits for you.")
+                    .accessibilityIdentifier("noActivity")
+                Button {
+                    model.openSheet(.connectComputer)
+                } label: {
+                    Label("Connect a computer", systemImage: "desktopcomputer")
+                }
+                .buttonStyle(CapsuleButtonStyle(kind: .primary, height: 48))
+                .accessibilityIdentifier("emptyConnectComputer")
+                Button {
+                    let address = model.mcpAddress
+                    UIPasteboard.general.string = address
+                    model.notice = "Copied \(address). In Claude.ai or ChatGPT: Settings, Connectors, add a custom connector and paste it."
+                    feedback.play(.copied)
+                } label: {
+                    Label("Connect Claude.ai or ChatGPT", systemImage: "link")
+                }
+                .buttonStyle(CapsuleButtonStyle(kind: .secondary, height: 48))
+                .accessibilityIdentifier("emptyConnectAi")
+            }
+            .padding(.horizontal, 32)
         } else {
             EmptyState(symbol: "list.bullet", title: "Nothing yet", message: "When an AI searches, reads or sends on your behalf, it shows up here.")
                 .accessibilityIdentifier("noActivity")
@@ -279,7 +309,7 @@ private struct PendingCard: View {
                     VStack(alignment: .leading, spacing: 4) {
                         HStack(spacing: 8) {
                             if !pairing { ConnectionIcon(connectionId: item.connectionId, label: item.connectionLabel, size: 20) }
-                            Text(joining ? "\(untrusted(item.connectionLabel)) asks to join your account" : pairing ? "\(untrusted(item.connectionLabel)): wants to connect" : item.headline)
+                            Text(joining ? "\(untrusted(item.connectionLabel)) asks to join your account" : pairing ? "\(untrusted(item.connectionLabel)): wants to connect" : item.listTitle)
                                 .font(RFont.sans(16, .semibold))
                                 .foregroundStyle(Palette.text)
                                 .lineLimit(2)
@@ -325,7 +355,7 @@ private struct PendingCard: View {
         .contextMenu {
             Button("Review", systemImage: "checkmark.shield", action: onOpen)
             Button("Copy", systemImage: "doc.on.doc") {
-                UIPasteboard.general.string = item.headline
+                UIPasteboard.general.string = item.listTitle
                 feedback.play(.copied)
             }
         }

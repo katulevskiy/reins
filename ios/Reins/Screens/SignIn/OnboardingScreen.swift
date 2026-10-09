@@ -65,7 +65,11 @@ private struct ComputerStep: View {
                 .font(RFont.sans(15.5))
                 .foregroundStyle(Palette.secondary)
                 .fixedSize(horizontal: false, vertical: true)
-            PhoneStatus().padding(.vertical, 4)
+            VStack(alignment: .leading, spacing: 0) {
+                PhoneStatus().padding(.vertical, 4)
+                // Approving needs the passcode: better found out here than at the first request.
+                ScreenLockBanner(padding: EdgeInsets(top: 12, leading: 0, bottom: 4, trailing: 0))
+            }
             if let added {
                 FormBanner(text: "\(untrusted(added.label)) is connected.", kind: .info)
                     .accessibilityIdentifier("computerConnected")
@@ -88,6 +92,9 @@ private struct ComputerStep: View {
                     .padding(.vertical, 6)
             }
             .accessibilityIdentifier("downloadDesktop")
+            // How a new AI starts (the computer included); someone who just installed Reins starts with the recommended rule.
+            // The card brings its own side margin; the step's other content already has one.
+            StartingRuleChooser().padding(.horizontal, -16).padding(.top, 8)
             Button("Next", action: onNext)
                 .buttonStyle(CapsuleButtonStyle(kind: .secondary))
                 .padding(.top, 8)
@@ -95,6 +102,7 @@ private struct ComputerStep: View {
         }
         // The connections the account had once they are read, not the empty list from before.
         .task {
+            if (try? await model.core.startingPolicy()) == nil { model.chooseStartingPolicy(.readsForADay) }
             await model.refreshConnections()
             if known == nil { known = Set(model.connections.map(\.id)) }
         }

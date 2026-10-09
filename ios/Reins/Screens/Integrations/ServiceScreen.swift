@@ -154,10 +154,17 @@ private struct AddAccountControls: View {
     var body: some View {
         switch service.kind {
         case "google":
-            ActionButton(title: "Add account", symbol: "plus", busy: accounts.busy) {
-                Task { await accounts.addGoogle() }
+            VStack(alignment: .leading, spacing: 10) {
+                Text(ServiceCopy.googleSignInNote)
+                    .font(RFont.sans(13.5))
+                    .foregroundStyle(Palette.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .accessibilityIdentifier("googleSignInNote")
+                ActionButton(title: "Add account", symbol: "plus", busy: accounts.busy) {
+                    Task { await accounts.addGoogle() }
+                }
+                .accessibilityIdentifier("addAccount")
             }
-            .accessibilityIdentifier("addAccount")
         case "device":
             if service.accounts.isEmpty {
                 ActionButton(title: "Allow on this phone", symbol: "iphone", busy: accounts.busy) {
