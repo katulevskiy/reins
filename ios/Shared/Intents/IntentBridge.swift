@@ -46,6 +46,14 @@ enum IntentBridge {
         return base == .lockdown ? .manual : base
     }
 
+    /// Lockdown off ("Resume Reins"); false when it was not on.
+    static func endLockdown() async throws -> Bool {
+        let model = try await signedIn()
+        let on = await model.refreshAutopilot()?.mode == .lockdown
+        if on { try await setLockdown(false) }
+        return on
+    }
+
     /// Ends every bypass; false when none ran.
     static func stopBypass() async throws -> Bool {
         let model = try await signedIn()

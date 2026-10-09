@@ -47,6 +47,23 @@ struct LockDownIntent: LiveActivityIntent {
     }
 }
 
+/// "Resume Reins": Lockdown off, back to the mode it interrupted, from Siri, Shortcuts or the Action button. Requests
+/// get through again, so it needs an unlocked phone.
+struct EndLockdownIntent: LiveActivityIntent {
+    static var title: LocalizedStringResource = "Resume"
+    static var description = IntentDescription("Ends Lockdown: your AIs' requests wait for you again, as before it.")
+    static var authenticationPolicy: IntentAuthenticationPolicy = .requiresAuthentication
+
+    func perform() async throws -> some IntentResult & ProvidesDialog {
+        #if REINS_APP
+        let ended = try await IntentBridge.endLockdown()
+        return .result(dialog: ended ? "Reins is back on. Requests wait for you again." : "Reins was not paused.")
+        #else
+        return .result(dialog: "Reins is back on.")
+        #endif
+    }
+}
+
 /// Ends every running bypass: the Bypass Live Activity's Stop, the Autopilot widget, the control, Siri.
 struct StopBypassIntent: LiveActivityIntent {
     static var title: LocalizedStringResource = "Stop the bypass"
@@ -170,14 +187,21 @@ enum ReinsIntentError: Error, CustomLocalizedStringResourceConvertible {
 }
 
 #if REINS_APP
-/// "Lock down Reins", "Stop the Reins bypass", "Show what is waiting in Reins".
+/// "Lock down Reins" (also "Pause Reins": Lockdown is how the phone pauses every AI), "Resume Reins", "Stop the Reins
+/// bypass", "Show what is waiting in Reins".
 struct ReinsShortcuts: AppShortcutsProvider {
     static var appShortcuts: [AppShortcut] {
         AppShortcut(
             intent: LockDownIntent(),
-            phrases: ["Lock down \(.applicationName)", "Turn on \(.applicationName) lockdown"],
+            phrases: ["Lock down \(.applicationName)", "Turn on \(.applicationName) lockdown", "Pause \(.applicationName)"],
             shortTitle: "Lock down",
             systemImageName: "lock.fill"
+        )
+        AppShortcut(
+            intent: EndLockdownIntent(),
+            phrases: ["Resume \(.applicationName)", "End \(.applicationName) lockdown"],
+            shortTitle: "Resume",
+            systemImageName: "lock.open.fill"
         )
         AppShortcut(
             intent: StopBypassIntent(),
