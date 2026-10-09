@@ -648,14 +648,16 @@ impl ReinsCore {
         .await
     }
 
-    /// Signs another device of the account out (a lost phone): it can no longer sync or answer for the account.
-    pub async fn sign_out_device(&self, device_id: String) -> Result<(), CoreError> {
+    /// Signs another device of the account out (a lost phone), with the recovery code or master password the user
+    /// typed now: it can no longer sync or answer for the account.
+    pub async fn sign_out_device(&self, device_id: String, code_or_password: String) -> Result<(), CoreError> {
         let runtime = Arc::clone(&self.runtime);
         let generation = runtime.generation();
+        let typed = Zeroizing::new(code_or_password);
         rt::run(async move {
             let engine = runtime.prepare(generation).await?;
             engine.ensure_active()?;
-            let result = engine.run_account(async { engine.sign_out_device(&device_id).await }).await;
+            let result = engine.run_account(async { engine.sign_out_device(&device_id, typed).await }).await;
             runtime.finish(&engine, result)
         })
         .await

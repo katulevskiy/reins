@@ -31,8 +31,8 @@ use crate::{
         DbConn,
         models::{
             AuthRequest, AuthRequestId, Device, DeviceId, EventType, Invitation, OIDCCodeResponseError,
-            OrganizationApiKey, OrganizationId, SendId, SsoAuth, SsoUser, TwoFactor, TwoFactorIncomplete,
-            TwoFactorType, User, UserId,
+            OrganizationApiKey, OrganizationId, ReinsDeviceSignout, SendId, SsoAuth, SsoUser, TwoFactor,
+            TwoFactorIncomplete, TwoFactorType, User, UserId,
         },
     },
     error::MapResult,
@@ -801,6 +801,22 @@ async fn get_device(data: &ConnectData, conn: &DbConn, user: &User) -> ApiResult
     let device_type = util::try_parse_string(data.device_type.as_ref()).unwrap_or(14);
     let device_id = data.device_identifier.clone().expect("No device id provided");
     let device_name = data.device_name.clone().expect("No device name provided");
+    // Only ids the phone apps can name, so that every device signed in can be signed out (Settings > Devices).
+    if !reins_proto::device::valid_device_id(&device_id.to_string()) {
+        err!("The device id must be 1 to 64 letters, digits, dashes or underscores")
+    }
+    // A device signed out from the account's approval phone does not come back with the keys it kept.
+    if let Some(gone) = ReinsDeviceSignout::find(&user.uuid, &device_id, conn).await {
+        let when =
+            chrono::DateTime::from_timestamp(gone.signed_out_at, 0).map(|t| t.format("%Y-%m-%d %H:%M UTC").to_string());
+        err!(format!(
+            "This device was signed out of the account from {} on {}. If that was not you, sign in on another phone, \
+             take the approval role back with your recovery code, and sign that phone out. To use this one again, \
+             delete the Reins app's data (or install it again), then sign in.",
+            gone.by_device_name,
+            when.unwrap_or_default()
+        ))
+    }
 
     // Find device or create new
     if let Some(device) = Device::find_by_uuid_and_user(&device_id, &user.uuid, conn).await {

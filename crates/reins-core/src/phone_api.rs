@@ -254,10 +254,10 @@ impl<'a> PhoneApi<'a> {
         Self::json(self.request(Method::GET, "/devices")).await
     }
 
-    /// A10 `DELETE /devices/{id}`: signs another device of the account out.
-    pub async fn delete_device(&self, id: &str) -> Result<(), ApiFailure> {
+    /// A10 `DELETE /devices/{id}`: signs another device of the account out, with proof typed now.
+    pub async fn delete_device(&self, id: &str, proof: &reins_proto::device::DeviceSignOut) -> Result<(), ApiFailure> {
         check_id(id)?;
-        Self::send(self.request(Method::DELETE, &format!("/devices/{id}"))).await.map(drop)
+        Self::send(self.request(Method::DELETE, &format!("/devices/{id}")).json(proof)).await.map(drop)
     }
 }
 

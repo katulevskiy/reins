@@ -410,6 +410,15 @@ table! {
 }
 
 table! {
+    reins_device_signouts (user_uuid, device_uuid) {
+        user_uuid -> Text,
+        device_uuid -> Text,
+        signed_out_at -> BigInt,
+        by_device_name -> Text,
+    }
+}
+
+table! {
     reins_sso_sessions (session_id) {
         session_id -> Text,
         user_uuid -> Text,

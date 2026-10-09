@@ -43,7 +43,7 @@ pub use self::reins_client::ReinsClient;
 pub use self::reins_connection::{ReinsConnection, ReinsRefreshToken};
 pub use self::reins_device::ReinsDevice;
 pub use self::reins_vault_passkey::ReinsVaultPasskey;
-pub use self::reins_workos::{ReinsSetting, ReinsSsoSession};
+pub use self::reins_workos::{ReinsDeviceSignout, ReinsSetting, ReinsSsoSession};
 pub use self::send::{Send, SendFileId, SendId, SendType};
 pub use self::sso_auth::{OIDCAuthenticatedUser, OIDCCodeResponseError, SsoAuth};
 pub use self::two_factor::{TwoFactor, TwoFactorType};

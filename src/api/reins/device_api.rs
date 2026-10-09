@@ -9,8 +9,8 @@ use std::time::Duration;
 use reins_proto::{
     check_version,
     device::{
-        ApiError, Connections, DEVICE_KEY_HEADER, DeviceInfo, DeviceRegistered, DeviceRegistration, Devices,
-        MAX_PENDING_WAIT_SECS, PairingResult, Pending, TAKEOVER_REFUSED, codes, device_key_hash,
+        ApiError, Connections, DEVICE_KEY_HEADER, DeviceInfo, DeviceRegistered, DeviceRegistration, DeviceSignOut,
+        Devices, MAX_PENDING_WAIT_SECS, PairingResult, Pending, TAKEOVER_REFUSED, codes, device_key_hash,
     },
     ids::{ConnectionId, PairingId, RequestId},
     pairing::{PairingClaim, PairingRequest, PairingResponse, PushKind, PushMessage},
@@ -36,10 +36,10 @@ use super::{
     relay::AnswerError,
 };
 use crate::{
-    auth::Headers,
+    auth::{ClientIp, Headers},
     db::{
         DbConn, DbPool,
-        models::{Device, DeviceId, ReinsConnection, ReinsDevice, ReinsSsoSession},
+        models::{Device, DeviceId, ReinsConnection, ReinsDevice, ReinsDeviceSignout, ReinsSsoSession},
     },
 };
 
@@ -495,22 +495,73 @@ async fn get_devices(headers: Headers, key: DeviceKey, conn: DbConn) -> PhoneRes
     }))
 }
 
-/// A10: signs another device of the account out, from the approval device. Its sign-in (access and refresh tokens,
-/// its WorkOS session) ends at once: every request it makes from then on is refused, so a lost phone can neither sync
-/// the vault nor answer for the account. It never held the approval role (the caller does), and this device itself
-/// signs out with A-logout instead.
-#[delete("/reins/api/devices/<id>")]
-async fn delete_device(id: &str, headers: Headers, key: DeviceKey, conn: DbConn) -> PhoneResult<Status> {
+/// A10: signs another device of the account out (a lost phone), from the approval device and with proof typed now (the
+/// recovery code's or the master password's hash, counted like a takeover proof). In one transaction its Vaultwarden
+/// device goes (its access token is refused at once, its refresh token is gone), with its SSO session mappings and any
+/// approval role still naming it, and the sign-out is recorded: a sign-in with that device id is refused from then on
+/// ([`crate::api::identity`]). Its WorkOS sessions are ended at WorkOS too (so the sign-in cookie it kept no longer
+/// signs anyone in), its push registration is dropped, and its join requests are forgotten. The device asking signs
+/// itself out with A-logout instead.
+#[delete("/reins/api/devices/<id>", data = "<data>")]
+async fn delete_device(
+    id: &str,
+    data: Data<'_>,
+    headers: Headers,
+    key: DeviceKey,
+    ip: ClientIp,
+    conn: DbConn,
+) -> PhoneResult<Status> {
     require_approval_device(&headers, &key, &conn).await?;
-    let id = DeviceId::from(id.to_owned());
-    if id == headers.device.uuid {
+    let body: DeviceSignOut = serde_json::from_slice(&read_body_limited(data, 4096).await?)
+        .map_err(|e| bad_request(format!("invalid body: {e}")))?;
+    // MySQL compares ids without case: so does this, so that this phone cannot be signed out under another spelling.
+    if id.eq_ignore_ascii_case(&headers.device.uuid.to_string()) {
         return Err(bad_request("This is the device asking; sign it out with Sign out instead"));
     }
-    if Device::find_by_uuid_and_user(&id, &headers.user.uuid, &conn).await.is_none() {
-        return Err(not_found());
+    let id = DeviceId::from(id.to_owned());
+    let Some(target) = Device::find_by_uuid_and_user(&id, &headers.user.uuid, &conn).await else {
+        return Err(api_err(Status::NotFound, codes::UNKNOWN_DEVICE, "The account has no device with that id"));
+    };
+    check_proof(&headers, &body.master_password_hash)?;
+    let user = user_key(&headers);
+    info!("Reins: device {} of user {user} signed out from device {} ({})", target.uuid, headers.device.uuid, ip.ip);
+    if crate::sso_workos::enabled() {
+        for session in ReinsDeviceSignout::sessions_of(&headers.user.uuid, &target.uuid, &conn).await {
+            // Best effort: the device's own sign-in ends below whatever WorkOS answers, and its id stays refused.
+            if let Err(e) = crate::sso_workos::revoke_session(&session).await {
+                warn!("Reins: ending a signed-out device's WorkOS session failed: {e:?}");
+            }
+        }
     }
-    ReinsSsoSession::revoke_device(&headers.user.uuid, &id, &conn).await.map_err(|e| internal(&e))?;
+    if crate::CONFIG.push_enabled()
+        && let Err(e) = crate::api::unregister_push_device(target.push_uuid.as_ref()).await
+    {
+        warn!("Reins: unregistering a signed-out device from push failed: {e:?}");
+    }
+    let signout = ReinsDeviceSignout {
+        user_uuid: headers.user.uuid.clone(),
+        device_uuid: target.uuid.clone(),
+        signed_out_at: now_unix(),
+        by_device_name: headers.device.name.chars().filter(|c| !c.is_control()).take(100).collect(),
+    };
+    signout.sign_out(&conn).await.map_err(|e| internal(&e))?;
+    HUB.joins.forget_device(&user, &target.uuid.to_string());
     Ok(Status::NoContent)
+}
+
+/// Proof typed now that the caller may sign a device out: the master password hash of the account secret or of the
+/// master password. Wrong hashes count against the account, with the takeover proofs.
+fn check_proof(headers: &Headers, hash: &str) -> PhoneResult<()> {
+    let user = user_key(headers);
+    if let Err(wait) = super::limits::DEVICE_PROOFS.check(&user) {
+        return Err(rate_limited("too many wrong recovery codes or passwords for this account", wait));
+    }
+    if !hash.is_empty() && headers.user.check_valid_password(hash) {
+        return Ok(());
+    }
+    super::limits::DEVICE_PROOFS.fail(&user);
+    warn!("Reins: a wrong proof to sign a device out of user {user}");
+    Err(api_err(Status::Forbidden, codes::WRONG_PROOF, "That is neither the recovery code nor the master password"))
 }
 
 #[catch(401)]

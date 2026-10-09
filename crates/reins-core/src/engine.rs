@@ -905,17 +905,27 @@ impl Engine {
             .collect())
     }
 
-    /// Signs another device of the account out at the server: its sign-in ends at once, so it can no longer sync the
-    /// vault or answer for the account. Already gone is fine.
-    pub async fn sign_out_device(&self, device_id: &str) -> Result<(), CoreError> {
+    /// Signs another device of the account out at the server, with the recovery code or the master password typed
+    /// now (never one this phone keeps): its sign-in ends at once and its id is refused from then on, so it can no
+    /// longer sync the vault or answer for the account. Already gone is fine; a server without the call is not.
+    pub async fn sign_out_device(&self, device_id: &str, code_or_password: Zeroizing<String>) -> Result<(), CoreError> {
         check_id(device_id)?;
         let session = self.session()?;
-        match api_call!(&session, |api| api.delete_device(device_id)) {
-            Ok(())
-            | Err(ApiFailure::Status {
-                status: 404,
+        let proof = reins_proto::device::DeviceSignOut {
+            master_password_hash: self.typed_proof(&session, code_or_password).await?.to_string(),
+        };
+        match api_call!(&session, |api| api.delete_device(device_id, &proof)) {
+            Ok(()) => Ok(()),
+            Err(ApiFailure::Status {
+                code,
                 ..
-            }) => Ok(()),
+            }) if code == codes::UNKNOWN_DEVICE => Ok(()),
+            Err(ApiFailure::Status {
+                code,
+                ..
+            }) if code == codes::WRONG_PROOF => {
+                Err(CoreError::invalid("That is neither the recovery code nor the master password."))
+            }
             Err(e) => Err(e.into_core()),
         }
     }

@@ -245,6 +245,12 @@ impl JoinHub {
         self.lock().retain(|_, e| e.expires_at + ttl_secs() > now);
     }
 
+    /// Drops the requests of one device of `user` with any sealed secret or takeover grant they carry (a device signed
+    /// out).
+    pub fn forget_device(&self, user: &str, device: &str) {
+        self.lock().retain(|_, e| !(e.user == user && e.device.eq_ignore_ascii_case(device)));
+    }
+
     /// Drops `user`'s requests with any sealed secret they carry (a deleted account).
     pub fn forget_user(&self, user: &str) {
         self.lock().retain(|_, e| e.user != user);

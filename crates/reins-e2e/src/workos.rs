@@ -35,6 +35,8 @@ struct State {
     deleted: Vec<String>,
     /// Deleting users fails (WorkOS is down).
     deletes_fail: bool,
+    /// Sessions ended through `POST /user_management/sessions/revoke`, in order.
+    revoked: Vec<String>,
 }
 
 pub struct FakeWorkos {
@@ -165,6 +167,24 @@ impl Respond for DeleteUser {
     }
 }
 
+struct RevokeSession(Arc<Mutex<State>>);
+
+impl Respond for RevokeSession {
+    fn respond(&self, req: &Request) -> ResponseTemplate {
+        let auth = req.headers.get("authorization").and_then(|v| v.to_str().ok());
+        if auth != Some(&format!("Bearer {API_KEY}")) {
+            return ResponseTemplate::new(401).set_body_json(json!({"message": "Unauthorized"}));
+        }
+        let Some(id) =
+            serde_json::from_slice::<Value>(&req.body).ok().and_then(|b| b["session_id"].as_str().map(str::to_owned))
+        else {
+            return ResponseTemplate::new(422).set_body_json(json!({"message": "session_id is required"}));
+        };
+        self.0.lock().expect("state").revoked.push(id);
+        ResponseTemplate::new(200).set_body_json(json!({}))
+    }
+}
+
 impl FakeWorkos {
     pub async fn start() -> Self {
         let server = MockServer::start().await;
@@ -183,6 +203,11 @@ impl FakeWorkos {
         Mock::given(method("DELETE"))
             .and(path_regex("^/user_management/users/[A-Za-z0-9_-]+$"))
             .respond_with(DeleteUser(Arc::clone(&state)))
+            .mount(&server)
+            .await;
+        Mock::given(method("POST"))
+            .and(path("/user_management/sessions/revoke"))
+            .respond_with(RevokeSession(Arc::clone(&state)))
             .mount(&server)
             .await;
         Self {
@@ -227,6 +252,11 @@ impl FakeWorkos {
     /// The WorkOS sessions handed out so far, oldest first.
     pub fn sessions(&self) -> Vec<String> {
         self.state.lock().expect("state").sessions.clone()
+    }
+
+    /// The sessions ended through the User Management API so far.
+    pub fn revoked_sessions(&self) -> Vec<String> {
+        self.state.lock().expect("state").revoked.clone()
     }
 
     /// The users deleted through the User Management API so far.
