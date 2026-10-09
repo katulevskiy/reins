@@ -79,6 +79,8 @@ class PairingViewModel(private val container: AppContainer, private val pairingI
                             container.state.setJustPaired(current.label.trim().ifEmpty { current.view.clientName })
                         }
                         container.refreshAfterAnswer(pairingId)
+                        // The new computer or AI app shows up in Settings and Activity right away.
+                        container.refreshConnections()
                         _ui.update { it.copy(busy = false, finished = true) }
                     }
                     AuthResult.Cancelled -> _ui.update { it.copy(busy = false) }

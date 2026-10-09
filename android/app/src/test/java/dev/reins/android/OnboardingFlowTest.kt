@@ -398,11 +398,15 @@ class OnboardingFlowTest : FlowHarness() {
         awaitTag("keyFingerprint")
         tap("code:42")
         rule.onNodeWithTag("label").performTextReplacement("Work laptop")
+        // The server stores the connection when the phone approves.
+        core.connections = listOf(TestData.computer(label = "Work laptop"))
         tap("approve")
         awaitCore { core.pairingAnswers.isNotEmpty() }
         // Back on the page that started it: the result, with the name.
         awaitTag("computerConnected")
         awaitText("Work laptop")
+        // And Settings lists it at once.
+        awaitCore { container.state.connections.value.any { it.id == "d1" } }
     }
 
     @Test

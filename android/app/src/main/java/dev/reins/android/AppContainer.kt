@@ -341,6 +341,8 @@ class AppContainer(private val context: Context) {
         refreshSession()
         try {
             registerDevice(force = true)
+            // Read before the registration, the connections were refused: read them again now.
+            refreshConnections()
         } catch (e: CancellationException) {
             throw e
         } catch (e: Exception) {
