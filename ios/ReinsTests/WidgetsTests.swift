@@ -136,6 +136,30 @@ final class WidgetsTests: XCTestCase {
         XCTAssertEqual(model.autopilot?.mode, .assisted)
     }
 
+    @MainActor
+    func testAFocusNeverLoosensAutopilotNorUndoesTheUsersOwnChoice() async throws {
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: "focus-tests-2"))
+        defaults.removePersistentDomain(forName: "focus-tests-2")
+        defer { defaults.removePersistentDomain(forName: "focus-tests-2") }
+        let model = AppModel(core: DemoReinsCore(signedIn: true, syncCap: 0.3), feedback: NoFeedback.shared, authenticator: TrustingAuthenticator(), demo: true)
+        await model.refreshSession()
+        IntentBridge.model = model
+        defer { IntentBridge.model = nil }
+        try await IntentBridge.setMode(.manual)
+        // Nobody confirms a Focus as it starts: Auto is refused, and nothing is remembered.
+        do {
+            try await IntentBridge.applyFocus(.auto, defaults: defaults)
+            XCTFail("a Focus set Auto")
+        } catch {}
+        XCTAssertEqual(model.autopilot?.mode, .manual)
+        XCTAssertNil(defaults.string(forKey: "focus.previousMode"))
+        // The user locks down during the Focus: when it ends, Lockdown stays.
+        try await IntentBridge.applyFocus(.assisted, defaults: defaults)
+        try await IntentBridge.setMode(.lockdown)
+        try await IntentBridge.applyFocus(nil, defaults: defaults)
+        XCTAssertEqual(model.autopilot?.mode, .lockdown)
+    }
+
     // MARK: Activity
 
     func testAgo() {

@@ -66,21 +66,36 @@ enum IntentBridge {
         await model.refreshPending()
     }
 
-    private static let focusKey = "focus.previousMode"
+    private static let focusBeforeKey = "focus.previousMode"
+    private static let focusSetKey = "focus.setMode"
 
-    /// A Focus filter: `option` while the Focus is on, remembering the mode before it; nil (the Focus ended) puts that
-    /// mode back. A bypass that ran when the Focus began comes back as the mode under it, not as a bypass.
+    /// A Focus filter: `option` while the Focus is on; nil (the Focus ended) puts back the mode from before it.
+    ///
+    /// Nobody confirms a Focus as it starts (a schedule, a place), so a Focus may only make Autopilot stricter: Manual,
+    /// Assisted or Lockdown, never Auto. The mode from before is put back only if the mode is still the one the Focus
+    /// set: one the user chose meanwhile (Lockdown, say) stays. A bypass that ran when the Focus began comes back as the
+    /// mode under it, not as a bypass.
     static func applyFocus(_ option: AutopilotModeOption?, defaults: UserDefaults = AppGroup.defaults) async throws {
         let model = try await signedIn()
         if let option {
-            if defaults.string(forKey: focusKey) == nil, let s = await model.refreshAutopilot() {
-                let before = AutopilotModeOption(s.mode) ?? AutopilotModeOption(s.baseMode) ?? .manual
-                defaults.set(before.rawValue, forKey: focusKey)
+            guard option != .auto else {
+                throw ReinsIntentError.failed("A Focus can make Autopilot stricter, not set it to Auto.")
             }
+            let settings = await model.refreshAutopilot()
+            let before = defaults.string(forKey: focusBeforeKey)
+                ?? settings.flatMap { AutopilotModeOption($0.mode) ?? AutopilotModeOption($0.baseMode) }?.rawValue
             try await setMode(option)
-        } else if let raw = defaults.string(forKey: focusKey) {
-            defaults.removeObject(forKey: focusKey)
-            if let previous = AutopilotModeOption(rawValue: raw) { try await setMode(previous) }
+            // Remembered only once the mode is set, so a failed start leaves nothing to put back.
+            if let before { defaults.set(before, forKey: focusBeforeKey) }
+            defaults.set(option.rawValue, forKey: focusSetKey)
+        } else {
+            let before = defaults.string(forKey: focusBeforeKey).flatMap(AutopilotModeOption.init(rawValue:))
+            let set = defaults.string(forKey: focusSetKey).flatMap(AutopilotModeOption.init(rawValue:))
+            defaults.removeObject(forKey: focusBeforeKey)
+            defaults.removeObject(forKey: focusSetKey)
+            guard let before, let set else { return }
+            let now = await model.refreshAutopilot()?.mode
+            if now == set.mode { try await setMode(before) }
         }
     }
 

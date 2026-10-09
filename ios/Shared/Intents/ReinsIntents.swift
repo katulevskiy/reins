@@ -112,11 +112,12 @@ struct SetAutopilotModeIntent: LiveActivityIntent {
 }
 
 #if REINS_APP
-/// A Focus filter: while the Focus is on (Sleep, Driving, Work, ...), Autopilot is in the mode picked here; when it
-/// ends, the mode from before comes back. The system runs it again with no mode when the Focus ends.
+/// A Focus filter: while the Focus is on (Sleep, Driving, Work, ...), Autopilot is in the mode picked here (Manual,
+/// Assisted or Lockdown: a Focus only makes it stricter); when it ends, the mode from before comes back unless the
+/// user changed it meanwhile. The system runs it again with no mode when the Focus ends.
 struct ReinsFocusFilter: SetFocusFilterIntent {
     static var title: LocalizedStringResource = "Set Autopilot mode"
-    static var description: IntentDescription? = IntentDescription("While this Focus is on, Reins uses the Autopilot mode you pick. When it ends, the mode from before comes back.")
+    static var description: IntentDescription? = IntentDescription("While this Focus is on, Reins uses the Autopilot mode you pick: Manual, Assisted or Lockdown. When it ends, the mode from before comes back.")
 
     @Parameter(title: "Mode")
     var mode: AutopilotModeOption?
