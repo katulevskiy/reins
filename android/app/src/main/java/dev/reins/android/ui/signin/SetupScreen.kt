@@ -82,6 +82,7 @@ import dev.reins.android.feedback.Event
 import dev.reins.android.feedback.LocalFeedback
 import dev.reins.android.feedback.cueUnlessRecent
 import dev.reins.android.feedback.play
+import dev.reins.android.platform.NotificationAccess
 import dev.reins.android.platform.NotificationState
 import dev.reins.android.platform.rememberNotificationState
 import dev.reins.android.platform.ScreenLockState
@@ -200,14 +201,20 @@ private fun SetupButtons(page: SetupPage, notifications: NotificationState, onBa
     Row(Modifier.fillMaxWidth().padding(start = 16.dp, end = 16.dp, top = 8.dp, bottom = 16.dp), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
         val asking = page == SetupPage.Notifications && !notifications.enabled
         if (asking) {
-            CapsuleButton("Not now", Modifier.weight(1f).testTag("notificationsLater"), style = ButtonStyle.Ghost, onClick = onNext)
+            val context = LocalContext.current
+            CapsuleButton("Not now", Modifier.weight(1f).testTag("notificationsLater"), style = ButtonStyle.Ghost) {
+                // An answer: Activity does not ask again right after the setup (its card still offers them).
+                NotificationAccess.markAsked(context)
+                onNext()
+            }
         } else if (page != SetupPage.Welcome && page != SetupPage.Done) {
             CapsuleButton("Back", Modifier.weight(1f).testTag("setupBack"), style = ButtonStyle.Ghost, onClick = onBack)
         }
         when {
             page == SetupPage.Welcome -> CapsuleButton("Show me around", Modifier.weight(1f).testTag("setupNext"), style = ButtonStyle.Primary, onClick = onNext)
             asking ->
-                CapsuleButton("Allow notifications", Modifier.weight(1f).testTag("allowNotifications"), style = ButtonStyle.Accent, glyph = Glyph.Bell) {
+                // "Allow notifications" does not fit beside "Not now" on a narrow phone; the page says what for.
+                CapsuleButton("Allow", Modifier.weight(1f).testTag("allowNotifications"), style = ButtonStyle.Accent, glyph = Glyph.Bell) {
                     notifications.request()
                 }
             page == SetupPage.Done -> CapsuleButton("Start using Reins", Modifier.weight(1f).testTag("setupDone"), style = ButtonStyle.Primary, onClick = onDone)

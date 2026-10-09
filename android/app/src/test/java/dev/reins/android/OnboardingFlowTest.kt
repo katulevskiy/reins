@@ -26,6 +26,7 @@ import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Test
 import org.junit.runner.RunWith
+import org.robolectric.Shadows.shadowOf
 import org.robolectric.annotation.Config
 import org.robolectric.annotation.GraphicsMode
 
@@ -136,6 +137,19 @@ class OnboardingFlowTest : FlowHarness() {
         tap("defaultServer")
         awaitGone("server")
         assertFalse(has("startSignIn"))
+    }
+
+    @Test
+    fun notNowOnTheSetupsNotificationsIsAnAnswerActivityDoesNotAskAgain() {
+        shadowOf(context as android.app.Application).denyPermissions(android.Manifest.permission.POST_NOTIFICATIONS)
+        core.session = null
+        launch()
+        signInFromWelcome()
+        setupTo("setupNotifications")
+        assertFalse(dev.reins.android.platform.NotificationAccess.asked(context))
+        tap("notificationsLater")
+        awaitTag("setupIntegrations")
+        assertTrue(dev.reins.android.platform.NotificationAccess.asked(context))
     }
 
     @Test
