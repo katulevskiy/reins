@@ -111,6 +111,9 @@ final class AppModel {
     let demo: Bool
     /// The passkey sheet for the passkeys that open the vault; the demo's answers by itself, tests put a fake here.
     @ObservationIgnored var passkeys: PasskeyPrompting
+    /// The vault screens' state (Integrations > Password vault > Open the vault), shared by the list, an item and its
+    /// form; emptied when the account changes.
+    let vault = VaultModel()
 
     // MARK: State read from the core
 
@@ -273,6 +276,7 @@ final class AppModel {
         accounts = []
         services = []
         connections = []
+        vault.reset()
         setMcpServers([])
         mcpNotice = nil
         approvalDevice = false

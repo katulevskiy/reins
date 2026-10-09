@@ -62,6 +62,10 @@ private struct AccountGroup: View {
                 .accessibilityHint("Copies the server address")
                 .accessibilityIdentifier("copyServer")
                 .cardRow()
+                SettingsLinkRow(
+                    title: "Devices", subtitle: "Your phones and computers; sign out a lost phone", symbol: "iphone", tint: Palette.accent,
+                    id: "devicesRow"
+                ) { model.show(.devices) }
                 if model.recoveryCodeAvailable {
                     RecoveryCodeRow()
                     VaultPasskeysRow()
