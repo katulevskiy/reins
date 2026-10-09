@@ -851,6 +851,8 @@ jobs:
           trap 'rm -f "$key_env" "$RUNNER_TEMP/release-signing.pk8"' EXIT
           [[ -s "$key_env" ]] || { echo "::error::The release key is missing (Infisical /signing/release)"; exit 1; }
           key_b64="$(sed -n "s/^RELEASE_SIGNING_KEY_BASE64='\(.*\)'$/\1/p" "$key_env")"
+          [[ -n "$key_b64" ]] || { echo "::error::RELEASE_SIGNING_KEY_BASE64 is missing"; exit 1; }
+          echo "::add-mask::$key_b64" # file exports are not masked by the Infisical action
           base64 -d <<<"$key_b64" > "$RUNNER_TEMP/release-signing.pk8"
           scripts/release-feed.sh --version "$VERSION" --build "$BUILD" --time "$BUILD_TIME" \
             --android-version-code "$VERSION_CODE" --dist dist --key "$RUNNER_TEMP/release-signing.pk8"

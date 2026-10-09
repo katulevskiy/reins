@@ -11,10 +11,12 @@
 #   install.sh, install.ps1               the installers, pointing at --site
 #   fetch.txt                             "<feed path> <release asset> <sha256> <size>" for the large files that are
 #                                         release assets already (installers, APK); the server downloads those itself
+#   feed.json                             the signed index: every file above (fetched ones included) with its SHA-256;
+#                                         the server publishes nothing it does not list
 #
 # Both manifests are signed with the release key (Ed25519, PKCS#8 DER) over the same context as
-# `reins-release manifest`, and checked against the key the apps pin (crates/reins-desktop/src/update.rs) before
-# anything is written.
+# `reins-release manifest`, the index over its own context (reins-feed/1), and all are checked against the key the
+# apps pin (crates/reins-desktop/src/update.rs) before anything is written.
 #
 #   scripts/release-feed.sh --version 0.2.5 --build 0.2.5-202610090300-fad997a6 --time 1791515000 \
 #       --android-version-code 29858583 --dist dist --key release-signing.pk8 [--site https://reins2fa.com] [--out dist]
@@ -64,17 +66,18 @@ printf '302a300506032b6570032100%s' "$pinned" | xxd -r -p >"$stage/public.der"
 sha() { sha256sum "$1" | cut -d' ' -f1; }
 size() { stat -c %s "$1"; }
 
-# Writes <out>/<name>: {"manifest": <compact JSON>, "signature": <base64url Ed25519 over context + manifest>}.
-sign_manifest() {
-    local manifest="$1" name="$2"
-    { printf 'reins-release/1\n'; printf '%s' "$manifest"; } >"$stage/message"
+# Writes feed/<name>: {<field>: <compact JSON>, "signature": <base64url Ed25519 over context + that JSON>}.
+sign_json() {
+    local json="$1" name="$2" field="$3" context="$4"
+    { printf '%s\n' "$context"; printf '%s' "$json"; } >"$stage/message"
     openssl pkeyutl -sign -inkey "$key" -keyform DER -rawin -in "$stage/message" -out "$stage/signature"
     openssl pkeyutl -verify -pubin -inkey "$stage/public.der" -keyform DER -rawin -in "$stage/message" \
         -sigfile "$stage/signature" >/dev/null || die "$name: the signature does not verify"
     signature="$(basenc --base64url -w0 "$stage/signature" | tr -d '=')"
-    jq -n --arg manifest "$manifest" --arg signature "$signature" '{manifest: $manifest, signature: $signature}' \
-        >"$feed/$name"
+    jq -n --arg field "$field" --arg json "$json" --arg signature "$signature" \
+        '{($field): $json, signature: $signature}' >"$feed/$name"
 }
+sign_manifest() { sign_json "$1" "$2" manifest reins-release/1; }
 
 # ── the command-line programs ────────────────────────────────────────────────────────────────────────────────────
 # platform:target:kind (optional ones are skipped when the release has no such archive)
@@ -149,6 +152,17 @@ sed "s|^DEFAULT_SITE=.*|DEFAULT_SITE=\"$site\"|" "$root/scripts/install.sh" >"$f
 grep -qxF "DEFAULT_SITE=\"$site\"" "$feed/install.sh" || die "could not set DEFAULT_SITE in install.sh"
 sed 's|^\( *\)\$DefaultSite = .*|\1$DefaultSite = "'"$site"'"|' "$root/scripts/install.ps1" >"$feed/install.ps1"
 grep -qF "\$DefaultSite = \"$site\"" "$feed/install.ps1" || die "could not set \$DefaultSite in install.ps1"
+
+# ── the signed index of everything above ─────────────────────────────────────────────────────────────────────────
+files='{}'
+while IFS= read -r path; do
+    files="$(jq -c --arg p "$path" --arg s "$(sha "$feed/$path")" '. + {($p): $s}' <<<"$files")"
+done < <(cd "$feed" && find . -type f -printf '%P\n' | sort)
+while read -r path _ sha _; do
+    files="$(jq -c --arg p "$path" --arg s "$sha" '. + {($p): $s}' <<<"$files")"
+done <"$feed/fetch.txt"
+index="$(jq -c -n --arg v "$version" --arg b "$build" --argjson f "$files" '{version: $v, build: $b, files: $f}')"
+sign_json "$index" feed.json index reins-feed/1
 
 mkdir -p "$out"
 tar --sort=name --owner=0 --group=0 --numeric-owner -czf "$out/reins-feed-$version.tar.gz" -C "$stage" feed

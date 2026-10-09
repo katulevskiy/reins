@@ -228,9 +228,10 @@ its public half is pinned in `crates/reins-desktop/src/update.rs`.
 Every release carries `reins-feed-<version>.tar.gz` (listed in `SHA256SUMS`): the signed `latest.json` and
 `latest-<platform>.txt` for `reins update` and the install scripts, the command-line programs they name, the signed
 `app.json` for the desktop app's one-click update, `android/latest.json` for the APK's updater, `install.sh`,
-`install.ps1`, and `fetch.txt`, which names the installers and the APK (already release assets) by SHA-256 instead of
-copying them. The server's `reins-releases-sync` timer (reins-site, `deploy/server/`) mirrors the newest release's
-feed into `/srv/reins-releases` every 15 minutes, checking everything against `SHA256SUMS` and the manifests, so a
+`install.ps1`, `fetch.txt`, which names the installers and the APK (already release assets) by SHA-256 instead of
+copying them, and `feed.json`, the index of all of these with their SHA-256, signed with the release key (context
+`reins-feed/1`). The server's `reins-releases-sync` timer (reins-site, `deploy/server/`) mirrors the newest release's
+feed into `/srv/reins-releases` every 15 minutes and publishes only files the verified index lists, so a
 release reaches `reins2fa.com/releases`, `/install.sh` and `/install.ps1` without anyone logging in to the server.
 `scripts/release-feed.sh` also builds a feed by hand from a directory of release assets.
 
