@@ -55,6 +55,8 @@ async fn a_session_is_one_request_and_becomes_grants_that_end_together() {
     );
     assert!(view.preview.contains(&"• Fetch GitHub me/app (git only)".to_owned()), "{:?}", view.preview);
     assert!(view.preview.iter().any(|l| l.starts_with("Always asked")), "{:?}", view.preview);
+    // Never answered from a notification, by "Approve all" or by Autopilot: the sheet has to be opened.
+    assert!(view.no_standing && view.quick.is_none(), "{view:?}");
     // The session itself cannot be remembered.
     assert!(matches!(
         desk.core.approve("s1".to_owned(), choice(&[], standing(&["session"], &[]))).await,
