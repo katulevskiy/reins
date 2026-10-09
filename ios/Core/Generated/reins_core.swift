@@ -2799,6 +2799,11 @@ public protocol ReinsCoreProtocol: AnyObject, Sendable {
     func setPreset(profileId: String, preset: Preset) async throws 
     
     /**
+     * Chosen during setup and changed under Grants; applies to connections made from then on.
+     */
+    func setStartingPolicy(policy: StartingPolicy) async throws 
+    
+    /**
      * Starts a sign-in through the server's SSO ("Continue": Google, Apple, GitHub or an email code on
      * app.reins2fa.com). Open `url` in ASWebAuthenticationSession / a Custom Tab, wait for `callback_scheme`, then
      * call `sso_finish` with the URL it came back with and this `state` and `verifier`.
@@ -2810,6 +2815,11 @@ public protocol ReinsCoreProtocol: AnyObject, Sendable {
      * `keys` is `Locked` when another phone or the recovery code has what opens them.
      */
     func ssoFinish(serverUrl: String, callbackUrl: String, state: String, verifier: String) async throws  -> SsoOutcome
+    
+    /**
+     * What a newly connected AI may do before it asked for anything; `None` until the user chose (acts as asking).
+     */
+    func startingPolicy() async throws  -> StartingPolicy?
     
     /**
      * Foreground long-poll, then everything received is processed like a push.
@@ -4275,6 +4285,25 @@ open func setPreset(profileId: String, preset: Preset)async throws   {
 }
     
     /**
+     * Chosen during setup and changed under Grants; applies to connections made from then on.
+     */
+open func setStartingPolicy(policy: StartingPolicy)async throws   {
+    return
+        try  await uniffiRustCallAsync(
+            rustFutureFunc: {
+                uniffi_reins_core_fn_method_reinscore_set_starting_policy(
+                        self.uniffiCloneHandle(),FfiConverterTypeStartingPolicy_lower(policy)
+                )
+            },
+            pollFunc: ffi_reins_core_rust_future_poll_void,
+            completeFunc: ffi_reins_core_rust_future_complete_void,
+            freeFunc: ffi_reins_core_rust_future_free_void,
+            liftFunc: { $0 },
+            errorHandler: FfiConverterTypeCoreError_lift
+        )
+}
+    
+    /**
      * Starts a sign-in through the server's SSO ("Continue": Google, Apple, GitHub or an email code on
      * app.reins2fa.com). Open `url` in ASWebAuthenticationSession / a Custom Tab, wait for `callback_scheme`, then
      * call `sso_finish` with the URL it came back with and this `state` and `verifier`.
@@ -4311,6 +4340,25 @@ open func ssoFinish(serverUrl: String, callbackUrl: String, state: String, verif
             completeFunc: ffi_reins_core_rust_future_complete_rust_buffer,
             freeFunc: ffi_reins_core_rust_future_free_rust_buffer,
             liftFunc: FfiConverterTypeSsoOutcome_lift,
+            errorHandler: FfiConverterTypeCoreError_lift
+        )
+}
+    
+    /**
+     * What a newly connected AI may do before it asked for anything; `None` until the user chose (acts as asking).
+     */
+open func startingPolicy()async throws  -> StartingPolicy?  {
+    return
+        try  await uniffiRustCallAsync(
+            rustFutureFunc: {
+                uniffi_reins_core_fn_method_reinscore_starting_policy(
+                        self.uniffiCloneHandle()
+                )
+            },
+            pollFunc: ffi_reins_core_rust_future_poll_rust_buffer,
+            completeFunc: ffi_reins_core_rust_future_complete_rust_buffer,
+            freeFunc: ffi_reins_core_rust_future_free_rust_buffer,
+            liftFunc: FfiConverterOptionTypeStartingPolicy.lift,
             errorHandler: FfiConverterTypeCoreError_lift
         )
 }
@@ -11013,6 +11061,82 @@ public func FfiConverterTypePreset_lower(_ value: Preset) -> RustBuffer {
 
 
 /**
+ * What a newly connected AI may do before it asked for anything (see `crate::starter`).
+ */
+
+public enum StartingPolicy: Equatable, Hashable {
+    
+    /**
+     * Everything it asks waits for the user.
+     */
+    case askEveryTime
+    /**
+     * It may search and read the connected integrations for 24 hours (grants under Grants); sending, changing,
+     * the vault, codes and passwords, and the hard floor still ask.
+     */
+    case readsForADay
+
+
+
+
+
+}
+
+#if compiler(>=6)
+extension StartingPolicy: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeStartingPolicy: FfiConverterRustBuffer {
+    typealias SwiftType = StartingPolicy
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> StartingPolicy {
+        let variant: Int32 = try readInt(&buf)
+        switch variant {
+        
+        case 1: return .askEveryTime
+        
+        case 2: return .readsForADay
+        
+        default: throw UniffiInternalError.unexpectedEnumCase
+        }
+    }
+
+    public static func write(_ value: StartingPolicy, into buf: inout [UInt8]) {
+        switch value {
+        
+        
+        case .askEveryTime:
+            writeInt(&buf, Int32(1))
+        
+        
+        case .readsForADay:
+            writeInt(&buf, Int32(2))
+        
+        }
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeStartingPolicy_lift(_ buf: RustBuffer) throws -> StartingPolicy {
+    return try FfiConverterTypeStartingPolicy.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeStartingPolicy_lower(_ value: StartingPolicy) -> RustBuffer {
+    return FfiConverterTypeStartingPolicy.lower(value)
+}
+
+
+
+/**
  * What to do with a request.
  */
 
@@ -11658,6 +11782,30 @@ fileprivate struct FfiConverterOptionTypeAutopilotMode: FfiConverterRustBuffer {
         switch try readInt(&buf) as Int8 {
         case 0: return nil
         case 1: return try FfiConverterTypeAutopilotMode.read(from: &buf)
+        default: throw UniffiInternalError.unexpectedOptionalTag
+        }
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+fileprivate struct FfiConverterOptionTypeStartingPolicy: FfiConverterRustBuffer {
+    typealias SwiftType = StartingPolicy?
+
+    public static func write(_ value: SwiftType, into buf: inout [UInt8]) {
+        guard let value = value else {
+            writeInt(&buf, Int8(0))
+            return
+        }
+        writeInt(&buf, Int8(1))
+        FfiConverterTypeStartingPolicy.write(value, into: &buf)
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> SwiftType {
+        switch try readInt(&buf) as Int8 {
+        case 0: return nil
+        case 1: return try FfiConverterTypeStartingPolicy.read(from: &buf)
         default: throw UniffiInternalError.unexpectedOptionalTag
         }
     }
@@ -12732,10 +12880,16 @@ private let initializationResult: InitializationResult = {
     if (uniffi_reins_core_checksum_method_reinscore_set_preset() != 57690) {
         return InitializationResult.apiChecksumMismatch
     }
+    if (uniffi_reins_core_checksum_method_reinscore_set_starting_policy() != 46624) {
+        return InitializationResult.apiChecksumMismatch
+    }
     if (uniffi_reins_core_checksum_method_reinscore_sso_begin() != 4525) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_reins_core_checksum_method_reinscore_sso_finish() != 10284) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_reins_core_checksum_method_reinscore_starting_policy() != 60526) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_reins_core_checksum_method_reinscore_sync() != 42469) {

@@ -163,7 +163,7 @@ private struct StandardOptions: View {
                 vm: vm,
                 title: "Allow all mail for a while",
                 text: "Release these and let this AI search and read any of your mail without asking again, then ask again when time is up. Sending is never included.",
-                ticks: Set(view.messages.map(\.id))
+                ticks: Set(view.messages.filter { !$0.sensitive }.map(\.id))
             )
         }
         if vm.draft.allMail == nil {

@@ -74,8 +74,8 @@ struct ApprovalDraft: Equatable {
         let selected: Set<String> = switch view.kind {
         case .grant, .send, .write: []
         case .accounts: Set(shareableAccounts(view))
-        case .fetch: Set(view.messages.filter { !$0.sensitive }.map(\.id))
-        case .search, .read: Set(view.messages.map(\.id))
+        // A code or a password is never ticked for the user.
+        case .fetch, .search, .read: Set(view.messages.filter { !$0.sensitive }.map(\.id))
         }
         // Showing the accounts is remembered for a month unless the user says otherwise.
         return ApprovalDraft(
@@ -139,11 +139,11 @@ func buildChoice(_ view: ApprovalView, _ draft: ApprovalDraft) -> BuildResult {
     }
     let send = view.kind == .send
     let covered = Set(view.messages.filter(\.coveredByGrant).map(\.id))
-    // "All mail" releases everything shown, so nothing has to be ticked.
+    // "All mail" releases everything shown but what looks like a code, so nothing has to be ticked.
     let ids: [String] = if send {
         []
     } else if draft.allMail != nil {
-        view.messages.map(\.id)
+        view.messages.filter { !$0.sensitive || draft.selected.contains($0.id) }.map(\.id)
     } else {
         view.messages.map(\.id).filter { draft.selected.contains($0) || covered.contains($0) }
     }

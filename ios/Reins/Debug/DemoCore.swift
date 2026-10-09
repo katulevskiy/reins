@@ -563,6 +563,12 @@ final class DemoReinsCore: ReinsCoreProtocol, @unchecked Sendable {
         }
     }
 
+    private var starting: StartingPolicy?
+
+    func startingPolicy() async throws -> StartingPolicy? { locked { _ in starting } }
+
+    func setStartingPolicy(policy: StartingPolicy) async throws { locked { _ in starting = policy } }
+
     /// As the core: what the sheet approves untouched, refused for what is asked every time.
     func approveQuick(requestId: String) async throws {
         let view: ApprovalView? = locked { s in s.views[requestId] }

@@ -31,4 +31,19 @@ final class QuickApprovalTests: XCTestCase {
             "Claude can then do the same without asking: searching and reading me@gmail.com. Revoke it any time in Grants."
         )
     }
+
+    func testTheStartingRuleSaysWhatItGivesOnlyWhenItGivesSomething() {
+        XCTAssertEqual(StartingRuleText.title(.readsForADay), "Let it read for a day")
+        XCTAssertNotNil(StartingRuleText.onPairing(.readsForADay))
+        XCTAssertNil(StartingRuleText.onPairing(.askEveryTime))
+        XCTAssertNil(StartingRuleText.onPairing(nil), "not chosen yet: it asks for everything")
+    }
+
+    func testAnEmailThatLooksLikeACodeIsNeverTickedForTheUser() {
+        let view = ApprovalLogicTests.view(kind: .search, messages: [
+            ApprovalLogicTests.message("m1", "Bank <alerts@bank.com>"),
+            ApprovalLogicTests.message("m2", "Bank <alerts@bank.com>", sensitive: true),
+        ], count: 2)
+        XCTAssertEqual(ApprovalDraft.initial(for: view).selected, ["m1"])
+    }
 }
