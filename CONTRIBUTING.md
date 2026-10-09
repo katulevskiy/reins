@@ -191,13 +191,14 @@ Bots and maintainers who do not need to sign are listed in the workflow's `allow
 ## Maintainers: signing the APK in releases
 
 Infisical is the source of the Android release signing secrets. They live in their own project, `reins-release`
-(id `e21d41de-d3f4-41bf-accb-b4c2df9f164d`, set in `.github/actions/android-signing/action.yml`), not in the
+(id `e21d41de-d3f4-41bf-accb-b4c2df9f164d`, set in `.github/actions/release-secrets/action.yml`), not in the
 `.infisical.json` project with the server's settings: Infisical's free plan has no folder-scoped roles, so a separate
 project is what keeps the release identity from reading anything else. The release workflow reads `/signing/android`
 in its `prod` environment through GitHub OIDC as the machine identity `github-release-android` (Viewer on
 `reins-release` only, no organization access). Its OIDC login only accepts tokens with audience
-`https://github.com/katulevskiy`, subject `repo:katulevskiy/reins:ref:refs/heads/main` and
-`job_workflow_ref` `katulevskiy/reins/.github/workflows/release.yml@refs/heads/main`. The GitHub Actions variable
+`https://github.com/katulevskiy`, subject `repo:katulevskiy@84909978/reins@1400899427:ref:refs/heads/main` (the repository
+uses GitHub's immutable subject format: owner and repository ids, which survive renames), repository and owner ids
+`1400899427` / `84909978`, and `job_workflow_ref` `katulevskiy/reins/.github/workflows/release.yml@refs/heads/main`. The GitHub Actions variable
 `INFISICAL_RELEASE_IDENTITY_ID` holds its identity id. `INFISICAL_RELEASE_ENVIRONMENT` and
 `INFISICAL_ANDROID_SIGNING_PATH` override the environment and folder when needed. The workflow never needs an
 Infisical API key. See the
@@ -216,6 +217,22 @@ Keep the keystore and import file outside the repository, with mode `0600`. The 
 "Reins Android release key" (the `.p12`, its passwords, and the `android-release.env` import file). Existing GitHub repository secrets of the
 same names remain a fallback while migrating. Without complete signing credentials, the release fails before
 building or publishing. Every release must include the signed Android APK.
+
+The same identity reads `/signing/release` (`RELEASE_SIGNING_KEY_BASE64`: the Ed25519 release key, PKCS#8 DER,
+base64) in the publish job, which signs the update feed with it (`scripts/release-feed.sh`; the key is written to a
+file for that one step, never exported). The master copy is the 1Password item "Reins release signing key (Ed25519)";
+its public half is pinned in `crates/reins-desktop/src/update.rs`.
+
+## Maintainers: the update feed
+
+Every release carries `reins-feed-<version>.tar.gz` (listed in `SHA256SUMS`): the signed `latest.json` and
+`latest-<platform>.txt` for `reins update` and the install scripts, the command-line programs they name, the signed
+`app.json` for the desktop app's one-click update, `android/latest.json` for the APK's updater, `install.sh`,
+`install.ps1`, and `fetch.txt`, which names the installers and the APK (already release assets) by SHA-256 instead of
+copying them. The server's `reins-releases-sync` timer (reins-site, `deploy/server/`) mirrors the newest release's
+feed into `/srv/reins-releases` every 15 minutes, checking everything against `SHA256SUMS` and the manifests, so a
+release reaches `reins2fa.com/releases`, `/install.sh` and `/install.ps1` without anyone logging in to the server.
+`scripts/release-feed.sh` also builds a feed by hand from a directory of release assets.
 
 Production signing uses a dedicated non-debug RSA-4096 identity, alias `reinsrelease`. Its SHA-256 certificate is
 `61edfc4c65cbdfa1b7a07109a9df347de93500b52012c3380b38c7c4a4e3f1c8`, pinned in

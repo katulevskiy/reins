@@ -3,7 +3,8 @@ name: Release
 # vX.Y.Z tag (scripts/next-version.sh; CONTRIBUTING.md, "Releases"); the tag is created on the exact commit CI tested.
 # Assets: the desktop app for Linux (static musl), macOS and Windows (a zip with reins.exe), the Reins app's
 # installers (a .dmg, an .msi, an AppImage and its tarball), the server binary, the server image on GHCR,
-# the signed Android APK, and SHA256SUMS. Android signing is required for every release. Archives and installers use a
+# the signed Android APK, the update feed (reins-feed-<version>.tar.gz, scripts/release-feed.sh; the server mirrors it
+# into reins2fa.com/releases), and SHA256SUMS. Android signing is required for every release. Archives and installers use a
 # versioned name and under a fixed one (reins-desktop-<target>.tar.gz, Reins-macOS.dmg, ...) for "latest" links.
 
 # Only main pushes and maintainer dispatches can build with release credentials.
@@ -118,7 +119,7 @@ jobs:
           echo "::notice::Releasing v$version from $SHA"
       - name: Fetch signing identity from Infisical
         if: steps.version.outputs.release == 'true' && vars.INFISICAL_RELEASE_IDENTITY_ID != ''
-        uses: ./.github/actions/android-signing # zizmor: ignore[self-repository] use the exact release checkout
+        uses: ./.github/actions/release-secrets # zizmor: ignore[self-repository] use the exact release checkout
         with:
           identity-id: ${{ vars.INFISICAL_RELEASE_IDENTITY_ID }}
           environment: ${{ vars.INFISICAL_RELEASE_ENVIRONMENT || 'prod' }}
@@ -659,6 +660,8 @@ jobs:
     permissions:
       contents: read
       id-token: write # Infisical OIDC
+    outputs:
+      version-code: ${{ steps.build.outputs.version-code }} # for the Android updater's feed (publish)
     env:
       VERSION: ${{ needs.plan.outputs.version }}
       BUILD: ${{ needs.plan.outputs.build }}
@@ -687,7 +690,7 @@ jobs:
           cache-read-only: false # maintainer dispatches also warm the Gradle build cache
       - name: Fetch signing identity from Infisical
         if: vars.INFISICAL_RELEASE_IDENTITY_ID != ''
-        uses: ./.github/actions/android-signing # zizmor: ignore[self-repository] use the exact release checkout
+        uses: ./.github/actions/release-secrets # zizmor: ignore[self-repository] use the exact release checkout
         with:
           identity-id: ${{ vars.INFISICAL_RELEASE_IDENTITY_ID }}
           environment: ${{ vars.INFISICAL_RELEASE_ENVIRONMENT || 'prod' }}
@@ -718,6 +721,11 @@ jobs:
           REINS_RELEASE_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
           REINS_RELEASE_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
           REINS_RELEASE_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+          # Telegram's application credentials (my.telegram.org) and the Firebase config (push). Without them the APK
+          # still builds, but Telegram shows "needs setup" and approvals only arrive while the app is open.
+          TELEGRAM_API_ID: ${{ secrets.TELEGRAM_API_ID }}
+          TELEGRAM_API_HASH: ${{ secrets.TELEGRAM_API_HASH }}
+          GOOGLE_SERVICES_JSON: ${{ secrets.GOOGLE_SERVICES_JSON }}
         run: |
           export REINS_RELEASE_KEYSTORE_PASSWORD="${REINS_RELEASE_KEYSTORE_PASSWORD:-${ANDROID_KEYSTORE_PASSWORD:-}}"
           export REINS_RELEASE_KEY_ALIAS="${REINS_RELEASE_KEY_ALIAS:-${ANDROID_KEY_ALIAS:-}}"
@@ -725,16 +733,30 @@ jobs:
           export REINS_RELEASE_KEYSTORE="$RUNNER_TEMP/release.keystore"
           version_code="$(($(date -u +%s) / 60))"
           echo "version-code=$version_code" >> "$GITHUB_OUTPUT"
+          extra=()
+          if [[ -n "${TELEGRAM_API_ID:-}" && -n "${TELEGRAM_API_HASH:-}" ]]; then
+            extra+=("-Preins.telegramApiId=$TELEGRAM_API_ID" "-Preins.telegramApiHash=$TELEGRAM_API_HASH")
+          else
+            echo "::warning::TELEGRAM_API_ID / TELEGRAM_API_HASH are not set: this APK cannot connect Telegram."
+          fi
+          if [[ -n "${GOOGLE_SERVICES_JSON:-}" ]]; then
+            (umask 077; printf '%s' "$GOOGLE_SERVICES_JSON" > "$RUNNER_TEMP/google-services.json")
+            rm -f app/google-services.json
+            extra+=("-Preins.googleServicesJson=$RUNNER_TEMP/google-services.json")
+          else
+            echo "::warning::GOOGLE_SERVICES_JSON is not set: this APK gets no push notifications."
+          fi
           # The site and the sign-in screen's server are gradle.properties' reins.site / reins.defaultServer.
           ./gradlew --no-daemon --parallel --no-configuration-cache :app:assembleFullRelease \
             "-Preins.prebuiltNativeDir=$GITHUB_WORKSPACE/native" \
             -Preins.secureScreens=true \
             "-Preins.versionCode=$version_code" \
             "-Preins.versionName=$VERSION" \
-            "-Preins.build=$BUILD"
+            "-Preins.build=$BUILD" \
+            "${extra[@]}"
       - name: Remove the keystore
         if: always()
-        run: rm -f "$RUNNER_TEMP/release.keystore" "$RUNNER_TEMP/release-certificate.der"
+        run: rm -f "$RUNNER_TEMP/release.keystore" "$RUNNER_TEMP/release-certificate.der" "$RUNNER_TEMP/google-services.json"
       - name: Verify and name the APK
         env:
           VERSION_CODE: ${{ steps.build.outputs.version-code }}
@@ -777,6 +799,7 @@ jobs:
       contents: write
       actions: read # exact-commit CI publication gate
       packages: write # publish the completed multi-architecture image
+      id-token: write # Infisical OIDC (the release key that signs the update feed)
     env:
       VERSION: ${{ needs.plan.outputs.version }}
       TAG: ${{ needs.plan.outputs.tag }}
@@ -805,6 +828,32 @@ jobs:
           pattern: dist-*
           merge-multiple: true
           path: dist
+      # The release key is written to a file (not exported to later steps) and removed right after signing.
+      - name: Fetch the release key from Infisical
+        if: vars.INFISICAL_RELEASE_IDENTITY_ID != ''
+        uses: ./.github/actions/release-secrets # zizmor: ignore[self-repository] use the exact release checkout
+        with:
+          identity-id: ${{ vars.INFISICAL_RELEASE_IDENTITY_ID }}
+          environment: ${{ vars.INFISICAL_RELEASE_ENVIRONMENT || 'prod' }}
+          secret-path: /signing/release
+          export-type: file
+          file-output-path: /.release-key.env
+      # reins-feed-<version>.tar.gz: the signed update manifests, the installers and the Android feed, which the
+      # server's reins-releases-sync mirrors into reins2fa.com/releases (scripts/release-feed.sh).
+      - name: Update feed
+        env:
+          BUILD: ${{ needs.plan.outputs.build }}
+          BUILD_TIME: ${{ needs.plan.outputs.build-time }}
+          VERSION_CODE: ${{ needs.android.outputs.version-code }}
+        run: |
+          umask 077
+          key_env="$GITHUB_WORKSPACE/.release-key.env"
+          trap 'rm -f "$key_env" "$RUNNER_TEMP/release-signing.pk8"' EXIT
+          [[ -s "$key_env" ]] || { echo "::error::The release key is missing (Infisical /signing/release)"; exit 1; }
+          key_b64="$(sed -n "s/^RELEASE_SIGNING_KEY_BASE64='\(.*\)'$/\1/p" "$key_env")"
+          base64 -d <<<"$key_b64" > "$RUNNER_TEMP/release-signing.pk8"
+          scripts/release-feed.sh --version "$VERSION" --build "$BUILD" --time "$BUILD_TIME" \
+            --android-version-code "$VERSION_CODE" --dist dist --key "$RUNNER_TEMP/release-signing.pk8"
       - name: Checksums
         working-directory: dist
         run: |

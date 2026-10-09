@@ -1,0 +1,31 @@
+name: Release secrets
+description: Fetch release signing secrets (Android keystore, release key) from Infisical using GitHub OIDC
+inputs:
+  identity-id:
+    description: Infisical machine identity with read access to the signing folders
+    required: true
+  environment:
+    description: Infisical environment slug
+    default: prod
+  secret-path:
+    description: Infisical folder to read
+    default: /signing/android
+  export-type:
+    description: "env: export the secrets to later steps; file: write them as a dotenv file (file-output-path)"
+    default: env
+  file-output-path:
+    description: With export-type file, the dotenv file to write, relative to the workspace
+    default: /.env
+runs:
+  using: composite
+  steps:
+    - uses: Infisical/secrets-action@v1.0.18
+      with:
+        method: oidc
+        identity-id: ${{ inputs.identity-id }}
+        # reins-release: a project holding only signing secrets, so the release identity cannot read server secrets.
+        project-id: e21d41de-d3f4-41bf-accb-b4c2df9f164d
+        env-slug: ${{ inputs.environment }}
+        secret-path: ${{ inputs.secret-path }}
+        export-type: ${{ inputs.export-type }}
+        file-output-path: ${{ inputs.file-output-path }}
