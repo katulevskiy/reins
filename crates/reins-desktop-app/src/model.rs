@@ -1204,6 +1204,11 @@ impl Model {
     // The status window's actions.
 
     fn persist(&mut self) {
+        // `--demo` keeps its pretend pairing, setup and pause to itself: written here, they would end up in a real
+        // install's `app.json` (setup done, a made-up phone and account).
+        if self.args.demo {
+            return;
+        }
         if let Err(e) = self.saved.save(&self.backend.paths().state_dir) {
             log::warn!("cannot save the app's state: {e}");
         }

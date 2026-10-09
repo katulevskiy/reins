@@ -98,7 +98,7 @@ impl Root {
                     row(pal, false)
                         .child(labelled(
                             "Command line tool",
-                            Some("`reins` in ~/.local/bin, for reins run and your scripts".to_owned()),
+                            Some("reins in ~/.local/bin, for reins run and your scripts".to_owned()),
                             pal,
                         ))
                         .child(

@@ -172,8 +172,9 @@ impl DeviceFlow for DemoFlow {
         }
         Ok(Poll::Approved(Approved {
             server: crate::links::SERVER.to_owned(),
-            phone: Some("Daniel's iPhone".to_owned()),
-            account: Some("daniel@example.com".to_owned()),
+            // The demo's account everywhere else (`REINS_DEMO_SCREEN`, the status window's samples).
+            phone: Some("Dana's iPhone".to_owned()),
+            account: Some("dana@acme.dev".to_owned()),
         }))
     }
 }
@@ -196,6 +197,6 @@ mod tests {
         let Poll::Approved(approved) = flow.poll().await.unwrap() else {
             panic!("not approved")
         };
-        assert_eq!(approved.phone.as_deref(), Some("Daniel's iPhone"));
+        assert_eq!(approved.phone.as_deref(), Some("Dana's iPhone"));
     }
 }
