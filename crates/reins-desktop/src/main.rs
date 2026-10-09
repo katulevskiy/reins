@@ -183,6 +183,7 @@ async fn status(paths: &Paths, config: &Config) -> Result<(), String> {
                 out!("Key:           {}", s.fingerprint);
                 out!("Pending:       {}", s.pending);
                 out!("Git:           {}", git_mode(config));
+                out!("AI tools:      {}", harnesses_line(paths, config));
                 if let Some(line) = service_status(paths) {
                     out!("Service:       {line}");
                 }
@@ -195,15 +196,19 @@ async fn status(paths: &Paths, config: &Config) -> Result<(), String> {
         Err(e) => return Err(e.to_string()),
     }
     out!("Version:       {}", update::LONG_VERSION);
-    out!("Daemon:        not running (reins daemon, or reins service install)");
+    out!("Daemon:        not running; `reins resume` starts it");
     out!("Mode:          {}", format!("{:?}", config.mode).to_ascii_lowercase());
-    out!("Server:        {}", server::oauth::logged_in_server(paths).as_deref().unwrap_or("not logged in"));
+    out!(
+        "Server:        {}",
+        server::oauth::logged_in_server(paths).as_deref().unwrap_or("not logged in; `reins login` pairs your phone")
+    );
     if paths.identity_file().exists() {
         let id = Identity::load_or_create(&paths.identity_file()).map_err(|e| e.to_string())?;
         out!("Key:           {}", id.fingerprint());
     }
     out!("Listen:        {}", config.listen);
     out!("Git:           {}", git_mode(config));
+    out!("AI tools:      {}", harnesses_line(paths, config));
     if let Some(line) = service_status(paths) {
         out!("Service:       {line}");
     }
@@ -217,6 +222,25 @@ fn git_mode(config: &Config) -> String {
         }
         Ok(_) => "direct to the git hosts; `reins resume` to go through Reins".to_owned(),
         Err(e) => format!("unknown ({e})"),
+    }
+}
+
+/// `Claude Code, Codex`: the harnesses Reins is added to, or how to add it.
+fn harnesses_line(paths: &Paths, config: &Config) -> String {
+    use reins_desktop::harness::{self, Harness};
+    let setup = match reins_desktop::agents_cli::setup(config) {
+        Ok(setup) => setup,
+        Err(e) => return format!("unknown ({e})"),
+    };
+    let added: Vec<&str> = Harness::ALL
+        .into_iter()
+        .filter(|h| harness::registered(paths, &setup, *h).is_ok_and(|r| r.any()))
+        .map(Harness::label)
+        .collect();
+    if added.is_empty() {
+        "none yet; `reins harness add --all` adds Reins to every one on this computer".to_owned()
+    } else {
+        format!("{} (`reins harness list` for details)", added.join(", "))
     }
 }
 

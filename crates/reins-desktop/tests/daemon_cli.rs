@@ -89,10 +89,13 @@ fn status_says_when_the_daemon_is_not_running() {
     let env = Env::new(free_port());
     let out = env.run(&["status"]);
     assert!(out.status.success());
-    assert!(stdout(&out).contains("not running"), "{}", stdout(&out));
+    let text = stdout(&out);
+    // Each missing piece says the command that fixes it.
+    assert!(text.contains("not running; `reins resume` starts it"), "{text}");
+    assert!(text.contains("AI tools:      none yet; `reins harness add --all`"), "{text}");
     let out = env.run(&["pending"]);
     assert!(!out.status.success());
-    assert!(String::from_utf8_lossy(&out.stderr).contains("not running"));
+    assert!(String::from_utf8_lossy(&out.stderr).contains("not running (`reins resume` starts it)"));
 }
 
 fn wait_for(path: &Path) {

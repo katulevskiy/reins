@@ -107,7 +107,7 @@ impl Control {
 
 #[derive(Debug, thiserror::Error)]
 pub enum ClientError {
-    #[error("the Reins daemon is not running (start it with `reins daemon` or `reins service install`)")]
+    #[error("the Reins daemon is not running (`reins resume` starts it)")]
     NotRunning,
     #[error("{0}")]
     Other(String),
