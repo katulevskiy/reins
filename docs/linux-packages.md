@@ -80,7 +80,8 @@ release.
 ## Checking the key
 
 The key the repositories are signed with is also in the source repository, as
-`scripts/package/linux-packages/packages-key.asc`. Compare its fingerprint with the one you installed:
+`scripts/package/linux-packages/packages-key.asc` ("Reins packages <support@reins2fa.com>", fingerprint
+`134A 8E7B 8571 0C27 D81C  A79F 5620 15A5 8DF5 6B22`). Compare its fingerprint with the one you installed:
 
 ```sh
 gpg --show-keys /etc/apt/keyrings/reins.gpg                    # Debian, Ubuntu
