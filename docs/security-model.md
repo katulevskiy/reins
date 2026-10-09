@@ -179,6 +179,14 @@ cannot open it. The desktop app accepts an answer only if:
 So a server that is compromised cannot read the credential, cannot substitute its own key (the key was pinned when
 you compared fingerprints), and cannot replay an older answer.
 
+**The other way: `reins vault add`.** A secret typed on the computer goes to the phone in a box from the app's pinned
+key to the phone's own key (X25519, XSalsa20-Poly1305), with the request's nonce, the item's name and the field. The
+phone opens it only if the app's pinned key made it, and only for the item and field the request names, so the server
+can neither read the value nor put another one in its place. The phone's key (one per installation, never copied to
+another phone) reaches the computer once, sealed to the app, after you approve it on the phone; you then type the
+eight digits the phone showed, and the computer keeps the key. Because the key never travels in the clear, a server
+that answered with its own key could not know which digits to aim for.
+
 **Git pushes.** The desktop app reads the pack git is about to send and works out what it does: which branches or
 tags it touches, whether each update is a fast-forward (asking the host's API when needed), the commits, the files,
 and the line counts. That summary is what the phone shows. The digest is computed over the repository, the ref

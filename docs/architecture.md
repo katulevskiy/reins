@@ -200,8 +200,9 @@ phone sees only the summary.
 
 ### Other desktop tools
 
-`reins ask` (`desktop_ask`), `reins run` and the API proxy (`vault_secret_release`), and the SSH agent
-(`vault_ssh_keys`, `vault_ssh_sign`) use the same path. Each answer is sealed to the pinned key and echoes the
+`reins ask` (`desktop_ask`), `reins run` and the API proxy (`vault_secret_release`), the SSH agent
+(`vault_ssh_keys`, `vault_ssh_sign`) and `reins vault add`/`list` (`vault_phone_key`, `vault_secret_store`,
+`vault_names`) use the same path. Each answer is sealed to the pinned key and echoes the
 request's nonce. GitLab, Codeberg and Bitbucket use `<service>_git_fetch`, `_push` and `_tag_push`. Their pushes are
 analysed from the pack alone, without the host's API.
 
