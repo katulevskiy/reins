@@ -234,8 +234,9 @@ Developer ID Application certificate" and "Reins App Store Connect API key". The
 
 The same identity reads `/signing/play` for Google Play: `PLAY_SERVICE_ACCOUNT_JSON`, a Google Cloud service
 account's JSON key (the whole file as the value) with the Play Console permission to release com.reins2fa.app to
-testing tracks. The `play` job (after the release is published) uploads `reins-<version>-play.aab` to the track in the
-repository variable `PLAY_TRACK` (default `internal`) with the status in `PLAY_RELEASE_STATUS` (default
+testing tracks. The `play` job (after the release is published) uploads `reins-<version>-play.aab` to every track that takes it:
+the repository variable `PLAY_TRACK`, comma-separated (default `internal,alpha,beta,production`; a track Google Play
+does not open to the app yet is skipped with a warning), with the status in `PLAY_RELEASE_STATUS` (default
 `completed`; `draft` until the app's first release is rolled out) through `scripts/play-upload.py`, and skips the
 upload with a notice while the folder or the secret is missing; a repository secret of the same name is the fallback.
 `INFISICAL_PLAY_PATH` overrides the folder. Set up and first upload: `android/PLAY_STORE.md`.

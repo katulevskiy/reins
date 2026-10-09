@@ -51,20 +51,23 @@ Every release builds the bundle next to the APK (`.github/workflows/release.yml`
    REQUEST_INSTALL_PACKAGES, QUERY_ALL_PACKAGES, exact alarms, background location, full-screen intents, AD_ID, ...),
    no foreground-service type but `dataSync`, no cleartext traffic.
 3. The bundle is a release asset, `reins-<version>-play.aab`, listed in `SHA256SUMS`.
-4. Job `play`, after the GitHub release is published: `scripts/play-upload.py` uploads it to the track in the repository
-   variable `PLAY_TRACK` (default `internal`; `alpha` is closed testing, `beta` open testing, `production`), with the
-   status in `PLAY_RELEASE_STATUS` (default `completed`) and the release notes in `play/release-notes/<language>.txt`
+4. Job `play`, after the GitHub release is published: `scripts/play-upload.py` releases it on every track in the
+   repository variable `PLAY_TRACK`, comma-separated (default `internal,alpha,beta,production`: `alpha` is closed
+   testing, `beta` open testing). A track Google Play does not take the release on yet is skipped with a warning: open
+   testing and production until production access is granted, production while the service account lacks "Release to
+   production". So releases reach each track as soon as it opens. The release has the status in
+   `PLAY_RELEASE_STATUS` (default `completed`) and the release notes in `play/release-notes/<language>.txt`
    (`{version}` is replaced; 500 characters at most). Without a service account it is skipped with a notice.
 
 The uploader (standard library and `openssl` only) signs a JWT with the service account's key, exchanges it for a
-one-hour token, then does one edit: insert, upload the bundle, set the track's release, commit; on any error it deletes
+one-hour token, then does one edit: insert, upload the bundle, set the release on each track, commit; on any error it deletes
 the edit. Neither the key nor the token is printed; the workflow also masks the key's lines. `--dry-run` checks the
 bundle, the notes and the key without network access; `scripts/test-play-upload.py` runs it against a fake Google
 Play. By hand:
 
 ```sh
 PLAY_SERVICE_ACCOUNT_JSON="$(cat key.json)" scripts/play-upload.py --bundle reins-0.3.0-play.aab --version 0.3.0 \
-    --notes-dir android/play/release-notes [--track internal|alpha|beta|production] [--status completed|draft] \
+    --notes-dir android/play/release-notes [--track internal,alpha,beta,production] [--status completed|draft] \
     [--status inProgress --user-fraction 0.1] [--changes-not-sent-for-review] [--dry-run]
 ```
 
@@ -119,7 +122,8 @@ never been published on any track. So:
 7. The next release uploads by itself. If its `play` job says the app is a draft (exit code 3), set the repository
    variable `PLAY_RELEASE_STATUS` to `draft` and roll each release out by hand in the Console until the first rollout
    went through, then delete the variable. A failed `play` job never affects the GitHub release; rerun the job.
-8. Later: `PLAY_TRACK=alpha` for closed testing, then production (below). Staged production rollouts are by hand
+8. Every release goes to internal and closed testing, and to open testing and production once Google opens them (below);
+   for production, also give the service account **Release to production**. Staged production rollouts are by hand
    (`--status inProgress --user-fraction`) or in the Console.
 
 **New personal developer accounts** (created after 2023-11-13) must run a closed test with at least 12 opted-in testers

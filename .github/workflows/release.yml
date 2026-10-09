@@ -1157,9 +1157,10 @@ jobs:
           gh release edit "$TAG" --draft=false --latest
           echo "::notice::Published $GITHUB_SERVER_URL/$GITHUB_REPOSITORY/releases/tag/$TAG"
 
-  # The published release's Play bundle goes to a Google Play track (internal testing unless the repository variable
-  # PLAY_TRACK says alpha, beta or production) with scripts/play-upload.py. Skipped while no service account is
-  # configured (Infisical /signing/play, PLAY_SERVICE_ACCOUNT_JSON); see android/PLAY_STORE.md.
+  # The published release's Play bundle goes to every Google Play track that takes it (internal, closed and open testing,
+  # production; the repository variable PLAY_TRACK, comma-separated, narrows that) with scripts/play-upload.py, which
+  # skips with a warning a track not open to the app yet. Skipped while no service account is configured (Infisical
+  # /signing/play, PLAY_SERVICE_ACCOUNT_JSON); see android/PLAY_STORE.md.
   play:
     name: Google Play upload
     needs: [plan, android, publish]
@@ -1197,7 +1198,7 @@ jobs:
       - name: Upload to Google Play
         env:
           PLAY_SERVICE_ACCOUNT_JSON: ${{ secrets.PLAY_SERVICE_ACCOUNT_JSON }}
-          PLAY_TRACK: ${{ vars.PLAY_TRACK || 'internal' }}
+          PLAY_TRACK: ${{ vars.PLAY_TRACK || 'internal,alpha,beta,production' }}
           PLAY_RELEASE_STATUS: ${{ vars.PLAY_RELEASE_STATUS || 'completed' }}
           VERSION_CODE: ${{ needs.android.outputs.version-code }}
         run: |
@@ -1241,7 +1242,7 @@ jobs:
           elif [[ "$status" != 0 ]]; then
             echo "::error::Google Play upload failed (the GitHub release is published; rerun this job after fixing it)"
           else
-            echo "::notice::v$VERSION ($VERSION_CODE) is on the Google Play $PLAY_TRACK track ($PLAY_RELEASE_STATUS)"
+            echo "::notice::v$VERSION ($VERSION_CODE) is on Google Play ($PLAY_RELEASE_STATUS); the log names the tracks"
           fi
           exit "$status"
       - name: Remove the Play credentials

@@ -2,11 +2,17 @@
 """Uploads the Play app bundle to a Google Play track with the Google Play Developer API (androidpublisher v3).
 
     scripts/play-upload.py --bundle dist/reins-0.3.0-play.aab --version 0.3.0 \
-        [--track internal|alpha|beta|production] [--status completed|draft|inProgress] [--user-fraction 0.1] \
+        [--track internal,alpha,beta,production] [--status completed|draft|inProgress] [--user-fraction 0.1] \
         [--notes-dir android/play/release-notes] [--version-code N] [--changes-not-sent-for-review] [--dry-run]
 
-One edit: create it, upload the bundle, set the track's release (the bundle's version code, the release notes,
-the status), commit. Anything that fails deletes the edit, so nothing half-done is left in the Play Console.
+One edit: create it, upload the bundle, set the release (the bundle's version code, the release notes, the status) on
+each track in --track, commit. Anything that fails deletes the edit, so nothing half-done is left in the Play Console.
+
+--track takes several tracks, comma-separated: the release goes to all of them. A track Google Play does not open to
+the app yet is skipped with a warning ("Precondition check failed": open testing and production stay closed to a new
+personal developer account until its closed test is done and production access granted), and so is a track the service
+account may not release to (production needs its own permission). So the widest list can stay configured, and releases
+reach those tracks as soon as they open. At least one track must take the release.
 
 Credentials: a Google Cloud service account's JSON key, from PLAY_SERVICE_ACCOUNT_JSON (the JSON itself) or
 --credentials FILE. The account needs the Play Console permission "Release apps to testing tracks" (and "Release to
@@ -47,6 +53,7 @@ TOKEN_URI = "https://oauth2.googleapis.com/token"
 TRACKS = ("internal", "alpha", "beta", "production")
 STATUSES = ("completed", "draft", "inProgress", "halted")
 NOTES_LIMIT = 500
+CLOSED_TRACK = "precondition check failed"
 DRAFT_APP = 3
 
 # What the Play Console's errors mean for this script, matched on Google's message (lower case).
@@ -91,12 +98,33 @@ class PlayError(Exception):
         self.message = message
 
     @property
+    def closed_track(self):
+        """Google Play refused one track, not the upload: not open to the app yet, or not to this service account."""
+        text = self.message.lower()
+        return CLOSED_TRACK in text or (self.status == 403 and "permission" in text)
+
+    @property
     def draft_app(self):
         return "draft app" in self.message.lower()
 
     def explanation(self):
         text = self.message.lower()
         return next((why for key, why in EXPLANATIONS if key in text), None)
+
+
+def tracks(text):
+    """--track: one track or several, comma-separated, in the order given and each once."""
+    names = list(dict.fromkeys(t.strip() for t in text.split(",") if t.strip()))
+    unknown = [t for t in names if t not in TRACKS]
+    if not names or unknown:
+        raise argparse.ArgumentTypeError(f"tracks are {', '.join(TRACKS)} (comma-separated), not {text!r}")
+    return names
+
+
+def warn(message, environ=os.environ):
+    """A warning on stderr, and on the GitHub Actions run's summary when it runs there."""
+    prefix = "::warning::" if environ.get("GITHUB_ACTIONS") == "true" else "play-upload: warning: "
+    print(f"{prefix}{message}", file=sys.stderr)
 
 
 def fail(message, code=2):
@@ -229,11 +257,12 @@ def release_body(track, version_code, version, status, notes, user_fraction=None
 
 
 class Uploader:
-    def __init__(self, http, account, package=PACKAGE, log=print):
+    def __init__(self, http, account, package=PACKAGE, log=print, warn=warn):
         self.http = http
         self.account = account
         self.package = package
         self.log = log
+        self.warn = warn
         self.token = None
 
     def authorize(self):
@@ -262,8 +291,9 @@ class Uploader:
         base = UPLOAD_API if upload is not None else API
         return self.http.request(method, f"{base}/{self.package}/{path}", headers, data, timeout)
 
-    def publish(self, bundle, track, status, version, notes, version_code=None, user_fraction=None,
+    def publish(self, bundle, tracks, status, version, notes, version_code=None, user_fraction=None,
                 changes_not_sent_for_review=False):
+        """Uploads the bundle and releases it on each of `tracks` Google Play takes; returns the code and those tracks."""
         self.authorize()
         edit = self.call("POST", "edits", {})["id"]
         self.log(f"Edit {edit} opened for {self.package}")
@@ -277,9 +307,22 @@ class Uploader:
             if version_code is not None and code != version_code:
                 raise PlayError(0, f"Google Play read versionCode {code} from the bundle, not {version_code}")
             self.log(f"Uploaded versionCode {code} (SHA-256 {uploaded.get('sha256', '?')})")
-            self.call("PUT", f"edits/{edit}/tracks/{track}",
-                      release_body(track, code, version, status, notes, user_fraction))
-            self.log(f"Track {track}: release {version} ({code}), status {status}")
+            released = []
+            for track in tracks:
+                try:
+                    self.call("PUT", f"edits/{edit}/tracks/{track}",
+                              release_body(track, code, version, status, notes, user_fraction))
+                except PlayError as error:
+                    if not error.closed_track:
+                        raise
+                    self.warn(f"Google Play does not take releases on the {track} track yet ({error.message}): skipped"
+                              + (". The service account needs the Play Console permission to release there."
+                                 if error.status == 403 else ""))
+                    continue
+                released.append(track)
+                self.log(f"Track {track}: release {version} ({code}), status {status}")
+            if not released:
+                raise PlayError(0, f"no track took the release (tried {', '.join(tracks)})")
             query = "?changesNotSentForReview=true" if changes_not_sent_for_review else ""
             self.call("POST", f"edits/{edit}:commit{query}")
         except BaseException:
@@ -288,15 +331,16 @@ class Uploader:
             except PlayError:
                 pass  # an uncommitted edit expires by itself
             raise
-        self.log(f"Committed: {version} ({code}) is on the {track} track ({status})")
-        return code
+        self.log(f"Committed: {version} ({code}) is on Google Play: {', '.join(released)} ({status})")
+        return code, released
 
 
 def parse_args(argv):
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--bundle", required=True, help="the signed .aab")
     parser.add_argument("--version", required=True, help="the release name, and {version} in the notes")
-    parser.add_argument("--track", default="internal", choices=TRACKS)
+    parser.add_argument("--track", dest="tracks", type=tracks, default=["internal"],
+                        help=f"one or more of {', '.join(TRACKS)}, comma-separated (default internal)")
     parser.add_argument("--status", default="completed", choices=STATUSES)
     parser.add_argument("--user-fraction", type=float, help="with --status inProgress: the share of users (0-1)")
     parser.add_argument("--notes-dir", help="release notes, <language>.txt")
@@ -326,17 +370,19 @@ def main(argv=None, http=None, environ=os.environ):
     if args.dry_run:
         print(f"Dry run, nothing sent. {args.package}: {Path(args.bundle).name} ({size / 1e6:.1f} MB)")
         print(f"  credentials: {account['client_email'] if account else 'none (PLAY_SERVICE_ACCOUNT_JSON is empty)'}")
-        print(f"  POST edits; POST edits/<id>/bundles; PUT edits/<id>/tracks/{args.track}; POST edits/<id>:commit")
-        body = release_body(args.track, args.version_code or "<from the bundle>", args.version, args.status, notes,
-                            args.user_fraction)
-        print(json.dumps(body, indent=2, ensure_ascii=False))
+        puts = "; ".join(f"PUT edits/<id>/tracks/{track}" for track in args.tracks)
+        print(f"  POST edits; POST edits/<id>/bundles; {puts}; POST edits/<id>:commit")
+        for track in args.tracks:
+            body = release_body(track, args.version_code or "<from the bundle>", args.version, args.status, notes,
+                                args.user_fraction)
+            print(json.dumps(body, indent=2, ensure_ascii=False))
         return 0
     if account is None:
         fail("no credentials: set PLAY_SERVICE_ACCOUNT_JSON or pass --credentials")
-    uploader = Uploader(http or Http(), account, args.package)
-    print(f"Google Play: {args.package}, {args.track} track, status {args.status}")
+    uploader = Uploader(http or Http(), account, args.package, warn=lambda message: warn(message, environ))
+    print(f"Google Play: {args.package}, tracks {', '.join(args.tracks)}, status {args.status}")
     try:
-        uploader.publish(args.bundle, args.track, args.status, args.version, notes, args.version_code,
+        uploader.publish(args.bundle, args.tracks, args.status, args.version, notes, args.version_code,
                          args.user_fraction, args.changes_not_sent_for_review)
     except PlayError as error:
         print(f"play-upload: Google Play refused the upload: {error}", file=sys.stderr)

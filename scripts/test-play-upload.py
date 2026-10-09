@@ -179,6 +179,37 @@ with tempfile.TemporaryDirectory(prefix="reins-play-upload-") as directory:
         code, _, _ = run(base + bad, FakePlay(), environ)
         check(code == 2, f"refused {bad}")
 
+    # Several tracks in one edit; a track Google Play does not open to the app yet is skipped with a warning.
+    closed = "Precondition check failed."
+    fake = FakePlay(
+        fail_on=lambda method, url: method == "PUT" and url.endswith(("/beta", "/production")), error=(400, closed)
+    )
+    code, out, err = run(base + ["--track", "internal,alpha,beta,production"], fake, environ)
+    check(code == 0, f"closed tracks are skipped: {err}")
+    puts = [url.rsplit("/", 1)[-1] for method, url in fake.routes() if method == "PUT"]
+    check(puts == ["internal", "alpha", "beta", "production"], f"every track tried: {puts}")
+    check(fake.routes()[-1] == ("POST", "com.reins2fa.app/edits/edit-1:commit"), "the open tracks are committed")
+    check("beta track yet" in err and "production track yet" in err, f"skipped tracks are reported: {err}")
+    check("internal, alpha (completed)" in out, f"the committed tracks are named: {out}")
+    code, _, err = run(base + ["--track", "beta"], FakePlay(fail_on=lambda m, u: m == "PUT", error=(400, closed)), environ)
+    check(code == 1 and "no track took the release" in err, "a release no track takes fails")
+    code, _, err = run(base + ["--track", "beta"], FakePlay(fail_on=lambda m, u: m == "PUT", error=(400, closed)),
+                       dict(environ, GITHUB_ACTIONS="true"))
+    check("::warning::Google Play does not take releases on the beta track" in err, "a warning annotation on CI")
+    denied = (403, "The caller does not have permission")
+    fake = FakePlay(fail_on=lambda method, url: method == "PUT" and url.endswith("/production"), error=denied)
+    code, _, err = run(base + ["--track", "alpha,production"], fake, environ)
+    check(code == 0 and "permission to release there" in err, f"a track the account may not release to: {err}")
+    code, _, _ = run(base, FakePlay(fail_on=lambda m, u: u.endswith("/edits"), error=denied), environ)
+    check(code == 1, "no access to the app at all still fails")
+    fake = FakePlay(fail_on=lambda method, url: method == "PUT" and url.endswith("/alpha"), error=(400, "Bad notes."))
+    code, _, _ = run(base + ["--track", "internal,alpha"], fake, environ)
+    check(code == 1 and fake.routes()[-1][0] == "DELETE", "any other refusal still fails the whole edit")
+    for bad in ("internal,nightly", ",", ""):
+        check(run(base + ["--track", bad], FakePlay(), environ)[0] == 2, f"refused --track {bad!r}")
+    code, _, _ = run(base + ["--track", "alpha, internal,alpha"], fake := FakePlay(), environ)
+    check([u.rsplit("/", 1)[-1] for m, u in fake.routes() if m == "PUT"] == ["alpha", "internal"], "each track once")
+
     # The app is still a draft: exit 3, the explanation, and the edit is deleted rather than committed.
     message = "Only releases with status draft may be created on draft app."
     fake = FakePlay(fail_on=lambda method, url: method == "PUT", error=(400, message))
@@ -216,6 +247,8 @@ with tempfile.TemporaryDirectory(prefix="reins-play-upload-") as directory:
     code, out, err = run(base + ["--dry-run", "--track", "alpha"], Offline(), environ)
     check(code == 0 and '"track": "alpha"' in out and account["client_email"] in out, f"dry run: {err}")
     check("PRIVATE KEY" not in out + err and "eyJ" not in out + err, "the dry run shows no key or JWT")
+    code, out, _ = run(base + ["--dry-run", "--track", "internal,alpha"], Offline(), environ)
+    check(code == 0 and '"track": "internal"' in out and '"track": "alpha"' in out, "dry run of two tracks")
     code, out, _ = run(base + ["--dry-run"], Offline(), {})
     check(code == 0 and "none (PLAY_SERVICE_ACCOUNT_JSON is empty)" in out, "dry run without credentials")
     broken = dict(account, private_key="-----BEGIN PRIVATE KEY-----\nAAAA\n-----END PRIVATE KEY-----\n")
