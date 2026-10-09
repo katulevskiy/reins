@@ -91,7 +91,8 @@ private struct ComputerStep: View {
             }
             .accessibilityIdentifier("downloadDesktop")
             // How a new AI starts (the computer included); someone who just installed Reins starts with the recommended rule.
-            StartingRuleChooser().padding(.top, 8)
+            // The card brings its own side margin; the step's other content already has one.
+            StartingRuleChooser().padding(.horizontal, -16).padding(.top, 8)
             Button("Next", action: onNext)
                 .buttonStyle(CapsuleButtonStyle(kind: .secondary))
                 .padding(.top, 8)

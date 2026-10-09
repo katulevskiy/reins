@@ -80,9 +80,9 @@ struct BurstBar: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
-            HStack(spacing: 8) {
+            HStack(alignment: .top, spacing: 8) {
                 ConnectionIcon(connectionId: burst.connectionId, label: burst.label, size: 22)
-                Text(burst.title).font(RFont.sans(15.5, .semibold)).foregroundStyle(Palette.text).lineLimit(1)
+                Text(burst.title).font(RFont.sans(15.5, .semibold)).foregroundStyle(Palette.text).lineLimit(2)
             }
             if let note = burst.heldNote {
                 Text(note).font(RFont.sans(13)).foregroundStyle(Palette.secondary).padding(.top, 4)

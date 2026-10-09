@@ -580,8 +580,7 @@ final class DemoReinsCore: ReinsCoreProtocol, @unchecked Sendable {
         guard let v = view else { throw CoreError.NotFound }
         guard v.quick != nil else { throw CoreError.Invalid(reason: "Open this request to decide.") }
         let selected = switch v.kind {
-        case .search, .read: v.messages.map(\.id)
-        case .fetch: v.messages.filter { !$0.sensitive }.map(\.id)
+        case .search, .read, .fetch: v.messages.filter { !$0.sensitive }.map(\.id)
         default: [String]()
         }
         try await approve(requestId: requestId, choice: ApprovalChoice(selectedMessageIds: selected, standing: nil))

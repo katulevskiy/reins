@@ -36,13 +36,19 @@ struct DecisionLayout<Details: View, Recap: View, Decision: View>: View {
                     ScrollView { details.padding(.bottom, 12) }
                         .scrollDismissesKeyboard(.interactively)
                         .safeAreaInset(edge: .bottom, spacing: 0) {
-                            // The glass buttons float over the details; a fade underneath keeps both readable.
+                            // The glass buttons float over the details; a fade above them and a fill underneath keep both
+                            // readable, however tall the decision is (the shortcut and its caption sit above the buttons).
                             decision.background {
-                                LinearGradient(
-                                    stops: [.init(color: Palette.background.opacity(0), location: 0), .init(color: Palette.background.opacity(0.92), location: 0.45)],
-                                    startPoint: .top,
-                                    endPoint: .bottom
-                                )
+                                VStack(spacing: 0) {
+                                    LinearGradient(
+                                        colors: [Palette.background.opacity(0), Palette.background],
+                                        startPoint: .top,
+                                        endPoint: .bottom
+                                    )
+                                    .frame(height: 24)
+                                    Palette.background
+                                }
+                                .padding(.top, -24)
                                 .ignoresSafeArea()
                                 .allowsHitTesting(false)
                             }

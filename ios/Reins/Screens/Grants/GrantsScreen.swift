@@ -73,10 +73,10 @@ struct GrantsScreen: View {
                     .plainRow(EdgeInsets(top: 6, leading: 16, bottom: 6, trailing: 16))
                 }
 
-                // The starting rule for new AIs.
+                // The starting rule for new AIs (the card brings its own side margin).
                 StartingRuleChooser()
                     .padding(.top, 18)
-                    .plainRow(EdgeInsets(top: 6, leading: 16, bottom: 6, trailing: 16))
+                    .plainRow(EdgeInsets(top: 6, leading: 0, bottom: 6, trailing: 0))
             }
             .listStyle(.plain)
             .scrollContentBackground(.hidden)

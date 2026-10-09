@@ -51,6 +51,7 @@ struct StartingRuleChooser: View {
                         }
                     }
                 }
+                .padding(16)
                 .accessibilityIdentifier(policy == .readsForADay ? "rule:readsForADay" : "rule:askEveryTime")
             }
         }
