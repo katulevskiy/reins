@@ -1,6 +1,6 @@
 //! `--demo` only: made-up activity, connections, keys and AI tools, shown where this computer has none yet, so the
 //! window can be tried (and photographed) without an account or a running daemon. Nothing here is sent anywhere, and
-//! none of it is written to disk.
+//! none of it is written to disk. `REINS_DEMO_EMPTY=1` leaves the samples out, to see the empty states.
 
 use std::collections::BTreeMap;
 use std::sync::Arc;
@@ -19,6 +19,8 @@ use crate::backend::{DaemonState, Snapshot};
 pub struct Demo {
     /// Unix seconds the demo started.
     base: i64,
+    /// No samples: a computer where nothing happened yet.
+    empty: bool,
 }
 
 /// One made-up request: seconds before the start, kind, source, service, what, detail, outcome, decider, reason,
@@ -202,6 +204,16 @@ impl Demo {
     pub fn new(now: i64) -> Self {
         Self {
             base: now,
+            empty: false,
+        }
+    }
+
+    /// Without the samples (the empty states).
+    #[must_use]
+    pub fn empty(self) -> Self {
+        Self {
+            empty: true,
+            ..self
         }
     }
 
@@ -317,6 +329,20 @@ impl Demo {
 
     /// Fills in what this computer does not have yet (the real data wins where there is some).
     pub fn fill(self, s: &mut Snapshot, paused: bool) {
+        if !matches!(s.daemon, DaemonState::Running { .. }) {
+            s.daemon = DaemonState::Running {
+                pending: 0,
+            };
+        }
+        if let Ok(config) = s.config.as_ref()
+            && !paused
+            && s.git_routed.is_empty()
+        {
+            s.git_routed = config.enabled_hosts().unwrap_or_default().into_iter().map(|h| h.host).collect();
+        }
+        if self.empty {
+            return;
+        }
         if s.activity.is_empty() {
             s.activity = Arc::new(self.activity());
         }
@@ -327,9 +353,6 @@ impl Demo {
             }
             if config.run.profiles.is_empty() {
                 config.run.profiles = Self::profiles();
-            }
-            if !paused && s.git_routed.is_empty() {
-                s.git_routed = config.enabled_hosts().unwrap_or_default().into_iter().map(|h| h.host).collect();
             }
         }
         let overview = Arc::make_mut(&mut s.overview);
@@ -348,17 +371,13 @@ impl Demo {
         if overview.started_at == 0 {
             overview.started_at = self.base - 5 * 3_600;
         }
-        if !matches!(s.daemon, DaemonState::Running { .. }) {
-            s.daemon = DaemonState::Running {
-                pending: 0,
-            };
-        }
         // Reins in no AI tool yet: as if it were in two of them.
         if !s.harnesses.iter().any(|h| h.added) {
             for row in &mut s.harnesses {
                 let sample = matches!(row.harness, Harness::ClaudeCode | Harness::Codex);
                 row.found |= sample;
                 row.added = sample;
+                row.complete = sample;
             }
         }
     }
@@ -382,6 +401,7 @@ mod tests {
                     harness,
                     found: false,
                     added: false,
+                    complete: false,
                 })
                 .collect(),
             fingerprint: None,
@@ -438,5 +458,11 @@ mod tests {
         demo.fill(&mut real, true);
         assert_eq!(*real.activity, vec![mine]);
         assert!(real.git_routed.is_empty(), "paused: nothing routed");
+
+        let mut bare = snapshot();
+        demo.empty().fill(&mut bare, false);
+        assert!(bare.activity.is_empty() && bare.overview.connections.is_empty());
+        assert!(matches!(bare.daemon, DaemonState::Running { .. }), "the service still looks on");
+        assert_eq!(bare.git_routed, vec!["github.com"]);
     }
 }

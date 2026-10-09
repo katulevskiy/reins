@@ -1,119 +1,355 @@
-//! The first-time setup: add Reins to the AI tools found here, start the background service, send git through it.
+//! Steps 2 and 3 of the welcome flow, and its end: connect the AI tools (one click each, undoable), turn Reins on
+//! (the background service, git, opening at login, each step as it goes), and "Reins is on" with a test to the
+//! phone.
 
+use gpui::prelude::FluentBuilder as _;
 use gpui::{
-    AnyElement, Context, FontWeight, InteractiveElement as _, IntoElement, ParentElement as _,
+    AnyElement, Context, Div, FontWeight, InteractiveElement as _, IntoElement, ParentElement, SharedString,
     StatefulInteractiveElement as _, Styled as _, div, px,
 };
+use reins_desktop::harness::{Harness, after_add_note};
 
-use super::Root;
-use super::parts::{button, caption, card, checkbox, mark, row, step_line, warning};
-use crate::model::{Model, Step};
+use super::parts::{
+    big, button, caption, card, check, check_circle, fine, labelled, link, row, step_line, toggle, warning,
+    welcome_title,
+};
+use super::{Data, Root};
+use crate::model::{Model, Step, TurnOn};
 use crate::theme::Palette;
+use crate::welcome::{self, ToolRow};
+
+/// The tile before an AI tool's name: its initials.
+fn tool_tile(h: Harness, pal: Palette) -> Div {
+    let initials = match h {
+        Harness::ClaudeCode => "CC",
+        Harness::Codex => "Cx",
+        Harness::Gemini => "G",
+        Harness::Cursor => "Cu",
+    };
+    div()
+        .flex()
+        .flex_none()
+        .items_center()
+        .justify_center()
+        .size(px(34.0))
+        .rounded(px(9.0))
+        .bg(pal.control_fill)
+        .text_color(pal.secondary)
+        .text_size(px(12.0))
+        .font_weight(FontWeight::SEMIBOLD)
+        .child(initials)
+}
+
+/// "✓ Connected" in green.
+fn connected_mark(pal: Palette) -> Div {
+    div()
+        .flex()
+        .flex_none()
+        .items_center()
+        .gap(px(6.0))
+        .text_color(pal.success)
+        .font_weight(FontWeight::MEDIUM)
+        .child(check(14.0, pal.success))
+        .child("Connected")
+}
+
+/// The row of buttons at the bottom of a step: what goes back on the left, what goes on at the right.
+fn actions(back: Option<AnyElement>, forward: impl IntoElement) -> Div {
+    div()
+        .flex()
+        .items_center()
+        .gap(px(10.0))
+        .child(div().flex().flex_1().when_some(back, ParentElement::child))
+        .child(forward)
+}
 
 impl Root {
-    pub(super) fn setup(&self, pal: Palette, cx: &mut Context<'_, Self>) -> AnyElement {
+    pub(super) fn tools_step(&self, pal: Palette, cx: &mut Context<'_, Self>) -> AnyElement {
         let m = self.model.read(cx);
-        let items = m.setup_items.clone();
+        let rows: Vec<ToolRow> = m.tools.clone();
+        // A copy of Reins that will not be there after a restart must not be written into the tools' settings.
+        let location = crate::backend::Backend::location_problem();
+        let connectable = if location.is_some() {
+            Vec::new()
+        } else {
+            welcome::connectable(&rows)
+        };
+        let restart = rows.iter().any(|r| r.undoable);
+
+        let mut list = card(pal);
+        for (i, r) in rows.iter().enumerate() {
+            let h = r.harness;
+            let detail: SharedString = if let Some(e) = &r.error {
+                e.clone().into()
+            } else if r.connected && r.undoable {
+                after_add_note(h).into()
+            } else if r.connected {
+                "Already connected: its tools and risky commands reach your phone".into()
+            } else if r.installed {
+                "Installed on this computer".into()
+            } else {
+                "Not installed".into()
+            };
+            let right: AnyElement = if r.busy {
+                fine("Connecting…", pal).into_any_element()
+            } else if r.connected {
+                div()
+                    .flex()
+                    .items_center()
+                    .gap(px(14.0))
+                    .child(connected_mark(pal))
+                    .child(
+                        link(
+                            SharedString::from(format!("undo-{}", h.id())),
+                            if r.undoable {
+                                "Undo"
+                            } else {
+                                "Remove"
+                            },
+                            pal,
+                        )
+                        .text_color(pal.secondary)
+                        .on_click(Self::on_model(cx, move |m, cx| m.undo_tool(h, cx))),
+                    )
+                    .into_any_element()
+            } else if r.installed && location.is_some() {
+                button(SharedString::from(format!("connect-{}", h.id())), "Connect", pal, true, false)
+                    .into_any_element()
+            } else if r.installed {
+                button(SharedString::from(format!("connect-{}", h.id())), "Connect", pal, true, true)
+                    .on_click(Self::on_model(cx, move |m, cx| m.connect_tool(h, cx)))
+                    .into_any_element()
+            } else {
+                fine("Not installed", pal).into_any_element()
+            };
+            let mut line = row(pal, i == 0)
+                .py(px(13.0))
+                .child(tool_tile(h, pal))
+                .child(
+                    div()
+                        .flex()
+                        .flex_col()
+                        .flex_1()
+                        .min_w(px(0.0))
+                        .gap(px(2.0))
+                        .child(div().text_size(px(13.5)).font_weight(FontWeight::MEDIUM).child(h.label()))
+                        .child(caption(detail, pal).when(r.error.is_some(), |c| c.text_color(pal.danger))),
+                )
+                .child(right);
+            if !r.installed && !r.connected {
+                line = line.opacity(0.5);
+            }
+            list = list.child(line);
+        }
+
+        let header = div()
+            .flex()
+            .items_center()
+            .gap(px(12.0))
+            .px(px(2.0))
+            .child(caption(welcome::tools_line(&rows), pal).flex_1().min_w(px(0.0)))
+            .when(connectable.len() > 1, |h| {
+                h.child(
+                    button("connect-all", "Connect all", pal, false, true)
+                        .on_click(Self::on_model(cx, Model::connect_all)),
+                )
+            });
+        let any_connected = rows.iter().any(|r| r.connected);
+        let forward = big(button(
+            "tools-continue",
+            if any_connected || connectable.is_empty() {
+                "Continue"
+            } else {
+                "Skip for now"
+            },
+            pal,
+            any_connected || connectable.is_empty(),
+            true,
+        ))
+        .on_click(Self::on_model(cx, Model::tools_continue));
+
+        div()
+            .flex()
+            .flex_col()
+            .gap(px(16.0))
+            .child(welcome_title(
+                "Connect your AI tools",
+                "Reins adds itself to each one: its tools reach your phone, and risky commands wait for your OK.",
+                pal,
+            ))
+            .when_some(location, |p, problem| p.child(warning(problem, pal)))
+            .child(div().flex().flex_col().gap(px(8.0)).pt(px(6.0)).child(header).child(list))
+            .when(restart, |p| {
+                p.child(
+                    fine("Restart a tool you connected so it picks Reins up; it keeps working as before.", pal)
+                        .px(px(2.0)),
+                )
+            })
+            .child(div().pt(px(6.0)).child(actions(None, forward)))
+            .into_any_element()
+    }
+
+    pub(super) fn turn_on_step(&self, pal: Palette, cx: &mut Context<'_, Self>) -> AnyElement {
+        let m = self.model.read(cx);
         let steps = m.setup_steps.clone();
         let running = m.setup_running;
         let finished = m.setup_finished();
         let failed = steps.iter().any(|(_, s)| matches!(s, Step::Failed(_)));
+        let (git, login) = (m.turn_git, m.turn_autostart);
         let notice = m.notice.clone();
         let location = crate::backend::Backend::location_problem();
 
-        let mut list = card(pal);
-        for (i, item) in items.iter().enumerate() {
-            let (checked, available) = (item.checked, item.available);
-            let mut r = row(pal, i == 0).id(("setup-item", i)).child(checkbox(checked, available, pal)).child(
-                div()
-                    .flex()
-                    .flex_col()
-                    .flex_1()
-                    .min_w(px(0.0))
-                    .gap(px(1.0))
-                    .child(div().font_weight(FontWeight::MEDIUM).child(item.label()))
-                    .child(caption(item.detail(), pal).text_size(px(11.5))),
-            );
-            if available && !running && !finished {
-                r = r.cursor_pointer().on_click(Self::on_model(cx, move |m, cx| m.toggle_item(i, cx)));
-            } else if !available {
-                r = r.opacity(0.6);
-            }
-            list = list.child(r);
-        }
-
-        let mut page = div()
-            .flex()
-            .flex_col()
-            .gap(px(14.0))
-            .child(
-                div()
-                    .flex()
-                    .items_center()
-                    .gap(px(10.0))
-                    .child(mark(30.0))
-                    .child(div().text_size(px(15.0)).font_weight(FontWeight::SEMIBOLD).child("Almost done")),
-            )
-            .child(
-                div()
-                    .flex()
-                    .flex_col()
-                    .gap(px(4.0))
-                    .child(div().text_size(px(19.0)).line_height(px(25.0)).font_weight(FontWeight::SEMIBOLD).child("Add Reins to your AI tools"))
-                    .child(caption(
-                        "Reins found these on this computer and adds itself to each one. Untick anything you want to leave alone.",
-                        pal,
-                    )),
-            );
-        if steps.is_empty() {
-            page = page.child(list);
+        let body = if steps.is_empty() {
+            let option = |id: &'static str, title: &'static str, about: &'static str, what: Option<(TurnOn, bool)>| {
+                let r = row(pal, id == "turn-service").id(id).py(px(13.0)).child(labelled(
+                    title,
+                    Some(about.to_owned()),
+                    pal,
+                ));
+                match what {
+                    Some((what, on)) => r
+                        .cursor_pointer()
+                        .child(toggle(on, pal))
+                        .on_click(Self::on_model(cx, move |m, cx| m.toggle_turn_on(what, cx))),
+                    None => r.child(fine("Always", pal)),
+                }
+            };
+            card(pal)
+                .child(option(
+                    "turn-service",
+                    "Start the background service",
+                    "Hooks, git and API keys go through it. It starts again when you log in.",
+                    None,
+                ))
+                .child(option(
+                    "turn-git",
+                    "Send git through Reins",
+                    "Pushes to GitHub wait for your OK on your phone; agents never see your token.",
+                    Some((TurnOn::Git, git)),
+                ))
+                .child(option(
+                    "turn-login",
+                    "Open Reins when you log in",
+                    "The shield in the menu bar or tray shows that Reins is on.",
+                    Some((TurnOn::Autostart, login)),
+                ))
         } else {
             let mut progress = card(pal);
             for (i, (label, step)) in steps.iter().enumerate() {
-                progress = progress.child(step_line(label, step, pal, i == 0));
+                progress = progress.child(step_line(label, step, pal, i == 0).py(px(13.0)));
             }
-            page = page.child(progress);
-        }
-        let actions = if finished && !failed {
+            progress
+        };
+
+        let back = (!running && (!finished || failed)).then(|| {
+            button("turn-back", "Back", pal, false, true)
+                .on_click(Self::on_model(cx, Model::setup_back))
+                .into_any_element()
+        });
+        let forward: AnyElement = if finished && failed {
             div()
                 .flex()
-                .flex_col()
                 .gap(px(8.0))
-                .child(caption("All set. Restart your AI tools so they pick up Reins.", pal))
-                .child(button("done", "Done", pal, true, true).on_click(Self::on_model(cx, Model::finish_setup)))
-        } else if finished {
-            div()
-                .flex()
-                .gap(px(8.0))
-                .child(
-                    button("again", "Try again", pal, true, true)
-                        .flex_1()
-                        .on_click(Self::on_model(cx, Model::run_setup)),
-                )
                 .child(
                     button("skip", "Continue anyway", pal, false, true)
                         .on_click(Self::on_model(cx, Model::finish_setup)),
                 )
+                .child(
+                    big(button("again", "Try again", pal, true, true)).on_click(Self::on_model(cx, Model::run_setup)),
+                )
+                .into_any_element()
         } else {
             let label = if running {
-                "Setting up…"
+                "Turning on…"
+            } else if finished {
+                "Reins is on"
             } else {
-                "Set up Reins"
+                "Turn on Reins"
             };
-            let b = button("run-setup", label, pal, true, !running && location.is_none());
-            div().flex().flex_col().child(if running || location.is_some() {
-                b
+            let enabled = !running && !finished && location.is_none();
+            let b = big(button("run-setup", label, pal, true, enabled));
+            if enabled {
+                b.on_click(Self::on_model(cx, Model::run_setup)).into_any_element()
             } else {
-                b.on_click(Self::on_model(cx, Model::run_setup))
-            })
+                b.into_any_element()
+            }
         };
+
+        let mut page = div().flex().flex_col().gap(px(16.0)).child(welcome_title(
+            "Turn on Reins",
+            "Reins runs quietly in the background and asks your phone whenever an agent wants something risky.",
+            pal,
+        ));
+        page = page.child(div().pt(px(6.0)).child(body));
         if let Some(problem) = location {
             page = page.child(warning(problem, pal));
         }
-        page = page.child(actions);
+        if finished && failed {
+            page = page
+                .child(caption("Something did not work. Try again, or continue and fix it later from Overview.", pal));
+        }
+        page = page.child(div().pt(px(6.0)).child(actions(back, forward)));
         if let Some(n) = notice {
             page = page.child(caption(n, pal).text_color(pal.danger));
         }
         page.into_any_element()
+    }
+
+    pub(super) fn done_step(&self, d: &Data, pal: Palette, cx: &mut Context<'_, Self>) -> AnyElement {
+        let m = self.model.read(cx);
+        let tools = welcome::connected_names(&m.tools);
+        let restart = m.tools.iter().any(|r| r.undoable);
+        let git = m.turn_git;
+        let login = m.autostart;
+        let phone = d.saved.phone.clone();
+        let test_ok = matches!(&d.test, crate::health::Test::Ended(a, _) if !matches!(a, reins_desktop::ask::Answer::Unanswered(_)));
+
+        let mut summary = card(pal);
+        let mut lines: Vec<(bool, String)> =
+            vec![(true, phone.map_or_else(|| "Paired with your phone".to_owned(), |p| format!("Paired with {p}")))];
+        lines.push(match tools {
+            Some(names) => (true, format!("{names} connected")),
+            None => (false, "No AI tool connected yet: connect one under Connections".to_owned()),
+        });
+        if git {
+            lines.push((true, "git goes through Reins".to_owned()));
+        }
+        if login {
+            lines.push((true, "Opens when you log in".to_owned()));
+        }
+        for (i, (ok, text)) in lines.into_iter().enumerate() {
+            summary = summary.child(
+                row(pal, i == 0)
+                    .py(px(10.0))
+                    .child(div().flex().flex_none().items_center().w(px(16.0)).child(if ok {
+                        check(15.0, pal.success).into_any_element()
+                    } else {
+                        div().text_color(pal.tertiary).child("–").into_any_element()
+                    }))
+                    .child(div().flex_1().min_w(px(0.0)).child(text)),
+            );
+        }
+
+        let hero = div().flex().flex_col().items_center().gap(px(12.0)).child(check_circle(68.0, pal.success)).child(
+            welcome_title("Reins is on", "Your phone now approves what your AI agents do on this computer.", pal),
+        );
+
+        div()
+            .flex()
+            .flex_col()
+            .gap(px(18.0))
+            .child(hero)
+            .child(summary)
+            .when(restart, |p| {
+                p.child(fine("Restart the AI tools you connected so they pick Reins up.", pal).px(px(2.0)))
+            })
+            .child(card(pal).child(Self::test_panel(d, false, pal, cx)))
+            .child(
+                div().flex().justify_center().child(
+                    big(button("open-reins", "Open Reins", pal, test_ok, true))
+                        .on_click(Self::on_model(cx, Model::finish_setup)),
+                ),
+            )
+            .into_any_element()
     }
 }

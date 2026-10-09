@@ -10,9 +10,11 @@ use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex, PoisonError};
 use std::time::{Duration, Instant, SystemTime};
 
+use reins_desktop::ask::{self, Answer};
 use reins_desktop::config::{Config, Paths};
 use reins_desktop::control::{self, Client, ClientError, Overview};
 use reins_desktop::daemon::{Daemon, Options};
+use reins_desktop::doctor::Doctor;
 use reins_desktop::guard::OnNoAnswer;
 use reins_desktop::harness::{self, Harness, detect};
 use reins_desktop::identity::Identity;
@@ -48,6 +50,8 @@ pub struct HarnessRow {
     pub found: bool,
     /// Reins is in its settings.
     pub added: bool,
+    /// Reins is fully in its settings (its MCP server and its hook, for this copy of `reins`).
+    pub complete: bool,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -308,13 +312,14 @@ impl Backend {
         let setup = self.config().and_then(|c| self.harness_setup(&c)).ok();
         Harness::ALL
             .into_iter()
-            .map(|h| HarnessRow {
-                harness: h,
-                found: detect::found(h, &self.home),
-                added: setup
-                    .as_ref()
-                    .and_then(|s| harness::registered(&self.paths, s, h).ok())
-                    .is_some_and(|r| r.any()),
+            .map(|h| {
+                let registered = setup.as_ref().and_then(|s| harness::registered(&self.paths, s, h).ok());
+                HarnessRow {
+                    harness: h,
+                    found: detect::found(h, &self.home),
+                    added: registered.as_ref().is_some_and(harness::Registered::any),
+                    complete: registered.as_ref().is_some_and(harness::Registered::complete),
+                }
             })
             .collect()
     }
@@ -534,7 +539,7 @@ impl Backend {
     }
 
     /// Restarts the daemon so it reads `config.toml` again: the one inside the app, or the installed service.
-    async fn restart_service(&self) -> Result<Option<String>, String> {
+    pub async fn restart_service(&self) -> Result<Option<String>, String> {
         let config = self.config()?;
         {
             let mut running = self.in_app.lock().await;
@@ -674,6 +679,24 @@ impl Backend {
             self.start_service().await?;
         }
         Ok(Some(format!("Updated to {}.", update::LONG_VERSION)))
+    }
+
+    /// `reins doctor`'s checks for this computer, as the app sets it up (its `reins`, its home and git).
+    pub fn doctor(&self) -> Result<Doctor, String> {
+        Ok(Doctor {
+            paths: self.paths.clone(),
+            config: self.config()?,
+            home: self.home.clone(),
+            // Without the program, the AI tools' entries cannot match it: the checks say so.
+            exe: self.cli().unwrap_or_else(|_| PathBuf::from(CLI_NAME)),
+            git: self.git.clone(),
+        })
+    }
+
+    /// "Send a test to my phone" (`reins test`): the answer, and whether the wait ran out. Logged in the activity log.
+    pub async fn send_test(&self) -> Result<(Answer, bool), String> {
+        let config = self.config()?;
+        Ok(ask::send_test(&self.paths, &config, &ask::DesktopAsk).await)
     }
 
     /// Signs in through the browser (`reins login`'s way). Returns the server.

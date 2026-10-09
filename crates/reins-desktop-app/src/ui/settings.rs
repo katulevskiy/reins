@@ -7,11 +7,12 @@ use gpui::{
     StatefulInteractiveElement as _, Styled as _, div, px,
 };
 
-use super::parts::{button, caption, card, fine, group, info_row, labelled, link, page_header, row, toggle};
+use super::parts::{button, caption, card, fine, group, info_row, kbd, labelled, link, page_header, row, toggle};
 use super::{Data, Root};
 use crate::backend::{DaemonState, Setting};
 use crate::format::host;
 use crate::model::Model;
+use crate::shortcuts;
 use crate::theme::{MONO, Palette};
 
 impl Root {
@@ -155,6 +156,41 @@ impl Root {
         );
         page = page.child(group("Account", None, acct, pal));
 
+        // Health.
+        page = page.child(group(
+            "Health",
+            Some("The checks `reins doctor` runs: pairing, the server, the clock, the service, git and your AI tools."),
+            Self::checks_row(d, pal, cx),
+            pal,
+        ));
+
+        // Keyboard shortcuts, two columns.
+        let list = shortcuts::list();
+        let half = list.len().div_ceil(2);
+        let column = |items: &[(String, String)]| {
+            let mut col = div().flex().flex_col().flex_1().min_w(px(220.0));
+            for (i, (keys, what)) in items.iter().enumerate() {
+                col = col.child(
+                    row(pal, i == 0)
+                        .py(px(8.0))
+                        .child(div().flex_1().min_w(px(0.0)).text_color(pal.secondary).child(what.clone()))
+                        .child(kbd(keys.clone(), pal)),
+                );
+            }
+            col
+        };
+        page = page.child(group(
+            "Keyboard shortcuts",
+            None,
+            card(pal)
+                .flex_row()
+                .flex_wrap()
+                .child(column(&list[..half]))
+                .child(div().w(px(1.0)).bg(pal.hairline))
+                .child(column(&list[half..])),
+            pal,
+        ));
+
         // Version and quit.
         page = page.child(
             div()
@@ -175,7 +211,7 @@ impl Root {
                         link("download", "Downloads", pal).on_click(|_, _, cx| cx.open_url(&crate::links::download())),
                     )
                 })
-                .child(button("quit", "Quit Reins", pal, false, true).on_click(|_, _, cx| cx.quit())),
+                .child(button("quit", "Quit Reins", pal, false, true).on_click(Self::on_model(cx, Model::quit))),
         );
         page.into_any_element()
     }

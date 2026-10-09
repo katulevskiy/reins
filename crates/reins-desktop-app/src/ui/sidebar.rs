@@ -10,6 +10,7 @@ use super::parts::{button, caption, fine, mark, pill, waiting_dot};
 use super::{Data, Root};
 use crate::model::{Model, Section};
 use crate::pause::PauseFor;
+use crate::shortcuts;
 use crate::theme::Palette;
 
 const WIDTH: f32 = 228.0;
@@ -18,12 +19,14 @@ impl Root {
     pub(super) fn sidebar(&self, d: &Data, pal: Palette, cx: &mut Context<'_, Self>) -> AnyElement {
         let waiting = d.waiting().count();
         let mut nav = div().flex().flex_col().gap(px(2.0)).px(px(10.0));
-        for section in Section::ALL {
+        for (i, section) in Section::ALL.into_iter().enumerate() {
             let selected = d.section == section;
             let badge = (section == Section::Activity && waiting > 0).then_some(waiting);
+            let group_name = SharedString::from(format!("nav-{}", section.id()));
             nav = nav.child(
                 div()
-                    .id(SharedString::from(format!("nav-{}", section.id())))
+                    .id(group_name.clone())
+                    .group(group_name.clone())
                     .flex()
                     .items_center()
                     .gap(px(8.0))
@@ -45,6 +48,16 @@ impl Root {
                         |r| r.text_color(pal.secondary).hover(|s| s.bg(pal.control_fill).text_color(pal.text)),
                     )
                     .child(div().flex_1().child(section.label()))
+                    // Its shortcut, while the pointer is on it.
+                    .when(badge.is_none(), |r| {
+                        r.child(
+                            div()
+                                .text_size(px(11.0))
+                                .text_color(pal.tertiary.opacity(0.0))
+                                .group_hover(group_name.clone(), |s| s.text_color(pal.tertiary))
+                                .child(shortcuts::hint(&(i + 1).to_string())),
+                        )
+                    })
                     .when_some(badge, |r, n| {
                         r.child(
                             div()

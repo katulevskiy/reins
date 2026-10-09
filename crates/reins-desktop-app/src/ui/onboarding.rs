@@ -1,16 +1,92 @@
-//! Onboarding: pair this computer with the phone (a QR code, or the browser sign-in), or use another server.
+//! Step 1 of the welcome flow: pair this computer with the phone. The QR code and its user code beside the three
+//! things to do (open Reins, scan, tap the number), and this computer's key to compare. The browser sign-in and
+//! another server are the quieter ways.
 
+use gpui::prelude::FluentBuilder as _;
 use gpui::{
-    AnyElement, Context, FontWeight, IntoElement, ParentElement as _, StatefulInteractiveElement as _, Styled as _,
+    AnyElement, Context, Div, FontWeight, IntoElement, ParentElement, StatefulInteractiveElement as _, Styled as _,
     Window, div, px,
 };
 
 use super::Root;
 use super::field::Field;
-use super::parts::{button, caption, card, link, mark, waiting_dot, warning};
+use super::parts::{button, caption, card, check_circle, fine, link, waiting_dot, warning, welcome_title};
 use crate::format::host;
 use crate::model::{Model, Pairing};
 use crate::theme::{MONO, Palette};
+
+/// The QR code's side, and the white frame around it.
+const QR: f32 = 188.0;
+const QR_FRAME: f32 = 10.0;
+
+/// One of the numbered things to do.
+fn numbered(n: usize, title: impl IntoElement, about: Option<AnyElement>, pal: Palette) -> Div {
+    div()
+        .flex()
+        .items_start()
+        .gap(px(12.0))
+        .child(
+            div()
+                .flex()
+                .flex_none()
+                .items_center()
+                .justify_center()
+                .size(px(22.0))
+                .mt(px(-1.0))
+                .rounded_full()
+                .bg(pal.accent_soft)
+                .text_color(pal.accent)
+                .text_size(px(11.5))
+                .font_weight(FontWeight::SEMIBOLD)
+                .child(n.to_string()),
+        )
+        .child(
+            div()
+                .flex()
+                .flex_col()
+                .flex_1()
+                .min_w(px(0.0))
+                .gap(px(2.0))
+                .child(div().text_size(px(13.5)).font_weight(FontWeight::MEDIUM).child(title))
+                .when_some(about, ParentElement::child),
+        )
+}
+
+/// This computer's key, to compare with the one the phone shows.
+fn key_box(fingerprint: &str, pal: Palette) -> Div {
+    div()
+        .flex()
+        .flex_col()
+        .gap(px(4.0))
+        .px(px(14.0))
+        .py(px(11.0))
+        .rounded(px(10.0))
+        .bg(pal.control_fill)
+        .child(fine("This computer's key", pal))
+        .child(
+            div()
+                .font_family(MONO)
+                .text_size(px(14.0))
+                .line_height(px(20.0))
+                .font_weight(FontWeight::SEMIBOLD)
+                .child(fingerprint.to_owned()),
+        )
+        .child(caption("Approve only if your phone shows the same key.", pal))
+}
+
+/// A centred message in the pairing card (signing in through the browser, an error, approved).
+fn centred(pal: Palette) -> Div {
+    div()
+        .flex()
+        .flex_col()
+        .items_center()
+        .justify_center()
+        .gap(px(12.0))
+        .w_full()
+        .min_h(px(260.0))
+        .p(px(28.0))
+        .bg(pal.elevated)
+}
 
 impl Root {
     pub(super) fn onboarding(&self, pal: Palette, window: &mut Window, cx: &mut Context<'_, Self>) -> AnyElement {
@@ -22,58 +98,129 @@ impl Root {
         let location = crate::backend::Backend::location_problem();
         let server = m.server();
 
-        let mut connect = card(pal).p(px(20.0)).items_center().gap(px(12.0));
-        connect =
-            connect.child(div().text_size(px(15.0)).font_weight(FontWeight::SEMIBOLD).child("Connect with your phone"));
-        if matches!(pairing, Pairing::Starting | Pairing::Code(_)) {
-            connect = connect.child(
-                caption("Open Reins on your phone and scan this code, or point your phone's camera at it.", pal)
-                    .text_center(),
-            );
-        }
-        match &pairing {
-            Pairing::Starting => {
-                connect = connect.child(
-                    div()
-                        .flex()
-                        .items_center()
-                        .justify_center()
-                        .size(px(196.0))
-                        .rounded(px(14.0))
-                        .bg(pal.control_fill)
-                        .child(caption("Getting a code…", pal)),
-                );
-            }
-            Pairing::Code(code) => {
-                connect = connect
-                    .child(
-                        div()
-                            .p(px(6.0))
-                            .rounded(px(14.0))
+        let body: AnyElement = match &pairing {
+            Pairing::Starting | Pairing::Code(_) => {
+                let code = match &pairing {
+                    Pairing::Code(c) => Some(c.clone()),
+                    _ => None,
+                };
+                // The QR code and the code under it.
+                let qr = div()
+                    .flex()
+                    .flex_col()
+                    .flex_none()
+                    .items_center()
+                    .gap(px(10.0))
+                    .child(match &code {
+                        Some(c) => div()
+                            .p(px(QR_FRAME))
+                            .rounded(px(16.0))
                             .bg(gpui::white())
                             .border_1()
                             .border_color(pal.hairline)
-                            .child(crate::qr::element(&code.qr_url, 184.0, gpui::black(), gpui::white())),
-                    )
+                            .child(crate::qr::element(&c.qr_url, QR, gpui::black(), gpui::white())),
+                        None => div()
+                            .flex()
+                            .items_center()
+                            .justify_center()
+                            .size(px(QR + 2.0 * QR_FRAME))
+                            .rounded(px(16.0))
+                            .bg(pal.control_fill)
+                            .child(
+                                div()
+                                    .flex()
+                                    .items_center()
+                                    .gap(px(8.0))
+                                    .child(waiting_dot("getting-code", pal.accent, 7.0))
+                                    .child(caption("Getting a code…", pal)),
+                            ),
+                    })
                     .child(
                         div()
                             .font_family(MONO)
-                            .text_size(px(22.0))
-                            .line_height(px(28.0))
+                            .text_size(px(19.0))
+                            .line_height(px(24.0))
                             .font_weight(FontWeight::SEMIBOLD)
-                            .child(code.user_code.clone()),
-                    )
-                    .child(
-                        div().flex().items_center().gap(px(8.0)).child(waiting_dot("waiting", pal.accent, 7.0)).child(
-                            caption(
-                                code.confirm_code.map_or_else(
-                                    || "Waiting for your phone…".to_owned(),
-                                    |n| format!("Waiting for your phone. Then tap {n} there."),
-                                ),
-                                pal,
-                            ),
-                        ),
+                            .text_color(if code.is_some() {
+                                pal.text
+                            } else {
+                                pal.tertiary
+                            })
+                            .child(code.as_ref().map_or_else(|| "····-····".to_owned(), |c| c.user_code.clone())),
                     );
+                // "Tap [37] on your phone", the number as the phone shows it.
+                let tap_title = match code.as_ref().and_then(|c| c.confirm_code) {
+                    Some(n) => div()
+                        .flex()
+                        .items_center()
+                        .gap(px(7.0))
+                        .child("Tap")
+                        .child(
+                            div()
+                                .flex()
+                                .items_center()
+                                .justify_center()
+                                .min_w(px(30.0))
+                                .h(px(24.0))
+                                .px(px(7.0))
+                                .rounded(px(7.0))
+                                .bg(pal.accent)
+                                .text_color(pal.on_accent)
+                                .text_size(px(14.0))
+                                .font_weight(FontWeight::BOLD)
+                                .child(n.to_string()),
+                        )
+                        .child("on your phone"),
+                    None => div().child("Approve on your phone"),
+                };
+                let steps = div()
+                    .flex()
+                    .flex_col()
+                    .flex_1()
+                    .min_w(px(0.0))
+                    .gap(px(16.0))
+                    .child(numbered(
+                        1,
+                        "Open Reins on your phone",
+                        Some(
+                            div()
+                                .flex()
+                                .flex_wrap()
+                                .gap_x(px(4.0))
+                                .child(caption("No app yet?", pal))
+                                .child(
+                                    link("get-app", "Get it for iPhone or Android", pal)
+                                        .on_click(|_, _, cx| cx.open_url(crate::links::PHONE_APP)),
+                                )
+                                .into_any_element(),
+                        ),
+                        pal,
+                    ))
+                    .child(numbered(
+                        2,
+                        "Scan this code",
+                        Some(caption("In Reins, or with your phone's camera.", pal).into_any_element()),
+                        pal,
+                    ))
+                    .child(numbered(
+                        3,
+                        tap_title,
+                        Some(
+                            caption("The number makes sure you pair this computer and no other.", pal)
+                                .into_any_element(),
+                        ),
+                        pal,
+                    ))
+                    .when(!fingerprint.is_empty(), |s| s.child(key_box(&fingerprint, pal)))
+                    .child(
+                        div()
+                            .flex()
+                            .items_center()
+                            .gap(px(8.0))
+                            .child(waiting_dot("waiting", pal.accent, 7.0))
+                            .child(caption("Waiting for your phone…", pal)),
+                    );
+                card(pal).flex_row().items_center().gap(px(32.0)).p(px(28.0)).child(qr).child(steps).into_any_element()
             }
             Pairing::Approved {
                 phone,
@@ -81,132 +228,94 @@ impl Root {
                 let on = phone
                     .as_deref()
                     .map_or_else(|| "Approved on your phone".to_owned(), |p| format!("Approved on {p}"));
-                connect = connect.child(
-                    div()
-                        .flex()
-                        .flex_col()
-                        .items_center()
-                        .justify_center()
-                        .gap(px(10.0))
-                        .w_full()
-                        .h(px(196.0))
+                card(pal)
+                    .child(
+                        centred(pal)
+                            .child(check_circle(60.0, pal.success))
+                            .child(div().text_size(px(17.0)).font_weight(FontWeight::SEMIBOLD).text_center().child(on))
+                            .child(caption("Paired. Next: your AI tools.", pal)),
+                    )
+                    .into_any_element()
+            }
+            Pairing::Browser => card(pal)
+                .child(
+                    centred(pal)
                         .child(
                             div()
                                 .flex()
                                 .items_center()
-                                .justify_center()
-                                .size(px(56.0))
-                                .rounded_full()
-                                .bg(pal.success.opacity(0.14))
-                                .text_color(pal.success)
-                                .text_size(px(26.0))
-                                .child("✓"),
+                                .gap(px(8.0))
+                                .text_size(px(15.0))
+                                .font_weight(FontWeight::MEDIUM)
+                                .child(waiting_dot("waiting", pal.accent, 8.0))
+                                .child("Finish signing in in your browser"),
                         )
-                        .child(div().text_size(px(15.0)).font_weight(FontWeight::SEMIBOLD).text_center().child(on)),
-                );
-            }
-            Pairing::Browser => {
-                connect = connect.child(
-                    div()
-                        .flex()
-                        .flex_col()
-                        .items_center()
-                        .gap(px(10.0))
-                        .py(px(24.0))
-                        .child(div().flex().items_center().gap(px(8.0)).child(waiting_dot("waiting", pal.accent, 7.0)).child("Finish signing in in your browser"))
+                        .child(caption("Your phone then shows this computer's key:", pal).text_center())
+                        .when(!fingerprint.is_empty(), |c| {
+                            c.child(div().w(px(340.0)).child(key_box(&fingerprint, pal)))
+                        })
                         .child(
-                            caption(
-                                format!("Your phone then shows this computer's key, {fingerprint}. Approve only if it is the same."),
-                                pal,
-                            )
-                            .text_center(),
-                        )
-                        .child(link("back-to-qr", "Use the QR code instead", pal).on_click(Self::on_model(cx, Model::start_pairing))),
-                );
-            }
-            Pairing::Failed(e) => {
-                connect = connect.child(
-                    div()
-                        .flex()
-                        .flex_col()
-                        .items_center()
-                        .gap(px(12.0))
-                        .py(px(24.0))
-                        .child(caption(e.clone(), pal).text_color(pal.danger).text_center())
+                            link("back-to-qr", "Use the QR code instead", pal)
+                                .on_click(Self::on_model(cx, Model::start_pairing)),
+                        ),
+                )
+                .into_any_element(),
+            Pairing::Failed(e) => card(pal)
+                .child(
+                    centred(pal)
+                        .child(div().text_size(px(15.0)).font_weight(FontWeight::MEDIUM).child("Pairing did not work"))
+                        .child(caption(e.clone(), pal).text_color(pal.danger).text_center().max_w(px(460.0)))
                         .child(
                             button("retry", "Try again", pal, true, true)
                                 .on_click(Self::on_model(cx, Model::start_pairing)),
                         ),
-                );
-            }
-            Pairing::Unavailable => {
-                connect = connect.child(
-                    div()
-                        .flex()
-                        .flex_col()
-                        .items_center()
-                        .gap(px(12.0))
-                        .py(px(18.0))
-                        .child(caption(crate::pairing::UNAVAILABLE, pal).text_center())
-                        .child(
-                            button("browser-primary", "Sign in with browser", pal, true, true)
-                                .on_click(Self::on_model(cx, Model::sign_in_with_browser)),
-                        ),
-                );
-            }
-        }
-        if matches!(pairing, Pairing::Code(_)) && !fingerprint.is_empty() {
-            connect = connect.child(
-                caption(
-                    format!("This computer's key is {fingerprint}. Approve only if your phone shows the same."),
-                    pal,
                 )
-                .text_size(px(11.5))
-                .text_color(pal.tertiary)
-                .text_center(),
-            );
-        }
+                .into_any_element(),
+            Pairing::Unavailable => card(pal)
+                .child(
+                    centred(pal).child(caption(crate::pairing::UNAVAILABLE, pal).text_center().max_w(px(460.0))).child(
+                        button("browser-primary", "Sign in with browser", pal, true, true)
+                            .on_click(Self::on_model(cx, Model::sign_in_with_browser)),
+                    ),
+                )
+                .into_any_element(),
+        };
 
-        let mut page = div().flex().flex_col().items_center().gap(px(14.0)).child(mark(44.0)).child(
-            div()
-                .flex()
-                .flex_col()
-                .items_center()
-                .gap(px(4.0))
-                .child(div().text_size(px(22.0)).line_height(px(28.0)).font_weight(FontWeight::SEMIBOLD).child("Reins"))
-                .child(caption("Reins keeps your AI agents on a leash.", pal).text_size(px(13.5))),
-        );
+        let mut page = div().flex().flex_col().items_center().gap(px(20.0)).child(welcome_title(
+            "Pair Reins with your phone",
+            "Your phone approves what your AI agents do on this computer. Pairing takes a few seconds.",
+            pal,
+        ));
         if let Some(problem) = location {
             page = page.child(warning(problem, pal));
         }
-        page = page.child(connect.w_full()).child(
-            div().flex().flex_col().items_center().gap(px(2.0)).child(caption("No phone app yet?", pal)).child(
-                link("get-app", "Get Reins for iPhone or Android", pal)
-                    .on_click(|_, _, cx| cx.open_url(crate::links::PHONE_APP)),
-            ),
-        );
-        let mut more = div().flex().items_center().justify_center().gap(px(16.0));
+        page = page.child(div().w_full().child(body));
+        let mut more = div().flex().items_center().justify_center().gap(px(18.0));
         if !matches!(pairing, Pairing::Browser | Pairing::Unavailable | Pairing::Approved { .. }) {
             more = more.child(
-                link("browser", "Sign in with browser", pal).on_click(Self::on_model(cx, Model::sign_in_with_browser)),
+                link("browser", "Sign in with browser instead", pal)
+                    .text_color(pal.secondary)
+                    .on_click(Self::on_model(cx, Model::sign_in_with_browser)),
             );
         }
-        more = more.child(
-            link(
-                "other-server",
-                if show_server {
-                    "Hide server"
-                } else {
-                    "Use another server"
-                },
-                pal,
-            )
-            .text_color(pal.tertiary)
-            .on_click(Self::on_model(cx, Model::toggle_server)),
-        );
+        if !matches!(pairing, Pairing::Approved { .. }) {
+            more = more.child(
+                link(
+                    "other-server",
+                    if show_server {
+                        "Hide server"
+                    } else {
+                        "Use another server"
+                    },
+                    pal,
+                )
+                .text_color(pal.tertiary)
+                .on_click(Self::on_model(cx, Model::toggle_server)),
+            );
+        }
         page = page.child(more);
         if show_server {
-            page = page.child(self.server_box(pal, &server, window, cx));
+            page = page.child(div().w_full().max_w(px(460.0)).child(self.server_box(pal, &server, window, cx)));
         }
         if let Some(n) = notice {
             page = page.child(caption(n, pal).text_color(pal.danger).text_center());

@@ -1,6 +1,7 @@
-//! Reins: the desktop app for people who never open a terminal. It pairs this computer with the phone (a QR code the
-//! phone scans), adds Reins to every AI harness it finds, keeps the background service (`reins daemon`) running
-//! and sends git through it, and sits in the tray or menu bar afterwards.
+//! Reins: the desktop app for people who never open a terminal. A welcome flow pairs this computer with the phone (a
+//! QR code the phone scans), connects the AI tools it finds with a click each, starts the background service
+//! (`reins daemon`) and sends git through it; afterwards it sits in the tray or menu bar, checks its own health and
+//! sends a test to the phone on request.
 //!
 //! Everything goes through the `reins_desktop` library in this process, or through the running daemon's control API
 //! (`reins_desktop::control`); the app never runs the `reins` command for its normal work. The bundled `reins`
@@ -11,16 +12,19 @@ mod autostart;
 mod backend;
 mod demo;
 mod format;
+mod health;
 mod model;
 mod pairing;
 mod pause;
 mod qr;
+mod shortcuts;
 mod single;
 mod state;
 mod theme;
 mod tray;
 mod ui;
 mod upgrade;
+mod welcome;
 
 use std::sync::Arc;
 
@@ -54,9 +58,10 @@ pub struct Args {
     /// Started at login: no window unless something needs the user.
     pub background: bool,
     /// A pretend pairing (a made-up code the "phone" approves after a few seconds) and made-up activity, for
-    /// screenshots and trying the app without an account. Nothing is sent anywhere. `REINS_DEMO_SCREEN=status` opens
-    /// the status window straight away, `REINS_DEMO_SECTION=<overview|activity|connections|keys|rules|settings>`
-    /// at that section.
+    /// screenshots and trying the app without an account. Nothing is sent anywhere. `REINS_DEMO_SCREEN` opens a
+    /// screen straight away (`pair`, `tools`, `tools-connected`, `turn-on`, `turning-on`, `done`, `status`),
+    /// `REINS_DEMO_SECTION=<overview|activity|connections|keys|rules|settings>` the status window at that section,
+    /// `REINS_DEMO_TEST=1` sends the pretend test at start, `REINS_DEMO_EMPTY=1` leaves the samples out.
     pub demo: bool,
 }
 

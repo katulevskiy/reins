@@ -7,7 +7,9 @@ use gpui::{
 };
 use reins_desktop::journal::{Decider, Entry, Kind, Outcome};
 
-use super::parts::{button, caption, card, chip, empty, fine, one_line, outcome_badge, page_header, phone_qr};
+use super::parts::{
+    button, caption, card, chip, dots, empty, empty_state, fine, one_line, outcome_badge, page_header, phone_qr,
+};
 use super::{Data, ROWS, Root};
 use crate::format;
 use crate::model::{Model, Section};
@@ -200,11 +202,15 @@ impl Root {
         let shown: Vec<&Entry> = all.iter().filter(|e| matches(e, outcome, kind)).collect();
         let total = shown.len();
         let list = if all.is_empty() {
-            card(pal).child(empty(
-                "Nothing yet. When an AI agent, git or ssh on this computer asks for something, it shows up here: \
-                 what it was, who asked, and how it ended.",
-                pal,
-            ))
+            card(pal)
+                .child(empty_state(
+                    dots(pal.accent),
+                    "Nothing asked yet",
+                    "When an AI agent, git or ssh on this computer asks for something, it shows up here: what it \
+                     was, who asked, and how your phone answered. Send a test to see one arrive.",
+                    pal,
+                ))
+                .child(div().border_t_1().border_color(pal.hairline).child(Self::test_panel(d, false, pal, cx)))
         } else if total == 0 {
             card(pal).child(empty("Nothing matches these filters.", pal))
         } else {

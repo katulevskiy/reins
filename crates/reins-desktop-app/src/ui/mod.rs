@@ -1,10 +1,12 @@
-//! The window. Before pairing and setup: one calm column (onboarding, then the first-time setup). Afterwards the
-//! status window: a sidebar (the state, the sections, pausing) and the section it selects: Overview, Activity,
-//! Connections, Keys & secrets, Rules, Settings. Like the phone apps: Geist, cool neutrals, one violet accent.
+//! The window. Before pairing and setup: the welcome flow, one calm column under its steps (pair, AI tools, turn on,
+//! done). Afterwards the status window: a sidebar (the state, the sections, pausing) and the section it selects:
+//! Overview, Activity, Connections, Keys & secrets, Rules, Settings. Like the phone apps: Geist, cool neutrals, one
+//! violet accent. Keyboard shortcuts ([`crate::shortcuts`]) work everywhere in it.
 
 mod activity;
 mod connections;
 mod field;
+mod health;
 mod keys;
 mod onboarding;
 mod overview;
@@ -18,7 +20,7 @@ use std::collections::HashSet;
 use std::sync::Arc;
 
 use gpui::{
-    AnyElement, App, ClickEvent, Context, Entity, FocusHandle, InteractiveElement as _, IntoElement,
+    AnyElement, App, ClickEvent, Context, Entity, FocusHandle, InteractiveElement as _, IntoElement, KeyDownEvent,
     ParentElement as _, Render, StatefulInteractiveElement as _, Styled as _, Subscription, Window, div, px,
 };
 use reins_desktop::config::Config;
@@ -26,11 +28,14 @@ use reins_desktop::control::Overview;
 use reins_desktop::journal::{Entry, Kind, Outcome};
 
 use crate::backend::{Snapshot, Update};
+use crate::health::{Health, Test};
 use crate::model::{Model, Screen, Section};
 use crate::pause::Pause;
+use crate::shortcuts::{self, Shortcut};
 use crate::state::Saved;
 use crate::theme::{FONT, Palette};
 use crate::tray::Look;
+use crate::welcome::Stage;
 
 /// The window's first size, and the smallest it can be.
 pub const WIDTH: f32 = 1000.0;
@@ -43,6 +48,8 @@ const ROWS: usize = 60;
 
 pub struct Root {
     model: Entity<Model>,
+    /// The window's own focus, so the keyboard shortcuts work before anything else is focused.
+    focus: FocusHandle,
     server_field: FocusHandle,
     /// The inputs under Rules, one per guard list ([`field::slot`]).
     guard_fields: [FocusHandle; 4],
@@ -78,6 +85,8 @@ struct Data {
     section: Section,
     /// Where `config.toml` is, for the empty states that say to edit it.
     config_file: String,
+    health: Health,
+    test: Test,
     now: i64,
 }
 
@@ -101,6 +110,8 @@ impl Data {
             autostart: m.autostart,
             section: m.section,
             config_file: m.config_file().display().to_string(),
+            health: m.health.clone(),
+            test: m.test.clone(),
             now: reins_desktop::now_unix(),
         }
     }
@@ -128,9 +139,23 @@ impl Root {
         let subscriptions = vec![
             cx.observe(&model, |_, _, cx| cx.notify()),
             cx.observe_window_appearance(window, |_, _, cx| cx.notify()),
+            // Where the window is and how big, to open it there next time.
+            cx.observe_window_bounds(window, |this, window, cx| {
+                // Tiling Wayland compositors report a tiled window as maximized, with the size it first had: there
+                // the window's size now is the one to keep. Elsewhere, a maximized window keeps its size before.
+                let bounds = if cfg!(target_os = "linux") {
+                    window.bounds()
+                } else {
+                    window.window_bounds().get_bounds()
+                };
+                this.model.update(cx, |m, _| m.note_window(bounds));
+            }),
         ];
+        let focus = cx.focus_handle();
+        window.focus(&focus, cx);
         Self {
             model,
+            focus,
             server_field: cx.focus_handle(),
             guard_fields: [cx.focus_handle(), cx.focus_handle(), cx.focus_handle(), cx.focus_handle()],
             guard_inputs: Default::default(),
@@ -160,6 +185,37 @@ impl Root {
             f(this, cx);
             cx.notify();
         })
+    }
+
+    /// A keyboard shortcut ([`shortcuts::of`]); text fields keep the keys they use.
+    fn on_key(&mut self, ev: &KeyDownEvent, window: &mut Window, cx: &mut Context<'_, Self>) {
+        let Some(shortcut) = shortcuts::of(&ev.keystroke) else {
+            return;
+        };
+        let status = self.model.read(cx).screen == Screen::Status;
+        match shortcut {
+            Shortcut::Section(section) if status => self.model.update(cx, |m, cx| m.show_section(section, cx)),
+            Shortcut::Section(_) => return,
+            Shortcut::Refresh => self.model.update(cx, Model::refresh_all),
+            Shortcut::Close => window.remove_window(),
+            Shortcut::Quit => self.model.update(cx, Model::quit),
+            Shortcut::Escape => {
+                if self.expanded.is_empty() && !self.pause_menu {
+                    // Nothing open here: the phone's QR code, if it shows.
+                    self.model.update(cx, |m, cx| {
+                        if m.show_phone_qr {
+                            m.toggle_phone_qr(cx);
+                        }
+                    });
+                }
+                self.expanded.clear();
+                self.pause_menu = false;
+                // Out of a text field, so the next shortcuts are not typed into it.
+                window.focus(&self.focus, cx);
+            }
+        }
+        cx.notify();
+        cx.stop_propagation();
     }
 
     /// Goes to `section`.
@@ -208,11 +264,16 @@ impl Render for Root {
         let d = Data::of(self.model.read(cx));
         let screen = self.model.read(cx).screen;
         let body = match screen {
-            Screen::Onboarding => Some(self.onboarding(pal, window, cx)),
-            Screen::Setup => Some(self.setup(pal, cx)),
+            Screen::Welcome(Stage::Pair) => Some((Stage::Pair, self.onboarding(pal, window, cx))),
+            Screen::Welcome(Stage::Tools) => Some((Stage::Tools, self.tools_step(pal, cx))),
+            Screen::Welcome(Stage::TurnOn) => Some((Stage::TurnOn, self.turn_on_step(pal, cx))),
+            Screen::Welcome(Stage::Done) => Some((Stage::Done, self.done_step(&d, pal, cx))),
             Screen::Status => None,
         };
         let root = div()
+            .id("root")
+            .track_focus(&self.focus)
+            .on_key_down(cx.listener(Self::on_key))
             .size_full()
             .flex()
             .flex_col()
@@ -222,7 +283,7 @@ impl Render for Root {
             .text_size(px(13.0))
             .line_height(px(18.0));
         match body {
-            Some(body) => root
+            Some((stage, body)) => root
                 // The macOS title bar is transparent: leave room for the traffic lights.
                 .child(div().flex_none().h(px(if cfg!(target_os = "macos") {
                     34.0
@@ -230,13 +291,30 @@ impl Render for Root {
                     6.0
                 })))
                 .child(
-                    div()
-                        .id("column")
-                        .flex_1()
-                        .overflow_y_scroll()
-                        .child(div().w_full().max_w(px(460.0)).mx_auto().px(px(22.0)).py(px(22.0)).child(body)),
+                    div().id("column").flex_1().overflow_y_scroll().child(
+                        div()
+                            .w_full()
+                            .min_h_full()
+                            .flex()
+                            .flex_col()
+                            .items_center()
+                            .justify_center()
+                            .gap(px(30.0))
+                            .px(px(32.0))
+                            .py(px(28.0))
+                            .child(parts::step_indicator(stage, pal))
+                            .child(div().w_full().max_w(px(stage_width(stage))).child(body)),
+                    ),
                 ),
             None => root.child(self.status(&d, pal, window, cx)),
         }
+    }
+}
+
+/// How wide a step of the welcome flow is: the pairing has the QR code beside the steps.
+fn stage_width(stage: Stage) -> f32 {
+    match stage {
+        Stage::Pair => 700.0,
+        Stage::Tools | Stage::TurnOn | Stage::Done => 580.0,
     }
 }
