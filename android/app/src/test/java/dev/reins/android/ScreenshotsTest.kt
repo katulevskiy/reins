@@ -1109,6 +1109,17 @@ abstract class ScreenshotsBase(private val suffix: String) {
         shoot("92-activity-burst")
     }
 
+    @Test
+    fun devices() {
+        core.resetDevices()
+        core.connections = listOf(TestData.connection("c1", "Claude"), TestData.computer("d1", "MacBook Pro"))
+        launch()
+        tap("openSettings")
+        tap("devicesRow")
+        await("device:d-old")
+        shoot("99-devices")
+    }
+
     private fun openVault() {
         core.resetVault()
         core.accounts = listOf(dev.reins.core.AccountView("vault", "me@example.com", now))

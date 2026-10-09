@@ -74,6 +74,8 @@ import dev.reins.android.ui.pairing.ConnectComputerScreen
 import dev.reins.android.ui.pairing.PairingSheet
 import dev.reins.android.ui.pairing.PairingViewModel
 import dev.reins.android.ui.settings.ConnectionDetailScreen
+import dev.reins.android.ui.settings.DevicesScreen
+import dev.reins.android.ui.settings.DevicesViewModel
 import dev.reins.android.ui.settings.SettingsScreen
 import dev.reins.android.ui.settings.SettingsViewModel
 import dev.reins.android.ui.signin.AccountRules
@@ -261,7 +263,14 @@ private fun SignedInContent(
                     onAutopilot = { app.open(Route.Autopilot) },
                     onConnectComputer = { app.open(Route.ConnectComputer) },
                     onVaultPasskeys = { app.open(Route.VaultPasskeys) },
+                    onDevices = { app.open(Route.Devices) },
                     authenticator = authenticator,
+                )
+                Route.Devices -> DevicesScreen(
+                    viewModel(key = "devices") { DevicesViewModel(container) },
+                    state,
+                    onBack = { app.back() },
+                    onConnection = { app.open(Route.Connection(it)) },
                 )
                 Route.VaultPasskeys -> VaultPasskeysScreen(
                     viewModel(key = "vaultPasskeys") { VaultPasskeysViewModel(container, deviceName = Build.MODEL) },
