@@ -19,11 +19,13 @@ struct MainShell: View {
                     TabShell()
                 }
             }
-            .sheet(item: $model.sheet, onDismiss: { model.feedback.cueUnlessRecent(.close) }) { target in
+            .sheet(item: $model.sheet) { target in
                 // Presented content does not inherit the presenter's environment reliably: hand the fold over.
                 SheetContent(target: target, regular: sizeClass == .regular)
                     .environment(\.hinge, posture)
             }
+            // Each item's sheet plays its own Open (`SheetContent`); the close is the shell's.
+            .presentationFeedback(model.sheet != nil, opens: false)
         }
         .overlay(alignment: .top) {
             if let notice = model.notice {
@@ -53,6 +55,7 @@ private struct TabShell: View {
                         SectionRoot(section: section)
                             .navigationDestination(for: Route.self) { RouteView(route: $0) }
                     }
+                    .pageFeedback(model.path(section).count)
                 }
                 .badge(badge(section))
             }
@@ -88,6 +91,7 @@ private struct SplitShell: View {
                 .navigationSplitViewColumnWidth(min: 380, ideal: hinge == .bent ? 400 : 440, max: 540)
         } detail: {
             DetailColumn()
+                .pageFeedback(model.path(model.section).count, in: model.section)
         }
         .navigationSplitViewStyle(.balanced)
     }
@@ -220,7 +224,8 @@ struct SheetContent: View {
         .environment(model)
         .environment(\.feedback, model.feedback)
         .modifier(SheetShape(regular: regular))
-        .onAppear { model.feedback.cue(.open) }
+        // Quiet when the request's chime just announced it (a request that pops up by itself).
+        .onAppear { model.feedback.sheetOpened() }
     }
 }
 

@@ -5,7 +5,6 @@
 	<key>BGTaskSchedulerPermittedIdentifiers</key>
 	<array>
 		<string>com.reins2fa.app.refresh</string>
-		<string>com.reins2fa.app.model-download</string>
 	</array>
 	<key>CFBundleDevelopmentRegion</key>
 	<string>$(DEVELOPMENT_LANGUAGE)</string>
@@ -61,6 +60,8 @@
 	<string>Your AI clients can look up contacts only when you allow each request.</string>
 	<key>NSFaceIDUsageDescription</key>
 	<string>Approving a request needs you, not just your unlocked phone.</string>
+	<key>NSLocalNetworkUsageDescription</key>
+	<string>Reins connects to your Reins server when it runs on your local network.</string>
 	<key>NSSupportsLiveActivities</key>
 	<true/>
 	<key>NSSupportsLiveActivitiesFrequentUpdates</key>
@@ -97,7 +98,6 @@
 	<key>UIBackgroundModes</key>
 	<array>
 		<string>fetch</string>
-		<string>processing</string>
 		<string>remote-notification</string>
 	</array>
 	<key>UILaunchScreen</key>

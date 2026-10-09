@@ -9,7 +9,8 @@ struct ActivityScreen: View {
     @SceneStorage("activity.automaticOnly") private var automaticOnly = false
     /// The list was placed where the user stopped reading; until then nothing is marked seen.
     @State private var positioned = false
-    @State private var visible: Set<Int64> = []
+    /// Which rows are on screen; not observed, so scrolling does not draw the whole list again.
+    @State private var seen = SeenRows()
     @State private var atTop = true
     @State private var away = false
 
@@ -70,8 +71,7 @@ struct ActivityScreen: View {
             }
             .task(id: model.activity.isEmpty) { await position(proxy) }
         }
-        .onChange(of: visible) { markSeen() }
-        .onChange(of: atTop) { markSeen() }
+        .onChange(of: atTop) { markSeenSoon() }
         .pageBackground()
         .rootNavigationBar()
         .navigationTitle("Activity")
@@ -98,12 +98,12 @@ struct ActivityScreen: View {
         HStack(spacing: 8) {
             if let autopilot = model.autopilot {
                 ActivityModePill(settings: autopilot) {
-                    feedback.play(.tap)
                     model.show(.autopilot)
+                    feedback.defaultTap()
                 }
             }
+            // The page's Open cue is the sound (GlassPill plays the default tap).
             GlassPill(symbol: "square.grid.2x2", text: "Integrations") {
-                feedback.play(.tap)
                 model.show(.integrations)
             }
             .accessibilityIdentifier("integrations")
@@ -132,8 +132,8 @@ struct ActivityScreen: View {
                 .padding(.bottom, 6)
             ForEach(model.pending, id: \.id) { item in
                 PendingCard(item: item) {
-                    feedback.play(.tap)
                     model.openSheet(item.sheetTarget)
+                    feedback.defaultTap()
                 }
                 .padding(.horizontal, 16)
                 .padding(.vertical, 5)
@@ -164,26 +164,30 @@ struct ActivityScreen: View {
     }
 
     @ViewBuilder private func list(_ entries: [ActivityEntry]) -> some View {
-        let seen = model.seenActivityId
-        let oldestUnseen = entries.lastIndex { $0.id > seen }
+        let seenId = model.seenActivityId
+        let oldestUnseen = entries.lastIndex { $0.id > seenId }
         let selected: Int64? = if case let .activityDetail(id)? = model.path(.activity).first { id } else { nil }
         ForEach(Array(entries.enumerated()), id: \.element.id) { index, entry in
             Button {
-                feedback.play(.tap)
                 model.show(.activityDetail(entry.id), in: .activity)
+                feedback.defaultTap()
             } label: {
                 ActivityRow(entry: entry, selected: selected == entry.id)
             }
             .buttonStyle(RowButtonStyle())
             .contextMenu {
-                Button("Open", systemImage: "arrow.up.right") { model.show(.activityDetail(entry.id), in: .activity) }
+                Button("Open", systemImage: "arrow.up.right") {
+                    model.show(.activityDetail(entry.id), in: .activity)
+                    feedback.defaultTap()
+                }
                 Button("Copy", systemImage: "doc.on.doc") {
                     UIPasteboard.general.string = [entry.headline, untrusted(entry.detail)].filter { !$0.isEmpty }.joined(separator: "\n")
                     feedback.play(.copied)
                 }
             }
             .onScrollVisibilityChange(threshold: 0.6) { isVisible in
-                if isVisible { visible.insert(entry.id) } else { visible.remove(entry.id) }
+                if isVisible { seen.visible.insert(entry.id) } else { seen.visible.remove(entry.id) }
+                markSeenSoon()
             }
             .id("e:\(entry.id)")
             .accessibilityIdentifier("entry:\(entry.id)")
@@ -212,13 +216,32 @@ struct ActivityScreen: View {
 
     /// What is on screen counts as seen: scroll up to the newest and the badge clears.
     private func markSeen() {
+        seen.settle?.cancel()
+        seen.settle = nil
         guard positioned else { return }
-        if let newest = visible.max() {
+        if let newest = seen.visible.max() {
             model.markActivitySeen(newest)
         } else if atTop, let first = shown.first {
             model.markActivitySeen(first.id)
         }
     }
+
+    /// `markSeen` once the scrolling settles, not for every row that passes.
+    private func markSeenSoon() {
+        guard positioned else { return }
+        seen.settle?.cancel()
+        seen.settle = Task {
+            try? await Task.sleep(for: .milliseconds(300))
+            if !Task.isCancelled { markSeen() }
+        }
+    }
+}
+
+/// The rows on screen and the pending "seen" update. Deliberately not observable: the screen's body never reads it.
+@MainActor
+private final class SeenRows {
+    var visible: Set<Int64> = []
+    var settle: Task<Void, Never>?
 }
 
 /// Where the entries you have not seen begin.
@@ -239,6 +262,7 @@ private struct NewMarker: View {
 private struct PendingCard: View {
     var item: PendingItem
     var onOpen: () -> Void
+    @Environment(\.feedback) private var feedback
     /// In a narrow column (an iPad's content column) the text gets the room and a chevron stands in for "Review".
     @State private var narrow = false
 
@@ -248,7 +272,7 @@ private struct PendingCard: View {
         // A new connection or another phone of the account: no connection of its own yet.
         let pairing = item.kind == .pairing || item.kind == .join
         let joining = item.kind == .join
-        CountdownFrame(createdAt: item.createdAt, waitUntil: waitUntil) { u in
+        CountdownFrame(createdAt: item.createdAt, waitUntil: waitUntil) {
             Button(action: onOpen) {
                 HStack(spacing: 14) {
                     ActionTile(kind: joining ? .join : pairing ? .pair : (item.kind == .blob ? .upload : ActionKind.of(item.action)), count: Int(item.count), size: 46)
@@ -272,10 +296,7 @@ private struct PendingCard: View {
                                 .lineLimit(1)
                                 .accessibilityIdentifier("pendingSuggestion:\(item.id)")
                         }
-                        Text(timeLine(u))
-                            .font(RFont.sans(13, .medium))
-                            .foregroundStyle(timeColor(u))
-                            .monospacedDigit()
+                        timeText(waitUntil)
                     }
                     if narrow {
                         Image(systemName: "chevron.right")
@@ -303,9 +324,30 @@ private struct PendingCard: View {
         .onGeometryChange(for: Bool.self) { $0.size.width < 370 } action: { narrow = $0 }
         .contextMenu {
             Button("Review", systemImage: "checkmark.shield", action: onOpen)
-            Button("Copy", systemImage: "doc.on.doc") { UIPasteboard.general.string = item.headline }
+            Button("Copy", systemImage: "doc.on.doc") {
+                UIPasteboard.general.string = item.headline
+                feedback.play(.copied)
+            }
         }
         .accessibilityIdentifier("pending:\(item.id)")
+    }
+
+    /// The only part of the card that follows the clock: the countdown while the AI waits, else "5 min ago", which
+    /// moves slowly.
+    @ViewBuilder private func timeText(_ waitUntil: Int64?) -> some View {
+        if waitUntil == nil {
+            LiveClock(interval: 15) { _ in timeLabel(nil) }
+        } else {
+            UrgencyClock(createdAt: item.createdAt, waitUntil: waitUntil) { u in timeLabel(u) }
+        }
+    }
+
+    private func timeLabel(_ u: Urgency?) -> some View {
+        Text(timeLine(u))
+            .font(RFont.sans(13, .medium))
+            .foregroundStyle(timeColor(u))
+            .monospacedDigit()
+            .animation(.easeInOut(duration: 0.4), value: u?.urgent)
     }
 
     private func timeLine(_ u: Urgency?) -> String {

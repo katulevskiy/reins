@@ -7,6 +7,7 @@
 	<key>com.apple.developer.associated-domains</key>
 	<array>
 		<string>applinks:app.reins2fa.com</string>
+		<string>webcredentials:app.reins2fa.com</string>
 	</array>
 	<key>com.apple.developer.usernotifications.time-sensitive</key>
 	<true/>

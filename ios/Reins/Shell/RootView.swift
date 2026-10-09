@@ -8,11 +8,7 @@ struct RootView: View {
         Group {
             switch model.session {
             case .loading:
-                ProgressView()
-                    .controlSize(.large)
-                    .tint(Palette.accent)
-                    .frame(maxWidth: .infinity, maxHeight: .infinity)
-                    .pageBackground()
+                LoadingView()
             case .signedOut:
                 SignInScreen()
             case .signedIn:
@@ -31,22 +27,23 @@ struct RootView: View {
             }
         }
         .environment(\.feedback, model.feedback)
-        // Links reach the model whatever shows: a pairing code opened while signed out waits for the sign-in.
-        .onOpenURL { url in
-            guard let link = DeepLink.opened(url) else { return }
-            Task { await model.handle(link) }
-        }
-        // A universal link (a computer's QR code, https://<server>/pair?code=...): only its code is used.
-        .onContinueUserActivity(NSUserActivityTypeBrowsingWeb) { activity in
-            guard let url = activity.webpageURL, let link = DeepLink.opened(url) else { return }
-            Task { await model.handle(link) }
-        }
         #if DEBUG
         // `-gallery`: every avatar on one page (provider logos, service logos, blobatars).
         .overlay { if AvatarGallery.requested { AvatarGallery() } }
         #endif
         .tint(Palette.accent)
         .fontDesign(.default)
+    }
+}
+
+/// The store is opening, or the session is being read.
+struct LoadingView: View {
+    var body: some View {
+        ProgressView()
+            .controlSize(.large)
+            .tint(Palette.accent)
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+            .pageBackground()
     }
 }
 

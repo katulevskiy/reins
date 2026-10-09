@@ -109,21 +109,56 @@ extension View {
     }
 }
 
+/// Redraws `content` with a request's urgency while the AI waits on it, like `LiveClock`; without a deadline it draws
+/// once (nothing changes), and it stops once the AI stopped waiting (nothing changes any more).
+struct UrgencyClock<Content: View>: View {
+    var createdAt: Int64
+    var waitUntil: Int64?
+    @ViewBuilder var content: (Urgency?) -> Content
+    /// The deadline passed.
+    @State private var over = false
+
+    var body: some View {
+        Group {
+            if waitUntil != nil && !over {
+                LiveClock { now in
+                    content(Urgency.of(createdAt: createdAt, waitUntil: waitUntil, now: now))
+                }
+            } else {
+                content(Urgency.of(createdAt: createdAt, waitUntil: waitUntil, now: Timers.now()))
+            }
+        }
+        .task(id: waitUntil) {
+            guard let waitUntil, Timers.live else { return }
+            let left = Double(waitUntil) - Timers.now()
+            over = left <= 0
+            guard left > 0 else { return }
+            try? await Task.sleep(for: .seconds(left + 0.25))
+            if !Task.isCancelled { over = true }
+        }
+    }
+}
+
 /// The frame of a request that waits for the user: full in the accent colour when it arrives, emptying as the AI's
-/// patience runs out, red for the last `urgentSeconds`, grey once the AI stopped waiting.
+/// patience runs out, red for the last `urgentSeconds`, grey once the AI stopped waiting. Only the frame follows the
+/// clock; `content` draws once (its own time line can use an `UrgencyClock`).
 struct CountdownFrame<Content: View>: View {
     var createdAt: Int64
     var waitUntil: Int64?
     var corner: CGFloat = 18
-    @ViewBuilder var content: (Urgency?) -> Content
+    @ViewBuilder var content: () -> Content
 
     var body: some View {
-        LiveClock { now in
-            let u = Urgency.of(createdAt: createdAt, waitUntil: waitUntil, now: now)
-            content(u)
-                .timeBar(fraction: u.map { $0.stale ? 0 : $0.fraction } ?? 1, color: Self.color(u), corner: corner)
-                .animation(.easeInOut(duration: 0.4), value: u?.urgent)
-        }
+        content()
+            .overlay {
+                UrgencyClock(createdAt: createdAt, waitUntil: waitUntil) { u in
+                    Color.clear
+                        .timeBar(fraction: u.map { $0.stale ? 0 : $0.fraction } ?? 1, color: Self.color(u), corner: corner)
+                        .animation(.easeInOut(duration: 0.4), value: u?.urgent)
+                }
+                .allowsHitTesting(false)
+                .accessibilityHidden(true)
+            }
     }
 
     static func color(_ u: Urgency?) -> Color {

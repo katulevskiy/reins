@@ -120,6 +120,7 @@ private struct ConnectionAutopilotGroup: View {
         } message: {
             Text("Everything it asks for is denied at once, what waits now included. Other AIs are not affected.")
         }
+        .presentationFeedback(askLockdown)
         .sheet(isPresented: $askBypass) {
             ConnectionBypassSheet(who: label) { minutes in
                 askBypass = false
@@ -127,6 +128,7 @@ private struct ConnectionAutopilotGroup: View {
             }
             .environment(\.feedback, feedback)
         }
+        .presentationFeedback(askBypass)
     }
 
     private var modeRow: some View {
@@ -218,10 +220,10 @@ private struct ConnectionAutopilotGroup: View {
         let restart = new == .bypass && old == .bypass
         if let event = restart ? .bypassOn : SettingsText.modeChangeEvent(old, new ?? settings.mode) { feedback.play(event) }
         let id = connection.id
+        let length = minutes ?? SettingsText.bypassMinutes[0]
+        model.patchAutopilot { $0.applyMode(new, minutes: length, connectionId: id) }
         run {
-            try await model.core.setAutopilotMode(
-                connectionId: id, mode: new, minutes: new == .bypass ? (minutes ?? SettingsText.bypassMinutes[0]) : nil
-            )
+            try await model.core.setAutopilotMode(connectionId: id, mode: new, minutes: new == .bypass ? length : nil)
         }
     }
 
@@ -229,12 +231,14 @@ private struct ConnectionAutopilotGroup: View {
     private func stopBypass() {
         feedback.play(.bypassOff)
         let (id, base) = (connection.id, own?.baseMode)
+        model.patchAutopilot { $0.applyMode(base, minutes: 0, connectionId: id) }
         run { try await model.core.setAutopilotMode(connectionId: id, mode: base, minutes: nil) }
     }
 
     /// Which profile this AI's decisions train (nil = the default profile).
     private func assignProfile(_ profileId: String?) {
         let id = connection.id
+        model.patchAutopilot { $0.applyProfile(profileId, connectionId: id) }
         run {
             try await model.core.assignProfile(connectionId: id, profileId: profileId)
             await loadProfiles()
@@ -346,6 +350,7 @@ private struct DisconnectGroup: View {
             } message: {
                 Text("It loses access immediately, and its saved grants stop working.")
             }
+            .presentationFeedback(confirm)
         }
     }
 

@@ -151,11 +151,13 @@ struct GrantDetailScreen: View {
         } message: {
             Text(untrusted(grant.summary) + "\n\nYou can resume it later from the Expired list.")
         }
+        .presentationFeedback(confirmingRevoke)
         .confirmationDialog("Delete this grant for good?", isPresented: $confirmingDelete, titleVisibility: .visible) {
             Button("Delete", role: .destructive) { run(leave: true) { await model.deleteGrant(grant.id) } }
         } message: {
             Text(untrusted(grant.summary) + "\n\nIt cannot be resumed afterwards.")
         }
+        .presentationFeedback(confirmingDelete)
         .sheet(item: $resuming) { pick in
             ResumeSheet(grant: pick.grant) { seconds, standing in
                 run(leave: false) { await model.resumeGrant(pick.grant.id, seconds: seconds, standing: standing) }
@@ -163,6 +165,7 @@ struct GrantDetailScreen: View {
             .environment(model)
             .environment(\.feedback, feedback)
         }
+        .presentationFeedback(resuming != nil)
     }
 
     private func header(_ grant: GrantView) -> some View {
@@ -202,6 +205,8 @@ struct GrantDetailScreen: View {
     private func run(leave: Bool, _ action: @escaping () async -> String?) {
         busy = true
         error = nil
+        // The action sounds once the core answers: the dialog or sheet that asked closes quietly.
+        feedback.quietClose()
         Task {
             let failure = await action()
             busy = false

@@ -35,9 +35,10 @@ struct OnboardingScreen: View {
         .pageBackground()
         .animation(.smooth(duration: 0.25), value: step)
         // The pairing a scanned code (or an opened link) stands for is answered right here.
-        .sheet(item: $model.sheet, onDismiss: { model.feedback.cueUnlessRecent(.close) }) { target in
+        .sheet(item: $model.sheet) { target in
             SheetContent(target: target, regular: sizeClass == .regular)
         }
+        .presentationFeedback(model.sheet != nil, opens: false)
         .overlay(alignment: .top) {
             if let notice = model.notice {
                 Toast(text: notice) { model.notice = nil }
@@ -69,8 +70,8 @@ private struct ComputerStep: View {
                 FormBanner(text: "\(untrusted(added.label)) is connected.", kind: .info)
                     .accessibilityIdentifier("computerConnected")
             }
+            // The sheet's Open cue is the sound (the style plays the default tap).
             Button {
-                feedback.play(.tap)
                 model.openSheet(.connectComputer)
             } label: {
                 Label("Scan QR code", systemImage: "qrcode.viewfinder")

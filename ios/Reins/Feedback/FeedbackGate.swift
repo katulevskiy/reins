@@ -121,25 +121,67 @@ final class FeedbackGate: @unchecked Sendable {
     }
 }
 
-/// Remembers when the last cue sounded, so a sheet or dialog closing right after the action it hosted stays quiet
-/// (the Android app's `ClaimTracker`, without the default-tap half: SwiftUI controls ask for their feedback
-/// explicitly).
+/// Anything pressable answers with a default tap, unless the moment already has its own feedback (the Android app's
+/// `ClaimTracker`). The default is deferred a few ms; if a haptic (or a cue) was asked for explicitly around the same
+/// press, that one is the answer and the default stays out of its way. Haptic and cue are claimed separately, so a
+/// press that opens a sheet (an explicit Open cue) still keeps the tap's haptic. It also remembers when the last cue
+/// sounded, so a sheet or dialog closing right after the action it hosted stays quiet.
 final class ClaimTracker: @unchecked Sendable {
     private static let never = Int64.min / 2
     private let clock: () -> Int64
     private let lock = NSLock()
+    private var hapticAt = never
     private var cueAt = never
     private var quietAt = never
+    private var chimeAt = never
 
     /// The window `Feedback.cueUnlessRecent` uses.
     static let recentMs: Int64 = 250
+    /// Explicit feedback this far before the release still counts (the action runs just ahead of the default).
+    static let windowBeforeMs: Int64 = 100
+    /// How long the default waits for an explicit answer.
+    static let deferMs: Int64 = 40
+    /// A sheet that opens this soon after a request's chime is announcing what the chime already announced.
+    static let arrivalMs: Int64 = 700
 
     init(clock: @escaping () -> Int64) { self.clock = clock }
+
+    func claimHaptic() {
+        lock.lock()
+        hapticAt = clock()
+        lock.unlock()
+    }
 
     func claimCue() {
         lock.lock()
         cueAt = clock()
         lock.unlock()
+    }
+
+    /// A request's chime sounded.
+    func claimChime() {
+        lock.lock()
+        chimeAt = clock()
+        lock.unlock()
+    }
+
+    func chimeWithin(_ windowMs: Int64) -> Bool {
+        lock.lock()
+        defer { lock.unlock() }
+        return clock() - chimeAt < windowMs
+    }
+
+    /// Was an explicit haptic asked for from `windowBeforeMs` before `releasedAt` until now?
+    func hapticClaimed(releasedAt: Int64) -> Bool {
+        lock.lock()
+        defer { lock.unlock() }
+        return hapticAt >= releasedAt - Self.windowBeforeMs
+    }
+
+    func cueClaimed(releasedAt: Int64) -> Bool {
+        lock.lock()
+        defer { lock.unlock() }
+        return cueAt >= releasedAt - Self.windowBeforeMs
     }
 
     /// A choice was made in a dialog: the dialog closing right after is the choice's doing, not a sound of its own.

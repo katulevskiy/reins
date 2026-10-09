@@ -5,14 +5,18 @@ final class AppDelegate: NSObject, UIApplicationDelegate {
     @MainActor lazy var host = AppHost()
 
     func application(_ application: UIApplication, didFinishLaunchingWithOptions launchOptions: [UIApplication.LaunchOptionsKey: Any]? = nil) -> Bool {
-        // Before launching ends: a tapped notification and the background refresh arrive right after.
+        #if DEBUG
+        LaunchTiming.mark("launching")
+        #endif
+        // Before launching ends, though the store may still be opening: a tapped notification and the background
+        // refresh arrive right after, and wait for it.
         #if DEBUG
         // `-noNotifications`: some simulators' notification service never answers, which blocks the main thread.
         if !ProcessInfo.processInfo.arguments.contains("-noNotifications") {
-            NotificationRouter.shared.install(model: host.model, notifier: host.notifier)
+            NotificationRouter.shared.install(host: host)
         }
         #else
-        NotificationRouter.shared.install(model: host.model, notifier: host.notifier)
+        NotificationRouter.shared.install(host: host)
         #endif
         BackgroundRefresh.register(host: host)
         application.registerForRemoteNotifications()
@@ -23,7 +27,7 @@ final class AppDelegate: NSObject, UIApplicationDelegate {
     }
 
     func application(_ application: UIApplication, didRegisterForRemoteNotificationsWithDeviceToken deviceToken: Data) {
-        host.model?.setPushToken(deviceToken)
+        host.whenReady { $0.setPushToken(deviceToken) }
     }
 
     func application(_ application: UIApplication, didFailToRegisterForRemoteNotificationsWithError error: Error) {

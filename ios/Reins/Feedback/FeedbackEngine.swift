@@ -26,7 +26,8 @@ final class FeedbackEngine: Feedback, FeedbackPreviewing, @unchecked Sendable {
     private let env: AppEnvironment
     private let gate: FeedbackGate
     private let claims: ClaimTracker
-    private let haptics = HapticPlayer()
+    private let clock: () -> Int64
+    private let haptics: HapticPlayer
     private let sounds: SoundPlayer
     private let log = Logger(subsystem: "com.reins2fa.app", category: "feedback")
     private var observers: [NSObjectProtocol] = []
@@ -37,6 +38,8 @@ final class FeedbackEngine: Feedback, FeedbackPreviewing, @unchecked Sendable {
         env = AppEnvironment()
         gate = FeedbackGate(settings: { store.current }, env: env, clock: clock)
         claims = ClaimTracker(clock: clock)
+        self.clock = clock
+        haptics = HapticPlayer(clock: clock)
         sounds = SoundPlayer(clock: clock)
         observeLifecycle()
         if store.current.hapticsOn { haptics.prewarm(strength: store.current.strength) }
@@ -45,12 +48,22 @@ final class FeedbackEngine: Feedback, FeedbackPreviewing, @unchecked Sendable {
     // MARK: Feedback
 
     func haptic(_ haptic: Haptic) {
+        claims.claimHaptic()
         play(haptic, preview: false)
     }
 
     func cue(_ cue: Cue, step: Int) {
         claims.claimCue()
+        if cue == .request { claims.claimChime() }
         play(cue, step: step, preview: false)
+    }
+
+    func sheetOpened() {
+        if claims.chimeWithin(ClaimTracker.arrivalMs) {
+            debug("cue open skip: a request's chime just announced it")
+        } else {
+            cue(.open, step: 0)
+        }
     }
 
     func cueUnlessRecent(_ cue: Cue) {
@@ -64,6 +77,18 @@ final class FeedbackEngine: Feedback, FeedbackPreviewing, @unchecked Sendable {
     /// A choice was made: the close that follows stays silent.
     func quietClose() { claims.quiet() }
 
+    /// Deferred `ClaimTracker.deferMs`, so the action the press ran can answer first with its own haptic or cue.
+    func defaultTap() {
+        let released = clock()
+        DispatchQueue.main.asyncAfter(deadline: .now() + .milliseconds(Int(ClaimTracker.deferMs))) { [weak self] in
+            guard let self else { return }
+            // A press just answered: a sheet or dialog closing around it stays silent.
+            claims.quiet()
+            if claims.cueClaimed(releasedAt: released) { debug("cue tap skip default tap: claimed") } else { play(.tap, step: 0, preview: false) }
+            if claims.hapticClaimed(releasedAt: released) { debug("haptic select skip default tap: claimed") } else { play(.select, preview: false) }
+        }
+    }
+
     // MARK: FeedbackPreviewing
 
     func preview(haptic: Haptic?, cue: Cue?, step: Int) {
@@ -72,7 +97,10 @@ final class FeedbackEngine: Feedback, FeedbackPreviewing, @unchecked Sendable {
             claims.claimCue()
             play(cue, step: step, preview: true)
         }
-        if let haptic { play(haptic, preview: true) }
+        if let haptic {
+            claims.claimHaptic()
+            play(haptic, preview: true)
+        }
     }
 
     var hapticTier: String {
@@ -138,8 +166,10 @@ final class FeedbackEngine: Feedback, FeedbackPreviewing, @unchecked Sendable {
         env.foreground = on
         if on {
             TouchDownRecognizer.install { [weak self] in
-                guard let self, self.env.foreground, self.store.current.soundsOn else { return }
-                self.sounds.touchDown()
+                guard let self, self.env.foreground else { return }
+                let settings = self.store.current
+                if settings.soundsOn { self.sounds.touchDown() }
+                if settings.hapticsOn { self.haptics.touchDown() }
             }
             if store.current.hapticsOn { haptics.prewarm(strength: store.current.strength) }
         } else {
@@ -172,8 +202,9 @@ final class AppEnvironment: FeedbackEnvironment, @unchecked Sendable {
     let hasHaptics: Bool = HapticPlayer.supportsCoreHaptics || UIDevice.current.userInterfaceIdiom == .phone
 }
 
-/// Sees every finger that goes down in a window without taking part in any gesture: the sound output wakes on the
-/// touch-down, so it is running by the time the tap's sound is asked for (the Android app's `onTouchDown`).
+/// Sees every finger that goes down in a window without taking part in any gesture: the sound output and the haptic
+/// engine wake on the touch-down, so they are running by the time the tap's sound and haptic are asked for (the
+/// Android app's `onTouchDown`).
 final class TouchDownRecognizer: UIGestureRecognizer {
     private var onDown: () -> Void = {}
 

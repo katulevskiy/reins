@@ -109,7 +109,8 @@ struct StatusPill: View {
     }
 }
 
-/// A full-width capsule button that dims while disabled, shows a spinner while its work runs, and plays the tap.
+/// A full-width capsule button that dims while disabled, shows a spinner while its work runs, and plays the default
+/// tap unless its action plays something of its own.
 struct ActionButton: View {
     enum Kind { case primary, accent, secondary, ghost, destructive }
 
@@ -135,8 +136,8 @@ struct ActionButton: View {
 
     var body: some View {
         Button {
-            feedback.play(.tap)
             action()
+            feedback.defaultTap()
         } label: {
             HStack(spacing: 8) {
                 if busy {
@@ -328,8 +329,8 @@ struct AccountRowView<Avatar: View>: View {
             }
             .frame(maxWidth: .infinity, alignment: .leading)
             Button {
-                feedback.play(.tap)
                 onRemove()
+                feedback.defaultTap()
             } label: {
                 Image(systemName: "trash")
                     .font(.system(size: 17, weight: .medium))
@@ -344,7 +345,10 @@ struct AccountRowView<Avatar: View>: View {
         }
         .padding(.vertical, 4)
         .swipeActions(edge: .trailing) {
-            Button("Remove", systemImage: "trash", role: .destructive, action: onRemove)
+            Button("Remove", systemImage: "trash", role: .destructive) {
+                onRemove()
+                feedback.defaultTap()
+            }
         }
         .accessibilityElement(children: .contain)
     }

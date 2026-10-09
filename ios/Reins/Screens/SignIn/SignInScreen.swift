@@ -381,6 +381,7 @@ struct AccountEntryView: View {
                 .tint(Palette.accent)
                 .disabled(state.busy)
                 .accessibilityIdentifier("acceptTerms")
+                .onChange(of: terms) { _, on in feedback.play(.toggle(on)) }
         }
         .padding(.vertical, 4)
     }
@@ -421,6 +422,8 @@ struct AccountEntryView: View {
                 await model.finishSignIn(info)
                 state = SignInState()
             } catch CoreError.TwoFactorRequired {
+                // Not a failure: one more thing is needed from the user.
+                feedback.play(.alert)
                 state = SignInState(needsTotp: true, error: CoreError.TwoFactorRequired.userMessage)
                 focus = .totp
             } catch {

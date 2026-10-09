@@ -44,7 +44,7 @@ enum NotificationSamples {
         }
         Task { @MainActor in
             try? await Task.sleep(for: .seconds(3))
-            if let model = host.model, let item = try? await model.core.pending().first {
+            if let model = await host.ready(), let item = try? await model.core.pending().first {
                 host.notifier.itemPending(item: item)
                 host.notifier.autoDecided(decision: AutoDecisionView(
                     requestId: "sample-auto",

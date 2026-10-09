@@ -23,6 +23,7 @@ struct RecoveryCodeRow: View {
         .sheet(item: Binding(get: { code.map(ShownCode.init) }, set: { if $0 == nil { code = nil } })) { shown in
             RecoveryCodeSheet(code: shown.code) { code = nil }
         }
+        .presentationFeedback(code != nil)
         .cardRow()
         if let error {
             FormBanner(text: error).cardRow()
@@ -124,6 +125,7 @@ struct RecoveryCodeSheet: View {
                 Toggle("I wrote this code down and stored it somewhere safe.", isOn: $recorded)
                     .font(RFont.sans(15))
                     .accessibilityIdentifier("recoveryRecorded")
+                    .onChange(of: recorded) { _, on in feedback.play(.toggle(on)) }
 
             }
             Button(required ? "Continue" : "Done", action: onDone)

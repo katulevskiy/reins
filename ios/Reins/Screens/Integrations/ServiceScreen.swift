@@ -125,6 +125,7 @@ struct AccountsScreen: View {
             presenting: removing
         ) { account in
             Button("Remove", role: .destructive) {
+                feedback.quietClose()
                 removing = nil
                 Task { await m.remove(account) }
             }
@@ -132,6 +133,7 @@ struct AccountsScreen: View {
         } message: { _ in
             Text(ServiceCopy.removeMessage(gmail: m.isGmail))
         }
+        .presentationFeedback(removing != nil)
     }
 
     private func allowAgain(_ service: ServiceView, _ account: String, _ m: AccountsModel) {

@@ -11,17 +11,19 @@ import UserNotifications
 final class NotificationRouter: NSObject, UNUserNotificationCenterDelegate {
     static let shared = NotificationRouter()
 
-    private weak var model: AppModel?
-    private var notifier: AppNotifier?
+    private var host: AppHost?
     private let center = UNUserNotificationCenter.current()
 
-    /// At launch, before it finishes (a tap that launched the app arrives right after).
-    func install(model: AppModel?, notifier: AppNotifier) {
-        self.model = model
-        self.notifier = notifier
+    /// At launch, before it finishes (a tap that launched the app arrives right after), though the store may still be
+    /// opening: the callbacks wait for it.
+    func install(host: AppHost) {
+        self.host = host
         center.delegate = self
         center.setNotificationCategories(Self.categories())
-        guard let model else { return }
+        host.whenReady { [weak self] model in self?.attach(model) }
+    }
+
+    private func attach(_ model: AppModel) {
         let grants = model.onGrantsChanged
         model.onGrantsChanged = { list in
             grants?(list)
@@ -127,8 +129,9 @@ final class NotificationRouter: NSObject, UNUserNotificationCenterDelegate {
             MainActor.assumeIsolated {
                 switch category {
                 case .request, .pairing, .blob, .join:
-                    if let payload, payload.itemKind != nil, let model = self.model {
+                    if let payload, payload.itemKind != nil, let host = self.host {
                         Task {
+                            guard let model = await host.ready() else { return }
                             try? await model.core.handlePush(kind: payload.kind, id: payload.id)
                             await model.refreshPending()
                         }
@@ -161,7 +164,7 @@ final class NotificationRouter: NSObject, UNUserNotificationCenterDelegate {
     }
 
     private func respond(action: String, link: DeepLink?, payload: PushPayload?, remote: Bool) async {
-        guard let model else { return }
+        guard let model = await host?.ready() else { return }
         switch action {
         case UNNotificationDismissActionIdentifier:
             return
@@ -195,13 +198,13 @@ final class NotificationRouter: NSObject, UNUserNotificationCenterDelegate {
         } catch CoreError.NotFound {
             // Already answered or expired: nothing left to deny.
         } catch {
-            notifier?.denyFailed(error.userMessage)
+            host?.notifier.denyFailed(error.userMessage)
         }
         center.removeDeliveredNotifications(withIdentifiers: [payload.id])
         await model.refreshPending()
     }
 
-    /// A tap that launched the app comes before the store is open.
+    /// A tap that launched the app comes before the session is read.
     private func waitForSession(_ model: AppModel) async {
         for _ in 0..<100 {
             if case .loading = model.session {
