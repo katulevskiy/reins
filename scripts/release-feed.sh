@@ -57,6 +57,16 @@ trap 'rm -rf "$stage"' EXIT
 feed="$stage/feed"
 mkdir -p "$feed/files" "$feed/android"
 
+# `reins-release keygen` (ring) writes PKCS#8 v2 (with the public key), which OpenSSL 3.0 cannot read; sign with the
+# same key as PKCS#8 v1, made from its 32-byte seed.
+key_hex="$(od -An -tx1 -v "$key" | tr -d ' \n')"
+case "$key_hex" in
+3051020101300506032b657004220420*) printf '302e020100300506032b657004220420%s' "${key_hex:32:64}" | xxd -r -p >"$stage/key.der" ;;
+302e020100300506032b657004220420*) cp "$key" "$stage/key.der" ;;
+*) die "$key is not an Ed25519 PKCS#8 key" ;;
+esac
+key="$stage/key.der"
+
 # The key must be the one the apps pin, or every client would refuse the feed.
 pinned="$(sed -n 's/^pub const RELEASE_KEY: &str = "\([0-9a-f]*\)";/\1/p' "$root/crates/reins-desktop/src/update.rs")"
 public="$(openssl pkey -inform DER -in "$key" -pubout -outform DER | tail -c 32 | od -An -tx1 | tr -d ' \n')"
