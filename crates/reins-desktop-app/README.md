@@ -122,11 +122,11 @@ Overview's **Work session** card says so in a line, with **Start a work session*
   repository adds its branch.
 
 **Ask my phone** (enabled once something is chosen and nothing is refused; Enter in a field does the same) runs
-`work_session::start` on the tokio runtime and shows "Waiting for your phone… approve the work session there" with the
+`work_session::start` on the tokio runtime and shows "Approve it on your phone…" with the
 approval wait's countdown (`approval_timeout_secs`). A refusal, a timeout or a missing pairing shows on the card with
 **Try again** and **Change**. Once approved, the card shows the session: what it is for, the time left ("1 h 12 min
 left", moving on with the refresh), until when on this computer's clock, what it allows and what was left out, and
-**End now**, which asks first ("End the session? Its permissions end on your phone now." **End** / **Keep**) and
+**End now**, which asks first ("End the session now?" **End** / **Keep**) and
 then runs `work_session::end`. The running session is read with every refresh (`work_session::current`,
 `work-session.json`); when it runs out the card offers a new one.
 

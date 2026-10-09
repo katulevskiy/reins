@@ -18,7 +18,7 @@ use crate::theme::{FONT, MONO, Palette};
 use crate::work::{self, Asking, Form, Length, PushRow, READS};
 
 /// What a work session leaves out, whatever it allows.
-const STILL_ASKS: &str = "Force pushes, deleting, the vault and purchases still ask.";
+const STILL_ASKS: &str = "Force push, delete, vault, purchases: still asked";
 /// The width of the form's labels.
 const LABEL: f32 = 112.0;
 
@@ -123,15 +123,7 @@ impl Root {
             row(pal, true)
                 .flex_wrap()
                 .py(px(14.0))
-                .child(
-                    caption(
-                        "Approve once on your phone and your AI tools work without asking for a while. Force pushes, \
-                         deleting, the vault and purchases still ask.",
-                        pal,
-                    )
-                    .flex_1()
-                    .min_w(px(260.0)),
-                )
+                .child(caption("Approve once, then work without asking.", pal).flex_1().min_w(px(260.0)))
                 .child(if d.paired {
                     start.on_click(Self::on_model(cx, Model::open_work_form))
                 } else {
@@ -212,7 +204,7 @@ impl Root {
                             }),
                         );
                 }
-                rows.child(fine("Only rows with a branch are included.", pal)).into_any_element()
+                rows.into_any_element()
             };
 
         let can_ask = form.request().is_some();
@@ -220,17 +212,7 @@ impl Root {
         card(pal)
             .child(form_line("How long", lengths, pal, true))
             .child(form_line("What it's for", div().flex().child(reason), pal, false))
-            .child(form_line(
-                "Read",
-                div()
-                    .flex()
-                    .flex_col()
-                    .gap(px(6.0))
-                    .child(reads)
-                    .child(fine("Integrations not connected on your phone are left out.", pal)),
-                pal,
-                false,
-            ))
+            .child(form_line("Read", div().flex().flex_col().gap(px(6.0)).child(reads), pal, false))
             .child(form_line("Push with git", push, pal, false))
             .child(
                 row(pal, false)
@@ -256,7 +238,7 @@ impl Root {
                 .py(px(14.0))
                 .child(badge(waiting_dot("session-waiting", pal.accent, 9.0), pal))
                 .child(titled(
-                    "Waiting for your phone… approve the work session there",
+                    "Approve it on your phone…",
                     format!("{} · {}", asking.request.reason, work::summary(&asking.request)),
                     pal,
                 ))
@@ -341,8 +323,7 @@ impl Root {
             );
         }
         if !session.skipped.is_empty() {
-            allows = allows
-                .child(fine(format!("Left out (not connected on your phone): {}", session.skipped.join(", ")), pal));
+            allows = allows.child(fine(format!("Not connected: {}", session.skipped.join(", ")), pal));
         }
         body = body.child(row(pal, false).items_start().py(px(12.0)).pl(px(58.0)).child(allows));
         if let Some(e) = &d.work.end_error {
@@ -354,22 +335,10 @@ impl Root {
         }
         let footer = row(pal, false).py(px(12.0)).bg(pal.background.opacity(0.5));
         let footer = if d.work.ending {
-            footer.child(caption("Ending the session on your phone…", pal).flex_1()).child(button(
-                "session-ending",
-                "Ending…",
-                pal,
-                false,
-                false,
-            ))
+            footer.child(caption("Ending…", pal).flex_1()).child(button("session-ending", "Ending…", pal, false, false))
         } else if d.work.confirm_end {
             footer
-                .child(
-                    div()
-                        .flex_1()
-                        .min_w(px(0.0))
-                        .font_weight(FontWeight::MEDIUM)
-                        .child("End the session? Its permissions end on your phone now."),
-                )
+                .child(div().flex_1().min_w(px(0.0)).font_weight(FontWeight::MEDIUM).child("End the session now?"))
                 .child(
                     button("session-keep", "Keep", pal, false, true)
                         .on_click(Self::on_model(cx, Model::keep_work_session)),
