@@ -1,4 +1,5 @@
-//! The status window's sidebar: the mark and the state at the top, the sections, and pausing at the bottom.
+//! The status window's sidebar: the mark and the state at the top (and a running work session's time left), the
+//! sections, and pausing at the bottom.
 
 use gpui::prelude::FluentBuilder as _;
 use gpui::{
@@ -18,6 +19,7 @@ const WIDTH: f32 = 228.0;
 impl Root {
     pub(super) fn sidebar(&self, d: &Data, pal: Palette, cx: &mut Context<'_, Self>) -> AnyElement {
         let waiting = d.waiting().count();
+        let session = d.work_session().map(|s| crate::work::left(s, d.now));
         let mut nav = div().flex().flex_col().gap(px(2.0)).px(px(10.0));
         for (i, section) in Section::ALL.into_iter().enumerate() {
             let selected = d.section == section;
@@ -99,11 +101,36 @@ impl Root {
                     } else {
                         20.0
                     }))
-                    .pb(px(18.0))
+                    .pb(px(if session.is_some() {
+                        8.0
+                    } else {
+                        18.0
+                    }))
                     .child(mark(26.0))
                     .child(div().flex_1().text_size(px(15.0)).font_weight(FontWeight::SEMIBOLD).child("Reins"))
                     .child(pill(d.look, pal)),
             )
+            .when_some(session, |side, left| {
+                side.child(
+                    div()
+                        .id("side-session")
+                        .flex()
+                        .items_center()
+                        .gap(px(7.0))
+                        .mx(px(10.0))
+                        .mb(px(10.0))
+                        .h(px(26.0))
+                        .px(px(8.0))
+                        .rounded(px(7.0))
+                        .cursor_pointer()
+                        .text_size(px(12.0))
+                        .text_color(pal.secondary)
+                        .hover(|s| s.bg(pal.control_fill).text_color(pal.text))
+                        .child(div().flex_none().size(px(6.0)).rounded_full().bg(pal.accent))
+                        .child(div().min_w(px(0.0)).truncate().child(format!("Work session · {left}")))
+                        .on_click(Self::go(cx, Section::Overview)),
+                )
+            })
             .child(nav)
             .child(div().flex_1())
             .child(self.pause_box(d, pal, cx))

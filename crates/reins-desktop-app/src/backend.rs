@@ -1,6 +1,6 @@
 //! Everything the app does to the computer, through the `reins_desktop` library: the session, the harnesses'
 //! settings, the background service, git's routing, the daemon's control API (status and overview), this computer's
-//! activity log, the settings in `config.toml`, the update feed and installing what it offers.
+//! activity log, the settings in `config.toml`, work sessions, the update feed and installing what it offers.
 //!
 //! The service runs the `reins` program that ships with the app (next to it in the bundle or install directory).
 //! Where no service manager is available, or with `REINS_DAEMON=in-app`, the daemon runs inside the app instead, for
@@ -24,6 +24,7 @@ use reins_desktop::service;
 use reins_desktop::settings::{self, Change, GuardList};
 use reins_desktop::setup::{Git, Scope};
 use reins_desktop::update::{self, Check};
+use reins_desktop::work_session::{self, Request, Session};
 
 use crate::state::Saved;
 use crate::upgrade::{self, Target};
@@ -84,6 +85,8 @@ pub struct Snapshot {
     pub overview: Arc<Overview>,
     /// This computer's activity log, newest first.
     pub activity: Arc<Vec<Entry>>,
+    /// The work session running on this computer (`work-session.json`, until it ends).
+    pub work_session: Option<Session>,
 }
 
 impl Snapshot {
@@ -418,6 +421,7 @@ impl Backend {
             status,
             overview: Arc::new(overview),
             activity: self.activity(),
+            work_session: work_session::current(&self.paths),
         }
     }
 
@@ -710,6 +714,19 @@ impl Backend {
     pub async fn send_test(&self) -> Result<(Answer, bool), String> {
         let config = self.config()?;
         Ok(ask::send_test(&self.paths, &config, &ask::DesktopAsk).await)
+    }
+
+    /// "Ask my phone": asks the phone for a work session (`reins allow`'s way) and waits for the answer, up to the
+    /// approval wait. On approval the session is saved (`work-session.json`) for the next snapshot.
+    pub async fn start_work_session(&self, request: Request) -> Result<Session, String> {
+        let config = self.config()?;
+        work_session::start(&self.paths, &config, &request, None).await
+    }
+
+    /// "End now": the session's permissions end on the phone. Returns how many ended.
+    pub async fn end_work_session(&self) -> Result<usize, String> {
+        let config = self.config()?;
+        work_session::end(&self.paths, &config).await
     }
 
     /// Signs in through the browser (`reins login`'s way). Returns the server.

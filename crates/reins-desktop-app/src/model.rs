@@ -1,7 +1,9 @@
 //! The app's state and what it does: which screen (a step of the welcome flow, or the status window and its
 //! section) the window shows, the pairing in progress, the first-time setup, the health checks and the test to the
-//! phone, the status the window and the tray icon show, pausing, and the settings the window changes. One [`Model`]
-//! per app (a GPUI global); the window and the tray are views of it.
+//! phone, the status the window and the tray icon show, pausing, work sessions (`work_actions`), and the settings the
+//! window changes. One [`Model`] per app (a GPUI global); the window and the tray are views of it.
+
+mod work_actions;
 
 use std::sync::Arc;
 use std::time::{Duration, Instant};
@@ -27,6 +29,7 @@ use crate::single::Instance;
 use crate::state::{Place, Rect, Saved};
 use crate::tray::{Action, Look, Shown, Tray};
 use crate::welcome::{self, Stage, ToolRow};
+use crate::work::{self, Work};
 use crate::{Args, autostart, ui, upgrade};
 
 /// How often a second start's request for the window is looked for.
@@ -185,6 +188,8 @@ pub struct Model {
     pub show_server: bool,
     pub server_input: String,
     pub autostart: bool,
+    /// The work session card: its form, the request waiting on the phone, ending.
+    pub work: Work,
     /// `--demo`: the pretend pairing went through.
     demo_paired: bool,
     /// `--demo`: the made-up activity and connections.
@@ -258,6 +263,7 @@ impl Model {
             }
         });
         let demo_test = args.demo && std::env::var_os("REINS_DEMO_TEST").is_some_and(|v| !v.is_empty() && v != "0");
+        let work = work_actions::initial(demo);
         let model = cx.new(|cx| {
             let mut model = Self {
                 fingerprint: backend.fingerprint().ok(),
@@ -285,6 +291,7 @@ impl Model {
                 show_phone_qr: false,
                 show_server: false,
                 autostart: autostart::enabled(&home),
+                work,
                 demo_paired,
                 demo,
                 notified: std::collections::HashSet::new(),
@@ -353,6 +360,7 @@ impl Model {
             }
             Action::Pause(length) => self.pause_for(length, cx),
             Action::Resume => self.resume(cx),
+            Action::EndSession => self.end_work_session(cx),
             Action::Quit => self.quit(cx),
         }
     }
@@ -475,6 +483,7 @@ impl Model {
         if let Some(demo) = self.demo {
             demo.fill(&mut snapshot, self.pause().on());
         }
+        self.fill_work_session(&mut snapshot, now, cx);
         // Signed out elsewhere (`reins logout`, or the phone removed the connection).
         if snapshot.server.is_none() && !self.demo_paired && self.screen != Screen::Welcome(Stage::Pair) {
             self.screen = Screen::Welcome(Stage::Pair);
@@ -588,11 +597,14 @@ impl Model {
     fn refresh_tray(&mut self) {
         let (look, status) = self.status_line();
         let paused = look == Look::Paused;
+        let now = reins_desktop::now_unix();
+        let session = self.snapshot.as_ref().and_then(|s| work::running(s.work_session.as_ref(), now));
         let shown = Shown {
             look,
-            status,
+            status: work::tray_line(look, status, session, now),
             can_pause: self.paired() && !paused,
             can_resume: self.paired() && paused,
+            can_end: session.is_some() && !self.work.ending,
         };
         if let Some(tray) = self.tray.as_mut() {
             tray.show(&shown);

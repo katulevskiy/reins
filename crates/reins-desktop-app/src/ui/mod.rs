@@ -15,6 +15,7 @@ mod rules;
 mod settings;
 mod setup;
 mod sidebar;
+mod work;
 
 use std::collections::HashSet;
 use std::sync::Arc;
@@ -36,6 +37,7 @@ use crate::state::Saved;
 use crate::theme::{FONT, Palette};
 use crate::tray::Look;
 use crate::welcome::Stage;
+use crate::work::Work;
 
 /// The window's first size, and the smallest it can be.
 pub const WIDTH: f32 = 1000.0;
@@ -54,6 +56,9 @@ pub struct Root {
     /// The inputs under Rules, one per guard list ([`field::slot`]).
     guard_fields: [FocusHandle; 4],
     guard_inputs: [String; 4],
+    /// The work session form's fields: what it is for, and a branch for each repository (made as rows appear).
+    session_reason: FocusHandle,
+    branch_fields: Vec<FocusHandle>,
     /// Activity's filters: one outcome, one kind (`None`: all).
     outcome_filter: Option<Outcome>,
     kind_filter: Option<Kind>,
@@ -87,6 +92,7 @@ struct Data {
     config_file: String,
     health: Health,
     test: Test,
+    work: Work,
     now: i64,
 }
 
@@ -112,6 +118,7 @@ impl Data {
             config_file: m.config_file().display().to_string(),
             health: m.health.clone(),
             test: m.test.clone(),
+            work: m.work.clone(),
             now: reins_desktop::now_unix(),
         }
     }
@@ -126,6 +133,11 @@ impl Data {
 
     fn overview(&self) -> Option<&Overview> {
         self.snapshot.as_ref().map(|s| s.overview.as_ref())
+    }
+
+    /// The work session running now.
+    fn work_session(&self) -> Option<&reins_desktop::work_session::Session> {
+        crate::work::running(self.snapshot.as_ref().and_then(|s| s.work_session.as_ref()), self.now)
     }
 
     /// Requests waiting for the phone now.
@@ -159,6 +171,8 @@ impl Root {
             server_field: cx.focus_handle(),
             guard_fields: [cx.focus_handle(), cx.focus_handle(), cx.focus_handle(), cx.focus_handle()],
             guard_inputs: Default::default(),
+            session_reason: cx.focus_handle(),
+            branch_fields: Vec::new(),
             outcome_filter: None,
             kind_filter: None,
             expanded: HashSet::new(),
@@ -226,7 +240,7 @@ impl Root {
     /// The status window: sidebar and section.
     fn status(&mut self, d: &Data, pal: Palette, window: &mut Window, cx: &mut Context<'_, Self>) -> AnyElement {
         let page = match d.section {
-            Section::Overview => self.overview(d, pal, cx),
+            Section::Overview => self.overview(d, pal, window, cx),
             Section::Activity => self.activity(d, pal, cx),
             Section::Connections => Self::connections(d, pal, cx),
             Section::Keys => Self::keys(d, pal, cx),
