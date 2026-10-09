@@ -223,6 +223,14 @@ base64) in the publish job, which signs the update feed with it (`scripts/releas
 file for that one step, never exported). The master copy is the 1Password item "Reins release signing key (Ed25519)";
 its public half is pinned in `crates/reins-desktop/src/update.rs`.
 
+The same identity reads `/signing/apple` for the macOS app: `MACOS_CERT_P12` (the "Developer ID Application:
+Daniil Katulevskiy (5DRCQV8HY2)" certificate and key, `.p12`, base64), `MACOS_CERT_PASSWORD`, and the App Store Connect
+API key "Reins CI" (App Manager) for notarization and TestFlight: `AC_API_KEY_P8` (the `.p8` text), `AC_API_KEY_ID`,
+`AC_API_ISSUER_ID`, plus `APPLE_TEAM_ID`. The signing step reads them from a file the Infisical action writes and
+removes it; repository secrets of the same names are the fallback. The master copies are the 1Password items "Reins
+Developer ID Application certificate" and "Reins App Store Connect API key". The server's APNs key ("Reins APNs key" in
+1Password) is `/etc/reins/AuthKey_<key id>.p8` on the server, configured by `REINS_APNS_*` in the `reins` project.
+
 ## Maintainers: the update feed
 
 Every release carries `reins-feed-<version>.tar.gz` (listed in `SHA256SUMS`): the signed `latest.json` and

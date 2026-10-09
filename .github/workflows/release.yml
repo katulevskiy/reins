@@ -232,7 +232,8 @@ jobs:
   # under a versioned name. scripts/package/ builds them; the names without a version are what the website's
   # /download/<platform> links point at (releases/latest/download/<name>).
   #
-  # macOS signing and notarization, all optional (without them the app is signed ad hoc and Gatekeeper asks once):
+  # macOS signing and notarization, all optional (without them the app is signed ad hoc and Gatekeeper asks once), read
+  # from Infisical reins-release prod /signing/apple, else from the repository secrets of the same names:
   #   MACOS_CERT_P12, MACOS_CERT_PASSWORD   the "Developer ID Application" certificate and key (.p12, base64)
   #   AC_API_KEY_P8, AC_API_KEY_ID, AC_API_ISSUER_ID   an App Store Connect API key for notarytool
   # Windows signing, optional: WINDOWS_CERT_PFX (base64) and WINDOWS_CERT_PASSWORD.
@@ -395,6 +396,7 @@ jobs:
     timeout-minutes: 20
     permissions:
       contents: read
+      id-token: write # Infisical OIDC (the Developer ID identity and notary key)
     env:
       VERSION: ${{ needs.plan.outputs.version }}
       REINS_BUILD: ${{ needs.plan.outputs.build }}
@@ -416,6 +418,16 @@ jobs:
         run: |
           chmod +x target/{aarch64,x86_64}-apple-darwin/release-app/{reins,reins-app}
           scripts/set-desktop-version.sh "$VERSION"
+      # Written to a file (not exported to later steps), read by the next step only, and removed afterwards.
+      - name: Fetch the Apple signing identity from Infisical
+        if: vars.INFISICAL_RELEASE_IDENTITY_ID != ''
+        uses: ./.github/actions/release-secrets # zizmor: ignore[self-repository] use the exact release checkout
+        with:
+          identity-id: ${{ vars.INFISICAL_RELEASE_IDENTITY_ID }}
+          environment: ${{ vars.INFISICAL_RELEASE_ENVIRONMENT || 'prod' }}
+          secret-path: /signing/apple
+          export-type: file
+          file-output-path: /.apple-signing.env
       - name: Package (macOS)
         # Signing set up and used in one step: the identity and notary key never pass through GITHUB_ENV.
         env:
@@ -427,6 +439,23 @@ jobs:
           AC_API_KEY_ID: ${{ secrets.AC_API_KEY_ID }}
           AC_API_ISSUER_ID: ${{ secrets.AC_API_ISSUER_ID }}
         run: |
+          # Infisical (/signing/apple) first; the repository secrets of the same names are the fallback.
+          apple_env="$GITHUB_WORKSPACE/.apple-signing.env"
+          if [[ -s "$apple_env" ]]; then
+            eval "$(python3 - "$apple_env" <<'PY'
+          import re, shlex, sys
+          text = open(sys.argv[1]).read()
+          names = {"MACOS_CERT_P12", "MACOS_CERT_PASSWORD", "AC_API_KEY_P8", "AC_API_KEY_ID", "AC_API_ISSUER_ID"}
+          for key, value in re.findall(r"^([A-Z0-9_]+)='(.*?)'$", text, re.M | re.S):
+              if key in names and value:
+                  for line in value.splitlines():
+                      if line.strip():
+                          print(f"echo {shlex.quote('::add-mask::' + line)}")
+                  print(f"{key}={shlex.quote(value)}")
+          PY
+          )"
+            rm -f "$apple_env"
+          fi
           if [[ -z "$MACOS_CERT_P12" ]]; then
             echo "::notice::macOS app not signed with a Developer ID: MACOS_CERT_P12 is not configured"
           else
@@ -460,7 +489,7 @@ jobs:
           done
       - name: Remove signing material
         if: always()
-        run: rm -f "$RUNNER_TEMP/notary.p8"
+        run: rm -f "$RUNNER_TEMP/notary.p8" "$GITHUB_WORKSPACE/.apple-signing.env"
       - uses: ./.github/actions/upload-artifact # zizmor: ignore[self-repository] use the exact release checkout
         with:
           name: dist-app-macOS
