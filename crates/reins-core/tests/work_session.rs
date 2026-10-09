@@ -17,9 +17,6 @@ async fn desk() -> Desk {
 
 fn start(desk: &Desk, id: &str, args: &Value) -> Value {
     let mut args = args.clone();
-    if args.get("from").is_none() {
-        args["from"] = json!("cli");
-    }
     args["client_key"] = json!(desk.public());
     args["nonce"] = json!(format!("nonce-{id}"));
     call(id, DESK, "desktop", "session", &args)
@@ -48,8 +45,8 @@ async fn a_session_is_one_request_and_becomes_grants_that_end_together() {
     assert_eq!(desk.waiting().await, ["s1"], "a session is always asked");
     let view = desk.core.approval_view("s1".to_owned()).await.unwrap();
     // What the user reads: where it came from, how long, every permission it makes, what stays asked.
-    assert_eq!(view.preview[0], "Work session: Fix the login bug");
-    assert!(view.preview[1].contains("command line"), "{:?}", view.preview);
+    assert_eq!(view.preview[0], "Work session: \u{201c}Fix the login bug\u{201d}");
+    assert_eq!(view.preview[1], "Asked from this computer. Didn't start it? Deny.");
     assert_eq!(view.preview[2], "For 2 h, all of it ending together:");
     assert!(
         view.preview.contains(&"• Push to GitHub me/app, branch feature/login (git only)".to_owned()),

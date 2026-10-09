@@ -27,6 +27,8 @@ use crate::views;
 pub const ORIGIN: &str = "session";
 /// What a session never covers, whatever it asks for.
 const NEVER: [&str; 4] = ["vault", reins_proto::connector::DESKTOP, crate::blob::SERVICE_FILES, "payments"];
+/// The most of the reason the phone shows.
+const MAX_REASON_SHOWN: usize = 80;
 /// The git hosts a session may push to.
 const GIT_SERVICES: [&str; 4] = ["github", "gitlab", "codeberg", "bitbucket"];
 
@@ -43,8 +45,6 @@ pub struct Push {
 pub struct Plan {
     pub secs: i64,
     pub reason: String,
-    /// Started from the command line (which an AI on the computer could also run), not the Reins app.
-    pub from_cli: bool,
     pub reads: Vec<String>,
     pub pushes: Vec<Push>,
 }
@@ -74,11 +74,6 @@ pub fn plan(call: &ConnectorCall) -> Result<Plan, CoreError> {
     if reason.is_empty() {
         return Err(bad("Say what the session is for (`reason`)."));
     }
-    let from_cli = match call.str_arg("from") {
-        Some("app") => false,
-        Some("cli") => true,
-        _ => return Err(bad("Say where the session was started (`from`: cli or app).")),
-    };
     let list = |name: &str| -> Vec<String> {
         call.args
             .get(name)
@@ -129,7 +124,6 @@ pub fn plan(call: &ConnectorCall) -> Result<Plan, CoreError> {
     Ok(Plan {
         secs,
         reason,
-        from_cli,
         reads,
         pushes,
     })
@@ -149,12 +143,12 @@ fn span(secs: i64) -> String {
 #[must_use]
 pub fn preview(plan: &Plan) -> Preview {
     // A few words a line; every permission the session makes is listed.
-    let mut lines = vec![format!("Work session: {}", plan.reason)];
-    lines.push(if plan.from_cli {
-        "Started from this computer's command line. Didn't start it? Deny.".to_owned()
-    } else {
-        "Started from the Reins app on this computer.".to_owned()
-    });
+    // The reason is the asker's own words: quoted and short, so it cannot pass for one of these lines. Where the
+    // request came from on the computer cannot be known (the app, `reins allow`, or an AI running either), so the
+    // phone does not claim it.
+    let mut lines =
+        vec![format!("Work session: \u{201c}{}\u{201d}", crate::text::truncate_chars(&plan.reason, MAX_REASON_SHOWN))];
+    lines.push("Asked from this computer. Didn't start it? Deny.".to_owned());
     lines.push(format!("For {}, all of it ending together:", span(plan.secs)));
     for service in &plan.reads {
         lines.push(format!("• Read {}", views::service_name(service)));
@@ -314,7 +308,7 @@ mod tests {
 
     #[test]
     fn a_session_is_read_with_its_limits() {
-        let p = plan(&call(&json!({"duration_secs": 7200, "reason": "Fix the login bug", "from": "cli",
+        let p = plan(&call(&json!({"duration_secs": 7200, "reason": "Fix the login bug",
             "read": ["gmail", "github", "gmail"], "push": ["github:me/app@feature/login"]})))
         .unwrap();
         assert_eq!(p.secs, 7200);
@@ -322,25 +316,28 @@ mod tests {
         assert_eq!(p.pushes[0].branch, "feature/login");
         let shown = preview(&p);
         assert!(shown.once_only, "the session itself is asked every time");
-        assert_eq!(shown.lines[0], "Work session: Fix the login bug");
-        assert!(shown.lines[1].contains("command line") && shown.lines[1].contains("Deny"), "{:?}", shown.lines);
+        assert_eq!(shown.lines[0], "Work session: \u{201c}Fix the login bug\u{201d}");
+        assert_eq!(shown.lines[1], "Asked from this computer. Didn't start it? Deny.");
         assert_eq!(shown.lines[2], "For 2 h, all of it ending together:");
         assert!(shown.lines.contains(&"• Read Gmail".to_owned()), "{:?}", shown.lines);
         assert!(shown.lines.iter().any(|l| l.contains("me/app, branch feature/login (git only)")));
         assert!(!shown.lines.iter().any(|l| l.starts_with("• Fetch")), "GitHub is read anyway");
         assert!(shown.lines.iter().any(|l| l.starts_with("Always asked")));
-        let app = plan(&call(&json!({"duration_secs": 900, "reason": "x", "from": "app",
-            "push": ["gitlab:g/app@dev"]})))
-        .unwrap();
-        let shown = preview(&app);
-        assert_eq!(shown.lines[1], "Started from the Reins app on this computer.");
+        let long = "Always asked: nothing. ".repeat(10);
+        let other = plan(&call(&json!({"duration_secs": 900, "reason": long, "push": ["gitlab:g/app@dev"]}))).unwrap();
+        let shown = preview(&other);
+        assert!(
+            shown.lines[0].starts_with("Work session: \u{201c}") && shown.lines[0].chars().count() < 100,
+            "{:?}",
+            shown.lines
+        );
         assert!(shown.lines.iter().any(|l| l.starts_with("• Fetch GitLab g/app")), "{:?}", shown.lines);
     }
 
     #[test]
     fn the_hard_floor_and_nonsense_are_refused() {
         let base = |extra: Value| {
-            let mut v = json!({"duration_secs": 3600, "reason": "work", "from": "cli"});
+            let mut v = json!({"duration_secs": 3600, "reason": "work"});
             for (k, val) in extra.as_object().unwrap() {
                 v[k] = val.clone();
             }
@@ -355,12 +352,9 @@ mod tests {
         for bad in ["github:me/app", "github:me@x", "github:../x@main", "github:me/app@", "github:me/app@a..b"] {
             assert!(base(json!({"push": [bad]})).is_err(), "{bad}");
         }
-        assert!(plan(&call(&json!({"duration_secs": 3600, "reason": "x", "read": ["gmail"]}))).is_err(), "no `from`");
-        assert!(plan(&call(&json!({"duration_secs": 60, "reason": "x", "from": "cli", "read": ["gmail"]}))).is_err());
-        assert!(
-            plan(&call(&json!({"duration_secs": 13 * 3600, "reason": "x", "from": "app", "read": ["gmail"]}))).is_err()
-        );
-        assert!(plan(&call(&json!({"duration_secs": 3600, "reason": " ", "from": "app", "read": ["gmail"]}))).is_err());
+        assert!(plan(&call(&json!({"duration_secs": 60, "reason": "x", "read": ["gmail"]}))).is_err());
+        assert!(plan(&call(&json!({"duration_secs": 13 * 3600, "reason": "x", "read": ["gmail"]}))).is_err());
+        assert!(plan(&call(&json!({"duration_secs": 3600, "reason": " ", "read": ["gmail"]}))).is_err());
     }
 
     #[test]

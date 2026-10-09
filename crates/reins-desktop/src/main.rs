@@ -693,14 +693,10 @@ async fn session_start(paths: &Paths, config: &Config, args: &SessionArgs) -> Re
     let request = Request {
         secs,
         reason,
-        from_cli: true,
         read,
         push,
     };
-    out!(
-        "Asking your phone for a {} work session (it says it comes from this computer's command line)…",
-        work_session::span(secs)
-    );
+    out!("Asking your phone for a {} work session (requested from this terminal)…", work_session::span(secs));
     let tell = reins_desktop::phone::teller(|line: &str| eprintln!("{line}"));
     let s = work_session::start(paths, config, &request, Some(tell)).await?;
     out!("Work session started: {} (until {} on this computer's clock).", s.reason, clock(s.expires_at));

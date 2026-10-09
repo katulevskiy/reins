@@ -326,7 +326,6 @@ async fn the_phone_approves_git_reads_and_pushes_and_refuses_a_force_push() {
     let request = reins_desktop::work_session::Request {
         secs: 3_600,
         reason: "Work on dev".to_owned(),
-        from_cli: true,
         read: vec![],
         push: vec![reins_desktop::work_session::Branch {
             service: "github".to_owned(),
@@ -339,8 +338,8 @@ async fn the_phone_approves_git_reads_and_pushes_and_refuses_a_force_push() {
     let user = async {
         let item = next_item(&phone).await;
         let view = phone.core.approval_view(item.id.clone()).await.unwrap();
-        assert_eq!(view.preview[0], "Work session: Work on dev");
-        assert!(view.preview[1].contains("command line"), "{:?}", view.preview);
+        assert_eq!(view.preview[0], "Work session: \u{201c}Work on dev\u{201d}");
+        assert_eq!(view.preview[1], "Asked from this computer. Didn't start it? Deny.");
         assert_eq!(view.preview[2], "For 1 h, all of it ending together:");
         assert!(view.no_standing, "the session itself is never remembered");
         phone

@@ -28,8 +28,6 @@ pub const MAX_SECS: u64 = 12 * 3_600;
 pub struct Request {
     pub secs: u64,
     pub reason: String,
-    /// Started from the command line (`reins allow`), not the Reins app: the phone says so (an AI could run it too).
-    pub from_cli: bool,
     /// Integrations to read (`gmail`, `gcalendar`, `github`, ...).
     pub read: Vec<String>,
     /// Branches to push to.
@@ -219,7 +217,6 @@ pub async fn start(paths: &Paths, config: &Config, request: &Request, tell: Opti
     let args = json!({
         "duration_secs": request.secs,
         "reason": request.reason,
-        "from": if request.from_cli { "cli" } else { "app" },
         "read": request.read,
         "push": request.push.iter().map(Branch::wire).collect::<Vec<_>>(),
     });

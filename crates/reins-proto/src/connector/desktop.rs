@@ -2,8 +2,8 @@
 //! (`reins ask`, harness hooks), and git through the desktop app for hosts besides GitHub.
 
 use crate::connector::{
-    BITBUCKET, CODEBERG, ClassInfo, DESKTOP, Effect, GITLAB, Param, ToolSpec, choice_p, int_p, json_p, list_p, str_p,
-    text_p, tool,
+    BITBUCKET, CODEBERG, ClassInfo, DESKTOP, Effect, GITLAB, Param, ToolSpec, int_p, json_p, list_p, str_p, text_p,
+    tool,
 };
 
 /// `desktop_session`: a work session, many permissions approved at once.
@@ -118,12 +118,6 @@ pub(super) fn tools() -> Vec<ToolSpec> {
                     "How long the session lasts (15 minutes to 12 hours).",
                 ),
                 str_p("reason", 300, true, "What the session is for, in the user's words."),
-                choice_p(
-                    "from",
-                    &["cli", "app"],
-                    true,
-                    "Where it was started: the command line (`reins allow`, which an AI could also run) or the Reins app.",
-                ),
                 list_p(
                     "read",
                     MAX_SESSION_ITEMS,
