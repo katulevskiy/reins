@@ -42,6 +42,15 @@ final class LiveOnboardingUITests: XCTestCase {
         return e
     }
 
+    /// Through the setup's pages with their forward button ("Not now" on notifications) until `id` shows.
+    private func advance(to id: String, timeout: TimeInterval = 10) {
+        for _ in 0..<8 {
+            if element(id).waitForExistence(timeout: 1.5) { return }
+            if element("onboardingNext").waitForExistence(timeout: timeout) { element("onboardingNext").tap() }
+        }
+        XCTAssertTrue(element(id).waitForExistence(timeout: timeout), "the setup never showed \(id)")
+    }
+
     private func waitForFile(_ name: String, _ timeout: TimeInterval) -> String? {
         let deadline = Date().addingTimeInterval(timeout)
         while Date() < deadline {
@@ -110,9 +119,12 @@ final class LiveOnboardingUITests: XCTestCase {
         XCTAssertTrue(wait("create").isEnabled, "the form is complete")
         element("create").tap()
 
-        // The account exists: the app asks for notifications (allowed) and becomes the approval device.
+        // The account exists: the setup asks for notifications on its page (allowed), and the phone becomes the
+        // approval device by the computer page.
+        wait("onboardingNext", 30).tap()
+        wait("allowNotifications", 10).tap()
         allowSystemPrompt(["Allow"], timeout: 20)
-        wait("phoneReady", 60)
+        advance(to: "phoneReady", timeout: 60)
         XCTAssertFalse(element("registerAgain").exists, "registering as the approval device failed")
         shot("03-connect-your-computer")
 

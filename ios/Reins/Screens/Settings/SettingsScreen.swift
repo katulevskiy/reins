@@ -23,6 +23,7 @@ struct SettingsScreen: View {
             ConnectionsGroup()
             NotificationsGroup()
             NavigationGroups()
+            HelpGroup()
             VersionGroup()
             SessionGroup()
         }
@@ -237,6 +238,22 @@ private struct NotificationsGroup: View {
         .task { await access.refresh() }
         .onChange(of: scenePhase) { _, phase in
             if phase == .active { Task { await access.refresh() } }
+        }
+    }
+}
+
+/// "Take the tour": the setup pages again (how Reins works, integrations, the private model).
+private struct HelpGroup: View {
+    @Environment(AppModel.self) private var model
+
+    var body: some View {
+        Section {
+            SettingsLinkRow(
+                title: "Take the tour", subtitle: "How Reins works, integrations and the private model", symbol: "questionmark.circle",
+                tint: Palette.accent, id: "takeTour"
+            ) { model.startTour() }
+        } header: {
+            GroupHeader("Help")
         }
     }
 }
