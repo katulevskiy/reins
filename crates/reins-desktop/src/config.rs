@@ -111,6 +111,13 @@ impl Paths {
         self.state_dir.join("identity.key")
     }
 
+    /// The phone's payment key, pinned by `reins mcp` the first time it opens card details (see
+    /// [`crate::mcp_payments`]).
+    #[must_use]
+    pub fn phone_payment_key_file(&self) -> PathBuf {
+        self.state_dir.join("phone-payments.key")
+    }
+
     /// The Reins server session (see [`crate::server`]).
     #[must_use]
     pub fn session_file(&self) -> PathBuf {

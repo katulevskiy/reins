@@ -54,8 +54,8 @@ struct Bridge {
     /// The client's `initialize`, replayed when the server forgets the session.
     initialize: Mutex<Option<Value>>,
     journal: Journal,
-    /// This app's key: card details of a purchase are sealed to it ([`crate::mcp_payments`]).
-    identity: Option<crate::identity::Identity>,
+    /// Card details of purchases are sealed to this app's key, and opened here ([`crate::mcp_payments`]).
+    sealing: crate::mcp_payments::Sealing,
 }
 
 /// A `tools/call` request: the tool, the progress token the client gave (if any), the argument names.
@@ -368,7 +368,12 @@ impl Bridge {
     /// Forwards one message from the harness; writes the answers (or an error for each request) to `out`.
     async fn forward_plain(&self, mut msg: Value, out: &mpsc::UnboundedSender<Value>) {
         let ids = request_ids(&msg);
-        let nonce = self.identity.as_ref().and_then(|i| crate::mcp_payments::seal_request(&mut msg, i));
+        if let Err(why) = self.sealing.prepare(&mut msg) {
+            for id in ids {
+                let _closed = out.send(error_for(&id, &why));
+            }
+            return;
+        }
         let is_initialize = msg.get("method").and_then(Value::as_str) == Some("initialize");
         if is_initialize {
             *lock(&self.initialize) = Some(msg.clone());
@@ -382,11 +387,7 @@ impl Bridge {
                 Err(e) => Err(e),
             };
         }
-        let fix = |v: &mut Value| {
-            if let Some(identity) = &self.identity {
-                crate::mcp_payments::open_answer(v, identity, nonce.as_deref());
-            }
-        };
+        let fix = |v: &mut Value| self.sealing.open(v);
         let outcome = match result {
             Ok(resp) => Self::relay(resp, out, fix).await,
             Err(e) => Err(e),
@@ -452,7 +453,7 @@ where
         protocol: Mutex::new(None),
         initialize: Mutex::new(None),
         journal: Journal::new(paths),
-        identity: crate::identity::Identity::load_or_create(&paths.identity_file()).ok(),
+        sealing: crate::mcp_payments::Sealing::load(paths),
     });
     let (tx, mut rx) = mpsc::unbounded_channel::<Value>();
     let writer = tokio::spawn(async move {
