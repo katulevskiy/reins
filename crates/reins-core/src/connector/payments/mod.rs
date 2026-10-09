@@ -1930,16 +1930,23 @@ impl Connector for Payments {
     }
 
     /// Payments is switched off: the provider's key goes; the settings and the history stay.
-    /// Payments is switched off: open virtual cards are closed (as far as the provider answers), then the provider's
-    /// key and the spend limits that paid with its cards go. The other settings and the history stay.
+    /// Payments is switched off: no AI can buy any more, so its spend limits go. Open virtual cards are closed; the
+    /// provider's key goes once none is left open, and stays otherwise, so that Spending (or switching Payments on
+    /// again) can still close them.
     async fn forget(&self, _account: &str) {
         let one = self.purchases.lock().await;
         let failed = self.close_open_cards(&one).await;
-        if failed > 0 {
-            log::warn!("virtual cards could not be closed when Payments was switched off");
+        if failed == 0 {
+            if self.drop_provider().is_err() {
+                log::warn!("the virtual card provider could not be forgotten");
+            }
+            return;
         }
-        if self.drop_provider().is_err() {
-            log::warn!("the virtual card provider could not be forgotten");
+        log::warn!("virtual cards could not be closed when Payments was switched off; the key stays to close them");
+        let _edit = self.edit_config();
+        if let Ok(mut config) = self.config() {
+            config.limits.retain(|l| l.method != VIRTUAL_CARD);
+            self.save(&config).ok();
         }
     }
 }

@@ -877,7 +877,20 @@ async fn disconnecting_the_provider_closes_its_cards_first() {
         .await;
     assert!(env.core.payments_disconnect_provider().await.unwrap_err().to_string().contains("could not be closed"));
     assert!(env.core.payments_overview().await.unwrap().provider.is_some());
-    // Next time it does: closed, then the key and the limit go.
+    // Switching Payments off with a card Privacy.com will not close: the limits go, the key stays to close it later.
+    Mock::given(method("PATCH"))
+        .and(path_regex(r"^/cards/.+$"))
+        .respond_with(ResponseTemplate::new(503))
+        .up_to_n_times(1)
+        .with_priority(1)
+        .mount(&env.privacy)
+        .await;
+    env.core.remove_service_account("payments".into(), "this phone".into()).await.unwrap();
+    let off = env.core.payments_overview().await.unwrap();
+    assert!(!off.enabled && off.limits.is_empty(), "no AI can buy any more");
+    assert!(off.provider.is_some(), "the key stays while a card is open");
+    env.core.add_service_account("payments".into(), String::new()).await.unwrap();
+    // Next time it does: closed, then the key goes.
     env.core.payments_disconnect_provider().await.unwrap();
     let overview = env.core.payments_overview().await.unwrap();
     assert!(overview.provider.is_none() && overview.limits.is_empty());
