@@ -58,10 +58,17 @@ impl Store {
         Ok(self.pending_rows(now)?.into_iter().find(|r| r.id == id))
     }
 
-    /// Unexpired parked items, newest first. Expired and undecryptable rows are deleted.
+    /// Unexpired parked items, newest first. Expired and undecryptable rows are deleted. An item lives as long as the
+    /// server keeps it, counted from when the server made it, so the phone never offers what the server already
+    /// dropped (a push that arrived late). A creation time after parking or more than a day before it says more about
+    /// the clocks than about the item: then it counts from parking.
     pub fn pending_rows(&self, now: i64) -> Result<Vec<PendingRow>, CoreError> {
         let conn = self.lock()?;
-        conn.execute("DELETE FROM pending WHERE parked_at <= ?1", params![now - PENDING_TTL_SECS])?;
+        conn.execute(
+            "DELETE FROM pending WHERE (CASE WHEN created_at BETWEEN parked_at - 86400 AND parked_at THEN created_at \
+             ELSE parked_at END) <= ?1",
+            params![now - PENDING_TTL_SECS],
+        )?;
         let mut stmt =
             conn.prepare("SELECT id, kind, created_at, parked_at, payload FROM pending ORDER BY created_at DESC, id")?;
         let rows = stmt
@@ -141,9 +148,9 @@ mod tests {
     fn park_dedupes_orders_and_expires() {
         let dir = tempfile::tempdir().unwrap();
         let store = open(dir.path());
-        assert!(store.park("r1", PendingKind::Request, 100, 1_000, b"one").unwrap());
-        assert!(!store.park("r1", PendingKind::Request, 100, 1_000, b"again").unwrap());
-        assert!(store.park("p1", PendingKind::Pairing, 200, 1_100, b"two").unwrap());
+        assert!(store.park("r1", PendingKind::Request, 1_000, 1_000, b"one").unwrap());
+        assert!(!store.park("r1", PendingKind::Request, 1_000, 1_000, b"again").unwrap());
+        assert!(store.park("p1", PendingKind::Pairing, 1_100, 1_100, b"two").unwrap());
         let rows = store.pending_rows(1_100).unwrap();
         assert_eq!(rows.iter().map(|r| r.id.as_str()).collect::<Vec<_>>(), vec!["p1", "r1"]);
         assert_eq!(rows[1].payload, b"one");
@@ -151,8 +158,15 @@ mod tests {
         assert!(store.pending_item("r1", 1_599).unwrap().is_some());
         assert!(store.pending_item("r1", 1_600).unwrap().is_none(), "expired 600 s after parking");
         assert!(store.pending_item("p1", 1_600).unwrap().is_some());
-        assert!(store.park("b1", PendingKind::Blob, 300, 1_100, b"three").unwrap());
+        assert!(store.park("b1", PendingKind::Blob, 1_100, 1_100, b"three").unwrap());
         assert_eq!(store.pending_item("b1", 1_100).unwrap().unwrap().kind, PendingKind::Blob);
+        // Made on the server 4 minutes before it reached the phone: gone when the server drops it, 6 minutes later.
+        assert!(store.park("late", PendingKind::Request, 100_000, 100_240, b"late").unwrap());
+        assert!(store.pending_item("late", 100_599).unwrap().is_some());
+        assert!(store.pending_item("late", 100_600).unwrap().is_none(), "expired with the server's copy");
+        // A clock behind the server's: counted from parking.
+        assert!(store.park("ahead", PendingKind::Request, 200_500, 200_000, b"x").unwrap());
+        assert!(store.pending_item("ahead", 200_599).unwrap().is_some());
     }
 
     #[test]
