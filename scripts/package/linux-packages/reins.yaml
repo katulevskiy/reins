@@ -1,0 +1,74 @@
+# nfpm configuration of the `reins` package (.deb and .rpm): the command-line program, the static musl build of the
+# release archive reins-desktop-<version>-<arch>-unknown-linux-musl.tar.gz, so it depends on nothing.
+# scripts/package/linux-packages.sh sets the variables below ($STAGE: the files, $SPEC: this directory).
+#
+# No systemd unit: `reins resume` (or `reins service install`) writes the user's own ~/.config/systemd/user/reins.service
+# for the program it runs from, as it does without a package; postinst.sh restarts the running ones after an upgrade.
+name: reins
+arch: ${PKG_ARCH}
+platform: linux
+version: ${VERSION}
+version_schema: none
+release: ${PKG_RELEASE}
+section: utils
+priority: optional
+maintainer: Daniil Katulevskiy <support@reins2fa.com>
+vendor: Reins
+homepage: https://reins2fa.com
+license: Apache-2.0
+description: |-
+  Phone approval for what AI agents do on this computer
+  Reins puts your phone between AI agents and what they act on. The reins
+  command adds Reins to AI harnesses (Claude Code, Codex, Gemini CLI,
+  Cursor), pairs this computer with the Reins phone app, and runs a
+  background service that sends git through Reins, so that pushes and other
+  risky actions wait for your approval on the phone. Get started with
+  `reins login` and `reins resume`. The Reins desktop app (a window and a
+  tray icon) is the reins-app package.
+contents:
+  - src: ${STAGE}/reins
+    dst: /usr/bin/reins
+    file_info:
+      mode: 0755
+  - src: ${STAGE}/doc/README.md
+    dst: /usr/share/doc/reins/README.md
+    type: doc
+    file_info:
+      mode: 0644
+  - src: ${STAGE}/doc/NOTICE
+    dst: /usr/share/doc/reins/NOTICE
+    type: doc
+    file_info:
+      mode: 0644
+  # Debian: the license text is /usr/share/common-licenses/Apache-2.0, which the copyright file names.
+  - src: ${STAGE}/doc/copyright
+    dst: /usr/share/doc/reins/copyright
+    packager: deb
+    file_info:
+      mode: 0644
+  - src: ${STAGE}/doc/changelog.gz
+    dst: /usr/share/doc/reins/changelog.gz
+    packager: deb
+    file_info:
+      mode: 0644
+  - src: ${SPEC}/lintian/reins
+    dst: /usr/share/lintian/overrides/reins
+    packager: deb
+    file_info:
+      mode: 0644
+  - src: ${STAGE}/doc/LICENSE
+    dst: /usr/share/licenses/reins/LICENSE
+    packager: rpm
+    type: license
+    file_info:
+      mode: 0644
+scripts:
+  postinstall: ${SPEC}/postinst.sh
+  preremove: ${SPEC}/prerm.sh
+rpm:
+  summary: Phone approval for what AI agents do on this computer
+  packager: Daniil Katulevskiy <support@reins2fa.com>
+  buildhost: reins2fa.com
+  compression: xz
+deb:
+  compression: xz

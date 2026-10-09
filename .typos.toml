@@ -43,6 +43,8 @@ extend-ignore-re = [
     # Windows: the format switch of whoami (`/fo csv`)
     "/fo\\b",
     "caf\\\\u\\{e9\\}",
+    # SSH host key fingerprints (the AUR's, in release.yml)
+    "SHA256:[A-Za-z0-9+/]{43}",
 ]
 
 [default.extend-words]
@@ -59,3 +61,5 @@ tigger = "tigger"
 # iOS: Core Audio sound files (.caf) and simulator device ids (UDID)
 caf = "caf"
 udid = "udid"
+# gpg --with-colons: the fingerprint record
+fpr = "fpr"

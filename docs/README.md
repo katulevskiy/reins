@@ -4,6 +4,8 @@
 
 - [Quick start](quick-start.md): account, phone app, desktop app, first agent. Also `ask`, `run`, the API proxy,
   SSH, and local mode.
+- [Linux packages](linux-packages.md): the APT and RPM repositories and the AUR package, for Debian, Ubuntu, Fedora and
+  Arch Linux.
 - [Harnesses](harnesses.md): Claude Code, Codex, Gemini CLI, Cursor and cloud AIs. What `reins harness add`
   changes, and the guard rules for hooks.
 - [Autopilot](autopilot.md): automatic approvals on the phone. Modes, the hard floor, learning, privacy, and the

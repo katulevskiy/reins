@@ -1,0 +1,11 @@
+# The release's static musl program, the same file as in reins-desktop-<version>-<arch>-unknown-linux-musl.tar.gz:
+# one build that runs on every distribution, checked by `reins update` and the install scripts against the same feed.
+reins: statically-linked-binary
+reins: hardening-no-pie
+# Rust links its dependencies in; their fixes reach users with Reins releases.
+reins: embedded-library
+# `reins --help` and `reins <command> --help` are the manual.
+reins: no-manual-page
+# The background service is each user's systemd user unit (no system unit to hand to deb-systemd-invoke): postinst
+# restarts the running ones with `systemctl --user --machine=<user>@`.
+reins: maintainer-script-calls-systemctl

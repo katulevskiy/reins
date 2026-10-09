@@ -1,0 +1,23 @@
+# rpmlint configuration for the reins and reins-app packages (`rpmlint -c <this file> *.rpm`; the release workflow runs
+# Fedora's rpmlint). Each filter is a known, accepted finding:
+Filters = [
+    # reins is the release's static musl program, the same file as the release archive's (see lintian/reins).
+    "reins\\.[a-z0-9_]+: E: statically-linked-binary /usr/bin/reins",
+    "reins\\.[a-z0-9_]+: [EW]: position-independent-executable-suggested /usr/bin/reins",
+    # nfpm writes no %changelog; the release notes are on GitHub.
+    "[EW]: no-changelogname-tag",
+    # `reins --help` and `reins-app --help` are the manual.
+    "[EW]: no-manual-page-for-binary",
+    # Group: is obsolete (Fedora, RHEL); openSUSE's locale and group rules do not apply to a vendor package.
+    "[EW]: no-group-tag",
+    "[EW]: non-standard-group",
+    "[EW]: no-dependency-on locales",
+    # rpmsign (rpm 4.16 and later) makes header-only signatures (RSAHEADER), which this check does not count. The
+    # release workflow installs every package with dnf, gpgcheck=1, against the published key.
+    "[EW]: no-signature",
+    # reins-app needs the reins of the same release (the program it runs).
+    "reins-app\\.[a-z0-9_]+: W: requires-on-release reins",
+    # The libraries reins-app loads at run time (libwayland-client, libvulkan) are required by soname, as rpm's own
+    # dependency generator does for the ones it links.
+    "reins-app\\.[a-z0-9_]+: [EW]: explicit-lib-dependency",
+]

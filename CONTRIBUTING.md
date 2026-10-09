@@ -126,7 +126,8 @@ Release builds start alongside CI on every push to `main`; publication waits for
 and all required assets. Only a successful push CI run on `main` qualifies. Obsolete runs are cancelled when a newer
 push arrives. Every push to `main` that passes CI is released: `.github/workflows/release.yml` tags the commit CI tested as
 `vX.Y.Z` and publishes a [GitHub release](https://github.com/katulevskiy/reins/releases) with the desktop app (Linux
-x86_64/aarch64, static; macOS Apple silicon/Intel; Windows x86_64/Arm as zips), the server binary, the server image
+x86_64/aarch64, static; macOS Apple silicon/Intel; Windows x86_64/Arm as zips), its Linux `.deb` and `.rpm` packages
+(see [below](#maintainers-linux-packages-their-repositories-and-the-aur)), the server binary, the server image
 `ghcr.io/katulevskiy/reins-server`, the Android APK and `SHA256SUMS`, with notes generated from the commits. Nobody
 bumps a version by hand: the tags are the source of truth, and `scripts/next-version.sh` computes the next one from
 the commits since the latest tag:
@@ -250,6 +251,64 @@ copying them, and `feed.json`, the index of all of these with their SHA-256, sig
 feed into `/srv/reins-releases` every 15 minutes and publishes only files the verified index lists, so a
 release reaches `reins2fa.com/releases`, `/install.sh` and `/install.ps1` without anyone logging in to the server.
 `scripts/release-feed.sh` also builds a feed by hand from a directory of release assets.
+
+## Maintainers: Linux packages, their repositories and the AUR
+
+Every release also carries `reins_<version>_{amd64,arm64}.deb`, `reins-<version>-1.{x86_64,aarch64}.rpm` (the static
+command-line program) and `reins-app_<version>_amd64.deb`, `reins-app-<version>-1.x86_64.rpm` (the desktop app, which
+needs `reins`), made with nfpm (version and SHA-256 pinned in `release.yml` and `ci.yml`) by
+`scripts/package/linux-packages.sh` from the archives and the app's tarball; the definitions are in
+`scripts/package/linux-packages/`. The release's `linux-packages` job lints them (lintian, rpmlint, with the accepted
+findings in `lintian/` and `rpmlint.toml` there), signs the `.rpm` files with `rpmsign`, builds the signed APT and RPM
+repositories (`scripts/package/linux-repos.sh`) and installs from them in Ubuntu, Debian and Fedora containers
+(`scripts/package/test-linux-repos.sh`; `linux-packages-arm64` does the same on arm64). A failure there holds the
+release back, as any other asset's does. `release-feed.sh --packages` puts the repositories in the update feed: their
+metadata as files, the `.deb` and `.rpm` files as `fetch.txt` lines naming the release assets, all of it in the signed
+index. Users find them at `reins2fa.com/releases/packages/` ([Linux packages](docs/linux-packages.md)).
+`scripts/test-linux-packages.py` tests all of this on a fake release with throwaway keys (CI runs it).
+
+The repositories hold one release, the one in the feed: each feed replaces them whole. apt and dnf only ever install
+the newest version, and every version stays a GitHub release asset for a downgrade by hand
+(`apt install ./reins_<version>_amd64.deb`). Carrying the previous version too would need the server to fetch assets
+of another release than the feed's, which `fetch.txt` cannot name; what it would buy, a client with an index from
+before a release that downloads after it, the server covers by keeping replaced files for 14 days (below).
+
+**The repository key** is an OpenPGP key, RSA 4096 (what every apt, dnf and rpm verifies). Make it once, outside the
+repository:
+
+```sh
+export GNUPGHOME="$(mktemp -d)"
+gpg --quick-gen-key "Reins packages <support@reins2fa.com>" rsa4096 sign never   # asks for a passphrase
+gpg --armor --export "Reins packages" > scripts/package/linux-packages/packages-key.asc
+gpg --armor --export-secret-keys "Reins packages" > reins-packages-private.asc  # mode 0600, not in the repository
+```
+
+and store it in Infisical `reins-release`, `prod`, `/signing/packages`: `PACKAGES_GPG_PRIVATE_KEY` (the whole armored
+block of `reins-packages-private.asc`) and `PACKAGES_GPG_PASSPHRASE` (leave it out for a key without one). The same
+release identity reads it, through a file the next step removes; repository secrets of the same names are the
+fallback. The master copy belongs in 1Password next to the release key. Committing the public key,
+`scripts/package/linux-packages/packages-key.asc`, is what switches the repositories on: until then the release signs
+test repositories with a throwaway key, releases the `.rpm` files unsigned and leaves them out of the feed (with a
+warning); from then on a missing secret key, or one that is not the committed key, fails the release. Rotating the
+key means users import the new one, so give it no expiry and keep it safe instead.
+
+Before committing the key, the server's `reins-releases-sync` (reins-site, `deploy/server/`) has to know the
+repositories, or it refuses the feed (its `fetch.txt` destinations are only `files/` and `android/files/` today):
+
+1. accept `fetch.txt` destinations `packages/apt/pool/main/<letter>/<package>/<file>.deb` and
+   `packages/rpm/<arch>/<file>.rpm` (each still a release asset with that SHA-256, and in the signed index);
+2. publish every `packages/` file of the signed index into `/srv/reins-releases/packages/`: the packages and
+   `repodata/*`, `Packages*` first, then with atomic renames the entry points that name them,
+   `apt/dists/stable/{Release,Release.gpg,InRelease}`, `rpm/repodata/repomd.xml{,.asc}`, `rpm/reins.repo`,
+   `reins.gpg` and `reins.asc`, so no client sees an index whose files are not there yet;
+3. keep replaced files under `packages/` for 14 days, as it does for `files/`.
+
+**The AUR package** `reins-bin` is written for each release by `scripts/package/aur.sh` (PKGBUILD and .SRCINFO from the
+release's `SHA256SUMS`; the release's `aur` job checks .SRCINFO and the sources with makepkg in an Arch Linux
+container) and pushed to `ssh://aur@aur.archlinux.org/reins-bin.git` once the release is public. It needs an AUR
+account with an SSH key: `ssh-keygen -t ed25519 -N '' -C reins-bin -f aur_ed25519`, the public half in the account's
+settings, the private half (the whole OpenSSH key file) in Infisical `/signing/aur` as `AUR_SSH_PRIVATE_KEY`. Without
+it the job only says so; the first push creates the package. The job cannot fail or hold back a release.
 
 Production signing uses a dedicated non-debug RSA-4096 identity, alias `reinsrelease`. Its SHA-256 certificate is
 `61edfc4c65cbdfa1b7a07109a9df347de93500b52012c3380b38c7c4a4e3f1c8`, pinned in

@@ -190,6 +190,32 @@ jobs:
       - run: cargo clippy --locked -p reins-desktop-app --all-targets -- -D warnings
       - run: cargo test --locked -p reins-desktop-app
 
+  # The release's Linux packages and repositories (scripts/package/linux-packages.sh, linux-repos.sh, aur.sh and
+  # release-feed.sh --packages) from a fake release: built, linted, signed with a throwaway key, checked with apt and
+  # installed in Debian and Fedora containers (scripts/test-linux-packages.py). The same nfpm as release.yml.
+  linux-packages:
+    name: Linux packages and repositories
+    needs: changes
+    if: needs.changes.outputs.rust == 'true'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    env:
+      NFPM_VERSION: 2.47.0
+      NFPM_SHA256: 0660ca602b2d2d2ae4781a06c692b3eeb9d437ffea05b831d76e41f4a3188783 # nfpm_2.47.0_Linux_x86_64.tar.gz
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - name: Packaging tools
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq --no-install-recommends lintian createrepo-c rpm apt-utils
+          curl -fsSL -o "$RUNNER_TEMP/nfpm.tar.gz" \
+            "https://github.com/goreleaser/nfpm/releases/download/v$NFPM_VERSION/nfpm_${NFPM_VERSION}_Linux_x86_64.tar.gz"
+          echo "$NFPM_SHA256  $RUNNER_TEMP/nfpm.tar.gz" | sha256sum -c -
+          tar -xzf "$RUNNER_TEMP/nfpm.tar.gz" -C "$RUNNER_TEMP" nfpm
+      - run: NFPM="$RUNNER_TEMP/nfpm" python3 scripts/test-linux-packages.py
+
   desktop-macos:
     name: Desktop app on macOS (clippy + tests)
     # The release builds the desktop app for macOS too (release.yml); this keeps it compiling and its tests passing.

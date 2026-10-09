@@ -1,0 +1,4 @@
+# Rust links its dependencies in; their fixes reach users with Reins releases.
+reins-app: embedded-library
+# A window and tray app; `reins-app --help` lists its few options.
+reins-app: no-manual-page

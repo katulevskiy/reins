@@ -4,9 +4,11 @@ name: Release
 # Assets: the desktop app for Linux (static musl), macOS and Windows (a zip with reins.exe), the Reins app's
 # installers (a .dmg, an .msi, an AppImage and its tarball), the server binary, the server image on GHCR,
 # the signed Android APK, the Google Play bundle (reins-<version>-play.aab, also uploaded to a Play track; job `play`),
-# the update feed (reins-feed-<version>.tar.gz, scripts/release-feed.sh; the server mirrors it into
-# reins2fa.com/releases), and SHA256SUMS. Android signing is required for every release. Archives and installers use a
+# the Linux distribution packages (.deb, .rpm), the update feed (reins-feed-<version>.tar.gz, scripts/release-feed.sh;
+# the server mirrors it into reins2fa.com/releases, with the APT and RPM repositories), and SHA256SUMS. Android
+# signing is required for every release. Archives and installers use a
 # versioned name and under a fixed one (reins-desktop-<target>.tar.gz, Reins-macOS.dmg, ...) for "latest" links.
+# After the release, the aur job updates the AUR package reins-bin (optional).
 
 # Only main pushes and maintainer dispatches can build with release credentials.
 # Public release/image tags are updated only after CI and all required builds pass.
@@ -851,15 +853,181 @@ jobs:
           path: dist/*.aab
           retention-days: 7
 
+  # The Linux distribution packages, made with nfpm from the files the archives and the AppImage carry
+  # (scripts/package/linux-packages.sh): reins_<version>_{amd64,arm64}.deb and reins-<version>-1.{x86_64,aarch64}.rpm
+  # (the command-line program), reins-app_<version>_amd64.deb and reins-app-<version>-1.x86_64.rpm (the desktop app).
+  # Linted (lintian, rpmlint), the .rpm files signed, the signed APT and RPM repositories built
+  # (scripts/package/linux-repos.sh), and installed from those repositories in Ubuntu, Debian and Fedora containers
+  # (here amd64, arm64 in linux-packages-arm64). The update feed carries the repositories to
+  # reins2fa.com/releases/packages/ (publish).
+  #
+  # The repository key (OpenPGP), from Infisical reins-release prod /signing/packages, else the repository secrets of the
+  # same names: PACKAGES_GPG_PRIVATE_KEY (the armored secret key) and, if it has one, PACKAGES_GPG_PASSPHRASE. Its
+  # public half, committed as scripts/package/linux-packages/packages-key.asc, switches the repositories on: until then
+  # a throwaway key signs them for the tests only, the .rpm files are released unsigned and the feed has no
+  # repositories. Once it is there, a missing or different secret key fails the release.
+  linux-packages:
+    name: Linux packages
+    needs: [plan, desktop, desktop-app]
+    if: needs.plan.outputs.release == 'true'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    permissions:
+      contents: read
+      id-token: write # Infisical OIDC (the repository key)
+    env:
+      VERSION: ${{ needs.plan.outputs.version }}
+      BUILD: ${{ needs.plan.outputs.build }}
+      BUILD_TIME: ${{ needs.plan.outputs.build-time }}
+      NFPM_VERSION: 2.47.0
+      NFPM_SHA256: 0660ca602b2d2d2ae4781a06c692b3eeb9d437ffea05b831d76e41f4a3188783 # nfpm_2.47.0_Linux_x86_64.tar.gz
+      FEDORA: fedora:44
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ needs.plan.outputs.sha }}
+          persist-credentials: false
+      - uses: actions/download-artifact@v8
+        with:
+          pattern: dist-desktop-*-unknown-linux-musl
+          merge-multiple: true
+          path: dist
+      - uses: actions/download-artifact@v8
+        with:
+          name: dist-app-Linux-x86_64
+          path: dist
+      - name: Packaging tools
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq --no-install-recommends lintian createrepo-c rpm apt-utils
+          curl -fsSL -o "$RUNNER_TEMP/nfpm.tar.gz" \
+            "https://github.com/goreleaser/nfpm/releases/download/v$NFPM_VERSION/nfpm_${NFPM_VERSION}_Linux_x86_64.tar.gz"
+          echo "$NFPM_SHA256  $RUNNER_TEMP/nfpm.tar.gz" | sha256sum -c -
+          tar -xzf "$RUNNER_TEMP/nfpm.tar.gz" -C "$RUNNER_TEMP" nfpm
+          "$RUNNER_TEMP/nfpm" --version | tail -n +2
+      - name: Build the packages
+        run: |
+          NFPM="$RUNNER_TEMP/nfpm" scripts/package/linux-packages.sh --version "$VERSION" --build "$BUILD" \
+            --time "$BUILD_TIME" --dist dist --out packages
+      - name: Lint the .deb packages (lintian)
+        run: lintian --fail-on error --no-tag-display-limit packages/*.deb
+      - name: Lint the .rpm packages (rpmlint)
+        run: |
+          docker run --rm -v "$PWD:/src:ro" -w /src "$FEDORA" sh -c \
+            'dnf install -y -q rpmlint >/dev/null && rpmlint -c scripts/package/linux-packages/rpmlint.toml packages/*.rpm'
+      # Written to a file (not exported to later steps), read by the next step only, and removed afterwards. A missing
+      # folder is not an error here: the next step decides whether the key is required.
+      - name: Fetch the repository key from Infisical
+        if: vars.INFISICAL_RELEASE_IDENTITY_ID != ''
+        continue-on-error: true
+        uses: ./.github/actions/release-secrets # zizmor: ignore[self-repository] use the exact release checkout
+        with:
+          identity-id: ${{ vars.INFISICAL_RELEASE_IDENTITY_ID }}
+          environment: ${{ vars.INFISICAL_RELEASE_ENVIRONMENT || 'prod' }}
+          secret-path: /signing/packages
+          export-type: file
+          file-output-path: /.packages-key.env
+      - name: Sign the packages and build the repositories
+        env:
+          PACKAGES_GPG_PRIVATE_KEY: ${{ secrets.PACKAGES_GPG_PRIVATE_KEY }}
+          PACKAGES_GPG_PASSPHRASE: ${{ secrets.PACKAGES_GPG_PASSPHRASE }}
+        run: |
+          umask 077
+          key_env="$GITHUB_WORKSPACE/.packages-key.env"
+          export GNUPGHOME="$RUNNER_TEMP/gnupg"
+          trap 'gpgconf --kill gpg-agent || true; rm -rf "$key_env" "$GNUPGHOME" "$RUNNER_TEMP/packages-passphrase"' EXIT
+          # Infisical (/signing/packages) first; the repository secrets of the same names are the fallback.
+          if [[ -s "$key_env" ]]; then
+            eval "$(python3 - "$key_env" <<'PY'
+          import re, shlex, sys
+          text = open(sys.argv[1]).read()
+          names = {"PACKAGES_GPG_PRIVATE_KEY", "PACKAGES_GPG_PASSPHRASE"}
+          for key, value in re.findall(r"^([A-Z0-9_]+)='(.*?)'$", text, re.M | re.S):
+              if key in names and value:
+                  for line in value.splitlines():
+                      if line.strip():
+                          print(f"echo {shlex.quote('::add-mask::' + line)}")
+                  print(f"{key}={shlex.quote(value)}")
+          PY
+          )"
+            rm -f "$key_env"
+          fi
+          mkdir -p "$GNUPGHOME"
+          pinned=scripts/package/linux-packages/packages-key.asc
+          args=()
+          if [[ -f "$pinned" ]]; then
+            [[ -n "${PACKAGES_GPG_PRIVATE_KEY:-}" ]] ||
+              { echo "::error::$pinned is pinned but PACKAGES_GPG_PRIVATE_KEY is missing (Infisical /signing/packages)"; exit 1; }
+            printf '%s\n' "$PACKAGES_GPG_PRIVATE_KEY" | gpg --batch --quiet --import
+            if [[ -n "${PACKAGES_GPG_PASSPHRASE:-}" ]]; then
+              printf '%s' "$PACKAGES_GPG_PASSPHRASE" > "$RUNNER_TEMP/packages-passphrase"
+              args+=(--passphrase-file "$RUNNER_TEMP/packages-passphrase")
+            fi
+            public="$pinned"
+          else
+            echo "::warning::No repository key is pinned ($pinned): a throwaway key signs the repositories for the tests; the .rpm files are released unsigned and the update feed has no repositories."
+            gpg --batch --quiet --pinentry-mode loopback --passphrase '' \
+              --quick-gen-key "Reins packages, throwaway <support@reins2fa.com>" rsa3072 sign 1d
+            gpg --batch --armor --export > "$RUNNER_TEMP/throwaway-key.asc"
+            public="$RUNNER_TEMP/throwaway-key.asc"
+          fi
+          fingerprint="$(gpg --batch --with-colons --list-secret-keys | awk -F: '$1 == "fpr" { print $10; exit }')"
+          scripts/package/linux-repos.sh --packages packages --out repo --key "$fingerprint" --public-key "$public" \
+            "${args[@]}"
+          # The release publishes the signed packages, the ones in the repository.
+          [[ -f "$pinned" ]] && cp repo/packages/rpm/*/*.rpm packages/
+          ls -l packages
+      - name: Install from the repositories (amd64)
+        run: scripts/package/test-linux-repos.sh --repo repo --version "$VERSION" --build "$BUILD"
+      - uses: ./.github/actions/upload-artifact # zizmor: ignore[self-repository] use the exact release checkout
+        with:
+          name: dist-linux-packages
+          compression-level: 0
+          path: |
+            packages/*.deb
+            packages/*.rpm
+          retention-days: 7
+      # Not a release asset: the update feed's repositories (publish) and the arm64 test.
+      - uses: ./.github/actions/upload-artifact # zizmor: ignore[self-repository] use the exact release checkout
+        with:
+          name: linux-package-repo
+          compression-level: 0
+          path: repo/
+          retention-days: 1
+
+  linux-packages-arm64:
+    name: Linux packages (arm64 install test)
+    needs: [plan, linux-packages]
+    if: needs.plan.outputs.release == 'true'
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 20
+    permissions:
+      contents: read
+    env:
+      VERSION: ${{ needs.plan.outputs.version }}
+      BUILD: ${{ needs.plan.outputs.build }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ needs.plan.outputs.sha }}
+          persist-credentials: false
+      - uses: actions/download-artifact@v8
+        with:
+          name: linux-package-repo
+          path: repo
+      - name: Install from the repositories (arm64)
+        run: scripts/package/test-linux-repos.sh --repo repo --version "$VERSION" --build "$BUILD"
+
   publish:
     name: Publish the release
-    needs: [plan, desktop, desktop-app, desktop-app-macos, server, docker, android]
+    needs: [plan, desktop, desktop-app, desktop-app-macos, server, docker, android, linux-packages, linux-packages-arm64]
     if: >-
       always() && needs.plan.outputs.release == 'true' &&
       needs.desktop.result == 'success' && needs.desktop-app.result == 'success' &&
       needs.desktop-app-macos.result == 'success' &&
       needs.server.result == 'success' && needs.docker.result == 'success' &&
-      needs.android.result == 'success'
+      needs.android.result == 'success' &&
+      needs.linux-packages.result == 'success' && needs.linux-packages-arm64.result == 'success'
     runs-on: ubuntu-24.04
     timeout-minutes: 20
     permissions:
@@ -895,6 +1063,10 @@ jobs:
           pattern: dist-*
           merge-multiple: true
           path: dist
+      - uses: actions/download-artifact@v8
+        with:
+          name: linux-package-repo
+          path: packages-repo
       # The release key is written to a file (not exported to later steps) and removed right after signing.
       - name: Fetch the release key from Infisical
         if: vars.INFISICAL_RELEASE_IDENTITY_ID != ''
@@ -906,7 +1078,8 @@ jobs:
           export-type: file
           file-output-path: /.release-key.env
       # reins-feed-<version>.tar.gz: the signed update manifests, the installers and the Android feed, which the
-      # server's reins-releases-sync mirrors into reins2fa.com/releases (scripts/release-feed.sh).
+      # server's reins-releases-sync mirrors into reins2fa.com/releases (scripts/release-feed.sh), and the APT and RPM
+      # repositories once their key is pinned (linux-packages).
       - name: Update feed
         env:
           BUILD: ${{ needs.plan.outputs.build }}
@@ -921,13 +1094,19 @@ jobs:
           [[ -n "$key_b64" ]] || { echo "::error::RELEASE_SIGNING_KEY_BASE64 is missing"; exit 1; }
           echo "::add-mask::$key_b64" # file exports are not masked by the Infisical action
           base64 -d <<<"$key_b64" > "$RUNNER_TEMP/release-signing.pk8"
+          packages=()
+          [[ -f scripts/package/linux-packages/packages-key.asc ]] && packages=(--packages packages-repo)
           scripts/release-feed.sh --version "$VERSION" --build "$BUILD" --time "$BUILD_TIME" \
-            --android-version-code "$VERSION_CODE" --dist dist --key "$RUNNER_TEMP/release-signing.pk8"
+            --android-version-code "$VERSION_CODE" --dist dist --key "$RUNNER_TEMP/release-signing.pk8" "${packages[@]}"
       - name: Checksums
         working-directory: dist
         run: |
           [[ -s "reins-$VERSION-android.apk" ]] || { echo "::error::Android APK is missing from release assets"; exit 1; }
           [[ -s "reins-$VERSION-play.aab" ]] || { echo "::error::Play bundle is missing from release assets"; exit 1; }
+          for package in "reins_${VERSION}_amd64.deb" "reins_${VERSION}_arm64.deb" "reins-app_${VERSION}_amd64.deb" \
+            "reins-$VERSION-1.x86_64.rpm" "reins-$VERSION-1.aarch64.rpm" "reins-app-$VERSION-1.x86_64.rpm"; do
+            [[ -s "$package" ]] || { echo "::error::$package is missing from release assets"; exit 1; }
+          done
           sha256sum -- * > SHA256SUMS
           cat SHA256SUMS
       - uses: docker/setup-buildx-action@v4
@@ -1068,3 +1247,100 @@ jobs:
       - name: Remove the Play credentials
         if: always()
         run: rm -f "$GITHUB_WORKSPACE/.play.env" "$RUNNER_TEMP/play-service-account.json"
+
+  # reins-bin on the AUR (https://aur.archlinux.org/packages/reins-bin): its PKGBUILD and .SRCINFO, written from the
+  # published release's SHA256SUMS (scripts/package/aur.sh) and checked with makepkg in an Arch Linux container
+  # (.SRCINFO as makepkg prints it; the sources download and match), then pushed over SSH. Optional: it runs after the
+  # release is public, and without the key (Infisical reins-release prod /signing/aur: AUR_SSH_PRIVATE_KEY, the
+  # OpenSSH private key of the AUR account that maintains reins-bin; else the repository secret of that name) it only
+  # says so. A failure here does not undo or block anything.
+  aur:
+    name: AUR (reins-bin)
+    needs: [plan, publish]
+    if: needs.publish.result == 'success' && inputs.verify_only != true
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    continue-on-error: true
+    permissions:
+      contents: read
+      id-token: write # Infisical OIDC (the AUR key)
+    env:
+      VERSION: ${{ needs.plan.outputs.version }}
+      TAG: ${{ needs.plan.outputs.tag }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ needs.plan.outputs.sha }}
+          persist-credentials: false
+      - name: PKGBUILD and .SRCINFO
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          gh release download "$TAG" --pattern SHA256SUMS --dir "$RUNNER_TEMP"
+          scripts/package/aur.sh --version "$VERSION" --sums "$RUNNER_TEMP/SHA256SUMS" --out aur
+          cat aur/PKGBUILD
+      - name: Check with makepkg
+        run: |
+          docker run --rm -v "$PWD/aur:/aur:ro" archlinux:base-devel bash -euo pipefail -c '
+            useradd -m builder
+            cp -r /aur /home/builder/aur
+            chown -R builder /home/builder/aur
+            cd /home/builder/aur
+            su builder -c "makepkg --printsrcinfo" | diff -u .SRCINFO -
+            su builder -c "makepkg --verifysource --noconfirm"'
+      - name: Fetch the AUR key from Infisical
+        if: vars.INFISICAL_RELEASE_IDENTITY_ID != ''
+        continue-on-error: true
+        uses: ./.github/actions/release-secrets # zizmor: ignore[self-repository] use the exact release checkout
+        with:
+          identity-id: ${{ vars.INFISICAL_RELEASE_IDENTITY_ID }}
+          environment: ${{ vars.INFISICAL_RELEASE_ENVIRONMENT || 'prod' }}
+          secret-path: /signing/aur
+          export-type: file
+          file-output-path: /.aur-key.env
+      - name: Push to the AUR
+        env:
+          AUR_SSH_PRIVATE_KEY: ${{ secrets.AUR_SSH_PRIVATE_KEY }}
+          # aur.archlinux.org's host key, as published on https://aur.archlinux.org (SHA256:RFzBCUItH9LZS0cKB5UE6ceAYhBD5C8GeOBip8Z11+4)
+          AUR_HOST_KEY: aur.archlinux.org ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIEuBKrPzbawxA/k2g6NcyV5jmqwJ2s+zpgZGZ7tpLIcN
+        run: |
+          umask 077
+          key_env="$GITHUB_WORKSPACE/.aur-key.env"
+          ssh_dir="$RUNNER_TEMP/aur-ssh"
+          trap 'rm -rf "$key_env" "$ssh_dir"' EXIT
+          # Infisical (/signing/aur) first; the repository secret of the same name is the fallback.
+          if [[ -s "$key_env" ]]; then
+            eval "$(python3 - "$key_env" <<'PY'
+          import re, shlex, sys
+          text = open(sys.argv[1]).read()
+          for key, value in re.findall(r"^([A-Z0-9_]+)='(.*?)'$", text, re.M | re.S):
+              if key == "AUR_SSH_PRIVATE_KEY" and value:
+                  for line in value.splitlines():
+                      if line.strip():
+                          print(f"echo {shlex.quote('::add-mask::' + line)}")
+                  print(f"{key}={shlex.quote(value)}")
+          PY
+          )"
+            rm -f "$key_env"
+          fi
+          if [[ -z "${AUR_SSH_PRIVATE_KEY:-}" ]]; then
+            echo "::notice::reins-bin was not pushed to the AUR: AUR_SSH_PRIVATE_KEY is not configured (Infisical /signing/aur)"
+            exit 0
+          fi
+          mkdir -p "$ssh_dir"
+          printf '%s\n' "$AUR_SSH_PRIVATE_KEY" > "$ssh_dir/key"
+          printf '%s\n' "$AUR_HOST_KEY" > "$ssh_dir/known_hosts"
+          export GIT_SSH_COMMAND="ssh -i $ssh_dir/key -o IdentitiesOnly=yes -o UserKnownHostsFile=$ssh_dir/known_hosts -o StrictHostKeyChecking=yes"
+          # A package that does not exist yet clones as an empty repository; the first push creates it.
+          git clone --quiet ssh://aur@aur.archlinux.org/reins-bin.git "$ssh_dir/reins-bin"
+          cp aur/PKGBUILD aur/.SRCINFO "$ssh_dir/reins-bin/"
+          cd "$ssh_dir/reins-bin"
+          git add PKGBUILD .SRCINFO
+          if git diff --cached --quiet; then
+            echo "::notice::reins-bin on the AUR is already $VERSION"
+            exit 0
+          fi
+          git -c user.name="Daniil Katulevskiy" -c user.email=support@reins2fa.com commit --quiet -m "Update to $VERSION"
+          git push --quiet origin HEAD:master
+          echo "::notice::Pushed reins-bin $VERSION to https://aur.archlinux.org/packages/reins-bin"

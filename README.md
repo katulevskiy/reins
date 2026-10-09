@@ -97,6 +97,9 @@ You need an Android phone or an iPhone and an account on a Reins server (the hos
    reins login     # scan the QR code with the phone; compare the key shown here with the one on the phone
    reins resume    # start the background service; send GitHub git through it
    ```
+   On Debian, Ubuntu, Fedora and Arch Linux, the packages `reins` and `reins-app` from Reins's signed APT and RPM
+   repositories, or `reins-bin` from the AUR, install it instead of the first line: see
+   [Linux packages](docs/linux-packages.md).
 3. **Connect your agent:**
    ```sh
    reins harness add claude-code    # or codex, gemini, cursor
@@ -194,8 +197,8 @@ and only after it has agreed with you often enough. Model card: [tools/laya/MODE
 
 - Phone: Android (Android 12 or later) and iOS / iPadOS 26 or later (iPhone, iPad, iPhone Duo; build it from
   [`ios/`](ios/README.md), no App Store release yet). iOS has no text messages integration: apps cannot read SMS there.
-- Desktop app: Linux (x86_64, aarch64), macOS (Apple silicon, Intel) and Windows (x86_64, and Arm when it builds)
-  builds are published with every release. macOS and Windows are alpha: built and tested on GitHub's runners, not yet
+- Desktop app: Linux (x86_64, aarch64; also as [.deb, .rpm and AUR packages](docs/linux-packages.md)), macOS (Apple
+  silicon, Intel) and Windows (x86_64, and Arm when it builds) builds are published with every release. macOS and Windows are alpha: built and tested on GitHub's runners, not yet
   field-tested end to end ([macOS](crates/reins-desktop/README.md#macos-alpha),
   [Windows](crates/reins-desktop/README.md#windows-alpha)).
 - Gmail and Google Calendar/Contacts use Google scopes that need Google's app verification before the general public

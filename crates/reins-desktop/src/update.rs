@@ -436,9 +436,29 @@ pub fn installed_with_app(exe: &Path) -> bool {
     exe.parent().is_some_and(|dir| APP_EXECUTABLES.iter().any(|name| dir.join(name).is_file()))
 }
 
+/// Whether `exe` is a Linux distribution package's (the .deb, .rpm and AUR packages put it in `/usr/bin`; the install
+/// script and the archives use `~/.local/bin` or wherever the user puts it, `/usr/local/bin` included). The package
+/// manager updates it: writing over its file would leave the package database describing another program.
+#[must_use]
+pub fn installed_by_package_manager(exe: &Path) -> bool {
+    cfg!(target_os = "linux") && exe.starts_with("/usr") && !exe.starts_with("/usr/local")
+}
+
 #[cfg(test)]
 mod tests {
     use ring::signature::KeyPair as _;
+
+    #[test]
+    fn a_reins_in_usr_is_the_package_managers() {
+        let packaged = ["/usr/bin/reins", "/usr/lib/reins/reins"];
+        let own = ["/usr/local/bin/reins", "/home/me/.local/bin/reins", "/opt/reins/reins", "/usrx/reins"];
+        for exe in packaged {
+            assert_eq!(installed_by_package_manager(Path::new(exe)), cfg!(target_os = "linux"), "{exe}");
+        }
+        for exe in own {
+            assert!(!installed_by_package_manager(Path::new(exe)), "{exe}");
+        }
+    }
 
     #[test]
     fn a_reins_next_to_the_app_is_the_apps() {

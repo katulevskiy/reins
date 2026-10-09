@@ -445,6 +445,15 @@ async fn self_update(paths: &Paths, config: &Config, check_only: bool) -> Result
         }
         Check::Available(latest, asset) => {
             let exe = update::current_executable()?;
+            if update::installed_by_package_manager(&exe) {
+                out!(
+                    "Update available: {} → {}. This reins came with a system package: update it with the package \
+                     manager (apt, dnf, or your AUR helper).",
+                    update::BUILD,
+                    latest.build
+                );
+                return Ok(());
+            }
             if update::installed_with_app(&exe) {
                 out!(
                     "Update available: {} → {}. This reins came with the Reins app: update the app ({}).",

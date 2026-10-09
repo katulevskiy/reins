@@ -69,6 +69,23 @@ checklist of your AI tools, and afterwards a shield in the menu bar (macOS) or t
 Resume. The app is also a download of its own: `Reins-macOS.dmg`, `Reins-Windows-x64.msi` or
 `Reins-Linux-x86_64.AppImage` from the [latest release](https://github.com/katulevskiy/reins/releases/latest).
 
+On Debian and Ubuntu, Fedora and Arch Linux, Reins also comes as packages, which the system keeps up to date: `reins`
+(the command-line program) and `reins-app` (the app) from signed APT and RPM repositories, and `reins-bin` on the
+AUR. For Debian and Ubuntu:
+
+```sh
+sudo install -d -m 0755 /etc/apt/keyrings
+curl -fsSL https://reins2fa.com/releases/packages/reins.gpg | sudo tee /etc/apt/keyrings/reins.gpg > /dev/null
+echo "deb [signed-by=/etc/apt/keyrings/reins.gpg] https://reins2fa.com/releases/packages/apt stable main" |
+    sudo tee /etc/apt/sources.list.d/reins.list
+sudo apt update && sudo apt install reins reins-app
+```
+
+For Fedora: `sudo curl -fsSL https://reins2fa.com/releases/packages/rpm/reins.repo -o /etc/yum.repos.d/reins.repo`,
+then `sudo dnf install reins reins-app`. The details, the `.sources` form and Arch Linux are in
+[Linux packages](linux-packages.md). The packages install no service by themselves; `reins resume` sets it up as
+below.
+
 On a Mac, `~/.local/bin` is usually not on your `PATH`; the script prints the line to add to `~/.zshrc`. macOS support
 is alpha: built and tested on GitHub's macOS runners, not yet field-tested end to end on a real Mac. Two things differ
 from Linux: git does not print "waiting for approval on your phone" while a push or clone waits (it just waits), and

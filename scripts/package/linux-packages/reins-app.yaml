@@ -1,0 +1,102 @@
+# nfpm configuration of the `reins-app` package (.deb and .rpm, x86_64 only): the Reins desktop app (GPUI), the
+# reins-app program, its .desktop file and icon from the release's Reins-<version>-Linux-x86_64.tar.gz (what the
+# AppImage is made of). It runs the reins program of the `reins` package, next to it in /usr/bin.
+#
+# Libraries: reins-app links libxcb, libxkbcommon and libxkbcommon-x11 (and glibc 2.35, the oldest it is built for:
+# Ubuntu 22.04) and loads libwayland-client and libvulkan at run time; drawing needs a Vulkan driver, recommended.
+# The AppImage brings its own copies of the first three; a package uses the distribution's.
+name: reins-app
+arch: amd64
+platform: linux
+version: ${VERSION}
+version_schema: none
+release: ${PKG_RELEASE}
+section: utils
+priority: optional
+maintainer: Daniil Katulevskiy <support@reins2fa.com>
+vendor: Reins
+homepage: https://reins2fa.com
+license: Apache-2.0 AND OFL-1.1
+description: |-
+  Reins desktop app: phone approval for AI agents
+  The Reins desktop app pairs this computer with the Reins phone app (it
+  shows a QR code to scan), adds Reins to the AI tools it finds, and then
+  lives in the tray with Pause and Resume. What the agents do on this
+  computer waits for your approval on the phone. The command-line program,
+  reins, is in the reins package.
+contents:
+  - src: ${STAGE}/reins-app
+    dst: /usr/bin/reins-app
+    file_info:
+      mode: 0755
+  - src: ${STAGE}/reins.desktop
+    dst: /usr/share/applications/reins.desktop
+    file_info:
+      mode: 0644
+  - src: ${STAGE}/reins.png
+    dst: /usr/share/icons/hicolor/256x256/apps/reins.png
+    file_info:
+      mode: 0644
+  - src: ${STAGE}/doc/NOTICE
+    dst: /usr/share/doc/reins-app/NOTICE
+    type: doc
+    file_info:
+      mode: 0644
+  - src: ${STAGE}/doc/FONTS-NOTICE.txt
+    dst: /usr/share/doc/reins-app/FONTS-NOTICE.txt
+    type: doc
+    file_info:
+      mode: 0644
+  - src: ${STAGE}/doc/copyright
+    dst: /usr/share/doc/reins-app/copyright
+    packager: deb
+    file_info:
+      mode: 0644
+  - src: ${STAGE}/doc/changelog.gz
+    dst: /usr/share/doc/reins-app/changelog.gz
+    packager: deb
+    file_info:
+      mode: 0644
+  - src: ${SPEC}/lintian/reins-app
+    dst: /usr/share/lintian/overrides/reins-app
+    packager: deb
+    file_info:
+      mode: 0644
+  - src: ${STAGE}/doc/LICENSE
+    dst: /usr/share/licenses/reins-app/LICENSE
+    packager: rpm
+    type: license
+    file_info:
+      mode: 0644
+overrides:
+  deb:
+    depends:
+      - reins (= ${VERSION})
+      - libc6 (>= 2.35)
+      - libgcc-s1
+      - libxcb1
+      - libxkbcommon0
+      - libxkbcommon-x11-0
+      - libwayland-client0
+      - libvulkan1
+    recommends:
+      - mesa-vulkan-drivers | vulkan-icd
+  rpm:
+    depends:
+      - reins = ${VERSION}-${PKG_RELEASE}
+      - libc.so.6(GLIBC_2.35)(64bit)
+      - libgcc_s.so.1()(64bit)
+      - libxcb.so.1()(64bit)
+      - libxkbcommon.so.0()(64bit)
+      - libxkbcommon-x11.so.0()(64bit)
+      - libwayland-client.so.0()(64bit)
+      - libvulkan.so.1()(64bit)
+    recommends:
+      - mesa-vulkan-drivers
+rpm:
+  summary: Reins desktop app, phone approval for AI agents
+  packager: Daniil Katulevskiy <support@reins2fa.com>
+  buildhost: reins2fa.com
+  compression: xz
+deb:
+  compression: xz

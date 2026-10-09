@@ -9,8 +9,11 @@
 #   app.json                              the signed desktop-app manifest (the app's one-click update)
 #   android/latest.json                   the Android updater's feed (the APK itself is verified by its signature)
 #   install.sh, install.ps1               the installers, pointing at --site
+#   packages/                             with --packages: the signed APT and RPM repositories of the Linux packages
+#                                         (scripts/package/linux-repos.sh), served as <site>/releases/packages/
 #   fetch.txt                             "<feed path> <release asset> <sha256> <size>" for the large files that are
-#                                         release assets already (installers, APK); the server downloads those itself
+#                                         release assets already (installers, APK, .deb and .rpm packages); the server
+#                                         downloads those itself
 #   feed.json                             the signed index: every file above (fetched ones included) with its SHA-256;
 #                                         the server publishes nothing it does not list
 #
@@ -20,7 +23,12 @@
 # apps pin (crates/reins-desktop/src/update.rs) before anything is written.
 #
 #   scripts/release-feed.sh --version 0.2.5 --build 0.2.5-202610090300-fad997a6 --time 1791515000 \
-#       --android-version-code 29858583 --dist dist --key release-signing.pk8 [--site https://reins2fa.com] [--out dist]
+#       --android-version-code 29858583 --dist dist --key release-signing.pk8 [--site https://reins2fa.com] [--out dist] \
+#       [--packages repo]
+#
+# --packages is linux-repos.sh's --out: its packages/ goes into the feed as is, except the .deb and .rpm files, which
+# must be release assets in --dist (fetch.txt). The repositories must be signed with the key users install, pinned in
+# scripts/package/linux-packages/packages-key.asc.
 set -euo pipefail
 
 die() {
@@ -28,7 +36,7 @@ die() {
     exit 1
 }
 
-version="" build="" build_time="" version_code="" dist="" key="" site="https://reins2fa.com" out=""
+version="" build="" build_time="" version_code="" dist="" key="" site="https://reins2fa.com" out="" packages=""
 while (($#)); do
     case "$1" in
     --version) version="$2" ;;
@@ -39,6 +47,7 @@ while (($#)); do
     --key) key="$2" ;;
     --site) site="${2%/}" ;;
     --out) out="$2" ;;
+    --packages) packages="$2" ;;
     *) die "unknown argument $1" ;;
     esac
     shift 2
@@ -49,6 +58,7 @@ done
 [[ "$version_code" =~ ^[0-9]+$ ]] || die "--android-version-code is required"
 [[ -d "$dist" ]] || die "--dist must be the directory with the release assets"
 [[ -f "$key" ]] || die "--key must be the release signing key"
+[[ -z "$packages" || -d "$packages/packages" ]] || die "--packages must hold packages/ (scripts/package/linux-repos.sh)"
 out="${out:-$dist}"
 root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 
@@ -163,6 +173,38 @@ sed "s|^DEFAULT_SITE=.*|DEFAULT_SITE=\"$site\"|" "$root/scripts/install.sh" >"$f
 grep -qxF "DEFAULT_SITE=\"$site\"" "$feed/install.sh" || die "could not set DEFAULT_SITE in install.sh"
 sed 's|^\( *\)\$DefaultSite = .*|\1$DefaultSite = "'"$site"'"|' "$root/scripts/install.ps1" >"$feed/install.ps1"
 grep -qF "\$DefaultSite = \"$site\"" "$feed/install.ps1" || die "could not set \$DefaultSite in install.ps1"
+
+# ── the Linux package repositories ───────────────────────────────────────────────────────────────────────────────────
+# Their metadata goes into the feed; each .deb and .rpm must be the release asset of that name (the server fetches it).
+if [[ -n "$packages" ]]; then
+    pinned_key="$root/scripts/package/linux-packages/packages-key.asc"
+    [[ -f "$pinned_key" ]] || die "--packages needs the repositories' public key pinned in $pinned_key"
+    repo="$packages/packages"
+    cmp -s "$repo/reins.asc" "$pinned_key" || die "$repo/reins.asc is not the pinned key $pinned_key"
+    gpg --batch --dearmor <"$pinned_key" >"$stage/packages-key.gpg" 2>/dev/null || die "$pinned_key is not a key"
+    cmp -s "$repo/reins.gpg" "$stage/packages-key.gpg" || die "$repo/reins.gpg is not the pinned key"
+    verify() { gpgv --keyring "$stage/packages-key.gpg" "$@" 2>/dev/null || die "${1#"$repo/"} does not verify"; }
+    verify "$repo/apt/dists/stable/InRelease"
+    verify "$repo/apt/dists/stable/Release.gpg" "$repo/apt/dists/stable/Release"
+    verify "$repo/rpm/repodata/repomd.xml.asc" "$repo/rpm/repodata/repomd.xml"
+    fetched=0
+    while IFS= read -r path; do
+        case "$path" in
+        *.deb | *.rpm)
+            asset="$(basename "$path")"
+            [[ -f "$dist/$asset" && "$(sha "$dist/$asset")" == "$(sha "$repo/$path")" ]] ||
+                die "packages/$path is not the release asset $asset"
+            fetch "packages/$path" "$asset"
+            fetched=$((fetched + 1))
+            ;;
+        *)
+            mkdir -p "$(dirname "$feed/packages/$path")"
+            cp "$repo/$path" "$feed/packages/$path"
+            ;;
+        esac
+    done < <(cd "$repo" && find . -type f -printf '%P\n' | sort)
+    ((fetched > 0)) || die "the repositories in $repo have no packages"
+fi
 
 # ── the signed index of everything above ─────────────────────────────────────────────────────────────────────────
 files='{}'

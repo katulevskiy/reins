@@ -85,6 +85,13 @@ assert publisher.index("--draft\n") < publisher.index(
     'gh release edit "$TAG" --draft=false --latest'
 )
 assert "needs.android.result == 'success'" in publisher
+# The Linux packages are release assets (and the feed's repositories): publication waits for them on both
+# architectures. The AUR job runs after publication and can neither block nor fail the release.
+assert "needs.linux-packages.result == 'success'" in publisher
+assert "needs.linux-packages-arm64.result == 'success'" in publisher
+aur = publisher.split("\n  aur:\n", 1)[1]
+assert "needs: [plan, publish]" in aur and "continue-on-error: true" in aur
+assert "needs.publish.result == 'success'" in aur
 # Artifact retries must preserve the release gate: only the first attempt may fail softly.
 action = (ROOT / ".github/actions/upload-artifact/action.yml").read_text()
 first, retry = action.split("    - id: retry\n", 1)
@@ -99,5 +106,5 @@ for field in ("name", "path", "compression-level", "retention-days"):
 desktop = workflow.split("  desktop:\n", 1)[1].split("  desktop-app:\n", 1)[0]
 assert "fail-fast: false" in desktop
 assert "uses: actions/upload-artifact@" not in workflow
-assert workflow.count("uses: ./.github/actions/upload-artifact") == 9
-print("31 release CI gate and artifact retry checks passed")
+assert workflow.count("uses: ./.github/actions/upload-artifact") == 11
+print("35 release CI gate and artifact retry checks passed")
