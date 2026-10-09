@@ -28,6 +28,7 @@ mod sends;
 mod totp;
 
 pub use items::desktop::{secret_release_view, ssh_sign_view};
+pub(crate) use items::editor;
 pub use totp::totp_code;
 
 /// The signed-in Reins session, shared with the engine.

@@ -19,6 +19,7 @@ use crate::types::{
     GmailStatus, GrantView, JoinProgress, JoinStart, JoinView, PairingView, PendingItem, ServerInfo, ServiceView,
     SessionInfo, SsoOutcome, SsoStart, StandingGrant, StartingPolicy,
 };
+use crate::vault_editor::{VaultItemDetail, VaultItemInput, VaultItemSummary, VaultSshKey};
 use crate::vault_passkey::{VaultPasskeyOptions, VaultPasskeyView};
 use crate::{CoreError, GoogleTokenProvider, KeyWrapper, Notifier, rt};
 
@@ -629,6 +630,102 @@ impl ReinsCore {
             let engine = runtime.prepare(generation).await?;
             engine.ensure_active()?;
             let result = engine.run_account(async { engine.revoke_connection(&connection_id).await }).await;
+            runtime.finish(&engine, result)
+        })
+        .await
+    }
+
+    /// The vault's items in use whose name, username or website contains `query` (empty: all), by name.
+    pub async fn vault_items(&self, query: String) -> Result<Vec<VaultItemSummary>, CoreError> {
+        let runtime = Arc::clone(&self.runtime);
+        let generation = runtime.generation();
+        rt::run(async move {
+            let engine = runtime.prepare(generation).await?;
+            let result = engine.run_account(async { engine.vault_items(&query).await }).await;
+            runtime.finish(&engine, result)
+        })
+        .await
+    }
+
+    /// One item: the values of its plain fields, which fields are secret, and how the desktop app names it.
+    pub async fn vault_item(&self, id: String) -> Result<VaultItemDetail, CoreError> {
+        let runtime = Arc::clone(&self.runtime);
+        let generation = runtime.generation();
+        rt::run(async move {
+            let engine = runtime.prepare(generation).await?;
+            let result = engine.run_account(async { engine.vault_item(&id).await }).await;
+            runtime.finish(&engine, result)
+        })
+        .await
+    }
+
+    /// The value of one field (`VaultField::key`), after the app checked the screen lock.
+    pub async fn vault_reveal(&self, id: String, key: String) -> Result<String, CoreError> {
+        let runtime = Arc::clone(&self.runtime);
+        let generation = runtime.generation();
+        rt::run(async move {
+            let engine = runtime.prepare(generation).await?;
+            let result = engine.run_account(async { engine.vault_reveal(&id, &key).await }).await;
+            runtime.finish(&engine, result)
+        })
+        .await
+    }
+
+    /// Creates an item; its id.
+    pub async fn vault_create(&self, input: VaultItemInput) -> Result<String, CoreError> {
+        let runtime = Arc::clone(&self.runtime);
+        let generation = runtime.generation();
+        rt::run(async move {
+            let engine = runtime.prepare(generation).await?;
+            let result = engine.run_account(async { engine.vault_create(&input).await }).await;
+            runtime.finish(&engine, result)
+        })
+        .await
+    }
+
+    /// Renames an item and changes the fields given.
+    pub async fn vault_update(&self, id: String, input: VaultItemInput) -> Result<(), CoreError> {
+        let runtime = Arc::clone(&self.runtime);
+        let generation = runtime.generation();
+        rt::run(async move {
+            let engine = runtime.prepare(generation).await?;
+            let result = engine.run_account(async { engine.vault_update(&id, &input).await }).await;
+            runtime.finish(&engine, result)
+        })
+        .await
+    }
+
+    /// Deletes an item for good.
+    pub async fn vault_delete(&self, id: String) -> Result<(), CoreError> {
+        let runtime = Arc::clone(&self.runtime);
+        let generation = runtime.generation();
+        rt::run(async move {
+            let engine = runtime.prepare(generation).await?;
+            let result = engine.run_account(async { engine.vault_delete(&id).await }).await;
+            runtime.finish(&engine, result)
+        })
+        .await
+    }
+
+    /// Makes an Ed25519 key on the phone and keeps it as an SSH key item named `name`.
+    pub async fn vault_generate_ssh_key(&self, name: String) -> Result<VaultSshKey, CoreError> {
+        let runtime = Arc::clone(&self.runtime);
+        let generation = runtime.generation();
+        rt::run(async move {
+            let engine = runtime.prepare(generation).await?;
+            let result = engine.run_account(async { engine.vault_generate_ssh_key(&name).await }).await;
+            runtime.finish(&engine, result)
+        })
+        .await
+    }
+
+    /// The eight digits of this phone's key, which `reins vault add` asks to compare once ("4821 9930").
+    pub async fn phone_key_fingerprint(&self) -> Result<String, CoreError> {
+        let runtime = Arc::clone(&self.runtime);
+        let generation = runtime.generation();
+        rt::run(async move {
+            let engine = runtime.prepare(generation).await?;
+            let result = engine.run_account(async { engine.phone_key_fingerprint() }).await;
             runtime.finish(&engine, result)
         })
         .await

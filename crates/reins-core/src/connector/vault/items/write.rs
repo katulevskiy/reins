@@ -21,13 +21,13 @@ use crate::session::Session;
 use crate::{CoreError, text};
 
 /// A type-specific field an AI may set.
-struct Def {
+pub(super) struct Def {
     /// The name in `fields`.
-    arg: &'static str,
+    pub arg: &'static str,
     /// The name in the cipher JSON.
-    key: &'static str,
-    label: &'static str,
-    secret: bool,
+    pub key: &'static str,
+    pub label: &'static str,
+    pub secret: bool,
 }
 
 const fn def(arg: &'static str, key: &'static str, label: &'static str, secret: bool) -> Def {
@@ -78,7 +78,7 @@ const SSH: &[Def] = &[
     def("fingerprint", "keyFingerprint", "Fingerprint", false),
 ];
 
-fn defs(kind: Kind) -> &'static [Def] {
+pub(super) fn defs(kind: Kind) -> &'static [Def] {
     match kind {
         Kind::Login => LOGIN,
         Kind::Card => CARD,
@@ -244,7 +244,7 @@ fn parse_custom(call: &ConnectorCall) -> Result<Vec<CustomIn>, CoreError> {
 }
 
 /// `SHA256:...` of an OpenSSH public key, as `ssh-keygen -l` prints it.
-fn ssh_fingerprint(public_key: &str) -> Option<String> {
+pub(super) fn ssh_fingerprint(public_key: &str) -> Option<String> {
     let blob = public_key.split_whitespace().nth(1)?;
     let raw = BASE64.decode(blob.as_bytes()).ok()?;
     Some(format!("SHA256:{}", BASE64_NOPAD.encode(digest::digest(&digest::SHA256, &raw).as_ref())))
@@ -1078,19 +1078,24 @@ pub(super) async fn plan(
 
 async fn plan_of(vault: &Vault, account: &str, call: &ConnectorCall) -> Result<(Arc<Session>, Plan), CoreError> {
     let snap = Snapshot::load(vault, account).await?;
-    let plan = match call.op.as_str() {
-        "item_create" => plan_create(&snap, call)?,
-        "item_update" => plan_update(&snap, call)?,
-        "item_clone" => plan_clone(&snap, call)?,
-        "item_trash" | "item_restore" | "item_archive" | "item_unarchive" => plan_state(&snap, call)?,
-        "item_favorite" | "item_move" => plan_partial(&snap, call)?,
-        "item_delete" => plan_delete(&snap, call)?,
-        "trash_empty" => plan_trash_empty(&snap)?,
-        "attachment_add" => plan_attachment_add(&snap, call)?,
-        "attachment_delete" => plan_attachment_delete(&snap, call)?,
-        _ => plan_folder(&snap, call)?,
-    };
+    let plan = plan_with(&snap, call)?;
     Ok((snap.session, plan))
+}
+
+/// The plan of a write of this area on a vault already read.
+pub(super) fn plan_with(snap: &Snapshot, call: &ConnectorCall) -> Result<Plan, CoreError> {
+    match call.op.as_str() {
+        "item_create" => plan_create(snap, call),
+        "item_update" => plan_update(snap, call),
+        "item_clone" => plan_clone(snap, call),
+        "item_trash" | "item_restore" | "item_archive" | "item_unarchive" => plan_state(snap, call),
+        "item_favorite" | "item_move" => plan_partial(snap, call),
+        "item_delete" => plan_delete(snap, call),
+        "trash_empty" => plan_trash_empty(snap),
+        "attachment_add" => plan_attachment_add(snap, call),
+        "attachment_delete" => plan_attachment_delete(snap, call),
+        _ => plan_folder(snap, call),
+    }
 }
 
 /// Does what the plan says and answers the AI with what happened.

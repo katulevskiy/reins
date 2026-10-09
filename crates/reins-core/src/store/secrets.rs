@@ -63,10 +63,38 @@ impl Store {
             self.secret_get(service, account)?.ok_or_else(|| CoreError::storage("the device key was not kept"))?;
         Ok(BASE64URL_NOPAD.encode(&raw))
     }
+
+    /// This phone's inbox key: the X25519 secret that opens what the desktop app seals to the phone (a secret to save
+    /// with `reins vault add`). Made the first time, kept sealed, and never copied to another phone of the account: a
+    /// new phone has a new key, which the computer then asks the user to check.
+    pub fn inbox_key(&self) -> Result<Zeroizing<[u8; 32]>, CoreError> {
+        let (service, account) = INBOX_KEY;
+        if let Some(raw) = self.secret_get(service, account)?
+            && let Ok(key) = <[u8; 32]>::try_from(raw.as_slice())
+        {
+            return Ok(Zeroizing::new(key));
+        }
+        self.secret_delete(service, account)?;
+        let fresh = Zeroizing::new(crate::crypto::random_bytes::<32>()?);
+        let sealed = self.seal(&aad(service, account), &fresh[..])?;
+        // Of two first calls at once, the first key stays.
+        self.lock()?.execute(
+            "INSERT INTO secrets (service, account, value) VALUES (?1, ?2, ?3) ON CONFLICT (service, account) DO NOTHING",
+            params![service, account, sealed],
+        )?;
+        let raw = Zeroizing::new(
+            self.secret_get(service, account)?.ok_or_else(|| CoreError::storage("the inbox key was not kept"))?,
+        );
+        <[u8; 32]>::try_from(raw.as_slice())
+            .map(Zeroizing::new)
+            .map_err(|_| CoreError::storage("the inbox key was not kept"))
+    }
 }
 
 /// Where the device key is kept (service, account).
 const DEVICE_KEY: (&str, &str) = ("reins.device-key", "this");
+/// Where the inbox key is kept (service, account).
+pub(crate) const INBOX_KEY: (&str, &str) = ("reins.inbox-key", "this");
 
 #[cfg(test)]
 mod tests {
@@ -96,5 +124,14 @@ mod tests {
         assert_eq!(open(dir.path()).device_key().unwrap(), key, "the same after a restart");
         let other = tempfile::tempdir().unwrap();
         assert_ne!(open(other.path()).device_key().unwrap(), key);
+    }
+
+    #[test]
+    fn the_inbox_key_is_made_once_and_kept() {
+        let dir = tempfile::tempdir().unwrap();
+        let key = open(dir.path()).inbox_key().unwrap();
+        assert_eq!(*open(dir.path()).inbox_key().unwrap(), *key, "the same after a restart");
+        let other = tempfile::tempdir().unwrap();
+        assert_ne!(*open(other.path()).inbox_key().unwrap(), *key);
     }
 }

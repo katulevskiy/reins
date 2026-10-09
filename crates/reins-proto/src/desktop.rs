@@ -375,6 +375,43 @@ pub struct SshSignature {
     pub signature_base64: String,
 }
 
+/// How the phone's refusal of a `vault_secret_store` sealed to a key it does not have starts: the desktop app then
+/// forgets the key it kept and asks for the phone's key again (a new phone, or the app reinstalled).
+pub const PHONE_KEY_CHANGED: &str = "This was sealed to another phone's key.";
+
+/// What the desktop app seals to the phone's own key for `vault_secret_store` (`reins vault add`): the value to keep,
+/// bound to the request's nonce. The server relays it without being able to open it.
+#[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SecretToStore {
+    pub v: u32,
+    pub nonce: String,
+    pub value: String,
+}
+
+impl std::fmt::Debug for SecretToStore {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("SecretToStore").field("nonce", &self.nonce).finish_non_exhaustive()
+    }
+}
+
+/// What the phone seals to the desktop app for `vault_phone_key`: the public key secrets for the vault are sealed to.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct PhoneKey {
+    pub v: u32,
+    pub nonce: String,
+    /// X25519, base64url without padding.
+    pub public_key: String,
+}
+
+/// What the phone seals to the desktop app for `vault_names`: the names of the vault's items, by kind.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct VaultNames {
+    pub v: u32,
+    pub nonce: String,
+    /// `(name, kind)`, the kind as the vault tools name it (`login`, `note`, `card`, `identity`, `ssh_key`).
+    pub items: Vec<(String, String)>,
+}
+
 /// SHA-256 (lowercase hex) binding an approval to exactly what git sends: the repository, every `old new ref`
 /// command in order, the pack bytes and the push options.
 #[must_use]
@@ -420,9 +457,20 @@ pub fn encode_key(key: &[u8; 32]) -> String {
 /// Eight digits the user compares on the computer and on the phone when pairing the desktop app ("4821 9930").
 #[must_use]
 pub fn key_fingerprint(key: &str) -> Option<String> {
+    eight_digits(b"reins-desktop-key/1", key)
+}
+
+/// Eight digits the user compares on the computer and on the phone before the computer first seals a secret to the
+/// phone's key (`reins vault add`); unlike [`key_fingerprint`], for the phone's key.
+#[must_use]
+pub fn phone_key_fingerprint(key: &str) -> Option<String> {
+    eight_digits(b"reins-phone-key/1", key)
+}
+
+fn eight_digits(domain: &[u8], key: &str) -> Option<String> {
     let raw = decode_key(key)?;
     let mut h = Sha256::new();
-    h.update(b"reins-desktop-key/1");
+    h.update(domain);
     h.update(raw);
     let d = h.finalize();
     let n = u64::from_be_bytes([0, 0, 0, d[0], d[1], d[2], d[3], d[4]]) % 100_000_000;

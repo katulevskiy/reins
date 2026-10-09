@@ -60,5 +60,51 @@ pub(super) fn tools() -> Vec<ToolSpec> {
         )
         .in_class("ssh")
         .desktop(),
+        tool(
+            "vault_phone_key",
+            VAULT,
+            "phone_key",
+            Effect::Write,
+            "Let the computer save secrets to the vault",
+            "The phone's own public key, which `reins vault add` seals a secret to so that only the phone can open it. \
+             The user compares its fingerprint on both screens once.",
+            vec![CLIENT_KEY, NONCE],
+            None,
+        )
+        .once()
+        .desktop(),
+        tool(
+            "vault_secret_store",
+            VAULT,
+            "secret_store",
+            Effect::Write,
+            "Save a secret from the computer",
+            "Saves a value typed on the computer (`reins vault add`) in a vault item, sealed to the phone's key: the \
+             server cannot read it. Creates the item, or changes the field of the item with that exact name.",
+            vec![
+                str_p("name", 300, true, "The item's exact name."),
+                str_p("kind", 20, true, "`api-key`, `login`, `note` or `ssh`."),
+                str_p("field", 100, true, "`password`, `username`, `notes`, `private_key`, or a custom field's name."),
+                text_p("sealed", 40_000, true, "The value, sealed to the phone's key (base64url)."),
+                str_p("phone_key", 64, true, "The phone key the value is sealed to (base64url)."),
+                CLIENT_KEY,
+                NONCE,
+            ],
+            Some("name"),
+        )
+        .in_class("items")
+        .once()
+        .desktop(),
+        tool(
+            "vault_names",
+            VAULT,
+            "names",
+            Effect::Read,
+            "List vault item names for the computer",
+            "The names and kinds of the vault's items (never a value), for `reins vault list`.",
+            vec![CLIENT_KEY, NONCE],
+            None,
+        )
+        .desktop(),
     ]
 }

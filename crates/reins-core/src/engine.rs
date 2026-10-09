@@ -389,6 +389,11 @@ impl Engine {
         *self.session_slot() = session;
     }
 
+    /// The slot the vault connector reads the session from, for the phone's own vault screens.
+    pub(crate) fn vault_session(&self) -> crate::connector::vault::SessionSlot {
+        Arc::clone(&self.session)
+    }
+
     pub(crate) fn session(&self) -> Result<Arc<Session>, CoreError> {
         self.ensure_active()?;
         self.session_slot().clone().ok_or(CoreError::NotLoggedIn)

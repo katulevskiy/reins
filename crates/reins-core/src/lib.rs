@@ -38,6 +38,7 @@ pub mod text;
 pub mod traits;
 pub mod types;
 pub mod vault;
+pub mod vault_editor;
 pub mod vault_passkey;
 pub mod views;
 
