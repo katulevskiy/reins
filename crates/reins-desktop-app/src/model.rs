@@ -29,6 +29,10 @@ use crate::tray::{Action, Look, Shown, Tray};
 use crate::welcome::{self, Stage, ToolRow};
 use crate::{Args, autostart, ui, upgrade};
 
+/// How often a second start's request for the window is looked for.
+const SHOW_POLL: Duration = Duration::from_millis(150);
+/// Every how many of those the app renews its claim on "Check your phone" (about every 5 s).
+const CLAIM_EVERY: u32 = 33;
 /// How often the status is read again.
 const REFRESH: Duration = Duration::from_secs(3);
 /// How often the update feed is asked.
@@ -185,6 +189,8 @@ pub struct Model {
     demo_paired: bool,
     /// `--demo`: the made-up activity and connections.
     demo: Option<Demo>,
+    /// Requests waiting for the phone that "Check your phone" was shown for (by journal id).
+    notified: std::collections::HashSet<String>,
     /// `--demo`: the checks fixed with the health card's buttons.
     demo_fixed: Vec<String>,
     /// The window is open (the health checks run only then).
@@ -281,6 +287,7 @@ impl Model {
                 autostart: autostart::enabled(&home),
                 demo_paired,
                 demo,
+                notified: std::collections::HashSet::new(),
                 demo_fixed: Vec::new(),
                 window_open: false,
                 place_dirty: false,
@@ -355,6 +362,10 @@ impl Model {
         if self.place_dirty {
             self.persist();
         }
+        // The services show "Check your phone" again themselves.
+        if self.demo.is_none() {
+            reins_desktop::notify::release(&self.backend.paths().state_dir);
+        }
         cx.quit();
     }
 
@@ -370,9 +381,6 @@ impl Model {
                         if let Ok(s) = snapshot {
                             model.set_snapshot(s, cx);
                         }
-                        if model.instance.take_show_request() {
-                            cx.defer(Self::show_window);
-                        }
                         if model.place_dirty {
                             model.persist();
                         }
@@ -382,6 +390,29 @@ impl Model {
                     break;
                 }
                 cx.background_executor().timer(REFRESH).await;
+            }
+        }));
+        // A second start asks for the window: answered within a moment, not at the next status refresh (which also
+        // waits for the status itself).
+        self.tasks.push(cx.spawn(async move |this, cx| {
+            let mut ticks: u32 = 0;
+            loop {
+                let Ok(asked) = this.read_with(cx, |m, _| m.instance.take_show_request()) else {
+                    break;
+                };
+                if asked {
+                    cx.update(Self::show_window);
+                }
+                // While Reins runs it shows "Check your phone" itself (see `check_your_phone`).
+                ticks += 1;
+                if ticks % CLAIM_EVERY == 1
+                    && let Ok((demo, state_dir)) =
+                        this.read_with(cx, |m, _| (m.demo.is_some(), m.backend.paths().state_dir.clone()))
+                    && !demo
+                {
+                    reins_desktop::notify::claim(&state_dir);
+                }
+                cx.background_executor().timer(SHOW_POLL).await;
             }
         }));
         // The health checks: on the status window while it is open, once a minute (and on demand).
@@ -449,6 +480,7 @@ impl Model {
             self.screen = Screen::Welcome(Stage::Pair);
             self.start_pairing(cx);
         }
+        self.check_your_phone(&snapshot.activity, now, cx);
         if self.snapshot.as_deref() != Some(&snapshot) {
             if self.fingerprint.is_none() {
                 self.fingerprint.clone_from(&snapshot.fingerprint);
@@ -461,6 +493,41 @@ impl Model {
         }
         self.minute = now / 60;
         self.refresh_tray();
+    }
+
+    /// "Check your phone" for each request that started waiting for the phone in the last two minutes (the asking
+    /// processes leave it to this app while it runs: on macOS only an app's own notifications show up), with the
+    /// chime; taken down once the request ended.
+    fn check_your_phone(&mut self, activity: &[Entry], now: i64, cx: &mut Context<'_, Self>) {
+        if self.demo.is_some() {
+            return;
+        }
+        let (fresh, ended) = waiting_changes(activity, &self.notified, now);
+        // Ended (answered, refused, timed out): the notification goes.
+        for id in ended {
+            cx.dismiss_system_notification(&format!("reins-waiting-{id}"));
+            self.notified.remove(&id);
+        }
+        if fresh.is_empty() {
+            return;
+        }
+        let config = self.backend.notify_config();
+        for e in &fresh {
+            self.notified.insert(e.id.clone());
+            if !config.phone {
+                continue;
+            }
+            let (title, body) = reins_desktop::notify::text(&e.what);
+            cx.show_system_notification(gpui::SystemNotification {
+                tag: format!("reins-waiting-{}", e.id).into(),
+                title: title.into(),
+                body: body.into(),
+                actions: Vec::new(),
+            });
+        }
+        if config.phone && config.sound {
+            reins_desktop::notify::chime(&self.backend.paths().state_dir);
+        }
     }
 
     /// Where `config.toml` is.
@@ -1427,6 +1494,20 @@ impl Model {
     }
 }
 
+/// Which requests waiting for the phone are new (started in the last two minutes, not shown yet), and which of the
+/// shown ones ended.
+fn waiting_changes<'a>(
+    activity: &'a [Entry],
+    notified: &std::collections::HashSet<String>,
+    now: i64,
+) -> (Vec<&'a Entry>, Vec<String>) {
+    use reins_desktop::journal::{Decider, Outcome};
+    let waiting = |e: &Entry| e.outcome == Outcome::Waiting && e.decider == Decider::Phone;
+    let fresh = activity.iter().filter(|e| waiting(e) && now - e.at < 120 && !notified.contains(&e.id)).collect();
+    let ended = notified.iter().filter(|id| !activity.iter().any(|e| &e.id == *id && waiting(e))).cloned().collect();
+    (fresh, ended)
+}
+
 impl Look {
     /// The word for the status pill.
     #[must_use]
@@ -1456,6 +1537,34 @@ fn demo_screen(name: &str) -> Option<Screen> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn check_your_phone_shows_each_new_wait_once_and_takes_it_down_when_it_ends() {
+        use reins_desktop::journal::{Decider, Entry, Kind, Outcome};
+        let now = 10_000;
+        let entry = |id: &str, at: i64, outcome: Outcome, decider: Decider| {
+            let mut e = Entry::new(Kind::Command, "Claude Code wants to run: git push --force").decider(decider);
+            e.id = id.to_owned();
+            e.at = at;
+            e.outcome = outcome;
+            e
+        };
+        let activity = vec![
+            entry("new", now - 5, Outcome::Waiting, Decider::Phone),
+            entry("old", now - 600, Outcome::Waiting, Decider::Phone),
+            entry("local", now - 5, Outcome::Waiting, Decider::Local),
+            entry("done", now - 30, Outcome::Approved, Decider::Phone),
+        ];
+        let mut shown = std::collections::HashSet::new();
+        let (fresh, ended) = waiting_changes(&activity, &shown, now);
+        assert_eq!(fresh.iter().map(|e| e.id.as_str()).collect::<Vec<_>>(), ["new"], "recent phone waits only");
+        assert!(ended.is_empty());
+        shown.insert("new".to_owned());
+        shown.insert("done".to_owned());
+        let (fresh, ended) = waiting_changes(&activity, &shown, now);
+        assert!(fresh.is_empty(), "shown once");
+        assert_eq!(ended, ["done"], "answered: taken down");
+    }
 
     #[test]
     fn sections_are_named_by_their_ids() {

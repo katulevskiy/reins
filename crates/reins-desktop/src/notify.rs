@@ -43,14 +43,59 @@ pub fn text(what: &str) -> (String, String) {
     ("Check your phone".to_owned(), format!("Reins 2FA is waiting for your OK: {what}"))
 }
 
-/// Shows "Check your phone" for `what` (and plays the chime), as `config` says. Returns at once.
+/// The file the Reins app keeps fresh while it runs: it then shows "Check your phone" itself, through its own
+/// notification permission (on macOS the only way a notification shows up at all), and the asking processes stay quiet.
+const CLAIM: &str = "app-notifies";
+/// A claim older than this is a Reins app that quit or hangs.
+const CLAIM_FRESH: std::time::Duration = std::time::Duration::from_secs(20);
+
+/// The app shows the notifications from now on (call it every few seconds while it runs).
+pub fn claim(state_dir: &Path) {
+    if let Err(e) = std::fs::write(state_dir.join(CLAIM), std::process::id().to_string()) {
+        log::debug!("notification claim: {e}");
+    }
+}
+
+/// The app no longer shows them (it quits).
+pub fn release(state_dir: &Path) {
+    std::fs::remove_file(state_dir.join(CLAIM)).ok();
+}
+
+/// Whether a running Reins app shows the notifications.
+#[must_use]
+pub fn app_notifies(state_dir: &Path) -> bool {
+    std::fs::metadata(state_dir.join(CLAIM))
+        .and_then(|m| m.modified())
+        .ok()
+        .and_then(|t| t.elapsed().ok())
+        .is_some_and(|age| age < CLAIM_FRESH)
+}
+
+/// Shows "Check your phone" for `what` (and plays the chime), as `config` says, unless the Reins app shows it.
+/// Returns at once.
 pub fn phone_waiting(config: &NotifyConfig, state_dir: &Path, what: &str) {
-    if !config.phone {
+    if !config.phone || app_notifies(state_dir) {
         return;
     }
     let (title, body) = text(what);
     let chime = config.sound.then(|| chime_file(state_dir)).flatten();
     show(&title, &body, config.sound, chime.as_deref());
+}
+
+/// Only the chime (the app plays it next to its own notification): the system's Glass sound on macOS, the chime file
+/// elsewhere. Returns at once.
+pub fn chime(state_dir: &Path) {
+    #[cfg(target_os = "macos")]
+    {
+        let _ = state_dir;
+        let mut c = std::process::Command::new("afplay");
+        c.arg("/System/Library/Sounds/Glass.aiff");
+        detach(c);
+    }
+    #[cfg(not(target_os = "macos"))]
+    if let Some(file) = chime_file(state_dir) {
+        play(&file);
+    }
 }
 
 /// The chime as a WAV file in the state directory (written once).
@@ -144,9 +189,15 @@ fn show(title: &str, body: &str, sound: bool, chime: Option<&Path>) {
     }
     n.arg(title).arg(body.replace('&', "&amp;").replace('<', "&lt;").replace('>', "&gt;"));
     detach(n);
-    if let Some(file) = chime
-        && let Some(player) = ["pw-play", "paplay", "aplay"].into_iter().find(|p| on_path(p))
-    {
+    if let Some(file) = chime {
+        play(file);
+    }
+}
+
+/// Plays a WAV file with the first player installed.
+#[cfg(all(unix, not(target_os = "macos")))]
+fn play(file: &Path) {
+    if let Some(player) = ["pw-play", "paplay", "aplay"].into_iter().find(|p| on_path(p)) {
         let mut c = std::process::Command::new(player);
         if player == "aplay" {
             c.arg("-q");
@@ -155,6 +206,23 @@ fn show(title: &str, body: &str, sound: bool, chime: Option<&Path>) {
         detach(c);
     }
 }
+
+#[cfg(windows)]
+fn play(file: &Path) {
+    let mut c = std::process::Command::new(crate::win::system32(r"WindowsPowerShell\v1.0\powershell.exe"));
+    c.args([
+        "-NoProfile",
+        "-NonInteractive",
+        "-Command",
+        "(New-Object System.Media.SoundPlayer $env:REINS_NOTIFY_CHIME).PlaySync()",
+    ])
+    .env("REINS_NOTIFY_CHIME", file);
+    crate::win::hidden(&mut c);
+    detach(c);
+}
+
+#[cfg(not(any(unix, windows)))]
+fn play(_file: &Path) {}
 
 #[cfg(target_os = "macos")]
 fn show(title: &str, body: &str, sound: bool, _chime: Option<&Path>) {
@@ -210,6 +278,16 @@ mod tests {
         assert_eq!(body, "Reins 2FA is waiting for your OK: Claude Code wants to run: git push --force");
         let (_, long) = text(&"x".repeat(500));
         assert!(long.chars().count() < 220 && long.ends_with('…'));
+    }
+
+    #[test]
+    fn a_fresh_claim_means_the_app_shows_the_notification() {
+        let dir = tempfile::tempdir().unwrap();
+        assert!(!app_notifies(dir.path()));
+        claim(dir.path());
+        assert!(app_notifies(dir.path()));
+        release(dir.path());
+        assert!(!app_notifies(dir.path()));
     }
 
     #[test]

@@ -564,12 +564,14 @@ pub fn step_indicator(current: Stage, pal: Palette) -> Div {
             .child(mark);
         bar = bar.child(
             div().flex().items_center().gap(px(7.0)).child(circle).child(
+                // One weight for every label: a bolder current step would widen the bar and shift it sideways.
                 div()
                     .text_size(px(12.5))
                     .whitespace_nowrap()
+                    .font_weight(FontWeight::MEDIUM)
                     .when_else(
                         here,
-                        |t| t.text_color(pal.text).font_weight(FontWeight::SEMIBOLD),
+                        |t| t.text_color(pal.text),
                         |t| {
                             t.text_color(if behind {
                                 pal.secondary
