@@ -15,7 +15,7 @@ You need:
 
 1. On the phone, open <https://reins2fa.com/app> and install the APK (Android asks you to allow installs from your
    browser once). The app updates itself from the same place.
-2. Tap **Continue** and sign in with Google, Apple, GitHub or a code sent to your email. There is no password: the
+2. Tap **Continue** and sign in, or sign up, with your email address on the sign-in page. There is no password: the
    first time, the phone makes your account and the keys of its vault by itself and keeps them. It then offers to
    protect the vault with a passkey and shows your **recovery code**, the code that opens the vault if you lose the
    phone: write it down (**Settings → Account → Recovery code** shows it again later). A short tour follows:
