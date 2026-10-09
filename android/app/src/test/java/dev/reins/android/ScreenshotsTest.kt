@@ -79,6 +79,8 @@ abstract class ScreenshotsBase(private val suffix: String) {
         core.resetAutopilot()
         core.resetSso()
         core.resetOnboarding()
+        core.payments = null
+        core.spending = dev.reins.core.SpendingView(0, emptyList(), emptyList(), emptyList())
         UpdateProvider.fetcher = updates
         UpdateProvider.installer = FakeInstaller()
         androidx.work.testing.WorkManagerTestInitHelper.initializeTestWorkManager(context)
@@ -1200,6 +1202,50 @@ abstract class ScreenshotsBase(private val suffix: String) {
         tap("vaultGenerate")
         await("sshMade")
         shoot("98-vault-ssh-made")
+    }
+
+    @Test
+    fun payments() {
+        history()
+        core.payments = TestData.paymentsOverview(enabled = false)
+        launch()
+        tap("integrations")
+        tap("service:payments")
+        await("paymentsEnable")
+        shoot("100-payments-off")
+        core.payments = TestData.paymentsOverview()
+        pressBackAndReopen()
+        await("method:virtual_card")
+        shoot("101-payments")
+        rule.onNodeWithTag("addLimit").performScrollTo()
+        shoot("102-payments-limits")
+        core.spending = TestData.spending()
+        tap("openSpending")
+        await("purchase:p1")
+        shoot("103-spending")
+    }
+
+    private fun pressBackAndReopen() {
+        scenario!!.onActivity { it.onBackPressedDispatcher.onBackPressed() }
+        settle()
+        tap("service:payments")
+    }
+
+    @Test
+    fun purchaseApproval() {
+        history()
+        val view = TestData.purchaseView().copy(waitUntil = now + 40)
+        core.pending = listOf(TestData.pending("req20", "write", 1u, waitUntil = now + 40, service = "payments", account = "this phone", op = "purchase_request", opTitle = view.opTitle))
+        core.approval = view
+        launch(link("request", "req20"))
+        await("receipt")
+        shoot("104-purchase")
+        rule.onNodeWithTag("payWith:pay_on_phone").performScrollTo()
+        shoot("105-purchase-pay-with")
+        tap("makeLimit")
+        await("limitEach")
+        rule.onNodeWithTag("limitEach").performScrollTo()
+        shoot("106-purchase-limit")
     }
 
     companion object {

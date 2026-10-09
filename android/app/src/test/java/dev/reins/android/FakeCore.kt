@@ -1049,6 +1049,7 @@ class FakeCore : ReinsCoreInterface {
             ServiceView("device_contacts", "Phone contacts", "device", true, null, emptyList()),
             ServiceView("sms", "Text messages", "device", true, null, emptyList()),
             ServiceView("vault", "Password vault", "vault", true, null, emptyList()),
+            ServiceView("payments", "Payments", "payments", true, null, emptyList()),
         )
 
         /** The PRF output of every passkey of the fake account (its vault's copy opens with it). */

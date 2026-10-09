@@ -10,7 +10,12 @@ import dev.reins.android.platform.Authenticator
 import dev.reins.android.ui.common.userMessage
 import dev.reins.core.ApprovalKind
 import dev.reins.core.ApprovalView
+import dev.reins.core.LimitPeriod
+import dev.reins.core.PurchaseChoice
+import dev.reins.core.PurchaseView
+import dev.reins.core.SpendLimitInput
 import dev.reins.core.SuggestionView
+import dev.reins.android.ui.payments.Money
 import kotlin.coroutines.cancellation.CancellationException
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -29,7 +34,35 @@ data class ApprovalUi(
     val moreOpen: Boolean = false,
     /** What Autopilot made of the request (Assisted and Auto), if it looked at it. */
     val suggestion: SuggestionView? = null,
+    /** A purchase: what pays and where it goes, as picked on the purchase screen. */
+    val purchase: PurchaseDraft = PurchaseDraft(),
 )
+
+/** The purchase screen's picks, and a spend limit for more like it. */
+data class PurchaseDraft(
+    val methodId: String? = null,
+    val addressId: String? = null,
+    val limit: Boolean = false,
+    /** Up to this a purchase, and this a day, for [limitDays] days (text as typed). */
+    val limitPerPurchase: String = "",
+    val limitPerDay: String = "",
+    val limitDays: Int = 7,
+) {
+    companion object {
+        /** What the view picked (the AI's choice or the user's defaults), else the first that can pay. */
+        fun of(p: PurchaseView): PurchaseDraft {
+            val usable = p.methods.filter { it.unavailable == null }
+            val method = p.methodId?.takeIf { id -> usable.any { it.id == id } } ?: usable.firstOrNull()?.id
+            val whole = Money.plain(p.totalMinor, p.currency).substringBefore('.')
+            return PurchaseDraft(
+                methodId = method,
+                addressId = p.addressId ?: p.addresses.firstOrNull()?.id,
+                limitPerPurchase = (whole.toLongOrNull()?.plus(1) ?: 1).toString(),
+                limitPerDay = ((whole.toLongOrNull() ?: 0) * 2 + 2).toString(),
+            )
+        }
+    }
+}
 
 class ApprovalViewModel(private val container: AppContainer, private val requestId: String) : ViewModel() {
     private val _ui = MutableStateFlow(ApprovalUi())
@@ -66,7 +99,12 @@ class ApprovalViewModel(private val container: AppContainer, private val request
         }
         // Showing the accounts is remembered for a month unless the user says otherwise.
         val lifetime = if (view.kind == ApprovalKind.ACCOUNTS) LifetimeKind.MONTH else LifetimeKind.ONCE
-        return ApprovalUi(loading = false, view = view, draft = ApprovalDraft(selected = preselected, lifetime = lifetime, resources = defaultResources(view), classes = defaultClasses(view)))
+        return ApprovalUi(
+            loading = false,
+            view = view,
+            draft = ApprovalDraft(selected = preselected, lifetime = lifetime, resources = defaultResources(view), classes = defaultClasses(view)),
+            purchase = view.purchase?.let(PurchaseDraft::of) ?: PurchaseDraft(),
+        )
     }
 
     /** Autopilot's suggestion is a hint: without one (Manual, no model, a failure) the screen is simply as before. */
@@ -84,6 +122,71 @@ class ApprovalViewModel(private val container: AppContainer, private val request
     fun edit(change: (ApprovalDraft) -> ApprovalDraft) {
         touched = true
         _ui.update { it.copy(draft = change(it.draft), error = null) }
+    }
+
+    fun editPurchase(change: (PurchaseDraft) -> PurchaseDraft) {
+        touched = true
+        _ui.update { it.copy(purchase = change(it.purchase), error = null) }
+    }
+
+    /**
+     * Approves a purchase with what the purchase screen shows picked, after the screen lock or biometrics. Paying on
+     * the phone then opens the store's checkout ([openCheckout]).
+     */
+    fun approvePurchase(authenticator: Authenticator, openCheckout: (String) -> Unit) {
+        val current = _ui.value
+        val view = current.view ?: return
+        val purchase = view.purchase ?: return
+        if (current.busy) return
+        val draft = current.purchase
+        val method = purchase.methods.firstOrNull { it.id == draft.methodId }
+        val problem = when {
+            method == null -> "Choose how to pay."
+            method.unavailable != null -> method.unavailable
+            purchase.ships && draft.addressId == null -> "Choose where it goes. Add an identity with an address to your vault."
+            else -> null
+        }
+        val limit = if (draft.limit && method?.id in purchase.limitMethods) {
+            val each = Money.parse(draft.limitPerPurchase, purchase.currency)
+            val day = Money.parse(draft.limitPerDay, purchase.currency)
+            if (each == null || day == null || day < each) {
+                container.feedback.play(Event.Error)
+                _ui.update { it.copy(error = "Enter the spend limit's amounts, the day's at least a purchase's.") }
+                return
+            }
+            SpendLimitInput("", listOf(purchase.domain), method!!.id, purchase.currency, each, day, LimitPeriod.DAY, draft.limitDays * 86_400L)
+        } else {
+            null
+        }
+        if (problem != null) {
+            container.feedback.play(Event.Error)
+            _ui.update { it.copy(error = problem) }
+            return
+        }
+        _ui.update { it.copy(busy = true, error = null) }
+        viewModelScope.launch {
+            try {
+                when (authenticator.authenticate("Approve purchase", "${purchase.total} at ${purchase.domain}")) {
+                    AuthResult.Success -> {
+                        container.feedback.play(if (limit != null) Event.GrantCreated else Event.Approved)
+                        container.core.approvePurchase(requestId, PurchaseChoice(draft.methodId, draft.addressId, limit))
+                        container.refreshAfterAnswer(requestId)
+                        if (method?.kind == "pay_on_phone") openCheckout(purchase.checkoutUrl)
+                        _ui.update { it.copy(busy = false, finished = true) }
+                    }
+                    AuthResult.Cancelled -> _ui.update { it.copy(busy = false) }
+                    AuthResult.Unavailable -> {
+                        container.feedback.play(Event.Error)
+                        _ui.update { it.copy(busy = false, error = "Set a screen lock or fingerprint on this phone to approve.") }
+                    }
+                }
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                container.feedback.play(Event.Error)
+                _ui.update { it.copy(busy = false, error = e.userMessage()) }
+            }
+        }
     }
 
     fun toggleMore() {

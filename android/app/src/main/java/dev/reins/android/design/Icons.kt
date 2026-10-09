@@ -48,6 +48,12 @@ enum class Glyph(val d: String, val fill: Boolean = false) {
     Play("M8 5.5v13l10.5-6.5z"),
     Copy("M9 9h10.5v10.5H9zM15 9V4.5H4.5V15H9"),
 
+    /** A payment card (Payments). */
+    Card("M3.5 6h17v12h-17zM3.5 10h17M6.5 14.5h4"),
+
+    /** A shopping bag (a purchase). */
+    Bag("M5.5 8h13l-1 12.5h-11zM9 10V7a3 3 0 0 1 6 0v3"),
+
     /** A QR code to scan (a computer's pairing code). */
     Qr("M4 4h6v6H4zM14 4h6v6h-6zM4 14h6v6H4zM14 14h2v2h-2zM18 18h2v2h-2zM14 18.5h1.5M18.5 14H20v1.5"),
 

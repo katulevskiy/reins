@@ -51,6 +51,12 @@ sealed interface Route {
     /** A new vault item of a kind ([id] null), or the item [id] changed. */
     data class VaultEdit(val id: String?, val newItem: dev.reins.android.ui.vault.NewItem?) : Route
 
+    /** Integrations > Payments: payment methods, the virtual card provider, addresses, spend limits, budgets. */
+    data object Payments : Route
+
+    /** Payments > Spending: every purchase, what was spent this month. */
+    data object Spending : Route
+
     /** Adding an MCP server by its address. */
     data object McpAdd : Route
 
