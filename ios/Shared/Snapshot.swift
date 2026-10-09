@@ -28,6 +28,9 @@ struct Snapshot: Codable, Equatable {
         /// The provider logo picked for the connection (`ConnectionView.icon`: "claude", "blob", ...), nil when none
         /// was picked (the name then suggests one).
         var connectionIcon: String? = nil
+        /// A routine request that can be approved without opening it (`PendingItem.quick`): the Live Activity offers
+        /// Approve. Optional so snapshots written before it still read.
+        var quick: Bool? = nil
     }
 
     struct Entry: Codable, Equatable, Identifiable {

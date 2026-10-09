@@ -122,6 +122,18 @@ final class WidgetsTests: XCTestCase {
         XCTAssertNil(Glance.approvalState([b, a], now: now + 600), "nothing waits: the activity ends")
     }
 
+    func testARoutineRequestCarriesApproveToTheLiveActivity() {
+        var routine = item("req1", created: now - 5, expires: now + 40)
+        routine.quick = true
+        XCTAssertEqual(Glance.approvalState([routine], now: now)?.quick, true)
+        // Asked every time (or written before the field existed): Deny and Review only.
+        XCTAssertNotEqual(Glance.approvalState([item("req2", created: now - 5, expires: now + 40)], now: now)?.quick, true)
+    }
+
+    func testTheApproveIntentTargetsTheRequest() {
+        XCTAssertEqual(ApproveQuickIntent(requestId: "req1").requestId, "req1")
+    }
+
     func testBypassLengthIsTheShortestChoiceThatFits() {
         XCTAssertEqual(Glance.bypassLength(left: 10 * 60), 15 * 60)
         XCTAssertEqual(Glance.bypassLength(left: 15 * 60), 15 * 60)

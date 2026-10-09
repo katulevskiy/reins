@@ -68,6 +68,21 @@ enum IntentBridge {
         await model.refreshPending()
     }
 
+    /// Approves a routine request as the notification's Approve does. Gone (answered, expired) is no error; a request
+    /// the core keeps for the sheet (asked every time) says so.
+    static func approveQuick(_ requestId: String) async throws {
+        guard DeepLink.isId(requestId) else { return }
+        let model = try await signedIn()
+        do {
+            try await model.core.approveQuick(requestId: requestId)
+        } catch CoreError.NotFound {
+            // Already answered or expired.
+        } catch {
+            throw ReinsIntentError.failed(error.userMessage)
+        }
+        await model.refreshPending()
+    }
+
     /// Opens a link in the app, as a tapped notification would.
     static func open(_ link: DeepLink) async {
         guard let model = await ready() else { return }

@@ -85,6 +85,30 @@ struct DenyRequestIntent: LiveActivityIntent {
     }
 }
 
+/// "Approve" on the requests Live Activity: the notification's one-tap answer for a routine request (the core refuses
+/// anything that is asked every time). Like the notification's Approve, it needs an unlocked phone.
+struct ApproveQuickIntent: LiveActivityIntent {
+    static var title: LocalizedStringResource = "Approve request"
+    static var authenticationPolicy: IntentAuthenticationPolicy = .requiresAuthentication
+    static var isDiscoverable = false
+
+    @Parameter(title: "Request")
+    var requestId: String
+
+    init() {}
+
+    init(requestId: String) {
+        self.requestId = requestId
+    }
+
+    func perform() async throws -> some IntentResult {
+        #if REINS_APP
+        try await IntentBridge.approveQuick(requestId)
+        #endif
+        return .result()
+    }
+}
+
 /// Opens Reins on a waiting request (the newest when none is given), or on the home screen when nothing waits:
 /// "Show what is waiting in Reins", the "Waiting request" control.
 struct ShowWaitingIntent: AppIntent {

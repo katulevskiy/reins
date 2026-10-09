@@ -1007,7 +1007,8 @@ extension PendingItem {
             service: service,
             createdAt: createdAt,
             expiresAt: expiresAt,
-            suggestion: suggestion
+            suggestion: suggestion,
+            quick: kind == .request && quick
         )
     }
 }

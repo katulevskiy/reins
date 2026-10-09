@@ -609,8 +609,10 @@ struct ApprovalLiveViews {
 
     var ring: CountdownRing { CountdownRing(from: state.createdAt, to: state.expiresAt, size: 44) }
 
-    /// Deny (requests only: pairings and files are answered in the app) and Review.
+    /// Deny (requests only: pairings and files are answered in the app), Approve for a routine request (the same
+    /// one-tap answer as the notification's), and Review.
     @ViewBuilder var buttons: some View {
+        let quick = state.kind == .request && state.quick == true && !stale
         HStack(spacing: 10) {
             if state.kind == .request {
                 Button(intent: DenyRequestIntent(requestId: state.itemId)) {
@@ -618,8 +620,14 @@ struct ApprovalLiveViews {
                 }
                 .buttonStyle(.plain)
             }
+            if quick {
+                Button(intent: ApproveQuickIntent(requestId: state.itemId)) {
+                    GlanceButtonLabel(title: "Approve", symbol: "checkmark", tint: Palette.success, filled: true)
+                }
+                .buttonStyle(.plain)
+            }
             Link(destination: link) {
-                GlanceButtonLabel(title: "Review", symbol: "arrow.up.forward", tint: Palette.accent, filled: true)
+                GlanceButtonLabel(title: "Review", symbol: "arrow.up.forward", tint: Palette.accent, filled: !quick)
             }
         }
     }
