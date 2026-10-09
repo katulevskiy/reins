@@ -113,6 +113,18 @@ SmartScreen may warn before the first start (More info → Run anyway, or **Unbl
 ## Set up
 
 ```sh
+reins setup     # all of the below in one go: pair, start the service, route git, connect every AI tool found
+reins test      # a harmless question to your phone, to see the whole loop work
+reins doctor    # what works and what does not, with the fix for each
+```
+
+`reins doctor` checks the pairing, that the server still accepts this computer, that the server is reachable, this
+computer's clock against the server's, when the phone last checked in (`GET /reins/desktop/phone`), the background
+service (and that it runs this version), git routing for the enabled hosts, each installed AI tool (connected, and set
+up for this copy of `reins`) and desktop notifications. It exits 1 when something fails. The desktop app shows the same
+checks as a health card. Step by step instead:
+
+```sh
 reins login     # scan the QR code with the phone; the phone shows a key: it must match the terminal
 reins resume    # start the background service, send github.com git through it
 reins status

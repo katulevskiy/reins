@@ -120,7 +120,16 @@ unpack the zip yourself and put `reins.exe` anywhere on your `PATH`. Windows sup
 GitHub's Windows runners, not yet field-tested end to end on a real PC; see the
 [desktop app README](../crates/reins-desktop/README.md#windows-alpha) for what differs.
 
-Pair it with your phone:
+All of the setup in one command (it pairs, starts the background service, sends git through Reins and connects every
+AI tool it finds, then sums up what it did):
+
+```sh
+reins setup
+reins test      # a harmless question on your phone: approve or deny it to see the whole loop
+reins doctor    # checks everything, with a fix for each problem
+```
+
+Or step by step. Pair it with your phone:
 
 ```sh
 reins login
