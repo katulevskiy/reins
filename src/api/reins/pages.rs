@@ -15,12 +15,13 @@ border-radius:.5rem;margin:.5rem 0 1rem}\
 button{width:100%;padding:.8rem;font-size:1rem;font-weight:600;border:0;border-radius:.5rem;\
 background:#175ddc;color:#fff;cursor:pointer}\
 .error{background:#fdecea;color:#8a1f17;padding:.7rem .9rem;border-radius:.5rem}\
+a:not(.button){color:#175ddc;text-underline-offset:.15em;text-decoration-thickness:1px}\
 a.button{display:block;box-sizing:border-box;text-align:center;text-decoration:none;padding:.8rem;\
 font-weight:600;border-radius:.5rem;background:#175ddc;color:#fff;margin:1rem 0}\
 .pcode{font-size:2rem;font-weight:700;letter-spacing:.15rem;text-align:center;margin:1rem 0;\
 font-family:ui-monospace,SFMono-Regular,Menlo,monospace}\
 @media (prefers-color-scheme:dark){body{background:#12141a;color:#e8eaf0}\
-main{background:#1c1f27;box-shadow:none}.muted{color:#9aa3b5}a{color:#8db4ff}\
+main{background:#1c1f27;box-shadow:none}.muted{color:#9aa3b5}a:not(.button){color:#8db4ff}\
 input[type=email]{background:#12141a;color:#e8eaf0;border-color:#3a3f4c}.error{background:#3a1613;color:#f5b5ae}}";
 
 /// Escapes text for HTML element content and quoted attribute values.
