@@ -5,6 +5,7 @@ import dev.reins.android.feedback.Event
 import dev.reins.android.feedback.play
 import dev.reins.android.platform.AuthResult
 import dev.reins.android.platform.Authenticator
+import dev.reins.android.ui.common.untrusted
 import dev.reins.android.ui.common.userMessage
 import dev.reins.core.PendingItem
 import dev.reins.core.PendingKind
@@ -12,9 +13,21 @@ import kotlin.coroutines.cancellation.CancellationException
 
 /**
  * Several requests from one AI at once (an agent run): [quick] can be approved together without opening each, [all] is
- * everything of it that waits. Only a burst with at least two routine requests is offered.
+ * everything of it that waits. Only a burst with at least two routine requests is offered. Bursts of several AIs are one
+ * ([ais] > 1, [connectionId] empty): their routine requests together, and "Deny" takes back only those.
  */
-data class Burst(val connectionId: String, val label: String, val quick: List<String>, val all: List<String>)
+data class Burst(val connectionId: String, val label: String, val quick: List<String>, val all: List<String>, val ais: Int = 1) {
+    val title: String
+        get() = if (ais > 1) "${quick.size} routine · $ais AIs" else "${untrusted(label)} · ${all.size} waiting"
+
+    /** What stays in the list for a closer look, or null. */
+    val heldNote: String?
+        get() = when (val held = all.size - quick.size) {
+            0 -> null
+            1 -> "1 needs a closer look"
+            else -> "$held need a closer look"
+        }
+}
 
 fun bursts(pending: List<PendingItem>): List<Burst> =
     pending
@@ -24,6 +37,14 @@ fun bursts(pending: List<PendingItem>): List<Burst> =
             val quick = items.filter { it.quick }.map { it.id }
             if (quick.size < 2) null else Burst(connection, items.first().connectionLabel, quick, items.map { it.id })
         }
+
+/** The one bar Activity shows above the requests: one AI's burst, or the bursts of several folded together. */
+fun burstBar(pending: List<PendingItem>): Burst? {
+    val all = bursts(pending)
+    if (all.size <= 1) return all.firstOrNull()
+    val quick = all.flatMap { it.quick }
+    return Burst(connectionId = "", label = "", quick = quick, all = quick, ais = all.size)
+}
 
 /**
  * "Approve all" (one screen lock or biometric check for the lot, then each routine request as its sheet would approve it

@@ -1104,7 +1104,7 @@ abstract class ScreenshotsBase(private val suffix: String) {
             TestData.pending("req4", "grant", 1u, waitUntil = now + 40),
         )
         launch()
-        await("burst:c1")
+        await("burst")
         shoot("92-activity-burst")
     }
 
