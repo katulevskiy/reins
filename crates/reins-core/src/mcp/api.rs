@@ -18,7 +18,7 @@ impl ReinsCore {
             let engine = runtime.prepare(generation).await?;
             engine.ensure_active()?;
             let result = engine.run_account(async { engine.mcp_servers() }).await;
-            runtime.finish(&engine, result).await
+            runtime.finish(&engine, result)
         })
         .await
     }
@@ -32,7 +32,7 @@ impl ReinsCore {
             let engine = runtime.prepare(generation).await?;
             engine.ensure_active()?;
             let result = engine.run_account(async { engine.mcp_add(&url, name).await }).await;
-            runtime.finish(&engine, result).await
+            runtime.finish(&engine, result)
         })
         .await
     }
@@ -49,7 +49,7 @@ impl ReinsCore {
             let engine = runtime.prepare(generation).await?;
             engine.ensure_active()?;
             let result = engine.run_account(async { engine.mcp_finish_sign_in(&server_id, &redirect_url).await }).await;
-            runtime.finish(&engine, result).await
+            runtime.finish(&engine, result)
         })
         .await
     }
@@ -68,7 +68,7 @@ impl ReinsCore {
             let engine = runtime.prepare(generation).await?;
             engine.ensure_active()?;
             let result = engine.run_account(async { engine.mcp_add_with_token(&url, &token, name).await }).await;
-            runtime.finish(&engine, result).await
+            runtime.finish(&engine, result)
         })
         .await
     }
@@ -81,7 +81,7 @@ impl ReinsCore {
             let engine = runtime.prepare(generation).await?;
             engine.ensure_active()?;
             let result = engine.run_account(async { engine.mcp_refresh(&id).await }).await;
-            runtime.finish(&engine, result).await
+            runtime.finish(&engine, result)
         })
         .await
     }
@@ -94,7 +94,7 @@ impl ReinsCore {
             let engine = runtime.prepare(generation).await?;
             engine.ensure_active()?;
             let result = engine.run_account(async { engine.mcp_remove(&id).await }).await;
-            runtime.finish(&engine, result).await
+            runtime.finish(&engine, result)
         })
         .await
     }
@@ -107,7 +107,7 @@ impl ReinsCore {
             let engine = runtime.prepare(generation).await?;
             engine.ensure_active()?;
             let result = engine.run_account(async { engine.mcp_set_heavy(&id, &tool, heavy) }).await;
-            runtime.finish(&engine, result).await
+            runtime.finish(&engine, result)
         })
         .await
     }

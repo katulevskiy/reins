@@ -14,6 +14,7 @@ mod organization;
 mod reins_client;
 mod reins_connection;
 mod reins_device;
+mod reins_vault_passkey;
 pub mod reins_workos;
 mod send;
 mod sso_auth;
@@ -41,6 +42,7 @@ pub use self::organization::{
 pub use self::reins_client::ReinsClient;
 pub use self::reins_connection::{ReinsConnection, ReinsRefreshToken};
 pub use self::reins_device::ReinsDevice;
+pub use self::reins_vault_passkey::ReinsVaultPasskey;
 pub use self::reins_workos::{ReinsSetting, ReinsSsoSession};
 pub use self::send::{Send, SendFileId, SendId, SendType};
 pub use self::sso_auth::{OIDCAuthenticatedUser, OIDCCodeResponseError, SsoAuth};

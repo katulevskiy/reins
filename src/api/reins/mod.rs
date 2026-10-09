@@ -29,6 +29,7 @@ pub mod relay;
 pub mod sniff;
 pub mod tools;
 pub mod ttl;
+pub mod vault_passkeys;
 pub mod workos_sync;
 
 use std::{
@@ -244,6 +245,7 @@ pub fn routes() -> Vec<Route> {
     routes.extend(pages::routes());
     routes.extend(join::routes());
     routes.extend(workos_sync::routes());
+    routes.extend(vault_passkeys::routes());
     routes
 }
 

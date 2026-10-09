@@ -153,8 +153,8 @@ pub async fn user_by_id(uuid: &UserId, conn: &DbConn) -> Result<Option<super::Us
 }
 
 /// Deletes what Reins keeps for a user beyond Vaultwarden's own tables (which `User::delete` clears): the approval
-/// device, the AI and desktop connections with their refresh tokens, SSO sessions and the SSO identity. SQLite does
-/// not enforce the foreign keys' cascades, so this does not rely on them.
+/// device, the AI and desktop connections with their refresh tokens, SSO sessions, the SSO identity and the vault's
+/// passkeys. SQLite does not enforce the foreign keys' cascades, so this does not rely on them.
 pub async fn delete_reins_data(user_uuid: &UserId, conn: &DbConn) -> EmptyResult {
     conn.run(move |c| q_delete_reins_data(c, user_uuid)).await.map_res("Error deleting the user's Reins data")
 }
@@ -253,6 +253,7 @@ fn q_delete_reins_data(c: &mut DbConnInner, user_uuid: &UserId) -> QueryResult<(
         diesel::delete(reins_devices::table.filter(reins_devices::user_uuid.eq(user_uuid))).execute(c)?;
         diesel::delete(reins_sso_sessions::table.filter(reins_sso_sessions::user_uuid.eq(user_uuid))).execute(c)?;
         diesel::delete(sso_users::table.filter(sso_users::user_uuid.eq(user_uuid))).execute(c)?;
+        super::reins_vault_passkey::q_delete_all(c, user_uuid)?;
         Ok(())
     })
 }

@@ -139,7 +139,7 @@ async fn switching_accounts_locks_previous_runtime_and_restores_only_own_integra
 }
 
 #[tokio::test]
-async fn logout_cancels_an_in_flight_accounts_response() {
+async fn a_slow_upload_neither_delays_calls_nor_blocks_logout() {
     let server = MockServer::start().await;
     Mock::given(method("POST"))
         .and(path("/identity/accounts/prelogin"))
@@ -166,12 +166,12 @@ async fn logout_cancels_an_in_flight_accounts_response() {
         })
         .mount(&server)
         .await;
-    let reading = Arc::clone(&app);
-    let task = tokio::spawn(async move { reading.accounts().await });
+    // The upload runs in the background: the call that started it answers without waiting for the network.
+    let answered = tokio::time::timeout(std::time::Duration::from_secs(1), app.accounts()).await.unwrap();
+    assert!(answered.is_ok());
     tokio::time::timeout(std::time::Duration::from_secs(3), started.notified()).await.unwrap();
-    app.logout().await.unwrap();
-    let result = tokio::time::timeout(std::time::Duration::from_secs(1), task).await.unwrap().unwrap();
-    assert_eq!(result.unwrap_err(), CoreError::NotLoggedIn);
+    // Logout gives the stuck upload a bounded wait, then retires it with the account.
+    tokio::time::timeout(std::time::Duration::from_secs(5), app.logout()).await.unwrap().unwrap();
     assert_eq!(app.accounts().await.unwrap().len(), 0);
 }
 
@@ -207,6 +207,14 @@ async fn alice(server: &MockServer, dir: &std::path::Path) -> Arc<ReinsCore> {
     app.login(server.uri(), "alice@example.com".to_owned(), "pw".to_owned(), None).await.unwrap();
     app.engine().register_account("github", "alice-private-integration").unwrap();
     app.accounts().await.unwrap();
+    // The upload that call started runs in the background: count from when it is done.
+    tokio::time::timeout(std::time::Duration::from_secs(5), async {
+        while uploads(server).await == 0 {
+            tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+        }
+    })
+    .await
+    .expect("the account state is uploaded");
     app
 }
 

@@ -94,6 +94,10 @@ pub struct Engine {
     pub(crate) closed: std::sync::atomic::AtomicBool,
     retired: tokio::sync::watch::Sender<bool>,
     pub(crate) account_sync: tokio::sync::Mutex<()>,
+    /// The store's write count when it last matched the server's copy; `u64::MAX` until the first sync.
+    pub(crate) synced_writes: std::sync::atomic::AtomicU64,
+    /// A background account sync is queued and has not started yet (see `schedule_account_sync`).
+    pub(crate) sync_queued: std::sync::atomic::AtomicBool,
     pub(crate) http: reqwest::Client,
     pub(crate) cfg: CoreConfig,
     pub(crate) google: Arc<dyn GoogleTokenProvider>,
@@ -222,6 +226,8 @@ impl Engine {
             closed: std::sync::atomic::AtomicBool::new(false),
             retired: tokio::sync::watch::channel(false).0,
             account_sync: tokio::sync::Mutex::new(()),
+            synced_writes: std::sync::atomic::AtomicU64::new(u64::MAX),
+            sync_queued: std::sync::atomic::AtomicBool::new(false),
             http,
             cfg,
             google,

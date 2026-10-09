@@ -399,6 +399,17 @@ table! {
 }
 
 table! {
+    reins_vault_passkeys (user_uuid, credential_hash) {
+        user_uuid -> Text,
+        credential_hash -> Text,
+        credential_id -> Text,
+        wrapped -> Text,
+        name -> Text,
+        created_at -> BigInt,
+    }
+}
+
+table! {
     reins_sso_sessions (session_id) {
         session_id -> Text,
         user_uuid -> Text,

@@ -10,7 +10,10 @@ use std::{
     fs,
     ops::{Deref, DerefMut},
     path::{Path, PathBuf},
-    sync::{Arc, Mutex, MutexGuard, PoisonError},
+    sync::{
+        Arc, Mutex, MutexGuard, PoisonError,
+        atomic::{AtomicU64, Ordering},
+    },
     time::SystemTime,
 };
 use zeroize::Zeroizing;
@@ -33,46 +36,140 @@ pub(super) struct Persistence {
     pub aad: String,
     pub stamp: Mutex<Option<(SystemTime, u64)>>,
     pub failure: Mutex<Option<String>>,
+    /// The lock other processes (the iOS notification extension) respect, shared by everything this store does at
+    /// once: taken by the first user, given back by the last. While this process holds it nobody else writes the
+    /// file, so the users after the first skip opening, locking and checking it.
+    held: Mutex<Held>,
+    /// The newest snapshot a write took and nobody has written yet, with its sequence number.
+    pending: Mutex<Option<(u64, Zeroizing<Vec<u8>>)>>,
+    /// The sequence number on disk. Held while sealing and writing, so writes reach the disk in order.
+    written: Mutex<u64>,
+    sequence: AtomicU64,
+}
+#[derive(Default)]
+struct Held {
+    file: Option<fs::File>,
+    users: usize,
+}
+impl Persistence {
+    pub fn new(path: PathBuf, aad: String) -> Self {
+        Self {
+            path,
+            aad,
+            stamp: Mutex::new(None),
+            failure: Mutex::new(None),
+            held: Mutex::new(Held::default()),
+            pending: Mutex::new(None),
+            written: Mutex::new(0),
+            sequence: AtomicU64::new(0),
+        }
+    }
+    /// Joins the users of the cross-process lock, taking it when nobody here holds it. True for the first user,
+    /// who must check whether another process changed the file meanwhile.
+    fn acquire(&self) -> Result<bool, CoreError> {
+        let mut held = self.held.lock().unwrap_or_else(PoisonError::into_inner);
+        if held.users > 0 {
+            held.users += 1;
+            return Ok(false);
+        }
+        if held.file.is_none() {
+            held.file = Some(
+                fs::OpenOptions::new()
+                    .create(true)
+                    .truncate(false)
+                    .read(true)
+                    .write(true)
+                    .open(self.path.with_extension("lock"))
+                    .map_err(|_| CoreError::storage("cannot lock account data"))?,
+            );
+        }
+        held.file.as_ref().expect("lock file").lock().map_err(|_| CoreError::storage("cannot lock account data"))?;
+        held.users = 1;
+        Ok(true)
+    }
+    fn release(&self) {
+        let mut held = self.held.lock().unwrap_or_else(PoisonError::into_inner);
+        held.users -= 1;
+        if held.users == 0
+            && let Some(f) = &held.file
+        {
+            drop(f.unlock());
+        }
+    }
+    fn fail(&self, e: &CoreError) {
+        *self.failure.lock().unwrap_or_else(PoisonError::into_inner) = Some(e.to_string());
+        log::error!("could not persist encrypted account data");
+    }
 }
 pub(crate) struct StoreLock<'a> {
     store: &'a Store,
-    conn: MutexGuard<'a, Option<Connection>>,
-    file: Option<fs::File>,
+    /// Taken back on drop before a write is sealed, so reads wait for the snapshot only, not for the disk.
+    conn: Option<MutexGuard<'a, Option<Connection>>>,
     changes: u64,
 }
 impl Deref for StoreLock<'_> {
     type Target = Connection;
     fn deref(&self) -> &Connection {
-        self.conn.as_ref().expect("open store lock")
+        self.conn.as_ref().and_then(|c| c.as_ref()).expect("open store lock")
     }
 }
 impl DerefMut for StoreLock<'_> {
     fn deref_mut(&mut self) -> &mut Connection {
-        self.conn.as_mut().expect("open store lock")
+        self.conn.as_mut().and_then(|c| c.as_mut()).expect("open store lock")
     }
 }
 impl Drop for StoreLock<'_> {
     fn drop(&mut self) {
-        if let Some(p) = &self.store.persistence
-            && self.total_changes() != self.changes
-            && let Err(e) = persist(self.store, self, p)
-        {
-            *p.failure.lock().unwrap_or_else(PoisonError::into_inner) = Some(e.to_string());
-            log::error!("could not persist encrypted account data");
+        let changed = self.total_changes() != self.changes;
+        if changed {
+            self.store.writes.fetch_add(1, Ordering::AcqRel);
         }
-        if let Some(f) = &self.file {
-            drop(f.unlock());
+        let Some(p) = &self.store.persistence else {
+            return;
+        };
+        // The copy is taken under the connection; sealing and the two fsyncs happen after letting it go. The call
+        // still returns only once its write is on disk (or a later write that includes it is).
+        let taken = if changed {
+            snapshot(self, p).map(Some)
+        } else {
+            Ok(None)
+        };
+        drop(self.conn.take());
+        match taken.and_then(|seq| seq.map_or(Ok(()), |seq| write_through(self.store, p, seq))) {
+            Ok(()) => {}
+            Err(e) => p.fail(&e),
         }
+        p.release();
     }
 }
 fn stamp(path: &Path) -> Option<(SystemTime, u64)> {
     fs::metadata(path).ok().and_then(|m| m.modified().ok().map(|t| (t, m.len())))
 }
-fn persist(store: &Store, conn: &Connection, p: &Persistence) -> Result<(), CoreError> {
-    let plain = conn.serialize("main")?;
+/// Queues the data as it is now to be written; returns its sequence number. Call with the connection held.
+fn snapshot(conn: &Connection, p: &Persistence) -> Result<u64, CoreError> {
+    let seq = p.sequence.fetch_add(1, Ordering::AcqRel) + 1;
+    let plain = Zeroizing::new(conn.serialize("main")?.to_vec());
+    let mut pending = p.pending.lock().unwrap_or_else(PoisonError::into_inner);
+    if pending.as_ref().is_none_or(|(queued, _)| *queued < seq) {
+        *pending = Some((seq, plain));
+    }
+    Ok(seq)
+}
+/// Makes sure snapshot `seq` (or a newer one) is on disk. Writes that queue while another is being written share
+/// the next write: the newest snapshot is the only one that still needs to reach the disk. Call holding the
+/// cross-process lock.
+fn write_through(store: &Store, p: &Persistence, seq: u64) -> Result<(), CoreError> {
+    let mut written = p.written.lock().unwrap_or_else(PoisonError::into_inner);
+    if *written >= seq {
+        return Ok(());
+    }
+    let Some((newest, plain)) = p.pending.lock().unwrap_or_else(PoisonError::into_inner).take() else {
+        return Ok(());
+    };
     let sealed = store.seal(&p.aad, &plain)?;
     write_atomically(&p.path, &sealed)?;
     *p.stamp.lock().unwrap_or_else(PoisonError::into_inner) = stamp(&p.path);
+    *written = newest;
     Ok(())
 }
 fn memory() -> Result<Connection, CoreError> {
@@ -90,40 +187,43 @@ impl Store {
         if conn.is_none() {
             return Err(CoreError::NotLoggedIn);
         }
-        let file = if let Some(p) = &self.persistence {
+        if let Some(p) = &self.persistence {
             if p.failure.lock().unwrap_or_else(PoisonError::into_inner).is_some() {
                 return Err(CoreError::storage("encrypted account data could not be saved"));
             }
-            let f = fs::OpenOptions::new()
-                .create(true)
-                .truncate(false)
-                .read(true)
-                .write(true)
-                .open(p.path.with_extension("lock"))
-                .map_err(|_| CoreError::storage("cannot lock account data"))?;
-            f.lock().map_err(|_| CoreError::storage("cannot lock account data"))?;
-            let current = stamp(&p.path);
-            if current.is_some() && current != *p.stamp.lock().unwrap_or_else(PoisonError::into_inner) {
-                let bytes = fs::read(&p.path).map_err(|_| CoreError::storage("cannot read account data"))?;
-                let plain = Zeroizing::new(self.unseal(&p.aad, &bytes)?);
-                let mut loaded = memory()?;
-                loaded.deserialize_read_exact("main", std::io::Cursor::new(plain.as_slice()), plain.len(), false)?;
-                loaded.execute_batch("PRAGMA temp_store=MEMORY; PRAGMA secure_delete=ON;")?;
-                migrate(&loaded)?;
-                *conn = Some(loaded);
-                *p.stamp.lock().unwrap_or_else(PoisonError::into_inner) = current;
+            if p.acquire()?
+                && let Err(e) = self.reload_if_changed(&mut conn, p)
+            {
+                p.release();
+                return Err(e);
             }
-            Some(f)
-        } else {
-            None
-        };
+        }
         let changes = conn.as_ref().expect("open").total_changes();
         Ok(StoreLock {
             store: self,
-            conn,
-            file,
+            conn: Some(conn),
             changes,
         })
+    }
+    /// Another process wrote the file since this one last read or wrote it: its copy replaces the one in memory.
+    fn reload_if_changed(&self, conn: &mut Option<Connection>, p: &Persistence) -> Result<(), CoreError> {
+        let current = stamp(&p.path);
+        if current.is_some() && current != *p.stamp.lock().unwrap_or_else(PoisonError::into_inner) {
+            let bytes = fs::read(&p.path).map_err(|_| CoreError::storage("cannot read account data"))?;
+            let plain = Zeroizing::new(self.unseal(&p.aad, &bytes)?);
+            let mut loaded = memory()?;
+            loaded.deserialize_read_exact("main", std::io::Cursor::new(plain.as_slice()), plain.len(), false)?;
+            loaded.execute_batch("PRAGMA temp_store=MEMORY; PRAGMA secure_delete=ON;")?;
+            migrate(&loaded)?;
+            *conn = Some(loaded);
+            *p.stamp.lock().unwrap_or_else(PoisonError::into_inner) = current;
+            self.writes.fetch_add(1, Ordering::AcqRel);
+        }
+        Ok(())
+    }
+    /// How many times the data has changed so far; equal counts mean equal data.
+    pub(crate) fn write_count(&self) -> u64 {
+        self.writes.load(Ordering::Acquire)
     }
     pub(crate) fn flush(&self) -> Result<(), CoreError> {
         if let Some(p) = &self.persistence
@@ -134,9 +234,22 @@ impl Store {
         Ok(())
     }
     pub(crate) fn close(&self) -> Result<(), CoreError> {
+        self.active.store(false, Ordering::Release);
+        // Waits for whoever holds the connection; a write among them has queued its snapshot by then.
+        drop(self.conn.lock().unwrap_or_else(PoisonError::into_inner).take());
+        if let Some(p) = &self.persistence {
+            // A write that let go of the connection may still be sealing: it (or this) finishes before the key goes.
+            let latest = p.sequence.load(Ordering::Acquire);
+            let written = p.acquire().and_then(|_| {
+                let result = write_through(self, p, latest);
+                p.release();
+                result
+            });
+            if let Err(e) = written {
+                p.fail(&e);
+            }
+        }
         let persisted = self.flush();
-        self.active.store(false, std::sync::atomic::Ordering::Release);
-        *self.conn.lock().unwrap_or_else(PoisonError::into_inner) = None;
         *self.dek.lock().unwrap_or_else(PoisonError::into_inner) = None;
         persisted
     }
@@ -156,12 +269,8 @@ impl Store {
             conn: Mutex::new(Some(memory()?)),
             dek: Mutex::new(Some(Dek::from_bytes(&derived)?)),
             dek_was_reset: false,
-            persistence: Some(Persistence {
-                path: directory.join(format!("{}.sealed", owner.id())),
-                aad: owner.aad(),
-                stamp: Mutex::new(None),
-                failure: Mutex::new(None),
-            }),
+            writes: AtomicU64::new(0),
+            persistence: Some(Persistence::new(directory.join(format!("{}.sealed", owner.id())), owner.aad())),
             control: Some(control),
             control_owner: Mutex::new(None),
             owner: Some(owner),
@@ -177,6 +286,7 @@ impl Store {
             conn: Mutex::new(Some(memory()?)),
             dek: Mutex::new(Some(dek)),
             dek_was_reset: false,
+            writes: AtomicU64::new(0),
             persistence: None,
             control,
             control_owner: Mutex::new(None),
@@ -207,8 +317,9 @@ impl Store {
 pub(super) fn protect(store: &Store, directory: &Path) -> Result<(), CoreError> {
     let p = store.persistence.as_ref().expect("protected store");
     let guard = store.lock()?;
-    persist(store, &guard, p)?;
+    let written = snapshot(&guard, p).and_then(|seq| write_through(store, p, seq));
     drop(guard);
+    written?;
     // Legacy SQLite and its WAL are removed only after the complete encrypted snapshot is durable.
     for name in ["reins.db", "reins.db-wal", "reins.db-shm"] {
         let path = directory.join(name);
@@ -335,5 +446,50 @@ mod tests {
         assert_eq!(root.save_session_for(&session("a"), &owner("a")).unwrap_err(), CoreError::NotLoggedIn);
         assert_eq!(root.clear_session_for(Some(&owner("a"))).unwrap_err(), CoreError::NotLoggedIn);
         assert_eq!(root.load_session().unwrap().unwrap().email, "b@example.com");
+    }
+    #[test]
+    fn concurrent_writes_all_reach_the_disk_and_a_newer_copy_is_never_overwritten() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = Arc::new(Store::open(dir.path(), &FakeKeys::default()).unwrap());
+        let key = VaultKey::from_bytes(&[7; 64]).unwrap();
+        let a = Arc::new(open_account(&root, dir.path(), owner("a"), &key));
+        let writers: Vec<_> = (0..8)
+            .map(|t| {
+                let a = Arc::clone(&a);
+                std::thread::spawn(move || {
+                    for i in 0..20 {
+                        a.meta_set(&format!("w{t}-{i}"), "v").unwrap();
+                        // Reads go on while others seal and write.
+                        a.meta_get("w0-0").unwrap();
+                    }
+                })
+            })
+            .collect();
+        for w in writers {
+            w.join().unwrap();
+        }
+        a.close().unwrap();
+        let reopened = open_account(&root, dir.path(), owner("a"), &key);
+        for t in 0..8 {
+            for i in 0..20 {
+                assert_eq!(reopened.meta_get(&format!("w{t}-{i}")).unwrap().as_deref(), Some("v"), "w{t}-{i}");
+            }
+        }
+    }
+    #[test]
+    fn another_process_sees_each_write_and_its_own_are_kept() {
+        // Two stores on one file stand for the app and the iOS notification extension.
+        let dir = tempfile::tempdir().unwrap();
+        let root = Arc::new(Store::open(dir.path(), &FakeKeys::default()).unwrap());
+        let key = VaultKey::from_bytes(&[7; 64]).unwrap();
+        let app = open_account(&root, dir.path(), owner("a"), &key);
+        let extension = Store::account(Arc::clone(&root), dir.path(), owner("a"), &key).unwrap();
+        app.meta_set("from-app", "1").unwrap();
+        assert_eq!(extension.meta_get("from-app").unwrap().as_deref(), Some("1"));
+        extension.meta_set("from-extension", "2").unwrap();
+        assert_eq!(app.meta_get("from-extension").unwrap().as_deref(), Some("2"));
+        app.meta_set("again", "3").unwrap();
+        assert_eq!(extension.meta_get("again").unwrap().as_deref(), Some("3"));
+        assert_eq!(extension.meta_get("from-app").unwrap().as_deref(), Some("1"));
     }
 }

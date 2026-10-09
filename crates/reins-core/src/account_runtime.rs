@@ -415,7 +415,18 @@ impl AccountRuntime {
         }
         Ok(())
     }
-    pub async fn finish<T>(&self, engine: &Arc<Engine>, result: Result<T, CoreError>) -> Result<T, CoreError> {
+    pub fn finish<T>(&self, engine: &Arc<Engine>, result: Result<T, CoreError>) -> Result<T, CoreError> {
+        engine.ensure_active()?;
+        if !Arc::ptr_eq(&self.engine(), engine) {
+            return Err(CoreError::NotLoggedIn);
+        }
+        engine.store.flush()?;
+        engine.schedule_account_sync();
+        result
+    }
+    /// [`Self::finish`] for work done in the background (a push), where the process may be suspended right after:
+    /// the upload is waited for instead of left running.
+    pub async fn finish_synced<T>(&self, engine: &Arc<Engine>, result: Result<T, CoreError>) -> Result<T, CoreError> {
         engine.ensure_active()?;
         if !Arc::ptr_eq(&self.engine(), engine) {
             return Err(CoreError::NotLoggedIn);
