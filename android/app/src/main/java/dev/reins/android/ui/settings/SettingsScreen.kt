@@ -54,6 +54,7 @@ import dev.reins.android.state.SessionState
 import dev.reins.android.ui.common.ConnectionIcon
 import dev.reins.android.ui.common.relativeTime
 import dev.reins.android.ui.common.untrusted
+import dev.reins.android.ui.signin.AccountRules
 
 @Composable
 fun SettingsScreen(
@@ -176,7 +177,25 @@ fun SettingsScreen(
 
         Group(header = "AI connections") {
             if (connections.isEmpty()) {
-                ListRow("No AI is connected yet", subtitle = "Add Reins to Claude or ChatGPT with your server's /mcp address.")
+                // The address to paste, not a description of it: tapping copies it.
+                val mcpUrl = (session as? SessionState.SignedIn)?.info?.serverUrl?.let(AccountRules::mcpUrl)
+                ListRow(
+                    "No AI is connected yet",
+                    Modifier.testTag("copyMcpUrl"),
+                    subtitle = if (mcpUrl != null) {
+                        "In Claude.ai or ChatGPT, add a custom connector with $mcpUrl. Tap to copy."
+                    } else {
+                        "Add Reins to Claude.ai or ChatGPT as a custom connector."
+                    },
+                    trailing = mcpUrl?.let { { GlyphIcon(Glyph.Copy, c.tertiary, size = 17.dp) } },
+                    onClick = mcpUrl?.let { url ->
+                        {
+                            copyText(context, "Reins MCP address", url)
+                            feedback.play(Event.Copied)
+                            if (Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU) viewModel.notice("MCP address copied.")
+                        }
+                    },
+                )
             }
             connections.forEachIndexed { i, connection ->
                 if (i > 0) Hairline(inset = 68.dp)
