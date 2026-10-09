@@ -292,16 +292,19 @@ impl Render for Root {
                 })))
                 .child(
                     div().id("column").flex_1().overflow_y_scroll().child(
+                        // Top-aligned, not centred: the step indicator stays put from step to step, whatever each
+                        // step's height.
                         div()
                             .w_full()
                             .min_h_full()
                             .flex()
                             .flex_col()
                             .items_center()
-                            .justify_center()
+                            .justify_start()
                             .gap(px(30.0))
                             .px(px(32.0))
-                            .py(px(28.0))
+                            .pt(px(WELCOME_TOP))
+                            .pb(px(28.0))
                             .child(parts::step_indicator(stage, pal))
                             .child(div().w_full().max_w(px(stage_width(stage))).child(body)),
                     ),
@@ -310,6 +313,9 @@ impl Render for Root {
         }
     }
 }
+
+/// The welcome flow's space above the step indicator.
+const WELCOME_TOP: f32 = 44.0;
 
 /// How wide a step of the welcome flow is: the pairing has the QR code beside the steps.
 fn stage_width(stage: Stage) -> f32 {

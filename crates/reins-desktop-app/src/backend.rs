@@ -205,6 +205,12 @@ impl Backend {
         Config::load(&self.paths).map_err(|e| e.to_string())
     }
 
+    /// "Check your phone": whether to show it and play the chime (`[notify]`).
+    #[must_use]
+    pub fn notify_config(&self) -> reins_desktop::notify::NotifyConfig {
+        self.config().map(|c| c.notify).unwrap_or_default()
+    }
+
     /// The server to pair with: `REINS_SERVER`, else the one picked in the app, else the default.
     #[must_use]
     pub fn server(saved: &Saved) -> String {

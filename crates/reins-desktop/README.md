@@ -204,8 +204,10 @@ Nothing just hangs. When an answer takes more than a moment (somebody has to loo
   (`systemMessage`); the waiting line goes to the hook's stderr;
 - `reins mcp` sends the harness MCP progress notifications ("Waiting for Reins 2FA on your phone…") when it asked for
   them; the server answers a call the phone has not decided within its wait with how to fetch the result later;
-- this computer shows a notification, "Check your phone", with a short chime (`notify-send` and `pw-play`, `paplay` or
-  `aplay` on Linux, Notification Center on macOS, a toast on Windows):
+- this computer shows a notification, "Check your phone", with a short chime. While the Reins app runs, the app shows
+  it through its own notification permission (on macOS only an app's own notifications appear) and takes it down once
+  the phone answered; without the app, the waiting program shows it itself (`notify-send` and `pw-play`, `paplay` or
+  `aplay` on Linux, `osascript` on macOS (older versions only), a toast on Windows):
 
 ```toml
 [notify]
