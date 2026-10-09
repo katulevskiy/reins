@@ -808,7 +808,7 @@ async fn a_work_session_covers_pushes_to_its_branch_but_not_main_or_a_force_push
     pair(&env, "p1", Some(&key), Some(DESK), true).await;
     let session = json!({"v": 1, "id": "s1", "connection_id": DESK, "connection_label": "Reins desktop app",
         "created_at": 100, "call": {"tool": "connector", "service": "desktop", "op": "session", "args": {
-            "duration_secs": 3600, "reason": "Work on dev", "push": ["github:me/app@dev"],
+            "duration_secs": 3600, "reason": "Work on dev", "from": "app", "push": ["github:me/app@dev"],
             "client_key": key, "nonce": "nonce-s1"}}});
     serve(&env, &[session], &[]).await;
     env.core.sync(0).await.unwrap();
