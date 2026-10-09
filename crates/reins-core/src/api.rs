@@ -2,6 +2,8 @@
 //! (`rt::run`), so the calling coroutine never blocks and a cancelled coroutine
 //! never aborts work that already reached the server.
 
+mod payments;
+
 use std::path::PathBuf;
 use std::sync::Arc;
 

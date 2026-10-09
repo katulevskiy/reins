@@ -225,6 +225,9 @@ pub struct ApprovalView {
     /// One-tap answers; `None` for what is asked every time (the hard floor).
     #[uniffi(default)]
     pub quick: Option<QuickApproval>,
+    /// A purchase: the cart like a receipt, and what may pay for it (approve it with `approve_purchase`).
+    #[uniffi(default)]
+    pub purchase: Option<crate::connector::payments::PurchaseView>,
 }
 
 /// What a newly connected AI may do before it asked for anything (see `crate::starter`).

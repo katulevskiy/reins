@@ -21,7 +21,7 @@ use reins_proto::relay::{RelayOutcome, RelayRequest, ToolResult};
 const RETRY_PASS_SECS: i64 = 15 * 60;
 
 /// The answer to a desktop-only call from anything but the desktop app paired with this connection.
-const DESKTOP_ONLY: &str = "This must come from the Reins desktop app paired with this phone.";
+pub(crate) const DESKTOP_ONLY: &str = "This must come from the Reins desktop app paired with this phone.";
 
 /// What the AI is told when an integration fails (never a token or a URL).
 fn ai_message(service: &str, e: &CoreError) -> String {
@@ -63,7 +63,7 @@ impl Engine {
     }
 
     /// Whether the `client_key` of a desktop-only call is the key pinned for its connection when it was paired.
-    fn desktop_key_matches(&self, connection: &ConnectionId, call: &ConnectorCall) -> bool {
+    pub(crate) fn desktop_key_matches(&self, connection: &ConnectionId, call: &ConnectorCall) -> bool {
         let Some(given) = call.str_arg("client_key").and_then(desktop::decode_key) else {
             return false;
         };
@@ -79,7 +79,7 @@ impl Engine {
 
     /// An audit entry for a call to another integration.
     #[allow(clippy::too_many_arguments, reason = "an audit entry is described by this many independent facts")]
-    fn audit_connector(
+    pub(crate) fn audit_connector(
         &self,
         request: &RelayRequest,
         call: &ConnectorCall,
@@ -112,7 +112,7 @@ impl Engine {
         audit
     }
 
-    async fn fail_connector(
+    pub(crate) async fn fail_connector(
         &self,
         session: &Session,
         request: &RelayRequest,
@@ -122,7 +122,7 @@ impl Engine {
         self.fail_connector_text(session, request, call, &ai_message(&call.service, e)).await
     }
 
-    async fn fail_connector_text(
+    pub(crate) async fn fail_connector_text(
         &self,
         session: &Session,
         request: &RelayRequest,
@@ -223,6 +223,9 @@ impl Engine {
                 .await;
         }
 
+        if effect == Effect::Write && call.service == reins_proto::connector::PAYMENTS {
+            return self.payments_write(session, &request, call).await;
+        }
         if effect == Effect::Write {
             // A file the write needs: asked for as an upload, or checked and shown with the preview.
             let Some(file) = self.file_input(session, &request, call).await? else {
@@ -290,6 +293,7 @@ impl Engine {
                     covered: BTreeMap::new(),
                     preview: Some(preview),
                     mcp: None,
+                    purchase: None,
                 },
             );
         }
@@ -352,6 +356,7 @@ impl Engine {
                 covered: per_item,
                 preview: None,
                 mcp: None,
+                purchase: None,
             },
         )
     }
@@ -395,6 +400,12 @@ impl Engine {
             ));
         }
 
+        if effect == Effect::Write && held.purchase.is_some() {
+            if choice.standing.is_some() {
+                return Err(CoreError::invalid("A purchase is asked for every time and cannot be remembered."));
+            }
+            return self.approve_parked_purchase(session, request_id, parked, None).await;
+        }
         if effect == Effect::Write {
             let preview = held.preview.as_ref().ok_or_else(|| CoreError::storage("corrupt parked request"))?;
             let spec = call.spec();
@@ -567,7 +578,7 @@ impl Engine {
     }
 
     /// Records the decision, drops the parked request and answers the server.
-    async fn settle(
+    pub(crate) async fn settle(
         &self,
         session: &Session,
         request_id: &str,

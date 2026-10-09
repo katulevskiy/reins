@@ -66,6 +66,9 @@ pub struct ParkedConnector {
     /// A call to an MCP server the user added: the server and tool as shown.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub mcp: Option<crate::mcp::ParkedMcp>,
+    /// A purchase: the cart, the methods and addresses offered, as shown.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub purchase: Option<crate::connector::payments::Plan>,
 }
 
 impl ParkedRequest {
@@ -236,6 +239,10 @@ pub fn request_title(parked: &ParkedRequest) -> String {
             service,
             ..
         } => format!("{label} wants to see your {} accounts", service.as_deref().map_or("connected", service_name)),
+        ToolCall::Connector(_) if parked.connector.as_ref().is_some_and(|h| h.purchase.is_some()) => {
+            let cart = parked.connector.as_ref().and_then(|h| h.purchase.as_ref()).map(|p| p.cart.summary());
+            format!("{label} wants to buy {}", cart.unwrap_or_default())
+        }
         ToolCall::Connector(call) => {
             format!("{label} wants to {}", call.spec().map_or_else(|| call.op.clone(), |s| s.title.to_lowercase()))
         }
@@ -344,6 +351,7 @@ pub fn service_name(service: &str) -> &str {
         "bitbucket" => "Bitbucket",
         "desktop" => "Desktop app",
         "vault" => "Password vault",
+        "payments" => "Payments",
         crate::blob::SERVICE_FILES => "Files",
         other => other,
     }
@@ -628,6 +636,7 @@ pub fn approval_view(parked: &ParkedRequest) -> ApprovalView {
         blob: held.and_then(|h| h.preview.as_ref()).and_then(|p| p.blob.as_ref()).map(crate::blob::blob_view),
         headline: String::new(),
         quick: None,
+        purchase: held.and_then(|h| h.purchase.as_ref()).map(crate::connector::payments::Plan::view),
     };
     crate::quick::decorate(parked, view)
 }

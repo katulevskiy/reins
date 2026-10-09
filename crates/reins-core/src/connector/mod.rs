@@ -10,6 +10,7 @@ pub(crate) mod git;
 pub mod githost;
 pub mod github;
 pub mod gmail;
+pub mod payments;
 pub(crate) mod sealed;
 pub mod telegram;
 pub mod telegram_client;
