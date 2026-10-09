@@ -192,7 +192,7 @@ Every approved purchase carries a mandate: a compact JWS (RFC 7515, `EdDSA` with
 makes once for your account. The key is kept with the account's encrypted state, so your phones sign with the same
 key; the server holds it only encrypted with your account key. The header holds the public key (`jwk`) and its
 thumbprint (`kid`). The key in the header only says which key signed: to rely on a mandate, compare the thumbprint with
-the one shown under Integrations → Payments (the desktop app does, once you confirm it with `reins payments-trust`).
+the one shown under Integrations → Payments (the desktop app does, once you type it into `reins payments-trust`).
 The payload is the cart as approved:
 
 ```json
@@ -244,9 +244,12 @@ which you pinned on the phone when you paired it:
 - the bridge opens sealed card details only when they carry a nonce it issued, once, and the phone's signature,
   including answers fetched later with `reins_get_result`; card details that come back in the clear are withheld.
 
-The bridge opens card details only once you have confirmed the phone's key on that computer: the first purchase
-through it says which key it was offered and is withheld; if Integrations → Payments on the phone shows the same key,
-run `reins payments-trust <key>` and ask again. From then on, card details signed by any other key are withheld. Card
+The bridge opens card details only once you have confirmed the phone's key on that computer: until then they are
+withheld, and the agent is told to have you run `reins payments-trust`. Run it yourself in a terminal and type the
+key shown under Integrations → Payments on the phone (at least its first 16 characters). It needs a terminal, the
+bridge never prints the key it was offered, and harness hooks send the command to your phone when an AI tool tries
+it, so the key you trust comes from the phone's screen. From then on, card details signed by any other key are
+withheld. Card
 numbers and codes are never written to the phone's activity log, the ledger or any log.
 
 ## Limits of this design
@@ -261,6 +264,6 @@ numbers and codes are never written to the phone's activity log, the ledger or a
 - Spend limits act without you, on the requests the Reins server relays. A server that forged requests could spend
   within your limits (at most 3 purchases an hour per AI, within their amounts), as it could use any standing
   permission you gave; it cannot exceed them.
-- The desktop bridge relies on you comparing the phone's key once (`reins payments-trust`); a key you trust without
-  comparing could be anyone's.
+- The desktop bridge relies on you typing the phone's key in once (`reins payments-trust`); a key typed from anywhere
+  but the phone's screen could be anyone's.
 - Lithic and other virtual card providers can be added behind the same interface; Privacy.com is the first.

@@ -152,34 +152,44 @@ impl Sealing {
         Ok(inner["payment"].clone())
     }
 
-    /// The phone's payment key must be the one the user confirmed (`reins payments-trust`): a server could otherwise
-    /// seal and sign a card of its own with a key of its own.
+    /// The phone's payment key must be the one the user typed in from the phone (`reins payments-trust`, at least the
+    /// first [`MIN_TRUSTED_CHARS`] characters of its thumbprint): a server could otherwise seal and sign a card of its
+    /// own with a key of its own. What is withheld never says which key was offered, so that nothing but the phone's
+    /// screen can tell the user what to type.
     fn check_pin(&self, thumbprint: &str) -> Result<(), String> {
         match std::fs::read_to_string(&self.pin_file) {
-            Ok(pinned) if pinned.trim() == thumbprint => Ok(()),
+            Ok(pinned) if pinned.trim().len() >= MIN_TRUSTED_CHARS && thumbprint.starts_with(pinned.trim()) => Ok(()),
             Ok(_) => Err("The card details are signed by another key than the one you trusted for your phone: they \
-                          were withheld. If you reset your account, compare the key under Integrations → Payments on \
-                          the phone and run `reins payments-trust <key>` again."
+                          were withheld. If you reset your account, run `reins payments-trust` again yourself and \
+                          type the key shown under Integrations → Payments on the phone."
                 .to_owned()),
-            Err(_) => Err(format!(
-                "Reins: to pay from this computer, confirm your phone's payment key once. If Integrations → Payments \
-                 on the phone shows {thumbprint}, run `reins payments-trust {thumbprint}` and ask for the purchase \
-                 again. The card details of this one were withheld."
-            )),
+            Err(_) => Err("Reins: to pay from this computer, confirm your phone's payment key once: run `reins \
+                           payments-trust` yourself in a terminal and type the key shown under Integrations → \
+                           Payments on the phone. The card details of this purchase were withheld; ask for it again \
+                           afterwards."
+                .to_owned()),
         }
     }
 }
 
-/// Trusts the phone's payment key (its RFC 7638 thumbprint, 43 base64url characters), for `reins payments-trust`.
-pub fn trust(paths: &Paths, thumbprint: &str) -> Result<(), String> {
-    let thumbprint = thumbprint.trim();
-    if thumbprint.len() != 43 || BASE64URL_NOPAD.decode(thumbprint.as_bytes()).is_err() {
-        return Err(
-            "That is not a key thumbprint: copy the 43 characters shown under Integrations → Payments.".to_owned()
-        );
+/// How much of the phone's key thumbprint the user types in at least (96 bits).
+pub const MIN_TRUSTED_CHARS: usize = 16;
+
+/// Trusts the phone's payment key as the user typed it from the phone: at least [`MIN_TRUSTED_CHARS`] characters of
+/// its RFC 7638 thumbprint (43 base64url characters), spaces ignored. Returns what is trusted.
+pub fn trust(paths: &Paths, typed: &str) -> Result<String, String> {
+    let key: String = typed.chars().filter(|c| !c.is_whitespace()).collect();
+    let valid = (MIN_TRUSTED_CHARS..=43).contains(&key.len())
+        && key.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'-' || b == b'_');
+    if !valid {
+        return Err(format!(
+            "That is not your phone's key: type at least the first {MIN_TRUSTED_CHARS} characters shown under \
+             Integrations → Payments."
+        ));
     }
     paths.ensure().map_err(|e| e.to_string())?;
-    crate::config::write_private(&paths.phone_payment_key_file(), thumbprint.as_bytes()).map_err(|e| e.to_string())
+    crate::config::write_private(&paths.phone_payment_key_file(), key.as_bytes()).map_err(|e| e.to_string())?;
+    Ok(key)
 }
 
 /// Checks a compact JWS signed with Ed25519 by the key in its header; the payload and the key's RFC 7638 thumbprint.
@@ -257,12 +267,17 @@ mod tests {
     }
 
     #[test]
-    fn only_a_thumbprint_can_be_trusted() {
+    fn a_typed_prefix_of_the_phones_key_is_trusted_and_nothing_shorter() {
         let dir = tempfile::tempdir().unwrap();
         let paths = Paths::under(dir.path());
+        let full = thumbprint_of(&key(1));
         assert!(trust(&paths, "not a key").is_err());
-        trust(&paths, &thumbprint_of(&key(1))).unwrap();
-        assert_eq!(std::fs::read_to_string(paths.phone_payment_key_file()).unwrap(), thumbprint_of(&key(1)));
+        assert!(trust(&paths, &full[..15]).is_err(), "too short to mean anything");
+        let typed = format!("{} {}\n", &full[..8], &full[8..16]);
+        assert_eq!(trust(&paths, &typed).unwrap(), full[..16]);
+        let sealing = Sealing::with(Identity::generate(), paths.phone_payment_key_file());
+        assert!(sealing.check_pin(&full).is_ok());
+        assert!(sealing.check_pin(&thumbprint_of(&key(2))).is_err());
     }
 
     fn nonce_of(call: &Value) -> String {
@@ -301,11 +316,12 @@ mod tests {
             sealing.prepare(&mut call).unwrap();
             nonce_of(&call)
         };
-        // Nothing opens before the user trusted the phone's key; the answer says which key to compare.
+        // Nothing opens before the user trusted the phone's key, and the answer never names the key offered: only the
+        // phone's screen says what to type.
         let mut untrusted = phone_answer(&key(1), &app, &issue(), "p0", SEALED_JWS_TYPE);
         sealing.open(&mut untrusted);
-        let said = untrusted["result"]["content"][0]["text"].as_str().unwrap().to_owned();
-        assert!(said.contains("reins payments-trust") && said.contains(&thumbprint_of(&key(1))), "{said}");
+        let said = untrusted.to_string();
+        assert!(said.contains("reins payments-trust") && !said.contains(&thumbprint_of(&key(1))[..16]), "{said}");
         // Trusted: the phone's answers open…
         trust_in(&sealing, &key(1));
         let mut first = phone_answer(&key(1), &app, &issue(), "p1", SEALED_JWS_TYPE);

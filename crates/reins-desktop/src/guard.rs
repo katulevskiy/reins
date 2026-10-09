@@ -58,6 +58,8 @@ pub const DEFAULT_COMMANDS: &[&str] = &[
     "yarn npm publish",
     "cargo publish",
     "poetry publish",
+    // Trusting a key to open card details is the user's own step (`docs/payments.md`).
+    "reins payments-trust",
     "uv publish",
     "twine upload",
     "gem push",
@@ -216,6 +218,13 @@ pub const GROUPS: &[Group] = &[
             "gh repo delete",
             "gh release delete",
         ],
+        files: &[],
+    },
+    Group {
+        id: "payments",
+        label: "Trusting a payment key",
+        detail: "reins payments-trust, which lets this computer open the card details of purchases",
+        commands: &["reins payments-trust"],
         files: &[],
     },
     Group {
@@ -831,6 +840,8 @@ mod tests {
     #[test]
     fn the_default_rules_catch_the_dangerous_commands() {
         for (c, rule) in [
+            ("reins payments-trust", "reins payments-trust"),
+            ("/usr/local/bin/reins payments-trust", "reins payments-trust"),
             ("git push --force origin main", "git push --force*"),
             ("git -C repo push -fu origin x", "git push -f"),
             ("git push --force-with-lease", "git push --force*"),

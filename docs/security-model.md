@@ -66,8 +66,8 @@ for, never by a spend limit), or nothing at all (the store's saved payment metho
 purchase counts against budgets and limits never goes down because of what the agent reports. For an AI connected
 directly, the server relays card details in memory like any answer and never writes them down. For the desktop app's
 connection the phone hands them over only sealed to the app's pinned key and signed with the account's payment key,
-which you confirm once on that computer (`reins payments-trust`), so a server that strips or forges anything gets
-nothing to pay with. Every
+which you type in once on that computer from the phone's screen (`reins payments-trust`), so a server that strips or
+forges anything gets nothing to pay with. Every
 approval carries a mandate signed on the phone, so the cart you approved can be proved later. [What leaves the phone,
 and when](payments.md#what-leaves-the-phone-and-when).
 
