@@ -103,6 +103,15 @@ enum Cmd {
     #[command(display_order = 26)]
     /// Sign this computer out: ends its connection on the server and forgets the session here.
     Logout,
+    #[command(display_order = 27)]
+    /// Trust your phone's payment key, so that `reins mcp` opens the card details of purchases you approve.
+    ///
+    /// The key is shown on the phone under Integrations → Payments ("signed by this account's key"); `reins mcp`
+    /// says which key it was offered. Card details signed by any other key are withheld.
+    PaymentsTrust {
+        /// The key's thumbprint, as the phone shows it.
+        thumbprint: String,
+    },
     #[command(display_order = 22)]
     /// Run the daemon at login (systemd user unit, launchd agent, or on Windows the user's Run key).
     Service {
@@ -455,6 +464,13 @@ async fn run(cmd: Cmd) -> Result<(), String> {
             Ok(())
         }
         Cmd::Test => test(&paths, &config).await,
+        Cmd::PaymentsTrust {
+            thumbprint,
+        } => {
+            reins_desktop::mcp_payments::trust(&paths, &thumbprint)?;
+            out!("This computer now opens card details signed by your phone's key {}.", thumbprint.trim());
+            Ok(())
+        }
         Cmd::Logout => {
             match server::oauth::sign_out(&paths).await? {
                 server::oauth::SignedOut::NotLoggedIn => out!("Not logged in."),

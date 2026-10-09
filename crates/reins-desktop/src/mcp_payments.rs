@@ -5,8 +5,9 @@
 //!
 //! Everything fails closed: without this app's key a purchase is not sent; card details that come back unsealed are
 //! withheld; a sealed answer is opened only when it carries a nonce this bridge issued and is signed by the phone's
-//! payment key, which the bridge pins the first time (the server could otherwise seal a forged card to the app's
-//! public key). Answers fetched later with `reins_get_result` are opened the same way.
+//! payment key, which the user confirmed once with `reins payments-trust` (the server could otherwise seal a forged
+//! card to the app's public key, signed by a key of its own). Answers fetched later with `reins_get_result` are opened
+//! the same way.
 
 use std::collections::HashSet;
 use std::path::PathBuf;
@@ -32,7 +33,7 @@ pub struct Sealing {
     identity: Result<Identity, String>,
     /// The nonces of purchases sent and not answered yet.
     issued: Mutex<HashSet<String>>,
-    /// Where the phone's payment key is pinned (its RFC 7638 thumbprint).
+    /// Where the phone's payment key is kept once the user trusted it (its RFC 7638 thumbprint).
     pin_file: PathBuf,
 }
 
@@ -151,24 +152,34 @@ impl Sealing {
         Ok(inner["payment"].clone())
     }
 
-    /// The phone's payment key: pinned the first time, the same every time after.
+    /// The phone's payment key must be the one the user confirmed (`reins payments-trust`): a server could otherwise
+    /// seal and sign a card of its own with a key of its own.
     fn check_pin(&self, thumbprint: &str) -> Result<(), String> {
         match std::fs::read_to_string(&self.pin_file) {
             Ok(pinned) if pinned.trim() == thumbprint => Ok(()),
-            Ok(_) => Err("The card details are signed by another key than your phone's: they were withheld. If you \
-                          reset the account, delete phone-payments.key in Reins's state folder."
+            Ok(_) => Err("The card details are signed by another key than the one you trusted for your phone: they \
+                          were withheld. If you reset your account, compare the key under Integrations → Payments on \
+                          the phone and run `reins payments-trust <key>` again."
                 .to_owned()),
-            Err(_) => {
-                crate::config::write_private(&self.pin_file, thumbprint.as_bytes())
-                    .map_err(|e| format!("Reins: the phone's payment key could not be pinned ({e})."))?;
-                eprintln!(
-                    "reins mcp: pinned your phone's payment key {thumbprint}; it is the one shown under Integrations \
-                     → Payments on the phone."
-                );
-                Ok(())
-            }
+            Err(_) => Err(format!(
+                "Reins: to pay from this computer, confirm your phone's payment key once. If Integrations → Payments \
+                 on the phone shows {thumbprint}, run `reins payments-trust {thumbprint}` and ask for the purchase \
+                 again. The card details of this one were withheld."
+            )),
         }
     }
+}
+
+/// Trusts the phone's payment key (its RFC 7638 thumbprint, 43 base64url characters), for `reins payments-trust`.
+pub fn trust(paths: &Paths, thumbprint: &str) -> Result<(), String> {
+    let thumbprint = thumbprint.trim();
+    if thumbprint.len() != 43 || BASE64URL_NOPAD.decode(thumbprint.as_bytes()).is_err() {
+        return Err(
+            "That is not a key thumbprint: copy the 43 characters shown under Integrations → Payments.".to_owned()
+        );
+    }
+    paths.ensure().map_err(|e| e.to_string())?;
+    crate::config::write_private(&paths.phone_payment_key_file(), thumbprint.as_bytes()).map_err(|e| e.to_string())
 }
 
 /// Checks a compact JWS signed with Ed25519 by the key in its header; the payload and the key's RFC 7638 thumbprint.
@@ -235,6 +246,25 @@ mod tests {
         Ed25519KeyPair::from_seed_unchecked(&[seed; 32]).unwrap()
     }
 
+    fn thumbprint_of(phone: &Ed25519KeyPair) -> String {
+        let x = BASE64URL_NOPAD.encode(phone.public_key().as_ref());
+        let canonical = format!(r#"{{"crv":"Ed25519","kty":"OKP","x":"{x}"}}"#);
+        BASE64URL_NOPAD.encode(ring::digest::digest(&ring::digest::SHA256, canonical.as_bytes()).as_ref())
+    }
+
+    fn trust_in(sealing: &Sealing, phone: &Ed25519KeyPair) {
+        std::fs::write(&sealing.pin_file, thumbprint_of(phone)).unwrap();
+    }
+
+    #[test]
+    fn only_a_thumbprint_can_be_trusted() {
+        let dir = tempfile::tempdir().unwrap();
+        let paths = Paths::under(dir.path());
+        assert!(trust(&paths, "not a key").is_err());
+        trust(&paths, &thumbprint_of(&key(1))).unwrap();
+        assert_eq!(std::fs::read_to_string(paths.phone_payment_key_file()).unwrap(), thumbprint_of(&key(1)));
+    }
+
     fn nonce_of(call: &Value) -> String {
         call["params"]["arguments"]["nonce"].as_str().unwrap().to_owned()
     }
@@ -245,6 +275,7 @@ mod tests {
         let identity = Identity::generate();
         let app = identity.public_key();
         let sealing = Sealing::with(identity, dir.path().join("phone-payments.key"));
+        trust_in(&sealing, &key(1));
         let mut call = json!({"jsonrpc": "2.0", "id": 7, "method": "tools/call",
             "params": {"name": PURCHASE_TOOL, "arguments": {"merchant": "Shop"}}});
         sealing.prepare(&mut call).unwrap();
@@ -270,14 +301,22 @@ mod tests {
             sealing.prepare(&mut call).unwrap();
             nonce_of(&call)
         };
-        // The phone's key is pinned by the first answer…
+        // Nothing opens before the user trusted the phone's key; the answer says which key to compare.
+        let mut untrusted = phone_answer(&key(1), &app, &issue(), "p0", SEALED_JWS_TYPE);
+        sealing.open(&mut untrusted);
+        let said = untrusted["result"]["content"][0]["text"].as_str().unwrap().to_owned();
+        assert!(said.contains("reins payments-trust") && said.contains(&thumbprint_of(&key(1))), "{said}");
+        // Trusted: the phone's answers open…
+        trust_in(&sealing, &key(1));
         let mut first = phone_answer(&key(1), &app, &issue(), "p1", SEALED_JWS_TYPE);
         sealing.open(&mut first);
         assert_eq!(first["result"]["isError"], false);
         // …and a server sealing its own card to the app's public key, signed by its own key, is refused.
         let mut forged = phone_answer(&key(2), &app, &issue(), "p2", SEALED_JWS_TYPE);
         sealing.open(&mut forged);
-        assert!(forged["result"]["content"][0]["text"].as_str().unwrap().contains("another key than your phone"));
+        assert!(
+            forged["result"]["content"][0]["text"].as_str().unwrap().contains("another key than the one you trusted")
+        );
         let mut wrong_type = phone_answer(&key(1), &app, &issue(), "p3", "reins-cart-mandate+jws");
         sealing.open(&mut wrong_type);
         assert_eq!(wrong_type["result"]["isError"], true);
