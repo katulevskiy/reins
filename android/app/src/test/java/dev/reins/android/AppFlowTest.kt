@@ -1876,6 +1876,8 @@ class AppFlowTest {
         rule.onAllNodes(hasText("Sign out")).let { it[it.fetchSemanticsNodes().lastIndex] }.performClick()
         awaitTag("welcome")
         awaitTag("continue")
+        // The screen signs out at once; the browser's logout page opens when the core has finished in the background.
+        awaitCore { shadowOf(context as android.app.Application).peekNextStartedActivity() != null }
         val opened = shadowOf(context as android.app.Application).nextStartedActivity
         assertEquals(core.browserLogoutUrl, opened?.data?.toString())
         assertNull(core.session)
