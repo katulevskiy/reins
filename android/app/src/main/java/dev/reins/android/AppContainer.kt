@@ -203,6 +203,9 @@ class AppContainer(private val context: Context) {
      * app, a push and an action finishing often ask at the same moment; callers then share one refresh that started
      * after they asked instead of queueing a full one each, so the screen catches up once.
      */
+    /** Approval sheets read ahead, so that they open without a spinner. */
+    val approvalViews = dev.reins.android.ui.approval.ApprovalViews()
+
     suspend fun refreshPending() {
         val ticket = refreshRequested.incrementAndGet()
         refreshLock.withLock {
@@ -247,7 +250,9 @@ class AppContainer(private val context: Context) {
                 val servers = async { core.mcpServers() }
                 val loaded = grants.await()
                 if (!state.isCurrent(epoch)) return@coroutineScope
-                state.setPending(pending.await())
+                val waiting = pending.await()
+                state.setPending(waiting)
+                appScope.launch { approvalViews.prefetch(core, waiting) }
                 state.setActivity(activity.await())
                 state.setGrants(loaded)
                 state.setAccounts(accounts.await())

@@ -114,6 +114,11 @@
             </intent-filter>
         </receiver>
 
+        <!-- Approve and Deny on a request's notification. -->
+        <receiver
+            android:name=".platform.ApprovalActionReceiver"
+            android:exported="false" />
+
         <!-- "Stop" on the bypass notification. -->
         <receiver
             android:name=".platform.BypassStopReceiver"

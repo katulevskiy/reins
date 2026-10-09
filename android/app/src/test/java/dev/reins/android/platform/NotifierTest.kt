@@ -74,4 +74,27 @@ class NotifierTest {
         assertEquals("blob", intent.getStringExtra(AppNotifier.EXTRA_KIND))
         assertEquals("blob_0123456789abcdef", intent.getStringExtra(AppNotifier.EXTRA_ID))
     }
+
+    @Test
+    fun `a routine request can be approved or denied right from the notification, once the phone is unlocked`() {
+        notifier.createChannels()
+        notifier.itemPending(TestData.pending("req1", "search", 2u, headline = "Claude gets the 2 emails found.", quick = true))
+        val posted = shadowOf(manager).allNotifications.single()
+        val actions = posted.actions.orEmpty()
+        assertEquals(listOf("Deny", "Approve"), actions.map { it.title.toString() })
+        assertEquals(false, actions[0].isAuthenticationRequired)
+        assertEquals(true, actions[1].isAuthenticationRequired)
+        val approve = shadowOf(actions[1].actionIntent).savedIntent
+        assertEquals(ApprovalActionReceiver.ACTION_APPROVE, approve.action)
+        assertEquals("req1", approve.getStringExtra(AppNotifier.EXTRA_ID))
+        val big = posted.extras.getCharSequence("android.bigText").toString()
+        assertEquals("Claude: Search Gmail\nClaude gets the 2 emails found.", big)
+    }
+
+    @Test
+    fun `what is asked every time or needs a closer look only opens the sheet`() {
+        notifier.createChannels()
+        notifier.itemPending(TestData.pending("req1", "grant", 1u))
+        assertEquals(0, shadowOf(manager).allNotifications.single().actions.orEmpty().size)
+    }
 }

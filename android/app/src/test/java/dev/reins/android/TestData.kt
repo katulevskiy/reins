@@ -27,6 +27,8 @@ import dev.reins.core.GitPushView
 import dev.reins.core.GitRefView
 import dev.reins.core.GrantRequestView
 import dev.reins.core.GrantView
+import dev.reins.core.GrantScopeChoice
+import dev.reins.core.StandingGrant
 import dev.reins.core.McpCallView
 import dev.reins.core.McpServerView
 import dev.reins.core.McpToolView
@@ -56,9 +58,11 @@ object TestData {
         op: String = "",
         opTitle: String = "",
         suggestion: String? = null,
+        headline: String = "",
+        quick: Boolean = false,
     ) = PendingItem(
         PendingKind.REQUEST, id, "$label wants to $action", "in:inbox", createdAt, conn, label, action, count,
-        service, account, waitUntil, op, opTitle, suggestion,
+        service, account, waitUntil, op, opTitle, suggestion, headline, quick,
     )
 
     fun pairingItem(id: String = "pair1") = PendingItem(
@@ -89,6 +93,26 @@ object TestData {
         op = "", resources = emptyList(), preview = emptyList(), noStanding = false,
         opTitle = "", action = "search", `class` = "", classes = emptyList(), git = null,
         blob = null, mcp = null, ask = null, secrets = null, ssh = null,
+    )
+
+    /** What the core adds to a routine request: its headline and one-tap answers ("allow" for [allowSecs]). */
+    fun quick(
+        view: ApprovalView,
+        headline: String = "Claude gets the 3 emails found for \"from:bank\".",
+        repeats: UInt = 0u,
+        allowSecs: ULong = if (repeats >= 2u) 28_800uL else 3_600uL,
+        allowWhat: String = "searching and reading me@gmail.com",
+    ) = view.copy(
+        headline = headline,
+        quick = dev.reins.core.QuickApproval(
+            fromNotification = true,
+            allow = StandingGrant(
+                allowSecs, null,
+                GrantScopeChoice(true, false, emptyList(), emptyList(), null, emptyList(), emptyList(), emptyList(), emptyList()),
+            ),
+            allowWhat = allowWhat,
+            repeats = repeats,
+        ),
     )
 
     /** An AI reads a Telegram chat: two ordinary messages and a login code from Telegram itself. */

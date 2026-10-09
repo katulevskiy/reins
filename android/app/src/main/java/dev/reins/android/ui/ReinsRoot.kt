@@ -203,6 +203,11 @@ private fun SignedInContent(
                         onOpenEntry = { app.open(Route.ActivityDetail(it)) },
                         onIntegrations = { app.open(Route.Integrations) },
                         onSettings = { app.open(Route.Settings) },
+                        onAnswerBurst = { burst, approve ->
+                            scope.launch {
+                                dev.reins.android.ui.activity.answerBurst(container, authenticator, burst, approve)?.let(app::showNotice)
+                            }
+                        },
                     )
                     Tab.Grants -> GrantsScreen(
                         state = state,
