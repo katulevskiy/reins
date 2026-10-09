@@ -88,6 +88,11 @@ fn same_address(a: &str, b: &Url) -> bool {
 fn connect_error(e: &McpError) -> CoreError {
     match e {
         McpError::Core(core) => core.clone(),
+        // A web page, not an MCP endpoint: the usual mistake is the service's home page or docs address.
+        McpError::Status(status @ (404 | 405)) => CoreError::service(format!(
+            "No MCP server answers at that address (HTTP {status}). Copy the address from the service's MCP \
+             instructions; it usually ends in /mcp."
+        )),
         other => CoreError::service(format!("Could not use the server: {}.", other.describe())),
     }
 }
