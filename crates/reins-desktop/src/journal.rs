@@ -391,8 +391,10 @@ mod tests {
         let first = Entry::new(Kind::Ask, "first");
         Journal::new(&paths).record(&first);
         let file = Journal::file(&paths);
-        let big = std::fs::OpenOptions::new().append(true).open(&file).unwrap();
+        // Write access (Windows refuses `set_len` on an append-only handle), closed before the log moves aside.
+        let big = std::fs::OpenOptions::new().write(true).open(&file).unwrap();
         big.set_len(MAX_BYTES + 1).unwrap();
+        drop(big);
         // Padding of NULs: one unreadable line, skipped.
         let second = Entry::new(Kind::Ask, "second");
         Journal::new(&paths).record(&second);
