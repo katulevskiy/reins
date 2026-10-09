@@ -164,30 +164,83 @@ fun ApprovalSheet(viewModel: ApprovalViewModel, authenticator: Authenticator, on
             }
             Spacer(Modifier.height(12.dp))
         }
-        Row(
+        Column(
             Modifier
                 .fillMaxWidth()
                 .background(c.background)
                 .windowInsetsPadding(WindowInsets.navigationBars)
                 .padding(horizontal = 16.dp, vertical = 12.dp),
-            horizontalArrangement = Arrangement.spacedBy(12.dp),
         ) {
-            // A question from the desktop app is answered, not approved.
-            val question = view.ask != null
-            CapsuleButton(if (question) "No" else "Deny", Modifier.weight(1f).testTag("deny"), style = ButtonStyle.Secondary, enabled = !ui.busy, onClick = viewModel::deny)
-            CapsuleButton(
-                when {
-                    question -> "Yes"
-                    isGrant || isAccounts -> "Allow"
-                    else -> "Approve"
-                },
-                Modifier.weight(1.3f).testTag("approve"),
-                style = if (isGrant || isAccounts) ButtonStyle.Accent else ButtonStyle.Primary,
-                enabled = !ui.busy,
-                busy = ui.busy,
-            ) { viewModel.approve(authenticator) }
+            // "More options" says how long itself; the shortcut would only contradict it.
+            if (!ui.moreOpen) QuickAllow(view, ui) { viewModel.approve(authenticator, allow = true) }
+            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                // A question from the desktop app is answered, not approved.
+                val question = view.ask != null
+                CapsuleButton(if (question) "No" else "Deny", Modifier.weight(1f).testTag("deny"), style = ButtonStyle.Secondary, enabled = !ui.busy, onClick = viewModel::deny)
+                CapsuleButton(
+                    when {
+                        question -> "Yes"
+                        isGrant || isAccounts -> "Allow"
+                        else -> "Approve"
+                    },
+                    Modifier.weight(1.3f).testTag("approve"),
+                    style = if (isGrant || isAccounts) ButtonStyle.Accent else ButtonStyle.Primary,
+                    enabled = !ui.busy,
+                    busy = ui.busy,
+                ) { viewModel.approve(authenticator) }
+            }
         }
     }
+}
+
+/**
+ * "Approve and allow for 1 hour": the approval plus a permission for the same AI, the same kind of request and the same
+ * target, which the core works out (never offered for what is asked every time). After a few identical approvals it
+ * says so and offers a longer period.
+ */
+@Composable
+private fun QuickAllow(view: ApprovalView, ui: ApprovalUi, onAllow: () -> Unit) {
+    val c = LocalColors.current
+    val quick = view.quick ?: return
+    val secs = quick.allow?.durationSecs?.toLong() ?: return
+    val repeated = quick.repeats >= REPEATS_FOR_HINT
+    Column(Modifier.fillMaxWidth().padding(bottom = 10.dp).testTag("quickAllow")) {
+        if (repeated) {
+            Row(Modifier.padding(bottom = 8.dp).testTag("repeatHint"), verticalAlignment = Alignment.CenterVertically) {
+                GlyphIcon(Glyph.Sparkle, c.accent, size = 14.dp, weight = 1.9f)
+                Spacer(Modifier.width(6.dp))
+                RText(
+                    "You approved this ${quick.repeats} times in the last 24 hours.",
+                    RType.sans(13.5f, FontWeight.Medium),
+                    c.accent,
+                )
+            }
+        }
+        CapsuleButton(
+            "Approve and allow for ${hoursLabel(secs)}",
+            Modifier.fillMaxWidth().testTag("approveAllow"),
+            style = if (repeated) ButtonStyle.Accent else ButtonStyle.Secondary,
+            enabled = !ui.busy,
+            onClick = onAllow,
+        )
+        RText(
+            "${untrusted(view.connectionLabel)} can then do the same without asking: ${untrusted(quick.allowWhat)}. Revoke it any time in Grants.",
+            RType.sans(12.5f, lineHeight = 17f),
+            c.tertiary,
+            Modifier.padding(start = 4.dp, end = 4.dp, top = 6.dp).testTag("allowWhat"),
+            maxLines = 3,
+        )
+    }
+}
+
+/** How many earlier identical approvals make the sheet point them out (the core then offers 8 hours). */
+private const val REPEATS_FOR_HINT = 2u
+
+/** 3600 → "1 hour", 28800 → "8 hours"; anything else as [durationLabel] says it. */
+fun hoursLabel(secs: Long): String = when {
+    secs == 3_600L -> "1 hour"
+    secs % 3_600L == 0L && secs < 86_400L -> "${secs / 3_600} hours"
+    else -> durationLabel(secs)
 }
 
 @Composable
@@ -222,6 +275,10 @@ private fun RequestHeader(view: ApprovalView) {
                 Modifier.weight(1f).testTag("what"),
                 maxLines = 2,
             )
+        }
+        // What approving does, in one sentence, before any detail.
+        if (view.headline.isNotBlank()) {
+            RText(untrusted(view.headline), RType.sans(16f, lineHeight = 22f), c.text, Modifier.padding(top = 12.dp).testTag("headline"), maxLines = 4)
         }
         ConnectorTags(view.service, view.account, Modifier.padding(top = 12.dp), name = view.mcp?.serverName?.let(::untrusted))
         view.query?.let { RText(it, RType.mono(14f), c.secondary, Modifier.padding(top = 12.dp), maxLines = 3, ltr = true) }

@@ -773,3 +773,30 @@ async fn the_activity_and_the_views_never_hold_the_token() {
     let entry = activity.iter().find(|a| a.op == "git_push").unwrap();
     assert_eq!(entry.op_title, "Push with git");
 }
+
+#[tokio::test]
+async fn a_fast_forward_is_one_tap_and_a_force_push_never_is() {
+    let env = env().await;
+    let key = env.public();
+    pair(&env, "p1", Some(&key), Some(DESK), true).await;
+    let force = summary(vec![update("refs/heads/main", &oid('b'), &oid('c'), Some(false))]);
+    serve(&env, &[push("r1", &key, "git_push", &fast_forward()), push("r2", &key, "git_push", &force)], &[]).await;
+    env.core.sync(0).await.unwrap();
+    let items = env.core.pending().await.unwrap();
+    let item = |id: &str| items.iter().find(|i| i.id == id).unwrap().clone();
+    assert!(item("r1").quick && !item("r2").quick);
+    assert_eq!(item("r1").headline, "Pushes 3 commits to main in me/app.");
+    assert_eq!(item("r2").headline, "Rewrites the history of main in me/app.");
+
+    let quick = env.core.approval_view("r1".to_owned()).await.unwrap().quick.unwrap();
+    assert_eq!(quick.allow_what, "push with git: me/app, branch main");
+    assert_eq!(quick.allow.as_ref().unwrap().scope.resources, ["me/app@main"], "the branch, not the repository");
+    assert!(env.core.approval_view("r2".to_owned()).await.unwrap().quick.is_none());
+    assert!(matches!(env.core.approve_quick("r2".to_owned()).await, Err(CoreError::Invalid { .. })));
+    assert!(answer(&env, "r2").await.is_none(), "a force push is not approved without being opened");
+
+    env.core.approve_quick("r1".to_owned()).await.unwrap();
+    let grant = open(&env.key, &answer(&env, "r1").await.unwrap()["result"]["data"]["sealed"]);
+    assert_eq!((grant.nonce.as_str(), grant.digest.as_deref()), ("nonce-r1", Some(DIGEST)));
+    assert_eq!(env.core.grants().await.unwrap().len(), 0);
+}

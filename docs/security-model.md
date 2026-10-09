@@ -131,7 +131,12 @@ vault also frees the role, by deleting everything the role protected). The phone
 loses the role is told by push. The phone's core attaches the proof itself when it has one, so a phone that just got
 the secret, or signed in with the master password, moves the role without asking again.
 
-- Approving needs the phone's screen lock or biometrics. Denying is one tap.
+- Approving needs the phone's screen lock or biometrics. Denying is one tap. A routine request can also be approved
+  from its notification, which works only once the phone is unlocked; that approves exactly what its screen would approve untouched (never an item that looks like a
+  code or a password) and creates no permission. Requests that are asked every time, and everything on Autopilot's
+  [hard floor](#autopilot), have no such button, and the phone's core refuses to approve them that way.
+- "Approve and allow for 1 hour" (8 hours after repeated identical approvals) creates an ordinary standing permission
+  for the same connection, kind of request and target, shown under Grants.
 - One-time approvals execute exactly what was shown and create no permission. Standing permissions are limited to one
   connection and can be narrowed by target (sender, recipient, repository, branch, kind of change), time and number of
   uses.

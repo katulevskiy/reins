@@ -584,3 +584,88 @@ async fn everything_of_an_integration_can_be_allowed_for_a_short_time_but_not_fo
         "writing cannot be allowed everywhere"
     );
 }
+
+#[tokio::test]
+async fn reading_a_chat_is_one_tap_and_allowing_it_covers_that_chat_only() {
+    let env = env().await;
+    let read = |id: &str, chat: &str| call_request(id, "c1", "read", &json!({"chat": chat}));
+    serve_pending(&env, &[read("r1", "Family")]).await;
+    let items = env.core.sync(0).await.unwrap();
+    assert!(items[0].quick);
+    assert_eq!(items[0].headline, "Claude gets 2 items from Family.");
+    let quick = env.core.approval_view("r1".to_owned()).await.unwrap().quick.unwrap();
+    assert_eq!((quick.allow_what.as_str(), quick.repeats), ("reading Family (Telegram)", 0));
+    assert_eq!(quick.allow.as_ref().unwrap().scope.resources, ["100"]);
+    env.core.approve_quick("r1".to_owned()).await.unwrap();
+    assert_eq!(answers(&env).await[0]["result"]["data"]["items"].as_array().unwrap().len(), 2);
+
+    // Reading another chat is not the same thing; reading Family again is.
+    serve_pending(&env, &[read("r2", "Family"), read("r3", "Work")]).await;
+    env.core.sync(0).await.unwrap();
+    let quick = env.core.approval_view("r2".to_owned()).await.unwrap().quick.unwrap();
+    assert_eq!(quick.repeats, 1);
+    assert_eq!(env.core.approval_view("r3".to_owned()).await.unwrap().quick.unwrap().repeats, 0);
+    env.core.approve("r2".to_owned(), choice(&["100:1", "100:2"], quick.allow)).await.unwrap();
+    serve_pending(&env, &[read("r4", "Family")]).await;
+    let waiting = env.core.sync(0).await.unwrap();
+    assert_eq!(waiting.iter().map(|i| i.id.as_str()).collect::<Vec<_>>(), ["r3"], "Family is covered, Work is not");
+}
+
+#[tokio::test]
+async fn a_code_keeps_a_read_out_of_the_notification_and_one_tap_never_releases_it() {
+    let env = env().await;
+    serve_pending(&env, &[call_request("r1", "c1", "read", &json!({"chat": "Work"}))]).await;
+    let items = env.core.sync(0).await.unwrap();
+    assert!(!items[0].quick, "something that looks like a code needs a look");
+    assert_eq!(
+        items[0].headline,
+        "Claude gets 1 item from Work. One that looks like a code or a password stays private unless you tick it."
+    );
+    let quick = env.core.approval_view("r1".to_owned()).await.unwrap().quick.unwrap();
+    assert!(!quick.from_notification && quick.allow.is_some());
+    env.core.approve_quick("r1".to_owned()).await.unwrap();
+    let told = answers(&env).await;
+    let shared = told[0]["result"]["data"]["items"].as_array().unwrap();
+    assert_eq!(shared.len(), 1);
+    assert_eq!(shared[0]["text"], "Report by Friday");
+}
+
+#[tokio::test]
+async fn what_is_asked_every_time_has_no_one_tap_answer() {
+    let env = env().await;
+    env.telegram.messages.lock().unwrap().insert(
+        "200".into(),
+        vec![Item {
+            id: "200:9".into(),
+            resource: "200".into(),
+            resource_label: "Work".into(),
+            snippet: "code 1".into(),
+            sensitive: true,
+            ..Item::default()
+        }],
+    );
+    serve_pending(&env, &[call_request("r1", "c1", "read", &json!({"chat": "Work"}))]).await;
+    let items = env.core.sync(0).await.unwrap();
+    assert!(!items[0].quick);
+    assert!(env.core.approval_view("r1".to_owned()).await.unwrap().quick.is_none());
+    assert!(matches!(env.core.approve_quick("r1".to_owned()).await, Err(CoreError::Invalid { .. })));
+    assert_eq!(answers(&env).await.len(), 0);
+    assert_eq!(env.core.pending().await.unwrap().len(), 1);
+}
+
+#[tokio::test]
+async fn a_message_to_send_says_what_happens_and_can_be_allowed_for_its_chat() {
+    let env = env().await;
+    serve_pending(&env, &[call_request("r1", "c1", "send", &json!({"chat": "Family", "text": "On my way"}))]).await;
+    let items = env.core.sync(0).await.unwrap();
+    assert_eq!(items[0].headline, "To Family.");
+    assert!(items[0].quick);
+    let quick = env.core.approval_view("r1".to_owned()).await.unwrap().quick.unwrap();
+    assert_eq!(quick.allow_what, "send a Telegram message: Family");
+    env.core.approve_quick("r1".to_owned()).await.unwrap();
+    assert_eq!(env.telegram.sent.lock().unwrap().len(), 1);
+    assert!(env.core.grants().await.unwrap().is_empty(), "one tap remembers nothing");
+    serve_pending(&env, &[call_request("r2", "c1", "send", &json!({"chat": "Family", "text": "Here"}))]).await;
+    env.core.sync(0).await.unwrap();
+    assert_eq!(env.core.approval_view("r2".to_owned()).await.unwrap().quick.unwrap().repeats, 1);
+}

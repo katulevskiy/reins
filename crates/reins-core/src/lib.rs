@@ -27,6 +27,7 @@ pub mod http;
 pub mod join;
 pub mod mcp;
 pub mod phone_api;
+pub mod quick;
 pub mod rt;
 pub mod services;
 pub mod session;
@@ -55,7 +56,7 @@ pub use types::{AccountKeys, JoinProgress, JoinStart, JoinView, SsoOutcome, SsoS
 pub use types::{
     AccountView, ActivityEntry, ActivityInfo, ActivityMessage, ApprovalChoice, ApprovalKind, ApprovalView, BlobView,
     ConnectionView, EmailContent, EmailView, GitCommitView, GitFileView, GitPushView, GitRefView, GmailStatus,
-    GrantRequestView, GrantScopeChoice, GrantView, MessageView, PairingView, PendingItem, PendingKind, ResourceView,
-    ServiceView, SessionInfo, StandingGrant,
+    GrantRequestView, GrantScopeChoice, GrantView, MessageView, PairingView, PendingItem, PendingKind, QuickApproval,
+    ResourceView, ServiceView, SessionInfo, StandingGrant,
 };
 pub use types::{AskView, SecretReleaseView, SshSignView};

@@ -64,6 +64,8 @@ class MainSafeCore(
 
     override suspend fun approve(requestId: String, choice: ApprovalChoice) = io { approve(requestId, choice) }
 
+    override suspend fun approveQuick(requestId: String) = io { approveQuick(requestId) }
+
     override suspend fun connections(): List<ConnectionView> = io { connections() }
 
     override suspend fun createGrant(connectionId: String, account: String, kind: ApprovalKind, standing: StandingGrant) =

@@ -35,6 +35,9 @@ These always wait for you, in every mode (Lockdown denies them):
 - uploaded files that may hold something to run (executables, scripts, archives, unknown binary types);
 - anything from a connection paired less than 10 minutes ago.
 
+The same floor decides what you can answer without opening a request: requests on it never get Approve on the
+notification, Approve all or "Approve and allow for 1 hour" ([quick start](quick-start.md#5-answer-requests-quickly)).
+
 ## How a request is judged
 
 For each waiting request, the phone writes a short plain-text description of the situation, from the same facts the

@@ -1074,6 +1074,34 @@ abstract class ScreenshotsBase(private val suffix: String) {
         shoot("14f-connect-computer")
     }
 
+    @Test
+    fun approvalOneTap() {
+        openView(TestData.quick(TestData.searchView()))
+        await("approveAllow")
+        shoot("90-approval-one-tap")
+    }
+
+    @Test
+    fun approvalRepeated() {
+        openView(TestData.quick(TestData.searchView(), repeats = 3u))
+        await("repeatHint")
+        shoot("91-approval-repeated")
+    }
+
+    @Test
+    fun activityBurst() {
+        history()
+        core.pending = listOf(
+            TestData.pending("req1", "search", 4u, waitUntil = now + 34, quick = true),
+            TestData.pending("req2", "read", 2u, waitUntil = now + 36, quick = true),
+            TestData.pending("req3", "send", 1u, waitUntil = now + 38, quick = true),
+            TestData.pending("req4", "grant", 1u, waitUntil = now + 40),
+        )
+        launch()
+        await("burst:c1")
+        shoot("92-activity-burst")
+    }
+
     companion object {
         @JvmStatic
         @BeforeClass

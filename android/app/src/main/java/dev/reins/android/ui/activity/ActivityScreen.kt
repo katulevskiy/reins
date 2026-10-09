@@ -86,6 +86,8 @@ fun ActivityScreen(
     onOpenEntry: (Long) -> Unit,
     onIntegrations: () -> Unit,
     onSettings: () -> Unit = {},
+    /** "Approve all" (true) or "Deny all" (false) for a burst of requests from one AI. */
+    onAnswerBurst: (Burst, Boolean) -> Unit = { _, _ -> },
 ) {
     val c = LocalColors.current
     val state: AppState = container.state
@@ -98,6 +100,7 @@ fun ActivityScreen(
     var automaticOnly by androidx.compose.runtime.saveable.rememberSaveable { mutableStateOf(false) }
     val automaticCount = remember(entries) { entries.count { it.decidedBy.isNotEmpty() } }
     val showFilters = automaticCount > 0 || automaticOnly
+    val burstList = remember(pending) { bursts(pending) }
     val shown = remember(entries, automaticOnly) { if (automaticOnly) entries.filter { it.decidedBy.isNotEmpty() } else entries }
     // The "new above" marker sits over the oldest entry you have not seen.
     val newMarkerAt = remember(shown, seen) { shown.indexOfLast { it.id > seen } }
@@ -112,7 +115,7 @@ fun ActivityScreen(
     }
 
     // Header rows above the entries: notices and the waiting section.
-    val headerCount = 1 + (if (pending.isEmpty()) 0 else 1 + pending.size) + (if (notice != null) 1 else 0) +
+    val headerCount = 1 + (if (pending.isEmpty()) 0 else 1 + pending.size + burstList.size) + (if (notice != null) 1 else 0) +
         (if (notifications.enabled) 0 else 1) +
         (if (replaced) 1 else 0) + (if (registrationError != null) 1 else 0) + (if (showFilters) 1 else 0)
 
@@ -181,6 +184,11 @@ fun ActivityScreen(
             }
             if (pending.isNotEmpty()) {
                 item(key = "waiting-label") { SectionTitle("Waiting for you") }
+                burstList.forEach { burst ->
+                    item(key = "burst:${burst.connectionId}") {
+                        BurstBar(burst, Modifier.padding(horizontal = 16.dp, vertical = 5.dp), onAnswerBurst)
+                    }
+                }
                 itemsIndexed(pending, key = { _, item -> "p:${item.id}" }, contentType = { _, _ -> "pending" }) { _, item ->
                     PendingCard(item, Modifier.padding(horizontal = 16.dp, vertical = 5.dp)) { onOpenPending(item) }
                 }
@@ -291,6 +299,42 @@ private fun NewMarker() {
         Box(Modifier.weight(1f).height(1.dp).background(c.accent.copy(alpha = 0.4f)))
         RText("NEW ABOVE", RType.sans(11.5f, FontWeight.SemiBold).copy(letterSpacing = 0.8.sp), c.accent, Modifier.padding(horizontal = 10.dp))
         Box(Modifier.weight(1f).height(1.dp).background(c.accent.copy(alpha = 0.4f)))
+    }
+}
+
+/**
+ * Several requests from one AI at once: approve its routine ones together (one screen lock or biometric check), or deny
+ * everything it asked. What is asked every time stays in the list below and is opened one by one.
+ */
+@Composable
+private fun BurstBar(burst: Burst, modifier: Modifier, onAnswer: (Burst, Boolean) -> Unit) {
+    val c = LocalColors.current
+    val label = untrusted(burst.label)
+    val held = burst.all.size - burst.quick.size
+    Column(
+        modifier
+            .fillMaxWidth()
+            .background(c.accent.copy(alpha = 0.08f), RoundedCornerShape(18.dp))
+            .padding(14.dp)
+            .testTag("burst:${burst.connectionId}"),
+    ) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            ConnectionIcon(burst.connectionId, burst.label, size = 22.dp)
+            Spacer(Modifier.width(8.dp))
+            RText("$label asked ${burst.all.size} times", RType.sans(15.5f, FontWeight.SemiBold), c.text, Modifier.weight(1f), maxLines = 1)
+        }
+        if (held > 0) {
+            RText(
+                if (held == 1) "1 of them needs a closer look and stays in the list." else "$held of them need a closer look and stay in the list.",
+                RType.sans(13f, lineHeight = 18f),
+                c.secondary,
+                Modifier.padding(top = 4.dp),
+            )
+        }
+        Row(Modifier.fillMaxWidth().padding(top = 10.dp), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+            CapsuleButton("Deny all", Modifier.weight(1f).testTag("denyAll"), style = ButtonStyle.Secondary, compact = true) { onAnswer(burst, false) }
+            CapsuleButton("Approve ${burst.quick.size}", Modifier.weight(1f).testTag("approveAll"), style = ButtonStyle.Accent, compact = true) { onAnswer(burst, true) }
+        }
     }
 }
 

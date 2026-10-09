@@ -141,10 +141,18 @@ class AppNotifier(
             )
             .setSubText(untrusted(item.subtitle).ifBlank { null })
             .apply {
-                // Assisted: what Autopilot would do, under the request.
-                item.suggestion?.let { line ->
-                    val text = fullTitle(item.connectionLabel, item.action, item.count.toInt(), item.service, item.opTitle, item.op)
-                    setStyle(Notification.BigTextStyle().bigText("$text\n$line"))
+                // Expanded: what approving does, then what Autopilot would do (Assisted).
+                val text = fullTitle(item.connectionLabel, item.action, item.count.toInt(), item.service, item.opTitle, item.op)
+                val more = listOfNotNull(untrusted(item.headline).ifBlank { null }, item.suggestion)
+                if (more.isNotEmpty()) setStyle(Notification.BigTextStyle().bigText((listOf(text) + more).joinToString("\n")))
+                // Routine requests are answered right here; what is asked every time opens the sheet.
+                if (item.kind == PendingKind.REQUEST && item.quick) {
+                    addAction(Notification.Action.Builder(null, "Deny", answer(item.id, approve = false)).build())
+                    addAction(
+                        Notification.Action.Builder(null, "Approve", answer(item.id, approve = true))
+                            .setAuthenticationRequired(true)
+                            .build(),
+                    )
                 }
             }
             .setVisibility(Notification.VISIBILITY_PRIVATE)
@@ -332,6 +340,43 @@ class AppNotifier(
             .setContentIntent(openApp())
             .build()
         manager.notify(REPLACED_ID, notification)
+    }
+
+    /** Approve or Deny from the notification ([ApprovalActionReceiver]). */
+    private fun answer(id: String, approve: Boolean): PendingIntent = PendingIntent.getBroadcast(
+        context,
+        notificationId(id) xor if (approve) 0x1 else 0x2,
+        Intent(context, ApprovalActionReceiver::class.java)
+            .setAction(if (approve) ApprovalActionReceiver.ACTION_APPROVE else ApprovalActionReceiver.ACTION_DENY)
+            .putExtra(EXTRA_ID, id),
+        PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT,
+    )
+
+    /** An answer from the notification did not go through: the request still waits, one tap away. */
+    fun answerFailed(id: String, approved: Boolean, message: String) {
+        onChanged()
+        if (!manager.areNotificationsEnabled()) return
+        val notification = Notification.Builder(context, channel(Kind.Approvals, silent = Foreground.focused))
+            .setSmallIcon(R.drawable.ic_notification)
+            .setContentTitle(if (approved) "Not approved yet" else "Not denied yet")
+            .setContentText(message)
+            .setStyle(Notification.BigTextStyle().bigText("$message Open it to try again."))
+            .setVisibility(Notification.VISIBILITY_PRIVATE)
+            .setAutoCancel(true)
+            .setContentIntent(
+                PendingIntent.getActivity(
+                    context,
+                    notificationId(id),
+                    Intent(context, MainActivity::class.java)
+                        .setAction(ACTION_OPEN_ITEM)
+                        .putExtra(EXTRA_KIND, KIND_REQUEST)
+                        .putExtra(EXTRA_ID, id)
+                        .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP),
+                    PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT,
+                ),
+            )
+            .build()
+        manager.notify(notificationId(id), notification)
     }
 
     private fun openItem(item: PendingItem): PendingIntent {

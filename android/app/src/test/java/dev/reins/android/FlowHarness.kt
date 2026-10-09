@@ -72,6 +72,7 @@ abstract class FlowHarness {
         core.serviceFailure = null
         core.tokensAdded.clear()
         core.approvals.clear()
+        core.quickApprovals.clear()
         core.denials.clear()
         core.blobs.clear()
         core.blobAnswers.clear()

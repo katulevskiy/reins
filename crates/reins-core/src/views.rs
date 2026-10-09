@@ -275,6 +275,7 @@ pub fn request_subtitle(parked: &ParkedRequest) -> String {
 }
 
 pub fn request_item(parked: &ParkedRequest) -> PendingItem {
+    let view = approval_view(parked);
     PendingItem {
         kind: PendingKind::Request,
         id: parked.request.id.0.clone(),
@@ -291,6 +292,8 @@ pub fn request_item(parked: &ParkedRequest) -> PendingItem {
         op: parked.op(),
         op_title: op_title(&parked.service(), &parked.op()),
         suggestion: None,
+        headline: view.headline,
+        quick: view.quick.is_some_and(|q| q.from_notification),
     }
 }
 
@@ -372,6 +375,8 @@ pub fn pairing_item(p: &PairingRequest) -> PendingItem {
         op: String::new(),
         op_title: String::new(),
         suggestion: None,
+        headline: String::new(),
+        quick: false,
     }
 }
 
@@ -554,7 +559,7 @@ pub fn approval_view(parked: &ParkedRequest) -> ApprovalView {
         _ => None,
     };
     let write = spec.is_some_and(|s| s.effect == Effect::Write) || matches!(parked.request.call, ToolCall::Mcp(_));
-    ApprovalView {
+    let view = ApprovalView {
         request_id: parked.request.id.0.clone(),
         connection_id: parked.request.connection_id.0.clone(),
         connection_label: parked.label(),
@@ -616,7 +621,10 @@ pub fn approval_view(parked: &ParkedRequest) -> ApprovalView {
         },
         mcp: crate::mcp::flow::call_view(parked),
         blob: held.and_then(|h| h.preview.as_ref()).and_then(|p| p.blob.as_ref()).map(crate::blob::blob_view),
-    }
+        headline: String::new(),
+        quick: None,
+    };
+    crate::quick::decorate(parked, view)
 }
 
 /// "Read emails from alerts@bank.com for 1 hour" — one line describing what an AI asked for.

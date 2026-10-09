@@ -101,6 +101,13 @@ impl Engine {
         audit.op.clone_from(&call.op);
         audit.info.query = call.str_arg("query").map(text::one_line);
         audit.info.messages = items.iter().map(|i| audit_message(i)).collect();
+        audit.info.targets = items
+            .iter()
+            .filter(|i| !i.sensitive && !i.resource.is_empty())
+            .map(|i| i.resource.clone())
+            .collect::<BTreeSet<_>>()
+            .into_iter()
+            .collect();
         audit
     }
 
@@ -386,8 +393,9 @@ impl Engine {
                 self.store.insert_grant_from(grant, &parked.label(), "approval")?;
             }
             let detail = format!("approved: {}", preview.lines.first().map_or("", String::as_str));
-            let audit =
+            let mut audit =
                 self.audit_connector(request, call, action_of(call), "sent", &detail, new_grant.map(|g| g.id.0), &[]);
+            audit.info.targets = crate::quick::approval_targets(parked);
             return self
                 .settle(
                     session,

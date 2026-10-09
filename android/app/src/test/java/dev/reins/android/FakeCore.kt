@@ -92,6 +92,16 @@ class FakeCore : ReinsCoreInterface {
         pending = pending.filterNot { it.id == requestId }
     }
 
+    /** Requests approved without being opened (a notification's Approve, "Approve all"). */
+    val quickApprovals = CopyOnWriteArrayList<String>()
+
+    override suspend fun approveQuick(requestId: String) {
+        val item = pending.firstOrNull { it.id == requestId } ?: throw CoreException.NotFound()
+        if (!item.quick) throw CoreException.Invalid("Open this request to decide.")
+        quickApprovals += requestId
+        pending = pending.filterNot { it.id == requestId }
+    }
+
     override suspend fun connections() = connections
 
     val createdGrants = CopyOnWriteArrayList<Triple<String, ApprovalKind, StandingGrant>>()
