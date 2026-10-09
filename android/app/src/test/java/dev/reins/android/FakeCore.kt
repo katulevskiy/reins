@@ -2,6 +2,7 @@ package dev.reins.android
 
 import dev.reins.core.AccountKeys
 import dev.reins.core.AccountView
+import dev.reins.core.StartingPolicy
 import dev.reins.core.AutopilotMode
 import dev.reins.core.AutopilotSettings
 import dev.reins.core.ConnectionAutopilot
@@ -100,6 +101,15 @@ class FakeCore : ReinsCoreInterface {
         if (!item.quick) throw CoreException.Invalid("Open this request to decide.")
         quickApprovals += requestId
         pending = pending.filterNot { it.id == requestId }
+    }
+
+    /** The starting rule; null until chosen. */
+    @Volatile var startingPolicy: StartingPolicy? = null
+
+    override suspend fun startingPolicy() = startingPolicy
+
+    override suspend fun setStartingPolicy(policy: StartingPolicy) {
+        startingPolicy = policy
     }
 
     override suspend fun connections() = connections

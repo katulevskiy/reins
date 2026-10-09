@@ -351,8 +351,9 @@ private fun MessagesSection(view: ApprovalView, viewModel: ApprovalViewModel, ui
             if (i > 0) Hairline(inset = 52.dp)
             MessageRow(
                 message = message,
-                checked = message.coveredByGrant || message.id in draft.selected || draft.allMail != null,
-                enabled = !message.coveredByGrant && draft.allMail == null,
+                // "All mail" ticks everything but what looks like a code, which stays the user's own pick.
+                checked = message.coveredByGrant || message.id in draft.selected || (draft.allMail != null && !message.sensitive),
+                enabled = !message.coveredByGrant && (draft.allMail == null || message.sensitive),
                 onChecked = { on ->
                     viewModel.edit { d -> d.copy(selected = if (on) d.selected + message.id else d.selected - message.id) }
                 },
@@ -756,7 +757,6 @@ private fun StandardOptions(view: ApprovalView, ui: ApprovalUi, viewModel: Appro
     val c = LocalColors.current
     val draft = ui.draft
     val send = view.kind == ApprovalKind.SEND
-    val allIds = view.messages.map { it.id }
     if (!send) {
         Column(Modifier.padding(horizontal = 16.dp, vertical = 6.dp)) {
             Card {
@@ -776,7 +776,7 @@ private fun StandardOptions(view: ApprovalView, ui: ApprovalUi, viewModel: Appro
                         ALL_MAIL_LIFETIMES.forEach { kind ->
                             SelectChip(kind.label, draft.allMail == kind, Modifier.testTag("allMail:${kind.name}")) {
                                 viewModel.edit {
-                                    if (it.allMail == kind) it.copy(allMail = null) else it.copy(allMail = kind, selected = allIds.toSet())
+                                    if (it.allMail == kind) it.copy(allMail = null) else it.copy(allMail = kind, selected = view.messages.filter { m -> !m.sensitive }.map { m -> m.id }.toSet())
                                 }
                             }
                         }

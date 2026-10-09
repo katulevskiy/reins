@@ -2,6 +2,7 @@ package dev.reins.android.core
 
 import dev.reins.core.AccountKeys
 import dev.reins.core.AccountView
+import dev.reins.core.StartingPolicy
 import dev.reins.core.AutopilotMode
 import dev.reins.core.AutopilotSettings
 import dev.reins.core.DownloadProgress
@@ -65,6 +66,10 @@ class MainSafeCore(
     override suspend fun approve(requestId: String, choice: ApprovalChoice) = io { approve(requestId, choice) }
 
     override suspend fun approveQuick(requestId: String) = io { approveQuick(requestId) }
+
+    override suspend fun startingPolicy(): StartingPolicy? = io { startingPolicy() }
+
+    override suspend fun setStartingPolicy(policy: StartingPolicy) = io { setStartingPolicy(policy) }
 
     override suspend fun connections(): List<ConnectionView> = io { connections() }
 

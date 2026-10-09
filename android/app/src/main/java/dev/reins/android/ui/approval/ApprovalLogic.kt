@@ -78,10 +78,10 @@ fun buildChoice(view: ApprovalView, draft: ApprovalDraft): BuildResult {
     if (view.kind == ApprovalKind.FETCH || view.kind == ApprovalKind.WRITE) return buildConnectorAnswer(view, draft)
     val send = view.kind == ApprovalKind.SEND
     val covered = view.messages.filter { it.coveredByGrant }.map { it.id }
-    // "All mail" releases everything shown, so nothing has to be ticked.
+    // "All mail" releases everything shown but what looks like a code, so nothing has to be ticked.
     val ids = when {
         send -> emptyList()
-        draft.allMail != null -> view.messages.map { it.id }
+        draft.allMail != null -> view.messages.filter { !it.sensitive || it.id in draft.selected }.map { it.id }
         else -> view.messages.map { it.id }.filter { it in draft.selected || it in covered }
     }
     if (draft.allMail != null) return buildAllMail(view, draft, ids)

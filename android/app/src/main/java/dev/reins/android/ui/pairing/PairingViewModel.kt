@@ -34,6 +34,9 @@ class PairingViewModel(private val container: AppContainer, private val pairingI
     private val _ui = MutableStateFlow(PairingUi())
     val ui: StateFlow<PairingUi> = _ui.asStateFlow()
 
+    /** The starting rule: what connecting gives the new AI (the sheet says so before the user connects). */
+    val startingPolicy: StateFlow<dev.reins.core.StartingPolicy?> = container.state.startingPolicy
+
     init {
         viewModelScope.launch {
             try {

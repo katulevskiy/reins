@@ -182,6 +182,16 @@ Most requests take one tap:
 - **Several at once.** When one AI asks for several routine things at once, **Activity** shows **Approve N** (one
   screen lock or biometric check for all of them) and **Deny all**. What needs a closer look stays in the list.
 
+**Your starting rule.** The setup asks how a new AI should start (change it later at the end of **Grants**):
+
+- **Let it read for a day** (recommended): when you connect an AI, it gets permissions to search and read each service
+  you connected (not the vault or the desktop app) for 24 hours. They are listed under **Grants**, where you can end
+  them. Sending and changing anything still ask.
+- **Ask me every time**: every search and every read waits for you too.
+
+Whatever the rule, an email or a message that looks like a login code or a password is never released by a
+permission: it waits for your tick, and it is never ticked for you.
+
 Some requests are always asked for and never have a shortcut: vault secrets an AI wants to see, destructive changes,
 history rewrites, new connections and permission requests ([security model](security-model.md#which-device-approves)).
 
