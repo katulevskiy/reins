@@ -50,7 +50,8 @@ impl Engine {
         let accounts = self.accounts_of(service);
         let name = views::service_name(service);
         match (named, accounts.as_slice()) {
-            (_, []) => Err(format!("{name} is not connected on the user's phone. Ask them to add it under Integrations.")),
+            // Read by the AI, in the activity log and in a failed git push's terminal: so no "the user" or "them".
+            (_, []) => Err(format!("{name} is not connected in Reins yet. Add it in the Reins app on the phone: Integrations, {name}.")),
             (Some(wanted), _) => accounts.iter().find(|a| a.eq_ignore_ascii_case(wanted)).cloned().ok_or_else(|| {
                 format!("That {name} account is not connected. Call reins_list_accounts with service=\"{service}\" to ask the user to share their accounts, and pick one of those.")
             }),

@@ -195,7 +195,11 @@ object AutopilotText {
         if (auto > 0) add("$auto on Auto")
     }.joinToString(" · ")
 
-    fun profileIcon(p: ProfileView): String = p.icon?.takeIf { it.isNotBlank() } ?: if (p.name.equals("work", ignoreCase = true)) "💼" else "🙂"
+    // Accounts made before the default profiles had emoji have the words "person" and "work" there: a plain word is
+    // no icon, and showing it cut to a circle reads "per…".
+    fun profileIcon(p: ProfileView): String =
+        p.icon?.trim()?.takeIf { it.isNotEmpty() && !it.all { ch -> ch in 'a'..'z' || ch in 'A'..'Z' } }
+            ?: if (p.name.equals("work", ignoreCase = true)) "💼" else "🙂"
 
     /** The icons offered for a profile. */
     val icons = listOf("🙂", "💼", "🏠", "🧪", "🚀", "🔒", "🌙", "🎓")

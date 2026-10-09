@@ -504,3 +504,12 @@ async fn removing_a_server_drops_its_tools_grants_and_waiting_calls() {
     w.relay("r3", "search", &json!({"query": "a"})).await;
     assert!(w.answered("r3").await && w.answer("r3").await["outcome"] == "error");
 }
+
+#[tokio::test]
+async fn an_address_that_is_no_mcp_server_says_so() {
+    let w = World::new(|_| {}).await;
+    // The usual mistake: the service's web page instead of its MCP address.
+    let err = w.core.mcp_add(format!("{}/docs", w.mcp.uri()), None).await.unwrap_err().to_string();
+    assert!(err.contains("No MCP server answers at that address (HTTP 404)"), "{err}");
+    assert!(err.contains("/mcp"), "{err}");
+}

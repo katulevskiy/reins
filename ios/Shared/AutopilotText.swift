@@ -363,7 +363,9 @@ extension AutopilotText {
     }
 
     static func profileIcon(_ p: ProfileView) -> String {
-        if let icon = p.icon?.trimmingCharacters(in: .whitespaces), !icon.isEmpty { return icon }
+        // A plain word ("person", "work" in accounts made before the default profiles had emoji) is no icon.
+        if let icon = p.icon?.trimmingCharacters(in: .whitespaces), !icon.isEmpty,
+           !icon.allSatisfy({ $0.isASCII && $0.isLetter }) { return icon }
         return p.name.lowercased() == "work" ? "💼" : "🙂"
     }
 

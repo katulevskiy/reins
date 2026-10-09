@@ -19,6 +19,15 @@ class AutopilotTextTest {
     )
 
     @Test
+    fun `a profile icon that is a plain word shows the default emoji`() {
+        // Accounts made earlier have the words "person" and "work" as the default profiles' icons.
+        assertEquals("🙂", AutopilotText.profileIcon(TestData.profile(icon = "person")))
+        assertEquals("💼", AutopilotText.profileIcon(TestData.profile(name = "Work", icon = "work")))
+        assertEquals("🏠", AutopilotText.profileIcon(TestData.profile(icon = "🏠")))
+        assertEquals("🙂", AutopilotText.profileIcon(TestData.profile(icon = " ")))
+    }
+
+    @Test
     fun `switching modes sounds like what it lets happen`() {
         assertEquals(Event.AutopilotOn, AutopilotText.modeChangeEvent(AutopilotMode.MANUAL, AutopilotMode.AUTO))
         assertEquals(Event.AutopilotOff, AutopilotText.modeChangeEvent(AutopilotMode.AUTO, AutopilotMode.ASSISTED))

@@ -81,7 +81,8 @@ fn fail(e: &str) -> ExitCode {
     ExitCode::FAILURE
 }
 
-fn setup(config: &Config) -> Result<Setup, String> {
+/// Where the harnesses' settings are and what they run, for this program and `config`.
+pub fn setup(config: &Config) -> Result<Setup, String> {
     let home = crate::config::home_dir()?;
     Ok(Setup {
         home,

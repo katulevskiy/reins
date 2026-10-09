@@ -234,7 +234,7 @@ async fn files_through_the_server() -> String {
         standing: None,
     };
     let refused = core.approve("f2".to_owned(), pick(&[])).await.unwrap_err();
-    assert!(refused.to_string().contains("no longer accepts the token"), "{refused}");
+    assert!(refused.to_string().contains("does not accept the token"), "{refused}");
     core.deny("f2".to_owned()).await.unwrap();
     core.approve("f3".to_owned(), pick(&["me/app:asset:3"])).await.unwrap();
     let after =

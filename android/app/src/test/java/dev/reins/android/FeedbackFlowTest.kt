@@ -176,4 +176,17 @@ class FeedbackFlowTest : FlowHarness() {
         val clipboard = context.getSystemService(android.content.ClipboardManager::class.java)
         assertEquals("http://127.0.0.1:8000", clipboard.primaryClip?.getItemAt(0)?.text?.toString())
     }
+
+    @Test
+    fun withNoAiConnectedSettingsOffersTheMcpAddressToCopy() {
+        core.connections = emptyList()
+        launch()
+        tap("openSettings")
+        heard.clear()
+        awaitText("custom connector with http://127.0.0.1:8000/mcp", substring = true)
+        tap("copyMcpUrl")
+        assertTrue(heard.played(Event.Copied))
+        val clipboard = context.getSystemService(android.content.ClipboardManager::class.java)
+        assertEquals("http://127.0.0.1:8000/mcp", clipboard.primaryClip?.getItemAt(0)?.text?.toString())
+    }
 }

@@ -13,6 +13,7 @@ import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.testTag
@@ -42,7 +43,9 @@ fun NewGrantScreen(viewModel: NewGrantViewModel, state: AppState, authenticator:
     val c = LocalColors.current
     val ui by viewModel.ui.collectAsStateWithLifecycle()
     val connections by state.connections.collectAsStateWithLifecycle()
-    val accounts by state.accounts.collectAsStateWithLifecycle()
+    // A grant made here is for mail: the vault and the other services' accounts are not offered.
+    val allAccounts by state.accounts.collectAsStateWithLifecycle()
+    val accounts = remember(allAccounts) { allAccounts.filter { it.service == "gmail" } }
     val draft = ui.draft
     LaunchedEffect(ui.finished) { if (ui.finished) onDone() }
     // With a single AI there is nothing to choose.

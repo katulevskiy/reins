@@ -333,7 +333,7 @@ impl Engine {
         }
         let now = unix_now();
         let mut first = None;
-        for (offset, (name, icon)) in [("Personal", "person"), ("Work", "work")].into_iter().enumerate() {
+        for (offset, (name, icon)) in [("Personal", "🙂"), ("Work", "💼")].into_iter().enumerate() {
             let id = uuid::Uuid::new_v4().to_string();
             let profile = Profile {
                 name: name.to_owned(),

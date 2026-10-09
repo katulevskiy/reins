@@ -31,10 +31,13 @@ class ForegroundSync(private val container: AppContainer, private val waitSecs: 
                         container.state.setSession(SessionState.SignedOut)
                         return
                     }
-                    e is CoreException.Server && e.status.toInt() == 403 -> {
+                    e is CoreException.Server && e.status.toInt() == 403 && container.state.approvalDevice.value -> {
                         container.markReplaced()
                         return
                     }
+                    // Refused before this phone registered: right after a sign-in the first poll can run before the
+                    // registration does. Ask again, instead of stopping until the app is opened again.
+                    e is CoreException.Server && e.status.toInt() == 403 && container.state.deviceReplaced.value -> return
                     else -> {
                         delay(backoffMillis(failures))
                         failures++

@@ -41,7 +41,9 @@ fn explain(status: StatusCode, body: &str) -> CoreError {
         None => CoreError::service(what),
     };
     match status {
-        StatusCode::UNAUTHORIZED => CoreError::needs_attention("GitHub no longer accepts the token"),
+        StatusCode::UNAUTHORIZED => {
+            CoreError::needs_attention("GitHub does not accept the token: it is mistyped, expired or revoked")
+        }
         StatusCode::FORBIDDEN => with("GitHub refused: the token may not reach that, or the rate limit is used up"),
         StatusCode::NOT_FOUND => with("GitHub says that does not exist, or the token cannot see it"),
         StatusCode::UNPROCESSABLE_ENTITY => with("GitHub did not accept that"),

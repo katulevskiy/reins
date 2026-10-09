@@ -186,3 +186,16 @@ async fn the_desktop_app_pairs_by_a_qr_code_the_phone_scans() {
     assert!(matches!(phone.core.pairing_by_code("not a code".to_owned()).await, Err(CoreError::Invalid { .. })));
     assert!(!server.log().contains("panicked"), "server log: {}", server.log());
 }
+
+/// "Continue" on a server without SSO opens the browser sign-in; the page says what to do instead of a JSON error.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn a_server_without_sso_explains_the_browser_sign_in_in_words() {
+    let server = Server::start(30, 10).await;
+    let start = reins_core::sso::begin(&ServerUrl::parse(&server.base).unwrap()).unwrap();
+    let r = http().get(&start.url).send().await.unwrap();
+    assert_eq!(r.status(), reqwest::StatusCode::NOT_FOUND);
+    assert!(r.headers()["content-type"].to_str().unwrap().starts_with("text/html"));
+    let page = r.text().await.unwrap();
+    assert!(page.contains("No browser sign-in on this server"), "{page}");
+    assert!(page.contains("master password"), "{page}");
+}
