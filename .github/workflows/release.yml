@@ -393,7 +393,7 @@ jobs:
     needs: [plan, macos-app-native]
     if: needs.plan.outputs.release == 'true'
     runs-on: macos-15
-    timeout-minutes: 20
+    timeout-minutes: 75 # notarization (twice: the app, then the disk image) can take long, the first ones especially
     permissions:
       contents: read
       id-token: write # Infisical OIDC (the Developer ID identity and notary key)
