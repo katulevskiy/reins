@@ -17,8 +17,9 @@ import kotlin.coroutines.cancellation.CancellationException
  * ([ais] > 1, [connectionId] empty): their routine requests together, and "Deny" takes back only those.
  */
 data class Burst(val connectionId: String, val label: String, val quick: List<String>, val all: List<String>, val ais: Int = 1) {
+    /** Says who asks: one AI's name, or for several their names ("Claude and Codex", "Claude, Codex and 2 more"). */
     val title: String
-        get() = if (ais > 1) "${quick.size} routine · $ais AIs" else "${untrusted(label)} · ${all.size} waiting"
+        get() = if (ais > 1) "${quick.size} routine · ${untrusted(label)}" else "${untrusted(label)} · ${all.size} waiting"
 
     /** What stays in the list for a closer look, or null. */
     val heldNote: String?
@@ -43,7 +44,14 @@ fun burstBar(pending: List<PendingItem>): Burst? {
     val all = bursts(pending)
     if (all.size <= 1) return all.firstOrNull()
     val quick = all.flatMap { it.quick }
-    return Burst(connectionId = "", label = "", quick = quick, all = quick, ais = all.size)
+    return Burst(connectionId = "", label = names(all.map { it.label }), quick = quick, all = quick, ais = all.size)
+}
+
+/** "Claude", "Claude and Codex", "Claude, Codex and 2 more". */
+private fun names(labels: List<String>): String = when (labels.size) {
+    1 -> labels[0]
+    2 -> "${labels[0]} and ${labels[1]}"
+    else -> "${labels[0]}, ${labels[1]} and ${labels.size - 2} more"
 }
 
 /**

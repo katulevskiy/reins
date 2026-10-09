@@ -97,7 +97,7 @@ class QuickApprovalsFlowTest : FlowHarness() {
         launch()
         awaitTag("burst")
         assertEquals(1, rule.onAllNodes(androidx.compose.ui.test.hasTestTag("burst")).fetchSemanticsNodes().size)
-        rule.onNodeWithTag("burstTitle").assertTextEquals("4 routine · 2 AIs")
+        rule.onNodeWithTag("burstTitle").assertTextEquals("4 routine · Claude and Codex")
         assertFalse(has("burstHeld"))
         tap("denyAll")
         awaitCore { core.denials.size == 4 }
