@@ -429,6 +429,7 @@ pub struct App {
 pub async fn logged_in(mock: &Mock) -> App {
     let dir = tempfile::tempdir().unwrap();
     let paths = Paths::under(dir.path());
+    quiet(&paths);
     let identity = Arc::new(Identity::generate());
     let server = reins_desktop::server::oauth::login_with_browser(&paths, &identity, &mock.base, |link| {
         tokio::spawn(browse(link.to_owned()));
@@ -486,4 +487,10 @@ pub fn tag_push() -> PushSummary {
     reins_proto::desktop::ZERO_OID.clone_into(&mut s.updates[0].old);
     s.updates[0].fast_forward = None;
     s
+}
+
+/// No "check your phone" notifications from tests (they would pop up on the desktop running them).
+pub fn quiet(paths: &Paths) {
+    paths.ensure().unwrap();
+    std::fs::write(paths.config_file(), "[notify]\nphone = false\n").unwrap();
 }

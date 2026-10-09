@@ -14,6 +14,7 @@ use serde_json::{Value, json};
 use crate::auth::prompt::{PendingItem, Prompter};
 use crate::config::{Config, Mode, Paths};
 use crate::identity::{Identity, IdentityError};
+use crate::journal::{Decider as JournalDecider, Entry, Journal, Outcome};
 use crate::server::LinkError;
 use crate::server::client::{CallAnswer, CallStatus, DesktopClient};
 
@@ -31,12 +32,16 @@ pub struct Question {
     pub topic: Option<String>,
 }
 
-/// At most `max` characters; a cut text ends with `…`.
+/// At most `max` bytes (so also characters: servers before 0.2.8 counted bytes); a cut text ends with `…`.
 fn cut(text: &str, max: usize) -> String {
-    if text.chars().count() <= max {
+    if text.len() <= max {
         return text.to_owned();
     }
-    let mut s: String = text.chars().take(max - 1).collect();
+    let mut end = max.saturating_sub('…'.len_utf8());
+    while !text.is_char_boundary(end) {
+        end -= 1;
+    }
+    let mut s = text[..end].to_owned();
     s.push('…');
     s
 }
@@ -46,8 +51,9 @@ fn one_line(text: &str) -> String {
 }
 
 impl Question {
-    /// The question on one line (≤ 300 characters), the detail without control characters but newlines and tabs (≤
-    /// 8,000), the topic on one line (≤ 100). An empty question is refused.
+    /// The question on one line (≤ 300 bytes), the detail without control characters but newlines and tabs (≤
+    /// 8,000), the topic on one line (≤ 100). An empty question is refused. A long command fits: the question is cut,
+    /// the detail keeps the whole command (up to its limit).
     pub fn new(question: &str, detail: Option<&str>, topic: Option<&str>) -> Result<Self, String> {
         let question = cut(&one_line(question), MAX_QUESTION);
         if question.is_empty() {
@@ -136,6 +142,72 @@ pub async fn ask(
         Ok(Decider::Local) if interactive => ask_terminal_stdin(q, timeout).await,
         Ok(Decider::Local) => ask_desktop(prompter, q, timeout).await,
     }
+}
+
+/// How an answer goes in the activity log: `Unanswered` after the whole `timeout` is a timeout, earlier a failure.
+#[must_use]
+pub fn outcome(answer: &Answer, waited: Duration, timeout: Duration) -> (Outcome, Option<String>) {
+    match answer {
+        Answer::Yes => (Outcome::Approved, None),
+        Answer::No(why) => (Outcome::Denied, Some(why.clone())),
+        Answer::Unanswered(why) if waited + Duration::from_millis(500) >= timeout => {
+            (Outcome::TimedOut, Some(why.clone()))
+        }
+        Answer::Unanswered(why) => (Outcome::Failed, Some(why.clone())),
+    }
+}
+
+/// [`ask`], written to this computer's activity log as `entry`. When the answer takes a moment the entry is logged as
+/// waiting, the desktop says "check your phone" (when the phone decides), and `tell` (stderr for a hook) gets a
+/// waiting line and then how it ended. Returns the answer and whether it timed out.
+#[allow(clippy::too_many_arguments, reason = "the question, where it goes and how it is logged")]
+pub async fn ask_logged(
+    paths: &Paths,
+    config: &Config,
+    q: &Question,
+    timeout: Duration,
+    interactive: bool,
+    prompter: &dyn Prompter,
+    entry: Entry,
+    tell: Option<&(dyn Fn(&str) + Sync)>,
+) -> (Answer, bool) {
+    let journal = Journal::new(paths);
+    let who = match decider(paths, config) {
+        Ok(Decider::Phone) => JournalDecider::Phone,
+        _ => JournalDecider::Local,
+    };
+    let mut entry = entry.decider(who);
+    let started = Instant::now();
+    let asking = ask(paths, config, q, timeout, interactive, prompter);
+    let mut asking = std::pin::pin!(asking);
+    let quick = tokio::select! {
+        a = &mut asking => Some(a),
+        () = tokio::time::sleep(crate::phone::NOTICE_AFTER) => None,
+    };
+    let waited = quick.is_none();
+    let answer = if let Some(a) = quick {
+        a
+    } else {
+        journal.record(&entry);
+        if who == JournalDecider::Phone {
+            journal.notify_waiting(&entry.what);
+        }
+        // The terminal prompt shows itself.
+        if !interactive && let Some(tell) = tell {
+            tell(&crate::phone::waiting_line(who, timeout, &entry.what));
+        }
+        asking.await
+    };
+    let (outcome, reason) = outcome(&answer, started.elapsed(), timeout);
+    entry.end(outcome, reason.as_deref());
+    journal.record(&entry);
+    if waited
+        && !interactive
+        && let Some(tell) = tell
+    {
+        tell(&crate::phone::ended_line(who, outcome, reason.as_deref(), timeout));
+    }
+    (answer, outcome == Outcome::TimedOut)
 }
 
 /// Asks the phone through the Reins server and waits up to `timeout` for its sealed answer.
@@ -373,10 +445,14 @@ mod tests {
         assert_eq!(q.detail.as_deref(), Some("line 1\nline 2"));
         assert_eq!(q.topic.as_deref(), Some("command:git push"));
         let long = Question::new(&"x".repeat(400), Some(&"d".repeat(9_000)), Some(&"t".repeat(200))).unwrap();
-        assert_eq!(long.question.chars().count(), 300);
+        assert_eq!(long.question.len(), 300);
         assert!(long.question.ends_with('…'));
-        assert_eq!(long.detail.unwrap().chars().count(), 8_000);
-        assert_eq!(long.topic.unwrap().chars().count(), 100);
+        assert_eq!(long.detail.unwrap().len(), 8_000);
+        assert_eq!(long.topic.unwrap().len(), 100);
+        // Multi-byte text is cut on a character boundary, within the limit in bytes.
+        let wide = Question::new(&"é".repeat(400), Some(&"ж".repeat(9_000)), None).unwrap();
+        assert!(wide.question.len() <= 300 && wide.question.ends_with('…'));
+        assert!(wide.detail.unwrap().len() <= 8_000);
         assert!(Question::new(" \n ", None, None).is_err());
         let q = Question::new("q", Some("  "), Some("")).unwrap();
         assert_eq!((q.detail, q.topic), (None, None));

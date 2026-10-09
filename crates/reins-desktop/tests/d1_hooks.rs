@@ -10,7 +10,7 @@ use reins_desktop::auth::prompt::NoPrompter;
 use reins_desktop::config::Config;
 use reins_desktop::guard::OnNoAnswer;
 use reins_desktop::harness::Harness;
-use reins_desktop::hooks;
+use reins_desktop::{hooks, journal};
 use serde_json::{Value, json};
 
 const CLAUDE_BASH: &str = r#"{
@@ -98,7 +98,7 @@ async fn claude_code_pre_tool_use() {
     let mock = Mock::start().await;
     let config = Config::default();
     let (run, asked) = hook(&mock, Harness::ClaudeCode, CLAUDE_BASH, &config).await;
-    claude("allow", "Approved", &run);
+    claude("allow", "Reins 2FA: approved", &run);
     let asked = asked.unwrap();
     assert_eq!(asked["question"], "Claude Code wants to run: git push --force origin main");
     assert_eq!(asked["topic"], "command:git push --force*");
@@ -111,7 +111,7 @@ async fn claude_code_pre_tool_use() {
 
     mock.plan(&[Step::Approve]);
     let (run, asked) = hook(&mock, Harness::ClaudeCode, CLAUDE_READ_ENV, &config).await;
-    claude("allow", "Approved", &run);
+    claude("allow", "Reins 2FA: approved", &run);
     let asked = asked.unwrap();
     assert_eq!(asked["question"], "Claude Code wants to read /home/me/app/.env");
     assert_eq!(asked["topic"], "file:.env");
@@ -119,12 +119,12 @@ async fn claude_code_pre_tool_use() {
     // No answer: refused by default, or left to Claude Code's own prompt.
     mock.plan(&[Step::Error("The phone is offline.")]);
     let (run, _) = hook(&mock, Harness::ClaudeCode, CLAUDE_BASH, &config).await;
-    claude("deny", "nobody answered (The phone is offline.)", &run);
+    claude("deny", "could not ask (The phone is offline.)", &run);
     let mut ask = Config::default();
     ask.guard.on_no_answer = OnNoAnswer::Ask;
     mock.plan(&[Step::Error("The phone is offline.")]);
     let (run, _) = hook(&mock, Harness::ClaudeCode, CLAUDE_BASH, &ask).await;
-    claude("ask", "no answer", &run);
+    claude("ask", "Reins 2FA: could not ask", &run);
 
     // Nothing risky: no output, no question.
     let (run, asked) = hook(&mock, Harness::ClaudeCode, CLAUDE_LS, &config).await;
@@ -136,11 +136,34 @@ async fn claude_code_pre_tool_use() {
 }
 
 #[tokio::test]
+async fn hooks_write_this_computers_activity_log() {
+    let mock = Mock::start().await;
+    let app = logged_in(&mock, 3600);
+    let config = Config::default();
+    hooks::run(Harness::ClaudeCode, CLAUDE_BASH.as_bytes(), &app.paths, &config, &NoPrompter).await;
+    mock.plan(&[Step::Denied(Some("Not on main."))]);
+    hooks::run(Harness::ClaudeCode, CLAUDE_BASH.as_bytes(), &app.paths, &config, &NoPrompter).await;
+    // Nothing risky: not asked, not logged.
+    hooks::run(Harness::ClaudeCode, CLAUDE_LS.as_bytes(), &app.paths, &config, &NoPrompter).await;
+    let log = journal::read(&app.paths, 10, 3_600);
+    assert_eq!(log.len(), 2, "{log:?}");
+    for e in &log {
+        assert_eq!(e.kind, journal::Kind::Command);
+        assert_eq!(e.source.as_deref(), Some("Claude Code"));
+        assert_eq!(e.what, "Claude Code wants to run: git push --force origin main");
+        assert_eq!(e.decider, journal::Decider::Phone);
+    }
+    assert!(log.iter().any(|e| e.outcome == journal::Outcome::Approved));
+    let denied = log.iter().find(|e| e.outcome == journal::Outcome::Denied).unwrap();
+    assert_eq!(denied.reason.as_deref(), Some("Not on main."));
+}
+
+#[tokio::test]
 async fn codex_pre_tool_use() {
     let mock = Mock::start().await;
     let config = Config::default();
     let (run, asked) = hook(&mock, Harness::Codex, CODEX_BASH, &config).await;
-    claude("allow", "Approved", &run);
+    claude("allow", "Reins 2FA: approved", &run);
     assert_eq!(asked.unwrap()["topic"], "command:terraform apply");
 
     mock.plan(&[Step::Denied(None)]);

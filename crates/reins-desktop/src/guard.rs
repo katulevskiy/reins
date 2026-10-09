@@ -119,6 +119,170 @@ pub const DEFAULT_FILES: &[&str] = &[
 pub const DEFAULT_ALLOW_FILES: &[&str] =
     &["*.pub", "known_hosts", ".env.example", ".env.sample", ".env.template", ".env.dist"];
 
+/// A named part of the built-in rules, which the desktop app (or `disabled_groups`) can turn off on its own.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Group {
+    pub id: &'static str,
+    pub label: &'static str,
+    pub detail: &'static str,
+    pub commands: &'static [&'static str],
+    pub files: &'static [&'static str],
+}
+
+/// The built-in rules by kind. Together they are exactly [`DEFAULT_COMMANDS`] and [`DEFAULT_FILES`].
+pub const GROUPS: &[Group] = &[
+    Group {
+        id: "git-history",
+        label: "Rewriting git history",
+        detail: "Force pushes, deleted branches, reset --hard, clean -f, filter-repo",
+        commands: &[
+            "git push -f",
+            "git push --force*",
+            "git push +*",
+            "git push -d",
+            "git push --delete",
+            "git push --mirror",
+            "git push --prune",
+            "git push :*",
+            "git reset --hard",
+            "git clean -f",
+            "git clean --force",
+            "git branch -D",
+            "git checkout -f",
+            "git filter-branch",
+            "git filter-repo",
+        ],
+        files: &[],
+    },
+    Group {
+        id: "deletes",
+        label: "Recursive deletes",
+        detail: "rm -r, Remove-Item -Recurse, rd /s",
+        commands: &[
+            "rm -r",
+            "rm -R",
+            "rm --recursive",
+            "Remove-Item -Recurse",
+            "ri -Recurse",
+            "del -Recurse",
+            "erase -Recurse",
+            "rd -Recurse",
+            "rmdir -Recurse",
+            "rd /s",
+            "rmdir /s",
+            "del /s",
+            "erase /s",
+        ],
+        files: &[],
+    },
+    Group {
+        id: "infrastructure",
+        label: "Infrastructure changes",
+        detail: "terraform and tofu apply or destroy, kubectl apply or delete, helm uninstall",
+        commands: &[
+            "terraform apply",
+            "terraform destroy",
+            "tofu apply",
+            "tofu destroy",
+            "kubectl apply",
+            "kubectl delete",
+            "helm uninstall",
+            "helm delete",
+        ],
+        files: &[],
+    },
+    Group {
+        id: "databases",
+        label: "Dropping data",
+        detail: "DROP TABLE, DROP DATABASE, DROP SCHEMA, TRUNCATE TABLE",
+        commands: &["text:drop table", "text:drop database", "text:drop schema", "text:truncate table"],
+        files: &[],
+    },
+    Group {
+        id: "publishing",
+        label: "Publishing",
+        detail: "npm, cargo, PyPI and gem publishes, docker push, deleting GitHub repos and releases",
+        commands: &[
+            "npm publish",
+            "pnpm publish",
+            "yarn publish",
+            "yarn npm publish",
+            "cargo publish",
+            "poetry publish",
+            "uv publish",
+            "twine upload",
+            "gem push",
+            "docker push",
+            "gh repo delete",
+            "gh release delete",
+        ],
+        files: &[],
+    },
+    Group {
+        id: "disks",
+        label: "Wiping disks",
+        detail: "mkfs, dd of=, format, Format-Volume, Clear-Disk",
+        commands: &["mkfs*", "dd of=*", "format *:", "Format-Volume", "Clear-Disk"],
+        files: &[],
+    },
+    Group {
+        id: "env-files",
+        label: ".env files",
+        detail: "Reading or changing .env and .env.* (not .env.example)",
+        commands: &[],
+        files: &[".env", ".env.*"],
+    },
+    Group {
+        id: "keys",
+        label: "Keys and certificates",
+        detail: "*.pem, *.key, *.p12, keystores, SSH private keys, ~/.ssh",
+        commands: &[],
+        files: &[
+            "*.pem",
+            "*.key",
+            "*.p12",
+            "*.pfx",
+            "*.jks",
+            "*.keystore",
+            "id_rsa",
+            "id_dsa",
+            "id_ecdsa",
+            "id_ed25519",
+            ".ssh/*",
+        ],
+    },
+    Group {
+        id: "cloud",
+        label: "Cloud and cluster credentials",
+        detail: "AWS, Google Cloud, Azure, kubeconfig, Docker logins, Terraform state",
+        commands: &[],
+        files: &[
+            "*.tfstate",
+            ".aws/credentials",
+            ".aws/config",
+            ".config/gcloud/*",
+            ".azure/*",
+            ".kube/config",
+            ".docker/config.json",
+            "AppData/Roaming/gcloud/*",
+            "credentials.json",
+        ],
+    },
+    Group {
+        id: "tokens",
+        label: "Saved tokens",
+        detail: ".netrc, .git-credentials, .npmrc, .pypirc, .vault-token",
+        commands: &[],
+        files: &[".netrc", "_netrc", ".git-credentials", ".npmrc", ".pypirc", ".vault-token"],
+    },
+];
+
+/// The group a built-in pattern belongs to.
+#[must_use]
+pub fn group_of(pattern: &str) -> Option<&'static Group> {
+    GROUPS.iter().find(|g| g.commands.contains(&pattern) || g.files.contains(&pattern))
+}
+
 /// What a hook does when the question gets no answer (timeout, phone offline, not logged in).
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -135,6 +299,8 @@ pub enum OnNoAnswer {
 pub struct GuardConfig {
     /// Use the built-in rules ([`DEFAULT_COMMANDS`], [`DEFAULT_FILES`], [`DEFAULT_ALLOW_FILES`]) besides these lists.
     pub defaults: bool,
+    /// Built-in groups ([`GROUPS`]) left out: what they cover goes through without asking.
+    pub disabled_groups: Vec<String>,
     pub commands: Vec<String>,
     pub files: Vec<String>,
     pub allow_commands: Vec<String>,
@@ -148,6 +314,7 @@ impl Default for GuardConfig {
     fn default() -> Self {
         Self {
             defaults: true,
+            disabled_groups: Vec::new(),
             commands: Vec::new(),
             files: Vec::new(),
             allow_commands: Vec::new(),
@@ -177,6 +344,12 @@ impl GuardConfig {
                 return Err(format!("`guard`: the command pattern `{p}` is empty"));
             }
         }
+        if let Some(g) = self.disabled_groups.iter().find(|g| !GROUPS.iter().any(|known| known.id == g.as_str())) {
+            return Err(format!(
+                "`guard.disabled_groups`: `{g}` is not one of {}",
+                GROUPS.iter().map(|g| g.id).collect::<Vec<_>>().join(", ")
+            ));
+        }
         if let Some(p) = self.files.iter().chain(&self.allow_files).find(|p| p.trim().trim_matches('/').is_empty()) {
             return Err(format!("`guard`: the file pattern `{p}` is empty"));
         }
@@ -189,7 +362,17 @@ impl GuardConfig {
         } else {
             &[]
         };
-        builtin.iter().copied().chain(extra.iter().map(String::as_str))
+        builtin
+            .iter()
+            .copied()
+            .filter(|p| group_of(p).is_none_or(|g| !self.group_off(g.id)))
+            .chain(extra.iter().map(String::as_str))
+    }
+
+    /// Whether the built-in group `id` is turned off.
+    #[must_use]
+    pub fn group_off(&self, id: &str) -> bool {
+        self.disabled_groups.iter().any(|g| g == id)
     }
 
     /// The first rule `command` (a shell command line) matches, if any.
@@ -586,6 +769,38 @@ fn split_commands(command: &str, windows: bool) -> Vec<Vec<String>> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_groups_are_exactly_the_built_in_rules() {
+        let mut commands: Vec<&str> = GROUPS.iter().flat_map(|g| g.commands.iter().copied()).collect();
+        let mut files: Vec<&str> = GROUPS.iter().flat_map(|g| g.files.iter().copied()).collect();
+        let (mut want_c, mut want_f) = (DEFAULT_COMMANDS.to_vec(), DEFAULT_FILES.to_vec());
+        for v in [&mut commands, &mut files, &mut want_c, &mut want_f] {
+            v.sort_unstable();
+        }
+        assert_eq!(commands, want_c);
+        assert_eq!(files, want_f);
+        let mut ids: Vec<&str> = GROUPS.iter().map(|g| g.id).collect();
+        ids.dedup();
+        assert_eq!(ids.len(), GROUPS.len());
+    }
+
+    #[test]
+    fn a_disabled_group_lets_its_commands_and_files_through() {
+        let mut g = GuardConfig::default();
+        assert!(g.check_command("npm publish").is_some());
+        assert!(g.check_file("/app/.env").is_some());
+        g.disabled_groups = vec!["publishing".to_owned(), "env-files".to_owned()];
+        g.validate().unwrap();
+        assert!(g.check_command("npm publish").is_none());
+        assert!(g.check_file("/app/.env").is_none());
+        // The other groups and the user's own rules still ask.
+        assert!(g.check_command("git push --force").is_some());
+        g.commands.push("npm publish".to_owned());
+        assert!(g.check_command("npm publish").is_some());
+        g.disabled_groups.push("nope".to_owned());
+        assert!(g.validate().unwrap_err().contains("nope"));
+    }
 
     fn guard() -> GuardConfig {
         GuardConfig::default()

@@ -328,7 +328,7 @@ async fn foreign_hosts_browsers_and_unknown_paths_are_refused() {
         .await;
         assert!(answer.starts_with("HTTP/1.1 404"), "{path}\n{answer}");
     }
-    assert!(up.seen().len() <= 2);
+    assert!(up.seen().len() <= 2, "{:?}", up.seen().iter().map(|s| (&s.method, &s.path, s.status)).collect::<Vec<_>>());
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
@@ -365,6 +365,8 @@ async fn the_control_api_needs_the_token() {
     assert_eq!(status.proxy_base, format!("http://{addr}/github.com/"));
     assert_eq!(status.fingerprint.len(), 9);
     assert!(client.pending().await.unwrap().is_empty());
+    let overview = client.overview().await.unwrap();
+    assert!(overview.started_at > 0 && overview.connections.is_empty(), "{overview:?}");
     assert!(client.answer("abcd1234", true).await.unwrap_err().to_string().contains("No pending approval"));
     assert!(proxy.control_token().len() >= 64);
 }
@@ -381,8 +383,12 @@ async fn git_is_told_while_an_approval_is_awaited() {
     let clone = home.git_ok("", &["clone", "-q", "https://github.com/me/priv", "priv"]).await;
     // The daemon tells the client through /proc (Linux only; elsewhere it says nothing, see notice.rs).
     if cfg!(target_os = "linux") {
-        assert!(clone.stderr.contains("reins: waiting for approval: read github.com/me/priv…"), "{}", clone.all());
-        assert!(clone.stderr.contains("reins: approved."), "{}", clone.all());
+        assert!(
+            clone.stderr.contains("reins: waiting for Reins 2FA on your phone, up to 120 s: read github.com/me/priv…"),
+            "{}",
+            clone.all()
+        );
+        assert!(clone.stderr.contains("reins: approved on your phone."), "{}", clone.all());
     }
     home.commit("priv", "a.txt", b"hello\n", "Add a").await;
     let push = home.git_ok("priv", &["push", "origin", "main"]).await;
@@ -391,4 +397,13 @@ async fn git_is_told_while_an_approval_is_awaited() {
     *auth.delay.lock().unwrap() = std::time::Duration::ZERO;
     let fetch = home.git_ok("priv", &["fetch", "origin"]).await;
     assert!(!fetch.stderr.contains("reins:"), "{}", fetch.all());
+    // The activity log has the reads that waited and the push; the overview counts the connections.
+    let log = reins_desktop::journal::read(&proxy.paths, 20, 3_600);
+    assert!(log.iter().all(|e| e.kind == reins_desktop::journal::Kind::Git), "{log:?}");
+    assert!(log.iter().any(|e| e.what.starts_with("push to github.com/me/priv: main")), "{log:?}");
+    assert!(log.iter().all(|e| e.outcome == reins_desktop::journal::Outcome::Approved), "{log:?}");
+    let overview = Client::new(&proxy.paths, proxy.addr()).unwrap().overview().await.unwrap();
+    let git = overview.connections.iter().find(|c| c.kind == "git").expect("a git connection");
+    assert_eq!(git.target, "github.com/me/priv");
+    assert!(git.count >= 3, "{git:?}");
 }

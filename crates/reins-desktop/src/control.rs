@@ -1,4 +1,5 @@
-//! The daemon's control API under `/_reins/`, used by the CLI: `GET status`, `GET pending`,
+//! The daemon's control API under `/_reins/`, used by the CLI and the desktop app: `GET status`, `GET overview` (the
+//! connections made, the API keys held, the SSH keys known; never a secret), `GET pending`,
 //! `POST pending/<id>/approve`, `POST pending/<id>/deny`, and `POST shutdown` (how the Windows background service is
 //! stopped: there is no service manager there to send it a signal). Every call needs `X-Reins-Token` with the secret the
 //! daemon wrote to `control.token` (0600), so only the user (and what runs as the user) can approve.
@@ -32,11 +33,43 @@ pub struct Status {
     pub pending: usize,
 }
 
+/// One `[[api]]` of the API proxy.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ApiInfo {
+    pub name: String,
+    pub base: String,
+    /// Unix seconds when the key the phone released runs out; `None`: no key held.
+    pub leased_until: Option<i64>,
+}
+
+/// One SSH key the phone listed.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SshKeyInfo {
+    pub name: String,
+    pub fingerprint: String,
+}
+
+/// `GET /_reins/overview`: what the daemon did and holds, for the desktop app.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Overview {
+    /// Unix seconds when the daemon started.
+    pub started_at: i64,
+    pub connections: Vec<crate::stats::Connection>,
+    pub apis: Vec<ApiInfo>,
+    /// Where the SSH agent listens, when it runs.
+    pub ssh_socket: Option<String>,
+    /// The keys the phone listed last (none until ssh first asked).
+    pub ssh_keys: Vec<SshKeyInfo>,
+}
+
+type Overviewer = Box<dyn Fn() -> Overview + Send + Sync>;
+
 /// The daemon side.
 pub struct Control {
     token: Zeroizing<String>,
     pending: Arc<Pending>,
     status: Box<dyn Fn() -> Status + Send + Sync>,
+    overview: Overviewer,
     stop: Arc<tokio::sync::Notify>,
 }
 
@@ -66,8 +99,16 @@ impl Control {
             token,
             pending,
             status,
+            overview: Box::new(Overview::default),
             stop: Arc::new(tokio::sync::Notify::new()),
         }
+    }
+
+    /// What `GET overview` answers.
+    #[must_use]
+    pub fn with_overview(mut self, overview: Overviewer) -> Self {
+        self.overview = overview;
+        self
     }
 
     /// Notified when `POST shutdown` asks the daemon to stop.
@@ -86,6 +127,7 @@ impl Control {
         let parts: Vec<&str> = rest.split('/').collect();
         match (method, parts.as_slice()) {
             (&Method::GET, ["status"]) => json(&(self.status)()),
+            (&Method::GET, ["overview"]) => json(&(self.overview)()),
             (&Method::GET, ["pending"]) => json(&self.pending.list()),
             (&Method::POST, ["pending", id, action @ ("approve" | "deny")]) => {
                 if self.pending.answer(id, *action == "approve") {
@@ -160,6 +202,14 @@ impl Client {
 
     pub async fn status(&self) -> Result<Status, ClientError> {
         self.call(Method::GET, "status").await
+    }
+
+    /// The daemon's overview; an older daemon without one answers with an empty overview.
+    pub async fn overview(&self) -> Result<Overview, ClientError> {
+        match self.call(Method::GET, "overview").await {
+            Err(ClientError::Other(e)) if e.contains("Unknown control path") => Ok(Overview::default()),
+            r => r,
+        }
     }
 
     pub async fn pending(&self) -> Result<Vec<PendingItem>, ClientError> {

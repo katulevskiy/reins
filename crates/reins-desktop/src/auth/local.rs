@@ -298,6 +298,10 @@ impl Authorizer for LocalAuthorizer {
     fn describe(&self) -> String {
         "the local policy on this computer".to_owned()
     }
+
+    fn decider(&self) -> crate::journal::Decider {
+        crate::journal::Decider::Local
+    }
 }
 
 #[cfg(test)]

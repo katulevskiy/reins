@@ -504,6 +504,7 @@ impl Proxy {
         capture_logs();
         let state = tempfile::tempdir().unwrap();
         let paths = Paths::under(state.path());
+        quiet(&paths);
         let daemon = Daemon::bind(&paths, config, options).await.unwrap();
         Self {
             running: daemon.spawn(),
@@ -543,4 +544,10 @@ pub async fn raw_http(addr: SocketAddr, request: &str) -> String {
     let mut out = Vec::new();
     s.read_to_end(&mut out).await.unwrap();
     String::from_utf8_lossy(&out).into_owned()
+}
+
+/// No "check your phone" notifications from tests (they would pop up on the desktop running them).
+pub fn quiet(paths: &Paths) {
+    paths.ensure().unwrap();
+    std::fs::write(paths.config_file(), "[notify]\nphone = false\n").unwrap();
 }

@@ -16,6 +16,7 @@ use zeroize::Zeroizing;
 use crate::auth::Refusal;
 use crate::config::{Config, Mode, Paths};
 use crate::identity::Identity;
+use crate::journal::{Entry, Journal, Kind};
 use crate::phone::{Phone, awaiting, teller};
 use crate::secrets::{self, MAX_SECRETS, SecretRef};
 
@@ -166,7 +167,12 @@ impl Plan {
 }
 
 /// Asks the phone for the plan's secrets; the variables to set, in the plan's order.
-pub async fn release(plan: &Plan, phone: &Phone) -> Result<Vec<(String, Zeroizing<String>)>, Refusal> {
+pub async fn release(
+    plan: &Plan,
+    phone: &Phone,
+    journal: &Journal,
+    timeout: Duration,
+) -> Result<Vec<(String, Zeroizing<String>)>, Refusal> {
     let secrets = plan.secrets();
     let command = plan.shown();
     let request = secrets::Request {
@@ -177,9 +183,15 @@ pub async fn release(plan: &Plan, phone: &Phone) -> Result<Vec<(String, Zeroizin
     };
     let tell = teller(|line: &str| eprintln!("{line}"));
     let what = format!("secrets for `{}`", secrets::cut(&command, 80));
+    let entry = Entry::new(Kind::Secrets, &what).source(Some("reins run")).detail(Some(&format!(
+        "Command: {command}\nSecrets: {}",
+        secrets.iter().map(ToString::to_string).collect::<Vec<_>>().join(", ")
+    )));
     let released = awaiting(
+        journal,
+        entry,
         Some(tell),
-        &what,
+        timeout,
         secrets::release(phone, &request, None, "No answer from your phone in time. Approve it, then run again."),
     )
     .await?;
@@ -334,10 +346,11 @@ pub async fn main(paths: &Paths, config: &Config, args: &RunArgs) -> u8 {
         Ok(p) => p,
         Err(e) => return fail(&e),
     };
-    let vars = match release(&plan, &phone).await {
-        Ok(v) => v,
-        Err(r) => return fail(r.message()),
-    };
+    let vars =
+        match release(&plan, &phone, &Journal::new(paths), Duration::from_secs(config.approval_timeout_secs)).await {
+            Ok(v) => v,
+            Err(r) => return fail(r.message()),
+        };
     drop(phone);
     execute(&plan.command, vars).await
 }
