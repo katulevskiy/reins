@@ -2748,6 +2748,12 @@ public protocol ReinsCoreProtocol: AnyObject, Sendable {
     func revokeGrant(grantId: String) async throws 
     
     /**
+     * What `server_url` offers before signing in: whether "Continue" (browser sign-in) works there, and whether it
+     * can wake each phone app. Unknown values are `None`; an unreachable server is no error.
+     */
+    func serverInfo(serverUrl: String) async throws  -> ServerInfo
+    
+    /**
      * Whether one account of an integration can be used right now.
      */
     func serviceAccountStatus(service: String, account: String) async  -> GmailStatus
@@ -4094,6 +4100,26 @@ open func revokeGrant(grantId: String)async throws   {
             completeFunc: ffi_reins_core_rust_future_complete_void,
             freeFunc: ffi_reins_core_rust_future_free_void,
             liftFunc: { $0 },
+            errorHandler: FfiConverterTypeCoreError_lift
+        )
+}
+    
+    /**
+     * What `server_url` offers before signing in: whether "Continue" (browser sign-in) works there, and whether it
+     * can wake each phone app. Unknown values are `None`; an unreachable server is no error.
+     */
+open func serverInfo(serverUrl: String)async throws  -> ServerInfo  {
+    return
+        try  await uniffiRustCallAsync(
+            rustFutureFunc: {
+                uniffi_reins_core_fn_method_reinscore_server_info(
+                        self.uniffiCloneHandle(),FfiConverterString.lower(serverUrl)
+                )
+            },
+            pollFunc: ffi_reins_core_rust_future_poll_rust_buffer,
+            completeFunc: ffi_reins_core_rust_future_complete_rust_buffer,
+            freeFunc: ffi_reins_core_rust_future_free_rust_buffer,
+            liftFunc: FfiConverterTypeServerInfo_lift,
             errorHandler: FfiConverterTypeCoreError_lift
         )
 }
@@ -6227,19 +6253,27 @@ public struct ConnectionView: Equatable, Hashable {
      * The icon the user picked (`None` = derived from the name by the app).
      */
     public var icon: String?
+    /**
+     * A computer (the Reins desktop app): the eight digits of the key pinned when it paired. `None` for an AI app.
+     */
+    public var keyFingerprint: String?
 
     // Default memberwise initializers are never public by default, so we
     // declare one manually.
     public init(id: String, label: String, clientHost: String, createdAt: Int64, lastUsedAt: Int64?, 
         /**
          * The icon the user picked (`None` = derived from the name by the app).
-         */icon: String?) {
+         */icon: String?, 
+        /**
+         * A computer (the Reins desktop app): the eight digits of the key pinned when it paired. `None` for an AI app.
+         */keyFingerprint: String?) {
         self.id = id
         self.label = label
         self.clientHost = clientHost
         self.createdAt = createdAt
         self.lastUsedAt = lastUsedAt
         self.icon = icon
+        self.keyFingerprint = keyFingerprint
     }
 
     
@@ -6263,7 +6297,8 @@ public struct FfiConverterTypeConnectionView: FfiConverterRustBuffer {
                 clientHost: FfiConverterString.read(from: &buf), 
                 createdAt: FfiConverterInt64.read(from: &buf), 
                 lastUsedAt: FfiConverterOptionInt64.read(from: &buf), 
-                icon: FfiConverterOptionString.read(from: &buf)
+                icon: FfiConverterOptionString.read(from: &buf), 
+                keyFingerprint: FfiConverterOptionString.read(from: &buf)
         )
     }
 
@@ -6274,6 +6309,7 @@ public struct FfiConverterTypeConnectionView: FfiConverterRustBuffer {
         FfiConverterInt64.write(value.createdAt, into: &buf)
         FfiConverterOptionInt64.write(value.lastUsedAt, into: &buf)
         FfiConverterOptionString.write(value.icon, into: &buf)
+        FfiConverterOptionString.write(value.keyFingerprint, into: &buf)
     }
 }
 
@@ -8928,6 +8964,85 @@ public func FfiConverterTypeSecretReleaseView_lift(_ buf: RustBuffer) throws -> 
 #endif
 public func FfiConverterTypeSecretReleaseView_lower(_ value: SecretReleaseView) -> RustBuffer {
     return FfiConverterTypeSecretReleaseView.lower(value)
+}
+
+
+/**
+ * What a server offers, read before signing in (`/api/config`). `None`: the server does not say (an older one).
+ */
+public struct ServerInfo: Equatable, Hashable {
+    /**
+     * "Continue" (sign-in in the browser, SSO) works here; when false, only email and master password do.
+     */
+    public var browserSignIn: Bool?
+    /**
+     * The server can wake the Android app; when false, requests show up only while the app is open.
+     */
+    public var pushAndroid: Bool?
+    /**
+     * The server can wake the iOS app.
+     */
+    public var pushIos: Bool?
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(
+        /**
+         * "Continue" (sign-in in the browser, SSO) works here; when false, only email and master password do.
+         */browserSignIn: Bool?, 
+        /**
+         * The server can wake the Android app; when false, requests show up only while the app is open.
+         */pushAndroid: Bool?, 
+        /**
+         * The server can wake the iOS app.
+         */pushIos: Bool?) {
+        self.browserSignIn = browserSignIn
+        self.pushAndroid = pushAndroid
+        self.pushIos = pushIos
+    }
+
+    
+
+    
+}
+
+#if compiler(>=6)
+extension ServerInfo: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeServerInfo: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> ServerInfo {
+        return
+            try ServerInfo(
+                browserSignIn: FfiConverterOptionBool.read(from: &buf), 
+                pushAndroid: FfiConverterOptionBool.read(from: &buf), 
+                pushIos: FfiConverterOptionBool.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: ServerInfo, into buf: inout [UInt8]) {
+        FfiConverterOptionBool.write(value.browserSignIn, into: &buf)
+        FfiConverterOptionBool.write(value.pushAndroid, into: &buf)
+        FfiConverterOptionBool.write(value.pushIos, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeServerInfo_lift(_ buf: RustBuffer) throws -> ServerInfo {
+    return try FfiConverterTypeServerInfo.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeServerInfo_lower(_ value: ServerInfo) -> RustBuffer {
+    return FfiConverterTypeServerInfo.lower(value)
 }
 
 
@@ -12848,6 +12963,9 @@ private let initializationResult: InitializationResult = {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_reins_core_checksum_method_reinscore_revoke_grant() != 13815) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_reins_core_checksum_method_reinscore_server_info() != 48285) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_reins_core_checksum_method_reinscore_service_account_status() != 15888) {

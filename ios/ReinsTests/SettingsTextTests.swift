@@ -55,7 +55,7 @@ final class SettingsTextTests: XCTestCase {
     }
 
     func testAConnectionSaysWhereItRunsAndWhenItWasUsed() {
-        let c = ConnectionView(id: "c1", label: "Claude", clientHost: "claude.ai", createdAt: 0, lastUsedAt: 9_700, icon: nil)
+        let c = ConnectionView(id: "c1", label: "Claude", clientHost: "claude.ai", createdAt: 0, lastUsedAt: 9_700, icon: nil, keyFingerprint: nil)
         XCTAssertEqual(SettingsText.connectionLine(c, now: 10_000), "claude.ai · used 5 min ago")
         var never = c
         never.lastUsedAt = nil

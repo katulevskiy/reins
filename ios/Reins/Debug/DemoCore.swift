@@ -185,6 +185,11 @@ final class DemoReinsCore: ReinsCoreProtocol, @unchecked Sendable {
 
     /// "Continue": the browser part is skipped (`ssoBegin`'s URL is a data page the app never opens in the demo); the
     /// account is `Created`, or `Locked` with `-demoLocked` (another phone has its keys).
+    /// The demo says nothing about its server: the sign-in shows every way in.
+    func serverInfo(serverUrl: String) async throws -> ServerInfo {
+        ServerInfo(browserSignIn: nil, pushAndroid: nil, pushIos: nil)
+    }
+
     func ssoBegin(serverUrl: String) async throws -> SsoStart {
         guard serverUrl.hasPrefix("http") else { throw CoreError.Network(reason: "could not reach \(serverUrl)") }
         return SsoStart(url: "\(serverUrl)/identity/connect/authorize?demo=1", callbackScheme: "com.reins2fa.app", state: "demo-state", verifier: "demo-verifier")
@@ -599,7 +604,7 @@ final class DemoReinsCore: ReinsCoreProtocol, @unchecked Sendable {
             guard approve else { return }
             s.nextConnection += 1
             let name = label.map { $0.trimmingCharacters(in: .whitespaces) }.flatMap { $0.isEmpty ? nil : $0 } ?? p.clientName
-            s.connections.append(ConnectionView(id: "c\(s.nextConnection)", label: name, clientHost: p.clientHost, createdAt: Self.now(), lastUsedAt: nil, icon: nil))
+            s.connections.append(ConnectionView(id: "c\(s.nextConnection)", label: name, clientHost: p.clientHost, createdAt: Self.now(), lastUsedAt: nil, icon: nil, keyFingerprint: p.keyFingerprint))
         }
     }
 

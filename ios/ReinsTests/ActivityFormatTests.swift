@@ -66,9 +66,9 @@ final class ActivityFormatTests: XCTestCase {
     }
 
     func testAnEntryFromBeforeIdsWereKeptFindsItsConnectionByAUniqueLabel() {
-        let a = ConnectionView(id: "c1", label: "Claude", clientHost: "", createdAt: 0, lastUsedAt: nil, icon: "claude")
-        let b = ConnectionView(id: "c2", label: "Twin", clientHost: "", createdAt: 0, lastUsedAt: nil, icon: nil)
-        let c = ConnectionView(id: "c3", label: "Twin", clientHost: "", createdAt: 0, lastUsedAt: nil, icon: nil)
+        let a = ConnectionView(id: "c1", label: "Claude", clientHost: "", createdAt: 0, lastUsedAt: nil, icon: "claude", keyFingerprint: nil)
+        let b = ConnectionView(id: "c2", label: "Twin", clientHost: "", createdAt: 0, lastUsedAt: nil, icon: nil, keyFingerprint: nil)
+        let c = ConnectionView(id: "c3", label: "Twin", clientHost: "", createdAt: 0, lastUsedAt: nil, icon: nil, keyFingerprint: nil)
         XCTAssertEqual(findConnection([a, b], id: "c2", label: "x")?.id, "c2")
         XCTAssertEqual(findConnection([a, b], id: "", label: "Claude")?.id, "c1")
         XCTAssertNil(findConnection([a, b, c], id: "", label: "Twin"), "two connections carry the label")

@@ -27,12 +27,12 @@ enum DemoData {
 
     static func connections(_ now: Int64) -> [ConnectionView] {
         [
-            ConnectionView(id: "c1", label: "Claude", clientHost: "claude.ai", createdAt: now - 86_400 * 40, lastUsedAt: now - 60, icon: "claude"),
-            ConnectionView(id: "c2", label: "My ChatGPT", clientHost: "chatgpt.com", createdAt: now - 86_400 * 21, lastUsedAt: now - 120, icon: "openai"),
-            ConnectionView(id: "c3", label: "Hermes agent", clientHost: "hermes.local", createdAt: now - 86_400 * 9, lastUsedAt: now - 7_200, icon: nil),
-            ConnectionView(id: "c4", label: "notes-bot", clientHost: "notes.example.com", createdAt: now - 86_400 * 5, lastUsedAt: now - 3_600, icon: nil),
-            ConnectionView(id: "c5", label: "Cursor", clientHost: "cursor.com", createdAt: now - 86_400 * 3, lastUsedAt: now - 1_800, icon: "cursor"),
-            ConnectionView(id: "c6", label: desktop, clientHost: "laptop", createdAt: now - 86_400 * 2, lastUsedAt: now - 300, icon: nil),
+            ConnectionView(id: "c1", label: "Claude", clientHost: "claude.ai", createdAt: now - 86_400 * 40, lastUsedAt: now - 60, icon: "claude", keyFingerprint: nil),
+            ConnectionView(id: "c2", label: "My ChatGPT", clientHost: "chatgpt.com", createdAt: now - 86_400 * 21, lastUsedAt: now - 120, icon: "openai", keyFingerprint: nil),
+            ConnectionView(id: "c3", label: "Hermes agent", clientHost: "hermes.local", createdAt: now - 86_400 * 9, lastUsedAt: now - 7_200, icon: nil, keyFingerprint: nil),
+            ConnectionView(id: "c4", label: "notes-bot", clientHost: "notes.example.com", createdAt: now - 86_400 * 5, lastUsedAt: now - 3_600, icon: nil, keyFingerprint: nil),
+            ConnectionView(id: "c5", label: "Cursor", clientHost: "cursor.com", createdAt: now - 86_400 * 3, lastUsedAt: now - 1_800, icon: "cursor", keyFingerprint: nil),
+            ConnectionView(id: "c6", label: desktop, clientHost: "laptop", createdAt: now - 86_400 * 2, lastUsedAt: now - 300, icon: nil, keyFingerprint: "4821 9930"),
         ]
     }
 
