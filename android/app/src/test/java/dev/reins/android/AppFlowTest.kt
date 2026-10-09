@@ -1432,6 +1432,23 @@ class AppFlowTest {
     }
 
     @Test
+    fun addingAGoogleAccountSaysWhatGoogleWillShow() {
+        launch()
+        tap("integrations")
+        tap("service:gmail")
+        awaitTag("googleSignInNote")
+        rule.onNodeWithTag("googleSignInNote").assertTextContains("Google hasn't verified this app", substring = true)
+    }
+
+    @Test
+    fun calendarSaysWhatGoogleWillShowToo() {
+        launch()
+        tap("integrations")
+        tap("service:gcalendar")
+        awaitTag("googleSignInNote")
+    }
+
+    @Test
     fun anAccountTheUserPickedIsConnectedThroughTheCore() {
         launch()
         tap("integrations")
