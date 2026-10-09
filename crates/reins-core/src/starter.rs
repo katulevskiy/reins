@@ -61,6 +61,7 @@ impl Engine {
                 labels: Vec::new(),
                 any: true,
                 classes: Vec::new(),
+                ops: Vec::new(),
             })
         };
         let mut grants = Vec::new();

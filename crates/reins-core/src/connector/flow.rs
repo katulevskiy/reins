@@ -245,6 +245,7 @@ impl Engine {
                     &call.service,
                     "write",
                     &class,
+                    &call.op,
                     std::slice::from_ref(&preview.resource),
                     true,
                     now,
@@ -307,6 +308,7 @@ impl Engine {
             &call.service,
             access,
             "",
+            &call.op,
             &resources,
             !any_sensitive,
             now,
@@ -526,6 +528,7 @@ impl Engine {
                     labels: resources.iter().map(|r| r.1.clone()).collect(),
                     any: false,
                     classes: Vec::new(),
+                    ops: Vec::new(),
                 }),
                 now,
                 Some(now + RETRY_PASS_SECS),
@@ -672,6 +675,7 @@ pub fn build_service_grant(
             labels: Vec::new(),
             any: true,
             classes: Vec::new(),
+            ops: Vec::new(),
         }
     } else {
         let mut resources = Vec::new();
@@ -714,6 +718,7 @@ pub fn build_service_grant(
             labels,
             any: false,
             classes,
+            ops: Vec::new(),
         }
     };
     Grant::new(

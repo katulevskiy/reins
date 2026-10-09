@@ -1,7 +1,9 @@
 //! Work sessions: before a stretch of focused work, the user approves a bundle of permissions from the desktop app once
 //! (`desktop_session`), instead of tapping through each request. On approval each part becomes an ordinary grant of the
 //! desktop app's connection (listed under Grants, revocable, logged, origin `session`) that ends with the session:
-//! reading the chosen integrations, and pushing with git to named branches (with reads of those repositories).
+//! reading the chosen integrations, and pushing with git to named branches (with git fetches of those repositories).
+//! The git grants name their operation (`git_push`, `git_fetch`): pushing to a branch does not also allow changing its
+//! files, merging into it or reading the repository's issues through the host's API.
 //!
 //! A session never covers the hard floor: changes asked for every time (force pushes, deleted branches, moved tags,
 //! deleting repositories) never look at grants; the vault, purchases, the desktop app's own questions and secrets, and
@@ -11,6 +13,7 @@
 
 use reins_policy::{Grant, ReadScope, Scope, ServiceScope};
 use reins_proto::connector::{ConnectorCall, MAX_SESSION_SECS, MIN_SESSION_SECS};
+use reins_proto::desktop::{GIT_FETCH_OP, GIT_PUSH_OP};
 use reins_proto::ids::{ConnectionId, GrantId};
 use serde_json::{Value, json};
 
@@ -197,6 +200,7 @@ impl Engine {
                     labels: Vec::new(),
                     any: true,
                     classes: Vec::new(),
+                    ops: Vec::new(),
                 })
             };
             grants.push(session_grant(connection, scope, now, expires)?);
@@ -212,6 +216,8 @@ impl Engine {
                     labels: vec![format!("{}, branch {}", p.repo, p.branch)],
                     any: false,
                     classes: vec!["code".to_owned()],
+                    // git pushes only: not also changing the branch's files through the host's API.
+                    ops: vec![GIT_PUSH_OP.to_owned()],
                 }),
                 now,
                 expires,
@@ -227,6 +233,8 @@ impl Engine {
                         labels: vec![p.repo.clone()],
                         any: false,
                         classes: Vec::new(),
+                        // git fetches only: not also the repository's issues or files through the host's API.
+                        ops: vec![GIT_FETCH_OP.to_owned()],
                     }),
                     now,
                     expires,

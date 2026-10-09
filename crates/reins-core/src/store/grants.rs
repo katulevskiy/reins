@@ -269,6 +269,7 @@ impl Store {
         service: &str,
         access: &str,
         class: &str,
+        op: &str,
         resources: &[String],
         reserve: bool,
         now: i64,
@@ -279,7 +280,7 @@ impl Store {
         let mut covered = std::collections::BTreeMap::new();
         for resource in resources {
             if let Some(id) =
-                reins_policy::service_allows(&grants, connection, account, service, access, class, resource, now)
+                reins_policy::service_allows(&grants, connection, account, service, access, class, op, resource, now)
             {
                 covered.insert(resource.clone(), id);
             }

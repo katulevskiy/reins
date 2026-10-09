@@ -836,7 +836,15 @@ fn service_summary(s: &ServiceScope) -> String {
             .collect();
         format!(" ({})", names.join(", "))
     };
-    format!("{verb} {}{kinds}: {what}", service_name(&s.service))
+    // A scope limited to operations says so: "Write to GitHub (with git only): me/app, branch dev".
+    let ops = if s.ops.iter().all(|o| o.starts_with("git_")) && !s.ops.is_empty() {
+        " (with git only)".to_owned()
+    } else if s.ops.is_empty() {
+        String::new()
+    } else {
+        format!(" (only {})", s.ops.join(", "))
+    };
+    format!("{verb} {}{kinds}{ops}: {what}", service_name(&s.service))
 }
 
 pub fn grant_summary(scope: &Scope) -> String {
