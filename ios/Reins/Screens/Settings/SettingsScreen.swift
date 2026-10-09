@@ -353,8 +353,9 @@ struct SettingsLinkRow: View {
 
     var body: some View {
         Button {
-            feedback.play(.tap)
             action()
+            // The page or sheet it opens has the sound.
+            feedback.defaultTap()
         } label: {
             InfoRow(title: title, subtitle: subtitle, symbol: symbol, tint: tint) { Chevron() }
                 .contentShape(Rectangle())

@@ -2513,6 +2513,12 @@ public protocol ReinsCoreProtocol: AnyObject, Sendable {
     func addTokenAccount(service: String, token: String) async throws  -> AccountView
     
     /**
+     * The passkey just made (its credential id and PRF output) opens the vault from now on. Only on a phone whose
+     * vault is open.
+     */
+    func addVaultPasskey(credentialId: Data, prfOutput: Data, name: String) async throws  -> [VaultPasskeyView]
+    
+    /**
      * The user's decision on an uploaded file: approved, its download link works; refused, the server deletes it.
      */
     func answerBlob(id: String, approve: Bool) async throws 
@@ -2674,7 +2680,7 @@ public protocol ReinsCoreProtocol: AnyObject, Sendable {
      * end its AuthKit session too. Network failure never prevents local sign-out; `None` means no URL is available.
      */
     func logoutWithBrowser() async throws  -> String?
-
+    
     func modelStatus() async  -> ModelStatus
     
     /**
@@ -2702,6 +2708,8 @@ public protocol ReinsCoreProtocol: AnyObject, Sendable {
      * Disconnects an account of any integration.
      */
     func removeServiceAccount(service: String, account: String) async throws 
+    
+    func removeVaultPasskey(credentialId: Data) async throws  -> [VaultPasskeyView]
     
     func renameProfile(profileId: String, name: String, icon: String?) async throws 
     
@@ -2807,6 +2815,22 @@ public protocol ReinsCoreProtocol: AnyObject, Sendable {
      * password of an account made with one.
      */
     func unlockAccount(codeOrPassword: String) async throws 
+    
+    /**
+     * Opens a `Locked` account with a passkey it added for its vault (the credential id and PRF output the
+     * platform's passkey UI returned), as the recovery code does.
+     */
+    func unlockWithVaultPasskey(credentialId: Data, prfOutput: Data) async throws 
+    
+    /**
+     * What the app hands the platform's passkey UI to make a vault passkey or use one (see `vault_passkey`).
+     */
+    func vaultPasskeyOptions() async throws  -> VaultPasskeyOptions
+    
+    /**
+     * The passkeys that open the account's vault.
+     */
+    func vaultPasskeys() async throws  -> [VaultPasskeyView]
     
     /**
      * Adds an MCP server by its address: added at once, or a sign-in page to open (its redirect goes to
@@ -3061,6 +3085,26 @@ open func addTokenAccount(service: String, token: String)async throws  -> Accoun
             completeFunc: ffi_reins_core_rust_future_complete_rust_buffer,
             freeFunc: ffi_reins_core_rust_future_free_rust_buffer,
             liftFunc: FfiConverterTypeAccountView_lift,
+            errorHandler: FfiConverterTypeCoreError_lift
+        )
+}
+    
+    /**
+     * The passkey just made (its credential id and PRF output) opens the vault from now on. Only on a phone whose
+     * vault is open.
+     */
+open func addVaultPasskey(credentialId: Data, prfOutput: Data, name: String)async throws  -> [VaultPasskeyView]  {
+    return
+        try  await uniffiRustCallAsync(
+            rustFutureFunc: {
+                uniffi_reins_core_fn_method_reinscore_add_vault_passkey(
+                        self.uniffiCloneHandle(),FfiConverterData.lower(credentialId),FfiConverterData.lower(prfOutput),FfiConverterString.lower(name)
+                )
+            },
+            pollFunc: ffi_reins_core_rust_future_poll_rust_buffer,
+            completeFunc: ffi_reins_core_rust_future_complete_rust_buffer,
+            freeFunc: ffi_reins_core_rust_future_free_rust_buffer,
+            liftFunc: FfiConverterSequenceTypeVaultPasskeyView.lift,
             errorHandler: FfiConverterTypeCoreError_lift
         )
 }
@@ -3746,7 +3790,7 @@ open func logoutWithBrowser()async throws  -> String?  {
             errorHandler: FfiConverterTypeCoreError_lift
         )
 }
-
+    
 open func modelStatus()async  -> ModelStatus  {
     return
         try!  await uniffiRustCallAsync(
@@ -3870,6 +3914,22 @@ open func removeServiceAccount(service: String, account: String)async throws   {
             completeFunc: ffi_reins_core_rust_future_complete_void,
             freeFunc: ffi_reins_core_rust_future_free_void,
             liftFunc: { $0 },
+            errorHandler: FfiConverterTypeCoreError_lift
+        )
+}
+    
+open func removeVaultPasskey(credentialId: Data)async throws  -> [VaultPasskeyView]  {
+    return
+        try  await uniffiRustCallAsync(
+            rustFutureFunc: {
+                uniffi_reins_core_fn_method_reinscore_remove_vault_passkey(
+                        self.uniffiCloneHandle(),FfiConverterData.lower(credentialId)
+                )
+            },
+            pollFunc: ffi_reins_core_rust_future_poll_rust_buffer,
+            completeFunc: ffi_reins_core_rust_future_complete_rust_buffer,
+            freeFunc: ffi_reins_core_rust_future_free_rust_buffer,
+            liftFunc: FfiConverterSequenceTypeVaultPasskeyView.lift,
             errorHandler: FfiConverterTypeCoreError_lift
         )
 }
@@ -4264,6 +4324,64 @@ open func unlockAccount(codeOrPassword: String)async throws   {
             completeFunc: ffi_reins_core_rust_future_complete_void,
             freeFunc: ffi_reins_core_rust_future_free_void,
             liftFunc: { $0 },
+            errorHandler: FfiConverterTypeCoreError_lift
+        )
+}
+    
+    /**
+     * Opens a `Locked` account with a passkey it added for its vault (the credential id and PRF output the
+     * platform's passkey UI returned), as the recovery code does.
+     */
+open func unlockWithVaultPasskey(credentialId: Data, prfOutput: Data)async throws   {
+    return
+        try  await uniffiRustCallAsync(
+            rustFutureFunc: {
+                uniffi_reins_core_fn_method_reinscore_unlock_with_vault_passkey(
+                        self.uniffiCloneHandle(),FfiConverterData.lower(credentialId),FfiConverterData.lower(prfOutput)
+                )
+            },
+            pollFunc: ffi_reins_core_rust_future_poll_void,
+            completeFunc: ffi_reins_core_rust_future_complete_void,
+            freeFunc: ffi_reins_core_rust_future_free_void,
+            liftFunc: { $0 },
+            errorHandler: FfiConverterTypeCoreError_lift
+        )
+}
+    
+    /**
+     * What the app hands the platform's passkey UI to make a vault passkey or use one (see `vault_passkey`).
+     */
+open func vaultPasskeyOptions()async throws  -> VaultPasskeyOptions  {
+    return
+        try  await uniffiRustCallAsync(
+            rustFutureFunc: {
+                uniffi_reins_core_fn_method_reinscore_vault_passkey_options(
+                        self.uniffiCloneHandle()
+                )
+            },
+            pollFunc: ffi_reins_core_rust_future_poll_rust_buffer,
+            completeFunc: ffi_reins_core_rust_future_complete_rust_buffer,
+            freeFunc: ffi_reins_core_rust_future_free_rust_buffer,
+            liftFunc: FfiConverterTypeVaultPasskeyOptions_lift,
+            errorHandler: FfiConverterTypeCoreError_lift
+        )
+}
+    
+    /**
+     * The passkeys that open the account's vault.
+     */
+open func vaultPasskeys()async throws  -> [VaultPasskeyView]  {
+    return
+        try  await uniffiRustCallAsync(
+            rustFutureFunc: {
+                uniffi_reins_core_fn_method_reinscore_vault_passkeys(
+                        self.uniffiCloneHandle()
+                )
+            },
+            pollFunc: ffi_reins_core_rust_future_poll_rust_buffer,
+            completeFunc: ffi_reins_core_rust_future_complete_rust_buffer,
+            freeFunc: ffi_reins_core_rust_future_free_rust_buffer,
+            liftFunc: FfiConverterSequenceTypeVaultPasskeyView.lift,
             errorHandler: FfiConverterTypeCoreError_lift
         )
 }
@@ -9303,6 +9421,178 @@ public func FfiConverterTypeSuggestionView_lower(_ value: SuggestionView) -> Rus
 
 
 /**
+ * Everything the app needs to ask the platform for a passkey (to make one, or to use one).
+ */
+public struct VaultPasskeyOptions: Equatable, Hashable {
+    /**
+     * The relying party: the server's host (`app.reins2fa.com`), which lists the app in its association files.
+     */
+    public var rpId: String
+    /**
+     * WebAuthn `user.id`: the account's server id.
+     */
+    public var userHandle: Data
+    /**
+     * WebAuthn `user.name` and `displayName`: the account's email.
+     */
+    public var userName: String
+    /**
+     * A fresh challenge. Nothing verifies the assertion (the sealed copy is useless without the PRF output), but the
+     * platform wants one.
+     */
+    public var challenge: Data
+    /**
+     * The PRF input (`eval.first`), the same for every passkey.
+     */
+    public var prfSalt: Data
+    /**
+     * The passkeys the account has for its vault already: excluded when making one, allowed when unlocking.
+     */
+    public var credentialIds: [Data]
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(
+        /**
+         * The relying party: the server's host (`app.reins2fa.com`), which lists the app in its association files.
+         */rpId: String, 
+        /**
+         * WebAuthn `user.id`: the account's server id.
+         */userHandle: Data, 
+        /**
+         * WebAuthn `user.name` and `displayName`: the account's email.
+         */userName: String, 
+        /**
+         * A fresh challenge. Nothing verifies the assertion (the sealed copy is useless without the PRF output), but the
+         * platform wants one.
+         */challenge: Data, 
+        /**
+         * The PRF input (`eval.first`), the same for every passkey.
+         */prfSalt: Data, 
+        /**
+         * The passkeys the account has for its vault already: excluded when making one, allowed when unlocking.
+         */credentialIds: [Data]) {
+        self.rpId = rpId
+        self.userHandle = userHandle
+        self.userName = userName
+        self.challenge = challenge
+        self.prfSalt = prfSalt
+        self.credentialIds = credentialIds
+    }
+
+    
+
+    
+}
+
+#if compiler(>=6)
+extension VaultPasskeyOptions: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeVaultPasskeyOptions: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> VaultPasskeyOptions {
+        return
+            try VaultPasskeyOptions(
+                rpId: FfiConverterString.read(from: &buf), 
+                userHandle: FfiConverterData.read(from: &buf), 
+                userName: FfiConverterString.read(from: &buf), 
+                challenge: FfiConverterData.read(from: &buf), 
+                prfSalt: FfiConverterData.read(from: &buf), 
+                credentialIds: FfiConverterSequenceData.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: VaultPasskeyOptions, into buf: inout [UInt8]) {
+        FfiConverterString.write(value.rpId, into: &buf)
+        FfiConverterData.write(value.userHandle, into: &buf)
+        FfiConverterString.write(value.userName, into: &buf)
+        FfiConverterData.write(value.challenge, into: &buf)
+        FfiConverterData.write(value.prfSalt, into: &buf)
+        FfiConverterSequenceData.write(value.credentialIds, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeVaultPasskeyOptions_lift(_ buf: RustBuffer) throws -> VaultPasskeyOptions {
+    return try FfiConverterTypeVaultPasskeyOptions.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeVaultPasskeyOptions_lower(_ value: VaultPasskeyOptions) -> RustBuffer {
+    return FfiConverterTypeVaultPasskeyOptions.lower(value)
+}
+
+
+/**
+ * One passkey that opens the vault, for Settings.
+ */
+public struct VaultPasskeyView: Equatable, Hashable {
+    public var credentialId: Data
+    public var name: String
+    public var createdAt: Int64
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(credentialId: Data, name: String, createdAt: Int64) {
+        self.credentialId = credentialId
+        self.name = name
+        self.createdAt = createdAt
+    }
+
+    
+
+    
+}
+
+#if compiler(>=6)
+extension VaultPasskeyView: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeVaultPasskeyView: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> VaultPasskeyView {
+        return
+            try VaultPasskeyView(
+                credentialId: FfiConverterData.read(from: &buf), 
+                name: FfiConverterString.read(from: &buf), 
+                createdAt: FfiConverterInt64.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: VaultPasskeyView, into buf: inout [UInt8]) {
+        FfiConverterData.write(value.credentialId, into: &buf)
+        FfiConverterString.write(value.name, into: &buf)
+        FfiConverterInt64.write(value.createdAt, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeVaultPasskeyView_lift(_ buf: RustBuffer) throws -> VaultPasskeyView {
+    return try FfiConverterTypeVaultPasskeyView.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeVaultPasskeyView_lower(_ value: VaultPasskeyView) -> RustBuffer {
+    return FfiConverterTypeVaultPasskeyView.lower(value)
+}
+
+
+/**
  * Whether this phone can open the account's vault.
  */
 
@@ -11262,6 +11552,31 @@ fileprivate struct FfiConverterSequenceString: FfiConverterRustBuffer {
 #if swift(>=5.8)
 @_documentation(visibility: private)
 #endif
+fileprivate struct FfiConverterSequenceData: FfiConverterRustBuffer {
+    typealias SwiftType = [Data]
+
+    public static func write(_ value: [Data], into buf: inout [UInt8]) {
+        let len = Int32(value.count)
+        writeInt(&buf, len)
+        for item in value {
+            FfiConverterData.write(item, into: &buf)
+        }
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> [Data] {
+        let len: Int32 = try readInt(&buf)
+        var seq = [Data]()
+        seq.reserveCapacity(Int(len))
+        for _ in 0 ..< len {
+            seq.append(try FfiConverterData.read(from: &buf))
+        }
+        return seq
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
 fileprivate struct FfiConverterSequenceTypeAccountView: FfiConverterRustBuffer {
     typealias SwiftType = [AccountView]
 
@@ -11833,6 +12148,31 @@ fileprivate struct FfiConverterSequenceTypeSmsThread: FfiConverterRustBuffer {
         return seq
     }
 }
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+fileprivate struct FfiConverterSequenceTypeVaultPasskeyView: FfiConverterRustBuffer {
+    typealias SwiftType = [VaultPasskeyView]
+
+    public static func write(_ value: [VaultPasskeyView], into buf: inout [UInt8]) {
+        let len = Int32(value.count)
+        writeInt(&buf, len)
+        for item in value {
+            FfiConverterTypeVaultPasskeyView.write(item, into: &buf)
+        }
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> [VaultPasskeyView] {
+        let len: Int32 = try readInt(&buf)
+        var seq = [VaultPasskeyView]()
+        seq.reserveCapacity(Int(len))
+        for _ in 0 ..< len {
+            seq.append(try FfiConverterTypeVaultPasskeyView.read(from: &buf))
+        }
+        return seq
+    }
+}
 private let UNIFFI_RUST_FUTURE_POLL_READY: Int8 = 0
 private let UNIFFI_RUST_FUTURE_POLL_WAKE: Int8 = 1
 
@@ -12011,6 +12351,9 @@ private let initializationResult: InitializationResult = {
     if (uniffi_reins_core_checksum_method_reinscore_add_token_account() != 43246) {
         return InitializationResult.apiChecksumMismatch
     }
+    if (uniffi_reins_core_checksum_method_reinscore_add_vault_passkey() != 42076) {
+        return InitializationResult.apiChecksumMismatch
+    }
     if (uniffi_reins_core_checksum_method_reinscore_answer_blob() != 10725) {
         return InitializationResult.apiChecksumMismatch
     }
@@ -12143,6 +12486,9 @@ private let initializationResult: InitializationResult = {
     if (uniffi_reins_core_checksum_method_reinscore_remove_service_account() != 28197) {
         return InitializationResult.apiChecksumMismatch
     }
+    if (uniffi_reins_core_checksum_method_reinscore_remove_vault_passkey() != 31346) {
+        return InitializationResult.apiChecksumMismatch
+    }
     if (uniffi_reins_core_checksum_method_reinscore_rename_profile() != 43478) {
         return InitializationResult.apiChecksumMismatch
     }
@@ -12204,6 +12550,15 @@ private let initializationResult: InitializationResult = {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_reins_core_checksum_method_reinscore_unlock_account() != 55036) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_reins_core_checksum_method_reinscore_unlock_with_vault_passkey() != 6226) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_reins_core_checksum_method_reinscore_vault_passkey_options() != 35373) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_reins_core_checksum_method_reinscore_vault_passkeys() != 30031) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_reins_core_checksum_method_reinscore_mcp_add() != 53705) {
