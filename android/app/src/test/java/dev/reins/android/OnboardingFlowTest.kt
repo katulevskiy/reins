@@ -139,6 +139,16 @@ class OnboardingFlowTest : FlowHarness() {
     }
 
     @Test
+    fun theSetupSaysBeforeTheFirstRequestThatApprovingNeedsAScreenLock() {
+        dev.reins.android.platform.ScreenLock.check = { false }
+        core.session = null
+        launch()
+        signInFromWelcome()
+        setupTo("setupNotifications")
+        awaitTag("screenLockOff")
+    }
+
+    @Test
     fun aServerWithoutBrowserSignInOffersOnlyTheMasterPassword() {
         core.session = null
         core.serverInfos[server] = dev.reins.core.ServerInfo(false, false, false)

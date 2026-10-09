@@ -77,6 +77,8 @@ class AppFlowTest {
     fun setUp() {
         dev.reins.android.TestNativeKeys.install()
         shadowOf(context as android.app.Application).grantPermissions(android.Manifest.permission.POST_NOTIFICATIONS)
+        // Robolectric has no screen lock; the tests that need none set it.
+        dev.reins.android.platform.ScreenLock.check = { true }
         Timers.live = false
         Timers.frozenNowMillis = 1_700_000_100_000
         Foreground.focused = false
@@ -732,6 +734,36 @@ class AppFlowTest {
         assertEquals(true, answer[1])
         assertEquals(42.toUByte(), answer[2])
         assertEquals("Claude Work", answer[3])
+    }
+
+    @Test
+    fun withoutAScreenLockPairingOffersAndroidsSettingsForOne() {
+        authResult = AuthResult.Unavailable
+        core.pending = listOf(TestData.pairingItem("pair1"))
+        core.pairing = PairingView("pair1", "Claude", "claude.ai", byteArrayOf(7, 42, 99), 1_700_000_200, null)
+        launch()
+        awaitTag("pending:pair1")
+        if (!has("sheet")) tap("pending:pair1")
+        tap("code:42")
+        tap("approve")
+        awaitTag("screenLockOff")
+        assertTrue(core.pairingAnswers.isEmpty())
+        tap("setScreenLock")
+        assertEquals(android.provider.Settings.ACTION_BIOMETRIC_ENROLL, shadowOf(context as android.app.Application).nextStartedActivity?.action)
+    }
+
+    @Test
+    fun activitySaysWhenThePhoneHasNoScreenLock() {
+        dev.reins.android.platform.ScreenLock.check = { false }
+        launch()
+        awaitTag("screenLockOff")
+        tap("setScreenLock")
+        assertEquals(android.provider.Settings.ACTION_BIOMETRIC_ENROLL, shadowOf(context as android.app.Application).nextStartedActivity?.action)
+        // Set in Android's settings, back in the app: the card is gone.
+        dev.reins.android.platform.ScreenLock.check = { true }
+        scenario!!.moveToState(androidx.lifecycle.Lifecycle.State.STARTED)
+        scenario!!.moveToState(androidx.lifecycle.Lifecycle.State.RESUMED)
+        awaitGone("screenLockOff")
     }
 
     @Test

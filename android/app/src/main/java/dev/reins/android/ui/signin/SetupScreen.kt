@@ -84,6 +84,9 @@ import dev.reins.android.feedback.cueUnlessRecent
 import dev.reins.android.feedback.play
 import dev.reins.android.platform.NotificationState
 import dev.reins.android.platform.rememberNotificationState
+import dev.reins.android.platform.ScreenLockState
+import dev.reins.android.platform.rememberScreenLockState
+import dev.reins.android.ui.common.ScreenLockCard
 import dev.reins.android.ui.AppViewModel
 import dev.reins.android.ui.autopilot.AutopilotViewModel
 import dev.reins.android.ui.autopilot.IconTile
@@ -110,6 +113,7 @@ enum class SetupPage { Welcome, Notifications, Integrations, Rules, Autopilot, C
 fun SetupScreen(app: AppViewModel, container: AppContainer, autopilot: AutopilotViewModel, serverUrl: String) {
     val feedback = LocalFeedback.current
     val notifications = rememberNotificationState()
+    val screenLock = rememberScreenLockState()
     val page = app.setupPage
     val pages = SetupPage.entries
     val go = { next: SetupPage ->
@@ -145,7 +149,7 @@ fun SetupScreen(app: AppViewModel, container: AppContainer, autopilot: Autopilot
             Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState())) {
                 when (shown) {
                     SetupPage.Welcome -> WelcomePage()
-                    SetupPage.Notifications -> NotificationsPage(notifications)
+                    SetupPage.Notifications -> NotificationsPage(notifications, screenLock)
                     SetupPage.Integrations -> IntegrationsPage(container) { id ->
                         app.open(
                             when (id) {
@@ -159,7 +163,7 @@ fun SetupScreen(app: AppViewModel, container: AppContainer, autopilot: Autopilot
                     SetupPage.Autopilot -> AutopilotPage(autopilot)
                     SetupPage.Computer -> ComputerPage(app)
                     SetupPage.Ai -> AiPage(AccountRules.mcpUrl(serverUrl))
-                    SetupPage.Done -> DonePage(container, autopilot, notifications)
+                    SetupPage.Done -> DonePage(container, autopilot, notifications, screenLock)
                 }
                 Spacer(Modifier.height(16.dp))
             }
@@ -351,7 +355,7 @@ private fun androidx.compose.foundation.layout.BoxScope.FlowNode(
 // ---- 2. Notifications -------------------------------------------------------------------------------------------
 
 @Composable
-private fun NotificationsPage(notifications: NotificationState) {
+private fun NotificationsPage(notifications: NotificationState, screenLock: ScreenLockState) {
     val c = LocalColors.current
     Column(Modifier.testTag("setupNotifications")) {
         PageHeader(
@@ -399,6 +403,8 @@ private fun NotificationsPage(notifications: NotificationState) {
                 Modifier.padding(horizontal = 24.dp),
             )
         }
+        // Approving needs the screen lock: better found out here than at the first request.
+        if (!screenLock.set) ScreenLockCard(Modifier.padding(start = 16.dp, end = 16.dp, top = 18.dp), screenLock::openSettings)
     }
 }
 
@@ -612,13 +618,14 @@ private fun AiPage(mcpUrl: String) {
 // ---- 7. Done ----------------------------------------------------------------------------------------------------
 
 @Composable
-private fun DonePage(container: AppContainer, autopilot: AutopilotViewModel, notifications: NotificationState) {
+private fun DonePage(container: AppContainer, autopilot: AutopilotViewModel, notifications: NotificationState, screenLock: ScreenLockState) {
     val c = LocalColors.current
     val services by container.state.services.collectAsStateWithLifecycle()
     val connections by container.state.connections.collectAsStateWithLifecycle()
     val ui by autopilot.ui.collectAsStateWithLifecycle()
     val settings by autopilot.settings.collectAsStateWithLifecycle()
-    val accounts = services.sumOf { it.accounts.size }
+    // The vault comes with the account: not something connected here.
+    val accounts = services.filter { it.service != "vault" }.sumOf { it.accounts.size }
     val model = (ui.model ?: settings?.model)?.state
     Column(Modifier.testTag("setupFinished")) {
         PageHeader(
@@ -630,6 +637,8 @@ private fun DonePage(container: AppContainer, autopilot: AutopilotViewModel, not
         )
         Group(Modifier.padding(top = 20.dp)) {
             Checklist(Glyph.Bell, "Notifications", if (notifications.enabled) "On" else "Off: turn them on from Activity", notifications.enabled)
+            Hairline(inset = 66.dp)
+            Checklist(Glyph.Lock, "Screen lock", if (screenLock.set) "On: approvals ask for it" else "Off: approving needs one", screenLock.set)
             Hairline(inset = 66.dp)
             Checklist(
                 Glyph.Apps,

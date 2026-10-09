@@ -59,6 +59,8 @@ import dev.reins.android.design.glass
 import dev.reins.android.design.pressable
 import dev.reins.android.design.rememberNowState
 import dev.reins.android.design.urgency
+import dev.reins.android.platform.rememberScreenLockState
+import dev.reins.android.ui.common.ScreenLockCard
 import dev.reins.android.platform.NotificationAccess
 import dev.reins.android.platform.rememberNotificationState
 import dev.reins.android.state.AppState
@@ -112,6 +114,7 @@ fun ActivityScreen(
     val scope = rememberCoroutineScope()
     val context = androidx.compose.ui.platform.LocalContext.current
     val notifications = rememberNotificationState()
+    val screenLock = rememberScreenLockState()
     // People who never went through the setup (signed in before it existed) are asked once here.
     LaunchedEffect(Unit) {
         val ask = withContext(Dispatchers.Default) { !NotificationAccess.enabled(context) && !NotificationAccess.asked(context) }
@@ -120,7 +123,7 @@ fun ActivityScreen(
 
     // Header rows above the entries: notices and the waiting section.
     val headerCount = 1 + (if (pending.isEmpty()) 0 else 1 + pending.size + burstList.size) + (if (notice != null) 1 else 0) +
-        (if (notifications.enabled) 0 else 1) +
+        (if (notifications.enabled) 0 else 1) + (if (screenLock.set) 0 else 1) +
         (if (replaced) 1 else 0) + (if (registrationError != null) 1 else 0) + (if (showFilters) 1 else 0)
 
     // Opening the tab lands where you stopped reading: at the oldest entry you have not seen, unless something is waiting.
@@ -163,6 +166,9 @@ fun ActivityScreen(
             }
             if (!notifications.enabled) {
                 item(key = "notifications") { NotificationsOffCard(Modifier.padding(horizontal = 16.dp, vertical = 6.dp), notifications::request) }
+            }
+            if (!screenLock.set) {
+                item(key = "screenLock") { ScreenLockCard(Modifier.padding(horizontal = 16.dp, vertical = 6.dp), screenLock::openSettings) }
             }
             notice?.let {
                 item(key = "notice") {
