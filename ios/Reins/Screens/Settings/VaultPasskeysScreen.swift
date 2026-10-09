@@ -73,7 +73,10 @@ struct VaultPasskeysScreen: View {
     @State private var vm = VaultPasskeysModel()
     @State private var removing: VaultPasskeyView?
 
-    var body: some View {
+    // The code, the unlock form, the passkeys: hidden in the app switcher and while the screen is recorded.
+    var body: some View { screen.privacyCover() }
+
+    @ViewBuilder private var screen: some View {
         List {
             Section {
                 switch vm.passkeys {

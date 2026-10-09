@@ -86,7 +86,10 @@ struct RecoveryCodeSheet: View {
         return rows
     }
 
-    var body: some View {
+    // The code, the unlock form, the passkeys: hidden in the app switcher and while the screen is recorded.
+    var body: some View { screen.privacyCover() }
+
+    @ViewBuilder private var screen: some View {
         ScrollView {
         VStack(alignment: .leading, spacing: 16) {
             Text("Recovery code")
