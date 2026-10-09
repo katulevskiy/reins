@@ -51,6 +51,7 @@ class VaultFlowTest : FlowHarness() {
     fun theListShowsEveryItemAndSearches() {
         openVault()
         assertTrue(has("vaultItem:github") && has("vaultItem:deploy") && has("vaultItem:visa"))
+        awaitText("This phone's key for reins vault add: 4821 9930")
         type("vaultSearch", "git")
         awaitGone("vaultItem:openai")
         assertTrue(has("vaultItem:github"))

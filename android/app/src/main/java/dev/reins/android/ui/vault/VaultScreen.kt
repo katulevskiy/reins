@@ -72,6 +72,7 @@ fun VaultScreen(viewModel: VaultViewModel, onBack: () -> Unit, onOpen: (String) 
     val items by viewModel.items.collectAsStateWithLifecycle()
     val query by viewModel.query.collectAsStateWithLifecycle()
     val ui by viewModel.ui.collectAsStateWithLifecycle()
+    val phoneKey by viewModel.phoneKey.collectAsStateWithLifecycle()
     LaunchedEffect(viewModel) { viewModel.load() }
 
     Screen(
@@ -113,8 +114,16 @@ fun VaultScreen(viewModel: VaultViewModel, onBack: () -> Unit, onOpen: (String) 
                 "a secret here without showing it to an AI.",
             RType.sans(13.5f, lineHeight = 19f),
             c.tertiary,
-            Modifier.padding(start = 32.dp, end = 32.dp, top = 16.dp, bottom = 32.dp),
+            Modifier.padding(start = 32.dp, end = 32.dp, top = 16.dp, bottom = if (phoneKey == null) 32.dp else 8.dp),
         )
+        phoneKey?.let {
+            RText(
+                "This phone's key for reins vault add: $it",
+                RType.sans(13.5f, lineHeight = 19f),
+                c.tertiary,
+                Modifier.padding(start = 32.dp, end = 32.dp, bottom = 32.dp).testTag("phoneKey"),
+            )
+        }
     }
 }
 

@@ -151,7 +151,7 @@ How it fits together:
   `com.reins2fa.app://sso-callback`, which the server allows in addition to the Bitwarden clients' ones.
 - A new account gets its vault keys from the phone, protected by a random account secret instead of a master
   password ([security model](security-model.md#accounts-without-a-master-password)). Bitwarden clients can still sign
-  in with SSO, but cannot open such a vault.
+  in with SSO, but cannot open such a vault; the Reins app's vault screens and `reins vault add` edit it instead.
 - `SSO_AUTH_ONLY_NOT_SESSION=true` keeps the server's own 30-day sessions, so approvals keep working when WorkOS is
   unreachable; WorkOS's revocations still reach the server through the sync. With `false`, every token refresh asks
   WorkOS (its access tokens live five minutes).

@@ -47,6 +47,10 @@ class VaultViewModel(private val container: AppContainer) : ViewModel() {
     private val _madeKey = MutableStateFlow<VaultSshKey?>(null)
     val madeKey: StateFlow<VaultSshKey?> = _madeKey.asStateFlow()
 
+    /** The eight digits of this phone's key, which `reins vault add` asks the user to type once. */
+    private val _phoneKey = MutableStateFlow<String?>(null)
+    val phoneKey: StateFlow<String?> = _phoneKey.asStateFlow()
+
     private val _ui = MutableStateFlow(VaultUi())
     val ui: StateFlow<VaultUi> = _ui.asStateFlow()
 
@@ -56,6 +60,17 @@ class VaultViewModel(private val container: AppContainer) : ViewModel() {
     fun load() {
         search?.cancel()
         search = viewModelScope.launch { read(_query.value) }
+        if (_phoneKey.value == null) {
+            viewModelScope.launch {
+                _phoneKey.value = try {
+                    container.core.phoneKeyFingerprint()
+                } catch (e: CancellationException) {
+                    throw e
+                } catch (e: Exception) {
+                    null
+                }
+            }
+        }
     }
 
     /** Searches as the user types, once they pause. */

@@ -70,4 +70,6 @@ must be connected again.
 ## `reins run` says "No vault item matches"
 
 Name the item by its id or its exact name, and the field after a slash: `vault:OpenAI/password`. Fields are
-`password`, `username`, `totp`, `notes`, `uri` or a custom field's name.
+`password`, `username`, `totp`, `notes`, `uri` or a custom field's name. `reins vault list` shows the names, and the
+item's page in the Reins app (Integrations → Password vault → Open the vault) shows what to write. Not there yet?
+`reins vault add OpenAI` adds it, or **+** on that page. Two items with the same name cannot be told apart: rename one.
