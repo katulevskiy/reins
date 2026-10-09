@@ -190,12 +190,17 @@ Bots and maintainers who do not need to sign are listed in the workflow's `allow
 
 ## Maintainers: signing the APK in releases
 
-Infisical is the source of the Android release signing secrets. The release workflow reads `/signing/android` in the
-`prod` environment through GitHub OIDC. Configure a machine identity with read-only access to that folder, trusting
-only this repository's release workflow on `main`, then set the GitHub Actions variable
-`INFISICAL_RELEASE_IDENTITY_ID` to its identity id. `INFISICAL_RELEASE_ENVIRONMENT` and
-`INFISICAL_ANDROID_SIGNING_PATH` override the environment and folder when needed. The project id is in
-`.infisical.json`; the workflow never needs an Infisical API key. See the
+Infisical is the source of the Android release signing secrets. They live in their own project, `reins-release`
+(id `e21d41de-d3f4-41bf-accb-b4c2df9f164d`, set in `.github/actions/android-signing/action.yml`), not in the
+`.infisical.json` project with the server's settings: Infisical's free plan has no folder-scoped roles, so a separate
+project is what keeps the release identity from reading anything else. The release workflow reads `/signing/android`
+in its `prod` environment through GitHub OIDC as the machine identity `github-release-android` (Viewer on
+`reins-release` only, no organization access). Its OIDC login only accepts tokens with audience
+`https://github.com/katulevskiy`, subject `repo:katulevskiy/reins:ref:refs/heads/main` and
+`job_workflow_ref` `katulevskiy/reins/.github/workflows/release.yml@refs/heads/main`. The GitHub Actions variable
+`INFISICAL_RELEASE_IDENTITY_ID` holds its identity id. `INFISICAL_RELEASE_ENVIRONMENT` and
+`INFISICAL_ANDROID_SIGNING_PATH` override the environment and folder when needed. The workflow never needs an
+Infisical API key. See the
 [Infisical GitHub OIDC setup](https://infisical.com/docs/documentation/platform/identities/oidc-auth/github).
 
 | Infisical secret | Value |
@@ -205,8 +210,10 @@ only this repository's release workflow on `main`, then set the GitHub Actions v
 | `ANDROID_KEY_ALIAS` | the key alias |
 | `ANDROID_KEY_PASSWORD` | the key password |
 
-Import a private dotenv file with `infisical secrets set --env=prod --path=/signing/android --file=/private/android.env`.
-Keep the keystore and import file outside the repository, with mode `0600`. Existing GitHub repository secrets of the
+Import a private dotenv file with
+`infisical secrets set --projectId=e21d41de-d3f4-41bf-accb-b4c2df9f164d --env=prod --path=/signing/android --file=android-release.env`.
+Keep the keystore and import file outside the repository, with mode `0600`. The master copy is the 1Password item
+"Reins Android release key" (the `.p12`, its passwords, and the `android-release.env` import file). Existing GitHub repository secrets of the
 same names remain a fallback while migrating. Without complete signing credentials, the release fails before
 building or publishing. Every release must include the signed Android APK.
 

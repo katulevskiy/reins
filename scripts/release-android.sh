@@ -8,7 +8,8 @@
 # The app's updater reads releases/android/latest.json; the download page, $REINS_SITE/app, is the website's. Run
 # from anywhere in the repository:
 #
-#   infisical run --env=prod --path=/signing/android -- scripts/release-android.sh
+#   infisical run --projectId=e21d41de-d3f4-41bf-accb-b4c2df9f164d --env=prod --path=/signing/android \
+#       -- scripts/release-android.sh
 #   scripts/release-android.sh            # refuses uncommitted changes
 #   scripts/release-android.sh --dirty    # publish anyway (the build id says so)
 #

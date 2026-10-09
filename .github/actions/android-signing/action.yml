@@ -17,7 +17,8 @@ runs:
       with:
         method: oidc
         identity-id: ${{ inputs.identity-id }}
-        project-id: 1fe9cbb8-7e10-44d1-973a-9a3bc80efb7a
+        # reins-release: a project holding only signing secrets, so the release identity cannot read server secrets.
+        project-id: e21d41de-d3f4-41bf-accb-b4c2df9f164d
         env-slug: ${{ inputs.environment }}
         secret-path: ${{ inputs.secret-path }}
         export-type: env
