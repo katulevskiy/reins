@@ -70,6 +70,21 @@ enum SettingsText {
         }
     }
 
+    /// What the Vault passkeys row says: how many there are (`count` nil while unknown).
+    static func passkeysSummary(_ count: Int?) -> String {
+        switch count {
+        case nil: "Unlock your vault on a new phone"
+        case 0: "None: add one to unlock on a new phone"
+        case 1: "1 passkey"
+        case let n?: "\(n) passkeys"
+        }
+    }
+
+    /// "Added 9 Oct 2026", in the phone's own date format.
+    static func passkeyAdded(_ epochSeconds: Int64) -> String {
+        "Added " + Date(timeIntervalSince1970: TimeInterval(epochSeconds)).formatted(date: .abbreviated, time: .omitted)
+    }
+
     /// "claude.ai · used 5 min ago".
     static func connectionLine(_ c: ConnectionView, now: Int64 = nowSeconds()) -> String {
         untrusted(c.clientHost) + " · " + (c.lastUsedAt.map { "used \(GrantText.relative($0, now: now))" } ?? "never used")

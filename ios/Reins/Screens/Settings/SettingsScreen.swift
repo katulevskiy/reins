@@ -62,7 +62,10 @@ private struct AccountGroup: View {
                 .accessibilityHint("Copies the server address")
                 .accessibilityIdentifier("copyServer")
                 .cardRow()
-                if model.recoveryCodeAvailable { RecoveryCodeRow() }
+                if model.recoveryCodeAvailable {
+                    RecoveryCodeRow()
+                    VaultPasskeysRow()
+                }
             } header: {
                 GroupHeader("Account")
             } footer: {
@@ -71,6 +74,20 @@ private struct AccountGroup: View {
                 }
             }
         }
+    }
+}
+
+/// Settings > Account > Vault passkeys: how many open the vault, read again each time Settings shows.
+private struct VaultPasskeysRow: View {
+    @Environment(AppModel.self) private var model
+    @State private var count: Int?
+
+    var body: some View {
+        SettingsLinkRow(
+            title: "Vault passkeys", subtitle: SettingsText.passkeysSummary(count), symbol: "person.badge.key", tint: Palette.accent,
+            id: "vaultPasskeysRow"
+        ) { model.show(.vaultPasskeys) }
+        .task { count = try? await model.core.vaultPasskeys().count }
     }
 }
 

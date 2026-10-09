@@ -109,6 +109,8 @@ final class AppModel {
     let authenticator: Authenticating
     /// True for the `-demo` fake core (screenshots, UI tests, a look around without a server).
     let demo: Bool
+    /// The passkey sheet for the passkeys that open the vault; the demo's answers by itself, tests put a fake here.
+    @ObservationIgnored var passkeys: PasskeyPrompting
 
     // MARK: State read from the core
 
@@ -135,6 +137,11 @@ final class AppModel {
     private(set) var recoveryCodeAvailable = false
     /// Normal screens remain behind the mandatory acknowledgement, also after the app restarts.
     private(set) var recoveryToRecord: String?
+    /// Before the recovery code, for an account without a passkey for its vault: the offer of one
+    /// (`PasskeyOfferScreen`). The code follows either way.
+    private(set) var passkeyOffer = false
+    /// "Use the recovery code only" for this sign-in: the offer does not come back until the next one.
+    private var passkeyDeclined = false
     private(set) var recoveryLoadError: String?
     /// How the last MCP sign-in ended, shown on that server's page until it is left.
     var mcpNotice: McpNotice?
@@ -191,6 +198,7 @@ final class AppModel {
         self.feedback = feedback
         self.authenticator = authenticator
         self.demo = demo
+        self.passkeys = demo ? DemoPasskeys() : PlatformPasskeys()
         self.modelDownloads = modelDownloads ?? ModelDownloads(core: core, feedback: feedback)
         self.modelDownloads.onFinished = { [weak self] failure in
             await self?.refreshAutopilot()
@@ -213,6 +221,11 @@ final class AppModel {
             catch CoreError.Invalid { /* Password accounts have no recovery secret. */ }
             catch { recoveryFailure = error.userMessage }
         }
+        // Before the code: a passkey that opens the vault, unless the account has one or the offer was declined.
+        var offerPasskey = false
+        if let info, let code, !passkeyDeclined, !RecoveryRecord.confirmed(server: info.serverUrl, code: code) {
+            offerPasskey = await hasNoVaultPasskey()
+        }
         let current = await core.session()
         guard epoch == accountEpoch, current == info else { return }
         if let info, !demo, KeysLock.matches(info) || keys != .unlocked {
@@ -226,6 +239,7 @@ final class AppModel {
             approvalDevice = DeviceStatus.approvalDevice && !DeviceStatus.replaced
             recoveryCodeAvailable = code != nil
             recoveryToRecord = code.flatMap { RecoveryRecord.confirmed(server: info.serverUrl, code: $0) ? nil : $0 }
+            passkeyOffer = offerPasskey && recoveryToRecord != nil
             recoveryLoadError = recoveryFailure
             onSignedIn?()
             await refreshPending()
@@ -260,6 +274,8 @@ final class AppModel {
         approvalDevice = false
         recoveryCodeAvailable = false
         recoveryToRecord = nil
+        passkeyOffer = false
+        passkeyDeclined = false
         recoveryLoadError = nil
         onboarding = false
         autopilot = nil
@@ -334,6 +350,22 @@ final class AppModel {
     func finishOnboarding() {
         guard recoveryToRecord == nil else { return }
         onboarding = false
+    }
+
+    /// Whether the account has no passkey for its vault yet. Unknown (offline) counts as having one: never a block.
+    private func hasNoVaultPasskey() async -> Bool {
+        (try? await core.vaultPasskeys().isEmpty) ?? false
+    }
+
+    /// "Use the recovery code only": the code shows next, and the offer does not come back for this sign-in.
+    func declinePasskeyOffer() {
+        passkeyDeclined = true
+        passkeyOffer = false
+    }
+
+    /// A passkey opens the vault now: the offer is done, and the recovery code follows.
+    func vaultPasskeyAdded() {
+        passkeyOffer = false
     }
 
     func confirmRecoveryRecord() {

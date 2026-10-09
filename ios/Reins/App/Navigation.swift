@@ -30,6 +30,8 @@ enum AppSection: String, CaseIterable, Hashable, Identifiable {
 enum Route: Hashable {
     /// Settings > Sounds & haptics.
     case sounds
+    /// Settings > Vault passkeys.
+    case vaultPasskeys
     /// One Autopilot profile.
     case autopilotProfile(String)
     /// Autopilot's "Try it", for a profile (nil = the default one).

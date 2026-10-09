@@ -19,6 +19,9 @@ struct RootView: View {
                         Button("Try again") { Task { await model.refreshSession() } }
                             .buttonStyle(CapsuleButtonStyle(kind: .primary))
                     }.padding(24).pageBackground()
+                } else if model.passkeyOffer {
+                    // Before the code: a passkey that opens the vault (or not); the code follows either way.
+                    PasskeyOfferScreen()
                 } else if let code = model.recoveryToRecord {
                     RecoveryCodeSheet(code: code, required: true, onDone: model.confirmRecoveryRecord)
                 } else if model.onboarding { OnboardingScreen() } else { MainShell() }
