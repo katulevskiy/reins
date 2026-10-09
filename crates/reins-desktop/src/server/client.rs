@@ -34,10 +34,14 @@ pub struct CallAnswer {
 }
 
 /// When the approval phone last polled the server, and the server's clock.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Deserialize)]
 pub struct PhoneSeen {
     /// Unix seconds; `None`: not since the server started.
     pub last_seen: Option<i64>,
+    /// The integrations the phone has an account for (`github`, `gmail`, …); `None`: not reported yet (or an older
+    /// server).
+    #[serde(default)]
+    pub services: Option<Vec<String>>,
     pub server_time: i64,
 }
 
@@ -73,6 +77,12 @@ impl DesktopClient {
         let body = self.send_raw(|server| self.http.get(format!("{server}/reins/desktop/phone"))).await?;
         serde_json::from_slice(&body)
             .map_err(|e| LinkError::Failed(format!("unexpected answer from the Reins server: {e}")))
+    }
+
+    /// Ends this computer's connection on the server (the phone's list no longer shows it). `LinkError::NotFound` from
+    /// a server too old to do it.
+    pub async fn revoke(&self) -> Result<(), LinkError> {
+        self.send_raw(|server| self.http.delete(format!("{server}/reins/desktop/connection"))).await.map(drop)
     }
 
     async fn send(&self, build: impl Fn(&str) -> reqwest::RequestBuilder) -> Result<CallAnswer, LinkError> {

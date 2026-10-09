@@ -23,7 +23,13 @@ macro_rules! out {
 }
 
 #[derive(Parser)]
-#[command(name = "reins", version = update::LONG_VERSION, about = "Reins desktop app: git for AI agents, allowed from your phone")]
+#[command(
+    name = "reins",
+    version = update::LONG_VERSION,
+    about = "Reins: your phone approves what AI agents do on this computer (commands, git, MCP tools, secrets, SSH)",
+    after_help = "New here? `reins setup` pairs your phone and connects your AI tools, `reins test` shows the whole \
+                  loop, `reins doctor` says what to fix.\nMore: https://github.com/katulevskiy/reins/blob/main/docs/quick-start.md"
+)]
 struct Cli {
     #[command(subcommand)]
     command: Cmd,
@@ -31,6 +37,7 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Cmd {
+    #[command(display_order = 1)]
     /// Set everything up: pair with your phone, start the service, route git, connect your AI tools.
     ///
     /// Pairs only when this computer is not paired yet; connects every AI tool found (Claude Code, Codex, Gemini CLI,
@@ -43,35 +50,44 @@ enum Cmd {
         #[arg(long)]
         browser: bool,
     },
+    #[command(display_order = 3)]
     /// Check that everything works, and say how to fix what does not.
     ///
     /// Exit code 1 when something needs fixing.
     Doctor,
+    #[command(display_order = 2)]
     /// Send a test request to your phone, to see the whole loop work.
     Test,
     /// Run the daemon in the foreground (what the service runs).
+    #[command(hide = true)]
     Daemon {
         /// Also append the log to this file (the Windows background service has no other place for it).
         #[arg(long, value_name = "FILE")]
         log_file: Option<PathBuf>,
     },
+    #[command(display_order = 4)]
     /// Whether the daemon runs, who decides, the listen address, the server and this app's key fingerprint.
     Status,
+    #[command(display_order = 21)]
     /// Route the enabled git hosts' remotes (`[[git.hosts]]`) through the proxy, or stop doing so.
     Git {
         #[command(subcommand)]
         action: GitCmd,
     },
+    #[command(display_order = 23)]
     /// Local approvals waiting for an answer.
     Pending,
+    #[command(display_order = 24)]
     /// Allow a pending local approval.
     Approve {
         id: String,
     },
+    #[command(display_order = 25)]
     /// Refuse a pending local approval.
     Deny {
         id: String,
     },
+    #[command(display_order = 5)]
     /// Pair with your phone: scan the QR code shown here with the Reins app. Your phone decides from then on.
     Login {
         /// The server your phone signed in to; a self-hosted one needs its address here.
@@ -84,30 +100,48 @@ enum Cmd {
         #[arg(long)]
         no_browser: bool,
     },
-    /// Forget the Reins server session.
+    #[command(display_order = 26)]
+    /// Sign this computer out: ends its connection on the server and forgets the session here.
     Logout,
+    #[command(display_order = 22)]
     /// Run the daemon at login (systemd user unit, launchd agent, or on Windows the user's Run key).
     Service {
         #[command(subcommand)]
         action: ServiceCmd,
     },
+    #[command(display_order = 10)]
     /// Stop sending git through Reins: git talks to the git hosts directly again (undo with `reins resume`).
     #[command(alias = "disable")]
     Pause,
+    #[command(display_order = 9)]
     /// Send git through Reins: starts the background service if needed, then routes the enabled hosts' remotes
     /// through it.
     #[command(alias = "enable")]
     Resume,
+    #[command(display_order = 12)]
     /// Install the latest release (signed by the Reins release key) and restart the service.
     Update {
         /// Only say whether a newer release exists.
         #[arg(long)]
         check: bool,
     },
+    /// Undo everything Reins did on this computer and end its connection to your phone.
+    ///
+    /// Takes Reins out of every AI tool, sends git directly again, removes the SSH agent block from ~/.ssh/config,
+    /// stops and removes the background service, and signs this computer out (the phone's list no longer shows
+    /// it). `--purge` also deletes this computer's key, activity log and settings. The `reins` program itself stays.
+    #[command(display_order = 30)]
+    Uninstall {
+        /// Also delete this computer's key, the activity log and config.toml.
+        #[arg(long)]
+        purge: bool,
+    },
     #[command(flatten)]
     Agents(reins_desktop::agents_cli::Command),
+    #[command(display_order = 13)]
     /// Run a command with secrets from the vault on your phone as environment variables.
     Run(reins_desktop::run::RunArgs),
+    #[command(display_order = 20)]
     /// The SSH agent whose keys stay on your phone.
     Ssh {
         #[command(subcommand)]
@@ -373,13 +407,21 @@ async fn run(cmd: Cmd) -> Result<(), String> {
         }
         Cmd::Test => test(&paths, &config).await,
         Cmd::Logout => {
-            if server::oauth::logout(&paths)? {
-                out!("Logged out.");
-            } else {
-                out!("Not logged in.");
+            match server::oauth::sign_out(&paths).await? {
+                server::oauth::SignedOut::NotLoggedIn => out!("Not logged in."),
+                server::oauth::SignedOut::Revoked => {
+                    out!("Logged out. Your phone no longer lists this computer.");
+                }
+                server::oauth::SignedOut::LocalOnly(why) => out!(
+                    "Logged out here; the server was not told ({why}). Remove this computer in the Reins app on your \
+                     phone (Settings, AI connections)."
+                ),
             }
             Ok(())
         }
+        Cmd::Uninstall {
+            purge,
+        } => uninstall(&paths, &config, purge).await,
         Cmd::Service {
             action,
         } => {
@@ -474,8 +516,13 @@ async fn setup(paths: &Paths, config: &Config, server_url: &str, browser: bool) 
         }
     }
     summary.push(format!("✓ Background service running on {}", config.listen));
-    Git::default().setup_hosts(&Scope::Global, config)?;
-    summary.push(format!("✓ git for {} goes through Reins", enabled_hosts(config)?));
+    let (routed, direct) = reins_desktop::setup::routable(paths, config).await;
+    Git::default().setup_hosts(&Scope::Global, &routed)?;
+    let hosts = enabled_hosts(&routed)?;
+    if !hosts.is_empty() {
+        summary.push(format!("✓ git for {hosts} goes through Reins"));
+    }
+    let mut next: Vec<String> = direct.iter().map(reins_desktop::setup::unserved_note).collect();
     out!("\nStep 3 of 3: your AI tools.");
     let s = reins_desktop::harness::Setup {
         home: home()?,
@@ -495,7 +542,10 @@ async fn setup(paths: &Paths, config: &Config, server_url: &str, browser: bool) 
             continue;
         }
         match reins_desktop::harness::add(paths, &s, h) {
-            Ok(_) => summary.push(format!("✓ {} connected. {}", h.label(), reins_desktop::harness::after_add_note(h))),
+            Ok(_) => {
+                summary.push(format!("✓ {} connected", h.label()));
+                next.push(format!("{}: {}", h.label(), reins_desktop::harness::after_add_note(h)));
+            }
             Err(e) => summary.push(format!("✗ {}: {e}", h.label())),
         }
     }
@@ -503,7 +553,95 @@ async fn setup(paths: &Paths, config: &Config, server_url: &str, browser: bool) 
     for line in &summary {
         out!("  {line}");
     }
+    if !next.is_empty() {
+        out!("\nStill to do:");
+        for line in &next {
+            out!("  → {line}");
+        }
+    }
     out!("\nTry it: `reins test` sends a test to your phone. `reins doctor` checks everything any time.");
+    Ok(())
+}
+
+/// `reins uninstall`: every undo step, each reported; failures do not stop the others.
+async fn uninstall(paths: &Paths, config: &Config, purge: bool) -> Result<(), String> {
+    let mut failed = false;
+    let mut step = |what: &str, r: Result<String, String>| match r {
+        Ok(done) => out!("✓ {what}: {done}"),
+        Err(e) => {
+            failed = true;
+            out!("✗ {what}: {e}");
+        }
+    };
+    let home = home()?;
+    let s = reins_desktop::harness::Setup {
+        home: home.clone(),
+        exe: update::current_executable()?,
+        hook_timeout_secs: config.guard.timeout_secs,
+    };
+    for h in reins_desktop::harness::Harness::ALL {
+        if !reins_desktop::harness::registered(paths, &s, h).is_ok_and(|r| r.any()) {
+            continue;
+        }
+        step(
+            &format!("Take Reins out of {}", h.label()),
+            reins_desktop::harness::remove(paths, &s, h).map(|lines| format!("{} change(s)", lines.len())),
+        );
+    }
+    step(
+        "Send git directly again",
+        Git::default().unsetup_hosts(&Scope::Global, config).map(|n| format!("removed {n} rule(s)")),
+    );
+    step(
+        "SSH agent",
+        reins_desktop::ssh_agent::setup::unsetup(&reins_desktop::ssh_agent::setup::config_file(&home)).map(|removed| {
+            if removed {
+                "removed its block from ~/.ssh/config".to_owned()
+            } else {
+                "nothing to remove".to_owned()
+            }
+        }),
+    );
+    #[cfg(windows)]
+    let service = service::windows::uninstall(paths, config, true).await;
+    #[cfg(not(windows))]
+    let service = service::Manager::current().and_then(|m| service::uninstall(m, &home, true));
+    step(
+        "Background service",
+        service.map(|removed| {
+            if removed {
+                "stopped and removed"
+            } else {
+                "was not installed"
+            }
+            .to_owned()
+        }),
+    );
+    step(
+        "Sign out",
+        server::oauth::sign_out(paths).await.map(|r| match r {
+            server::oauth::SignedOut::NotLoggedIn => "was not paired".to_owned(),
+            server::oauth::SignedOut::Revoked => "your phone no longer lists this computer".to_owned(),
+            server::oauth::SignedOut::LocalOnly(why) => {
+                format!("signed out here; remove this computer in the Reins app on your phone ({why})")
+            }
+        }),
+    );
+    if purge {
+        for dir in [&paths.state_dir, &paths.config_dir] {
+            let r = match std::fs::remove_dir_all(dir) {
+                Ok(()) => Ok("deleted".to_owned()),
+                Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok("nothing there".to_owned()),
+                Err(e) => Err(e.to_string()),
+            };
+            step(&dir.display().to_string(), r);
+        }
+    }
+    let exe = update::current_executable().map_or_else(|_| "reins".to_owned(), |e| e.display().to_string());
+    out!("\nThe program itself is still at {exe}; delete it to finish (the Reins app: uninstall it like any app).");
+    if failed {
+        return Err("some steps failed (✗ above)".to_owned());
+    }
     Ok(())
 }
 
@@ -588,8 +726,15 @@ async fn resume(paths: &Paths, config: &Config) -> Result<(), String> {
             tokio::time::sleep(std::time::Duration::from_millis(200)).await;
         }
     }
-    Git::default().setup_hosts(&Scope::Global, config)?;
-    out!("git sends {} through Reins (http://{}/).", enabled_hosts(config)?, config.listen);
+    let (routed, direct) = reins_desktop::setup::routable(paths, config).await;
+    Git::default().setup_hosts(&Scope::Global, &routed)?;
+    let hosts = enabled_hosts(&routed)?;
+    if !hosts.is_empty() {
+        out!("git sends {hosts} through Reins (http://{}/).", config.listen);
+    }
+    for h in &direct {
+        out!("{}", reins_desktop::setup::unserved_note(h));
+    }
     if server::oauth::logged_in_server(paths).is_none() {
         out!("Not logged in: the local policy decides. `reins login` to decide on your phone.");
     }

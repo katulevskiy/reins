@@ -91,6 +91,7 @@ impl Doctor {
     pub async fn run(&self) -> Vec<Check> {
         let mut checks = Vec::new();
         let server = crate::server::oauth::logged_in_server(&self.paths);
+        let mut services = None;
         if self.config.mode == Mode::Local {
             checks.push(Check::new(
                 "pairing",
@@ -101,7 +102,9 @@ impl Doctor {
             ));
         } else if let Some(server) = &server {
             checks.push(Check::new("pairing", "Paired with your phone", Level::Ok, format!("Through {server}"), None));
-            checks.extend(self.server_checks(server).await);
+            let (found, reported) = self.server_checks(server).await;
+            checks.extend(found);
+            services = reported;
         } else {
             checks.push(Check::new(
                 "pairing",
@@ -113,16 +116,19 @@ impl Doctor {
         }
         checks.push(self.service().await);
         checks.push(self.git_check());
+        checks.extend(self.git_hosts_on_phone(services.as_deref()));
         checks.extend(self.harness_checks());
         checks.push(self.notifications());
         checks
     }
 
-    async fn server_checks(&self, server: &str) -> Vec<Check> {
+    /// The server's checks, and the integrations the phone reported (when the server says).
+    async fn server_checks(&self, server: &str) -> (Vec<Check>, Option<Vec<String>>) {
         let mut out = Vec::new();
+        let mut services = None;
         let http = match crate::http::client(Some(Duration::from_secs(10))) {
             Ok(h) => h,
-            Err(e) => return vec![Check::new("server", "Server reachable", Level::Fail, e, None)],
+            Err(e) => return (vec![Check::new("server", "Server reachable", Level::Fail, e, None)], None),
         };
         let started = Instant::now();
         let alive = http.get(format!("{server}/alive")).send().await;
@@ -160,13 +166,14 @@ impl Doctor {
             Ok(c) => c,
             Err(e) => {
                 out.push(Check::new("session", "Session accepted", Level::Fail, e, None));
-                return out;
+                return (out, None);
             }
         };
         match client.phone().await {
             Ok(seen) => {
                 out.push(Check::new("session", "Session accepted", Level::Ok, "The server knows this computer", None));
                 out.push(phone_check(seen.last_seen, seen.server_time));
+                services = seen.services;
             }
             Err(LinkError::LoggedOut(m)) => out.push(Check::new(
                 "session",
@@ -189,7 +196,32 @@ impl Doctor {
                 out.push(Check::new("session", "Session accepted", Level::Warn, m, None));
             }
         }
-        out
+        (out, services)
+    }
+
+    /// Each enabled git host whose integration the phone has no account for: pushes through Reins would fail.
+    fn git_hosts_on_phone(&self, services: Option<&[String]>) -> Vec<Check> {
+        crate::setup::unserved_hosts(&self.config, services)
+            .into_iter()
+            .map(|h| {
+                let id = format!("phone:{}", h.service);
+                let label = format!("{} on your phone", h.label());
+                Check {
+                    id,
+                    label,
+                    level: Level::Warn,
+                    detail: format!(
+                        "Not connected in the Reins app: git for {} through Reins cannot read private repositories or \
+                         push.",
+                        h.host
+                    ),
+                    fix: Some(format!(
+                        "In the Reins app on your phone: Integrations, {}. Then `reins resume`.",
+                        h.label()
+                    )),
+                }
+            })
+            .collect()
     }
 
     async fn service(&self) -> Check {
@@ -267,6 +299,13 @@ impl Doctor {
             let label = h.label();
             let add = format!("Run `reins harness add {}` (or connect it in the Reins app).", h.id());
             let check = match (found, reg) {
+                (_, Some(r)) if r.complete() && h == Harness::Codex => Check::new(
+                    &id,
+                    label,
+                    Level::Ok,
+                    "Connected. Codex runs a new hook only after you trust it once: type /hooks in Codex",
+                    None,
+                ),
                 (_, Some(r)) if r.complete() => {
                     Check::new(&id, label, Level::Ok, "Connected: its tools and risky commands reach your phone", None)
                 }

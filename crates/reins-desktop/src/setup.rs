@@ -7,7 +7,7 @@ use std::ffi::OsString;
 use std::path::PathBuf;
 use std::process::Command;
 
-use crate::config::Config;
+use crate::config::{Config, GitHost, HostEntry, Mode, Paths};
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Scope {
@@ -146,9 +146,85 @@ impl Git {
     }
 }
 
+/// The enabled git hosts the phone cannot serve yet: their service (`github`, `gitlab`, …) is not among `services`, the
+/// integrations the phone reported. Nothing when `services` is unknown.
+#[must_use]
+pub fn unserved_hosts(config: &Config, services: Option<&[String]>) -> Vec<GitHost> {
+    let Some(services) = services else {
+        return Vec::new();
+    };
+    config.enabled_hosts().unwrap_or_default().into_iter().filter(|h| !services.contains(&h.service)).collect()
+}
+
+/// `config` with `hosts` turned off: what git is routed for while the phone cannot serve them.
+#[must_use]
+pub fn without_hosts(config: &Config, hosts: &[GitHost]) -> Config {
+    let mut c = config.clone();
+    for h in hosts {
+        match c.git.hosts.iter_mut().find(|e| e.host.eq_ignore_ascii_case(&h.host)) {
+            Some(e) => e.enabled = Some(false),
+            None => c.git.hosts.push(HostEntry {
+                host: h.host.clone(),
+                enabled: Some(false),
+                ..HostEntry::default()
+            }),
+        }
+    }
+    c
+}
+
+/// What `reins resume`, `reins setup` and the app route git for: every enabled host, except those the phone has no
+/// account for yet (asked from the server; when it cannot say, every enabled host). Returns the config to route
+/// with and the hosts left direct.
+pub async fn routable(paths: &Paths, config: &Config) -> (Config, Vec<GitHost>) {
+    if config.mode == Mode::Local || crate::server::oauth::logged_in_server(paths).is_none() {
+        return (config.clone(), Vec::new());
+    }
+    let services = match crate::server::client::DesktopClient::new(paths) {
+        Ok(client) => match tokio::time::timeout(std::time::Duration::from_secs(10), client.phone()).await {
+            Ok(Ok(seen)) => seen.services,
+            _ => None,
+        },
+        Err(_) => None,
+    };
+    let unserved = unserved_hosts(config, services.as_deref());
+    (without_hosts(config, &unserved), unserved)
+}
+
+/// What to tell the user about a host left direct.
+#[must_use]
+pub fn unserved_note(h: &GitHost) -> String {
+    format!(
+        "{} is not connected in the Reins app on your phone yet, so git for {} stays direct (your own pushes keep \
+         working). Connect it there (Integrations, {}), then run `reins resume`.",
+        h.label(),
+        h.host,
+        h.label()
+    )
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn hosts_the_phone_cannot_serve_stay_direct() {
+        let mut c = Config::default();
+        c.git.hosts.push(HostEntry {
+            host: "gitlab.com".to_owned(),
+            enabled: Some(true),
+            ..HostEntry::default()
+        });
+        assert!(unserved_hosts(&c, None).is_empty(), "unknown: route as configured");
+        let unserved = unserved_hosts(&c, Some(&["gmail".to_owned(), "gitlab".to_owned()]));
+        assert_eq!(unserved.iter().map(|h| h.host.as_str()).collect::<Vec<_>>(), ["github.com"]);
+        let routed = without_hosts(&c, &unserved);
+        let enabled: Vec<String> = routed.enabled_hosts().unwrap().into_iter().map(|h| h.host).collect();
+        assert_eq!(enabled, ["gitlab.com"]);
+        assert!(unserved_note(&unserved[0]).contains("GitHub is not connected"));
+        let both = Some(vec!["github".to_owned(), "gitlab".to_owned()]);
+        assert!(unserved_hosts(&c, both.as_deref()).is_empty());
+    }
 
     fn git(home: &std::path::Path) -> Git {
         Git::default()

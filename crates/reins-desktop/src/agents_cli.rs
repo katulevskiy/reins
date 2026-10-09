@@ -17,6 +17,7 @@ const MAX_HOOK_INPUT: u64 = 4 * 1024 * 1024;
 #[derive(Subcommand)]
 pub enum Command {
     /// Ask a yes-or-no question: on your phone when logged in, else here. Exit code 0 yes, 1 no, 2 no answer.
+    #[command(display_order = 11)]
     Ask {
         question: String,
         /// What exactly would happen (`-` reads it from stdin).
@@ -31,16 +32,19 @@ pub enum Command {
     },
     /// A harness's pre-command hook (`reins harness add` sets it up): reads the hook's JSON on stdin, asks about
     /// risky commands and secret files (`[guard]` in the config), answers in the harness's format.
+    #[command(hide = true)]
     Hook {
         /// claude-code, codex, gemini or cursor.
         harness: Harness,
     },
     /// Add Reins to an AI harness (its MCP server and, where the harness has them, its hook), remove it, or list.
+    #[command(display_order = 6)]
     Harness {
         #[command(subcommand)]
         action: HarnessCmd,
     },
     /// A stdio MCP server that passes everything to your Reins server with this app's session.
+    #[command(hide = true)]
     Mcp {
         /// Who asks, shown on your phone ("Claude Code").
         #[arg(long, value_name = "NAME")]
@@ -164,9 +168,12 @@ async fn ask(
     };
     let timeout = Duration::from_secs(timeout.unwrap_or(config.approval_timeout_secs).clamp(1, 3_600));
     let interactive = !from_stdin && std::io::stdin().is_terminal();
+    let secs = timeout.as_secs();
     match crate::ask::decider(paths, config) {
-        Ok(Decider::Phone) => eprintln!("Asking on your phone…"),
-        Ok(Decider::Local) if !interactive => eprintln!("Asking on the desktop…"),
+        Ok(Decider::Phone) => eprintln!("Asking on your phone; waiting up to {secs} s…"),
+        Ok(Decider::Local) if !interactive => eprintln!(
+            "Asking on this computer (a desktop notification; not paired with a phone); waiting up to {secs} s…"
+        ),
         _ => {}
     }
     let entry = crate::journal::Entry::new(crate::journal::Kind::Ask, &q.question)
@@ -199,6 +206,16 @@ async fn hook(paths: &Paths, config: &Config, harness: Harness) -> ExitCode {
         say(&out);
     }
     ExitCode::from(code)
+}
+
+/// `set up`, `partly set up`, `not set up` or `not installed`, for the one-line list.
+fn state_word(paths: &Paths, s: &Setup, h: Harness) -> &'static str {
+    match harness::registered(paths, s, h) {
+        Ok(r) if r.complete() => "set up",
+        Ok(r) if r.any() => "partly set up (`reins harness add` repairs it)",
+        _ if harness::detect::found(h, &s.home) => "not set up",
+        _ => "not installed",
+    }
 }
 
 fn harness_cmd(paths: &Paths, config: &Config, action: HarnessCmd) -> Result<(), String> {
@@ -242,14 +259,19 @@ fn harness_cmd(paths: &Paths, config: &Config, action: HarnessCmd) -> Result<(),
         HarnessCmd::List {
             harness,
         } => {
-            let all = harness.map_or_else(|| Harness::ALL.to_vec(), |h| vec![h]);
-            for h in all {
+            if let Some(h) = harness {
+                // One harness: every part, with its file.
                 for line in harness::list(paths, &s, h)? {
                     say(&line);
                 }
                 if !harness::detect::found(h, &s.home) {
                     say("  (not found on this computer)");
                 }
+            } else {
+                for h in Harness::ALL {
+                    say(&format!("{:<12} {:<12} {}", h.id(), h.label(), state_word(paths, &s, h)));
+                }
+                say("`reins harness list <name>` shows each part and its file.");
             }
         }
     }

@@ -41,7 +41,7 @@ const MAX_REQUEST_ID_BYTES: usize = 64;
 const MAX_ECHOED_TOOL_CHARS: usize = 64;
 
 pub fn routes() -> Vec<Route> {
-    routes![post_call, get_call, get_phone]
+    routes![post_call, get_call, get_phone, delete_connection]
 }
 
 // ---------------------------------------------------------------------------------------
@@ -297,8 +297,10 @@ async fn get_call(id: &str, request: McpRequest, conn: DbConn) -> DesktopRespons
     wait_response(&waited, &request_id)
 }
 
-/// When the approval phone last asked this server for work (`null`: not since the server started), and the server's
-/// clock, for `reins doctor`. A phone asleep in a pocket polls rarely; push wakes it, so an old time is no fault.
+/// When the approval phone last asked this server for work (`null`: not since the server started), the integrations
+/// it reported having an account for (`null`: not reported since the server started), and the server's clock: for
+/// `reins doctor`, and for `reins setup`/`resume`, which leave git direct for a host the phone cannot serve yet. A
+/// phone asleep in a pocket polls rarely; push wakes it, so an old time is no fault.
 #[get("/reins/desktop/phone")]
 async fn get_phone(request: McpRequest, conn: DbConn) -> DesktopResponse {
     let connection = match authenticated(&request, &conn).await {
@@ -306,8 +308,30 @@ async fn get_phone(request: McpRequest, conn: DbConn) -> DesktopResponse {
         Err(response) => return response,
     };
     drop(conn);
-    let last_seen = HUB.phone_seen(&connection.user_uuid.to_string());
-    DesktopResponse::json(Status::Ok, json!({"last_seen": last_seen, "server_time": now_unix()}))
+    let user = connection.user_uuid.to_string();
+    let services = HUB.services_of(&user);
+    let last_seen = HUB.phone_seen(&user);
+    DesktopResponse::json(Status::Ok, json!({"last_seen": last_seen, "services": services, "server_time": now_unix()}))
+}
+
+/// `reins logout` and `reins uninstall`: this computer's connection ends itself, its refresh tokens with it. The phone's
+/// list of connections no longer shows it, and its access token stops working at once (every call re-checks).
+#[delete("/reins/desktop/connection")]
+async fn delete_connection(request: McpRequest, conn: DbConn) -> DesktopResponse {
+    let connection = match authenticated(&request, &conn).await {
+        Ok(c) => c,
+        Err(response) => return response,
+    };
+    match connection.delete(&conn).await {
+        Ok(()) => {
+            info!("Desktop connection {} removed by the desktop app", connection.uuid);
+            DesktopResponse::json(Status::Ok, json!({"removed": true}))
+        }
+        Err(e) => {
+            warn!("Could not remove desktop connection: {e:?}");
+            DesktopResponse::error(Status::InternalServerError, "server_error", "The connection could not be removed.")
+        }
+    }
 }
 
 #[cfg(test)]
