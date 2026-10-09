@@ -17,6 +17,7 @@ mod state;
 mod theme;
 mod tray;
 mod ui;
+mod upgrade;
 
 use std::sync::Arc;
 

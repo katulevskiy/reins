@@ -671,6 +671,7 @@ impl Root {
         let server = m.server();
         let fingerprint = m.fingerprint.clone();
         let update = m.update.clone();
+        let updating = m.updating;
         let notice = m.notice.clone();
         let show_qr = m.show_phone_qr;
         let autostart = m.autostart;
@@ -746,20 +747,31 @@ impl Root {
                     ).flex_1().min_w(px(0.0))),
             );
         }
-        if let Some(version) = update {
-            page = page.child(
-                card(pal)
-                    .p(px(12.0))
-                    .flex_row()
-                    .items_center()
-                    .gap(px(10.0))
-                    .bg(pal.accent_soft)
-                    .border_color(pal.accent.opacity(0.25))
-                    .child(div().flex_1().child(format!("Reins {version} is available.")))
-                    .child(
-                        link("download", "Download", pal).on_click(|_, _, cx| cx.open_url(&crate::links::download())),
-                    ),
-            );
+        if let Some(update) = update {
+            let banner = card(pal)
+                .p(px(12.0))
+                .flex_row()
+                .items_center()
+                .gap(px(10.0))
+                .bg(pal.accent_soft)
+                .border_color(pal.accent.opacity(0.25));
+            page = page.child(if update.ready.is_some() {
+                let label = if updating {
+                    "Restarting…"
+                } else {
+                    "Restart to update"
+                };
+                let restart = button("restart-update", label, pal, true, !updating);
+                banner.child(div().flex_1().child(format!("Reins {} is ready.", update.version))).child(if updating {
+                    restart
+                } else {
+                    restart.on_click(Self::on_model(cx, Model::restart_to_update))
+                })
+            } else {
+                banner.child(div().flex_1().child(format!("Reins {} is available.", update.version))).child(
+                    link("download", "Download", pal).on_click(|_, _, cx| cx.open_url(&crate::links::download())),
+                )
+            });
         }
 
         // Account.

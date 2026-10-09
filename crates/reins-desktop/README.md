@@ -16,7 +16,27 @@ curl -fsSL https://reins2fa.com/install.sh | sh
 Linux x86_64 and arm64 (static binaries, any distro) and macOS (Apple silicon and Intel). It installs to
 `~/.local/bin` (`REINS_INSTALL_DIR` to change). `reins update` installs the latest release later; it only accepts
 releases signed with the Reins release key built into the app, never an older one, and restarts the background
-service.
+service. A `reins` that came with the desktop app is updated with the app instead, which updates itself from a
+second signed list, `app.json` ([the app's README](../reins-desktop-app/README.md#updates)).
+
+The release feed (`<releases>/`): every release carries it as `reins-feed-<version>.tar.gz`, built by
+`scripts/release-feed.sh`, and the server mirrors the newest one into reins2fa.com/releases (see CONTRIBUTING.md,
+"The update feed"). `reins-release` writes the same files by hand:
+
+| File | Lists | Written by |
+| --- | --- | --- |
+| `latest.json`, `latest-<platform>.txt` | one `reins` binary per platform (`linux-x86_64`, `macos-aarch64`, ...), up to 64 MiB each | `reins-release manifest` |
+| `app.json` | the desktop app's installers: `macos-universal` (`.dmg`), `windows-x86_64` (`.msi`), `linux-x86_64` (`.AppImage`), up to 512 MiB each | `reins-release app-manifest` |
+| `files/<file>` | the files both lists name | |
+
+Both lists are `{"manifest": …, "signature": …}`, Ed25519 over `reins-release/1\n` and the manifest, with the same key:
+
+```sh
+reins-release app-manifest --key release.key --version 0.2.0 --build 0.2.0-202610081200-abcdef12 \
+    --time 1791460800 --out out/ macos-universal=Reins-0.2.0-202610081200-abcdef12-macOS.dmg \
+    windows-x86_64=Reins-0.2.0-202610081200-abcdef12-Windows-x64.msi \
+    linux-x86_64=Reins-0.2.0-202610081200-abcdef12-Linux-x86_64.AppImage
+```
 
 Every [GitHub release](https://github.com/katulevskiy/reins/releases) also has the app for Linux (static, x86_64 and
 aarch64) and macOS (Apple silicon and Intel), as `reins-desktop-<version>-<target>.tar.gz`, and for Windows

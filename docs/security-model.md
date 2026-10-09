@@ -196,7 +196,9 @@ Push notifications through Firebase carry only a request id. The phone then fetc
   the SSH agent's named pipe can be written only by your user (and the administrators), and the background service is
   a copy of the program in that same folder, so another user cannot replace what runs at your logon.
 - Release updates (`reins update`) install only builds signed with the release key built into the binary, and
-  never an older build. The install script checks the published SHA-256.
+  never an older build. The desktop app's own updates come from a second list signed with the same key
+  (`app.json`); it keeps a downloaded installer only when its size and SHA-256 match that list. The install script
+  checks the published SHA-256.
 
 **Same-user limits.** An agent running as your OS user can read the files in `~/.local/state/reins/`, including
 the app's key and session. With them it could act as the desktop app: call the server, receive sealed answers, and

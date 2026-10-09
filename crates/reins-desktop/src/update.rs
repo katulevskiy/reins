@@ -4,8 +4,13 @@
 //! binary per platform with its SHA-256, signed with the release key whose public half is built into this binary. So
 //! `reins update` installs only what the release key signed, never an older build than the running one, and never a
 //! file whose hash differs, even if the server that hosts the files were taken over.
+//!
+//! The desktop app's installers (the disk image, the MSI, the AppImage) are listed the same way, signed with the same
+//! key, in `<releases>/app.json` ([`Updater::check_app`]); the app downloads the one for its platform into a cache
+//! ([`Updater::fetch_app`]) and installs it when the user says so.
 
 use std::collections::BTreeMap;
+use std::io::{Read as _, Write as _};
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
@@ -24,6 +29,12 @@ pub const SIGNING_CONTEXT: &[u8] = b"reins-release/1\n";
 
 /// Largest binary `reins update` downloads.
 const MAX_BINARY: u64 = 64 << 20;
+
+/// Largest app installer the app downloads (a universal disk image is about 30 MB).
+pub const MAX_APP: u64 = 512 << 20;
+
+/// The platforms `app.json` lists installers for: one disk image for every Mac, the MSI, the AppImage.
+pub const APP_PLATFORMS: [&str; 3] = ["macos-universal", "windows-x86_64", "linux-x86_64"];
 
 /// This binary's version, release id and release time (0 for a local build).
 pub const VERSION: &str = env!("CARGO_PKG_VERSION");
@@ -76,6 +87,21 @@ pub fn platform() -> Option<&'static str> {
     }
 }
 
+/// The `app.json` platform of this app, when installers exist for it.
+#[must_use]
+pub fn app_platform() -> Option<&'static str> {
+    app_platform_of(std::env::consts::OS, std::env::consts::ARCH)
+}
+
+fn app_platform_of(os: &str, arch: &str) -> Option<&'static str> {
+    match (os, arch) {
+        ("macos", _) => Some("macos-universal"),
+        ("windows", "x86_64") => Some("windows-x86_64"),
+        ("linux", "x86_64") => Some("linux-x86_64"),
+        _ => None,
+    }
+}
+
 fn file_name_ok(name: &str) -> bool {
     !name.is_empty()
         && name.len() <= 120
@@ -85,6 +111,15 @@ fn file_name_ok(name: &str) -> bool {
 
 /// Opens `latest.json`: the signature must verify with `public_key` and the manifest must be well formed.
 pub fn open(signed_json: &[u8], public_key: &[u8]) -> Result<Manifest, String> {
+    open_limited(signed_json, public_key, MAX_BINARY)
+}
+
+/// Opens `app.json`: as [`open`], with installers up to [`MAX_APP`].
+pub fn open_app(signed_json: &[u8], public_key: &[u8]) -> Result<Manifest, String> {
+    open_limited(signed_json, public_key, MAX_APP)
+}
+
+fn open_limited(signed_json: &[u8], public_key: &[u8], max_size: u64) -> Result<Manifest, String> {
     let signed: Signed = serde_json::from_slice(signed_json).map_err(|_| "the release list is malformed".to_owned())?;
     let signature =
         BASE64URL_NOPAD.decode(signed.signature.as_bytes()).map_err(|_| "the release signature is malformed")?;
@@ -96,7 +131,7 @@ pub fn open(signed_json: &[u8], public_key: &[u8]) -> Result<Manifest, String> {
     let manifest: Manifest =
         serde_json::from_str(&signed.manifest).map_err(|_| "the release manifest is malformed".to_owned())?;
     for asset in manifest.assets.values() {
-        if !file_name_ok(&asset.file) || asset.sha256.len() != 64 || asset.size == 0 || asset.size > MAX_BINARY {
+        if !file_name_ok(&asset.file) || asset.sha256.len() != 64 || asset.size == 0 || asset.size > max_size {
             return Err("the release manifest is malformed".to_owned());
         }
     }
@@ -136,6 +171,12 @@ impl Updater {
         Self::new(releases, release_key(), platform, build_time())
     }
 
+    /// For this app's installers (`app.json`): the built-in key, [`app_platform`] and this build's release time.
+    pub fn for_this_app(releases: &str) -> Result<Self, String> {
+        let platform = app_platform().ok_or("there are no app installers for this platform")?;
+        Self::new(releases, release_key(), platform, build_time())
+    }
+
     pub fn new(releases: &str, public_key: Vec<u8>, platform: &str, current_time: i64) -> Result<Self, String> {
         Ok(Self {
             releases: releases.trim_end_matches('/').to_owned(),
@@ -146,12 +187,26 @@ impl Updater {
         })
     }
 
-    async fn get(&self, url: &str, limit: u64) -> Result<Vec<u8>, String> {
-        let mut resp =
-            self.http.get(url).send().await.map_err(|e| format!("cannot reach {url}: {}", e.without_url()))?;
+    /// The answer for `url`; `None` when the server has no such file (HTTP 404).
+    async fn send(&self, url: &str) -> Result<Option<reqwest::Response>, String> {
+        let resp = self.http.get(url).send().await.map_err(|e| format!("cannot reach {url}: {}", e.without_url()))?;
+        if resp.status() == reqwest::StatusCode::NOT_FOUND {
+            return Ok(None);
+        }
         if !resp.status().is_success() {
             return Err(format!("{url}: HTTP {}", resp.status().as_u16()));
         }
+        Ok(Some(resp))
+    }
+
+    async fn get(&self, url: &str, limit: u64) -> Result<Vec<u8>, String> {
+        self.get_if_there(url, limit).await?.ok_or_else(|| format!("{url}: HTTP 404"))
+    }
+
+    async fn get_if_there(&self, url: &str, limit: u64) -> Result<Option<Vec<u8>>, String> {
+        let Some(mut resp) = self.send(url).await? else {
+            return Ok(None);
+        };
         let mut out = Vec::new();
         while let Some(chunk) = resp.chunk().await.map_err(|e| format!("{url}: {}", e.without_url()))? {
             out.extend_from_slice(&chunk);
@@ -159,19 +214,71 @@ impl Updater {
                 return Err(format!("{url} is larger than expected"));
             }
         }
-        Ok(out)
+        Ok(Some(out))
+    }
+
+    fn compare(&self, manifest: Manifest) -> Check {
+        if manifest.build_time <= self.current_time {
+            return Check::UpToDate(manifest);
+        }
+        match manifest.assets.get(&self.platform).cloned() {
+            Some(asset) => Check::Available(manifest, asset),
+            None => Check::NoBuild(manifest),
+        }
     }
 
     pub async fn check(&self) -> Result<Check, String> {
         let raw = self.get(&format!("{}/latest.json", self.releases), 1 << 20).await?;
-        let manifest = open(&raw, &self.public_key)?;
-        if manifest.build_time <= self.current_time {
-            return Ok(Check::UpToDate(manifest));
+        Ok(self.compare(open(&raw, &self.public_key)?))
+    }
+
+    /// Checks `app.json`; `None` when the feed has none (one published before the app's installers were).
+    pub async fn check_app(&self) -> Result<Option<Check>, String> {
+        let Some(raw) = self.get_if_there(&format!("{}/app.json", self.releases), 1 << 20).await? else {
+            return Ok(None);
+        };
+        Ok(Some(self.compare(open_app(&raw, &self.public_key)?)))
+    }
+
+    /// Downloads `asset` into the file `dest`, checking its size and SHA-256 as it arrives: it is written next to
+    /// `dest` and renamed into place only when both match, so `dest` is the signed file or not there at all.
+    pub async fn download_to(&self, asset: &Asset, dest: &Path) -> Result<(), String> {
+        let url = format!("{}/files/{}", self.releases, asset.file);
+        let mut resp = self.send(&url).await?.ok_or_else(|| format!("{url}: HTTP 404"))?;
+        let dir = dest.parent().ok_or("the download has no directory")?;
+        let mut tmp = tempfile::Builder::new()
+            .prefix(".reins-download-")
+            .tempfile_in(dir)
+            .map_err(|e| format!("cannot write in {}: {e}", dir.display()))?;
+        let mut hash = Sha256::new();
+        let mut size = 0u64;
+        while let Some(chunk) = resp.chunk().await.map_err(|e| format!("{url}: {}", e.without_url()))? {
+            size += chunk.len() as u64;
+            if size > asset.size {
+                return Err(format!("{url} is larger than expected"));
+            }
+            hash.update(&chunk);
+            tmp.write_all(&chunk).map_err(|e| format!("{}: {e}", dir.display()))?;
         }
-        match manifest.assets.get(&self.platform).cloned() {
-            Some(asset) => Ok(Check::Available(manifest, asset)),
-            None => Ok(Check::NoBuild(manifest)),
+        let got = HEXLOWER_PERMISSIVE.encode(&hash.finalize());
+        if size != asset.size || !got.eq_ignore_ascii_case(&asset.sha256) {
+            return Err("the downloaded file does not match the signed release; nothing was changed".to_owned());
         }
+        tmp.as_file().sync_all().map_err(|e| e.to_string())?;
+        tmp.persist(dest).map_err(|e| format!("cannot write {}: {}", dest.display(), e.error))?;
+        Ok(())
+    }
+
+    /// The installer `asset` in the directory `cache`: the copy already there when it is the signed file, else a new
+    /// download. Anything else in `cache` (an earlier release's installer) is removed.
+    pub async fn fetch_app(&self, asset: &Asset, cache: &Path) -> Result<PathBuf, String> {
+        std::fs::create_dir_all(cache).map_err(|e| format!("{}: {e}", cache.display()))?;
+        let file = cache.join(&asset.file);
+        if !is_signed_file(&file, asset) {
+            self.download_to(asset, &file).await?;
+        }
+        remove_downloads(cache, Some(&asset.file));
+        Ok(file)
     }
 
     /// Downloads `asset` and checks its size and SHA-256.
@@ -182,6 +289,38 @@ impl Updater {
             return Err("the downloaded file does not match the signed release; nothing was changed".to_owned());
         }
         Ok(bytes)
+    }
+}
+
+/// Whether `file` is `asset`: its size and SHA-256 match the signed ones.
+#[must_use]
+pub fn is_signed_file(file: &Path, asset: &Asset) -> bool {
+    let hashed = || -> std::io::Result<String> {
+        let mut f = std::fs::File::open(file)?;
+        let mut hash = Sha256::new();
+        let mut buf = vec![0u8; 64 << 10];
+        loop {
+            let n = f.read(&mut buf)?;
+            if n == 0 {
+                return Ok(HEXLOWER_PERMISSIVE.encode(&hash.finalize()));
+            }
+            hash.update(&buf[..n]);
+        }
+    };
+    std::fs::metadata(file).is_ok_and(|m| m.is_file() && m.len() == asset.size)
+        && hashed().is_ok_and(|got| got.eq_ignore_ascii_case(&asset.sha256))
+}
+
+/// Removes the files in the download cache `cache` but `keep` (best effort).
+pub fn remove_downloads(cache: &Path, keep: Option<&str>) {
+    let Ok(entries) = std::fs::read_dir(cache) else {
+        return;
+    };
+    for entry in entries.flatten() {
+        let kept = keep.is_some_and(|k| entry.file_name() == k);
+        if !kept && entry.file_type().is_ok_and(|t| t.is_file()) {
+            std::fs::remove_file(entry.path()).ok();
+        }
     }
 }
 
@@ -377,6 +516,76 @@ mod tests {
             assert_eq!(std::fs::metadata(&exe).unwrap().permissions().mode() & 0o777, 0o755);
         }
         assert_eq!(std::fs::read_dir(dir.path()).unwrap().count(), 1, "no temporary file left behind");
+    }
+
+    #[test]
+    fn app_installers_may_be_larger_than_binaries_but_not_unbounded() {
+        let k = key();
+        let mut dmg = manifest(5);
+        dmg.assets = BTreeMap::from([(
+            "macos-universal".to_owned(),
+            Asset {
+                file: "Reins-0.1.0-1-abc-macOS.dmg".into(),
+                sha256: "b".repeat(64),
+                size: 30 << 20,
+            },
+        )]);
+        let pk = k.public_key().as_ref();
+        assert_eq!(open_app(&sign(&k, &dmg), pk).unwrap(), dmg);
+        assert_eq!(open(&sign(&k, &dmg), pk).unwrap(), dmg, "30 MB is within the binary limit too");
+        let big = |size| {
+            let mut m = dmg.clone();
+            m.assets.get_mut("macos-universal").unwrap().size = size;
+            sign(&k, &m)
+        };
+        assert!(open(&big(MAX_BINARY + 1), pk).unwrap_err().contains("malformed"), "latest.json keeps its limit");
+        assert!(open_app(&big(MAX_BINARY + 1), pk).is_ok());
+        assert!(open_app(&big(MAX_APP), pk).is_ok());
+        assert!(open_app(&big(MAX_APP + 1), pk).unwrap_err().contains("malformed"));
+        assert!(open_app(&sign(&k, &dmg), key().public_key().as_ref()).unwrap_err().contains("not signed"));
+        let mut bad_file = dmg.clone();
+        bad_file.assets.get_mut("macos-universal").unwrap().file = ".hidden.dmg".into();
+        assert!(open_app(&sign(&k, &bad_file), pk).is_err());
+    }
+
+    #[test]
+    fn app_platforms_are_one_per_installer() {
+        assert_eq!(app_platform_of("macos", "aarch64"), Some("macos-universal"));
+        assert_eq!(app_platform_of("macos", "x86_64"), Some("macos-universal"));
+        assert_eq!(app_platform_of("windows", "x86_64"), Some("windows-x86_64"));
+        assert_eq!(app_platform_of("linux", "x86_64"), Some("linux-x86_64"));
+        assert_eq!(app_platform_of("linux", "aarch64"), None);
+        assert_eq!(app_platform_of("windows", "aarch64"), None);
+        assert_eq!(app_platform_of("freebsd", "x86_64"), None);
+        assert!(app_platform().is_none_or(|p| APP_PLATFORMS.contains(&p)));
+    }
+
+    #[test]
+    fn a_cached_installer_counts_only_when_it_is_the_signed_file() {
+        let dir = tempfile::tempdir().unwrap();
+        let file = dir.path().join("Reins-1-Linux-x86_64.AppImage");
+        let asset = Asset {
+            file: "Reins-1-Linux-x86_64.AppImage".into(),
+            sha256: HEXLOWER_PERMISSIVE.encode(&Sha256::digest(b"appimage")),
+            size: 8,
+        };
+        assert!(!is_signed_file(&file, &asset), "not there");
+        std::fs::write(&file, b"appimage").unwrap();
+        assert!(is_signed_file(&file, &asset));
+        std::fs::write(&file, b"appimagX").unwrap();
+        assert!(!is_signed_file(&file, &asset), "same size, other bytes");
+        std::fs::write(&file, b"appimage!").unwrap();
+        assert!(!is_signed_file(&file, &asset), "other size");
+
+        std::fs::write(dir.path().join("Reins-0-Linux-x86_64.AppImage"), b"older").unwrap();
+        std::fs::create_dir(dir.path().join("sub")).unwrap();
+        remove_downloads(dir.path(), Some(&asset.file));
+        let mut left: Vec<String> =
+            std::fs::read_dir(dir.path()).unwrap().map(|e| e.unwrap().file_name().to_string_lossy().into()).collect();
+        left.sort();
+        assert_eq!(left, ["Reins-1-Linux-x86_64.AppImage", "sub"]);
+        remove_downloads(dir.path(), None);
+        assert!(!file.exists());
     }
 
     #[test]

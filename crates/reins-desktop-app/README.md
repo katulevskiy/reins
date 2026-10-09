@@ -18,6 +18,28 @@ window's "Install command line tool" links it to `~/.local/bin`.
 | `model`, `ui` | the screens: onboarding, first-time setup, status |
 | `tray` | `tray-icon` on macOS and Windows, `ksni` (StatusNotifierItem) on Linux |
 | `autostart` | open at login: a launch agent, the `Run` key (`Reins app`), an XDG autostart entry |
+| `upgrade` | "Restart to update": the new installer in place of the running copy |
+
+## Updates
+
+At start and every 6 hours a release build reads `<releases>/app.json`, a list of installers signed with the same
+release key as `reins update`'s `latest.json` (every release publishes it; see CONTRIBUTING.md, "The update feed"). When it lists a newer build
+for this computer (`macos-universal`, `windows-x86_64`, `linux-x86_64`), the app downloads that installer into
+`updates/` in its state directory, checks its size and SHA-256 against the signed list, keeps it (a later check does
+not download it again), and only then shows "Reins X is ready" with **Restart to update**:
+
+- macOS: the disk image is mounted read-only, `Reins.app` copied next to the running one with `ditto` and swapped in
+  by renaming (the old one is removed at the next start); Reins opens again. When the app's folder cannot be written,
+  the disk image opens instead, to drag Reins to Applications.
+- Windows: once the app has quit, `msiexec /i … /passive /norestart` installs the MSI (per user, no administrator),
+  then Reins starts again.
+- Linux: only an AppImage in a folder Reins may write to: the new one is written next to it, renamed over it and
+  started.
+
+The first start of the new app restarts the background service (and, for an AppImage, copies the new `reins` to
+`~/.local/bin` first), so it runs the new `reins`. A failed download shows nothing and is tried again at the next
+check. Where the feed has no `app.json`, or no installer for this computer, and for any other copy (the tarball, a
+build from source), the app says "Reins X is available" with a link to the download page, as before.
 
 ## Run it
 

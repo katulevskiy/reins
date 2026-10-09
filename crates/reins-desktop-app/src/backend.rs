@@ -1,5 +1,6 @@
 //! Everything the app does to the computer, through the `reins_desktop` library: the session, the harnesses'
-//! settings, the background service, git's routing, the daemon's control API and the update feed.
+//! settings, the background service, git's routing, the daemon's control API, the update feed and installing what it
+//! offers.
 //!
 //! The service runs the `reins` program that ships with the app (next to it in the bundle or install directory).
 //! Where no service manager is available, or with `REINS_DAEMON=in-app`, the daemon runs inside the app instead, for
@@ -20,6 +21,7 @@ use reins_desktop::setup::{Git, Scope};
 use reins_desktop::update::{self, Check};
 
 use crate::state::Saved;
+use crate::upgrade::{self, Target};
 
 /// The `reins` program's file name.
 const CLI_NAME: &str = if cfg!(windows) {
@@ -63,6 +65,23 @@ pub struct Snapshot {
     pub harnesses: Vec<HarnessRow>,
     /// This computer's key, as the phone shows it when pairing.
     pub fingerprint: Option<String>,
+}
+
+/// A newer Reins.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Update {
+    pub version: String,
+    /// Downloaded and checked: "Restart to update" installs it. `None`: the download page has it (this copy cannot
+    /// install it, or the release has no installer for it).
+    pub ready: Option<Ready>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Ready {
+    pub installer: PathBuf,
+    /// The signed entry the installer was checked against; checked again just before installing.
+    pub asset: update::Asset,
+    pub target: Target,
 }
 
 pub struct Backend {
@@ -390,22 +409,111 @@ impl Backend {
         Ok(())
     }
 
-    /// A newer release, if there is one for this computer.
-    pub async fn update_available(&self) -> Option<String> {
+    /// Where installers are downloaded to.
+    fn update_cache(&self) -> PathBuf {
+        self.paths.state_dir.join("updates")
+    }
+
+    /// Left by "Restart to update" for the new app's first start ([`Self::after_update`]).
+    fn update_marker(&self) -> PathBuf {
+        self.paths.state_dir.join("app-updated")
+    }
+
+    /// A newer release, if there is one for this computer: downloaded and checked when this copy can install it
+    /// (`app.json`), else for the download page (`latest.json`, as when the feed has no installer for it). An error
+    /// means the feed could not be read, or the download failed; the next check tries again.
+    pub async fn check_update(&self) -> Result<Option<Update>, String> {
         // A build from source has no release time: every release would look newer.
         if update::BUILD == "dev" {
-            return None;
+            return Ok(None);
         }
-        let config = self.config().ok()?;
-        let updater = update::Updater::for_this_binary(&config.releases).ok()?;
-        match updater.check().await {
-            Ok(Check::Available(latest, _)) => Some(latest.version),
-            Ok(_) => None,
-            Err(e) => {
-                log::info!("update check: {e}");
-                None
+        let config = self.config()?;
+        let target = upgrade::target().filter(|t| !is_transient(t.path()));
+        if let Some(target) = target
+            && let Ok(updater) = update::Updater::for_this_app(&config.releases)
+        {
+            match updater.check_app().await? {
+                Some(Check::UpToDate(_)) => {
+                    update::remove_downloads(&self.update_cache(), None);
+                    return Ok(None);
+                }
+                Some(Check::Available(latest, asset)) => {
+                    let installer = updater.fetch_app(&asset, &self.update_cache()).await?;
+                    return Ok(Some(Update {
+                        version: latest.version,
+                        ready: Some(Ready {
+                            installer,
+                            asset,
+                            target,
+                        }),
+                    }));
+                }
+                // An older feed, or no installer for this computer in it.
+                Some(Check::NoBuild(_)) | None => {}
             }
         }
+        let updater = update::Updater::for_this_binary(&config.releases)?;
+        Ok(match updater.check().await? {
+            Check::Available(latest, _) => Some(Update {
+                version: latest.version,
+                ready: None,
+            }),
+            _ => None,
+        })
+    }
+
+    /// Installs a downloaded update (see [`upgrade`]); when the new app is in place, its first start restarts the
+    /// background service ([`Self::after_update`]). Blocks.
+    pub fn install_update(&self, ready: &Ready) -> Result<upgrade::Installed, String> {
+        // The cached download may have changed since it was checked; install only the signed file.
+        if !update::is_signed_file(&ready.installer, &ready.asset) {
+            update::remove_downloads(&self.update_cache(), None);
+            return Err(
+                "the downloaded update does not match the signed release; it will be downloaded again".to_owned()
+            );
+        }
+        let installed = upgrade::install(&ready.target, &ready.installer)?;
+        if let Err(e) = std::fs::write(self.update_marker(), update::BUILD) {
+            log::warn!("{}: {e}", self.update_marker().display());
+        }
+        Ok(installed)
+    }
+
+    /// At start: removes what an update left behind and, on the first start after "Restart to update", makes the
+    /// background service run the new `reins` (the one it ran is the old app's). Says what it did.
+    pub async fn after_update(&self, setup_done: bool) -> Result<Option<String>, String> {
+        if let Some(target) = upgrade::target() {
+            upgrade::remove_leftovers(&target);
+        }
+        if std::fs::remove_file(self.update_marker()).is_err() {
+            return Ok(None);
+        }
+        // An AppImage's command line tool is a copy (see `install_cli`): the new one replaces it.
+        if std::env::var_os("APPIMAGE").is_some()
+            && self.home.join(".local/bin").join(CLI_NAME).is_file()
+            && let Err(e) = self.install_cli()
+        {
+            log::warn!("after the update: {e}");
+        }
+        if !Self::daemon_in_app() {
+            #[cfg(windows)]
+            let restarted = match (self.config(), self.cli()) {
+                (Ok(config), Ok(cli)) => service::windows::restart_if_installed(&self.paths, &config, &cli).await,
+                (Err(e), _) | (_, Err(e)) => Err(e),
+            };
+            #[cfg(not(windows))]
+            let restarted = service::Manager::current().and_then(|m| service::restart_if_installed(m, &self.home));
+            match restarted {
+                Ok(Some(done)) => log::info!("after the update: {done}"),
+                Ok(None) => {}
+                Err(e) => log::warn!("after the update: {e}"),
+            }
+        }
+        // Not running (a daemon that ran inside the old app, or one the restart did not start): started again.
+        if setup_done {
+            self.start_service().await?;
+        }
+        Ok(Some(format!("Updated to {}.", update::LONG_VERSION)))
     }
 
     /// Signs in through the browser (`reins login`'s way). Returns the server.
@@ -442,6 +550,22 @@ mod tests {
         assert_eq!(rows.len(), Harness::ALL.len());
         let codex = rows.iter().find(|r| r.harness == Harness::Codex).unwrap();
         assert!(codex.found && !codex.added);
+    }
+
+    // On Windows the service is the user's `Run` key, which a test must not restart.
+    #[cfg(not(windows))]
+    #[tokio::test]
+    async fn only_the_first_start_after_an_update_handles_the_service() {
+        let root = tempfile::tempdir().unwrap();
+        let backend = Backend::under(root.path());
+        backend.paths().ensure().unwrap();
+        assert_eq!(backend.after_update(false).await.unwrap(), None);
+        std::fs::write(backend.update_marker(), b"").unwrap();
+        // No service installed under this home: nothing to restart.
+        let done = backend.after_update(false).await.unwrap().unwrap();
+        assert!(done.starts_with("Updated to "), "{done}");
+        assert!(!backend.update_marker().exists());
+        assert_eq!(backend.after_update(false).await.unwrap(), None);
     }
 
     #[test]

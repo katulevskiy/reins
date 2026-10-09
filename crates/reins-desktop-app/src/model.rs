@@ -13,12 +13,12 @@ use gpui::{
 use gpui_tokio::Tokio;
 use reins_desktop::harness::Harness;
 
-use crate::backend::{Backend, DaemonState, Snapshot};
+use crate::backend::{Backend, DaemonState, Snapshot, Update};
 use crate::pairing::{self, Approved, DemoFlow, DeviceCode, DeviceFlow, Poll, ServerFlow};
 use crate::single::Instance;
 use crate::state::Saved;
 use crate::tray::{Action, Look, Shown, Tray};
-use crate::{Args, autostart, ui};
+use crate::{Args, autostart, ui, upgrade};
 
 /// How often the status is read again.
 const REFRESH: Duration = Duration::from_secs(3);
@@ -107,7 +107,9 @@ pub struct Model {
     pub setup_items: Vec<SetupItem>,
     pub setup_steps: Vec<(String, Step)>,
     pub setup_running: bool,
-    pub update: Option<String>,
+    pub update: Option<Update>,
+    /// "Restart to update" is installing it.
+    pub updating: bool,
     /// The last thing that went wrong, shown until the next action.
     pub notice: Option<String>,
     /// The QR code that opens Activity on the phone is showing.
@@ -175,6 +177,7 @@ impl Model {
                 setup_steps: Vec::new(),
                 setup_running: false,
                 update: None,
+                updating: false,
                 notice: None,
                 show_phone_qr: false,
                 show_server: false,
@@ -257,15 +260,33 @@ impl Model {
             }
         }));
         self.tasks.push(cx.spawn(async move |this, cx| {
+            // The first start after "Restart to update": the service runs the new `reins`.
+            if let Ok((backend, setup_done)) = this.read_with(cx, |m, _| (Arc::clone(&m.backend), m.saved.setup_done)) {
+                match Tokio::spawn(cx, async move { backend.after_update(setup_done).await }).await {
+                    Ok(Ok(Some(done))) => {
+                        log::info!("{done}");
+                        let _gone = this.update(cx, Self::refresh_now);
+                    }
+                    Ok(Ok(None)) => {}
+                    Ok(Err(e)) => log::warn!("after the update: {e}"),
+                    Err(e) => log::warn!("after the update: {e}"),
+                }
+            }
             loop {
                 let Ok(backend) = this.read_with(cx, |m, _| Arc::clone(&m.backend)) else {
                     break;
                 };
-                let found = Tokio::spawn(cx, async move { backend.update_available().await }).await.ok().flatten();
+                let found = Tokio::spawn(cx, async move { backend.check_update().await })
+                    .await
+                    .unwrap_or_else(|e| Err(e.to_string()));
                 if this
-                    .update(cx, |model, cx| {
-                        model.update = found;
-                        cx.notify();
+                    .update(cx, |model, cx| match found {
+                        Ok(found) => {
+                            model.update = found;
+                            cx.notify();
+                        }
+                        // Shown as it was; the next check tries again.
+                        Err(e) => log::info!("update check: {e}"),
                     })
                     .is_err()
                 {
@@ -799,6 +820,38 @@ impl Model {
     pub fn toggle_phone_qr(&mut self, cx: &mut Context<'_, Self>) {
         self.show_phone_qr = !self.show_phone_qr;
         cx.notify();
+    }
+
+    /// "Restart to update": installs the downloaded update and quits; the new Reins starts when this one has ended.
+    pub fn restart_to_update(&mut self, cx: &mut Context<'_, Self>) {
+        let Some(ready) = self.update.as_ref().and_then(|u| u.ready.clone()) else {
+            return;
+        };
+        if self.updating {
+            return;
+        }
+        self.updating = true;
+        self.notice = None;
+        cx.notify();
+        let backend = Arc::clone(&self.backend);
+        self.tasks.push(cx.spawn(async move |this, cx| {
+            let installed = cx.background_executor().spawn(async move { backend.install_update(&ready) }).await;
+            let _gone = this.update(cx, |m, cx| {
+                match installed {
+                    Ok(upgrade::Installed::Restarting) => {
+                        log::info!("updating: Reins starts again when this one has quit");
+                        cx.quit();
+                        return;
+                    }
+                    Ok(upgrade::Installed::Opened) => {
+                        m.notice = Some("Quit Reins, then drag the new Reins to Applications.".to_owned());
+                    }
+                    Err(e) => m.notice = Some(e),
+                }
+                m.updating = false;
+                cx.notify();
+            });
+        }));
     }
 }
 

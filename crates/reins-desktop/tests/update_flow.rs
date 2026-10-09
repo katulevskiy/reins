@@ -105,6 +105,107 @@ async fn a_binary_that_differs_from_the_signed_hash_is_refused() {
     assert!(err.contains("does not match"), "{err}");
 }
 
+const INSTALLER: &[u8] = b"pretend AppImage, bigger than a binary may be";
+const INSTALLER_FILE: &str = "Reins-0.2.0-2000-abcdef12-Linux-x86_64.AppImage";
+
+fn signed_app(key: &Ed25519KeyPair, build_time: i64, sha256: &str) -> Vec<u8> {
+    let manifest = Manifest {
+        version: "0.2.0".into(),
+        build: format!("0.2.0-{build_time}-abcdef12"),
+        build_time,
+        assets: BTreeMap::from([(
+            PLATFORM.to_owned(),
+            Asset {
+                file: INSTALLER_FILE.into(),
+                sha256: sha256.to_owned(),
+                size: INSTALLER.len() as u64,
+            },
+        )]),
+    };
+    let text = serde_json::to_string(&manifest).unwrap();
+    let mut message = SIGNING_CONTEXT.to_vec();
+    message.extend_from_slice(text.as_bytes());
+    serde_json::to_vec(&Signed {
+        signature: BASE64URL_NOPAD.encode(key.sign(&message).as_ref()),
+        manifest: text,
+    })
+    .unwrap()
+}
+
+/// `app.json` and the installer, which may be fetched `downloads` times.
+async fn mount_app(s: &MockServer, app: Vec<u8>, downloads: u64) {
+    Mock::given(method("GET"))
+        .and(path("/releases/app.json"))
+        .respond_with(ResponseTemplate::new(200).set_body_bytes(app))
+        .mount(s)
+        .await;
+    Mock::given(method("GET"))
+        .and(path(format!("/releases/files/{INSTALLER_FILE}")))
+        .respond_with(ResponseTemplate::new(200).set_body_bytes(INSTALLER.to_vec()))
+        .expect(downloads)
+        .mount(s)
+        .await;
+}
+
+#[tokio::test]
+async fn a_feed_without_app_installers_is_not_an_error() {
+    let key = keypair();
+    let s = server(signed(&key, 2_000, &sha(BINARY)), BINARY).await;
+    let up = updater(&s, &key, 1_000);
+    assert_eq!(up.check_app().await.unwrap(), None, "no app.json: the app falls back to latest.json");
+    assert!(matches!(up.check().await.unwrap(), Check::Available(..)));
+}
+
+#[tokio::test]
+async fn a_newer_installer_is_downloaded_once_and_kept() {
+    let key = keypair();
+    let s = server(signed(&key, 2_000, &sha(BINARY)), BINARY).await;
+    mount_app(&s, signed_app(&key, 2_000, &sha(INSTALLER)), 2).await;
+    let cache = tempfile::tempdir().unwrap();
+    std::fs::write(cache.path().join("Reins-0.1.0-Linux-x86_64.AppImage"), b"an older release").unwrap();
+    let up = updater(&s, &key, 1_000);
+    let Some(Check::Available(latest, asset)) = up.check_app().await.unwrap() else {
+        panic!("a newer app must be offered")
+    };
+    assert_eq!(latest.version, "0.2.0");
+    let file = up.fetch_app(&asset, cache.path()).await.unwrap();
+    assert_eq!(file, cache.path().join(INSTALLER_FILE));
+    assert_eq!(std::fs::read(&file).unwrap(), INSTALLER);
+    let left: Vec<_> = std::fs::read_dir(cache.path()).unwrap().map(|e| e.unwrap().file_name()).collect();
+    assert_eq!(left, [INSTALLER_FILE], "the older installer is gone");
+    // Checked again later: the copy is still the signed file, so nothing is downloaded.
+    assert_eq!(up.fetch_app(&asset, cache.path()).await.unwrap(), file);
+    // A damaged copy is downloaded again (the second and last allowed download).
+    std::fs::write(&file, b"damaged").unwrap();
+    up.fetch_app(&asset, cache.path()).await.unwrap();
+    assert_eq!(std::fs::read(&file).unwrap(), INSTALLER);
+    assert!(matches!(updater(&s, &key, 2_000).check_app().await.unwrap(), Some(Check::UpToDate(_))));
+}
+
+#[tokio::test]
+async fn an_installer_that_differs_from_the_signed_hash_is_not_kept() {
+    let key = keypair();
+    let s = server(signed(&key, 2_000, &sha(BINARY)), BINARY).await;
+    mount_app(&s, signed_app(&key, 2_000, &sha(b"another installer")), 1).await;
+    let cache = tempfile::tempdir().unwrap();
+    let up = updater(&s, &key, 1_000);
+    let Some(Check::Available(_, asset)) = up.check_app().await.unwrap() else {
+        panic!("offered")
+    };
+    let err = up.fetch_app(&asset, cache.path()).await.unwrap_err();
+    assert!(err.contains("does not match"), "{err}");
+    assert_eq!(std::fs::read_dir(cache.path()).unwrap().count(), 0, "nothing left behind");
+}
+
+#[tokio::test]
+async fn an_app_list_signed_with_another_key_is_refused() {
+    let key = keypair();
+    let s = server(signed(&key, 2_000, &sha(BINARY)), BINARY).await;
+    mount_app(&s, signed_app(&keypair(), 2_000, &sha(INSTALLER)), 0).await;
+    let err = updater(&s, &key, 1_000).check_app().await.unwrap_err();
+    assert!(err.contains("not signed"), "{err}");
+}
+
 #[tokio::test]
 async fn a_release_without_a_build_for_this_platform_says_so() {
     let key = keypair();
