@@ -27,6 +27,7 @@ use self::keys::Verified;
 use self::wire::{Reader, Writer};
 use crate::auth::Refusal;
 use crate::config::Paths;
+use crate::journal::{Entry, Kind};
 use crate::phone::{PhoneLink, awaiting, teller, unavailable};
 
 pub const KEYS_TOOL: &str = "vault_ssh_keys";
@@ -213,15 +214,17 @@ type Tell = Option<crate::phone::Tell>;
 
 pub struct Agent {
     phone: Arc<PhoneLink>,
+    stats: Arc<crate::stats::Stats>,
     known_hosts: Vec<PathBuf>,
     keys: tokio::sync::Mutex<Option<(Instant, Vec<VaultKey>)>>,
 }
 
 impl Agent {
     #[must_use]
-    pub fn new(phone: Arc<PhoneLink>, config: &SshConfig) -> Self {
+    pub fn new(phone: Arc<PhoneLink>, config: &SshConfig, stats: Arc<crate::stats::Stats>) -> Self {
         Self {
             phone,
+            stats,
             known_hosts: config.known_hosts_files(),
             keys: tokio::sync::Mutex::new(None),
         }
@@ -229,6 +232,19 @@ impl Agent {
 
     fn tell(session: &Session) -> Tell {
         session.pid.map(|pid| teller(move |line: &str| tell_pid(pid, line)))
+    }
+
+    /// The keys the phone listed last (name and fingerprint), for the desktop app; none before the first use.
+    /// Empty while the list is being asked for.
+    #[must_use]
+    pub fn known_keys(&self) -> Vec<(String, String)> {
+        self.keys
+            .try_lock()
+            .ok()
+            .and_then(|cache| {
+                cache.as_ref().map(|(_, keys)| keys.iter().map(|k| (k.name.clone(), k.fingerprint.clone())).collect())
+            })
+            .unwrap_or_default()
     }
 
     async fn keys(&self, tell: Tell) -> Result<Vec<VaultKey>, Refusal> {
@@ -239,9 +255,12 @@ impl Agent {
             return Ok(keys.clone());
         }
         let phone = self.phone.phone()?;
+        let entry = Entry::new(Kind::Ssh, "the list of SSH keys").source(Some("ssh"));
         let answer = awaiting(
+            self.phone.journal(),
+            entry,
             tell,
-            "the list of SSH keys",
+            self.phone.timeout(),
             phone.ask(KEYS_TOOL, Some(KEYS_TOOL), |_| json!({}), "No answer from your phone in time."),
         )
         .await?;
@@ -336,9 +355,16 @@ impl Agent {
         };
         let phone = self.phone.phone()?;
         let data_b64 = BASE64.encode(data);
+        let entry = Entry::new(Kind::Ssh, &what)
+            .source(Some("ssh"))
+            .service(host.as_deref().or(host_fp.as_deref()))
+            .detail(Some(&format!("Key: {} ({})", key.name, key.fingerprint)));
+        let target = host.clone().or_else(|| host_fp.clone()).unwrap_or_else(|| "an SSH server".to_owned());
         let answer = awaiting(
+            self.phone.journal(),
+            entry,
             tell,
-            &what,
+            self.phone.timeout(),
             phone.ask(
                 SIGN_TOOL,
                 None,
@@ -355,7 +381,9 @@ impl Agent {
                 "No answer from your phone in time. Approve it, then connect again.",
             ),
         )
-        .await?;
+        .await
+        .inspect_err(|r| self.stats.record("ssh", &target, &format!("sign {}", crate::proxy::refusal_kind(r))))?;
+        self.stats.record("ssh", &target, "signed");
         let sig: SshSignature = phone.open(&answer.data)?;
         if sig.nonce != answer.nonce {
             return Err(unavailable("The phone's answer is for another request (the nonce differs); refused."));
@@ -466,6 +494,12 @@ fn pipe_instance(name: &Path, first: bool) -> std::io::Result<tokio::net::window
 }
 
 impl SshAgent {
+    /// The agent itself (what the desktop app shows of it).
+    #[must_use]
+    pub fn agent(&self) -> Arc<Agent> {
+        Arc::clone(&self.agent)
+    }
+
     /// Binds `path` (its directory made 0700 when missing, the socket 0600). A stale socket is replaced; a live one
     /// (another agent) is an error.
     #[cfg(unix)]
@@ -582,12 +616,17 @@ impl SshAgent {
 /// The daemon's agent: `None` when `[ssh] enabled = false` or the socket cannot be bound (logged; the rest of the
 /// daemon runs on).
 #[must_use]
-pub fn start(paths: &Paths, config: &SshConfig, phone: Arc<PhoneLink>) -> Option<SshAgent> {
+pub fn start(
+    paths: &Paths,
+    config: &SshConfig,
+    phone: Arc<PhoneLink>,
+    stats: Arc<crate::stats::Stats>,
+) -> Option<SshAgent> {
     if !config.enabled {
         return None;
     }
     let path = socket_path(paths, config);
-    match SshAgent::bind(&path, Agent::new(phone, config)) {
+    match SshAgent::bind(&path, Agent::new(phone, config, stats)) {
         Ok(a) => {
             log::info!("ssh agent on {}", path.display());
             Some(a)

@@ -77,7 +77,11 @@ Restart Claude Code. `/mcp` and `/hooks` show the new entries.
 
 The hook answers with Claude Code's `permissionDecision`: `allow` when you approved on the phone, `deny` when you
 refused, `ask` (Claude Code's own prompt) when the guard is set to `on_no_answer = "ask"` and nobody answered.
-Commands that match no rule get no answer from the hook, so Claude Code's normal permission rules apply.
+Commands that match no rule get no answer from the hook, so Claude Code's normal permission rules apply. The reason
+says how the phone's 2FA ended (`Reins 2FA: approved.`, `Reins 2FA: denied. …`, `Reins 2FA: not allowed: timed out,
+nobody answered …`), and Claude Code shows the same line to you as the hook's `systemMessage`. While the hook waits,
+your computer shows "Check your phone" (see [the desktop app](../crates/reins-desktop/README.md#while-your-phone-decides)).
+MCP tool calls that wait for the phone send Claude Code progress notifications, "Waiting for Reins 2FA on your phone…".
 
 Alternative without the desktop app: Claude Code can also use the server's MCP endpoint directly as a remote HTTP
 server. It signs in through the browser with the same two-digit code. That gives you the tools but no hook.

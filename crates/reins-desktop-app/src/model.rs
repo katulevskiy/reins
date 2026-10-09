@@ -1,5 +1,6 @@
-//! The app's state and what it does: which screen the window shows, the pairing in progress, the first-time setup,
-//! and the status the window and the tray icon show. One [`Model`] per app (a GPUI global); the window and the tray
+//! The app's state and what it does: which screen (and, in the status window, which section) the window shows, the
+//! pairing in progress, the first-time setup, the status the window and the tray icon show, pausing, and the
+//! settings the window changes. One [`Model`] per app (a GPUI global); the window and the tray
 //! are views of it.
 
 use std::sync::Arc;
@@ -13,8 +14,12 @@ use gpui::{
 use gpui_tokio::Tokio;
 use reins_desktop::harness::Harness;
 
-use crate::backend::{Backend, DaemonState, Snapshot, Update};
+use reins_desktop::settings::GuardList;
+
+use crate::backend::{Backend, DaemonState, Setting, Snapshot, Update};
+use crate::demo::Demo;
 use crate::pairing::{self, Approved, DemoFlow, DeviceCode, DeviceFlow, Poll, ServerFlow};
+use crate::pause::{Pause, PauseFor};
 use crate::single::Instance;
 use crate::state::Saved;
 use crate::tray::{Action, Look, Shown, Tray};
@@ -26,13 +31,59 @@ const REFRESH: Duration = Duration::from_secs(3);
 const UPDATE_CHECK: Duration = Duration::from_hours(6);
 /// How long "Approved on …" stays before the setup screen.
 const APPROVED_PAUSE: Duration = Duration::from_millis(1600);
-const PAUSE_SECS: i64 = 3600;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Screen {
     Onboarding,
     Setup,
     Status,
+}
+
+/// The status window's sections (the sidebar).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Section {
+    Overview,
+    Activity,
+    Connections,
+    Keys,
+    Rules,
+    Settings,
+}
+
+impl Section {
+    pub const ALL: [Self; 6] =
+        [Self::Overview, Self::Activity, Self::Connections, Self::Keys, Self::Rules, Self::Settings];
+
+    #[must_use]
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::Overview => "Overview",
+            Self::Activity => "Activity",
+            Self::Connections => "Connections",
+            Self::Keys => "Keys & secrets",
+            Self::Rules => "Rules",
+            Self::Settings => "Settings",
+        }
+    }
+
+    /// As `REINS_DEMO_SECTION` names it.
+    #[must_use]
+    pub fn id(self) -> &'static str {
+        match self {
+            Self::Overview => "overview",
+            Self::Activity => "activity",
+            Self::Connections => "connections",
+            Self::Keys => "keys",
+            Self::Rules => "rules",
+            Self::Settings => "settings",
+        }
+    }
+
+    #[must_use]
+    pub fn from_id(id: &str) -> Option<Self> {
+        let id = id.trim().to_ascii_lowercase();
+        Self::ALL.into_iter().find(|s| s.id() == id)
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -100,8 +151,9 @@ pub struct Model {
     instance: Instance,
     runtime: tokio::runtime::Handle,
     pub saved: Saved,
-    pub snapshot: Option<Snapshot>,
+    pub snapshot: Option<Arc<Snapshot>>,
     pub screen: Screen,
+    pub section: Section,
     pub pairing: Pairing,
     pub fingerprint: Option<String>,
     pub setup_items: Vec<SetupItem>,
@@ -112,6 +164,8 @@ pub struct Model {
     pub updating: bool,
     /// The last thing that went wrong, shown until the next action.
     pub notice: Option<String>,
+    /// Something done that the user should know (not an error), shown until the next action.
+    pub note: Option<String>,
     /// The QR code that opens Activity on the phone is showing.
     pub show_phone_qr: bool,
     /// "Use another server" is open.
@@ -120,6 +174,10 @@ pub struct Model {
     pub autostart: bool,
     /// `--demo`: the pretend pairing went through.
     demo_paired: bool,
+    /// `--demo`: the made-up activity and connections.
+    demo: Option<Demo>,
+    /// The minute the window last showed (relative times change with it).
+    minute: i64,
     pairing_task: Option<Task<()>>,
     window: Option<WindowHandle<ui::Root>>,
     tray: Option<Tray>,
@@ -150,8 +208,20 @@ fn show_in_dock(_visible: bool) {}
 
 impl Model {
     pub fn init(backend: Arc<Backend>, args: Args, instance: Instance, cx: &mut App) {
-        let saved = Saved::load(&backend.paths().state_dir);
-        let paired = backend.paired_server().is_some();
+        let mut saved = Saved::load(&backend.paths().state_dir);
+        // `--demo` with `REINS_DEMO_SCREEN=status`: straight to the status window, as if paired and set up.
+        let demo_status = args.demo && std::env::var("REINS_DEMO_SCREEN").is_ok_and(|v| v.trim() == "status");
+        if demo_status {
+            saved.setup_done = true;
+            saved.account.get_or_insert_with(|| "dana@acme.dev".to_owned());
+            saved.phone.get_or_insert_with(|| "Dana's iPhone".to_owned());
+        }
+        let section = std::env::var("REINS_DEMO_SECTION")
+            .ok()
+            .filter(|_| args.demo)
+            .and_then(|s| Section::from_id(&s))
+            .unwrap_or(Section::Overview);
+        let paired = demo_status || backend.paired_server().is_some();
         let screen = if !paired {
             Screen::Onboarding
         } else if !saved.setup_done {
@@ -161,6 +231,7 @@ impl Model {
         };
         let home = backend.home().to_path_buf();
         let runtime = Tokio::handle(cx);
+        let demo = args.demo.then(|| Demo::new(reins_desktop::now_unix()));
         let model = cx.new(|cx| {
             let mut model = Self {
                 fingerprint: backend.fingerprint().ok(),
@@ -172,6 +243,7 @@ impl Model {
                 saved,
                 snapshot: None,
                 screen,
+                section,
                 pairing: Pairing::Starting,
                 setup_items: Vec::new(),
                 setup_steps: Vec::new(),
@@ -179,10 +251,13 @@ impl Model {
                 update: None,
                 updating: false,
                 notice: None,
+                note: None,
                 show_phone_qr: false,
                 show_server: false,
                 autostart: autostart::enabled(&home),
-                demo_paired: false,
+                demo_paired: demo_status,
+                demo,
+                minute: 0,
                 pairing_task: None,
                 window: None,
                 tray: None,
@@ -227,10 +302,14 @@ impl Model {
             Action::Status | Action::Open => {
                 if self.screen == Screen::Status {
                     self.show_phone_qr = false;
+                    if action == Action::Status {
+                        self.section = Section::Overview;
+                        cx.notify();
+                    }
                 }
                 cx.defer(Self::show_window);
             }
-            Action::PauseHour => self.pause_hour(cx),
+            Action::Pause(length) => self.pause_for(length, cx),
             Action::Resume => self.resume(cx),
             Action::Quit => cx.quit(),
         }
@@ -297,26 +376,38 @@ impl Model {
         }));
     }
 
-    fn set_snapshot(&mut self, snapshot: Snapshot, cx: &mut Context<'_, Self>) {
-        // A pause runs out: git goes through Reins again.
-        if let Some(until) = self.saved.paused_until
-            && reins_desktop::now_unix() >= until
-        {
+    fn set_snapshot(&mut self, mut snapshot: Snapshot, cx: &mut Context<'_, Self>) {
+        let now = reins_desktop::now_unix();
+        // A timed pause runs out: git goes through Reins again. "Until I resume" never does.
+        if self.saved.pause_ran_out(now) {
             self.resume(cx);
+        }
+        if let Some(demo) = self.demo {
+            demo.fill(&mut snapshot, self.pause().on());
         }
         // Signed out elsewhere (`reins logout`, or the phone removed the connection).
         if snapshot.server.is_none() && !self.demo_paired && self.screen != Screen::Onboarding {
             self.screen = Screen::Onboarding;
             self.start_pairing(cx);
         }
-        if self.snapshot.as_ref() != Some(&snapshot) {
+        if self.snapshot.as_deref() != Some(&snapshot) {
             if self.fingerprint.is_none() {
                 self.fingerprint.clone_from(&snapshot.fingerprint);
             }
-            self.snapshot = Some(snapshot);
+            self.snapshot = Some(Arc::new(snapshot));
+            cx.notify();
+        } else if now / 60 != self.minute {
+            // "2 min ago" and "Paused for 12 min more" move on.
             cx.notify();
         }
+        self.minute = now / 60;
         self.refresh_tray();
+    }
+
+    /// Where `config.toml` is.
+    #[must_use]
+    pub fn config_file(&self) -> std::path::PathBuf {
+        self.backend.paths().config_file()
     }
 
     /// Paired with a server (or, with `--demo`, pretending).
@@ -332,11 +423,10 @@ impl Model {
         self.snapshot.as_ref().and_then(|s| s.server.clone()).unwrap_or_else(|| Backend::server(&self.saved))
     }
 
-    /// Minutes left of a pause.
+    /// Whether git is paused now, and until when.
     #[must_use]
-    pub fn paused_minutes(&self) -> Option<i64> {
-        let left = self.saved.paused_until? - reins_desktop::now_unix();
-        (left > 0).then(|| (left + 59) / 60)
+    pub fn pause(&self) -> Pause {
+        Pause::of(&self.saved, reins_desktop::now_unix())
     }
 
     /// The state in a few words, and the icon for it.
@@ -345,8 +435,8 @@ impl Model {
         if !self.paired() {
             return (Look::Attention, "Not connected to your phone".to_owned());
         }
-        if let Some(minutes) = self.paused_minutes() {
-            return (Look::Paused, format!("Paused for {minutes} more min"));
+        if let Some(line) = self.pause().line(reins_desktop::now_unix()) {
+            return (Look::Paused, line);
         }
         match self.snapshot.as_ref().map(|s| &s.daemon) {
             Some(DaemonState::Stopped) if self.saved.setup_done => {
@@ -389,6 +479,7 @@ impl Model {
             return;
         }
         let bounds = Bounds::centered(None, size(px(ui::WIDTH), px(ui::HEIGHT)), cx);
+        let min = size(px(ui::MIN_WIDTH), px(ui::MIN_HEIGHT));
         let options = WindowOptions {
             window_bounds: Some(WindowBounds::Windowed(bounds)),
             titlebar: Some(TitlebarOptions {
@@ -397,10 +488,10 @@ impl Model {
                 traffic_light_position: Some(point(px(14.0), px(16.0))),
             }),
             kind: WindowKind::Normal,
-            is_resizable: false,
+            is_resizable: true,
             is_minimizable: true,
             app_id: Some("reins".to_owned()),
-            window_min_size: Some(size(px(ui::WIDTH), px(ui::HEIGHT))),
+            window_min_size: Some(min),
             ..WindowOptions::default()
         };
         let window_model = model.clone();
@@ -705,7 +796,7 @@ impl Model {
                 let failed = m.setup_steps.iter().any(|(_, s)| matches!(s, Step::Failed(_)));
                 if !failed {
                     m.saved.setup_done = true;
-                    m.saved.paused_until = None;
+                    m.saved.unpause();
                     m.persist();
                 }
                 m.refresh_now(cx);
@@ -718,7 +809,16 @@ impl Model {
         self.saved.setup_done = true;
         self.persist();
         self.screen = Screen::Status;
+        self.section = Section::Overview;
         cx.notify();
+    }
+
+    pub fn show_section(&mut self, section: Section, cx: &mut Context<'_, Self>) {
+        if self.section != section {
+            self.section = section;
+            self.show_phone_qr = false;
+            cx.notify();
+        }
     }
 
     // The status window's actions.
@@ -746,12 +846,22 @@ impl Model {
     where
         F: Future<Output = Result<(), String>> + Send + 'static,
     {
+        self.act_noting(async move { work.await.map(|()| None) }, cx);
+    }
+
+    /// [`Self::act`] for work that may have something to say.
+    fn act_noting<F>(&mut self, work: F, cx: &mut Context<'_, Self>)
+    where
+        F: Future<Output = Result<Option<String>, String>> + Send + 'static,
+    {
         self.notice = None;
+        self.note = None;
         cx.spawn(async move |this, cx| {
             let result = Tokio::spawn(cx, work).await.unwrap_or_else(|e| Err(e.to_string()));
             let _gone = this.update(cx, |m, cx| {
-                if let Err(e) = result {
-                    m.notice = Some(e);
+                match result {
+                    Ok(note) => m.note = note,
+                    Err(e) => m.notice = Some(e),
                 }
                 m.refresh_now(cx);
                 cx.notify();
@@ -760,20 +870,78 @@ impl Model {
         .detach();
     }
 
-    pub fn pause_hour(&mut self, cx: &mut Context<'_, Self>) {
-        self.saved.paused_until = Some(reins_desktop::now_unix() + PAUSE_SECS);
+    /// Pauses git's routing for `length` (or until the user resumes). Hooks and MCP tools still ask the phone.
+    pub fn pause_for(&mut self, length: PauseFor, cx: &mut Context<'_, Self>) {
+        self.saved.pause(length, reins_desktop::now_unix());
         self.persist();
-        let backend = Arc::clone(&self.backend);
-        self.act(async move { backend.pause() }, cx);
+        if self.args.demo {
+            // Nothing changes on the computer in the demo.
+            self.refresh_now(cx);
+        } else {
+            let backend = Arc::clone(&self.backend);
+            self.act(async move { backend.pause() }, cx);
+        }
         self.refresh_tray();
+        cx.notify();
     }
 
     pub fn resume(&mut self, cx: &mut Context<'_, Self>) {
-        self.saved.paused_until = None;
+        self.saved.unpause();
         self.persist();
-        let backend = Arc::clone(&self.backend);
-        self.act(async move { backend.resume().await }, cx);
+        if self.args.demo {
+            self.refresh_now(cx);
+        } else {
+            let backend = Arc::clone(&self.backend);
+            self.act(async move { backend.resume().await }, cx);
+        }
         self.refresh_tray();
+        cx.notify();
+    }
+
+    /// Writes one setting to `config.toml` (restarting the background service when the daemon needs it).
+    pub fn change(&mut self, setting: Setting, cx: &mut Context<'_, Self>) {
+        // The demo changes only a stand-in home's settings, never the real ones, and restarts nothing.
+        let demo = self.args.demo;
+        if demo && std::env::var_os("REINS_HOME").is_none_or(|h| h.is_empty()) {
+            self.notice = Some("The demo changes settings only with REINS_HOME set.".to_owned());
+            cx.notify();
+            return;
+        }
+        let backend = Arc::clone(&self.backend);
+        let paused = self.pause().on();
+        self.act_noting(async move { backend.change(setting, paused, !demo).await }, cx);
+    }
+
+    /// A guard list as `config.toml` has it now.
+    #[must_use]
+    pub fn guard_list(&self, list: GuardList) -> Vec<String> {
+        let Some(Ok(config)) = self.snapshot.as_ref().map(|s| &s.config) else {
+            return Vec::new();
+        };
+        let g = &config.guard;
+        match list {
+            GuardList::Commands => g.commands.clone(),
+            GuardList::Files => g.files.clone(),
+            GuardList::AllowCommands => g.allow_commands.clone(),
+            GuardList::AllowFiles => g.allow_files.clone(),
+        }
+    }
+
+    /// Adds `item` to a guard list (nothing when it is empty or already there).
+    pub fn add_guard_item(&mut self, list: GuardList, item: &str, cx: &mut Context<'_, Self>) {
+        let mut items = self.guard_list(list);
+        let item = item.trim();
+        if item.is_empty() || items.iter().any(|i| i == item) {
+            return;
+        }
+        items.push(item.to_owned());
+        self.change(Setting::GuardList(list, items), cx);
+    }
+
+    pub fn remove_guard_item(&mut self, list: GuardList, item: &str, cx: &mut Context<'_, Self>) {
+        let mut items = self.guard_list(list);
+        items.retain(|i| i != item);
+        self.change(Setting::GuardList(list, items), cx);
     }
 
     pub fn set_harness(&mut self, h: Harness, on: bool, cx: &mut Context<'_, Self>) {
@@ -791,16 +959,18 @@ impl Model {
     }
 
     pub fn install_cli(&mut self, cx: &mut Context<'_, Self>) {
-        self.notice = Some(match self.backend.install_cli() {
-            Ok(p) => format!("Installed `reins` at {}.", p.display()),
-            Err(e) => e,
-        });
+        self.notice = None;
+        self.note = None;
+        match self.backend.install_cli() {
+            Ok(p) => self.note = Some(format!("Installed `reins` at {}.", p.display())),
+            Err(e) => self.notice = Some(e),
+        }
         cx.notify();
     }
 
     pub fn start_service(&mut self, cx: &mut Context<'_, Self>) {
         let backend = Arc::clone(&self.backend);
-        self.act(async move { backend.start_service().await.map(drop) }, cx);
+        self.act_noting(async move { backend.start_service().await.map(Some) }, cx);
     }
 
     pub fn sign_out(&mut self, cx: &mut Context<'_, Self>) {
@@ -809,6 +979,7 @@ impl Model {
         }
         self.demo_paired = false;
         self.saved.setup_done = false;
+        self.saved.unpause();
         self.saved.phone = None;
         self.saved.account = None;
         self.persist();
@@ -864,5 +1035,20 @@ impl Look {
             Self::Paused => "Paused",
             Self::Attention => "Needs you",
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn sections_are_named_by_their_ids() {
+        for s in Section::ALL {
+            assert_eq!(Section::from_id(s.id()), Some(s));
+            assert!(!s.label().is_empty());
+        }
+        assert_eq!(Section::from_id(" Rules "), Some(Section::Rules));
+        assert_eq!(Section::from_id("nope"), None);
     }
 }

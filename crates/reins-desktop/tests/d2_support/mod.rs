@@ -318,7 +318,7 @@ pub struct App {
 pub fn logged_in(mock: &Mock) -> App {
     let dir = tempfile::tempdir().unwrap();
     let paths = Paths::under(dir.path());
-    paths.ensure().unwrap();
+    quiet(&paths);
     let session = json!({
         "server": mock.base,
         "client_id": "client-1",
@@ -367,4 +367,10 @@ pub fn capture_logs() {
 
 pub fn logs() -> String {
     LOGS.lock().unwrap().clone()
+}
+
+/// No "check your phone" notifications from tests (they would pop up on the desktop running them).
+pub fn quiet(paths: &Paths) {
+    paths.ensure().unwrap();
+    std::fs::write(paths.config_file(), "[notify]\nphone = false\n").unwrap();
 }

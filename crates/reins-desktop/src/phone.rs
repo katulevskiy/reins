@@ -16,6 +16,7 @@ use zeroize::Zeroizing;
 use crate::auth::Refusal;
 use crate::config::{Mode, Paths};
 use crate::identity::{Identity, IdentityError};
+use crate::journal::{Decider, Entry, Journal, Outcome};
 use crate::server::LinkError;
 use crate::server::client::{CallAnswer, CallStatus, DesktopClient};
 
@@ -221,6 +222,7 @@ pub struct PhoneLink {
     paths: Paths,
     identity: Arc<Identity>,
     timeout: Duration,
+    journal: Journal,
     current: Mutex<Option<(String, Arc<Phone>)>>,
 }
 
@@ -229,11 +231,24 @@ impl PhoneLink {
     pub fn new(mode: Mode, paths: Paths, identity: Arc<Identity>, timeout: Duration) -> Self {
         Self {
             mode,
+            journal: Journal::new(&paths),
             paths,
             identity,
             timeout,
             current: Mutex::new(None),
         }
+    }
+
+    /// Where the requests asked through this link are logged.
+    #[must_use]
+    pub fn journal(&self) -> &Journal {
+        &self.journal
+    }
+
+    /// How long the phone is given to answer.
+    #[must_use]
+    pub fn timeout(&self) -> Duration {
+        self.timeout
     }
 
     /// The phone, or why there is none.
@@ -270,28 +285,106 @@ pub fn teller(f: impl Fn(&str) + Send + Sync + 'static) -> Tell {
     Arc::new(f)
 }
 
-/// Waits for `decision`; when it takes longer than [`NOTICE_AFTER`], calls `tell` with a waiting line (`what` is
-/// waiting for approval), and with "approved" afterwards when it was. `tell` may block: it runs on a blocking thread.
+/// The activity log's outcome for a decision.
+#[must_use]
+pub fn outcome_of<T>(r: &Result<T, Refusal>) -> (Outcome, Option<String>) {
+    match r {
+        Ok(_) => (Outcome::Approved, None),
+        Err(Refusal::Denied(m)) => (Outcome::Denied, Some(m.clone())),
+        Err(Refusal::Waiting(m)) => (Outcome::TimedOut, Some(m.clone())),
+        Err(Refusal::Unavailable(m)) => (Outcome::Failed, Some(m.clone())),
+    }
+}
+
+/// The line that says a request waits: who is asked, for how long at most, and what.
+#[must_use]
+pub fn waiting_line(decider: Decider, timeout: Duration, what: &str) -> String {
+    match decider {
+        Decider::Local => format!(
+            "reins: waiting for approval on this computer (the notification, or `reins pending`), up to {} s: {what}…",
+            timeout.as_secs()
+        ),
+        Decider::Phone | Decider::Settings => {
+            format!("reins: waiting for Reins 2FA on your phone, up to {} s: {what}…", timeout.as_secs())
+        }
+    }
+}
+
+/// The line that says how a request that waited ended.
+#[must_use]
+pub fn ended_line(decider: Decider, outcome: Outcome, reason: Option<&str>, timeout: Duration) -> String {
+    let where_ = match decider {
+        Decider::Local => "on this computer",
+        Decider::Phone | Decider::Settings => "on your phone",
+    };
+    let why = reason.map(str::trim).filter(|r| !r.is_empty());
+    match outcome {
+        Outcome::Approved | Outcome::Allowed => format!("reins: approved {where_}."),
+        Outcome::Denied | Outcome::Blocked => match why {
+            Some(r) if !r.starts_with("Denied") => format!("reins: denied {where_}: {r}"),
+            _ => format!("reins: denied {where_}."),
+        },
+        Outcome::TimedOut => format!(
+            "reins: timed out: no answer {where_} within {} s. Approve it there, then try again.",
+            timeout.as_secs()
+        ),
+        Outcome::Failed | Outcome::Waiting => format!("reins: not approved: {}", why.unwrap_or("no answer")),
+    }
+}
+
+/// Waits for `decision` and writes it to the activity log as `entry`. When it takes longer than [`NOTICE_AFTER`]
+/// (somebody has to look), the entry is logged as waiting, the desktop says "check your phone" (phone decisions only),
+/// and `tell` gets a waiting line; afterwards `tell` hears how it ended: approved, denied or timed out. A quick answer
+/// (a grant, Autopilot) is only logged. `tell` may block: it runs on a blocking thread.
 pub async fn awaiting<T>(
+    journal: &Journal,
+    entry: Entry,
     tell: Option<Tell>,
-    what: &str,
+    timeout: Duration,
+    decision: impl Future<Output = Result<T, Refusal>>,
+) -> Result<T, Refusal> {
+    awaiting_logged(journal, entry, tell, timeout, true, decision).await
+}
+
+/// [`awaiting`]; with `log_quick_yes` false, a quick yes is not logged (a git read with a credential still valid).
+pub async fn awaiting_logged<T>(
+    journal: &Journal,
+    mut entry: Entry,
+    tell: Option<Tell>,
+    timeout: Duration,
+    log_quick_yes: bool,
     decision: impl Future<Output = Result<T, Refusal>>,
 ) -> Result<T, Refusal> {
     let mut decision = std::pin::pin!(decision);
     tokio::select! {
-        r = &mut decision => return r,
+        r = &mut decision => {
+            if log_quick_yes || r.is_err() {
+                let (outcome, reason) = outcome_of(&r);
+                entry.end(outcome, reason.as_deref());
+                journal.record(&entry);
+            }
+            return r;
+        }
         () = tokio::time::sleep(NOTICE_AFTER) => {}
     }
-    let Some(tell) = tell else {
-        return decision.await;
-    };
-    let line = format!("reins: waiting for approval in your Reins app: {what}…");
-    let t = Arc::clone(&tell);
-    let told = tokio::task::spawn_blocking(move || t(&line));
+    journal.record(&entry);
+    if entry.decider == Decider::Phone {
+        journal.notify_waiting(&entry.what);
+    }
+    let told = tell.clone().map(|t| {
+        let line = waiting_line(entry.decider, timeout, &entry.what);
+        tokio::task::spawn_blocking(move || t(&line))
+    });
     let r = decision.await;
-    told.await.ok();
-    if r.is_ok() {
-        tokio::task::spawn_blocking(move || tell("reins: approved.")).await.ok();
+    if let Some(told) = told {
+        told.await.ok();
+    }
+    let (outcome, reason) = outcome_of(&r);
+    entry.end(outcome, reason.as_deref());
+    journal.record(&entry);
+    if let Some(tell) = tell {
+        let line = ended_line(entry.decider, outcome, reason.as_deref(), timeout);
+        tokio::task::spawn_blocking(move || tell(&line)).await.ok();
     }
     r
 }

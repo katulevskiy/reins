@@ -5,7 +5,7 @@ use std::time::Duration;
 use reins_core::{ApprovalChoice, ApprovalKind, GrantScopeChoice, StandingGrant};
 use reins_e2e::{AiClient, Phone, Server};
 use reqwest::StatusCode;
-use serde_json::json;
+use serde_json::{Value, json};
 
 const EMAIL: &str = "user@example.com";
 
@@ -203,8 +203,11 @@ async fn an_ai_sees_the_integrations_and_gets_their_accounts_only_when_the_user_
     let (listing, waiting) = tokio::join!(listing, app_open);
     assert!(waiting.is_empty(), "nothing needed the user");
     assert_eq!(listing["isError"], false, "{listing}");
+    // In the order they were first connected: the vault and Gmail can register in either order here.
+    let mut integrations = listing["structuredContent"]["integrations"].as_array().cloned().unwrap_or_default();
+    integrations.sort_by_key(|i| i["service"].as_str().unwrap_or_default().to_owned());
     assert_eq!(
-        listing["structuredContent"]["integrations"],
+        Value::Array(integrations),
         json!([
             {"service": "gmail", "name": "Gmail"},
             {"service": "vault", "name": "Password vault"}

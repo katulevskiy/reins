@@ -414,6 +414,8 @@ pub struct Config {
     pub api: Vec<crate::api_proxy::ApiConfig>,
     /// The SSH agent (`[ssh]`).
     pub ssh: crate::ssh_agent::SshConfig,
+    /// "Check your phone" on the desktop (`[notify]`).
+    pub notify: crate::notify::NotifyConfig,
 }
 
 impl Default for Config {
@@ -430,6 +432,7 @@ impl Default for Config {
             run: crate::run::RunConfig::default(),
             api: Vec::new(),
             ssh: crate::ssh_agent::SshConfig::default(),
+            notify: crate::notify::NotifyConfig::default(),
         }
     }
 }

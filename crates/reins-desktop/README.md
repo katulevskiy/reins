@@ -178,8 +178,33 @@ at the end of `~/.ssh/config` (more specific settings earlier in the file still 
 exactly that block; `reins ssh status` shows both. `[ssh] enabled = false` turns the agent off; `socket` and
 `known_hosts` override the paths.
 
-While your phone decides, the waiting command (git, ssh, the agent's HTTP client, `reins run`) gets a
-"waiting for approval in your Reins app" line on its stderr.
+## While your phone decides
+
+Nothing just hangs. When an answer takes more than a moment (somebody has to look at the phone):
+
+- the waiting program gets a line on its stderr, `reins: waiting for Reins 2FA on your phone, up to 120 s: push to
+  github.com/me/app: main (2 commits)…`, and afterwards how it ended: `reins: approved on your phone.`, `reins: denied on
+  your phone: <reason>`, or `reins: timed out: no answer on your phone within 120 s. Approve it there, then try again.`
+  That is git, ssh, the agent's HTTP client (API proxy) and `reins run`; for git and the API proxy on Linux only (the
+  daemon finds the process through `/proc`);
+- a harness hook (`reins hook`) answers the harness with the outcome in its reason (`Reins 2FA: approved.`, `Reins
+  2FA: denied. …`, `Reins 2FA: not allowed: timed out, nobody answered …`), which Claude Code also shows the user
+  (`systemMessage`); the waiting line goes to the hook's stderr;
+- `reins mcp` sends the harness MCP progress notifications ("Waiting for Reins 2FA on your phone…") when it asked for
+  them; the server answers a call the phone has not decided within its wait with how to fetch the result later;
+- this computer shows a notification, "Check your phone", with a short chime (`notify-send` and `pw-play`, `paplay` or
+  `aplay` on Linux, Notification Center on macOS, a toast on Windows):
+
+```toml
+[notify]
+phone = true    # "Check your phone" when a request waits for your phone
+sound = true    # with a chime
+```
+
+Every request decided here, how it ended and who decided, goes to this computer's activity log, `activity.jsonl` in
+the state directory (0600, never a secret; moved to `activity.jsonl.old` past 2 MiB), which the desktop app shows. The
+daemon's control API (`GET /_reins/overview`) adds what it did since it started: the git repositories, APIs and SSH
+servers it connected to, which API keys it holds and until when (never the keys), and the SSH keys the phone listed.
 
 ## Without a phone
 
@@ -229,6 +254,7 @@ that existed byte for byte and deletes the ones `add` created.
 ```toml
 [guard]
 defaults = true                 # the built-in rules, plus:
+disabled_groups = ["publishing"]  # built-in groups left out (see below)
 commands = ["make deploy", "text:shutdown"]   # shell words, `*` in a word, `-x` matches `-xyz`; text: anywhere
 files = ["*.sqlite"]            # a name, or the end of a path (`.aws/credentials`)
 allow_commands = ["git push --force* origin feature/*"]
@@ -236,6 +262,12 @@ allow_files = ["fixtures/*.key"]
 timeout_secs = 120
 on_no_answer = "deny"           # deny | ask (leave it to the harness's own prompt, where it has one)
 ```
+
+The built-in rules come in groups the desktop app turns on and off one by one (`disabled_groups`): `git-history`
+(force pushes, `reset --hard`, …), `deletes` (recursive deletes), `infrastructure` (terraform, kubectl, helm),
+`databases` (`DROP TABLE`, …), `publishing` (npm, cargo, PyPI, docker push, …), `disks`, `env-files`, `keys`, `cloud`
+(cloud and cluster credentials) and `tokens` (`.netrc`, `.npmrc`, …). The desktop app writes its changes into
+`config.toml` keeping the rest of the file as it was.
 
 ## What it protects against
 

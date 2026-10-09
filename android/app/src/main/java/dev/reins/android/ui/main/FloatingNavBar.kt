@@ -82,22 +82,19 @@ fun FloatingNavBar(
     }
 }
 
-/** The Autopilot mode at a glance: its icon on a wash of its colour; solid red with the time left during a bypass. */
+/**
+ * The Autopilot mode at a glance, where Settings used to be and the same size: its icon on a wash of its colour; solid red
+ * with the time left during a bypass.
+ */
 @Composable
 private fun ModeButton(settings: AutopilotSettings?, onClick: () -> Unit) {
     val c = LocalColors.current
     val mode = settings?.mode ?: AutopilotMode.MANUAL
     val tint = modeTint(mode, c)
     val bypass = mode == AutopilotMode.BYPASS
-    val wash by animateColorAsState(
-        when {
-            bypass -> c.danger
-            mode == AutopilotMode.MANUAL -> Color.Transparent
-            else -> tint.copy(alpha = 0.16f)
-        },
-        label = "modeWash",
-    )
-    val fg by animateColorAsState(if (bypass) Color.White else if (mode == AutopilotMode.MANUAL) c.text else tint, label = "modeFg")
+    // Every mode in its own colour, as the Autopilot screen shows it (Manual's is the quiet grey).
+    val wash by animateColorAsState(if (bypass) c.danger else tint.copy(alpha = 0.16f), label = "modeWash")
+    val fg by animateColorAsState(if (bypass) Color.White else tint, label = "modeFg")
     Box(
         Modifier
             .size(60.dp)

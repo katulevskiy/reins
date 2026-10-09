@@ -16,6 +16,7 @@ use tokio::io::{AsyncBufRead, AsyncBufReadExt as _, AsyncWrite, AsyncWriteExt as
 use tokio::sync::mpsc;
 
 use crate::config::Paths;
+use crate::journal::{Entry, Journal, Kind, Outcome};
 use crate::server::LinkError;
 use crate::server::oauth::{Access, SessionTokens};
 
@@ -26,6 +27,15 @@ const REQUEST_TIMEOUT: Duration = Duration::from_mins(15);
 const MAX_VIA: usize = 40;
 /// JSON-RPC error code for "the bridge could not get an answer".
 const BRIDGE_ERROR: i64 = -32000;
+/// A tool call unanswered this long is waiting for the phone: the harness gets a progress notification (when it asked
+/// for them), then one every [`PROGRESS_EVERY`].
+const PROGRESS_AFTER: Duration = Duration::from_secs(2);
+const PROGRESS_EVERY: Duration = Duration::from_secs(5);
+/// Unanswered this long, the user is most likely asked: the activity log shows it waiting and the desktop says "check
+/// your phone". (Calls the phone runs on its own, under a grant or Autopilot, usually finish well before.)
+const NOTIFY_AFTER: Duration = Duration::from_secs(5);
+/// What the progress notifications say.
+pub const WAITING_MESSAGE: &str = "Waiting for Reins 2FA on your phone…";
 
 /// `NAME` as the server takes it: printable ASCII, at most 40 characters; `None` when nothing is left.
 #[must_use]
@@ -43,6 +53,62 @@ struct Bridge {
     protocol: Mutex<Option<String>>,
     /// The client's `initialize`, replayed when the server forgets the session.
     initialize: Mutex<Option<Value>>,
+    journal: Journal,
+}
+
+/// A `tools/call` request: the tool, the progress token the client gave (if any), the argument names.
+struct ToolCall {
+    name: String,
+    progress_token: Option<Value>,
+    arguments: Vec<String>,
+}
+
+fn tool_call(msg: &Value) -> Option<ToolCall> {
+    if msg.get("method").and_then(Value::as_str) != Some("tools/call") || msg.get("id").is_none() {
+        return None;
+    }
+    let params = msg.get("params")?;
+    Some(ToolCall {
+        name: params.get("name").and_then(Value::as_str).unwrap_or("a tool").to_owned(),
+        progress_token: params.pointer("/_meta/progressToken").filter(|t| t.is_string() || t.is_number()).cloned(),
+        arguments: params
+            .get("arguments")
+            .and_then(Value::as_object)
+            .map(|a| a.keys().cloned().collect())
+            .unwrap_or_default(),
+    })
+}
+
+/// How a tool call ended, from the server's answer: its texts for a denial and for "still waiting" (`reins_get_result`
+/// is offered when the phone did not answer in time, or is offline).
+#[must_use]
+pub fn tool_outcome(response: Option<&Value>) -> (Outcome, Option<String>) {
+    let Some(r) = response else {
+        return (Outcome::Failed, Some("No answer from the Reins server.".to_owned()));
+    };
+    if let Some(message) = r.pointer("/error/message").and_then(Value::as_str) {
+        return (Outcome::Failed, Some(message.to_owned()));
+    }
+    let text: String = r
+        .pointer("/result/content")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .filter_map(|c| c.get("text").and_then(Value::as_str))
+        .collect::<Vec<_>>()
+        .join(" ");
+    let error = r.pointer("/result/isError").and_then(Value::as_bool).unwrap_or(false);
+    if !error {
+        return (Outcome::Approved, None);
+    }
+    let line = text.lines().next().unwrap_or_default().to_owned();
+    if text.starts_with("Denied") {
+        (Outcome::Denied, Some(line))
+    } else if text.contains("reins_get_result") {
+        (Outcome::TimedOut, Some(line))
+    } else {
+        (Outcome::Failed, Some(line))
+    }
 }
 
 enum Failure {
@@ -219,8 +285,81 @@ impl Bridge {
         Ok(())
     }
 
-    /// Forwards one message from the harness; writes the answers (or an error for each request) to `out`.
+    /// Forwards one message; a tool call is also logged, and while it waits for the phone the harness gets progress
+    /// notifications and the desktop says "check your phone".
     async fn forward(&self, msg: Value, out: &mpsc::UnboundedSender<Value>) {
+        let Some(call) = tool_call(&msg) else {
+            self.forward_plain(msg, out).await;
+            return;
+        };
+        let id = msg.get("id").cloned().unwrap_or(Value::Null);
+        let who = self.via.clone().unwrap_or_else(|| "An AI agent".to_owned());
+        let mut entry = Entry::new(Kind::Mcp, &format!("{who}: {}", call.name))
+            .source(self.via.as_deref())
+            .service(Some(&call.name))
+            .detail(
+                (!call.arguments.is_empty()).then(|| format!("Arguments: {}", call.arguments.join(", "))).as_deref(),
+            );
+        // Answers pass through here so the call's own response can be found.
+        let (tx, mut rx) = mpsc::unbounded_channel::<Value>();
+        let watch = {
+            let out = out.clone();
+            let journal = self.journal.clone();
+            let entry = entry.clone();
+            let token = call.progress_token.clone();
+            tokio::spawn(async move {
+                let started = tokio::time::Instant::now();
+                tokio::time::sleep(PROGRESS_AFTER).await;
+                let mut told = false;
+                loop {
+                    if let Some(token) = &token {
+                        let _closed =
+                            out.send(json!({"jsonrpc": "2.0", "method": "notifications/progress", "params": {
+                                "progressToken": token,
+                                "progress": started.elapsed().as_secs(),
+                                "message": WAITING_MESSAGE,
+                            }}));
+                    }
+                    if !told && started.elapsed() >= NOTIFY_AFTER {
+                        told = true;
+                        journal.record(&entry);
+                        journal.notify_waiting(&entry.what);
+                        eprintln!("reins mcp: {} {}", WAITING_MESSAGE.trim_end_matches('…'), entry.what);
+                    }
+                    let next = if told {
+                        PROGRESS_EVERY
+                    } else {
+                        NOTIFY_AFTER.saturating_sub(started.elapsed())
+                    };
+                    tokio::time::sleep(next.max(Duration::from_millis(100))).await;
+                }
+            })
+        };
+        let passing = {
+            let out = out.clone();
+            let id = id.clone();
+            tokio::spawn(async move {
+                let mut own = None;
+                while let Some(v) = rx.recv().await {
+                    if v.get("id") == Some(&id) && v.get("method").is_none() {
+                        own = Some(v.clone());
+                    }
+                    let _closed = out.send(v);
+                }
+                own
+            })
+        };
+        self.forward_plain(msg, &tx).await;
+        drop(tx);
+        watch.abort();
+        let own = passing.await.ok().flatten();
+        let (outcome, reason) = tool_outcome(own.as_ref());
+        entry.end(outcome, reason.as_deref());
+        self.journal.record(&entry);
+    }
+
+    /// Forwards one message from the harness; writes the answers (or an error for each request) to `out`.
+    async fn forward_plain(&self, msg: Value, out: &mpsc::UnboundedSender<Value>) {
         let ids = request_ids(&msg);
         let is_initialize = msg.get("method").and_then(Value::as_str) == Some("initialize");
         if is_initialize {
@@ -299,6 +438,7 @@ where
         session: Mutex::new(None),
         protocol: Mutex::new(None),
         initialize: Mutex::new(None),
+        journal: Journal::new(paths),
     });
     let (tx, mut rx) = mpsc::unbounded_channel::<Value>();
     let writer = tokio::spawn(async move {
@@ -365,6 +505,31 @@ mod tests {
         assert_eq!(sanitize_via(" a\u{7}b\nc é ").as_deref(), Some("abc"));
         assert_eq!(sanitize_via(&"x".repeat(50)).unwrap().len(), 40);
         assert_eq!(sanitize_via("\u{1}"), None);
+    }
+
+    #[test]
+    fn tool_calls_are_recognised_with_their_progress_token() {
+        let call = tool_call(&json!({"jsonrpc": "2.0", "id": 7, "method": "tools/call",
+            "params": {"name": "gmail_send", "arguments": {"to": "a@b", "body": "x"}, "_meta": {"progressToken": "p1"}}}))
+        .unwrap();
+        assert_eq!(call.name, "gmail_send");
+        assert_eq!(call.progress_token, Some(json!("p1")));
+        assert_eq!(call.arguments.len(), 2);
+        assert!(tool_call(&json!({"jsonrpc": "2.0", "id": 1, "method": "tools/list"})).is_none());
+        assert!(tool_call(&json!({"jsonrpc": "2.0", "method": "tools/call", "params": {}})).is_none());
+    }
+
+    #[test]
+    fn the_servers_answers_say_how_a_tool_call_ended() {
+        let reply = |error: bool, text: &str| json!({"jsonrpc": "2.0", "id": 1, "result": {"isError": error, "content": [{"type": "text", "text": text}]}});
+        assert_eq!(tool_outcome(Some(&reply(false, "sent"))).0, Outcome::Approved);
+        assert_eq!(tool_outcome(Some(&reply(true, "Denied by the user on their Reins device."))).0, Outcome::Denied);
+        let waiting = "Waiting for the user to approve on their phone. When they confirm, call reins_get_result \
+                       with request_id=r1.";
+        assert_eq!(tool_outcome(Some(&reply(true, waiting))).0, Outcome::TimedOut);
+        assert_eq!(tool_outcome(Some(&reply(true, "Gmail said no"))).0, Outcome::Failed);
+        assert_eq!(tool_outcome(Some(&json!({"id": 1, "error": {"code": -1, "message": "x"}}))).0, Outcome::Failed);
+        assert_eq!(tool_outcome(None).0, Outcome::Failed);
     }
 
     #[test]

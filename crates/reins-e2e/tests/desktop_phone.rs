@@ -278,12 +278,15 @@ async fn the_phone_approves_git_reads_and_pushes_and_refuses_a_force_push() {
         detail: Some("terraform apply -auto-approve".to_owned()),
         topic: Some("command:terraform apply".to_owned()),
     };
-    for approve in [true, false] {
-        let q = question(if approve {
-            "Deploy to prod?"
-        } else {
-            "Drop the staging database?"
-        });
+    // The third: a long command, cut to 300 characters with an ellipsis (more than 300 bytes), and a detail of
+    // multi-byte text, both within the limits counted in characters.
+    let long = format!("Claude Code wants to run: {}…", "x".repeat(273));
+    assert_eq!(long.chars().count(), 300);
+    for (approve, text) in [(true, "Deploy to prod?"), (false, "Drop the staging database?"), (true, long.as_str())] {
+        let mut q = question(text);
+        if text == long {
+            q.detail = Some(format!("Command:\n{}", "é".repeat(7_000)));
+        }
         let asked = reins_desktop::ask::ask_phone(&paths, &identity, &q, Duration::from_secs(60));
         let user = async {
             let item = next_item(&phone).await;

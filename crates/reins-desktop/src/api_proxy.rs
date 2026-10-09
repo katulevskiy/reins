@@ -14,10 +14,12 @@ use serde::{Deserialize, Serialize};
 use zeroize::Zeroizing;
 
 use crate::auth::Refusal;
+use crate::journal::{Entry, Kind};
 use crate::notice::{self, Peer};
 use crate::phone::{PhoneLink, awaiting, teller};
 use crate::proxy::{Body, BoxError, text};
 use crate::secrets::{self, MAX_LEASE_SECS, MIN_LEASE_SECS, SecretRef};
+use crate::stats::Stats;
 
 /// Requests under this path go to the API proxy.
 pub const PREFIX: &str = "/api/";
@@ -132,6 +134,7 @@ pub struct ApiProxy {
     leases: Mutex<HashMap<String, Lease>>,
     /// One question per API at a time: concurrent requests wait for the same answer.
     turns: HashMap<String, tokio::sync::Mutex<()>>,
+    stats: Arc<Stats>,
 }
 
 /// `rest` of `/api/<name>/<rest>` when it is a plain path: no `.`/`..` segments (also percent-encoded), backslashes,
@@ -160,7 +163,7 @@ fn refusal(r: &Refusal) -> Response<Body> {
 }
 
 impl ApiProxy {
-    pub fn new(apis: &[ApiConfig], phone: Arc<PhoneLink>) -> Result<Self, String> {
+    pub fn new(apis: &[ApiConfig], phone: Arc<PhoneLink>, stats: Arc<Stats>) -> Result<Self, String> {
         validate(apis)?;
         let mut map = HashMap::new();
         let mut turns = HashMap::new();
@@ -188,6 +191,7 @@ impl ApiProxy {
             http: crate::http::client(None)?,
             leases: Mutex::new(HashMap::new()),
             turns,
+            stats,
         })
     }
 
@@ -196,6 +200,21 @@ impl ApiProxy {
         let now = crate::now_unix();
         leases.retain(|_, l| now < l.expires_at);
         leases.get(key).map(|l| l.value.clone())
+    }
+
+    /// The APIs, with when the key the phone released for each runs out (`None`: none held). Never the key.
+    #[must_use]
+    pub fn leases(&self) -> Vec<(String, String, Option<i64>)> {
+        let mut leases = self.leases.lock().unwrap_or_else(PoisonError::into_inner);
+        let now = crate::now_unix();
+        leases.retain(|_, l| now < l.expires_at);
+        let mut v: Vec<(String, String, Option<i64>)> = self
+            .apis
+            .iter()
+            .map(|(key, a)| (a.name.clone(), a.base.to_string(), leases.get(key).map(|l| l.expires_at)))
+            .collect();
+        v.sort();
+        v
     }
 
     fn forget(&self, key: &str) {
@@ -226,9 +245,15 @@ impl ApiProxy {
         };
         let tell = peer.map(|p| teller(move |line: &str| notice::tell(p, line)));
         let reuse = format!("api:{key}");
+        let what = format!("the key for API {}", api.name);
+        let entry = Entry::new(Kind::Api, &what)
+            .service(Some(&api.name))
+            .detail(Some(&format!("{purpose}\nSecret: {}\nLease: {} s", api.secret, api.lease_secs)));
         let mut released = awaiting(
+            self.phone.journal(),
+            entry,
             tell,
-            &format!("the key for API {}", api.name),
+            self.phone.timeout(),
             secrets::release(
                 &phone,
                 &request,
@@ -274,6 +299,7 @@ impl ApiProxy {
             Ok(s) => s,
             Err(r) => {
                 log::info!("{method} api {}: secret {}", api.name, kind(&r));
+                self.stats.record("api", &api.name, kind(&r));
                 return refusal(&r);
             }
         };
@@ -305,11 +331,13 @@ impl ApiProxy {
             Err(e) => {
                 let e = e.without_url();
                 log::warn!("{method} api {}: upstream: {e}", api.name);
+                self.stats.record("api", &api.name, "unreachable");
                 return text(StatusCode::BAD_GATEWAY, &format!("Cannot reach the API: {e}"));
             }
         };
         let status = answer.status();
         log::info!("{method} api {}: {}", api.name, status.as_u16());
+        self.stats.record("api", &api.name, &format!("{method} {}", status.as_u16()));
         if status == StatusCode::UNAUTHORIZED {
             // A revoked or rotated key: the next request asks the phone again.
             self.forget(&key);

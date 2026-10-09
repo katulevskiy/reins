@@ -174,8 +174,12 @@ async fn a_signature_made_on_the_phone_verifies_with_ssh_keygen() {
     let (_, stderr) = text(&out);
     assert!(out.status.success(), "{stderr}");
     if TELLS_THE_CLIENT {
-        assert!(stderr.contains("reins: waiting for approval in your Reins app: sign with Deploy key"), "{stderr}");
-        assert!(stderr.contains("reins: approved."), "{stderr}");
+        assert!(
+            stderr.contains("reins: waiting for Reins 2FA on your phone, up to ")
+                && stderr.contains(": sign with Deploy key"),
+            "{stderr}"
+        );
+        assert!(stderr.contains("reins: approved on your phone."), "{stderr}");
     }
     let signers = a.file("allowed_signers", &format!("me@example.com {}\n", a.mock.key.line()));
     let sig = format!("{}.sig", data.display());
@@ -329,10 +333,7 @@ async fn login(sshd: &Path, kind: &str, algorithms: &str) {
     assert_eq!(stdout.trim(), "hello-through-the-phone");
     let server_name = format!("127.0.0.1:{port}");
     assert!(
-        !TELLS_THE_CLIENT
-            || stderr.contains(&format!(
-                "reins: waiting for approval in your Reins app: sign in to {server_name} as {user} with Deploy key"
-            )),
+        !TELLS_THE_CLIENT || stderr.contains(&format!(": sign in to {server_name} as {user} with Deploy key")),
         "{stderr}"
     );
     let calls = a.mock.calls_of("vault_ssh_sign");

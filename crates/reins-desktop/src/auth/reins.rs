@@ -321,7 +321,7 @@ impl Authorizer for ReinsAuthorizer {
     }
 
     fn waiting_hint(&self) -> String {
-        "waiting for approval in your Reins app".to_owned()
+        "waiting for Reins 2FA on your phone".to_owned()
     }
 
     fn describe(&self) -> String {

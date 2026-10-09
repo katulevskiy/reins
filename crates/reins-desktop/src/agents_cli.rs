@@ -168,10 +168,17 @@ async fn ask(
         Ok(Decider::Local) if !interactive => eprintln!("Asking on the desktop…"),
         _ => {}
     }
-    let answer = crate::ask::ask(paths, config, &q, timeout, interactive, &DesktopAsk).await;
+    let entry = crate::journal::Entry::new(crate::journal::Kind::Ask, &q.question)
+        .source(Some("reins ask"))
+        .service(q.topic.as_deref())
+        .detail(q.detail.as_deref());
+    let tell = |line: &str| eprintln!("{line}");
+    let (answer, timed_out) =
+        crate::ask::ask_logged(paths, config, &q, timeout, interactive, &DesktopAsk, entry, Some(&tell)).await;
     match &answer {
         Answer::Yes => eprintln!("Yes."),
         Answer::No(why) => eprintln!("No: {why}"),
+        Answer::Unanswered(why) if timed_out => eprintln!("Timed out: {why}"),
         Answer::Unanswered(why) => eprintln!("No answer: {why}"),
     }
     ExitCode::from(answer.exit_code())

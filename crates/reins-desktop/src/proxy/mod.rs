@@ -24,7 +24,9 @@ use self::route::{Kind, Route, Service};
 use crate::auth::{Authorizer, Credential, Refusal, Repo};
 use crate::config::{Config, GitHost};
 use crate::git::{GitHubRemote, NoRemote, Remote, analyze_push};
+use crate::journal::{Entry, Journal, Kind as JournalKind};
 use crate::notice::{self, Peer};
+use crate::stats::Stats;
 
 pub type BoxError = Box<dyn std::error::Error + Send + Sync>;
 /// What the daemon answers with.
@@ -65,9 +67,6 @@ pub fn text(status: StatusCode, message: &str) -> Response<Body> {
     full(status, "text/plain; charset=utf-8", body)
 }
 
-/// How long a decision may take before git is told who is being asked.
-const NOTICE_AFTER: Duration = Duration::from_millis(800);
-
 /// "push to github.com/me/app: main (3 commits), v1.2", for the waiting line.
 fn push_what(repo: &Repo, summary: &reins_proto::desktop::PushSummary) -> String {
     let refs: Vec<String> = summary
@@ -90,7 +89,9 @@ fn refused(r: &Refusal) -> Response<Body> {
     text(StatusCode::FORBIDDEN, r.message())
 }
 
-fn decision(r: &Refusal) -> &'static str {
+/// One word for a refusal, for logs and the connection list.
+#[must_use]
+pub fn refusal_kind(r: &Refusal) -> &'static str {
     match r {
         Refusal::Denied(_) => "denied",
         Refusal::Waiting(_) => "waiting",
@@ -132,6 +133,9 @@ pub struct Proxy {
     private: Mutex<HashSet<String>>,
     /// Lowercase `host/path` → upstream path (`/owner/new.git`) after the host redirected (a renamed repository).
     moved: Mutex<HashMap<String, String>>,
+    journal: Journal,
+    stats: Arc<Stats>,
+    timeout: Duration,
 }
 
 fn lock<T>(m: &Mutex<T>) -> std::sync::MutexGuard<'_, T> {
@@ -167,7 +171,18 @@ impl Proxy {
             api_http: crate::http::client(Some(Duration::from_secs(60)))?,
             private: Mutex::default(),
             moved: Mutex::default(),
+            journal: Journal::off(),
+            stats: Arc::default(),
+            timeout: Duration::from_secs(config.approval_timeout_secs),
         })
+    }
+
+    /// Logs decisions to `journal` and counts connections in `stats`.
+    #[must_use]
+    pub fn with_activity(mut self, journal: Journal, stats: Arc<Stats>) -> Self {
+        self.journal = journal;
+        self.stats = stats;
+        self
     }
 
     /// The git hosts served (the enabled ones).
@@ -330,30 +345,29 @@ impl Proxy {
         matches!(status.as_u16(), 401 | 403 | 404)
     }
 
-    /// Handles one proxy request.
-    /// Waits for a decision; when it takes more than a moment (the phone is asked), tells the git process whose turn it
-    /// is, and afterwards that it was approved, since git itself shows nothing while it waits.
+    /// Waits for a decision through [`crate::phone::awaiting_logged`]: the activity log, "check your phone" and, since
+    /// git itself shows nothing while it waits, lines on the git process's stderr saying whose turn it is and how it
+    /// ended. Reads are logged when they had to ask; pushes always.
     async fn awaiting<T>(
         &self,
         peer: Option<Peer>,
+        repo: &Repo,
         what: &str,
+        push: bool,
         decision: impl Future<Output = Result<T, Refusal>>,
     ) -> Result<T, Refusal> {
-        let mut decision = std::pin::pin!(decision);
-        tokio::select! {
-            r = &mut decision => return r,
-            () = tokio::time::sleep(NOTICE_AFTER) => {}
-        }
-        let Some(peer) = peer else {
-            return decision.await;
+        let entry = Entry::new(JournalKind::Git, what)
+            .source(Some("git"))
+            .service(Some(&repo.label()))
+            .decider(self.authorizer.decider());
+        let tell = peer.map(|p| crate::phone::teller(move |line: &str| notice::tell(p, line)));
+        let r = crate::phone::awaiting_logged(&self.journal, entry, tell, self.timeout, push, decision).await;
+        let how = match &r {
+            Ok(_) if push => "push approved",
+            Ok(_) => "read",
+            Err(e) => refusal_kind(e),
         };
-        let line = format!("reins: {}: {what}…", self.authorizer.waiting_hint());
-        let told = tokio::task::spawn_blocking(move || notice::tell(peer, &line));
-        let r = decision.await;
-        told.await.ok();
-        if r.is_ok() {
-            tokio::task::spawn_blocking(move || notice::tell(peer, "reins: approved.")).await.ok();
-        }
+        self.stats.record("git", &repo.label(), how);
         r
     }
 
@@ -398,14 +412,15 @@ impl Proxy {
             }
             log::info!("{method} {} {suffix}: anonymous {}, asking", repo.label(), resp.status().as_u16());
         }
-        let credential = match self.awaiting(peer, &format!("read {}", repo.label()), self.authorizer.read(repo)).await
-        {
-            Ok(c) => c,
-            Err(r) => {
-                log::info!("{method} {} {suffix}: read {}", repo.label(), decision(&r));
-                return Ok(refused(&r));
-            }
-        };
+        let credential =
+            match self.awaiting(peer, repo, &format!("read {}", repo.label()), false, self.authorizer.read(repo)).await
+            {
+                Ok(c) => c,
+                Err(r) => {
+                    log::info!("{method} {} {suffix}: read {}", repo.label(), refusal_kind(&r));
+                    return Ok(refused(&r));
+                }
+            };
         let out = match (&held, stream) {
             (Some(spool), _) => Out::Held(spool),
             (None, Some(s)) if method == Method::POST => Out::Stream(s),
@@ -432,14 +447,15 @@ impl Proxy {
         let method = req.method().clone();
         let peer = req.extensions().get::<Peer>().copied();
         let (parts, incoming) = req.into_parts();
-        let credential = match self.awaiting(peer, &format!("read {}", repo.label()), self.authorizer.read(repo)).await
-        {
-            Ok(c) => c,
-            Err(r) => {
-                log::info!("{method} {} {suffix}: read {}", repo.label(), decision(&r));
-                return Ok(refused(&r));
-            }
-        };
+        let credential =
+            match self.awaiting(peer, repo, &format!("read {}", repo.label()), false, self.authorizer.read(repo)).await
+            {
+                Ok(c) => c,
+                Err(r) => {
+                    log::info!("{method} {} {suffix}: read {}", repo.label(), refusal_kind(&r));
+                    return Ok(refused(&r));
+                }
+            };
         let out = if method == Method::POST {
             Out::Stream(incoming)
         } else {
@@ -475,7 +491,8 @@ impl Proxy {
             .await
             .map_err(|_| text(StatusCode::INTERNAL_SERVER_ERROR, "Reading the push failed."))?
             .map_err(|e| body_error(&e))?;
-        let read = self.awaiting(peer, &format!("read {}", repo.label()), self.authorizer.read(repo)).await;
+        let read =
+            self.awaiting(peer, repo, &format!("read {}", repo.label()), false, self.authorizer.read(repo)).await;
         if push.head.commands.is_empty() {
             // Git's probe before a large chunked push: nothing to approve yet.
             let credential = match read {
@@ -497,7 +514,7 @@ impl Proxy {
         let read = match read {
             Ok(c) => c,
             Err(r) => {
-                log::info!("POST {who} {suffix}: read {}", decision(&r));
+                log::info!("POST {who} {suffix}: read {}", refusal_kind(&r));
                 return Ok(reject(r.message(), r.message()));
             }
         };
@@ -539,12 +556,12 @@ impl Proxy {
             digest.get(..12).unwrap_or(&digest)
         );
         let credential = match self
-            .awaiting(peer, &push_what(repo, &summary), self.authorizer.push(repo, &summary, &digest))
+            .awaiting(peer, repo, &push_what(repo, &summary), true, self.authorizer.push(repo, &summary, &digest))
             .await
         {
             Ok(c) => c,
             Err(r) => {
-                log::info!("POST {who} {suffix}: push {}", decision(&r));
+                log::info!("POST {who} {suffix}: push {}", refusal_kind(&r));
                 return Ok(reject(r.message(), r.message()));
             }
         };

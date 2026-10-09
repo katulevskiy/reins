@@ -31,6 +31,7 @@ use crate::auth::prompt::Prompter;
 use crate::config::{Config, Paths};
 use crate::guard::{GuardConfig, Match, OnNoAnswer};
 use crate::harness::Harness;
+use crate::journal::{Entry, Kind};
 
 /// What the tool is about to do.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -245,18 +246,25 @@ pub fn question(call: &HookCall, guard: &GuardConfig) -> Option<(Match, Question
     Some((m, q))
 }
 
-/// The verdict for an answer.
+/// The verdict for an answer (`timed_out`: nobody answered within the time), in words that say it was Reins 2FA.
 #[must_use]
-pub fn verdict(answer: Answer, on_no_answer: OnNoAnswer) -> Verdict {
+pub fn verdict(answer: Answer, timed_out: bool, on_no_answer: OnNoAnswer) -> Verdict {
     match answer {
-        Answer::Yes => Verdict::Allow("Approved through Reins.".to_owned()),
-        Answer::No(why) => Verdict::Deny(format!("Reins: {why} Do not try another way around this.")),
-        Answer::Unanswered(why) => match on_no_answer {
-            OnNoAnswer::Deny => Verdict::Deny(format!(
-                "Reins: not allowed, nobody answered ({why}). Ask the user to approve it, then try again."
-            )),
-            OnNoAnswer::Ask => Verdict::Ask(format!("Reins got no answer ({why}).")),
-        },
+        Answer::Yes => Verdict::Allow("Reins 2FA: approved.".to_owned()),
+        Answer::No(why) => Verdict::Deny(format!("Reins 2FA: denied. {why} Do not try another way around this.")),
+        Answer::Unanswered(why) => {
+            let what = if timed_out {
+                format!("timed out, nobody answered ({why})")
+            } else {
+                format!("could not ask ({why})")
+            };
+            match on_no_answer {
+                OnNoAnswer::Deny => Verdict::Deny(format!(
+                    "Reins 2FA: not allowed: {what}. Ask the user to approve it in the Reins app, then try again."
+                )),
+                OnNoAnswer::Ask => Verdict::Ask(format!("Reins 2FA: {what}.")),
+            }
+        }
     }
 }
 
@@ -277,11 +285,16 @@ pub fn render(call: &HookCall, verdict: &Verdict) -> (Option<String>, u8) {
                 Verdict::Ask(r) => ("ask", r),
                 Verdict::Unmatched => return (None, 0),
             };
-            out(json!({"hookSpecificOutput": {
+            let mut answer = json!({"hookSpecificOutput": {
                 "hookEventName": "PreToolUse",
                 "permissionDecision": decision,
                 "permissionDecisionReason": reason,
-            }}))
+            }});
+            // Claude Code shows this line to the user, so the outcome of the phone's 2FA is visible there too.
+            if call.harness == Harness::ClaudeCode {
+                answer["systemMessage"] = json!(reason);
+            }
+            out(answer)
         }
         (Event::CursorShell | Event::CursorRead | Event::CursorTool, v) => {
             let (permission, message) = match v {
@@ -319,8 +332,19 @@ pub async fn run(
     };
     log::info!("hook {}: asking about `{}`", harness.id(), m.pattern);
     let timeout = Duration::from_secs(config.guard.timeout_secs);
-    let answer = crate::ask::ask(paths, config, &q, timeout, false, prompter).await;
-    let v = verdict(answer, config.guard.on_no_answer);
+    let kind = match call.action {
+        Action::Files {
+            ..
+        } => Kind::File,
+        _ => Kind::Command,
+    };
+    let entry =
+        Entry::new(kind, &q.question).source(Some(harness.label())).service(Some(&m.topic)).detail(q.detail.as_deref());
+    // stderr: the harness's log, and its transcript where it shows hook output.
+    let tell = |line: &str| eprintln!("{line}");
+    let (answer, timed_out) =
+        crate::ask::ask_logged(paths, config, &q, timeout, false, prompter, entry, Some(&tell)).await;
+    let v = verdict(answer, timed_out, config.guard.on_no_answer);
     let (out, code) = render(&call, &v);
     (out, code, None)
 }
@@ -337,10 +361,23 @@ mod tests {
 
     #[test]
     fn verdicts_follow_the_answer_and_the_no_answer_setting() {
-        assert!(matches!(verdict(Answer::Yes, OnNoAnswer::Deny), Verdict::Allow(_)));
-        assert!(matches!(verdict(Answer::No("x".into()), OnNoAnswer::Ask), Verdict::Deny(_)));
-        assert!(matches!(verdict(Answer::Unanswered("t".into()), OnNoAnswer::Deny), Verdict::Deny(_)));
-        assert!(matches!(verdict(Answer::Unanswered("t".into()), OnNoAnswer::Ask), Verdict::Ask(_)));
+        assert!(matches!(verdict(Answer::Yes, false, OnNoAnswer::Deny), Verdict::Allow(_)));
+        assert!(matches!(verdict(Answer::No("x".into()), false, OnNoAnswer::Ask), Verdict::Deny(_)));
+        assert!(matches!(verdict(Answer::Unanswered("t".into()), true, OnNoAnswer::Deny), Verdict::Deny(_)));
+        assert!(matches!(verdict(Answer::Unanswered("t".into()), true, OnNoAnswer::Ask), Verdict::Ask(_)));
+        // The agent is told which it was: approved, denied, timed out.
+        let Verdict::Deny(late) = verdict(Answer::Unanswered("120 s".into()), true, OnNoAnswer::Deny) else {
+            unreachable!()
+        };
+        assert!(late.starts_with("Reins 2FA: not allowed: timed out"), "{late}");
+        let Verdict::Deny(no) = verdict(Answer::No("Denied on your phone.".into()), false, OnNoAnswer::Deny) else {
+            unreachable!()
+        };
+        assert!(no.starts_with("Reins 2FA: denied."), "{no}");
+        let Verdict::Deny(off) = verdict(Answer::Unanswered("not logged in".into()), false, OnNoAnswer::Deny) else {
+            unreachable!()
+        };
+        assert!(off.contains("could not ask (not logged in)"), "{off}");
     }
 
     fn cursor(input: &str) -> HookCall {
@@ -380,5 +417,37 @@ mod tests {
         assert_eq!(permission(&shell, Verdict::Ask("?".into())), "ask");
         // Read and tool hooks know no "ask".
         assert_eq!(permission(&read, Verdict::Ask("?".into())), "deny");
+    }
+
+    #[test]
+    fn claude_code_shows_the_outcome_to_the_user_too() {
+        let input = r#"{"hook_event_name": "PreToolUse", "tool_name": "Bash", "tool_input": {"command": "rm -rf x"}}"#;
+        let claude = parse(Harness::ClaudeCode, input.as_bytes()).unwrap();
+        let (out, _) = render(&claude, &Verdict::Allow("Reins 2FA: approved.".into()));
+        let v: Value = serde_json::from_str(&out.unwrap()).unwrap();
+        assert_eq!(v["systemMessage"], "Reins 2FA: approved.");
+        assert_eq!(v["hookSpecificOutput"]["permissionDecision"], "allow");
+        let codex = parse(Harness::Codex, input.as_bytes()).unwrap();
+        let (out, _) = render(&codex, &Verdict::Deny("no".into()));
+        assert!(serde_json::from_str::<Value>(&out.unwrap()).unwrap().get("systemMessage").is_none());
+    }
+
+    #[test]
+    fn a_command_of_any_length_makes_a_question_the_server_takes() {
+        let cmd = format!("git push --force origin {}", "feature/a-very-long-branch-name-".repeat(40));
+        let call = HookCall {
+            harness: Harness::ClaudeCode,
+            event: Event::PreToolUse,
+            action: Action::Command(cmd.clone()),
+            cwd: Some("/home/me/app".to_owned()),
+        };
+        let (_, q) = question(&call, &GuardConfig::default()).unwrap();
+        assert!(q.question.ends_with('…'));
+        assert!(q.detail.as_deref().unwrap().contains(&cmd), "the whole command is in the detail");
+        let spec = reins_proto::connector::spec_for_tool(crate::ask::ASK_TOOL).unwrap();
+        let mut args = json!({"question": q.question, "client_key": "k".repeat(43), "nonce": "n"});
+        args["detail"] = json!(q.detail);
+        args["topic"] = json!(q.topic);
+        spec.parse(&args).unwrap();
     }
 }

@@ -355,7 +355,8 @@ fn check(p: &Param, value: &Value) -> Result<Value, String> {
         } => {
             let s = value.as_str().ok_or_else(|| format!("`{name}` must be a string."))?;
             let s = s.trim();
-            if (p.required && s.is_empty()) || s.len() > max || !control_free(s) {
+            // Characters, as the schema's `maxLength` counts them (and as clients cut text), not bytes.
+            if (p.required && s.is_empty()) || s.chars().count() > max || !control_free(s) {
                 return Err(format!(
                     "`{name}` must be {}..={max} characters without control characters.",
                     u8::from(p.required)
@@ -386,7 +387,7 @@ fn check(p: &Param, value: &Value) -> Result<Value, String> {
             let mut out = Vec::new();
             for item in items {
                 let s = item.as_str().ok_or_else(|| format!("`{name}` must contain only strings."))?.trim();
-                if s.is_empty() || s.len() > max_len || !control_free(s) {
+                if s.is_empty() || s.chars().count() > max_len || !control_free(s) {
                     return Err(format!("Entries of `{name}` must be 1..={max_len} characters."));
                 }
                 out.push(json!(s));
@@ -405,11 +406,11 @@ fn check(p: &Param, value: &Value) -> Result<Value, String> {
             max,
         } => {
             let s = value.as_str().ok_or_else(|| format!("`{name}` must be a string."))?;
-            if s.len() > max
+            if s.chars().count() > max
                 || (p.required && s.is_empty())
                 || s.chars().any(|c| c.is_control() && !matches!(c, '\n' | '\r' | '\t'))
             {
-                return Err(format!("`{name}` must be at most {max} bytes, without control characters."));
+                return Err(format!("`{name}` must be at most {max} characters, without control characters."));
             }
             Ok(json!(s))
         }
@@ -425,7 +426,12 @@ fn check(p: &Param, value: &Value) -> Result<Value, String> {
             let mut out = Map::new();
             for (k, v) in map {
                 let v = v.as_str().ok_or_else(|| format!("`{name}` must contain only strings."))?;
-                if k.is_empty() || k.len() > max_key || v.len() > max_val || !control_free(k) || !control_free(v) {
+                if k.is_empty()
+                    || k.chars().count() > max_key
+                    || v.chars().count() > max_val
+                    || !control_free(k)
+                    || !control_free(v)
+                {
                     return Err(format!("Entries of `{name}` are too long or contain control characters."));
                 }
                 out.insert(k.clone(), json!(v));
@@ -821,6 +827,22 @@ pub fn sensitive_note() -> &'static str {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn lengths_are_characters_like_the_schema_says() {
+        let ask = spec_for_tool("desktop_ask").unwrap();
+        let key = "k".repeat(43);
+        // What the desktop app sends for a long command: 299 characters and an ellipsis, 302 bytes.
+        let cut = format!("{}…", "x".repeat(299));
+        assert!(cut.len() > 300);
+        let detail = "é".repeat(8_000);
+        let args = json!({"question": cut, "detail": detail, "client_key": key, "nonce": "n"});
+        ask.parse(&args).unwrap();
+        let long = json!({"question": "x".repeat(301), "client_key": key, "nonce": "n"});
+        assert!(ask.parse(&long).unwrap_err().contains("characters"));
+        let too_much = json!({"question": "q", "detail": "é".repeat(8_001), "client_key": key, "nonce": "n"});
+        assert!(ask.parse(&too_much).unwrap_err().contains("8000 characters"));
+    }
 
     #[test]
     fn every_tool_is_named_once_and_described_completely() {

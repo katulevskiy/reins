@@ -228,10 +228,6 @@ async fn the_waiting_notice_names_the_host() {
     let clone = home.git_ok("", &["clone", "-q", "https://gitlab.com/group/sub/app", "app"]).await;
     // The daemon tells the client through /proc (Linux only; elsewhere it says nothing, see notice.rs).
     if cfg!(target_os = "linux") {
-        assert!(
-            clone.stderr.contains("reins: waiting for approval: read gitlab.com/group/sub/app…"),
-            "{}",
-            clone.all()
-        );
+        assert!(clone.stderr.contains("on your phone, up to 120 s: read gitlab.com/group/sub/app…"), "{}", clone.all());
     }
 }

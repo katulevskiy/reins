@@ -9,8 +9,11 @@
 
 mod autostart;
 mod backend;
+mod demo;
+mod format;
 mod model;
 mod pairing;
+mod pause;
 mod qr;
 mod single;
 mod state;
@@ -50,8 +53,10 @@ pub mod links {
 pub struct Args {
     /// Started at login: no window unless something needs the user.
     pub background: bool,
-    /// A pretend pairing (a made-up code the "phone" approves after a few seconds), for screenshots and trying the
-    /// app without an account. Nothing is sent anywhere.
+    /// A pretend pairing (a made-up code the "phone" approves after a few seconds) and made-up activity, for
+    /// screenshots and trying the app without an account. Nothing is sent anywhere. `REINS_DEMO_SCREEN=status` opens
+    /// the status window straight away, `REINS_DEMO_SECTION=<overview|activity|connections|keys|rules|settings>`
+    /// at that section.
     pub demo: bool,
 }
 
@@ -70,7 +75,7 @@ impl Args {
                 }
                 "--help" | "-h" => {
                     println!(
-                        "Reins {}\n\nUsage: reins-app [--background] [--demo]\n\n  --background  started at login: stay in the tray unless something needs you\n  --demo        pretend pairing, for trying the app (nothing is sent)",
+                        "Reins {}\n\nUsage: reins-app [--background] [--demo]\n\n  --background  started at login: stay in the tray unless something needs you\n  --demo        pretend pairing and activity, for trying the app (nothing is sent)",
                         reins_desktop::update::LONG_VERSION
                     );
                     std::process::exit(0);

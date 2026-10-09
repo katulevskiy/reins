@@ -125,4 +125,9 @@ pub trait Authorizer: Send + Sync {
     fn waiting_hint(&self) -> String {
         "waiting for approval".to_owned()
     }
+
+    /// Who answers (for the activity log and the "check your phone" notification).
+    fn decider(&self) -> crate::journal::Decider {
+        crate::journal::Decider::Phone
+    }
 }

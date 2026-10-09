@@ -97,13 +97,17 @@ impl Authorizer for ModeAuthorizer {
     fn waiting_hint(&self) -> String {
         self.pick().map_or_else(|_| "waiting for approval".to_owned(), |a| a.waiting_hint())
     }
+
+    fn decider(&self) -> crate::journal::Decider {
+        self.pick().map_or(crate::journal::Decider::Phone, |a| a.decider())
+    }
 }
 
 struct State {
     port: u16,
     proxy: Proxy,
     control: Control,
-    api: crate::api_proxy::ApiProxy,
+    api: Arc<crate::api_proxy::ApiProxy>,
 }
 
 impl State {
@@ -189,15 +193,47 @@ impl Daemon {
         let token_file = paths.control_token_file();
         crate::config::write_private(&token_file, token.as_bytes())
             .map_err(|e| format!("{}: {e}", token_file.display()))?;
-        let proxy = Proxy::new(&config, Arc::clone(&authorizer))?;
+        let counts = Arc::new(crate::stats::Stats::default());
+        let proxy = Proxy::new(&config, Arc::clone(&authorizer))?
+            .with_activity(crate::journal::Journal::new(paths), Arc::clone(&counts));
         let phone = Arc::new(crate::phone::PhoneLink::new(
             config.mode,
             paths.clone(),
             Arc::clone(&identity),
             Duration::from_secs(config.approval_timeout_secs),
         ));
-        let api = crate::api_proxy::ApiProxy::new(&config.api, Arc::clone(&phone))?;
-        let ssh = crate::ssh_agent::start(paths, &config.ssh, phone);
+        let api = Arc::new(crate::api_proxy::ApiProxy::new(&config.api, Arc::clone(&phone), Arc::clone(&counts))?);
+        let ssh = crate::ssh_agent::start(paths, &config.ssh, phone, Arc::clone(&counts));
+        let overview = {
+            let started_at = crate::now_unix();
+            let api = Arc::clone(&api);
+            let agent = ssh.as_ref().map(crate::ssh_agent::SshAgent::agent);
+            let socket = ssh.as_ref().map(|s| s.path().display().to_string());
+            Box::new(move || control::Overview {
+                started_at,
+                connections: counts.list(),
+                apis: api
+                    .leases()
+                    .into_iter()
+                    .map(|(name, base, leased_until)| control::ApiInfo {
+                        name,
+                        base,
+                        leased_until,
+                    })
+                    .collect(),
+                ssh_socket: socket.clone(),
+                ssh_keys: agent
+                    .as_ref()
+                    .map(|a| a.known_keys())
+                    .unwrap_or_default()
+                    .into_iter()
+                    .map(|(name, fingerprint)| control::SshKeyInfo {
+                        name,
+                        fingerprint,
+                    })
+                    .collect(),
+            })
+        };
         let status = {
             let pending = Arc::clone(&pending);
             let paths = paths.clone();
@@ -221,7 +257,7 @@ impl Daemon {
             state: Arc::new(State {
                 port: addr.port(),
                 proxy,
-                control: Control::new(token, pending, status),
+                control: Control::new(token, pending, status).with_overview(overview),
                 api,
             }),
             token_file,

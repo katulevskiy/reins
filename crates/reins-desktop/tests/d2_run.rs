@@ -10,7 +10,8 @@ use d2_support::{App, Mock, Step, logged_in};
 
 fn command(app: &App, config: &str, args: &[&str]) -> tokio::process::Command {
     std::fs::create_dir_all(&app.paths.config_dir).unwrap();
-    std::fs::write(app.paths.config_file(), config).unwrap();
+    // No "check your phone" notifications from tests.
+    std::fs::write(app.paths.config_file(), format!("{config}\n[notify]\nphone = false\n")).unwrap();
     let home = app.dir.path().join("home");
     std::fs::create_dir_all(&home).unwrap();
     let mut c = tokio::process::Command::new(env!("CARGO_BIN_EXE_reins"));
@@ -193,6 +194,6 @@ async fn a_slow_phone_is_announced_on_stderr() {
     let out = run(&app, "", &args).await;
     assert!(out.status.success(), "{}", stderr(&out));
     let err = stderr(&out);
-    assert!(err.contains(&format!("waiting for approval in your Reins app: secrets for `{shown}`")), "{err}");
-    assert!(err.contains("reins: approved."), "{err}");
+    assert!(err.contains(&format!("waiting for Reins 2FA on your phone, up to 120 s: secrets for `{shown}`")), "{err}");
+    assert!(err.contains("reins: approved on your phone."), "{err}");
 }
