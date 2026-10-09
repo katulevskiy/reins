@@ -56,6 +56,7 @@ private struct HingeProbe: UIViewRepresentable {
     func makeUIView(context: Context) -> UIView {
         let view = UIView()
         view.isUserInteractionEnabled = false
+        #if REINS_HINGE // built with the iOS 27.1 SDK or later (Config/Reins.xcconfig)
         if #available(iOS 27.1, *) {
             let binding = $posture
             view.addInteraction(UIHingeInteraction { _, update in
@@ -70,6 +71,7 @@ private struct HingeProbe: UIViewRepresentable {
                 }
             })
         }
+        #endif
         return view
     }
 

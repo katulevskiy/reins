@@ -7,8 +7,10 @@ Autopilot. It runs on iPhone, iPad and the foldable iPhone Duo (iOS 26 or later)
 
 ## Build
 
-Needs Xcode 27.1 (the iPhone Duo's `UIHinge` and its simulator runtime) and Rust (`rustup`; the targets
-`aarch64-apple-ios` and `aarch64-apple-ios-sim` are added by the build script). Apple silicon only.
+Needs Xcode 27.1 for the iPhone Duo's fold (`UIHinge`, and its simulator runtime), or Xcode 27.0, which builds the app
+without it (the fold reads as flat; `REINS_HINGE_CONDITION` in `Config/Reins.xcconfig`). App Store and TestFlight uploads
+need a released Xcode, so they use 27.0 while 27.1 is in beta. Also Rust (`rustup`; the targets `aarch64-apple-ios` and
+`aarch64-apple-ios-sim` are added by the build script). Apple silicon only.
 
 ```bash
 export DEVELOPER_DIR=/Applications/Xcode-27.1-beta.app/Contents/Developer

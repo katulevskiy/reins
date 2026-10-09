@@ -20,4 +20,12 @@ REINS_GOOGLE_REDIRECT_SCHEME = com.reins2fa.app.google
 REINS_APS_ENVIRONMENT = development
 REINS_APS_ENVIRONMENT[config=Release] = production
 
+// UIHingeInteraction (the iPhone Duo's fold, Shell/Hinge.swift) is in the iOS 27.1 SDK and later. With the 27.0 SDK (the
+// released Xcode while 27.1 is in beta; App Store uploads need a released Xcode) the app builds without it and the fold
+// reads as flat.
+REINS_HINGE_CONDITION = REINS_HINGE
+REINS_HINGE_CONDITION[sdk=iphoneos27.0*] =
+REINS_HINGE_CONDITION[sdk=iphonesimulator27.0*] =
+SWIFT_ACTIVE_COMPILATION_CONDITIONS = $(inherited) $(REINS_HINGE_CONDITION)
+
 #include? "Local.xcconfig"
