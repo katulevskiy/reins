@@ -187,7 +187,7 @@ mod tests {
         let grants = [read_grant("g1", "c2", from_domain("bank.com"), None)];
         let d = evaluate_read(&grants, &"c1".into(), &[msg("m1", "a@bank.com")], NOW);
         assert_eq!(d.needs_approval, vec![0]);
-        assert!(d.allowed.is_empty());
+        assert_eq!(d.allowed.len(), 0);
     }
 
     #[test]
@@ -298,7 +298,7 @@ mod tests {
         assert_eq!(account_coverage(&grants, &"c2".into(), "gmail", 50), AccountCoverage::default(), "another AI");
         assert_eq!(account_coverage(&grants, &"c1".into(), "gmail", 100), AccountCoverage::default(), "expired");
         assert!(!needs_body(&grants, &"c1".into(), 50));
-        assert!(evaluate_read(&grants, &"c1".into(), &[], 50).allowed.is_empty());
+        assert_eq!(evaluate_read(&grants, &"c1".into(), &[], 50).allowed.len(), 0);
     }
 
     #[test]
