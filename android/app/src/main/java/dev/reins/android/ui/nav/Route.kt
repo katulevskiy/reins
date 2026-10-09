@@ -36,6 +36,18 @@ sealed interface Route {
     /** The accounts of one other integration (its id). */
     data class Service(val id: String) : Route
 
+    /** Integrations > Password vault > Open the vault: the items and a search. */
+    data object Vault : Route
+
+    /** Vault > Add: what kind of item. */
+    data object VaultAdd : Route
+
+    /** One vault item. */
+    data class VaultItem(val id: String) : Route
+
+    /** A new vault item of a kind ([id] null), or the item [id] changed. */
+    data class VaultEdit(val id: String?, val newItem: dev.reins.android.ui.vault.NewItem?) : Route
+
     /** Adding an MCP server by its address. */
     data object McpAdd : Route
 

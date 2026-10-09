@@ -52,7 +52,7 @@ import dev.reins.core.ServiceView
 
 /** The accounts of one integration and the way to add another, which depends on the kind of service. */
 @Composable
-fun ServiceScreen(viewModel: ServiceViewModel, state: AppState, onBack: () -> Unit) {
+fun ServiceScreen(viewModel: ServiceViewModel, state: AppState, onBack: () -> Unit, onOpenVault: () -> Unit = {}) {
     val c = LocalColors.current
     val services by state.services.collectAsStateWithLifecycle()
     val statuses by viewModel.statuses.collectAsStateWithLifecycle()
@@ -102,6 +102,17 @@ fun ServiceScreen(viewModel: ServiceViewModel, state: AppState, onBack: () -> Un
                         }
                     },
                     onRemove = { removing = account.account },
+                )
+            }
+        }
+        if (service.kind == "vault" && service.accounts.isNotEmpty()) {
+            Column(Modifier.padding(horizontal = 16.dp, vertical = 16.dp)) {
+                CapsuleButton("Open the vault", Modifier.fillMaxWidth().testTag("openVault"), glyph = Glyph.Key, onClick = onOpenVault)
+                RText(
+                    "See, add and change your API keys, logins and SSH keys. reins run, the API proxy and the SSH agent use them by name.",
+                    RType.sans(13f, lineHeight = 18f),
+                    c.secondary,
+                    Modifier.padding(horizontal = 4.dp, vertical = 8.dp),
                 )
             }
         }

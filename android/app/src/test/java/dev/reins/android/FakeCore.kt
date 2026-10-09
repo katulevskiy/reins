@@ -38,8 +38,15 @@ import dev.reins.core.ReinsCoreInterface
 import dev.reins.core.SessionInfo
 import dev.reins.core.SsoOutcome
 import dev.reins.core.SsoStart
+import dev.reins.core.VaultField
+import dev.reins.core.VaultItemDetail
+import dev.reins.core.VaultItemInput
+import dev.reins.core.VaultItemKind
+import dev.reins.core.VaultItemSummary
 import dev.reins.core.VaultPasskeyOptions
 import dev.reins.core.VaultPasskeyView
+import dev.reins.core.VaultSshKey
+import dev.reins.core.VaultUse
 import java.util.concurrent.CopyOnWriteArrayList
 
 /** In-memory core for UI tests: holds state, records the calls that matter. */
@@ -828,6 +835,90 @@ class FakeCore : ReinsCoreInterface {
             TestData.suggestion("")
         }
     }
+
+    // ---- the vault on the phone ----
+
+    /** The vault's items and their details; secrets are in [vaultSecrets] by "id/key". */
+    @Volatile var vaultDetails: List<VaultItemDetail> = TestData.vaultItems()
+    @Volatile var vaultSecrets: Map<String, String> = TestData.vaultSecrets()
+    @Volatile var vaultError: CoreException? = null
+    val vaultCreated = CopyOnWriteArrayList<VaultItemInput>()
+    val vaultUpdated = CopyOnWriteArrayList<Pair<String, VaultItemInput>>()
+    val vaultDeleted = CopyOnWriteArrayList<String>()
+    val vaultRevealed = CopyOnWriteArrayList<String>()
+
+    fun resetVault() {
+        vaultDetails = TestData.vaultItems()
+        vaultSecrets = TestData.vaultSecrets()
+        vaultError = null
+        vaultCreated.clear()
+        vaultUpdated.clear()
+        vaultDeleted.clear()
+        vaultRevealed.clear()
+    }
+
+    override suspend fun vaultItems(query: String): List<VaultItemSummary> {
+        vaultError?.let { throw it }
+        return vaultDetails
+            .filter { query.isBlank() || it.name.contains(query, ignoreCase = true) }
+            .sortedBy { it.name.lowercase() }
+            .map { d -> VaultItemSummary(d.id, d.name, d.kind, d.fields.firstOrNull { !it.secret }?.value.orEmpty(), d.favorite) }
+    }
+
+    override suspend fun vaultItem(id: String): VaultItemDetail {
+        vaultError?.let { throw it }
+        return vaultDetails.firstOrNull { it.id == id } ?: throw CoreException.Service("That item is no longer in the vault.")
+    }
+
+    override suspend fun vaultReveal(id: String, key: String): String {
+        vaultRevealed += "$id/$key"
+        return vaultSecrets["$id/$key"] ?: throw CoreException.Service("That item has no such field.")
+    }
+
+    override suspend fun vaultCreate(input: VaultItemInput): String {
+        vaultError?.let { throw it }
+        vaultCreated += input
+        val id = "new-${vaultCreated.size}"
+        vaultDetails = vaultDetails + VaultItemDetail(
+            id, input.name, input.kind,
+            input.fields.map { VaultField(it.key, it.key, if (it.key == "password" || it.key == "notes") null else it.value, it.key == "password" || it.key == "notes", false) },
+            listOf(VaultUse("vault:${input.name}/password", "reins run --env, and secret = in an [[api]] block")),
+            null, false,
+        )
+        return id
+    }
+
+    override suspend fun vaultUpdate(id: String, input: VaultItemInput) {
+        vaultError?.let { throw it }
+        vaultUpdated += id to input
+        vaultDetails = vaultDetails.map { if (it.id == id) it.copy(name = input.name) else it }
+    }
+
+    override suspend fun vaultDelete(id: String) {
+        vaultDeleted += id
+        vaultDetails = vaultDetails.filterNot { it.id == id }
+    }
+
+    override suspend fun vaultGenerateSshKey(name: String): VaultSshKey {
+        val public = "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIFakeKeyForTestsOnly0000000000000000000000 $name"
+        val fingerprint = "SHA256:fakefingerprint0000000000000000000000000000"
+        val id = "ssh-${vaultDetails.size}"
+        vaultDetails = vaultDetails + VaultItemDetail(
+            id, name, VaultItemKind.SSH_KEY,
+            listOf(
+                VaultField("private_key", "Private key", null, true, true),
+                VaultField("public_key", "Public key", public, false, true),
+                VaultField("fingerprint", "Fingerprint", fingerprint, false, false),
+            ),
+            listOf(VaultUse(fingerprint, "Offered by the SSH agent of the desktop app (reins ssh setup); the private key stays on the phone")),
+            null, false,
+        )
+        return VaultSshKey(id, public, fingerprint)
+    }
+
+    @Volatile var phoneKeyDigits = "4821 9930"
+
+    override suspend fun phoneKeyFingerprint() = phoneKeyDigits
 
     companion object {
         fun defaultServices(): List<ServiceView> = listOf(
