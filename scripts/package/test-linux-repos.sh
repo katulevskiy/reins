@@ -88,6 +88,7 @@ if [ "$app" = true ]; then
     test -f /usr/share/icons/hicolor/256x256/apps/reins.png
 fi
 apt-get remove -y $packages
+hash -r # the shell remembers where reins was when it ran it above
 ! command -v reins
 SH
 
@@ -111,6 +112,7 @@ if [ "$app" = true ]; then
     test -f /usr/share/applications/reins.desktop
 fi
 dnf remove -y $packages
+hash -r # the shell remembers where reins was when it ran it above
 ! command -v reins
 SH
 
