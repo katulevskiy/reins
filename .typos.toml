@@ -16,6 +16,8 @@ ignore-hidden = false
 
 [default]
 extend-ignore-re = [
+    # App Store Connect's error codes (ITMS-90208, ...)
+    "ITMS-[0-9]+",
     # We use this in place of the reserved type identifier at some places
     "typ",
     # In SMTP it's called HELO, so ignore it
