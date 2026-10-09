@@ -117,7 +117,8 @@ impl Phone {
                 o.insert("client_key".to_owned(), Value::String(self.identity.public_key()));
                 o.insert("nonce".to_owned(), Value::String(nonce.clone()));
             }
-            let a = self.client.call(tool, &args, None).await.map_err(link_refusal)?;
+            let waits = deadline.saturating_duration_since(Instant::now());
+            let a = self.client.call_waiting(tool, &args, None, Some(waits)).await.map_err(link_refusal)?;
             log::info!("{tool}: asked the phone, request {}", a.request_id);
             let f = InFlight {
                 request_id: a.request_id.clone(),

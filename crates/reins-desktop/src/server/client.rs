@@ -62,8 +62,27 @@ impl DesktopClient {
 
     /// Asks the phone: `tool` (a desktop-only tool) with `arguments`, for `account` when the phone has several.
     pub async fn call(&self, tool: &str, arguments: &Value, account: Option<&str>) -> Result<CallAnswer, LinkError> {
+        self.call_waiting(tool, arguments, account, None).await
+    }
+
+    /// Like [`DesktopClient::call`], saying how long this app keeps asking (`X-Reins-Wait`): the phone counts that
+    /// down instead of one server wait. Servers that do not know the header ignore it.
+    pub async fn call_waiting(
+        &self,
+        tool: &str,
+        arguments: &Value,
+        account: Option<&str>,
+        waits: Option<Duration>,
+    ) -> Result<CallAnswer, LinkError> {
         let body = serde_json::json!({"tool": tool, "arguments": arguments, "account": account});
-        self.send(|server| self.http.post(format!("{server}/reins/desktop/calls")).json(&body)).await
+        self.send(|server| {
+            let request = self.http.post(format!("{server}/reins/desktop/calls")).json(&body);
+            match waits {
+                Some(w) => request.header("X-Reins-Wait", w.as_secs().max(1).to_string()),
+                None => request,
+            }
+        })
+        .await
     }
 
     /// Waits for the answer to an earlier call again.
