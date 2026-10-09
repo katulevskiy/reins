@@ -119,14 +119,20 @@ pub fn destructive_ask(topic: Option<&str>, question: &str, detail: &str) -> boo
     let raw = format!("{}\n{question}\n{detail}", topic.unwrap_or_default()).to_lowercase();
     // Spacing as typed does not matter: `rm  -rf` is `rm -rf`.
     let text = raw.split_whitespace().collect::<Vec<_>>().join(" ");
-    DESTRUCTIVE.iter().any(|needle| text.contains(needle)) || dangerous_flags(&raw)
+    // Line by line (a command per line) and as one line (a command wrapped onto the next): either may hide nothing.
+    DESTRUCTIVE.iter().any(|needle| text.contains(needle)) || dangerous_flags(&raw) || dangerous_flags(&text)
 }
 
 /// A command whose flags make it destructive wherever they stand (`git push origin main --force`, `rm build -rf`):
 /// each command up to `;`, `&`, `|` or the end of the line, word by word.
 fn dangerous_flags(text: &str) -> bool {
     text.split(['\n', ';', '&', '|']).any(|command| {
-        let words: Vec<&str> = command.split_whitespace().collect();
+        // Quotes and escapes do not change what a shell runs: `'+main'` is `+main`.
+        let words: Vec<String> = command
+            .split_whitespace()
+            .map(|w| w.chars().filter(|c| !matches!(c, '\'' | '"' | '\\' | '`')).collect())
+            .collect();
+        let words: Vec<&str> = words.iter().map(String::as_str).collect();
         words.iter().enumerate().any(|(i, word)| {
             let rest = &words[i + 1..];
             // `-fu`: single-letter flags together.
@@ -276,6 +282,10 @@ mod tests {
             "git clean -xdf",
             "git branch old -D",
             "git checkout . --force",
+            "git push origin '+main'",
+            "git push origin \"--force\"",
+            "git push origin\n+main",
+            "git push origin main --force=true",
         ] {
             assert!(ask(None, "Run this?", command), "{command}");
         }
