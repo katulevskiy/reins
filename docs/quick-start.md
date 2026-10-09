@@ -206,7 +206,8 @@ Whatever the rule, an email or a message that looks like a login code or a passw
 permission: it waits for your tick, and it is never ticked for you.
 
 Some requests are always asked for and never have a shortcut: vault secrets an AI wants to see, destructive changes,
-history rewrites, new connections and permission requests ([security model](security-model.md#which-device-approves)).
+history rewrites (including a hook's question about a force push, a recursive delete, `reset --hard` and the like, or
+about reading `.env` or a key), new connections and permission requests ([security model](security-model.md#which-device-approves)).
 
 ## More from the desktop app
 

@@ -257,8 +257,9 @@ Autopilot runs only on the phone. Nothing it uses or learns leaves the phone. It
 
 - **Hard floor.** Some requests always wait for you, in every mode: new connections, standing permission requests,
   account listings, secret releases, SSH signatures, everything that is asked every time (above), destructive MCP
-  tools, pushes that rewrite or delete history (or whose history could not be checked), uploaded files that may hold
-  something to run, and anything from a connection paired less than 10 minutes ago. Lockdown denies, and never
+  tools, pushes that rewrite or delete history (or whose history could not be checked), hook questions about a
+  destructive command or a secret file, uploaded files that may hold something to run, and anything from a connection
+  paired less than 10 minutes ago. Lockdown denies, and never
   approves.
 - **Prompt-injection rule.** The model scores each request twice: once on the facts the phone verified (service,
   action, target, history), and once with the AI-written text added (reason, email body, commit messages, arguments).

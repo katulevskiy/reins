@@ -69,12 +69,22 @@ fn quick_view(parked: &ParkedRequest, view: &ApprovalView, repeats: u32) -> Opti
         None => (None, String::new()),
     };
     Some(QuickApproval {
-        from_notification: !view.messages.iter().any(|m| m.sensitive),
+        from_notification: !view.messages.iter().any(|m| m.sensitive)
+            && !too_many_to_show(parked)
+            && headline_fits(parked, view),
         allow,
         allow_what,
         repeats,
     })
 }
+
+/// An email to more people than a notification can name is opened before it is sent.
+fn too_many_to_show(parked: &ParkedRequest) -> bool {
+    matches!(&parked.request.call, ToolCall::GmailSend { email } if email.recipients().count() > MAX_NOTIFIED_RECIPIENTS)
+}
+
+/// The most recipients an email approvable from its notification may have.
+const MAX_NOTIFIED_RECIPIENTS: usize = 3;
 
 fn empty_scope() -> GrantScopeChoice {
     GrantScopeChoice {
@@ -166,6 +176,21 @@ fn allow_scope(parked: &ParkedRequest, view: &ApprovalView) -> Option<(GrantScop
 
 /// What approving does, in one sentence, from the AI's point of view.
 pub fn headline(parked: &ParkedRequest, view: &ApprovalView) -> String {
+    let full = full_headline(parked, view);
+    if full.chars().count() <= MAX_HEADLINE_CHARS {
+        full
+    } else {
+        // Visibly cut: the sheet has the rest.
+        format!("{}…", text::truncate_chars(&full, MAX_HEADLINE_CHARS - 1))
+    }
+}
+
+/// The whole sentence fits the headline: a notification that shows it shows everything an Approve there does.
+fn headline_fits(parked: &ParkedRequest, view: &ApprovalView) -> bool {
+    full_headline(parked, view).chars().count() <= MAX_HEADLINE_CHARS
+}
+
+fn full_headline(parked: &ParkedRequest, view: &ApprovalView) -> String {
     let who = parked.label();
     let line = match &parked.request.call {
         ToolCall::GmailSearch {
@@ -183,12 +208,13 @@ pub fn headline(parked: &ParkedRequest, view: &ApprovalView) -> String {
         ToolCall::GmailRead {
             ..
         } => format!("{who} gets the full text of {}.", plural(shared(view), "email", "emails")) + held_note(view),
+        // Everyone it goes to and the subject, so that a notification shows what an Approve there sends.
         ToolCall::GmailSend {
             email,
         } => {
-            let to: Vec<String> = email.recipients().map(str::to_owned).collect();
+            let to: Vec<&str> = email.recipients().collect();
             let from = view.account.as_deref().map(|a| format!(" from {a}")).unwrap_or_default();
-            format!("An email to {} goes out{from}.", list(&to))
+            format!("An email to {} goes out{from}: \"{}\".", to.join(", "), text::one_line(&email.subject))
         }
         ToolCall::RequestGrant {
             grant,
@@ -209,7 +235,7 @@ pub fn headline(parked: &ParkedRequest, view: &ApprovalView) -> String {
         } => format!("{who} shares a file."),
         ToolCall::Connector(_) => connector_headline(&who, view),
     };
-    text::truncate_chars(&text::one_line(&line), MAX_HEADLINE_CHARS)
+    text::one_line(&line)
 }
 
 fn connector_headline(who: &str, view: &ApprovalView) -> String {
@@ -231,11 +257,15 @@ fn connector_headline(who: &str, view: &ApprovalView) -> String {
         let host = ssh.host.as_deref().map(|h| format!(" to {h}")).unwrap_or_default();
         return format!("Your SSH key {} signs a sign-in{host}.", text::one_line(&ssh.key_name));
     }
+    // The change and what it says ("To Family: On my way."), so that a notification shows what an Approve there does.
     if view.kind == ApprovalKind::Write {
-        return view.preview.first().map_or_else(
-            || format!("{who} makes a change in {}.", service_name(&view.service)),
-            |l| with_period(&text::one_line(l)),
-        );
+        let mut lines = view.preview.iter().take(2).map(|l| text::one_line(l)).filter(|l| !l.is_empty());
+        return match (lines.next(), lines.next()) {
+            (None, _) => format!("{who} makes a change in {}.", service_name(&view.service)),
+            (Some(first), None) => with_period(&first),
+            // What the AI wrote is quoted: it cannot pass for the rest of the sentence.
+            (Some(first), Some(second)) => format!("{}: \"{second}\".", first.trim_end_matches([':', '.'])),
+        };
     }
     let place = {
         let narrow: Vec<String> =

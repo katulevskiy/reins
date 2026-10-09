@@ -106,7 +106,7 @@ fun ActivityScreen(
     var automaticOnly by androidx.compose.runtime.saveable.rememberSaveable { mutableStateOf(false) }
     val automaticCount = remember(entries) { entries.count { it.decidedBy.isNotEmpty() } }
     val showFilters = automaticCount > 0 || automaticOnly
-    val burstList = remember(pending) { bursts(pending) }
+    val burst = remember(pending) { burstBar(pending) }
     val shown = remember(entries, automaticOnly) { if (automaticOnly) entries.filter { it.decidedBy.isNotEmpty() } else entries }
     // The "new above" marker sits over the oldest entry you have not seen.
     val newMarkerAt = remember(shown, seen) { shown.indexOfLast { it.id > seen } }
@@ -122,7 +122,7 @@ fun ActivityScreen(
     }
 
     // Header rows above the entries: notices and the waiting section.
-    val headerCount = 1 + (if (pending.isEmpty()) 0 else 1 + pending.size + burstList.size) + (if (notice != null) 1 else 0) +
+    val headerCount = 1 + (if (pending.isEmpty()) 0 else 1 + pending.size + (if (burst == null) 0 else 1)) + (if (notice != null) 1 else 0) +
         (if (notifications.enabled) 0 else 1) + (if (screenLock.set) 0 else 1) +
         (if (replaced) 1 else 0) + (if (registrationError != null) 1 else 0) + (if (showFilters) 1 else 0)
 
@@ -194,10 +194,8 @@ fun ActivityScreen(
             }
             if (pending.isNotEmpty()) {
                 item(key = "waiting-label") { SectionTitle("Waiting for you") }
-                burstList.forEach { burst ->
-                    item(key = "burst:${burst.connectionId}") {
-                        BurstBar(burst, Modifier.padding(horizontal = 16.dp, vertical = 5.dp), onAnswerBurst)
-                    }
+                burst?.let { b ->
+                    item(key = "burst") { BurstBar(b, Modifier.padding(horizontal = 16.dp, vertical = 5.dp), onAnswerBurst) }
                 }
                 itemsIndexed(pending, key = { _, item -> "p:${item.id}" }, contentType = { _, _ -> "pending" }) { _, item ->
                     PendingCard(item, Modifier.padding(horizontal = 16.dp, vertical = 5.dp)) { onOpenPending(item) }
@@ -330,38 +328,33 @@ private fun NewMarker() {
 }
 
 /**
- * Several requests from one AI at once: approve its routine ones together (one screen lock or biometric check), or deny
- * everything it asked. What is asked every time stays in the list below and is opened one by one.
+ * Several requests at once, in one compact row above the list: approve the routine ones together (one screen lock or
+ * biometric check), or deny them. One AI's bar denies everything it asked; a bar for several AIs only their routine
+ * requests. What is asked every time stays in the list below and is opened one by one.
  */
 @Composable
 private fun BurstBar(burst: Burst, modifier: Modifier, onAnswer: (Burst, Boolean) -> Unit) {
     val c = LocalColors.current
-    val label = untrusted(burst.label)
-    val held = burst.all.size - burst.quick.size
-    Column(
+    Row(
         modifier
             .fillMaxWidth()
             .background(c.accent.copy(alpha = 0.08f), RoundedCornerShape(18.dp))
-            .padding(14.dp)
-            .testTag("burst:${burst.connectionId}"),
+            .padding(start = 14.dp, end = 10.dp, top = 10.dp, bottom = 10.dp)
+            .testTag("burst"),
+        verticalAlignment = Alignment.CenterVertically,
     ) {
-        Row(verticalAlignment = Alignment.CenterVertically) {
+        if (burst.ais == 1) {
             ConnectionIcon(burst.connectionId, burst.label, size = 22.dp)
             Spacer(Modifier.width(8.dp))
-            RText("$label asked ${burst.all.size} times", RType.sans(15.5f, FontWeight.SemiBold), c.text, Modifier.weight(1f), maxLines = 1)
         }
-        if (held > 0) {
-            RText(
-                if (held == 1) "1 of them needs a closer look and stays in the list." else "$held of them need a closer look and stay in the list.",
-                RType.sans(13f, lineHeight = 18f),
-                c.secondary,
-                Modifier.padding(top = 4.dp),
-            )
+        Column(Modifier.weight(1f)) {
+            RText(burst.title, RType.sans(14.5f, FontWeight.SemiBold), c.text, Modifier.testTag("burstTitle"), maxLines = 1)
+            burst.heldNote?.let { RText(it, RType.sans(12.5f), c.secondary, Modifier.testTag("burstHeld"), maxLines = 1) }
         }
-        Row(Modifier.fillMaxWidth().padding(top = 10.dp), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-            CapsuleButton("Deny all", Modifier.weight(1f).testTag("denyAll"), style = ButtonStyle.Secondary, compact = true) { onAnswer(burst, false) }
-            CapsuleButton("Approve ${burst.quick.size}", Modifier.weight(1f).testTag("approveAll"), style = ButtonStyle.Accent, compact = true) { onAnswer(burst, true) }
-        }
+        Spacer(Modifier.width(8.dp))
+        CapsuleButton(if (burst.ais > 1) "Deny" else "Deny all", Modifier.testTag("denyAll"), style = ButtonStyle.Ghost, compact = true) { onAnswer(burst, false) }
+        Spacer(Modifier.width(6.dp))
+        CapsuleButton("Approve ${burst.quick.size}", Modifier.testTag("approveAll"), style = ButtonStyle.Accent, compact = true) { onAnswer(burst, true) }
     }
 }
 

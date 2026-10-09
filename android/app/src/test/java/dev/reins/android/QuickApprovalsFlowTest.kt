@@ -70,18 +70,39 @@ class QuickApprovalsFlowTest : FlowHarness() {
         )
         dev.reins.android.platform.Foreground.autoPopup = false
         launch()
-        awaitTag("burst:c1")
-        assertFalse("one routine request is no burst", has("burst:c2"))
-        awaitText("Claude asked 4 times")
-        awaitText("1 of them needs a closer look and stays in the list.")
+        awaitTag("burst")
+        // Codex's one routine request is no burst: the bar is Claude's alone.
+        rule.onNodeWithTag("burstTitle").assertTextEquals("Claude · 4 waiting")
+        rule.onNodeWithTag("burstHeld").assertTextEquals("1 needs a closer look")
         rule.onNodeWithTag("approveAll").assertTextEquals("Approve 3")
         tap("approveAll")
         awaitCore { core.quickApprovals.size == 3 }
         assertEquals(listOf("r1", "r2", "r3"), core.quickApprovals.toList())
         assertEquals(1, prompts.get())
-        awaitGone("burst:c1")
+        awaitGone("burst")
         assertTrue(has("pending:r4"))
         assertTrue(core.approvals.isEmpty())
+    }
+
+    @Test
+    fun burstsOfSeveralAisAreOneCompactBarThatAnswersOnlyTheirRoutineRequests() {
+        core.pending = listOf(
+            TestData.pending("r1", quick = true),
+            TestData.pending("r2", quick = true),
+            TestData.pending("r3", "grant", 1u),
+            TestData.pending("r4", label = "Codex", conn = "c2", quick = true),
+            TestData.pending("r5", label = "Codex", conn = "c2", quick = true),
+        )
+        dev.reins.android.platform.Foreground.autoPopup = false
+        launch()
+        awaitTag("burst")
+        assertEquals(1, rule.onAllNodes(androidx.compose.ui.test.hasTestTag("burst")).fetchSemanticsNodes().size)
+        rule.onNodeWithTag("burstTitle").assertTextEquals("4 routine · Claude and Codex")
+        assertFalse(has("burstHeld"))
+        tap("denyAll")
+        awaitCore { core.denials.size == 4 }
+        assertEquals(listOf("r1", "r2", "r4", "r5"), core.denials.toList().sorted())
+        assertTrue("what needs a look is not denied with them", has("pending:r3"))
     }
 
     @Test

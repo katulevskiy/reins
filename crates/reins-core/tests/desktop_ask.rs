@@ -16,8 +16,13 @@ async fn desk() -> Desk {
     desk_with(server, "me@example.com", "pw", CoreConfig::default()).await
 }
 
+/// A question about running the tests (see [`ask_about`] for another command).
 fn ask(desk: &Desk, id: &str, question: &str, topic: Option<&str>) -> Value {
-    let mut args = json!({"question": question, "detail": "git push --force origin main\nrewrites 3 commits",
+    ask_about(desk, id, question, topic, "cargo test --all\nruns the test suite")
+}
+
+fn ask_about(desk: &Desk, id: &str, question: &str, topic: Option<&str>, detail: &str) -> Value {
+    let mut args = json!({"question": question, "detail": detail,
         "client_key": desk.public(), "nonce": format!("nonce-{id}")});
     if let Some(t) = topic {
         args["topic"] = json!(t);
@@ -46,7 +51,8 @@ async fn only_the_paired_app_may_ask() {
 async fn a_question_is_shown_and_yes_is_sealed_to_the_app_with_its_nonce() {
     let desk = desk().await;
     desk.pair().await;
-    desk.send(&[ask(&desk, "r1", "Force push to main?", Some("command:git push --force"))]).await;
+    let force = "git push --force origin main\nrewrites 3 commits";
+    desk.send(&[ask_about(&desk, "r1", "Force push to main?", Some("command:git push --force"), force)]).await;
     assert_eq!(desk.waiting().await, ["r1"]);
     let item = desk.core.pending().await.unwrap().remove(0);
     assert_eq!((item.service.as_str(), item.op_title.as_str()), ("desktop", "Ask you on your phone"));
@@ -146,4 +152,25 @@ async fn a_hook_question_says_what_yes_means_and_repeats_count_per_topic() {
     .await;
     assert_eq!(desk.core.approval_view("r2".to_owned()).await.unwrap().quick.unwrap().repeats, 1);
     assert_eq!(desk.core.approval_view("r3".to_owned()).await.unwrap().quick.unwrap().repeats, 0);
+}
+
+#[tokio::test]
+async fn a_destructive_command_is_asked_every_time_and_never_in_one_tap() {
+    let desk = desk().await;
+    desk.pair().await;
+    desk.send(&[ask(&desk, "r1", "Force-push main?", Some("command:git push --force*"))]).await;
+    let view = desk.core.approval_view("r1".to_owned()).await.unwrap();
+    assert!(view.no_standing, "never remembered");
+    assert!(view.quick.is_none(), "no notification button, no Approve all, no allow for a while");
+    let item = desk.core.pending().await.unwrap().into_iter().find(|i| i.id == "r1").unwrap();
+    assert!(!item.quick);
+    assert!(matches!(desk.core.approve_quick("r1".to_owned()).await, Err(CoreError::Invalid { .. })));
+    assert!(matches!(
+        desk.core.approve("r1".to_owned(), choice(&[], standing(&["command:git push --force*"], &[]))).await,
+        Err(CoreError::Invalid { .. })
+    ));
+    // Opened and approved on its own, it goes through.
+    desk.core.approve("r1".to_owned(), choice(&[], None)).await.unwrap();
+    let answer: AskAnswer = desk.open(&desk.data("r1").await["sealed"]);
+    assert!(answer.approved);
 }
