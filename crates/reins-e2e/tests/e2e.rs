@@ -142,6 +142,7 @@ async fn revoking_the_connection_cuts_the_ai_off() {
     let (_server, phone, ai) = connected(6, 3).await;
     let connections = phone.core.connections().await.unwrap();
     assert_eq!((connections.len(), connections[0].label.as_str()), (1, "My Claude"));
+    assert_eq!(connections[0].key_fingerprint, None, "an AI app pins no key");
     let (status, _) = ai.rpc(&json!({"jsonrpc": "2.0", "id": 1, "method": "ping"})).await;
     assert_eq!(status, StatusCode::OK);
     phone.core.revoke_connection(connections[0].id.clone()).await.unwrap();

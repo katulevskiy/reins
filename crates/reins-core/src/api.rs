@@ -16,8 +16,8 @@ use crate::connector::{Connector, LoginProgress};
 use crate::engine::{CoreConfig, Engine};
 use crate::types::{
     AccountKeys, AccountView, ActivityEntry, ApprovalChoice, ApprovalKind, ApprovalView, ConnectionView, EmailContent,
-    GmailStatus, GrantView, JoinProgress, JoinStart, JoinView, PairingView, PendingItem, ServiceView, SessionInfo,
-    SsoOutcome, SsoStart, StandingGrant, StartingPolicy,
+    GmailStatus, GrantView, JoinProgress, JoinStart, JoinView, PairingView, PendingItem, ServerInfo, ServiceView,
+    SessionInfo, SsoOutcome, SsoStart, StandingGrant, StartingPolicy,
 };
 use crate::vault_passkey::{VaultPasskeyOptions, VaultPasskeyView};
 use crate::{CoreError, GoogleTokenProvider, KeyWrapper, Notifier, rt};
@@ -127,6 +127,18 @@ impl ReinsCore {
         rt::run(async move {
             let engine = runtime.prepare(generation).await?;
             engine.sso_begin(&server_url)
+        })
+        .await
+    }
+
+    /// What `server_url` offers before signing in: whether "Continue" (browser sign-in) works there, and whether it
+    /// can wake each phone app. Unknown values are `None`; an unreachable server is no error.
+    pub async fn server_info(&self, server_url: String) -> Result<ServerInfo, CoreError> {
+        let runtime = Arc::clone(&self.runtime);
+        let generation = runtime.generation();
+        rt::run(async move {
+            let engine = runtime.prepare(generation).await?;
+            engine.server_info(&server_url).await
         })
         .await
     }
