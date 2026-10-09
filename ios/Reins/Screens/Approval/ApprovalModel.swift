@@ -76,14 +76,11 @@ final class ApprovalModel {
             // A permission that stays is a bigger step than one answer, and sounds like it.
             let standing = choice.standing != nil || view.kind == .grant
             app.feedback.play(standing ? .grantCreated : .approved)
-            do {
-                try await app.core.approve(requestId: requestId, choice: choice)
-                answered(app)
-            } catch {
-                app.feedback.play(.error)
-                busy = false
-                self.error = decisionErrorMessage(error)
-            }
+            // The sheet closes now; the action (an email going out, a push) finishes in the background.
+            let (core, id, answer) = (app.core, requestId, choice)
+            app.answerInBackground(id, failed: "Not approved") { try await core.approve(requestId: id, choice: answer) }
+            busy = false
+            finished = true
         case .cancelled:
             busy = false
         case .unavailable:
@@ -94,27 +91,13 @@ final class ApprovalModel {
     }
 
     /// Denying needs no confirmation: it can only take something away.
+    /// Closes at once; the answer goes out in the background (and the request comes back if it could not).
     func deny(_ app: AppModel) async {
         guard !busy else { return }
-        busy = true
-        error = nil
         app.feedback.play(.denied)
-        do {
-            try await app.core.deny(requestId: requestId)
-            answered(app)
-        } catch {
-            app.feedback.play(.error)
-            busy = false
-            self.error = decisionErrorMessage(error)
-        }
-    }
-
-    /// The core has the answer: the sheet closes and the item leaves the list now; the full re-read follows.
-    private func answered(_ app: AppModel) {
-        busy = false
+        let (core, id) = (app.core, requestId)
+        app.answerInBackground(id, failed: "Not denied") { try await core.deny(requestId: id) }
         finished = true
-        app.dropPending(requestId)
-        app.refreshPendingSoon()
     }
 }
 

@@ -572,6 +572,22 @@ final class AppModel {
         }
     }
 
+    /// An answer the screen has already moved on from (the Android app's `answerInBackground`): the item leaves the list
+    /// now and `work` runs without anyone waiting for it. If it fails, the item comes back with the next read and a few
+    /// words say why ("Not approved: …").
+    func answerInBackground(_ id: String, failed: String, work: @escaping @Sendable () async throws -> Void) {
+        dropPending(id)
+        Task {
+            do {
+                try await work()
+            } catch {
+                feedback.play(.error)
+                notice = "\(failed): \(decisionErrorMessage(error))"
+            }
+            await refreshPending()
+        }
+    }
+
     /// An item the user just answered leaves the list now; the re-read that follows confirms it.
     func dropPending(_ id: String) {
         listEdits += 1

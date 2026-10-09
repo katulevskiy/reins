@@ -39,14 +39,54 @@ struct RootView: View {
     }
 }
 
-/// The store is opening, or the session is being read.
+/// The store is opening, or the session is being read. Someone signed in sees their main screen as it last was (the
+/// widgets' snapshot: what waited, nothing secret) instead of a spinner; the live one replaces it within moments.
 struct LoadingView: View {
+    @State private var last: Snapshot?
+
     var body: some View {
-        ProgressView()
-            .controlSize(.large)
-            .tint(Palette.accent)
-            .frame(maxWidth: .infinity, maxHeight: .infinity)
-            .pageBackground()
+        Group {
+            if let last, last.signedIn {
+                LaunchPreview(snapshot: last)
+            } else {
+                ProgressView()
+                    .controlSize(.large)
+                    .tint(Palette.accent)
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+            }
+        }
+        .pageBackground()
+        // The snapshot is sealed with a keychain key: read off the main thread.
+        .task { last = await Task.detached(priority: .userInitiated) { Snapshot.load() }.value }
+    }
+}
+
+/// The main screen's first moment, drawn from the last snapshot: the title and what was waiting, not yet tappable.
+private struct LaunchPreview: View {
+    var snapshot: Snapshot
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Text("Activity").font(RFont.sans(34, .bold)).foregroundStyle(Palette.text).padding(.top, 12)
+            let waiting = snapshot.waiting()
+            if !waiting.isEmpty {
+                SectionHeader("Waiting for you").padding(.top, 8)
+                ForEach(waiting.prefix(6)) { item in
+                    Text(item.title)
+                        .font(RFont.sans(16, .semibold))
+                        .foregroundStyle(Palette.text)
+                        .lineLimit(2)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .padding(14)
+                        .background(Palette.elevated, in: RoundedRectangle(cornerRadius: 18, style: .continuous))
+                }
+            }
+            Spacer()
+        }
+        .padding(.horizontal, 16)
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+        .allowsHitTesting(false)
+        .accessibilityIdentifier("launchPreview")
     }
 }
 

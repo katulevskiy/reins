@@ -70,25 +70,16 @@ struct Burst: Equatable {
             }
         }
         app.feedback.play(approve ? .approved : .denied)
-        var failed = 0
-        var reason: String?
+        // The cards go now; the answers go out in the background, and any that do not come back with a few words.
+        let core = app.core
         for id in ids {
-            do {
+            app.answerInBackground(id, failed: approve ? "Not approved" : "Not denied") {
                 if approve {
-                    try await app.core.approveQuick(requestId: id)
+                    try await core.approveQuick(requestId: id)
                 } else {
-                    try await app.core.deny(requestId: id)
+                    try await core.deny(requestId: id)
                 }
-                app.dropPending(id)
-            } catch {
-                failed += 1
-                reason = reason ?? decisionErrorMessage(error)
             }
-        }
-        app.refreshPendingSoon()
-        if failed > 0 {
-            app.feedback.play(.error)
-            app.notice = "\(failed) of \(ids.count) could not be \(approve ? "approved" : "denied"): \(reason ?? "")"
         }
     }
 }
