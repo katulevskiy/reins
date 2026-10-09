@@ -23,6 +23,7 @@ espresso = "3.7.0"
 material3 = "1.5.0-alpha22"
 materialIcons = "1.7.8"
 robolectric = "4.17"
+testRetry = "1.6.6"
 onnxruntime = "1.30.0"
 androidxTestCore = "1.7.0"
 
@@ -64,3 +65,4 @@ espresso-core = { module = "androidx.test.espresso:espresso-core", version.ref =
 android-application = { id = "com.android.application", version.ref = "agp" }
 kotlin-compose = { id = "org.jetbrains.kotlin.plugin.compose", version.ref = "kotlin" }
 google-services = { id = "com.google.gms.google-services", version.ref = "googleServices" }
+test-retry = { id = "org.gradle.test-retry", version.ref = "testRetry" }

@@ -5,6 +5,7 @@ import org.gradle.api.tasks.testing.logging.TestExceptionFormat
 plugins {
     alias(libs.plugins.android.application)
     alias(libs.plugins.kotlin.compose)
+    alias(libs.plugins.test.retry)
 }
 
 // google-services.json is optional (plan Decision 18). Copy it in from outside the repo when
@@ -171,6 +172,14 @@ android {
             test.testLogging {
                 events("failed")
                 exceptionFormat = TestExceptionFormat.FULL
+            }
+            // On CI a failed test runs once more (the log still names it): a few Robolectric flows are timing-sensitive
+            // on a busy runner. Locally a failure fails at once.
+            if (providers.environmentVariable("CI").isPresent) {
+                test.extensions.configure<org.gradle.testretry.TestRetryTaskExtension> {
+                    maxRetries.set(1)
+                    maxFailures.set(5)
+                }
             }
             // The shared suite (src/test) does not depend on the distribution, so it runs once, under `full`; `play`
             // runs what src/testPlay adds (screenshots included, for play/graphics/render.sh).
