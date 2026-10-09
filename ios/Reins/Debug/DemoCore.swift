@@ -794,11 +794,14 @@ final class DemoReinsCore: ReinsCoreProtocol, @unchecked Sendable {
 
     func devices() async throws -> [DeviceView] { locked { $0.devices } }
 
-    func signOutDevice(deviceId: String) async throws {
-        locked { $0.devices.removeAll { $0.id == deviceId } }
+    func signOutDevice(deviceId: String, codeOrPassword: String) async throws {
+        try locked { s in
+            guard codeOrPassword == s.recoveryCode else { throw CoreError.Invalid(reason: "That is neither the recovery code nor the master password.") }
+            s.devices.removeAll { $0.id == deviceId }
+        }
     }
 
-    func phoneKeyFingerprint() async throws -> String { "4821 9930" }
+    func phoneKeyFingerprint() async throws -> String { "4821-9930-1274" }
 
     func vaultItems(query: String) async throws -> [VaultItemSummary] {
         locked { s in

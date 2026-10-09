@@ -244,9 +244,9 @@ final class VaultModel {
         revealed[key] = nil
     }
 
-    /// Creates the item (`id` nil) or changes it; the item's id.
+    /// Creates the item (`id` nil) or changes it, after Face ID or the passcode; the item's id.
     func save(id: String?, input: VaultItemInput, _ model: AppModel) async -> String? {
-        await run(model) {
+        await run(model, reason: id == nil ? "Save \(untrusted(input.name)) in your vault" : "Change \(untrusted(input.name))") {
             if let id {
                 try await model.core.vaultUpdate(id: id, input: input)
                 return id
@@ -256,7 +256,7 @@ final class VaultModel {
     }
 
     func generateSshKey(name: String, _ model: AppModel) async -> String? {
-        await run(model) {
+        await run(model, reason: "Make the SSH key \(untrusted(name))") {
             let key = try await model.core.vaultGenerateSshKey(name: name)
             self.madeKey = key
             return key.id
@@ -264,7 +264,7 @@ final class VaultModel {
     }
 
     func delete(_ id: String, _ model: AppModel) async -> Bool {
-        let done = await run(model) {
+        let done = await run(model, reason: "Delete \(untrusted(item?.name ?? "the item")) for good") {
             try await model.core.vaultDelete(id: id)
             self.item = nil
             return id
@@ -272,11 +272,16 @@ final class VaultModel {
         return done != nil
     }
 
-    private func run(_ model: AppModel, _ block: () async throws -> String) async -> String? {
+    /// A change to the vault: only after Face ID or the passcode, like approving one from the computer.
+    private func run(_ model: AppModel, reason: String, _ block: () async throws -> String) async -> String? {
         guard !busy else { return nil }
         busy = true
         error = nil
         defer { busy = false }
+        guard await model.authenticator.confirm(reason) else {
+            if !ScreenLock.isSet() { error = "Set a passcode on this iPhone to change your vault." }
+            return nil
+        }
         do {
             let id = try await block()
             model.feedback.play(.grantCreated)

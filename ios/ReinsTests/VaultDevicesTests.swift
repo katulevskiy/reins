@@ -38,12 +38,16 @@ final class VaultDevicesTests: XCTestCase {
         XCTAssertTrue(made.publicKey.hasPrefix("ssh-ed25519 "))
         let item = try await core.vaultItem(id: made.id)
         XCTAssertEqual(item.kind, .sshKey)
-        try await core.signOutDevice(deviceId: "d-old")
+        do {
+            try await core.signOutDevice(deviceId: "d-old", codeOrPassword: "wrong")
+            XCTFail("a wrong recovery code signs nothing out")
+        } catch {}
+        try await core.signOutDevice(deviceId: "d-old", codeOrPassword: DemoData.recoveryCode)
         let devices = try await core.devices()
         XCTAssertEqual(devices.map(\.id), ["d-this"])
     }
 
     func testAPhoneThatIsNotTheApprovalDeviceIsToldWhichOneIs() {
-        XCTAssertTrue(DevicesModel.message(CoreError.Server(status: 403, reason: "x")).hasPrefix("Only your approval phone"))
+        XCTAssertTrue(DevicesModel.message(CoreError.Server(status: 403, reason: "x")).hasPrefix("Devices are listed and signed out from your approval phone"))
     }
 }

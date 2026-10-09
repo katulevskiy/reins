@@ -22,17 +22,18 @@ final class DevicesModel {
         phoneKey = try? await model.core.phoneKeyFingerprint()
     }
 
-    func signOut(_ device: DeviceView, _ model: AppModel) async {
+    /// Signs `device` out with the recovery code or master password the user typed now (never one the phone keeps).
+    func signOut(_ device: DeviceView, proof: String, _ model: AppModel) async {
         guard !busy else { return }
         busy = true
         error = nil
         message = nil
         defer { busy = false }
         do {
-            try await model.core.signOutDevice(deviceId: device.id)
+            try await model.core.signOutDevice(deviceId: device.id, codeOrPassword: proof)
             model.feedback.play(.revoked)
             devices = try await model.core.devices()
-            message = "\(untrusted(device.name)) is signed out. It can no longer open your vault or answer requests."
+            message = "\(untrusted(device.name)) is signed out. It can no longer open your vault or answer requests, and cannot sign in again as it is."
         } catch {
             model.feedback.play(.error)
             self.error = Self.message(error)
@@ -42,7 +43,7 @@ final class DevicesModel {
     /// Only the approval phone sees and signs out the account's devices.
     static func message(_ error: Error) -> String {
         if case let CoreError.Server(status, _) = error, status == 403 {
-            return "Only your approval phone lists and signs out devices. Use this phone for approvals first (Settings, Approval device)."
+            return "Devices are listed and signed out from your approval phone, the one that receives the requests."
         }
         return error.userMessage
     }
@@ -61,6 +62,7 @@ struct DevicesScreen: View {
     @Environment(AppModel.self) private var model
     @State private var vm = DevicesModel()
     @State private var signingOut: DeviceView?
+    @State private var proof = ""
 
     var body: some View {
         let me = vm.devices?.first { $0.thisDevice }
@@ -117,7 +119,7 @@ struct DevicesScreen: View {
             } header: {
                 GroupHeader("Other phones and apps")
             } footer: {
-                GroupFooter("Lost a phone? Sign it out here. It can no longer open your vault or answer requests; what it kept stays encrypted behind its screen lock.")
+                GroupFooter("Lost a phone? Sign it out here. It can no longer open your vault or answer requests, nor sign in again as it is. Whoever has it and its passcode could still read what it kept, your recovery code included.")
             }
             Section {
                 if computers.isEmpty {
@@ -143,21 +145,31 @@ struct DevicesScreen: View {
         }
         .reinsGrouped()
         .navigationTitle("Devices")
+        .privacySensitive()
         .animation(.smooth(duration: 0.25), value: vm.devices)
         .task { await vm.load(model) }
         .refreshable { await vm.load(model) }
-        .confirmationDialog(
+        .alert(
             "Sign out \(untrusted(signingOut?.name ?? ""))?",
-            isPresented: Binding(get: { signingOut != nil }, set: { if !$0 { signingOut = nil } }),
-            titleVisibility: .visible,
+            isPresented: Binding(get: { signingOut != nil }, set: { if !$0 { signingOut = nil; proof = "" } }),
             presenting: signingOut
         ) { device in
+            SecureField("Recovery code or master password", text: $proof)
+                .accessibilityIdentifier("signOutProof")
             Button("Sign out", role: .destructive) {
+                let typed = proof
+                proof = ""
                 signingOut = nil
-                Task { await vm.signOut(device, model) }
+                Task { await vm.signOut(device, proof: typed, model) }
             }
-        } message: { _ in
-            Text("It can no longer open your vault, sync or answer requests. If you find it, sign in on it again.")
+            .disabled(proof.trimmingCharacters(in: .whitespaces).isEmpty)
+            Button("Cancel", role: .cancel) {
+                proof = ""
+                signingOut = nil
+            }
+        } message: { device in
+            // Two phones may share a name: say which one this is.
+            Text("\(device.platform) · signed in \(TimeText.relative(device.createdAt)) · last seen \(TimeText.relative(device.lastSeenAt)). It can no longer open your vault, sync or answer requests, and cannot sign in again as it is. Type your recovery code (or master password) to confirm.")
         }
         .presentationFeedback(signingOut != nil)
     }

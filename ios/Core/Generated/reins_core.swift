@@ -2820,9 +2820,10 @@ public protocol ReinsCoreProtocol: AnyObject, Sendable {
     func setStartingPolicy(policy: StartingPolicy) async throws 
     
     /**
-     * Signs another device of the account out (a lost phone): it can no longer sync or answer for the account.
+     * Signs another device of the account out (a lost phone), with the recovery code or master password the user
+     * typed now: it can no longer sync or answer for the account.
      */
-    func signOutDevice(deviceId: String) async throws 
+    func signOutDevice(deviceId: String, codeOrPassword: String) async throws 
     
     /**
      * Starts a sign-in through the server's SSO ("Continue": Google, Apple, GitHub or an email code on
@@ -4418,14 +4419,15 @@ open func setStartingPolicy(policy: StartingPolicy)async throws   {
 }
     
     /**
-     * Signs another device of the account out (a lost phone): it can no longer sync or answer for the account.
+     * Signs another device of the account out (a lost phone), with the recovery code or master password the user
+     * typed now: it can no longer sync or answer for the account.
      */
-open func signOutDevice(deviceId: String)async throws   {
+open func signOutDevice(deviceId: String, codeOrPassword: String)async throws   {
     return
         try  await uniffiRustCallAsync(
             rustFutureFunc: {
                 uniffi_reins_core_fn_method_reinscore_sign_out_device(
-                        self.uniffiCloneHandle(),FfiConverterString.lower(deviceId)
+                        self.uniffiCloneHandle(),FfiConverterString.lower(deviceId),FfiConverterString.lower(codeOrPassword)
                 )
             },
             pollFunc: ffi_reins_core_rust_future_poll_void,
@@ -14163,7 +14165,7 @@ private let initializationResult: InitializationResult = {
     if (uniffi_reins_core_checksum_method_reinscore_set_starting_policy() != 46624) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_reins_core_checksum_method_reinscore_sign_out_device() != 20713) {
+    if (uniffi_reins_core_checksum_method_reinscore_sign_out_device() != 32606) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_reins_core_checksum_method_reinscore_sso_begin() != 4525) {
