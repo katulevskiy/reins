@@ -375,8 +375,9 @@ pub struct SshSignature {
     pub signature_base64: String,
 }
 
-/// How the phone's refusal of a `vault_secret_store` sealed to a key it does not have starts: the desktop app then
-/// forgets the key it kept and asks for the phone's key again (a new phone, or the app reinstalled).
+/// How the phone's refusal of a `vault_secret_store` it cannot open starts (a box for another phone's key, after a new
+/// phone or the app reinstalled): the desktop app then forgets the key it kept and asks for the phone's key again. The
+/// phone's public key itself only ever travels sealed to the app, so the server cannot make a key with the same digits.
 pub const PHONE_KEY_CHANGED: &str = "This was sealed to another phone's key.";
 
 /// What the desktop app sends the phone for `vault_secret_store` (`reins vault add`): the value to keep, bound to the

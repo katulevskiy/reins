@@ -1,9 +1,10 @@
 //! `reins vault add` and `reins vault list`: the desktop app saves a value typed on the computer into the vault, and
 //! lists the items' names.
 //!
-//! - `phone_key`: the public half of this phone's inbox key ([`Store::inbox_key`]). The user approves it once, and the
-//!   computer then shows its eight digits ([`phone_key_fingerprint`]) to compare with the ones the approval showed, and
-//!   keeps the key. A server that swapped the key would make the digits differ.
+//! - `phone_key`: the public half of this phone's inbox key ([`Store::inbox_key`]), sealed to the computer. The user
+//!   approves it once, the approval shows its eight digits ([`phone_key_fingerprint`]), the user types them on the
+//!   computer, and the computer keeps the key. The key never travels in the clear, so a server that answered with its
+//!   own key could not know which digits to aim for.
 //! - `secret_store`: the value, in a box from the computer's pinned key to that key, so the server can neither read
 //!   nor replace it. The phone opens it,
 //!   shows what will be saved (never the value) and, once approved, creates the item or changes the field of the item
@@ -44,7 +45,7 @@ pub(super) fn preview_phone_key(vault: &Vault, call: &ConnectorCall) -> Result<P
         lines: vec![
             "Let this computer save secrets in your vault (reins vault add)".to_owned(),
             format!("This phone's key: {digits}"),
-            "The computer shows its number next: approve there only if it is the same.".to_owned(),
+            "The computer asks you to type this number once you approve.".to_owned(),
         ],
         parents: Vec::new(),
         once_only: true,
@@ -103,10 +104,6 @@ fn field_arg(field: &str) -> String {
 fn open(vault: &Vault, call: &ConnectorCall) -> Result<Store, CoreError> {
     client_key(call)?;
     let nonce = nonce_arg(call)?;
-    let ours = inbox_public_key(&vault.store)?;
-    if call.str_arg("phone_key") != Some(ours.as_str()) {
-        return Err(bad(format!("{PHONE_KEY_CHANGED} Run reins vault add again: it asks for this phone's key.")));
-    }
     let name = text::one_line(call.str_arg("name").unwrap_or_default()).trim().to_owned();
     if name.is_empty() {
         return Err(bad("The item needs a name."));
@@ -118,7 +115,8 @@ fn open(vault: &Vault, call: &ConnectorCall) -> Result<Store, CoreError> {
     }
     // A box from the app's key, which the flow checked is the one pinned for this connection: the server can neither
     // read the value nor put another one in its place.
-    let unreadable = || bad("The value could not be opened on the phone. Run reins vault add again.");
+    // A box for another key: the computer kept the key of a phone this is not (a new phone, the app reinstalled).
+    let unreadable = || bad(format!("{PHONE_KEY_CHANGED} Run reins vault add again: it asks for this phone's key."));
     let plain = open_from(client_key(call)?, &*vault.store.inbox_key()?, call.str_arg("sealed").unwrap_or_default())
         .ok_or_else(unreadable)?;
     let opened: SecretToStore = serde_json::from_slice(&plain).map_err(|_| unreadable())?;

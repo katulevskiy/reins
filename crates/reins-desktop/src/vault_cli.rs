@@ -6,10 +6,11 @@
 //! once approved. The server relays the box without being able to open or replace it, and nothing here keeps the
 //! value.
 //!
-//! The phone's key comes from the phone the first time (`vault_phone_key`): the approval shows eight digits, this
-//! terminal shows the digits of the key it received, and the key is kept (`phone-key.json`) only when the user says
-//! they are the same. A server that swapped the key would make them differ. A new phone, or the app reinstalled, has a
-//! new key: the phone then refuses the sealed value, and the key is asked for and checked again.
+//! The phone's key comes from the phone the first time (`vault_phone_key`, sealed to this app): the approval shows its
+//! eight digits, the user types them here, and the key is kept (`phone-key.json`) only when they match the key that
+//! arrived. The key never travels in the clear, so a server that answered with its own key could not know which digits
+//! to aim for. A new phone, or the app reinstalled, has a new key: the phone then cannot open the box, and the key is
+//! asked for and checked again.
 
 use std::io::{IsTerminal as _, Read as _, Write as _};
 use std::path::PathBuf;
@@ -152,21 +153,22 @@ async fn check_phone_key(phone: &Phone, paths: &Paths, given: Option<&str>) -> R
         return Err("The phone's answer is for another request; refused.".to_owned());
     }
     let digits = phone_key_fingerprint(&key.public_key).ok_or("The phone sent a malformed key; refused.")?;
-    let confirmed = if let Some(typed) = given {
-        same_digits(typed, &digits)
-    } else {
-        let prompt =
-            format!("Your phone showed its key when you approved. Here it is {digits}. The same number? [y/N] ");
-        let line = ask_terminal(&prompt).ok_or(
-            "Check your phone's key once: run reins vault add in a terminal, or pass --phone-key with the eight \
-             digits your phone showed.",
-        )?;
-        matches!(line.to_ascii_lowercase().as_str(), "y" | "yes")
+    // Typed, not a yes: the user has to read the number on the phone.
+    let typed = match given {
+        Some(typed) => typed.to_owned(),
+        None => ask_terminal(
+            "Type the eight digits your phone showed for its key (also in the Reins app: Settings, Devices): ",
+        )
+        .ok_or(
+            "Check your phone's key once: run reins vault add in a terminal, or pass --phone-key with the eight digits \
+             your phone showed.",
+        )?,
     };
-    if !confirmed {
+    if !same_digits(&typed, &digits) {
         return Err(format!(
-            "Not saved: the key this computer received ({digits}) is not the one your phone showed. Something \
-             between them changed it; check which Reins server you are logged in to (reins status)."
+            "Not saved: this computer received a key with the digits {digits}, not the ones you typed. If your phone \
+             shows {digits}, run reins vault add again and type them; if it does not, something between your phone \
+             and this computer changed the key (check the server: reins status)."
         ));
     }
     pin(paths, phone.server(), &key.public_key)?;
@@ -239,7 +241,7 @@ async fn store(
             STORE_TOOL,
             None,
             |nonce| {
-                json!({"name": name, "kind": kind.arg(), "field": field, "phone_key": phone_key,
+                json!({"name": name, "kind": kind.arg(), "field": field,
                     "sealed": box_value(phone.identity(), phone_key, nonce, name, field, value).unwrap_or_default()})
             },
             "No answer from your phone in time. Approve it, then run again.",

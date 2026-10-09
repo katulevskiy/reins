@@ -86,7 +86,6 @@ pub(super) fn tools() -> Vec<ToolSpec> {
                 str_p("kind", 20, true, "`api-key`, `login`, `note` or `ssh`."),
                 str_p("field", 100, true, "`password`, `username`, `notes`, `private_key`, or a custom field's name."),
                 text_p("sealed", 40_000, true, "The value, boxed to the phone's key (base64url of nonce and ciphertext)."),
-                str_p("phone_key", 64, true, "The phone key the value is sealed to (base64url)."),
                 CLIENT_KEY,
                 NONCE,
             ],

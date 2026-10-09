@@ -277,17 +277,17 @@ fn box_from(from: &SecretKey, phone: &str, nonce: &str, name: &str, field: &str,
 fn store(desk: &Desk, id: &str, phone: &str, name: &str, kind: &str, field: &str, value: &str) -> Value {
     let nonce = format!("nonce-{id}");
     let boxed = box_from(&desk.key, phone, &nonce, name, field, value);
-    store_boxed(desk, id, phone, name, kind, field, &boxed)
+    store_boxed(desk, id, name, kind, field, &boxed)
 }
 
-fn store_boxed(desk: &Desk, id: &str, phone: &str, name: &str, kind: &str, field: &str, boxed: &str) -> Value {
+fn store_boxed(desk: &Desk, id: &str, name: &str, kind: &str, field: &str, boxed: &str) -> Value {
     call(
         id,
         DESK,
         "vault",
         "secret_store",
         &json!({"name": name, "kind": kind, "field": field, "sealed": boxed,
-            "phone_key": phone, "client_key": desk.public(), "nonce": format!("nonce-{id}")}),
+            "client_key": desk.public(), "nonce": format!("nonce-{id}")}),
     )
 }
 
@@ -313,7 +313,9 @@ async fn a_secret_typed_on_the_computer_is_saved_without_the_server_seeing_it() 
     let created = &sent(&desk, "POST", "/api/ciphers").await[0];
     assert_eq!((dec(&created["name"]).as_str(), created["type"].as_i64()), ("Groq", Some(1)));
     assert_eq!(dec(&created["login"]["password"]), "gsk_typed_42");
-    assert!(!desk.everything_shown(&["s1"]).await.contains("gsk_typed_42"), "never in the clear");
+    let shown = desk.everything_shown(&["k1", "s1"]).await;
+    assert!(!shown.contains("gsk_typed_42"), "never in the clear");
+    assert!(!shown.contains(&phone), "the phone's key travels sealed only, so nobody can aim for its digits");
 
     // The same name again changes that item's field.
     desk.send(&[store(&desk, "s2", &phone, "Bank", "api-key", "password", "rotated")]).await;
@@ -350,8 +352,8 @@ async fn a_value_for_another_key_or_request_or_an_unpaired_app_is_refused() {
     let cases = [
         cases.to_vec(),
         vec![
-            ("w7", store_boxed(&desk, "w7", &phone, "X", "api-key", "password", &forged), "could not be opened"),
-            ("w8", store_boxed(&desk, "w8", &phone, "X", "api-key", "password", &moved), "another item or field"),
+            ("w7", store_boxed(&desk, "w7", "X", "api-key", "password", &forged), PHONE_KEY_CHANGED),
+            ("w8", store_boxed(&desk, "w8", "X", "api-key", "password", &moved), "another item or field"),
         ],
     ]
     .concat();
