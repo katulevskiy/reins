@@ -222,18 +222,6 @@ async fn sso_login(
         (Some(code), Some(code_verifier)) => (code, code_verifier.clone()),
     };
 
-    // A device id some account signed out does not get as far as a provider session.
-    if let Some(device) = data.device_identifier.as_ref()
-        && ReinsDeviceSignout::exists_for_device(device, conn).await
-    {
-        err!(
-            "This device was signed out of the account from another phone. To use it again, delete the Reins app's \
-             data (or install it again), then sign in.",
-            ErrorEvent {
-                event: EventType::UserFailedLogIn
-            }
-        )
-    }
     let (sso_auth, user_infos) = sso::exchange_code(code, code_verifier, conn).await?;
     let user_with_sso = match SsoUser::find_by_identifier(&user_infos.identifier, conn).await {
         None => match SsoUser::find_by_mail(&user_infos.email, conn).await {
@@ -367,6 +355,7 @@ async fn sso_login(
             )
         }
         Some((mut user, sso_user)) => {
+            refuse_signed_out_sso(&user, &data, user_infos.session_id.as_deref(), conn).await?;
             let mut device = get_device(&data, conn, &user).await?;
 
             let twofactor_token = twofactor_auth(&mut user, &data, &mut device, ip, client_version, conn).await?;
@@ -808,6 +797,25 @@ async fn organization_api_key_login(data: ConnectData, conn: &DbConn, ip: &Clien
         "token_type": "Bearer",
         "scope": AuthMethod::OrgApiKey.scope(),
     })))
+}
+
+/// An SSO sign-in of a device this account signed out (Settings > Devices): refused, and the provider session the code
+/// exchange just made is ended at WorkOS, so it does not linger. Only this account's sign-outs count: device ids are
+/// chosen by the clients, so another account's record of the same id says nothing about this one.
+async fn refuse_signed_out_sso(user: &User, data: &ConnectData, session: Option<&str>, conn: &DbConn) -> EmptyResult {
+    let Some(device) = data.device_identifier.as_ref() else {
+        return Ok(());
+    };
+    if ReinsDeviceSignout::find(&user.uuid, device, conn).await.is_none() {
+        return Ok(());
+    }
+    if let Some(session) = session.filter(|_| crate::sso_workos::enabled())
+        && let Err(e) = crate::sso_workos::revoke_session(session).await
+    {
+        warn!("Reins: ending the WorkOS session of a refused sign-in failed: {e:?}");
+    }
+    // `get_device` refuses it with the full message.
+    get_device(data, conn, user).await.map(drop)
 }
 
 /// Retrieves an existing device or creates a new device from ConnectData and the User

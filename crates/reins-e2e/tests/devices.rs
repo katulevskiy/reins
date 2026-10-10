@@ -53,11 +53,17 @@ async fn the_approval_phone_signs_a_lost_phone_out_and_it_cannot_come_back() {
     approval.core.sync(0).await.expect("the approval phone still syncs");
 }
 
+const OTHER: &str = "other@example.com";
+
 /// A password sign-in with the given device id, as any client could make it.
 async fn sign_in_as_device(server: &Server, hash: &str, id: &str) -> reqwest::Response {
+    sign_in_as_device_of(server, EMAIL, hash, id).await
+}
+
+async fn sign_in_as_device_of(server: &Server, email: &str, hash: &str, id: &str) -> reqwest::Response {
     let form = [
         ("grant_type", "password"),
-        ("username", EMAIL),
+        ("username", email),
         ("password", hash),
         ("scope", "api offline_access"),
         ("client_id", "mobile"),
@@ -69,10 +75,14 @@ async fn sign_in_as_device(server: &Server, hash: &str, id: &str) -> reqwest::Re
 }
 
 async fn password_hash() -> String {
-    tokio::task::spawn_blocking(|| {
+    password_hash_of(EMAIL).await
+}
+
+async fn password_hash_of(email: &'static str) -> String {
+    tokio::task::spawn_blocking(move || {
         let key = master_key(
             PASSWORD,
-            EMAIL,
+            email,
             Kdf::Pbkdf2 {
                 iterations: 600_000,
             },
@@ -101,6 +111,29 @@ async fn a_device_named_like_the_approval_phone_in_another_case_can_still_be_sig
     approval.core.sign_out_device(other.id, PASSWORD.to_owned()).await.unwrap();
     assert_eq!(approval.core.devices().await.unwrap().len(), 1);
     approval.core.sync(0).await.expect("the approval phone is untouched");
+}
+
+/// Device ids are chosen by the clients: one account signing an id out says nothing about another account's device
+/// with the same id.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn another_accounts_sign_out_of_the_same_device_id_does_not_block_this_one() {
+    let server = Server::start(20, 8).await;
+    server.register(EMAIL).await;
+    server.register(OTHER).await;
+    let approval = Phone::sign_in(&server.base, EMAIL).await;
+    let shared = "same-device-id-1";
+    let r = sign_in_as_device_of(&server, EMAIL, &password_hash_of(EMAIL).await, shared).await;
+    assert!(r.status().is_success());
+    approval.core.sign_out_device(shared.to_owned(), PASSWORD.to_owned()).await.unwrap();
+    let again = sign_in_as_device_of(&server, EMAIL, &password_hash_of(EMAIL).await, shared).await;
+    assert!(!again.status().is_success(), "refused for the account that signed it out");
+    let other = sign_in_as_device_of(&server, OTHER, &password_hash_of(OTHER).await, shared).await;
+    let status = other.status();
+    assert!(
+        status.is_success(),
+        "another account is not affected: {status} {}",
+        other.text().await.unwrap_or_default()
+    );
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]

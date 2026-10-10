@@ -365,6 +365,8 @@ async fn signing_a_phone_out_ends_its_workos_session_and_it_cannot_sign_back_in(
     assert!(lost.core.account_keys().await.is_err(), "its sign-in is over");
     let back = lost.sso_sign_in(&server.base).await;
     assert!(format!("{back:?}").contains("signed out of the account"), "{back:?}");
+    let refused_session = workos.sessions().last().unwrap().clone();
+    assert!(workos.revoked_sessions().contains(&refused_session), "the refused sign-in's session is ended too");
     first.core.sync(0).await.expect("the approval phone still works");
 }
 

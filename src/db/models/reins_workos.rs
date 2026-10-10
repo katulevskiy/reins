@@ -140,23 +140,6 @@ impl ReinsDeviceSignout {
         .await
     }
 
-    /// Whether any account signed this device id out: checked before an SSO code is exchanged, when the account is not
-    /// known yet.
-    pub async fn exists_for_device(device: &DeviceId, conn: &DbConn) -> bool {
-        let device = device.clone();
-        conn.run(move |c| {
-            // Unreadable counts as signed out: a sign-in is refused rather than let through.
-            !matches!(
-                reins_device_signouts::table
-                    .filter(reins_device_signouts::device_uuid.eq(device))
-                    .count()
-                    .get_result::<i64>(c),
-                Ok(0)
-            )
-        })
-        .await
-    }
-
     /// The SSO sessions `device` signed in with, to end at the provider.
     pub async fn sessions_of(user: &UserId, device: &DeviceId, conn: &DbConn) -> Result<Vec<String>, crate::Error> {
         let device = device.clone();
