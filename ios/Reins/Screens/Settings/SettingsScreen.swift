@@ -295,7 +295,8 @@ private struct ConnectionsGroup: View {
             } label: {
                 InfoRow(
                     title: aiApps.isEmpty ? "No AI app is connected yet" : "Connect another AI app",
-                    subtitle: "In Claude.ai or ChatGPT, add a custom connector with \(address). Tap to copy.",
+                    // The address on a line of its own, so it does not break in the middle.
+                    subtitle: "\(address)\nIn Claude.ai or ChatGPT, add it as a custom connector. Tap to copy.",
                     symbol: "link", tint: Palette.accent, ltrSubtitle: false
                 ) {
                     Image(systemName: "doc.on.doc").foregroundStyle(Palette.tertiary).accessibilityHidden(true)

@@ -262,6 +262,7 @@ private struct Promise: View {
 
 private struct NotificationsPage: View {
     @Environment(\.scenePhase) private var scenePhase
+    @Environment(\.openURL) private var openURL
     private var access: NotificationAccess { .shared }
 
     var body: some View {
@@ -272,10 +273,12 @@ private struct NotificationsPage: View {
             VStack(alignment: .leading, spacing: 4) {
                 Text("Reins · now").font(RFont.sans(12.5, .medium)).foregroundStyle(Palette.secondary)
                 Text("Claude wants to send an email").font(RFont.sans(15.5, .semibold)).foregroundStyle(Palette.text)
-                Text("To anna@example.com · \"Draft for Friday\"").font(RFont.sans(13.5)).foregroundStyle(Palette.secondary).lineLimit(1)
+                // Verbatim: a string literal is Markdown, which would turn the address into a link.
+                Text(verbatim: "To anna@example.com · \"Draft for Friday\"").font(RFont.sans(13.5)).foregroundStyle(Palette.secondary).lineLimit(1)
+                // In the order the notification shows them.
                 HStack(spacing: 8) {
-                    StatusPill(text: "Approve", tint: Palette.success)
                     StatusPill(text: "Deny", tint: Palette.danger)
+                    StatusPill(text: "Approve", tint: Palette.success)
                 }
                 .padding(.top, 6)
             }
@@ -295,6 +298,16 @@ private struct NotificationsPage: View {
                     .font(RFont.sans(13.5))
                     .foregroundStyle(Palette.tertiary)
                     .fixedSize(horizontal: false, vertical: true)
+                // Refused or quiet: only the Settings app can change it, so a way there.
+                if access.state.needsAttention && access.state != .notAsked {
+                    Button {
+                        Task { await access.turnOn(openURL: openURL) }
+                    } label: {
+                        Label("Open Settings", systemImage: "gear")
+                    }
+                    .buttonStyle(CapsuleButtonStyle(kind: .secondary))
+                    .accessibilityIdentifier("openNotificationSettings")
+                }
             }
             // Approving needs the passcode: better found out here than at the first request.
             ScreenLockBanner(padding: EdgeInsets(top: 10, leading: 0, bottom: 0, trailing: 0))
@@ -404,6 +417,14 @@ private struct RulesPage: View {
 // MARK: 5. Autopilot
 
 private struct AutopilotPage: View {
+    @Environment(AppModel.self) private var model
+
+    /// Where a new account starts, or (the tour taken again) the mode it is in now.
+    private var startLine: String {
+        guard let mode = model.autopilot?.mode, mode != .manual else { return "You start in Manual." }
+        return "Autopilot is in \(AutopilotText.name(mode)) now."
+    }
+
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
             StepHeader(eyebrow: "Step 4 · Autopilot", symbol: "cpu", tint: Palette.accent, title: "A private model that learns your rules",
@@ -425,7 +446,7 @@ private struct AutopilotPage: View {
             }
             .background(Palette.elevated, in: RoundedRectangle(cornerRadius: 20, style: .continuous))
             .padding(.top, 8)
-            Text("You start in Manual. Change modes, and download the model (about 370 MB), any time from Autopilot on the Activity tab.")
+            Text("\(startLine) Change modes, and download the model (about 370 MB), any time from Autopilot on the Activity tab.")
                 .font(RFont.sans(13.5))
                 .foregroundStyle(Palette.tertiary)
                 .fixedSize(horizontal: false, vertical: true)

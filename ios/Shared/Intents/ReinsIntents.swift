@@ -112,6 +112,26 @@ struct SetAutopilotModeIntent: LiveActivityIntent {
 }
 
 #if REINS_APP
+/// The modes a Focus may pick: the stricter ones only, so its picker never offers Auto (which `applyFocus` refuses).
+enum FocusModeOption: String, AppEnum {
+    case manual, assisted, lockdown
+
+    static var typeDisplayRepresentation: TypeDisplayRepresentation = "Autopilot mode"
+    static var caseDisplayRepresentations: [FocusModeOption: DisplayRepresentation] = [
+        .manual: "Manual",
+        .assisted: "Assisted",
+        .lockdown: "Lockdown",
+    ]
+
+    var option: AutopilotModeOption {
+        switch self {
+        case .manual: .manual
+        case .assisted: .assisted
+        case .lockdown: .lockdown
+        }
+    }
+}
+
 /// A Focus filter: while the Focus is on (Sleep, Driving, Work, ...), Autopilot is in the mode picked here (Manual,
 /// Assisted or Lockdown: a Focus only makes it stricter); when it ends, the mode from before comes back unless the
 /// user changed it meanwhile. The system runs it again with no mode when the Focus ends.
@@ -120,14 +140,14 @@ struct ReinsFocusFilter: SetFocusFilterIntent {
     static var description: IntentDescription? = IntentDescription("While this Focus is on, Reins uses the Autopilot mode you pick: Manual, Assisted or Lockdown. When it ends, the mode from before comes back.")
 
     @Parameter(title: "Mode")
-    var mode: AutopilotModeOption?
+    var mode: FocusModeOption?
 
     var displayRepresentation: DisplayRepresentation {
-        DisplayRepresentation(title: mode.map { "Autopilot: \($0.title)" } ?? "Autopilot unchanged")
+        DisplayRepresentation(title: mode.map { "Autopilot: \($0.option.title)" } ?? "Autopilot unchanged")
     }
 
     func perform() async throws -> some IntentResult {
-        try await IntentBridge.applyFocus(mode)
+        try await IntentBridge.applyFocus(mode?.option)
         return .result()
     }
 }

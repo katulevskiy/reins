@@ -118,6 +118,10 @@ final class WidgetsTests: XCTestCase {
         XCTAssertNil(AutopilotModeOption(AutopilotMode.bypass))
     }
 
+    func testAFocusOffersOnlyTheStricterModes() {
+        XCTAssertEqual(FocusModeOption.allCases.map(\.option), [.manual, .assisted, .lockdown], "never Auto, never Bypass")
+    }
+
     @MainActor
     func testAFocusSetsTheModeAndPutsTheOldOneBack() async throws {
         let defaults = try XCTUnwrap(UserDefaults(suiteName: "focus-tests"))
