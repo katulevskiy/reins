@@ -2616,6 +2616,11 @@ public protocol ReinsCoreProtocol: AnyObject, Sendable {
     func deny(requestId: String) async throws 
     
     /**
+     * The devices signed in to the account (Settings > Devices).
+     */
+    func devices() async throws  -> [DeviceView]
+    
+    /**
      * Downloads the model and checks it against the hashes built into the core; nothing is kept if it does not match.
      */
     func downloadModel(progress: DownloadProgress) async throws  -> ModelStatus
@@ -2702,6 +2707,11 @@ public protocol ReinsCoreProtocol: AnyObject, Sendable {
      * Items parked for the user, newest first.
      */
     func pending() async throws  -> [PendingItem]
+    
+    /**
+     * The eight digits of this phone's key, which `reins vault add` asks to compare once ("4821 9930").
+     */
+    func phoneKeyFingerprint() async throws  -> String
     
     func registerDevice(fcmToken: String?) async throws 
     
@@ -2810,6 +2820,12 @@ public protocol ReinsCoreProtocol: AnyObject, Sendable {
     func setStartingPolicy(policy: StartingPolicy) async throws 
     
     /**
+     * Signs another device of the account out (a lost phone), with the recovery code or master password the user
+     * typed now: it can no longer sync or answer for the account.
+     */
+    func signOutDevice(deviceId: String, codeOrPassword: String) async throws 
+    
+    /**
      * Starts a sign-in through the server's SSO ("Continue": Google, Apple, GitHub or an email code on
      * app.reins2fa.com). Open `url` in ASWebAuthenticationSession / a Custom Tab, wait for `callback_scheme`, then
      * call `sso_finish` with the URL it came back with and this `state` and `verifier`.
@@ -2845,6 +2861,31 @@ public protocol ReinsCoreProtocol: AnyObject, Sendable {
     func unlockWithVaultPasskey(credentialId: Data, prfOutput: Data) async throws 
     
     /**
+     * Creates an item; its id.
+     */
+    func vaultCreate(input: VaultItemInput) async throws  -> String
+    
+    /**
+     * Deletes an item for good.
+     */
+    func vaultDelete(id: String) async throws 
+    
+    /**
+     * Makes an Ed25519 key on the phone and keeps it as an SSH key item named `name`.
+     */
+    func vaultGenerateSshKey(name: String) async throws  -> VaultSshKey
+    
+    /**
+     * One item: the values of its plain fields, which fields are secret, and how the desktop app names it.
+     */
+    func vaultItem(id: String) async throws  -> VaultItemDetail
+    
+    /**
+     * The vault's items in use whose name, username or website contains `query` (empty: all), by name.
+     */
+    func vaultItems(query: String) async throws  -> [VaultItemSummary]
+    
+    /**
      * What the app hands the platform's passkey UI to make a vault passkey or use one (see `vault_passkey`).
      */
     func vaultPasskeyOptions() async throws  -> VaultPasskeyOptions
@@ -2853,6 +2894,49 @@ public protocol ReinsCoreProtocol: AnyObject, Sendable {
      * The passkeys that open the account's vault.
      */
     func vaultPasskeys() async throws  -> [VaultPasskeyView]
+    
+    /**
+     * The value of one field (`VaultField::key`), after the app checked the screen lock.
+     */
+    func vaultReveal(id: String, key: String) async throws  -> String
+    
+    /**
+     * Renames an item and changes the fields given.
+     */
+    func vaultUpdate(id: String, input: VaultItemInput) async throws 
+    
+    /**
+     * Approves a purchase with what the user picked on the purchase screen (and maybe a spend limit for more like it).
+     */
+    func approvePurchase(requestId: String, choice: PurchaseChoice) async throws 
+    
+    func paymentsAcknowledgeCharge(purchaseId: String) async throws 
+    
+    func paymentsAddLimit(limit: SpendLimitInput) async throws  -> SpendLimitView
+    
+    func paymentsClearPurchase(purchaseId: String) async throws 
+    
+    func paymentsCloseCard(purchaseId: String) async throws 
+    
+    func paymentsConnectProvider(kind: String, apiKey: String, sandbox: Bool, singleUse: Bool) async throws 
+    
+    func paymentsDisconnectProvider() async throws 
+    
+    func paymentsOverview() async throws  -> PaymentsOverview
+    
+    func paymentsRemoveLimit(limitId: String) async throws 
+    
+    func paymentsSetBudget(budget: BudgetView) async throws 
+    
+    func paymentsSetCardOptions(tolerancePct: UInt32, singleUse: Bool) async throws 
+    
+    func paymentsSetDefaults(methodId: String?, addressId: String?) async throws 
+    
+    func paymentsSetMethod(methodId: String, enabled: Bool) async throws 
+    
+    func paymentsSetNickname(methodId: String, nickname: String?) async throws 
+    
+    func paymentsSpending(since: Int64) async throws  -> SpendingView
     
     /**
      * Adds an MCP server by its address: added at once, or a sign-in page to open (its redirect goes to
@@ -3537,6 +3621,25 @@ open func deny(requestId: String)async throws   {
 }
     
     /**
+     * The devices signed in to the account (Settings > Devices).
+     */
+open func devices()async throws  -> [DeviceView]  {
+    return
+        try  await uniffiRustCallAsync(
+            rustFutureFunc: {
+                uniffi_reins_core_fn_method_reinscore_devices(
+                        self.uniffiCloneHandle()
+                )
+            },
+            pollFunc: ffi_reins_core_rust_future_poll_rust_buffer,
+            completeFunc: ffi_reins_core_rust_future_complete_rust_buffer,
+            freeFunc: ffi_reins_core_rust_future_free_rust_buffer,
+            liftFunc: FfiConverterSequenceTypeDeviceView.lift,
+            errorHandler: FfiConverterTypeCoreError_lift
+        )
+}
+    
+    /**
      * Downloads the model and checks it against the hashes built into the core; nothing is kept if it does not match.
      */
 open func downloadModel(progress: DownloadProgress)async throws  -> ModelStatus  {
@@ -3902,6 +4005,25 @@ open func pending()async throws  -> [PendingItem]  {
             completeFunc: ffi_reins_core_rust_future_complete_rust_buffer,
             freeFunc: ffi_reins_core_rust_future_free_rust_buffer,
             liftFunc: FfiConverterSequenceTypePendingItem.lift,
+            errorHandler: FfiConverterTypeCoreError_lift
+        )
+}
+    
+    /**
+     * The eight digits of this phone's key, which `reins vault add` asks to compare once ("4821 9930").
+     */
+open func phoneKeyFingerprint()async throws  -> String  {
+    return
+        try  await uniffiRustCallAsync(
+            rustFutureFunc: {
+                uniffi_reins_core_fn_method_reinscore_phone_key_fingerprint(
+                        self.uniffiCloneHandle()
+                )
+            },
+            pollFunc: ffi_reins_core_rust_future_poll_rust_buffer,
+            completeFunc: ffi_reins_core_rust_future_complete_rust_buffer,
+            freeFunc: ffi_reins_core_rust_future_free_rust_buffer,
+            liftFunc: FfiConverterString.lift,
             errorHandler: FfiConverterTypeCoreError_lift
         )
 }
@@ -4330,6 +4452,26 @@ open func setStartingPolicy(policy: StartingPolicy)async throws   {
 }
     
     /**
+     * Signs another device of the account out (a lost phone), with the recovery code or master password the user
+     * typed now: it can no longer sync or answer for the account.
+     */
+open func signOutDevice(deviceId: String, codeOrPassword: String)async throws   {
+    return
+        try  await uniffiRustCallAsync(
+            rustFutureFunc: {
+                uniffi_reins_core_fn_method_reinscore_sign_out_device(
+                        self.uniffiCloneHandle(),FfiConverterString.lower(deviceId),FfiConverterString.lower(codeOrPassword)
+                )
+            },
+            pollFunc: ffi_reins_core_rust_future_poll_void,
+            completeFunc: ffi_reins_core_rust_future_complete_void,
+            freeFunc: ffi_reins_core_rust_future_free_void,
+            liftFunc: { $0 },
+            errorHandler: FfiConverterTypeCoreError_lift
+        )
+}
+    
+    /**
      * Starts a sign-in through the server's SSO ("Continue": Google, Apple, GitHub or an email code on
      * app.reins2fa.com). Open `url` in ASWebAuthenticationSession / a Custom Tab, wait for `callback_scheme`, then
      * call `sso_finish` with the URL it came back with and this `state` and `verifier`.
@@ -4449,6 +4591,101 @@ open func unlockWithVaultPasskey(credentialId: Data, prfOutput: Data)async throw
 }
     
     /**
+     * Creates an item; its id.
+     */
+open func vaultCreate(input: VaultItemInput)async throws  -> String  {
+    return
+        try  await uniffiRustCallAsync(
+            rustFutureFunc: {
+                uniffi_reins_core_fn_method_reinscore_vault_create(
+                        self.uniffiCloneHandle(),FfiConverterTypeVaultItemInput_lower(input)
+                )
+            },
+            pollFunc: ffi_reins_core_rust_future_poll_rust_buffer,
+            completeFunc: ffi_reins_core_rust_future_complete_rust_buffer,
+            freeFunc: ffi_reins_core_rust_future_free_rust_buffer,
+            liftFunc: FfiConverterString.lift,
+            errorHandler: FfiConverterTypeCoreError_lift
+        )
+}
+    
+    /**
+     * Deletes an item for good.
+     */
+open func vaultDelete(id: String)async throws   {
+    return
+        try  await uniffiRustCallAsync(
+            rustFutureFunc: {
+                uniffi_reins_core_fn_method_reinscore_vault_delete(
+                        self.uniffiCloneHandle(),FfiConverterString.lower(id)
+                )
+            },
+            pollFunc: ffi_reins_core_rust_future_poll_void,
+            completeFunc: ffi_reins_core_rust_future_complete_void,
+            freeFunc: ffi_reins_core_rust_future_free_void,
+            liftFunc: { $0 },
+            errorHandler: FfiConverterTypeCoreError_lift
+        )
+}
+    
+    /**
+     * Makes an Ed25519 key on the phone and keeps it as an SSH key item named `name`.
+     */
+open func vaultGenerateSshKey(name: String)async throws  -> VaultSshKey  {
+    return
+        try  await uniffiRustCallAsync(
+            rustFutureFunc: {
+                uniffi_reins_core_fn_method_reinscore_vault_generate_ssh_key(
+                        self.uniffiCloneHandle(),FfiConverterString.lower(name)
+                )
+            },
+            pollFunc: ffi_reins_core_rust_future_poll_rust_buffer,
+            completeFunc: ffi_reins_core_rust_future_complete_rust_buffer,
+            freeFunc: ffi_reins_core_rust_future_free_rust_buffer,
+            liftFunc: FfiConverterTypeVaultSshKey_lift,
+            errorHandler: FfiConverterTypeCoreError_lift
+        )
+}
+    
+    /**
+     * One item: the values of its plain fields, which fields are secret, and how the desktop app names it.
+     */
+open func vaultItem(id: String)async throws  -> VaultItemDetail  {
+    return
+        try  await uniffiRustCallAsync(
+            rustFutureFunc: {
+                uniffi_reins_core_fn_method_reinscore_vault_item(
+                        self.uniffiCloneHandle(),FfiConverterString.lower(id)
+                )
+            },
+            pollFunc: ffi_reins_core_rust_future_poll_rust_buffer,
+            completeFunc: ffi_reins_core_rust_future_complete_rust_buffer,
+            freeFunc: ffi_reins_core_rust_future_free_rust_buffer,
+            liftFunc: FfiConverterTypeVaultItemDetail_lift,
+            errorHandler: FfiConverterTypeCoreError_lift
+        )
+}
+    
+    /**
+     * The vault's items in use whose name, username or website contains `query` (empty: all), by name.
+     */
+open func vaultItems(query: String)async throws  -> [VaultItemSummary]  {
+    return
+        try  await uniffiRustCallAsync(
+            rustFutureFunc: {
+                uniffi_reins_core_fn_method_reinscore_vault_items(
+                        self.uniffiCloneHandle(),FfiConverterString.lower(query)
+                )
+            },
+            pollFunc: ffi_reins_core_rust_future_poll_rust_buffer,
+            completeFunc: ffi_reins_core_rust_future_complete_rust_buffer,
+            freeFunc: ffi_reins_core_rust_future_free_rust_buffer,
+            liftFunc: FfiConverterSequenceTypeVaultItemSummary.lift,
+            errorHandler: FfiConverterTypeCoreError_lift
+        )
+}
+    
+    /**
      * What the app hands the platform's passkey UI to make a vault passkey or use one (see `vault_passkey`).
      */
 open func vaultPasskeyOptions()async throws  -> VaultPasskeyOptions  {
@@ -4482,6 +4719,287 @@ open func vaultPasskeys()async throws  -> [VaultPasskeyView]  {
             completeFunc: ffi_reins_core_rust_future_complete_rust_buffer,
             freeFunc: ffi_reins_core_rust_future_free_rust_buffer,
             liftFunc: FfiConverterSequenceTypeVaultPasskeyView.lift,
+            errorHandler: FfiConverterTypeCoreError_lift
+        )
+}
+    
+    /**
+     * The value of one field (`VaultField::key`), after the app checked the screen lock.
+     */
+open func vaultReveal(id: String, key: String)async throws  -> String  {
+    return
+        try  await uniffiRustCallAsync(
+            rustFutureFunc: {
+                uniffi_reins_core_fn_method_reinscore_vault_reveal(
+                        self.uniffiCloneHandle(),FfiConverterString.lower(id),FfiConverterString.lower(key)
+                )
+            },
+            pollFunc: ffi_reins_core_rust_future_poll_rust_buffer,
+            completeFunc: ffi_reins_core_rust_future_complete_rust_buffer,
+            freeFunc: ffi_reins_core_rust_future_free_rust_buffer,
+            liftFunc: FfiConverterString.lift,
+            errorHandler: FfiConverterTypeCoreError_lift
+        )
+}
+    
+    /**
+     * Renames an item and changes the fields given.
+     */
+open func vaultUpdate(id: String, input: VaultItemInput)async throws   {
+    return
+        try  await uniffiRustCallAsync(
+            rustFutureFunc: {
+                uniffi_reins_core_fn_method_reinscore_vault_update(
+                        self.uniffiCloneHandle(),FfiConverterString.lower(id),FfiConverterTypeVaultItemInput_lower(input)
+                )
+            },
+            pollFunc: ffi_reins_core_rust_future_poll_void,
+            completeFunc: ffi_reins_core_rust_future_complete_void,
+            freeFunc: ffi_reins_core_rust_future_free_void,
+            liftFunc: { $0 },
+            errorHandler: FfiConverterTypeCoreError_lift
+        )
+}
+    
+    /**
+     * Approves a purchase with what the user picked on the purchase screen (and maybe a spend limit for more like it).
+     */
+open func approvePurchase(requestId: String, choice: PurchaseChoice)async throws   {
+    return
+        try  await uniffiRustCallAsync(
+            rustFutureFunc: {
+                uniffi_reins_core_fn_method_reinscore_approve_purchase(
+                        self.uniffiCloneHandle(),FfiConverterString.lower(requestId),FfiConverterTypePurchaseChoice_lower(choice)
+                )
+            },
+            pollFunc: ffi_reins_core_rust_future_poll_void,
+            completeFunc: ffi_reins_core_rust_future_complete_void,
+            freeFunc: ffi_reins_core_rust_future_free_void,
+            liftFunc: { $0 },
+            errorHandler: FfiConverterTypeCoreError_lift
+        )
+}
+    
+open func paymentsAcknowledgeCharge(purchaseId: String)async throws   {
+    return
+        try  await uniffiRustCallAsync(
+            rustFutureFunc: {
+                uniffi_reins_core_fn_method_reinscore_payments_acknowledge_charge(
+                        self.uniffiCloneHandle(),FfiConverterString.lower(purchaseId)
+                )
+            },
+            pollFunc: ffi_reins_core_rust_future_poll_void,
+            completeFunc: ffi_reins_core_rust_future_complete_void,
+            freeFunc: ffi_reins_core_rust_future_free_void,
+            liftFunc: { $0 },
+            errorHandler: FfiConverterTypeCoreError_lift
+        )
+}
+    
+open func paymentsAddLimit(limit: SpendLimitInput)async throws  -> SpendLimitView  {
+    return
+        try  await uniffiRustCallAsync(
+            rustFutureFunc: {
+                uniffi_reins_core_fn_method_reinscore_payments_add_limit(
+                        self.uniffiCloneHandle(),FfiConverterTypeSpendLimitInput_lower(limit)
+                )
+            },
+            pollFunc: ffi_reins_core_rust_future_poll_rust_buffer,
+            completeFunc: ffi_reins_core_rust_future_complete_rust_buffer,
+            freeFunc: ffi_reins_core_rust_future_free_rust_buffer,
+            liftFunc: FfiConverterTypeSpendLimitView_lift,
+            errorHandler: FfiConverterTypeCoreError_lift
+        )
+}
+    
+open func paymentsClearPurchase(purchaseId: String)async throws   {
+    return
+        try  await uniffiRustCallAsync(
+            rustFutureFunc: {
+                uniffi_reins_core_fn_method_reinscore_payments_clear_purchase(
+                        self.uniffiCloneHandle(),FfiConverterString.lower(purchaseId)
+                )
+            },
+            pollFunc: ffi_reins_core_rust_future_poll_void,
+            completeFunc: ffi_reins_core_rust_future_complete_void,
+            freeFunc: ffi_reins_core_rust_future_free_void,
+            liftFunc: { $0 },
+            errorHandler: FfiConverterTypeCoreError_lift
+        )
+}
+    
+open func paymentsCloseCard(purchaseId: String)async throws   {
+    return
+        try  await uniffiRustCallAsync(
+            rustFutureFunc: {
+                uniffi_reins_core_fn_method_reinscore_payments_close_card(
+                        self.uniffiCloneHandle(),FfiConverterString.lower(purchaseId)
+                )
+            },
+            pollFunc: ffi_reins_core_rust_future_poll_void,
+            completeFunc: ffi_reins_core_rust_future_complete_void,
+            freeFunc: ffi_reins_core_rust_future_free_void,
+            liftFunc: { $0 },
+            errorHandler: FfiConverterTypeCoreError_lift
+        )
+}
+    
+open func paymentsConnectProvider(kind: String, apiKey: String, sandbox: Bool, singleUse: Bool)async throws   {
+    return
+        try  await uniffiRustCallAsync(
+            rustFutureFunc: {
+                uniffi_reins_core_fn_method_reinscore_payments_connect_provider(
+                        self.uniffiCloneHandle(),FfiConverterString.lower(kind),FfiConverterString.lower(apiKey),FfiConverterBool.lower(sandbox),FfiConverterBool.lower(singleUse)
+                )
+            },
+            pollFunc: ffi_reins_core_rust_future_poll_void,
+            completeFunc: ffi_reins_core_rust_future_complete_void,
+            freeFunc: ffi_reins_core_rust_future_free_void,
+            liftFunc: { $0 },
+            errorHandler: FfiConverterTypeCoreError_lift
+        )
+}
+    
+open func paymentsDisconnectProvider()async throws   {
+    return
+        try  await uniffiRustCallAsync(
+            rustFutureFunc: {
+                uniffi_reins_core_fn_method_reinscore_payments_disconnect_provider(
+                        self.uniffiCloneHandle()
+                )
+            },
+            pollFunc: ffi_reins_core_rust_future_poll_void,
+            completeFunc: ffi_reins_core_rust_future_complete_void,
+            freeFunc: ffi_reins_core_rust_future_free_void,
+            liftFunc: { $0 },
+            errorHandler: FfiConverterTypeCoreError_lift
+        )
+}
+    
+open func paymentsOverview()async throws  -> PaymentsOverview  {
+    return
+        try  await uniffiRustCallAsync(
+            rustFutureFunc: {
+                uniffi_reins_core_fn_method_reinscore_payments_overview(
+                        self.uniffiCloneHandle()
+                )
+            },
+            pollFunc: ffi_reins_core_rust_future_poll_rust_buffer,
+            completeFunc: ffi_reins_core_rust_future_complete_rust_buffer,
+            freeFunc: ffi_reins_core_rust_future_free_rust_buffer,
+            liftFunc: FfiConverterTypePaymentsOverview_lift,
+            errorHandler: FfiConverterTypeCoreError_lift
+        )
+}
+    
+open func paymentsRemoveLimit(limitId: String)async throws   {
+    return
+        try  await uniffiRustCallAsync(
+            rustFutureFunc: {
+                uniffi_reins_core_fn_method_reinscore_payments_remove_limit(
+                        self.uniffiCloneHandle(),FfiConverterString.lower(limitId)
+                )
+            },
+            pollFunc: ffi_reins_core_rust_future_poll_void,
+            completeFunc: ffi_reins_core_rust_future_complete_void,
+            freeFunc: ffi_reins_core_rust_future_free_void,
+            liftFunc: { $0 },
+            errorHandler: FfiConverterTypeCoreError_lift
+        )
+}
+    
+open func paymentsSetBudget(budget: BudgetView)async throws   {
+    return
+        try  await uniffiRustCallAsync(
+            rustFutureFunc: {
+                uniffi_reins_core_fn_method_reinscore_payments_set_budget(
+                        self.uniffiCloneHandle(),FfiConverterTypeBudgetView_lower(budget)
+                )
+            },
+            pollFunc: ffi_reins_core_rust_future_poll_void,
+            completeFunc: ffi_reins_core_rust_future_complete_void,
+            freeFunc: ffi_reins_core_rust_future_free_void,
+            liftFunc: { $0 },
+            errorHandler: FfiConverterTypeCoreError_lift
+        )
+}
+    
+open func paymentsSetCardOptions(tolerancePct: UInt32, singleUse: Bool)async throws   {
+    return
+        try  await uniffiRustCallAsync(
+            rustFutureFunc: {
+                uniffi_reins_core_fn_method_reinscore_payments_set_card_options(
+                        self.uniffiCloneHandle(),FfiConverterUInt32.lower(tolerancePct),FfiConverterBool.lower(singleUse)
+                )
+            },
+            pollFunc: ffi_reins_core_rust_future_poll_void,
+            completeFunc: ffi_reins_core_rust_future_complete_void,
+            freeFunc: ffi_reins_core_rust_future_free_void,
+            liftFunc: { $0 },
+            errorHandler: FfiConverterTypeCoreError_lift
+        )
+}
+    
+open func paymentsSetDefaults(methodId: String?, addressId: String?)async throws   {
+    return
+        try  await uniffiRustCallAsync(
+            rustFutureFunc: {
+                uniffi_reins_core_fn_method_reinscore_payments_set_defaults(
+                        self.uniffiCloneHandle(),FfiConverterOptionString.lower(methodId),FfiConverterOptionString.lower(addressId)
+                )
+            },
+            pollFunc: ffi_reins_core_rust_future_poll_void,
+            completeFunc: ffi_reins_core_rust_future_complete_void,
+            freeFunc: ffi_reins_core_rust_future_free_void,
+            liftFunc: { $0 },
+            errorHandler: FfiConverterTypeCoreError_lift
+        )
+}
+    
+open func paymentsSetMethod(methodId: String, enabled: Bool)async throws   {
+    return
+        try  await uniffiRustCallAsync(
+            rustFutureFunc: {
+                uniffi_reins_core_fn_method_reinscore_payments_set_method(
+                        self.uniffiCloneHandle(),FfiConverterString.lower(methodId),FfiConverterBool.lower(enabled)
+                )
+            },
+            pollFunc: ffi_reins_core_rust_future_poll_void,
+            completeFunc: ffi_reins_core_rust_future_complete_void,
+            freeFunc: ffi_reins_core_rust_future_free_void,
+            liftFunc: { $0 },
+            errorHandler: FfiConverterTypeCoreError_lift
+        )
+}
+    
+open func paymentsSetNickname(methodId: String, nickname: String?)async throws   {
+    return
+        try  await uniffiRustCallAsync(
+            rustFutureFunc: {
+                uniffi_reins_core_fn_method_reinscore_payments_set_nickname(
+                        self.uniffiCloneHandle(),FfiConverterString.lower(methodId),FfiConverterOptionString.lower(nickname)
+                )
+            },
+            pollFunc: ffi_reins_core_rust_future_poll_void,
+            completeFunc: ffi_reins_core_rust_future_complete_void,
+            freeFunc: ffi_reins_core_rust_future_free_void,
+            liftFunc: { $0 },
+            errorHandler: FfiConverterTypeCoreError_lift
+        )
+}
+    
+open func paymentsSpending(since: Int64)async throws  -> SpendingView  {
+    return
+        try  await uniffiRustCallAsync(
+            rustFutureFunc: {
+                uniffi_reins_core_fn_method_reinscore_payments_spending(
+                        self.uniffiCloneHandle(),FfiConverterInt64.lower(since)
+                )
+            },
+            pollFunc: ffi_reins_core_rust_future_poll_rust_buffer,
+            completeFunc: ffi_reins_core_rust_future_complete_rust_buffer,
+            freeFunc: ffi_reins_core_rust_future_free_rust_buffer,
+            liftFunc: FfiConverterTypeSpendingView_lift,
             errorHandler: FfiConverterTypeCoreError_lift
         )
 }
@@ -5048,6 +5566,83 @@ public func FfiConverterTypeActivityMessage_lower(_ value: ActivityMessage) -> R
 
 
 /**
+ * A shipping address.
+ */
+public struct AddressView: Equatable, Hashable {
+    public var id: String
+    public var label: String
+    /**
+     * The whole address, line by line, for the user's own screen.
+     */
+    public var lines: [String]
+    /**
+     * What an AI is shown when it lists addresses ("London, GB").
+     */
+    public var masked: String
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(id: String, label: String, 
+        /**
+         * The whole address, line by line, for the user's own screen.
+         */lines: [String], 
+        /**
+         * What an AI is shown when it lists addresses ("London, GB").
+         */masked: String) {
+        self.id = id
+        self.label = label
+        self.lines = lines
+        self.masked = masked
+    }
+
+    
+
+    
+}
+
+#if compiler(>=6)
+extension AddressView: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeAddressView: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> AddressView {
+        return
+            try AddressView(
+                id: FfiConverterString.read(from: &buf), 
+                label: FfiConverterString.read(from: &buf), 
+                lines: FfiConverterSequenceString.read(from: &buf), 
+                masked: FfiConverterString.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: AddressView, into buf: inout [UInt8]) {
+        FfiConverterString.write(value.id, into: &buf)
+        FfiConverterString.write(value.label, into: &buf)
+        FfiConverterSequenceString.write(value.lines, into: &buf)
+        FfiConverterString.write(value.masked, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeAddressView_lift(_ buf: RustBuffer) throws -> AddressView {
+    return try FfiConverterTypeAddressView.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeAddressView_lower(_ value: AddressView) -> RustBuffer {
+    return FfiConverterTypeAddressView.lower(value)
+}
+
+
+/**
  * What the user approved. For Search/Read: `selected_message_ids` ⊆ the view's
  * messages (covered ones are always included). For Send: ignored.
  */
@@ -5195,6 +5790,10 @@ public struct ApprovalView: Equatable, Hashable {
      * One-tap answers; `None` for what is asked every time (the hard floor).
      */
     public var quick: QuickApproval?
+    /**
+     * A purchase: the cart like a receipt, and what may pay for it (approve it with `approve_purchase`).
+     */
+    public var purchase: PurchaseView?
 
     // Default memberwise initializers are never public by default, so we
     // declare one manually.
@@ -5256,7 +5855,10 @@ public struct ApprovalView: Equatable, Hashable {
          */headline: String = "", 
         /**
          * One-tap answers; `None` for what is asked every time (the hard floor).
-         */quick: QuickApproval? = nil) {
+         */quick: QuickApproval? = nil, 
+        /**
+         * A purchase: the cart like a receipt, and what may pay for it (approve it with `approve_purchase`).
+         */purchase: PurchaseView? = nil) {
         self.requestId = requestId
         self.connectionId = connectionId
         self.connectionLabel = connectionLabel
@@ -5288,6 +5890,7 @@ public struct ApprovalView: Equatable, Hashable {
         self.ssh = ssh
         self.headline = headline
         self.quick = quick
+        self.purchase = purchase
     }
 
     
@@ -5336,7 +5939,8 @@ public struct FfiConverterTypeApprovalView: FfiConverterRustBuffer {
                 secrets: FfiConverterOptionTypeSecretReleaseView.read(from: &buf), 
                 ssh: FfiConverterOptionTypeSshSignView.read(from: &buf), 
                 headline: FfiConverterString.read(from: &buf), 
-                quick: FfiConverterOptionTypeQuickApproval.read(from: &buf)
+                quick: FfiConverterOptionTypeQuickApproval.read(from: &buf), 
+                purchase: FfiConverterOptionTypePurchaseView.read(from: &buf)
         )
     }
 
@@ -5372,6 +5976,7 @@ public struct FfiConverterTypeApprovalView: FfiConverterRustBuffer {
         FfiConverterOptionTypeSshSignView.write(value.ssh, into: &buf)
         FfiConverterString.write(value.headline, into: &buf)
         FfiConverterOptionTypeQuickApproval.write(value.quick, into: &buf)
+        FfiConverterOptionTypePurchaseView.write(value.purchase, into: &buf)
     }
 }
 
@@ -5955,6 +6560,168 @@ public func FfiConverterTypeBlobView_lower(_ value: BlobView) -> RustBuffer {
 
 
 /**
+ * A budget: every AI together (`connection_id` empty) or one.
+ */
+public struct BudgetView: Equatable, Hashable {
+    public var connectionId: String
+    public var connectionLabel: String
+    public var currency: String
+    public var perPurchase: Int64?
+    public var perDay: Int64?
+    public var perMonth: Int64?
+    public var merchants: [String]
+    /**
+     * One line per rule ("At most $500.00 a purchase").
+     */
+    public var lines: [String]
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(connectionId: String, connectionLabel: String, currency: String, perPurchase: Int64?, perDay: Int64?, perMonth: Int64?, merchants: [String], 
+        /**
+         * One line per rule ("At most $500.00 a purchase").
+         */lines: [String]) {
+        self.connectionId = connectionId
+        self.connectionLabel = connectionLabel
+        self.currency = currency
+        self.perPurchase = perPurchase
+        self.perDay = perDay
+        self.perMonth = perMonth
+        self.merchants = merchants
+        self.lines = lines
+    }
+
+    
+
+    
+}
+
+#if compiler(>=6)
+extension BudgetView: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeBudgetView: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> BudgetView {
+        return
+            try BudgetView(
+                connectionId: FfiConverterString.read(from: &buf), 
+                connectionLabel: FfiConverterString.read(from: &buf), 
+                currency: FfiConverterString.read(from: &buf), 
+                perPurchase: FfiConverterOptionInt64.read(from: &buf), 
+                perDay: FfiConverterOptionInt64.read(from: &buf), 
+                perMonth: FfiConverterOptionInt64.read(from: &buf), 
+                merchants: FfiConverterSequenceString.read(from: &buf), 
+                lines: FfiConverterSequenceString.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: BudgetView, into buf: inout [UInt8]) {
+        FfiConverterString.write(value.connectionId, into: &buf)
+        FfiConverterString.write(value.connectionLabel, into: &buf)
+        FfiConverterString.write(value.currency, into: &buf)
+        FfiConverterOptionInt64.write(value.perPurchase, into: &buf)
+        FfiConverterOptionInt64.write(value.perDay, into: &buf)
+        FfiConverterOptionInt64.write(value.perMonth, into: &buf)
+        FfiConverterSequenceString.write(value.merchants, into: &buf)
+        FfiConverterSequenceString.write(value.lines, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeBudgetView_lift(_ buf: RustBuffer) throws -> BudgetView {
+    return try FfiConverterTypeBudgetView.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeBudgetView_lower(_ value: BudgetView) -> RustBuffer {
+    return FfiConverterTypeBudgetView.lower(value)
+}
+
+
+/**
+ * The connected virtual card provider.
+ */
+public struct CardProviderView: Equatable, Hashable {
+    /**
+     * "privacy".
+     */
+    public var kind: String
+    public var name: String
+    public var sandbox: Bool
+    public var singleUse: Bool
+    public var addedAt: Int64
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(
+        /**
+         * "privacy".
+         */kind: String, name: String, sandbox: Bool, singleUse: Bool, addedAt: Int64) {
+        self.kind = kind
+        self.name = name
+        self.sandbox = sandbox
+        self.singleUse = singleUse
+        self.addedAt = addedAt
+    }
+
+    
+
+    
+}
+
+#if compiler(>=6)
+extension CardProviderView: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeCardProviderView: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> CardProviderView {
+        return
+            try CardProviderView(
+                kind: FfiConverterString.read(from: &buf), 
+                name: FfiConverterString.read(from: &buf), 
+                sandbox: FfiConverterBool.read(from: &buf), 
+                singleUse: FfiConverterBool.read(from: &buf), 
+                addedAt: FfiConverterInt64.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: CardProviderView, into buf: inout [UInt8]) {
+        FfiConverterString.write(value.kind, into: &buf)
+        FfiConverterString.write(value.name, into: &buf)
+        FfiConverterBool.write(value.sandbox, into: &buf)
+        FfiConverterBool.write(value.singleUse, into: &buf)
+        FfiConverterInt64.write(value.addedAt, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeCardProviderView_lift(_ buf: RustBuffer) throws -> CardProviderView {
+    return try FfiConverterTypeCardProviderView.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeCardProviderView_lower(_ value: CardProviderView) -> RustBuffer {
+    return FfiConverterTypeCardProviderView.lower(value)
+}
+
+
+/**
  * One kind of change a standing permission can allow (issues, code, releases, ...).
  */
 public struct ClassOption: Equatable, Hashable {
@@ -6480,6 +7247,105 @@ public func FfiConverterTypeDeviceEvent_lift(_ buf: RustBuffer) throws -> Device
 #endif
 public func FfiConverterTypeDeviceEvent_lower(_ value: DeviceEvent) -> RustBuffer {
     return FfiConverterTypeDeviceEvent.lower(value)
+}
+
+
+/**
+ * One device signed in to the account (Settings > Devices).
+ */
+public struct DeviceView: Equatable, Hashable {
+    public var id: String
+    public var name: String
+    public var kind: DeviceKind
+    /**
+     * "Android", "iOS", "Chrome extension", "Web vault", ...
+     */
+    public var platform: String
+    public var createdAt: Int64
+    /**
+     * When it last signed in or renewed its sign-in.
+     */
+    public var lastSeenAt: Int64
+    /**
+     * The account's approval device: the one requests go to.
+     */
+    public var approval: Bool
+    public var thisDevice: Bool
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(id: String, name: String, kind: DeviceKind, 
+        /**
+         * "Android", "iOS", "Chrome extension", "Web vault", ...
+         */platform: String, createdAt: Int64, 
+        /**
+         * When it last signed in or renewed its sign-in.
+         */lastSeenAt: Int64, 
+        /**
+         * The account's approval device: the one requests go to.
+         */approval: Bool, thisDevice: Bool) {
+        self.id = id
+        self.name = name
+        self.kind = kind
+        self.platform = platform
+        self.createdAt = createdAt
+        self.lastSeenAt = lastSeenAt
+        self.approval = approval
+        self.thisDevice = thisDevice
+    }
+
+    
+
+    
+}
+
+#if compiler(>=6)
+extension DeviceView: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeDeviceView: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> DeviceView {
+        return
+            try DeviceView(
+                id: FfiConverterString.read(from: &buf), 
+                name: FfiConverterString.read(from: &buf), 
+                kind: FfiConverterTypeDeviceKind.read(from: &buf), 
+                platform: FfiConverterString.read(from: &buf), 
+                createdAt: FfiConverterInt64.read(from: &buf), 
+                lastSeenAt: FfiConverterInt64.read(from: &buf), 
+                approval: FfiConverterBool.read(from: &buf), 
+                thisDevice: FfiConverterBool.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: DeviceView, into buf: inout [UInt8]) {
+        FfiConverterString.write(value.id, into: &buf)
+        FfiConverterString.write(value.name, into: &buf)
+        FfiConverterTypeDeviceKind.write(value.kind, into: &buf)
+        FfiConverterString.write(value.platform, into: &buf)
+        FfiConverterInt64.write(value.createdAt, into: &buf)
+        FfiConverterInt64.write(value.lastSeenAt, into: &buf)
+        FfiConverterBool.write(value.approval, into: &buf)
+        FfiConverterBool.write(value.thisDevice, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeDeviceView_lift(_ buf: RustBuffer) throws -> DeviceView {
+    return try FfiConverterTypeDeviceView.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeDeviceView_lower(_ value: DeviceView) -> RustBuffer {
+    return FfiConverterTypeDeviceView.lower(value)
 }
 
 
@@ -8433,6 +9299,244 @@ public func FfiConverterTypePairingView_lower(_ value: PairingView) -> RustBuffe
 }
 
 
+/**
+ * A payment method, as the approval and the settings show it.
+ */
+public struct PaymentMethodView: Equatable, Hashable {
+    /**
+     * `virtual_card`, `card:<vault item id>`, `merchant_account` or `pay_on_phone`.
+     */
+    public var id: String
+    /**
+     * `virtual_card`, `card`, `merchant_account` or `pay_on_phone`.
+     */
+    public var kind: String
+    /**
+     * The user's nickname, else a name ("Visa •• 4242", "Privacy.com card").
+     */
+    public var name: String
+    public var brand: String?
+    public var last4: String?
+    /**
+     * "04/29".
+     */
+    public var expiry: String?
+    /**
+     * One line on what happens with it ("A new card for this purchase, capped at $27.47").
+     */
+    public var detail: String
+    /**
+     * Settings: switched on for AIs. Approval: always true.
+     */
+    public var enabled: Bool
+    /**
+     * Approval: why it cannot pay for this cart (a virtual card for another currency), else `None`.
+     */
+    public var unavailable: String?
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(
+        /**
+         * `virtual_card`, `card:<vault item id>`, `merchant_account` or `pay_on_phone`.
+         */id: String, 
+        /**
+         * `virtual_card`, `card`, `merchant_account` or `pay_on_phone`.
+         */kind: String, 
+        /**
+         * The user's nickname, else a name ("Visa •• 4242", "Privacy.com card").
+         */name: String, brand: String?, last4: String?, 
+        /**
+         * "04/29".
+         */expiry: String?, 
+        /**
+         * One line on what happens with it ("A new card for this purchase, capped at $27.47").
+         */detail: String, 
+        /**
+         * Settings: switched on for AIs. Approval: always true.
+         */enabled: Bool, 
+        /**
+         * Approval: why it cannot pay for this cart (a virtual card for another currency), else `None`.
+         */unavailable: String?) {
+        self.id = id
+        self.kind = kind
+        self.name = name
+        self.brand = brand
+        self.last4 = last4
+        self.expiry = expiry
+        self.detail = detail
+        self.enabled = enabled
+        self.unavailable = unavailable
+    }
+
+    
+
+    
+}
+
+#if compiler(>=6)
+extension PaymentMethodView: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypePaymentMethodView: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> PaymentMethodView {
+        return
+            try PaymentMethodView(
+                id: FfiConverterString.read(from: &buf), 
+                kind: FfiConverterString.read(from: &buf), 
+                name: FfiConverterString.read(from: &buf), 
+                brand: FfiConverterOptionString.read(from: &buf), 
+                last4: FfiConverterOptionString.read(from: &buf), 
+                expiry: FfiConverterOptionString.read(from: &buf), 
+                detail: FfiConverterString.read(from: &buf), 
+                enabled: FfiConverterBool.read(from: &buf), 
+                unavailable: FfiConverterOptionString.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: PaymentMethodView, into buf: inout [UInt8]) {
+        FfiConverterString.write(value.id, into: &buf)
+        FfiConverterString.write(value.kind, into: &buf)
+        FfiConverterString.write(value.name, into: &buf)
+        FfiConverterOptionString.write(value.brand, into: &buf)
+        FfiConverterOptionString.write(value.last4, into: &buf)
+        FfiConverterOptionString.write(value.expiry, into: &buf)
+        FfiConverterString.write(value.detail, into: &buf)
+        FfiConverterBool.write(value.enabled, into: &buf)
+        FfiConverterOptionString.write(value.unavailable, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypePaymentMethodView_lift(_ buf: RustBuffer) throws -> PaymentMethodView {
+    return try FfiConverterTypePaymentMethodView.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypePaymentMethodView_lower(_ value: PaymentMethodView) -> RustBuffer {
+    return FfiConverterTypePaymentMethodView.lower(value)
+}
+
+
+/**
+ * Integrations → Payments.
+ */
+public struct PaymentsOverview: Equatable, Hashable {
+    /**
+     * Payments is on (the integration has its account).
+     */
+    public var enabled: Bool
+    /**
+     * The vault can be read (cards and addresses come from it).
+     */
+    public var vaultReady: Bool
+    public var methods: [PaymentMethodView]
+    public var addresses: [AddressView]
+    public var provider: CardProviderView?
+    public var defaultMethod: String?
+    public var defaultAddress: String?
+    public var tolerancePct: UInt32
+    public var budgets: [BudgetView]
+    public var limits: [SpendLimitView]
+    /**
+     * The mandate key's RFC 7638 thumbprint.
+     */
+    public var mandateKey: String
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(
+        /**
+         * Payments is on (the integration has its account).
+         */enabled: Bool, 
+        /**
+         * The vault can be read (cards and addresses come from it).
+         */vaultReady: Bool, methods: [PaymentMethodView], addresses: [AddressView], provider: CardProviderView?, defaultMethod: String?, defaultAddress: String?, tolerancePct: UInt32, budgets: [BudgetView], limits: [SpendLimitView], 
+        /**
+         * The mandate key's RFC 7638 thumbprint.
+         */mandateKey: String) {
+        self.enabled = enabled
+        self.vaultReady = vaultReady
+        self.methods = methods
+        self.addresses = addresses
+        self.provider = provider
+        self.defaultMethod = defaultMethod
+        self.defaultAddress = defaultAddress
+        self.tolerancePct = tolerancePct
+        self.budgets = budgets
+        self.limits = limits
+        self.mandateKey = mandateKey
+    }
+
+    
+
+    
+}
+
+#if compiler(>=6)
+extension PaymentsOverview: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypePaymentsOverview: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> PaymentsOverview {
+        return
+            try PaymentsOverview(
+                enabled: FfiConverterBool.read(from: &buf), 
+                vaultReady: FfiConverterBool.read(from: &buf), 
+                methods: FfiConverterSequenceTypePaymentMethodView.read(from: &buf), 
+                addresses: FfiConverterSequenceTypeAddressView.read(from: &buf), 
+                provider: FfiConverterOptionTypeCardProviderView.read(from: &buf), 
+                defaultMethod: FfiConverterOptionString.read(from: &buf), 
+                defaultAddress: FfiConverterOptionString.read(from: &buf), 
+                tolerancePct: FfiConverterUInt32.read(from: &buf), 
+                budgets: FfiConverterSequenceTypeBudgetView.read(from: &buf), 
+                limits: FfiConverterSequenceTypeSpendLimitView.read(from: &buf), 
+                mandateKey: FfiConverterString.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: PaymentsOverview, into buf: inout [UInt8]) {
+        FfiConverterBool.write(value.enabled, into: &buf)
+        FfiConverterBool.write(value.vaultReady, into: &buf)
+        FfiConverterSequenceTypePaymentMethodView.write(value.methods, into: &buf)
+        FfiConverterSequenceTypeAddressView.write(value.addresses, into: &buf)
+        FfiConverterOptionTypeCardProviderView.write(value.provider, into: &buf)
+        FfiConverterOptionString.write(value.defaultMethod, into: &buf)
+        FfiConverterOptionString.write(value.defaultAddress, into: &buf)
+        FfiConverterUInt32.write(value.tolerancePct, into: &buf)
+        FfiConverterSequenceTypeBudgetView.write(value.budgets, into: &buf)
+        FfiConverterSequenceTypeSpendLimitView.write(value.limits, into: &buf)
+        FfiConverterString.write(value.mandateKey, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypePaymentsOverview_lift(_ buf: RustBuffer) throws -> PaymentsOverview {
+    return try FfiConverterTypePaymentsOverview.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypePaymentsOverview_lower(_ value: PaymentsOverview) -> RustBuffer {
+    return FfiConverterTypePaymentsOverview.lower(value)
+}
+
+
 public struct PendingItem: Equatable, Hashable {
     public var kind: PendingKind
     public var id: String
@@ -8717,6 +9821,535 @@ public func FfiConverterTypeProfileView_lift(_ buf: RustBuffer) throws -> Profil
 #endif
 public func FfiConverterTypeProfileView_lower(_ value: ProfileView) -> RustBuffer {
     return FfiConverterTypeProfileView.lower(value)
+}
+
+
+/**
+ * What the user picked on the purchase screen.
+ */
+public struct PurchaseChoice: Equatable, Hashable {
+    /**
+     * `None`: the one the view picked.
+     */
+    public var methodId: String?
+    public var addressId: String?
+    public var limit: SpendLimitInput?
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(
+        /**
+         * `None`: the one the view picked.
+         */methodId: String?, addressId: String?, limit: SpendLimitInput?) {
+        self.methodId = methodId
+        self.addressId = addressId
+        self.limit = limit
+    }
+
+    
+
+    
+}
+
+#if compiler(>=6)
+extension PurchaseChoice: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypePurchaseChoice: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> PurchaseChoice {
+        return
+            try PurchaseChoice(
+                methodId: FfiConverterOptionString.read(from: &buf), 
+                addressId: FfiConverterOptionString.read(from: &buf), 
+                limit: FfiConverterOptionTypeSpendLimitInput.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: PurchaseChoice, into buf: inout [UInt8]) {
+        FfiConverterOptionString.write(value.methodId, into: &buf)
+        FfiConverterOptionString.write(value.addressId, into: &buf)
+        FfiConverterOptionTypeSpendLimitInput.write(value.limit, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypePurchaseChoice_lift(_ buf: RustBuffer) throws -> PurchaseChoice {
+    return try FfiConverterTypePurchaseChoice.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypePurchaseChoice_lower(_ value: PurchaseChoice) -> RustBuffer {
+    return FfiConverterTypePurchaseChoice.lower(value)
+}
+
+
+public struct PurchaseLineView: Equatable, Hashable {
+    public var name: String
+    public var details: String?
+    public var quantity: UInt32
+    public var unitPrice: String
+    public var lineTotal: String
+    public var url: String?
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(name: String, details: String?, quantity: UInt32, unitPrice: String, lineTotal: String, url: String?) {
+        self.name = name
+        self.details = details
+        self.quantity = quantity
+        self.unitPrice = unitPrice
+        self.lineTotal = lineTotal
+        self.url = url
+    }
+
+    
+
+    
+}
+
+#if compiler(>=6)
+extension PurchaseLineView: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypePurchaseLineView: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> PurchaseLineView {
+        return
+            try PurchaseLineView(
+                name: FfiConverterString.read(from: &buf), 
+                details: FfiConverterOptionString.read(from: &buf), 
+                quantity: FfiConverterUInt32.read(from: &buf), 
+                unitPrice: FfiConverterString.read(from: &buf), 
+                lineTotal: FfiConverterString.read(from: &buf), 
+                url: FfiConverterOptionString.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: PurchaseLineView, into buf: inout [UInt8]) {
+        FfiConverterString.write(value.name, into: &buf)
+        FfiConverterOptionString.write(value.details, into: &buf)
+        FfiConverterUInt32.write(value.quantity, into: &buf)
+        FfiConverterString.write(value.unitPrice, into: &buf)
+        FfiConverterString.write(value.lineTotal, into: &buf)
+        FfiConverterOptionString.write(value.url, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypePurchaseLineView_lift(_ buf: RustBuffer) throws -> PurchaseLineView {
+    return try FfiConverterTypePurchaseLineView.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypePurchaseLineView_lower(_ value: PurchaseLineView) -> RustBuffer {
+    return FfiConverterTypePurchaseLineView.lower(value)
+}
+
+
+/**
+ * One purchase in the spending history.
+ */
+public struct PurchaseRecordView: Equatable, Hashable {
+    public var id: String
+    public var at: Int64
+    public var connectionId: String
+    public var connectionLabel: String
+    public var merchant: String
+    public var domain: String
+    public var lines: [String]
+    public var currency: String
+    public var total: Int64
+    public var totalText: String
+    public var methodKind: String
+    public var methodLabel: String
+    public var shipTo: String?
+    /**
+     * Approved by the user, or by a spend limit.
+     */
+    public var byLimit: Bool
+    /**
+     * "approved" | "completed" | "failed" | "cancelled".
+     */
+    public var status: String
+    public var orderId: String?
+    public var chargedText: String?
+    public var receiptUrl: String?
+    public var reportNote: String?
+    /**
+     * A virtual card that is still open and can be closed.
+     */
+    public var cardOpen: Bool
+    public var cardLast4: String?
+    /**
+     * Who charged the virtual card, as the card network names them.
+     */
+    public var chargedBy: [String]
+    /**
+     * A charge by someone who does not look like the approved store: shown until the user has seen it, and spend
+     * limits for this AI wait until then.
+     */
+    public var mismatch: String?
+    /**
+     * What it counts for in budgets and limits now ("$27.47": an open card counts its cap).
+     */
+    public var countedText: String
+    /**
+     * It did not pay with a virtual card and still counts: the user can say nothing was charged.
+     */
+    public var clearable: Bool
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(id: String, at: Int64, connectionId: String, connectionLabel: String, merchant: String, domain: String, lines: [String], currency: String, total: Int64, totalText: String, methodKind: String, methodLabel: String, shipTo: String?, 
+        /**
+         * Approved by the user, or by a spend limit.
+         */byLimit: Bool, 
+        /**
+         * "approved" | "completed" | "failed" | "cancelled".
+         */status: String, orderId: String?, chargedText: String?, receiptUrl: String?, reportNote: String?, 
+        /**
+         * A virtual card that is still open and can be closed.
+         */cardOpen: Bool, cardLast4: String?, 
+        /**
+         * Who charged the virtual card, as the card network names them.
+         */chargedBy: [String], 
+        /**
+         * A charge by someone who does not look like the approved store: shown until the user has seen it, and spend
+         * limits for this AI wait until then.
+         */mismatch: String?, 
+        /**
+         * What it counts for in budgets and limits now ("$27.47": an open card counts its cap).
+         */countedText: String, 
+        /**
+         * It did not pay with a virtual card and still counts: the user can say nothing was charged.
+         */clearable: Bool) {
+        self.id = id
+        self.at = at
+        self.connectionId = connectionId
+        self.connectionLabel = connectionLabel
+        self.merchant = merchant
+        self.domain = domain
+        self.lines = lines
+        self.currency = currency
+        self.total = total
+        self.totalText = totalText
+        self.methodKind = methodKind
+        self.methodLabel = methodLabel
+        self.shipTo = shipTo
+        self.byLimit = byLimit
+        self.status = status
+        self.orderId = orderId
+        self.chargedText = chargedText
+        self.receiptUrl = receiptUrl
+        self.reportNote = reportNote
+        self.cardOpen = cardOpen
+        self.cardLast4 = cardLast4
+        self.chargedBy = chargedBy
+        self.mismatch = mismatch
+        self.countedText = countedText
+        self.clearable = clearable
+    }
+
+    
+
+    
+}
+
+#if compiler(>=6)
+extension PurchaseRecordView: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypePurchaseRecordView: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> PurchaseRecordView {
+        return
+            try PurchaseRecordView(
+                id: FfiConverterString.read(from: &buf), 
+                at: FfiConverterInt64.read(from: &buf), 
+                connectionId: FfiConverterString.read(from: &buf), 
+                connectionLabel: FfiConverterString.read(from: &buf), 
+                merchant: FfiConverterString.read(from: &buf), 
+                domain: FfiConverterString.read(from: &buf), 
+                lines: FfiConverterSequenceString.read(from: &buf), 
+                currency: FfiConverterString.read(from: &buf), 
+                total: FfiConverterInt64.read(from: &buf), 
+                totalText: FfiConverterString.read(from: &buf), 
+                methodKind: FfiConverterString.read(from: &buf), 
+                methodLabel: FfiConverterString.read(from: &buf), 
+                shipTo: FfiConverterOptionString.read(from: &buf), 
+                byLimit: FfiConverterBool.read(from: &buf), 
+                status: FfiConverterString.read(from: &buf), 
+                orderId: FfiConverterOptionString.read(from: &buf), 
+                chargedText: FfiConverterOptionString.read(from: &buf), 
+                receiptUrl: FfiConverterOptionString.read(from: &buf), 
+                reportNote: FfiConverterOptionString.read(from: &buf), 
+                cardOpen: FfiConverterBool.read(from: &buf), 
+                cardLast4: FfiConverterOptionString.read(from: &buf), 
+                chargedBy: FfiConverterSequenceString.read(from: &buf), 
+                mismatch: FfiConverterOptionString.read(from: &buf), 
+                countedText: FfiConverterString.read(from: &buf), 
+                clearable: FfiConverterBool.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: PurchaseRecordView, into buf: inout [UInt8]) {
+        FfiConverterString.write(value.id, into: &buf)
+        FfiConverterInt64.write(value.at, into: &buf)
+        FfiConverterString.write(value.connectionId, into: &buf)
+        FfiConverterString.write(value.connectionLabel, into: &buf)
+        FfiConverterString.write(value.merchant, into: &buf)
+        FfiConverterString.write(value.domain, into: &buf)
+        FfiConverterSequenceString.write(value.lines, into: &buf)
+        FfiConverterString.write(value.currency, into: &buf)
+        FfiConverterInt64.write(value.total, into: &buf)
+        FfiConverterString.write(value.totalText, into: &buf)
+        FfiConverterString.write(value.methodKind, into: &buf)
+        FfiConverterString.write(value.methodLabel, into: &buf)
+        FfiConverterOptionString.write(value.shipTo, into: &buf)
+        FfiConverterBool.write(value.byLimit, into: &buf)
+        FfiConverterString.write(value.status, into: &buf)
+        FfiConverterOptionString.write(value.orderId, into: &buf)
+        FfiConverterOptionString.write(value.chargedText, into: &buf)
+        FfiConverterOptionString.write(value.receiptUrl, into: &buf)
+        FfiConverterOptionString.write(value.reportNote, into: &buf)
+        FfiConverterBool.write(value.cardOpen, into: &buf)
+        FfiConverterOptionString.write(value.cardLast4, into: &buf)
+        FfiConverterSequenceString.write(value.chargedBy, into: &buf)
+        FfiConverterOptionString.write(value.mismatch, into: &buf)
+        FfiConverterString.write(value.countedText, into: &buf)
+        FfiConverterBool.write(value.clearable, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypePurchaseRecordView_lift(_ buf: RustBuffer) throws -> PurchaseRecordView {
+    return try FfiConverterTypePurchaseRecordView.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypePurchaseRecordView_lower(_ value: PurchaseRecordView) -> RustBuffer {
+    return FfiConverterTypePurchaseRecordView.lower(value)
+}
+
+
+/**
+ * A purchase waiting for the user (`ApprovalView.purchase`).
+ */
+public struct PurchaseView: Equatable, Hashable {
+    public var merchant: String
+    /**
+     * The store's domain (`amazon.com`), from the page it named.
+     */
+    public var domain: String
+    public var merchantUrl: String
+    /**
+     * The page Pay on phone opens, and its host.
+     */
+    public var checkoutUrl: String
+    public var checkoutHost: String
+    public var items: [PurchaseLineView]
+    public var subtotal: String
+    public var shipping: String?
+    public var tax: String?
+    public var discount: String?
+    public var total: String
+    public var totalMinor: Int64
+    public var currency: String
+    /**
+     * Why, in the AI's words.
+     */
+    public var note: String?
+    /**
+     * The methods the user may pay with, and the one picked (the AI's choice, else the default).
+     */
+    public var methods: [PaymentMethodView]
+    public var methodId: String?
+    /**
+     * Whether it ships; the addresses, and the one picked.
+     */
+    public var ships: Bool
+    public var addresses: [AddressView]
+    public var addressId: String?
+    /**
+     * Shown above the total ("amazon.com is new for this AI").
+     */
+    public var warnings: [String]
+    /**
+     * "Claude spent $40.00 of $200.00 in the last 30 days".
+     */
+    public var budgetLines: [String]
+    /**
+     * The methods a spend limit made from this approval may use.
+     */
+    public var limitMethods: [String]
+    /**
+     * Where card details go: "Card details go sealed to “Work laptop”, your desktop app paired on 2026-10-09: the
+     * Reins server cannot read them.", or that they go through the server. The app's name is the one this phone kept
+     * when pairing it, not the server's.
+     */
+    public var delivery: String?
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(merchant: String, 
+        /**
+         * The store's domain (`amazon.com`), from the page it named.
+         */domain: String, merchantUrl: String, 
+        /**
+         * The page Pay on phone opens, and its host.
+         */checkoutUrl: String, checkoutHost: String, items: [PurchaseLineView], subtotal: String, shipping: String?, tax: String?, discount: String?, total: String, totalMinor: Int64, currency: String, 
+        /**
+         * Why, in the AI's words.
+         */note: String?, 
+        /**
+         * The methods the user may pay with, and the one picked (the AI's choice, else the default).
+         */methods: [PaymentMethodView], methodId: String?, 
+        /**
+         * Whether it ships; the addresses, and the one picked.
+         */ships: Bool, addresses: [AddressView], addressId: String?, 
+        /**
+         * Shown above the total ("amazon.com is new for this AI").
+         */warnings: [String], 
+        /**
+         * "Claude spent $40.00 of $200.00 in the last 30 days".
+         */budgetLines: [String], 
+        /**
+         * The methods a spend limit made from this approval may use.
+         */limitMethods: [String], 
+        /**
+         * Where card details go: "Card details go sealed to “Work laptop”, your desktop app paired on 2026-10-09: the
+         * Reins server cannot read them.", or that they go through the server. The app's name is the one this phone kept
+         * when pairing it, not the server's.
+         */delivery: String? = nil) {
+        self.merchant = merchant
+        self.domain = domain
+        self.merchantUrl = merchantUrl
+        self.checkoutUrl = checkoutUrl
+        self.checkoutHost = checkoutHost
+        self.items = items
+        self.subtotal = subtotal
+        self.shipping = shipping
+        self.tax = tax
+        self.discount = discount
+        self.total = total
+        self.totalMinor = totalMinor
+        self.currency = currency
+        self.note = note
+        self.methods = methods
+        self.methodId = methodId
+        self.ships = ships
+        self.addresses = addresses
+        self.addressId = addressId
+        self.warnings = warnings
+        self.budgetLines = budgetLines
+        self.limitMethods = limitMethods
+        self.delivery = delivery
+    }
+
+    
+
+    
+}
+
+#if compiler(>=6)
+extension PurchaseView: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypePurchaseView: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> PurchaseView {
+        return
+            try PurchaseView(
+                merchant: FfiConverterString.read(from: &buf), 
+                domain: FfiConverterString.read(from: &buf), 
+                merchantUrl: FfiConverterString.read(from: &buf), 
+                checkoutUrl: FfiConverterString.read(from: &buf), 
+                checkoutHost: FfiConverterString.read(from: &buf), 
+                items: FfiConverterSequenceTypePurchaseLineView.read(from: &buf), 
+                subtotal: FfiConverterString.read(from: &buf), 
+                shipping: FfiConverterOptionString.read(from: &buf), 
+                tax: FfiConverterOptionString.read(from: &buf), 
+                discount: FfiConverterOptionString.read(from: &buf), 
+                total: FfiConverterString.read(from: &buf), 
+                totalMinor: FfiConverterInt64.read(from: &buf), 
+                currency: FfiConverterString.read(from: &buf), 
+                note: FfiConverterOptionString.read(from: &buf), 
+                methods: FfiConverterSequenceTypePaymentMethodView.read(from: &buf), 
+                methodId: FfiConverterOptionString.read(from: &buf), 
+                ships: FfiConverterBool.read(from: &buf), 
+                addresses: FfiConverterSequenceTypeAddressView.read(from: &buf), 
+                addressId: FfiConverterOptionString.read(from: &buf), 
+                warnings: FfiConverterSequenceString.read(from: &buf), 
+                budgetLines: FfiConverterSequenceString.read(from: &buf), 
+                limitMethods: FfiConverterSequenceString.read(from: &buf), 
+                delivery: FfiConverterOptionString.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: PurchaseView, into buf: inout [UInt8]) {
+        FfiConverterString.write(value.merchant, into: &buf)
+        FfiConverterString.write(value.domain, into: &buf)
+        FfiConverterString.write(value.merchantUrl, into: &buf)
+        FfiConverterString.write(value.checkoutUrl, into: &buf)
+        FfiConverterString.write(value.checkoutHost, into: &buf)
+        FfiConverterSequenceTypePurchaseLineView.write(value.items, into: &buf)
+        FfiConverterString.write(value.subtotal, into: &buf)
+        FfiConverterOptionString.write(value.shipping, into: &buf)
+        FfiConverterOptionString.write(value.tax, into: &buf)
+        FfiConverterOptionString.write(value.discount, into: &buf)
+        FfiConverterString.write(value.total, into: &buf)
+        FfiConverterInt64.write(value.totalMinor, into: &buf)
+        FfiConverterString.write(value.currency, into: &buf)
+        FfiConverterOptionString.write(value.note, into: &buf)
+        FfiConverterSequenceTypePaymentMethodView.write(value.methods, into: &buf)
+        FfiConverterOptionString.write(value.methodId, into: &buf)
+        FfiConverterBool.write(value.ships, into: &buf)
+        FfiConverterSequenceTypeAddressView.write(value.addresses, into: &buf)
+        FfiConverterOptionString.write(value.addressId, into: &buf)
+        FfiConverterSequenceString.write(value.warnings, into: &buf)
+        FfiConverterSequenceString.write(value.budgetLines, into: &buf)
+        FfiConverterSequenceString.write(value.limitMethods, into: &buf)
+        FfiConverterOptionString.write(value.delivery, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypePurchaseView_lift(_ buf: RustBuffer) throws -> PurchaseView {
+    return try FfiConverterTypePurchaseView.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypePurchaseView_lower(_ value: PurchaseView) -> RustBuffer {
+    return FfiConverterTypePurchaseView.lower(value)
 }
 
 
@@ -9338,6 +10971,410 @@ public func FfiConverterTypeSmsThread_lower(_ value: SmsThread) -> RustBuffer {
 
 
 /**
+ * What one AI spent.
+ */
+public struct SpendByAi: Equatable, Hashable {
+    public var connectionId: String
+    public var connectionLabel: String
+    public var totals: [SpendTotal]
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(connectionId: String, connectionLabel: String, totals: [SpendTotal]) {
+        self.connectionId = connectionId
+        self.connectionLabel = connectionLabel
+        self.totals = totals
+    }
+
+    
+
+    
+}
+
+#if compiler(>=6)
+extension SpendByAi: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeSpendByAi: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> SpendByAi {
+        return
+            try SpendByAi(
+                connectionId: FfiConverterString.read(from: &buf), 
+                connectionLabel: FfiConverterString.read(from: &buf), 
+                totals: FfiConverterSequenceTypeSpendTotal.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: SpendByAi, into buf: inout [UInt8]) {
+        FfiConverterString.write(value.connectionId, into: &buf)
+        FfiConverterString.write(value.connectionLabel, into: &buf)
+        FfiConverterSequenceTypeSpendTotal.write(value.totals, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeSpendByAi_lift(_ buf: RustBuffer) throws -> SpendByAi {
+    return try FfiConverterTypeSpendByAi.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeSpendByAi_lower(_ value: SpendByAi) -> RustBuffer {
+    return FfiConverterTypeSpendByAi.lower(value)
+}
+
+
+/**
+ * A spend limit to create alongside an approval, or from the settings.
+ */
+public struct SpendLimitInput: Equatable, Hashable {
+    /**
+     * From the settings; ignored alongside an approval (it is the request's).
+     */
+    public var connectionId: String
+    /**
+     * Store domains; empty: every store.
+     */
+    public var merchants: [String]
+    public var method: String
+    public var currency: String
+    public var perPurchase: Int64
+    public var perPeriod: Int64
+    public var period: LimitPeriod
+    public var durationSecs: Int64
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(
+        /**
+         * From the settings; ignored alongside an approval (it is the request's).
+         */connectionId: String, 
+        /**
+         * Store domains; empty: every store.
+         */merchants: [String], method: String, currency: String, perPurchase: Int64, perPeriod: Int64, period: LimitPeriod, durationSecs: Int64) {
+        self.connectionId = connectionId
+        self.merchants = merchants
+        self.method = method
+        self.currency = currency
+        self.perPurchase = perPurchase
+        self.perPeriod = perPeriod
+        self.period = period
+        self.durationSecs = durationSecs
+    }
+
+    
+
+    
+}
+
+#if compiler(>=6)
+extension SpendLimitInput: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeSpendLimitInput: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> SpendLimitInput {
+        return
+            try SpendLimitInput(
+                connectionId: FfiConverterString.read(from: &buf), 
+                merchants: FfiConverterSequenceString.read(from: &buf), 
+                method: FfiConverterString.read(from: &buf), 
+                currency: FfiConverterString.read(from: &buf), 
+                perPurchase: FfiConverterInt64.read(from: &buf), 
+                perPeriod: FfiConverterInt64.read(from: &buf), 
+                period: FfiConverterTypeLimitPeriod.read(from: &buf), 
+                durationSecs: FfiConverterInt64.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: SpendLimitInput, into buf: inout [UInt8]) {
+        FfiConverterString.write(value.connectionId, into: &buf)
+        FfiConverterSequenceString.write(value.merchants, into: &buf)
+        FfiConverterString.write(value.method, into: &buf)
+        FfiConverterString.write(value.currency, into: &buf)
+        FfiConverterInt64.write(value.perPurchase, into: &buf)
+        FfiConverterInt64.write(value.perPeriod, into: &buf)
+        FfiConverterTypeLimitPeriod.write(value.period, into: &buf)
+        FfiConverterInt64.write(value.durationSecs, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeSpendLimitInput_lift(_ buf: RustBuffer) throws -> SpendLimitInput {
+    return try FfiConverterTypeSpendLimitInput.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeSpendLimitInput_lower(_ value: SpendLimitInput) -> RustBuffer {
+    return FfiConverterTypeSpendLimitInput.lower(value)
+}
+
+
+public struct SpendLimitView: Equatable, Hashable {
+    public var id: String
+    public var connectionId: String
+    public var connectionLabel: String
+    public var merchants: [String]
+    public var method: String
+    public var methodName: String
+    public var currency: String
+    public var perPurchase: Int64
+    public var perPeriod: Int64
+    public var period: LimitPeriod
+    /**
+     * "Up to $25.00 a purchase and $50.00 a day at amazon.com".
+     */
+    public var summary: String
+    /**
+     * Spent within this limit's period so far.
+     */
+    public var spent: Int64
+    public var createdAt: Int64
+    public var expiresAt: Int64
+    public var active: Bool
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(id: String, connectionId: String, connectionLabel: String, merchants: [String], method: String, methodName: String, currency: String, perPurchase: Int64, perPeriod: Int64, period: LimitPeriod, 
+        /**
+         * "Up to $25.00 a purchase and $50.00 a day at amazon.com".
+         */summary: String, 
+        /**
+         * Spent within this limit's period so far.
+         */spent: Int64, createdAt: Int64, expiresAt: Int64, active: Bool) {
+        self.id = id
+        self.connectionId = connectionId
+        self.connectionLabel = connectionLabel
+        self.merchants = merchants
+        self.method = method
+        self.methodName = methodName
+        self.currency = currency
+        self.perPurchase = perPurchase
+        self.perPeriod = perPeriod
+        self.period = period
+        self.summary = summary
+        self.spent = spent
+        self.createdAt = createdAt
+        self.expiresAt = expiresAt
+        self.active = active
+    }
+
+    
+
+    
+}
+
+#if compiler(>=6)
+extension SpendLimitView: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeSpendLimitView: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> SpendLimitView {
+        return
+            try SpendLimitView(
+                id: FfiConverterString.read(from: &buf), 
+                connectionId: FfiConverterString.read(from: &buf), 
+                connectionLabel: FfiConverterString.read(from: &buf), 
+                merchants: FfiConverterSequenceString.read(from: &buf), 
+                method: FfiConverterString.read(from: &buf), 
+                methodName: FfiConverterString.read(from: &buf), 
+                currency: FfiConverterString.read(from: &buf), 
+                perPurchase: FfiConverterInt64.read(from: &buf), 
+                perPeriod: FfiConverterInt64.read(from: &buf), 
+                period: FfiConverterTypeLimitPeriod.read(from: &buf), 
+                summary: FfiConverterString.read(from: &buf), 
+                spent: FfiConverterInt64.read(from: &buf), 
+                createdAt: FfiConverterInt64.read(from: &buf), 
+                expiresAt: FfiConverterInt64.read(from: &buf), 
+                active: FfiConverterBool.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: SpendLimitView, into buf: inout [UInt8]) {
+        FfiConverterString.write(value.id, into: &buf)
+        FfiConverterString.write(value.connectionId, into: &buf)
+        FfiConverterString.write(value.connectionLabel, into: &buf)
+        FfiConverterSequenceString.write(value.merchants, into: &buf)
+        FfiConverterString.write(value.method, into: &buf)
+        FfiConverterString.write(value.methodName, into: &buf)
+        FfiConverterString.write(value.currency, into: &buf)
+        FfiConverterInt64.write(value.perPurchase, into: &buf)
+        FfiConverterInt64.write(value.perPeriod, into: &buf)
+        FfiConverterTypeLimitPeriod.write(value.period, into: &buf)
+        FfiConverterString.write(value.summary, into: &buf)
+        FfiConverterInt64.write(value.spent, into: &buf)
+        FfiConverterInt64.write(value.createdAt, into: &buf)
+        FfiConverterInt64.write(value.expiresAt, into: &buf)
+        FfiConverterBool.write(value.active, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeSpendLimitView_lift(_ buf: RustBuffer) throws -> SpendLimitView {
+    return try FfiConverterTypeSpendLimitView.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeSpendLimitView_lower(_ value: SpendLimitView) -> RustBuffer {
+    return FfiConverterTypeSpendLimitView.lower(value)
+}
+
+
+/**
+ * What was spent in one currency.
+ */
+public struct SpendTotal: Equatable, Hashable {
+    public var currency: String
+    public var minor: Int64
+    public var text: String
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(currency: String, minor: Int64, text: String) {
+        self.currency = currency
+        self.minor = minor
+        self.text = text
+    }
+
+    
+
+    
+}
+
+#if compiler(>=6)
+extension SpendTotal: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeSpendTotal: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> SpendTotal {
+        return
+            try SpendTotal(
+                currency: FfiConverterString.read(from: &buf), 
+                minor: FfiConverterInt64.read(from: &buf), 
+                text: FfiConverterString.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: SpendTotal, into buf: inout [UInt8]) {
+        FfiConverterString.write(value.currency, into: &buf)
+        FfiConverterInt64.write(value.minor, into: &buf)
+        FfiConverterString.write(value.text, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeSpendTotal_lift(_ buf: RustBuffer) throws -> SpendTotal {
+    return try FfiConverterTypeSpendTotal.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeSpendTotal_lower(_ value: SpendTotal) -> RustBuffer {
+    return FfiConverterTypeSpendTotal.lower(value)
+}
+
+
+/**
+ * Payments → Spending.
+ */
+public struct SpendingView: Equatable, Hashable {
+    public var since: Int64
+    public var totals: [SpendTotal]
+    public var byAi: [SpendByAi]
+    /**
+     * Newest first, every purchase kept.
+     */
+    public var purchases: [PurchaseRecordView]
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(since: Int64, totals: [SpendTotal], byAi: [SpendByAi], 
+        /**
+         * Newest first, every purchase kept.
+         */purchases: [PurchaseRecordView]) {
+        self.since = since
+        self.totals = totals
+        self.byAi = byAi
+        self.purchases = purchases
+    }
+
+    
+
+    
+}
+
+#if compiler(>=6)
+extension SpendingView: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeSpendingView: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> SpendingView {
+        return
+            try SpendingView(
+                since: FfiConverterInt64.read(from: &buf), 
+                totals: FfiConverterSequenceTypeSpendTotal.read(from: &buf), 
+                byAi: FfiConverterSequenceTypeSpendByAi.read(from: &buf), 
+                purchases: FfiConverterSequenceTypePurchaseRecordView.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: SpendingView, into buf: inout [UInt8]) {
+        FfiConverterInt64.write(value.since, into: &buf)
+        FfiConverterSequenceTypeSpendTotal.write(value.totals, into: &buf)
+        FfiConverterSequenceTypeSpendByAi.write(value.byAi, into: &buf)
+        FfiConverterSequenceTypePurchaseRecordView.write(value.purchases, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeSpendingView_lift(_ buf: RustBuffer) throws -> SpendingView {
+    return try FfiConverterTypeSpendingView.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeSpendingView_lower(_ value: SpendingView) -> RustBuffer {
+    return FfiConverterTypeSpendingView.lower(value)
+}
+
+
+/**
  * One SSH sign-in, signed on the phone with a vault key.
  */
 public struct SshSignView: Equatable, Hashable {
@@ -9749,6 +11786,374 @@ public func FfiConverterTypeSuggestionView_lower(_ value: SuggestionView) -> Rus
 
 
 /**
+ * One field of an item as the phone shows it.
+ */
+public struct VaultField: Equatable, Hashable {
+    /**
+     * What [`VaultFieldInput::key`] and `vault_reveal` call it: `username`, `password`, `notes`, `uris`,
+     * `private_key`, `number`, ..., or `custom:<name>` for a custom field.
+     */
+    public var key: String
+    public var label: String
+    /**
+     * The value of a field that is not secret; `None` for a secret one (`vault_reveal` gives it).
+     */
+    public var value: String?
+    public var secret: Bool
+    /**
+     * Several lines (notes, websites, a key).
+     */
+    public var multiline: Bool
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(
+        /**
+         * What [`VaultFieldInput::key`] and `vault_reveal` call it: `username`, `password`, `notes`, `uris`,
+         * `private_key`, `number`, ..., or `custom:<name>` for a custom field.
+         */key: String, label: String, 
+        /**
+         * The value of a field that is not secret; `None` for a secret one (`vault_reveal` gives it).
+         */value: String?, secret: Bool, 
+        /**
+         * Several lines (notes, websites, a key).
+         */multiline: Bool) {
+        self.key = key
+        self.label = label
+        self.value = value
+        self.secret = secret
+        self.multiline = multiline
+    }
+
+    
+
+    
+}
+
+#if compiler(>=6)
+extension VaultField: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeVaultField: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> VaultField {
+        return
+            try VaultField(
+                key: FfiConverterString.read(from: &buf), 
+                label: FfiConverterString.read(from: &buf), 
+                value: FfiConverterOptionString.read(from: &buf), 
+                secret: FfiConverterBool.read(from: &buf), 
+                multiline: FfiConverterBool.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: VaultField, into buf: inout [UInt8]) {
+        FfiConverterString.write(value.key, into: &buf)
+        FfiConverterString.write(value.label, into: &buf)
+        FfiConverterOptionString.write(value.value, into: &buf)
+        FfiConverterBool.write(value.secret, into: &buf)
+        FfiConverterBool.write(value.multiline, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeVaultField_lift(_ buf: RustBuffer) throws -> VaultField {
+    return try FfiConverterTypeVaultField.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeVaultField_lower(_ value: VaultField) -> RustBuffer {
+    return FfiConverterTypeVaultField.lower(value)
+}
+
+
+/**
+ * A field to set. An empty value clears it.
+ */
+public struct VaultFieldInput: Equatable, Hashable {
+    public var key: String
+    public var value: String
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(key: String, value: String) {
+        self.key = key
+        self.value = value
+    }
+
+    
+
+    
+}
+
+#if compiler(>=6)
+extension VaultFieldInput: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeVaultFieldInput: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> VaultFieldInput {
+        return
+            try VaultFieldInput(
+                key: FfiConverterString.read(from: &buf), 
+                value: FfiConverterString.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: VaultFieldInput, into buf: inout [UInt8]) {
+        FfiConverterString.write(value.key, into: &buf)
+        FfiConverterString.write(value.value, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeVaultFieldInput_lift(_ buf: RustBuffer) throws -> VaultFieldInput {
+    return try FfiConverterTypeVaultFieldInput.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeVaultFieldInput_lower(_ value: VaultFieldInput) -> RustBuffer {
+    return FfiConverterTypeVaultFieldInput.lower(value)
+}
+
+
+public struct VaultItemDetail: Equatable, Hashable {
+    public var id: String
+    public var name: String
+    public var kind: VaultItemKind
+    /**
+     * The fields that are set, in the order the item's kind has them; then the custom fields and the notes.
+     */
+    public var fields: [VaultField]
+    public var uses: [VaultUse]
+    /**
+     * Something to fix for the desktop app to find the item ("2 items are named OpenAI"), when there is one.
+     */
+    public var warning: String?
+    public var favorite: Bool
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(id: String, name: String, kind: VaultItemKind, 
+        /**
+         * The fields that are set, in the order the item's kind has them; then the custom fields and the notes.
+         */fields: [VaultField], uses: [VaultUse], 
+        /**
+         * Something to fix for the desktop app to find the item ("2 items are named OpenAI"), when there is one.
+         */warning: String?, favorite: Bool) {
+        self.id = id
+        self.name = name
+        self.kind = kind
+        self.fields = fields
+        self.uses = uses
+        self.warning = warning
+        self.favorite = favorite
+    }
+
+    
+
+    
+}
+
+#if compiler(>=6)
+extension VaultItemDetail: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeVaultItemDetail: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> VaultItemDetail {
+        return
+            try VaultItemDetail(
+                id: FfiConverterString.read(from: &buf), 
+                name: FfiConverterString.read(from: &buf), 
+                kind: FfiConverterTypeVaultItemKind.read(from: &buf), 
+                fields: FfiConverterSequenceTypeVaultField.read(from: &buf), 
+                uses: FfiConverterSequenceTypeVaultUse.read(from: &buf), 
+                warning: FfiConverterOptionString.read(from: &buf), 
+                favorite: FfiConverterBool.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: VaultItemDetail, into buf: inout [UInt8]) {
+        FfiConverterString.write(value.id, into: &buf)
+        FfiConverterString.write(value.name, into: &buf)
+        FfiConverterTypeVaultItemKind.write(value.kind, into: &buf)
+        FfiConverterSequenceTypeVaultField.write(value.fields, into: &buf)
+        FfiConverterSequenceTypeVaultUse.write(value.uses, into: &buf)
+        FfiConverterOptionString.write(value.warning, into: &buf)
+        FfiConverterBool.write(value.favorite, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeVaultItemDetail_lift(_ buf: RustBuffer) throws -> VaultItemDetail {
+    return try FfiConverterTypeVaultItemDetail.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeVaultItemDetail_lower(_ value: VaultItemDetail) -> RustBuffer {
+    return FfiConverterTypeVaultItemDetail.lower(value)
+}
+
+
+/**
+ * A new item, or the changes to one: only the fields given are changed.
+ */
+public struct VaultItemInput: Equatable, Hashable {
+    public var kind: VaultItemKind
+    public var name: String
+    public var fields: [VaultFieldInput]
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(kind: VaultItemKind, name: String, fields: [VaultFieldInput]) {
+        self.kind = kind
+        self.name = name
+        self.fields = fields
+    }
+
+    
+
+    
+}
+
+#if compiler(>=6)
+extension VaultItemInput: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeVaultItemInput: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> VaultItemInput {
+        return
+            try VaultItemInput(
+                kind: FfiConverterTypeVaultItemKind.read(from: &buf), 
+                name: FfiConverterString.read(from: &buf), 
+                fields: FfiConverterSequenceTypeVaultFieldInput.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: VaultItemInput, into buf: inout [UInt8]) {
+        FfiConverterTypeVaultItemKind.write(value.kind, into: &buf)
+        FfiConverterString.write(value.name, into: &buf)
+        FfiConverterSequenceTypeVaultFieldInput.write(value.fields, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeVaultItemInput_lift(_ buf: RustBuffer) throws -> VaultItemInput {
+    return try FfiConverterTypeVaultItemInput.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeVaultItemInput_lower(_ value: VaultItemInput) -> RustBuffer {
+    return FfiConverterTypeVaultItemInput.lower(value)
+}
+
+
+/**
+ * One item of the list.
+ */
+public struct VaultItemSummary: Equatable, Hashable {
+    public var id: String
+    public var name: String
+    public var kind: VaultItemKind
+    /**
+     * A login's username or website, a card's holder, an SSH key's fingerprint; empty when there is none.
+     */
+    public var subtitle: String
+    public var favorite: Bool
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(id: String, name: String, kind: VaultItemKind, 
+        /**
+         * A login's username or website, a card's holder, an SSH key's fingerprint; empty when there is none.
+         */subtitle: String, favorite: Bool) {
+        self.id = id
+        self.name = name
+        self.kind = kind
+        self.subtitle = subtitle
+        self.favorite = favorite
+    }
+
+    
+
+    
+}
+
+#if compiler(>=6)
+extension VaultItemSummary: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeVaultItemSummary: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> VaultItemSummary {
+        return
+            try VaultItemSummary(
+                id: FfiConverterString.read(from: &buf), 
+                name: FfiConverterString.read(from: &buf), 
+                kind: FfiConverterTypeVaultItemKind.read(from: &buf), 
+                subtitle: FfiConverterString.read(from: &buf), 
+                favorite: FfiConverterBool.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: VaultItemSummary, into buf: inout [UInt8]) {
+        FfiConverterString.write(value.id, into: &buf)
+        FfiConverterString.write(value.name, into: &buf)
+        FfiConverterTypeVaultItemKind.write(value.kind, into: &buf)
+        FfiConverterString.write(value.subtitle, into: &buf)
+        FfiConverterBool.write(value.favorite, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeVaultItemSummary_lift(_ buf: RustBuffer) throws -> VaultItemSummary {
+    return try FfiConverterTypeVaultItemSummary.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeVaultItemSummary_lower(_ value: VaultItemSummary) -> RustBuffer {
+    return FfiConverterTypeVaultItemSummary.lower(value)
+}
+
+
+/**
  * Everything the app needs to ask the platform for a passkey (to make one, or to use one).
  */
 public struct VaultPasskeyOptions: Equatable, Hashable {
@@ -9917,6 +12322,148 @@ public func FfiConverterTypeVaultPasskeyView_lift(_ buf: RustBuffer) throws -> V
 #endif
 public func FfiConverterTypeVaultPasskeyView_lower(_ value: VaultPasskeyView) -> RustBuffer {
     return FfiConverterTypeVaultPasskeyView.lower(value)
+}
+
+
+/**
+ * An SSH key made on the phone: its item, and the public half to put on servers.
+ */
+public struct VaultSshKey: Equatable, Hashable {
+    public var id: String
+    /**
+     * `ssh-ed25519 AAAA… name`, to paste into `authorized_keys` or a Git host's settings.
+     */
+    public var publicKey: String
+    /**
+     * `SHA256:…`.
+     */
+    public var fingerprint: String
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(id: String, 
+        /**
+         * `ssh-ed25519 AAAA… name`, to paste into `authorized_keys` or a Git host's settings.
+         */publicKey: String, 
+        /**
+         * `SHA256:…`.
+         */fingerprint: String) {
+        self.id = id
+        self.publicKey = publicKey
+        self.fingerprint = fingerprint
+    }
+
+    
+
+    
+}
+
+#if compiler(>=6)
+extension VaultSshKey: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeVaultSshKey: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> VaultSshKey {
+        return
+            try VaultSshKey(
+                id: FfiConverterString.read(from: &buf), 
+                publicKey: FfiConverterString.read(from: &buf), 
+                fingerprint: FfiConverterString.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: VaultSshKey, into buf: inout [UInt8]) {
+        FfiConverterString.write(value.id, into: &buf)
+        FfiConverterString.write(value.publicKey, into: &buf)
+        FfiConverterString.write(value.fingerprint, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeVaultSshKey_lift(_ buf: RustBuffer) throws -> VaultSshKey {
+    return try FfiConverterTypeVaultSshKey.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeVaultSshKey_lower(_ value: VaultSshKey) -> RustBuffer {
+    return FfiConverterTypeVaultSshKey.lower(value)
+}
+
+
+/**
+ * A way the desktop app uses the item: what to write, and where.
+ */
+public struct VaultUse: Equatable, Hashable {
+    /**
+     * `vault:OpenAI/password`, or an SSH key's fingerprint.
+     */
+    public var reference: String
+    /**
+     * "reins run --env and [[api]] secret".
+     */
+    public var hint: String
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(
+        /**
+         * `vault:OpenAI/password`, or an SSH key's fingerprint.
+         */reference: String, 
+        /**
+         * "reins run --env and [[api]] secret".
+         */hint: String) {
+        self.reference = reference
+        self.hint = hint
+    }
+
+    
+
+    
+}
+
+#if compiler(>=6)
+extension VaultUse: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeVaultUse: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> VaultUse {
+        return
+            try VaultUse(
+                reference: FfiConverterString.read(from: &buf), 
+                hint: FfiConverterString.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: VaultUse, into buf: inout [UInt8]) {
+        FfiConverterString.write(value.reference, into: &buf)
+        FfiConverterString.write(value.hint, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeVaultUse_lift(_ buf: RustBuffer) throws -> VaultUse {
+    return try FfiConverterTypeVaultUse.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeVaultUse_lower(_ value: VaultUse) -> RustBuffer {
+    return FfiConverterTypeVaultUse.lower(value)
 }
 
 
@@ -10515,6 +13062,98 @@ public func FfiConverterTypeCoreError_lower(_ value: CoreError) -> RustBuffer {
 
 
 /**
+ * What a device signed in to the account is.
+ */
+
+public enum DeviceKind: Equatable, Hashable {
+    
+    /**
+     * A phone or tablet (the Reins app, or a Bitwarden app on it).
+     */
+    case phone
+    /**
+     * A Bitwarden desktop app or command line.
+     */
+    case computer
+    /**
+     * The web vault or a browser extension.
+     */
+    case browser
+    case other
+
+
+
+
+
+}
+
+#if compiler(>=6)
+extension DeviceKind: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeDeviceKind: FfiConverterRustBuffer {
+    typealias SwiftType = DeviceKind
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> DeviceKind {
+        let variant: Int32 = try readInt(&buf)
+        switch variant {
+        
+        case 1: return .phone
+        
+        case 2: return .computer
+        
+        case 3: return .browser
+        
+        case 4: return .other
+        
+        default: throw UniffiInternalError.unexpectedEnumCase
+        }
+    }
+
+    public static func write(_ value: DeviceKind, into buf: inout [UInt8]) {
+        switch value {
+        
+        
+        case .phone:
+            writeInt(&buf, Int32(1))
+        
+        
+        case .computer:
+            writeInt(&buf, Int32(2))
+        
+        
+        case .browser:
+            writeInt(&buf, Int32(3))
+        
+        
+        case .other:
+            writeInt(&buf, Int32(4))
+        
+        }
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeDeviceKind_lift(_ buf: RustBuffer) throws -> DeviceKind {
+    return try FfiConverterTypeDeviceKind.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeDeviceKind_lower(_ value: DeviceKind) -> RustBuffer {
+    return FfiConverterTypeDeviceKind.lower(value)
+}
+
+
+
+/**
  * Error returned by the Kotlin implementations of the foreign traits.
  */
 public 
@@ -10756,6 +13395,79 @@ public func FfiConverterTypeJoinProgress_lift(_ buf: RustBuffer) throws -> JoinP
 #endif
 public func FfiConverterTypeJoinProgress_lower(_ value: JoinProgress) -> RustBuffer {
     return FfiConverterTypeJoinProgress.lower(value)
+}
+
+
+
+
+public enum LimitPeriod: Equatable, Hashable {
+    
+    case day
+    case week
+    case month
+
+
+
+
+
+}
+
+#if compiler(>=6)
+extension LimitPeriod: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeLimitPeriod: FfiConverterRustBuffer {
+    typealias SwiftType = LimitPeriod
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> LimitPeriod {
+        let variant: Int32 = try readInt(&buf)
+        switch variant {
+        
+        case 1: return .day
+        
+        case 2: return .week
+        
+        case 3: return .month
+        
+        default: throw UniffiInternalError.unexpectedEnumCase
+        }
+    }
+
+    public static func write(_ value: LimitPeriod, into buf: inout [UInt8]) {
+        switch value {
+        
+        
+        case .day:
+            writeInt(&buf, Int32(1))
+        
+        
+        case .week:
+            writeInt(&buf, Int32(2))
+        
+        
+        case .month:
+            writeInt(&buf, Int32(3))
+        
+        }
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeLimitPeriod_lift(_ buf: RustBuffer) throws -> LimitPeriod {
+    return try FfiConverterTypeLimitPeriod.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeLimitPeriod_lower(_ value: LimitPeriod) -> RustBuffer {
+    return FfiConverterTypeLimitPeriod.lower(value)
 }
 
 
@@ -11252,6 +13964,96 @@ public func FfiConverterTypeStartingPolicy_lower(_ value: StartingPolicy) -> Rus
 
 
 /**
+ * The kind of a vault item.
+ */
+
+public enum VaultItemKind: Equatable, Hashable {
+    
+    case login
+    case note
+    case card
+    case identity
+    case sshKey
+
+
+
+
+
+}
+
+#if compiler(>=6)
+extension VaultItemKind: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeVaultItemKind: FfiConverterRustBuffer {
+    typealias SwiftType = VaultItemKind
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> VaultItemKind {
+        let variant: Int32 = try readInt(&buf)
+        switch variant {
+        
+        case 1: return .login
+        
+        case 2: return .note
+        
+        case 3: return .card
+        
+        case 4: return .identity
+        
+        case 5: return .sshKey
+        
+        default: throw UniffiInternalError.unexpectedEnumCase
+        }
+    }
+
+    public static func write(_ value: VaultItemKind, into buf: inout [UInt8]) {
+        switch value {
+        
+        
+        case .login:
+            writeInt(&buf, Int32(1))
+        
+        
+        case .note:
+            writeInt(&buf, Int32(2))
+        
+        
+        case .card:
+            writeInt(&buf, Int32(3))
+        
+        
+        case .identity:
+            writeInt(&buf, Int32(4))
+        
+        
+        case .sshKey:
+            writeInt(&buf, Int32(5))
+        
+        }
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeVaultItemKind_lift(_ buf: RustBuffer) throws -> VaultItemKind {
+    return try FfiConverterTypeVaultItemKind.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeVaultItemKind_lower(_ value: VaultItemKind) -> RustBuffer {
+    return FfiConverterTypeVaultItemKind.lower(value)
+}
+
+
+
+/**
  * What to do with a request.
  */
 
@@ -11617,6 +14419,30 @@ fileprivate struct FfiConverterOptionTypeBlobView: FfiConverterRustBuffer {
 #if swift(>=5.8)
 @_documentation(visibility: private)
 #endif
+fileprivate struct FfiConverterOptionTypeCardProviderView: FfiConverterRustBuffer {
+    typealias SwiftType = CardProviderView?
+
+    public static func write(_ value: SwiftType, into buf: inout [UInt8]) {
+        guard let value = value else {
+            writeInt(&buf, Int8(0))
+            return
+        }
+        writeInt(&buf, Int8(1))
+        FfiConverterTypeCardProviderView.write(value, into: &buf)
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> SwiftType {
+        switch try readInt(&buf) as Int8 {
+        case 0: return nil
+        case 1: return try FfiConverterTypeCardProviderView.read(from: &buf)
+        default: throw UniffiInternalError.unexpectedOptionalTag
+        }
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
 fileprivate struct FfiConverterOptionTypeEmailView: FfiConverterRustBuffer {
     typealias SwiftType = EmailView?
 
@@ -11737,6 +14563,30 @@ fileprivate struct FfiConverterOptionTypeMcpCallView: FfiConverterRustBuffer {
 #if swift(>=5.8)
 @_documentation(visibility: private)
 #endif
+fileprivate struct FfiConverterOptionTypePurchaseView: FfiConverterRustBuffer {
+    typealias SwiftType = PurchaseView?
+
+    public static func write(_ value: SwiftType, into buf: inout [UInt8]) {
+        guard let value = value else {
+            writeInt(&buf, Int8(0))
+            return
+        }
+        writeInt(&buf, Int8(1))
+        FfiConverterTypePurchaseView.write(value, into: &buf)
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> SwiftType {
+        switch try readInt(&buf) as Int8 {
+        case 0: return nil
+        case 1: return try FfiConverterTypePurchaseView.read(from: &buf)
+        default: throw UniffiInternalError.unexpectedOptionalTag
+        }
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
 fileprivate struct FfiConverterOptionTypeQuickApproval: FfiConverterRustBuffer {
     typealias SwiftType = QuickApproval?
 
@@ -11801,6 +14651,30 @@ fileprivate struct FfiConverterOptionTypeSessionInfo: FfiConverterRustBuffer {
         switch try readInt(&buf) as Int8 {
         case 0: return nil
         case 1: return try FfiConverterTypeSessionInfo.read(from: &buf)
+        default: throw UniffiInternalError.unexpectedOptionalTag
+        }
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+fileprivate struct FfiConverterOptionTypeSpendLimitInput: FfiConverterRustBuffer {
+    typealias SwiftType = SpendLimitInput?
+
+    public static func write(_ value: SwiftType, into buf: inout [UInt8]) {
+        guard let value = value else {
+            writeInt(&buf, Int8(0))
+            return
+        }
+        writeInt(&buf, Int8(1))
+        FfiConverterTypeSpendLimitInput.write(value, into: &buf)
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> SwiftType {
+        switch try readInt(&buf) as Int8 {
+        case 0: return nil
+        case 1: return try FfiConverterTypeSpendLimitInput.read(from: &buf)
         default: throw UniffiInternalError.unexpectedOptionalTag
         }
     }
@@ -12104,6 +14978,56 @@ fileprivate struct FfiConverterSequenceTypeActivityMessage: FfiConverterRustBuff
 #if swift(>=5.8)
 @_documentation(visibility: private)
 #endif
+fileprivate struct FfiConverterSequenceTypeAddressView: FfiConverterRustBuffer {
+    typealias SwiftType = [AddressView]
+
+    public static func write(_ value: [AddressView], into buf: inout [UInt8]) {
+        let len = Int32(value.count)
+        writeInt(&buf, len)
+        for item in value {
+            FfiConverterTypeAddressView.write(item, into: &buf)
+        }
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> [AddressView] {
+        let len: Int32 = try readInt(&buf)
+        var seq = [AddressView]()
+        seq.reserveCapacity(Int(len))
+        for _ in 0 ..< len {
+            seq.append(try FfiConverterTypeAddressView.read(from: &buf))
+        }
+        return seq
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+fileprivate struct FfiConverterSequenceTypeBudgetView: FfiConverterRustBuffer {
+    typealias SwiftType = [BudgetView]
+
+    public static func write(_ value: [BudgetView], into buf: inout [UInt8]) {
+        let len = Int32(value.count)
+        writeInt(&buf, len)
+        for item in value {
+            FfiConverterTypeBudgetView.write(item, into: &buf)
+        }
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> [BudgetView] {
+        let len: Int32 = try readInt(&buf)
+        var seq = [BudgetView]()
+        seq.reserveCapacity(Int(len))
+        for _ in 0 ..< len {
+            seq.append(try FfiConverterTypeBudgetView.read(from: &buf))
+        }
+        return seq
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
 fileprivate struct FfiConverterSequenceTypeClassOption: FfiConverterRustBuffer {
     typealias SwiftType = [ClassOption]
 
@@ -12246,6 +15170,31 @@ fileprivate struct FfiConverterSequenceTypeDeviceEvent: FfiConverterRustBuffer {
         seq.reserveCapacity(Int(len))
         for _ in 0 ..< len {
             seq.append(try FfiConverterTypeDeviceEvent.read(from: &buf))
+        }
+        return seq
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+fileprivate struct FfiConverterSequenceTypeDeviceView: FfiConverterRustBuffer {
+    typealias SwiftType = [DeviceView]
+
+    public static func write(_ value: [DeviceView], into buf: inout [UInt8]) {
+        let len = Int32(value.count)
+        writeInt(&buf, len)
+        for item in value {
+            FfiConverterTypeDeviceView.write(item, into: &buf)
+        }
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> [DeviceView] {
+        let len: Int32 = try readInt(&buf)
+        var seq = [DeviceView]()
+        seq.reserveCapacity(Int(len))
+        for _ in 0 ..< len {
+            seq.append(try FfiConverterTypeDeviceView.read(from: &buf))
         }
         return seq
     }
@@ -12454,6 +15403,31 @@ fileprivate struct FfiConverterSequenceTypeNeighbourView: FfiConverterRustBuffer
 #if swift(>=5.8)
 @_documentation(visibility: private)
 #endif
+fileprivate struct FfiConverterSequenceTypePaymentMethodView: FfiConverterRustBuffer {
+    typealias SwiftType = [PaymentMethodView]
+
+    public static func write(_ value: [PaymentMethodView], into buf: inout [UInt8]) {
+        let len = Int32(value.count)
+        writeInt(&buf, len)
+        for item in value {
+            FfiConverterTypePaymentMethodView.write(item, into: &buf)
+        }
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> [PaymentMethodView] {
+        let len: Int32 = try readInt(&buf)
+        var seq = [PaymentMethodView]()
+        seq.reserveCapacity(Int(len))
+        for _ in 0 ..< len {
+            seq.append(try FfiConverterTypePaymentMethodView.read(from: &buf))
+        }
+        return seq
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
 fileprivate struct FfiConverterSequenceTypePendingItem: FfiConverterRustBuffer {
     typealias SwiftType = [PendingItem]
 
@@ -12496,6 +15470,56 @@ fileprivate struct FfiConverterSequenceTypeProfileView: FfiConverterRustBuffer {
         seq.reserveCapacity(Int(len))
         for _ in 0 ..< len {
             seq.append(try FfiConverterTypeProfileView.read(from: &buf))
+        }
+        return seq
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+fileprivate struct FfiConverterSequenceTypePurchaseLineView: FfiConverterRustBuffer {
+    typealias SwiftType = [PurchaseLineView]
+
+    public static func write(_ value: [PurchaseLineView], into buf: inout [UInt8]) {
+        let len = Int32(value.count)
+        writeInt(&buf, len)
+        for item in value {
+            FfiConverterTypePurchaseLineView.write(item, into: &buf)
+        }
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> [PurchaseLineView] {
+        let len: Int32 = try readInt(&buf)
+        var seq = [PurchaseLineView]()
+        seq.reserveCapacity(Int(len))
+        for _ in 0 ..< len {
+            seq.append(try FfiConverterTypePurchaseLineView.read(from: &buf))
+        }
+        return seq
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+fileprivate struct FfiConverterSequenceTypePurchaseRecordView: FfiConverterRustBuffer {
+    typealias SwiftType = [PurchaseRecordView]
+
+    public static func write(_ value: [PurchaseRecordView], into buf: inout [UInt8]) {
+        let len = Int32(value.count)
+        writeInt(&buf, len)
+        for item in value {
+            FfiConverterTypePurchaseRecordView.write(item, into: &buf)
+        }
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> [PurchaseRecordView] {
+        let len: Int32 = try readInt(&buf)
+        var seq = [PurchaseRecordView]()
+        seq.reserveCapacity(Int(len))
+        for _ in 0 ..< len {
+            seq.append(try FfiConverterTypePurchaseRecordView.read(from: &buf))
         }
         return seq
     }
@@ -12604,6 +15628,156 @@ fileprivate struct FfiConverterSequenceTypeSmsThread: FfiConverterRustBuffer {
 #if swift(>=5.8)
 @_documentation(visibility: private)
 #endif
+fileprivate struct FfiConverterSequenceTypeSpendByAi: FfiConverterRustBuffer {
+    typealias SwiftType = [SpendByAi]
+
+    public static func write(_ value: [SpendByAi], into buf: inout [UInt8]) {
+        let len = Int32(value.count)
+        writeInt(&buf, len)
+        for item in value {
+            FfiConverterTypeSpendByAi.write(item, into: &buf)
+        }
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> [SpendByAi] {
+        let len: Int32 = try readInt(&buf)
+        var seq = [SpendByAi]()
+        seq.reserveCapacity(Int(len))
+        for _ in 0 ..< len {
+            seq.append(try FfiConverterTypeSpendByAi.read(from: &buf))
+        }
+        return seq
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+fileprivate struct FfiConverterSequenceTypeSpendLimitView: FfiConverterRustBuffer {
+    typealias SwiftType = [SpendLimitView]
+
+    public static func write(_ value: [SpendLimitView], into buf: inout [UInt8]) {
+        let len = Int32(value.count)
+        writeInt(&buf, len)
+        for item in value {
+            FfiConverterTypeSpendLimitView.write(item, into: &buf)
+        }
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> [SpendLimitView] {
+        let len: Int32 = try readInt(&buf)
+        var seq = [SpendLimitView]()
+        seq.reserveCapacity(Int(len))
+        for _ in 0 ..< len {
+            seq.append(try FfiConverterTypeSpendLimitView.read(from: &buf))
+        }
+        return seq
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+fileprivate struct FfiConverterSequenceTypeSpendTotal: FfiConverterRustBuffer {
+    typealias SwiftType = [SpendTotal]
+
+    public static func write(_ value: [SpendTotal], into buf: inout [UInt8]) {
+        let len = Int32(value.count)
+        writeInt(&buf, len)
+        for item in value {
+            FfiConverterTypeSpendTotal.write(item, into: &buf)
+        }
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> [SpendTotal] {
+        let len: Int32 = try readInt(&buf)
+        var seq = [SpendTotal]()
+        seq.reserveCapacity(Int(len))
+        for _ in 0 ..< len {
+            seq.append(try FfiConverterTypeSpendTotal.read(from: &buf))
+        }
+        return seq
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+fileprivate struct FfiConverterSequenceTypeVaultField: FfiConverterRustBuffer {
+    typealias SwiftType = [VaultField]
+
+    public static func write(_ value: [VaultField], into buf: inout [UInt8]) {
+        let len = Int32(value.count)
+        writeInt(&buf, len)
+        for item in value {
+            FfiConverterTypeVaultField.write(item, into: &buf)
+        }
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> [VaultField] {
+        let len: Int32 = try readInt(&buf)
+        var seq = [VaultField]()
+        seq.reserveCapacity(Int(len))
+        for _ in 0 ..< len {
+            seq.append(try FfiConverterTypeVaultField.read(from: &buf))
+        }
+        return seq
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+fileprivate struct FfiConverterSequenceTypeVaultFieldInput: FfiConverterRustBuffer {
+    typealias SwiftType = [VaultFieldInput]
+
+    public static func write(_ value: [VaultFieldInput], into buf: inout [UInt8]) {
+        let len = Int32(value.count)
+        writeInt(&buf, len)
+        for item in value {
+            FfiConverterTypeVaultFieldInput.write(item, into: &buf)
+        }
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> [VaultFieldInput] {
+        let len: Int32 = try readInt(&buf)
+        var seq = [VaultFieldInput]()
+        seq.reserveCapacity(Int(len))
+        for _ in 0 ..< len {
+            seq.append(try FfiConverterTypeVaultFieldInput.read(from: &buf))
+        }
+        return seq
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+fileprivate struct FfiConverterSequenceTypeVaultItemSummary: FfiConverterRustBuffer {
+    typealias SwiftType = [VaultItemSummary]
+
+    public static func write(_ value: [VaultItemSummary], into buf: inout [UInt8]) {
+        let len = Int32(value.count)
+        writeInt(&buf, len)
+        for item in value {
+            FfiConverterTypeVaultItemSummary.write(item, into: &buf)
+        }
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> [VaultItemSummary] {
+        let len: Int32 = try readInt(&buf)
+        var seq = [VaultItemSummary]()
+        seq.reserveCapacity(Int(len))
+        for _ in 0 ..< len {
+            seq.append(try FfiConverterTypeVaultItemSummary.read(from: &buf))
+        }
+        return seq
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
 fileprivate struct FfiConverterSequenceTypeVaultPasskeyView: FfiConverterRustBuffer {
     typealias SwiftType = [VaultPasskeyView]
 
@@ -12621,6 +15795,31 @@ fileprivate struct FfiConverterSequenceTypeVaultPasskeyView: FfiConverterRustBuf
         seq.reserveCapacity(Int(len))
         for _ in 0 ..< len {
             seq.append(try FfiConverterTypeVaultPasskeyView.read(from: &buf))
+        }
+        return seq
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+fileprivate struct FfiConverterSequenceTypeVaultUse: FfiConverterRustBuffer {
+    typealias SwiftType = [VaultUse]
+
+    public static func write(_ value: [VaultUse], into buf: inout [UInt8]) {
+        let len = Int32(value.count)
+        writeInt(&buf, len)
+        for item in value {
+            FfiConverterTypeVaultUse.write(item, into: &buf)
+        }
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> [VaultUse] {
+        let len: Int32 = try readInt(&buf)
+        var seq = [VaultUse]()
+        seq.reserveCapacity(Int(len))
+        for _ in 0 ..< len {
+            seq.append(try FfiConverterTypeVaultUse.read(from: &buf))
         }
         return seq
     }
@@ -12763,6 +15962,30 @@ private func uniffiForeignFutureDroppedCallback(handle: UInt64) {
 public func uniffiForeignFutureHandleCountReinsCore() -> Int {
     UNIFFI_FOREIGN_FUTURE_HANDLE_MAP.count
 }
+/**
+ * Minor units as the user reads them ("$19.98").
+ */
+public func paymentsFormatAmount(minor: Int64, currency: String) -> String  {
+    return try!  FfiConverterString.lift(try! rustCall() {
+        uniffiCallStatus in
+    uniffi_reins_core_fn_func_payments_format_amount(
+        FfiConverterInt64.lower(minor),
+        FfiConverterString.lower(currency),uniffiCallStatus
+    )
+})
+}
+/**
+ * "19.98" in `currency` as minor units (1998), for amounts the user types; an error says what is wrong.
+ */
+public func paymentsParseAmount(text: String, currency: String)throws  -> Int64  {
+    return try  FfiConverterInt64.lift(try rustCallWithError(FfiConverterTypeCoreError_lift) {
+        uniffiCallStatus in
+    uniffi_reins_core_fn_func_payments_parse_amount(
+        FfiConverterString.lower(text),
+        FfiConverterString.lower(currency),uniffiCallStatus
+    )
+})
+}
 
 private enum InitializationResult {
     case ok
@@ -12778,6 +16001,12 @@ private let initializationResult: InitializationResult = {
     let scaffolding_contract_version = ffi_reins_core_uniffi_contract_version()
     if bindings_contract_version != scaffolding_contract_version {
         return InitializationResult.contractVersionMismatch
+    }
+    if (uniffi_reins_core_checksum_func_payments_format_amount() != 50711) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_reins_core_checksum_func_payments_parse_amount() != 22380) {
+        return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_reins_core_checksum_method_reinscore_account_keys() != 41425) {
         return InitializationResult.apiChecksumMismatch
@@ -12872,6 +16101,9 @@ private let initializationResult: InitializationResult = {
     if (uniffi_reins_core_checksum_method_reinscore_deny() != 24458) {
         return InitializationResult.apiChecksumMismatch
     }
+    if (uniffi_reins_core_checksum_method_reinscore_devices() != 30266) {
+        return InitializationResult.apiChecksumMismatch
+    }
     if (uniffi_reins_core_checksum_method_reinscore_download_model() != 52176) {
         return InitializationResult.apiChecksumMismatch
     }
@@ -12930,6 +16162,9 @@ private let initializationResult: InitializationResult = {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_reins_core_checksum_method_reinscore_pending() != 41948) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_reins_core_checksum_method_reinscore_phone_key_fingerprint() != 65272) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_reins_core_checksum_method_reinscore_register_device() != 53382) {
@@ -13001,6 +16236,9 @@ private let initializationResult: InitializationResult = {
     if (uniffi_reins_core_checksum_method_reinscore_set_starting_policy() != 46624) {
         return InitializationResult.apiChecksumMismatch
     }
+    if (uniffi_reins_core_checksum_method_reinscore_sign_out_device() != 32606) {
+        return InitializationResult.apiChecksumMismatch
+    }
     if (uniffi_reins_core_checksum_method_reinscore_sso_begin() != 4525) {
         return InitializationResult.apiChecksumMismatch
     }
@@ -13019,10 +16257,76 @@ private let initializationResult: InitializationResult = {
     if (uniffi_reins_core_checksum_method_reinscore_unlock_with_vault_passkey() != 6226) {
         return InitializationResult.apiChecksumMismatch
     }
+    if (uniffi_reins_core_checksum_method_reinscore_vault_create() != 43120) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_reins_core_checksum_method_reinscore_vault_delete() != 7618) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_reins_core_checksum_method_reinscore_vault_generate_ssh_key() != 6874) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_reins_core_checksum_method_reinscore_vault_item() != 43231) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_reins_core_checksum_method_reinscore_vault_items() != 26558) {
+        return InitializationResult.apiChecksumMismatch
+    }
     if (uniffi_reins_core_checksum_method_reinscore_vault_passkey_options() != 35373) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_reins_core_checksum_method_reinscore_vault_passkeys() != 30031) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_reins_core_checksum_method_reinscore_vault_reveal() != 31519) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_reins_core_checksum_method_reinscore_vault_update() != 22034) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_reins_core_checksum_method_reinscore_approve_purchase() != 55085) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_reins_core_checksum_method_reinscore_payments_acknowledge_charge() != 18068) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_reins_core_checksum_method_reinscore_payments_add_limit() != 5383) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_reins_core_checksum_method_reinscore_payments_clear_purchase() != 23382) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_reins_core_checksum_method_reinscore_payments_close_card() != 54965) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_reins_core_checksum_method_reinscore_payments_connect_provider() != 35967) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_reins_core_checksum_method_reinscore_payments_disconnect_provider() != 21459) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_reins_core_checksum_method_reinscore_payments_overview() != 51361) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_reins_core_checksum_method_reinscore_payments_remove_limit() != 41890) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_reins_core_checksum_method_reinscore_payments_set_budget() != 37276) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_reins_core_checksum_method_reinscore_payments_set_card_options() != 49406) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_reins_core_checksum_method_reinscore_payments_set_defaults() != 18332) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_reins_core_checksum_method_reinscore_payments_set_method() != 64203) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_reins_core_checksum_method_reinscore_payments_set_nickname() != 14535) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_reins_core_checksum_method_reinscore_payments_spending() != 36866) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_reins_core_checksum_method_reinscore_mcp_add() != 53705) {
