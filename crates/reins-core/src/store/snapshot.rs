@@ -152,7 +152,7 @@ pub(super) fn import(conn: &mut Connection, bytes: &[u8], portable: bool) -> Res
             // Never accept secret or session-key rows from a portable snapshot, even if its author supplies them.
             if portable
                 && name == "secrets"
-                && matches!(row.first(),Some(Cell::Text(s)) if matches!(s.as_str(),"reins.device-key"|"reins.inbox-key"|"reins.account-secret"|"vault"|"reins.join"|"mcp_signin"))
+                && matches!(row.first(),Some(Cell::Text(s)) if matches!(s.as_str(),"reins.device-key"|"reins.inbox-key"|"reins.account-secret"|"vault"|"reins.join"|"mcp_signin"|"payments.provider"))
             {
                 return Err(CoreError::storage("account data contains an installation key"));
             }

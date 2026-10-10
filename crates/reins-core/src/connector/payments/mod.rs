@@ -176,17 +176,18 @@ impl ShipAddress {
         }
     }
 
-    /// The address as the mandate binds it: its label and country, and a salted hash of the whole address.
-    fn bound(&self) -> MandateShipTo {
-        let salt = data_encoding::BASE64URL_NOPAD.encode(&crate::crypto::random_bytes::<16>().unwrap_or([0; 16]));
+    /// The address as the mandate binds it: its label and country, and a salted hash of the whole address. Without
+    /// randomness for the salt there is no mandate (a known salt would let anyone check guessed addresses).
+    fn bound(&self) -> Result<MandateShipTo, CoreError> {
+        let salt = data_encoding::BASE64URL_NOPAD.encode(&crate::crypto::random_bytes::<16>()?);
         let text = format!("{salt}\n{}", self.lines().join("\n"));
         let digest = ring::digest::digest(&ring::digest::SHA256, text.as_bytes());
-        MandateShipTo {
+        Ok(MandateShipTo {
             label: self.label.clone(),
             country: self.country.clone(),
             address_sha256: data_encoding::BASE64URL_NOPAD.encode(digest.as_ref()),
             salt,
-        }
+        })
     }
 
     /// The address as the AI gets it with an approved purchase.
@@ -228,6 +229,9 @@ pub struct Plan {
     pub budget_lines: Vec<String>,
     /// How much more than the total a virtual card allows.
     pub tolerance: i64,
+    /// Where card details go: sealed to the paired desktop app (named as this phone knows it), or through the server.
+    #[serde(default)]
+    pub delivery: Option<String>,
 }
 
 impl Plan {
@@ -302,6 +306,7 @@ impl Plan {
                 .filter(|m| m.unavailable.is_none() && limit_may_use(&m.id))
                 .map(|m| m.id.clone())
                 .collect(),
+            delivery: self.delivery.clone(),
         }
     }
 }
@@ -318,16 +323,36 @@ pub fn limit_may_use(method: &str) -> bool {
 /// Proof that the caller holds [`Payments::purchases`]: what changes the ledger takes one.
 pub(crate) type Held<'a> = tokio::sync::MutexGuard<'a, ()>;
 
-/// How card details may leave the phone for one purchase.
+/// How card details may leave the phone for one purchase. The connection a request comes from is the server's to
+/// say, so what decides is whether this phone has a desktop app paired, and whether the request carries its key.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) enum Seal {
-    /// An ordinary AI connection: in the answer.
+    /// No desktop app is paired: card details go in the answer, through the server, which can read them.
     Plain,
-    /// The paired desktop app asked: sealed to its key (and its nonce), and signed by this phone.
+    /// A desktop app is paired, and this request is not from its connection: a card from the vault is refused (the
+    /// server could have moved the desktop app's purchase here, under its name); a virtual card goes in the answer.
+    Unsealed,
+    /// The paired desktop app asked: card details are sealed to its key, and the whole answer is signed by this phone
+    /// with the request's nonce, so that the app can tell it from anything the server makes up.
     To([u8; 32], String),
     /// The connection is the paired desktop app's but the call did not ask for sealing: card details are refused, so
     /// that a server that strips the request's key gets nothing.
     Refused,
+}
+
+impl Seal {
+    /// Why a payment method cannot pay this way, if it cannot.
+    pub(crate) fn refuses(&self, kind: &str) -> Option<&'static str> {
+        match (self, kind) {
+            (Self::Refused, VIRTUAL_CARD | "card") => {
+                Some("This request came without your desktop app's key, so no card details can go to it")
+            }
+            (Self::Unsealed, "card") => Some(
+                "A card from your vault goes only to your paired desktop app, sealed, and this did not come from it",
+            ),
+            _ => None,
+        }
+    }
 }
 
 /// Who approved a purchase, for [`Payments::perform`].
@@ -405,6 +430,19 @@ fn days_from_civil(y: i64, m: i64) -> i64 {
 pub(crate) fn registrable(host: &str) -> String {
     let host = host.trim_end_matches('.').to_ascii_lowercase();
     psl::domain_str(&host).map_or_else(|| host.clone(), str::to_owned)
+}
+
+/// A store for a limit's or a budget's list, as the user typed it ("Amazon.com", "https://www.ebay.com/"). A public
+/// suffix (`com`, `co.uk`, and shared hosts like `github.io` or `myshopify.com`) is refused: it would cover every site
+/// under it.
+fn store_entry(raw: &str) -> Result<String, CoreError> {
+    let domain = normalize_domain(raw).map_err(CoreError::invalid)?;
+    if psl::domain_str(&domain).is_none() {
+        return Err(CoreError::invalid(format!(
+            "{domain} is shared by many sites: name the store's own address (like shop.{domain})."
+        )));
+    }
+    Ok(domain)
 }
 
 /// The brand of a host: the first label of its registrable domain (`amazon` for `smile.amazon.co.uk`).
@@ -753,6 +791,7 @@ impl Payments {
         call: &ConnectorCall,
         connection_id: &str,
         connection_label: &str,
+        seal: &Seal,
     ) -> Result<Plan, CoreError> {
         let cart = Cart::from_call(call).map_err(bad)?;
         check_urls(&cart)?;
@@ -768,8 +807,11 @@ impl Payments {
                 error: None,
             }
         };
-        let methods: Vec<MethodOption> =
+        let mut methods: Vec<MethodOption> =
             Self::methods(&config, &wallet.cards, Some(&cart), false).into_iter().map(|(m, _)| m).collect();
+        for m in methods.iter_mut().filter(|m| m.unavailable.is_none()) {
+            m.unavailable = seal.refuses(&m.kind).map(str::to_owned);
+        }
         if methods.is_empty() {
             return Err(bad("The user has not set up a payment method in Reins (Integrations → Payments)."));
         }
@@ -871,6 +913,7 @@ impl Payments {
             address_id,
             warnings,
             budget_lines,
+            delivery: None,
         })
     }
 
@@ -1044,13 +1087,12 @@ impl Payments {
             return Err(CoreError::invalid("This request was already paid for."));
         }
         let pays_with_card = matches!(chosen.kind.as_str(), VIRTUAL_CARD | "card");
-        if pays_with_card && approval.seal == Seal::Refused {
-            return Err(CoreError::invalid(
-                "This is the Reins desktop app's connection: card details go to it sealed only, and this request did \
-                 not ask for that. Update the desktop app, or pay another way.",
-            ));
+        // Decided again now: a desktop app may have been paired or unpaired while the request waited.
+        if let Some(why) = approval.seal.refuses(&chosen.kind) {
+            return Err(CoreError::invalid(format!("{why}. Pay another way.")));
         }
         let purchase_id = uuid::Uuid::new_v4().to_string();
+        let bound = ship_to.as_ref().map(ShipAddress::bound).transpose()?;
 
         let mut card_ref = None;
         let mut payment_info = MandatePayment {
@@ -1158,7 +1200,7 @@ impl Payments {
         let mandate = CartMandate::new(
             cart,
             &purchase_id,
-            ship_to.as_ref().map(ShipAddress::bound),
+            bound,
             payment_info,
             &text::one_line(approval.connection_label),
             approved_by,
@@ -1172,6 +1214,39 @@ impl Payments {
                 return Err(e);
             }
         };
+        let next = if chosen.kind == PAY_ON_PHONE {
+            "The user pays on their phone. When they tell you it is done, call payments_purchase_complete."
+        } else {
+            "Check out now with exactly this cart, then call payments_purchase_complete with the order number and the amount charged."
+        };
+        let mut answer = json!({
+            "status": "approved",
+            "purchase_id": purchase_id,
+            "approved_by": approved_by,
+            "merchant": {"name": cart.merchant, "domain": cart.domain},
+            "total": format_minor(cart.total, &cart.currency),
+            "currency": cart.currency,
+            "payment": payment,
+            "ship_to": ship_to.as_ref().map(ShipAddress::released),
+            "mandate": signed,
+            "expires_at": text::iso_utc(mandate.exp),
+            "next": next,
+        });
+        // For the desktop app, the whole answer is signed with its nonce: it takes only what this phone signed, so
+        // the server can neither change an approval nor make one up (for any way of paying).
+        if let Seal::To(_, nonce) = &approval.seal {
+            match mandate::sign_json(
+                &self.store,
+                mandate::ANSWER_JWS_TYPE,
+                &json!({"v": 1, "nonce": nonce, "answer": answer}),
+            ) {
+                Ok(jws) => answer["signed"] = json!(jws),
+                Err(e) => {
+                    undo(&card_ref).await;
+                    return Err(e);
+                }
+            }
+        }
         ledger.push(Purchase {
             id: purchase_id.clone(),
             request_id: approval.request_id.to_owned(),
@@ -1198,7 +1273,7 @@ impl Payments {
             reported_at: None,
             card: card_ref.clone(),
             charged_by: Vec::new(),
-            charges_read: false,
+            charges_final: false,
             provider_charged: None,
             cleared: false,
             mismatch: None,
@@ -1208,24 +1283,7 @@ impl Payments {
             undo(&card_ref).await;
             return Err(e);
         }
-        let next = if chosen.kind == PAY_ON_PHONE {
-            "The user pays on their phone. When they tell you it is done, call payments_purchase_complete."
-        } else {
-            "Check out now with exactly this cart, then call payments_purchase_complete with the order number and the amount charged."
-        };
-        Ok(json!({
-            "status": "approved",
-            "purchase_id": purchase_id,
-            "approved_by": approved_by,
-            "merchant": {"name": cart.merchant, "domain": cart.domain},
-            "total": format_minor(cart.total, &cart.currency),
-            "currency": cart.currency,
-            "payment": payment,
-            "ship_to": ship_to.as_ref().map(ShipAddress::released),
-            "mandate": signed,
-            "expires_at": text::iso_utc(mandate.exp),
-            "next": next,
-        }))
+        Ok(answer)
     }
 
     /// The AI reports how checkout went. Only for its own purchases.
@@ -1270,19 +1328,20 @@ impl Payments {
         }
         purchase.report_note = call.str_arg("note").map(text::one_line).filter(|s| !s.is_empty());
         purchase.reported_at = Some(unix_now());
-        if purchase.card.is_some() && self.check_card(purchase, unix_now()).await.is_err() {
-            log::warn!("the charges of a virtual card could not be read yet");
-        }
         let mut card_state = None;
-        if let Some(card) = purchase.card.as_mut().filter(|c| c.closed_at.is_none()) {
-            if status.spends() {
+        let open = purchase.card.as_ref().is_some_and(|c| c.closed_at.is_none());
+        if open && !status.spends() {
+            // Closed before its charges are read, so that one racing the report still counts.
+            self.close_purchase_card(purchase, unix_now()).await?;
+            card_state = Some("closed".to_owned());
+        } else if purchase.card.is_some() {
+            if self.check_card(purchase, unix_now()).await.is_err() {
+                log::warn!("the charges of a virtual card could not be read yet");
+            }
+            if open {
                 card_state = Some(format!(
                     "open for {VIRTUAL_CARD_DAYS} days (later charges for split shipments), up to its limit"
                 ));
-            } else {
-                self.close_card_ref(card).await?;
-                card.closed_at = Some(unix_now());
-                card_state = Some("closed".to_owned());
             }
         }
         let over = purchase.charged.filter(|c| *c > purchase.total).map(|c| {
@@ -1327,14 +1386,16 @@ impl Payments {
         self.issuer(card.sandbox).close(&key, &card.token).await
     }
 
-    /// Reads the charges of a purchase's virtual card: what was charged in all (what the purchase counts once its card
-    /// is closed) and who charged it. A name that does not look like the approved store is flagged (spend limits for
-    /// that AI wait until the user has seen it) and the card is closed at once; the names are a hint, the store picks
-    /// its own. `Ok(true)` when the purchase changed; an error when the charges could not be read.
-    async fn check_card(&self, p: &mut Purchase, now: i64) -> Result<bool, CoreError> {
+    /// Reads the charges of a purchase's virtual card: what was charged in all and who charged it. What was charged is
+    /// final (what the purchase counts) only when the card was closed before the read: an open card can still be
+    /// charged. A name that does not look like the approved store is flagged (spend limits for that AI wait until the
+    /// user has seen it); the names are a hint, the store picks its own. `Ok(true)` when the purchase changed; an
+    /// error when the charges could not be read.
+    async fn read_charges(&self, p: &mut Purchase) -> Result<bool, CoreError> {
         let Some(card) = p.card.clone() else {
             return Ok(false);
         };
+        let closed = card.closed_at.is_some();
         let key = self.provider_key(&card.provider)?;
         let charges = self.issuer(card.sandbox).charges(&key, &card.token).await?;
         let total: i64 = charges.iter().map(|c| c.amount).sum();
@@ -1345,23 +1406,42 @@ impl Payments {
             }
         }
         let other = names.iter().find(|n| !charge_fits(n, &p.domain)).filter(|_| p.mismatch.is_none());
-        let changed = names != p.charged_by || other.is_some() || p.provider_charged != Some(total);
+        let changed =
+            names != p.charged_by || other.is_some() || p.provider_charged != Some(total) || p.charges_final != closed;
         p.provider_charged = Some(total);
         if let Some(other) = other {
             p.mismatch = Some(other.clone());
             p.mismatch_seen = false;
         }
-        let closed = p.mismatch.is_some()
-            && match p.card.as_mut().filter(|c| c.closed_at.is_none()) {
-                Some(open) if self.close_card_ref(open).await.is_ok() => {
-                    open.closed_at = Some(now);
-                    true
-                }
-                _ => false,
-            };
         p.charged_by = names;
-        p.charges_read = true;
-        Ok(changed || closed)
+        p.charges_final = closed;
+        Ok(changed)
+    }
+
+    /// Closes a purchase's virtual card, then reads its charges: read after closing, they are final. When that read
+    /// fails the card counts its cap until a later one works.
+    async fn close_purchase_card(&self, p: &mut Purchase, now: i64) -> Result<(), CoreError> {
+        let Some(card) = p.card.as_mut().filter(|c| c.closed_at.is_none()) else {
+            return Ok(());
+        };
+        self.close_card_ref(card).await?;
+        card.closed_at = Some(now);
+        p.charges_final = false;
+        if self.read_charges(p).await.is_err() {
+            log::warn!("the charges of a closed virtual card could not be read yet");
+        }
+        Ok(())
+    }
+
+    /// Reads a card's charges ([`Self::read_charges`]); a charge by another store closes the card at once (and its
+    /// charges are read again, now final). `Ok(true)` when the purchase changed.
+    async fn check_card(&self, p: &mut Purchase, now: i64) -> Result<bool, CoreError> {
+        let changed = self.read_charges(p).await?;
+        let open = p.card.as_ref().is_some_and(|c| c.closed_at.is_none());
+        if p.mismatch.is_some() && open && self.close_purchase_card(p, now).await.is_ok() {
+            return Ok(true);
+        }
+        Ok(changed)
     }
 
     /// Checks the charges of the virtual cards of the last [`VIRTUAL_CARD_DAYS`] days (one AI's, or everyone's) and
@@ -1379,8 +1459,8 @@ impl Payments {
             let Some(card) = &p.card else {
                 continue;
             };
-            // A closed card whose charges are known has nothing more to read.
-            let settled = card.closed_at.is_some() && p.charges_read;
+            // A closed card whose charges were read after it closed has nothing more to read.
+            let settled = card.closed_at.is_some() && p.charges_final;
             if settled || !recent || connection.is_some_and(|c| c != p.connection_id) {
                 continue;
             }
@@ -1391,23 +1471,24 @@ impl Payments {
                 continue;
             }
             reads += 1;
-            if let Ok(c) = self.check_card(p, now).await {
-                changed |= c;
+            let before = p.clone();
+            let due = !p.status.spends() || p.at + VIRTUAL_CARD_DAYS * DAY <= now;
+            let read = if due && card.closed_at.is_none() {
+                // Closed first and read after, so that a charge made meanwhile still counts.
+                if self.close_purchase_card(p, now).await.is_ok() {
+                    p.charges_final
+                } else {
+                    log::warn!("a virtual card could not be closed yet; trying again later");
+                    self.check_card(p, now).await.is_ok()
+                }
             } else {
+                self.check_card(p, now).await.is_ok()
+            };
+            if !read {
                 log::warn!("the charges of a virtual card could not be read yet");
                 all_read = false;
             }
-            let due = !p.status.spends() || p.at + VIRTUAL_CARD_DAYS * DAY <= now;
-            let Some(card) = p.card.as_mut().filter(|c| c.closed_at.is_none() && due) else {
-                continue;
-            };
-            match self.close_card_ref(card).await {
-                Ok(()) => {
-                    card.closed_at = Some(now);
-                    changed = true;
-                }
-                Err(_) => log::warn!("a virtual card could not be closed yet; trying again later"),
-            }
+            changed |= *p != before;
         }
         if changed && settings::save_ledger(&self.store, &mut ledger).is_err() {
             log::warn!("the purchase history could not be saved");
@@ -1553,10 +1634,9 @@ impl Payments {
         };
         let now = unix_now();
         let mut failed = 0;
-        for card in ledger.iter_mut().filter_map(|p| p.card.as_mut()).filter(|c| c.closed_at.is_none()) {
-            if self.close_card_ref(card).await.is_ok() {
-                card.closed_at = Some(now);
-            } else {
+        for p in ledger.iter_mut().filter(|p| p.card.as_ref().is_some_and(|c| c.closed_at.is_none())) {
+            // Its charges are read once it is closed, while the key is still here.
+            if self.close_purchase_card(p, now).await.is_err() {
                 failed += 1;
             }
         }
@@ -1626,11 +1706,7 @@ impl Payments {
             }
             v => Ok(v),
         };
-        let merchants = budget
-            .merchants
-            .iter()
-            .map(|m| normalize_domain(m).map_err(CoreError::invalid))
-            .collect::<Result<Vec<_>, _>>()?;
+        let merchants = budget.merchants.iter().map(|m| store_entry(m)).collect::<Result<Vec<_>, _>>()?;
         let _edit = self.edit_config();
         let mut config = self.config()?;
         config.budgets.retain(|b| b.connection_id != budget.connection_id);
@@ -1679,11 +1755,7 @@ impl Payments {
         if connection_id.is_empty() {
             return Err(CoreError::invalid("A spend limit is for one AI."));
         }
-        let merchants = input
-            .merchants
-            .iter()
-            .map(|m| normalize_domain(m).map_err(CoreError::invalid))
-            .collect::<Result<Vec<_>, _>>()?;
+        let merchants = input.merchants.iter().map(|m| store_entry(m)).collect::<Result<Vec<_>, _>>()?;
         let _edit = self.edit_config();
         let mut config = self.config()?;
         if input.method == VIRTUAL_CARD && config.provider.is_none() {
@@ -1761,10 +1833,8 @@ impl Payments {
 
     pub(crate) async fn close_card(&self, _one: &Held<'_>, purchase_id: &str) -> Result<(), CoreError> {
         let mut ledger = self.ledger()?;
-        let card =
-            ledger.iter_mut().find(|p| p.id == purchase_id).and_then(|p| p.card.as_mut()).ok_or(CoreError::NotFound)?;
-        self.close_card_ref(card).await?;
-        card.closed_at = Some(unix_now());
+        let p = ledger.iter_mut().find(|p| p.id == purchase_id && p.card.is_some()).ok_or(CoreError::NotFound)?;
+        self.close_purchase_card(p, unix_now()).await?;
         settings::save_ledger(&self.store, &mut ledger)
     }
 }
@@ -1914,7 +1984,7 @@ impl Connector for Payments {
     /// other caller sees.
     async fn preview(&self, _account: &str, call: &ConnectorCall) -> Result<Preview, CoreError> {
         match call.op.as_str() {
-            PURCHASE_REQUEST_OP => Ok(self.plan(call, "", "").await?.preview()),
+            PURCHASE_REQUEST_OP => Ok(self.plan(call, "", "", &Seal::Plain).await?.preview()),
             PURCHASE_COMPLETE_OP => Ok(Preview {
                 resource: "purchases".to_owned(),
                 resource_label: "Purchases".to_owned(),
@@ -1929,7 +1999,6 @@ impl Connector for Payments {
         GmailStatus::Ready
     }
 
-    /// Payments is switched off: the provider's key goes; the settings and the history stay.
     /// Payments is switched off: no AI can buy any more, so its spend limits go. Open virtual cards are closed; the
     /// provider's key goes once none is left open, and stays otherwise, so that Spending (or switching Payments on
     /// again) can still close them.
@@ -2065,6 +2134,7 @@ mod tests {
             warnings: Vec::new(),
             budget_lines: Vec::new(),
             tolerance: 100,
+            delivery: None,
         };
         let approval = Approval {
             request_id: "r1",
@@ -2080,6 +2150,18 @@ mod tests {
         assert!(again.to_string().contains("already paid"), "{again}");
         let ledger = payments.ledger().unwrap();
         assert_eq!((ledger.len(), ledger[0].request_id.as_str()), (1, "r1"), "the first one stays, counted");
+    }
+
+    #[test]
+    fn a_store_list_names_stores_never_a_public_suffix() {
+        assert_eq!(store_entry("https://www.Amazon.com/").unwrap(), "amazon.com");
+        assert_eq!(store_entry("shop.github.io").unwrap(), "shop.github.io");
+        assert_eq!(store_entry("amazon.co.uk").unwrap(), "amazon.co.uk");
+        for shared in ["github.io", "myshopify.com", "co.uk", "appspot.com"] {
+            let err = store_entry(shared).unwrap_err().to_string();
+            assert!(err.contains("shared by many sites"), "{shared}: {err}");
+        }
+        assert!(store_entry("com").is_err(), "not even a site");
     }
 
     #[test]

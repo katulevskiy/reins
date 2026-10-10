@@ -262,9 +262,9 @@ pub struct Purchase {
     /// Who charged the virtual card, as the card network names them…
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub charged_by: Vec<String>,
-    /// …once the provider was asked…
+    /// …whether that was read after the card was closed (so it is final, and what the purchase counts)…
     #[serde(default)]
-    pub charges_read: bool,
+    pub charges_final: bool,
     /// …and what it says was charged in all, in cents.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub provider_charged: Option<i64>,
@@ -290,15 +290,15 @@ impl Purchase {
 impl Purchase {
     /// What it counts for in budgets and limits. Nothing the AI reports lowers it:
     ///
-    /// - a virtual card counts its cap (the most it can be charged) while it is open, or once closed while its charges
-    ///   are unknown, and once closed what the provider says was charged;
+    /// - a virtual card counts its cap (the most it can be charged) while it is open, and once closed until its charges
+    ///   are read after the closing, then what the provider says was charged;
     /// - anything else counts the approved total (or a higher reported charge) until the user clears it, whatever the
     ///   AI says happened: only the user knows nothing was charged.
     #[must_use]
     pub fn spent(&self) -> i64 {
         let reported = self.charged.unwrap_or(0);
         match &self.card {
-            Some(card) if card.closed_at.is_some() && self.charges_read => {
+            Some(card) if card.closed_at.is_some() && self.charges_final => {
                 self.provider_charged.unwrap_or(0).max(reported)
             }
             Some(card) => card.limit.max(reported),
@@ -339,7 +339,7 @@ impl Purchase {
             reported_at: None,
             card: Some(made),
             charged_by: Vec::new(),
-            charges_read: false,
+            charges_final: false,
             provider_charged: None,
             cleared: false,
             mismatch: None,
@@ -438,7 +438,7 @@ mod tests {
             reported_at: None,
             card: None,
             charged_by: Vec::new(),
-            charges_read: false,
+            charges_final: false,
             provider_charged: None,
             cleared: false,
             mismatch: None,
@@ -465,7 +465,7 @@ mod tests {
         assert_eq!(p.spent(), 101, "a 0.01 cart with a 1.01 card counts 1.01 while the card is open");
         p.card = Some(card(101, true));
         assert_eq!(p.spent(), 101, "closed, charges unknown: still the cap");
-        p.charges_read = true;
+        p.charges_final = true;
         p.provider_charged = Some(0);
         p.charged = Some(0);
         assert_eq!(p.spent(), 0, "the provider says it was never charged");

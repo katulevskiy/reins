@@ -78,6 +78,11 @@ pub struct PurchaseView {
     pub budget_lines: Vec<String>,
     /// The methods a spend limit made from this approval may use.
     pub limit_methods: Vec<String>,
+    /// Where card details go: "Card details go sealed to “Work laptop”, your desktop app paired on 2026-10-09: the
+    /// Reins server cannot read them.", or that they go through the server. The app's name is the one this phone kept
+    /// when pairing it, not the server's.
+    #[uniffi(default)]
+    pub delivery: Option<String>,
 }
 
 /// A spend limit to create alongside an approval, or from the settings.

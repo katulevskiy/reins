@@ -1,8 +1,9 @@
 //! Cart mandates: what the user approved, signed on the phone. A compact JWS (RFC 7515) with `EdDSA` (Ed25519, RFC
 //! 8037) whose header carries the public key as a JWK and its RFC 7638 thumbprint as `kid`. The embedded key only
 //! says which key signed: a verifier must compare the thumbprint with the one the Payments screen shows (the desktop
-//! app pins it the first time). The key is made once per account and kept with the account's encrypted state, so the
-//! user's phones sign with the same key; the server holds it only encrypted with the account key.
+//! app trusts the one the user types in from that screen, with `reins payments-trust`). The key is made once per
+//! account and kept with the account's encrypted state, so the user's phones sign with the same key; the server holds
+//! it only encrypted with the account key.
 
 use data_encoding::BASE64URL_NOPAD;
 use reins_proto::payments::{CartMandate, MANDATE_JWS_TYPE, MANDATE_TYPE};
@@ -49,6 +50,8 @@ pub fn key_thumbprint(store: &Store) -> Result<String, CoreError> {
 
 /// The `typ` of the signed card details sealed to the desktop app.
 pub const SEALED_JWS_TYPE: &str = "reins-sealed-payment+jws";
+/// The `typ` of a whole approved answer signed for the desktop app, with the nonce it sent.
+pub const ANSWER_JWS_TYPE: &str = "reins-purchase-answer+jws";
 
 /// Signs `mandate`.
 pub fn sign(store: &Store, mandate: &CartMandate) -> Result<String, CoreError> {

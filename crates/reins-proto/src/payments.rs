@@ -27,6 +27,7 @@ pub const MAX_QUANTITY: u32 = 999;
 pub const MAX_NAME: usize = 200;
 pub const MAX_URL: usize = 2_000;
 pub const MAX_NOTE: usize = 500;
+pub const MAX_ORDER_ID: usize = 200;
 /// The largest amount anything may have, in minor units (a billion cents).
 pub const MAX_MINOR: i64 = 100_000_000_000;
 
@@ -247,11 +248,41 @@ fn one_line(s: &str) -> String {
     s.split_whitespace().collect::<Vec<_>>().join(" ")
 }
 
-/// Characters that change how text around them is laid out or hide in it (bidirectional controls, zero-width
-/// characters): never in what the user reads on a purchase.
+/// Characters that change how text around them is laid out or hide in it: never in what the user reads on a purchase.
+/// The whole `Cf` (format) category of Unicode 16 (bidirectional controls, zero-width characters, tags, the soft
+/// hyphen, Arabic and Egyptian format signs; unassigned code points inside its ranges too), the variation selectors,
+/// the Hangul fillers, the combining grapheme joiner and the Khmer and Mongolian invisible signs.
 #[must_use]
 pub fn is_format_char(c: char) -> bool {
-    matches!(c, '\u{00AD}' | '\u{061C}' | '\u{180E}' | '\u{200B}'..='\u{200F}' | '\u{202A}'..='\u{202E}' | '\u{2060}'..='\u{206F}' | '\u{FEFF}')
+    matches!(
+        c,
+        '\u{00AD}'
+            | '\u{034F}'
+            | '\u{0600}'..='\u{0605}'
+            | '\u{061C}'
+            | '\u{06DD}'
+            | '\u{070F}'
+            | '\u{0890}'..='\u{0891}'
+            | '\u{08E2}'
+            | '\u{115F}'..='\u{1160}'
+            | '\u{17B4}'..='\u{17B5}'
+            | '\u{180B}'..='\u{180F}'
+            | '\u{200B}'..='\u{200F}'
+            | '\u{202A}'..='\u{202E}'
+            | '\u{2060}'..='\u{206F}'
+            | '\u{3164}'
+            | '\u{FE00}'..='\u{FE0F}'
+            | '\u{FEFF}'
+            | '\u{FFA0}'
+            | '\u{FFF9}'..='\u{FFFB}'
+            | '\u{110BD}'
+            | '\u{110CD}'
+            | '\u{13430}'..='\u{1343F}'
+            | '\u{1BCA0}'..='\u{1BCA3}'
+            | '\u{1D173}'..='\u{1D17A}'
+            | '\u{E0000}'..='\u{E007F}'
+            | '\u{E0100}'..='\u{E01EF}'
+    )
 }
 
 fn text_field(v: Option<&Value>, name: &str, max: usize, required: bool) -> Result<Option<String>, String> {
@@ -441,6 +472,9 @@ pub fn check_purchase_complete(call: &ConnectorCall) -> Result<(), String> {
         (None, None) => Ok(()),
         _ => Err("Give `charged_total` and `currency` together.".to_owned()),
     }?;
+    // Both are shown in the user's Spending list.
+    text_field(call.args.get("order_id"), "order_id", MAX_ORDER_ID, false)?;
+    text_field(call.args.get("note"), "note", MAX_NOTE, false)?;
     url_field(call.str_arg("receipt_url"), "receipt_url").map(drop)
 }
 
@@ -636,6 +670,32 @@ mod tests {
         let mut item = cart_args();
         item["items"][0]["name"] = json!("Cable \u{2066}x10\u{2069}");
         assert!(Cart::from_call(&call(&item)).is_err());
+        // The whole format category and the other invisible characters: tags, variation selectors, Hangul fillers,
+        // the combining grapheme joiner, Arabic and Egyptian format signs.
+        for hidden in [
+            '\u{E0041}',
+            '\u{E007F}',
+            '\u{FE0F}',
+            '\u{E0100}',
+            '\u{3164}',
+            '\u{115F}',
+            '\u{FFA0}',
+            '\u{034F}',
+            '\u{0600}',
+            '\u{13430}',
+            '\u{180B}',
+        ] {
+            let mut item = cart_args();
+            item["items"][0]["name"] = json!(format!("Cable{hidden}"));
+            assert!(Cart::from_call(&call(&item)).is_err(), "U+{:04X}", hidden as u32);
+        }
+        for seen in
+            ["Caf\u{e9} cr\u{e8}me", "\u{41a}\u{430}\u{431}\u{435}\u{43b}\u{44c}", "\u{6f22}\u{5b57}", "\u{1F600} mug"]
+        {
+            let mut item = cart_args();
+            item["items"][0]["name"] = json!(seen);
+            assert!(Cart::from_call(&call(&item)).is_ok(), "{seen}");
+        }
 
         let mut extra = cart_args();
         extra["items"][0]["price"] = json!("1");
@@ -688,5 +748,29 @@ mod tests {
         assert_eq!(v["amounts"]["total"], "24.97");
         assert_eq!(v["items"][0], json!({"name": "USB-C cable", "quantity": 2, "unit_price": "9.99"}));
         assert_eq!((v["iat"].as_i64(), v["exp"].as_i64()), (Some(100), Some(3700)));
+    }
+
+    #[test]
+    fn a_completion_report_is_text_the_user_can_read() {
+        let report = |args: Value| ConnectorCall {
+            service: PAYMENTS.to_owned(),
+            op: PURCHASE_COMPLETE_OP.to_owned(),
+            args: args.as_object().unwrap().clone(),
+        };
+        assert!(
+            check_purchase_complete(&report(json!({"purchase_id": "p", "status": "completed",
+            "order_id": "112-3", "note": "Arrives Friday"})))
+            .is_ok()
+        );
+        for (field, text) in [("order_id", "112\u{202e}3"), ("note", "done\u{E0041}"), ("order_id", "1\u{200b}2")] {
+            let err = check_purchase_complete(&report(json!({"purchase_id": "p", "status": "completed", field: text})))
+                .unwrap_err();
+            assert!(err.contains(field), "{err}");
+        }
+        let long = "x".repeat(MAX_ORDER_ID + 1);
+        assert!(
+            check_purchase_complete(&report(json!({"purchase_id": "p", "status": "completed", "order_id": long})))
+                .is_err()
+        );
     }
 }

@@ -70,7 +70,20 @@ pub struct Privacy {
 struct Transactions {
     #[serde(default)]
     data: Vec<Transaction>,
+    /// How many pages of [`PAGE_SIZE`] there are (1 when the answer does not say).
+    #[serde(default = "one_page")]
+    total_pages: u32,
 }
+
+fn one_page() -> u32 {
+    1
+}
+
+/// Transactions per page read.
+const PAGE_SIZE: &str = "50";
+/// The most pages of a card's transactions read: a card for one cart has a few. With more, the charges are unknown and
+/// the card counts its cap.
+const MAX_PAGES: u32 = 20;
 
 #[derive(Deserialize)]
 struct Transaction {
@@ -177,26 +190,36 @@ impl CardIssuer for Privacy {
 
     async fn charges(&self, key: &str, token: &str) -> Result<Vec<Charge>, CoreError> {
         card_token(token)?;
-        let req = self.http.get(format!("{}/transactions", self.base)).query(&[
-            ("card_token", token),
-            ("result", "APPROVED"),
-            ("page_size", "50"),
-        ]);
-        let bytes = self.send(req, key).await?;
-        let list: Transactions = serde_json::from_slice(&bytes)
-            .map_err(|_| CoreError::service("Privacy.com sent an answer Reins does not understand."))?;
-        Ok(list
-            .data
-            .into_iter()
-            .filter(|t| t.result.eq_ignore_ascii_case("APPROVED"))
-            .map(|t| Charge {
-                descriptor: text::truncate_chars(
-                    &text::one_line(&t.merchant.map(|m| m.descriptor).unwrap_or_default()),
-                    80,
-                ),
-                amount: t.amount.max(0),
-            })
-            .collect())
+        let mut charges = Vec::new();
+        let mut page = 1u32;
+        loop {
+            let number = page.to_string();
+            let req = self.http.get(format!("{}/transactions", self.base)).query(&[
+                ("card_token", token),
+                ("result", "APPROVED"),
+                ("page_size", PAGE_SIZE),
+                ("page", number.as_str()),
+            ]);
+            let bytes = self.send(req, key).await?;
+            let list: Transactions = serde_json::from_slice(&bytes)
+                .map_err(|_| CoreError::service("Privacy.com sent an answer Reins does not understand."))?;
+            charges.extend(list.data.into_iter().filter(|t| t.result.eq_ignore_ascii_case("APPROVED")).map(|t| {
+                Charge {
+                    descriptor: text::truncate_chars(
+                        &text::one_line(&t.merchant.map(|m| m.descriptor).unwrap_or_default()),
+                        80,
+                    ),
+                    amount: t.amount.max(0),
+                }
+            }));
+            if page >= list.total_pages {
+                return Ok(charges);
+            }
+            if page >= MAX_PAGES {
+                return Err(CoreError::service("This card has more charges than Reins reads."));
+            }
+            page += 1;
+        }
     }
 
     async fn close(&self, key: &str, token: &str) -> Result<(), CoreError> {

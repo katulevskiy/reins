@@ -20,12 +20,15 @@ use crate::{CoreError, text};
 
 impl Engine {
     /// How card details may leave for this purchase. Fail closed: the paired desktop app's connection gets them sealed
-    /// to its pinned key and signed, or not at all (a server that strips the key gets nothing); an ordinary AI gets
-    /// them in the answer; a key without a pinned desktop app, or another key than the one pinned, is an error.
+    /// to its pinned key and signed, or not at all (a server that strips the key gets nothing). Any other connection is
+    /// the server's word only, so while a desktop app is paired a card from the vault never goes to one (the server
+    /// could have moved the app's purchase there); without one, card details go in the answer, through the server. A
+    /// key without a pinned desktop app, or another key than the one pinned, is an error.
     fn seal_target(&self, request: &RelayRequest, call: &ConnectorCall) -> Result<Seal, ()> {
         let pinned = self.store.desktop_key(&request.connection_id.0).map_err(|_| ())?;
         match (call.str_arg("client_key"), pinned) {
-            (None, None) => Ok(Seal::Plain),
+            (None, None) if self.store.desktop_connections().map_err(|_| ())?.is_empty() => Ok(Seal::Plain),
+            (None, None) => Ok(Seal::Unsealed),
             (None, Some(_)) => Ok(Seal::Refused),
             (Some(_), Some(_)) if self.desktop_key_matches(&request.connection_id, call) => {
                 match (client_key(call), nonce_arg(call)) {
@@ -35,6 +38,44 @@ impl Engine {
             }
             // A key without a paired desktop app, or another key than the one pinned.
             (Some(_), _) => Err(()),
+        }
+    }
+
+    /// Where card details go, for the purchase screen, named as this phone knows it; and a warning when a request that
+    /// is not from a paired desktop app carries the name of one.
+    fn delivery(&self, seal: &Seal, request: &RelayRequest) -> (String, Option<String>) {
+        let pairing = |connection: &str| self.store.desktop_pairing(connection).ok().flatten();
+        let through_server = "card details go through your Reins server, which can read them";
+        match seal {
+            Seal::To(..) => {
+                let (label, at) = pairing(&request.connection_id.0).unwrap_or_default();
+                let day = text::iso_utc(at).chars().take(10).collect::<String>();
+                let app = if label.is_empty() {
+                    format!("your desktop app paired on {day}")
+                } else {
+                    format!("\u{201c}{label}\u{201d}, your desktop app paired on {day}")
+                };
+                (format!("Card details go sealed to {app}: the Reins server cannot read them."), None)
+            }
+            Seal::Plain => (format!("This is not a desktop app: {through_server}."), None),
+            Seal::Unsealed => {
+                let claimed = text::one_line(&request.connection_label).to_lowercase();
+                let named = self.store.desktop_connections().unwrap_or_default().into_iter().find_map(|c| {
+                    pairing(&c).map(|(label, _)| label).filter(|l| !l.is_empty() && l.to_lowercase() == claimed)
+                });
+                (
+                    format!("Not from your paired desktop app: {through_server}."),
+                    named.map(|l| {
+                        format!(
+                            "This says it is from \u{201c}{l}\u{201d}, the name of your desktop app, but it did not come \
+                             from that app."
+                        )
+                    }),
+                )
+            }
+            Seal::Refused => {
+                ("This request came without your desktop app's key: no card details can go to it.".to_owned(), None)
+            }
         }
     }
 
@@ -85,10 +126,13 @@ impl Engine {
         // may approve, what this AI's earlier cards were charged with is read again (and shown with the plan).
         let locked = self.ap_mode_for(connection, now)? == AutopilotMode::Lockdown;
         let limits = !locked && self.payments.limits_may_apply(&one, connection, now).await?;
-        let plan = match self.payments.plan(call, connection, &request.connection_label).await {
+        let mut plan = match self.payments.plan(call, connection, &request.connection_label, &seal).await {
             Ok(plan) => plan,
             Err(e) => return self.fail_connector(session, request, call, &e).await,
         };
+        let (delivery, impostor) = self.delivery(&seal, request);
+        plan.delivery = Some(delivery);
+        plan.warnings.extend(impostor);
         let margin = Self::margin(&plan, plan.cart.payment_method.as_deref());
         if let Some(why) = self.payments.refusal(&plan.cart, connection, margin, now)? {
             drop(one);

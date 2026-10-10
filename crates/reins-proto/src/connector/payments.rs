@@ -4,8 +4,8 @@
 
 use crate::connector::{Effect, Param, ToolSpec, choice_p, json_p, str_p, tool};
 use crate::payments::{
-    ADDRESSES_LIST_OP, MAX_NOTE, MAX_URL, METHODS_LIST_OP, PAYMENTS, PURCHASE_COMPLETE_OP, PURCHASE_REQUEST_OP,
-    check_purchase_complete, check_purchase_request,
+    ADDRESSES_LIST_OP, MAX_NOTE, MAX_ORDER_ID, MAX_URL, METHODS_LIST_OP, PAYMENTS, PURCHASE_COMPLETE_OP,
+    PURCHASE_REQUEST_OP, check_purchase_complete, check_purchase_request,
 };
 
 const AMOUNT_HELP: &str = "An amount as a string in the currency's decimals, like \"4.99\".";
@@ -126,7 +126,7 @@ pub(super) fn tools() -> Vec<ToolSpec> {
                     true,
                     "completed: the order was placed; failed: the store refused it; cancelled: you did not place it.",
                 ),
-                str_p("order_id", 200, false, "The store's order number."),
+                str_p("order_id", MAX_ORDER_ID, false, "The store's order number."),
                 str_p("charged_total", 20, false, "The amount charged, as the store says (with currency)."),
                 str_p("currency", 3, false, "The currency of charged_total."),
                 str_p("receipt_url", MAX_URL, false, "The https page of the order or receipt."),

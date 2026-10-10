@@ -637,7 +637,9 @@ impl Engine {
         let mut note = format!("From {}", pairing.client_host);
         if let (Some(connection), Some(key)) = (new_connection, key) {
             let key = reins_proto::desktop::encode_key(&key);
-            self.store.pin_desktop_key(&connection.0, &key, now)?;
+            // The name the user saw, kept on the phone: a purchase sealed to this app names it from here.
+            let named = response.label.clone().unwrap_or_else(|| text::one_line(&pairing.client_name));
+            self.store.pin_desktop_key(&connection.0, &key, &text::truncate_chars(&named, 64), now)?;
             if let Some(fingerprint) = reins_proto::desktop::key_fingerprint(&key) {
                 note = format!("{note}. Desktop app key {fingerprint}");
             }

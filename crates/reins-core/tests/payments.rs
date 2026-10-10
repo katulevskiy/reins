@@ -8,6 +8,8 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicU32, Ordering};
 
 use common::{FakeGoogle, FakeKeys, RecordingNotifier};
+use crypto_box::SecretKey;
+use crypto_box::aead::OsRng;
 use reins_core::connector::payments::mandate;
 use reins_core::connector::payments::{BudgetView, LimitPeriod, PurchaseChoice, SpendLimitInput};
 use reins_core::crypto::{Kdf, VaultKey, master_key};
@@ -198,6 +200,68 @@ async fn ask_from(env: &Env, connection: &str, op: &str, args: &Value) -> (Strin
 
 async fn ask(env: &Env, op: &str, args: &Value) -> (String, bool) {
     ask_from(env, "c1", op, args).await
+}
+
+/// The server relays `request` (once). Whether it waits for the user.
+async fn deliver(env: &Env, request: Value) -> bool {
+    let id = request["id"].as_str().unwrap().to_owned();
+    Mock::given(method("GET"))
+        .and(path("/reins/api/pending"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({"requests": [request], "pairings": []})))
+        .up_to_n_times(1)
+        .with_priority(1)
+        .mount(&env.server)
+        .await;
+    Mock::given(method("GET"))
+        .and(path("/reins/api/pending"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({"requests": [], "pairings": []})))
+        .mount(&env.server)
+        .await;
+    env.core.sync(0).await.unwrap().iter().any(|p| p.id == id)
+}
+
+/// A purchase request from `connection`, under the name `label`.
+fn named_request(id: &str, connection: &str, label: &str, args: &Value) -> Value {
+    let mut r = request(id, connection, "purchase_request", args);
+    r["connection_label"] = json!(label);
+    r
+}
+
+/// A Reins desktop app named `label` is paired with this phone on `connection`, with a key of its own.
+async fn pair_desktop(env: &Env, connection: &str, label: &str) -> SecretKey {
+    let key = SecretKey::generate(&mut OsRng);
+    let id = format!("pair-{}", env.counter.fetch_add(1, Ordering::SeqCst));
+    let pairing = json!({"v": 1, "id": id, "client_name": label, "client_host": "127.0.0.1", "choices": [12, 47, 83],
+        "created_at": now(), "client_key": reins_proto::desktop::encode_key(key.public_key().as_bytes())});
+    Mock::given(method("GET"))
+        .and(path("/reins/api/pending"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({"requests": [], "pairings": [pairing]})))
+        .up_to_n_times(1)
+        .with_priority(1)
+        .mount(&env.server)
+        .await;
+    env.core.sync(0).await.unwrap();
+    Mock::given(method("POST"))
+        .and(path(format!("/reins/api/pairings/{id}/response")))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({"connection_id": connection})))
+        .with_priority(1)
+        .mount(&env.server)
+        .await;
+    env.core.answer_pairing(id, true, Some(47), None).await.unwrap();
+    key
+}
+
+/// A cart asked for by the desktop app with `key`, sealed with `nonce`.
+fn sealed_cart(key: &SecretKey, nonce: &str, changes: &Value) -> Value {
+    let mut c = cart_with(changes);
+    c["client_key"] = json!(reins_proto::desktop::encode_key(key.public_key().as_bytes()));
+    c["nonce"] = json!(nonce);
+    c
+}
+
+fn unseal(key: &SecretKey, sealed: &Value) -> Value {
+    let bytes = data_encoding::BASE64URL_NOPAD.decode(sealed.as_str().unwrap().as_bytes()).unwrap();
+    serde_json::from_slice(&key.unseal(&bytes).unwrap()).unwrap()
 }
 
 /// The phone's answer to request `id`.
@@ -708,10 +772,13 @@ async fn card_details_for_the_desktop_app_are_sealed_to_its_pinned_key() {
     stripped.as_object_mut().unwrap().remove("client_key");
     stripped.as_object_mut().unwrap().remove("nonce");
     desk.send(&[request("s3", common::desktop::DESK, "purchase_request", &stripped)]).await;
-    let refused = desk.core.approve_purchase("s3".into(), choose("virtual_card")).await.unwrap_err();
-    assert!(refused.to_string().contains("sealed only"), "{refused}");
-    desk.core.approve_purchase("s3".into(), choose("merchant_account")).await.unwrap();
-    assert_eq!(desk.data("s3").await["payment"]["kind"], "merchant_account");
+    assert!(desk.error("s3").await.contains("without your desktop app's key"), "it asked for a virtual card");
+    stripped.as_object_mut().unwrap().remove("payment_method");
+    desk.send(&[request("s4", common::desktop::DESK, "purchase_request", &stripped)]).await;
+    let refused = desk.core.approve_purchase("s4".into(), choose("virtual_card")).await.unwrap_err();
+    assert!(refused.to_string().contains("without your desktop app's key"), "{refused}");
+    desk.core.approve_purchase("s4".into(), choose("merchant_account")).await.unwrap();
+    assert_eq!(desk.data("s4").await["payment"]["kind"], "merchant_account");
 
     // Another key on the desktop app's connection is refused.
     let mut wrong = digital.clone();
@@ -895,4 +962,263 @@ async fn disconnecting_the_provider_closes_its_cards_first() {
     let overview = env.core.payments_overview().await.unwrap();
     assert!(overview.provider.is_none() && overview.limits.is_empty());
     assert!(!env.core.payments_spending(0).await.unwrap().purchases[0].card_open);
+}
+
+/// The server's copy of the account's encrypted state, shared by the user's phones.
+#[derive(Clone, Default)]
+struct Cloud(Arc<std::sync::Mutex<Value>>);
+
+impl wiremock::Respond for Cloud {
+    fn respond(&self, request: &wiremock::Request) -> ResponseTemplate {
+        let mut state = self.0.lock().unwrap();
+        if state.is_null() {
+            *state = json!({"revision": 0, "ciphertext": null});
+        }
+        if request.method.as_str() == "PUT" {
+            let update: Value = serde_json::from_slice(&request.body).unwrap();
+            if update["revision"] != state["revision"] {
+                return ResponseTemplate::new(409);
+            }
+            *state = json!({"revision": state["revision"].as_u64().unwrap() + 1, "ciphertext": update["ciphertext"]});
+        }
+        ResponseTemplate::new(200).set_body_json(state.clone())
+    }
+}
+
+#[tokio::test]
+async fn a_request_already_paid_for_is_refused_when_it_arrives_again() {
+    let env = env().await;
+    let cloud = Cloud::default();
+    Mock::given(path("/reins/api/account-state")).respond_with(cloud.clone()).mount(&env.server).await;
+    let paid = request("again-1", "c1", "purchase_request", &cart());
+    assert!(deliver(&env, paid.clone()).await);
+    env.core.approve_purchase("again-1".into(), choose("merchant_account")).await.unwrap();
+    assert_eq!(answer(&env, "again-1").await["outcome"], "result");
+    // The ledger travels with the account's encrypted state.
+    for _ in 0..100 {
+        env.core.accounts().await.unwrap();
+        if cloud.0.lock().unwrap()["revision"].as_u64() > Some(0) {
+            break;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+    }
+    assert!(cloud.0.lock().unwrap()["revision"].as_u64() > Some(0), "the state was uploaded");
+
+    // The same request relayed to the user's other phone, which never answered it: its ledger knows it was paid.
+    let dir = tempfile::tempdir().unwrap();
+    let other = ReinsCore::with_connectors(
+        dir.path().to_str().unwrap(),
+        &FakeKeys,
+        Arc::new(FakeGoogle::new()),
+        Arc::new(RecordingNotifier::default()),
+        CoreConfig {
+            privacy_base: env.privacy.uri(),
+            ..CoreConfig::default()
+        },
+        vec![],
+    )
+    .unwrap();
+    other.login(env.server.uri(), EMAIL.to_owned(), PASSWORD.to_owned(), None).await.unwrap();
+    assert_eq!(other.payments_spending(0).await.unwrap().purchases.len(), 1, "the other phone has the ledger");
+    Mock::given(method("GET"))
+        .and(path("/reins/api/pending"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({"requests": [paid], "pairings": []})))
+        .up_to_n_times(1)
+        .with_priority(1)
+        .mount(&env.server)
+        .await;
+    assert!(other.sync(0).await.unwrap().is_empty(), "it does not wait for the user");
+    let again = answer(&env, "again-1").await;
+    assert_eq!(again["outcome"], "error", "{again}");
+    assert!(again["message"].as_str().unwrap().contains("already paid"), "{again}");
+    assert_eq!(other.payments_spending(0).await.unwrap().purchases.len(), 1, "paid once");
+}
+
+#[tokio::test]
+async fn while_a_desktop_app_is_paired_a_card_from_the_vault_goes_only_to_it() {
+    let env = env().await;
+    env.core.payments_set_method("card:card1".into(), true).await.unwrap();
+    env.core.payments_connect_provider("privacy".into(), PRIVACY_KEY.into(), false, false).await.unwrap();
+    // Without a desktop app, a card goes in the answer, through the server, and the purchase screen says so.
+    assert!(deliver(&env, request("plain-1", "c1", "purchase_request", &cart())).await);
+    let p = env.core.approval_view("plain-1".into()).await.unwrap().purchase.unwrap();
+    assert!(p.delivery.as_deref().unwrap().contains("through your Reins server"), "{:?}", p.delivery);
+    assert!(p.methods.iter().any(|m| m.id == "card:card1" && m.unavailable.is_none()));
+
+    let desk = pair_desktop(&env, "desk1", "Work laptop").await;
+    // The server moves the desktop app's purchase to another connection, under the app's name, without its key.
+    assert!(deliver(&env, named_request("moved-1", "c2", "Work laptop", &cart())).await);
+    let p = env.core.approval_view("moved-1".into()).await.unwrap().purchase.unwrap();
+    let card = p.methods.iter().find(|m| m.id == "card:card1").unwrap();
+    assert!(card.unavailable.as_deref().unwrap().contains("only to your paired desktop app"), "{card:?}");
+    assert!(p.delivery.as_deref().unwrap().starts_with("Not from your paired desktop app"), "{:?}", p.delivery);
+    assert!(
+        p.warnings.iter().any(|w| w.contains("\u{201c}Work laptop\u{201d}, the name of your desktop app")),
+        "{:?}",
+        p.warnings
+    );
+    let refused = env.core.approve_purchase("moved-1".into(), choose("card:card1")).await.unwrap_err();
+    assert!(refused.to_string().contains("only to your paired desktop app"), "{refused}");
+    // A virtual card, capped and locked to the store, still pays.
+    env.core.approve_purchase("moved-1".into(), choose("virtual_card")).await.unwrap();
+    assert_eq!(answer(&env, "moved-1").await["result"]["data"]["payment"]["number"], VIRTUAL_PAN);
+    // An AI that names the vault card is told at once.
+    let named = cart_with(&json!({"payment_method": "card:card1"}));
+    assert!(!deliver(&env, request("moved-2", "c2", "purchase_request", &named)).await);
+    assert!(answer(&env, "moved-2").await["message"].as_str().unwrap().contains("only to your paired desktop app"));
+    // A request that waited from before the pairing is decided again when approved.
+    let late = env.core.approve_purchase("plain-1".into(), choose("card:card1")).await.unwrap_err();
+    assert!(late.to_string().contains("only to your paired desktop app"), "{late}");
+
+    // The desktop app itself gets the vault card, sealed to its key, and the whole answer signed with its nonce.
+    assert!(
+        deliver(&env, named_request("desk-1", "desk1", "Work laptop", &sealed_cart(&desk, "n-7", &json!({})))).await
+    );
+    let p = env.core.approval_view("desk-1".into()).await.unwrap().purchase.unwrap();
+    assert!(p.methods.iter().any(|m| m.id == "card:card1" && m.unavailable.is_none()));
+    let delivery = p.delivery.unwrap();
+    assert!(delivery.starts_with("Card details go sealed to \u{201c}Work laptop\u{201d}, your desktop app paired on"));
+    env.core.approve_purchase("desk-1".into(), choose("card:card1")).await.unwrap();
+    let data = answer(&env, "desk-1").await["result"]["data"].clone();
+    assert!(!data.to_string().contains(VAULT_CARD), "the server never sees the number");
+    let (signed, kid) = mandate::verify_json(data["signed"].as_str().unwrap(), mandate::ANSWER_JWS_TYPE).unwrap();
+    assert_eq!(kid, env.core.payments_overview().await.unwrap().mandate_key);
+    assert_eq!(signed["nonce"], "n-7");
+    assert_eq!(signed["answer"]["purchase_id"], data["purchase_id"]);
+    assert_eq!(signed["answer"]["payment"], data["payment"], "what the server relays is what was signed");
+    let opened = unseal(&desk, &data["payment"]["sealed"]);
+    let (inner, _) = mandate::verify_json(opened["jws"].as_str().unwrap(), mandate::SEALED_JWS_TYPE).unwrap();
+    assert_eq!(inner["payment"]["number"], VAULT_CARD);
+    // Paying at the store, the desktop app gets a signed answer too.
+    assert!(
+        deliver(&env, named_request("desk-2", "desk1", "Work laptop", &sealed_cart(&desk, "n-8", &json!({})))).await
+    );
+    env.core.approve_purchase("desk-2".into(), choose("merchant_account")).await.unwrap();
+    let data = answer(&env, "desk-2").await["result"]["data"].clone();
+    let (signed, _) = mandate::verify_json(data["signed"].as_str().unwrap(), mandate::ANSWER_JWS_TYPE).unwrap();
+    assert_eq!(
+        (signed["nonce"].as_str(), &signed["answer"]["payment"]["kind"]),
+        (Some("n-8"), &json!("merchant_account"))
+    );
+    nothing_kept_holds_a_card_number(&env).await;
+}
+
+#[tokio::test]
+async fn a_desktop_key_from_a_connection_without_that_app_is_refused() {
+    let env = env().await;
+    let desk = pair_desktop(&env, "desk1", "Work laptop").await;
+    // The desktop app's key and nonce, on a connection that is not the app's (the server moved them there).
+    for connection in ["c1", "c9"] {
+        let id = format!("keyed-{connection}");
+        assert!(
+            !deliver(&env, request(&id, connection, "purchase_request", &sealed_cart(&desk, "n-1", &json!({})))).await
+        );
+        let refused = answer(&env, &id).await;
+        assert_eq!(refused["outcome"], "error", "{refused}");
+        assert!(refused["message"].as_str().unwrap().contains("desktop app paired with this phone"), "{refused}");
+    }
+}
+
+#[tokio::test]
+async fn a_desktop_app_unpaired_or_paired_again_while_a_purchase_waits_gets_nothing() {
+    let env = env().await;
+    env.core.payments_connect_provider("privacy".into(), PRIVACY_KEY.into(), false, false).await.unwrap();
+    let old = pair_desktop(&env, "desk1", "Work laptop").await;
+    assert!(deliver(&env, request("w-1", "desk1", "purchase_request", &sealed_cart(&old, "n-1", &json!({})))).await);
+    // Paired again (another key on the same connection) before the user approved: the old key gets nothing.
+    let new = pair_desktop(&env, "desk1", "Work laptop").await;
+    let refused = env.core.approve_purchase("w-1".into(), choose("virtual_card")).await.unwrap_err();
+    assert!(refused.to_string().contains("no longer paired"), "{refused}");
+    assert!(privacy_requests(&env, "POST").await.is_empty(), "no card was made");
+    // Unpaired: what it asked for goes with it.
+    assert!(deliver(&env, request("w-2", "desk1", "purchase_request", &sealed_cart(&new, "n-2", &json!({})))).await);
+    Mock::given(method("DELETE"))
+        .and(path("/reins/api/connections/desk1"))
+        .respond_with(ResponseTemplate::new(204))
+        .mount(&env.server)
+        .await;
+    env.core.revoke_connection("desk1".into()).await.unwrap();
+    assert!(env.core.approve_purchase("w-2".into(), choose("virtual_card")).await.is_err());
+    assert!(privacy_requests(&env, "POST").await.is_empty(), "no card was made");
+}
+
+#[tokio::test]
+async fn lockdown_switched_on_while_the_charges_are_read_stops_a_spend_limit() {
+    let env = env().await;
+    env.core.payments_connect_provider("privacy".into(), PRIVACY_KEY.into(), false, false).await.unwrap();
+    limit_for(&env, 5_000, 1_000_000, vec![]).await;
+    let made_before = privacy_requests(&env, "POST").await.len();
+    // Reading the earlier card's charges takes a while; the user switches Lockdown on meanwhile.
+    Mock::given(method("GET"))
+        .and(path("/transactions"))
+        .respond_with(charges("AMZN Mktp US*2K3AB1CD2").set_delay(std::time::Duration::from_millis(800)))
+        .with_priority(1)
+        .mount(&env.privacy)
+        .await;
+    let core = Arc::clone(&env.core);
+    let lock = tokio::spawn(async move {
+        tokio::time::sleep(std::time::Duration::from_millis(250)).await;
+        core.set_autopilot_mode(None, Some(reins_core::AutopilotMode::Lockdown), None).await.unwrap();
+    });
+    let (id, _) = ask(&env, "purchase_request", &tiny()).await;
+    lock.await.unwrap();
+    assert_eq!(privacy_requests(&env, "POST").await.len(), made_before, "no card was made");
+    let said = answer(&env, &id).await;
+    assert_ne!(said["outcome"], "result", "{said}");
+}
+
+#[tokio::test]
+async fn charges_are_read_after_a_card_is_closed_and_every_page_counts() {
+    let env = env().await;
+    env.core.payments_connect_provider("privacy".into(), PRIVACY_KEY.into(), false, false).await.unwrap();
+    let (id, _) = ask(&env, "purchase_request", &cart_with(&json!({"payment_method": "virtual_card"}))).await;
+    env.core.approve_purchase(id.clone(), choose("virtual_card")).await.unwrap();
+    let pid = answer(&env, &id).await["result"]["data"]["purchase_id"].clone();
+    // Two pages of charges, made by the store while the AI reports that checkout failed.
+    let page = |n: u32, amount: i64| {
+        ResponseTemplate::new(200).set_body_json(json!({"page": n, "total_pages": 2, "total_entries": 2, "data": [
+            {"token": format!("t{n}"), "result": "APPROVED", "amount": amount, "merchant": {"descriptor": "AMZN Mktp US"}}]}))
+    };
+    Mock::given(method("GET"))
+        .and(path("/transactions"))
+        .and(wiremock::matchers::query_param("page", "1"))
+        .respond_with(page(1, 1_500))
+        .up_to_n_times(1)
+        .with_priority(1)
+        .mount(&env.privacy)
+        .await;
+    Mock::given(method("GET"))
+        .and(path("/transactions"))
+        .and(wiremock::matchers::query_param("page", "2"))
+        .respond_with(page(2, 997))
+        .up_to_n_times(1)
+        .with_priority(1)
+        .mount(&env.privacy)
+        .await;
+    let (rid, _) = ask(&env, "purchase_complete", &json!({"purchase_id": pid, "status": "failed"})).await;
+    assert_eq!(answer(&env, &rid).await["result"]["data"]["virtual_card"], "closed");
+    // The card was closed before its charges were read, so the read is final: both pages count.
+    let calls = env.privacy.received_requests().await.unwrap();
+    let closed = calls.iter().position(|r| r.method.as_str() == "PATCH").unwrap();
+    let last_read = calls.iter().rposition(|r| r.url.path() == "/transactions").unwrap();
+    assert!(closed < last_read, "closed, then read");
+    let spending = env.core.payments_spending(0).await.unwrap();
+    assert_eq!(spending.purchases[0].charged_text.as_deref(), None);
+    assert_eq!(spending.totals[0].minor, 2_497, "what both pages say was charged");
+
+    // A card the user closes counts its cap until its charges are read after the closing.
+    let (id, _) = ask(&env, "purchase_request", &cart_with(&json!({"payment_method": "virtual_card"}))).await;
+    env.core.approve_purchase(id.clone(), choose("virtual_card")).await.unwrap();
+    let pid = answer(&env, &id).await["result"]["data"]["purchase_id"].as_str().unwrap().to_owned();
+    Mock::given(method("GET"))
+        .and(path("/transactions"))
+        .respond_with(ResponseTemplate::new(503))
+        .with_priority(1)
+        .mount(&env.privacy)
+        .await;
+    env.core.payments_close_card(pid.clone()).await.unwrap();
+    let spending = env.core.payments_spending(0).await.unwrap();
+    let closed = spending.purchases.iter().find(|p| p.id == pid).unwrap();
+    assert!(!closed.card_open);
+    assert_eq!(closed.counted_text, "$27.47", "its cap, while what was charged is unknown");
 }
