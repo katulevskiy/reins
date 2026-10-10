@@ -714,13 +714,29 @@ async fn session_start(paths: &Paths, config: &Config, args: &SessionArgs) -> Re
 fn clock(unix: i64) -> String {
     let secs = unix.rem_euclid(86_400);
     let utc = format!("{:02}:{:02} UTC", secs / 3_600, (secs % 3_600) / 60);
-    std::process::Command::new("date")
-        .args(["-d", &format!("@{unix}"), "+%H:%M"])
-        .output()
+    let mut cmd = if cfg!(windows) {
+        let mut c = std::process::Command::new("powershell.exe");
+        c.args([
+            "-NoProfile",
+            "-NonInteractive",
+            "-Command",
+            &format!("[DateTimeOffset]::FromUnixTimeSeconds({unix}).LocalDateTime.ToString('HH:mm')"),
+        ]);
+        c
+    } else if cfg!(target_os = "macos") {
+        let mut c = std::process::Command::new("date");
+        c.args(["-r", &unix.to_string(), "+%H:%M"]);
+        c
+    } else {
+        let mut c = std::process::Command::new("date");
+        c.args(["-d", &format!("@{unix}"), "+%H:%M"]);
+        c
+    };
+    cmd.output()
         .ok()
         .filter(|o| o.status.success())
         .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_owned())
-        .filter(|s| !s.is_empty())
+        .filter(|s| s.len() == 5 && s.as_bytes()[2] == b':')
         .unwrap_or(utc)
 }
 
@@ -837,6 +853,10 @@ async fn doctor(paths: &Paths, config: &Config) -> Result<bool, String> {
 
 /// `reins test`: a test question to the phone; prints how it ended.
 async fn test(paths: &Paths, config: &Config) -> Result<(), String> {
+    // A test that never reaches the phone would only ask this computer, and prove nothing.
+    if config.mode == reins_desktop::config::Mode::Local || server::oauth::logged_in_server(paths).is_none() {
+        return Err("not paired with a phone: `reins setup` pairs it".to_owned());
+    }
     out!("Sent a test to your phone. Open Reins there and approve or deny it…");
     let (answer, timed_out) = reins_desktop::ask::send_test(paths, config, &reins_desktop::ask::DesktopAsk).await;
     match answer {

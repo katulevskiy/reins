@@ -133,11 +133,8 @@
 
         if (-not $wasInstalled) {
             Write-Host ""
-            Write-Host "Next:"
-            Write-Host "  reins login"
-            Write-Host "      sign in; your phone shows a key: approve only if it matches the one printed here"
-            Write-Host "  reins resume"
-            Write-Host "      start the background service and send GitHub git through it (reins pause undoes it)"
+            Write-Host "Next:  reins setup    (pairs your phone, connects your AI tools)"
+            Write-Host "Then:  reins test     (see it work)    reins doctor    (if something doesn't)"
         }
     } finally {
         Remove-Item -LiteralPath $tmp -Recurse -Force -ErrorAction SilentlyContinue

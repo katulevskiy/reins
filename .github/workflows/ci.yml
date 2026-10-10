@@ -221,7 +221,7 @@ jobs:
     needs: changes
     if: needs.changes.outputs.rust == 'true'
     runs-on: macos-15
-    timeout-minutes: 45
+    timeout-minutes: 60
     steps:
       - uses: actions/checkout@v7
         with:
@@ -233,6 +233,9 @@ jobs:
           save-if: ${{ github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository }}
       - run: cargo clippy --locked -p reins-desktop --all-targets -- -D warnings
       - run: cargo test --locked --no-fail-fast -p reins-desktop
+      # The app's macOS parts (the menu bar item, notifications, the Dock) are otherwise first compiled by the release.
+      - run: cargo clippy --locked -p reins-desktop-app --all-targets -- -D warnings
+      - run: cargo test --locked -p reins-desktop-app
 
   desktop-windows:
     name: Desktop app on Windows (clippy + tests)
@@ -258,6 +261,10 @@ jobs:
           save-if: ${{ github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository }}
       - run: cargo clippy --locked -p reins-desktop --all-targets -- -D warnings
       - run: cargo test --locked --no-fail-fast -p reins-desktop
+      # The app's Windows parts (the tray's tray-icon menu, the toast, the window's place) are otherwise first compiled by
+      # the release.
+      - run: cargo clippy --locked -p reins-desktop-app --all-targets -- -D warnings
+      - run: cargo test --locked -p reins-desktop-app
       # scripts/install.ps1 as `irm | iex` runs it, in Windows PowerShell 5.1, from a release made here of the test
       # build: install, then install over it, then the user PATH has it.
       - name: Install script
