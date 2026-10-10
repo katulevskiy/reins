@@ -25,6 +25,7 @@ const CATALOGUE: &[(&str, &str)] = &[
     ("device_contacts", "device"),
     ("sms", "device"),
     ("vault", "vault"),
+    ("payments", "payments"),
 ];
 
 impl Engine {

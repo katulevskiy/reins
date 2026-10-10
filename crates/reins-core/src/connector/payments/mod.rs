@@ -1853,7 +1853,7 @@ fn applicable<'a>(budgets: &'a [Budget], connection_id: &'a str) -> impl Iterato
 
 fn budget_status(b: &Budget, ledger: &[Purchase], now: i64) -> Vec<String> {
     let who = if b.connection_id.is_empty() {
-        "every AI".to_owned()
+        "Every AI".to_owned()
     } else {
         text::one_line(&b.connection_label)
     };

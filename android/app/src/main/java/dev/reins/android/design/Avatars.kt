@@ -200,5 +200,6 @@ fun serviceColor(service: String, colors: RColors): Color = when (service) {
     "device_contacts" -> Color(0xFFF57C00)
     "sms" -> Color(0xFF00A884)
     "vault" -> Color(0xFF175DDC)
+    "payments" -> Color(0xFF0E9F6E)
     else -> colors.secondary
 }

@@ -45,6 +45,19 @@ import dev.reins.core.VaultField
 import dev.reins.core.VaultItemDetail
 import dev.reins.core.VaultItemKind
 import dev.reins.core.VaultUse
+import dev.reins.core.AddressView
+import dev.reins.core.BudgetView
+import dev.reins.core.CardProviderView
+import dev.reins.core.LimitPeriod
+import dev.reins.core.PaymentMethodView
+import dev.reins.core.PaymentsOverview
+import dev.reins.core.PurchaseLineView
+import dev.reins.core.PurchaseRecordView
+import dev.reins.core.PurchaseView
+import dev.reins.core.SpendByAi
+import dev.reins.core.SpendLimitView
+import dev.reins.core.SpendTotal
+import dev.reins.core.SpendingView
 
 /** Builders for the records the UI shows, with sensible defaults. */
 object TestData {
@@ -592,5 +605,103 @@ object TestData {
         DeviceView("d-this", "Pixel 9", DeviceKind.PHONE, "Android", 1_699_000_000, 1_700_000_090, true, true),
         DeviceView("d-old", "Pixel 7", DeviceKind.PHONE, "Android", 1_690_000_000, 1_699_900_000, false, false),
         DeviceView("d-web", "Firefox", DeviceKind.BROWSER, "Web vault", 1_695_000_000, 1_699_000_000, false, false),
+    )
+
+    // ---- Payments ----------------------------------------------------------------------------------------------
+
+    fun virtualCard(detail: String = "A new card for this purchase only, locked to the store, at most $38.47") =
+        PaymentMethodView("virtual_card", "virtual_card", "Privacy.com card", null, null, null, detail, true, null)
+
+    fun vaultCard(enabled: Boolean = true) = PaymentMethodView(
+        "card:visa", "card", "Everyday Visa", "Visa", "4242", "04/29",
+        "Its number, expiry and security code are handed over for this purchase", enabled, null,
+    )
+
+    fun storeAccount(domain: String = "amazon.com") = PaymentMethodView(
+        "merchant_account", "merchant_account", "Saved at $domain", null, null, null,
+        "The store's own saved payment method; nothing is handed over", true, null,
+    )
+
+    fun payOnPhone() = PaymentMethodView(
+        "pay_on_phone", "pay_on_phone", "Pay on this phone", null, null, null, "The checkout opens on this phone and you pay there", true, null,
+    )
+
+    fun home() = AddressView("home", "Home", listOf("Ada Lovelace", "12 St James's Square", "SW1Y 4JH London", "GB"), "London, GB")
+
+    fun work() = AddressView("work", "Work", listOf("Ada Lovelace", "Analytical Engines Ltd", "1 Euston Road", "NW1 2RA London", "GB"), "London, GB")
+
+    fun purchase() = PurchaseView(
+        merchant = "Amazon", domain = "amazon.com", merchantUrl = "https://www.amazon.com/dp/B0EXAMPLE",
+        checkoutUrl = "https://www.amazon.com/gp/buy/spc/handlers/display.html", checkoutHost = "www.amazon.com",
+        items = listOf(
+            PurchaseLineView("Anker USB-C to USB-C cable, 6 ft", "Black, 2-pack", 2u, "$12.99", "$25.98", null),
+            PurchaseLineView("Twelve South HiRise stand", null, 1u, "$4.99", "$4.99", null),
+        ),
+        subtotal = "$30.97", shipping = "$4.99", tax = "$2.51", discount = "$3.50", total = "$34.97", totalMinor = 3_497,
+        currency = "USD", note = "Ada asked for spare charging cables and a stand for the desk.",
+        methods = listOf(virtualCard(), vaultCard(), storeAccount(), payOnPhone()), methodId = "virtual_card",
+        ships = true, addresses = listOf(home(), work()), addressId = "home",
+        warnings = listOf("The first purchase at amazon.com by Claude."),
+        budgetLines = listOf("Every AI: $40.00 of $200.00 spent in the last 30 days"),
+        limitMethods = listOf("virtual_card"),
+    )
+
+    fun purchaseView() = writeView().copy(
+        requestId = "req20", service = "payments", account = "this phone", op = "purchase_request",
+        resources = listOf(ResourceView("amazon.com", "Amazon (amazon.com)", false)),
+        preview = listOf("Buy 3 items at amazon.com for $34.97 from Amazon"), noStanding = true,
+        opTitle = "Buy something", action = "write", headline = "Claude pays $34.97 at amazon.com for this cart.",
+        purchase = purchase(),
+    )
+
+    fun limit() = SpendLimitView(
+        "lim1", "c1", "Claude", listOf("amazon.com"), "virtual_card", "Privacy.com card", "USD", 3_000, 5_000,
+        LimitPeriod.DAY, "Up to $30.00 a purchase and $50.00 a day at amazon.com", 2_497, 1_699_990_000, 1_700_600_000, true,
+    )
+
+    fun paymentsOverview(enabled: Boolean = true) = PaymentsOverview(
+        enabled = enabled, vaultReady = true,
+        methods = listOf(virtualCard("A new card for each purchase, locked to the store and capped at the approved total"), vaultCard(), vaultCard(false).copy(id = "card:amex", name = "Travel Amex", brand = "American Express", last4 = "1005", expiry = "11/27"), storeAccount("the store").copy(name = "Saved at the store"), payOnPhone()),
+        addresses = listOf(home(), work()),
+        provider = CardProviderView("privacy", "Privacy.com", false, false, 1_699_000_000),
+        defaultMethod = "virtual_card", defaultAddress = "home", tolerancePct = 10u,
+        budgets = listOf(BudgetView("", "", "USD", 50_000, null, 20_000, emptyList(), listOf("At most $500.00 a purchase", "At most $200.00 in 30 days", "Every AI: $40.00 of $200.00 spent in the last 30 days"))),
+        limits = listOf(limit()),
+        mandateKey = "kPrK_qmxVWaYVA9wwBF6Iuo3vVzz7TxHCTwXBygrS4k",
+    )
+
+    fun record(
+        id: String,
+        merchant: String,
+        domain: String,
+        total: String,
+        status: String,
+        at: Long,
+        label: String = "Claude",
+        method: String = "virtual_card",
+        methodLabel: String = "Privacy.com •• 1234",
+        mismatch: String? = null,
+        cardOpen: Boolean = false,
+    ) = PurchaseRecordView(
+        id, at, "c1", label, merchant, domain, listOf("2 × Anker USB-C cable", "1 × Twelve South HiRise stand"), "USD", 3_497, total,
+        method, methodLabel, "Home", false, status, if (status == "completed") "113-4098271-7721" else null,
+        if (status == "completed") total else null, null, null, cardOpen, if (method == "virtual_card") "1234" else null,
+        if (mismatch != null) listOf(mismatch) else emptyList(), mismatch,
+        if (method == "virtual_card") "$38.47" else total, method != "virtual_card" && status != "completed",
+    )
+
+    fun spending() = SpendingView(
+        since = 1_698_796_800,
+        totals = listOf(SpendTotal("USD", 8_746, "$87.46")),
+        byAi = listOf(
+            SpendByAi("c1", "Claude", listOf(SpendTotal("USD", 6_247, "$62.47"))),
+            SpendByAi("c2", "My ChatGPT", listOf(SpendTotal("USD", 2_499, "$24.99"))),
+        ),
+        purchases = listOf(
+            record("p3", "Example Books", "books.example.com", "$12.00", "approved", 1_700_000_000, cardOpen = true),
+            record("p2", "Amazon", "amazon.com", "$34.97", "completed", 1_699_900_000),
+            record("p1", "Bargain Bin", "bargainbin.example", "$24.99", "approved", 1_699_800_000, label = "My ChatGPT", mismatch = "CHEAP WATCHES LTD"),
+            record("p0", "Example Books", "books.example.com", "$9.99", "failed", 1_699_700_000, method = "merchant_account", methodLabel = "Saved at books.example.com"),
+        ),
     )
 }

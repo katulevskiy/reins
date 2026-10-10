@@ -85,6 +85,9 @@ import dev.reins.android.ui.settings.SoundsScreen
 import dev.reins.android.ui.settings.VaultPasskeysScreen
 import dev.reins.android.ui.settings.VaultPasskeysViewModel
 import dev.reins.android.ui.sheet.SheetHost
+import dev.reins.android.ui.payments.PaymentsScreen
+import dev.reins.android.ui.payments.PaymentsViewModel
+import dev.reins.android.ui.payments.SpendingScreen
 import dev.reins.android.ui.services.ServiceScreen
 import dev.reins.android.ui.services.ServiceViewModel
 import dev.reins.android.ui.signin.OnboardingScreen
@@ -303,7 +306,15 @@ private fun SignedInContent(
                 Route.Integrations -> IntegrationsScreen(
                     state,
                     onBack = { app.back() },
-                    onOpen = { id -> app.open(if (id == "gmail") Route.Gmail else Route.Service(id)) },
+                    onOpen = { id ->
+                        app.open(
+                            when (id) {
+                                "gmail" -> Route.Gmail
+                                "payments" -> Route.Payments
+                                else -> Route.Service(id)
+                            },
+                        )
+                    },
                     onOpenMcp = { id -> app.open(Route.McpServer(id)) },
                     onAddMcp = { app.open(Route.McpAdd) },
                     onShown = mcp::refreshList,
@@ -353,6 +364,13 @@ private fun SignedInContent(
                     },
                 )
                 Route.Gmail -> GmailScreen(gmail, state, onBack = { app.back() })
+                Route.Payments -> PaymentsScreen(
+                    viewModel(key = "payments") { PaymentsViewModel(container) },
+                    state,
+                    onBack = { app.back() },
+                    onSpending = { app.open(Route.Spending) },
+                )
+                Route.Spending -> SpendingScreen(viewModel(key = "payments") { PaymentsViewModel(container) }, onBack = { app.back() })
                 is Route.ActivityDetail -> ActivityDetailScreen(
                     entryId = route.id,
                     state = state,

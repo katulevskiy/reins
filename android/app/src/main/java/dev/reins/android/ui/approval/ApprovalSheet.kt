@@ -128,7 +128,9 @@ fun ApprovalSheet(viewModel: ApprovalViewModel, authenticator: Authenticator, on
                     val ask = view.ask
                     val secrets = view.secrets
                     val ssh = view.ssh
+                    val purchase = view.purchase
                     when {
+                        purchase != null -> PurchaseSection(purchase, ui.purchase, viewModel)
                         git != null -> GitPushSection(git, serviceName(view.service))
                         mcp != null -> McpCallSection(mcp)
                         ask != null -> AskSection(ask)
@@ -137,8 +139,8 @@ fun ApprovalSheet(viewModel: ApprovalViewModel, authenticator: Authenticator, on
                         else -> WritePreview(view)
                     }
                     view.blob?.let { AttachedFileSection(it) }
-                    // A destructive MCP tool says so in its own section.
-                    if (view.noStanding && mcp == null) {
+                    // A destructive MCP tool says so in its own section; a purchase is a receipt of its own.
+                    if (view.noStanding && mcp == null && purchase == null) {
                         Banner(
                             "This changes something that cannot be undone or reaches far. It is always asked for and can never be allowed in advance, so read the details above before you approve.",
                             Modifier.padding(horizontal = 16.dp, vertical = 8.dp),
@@ -149,7 +151,8 @@ fun ApprovalSheet(viewModel: ApprovalViewModel, authenticator: Authenticator, on
                 }
                 else -> MessagesSection(view, viewModel, ui)
             }
-            MoreSection(view, ui, viewModel)
+            // A purchase is asked every time: nothing to remember, so no further options.
+            if (view.purchase == null) MoreSection(view, ui, viewModel)
             ui.error?.let { Banner(it, Modifier.padding(16.dp), BannerKind.Error) }
             val preview = buildChoice(view, draft)
             if (preview is BuildResult.Ok) {
@@ -177,6 +180,18 @@ fun ApprovalSheet(viewModel: ApprovalViewModel, authenticator: Authenticator, on
                 // A question from the desktop app is answered, not approved.
                 val question = view.ask != null
                 CapsuleButton(if (question) "No" else "Deny", Modifier.weight(1f).testTag("deny"), style = ButtonStyle.Secondary, enabled = !ui.busy, onClick = viewModel::deny)
+                val purchase = view.purchase
+                if (purchase != null) {
+                    val context = androidx.compose.ui.platform.LocalContext.current
+                    val onPhone = purchase.methods.firstOrNull { it.id == ui.purchase.methodId }?.kind == "pay_on_phone"
+                    CapsuleButton(
+                        if (onPhone) "Open checkout" else "Pay ${purchase.total}",
+                        Modifier.weight(1.3f).testTag("approve"),
+                        enabled = !ui.busy,
+                        busy = ui.busy,
+                    ) { viewModel.approvePurchase(authenticator) { url -> dev.reins.android.platform.Browser.open(context, url) } }
+                    return@Row
+                }
                 CapsuleButton(
                     when {
                         question -> "Yes"
@@ -280,7 +295,9 @@ private fun RequestHeader(view: ApprovalView) {
         if (view.headline.isNotBlank()) {
             RText(untrusted(view.headline), RType.sans(16f, lineHeight = 22f), c.text, Modifier.padding(top = 12.dp).testTag("headline"), maxLines = 4)
         }
-        ConnectorTags(view.service, view.account, Modifier.padding(top = 12.dp), name = view.mcp?.serverName?.let(::untrusted))
+        // Payments has one account, this phone: naming it says nothing.
+        val account = view.account.takeIf { view.service != "payments" }
+        ConnectorTags(view.service, account, Modifier.padding(top = 12.dp), name = view.mcp?.serverName?.let(::untrusted))
         view.query?.let { RText(it, RType.mono(14f), c.secondary, Modifier.padding(top = 12.dp), maxLines = 3, ltr = true) }
         WaitLine(view)
     }

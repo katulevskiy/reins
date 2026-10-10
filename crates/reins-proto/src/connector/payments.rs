@@ -52,7 +52,7 @@ pub(super) fn tools() -> Vec<ToolSpec> {
             PAYMENTS,
             PURCHASE_REQUEST_OP,
             Effect::Write,
-            "Ask to buy something",
+            "Buy something",
             "Asks the user to approve one purchase, exactly as the store's checkout shows it: the store, its page, \
              every item with its quantity and unit price, shipping, tax, a discount, and the total, which must be \
              exactly the items plus shipping and tax minus the discount. The user sees it on their phone like a \

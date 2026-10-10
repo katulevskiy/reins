@@ -112,6 +112,7 @@ object AutopilotText {
         return when (d.decidedBy) {
             "bypass" -> if (approved) "Approved by Bypass" else "Denied in Bypass"
             "lockdown" -> "Denied by Lockdown"
+            "spend limit" -> "Bought within your spend limit"
             else -> if (approved) "Autopilot approved" else "Autopilot denied"
         }
     }
