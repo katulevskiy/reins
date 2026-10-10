@@ -132,7 +132,7 @@ struct ActivityScreen: View {
                 .padding(.leading, 16)
                 .padding(.top, 18)
                 .padding(.bottom, 6)
-            ForEach(Burst.of(model.pending), id: \.connectionId) { burst in
+            if let burst = Burst.bar(model.pending) {
                 BurstBar(burst: burst)
                     .padding(.horizontal, 16)
                     .padding(.vertical, 5)
