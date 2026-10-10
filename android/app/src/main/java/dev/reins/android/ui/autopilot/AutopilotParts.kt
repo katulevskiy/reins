@@ -273,7 +273,7 @@ private fun ModeRow(mode: AutopilotMode, selected: Boolean, needsModel: Boolean,
                     )
                 }
             }
-            RText(AutopilotText.line(mode), RType.sans(13f), c.secondary, Modifier.padding(top = 2.dp), maxLines = 2)
+            if (selected) RText(AutopilotText.line(mode), RType.sans(13f), c.secondary, Modifier.padding(top = 2.dp), maxLines = 2)
         }
         Spacer(Modifier.width(10.dp))
         RadioDot(selected, tint)

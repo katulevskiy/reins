@@ -57,7 +57,7 @@ fun NewGrantScreen(viewModel: NewGrantViewModel, state: AppState, authenticator:
         if (draft.account == null && accounts.size == 1) viewModel.edit { it.copy(account = accounts.first().account) }
     }
 
-    Screen(title = "New grant", subtitle = "Allow something before it is asked", onBack = onBack) {
+    Screen(title = "New grant", onBack = onBack) {
         Label("For which AI?")
         if (connections.isEmpty()) {
             RText("No AI is connected yet.", RType.sans(15f), c.secondary, Modifier.padding(horizontal = 20.dp))
@@ -124,7 +124,7 @@ fun NewGrantScreen(viewModel: NewGrantViewModel, state: AppState, authenticator:
             )
         } else {
             RText(
-                "Every email, for as long as you choose (at most 7 days). Sending is never included.",
+                "Up to 7 days. Never sending.",
                 RType.sans(14f, lineHeight = 19f),
                 c.secondary,
                 Modifier.padding(horizontal = 20.dp, vertical = 8.dp),
@@ -144,7 +144,7 @@ fun NewGrantScreen(viewModel: NewGrantViewModel, state: AppState, authenticator:
         }
         if (draft.lifetime == NewGrantLifetime.ONE_TIME) {
             RText(
-                "It covers one request and stays until then, whenever the AI gets around to asking.",
+                "One request, whenever it comes.",
                 RType.sans(13f, lineHeight = 18f),
                 c.tertiary,
                 Modifier.padding(start = 20.dp, end = 20.dp, top = 8.dp),

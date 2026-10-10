@@ -149,12 +149,12 @@ private fun WelcomePage(
             Spacer(Modifier.height(6.dp))
             RText("Reins", RType.sans(38f, FontWeight.SemiBold), c.text)
             RText(
-                "Your AI assistants and agents ask this phone before they read, send or change anything, and you decide with a tap.",
+                "Your AIs ask. You decide.",
                 RType.sans(16.5f, lineHeight = 23f),
                 c.secondary,
             )
             if (linkWaiting) {
-                Banner("Continue to sign in, and your computer connects right after.", Modifier.padding(top = 6.dp), tag = "linkWaiting")
+                Banner("Sign in, then your computer connects.", Modifier.padding(top = 6.dp), tag = "linkWaiting")
             }
             Spacer(Modifier.height(36.dp))
             ui.error?.let { Banner(it, kind = BannerKind.Error, tag = "signInError") }
@@ -168,17 +168,10 @@ private fun WelcomePage(
                     busy = ui.busy,
                 ) { viewModel.continueWithSso(server) { Browser.openSignIn(context, it, AccountRules.SSO_CALLBACK_SCHEME, authTab) } }
             }
-            if (!passwordForms) {
-                RText(
-                    "Sign in or create an account on the secure sign-in page.",
-                    RType.sans(13.5f, lineHeight = 19f),
-                    c.tertiary,
-                )
-            }
             ServerChoice(server, onServer, custom, onCustom, enabled = !ui.busy)
             if (passwordForms) {
                 RText(
-                    if (noBrowserSignIn) "This server signs in with an email address and a master password." else "Or with email and master password on this server:",
+                    if (noBrowserSignIn) "Email and master password" else "Or with email and master password",
                     RType.sans(13.5f, lineHeight = 19f),
                     c.secondary,
                     Modifier.padding(start = 4.dp, top = 8.dp).testTag("passwordFormsNote"),
@@ -222,12 +215,6 @@ private fun CreateAccountPage(
 
     Screen(title = "Create account", onBack = onBack) {
         Column(Modifier.padding(horizontal = 20.dp).padding(top = 8.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-            RText(
-                "One account for this phone, your computer and your AI apps.",
-                RType.sans(15f, lineHeight = 21f),
-                c.secondary,
-                Modifier.padding(start = 4.dp, bottom = 4.dp),
-            )
             EmailField(email, onEmail, enabled = !ui.busy)
             RTextField(
                 password, { password = it }, "Master password", tag = "password", enabled = !ui.busy, password = true,
@@ -242,8 +229,7 @@ private fun CreateAccountPage(
                 RText("The passwords don't match.", RType.sans(13.5f), c.danger, Modifier.padding(start = 4.dp).testTag("mismatch"))
             }
             Banner(
-                "Nobody can recover or reset your master password, not even Reins. If you forget it, you lose the account " +
-                    "and everything in it. Write it down and keep it somewhere safe.",
+                "Nobody can reset your master password. Forget it and the account is lost. Write it down.",
                 kind = BannerKind.Warning,
                 tag = "noRecovery",
             )
@@ -284,12 +270,6 @@ private fun SignInPage(
 
     Screen(title = "Sign in", onBack = onBack) {
         Column(Modifier.padding(horizontal = 20.dp).padding(top = 8.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-            RText(
-                "Sign in with your Reins account. This phone then approves what your AI assistants ask for.",
-                RType.sans(15f, lineHeight = 21f),
-                c.secondary,
-                Modifier.padding(start = 4.dp, bottom = 4.dp),
-            )
             EmailField(email, onEmail, enabled = !ui.busy)
             RTextField(
                 password, { password = it }, "Master password", tag = "password", enabled = !ui.busy, password = true,
@@ -347,7 +327,8 @@ private fun StrengthMeter(password: String) {
             Spacer(Modifier.width(12.dp))
             RText(label, RType.sans(13.5f, FontWeight.SemiBold), tone, Modifier.testTag("strengthLabel"))
         }
-        RText(AccountRules.strengthHint(password), RType.sans(13f), c.secondary, Modifier.padding(top = 6.dp))
+        // A strong password needs no advice: the meter says it.
+        AccountRules.strengthHint(password).takeIf { it.isNotEmpty() }?.let { RText(it, RType.sans(13f), c.secondary, Modifier.padding(top = 6.dp)) }
     }
 }
 

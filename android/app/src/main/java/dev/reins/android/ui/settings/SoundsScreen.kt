@@ -61,13 +61,12 @@ fun SoundsScreen(engine: AndroidFeedback, onBack: () -> Unit) {
             header = "Sounds",
             footer = "While Reins is open. In the background the same chimes come with the notification, at your phone's notification volume.",
         ) {
-            SwitchRow("Sounds", s.sounds, { on -> update { copy(sounds = on) } }, subtitle = "Every sound in Reins", glyph = Glyph.Speaker, enabled = s.master, tag = "sounds")
+            SwitchRow("Sounds", s.sounds, { on -> update { copy(sounds = on) } }, glyph = Glyph.Speaker, enabled = s.master, tag = "sounds")
             Hairline(inset = 51.dp)
             SwitchRow(
                 "Interface",
                 s.interfaceSounds,
                 { on -> update { copy(interfaceSounds = on) } },
-                subtitle = "Soft taps for buttons, switches and sheets, approve and deny",
                 glyph = Glyph.Apps,
                 enabled = s.soundsOn,
                 tag = "interfaceSounds",
@@ -77,7 +76,6 @@ fun SoundsScreen(engine: AndroidFeedback, onBack: () -> Unit) {
                 "Requests",
                 s.requestSounds,
                 { on -> update { copy(requestSounds = on) } },
-                subtitle = "A chime when something waits for your approval",
                 glyph = Glyph.Bell,
                 enabled = s.soundsOn,
                 tag = "requestSounds",
@@ -87,7 +85,6 @@ fun SoundsScreen(engine: AndroidFeedback, onBack: () -> Unit) {
                 "Alerts",
                 s.alertSounds,
                 { on -> update { copy(alertSounds = on) } },
-                subtitle = "A grant ends soon, this phone stops being your approval device",
                 glyph = Glyph.Warning,
                 enabled = s.soundsOn,
                 tag = "alertSounds",
@@ -97,7 +94,6 @@ fun SoundsScreen(engine: AndroidFeedback, onBack: () -> Unit) {
                 "Autopilot",
                 s.autopilotSounds,
                 { on -> update { copy(autopilotSounds = on) } },
-                subtitle = "A soft sound when Autopilot approves or denies for you",
                 glyph = Glyph.Sparkle,
                 enabled = s.soundsOn,
                 tag = "autopilotSounds",
@@ -107,7 +103,7 @@ fun SoundsScreen(engine: AndroidFeedback, onBack: () -> Unit) {
         }
 
         Group(header = "Haptics") {
-            SwitchRow("Haptics", s.haptics, { on -> update { copy(haptics = on) } }, subtitle = engine.hapticTier(), glyph = Glyph.Vibrate, enabled = s.master, tag = "haptics")
+            SwitchRow("Haptics", s.haptics, { on -> update { copy(haptics = on) } }, glyph = Glyph.Vibrate, enabled = s.master, tag = "haptics")
             Hairline(inset = 51.dp)
             StrengthRow(s) { level -> update { copy(strength = level) } }
         }
@@ -133,7 +129,7 @@ private fun VolumeRow(engine: AndroidFeedback, s: FeedbackSettings) {
             Spacer(Modifier.width(14.dp))
             Column(Modifier.weight(1f)) {
                 RText("Volume", RType.sans(16f, FontWeight.Medium), if (enabled) c.text else c.tertiary)
-                RText("Follows your phone's media volume. 100% is twice as loud as 50%.", RType.sans(13f), c.secondary, Modifier.padding(top = 2.dp))
+                RText("Media volume", RType.sans(13f), c.secondary, Modifier.padding(top = 2.dp))
             }
             Spacer(Modifier.width(10.dp))
             RText("${Math.round(s.volume * 100)}%", RType.mono(14f, FontWeight.Medium), c.secondary, Modifier.testTag("volumeValue"))
@@ -161,7 +157,7 @@ private fun StrengthRow(s: FeedbackSettings, onChange: (HapticStrength) -> Unit)
     val c = LocalColors.current
     Column(Modifier.padding(16.dp)) {
         RText("Strength", RType.sans(16f, FontWeight.Medium), if (s.hapticsOn) c.text else c.tertiary)
-        RText("How firmly taps and alerts are felt", RType.sans(13f), c.secondary, Modifier.padding(top = 2.dp, bottom = 12.dp))
+        Spacer(Modifier.height(12.dp))
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             // The choice is felt at the strength it picks: the chip's own haptic plays after the change.
             HapticStrength.entries.forEach { level ->

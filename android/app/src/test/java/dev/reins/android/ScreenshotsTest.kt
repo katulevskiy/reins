@@ -783,6 +783,46 @@ abstract class ScreenshotsBase(private val suffix: String) {
         shoot("66b-home-auto-pill")
     }
 
+    /** The compact switchers the round Autopilot button opens: the menu, then the risk slider. */
+    @Test
+    fun autopilotQuick() {
+        automaticHistory()
+        core.model = installed
+        val styles = dev.reins.android.ui.autopilot.QuickStyles
+        styles.set(context, dev.reins.android.ui.autopilot.QuickStyle.Menu)
+        try {
+            launch()
+            top()
+            tap("modePill")
+            await("autopilotQuick")
+            repeat(10) { rule.mainClock.advanceTimeBy(50) }
+            shoot("67-quick-menu")
+            tap("quick:BYPASS")
+            await("quickBypassTimes")
+            repeat(10) { rule.mainClock.advanceTimeBy(50) }
+            shoot("67b-quick-menu-bypass")
+            pressBack()
+            styles.set(context, dev.reins.android.ui.autopilot.QuickStyle.Slider)
+            tap("modePill")
+            await("riskSlider")
+            repeat(10) { rule.mainClock.advanceTimeBy(50) }
+            shoot("68-quick-slider")
+            tap("detent:BYPASS")
+            await("quickBypassTimes")
+            repeat(20) { rule.mainClock.advanceTimeBy(50) }
+            shoot("68b-quick-slider-bypass")
+            tap("quickBypassCancel")
+            tap("detent:LOCKDOWN")
+            repeat(20) { rule.mainClock.advanceTimeBy(50) }
+            tap("modePill")
+            await("riskSlider")
+            repeat(20) { rule.mainClock.advanceTimeBy(50) }
+            shoot("68c-quick-slider-lockdown")
+        } finally {
+            styles.set(context, dev.reins.android.ui.autopilot.QuickStyle.DEFAULT)
+        }
+    }
+
     /** The activity list opens at the oldest unseen entry; these shots want its top. */
     private fun top() {
         await("activityList")

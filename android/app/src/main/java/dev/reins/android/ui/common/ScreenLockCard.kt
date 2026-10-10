@@ -43,12 +43,7 @@ fun ScreenLockCard(modifier: Modifier = Modifier, onSet: () -> Unit) {
         Spacer(Modifier.width(12.dp))
         Column(Modifier.weight(1f)) {
             RText("No screen lock", RType.sans(15.5f, FontWeight.SemiBold), c.text)
-            RText(
-                "Approving needs this phone's PIN, pattern, password or fingerprint. Until you set one, every approval fails.",
-                RType.sans(13f, lineHeight = 18f),
-                c.secondary,
-                Modifier.padding(top = 2.dp),
-            )
+            RText("Approving needs one", RType.sans(13f, lineHeight = 18f), c.secondary, Modifier.padding(top = 2.dp))
         }
         Spacer(Modifier.width(10.dp))
         CapsuleButton("Set one", Modifier.testTag("setScreenLock"), style = ButtonStyle.Accent, compact = true, onClick = onSet)

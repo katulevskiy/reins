@@ -51,7 +51,7 @@ class SettingsDeleteAccountFlowTest : FlowHarness() {
     @Test
     fun theSheetSaysWhatGoesAndDeletesOnlyOnceTheEmailIsTyped() {
         openSheet()
-        assertTrue(showsText("It cannot be undone", substring = true))
+        assertTrue(showsText("Can't be undone", substring = true))
         assertTrue(showsText("Your account and its vault on the server"))
         assertTrue(showsText("Type me@example.com to confirm."))
         rule.onNodeWithTag("confirmDeleteAccount").assertIsNotEnabled()

@@ -71,7 +71,7 @@ fun DeleteAccountSheet(email: String, ui: DeleteAccountUi, onDelete: (String) ->
         ) {
             RText("Delete account", RType.sans(19f, FontWeight.SemiBold), c.text)
             Spacer(Modifier.height(8.dp))
-            RText("This deletes your Reins account for good. It cannot be undone.", RType.sans(15f, lineHeight = 21f), c.secondary)
+            RText("Gone for good. Can't be undone.", RType.sans(15f, lineHeight = 21f), c.secondary)
             Spacer(Modifier.height(14.dp))
             deletionItems.forEach { item ->
                 Row(Modifier.padding(vertical = 4.dp), verticalAlignment = Alignment.Top) {

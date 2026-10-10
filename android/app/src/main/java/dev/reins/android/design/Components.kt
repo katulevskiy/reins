@@ -38,6 +38,9 @@ import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.setValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.draw.drawWithContent
 import androidx.compose.ui.Alignment
@@ -535,7 +538,10 @@ fun ListRow(
     }
 }
 
-/** Grouped card with an optional small-caps header. */
+/**
+ * Grouped card with an optional small-caps header. [footer] is the longer explanation: it stays behind a (?) beside the
+ * header until asked for.
+ */
 @Composable
 fun Group(
     modifier: Modifier = Modifier,
@@ -544,17 +550,70 @@ fun Group(
     content: @Composable ColumnScope.() -> Unit,
 ) {
     val c = LocalColors.current
+    var help by rememberSaveable { mutableStateOf(false) }
     Column(modifier.padding(horizontal = 16.dp)) {
-        if (header != null) {
-            RText(
-                header.uppercase(),
-                RType.sans(12.5f, FontWeight.Medium).copy(letterSpacing = 0.6.sp),
-                c.secondary,
-                Modifier.padding(start = 16.dp, top = 22.dp, bottom = 8.dp),
-            )
+        if (header != null || footer != null) {
+            Row(Modifier.fillMaxWidth().padding(start = 16.dp, end = 4.dp, top = 22.dp, bottom = 8.dp), verticalAlignment = Alignment.CenterVertically) {
+                RText(
+                    header?.uppercase().orEmpty(),
+                    RType.sans(12.5f, FontWeight.Medium).copy(letterSpacing = 0.6.sp),
+                    c.secondary,
+                    Modifier.weight(1f),
+                )
+                if (footer != null) HelpButton(help, header ?: "this") { help = it }
+            }
         }
         Column(Modifier.fillMaxWidth().clip(RoundedCornerShape(18.dp)).background(c.elevated), content = content)
-        if (footer != null) RText(footer, RType.sans(12.5f), c.tertiary, Modifier.padding(start = 16.dp, end = 16.dp, top = 8.dp))
+        if (footer != null) HelpText(footer, help, Modifier.padding(start = 16.dp, end = 16.dp, top = 8.dp))
+    }
+}
+
+/** The small (?) that shows or hides the longer explanation of [topic]. */
+@Composable
+fun HelpButton(open: Boolean, topic: String, modifier: Modifier = Modifier, onToggle: (Boolean) -> Unit) {
+    val c = LocalColors.current
+    val feedback = LocalFeedback.current
+    val bg by animateColorAsState(if (open) c.accentSoft else c.controlFill, label = "helpBg")
+    Box(
+        modifier
+            .size(36.dp)
+            .pressable(shape = CircleShape, dim = 0.6f, label = if (open) "Hide help" else "Help") {
+                onToggle(!open)
+                feedback.play(Event.expand(!open))
+            }
+            .semantics { contentDescription = "About $topic" }
+            .testTag("help:$topic"),
+        contentAlignment = Alignment.Center,
+    ) {
+        Box(Modifier.size(22.dp).clip(CircleShape).background(bg), contentAlignment = Alignment.Center) {
+            RText("?", RType.sans(12.5f, FontWeight.SemiBold), if (open) c.accent else c.secondary, maxLines = 1)
+        }
+    }
+}
+
+/** A (?) on its own line, at the end, for an explanation that belongs to no section header. */
+@Composable
+fun InlineHelp(topic: String, text: String, modifier: Modifier = Modifier, label: String? = null) {
+    val c = LocalColors.current
+    var open by rememberSaveable { mutableStateOf(false) }
+    Column(modifier.fillMaxWidth()) {
+        Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+            RText(label.orEmpty(), RType.sans(13f, FontWeight.Medium), c.tertiary, Modifier.weight(1f).padding(start = 4.dp), maxLines = 1)
+            HelpButton(open, topic) { open = it }
+        }
+        HelpText(text, open, Modifier.padding(horizontal = 4.dp))
+    }
+}
+
+/** The explanation a [HelpButton] opens. */
+@Composable
+fun HelpText(text: String, open: Boolean, modifier: Modifier = Modifier) {
+    androidx.compose.animation.AnimatedVisibility(
+        open,
+        enter = androidx.compose.animation.expandVertically(spring(dampingRatio = 0.9f, stiffness = 600f)) + androidx.compose.animation.fadeIn(),
+        exit = androidx.compose.animation.shrinkVertically(spring(dampingRatio = 0.9f, stiffness = 600f)) + androidx.compose.animation.fadeOut(),
+    ) {
+        RText(text, RType.sans(13f, lineHeight = 18f), LocalColors.current.secondary, modifier)
     }
 }
 

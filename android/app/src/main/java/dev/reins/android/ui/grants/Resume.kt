@@ -235,7 +235,7 @@ fun ResumeDialog(grant: GrantView, onResume: (seconds: Long, standing: StandingG
                             }
                         } else {
                             RText(
-                                "This grant is tied to specific emails or other limits, so it can only come back as it was.",
+                                "Comes back as it was.",
                                 RType.sans(13.5f, lineHeight = 19f),
                                 c.tertiary,
                                 Modifier.padding(top = 14.dp),

@@ -76,7 +76,7 @@ fun ComputerHowTo(modifier: Modifier = Modifier) {
         withStyle(SpanStyle(fontFamily = Fonts.mono, fontWeight = FontWeight.Medium, color = c.text, background = c.controlFill)) {
             append(" reins login ")
         }
-        append(" on your computer (or open the Reins desktop app) and scan the QR code it shows.")
+        append(" or open the desktop app, then scan its code.")
     }
     BasicText(text, modifier.testTag("computerHowTo"), RType.sans(15.5f, lineHeight = 22f).copy(color = c.secondary))
 }

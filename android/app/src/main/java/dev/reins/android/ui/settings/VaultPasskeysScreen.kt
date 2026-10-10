@@ -54,19 +54,14 @@ fun VaultPasskeysScreen(viewModel: VaultPasskeysViewModel, passkeys: PasskeyProm
     Screen(title = "Vault passkeys", onBack = onBack) {
         Group(
             header = "Passkeys",
-            footer = "Each one opens your vault on a new or reinstalled phone, without your other phone or the recovery code.",
+            footer = "Each one opens your vault on a new or reinstalled phone, without your other phone or the recovery code. " +
+                "Your password manager keeps the passkey. Reins keeps only a copy of the vault's key that the passkey alone opens.",
         ) {
             val current = list
             when {
                 current == null -> RText("Loading…", RType.sans(15f), c.secondary, Modifier.padding(16.dp))
                 current.isEmpty() -> Column(Modifier.padding(16.dp).testTag("noPasskeys")) {
                     RText("No passkey yet", RType.sans(16f, FontWeight.Medium), c.text)
-                    RText(
-                        "Add one to unlock your vault on a new phone.",
-                        RType.sans(13f, lineHeight = 18f),
-                        c.secondary,
-                        Modifier.padding(top = 2.dp),
-                    )
                 }
                 else -> current.forEachIndexed { i, passkey ->
                     if (i > 0) Hairline(inset = 68.dp)
@@ -83,18 +78,13 @@ fun VaultPasskeysScreen(viewModel: VaultPasskeysViewModel, passkeys: PasskeyProm
             ) { viewModel.add(passkeys) }
             ui.error?.let { Banner(it, Modifier.padding(top = 12.dp), BannerKind.Error, tag = "passkeyError") }
         }
-        RText(
-            "Your password manager keeps the passkey. Reins keeps only a copy of the vault's key that the passkey alone opens.",
-            RType.sans(13.5f, lineHeight = 19f),
-            c.tertiary,
-            Modifier.padding(start = 32.dp, end = 32.dp, bottom = 32.dp),
-        )
+        androidx.compose.foundation.layout.Spacer(Modifier.padding(bottom = 32.dp))
     }
 
     removing?.let { passkey ->
         ConfirmDialog(
             title = "Remove this passkey?",
-            text = "It no longer opens your vault. It stays in your password manager until you delete it there.",
+            text = "It stops opening your vault.",
             confirmLabel = "Remove",
             onConfirm = {
                 removing = null

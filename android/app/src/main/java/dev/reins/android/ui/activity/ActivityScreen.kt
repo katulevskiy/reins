@@ -161,7 +161,7 @@ fun ActivityScreen(
         ) {
             item(key = "title") {
                 LargeTitle("Activity") {
-                    CapsuleButton("Integrations", Modifier.testTag("integrations"), compact = true, glyph = Glyph.Apps, onClick = onIntegrations)
+                    dev.reins.android.ui.main.HeaderPill("Integrations", Glyph.Apps, "integrations", onIntegrations)
                     SettingsButton(onSettings)
                 }
             }
@@ -182,7 +182,7 @@ fun ActivityScreen(
             if (replaced) {
                 item(key = "replaced") {
                     Banner(
-                        "Another phone is your approval device now. Use this phone again from Settings.",
+                        "Another phone approves now. Switch back in Settings.",
                         Modifier.padding(16.dp),
                         BannerKind.Warning,
                     )
@@ -190,7 +190,7 @@ fun ActivityScreen(
             }
             registrationError?.let {
                 item(key = "registration") {
-                    Banner("This phone is not registered as your approval device yet: $it", Modifier.padding(16.dp), BannerKind.Error)
+                    Banner("Not your approval phone yet: $it", Modifier.padding(16.dp), BannerKind.Error)
                 }
             }
             if (pending.isNotEmpty()) {
@@ -216,7 +216,7 @@ fun ActivityScreen(
                         EmptyState(
                             Glyph.Sparkle,
                             "Nothing automatic yet",
-                            "What Autopilot, a bypass or Lockdown decides for you shows up here.",
+                            null,
                             tag = "noAutomatic",
                         )
                     } else if (connections.isEmpty()) {
@@ -224,7 +224,7 @@ fun ActivityScreen(
                         EmptyState(
                             Glyph.List,
                             "Nothing yet",
-                            "Connect your computer or an AI app. What they ask for shows up here, and waits for you.",
+                            null,
                             tag = "noActivity",
                         ) {
                             CapsuleButton("Connect a computer", Modifier.testTag("emptyConnectComputer"), glyph = Glyph.Laptop, onClick = onConnectComputer)
@@ -240,7 +240,7 @@ fun ActivityScreen(
                         EmptyState(
                             Glyph.List,
                             "Nothing yet",
-                            "When an AI searches, reads or sends on your behalf, it shows up here.",
+                            null,
                             tag = "noActivity",
                         )
                     }
@@ -295,12 +295,7 @@ private fun NotificationsOffCard(modifier: Modifier, onTurnOn: () -> Unit) {
         Spacer(Modifier.width(12.dp))
         Column(Modifier.weight(1f)) {
             RText("Notifications are off", RType.sans(15.5f, FontWeight.SemiBold), c.text)
-            RText(
-                "Requests from your AIs can't reach you while Reins is closed, so they wait and time out.",
-                RType.sans(13f, lineHeight = 18f),
-                c.secondary,
-                Modifier.padding(top = 2.dp),
-            )
+            RText("Requests time out while Reins is closed", RType.sans(13f, lineHeight = 18f), c.secondary, Modifier.padding(top = 2.dp))
         }
         Spacer(Modifier.width(10.dp))
         CapsuleButton("Turn on", Modifier.testTag("turnOnNotifications"), style = ButtonStyle.Accent, compact = true, onClick = onTurnOn)
@@ -404,7 +399,7 @@ private fun PendingCard(item: PendingItem, modifier: Modifier = Modifier, onClic
                 if (item.kind == PendingKind.BLOB && item.subtitle.isNotBlank()) {
                     RText(untrusted(item.subtitle), RType.sans(13.5f), c.secondary, maxLines = 2)
                 }
-                if (join) RText("Another phone signed in to your account", RType.sans(13.5f), c.secondary, maxLines = 2)
+                if (join) RText("New phone", RType.sans(13.5f), c.secondary, maxLines = 2)
                 if (fromAi) ConnectorTags(item.service, item.account)
                 item.suggestion?.let { line ->
                     Row(Modifier.testTag("pendingSuggestion:${item.id}"), verticalAlignment = Alignment.CenterVertically) {
@@ -431,9 +426,9 @@ private fun WaitLine(createdAt: Long, waitUntil: Long?, now: State<Long>) {
             val u = urgency(createdAt, waitUntil, now.value)
             when {
                 u == null -> relativeTime(createdAt) to c.tertiary
-                u.stale -> "Stopped waiting · you can still approve" to c.warning
+                u.stale -> "Stopped waiting" to c.warning
                 u.urgent -> "${u.remainingSeconds} s left" to c.danger
-                else -> "${u.remainingSeconds} s · waiting for you" to c.secondary
+                else -> "${u.remainingSeconds} s left" to c.secondary
             }
         }
     }

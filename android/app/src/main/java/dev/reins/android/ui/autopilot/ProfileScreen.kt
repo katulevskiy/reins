@@ -119,7 +119,7 @@ fun ProfileScreen(
                 EmptyState(
                     Glyph.Sparkle,
                     "Nothing learned yet",
-                    "Answer requests in Assisted or Auto: every approve and deny teaches this profile.",
+                    "Your answers teach it.",
                     tag = "noClasses",
                 )
             }
@@ -137,7 +137,6 @@ fun ProfileScreen(
         Group(header = "Try it") {
             ListRow(
                 "Try this profile",
-                subtitle = "See what it would do with a request you type",
                 glyph = Glyph.Flask,
                 tint = c.accent,
                 chevron = true,
@@ -149,7 +148,6 @@ fun ProfileScreen(
             if (!profile.isDefault) {
                 ListRow(
                     "Use for every AI by default",
-                    subtitle = "AIs without a profile of their own learn here",
                     glyph = Glyph.Star,
                     modifier = Modifier.testTag("makeDefault"),
                 ) { viewModel.makeDefault(profile.id) }
@@ -157,7 +155,7 @@ fun ProfileScreen(
             }
             ListRow(
                 "Forget what it learned",
-                subtitle = "${profile.memoryCount} remembered ${if (profile.memoryCount == 1u) "decision" else "decisions"}, and kinds you locked or unlocked",
+                subtitle = "${profile.memoryCount} remembered",
                 glyph = Glyph.Refresh,
                 modifier = Modifier.testTag("resetProfile"),
             ) { reset = true }
@@ -186,7 +184,7 @@ fun ProfileScreen(
         if (reset) {
             ConfirmDialog(
                 title = "Forget what ${untrusted(profile.name)} learned?",
-                text = "Its ${profile.memoryCount} remembered decisions go, every kind of request is locked again, and Autopilot starts learning from your next answer.",
+                text = "Its ${profile.memoryCount} decisions go and it starts over.",
                 confirmLabel = "Forget",
                 onConfirm = {
                     reset = false
@@ -198,7 +196,7 @@ fun ProfileScreen(
         if (delete) {
             ConfirmDialog(
                 title = "Delete ${untrusted(profile.name)}?",
-                text = "What it learned is gone. AIs that used it move to the default profile.",
+                text = "Its AIs move to the default profile.",
                 confirmLabel = "Delete",
                 onConfirm = {
                     delete = false
@@ -210,7 +208,7 @@ fun ProfileScreen(
         unlocking?.let { cls ->
             ConfirmDialog(
                 title = "Let Auto approve ${cls.label}?",
-                text = "Autopilot will approve these on its own when it is sure enough, before it has learned enough to unlock them by itself. The riskiest requests still wait for you.",
+                text = "Auto approves these when it is sure. The riskiest still ask.",
                 confirmLabel = "Unlock",
                 onConfirm = {
                     unlocking = null
@@ -237,8 +235,8 @@ private fun ProfileHeader(profile: ProfileView, connectionLabels: List<String>) 
         RText(
             when {
                 connectionLabels.isNotEmpty() -> "Learns from " + connectionLabels.joinToString(", ")
-                profile.isDefault -> "Learns from every AI without a profile of its own"
-                else -> "No AI uses it yet: pick it on an AI's page"
+                profile.isDefault -> "Every other AI"
+                else -> "No AI yet"
             },
             RType.sans(13.5f),
             c.secondary,

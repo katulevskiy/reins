@@ -27,8 +27,8 @@ object StartingRuleText {
 
     fun detail(policy: StartingPolicy): String = when (policy) {
         StartingPolicy.READS_FOR_A_DAY ->
-            "It can search and read your connected services for 24 hours without asking. Anything that looks like a code or a password still waits for you."
-        StartingPolicy.ASK_EVERY_TIME -> "Every search and every read waits for your OK, like everything else."
+            "Searches and reads for 24 hours. Codes and passwords still ask."
+        StartingPolicy.ASK_EVERY_TIME -> "Every read asks too."
     }
 
     const val ALWAYS_ASKS =

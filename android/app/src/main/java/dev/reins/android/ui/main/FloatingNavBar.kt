@@ -33,6 +33,8 @@ import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import dev.reins.android.autopilot.AutopilotText
 import dev.reins.android.design.CountPill
+import dev.reins.android.design.CapsuleButton
+import dev.reins.android.design.Glyph
 import dev.reins.android.design.GlyphIcon
 import dev.reins.android.design.rememberNowState
 import dev.reins.android.ui.autopilot.PulseDot
@@ -127,12 +129,21 @@ private fun BypassTime(until: Long, color: Color) {
 }
 
 /** The round Settings button at the top right of the two tabs. */
+/** The height of everything beside a tab's title: the round Settings button and the pill next to it. */
+val HeaderControlHeight = 40.dp
+
+/** The pill beside a tab's title (Integrations, New grant): exactly as tall as the round Settings button. */
+@Composable
+fun HeaderPill(title: String, glyph: Glyph, tag: String, onClick: () -> Unit) {
+    CapsuleButton(title, Modifier.height(HeaderControlHeight).testTag(tag), compact = true, glyph = glyph, onClick = onClick)
+}
+
 @Composable
 fun SettingsButton(onClick: () -> Unit) {
     val c = LocalColors.current
     Box(
         Modifier
-            .size(40.dp)
+            .size(HeaderControlHeight)
             .clip(CircleShape)
             .background(c.controlFill.copy(alpha = if (c.dark) 0.14f else 0.08f))
             .pressable(shape = CircleShape, label = "Settings", onClick = onClick)

@@ -90,12 +90,6 @@ fun ConnectionDetailScreen(
                 }
             }
         }
-        RText(
-            "Auto picks a known AI from the name, or draws a blobatar for it.",
-            RType.sans(12.5f),
-            c.tertiary,
-            Modifier.padding(start = 32.dp, top = 8.dp, end = 32.dp),
-        )
 
         Group(header = "Activity") {
             ListRow("Connected", subtitle = formatFull(connection.createdAt))
@@ -120,7 +114,7 @@ fun ConnectionDetailScreen(
     if (confirming && connection != null) {
         ConfirmDialog(
             title = "Disconnect ${untrusted(connection.label)}?",
-            text = "It loses access immediately, and its saved grants stop working.",
+            text = "It loses access now.",
             confirmLabel = "Disconnect",
             onConfirm = {
                 confirming = false

@@ -19,10 +19,9 @@ const val GOOGLE_APP_VERIFIED = false
 @Composable
 fun GoogleSignInNote(modifier: Modifier = Modifier) {
     val text = if (GOOGLE_APP_VERIFIED) {
-        "Google asks which account, then what Reins may do with it."
+        ""
     } else {
-        "Google asks which account, then what Reins may do with it. While Google reviews Reins, it first warns " +
-            "\"Google hasn't verified this app\": tap Advanced, then Go to Reins."
+        "If Google says it hasn't verified this app: Advanced, then Go to Reins."
     }
-    RText(text, RType.sans(13.5f, lineHeight = 19f), LocalColors.current.secondary, modifier.padding(horizontal = 16.dp).testTag("googleSignInNote"))
+    if (text.isNotEmpty()) RText(text, RType.sans(13f, lineHeight = 18f), LocalColors.current.tertiary, modifier.padding(horizontal = 16.dp).testTag("googleSignInNote"))
 }

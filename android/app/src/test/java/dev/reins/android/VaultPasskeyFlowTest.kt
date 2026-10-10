@@ -76,7 +76,7 @@ class VaultPasskeyFlowTest : FlowHarness() {
     fun aNewAccountAddsAPasskeyThenRecordsTheCodeThenSetsUp() {
         signUpWithoutPasskey()
         assertTrue(showsText("Protect your vault with a passkey"))
-        assertTrue(showsText("no other phone or recovery code", substring = true))
+        assertTrue(showsText("Unlocks your vault on a new phone", substring = true))
         assertFalse(has("recoveryRecorded"))
         assertEquals("Nothing polls before the recovery code is recorded", 0, core.syncStarts.get())
 
@@ -185,7 +185,7 @@ class VaultPasskeyFlowTest : FlowHarness() {
     fun aLockedAccountWithAPasskeyUnlocksWithIt() {
         signInLocked()
         awaitTag("unlockWithPasskey")
-        assertTrue(showsText("Unlock it with your passkey", substring = true))
+        assertTrue(showsText("Use your passkey", substring = true))
         tap("unlockWithPasskey")
         // The account has its passkey already: the recovery code comes next, without the offer.
         awaitTag("recoveryRecorded")
@@ -276,7 +276,7 @@ class VaultPasskeyFlowTest : FlowHarness() {
         core.vaultPasskeys = emptyList()
         passkeys.createResult = PasskeyResult.Unsupported
         openVaultPasskeys()
-        awaitText("None: add one to unlock on a new phone")
+        awaitText("None")
         tap("vaultPasskeysRow")
         awaitTag("noPasskeys")
         tap("addPasskey")

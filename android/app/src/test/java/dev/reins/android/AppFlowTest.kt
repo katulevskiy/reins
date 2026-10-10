@@ -1163,7 +1163,7 @@ class AppFlowTest {
         tap("expiredHeader")
         tap("resume:old")
         tap("resumeMore")
-        awaitTextContaining("can only come back as it was")
+        awaitTextContaining("Comes back as it was")
         assertFalse(has("resumeParties"))
     }
 
@@ -1315,7 +1315,7 @@ class AppFlowTest {
         core.accounts = listOf(dev.reins.core.AccountView("vault", "me@example.com", 1_700_000_000))
         launch()
         tap("openSettings")
-        awaitText("Connect Gmail and more")
+        awaitText("None yet")
     }
 
     @Test
@@ -1437,7 +1437,7 @@ class AppFlowTest {
         tap("integrations")
         tap("service:gmail")
         awaitTag("googleSignInNote")
-        rule.onNodeWithTag("googleSignInNote").assertTextContains("Google hasn't verified this app", substring = true)
+        rule.onNodeWithTag("googleSignInNote").assertTextContains("hasn't verified this app", substring = true)
     }
 
     @Test
@@ -1520,8 +1520,8 @@ class AppFlowTest {
         tap("service:github")
         awaitTag("openGithub")
         awaitTag("openGithubClassic")
-        awaitText("Fine-grained token (pick repositories)")
-        awaitText("Classic token (everything, incl. gists and notifications)")
+        awaitText("Chosen repositories")
+        awaitText("Everything")
         tap("pasteManually")
         awaitTag("secret")
         rule.onNodeWithTag("connectSecret").assertIsNotEnabled()
@@ -1813,7 +1813,7 @@ class AppFlowTest {
         rule.onNodeWithText("Use this phone for approvals").assertExists()
         rule.onNodeWithTag("connection:c1").assertExists()
         rule.onNodeWithTag("openIntegrations").assertExists()
-        rule.onNodeWithText("1 account connected").assertExists()
+        rule.onNodeWithText("1 account").assertExists()
     }
 
     @Test

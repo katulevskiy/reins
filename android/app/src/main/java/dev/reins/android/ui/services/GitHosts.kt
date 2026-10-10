@@ -17,6 +17,7 @@ import androidx.compose.ui.unit.dp
 import dev.reins.android.design.ButtonStyle
 import dev.reins.android.design.CapsuleButton
 import dev.reins.android.design.Glyph
+import dev.reins.android.design.InlineHelp
 import dev.reins.android.design.LocalColors
 import dev.reins.android.design.RText
 import dev.reins.android.design.RType
@@ -115,7 +116,7 @@ internal fun GitHostConnect(host: GitHost, busy: Boolean, onToken: (String) -> U
         waiting = true
         context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(host.tokenUrl())).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
     }
-    RText(host.steps, RType.sans(13f, lineHeight = 18f), c.secondary, Modifier.padding(horizontal = 4.dp).testTag("tokenSteps"))
+    InlineHelp("${host.name} tokens", host.steps + "\n\n" + host.hint, Modifier.testTag("tokenSteps"), label = "Opens ${host.name}")
     found?.let { token ->
         CapsuleButton("Use the token I copied", Modifier.fillMaxWidth().testTag("useCopied"), style = ButtonStyle.Accent, enabled = !busy) {
             found = null
@@ -126,6 +127,6 @@ internal fun GitHostConnect(host: GitHost, busy: Boolean, onToken: (String) -> U
     if (!manual) {
         CapsuleButton("I already have a token", Modifier.fillMaxWidth().testTag("pasteManually"), style = ButtonStyle.Ghost, enabled = !busy) { manual = true }
     } else {
-        SecretForm(placeholder = host.placeholder, button = "Connect", busy = busy, hint = host.hint, onSubmit = onToken)
+        SecretForm(placeholder = host.placeholder, button = "Connect", busy = busy, onSubmit = onToken)
     }
 }

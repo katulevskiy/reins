@@ -53,7 +53,7 @@ class AccountRulesTest {
     fun `the hint says what to do`() {
         assertEquals("Use at least 12 characters.", AccountRules.strengthHint("short"))
         assertEquals("Too repetitive. Mix in other characters.", AccountRules.strengthHint("abababababab"))
-        assertEquals("Hard to guess. Remember it, or write it down.", AccountRules.strengthHint("correct horse battery staple"))
+        assertEquals("", AccountRules.strengthHint("correct horse battery staple"))
     }
 
     @Test

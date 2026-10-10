@@ -50,8 +50,7 @@ fun PasskeyOfferScreen(viewModel: VaultPasskeysViewModel, passkeys: PasskeyPromp
             Spacer(Modifier.height(6.dp))
             RText("Protect your vault with a passkey", RType.sans(28f, FontWeight.SemiBold, lineHeight = 34f), c.text)
             RText(
-                "A passkey unlocks your vault on a new or reinstalled phone, with no other phone or recovery code " +
-                    "needed. Your password manager keeps it, behind your fingerprint or screen lock.",
+                "Unlocks your vault on a new phone. Your password manager keeps it.",
                 RType.sans(16f, lineHeight = 22f),
                 c.secondary,
             )
@@ -72,7 +71,7 @@ fun PasskeyOfferScreen(viewModel: VaultPasskeysViewModel, passkeys: PasskeyPromp
                 onClick = viewModel::decline,
             )
             RText(
-                "You still get a recovery code to write down next. Either one opens your vault.",
+                "A recovery code comes next.",
                 RType.sans(13f, lineHeight = 18f),
                 c.tertiary,
                 Modifier.padding(start = 4.dp),

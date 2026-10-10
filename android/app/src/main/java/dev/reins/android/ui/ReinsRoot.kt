@@ -18,6 +18,8 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.setValue
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.rememberCoroutineScope
@@ -210,6 +212,10 @@ private fun SignedInContent(
     val context = androidx.compose.ui.platform.LocalContext.current
     // The setup can open an integration's page over itself; Back returns to the same setup page.
     val route = app.current
+    var quickOpen by remember { mutableStateOf(false) }
+    val quickStyle by dev.reins.android.ui.autopilot.QuickStyles.state(context)
+    // A page or a sheet taking over closes the switcher under it.
+    LaunchedEffect(route, sheet) { quickOpen = false }
     BackHandler(enabled = app.stack.isNotEmpty()) { app.back() }
     PageFeedback(app.stack.size)
 
@@ -398,8 +404,23 @@ private fun SignedInContent(
                 Column(Modifier.align(Alignment.BottomCenter).windowInsetsPadding(WindowInsets.navigationBars)) {
                     // Above the tab bar, and never while an approval sheet is up.
                     container.updates?.let { UpdatePromptHost(it, allowed = sheet == null, modifier = Modifier.padding(top = 10.dp)) }
-                    NavBar(container, app)
+                    NavBar(container, app) {
+                        if (quickStyle == dev.reins.android.ui.autopilot.QuickStyle.Page) app.open(Route.Autopilot) else quickOpen = !quickOpen
+                    }
                 }
+                val apSettings by state.autopilot.collectAsStateWithLifecycle()
+                dev.reins.android.ui.autopilot.AutopilotQuick(
+                    open = quickOpen,
+                    style = quickStyle,
+                    settings = apSettings,
+                    onSet = { mode, minutes -> autopilot.setMode(mode, minutes) },
+                    onStopBypass = { autopilot.stopBypass() },
+                    onMore = {
+                        quickOpen = false
+                        app.open(Route.Autopilot)
+                    },
+                    onDismiss = { quickOpen = false },
+                )
             }
             SheetHost(sheet, onClose = app::closeSheet) { target ->
                 when (target) {
@@ -437,7 +458,7 @@ private fun SignedInContent(
  * screen.
  */
 @Composable
-private fun NavBar(container: AppContainer, app: AppViewModel) {
+private fun NavBar(container: AppContainer, app: AppViewModel, onAutopilot: () -> Unit) {
     val entries by container.state.activity.collectAsStateWithLifecycle()
     val grants by container.state.grants.collectAsStateWithLifecycle()
     val seen by container.state.seenActivityId.collectAsStateWithLifecycle()
@@ -448,7 +469,7 @@ private fun NavBar(container: AppContainer, app: AppViewModel) {
         grantCount = grants.count { it.active },
         autopilot = autopilot,
         onSelect = app::selectTab,
-        onAutopilot = { app.open(Route.Autopilot) },
+        onAutopilot = onAutopilot,
     )
 }
 

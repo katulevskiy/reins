@@ -74,17 +74,14 @@ private fun ServiceRow(service: ServiceView, onClick: () -> Unit) {
         Spacer(Modifier.width(14.dp))
         Column(Modifier.weight(1f)) {
             RText(service.name, RType.sans(16f, FontWeight.Medium), c.text)
-            RText(
-                when {
-                    !service.available -> "Not available"
-                    count == 0 -> "Not connected"
-                    count == 1 -> "1 account"
-                    else -> "$count accounts"
-                },
-                RType.sans(13f),
-                if (count == 0) c.tertiary else c.secondary,
-                Modifier.padding(top = 2.dp),
-            )
+            // Only what is there: a service with nothing connected is just its name.
+            val status = when {
+                !service.available -> "Not available"
+                count == 0 -> null
+                count == 1 -> "1 account"
+                else -> "$count accounts"
+            }
+            if (status != null) RText(status, RType.sans(13f), c.secondary, Modifier.padding(top = 2.dp))
         }
         GlyphIcon(Glyph.ChevronRight, c.tertiary, size = 14.dp)
     }

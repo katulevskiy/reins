@@ -6,6 +6,7 @@ import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
@@ -32,6 +33,7 @@ import dev.reins.android.design.ButtonStyle
 import dev.reins.android.design.CapsuleButton
 import dev.reins.android.design.ConfirmDialog
 import dev.reins.android.design.Glyph
+import dev.reins.android.design.InlineHelp
 import dev.reins.android.design.GlyphIcon
 import dev.reins.android.design.Group
 import dev.reins.android.design.Hairline
@@ -74,15 +76,15 @@ fun ServiceScreen(viewModel: ServiceViewModel, state: AppState, onBack: () -> Un
         }
     }
     val permissions = rememberLauncherForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) { granted ->
-        if (granted.values.all { it }) viewModel.addDevice() else viewModel.fail("Android did not allow it. You can allow it in the phone's settings for Reins.")
+        if (granted.values.all { it }) viewModel.addDevice() else viewModel.fail("Not allowed. Turn it on in Android settings.")
     }
 
-    Screen(title = service.name, subtitle = "Integration", onBack = onBack) {
-        Group(header = "Accounts", footer = accountsFooter(service)) {
+    Screen(title = service.name, onBack = onBack) {
+        // What it is for, how it works and where the secret is kept: all behind the (?).
+        Group(header = "Accounts", footer = listOf(intro(service), accountsFooter(service), fineprint(service)).joinToString("\n\n")) {
             if (service.accounts.isEmpty()) {
                 Column(Modifier.padding(16.dp).testTag("noAccounts")) {
                     RText("Not connected", RType.sans(16f, FontWeight.Medium), c.text)
-                    RText(intro(service), RType.sans(13f, lineHeight = 18f), c.secondary, Modifier.padding(top = 2.dp))
                 }
             }
             service.accounts.forEachIndexed { i, account ->
@@ -129,13 +131,13 @@ fun ServiceScreen(viewModel: ServiceViewModel, state: AppState, onBack: () -> Un
             Banner(service.note ?: "Not available in this build.", Modifier.padding(16.dp), BannerKind.Warning, tag = "unavailable")
         }
         error?.let { Banner(untrusted(it), Modifier.padding(horizontal = 16.dp), BannerKind.Error, tag = "accountError") }
-        RText(fineprint(service), RType.sans(13.5f, lineHeight = 19f), c.tertiary, Modifier.padding(start = 32.dp, end = 32.dp, top = 16.dp, bottom = 32.dp))
+        Spacer(Modifier.height(32.dp))
     }
 
     removing?.let { account ->
         ConfirmDialog(
             title = "Remove ${if (service.kind == "device") service.name else account}?",
-            text = "Your AIs lose access to this, and the grants made for it are deleted.",
+            text = "Its grants go too.",
             confirmLabel = "Remove",
             onConfirm = {
                 removing = null
@@ -202,12 +204,7 @@ private fun AddAccount(
                 else -> GitHostConnect(host, busy) { viewModel.addSecret(it) }
             }
             "vault" -> if (service.accounts.isEmpty()) {
-                SecretForm(
-                    placeholder = "Master password",
-                    button = "Unlock and connect",
-                    busy = busy,
-                    hint = "The vault of the account this phone is signed in with.",
-                ) { viewModel.addSecret(it) }
+                SecretForm(placeholder = "Master password", button = "Unlock and connect", busy = busy) { viewModel.addSecret(it) }
             }
             "telegram" -> TelegramLogin(viewModel, busy, login)
             else -> RText("This kind of integration cannot be added here.", RType.sans(14f), c.secondary)
@@ -275,23 +272,18 @@ private fun GithubConnect(busy: Boolean, onToken: (String) -> Unit) {
         waiting = true
         context.startActivity(android.content.Intent(android.content.Intent.ACTION_VIEW, android.net.Uri.parse(url)).addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK))
     }
-    CapsuleButton("Fine-grained token (pick repositories)", Modifier.fillMaxWidth().testTag("openGithub"), enabled = !busy, glyph = Glyph.Key) {
+    CapsuleButton("Chosen repositories", Modifier.fillMaxWidth().testTag("openGithub"), enabled = !busy, glyph = Glyph.Key) {
         open(githubTokenUrl())
     }
-    RText(
-        "GitHub opens with the token already set up. Under Repository access choose the repositories to allow, tap Generate token, then the copy button. Come back here and it connects by itself. It only reaches the repositories you choose, and cannot do gists or notifications.",
-        RType.sans(13f, lineHeight = 18f),
-        c.secondary,
-        Modifier.padding(horizontal = 4.dp),
-    )
-    CapsuleButton("Classic token (everything, incl. gists and notifications)", Modifier.fillMaxWidth().testTag("openGithubClassic"), style = ButtonStyle.Secondary, enabled = !busy, maxLines = 2) {
+    CapsuleButton("Everything", Modifier.fillMaxWidth().testTag("openGithubClassic"), style = ButtonStyle.Secondary, enabled = !busy) {
         open(githubClassicTokenUrl())
     }
-    RText(
-        "A classic token reaches every repository of your account and organizations, plus gists and notifications. Tap Generate token at the bottom of the page, copy it, and come back.",
-        RType.sans(13f, lineHeight = 18f),
-        c.secondary,
-        Modifier.padding(horizontal = 4.dp),
+    InlineHelp(
+        "GitHub tokens",
+        "Either button opens GitHub with the token already set up. Tap Generate token, then copy it, and come back: it connects by itself.\n\n" +
+            "Chosen repositories: a fine-grained token, only for the repositories you pick (no gists or notifications).\n\n" +
+            "Everything: a classic token for every repository, plus gists and notifications.",
+        label = "Opens GitHub",
     )
     found?.let { token ->
         CapsuleButton("Use the token I copied", Modifier.fillMaxWidth().testTag("useCopied"), style = ButtonStyle.Accent, enabled = !busy) {
@@ -303,20 +295,18 @@ private fun GithubConnect(busy: Boolean, onToken: (String) -> Unit) {
     if (!manual) {
         CapsuleButton("I already have a token", Modifier.fillMaxWidth().testTag("pasteManually"), style = ButtonStyle.Ghost, enabled = !busy) { manual = true }
     } else {
-        SecretForm(placeholder = "Access token", button = "Connect", busy = busy, hint = "A fine-grained or classic token. It is kept encrypted on this phone.", onSubmit = onToken)
+        SecretForm(placeholder = "Access token", button = "Connect", busy = busy, onSubmit = onToken)
     }
 }
 
 /** One secret typed in and sent once; it is cleared as soon as it is sent. */
 @Composable
-internal fun SecretForm(placeholder: String, button: String, busy: Boolean, hint: String, onSubmit: (String) -> Unit) {
-    val c = LocalColors.current
+internal fun SecretForm(placeholder: String, button: String, busy: Boolean, onSubmit: (String) -> Unit) {
     var secret by remember { mutableStateOf("") }
     RTextField(
         secret, { secret = it }, placeholder, tag = "secret", enabled = !busy, password = true, mono = true,
         keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password, autoCorrectEnabled = false),
     )
-    RText(hint, RType.sans(13f, lineHeight = 18f), c.secondary, Modifier.padding(horizontal = 4.dp))
     CapsuleButton(button, Modifier.fillMaxWidth().testTag("connectSecret"), enabled = !busy && secret.isNotBlank(), busy = busy) {
         val sent = secret
         secret = ""
@@ -342,7 +332,7 @@ private fun TelegramLogin(viewModel: ServiceViewModel, busy: Boolean, login: Log
             }
         }
         is LoginStep.Code -> {
-            RText("Telegram sent a code to ${login.phone}. It arrives in the Telegram app on your other devices, or as a text.", RType.sans(13.5f, lineHeight = 19f), c.secondary)
+            RText("Code sent to ${login.phone}", RType.sans(13.5f), c.secondary)
             RTextField(
                 code, { code = it.filter(Char::isDigit).take(8) }, "Login code", tag = "code", enabled = !busy, mono = true,
                 keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number, autoCorrectEnabled = false),
@@ -355,11 +345,7 @@ private fun TelegramLogin(viewModel: ServiceViewModel, busy: Boolean, login: Log
             CapsuleButton("Use another number", Modifier.fillMaxWidth().testTag("restartLogin"), style = ButtonStyle.Ghost, enabled = !busy, onClick = viewModel::loginRestart)
         }
         is LoginStep.Password -> {
-            RText(
-                "This account has two-step verification. Enter its Telegram password" + (login.hint?.takeIf { it.isNotBlank() }?.let { " (hint: ${untrusted(it)})" } ?: "") + ".",
-                RType.sans(13.5f, lineHeight = 19f),
-                c.secondary,
-            )
+            login.hint?.takeIf { it.isNotBlank() }?.let { RText("Hint: ${untrusted(it)}", RType.sans(13.5f), c.secondary) }
             RTextField(
                 password, { password = it }, "Telegram password", tag = "tgPassword", enabled = !busy, password = true,
                 keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password, autoCorrectEnabled = false),
@@ -419,9 +405,9 @@ private fun AccountRow(
 }
 
 private fun needsAgain(service: ServiceView): String = when (service.kind) {
-    "device" -> "Needs Android's permission again"
-    "telegram" -> "Signed out: remove it and sign in again"
-    "token" -> "The token no longer works: remove it and add a new one"
-    "vault" -> "Remove it and enter the master password again"
-    else -> "Needs your permission again"
+    "device" -> "Allow again"
+    "telegram" -> "Signed out"
+    "token" -> "Token expired"
+    "vault" -> "Locked"
+    else -> "Allow again"
 }

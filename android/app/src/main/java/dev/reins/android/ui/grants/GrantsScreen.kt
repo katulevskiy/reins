@@ -40,7 +40,6 @@ import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import dev.reins.android.design.Banner
 import dev.reins.android.design.BannerKind
-import dev.reins.android.design.CapsuleButton
 import dev.reins.android.design.ConfirmDialog
 import dev.reins.android.design.EmptyState
 import dev.reins.android.design.Glyph
@@ -101,7 +100,7 @@ fun GrantsScreen(
         ) {
             item(key = "title") {
                 LargeTitle("Grants") {
-                    CapsuleButton("New grant", Modifier.testTag("newGrant"), compact = true, glyph = Glyph.Plus, onClick = onNew)
+                    dev.reins.android.ui.main.HeaderPill("New grant", Glyph.Plus, "newGrant", onNew)
                     SettingsButton(onSettings)
                 }
             }
@@ -113,11 +112,7 @@ fun GrantsScreen(
                     EmptyState(
                         Glyph.Key,
                         if (grants.isEmpty()) "No grants" else "No active grants",
-                        if (grants.isEmpty()) {
-                            "Allow something for a while from an approval, when an AI asks, or create one yourself."
-                        } else {
-                            "Everything asks you first. Resume an expired one below, or create a new grant."
-                        },
+                        null,
                         tag = "noGrants",
                     )
                 }

@@ -36,7 +36,7 @@ import org.robolectric.annotation.GraphicsMode
 @Config(sdk = [35], qualifiers = "w411dp-h891dp-normal-xxhdpi")
 class OnboardingFlowTest : FlowHarness() {
     private val password = "correct horse battery staple"
-    private val expired = "This code has expired or was already used. Show a new one on your computer."
+    private val expired = "Code expired. Show a new one on your computer."
     /** The password forms are only offered for a server people run themselves. */
     private val server = "https://reins.example.com"
 
@@ -170,7 +170,7 @@ class OnboardingFlowTest : FlowHarness() {
         useOwnServer()
         // Asked once the address settles: no "Continue", which would end on an error page there.
         awaitGone("continue")
-        awaitText("This server signs in with an email address and a master password.")
+        awaitText("Email and master password")
         assertTrue(has("startSignIn") && has("createAccount"))
         // A server that says nothing (an older one) keeps every way in.
         rule.onNodeWithTag("server").performTextReplacement("https://old.example.com")
@@ -198,7 +198,7 @@ class OnboardingFlowTest : FlowHarness() {
         rule.onNodeWithTag("create").assertIsNotEnabled()
         rule.onNodeWithTag("serverName").assertTextContains("reins.example.com", substring = true)
         assertTrue(has("noRecovery"))
-        assertTrue(showsText("not even Reins", substring = true))
+        assertTrue(showsText("Nobody can reset your master password", substring = true))
 
         rule.onNodeWithTag("email").performTextReplacement("new@example.com")
         rule.onNodeWithTag("password").performTextReplacement("too short")
@@ -382,7 +382,7 @@ class OnboardingFlowTest : FlowHarness() {
         scan = ScanResult.Scanned("https://evil.example.com/login?code=BCDF-GHJK")
         openConnectComputer()
         tap("scanQr")
-        awaitText("That QR code is not a Reins pairing code. Scan the one your computer shows.")
+        awaitText("Not a Reins code. Scan the one your computer shows.")
         assertTrue(core.pairingCodes.isEmpty())
         assertFalse(has("sheet"))
     }
@@ -393,7 +393,7 @@ class OnboardingFlowTest : FlowHarness() {
         openConnectComputer()
         tap("scanQr")
         awaitTag("pairCode")
-        awaitText("The QR scanner is not available on this phone. Type the code your computer shows instead.")
+        awaitText("No scanner here. Type the code instead.")
         rule.onNodeWithTag("submitCode").assertIsNotEnabled()
         rule.onNodeWithTag("pairCode").performTextReplacement("bcdf ghjk")
         rule.onNodeWithTag("submitCode").assertIsEnabled()

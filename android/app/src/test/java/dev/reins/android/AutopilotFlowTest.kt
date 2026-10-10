@@ -13,6 +13,8 @@ import androidx.work.testing.WorkManagerTestInitHelper
 import dev.reins.android.autopilot.WorkModelDownloads
 import dev.reins.android.feedback.Event
 import dev.reins.android.feedback.FeedbackProvider
+import dev.reins.android.ui.autopilot.QuickStyle
+import dev.reins.android.ui.autopilot.QuickStyles
 import dev.reins.core.AutopilotMode
 import dev.reins.core.CoreException
 import dev.reins.core.ModelState
@@ -45,6 +47,7 @@ class AutopilotFlowTest : FlowHarness() {
     @After
     fun stopListening() {
         FeedbackProvider.observer = null
+        QuickStyles.set(context, QuickStyle.DEFAULT)
     }
 
     private fun installModel() {
@@ -61,14 +64,97 @@ class AutopilotFlowTest : FlowHarness() {
     // ---- modes ------------------------------------------------------------------------------------------------------
 
     @Test
-    fun theHeaderPillShowsTheModeAndOpensAutopilot() {
+    fun theModeButtonOpensTheQuickMenuAndMoreOpensAutopilot() {
         installModel()
         launch()
         awaitTag("modePill")
         rule.onNodeWithContentDescription("Autopilot: Assisted").assertExists()
         tap("modePill")
+        awaitTag("autopilotQuick")
+        assertFalse("the full page waits for More", has("modeHero"))
+        tap("quickMore")
         awaitTag("modeHero")
         rule.onNodeWithTag("heroMode").assertTextContains("Assisted")
+        assertFalse(has("autopilotQuick"))
+    }
+
+    @Test
+    fun theQuickMenuSetsAModeInOneTapAndCloses() {
+        installModel()
+        launch()
+        tap("modePill")
+        heard.clear()
+        tap("quick:AUTO")
+        awaitCore { core.modeCalls.isNotEmpty() }
+        assertEquals(Triple(null, AutopilotMode.AUTO, null), core.modeCalls.single())
+        assertTrue(heard.played(Event.AutopilotOn))
+        awaitGone("autopilotQuick")
+        tap("modePill")
+        tap("quick:LOCKDOWN")
+        awaitCore { core.modeCalls.size == 2 }
+        assertEquals("Lockdown only takes power away: no confirmation", AutopilotMode.LOCKDOWN, core.modeCalls.last().second)
+    }
+
+    @Test
+    fun bypassFromTheQuickMenuAsksHowLongFirst() {
+        installModel()
+        launch()
+        tap("modePill")
+        tap("quick:BYPASS")
+        awaitTag("quickBypassTimes")
+        assertTrue("nothing changes before a length is picked", core.modeCalls.isEmpty())
+        tap("quickBypass:15")
+        awaitCore { core.modeCalls.isNotEmpty() }
+        assertEquals(Triple(null, AutopilotMode.BYPASS, 15u), core.modeCalls.single())
+        awaitGone("autopilotQuick")
+        tap("modePill")
+        tap("quickStopBypass")
+        awaitCore { core.modeCalls.size == 2 }
+        assertEquals("back to the mode it interrupted", AutopilotMode.ASSISTED, core.modeCalls.last().second)
+    }
+
+    @Test
+    fun theSliderTicksAtEachDetentAndSetsTheModeItLandsOn() {
+        installModel()
+        QuickStyles.set(context, QuickStyle.Slider)
+        launch()
+        tap("modePill")
+        awaitTag("riskSlider")
+        rule.onNodeWithTag("quickMode").assertTextContains("Assisted")
+        heard.clear()
+        tap("detent:AUTO")
+        assertTrue(heard.played(Event.Detent))
+        awaitCore { core.modeCalls.isNotEmpty() }
+        assertEquals(Triple(null, AutopilotMode.AUTO, null), core.modeCalls.single())
+    }
+
+    @Test
+    fun theSlidersBypassWaitsForALengthAndCancelSlidesBack() {
+        installModel()
+        QuickStyles.set(context, QuickStyle.Slider)
+        launch()
+        tap("modePill")
+        tap("detent:BYPASS")
+        awaitTag("quickBypassTimes")
+        rule.onNodeWithTag("quickMode").assertTextContains("Bypass")
+        assertTrue(core.modeCalls.isEmpty())
+        tap("quickBypassCancel")
+        awaitGone("quickBypassTimes")
+        rule.onNodeWithTag("quickMode").assertTextContains("Assisted")
+        assertTrue(core.modeCalls.isEmpty())
+        tap("detent:BYPASS")
+        tap("quickBypass:60")
+        awaitCore { core.modeCalls.isNotEmpty() }
+        assertEquals(Triple(null, AutopilotMode.BYPASS, 60u), core.modeCalls.single())
+    }
+
+    @Test
+    fun thePageStyleOpensTheFullPage() {
+        QuickStyles.set(context, QuickStyle.Page)
+        launch()
+        tap("modePill")
+        awaitTag("modeHero")
+        assertFalse(has("autopilotQuick"))
     }
 
     @Test

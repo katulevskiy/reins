@@ -73,7 +73,7 @@ fun ConnectionAutopilotSection(connectionId: String, label: String, viewModel: A
                     when {
                         lockedDown -> "Every AI is locked down"
                         bypassUntil != null -> "Bypass for this AI · " + AutopilotText.minutesLeft(bypassUntil, now)
-                        chosen == null -> "Like every AI (Settings, then Autopilot)"
+                        chosen == null -> "Like every AI"
                         else -> "Its own mode"
                     }
                 }
@@ -136,7 +136,7 @@ fun ConnectionAutopilotSection(connectionId: String, label: String, viewModel: A
     if (lockdownAsk) {
         ConfirmDialog(
             title = "Lock down ${untrusted(label)}?",
-            text = "Everything it asks for is denied at once, what waits now included. Other AIs are not affected.",
+            text = "Only this AI. Waiting requests too.",
             confirmLabel = "Lock down",
             onConfirm = {
                 lockdownAsk = false
