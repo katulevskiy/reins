@@ -71,7 +71,7 @@ struct ProfileScreen: View {
                 Task { await ap.resetProfile(profileId) }
             }
         } message: {
-            Text("Its \(profile?.memoryCount ?? 0) remembered decisions go, every kind of request is locked again, and Autopilot starts learning from your next answer.")
+            Text("Its \(profile?.memoryCount ?? 0) decisions go and it starts over.")
         }
         .presentationFeedback(reset)
         .alert(profile.map { "Delete \(untrusted($0.name))?" } ?? "", isPresented: $delete) {
@@ -81,7 +81,7 @@ struct ProfileScreen: View {
                 Task { if await ap.deleteProfile(profileId) { model.back() } }
             }
         } message: {
-            Text("What it learned is gone. AIs that used it move to the default profile.")
+            Text("Its AIs move to the default profile.")
         }
         .presentationFeedback(delete)
         .alert(unlocking.map { "Let Auto approve \($0.label)?" } ?? "", isPresented: Binding(get: { unlocking != nil }, set: { if !$0 { unlocking = nil } })) {
@@ -94,7 +94,7 @@ struct ProfileScreen: View {
                 unlocking = nil
             }
         } message: {
-            Text("Autopilot will approve these on its own when it is sure enough, before it has learned enough to unlock them by itself. The riskiest requests still wait for you.")
+            Text("Auto approves these when it is sure. The riskiest still ask.")
         }
         .presentationFeedback(unlocking != nil)
     }
@@ -134,7 +134,7 @@ struct ProfileScreen: View {
                 footer: "A kind runs by itself in Auto after 20 of your answers with 95% agreement, and never after Autopilot approved something you would have denied. Tap one to lock or unlock it yourself."
             ) {
                 if profile.classes.isEmpty {
-                    EmptyState(symbol: "sparkles", title: "Nothing learned yet", message: "Answer requests in Assisted or Auto: every approve and deny teaches this profile.")
+                    EmptyState(symbol: "sparkles", title: "Nothing learned yet", message: "Your answers teach it.")
                         .accessibilityIdentifier("noClasses")
                 }
                 ForEach(Array(profile.classes.enumerated()), id: \.element.classKey) { i, cls in
@@ -210,8 +210,8 @@ private struct ProfileHeader: View {
 
     private var learnsFrom: String {
         if !connections.isEmpty { return "Learns from " + connections.joined(separator: ", ") }
-        if profile.isDefault { return "Learns from every AI without a profile of its own" }
-        return "No AI uses it yet: pick it on an AI's page"
+        if profile.isDefault { return "Every other AI" }
+        return "No AI yet"
     }
 }
 

@@ -37,16 +37,44 @@ struct GroupHeader: View {
     }
 }
 
-/// A section footer: what the group is about, in a sentence.
+/// A section footer: the longer explanation of the group, behind a (?) until asked for. Every group's footer,
+/// header'd or not, goes through this one, so no page opens on a paragraph.
 struct GroupFooter: View {
     var text: String
+    @State private var open = false
+    @Environment(\.feedback) private var feedback
 
     init(_ text: String) { self.text = text }
 
     var body: some View {
-        Text(text)
-            .font(RFont.sans(13))
-            .foregroundStyle(Palette.tertiary)
+        VStack(alignment: .trailing, spacing: 4) {
+            Button {
+                let next = !open
+                withAnimation(.smooth(duration: 0.25)) { open = next }
+                feedback.play(.expand(next))
+            } label: {
+                Text("?")
+                    .font(RFont.sans(12.5, .semibold))
+                    .foregroundStyle(open ? Palette.accent : Palette.secondary)
+                    .frame(width: 22, height: 22)
+                    .background(open ? Palette.accentSoft : Palette.controlFill, in: Circle())
+                    .frame(width: 44, height: 30, alignment: .trailing)
+                    .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .accessibilityLabel(open ? "Hide help" : "Help")
+            .accessibilityIdentifier("help")
+            if open {
+                Text(text)
+                    .font(RFont.sans(13))
+                    .foregroundStyle(Palette.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .transition(.opacity)
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .trailing)
+        .textCase(nil)
     }
 }
 

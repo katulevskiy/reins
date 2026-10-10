@@ -41,6 +41,21 @@ final class ActivityFlowTests: XCTestCase {
         shot(app, "activity-sheet-search")
     }
 
+    /// The mode pill opens the compact Autopilot menu, not the page; "More" opens the page.
+    func testTheModePillOpensTheQuickMenuAndMoreOpensAutopilot() {
+        let app = launch()
+        let pill = element(app, "modePill")
+        XCTAssertTrue(pill.waitForExistence(timeout: 10))
+        pill.tap()
+        let lockdown = app.buttons["Lockdown"]
+        XCTAssertTrue(lockdown.waitForExistence(timeout: 3), "the menu lists the modes")
+        XCTAssertTrue(app.buttons["More"].exists)
+        XCTAssertFalse(element(app, "modeHero").exists, "the page waits for More")
+        shot(app, "activity-quick-menu")
+        app.buttons["More"].tap()
+        XCTAssertTrue(element(app, "modeHero").waitForExistence(timeout: 5))
+    }
+
     func testMoreOptionsHoldTheStandingChoicesAndApprovingClosesTheSheet() {
         let app = launch("reins://item?kind=request&id=req1")
         XCTAssertTrue(element(app, "approvalSheet").waitForExistence(timeout: 10))

@@ -22,9 +22,7 @@ struct ConnectionAutopilotSection: View {
         } header: {
             SectionHeader("Autopilot").textCase(nil).padding(.horizontal, -4)
         } footer: {
-            Text(ConnectionAutopilotContent.footer)
-                .font(RFont.sans(13))
-                .foregroundStyle(Palette.secondary)
+            GroupFooter(ConnectionAutopilotContent.footer)
         }
         .listRowBackground(Palette.elevated)
     }
@@ -83,7 +81,7 @@ struct ConnectionAutopilotContent: View {
                 Task { await ap.setMode(.lockdown, connectionId: connectionId, label: name) }
             }
         } message: {
-            Text("Everything it asks for is denied at once, what waits now included. Other AIs are not affected.")
+            Text("Only this AI. Waiting requests too.")
         }
         .presentationFeedback(lockdownAsk)
     }
@@ -171,7 +169,7 @@ struct ConnectionAutopilotContent: View {
     private func modeLine(_ s: AutopilotSettings, own: ConnectionAutopilot?, mode: AutopilotMode, chosen: AutopilotMode?, now: Int64) -> String {
         if mode == .lockdown && s.mode == .lockdown && own?.baseMode != .lockdown { return "Every AI is locked down" }
         if let until = own?.bypassUntil { return "Bypass for this AI · " + AutopilotText.minutesLeft(until: until, now: now) }
-        if chosen == nil { return "Like every AI (Settings, then Autopilot)" }
+        if chosen == nil { return "Like every AI" }
         return "Its own mode"
     }
 

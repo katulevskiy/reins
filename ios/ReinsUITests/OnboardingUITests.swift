@@ -149,7 +149,7 @@ final class OnboardingUITests: XCTestCase {
         tap("connectComputer")
         typeInto("pairingCode", "BBBB-CDFG")
         tap("pairWithCode")
-        XCTAssertTrue(app.staticTexts["This code has expired or was already used. Show a new one on your computer."].waitForExistence(timeout: 5))
+        XCTAssertTrue(app.staticTexts["Code expired. Show a new one on your computer."].waitForExistence(timeout: 5))
     }
 
     func testAPairLinkOpensThePairing() {

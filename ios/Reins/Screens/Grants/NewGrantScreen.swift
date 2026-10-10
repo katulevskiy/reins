@@ -155,7 +155,7 @@ struct NewGrantScreen: View {
                             .accessibilityIdentifier("newSubject")
                     }
                 } else {
-                    Text("Every email, for as long as you choose (at most 7 days). Sending is never included.")
+                    Text("Up to 7 days. Never sending.")
                         .font(RFont.sans(14))
                         .foregroundStyle(Palette.secondary)
                         .padding(.top, 14)
@@ -169,7 +169,7 @@ struct NewGrantScreen: View {
                         }
                     }
                     if draft.lifetime == .oneTime {
-                        Text("It covers one request and stays until then, whenever the AI gets around to asking.")
+                        Text("One request, whenever it comes.")
                             .font(RFont.sans(13))
                             .foregroundStyle(Palette.tertiary)
                             .padding(.top, 2)

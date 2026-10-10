@@ -16,9 +16,12 @@ struct IntegrationsScreen: View {
                         ServiceAvatar(service: service.service, size: 44)
                         VStack(alignment: .leading, spacing: 2) {
                             Text(service.name).font(RFont.sans(16, .medium)).foregroundStyle(Palette.text)
-                            Text(ServiceCopy.summary(service))
-                                .font(RFont.sans(13))
-                                .foregroundStyle(service.accounts.isEmpty ? Palette.tertiary : Palette.secondary)
+                            // Only what is there: a service with nothing connected is just its name.
+                            if !ServiceCopy.summary(service).isEmpty {
+                                Text(ServiceCopy.summary(service))
+                                    .font(RFont.sans(13))
+                                    .foregroundStyle(Palette.secondary)
+                            }
                         }
                     }
                 }

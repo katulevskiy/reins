@@ -865,7 +865,7 @@ final class AppModel {
     /// What to say when a pairing code does not work.
     static func pairingCodeMessage(_ error: Error) -> String {
         if case CoreError.NotFound = error {
-            return "This code has expired or was already used. Show a new one on your computer."
+            return "Code expired. Show a new one on your computer."
         }
         return error.userMessage
     }

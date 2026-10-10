@@ -92,8 +92,8 @@ struct UnlockScreen: View {
     private var reason: String {
         if takeover { return CoreError.OtherApprovalDevice.userMessage }
         return vm.passkeyUnlock
-            ? "This account's vault is encrypted with keys that only your other phone, your passkeys and your recovery code can open. Unlock with your passkey, ask that phone, or enter the code."
-            : "This account's vault is encrypted with keys that only your other phone and your recovery code can open. Ask that phone, or enter the code."
+            ? "Use your passkey, approve from your other phone, or enter your recovery code."
+            : "Approve from your other phone, or enter your recovery code."
     }
 
     private var choose: some View {
@@ -190,10 +190,7 @@ struct UnlockScreen: View {
     private var recovery: some View {
         @Bindable var vm = vm
         return VStack(alignment: .leading, spacing: 12) {
-            Text("The recovery code is in thirteen groups of four letters and digits. An account made with a master password opens with that password instead.")
-                .font(RFont.sans(15.5))
-                .foregroundStyle(Palette.secondary)
-                .fixedSize(horizontal: false, vertical: true)
+            GroupFooter("The recovery code is in thirteen groups of four letters and digits. An account made with a master password opens with that password instead.")
             TextField("Recovery code or master password", text: $vm.code, axis: .vertical)
                 .font(RFont.mono(16))
                 .textInputAutocapitalization(.characters)
@@ -234,11 +231,11 @@ struct UnlockScreen: View {
     /// What a reset deletes and what it keeps; signing in again confirms it.
     private var resetting: some View {
         VStack(alignment: .leading, spacing: 12) {
-            Text("Resetting deletes everything in this account's vault: saved items, integrations and their grants, and the activity and settings kept for it. Any other phone signed in to it is signed out, and connected AIs must be connected again. This cannot be undone.")
+            Text("Deletes the vault: items, integrations, grants and activity. Other phones sign out; AIs connect again. Can't be undone.")
                 .font(RFont.sans(15.5))
                 .foregroundStyle(Palette.secondary)
                 .fixedSize(horizontal: false, vertical: true)
-            Text("The account itself stays: its email and its sign-in. You get a new recovery code to write down.")
+            Text("Your email and sign-in stay. You get a new recovery code.")
                 .font(RFont.sans(15.5))
                 .foregroundStyle(Palette.secondary)
                 .fixedSize(horizontal: false, vertical: true)

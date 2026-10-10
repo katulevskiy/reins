@@ -135,7 +135,7 @@ struct VaultPasskeysScreen: View {
                 Task { await vm.remove(passkey.credentialId, model) }
             }
         } message: { _ in
-            Text("It no longer opens your vault. It stays in your password manager until you delete it there.")
+            Text("It stops opening your vault.")
         }
         .presentationFeedback(removing != nil)
     }

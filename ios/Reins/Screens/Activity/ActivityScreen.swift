@@ -97,10 +97,7 @@ struct ActivityScreen: View {
     private var pills: some View {
         HStack(spacing: 8) {
             if let autopilot = model.autopilot {
-                ActivityModePill(settings: autopilot) {
-                    model.show(.autopilot)
-                    feedback.defaultTap()
-                }
+                AutopilotQuickPill(settings: autopilot)
             }
             // The page's Open cue is the sound (GlassPill plays the default tap).
             GlassPill(symbol: "square.grid.2x2", text: "Integrations") {
@@ -113,12 +110,12 @@ struct ActivityScreen: View {
 
     @ViewBuilder private var banners: some View {
         if model.deviceReplaced {
-            Banner("Another phone is your approval device now. Use this phone again from Settings.", kind: .warning)
+            Banner("Another phone approves now. Switch back in Settings.", kind: .warning)
                 .padding(16)
                 .accessibilityIdentifier("replacedBanner")
         }
         if let error = model.registrationError {
-            Banner("This phone is not registered as your approval device yet: \(error)", kind: .error)
+            Banner("Not your approval phone yet: \(error)", kind: .error)
                 .padding(16)
                 .accessibilityIdentifier("registrationBanner")
         }
@@ -162,12 +159,12 @@ struct ActivityScreen: View {
 
     @ViewBuilder private var empty: some View {
         if automaticOnly {
-            EmptyState(symbol: "sparkles", title: "Nothing automatic yet", message: "What Autopilot, a bypass or Lockdown decides for you shows up here.")
+            EmptyState(symbol: "sparkles", title: "Nothing automatic yet")
                 .accessibilityIdentifier("noAutomatic")
         } else if model.connections.isEmpty {
             // A new account: nothing can ask yet, so say how to connect something.
             VStack(spacing: 10) {
-                EmptyState(symbol: "list.bullet", title: "Nothing yet", message: "Connect your computer or an AI app. What they ask for shows up here, and waits for you.")
+                EmptyState(symbol: "list.bullet", title: "Nothing yet")
                     .accessibilityIdentifier("noActivity")
                 Button {
                     model.openSheet(.connectComputer)
@@ -189,7 +186,7 @@ struct ActivityScreen: View {
             }
             .padding(.horizontal, 32)
         } else {
-            EmptyState(symbol: "list.bullet", title: "Nothing yet", message: "When an AI searches, reads or sends on your behalf, it shows up here.")
+            EmptyState(symbol: "list.bullet", title: "Nothing yet")
                 .accessibilityIdentifier("noActivity")
         }
     }
@@ -383,7 +380,7 @@ private struct PendingCard: View {
 
     private func timeLine(_ u: Urgency?) -> String {
         guard let u else { return TimeText.relative(item.createdAt) }
-        if u.stale { return "Stopped waiting · you can still approve" }
+        if u.stale { return "Stopped waiting" }
         return u.urgent ? "\(u.remainingText) left" : "\(u.remainingText) · waiting for you"
     }
 

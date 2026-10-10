@@ -58,7 +58,7 @@ struct AutopilotScreen: View {
                 Task { await ap.setMode(.lockdown) }
             }
         } message: {
-            Text("Every request is denied at once, the ones waiting now included. New connections still reach you. Switch back any time.")
+            Text("Every request is denied, waiting ones too.")
         }
         .presentationFeedback(lockdownAsk)
         .alert("Delete the model?", isPresented: $deleteAsk) {
@@ -68,7 +68,7 @@ struct AutopilotScreen: View {
                 Task { await ap.deleteModel() }
             }
         } message: {
-            Text("Assisted and Auto stop until you download it again; requests wait for you. What your profiles learned stays.")
+            Text("Assisted and Auto pause until you download it again.")
         }
         .presentationFeedback(deleteAsk)
         .confirmationDialog("You are on mobile data", isPresented: $mobileDataAsk, titleVisibility: .visible) {
@@ -109,7 +109,7 @@ struct AutopilotScreen: View {
             AutopilotGroup(header: "Try it", footer: "Type a request and see what Autopilot would do with it. Nothing is kept.") {
                 AutopilotRow(
                     title: "See how Autopilot judges",
-                    subtitle: ap.modelReady ? "A push, an email, a command, an injection attempt" : "Download the model first",
+                    subtitle: ap.modelReady ? nil : "Download the model first",
                     symbol: "flask",
                     chevron: true,
                     identifier: "openTryIt"
@@ -148,11 +148,7 @@ private struct AutopilotGroupHeaderless<Content: View>: View {
         VStack(alignment: .leading, spacing: 8) {
             SectionHeader(header).padding(.horizontal, 12)
             content
-            Text(footer)
-                .font(RFont.sans(12.5))
-                .foregroundStyle(Palette.tertiary)
-                .fixedSize(horizontal: false, vertical: true)
-                .padding(.horizontal, 16)
+            GroupFooter(footer).padding(.horizontal, 12)
         }
     }
 }

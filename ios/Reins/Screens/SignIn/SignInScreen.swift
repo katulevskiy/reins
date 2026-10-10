@@ -71,8 +71,8 @@ enum NewAccountRules {
         if password.count < minPasswordLength { return "Use at least \(minPasswordLength) characters." }
         switch strength(password) {
         case .weak: return "Too repetitive. Mix in other characters."
-        case .fair: return "Longer, or mixing letters, digits and symbols, is stronger."
-        case .strong: return "Hard to guess. Remember it, or write it down."
+        case .fair: return "Longer is stronger."
+        case .strong: return ""
         }
     }
 
@@ -155,7 +155,7 @@ struct SignInScreen: View {
     private var welcome: some View {
         VStack(alignment: .leading, spacing: 12) {
             BrandMark()
-            Text("Your AI assistants ask, this phone decides: approve or deny what they want to read, send or change.")
+            Text("Your AIs ask. You decide.")
                 .font(RFont.sans(15.5))
                 .foregroundStyle(Palette.secondary)
                 .fixedSize(horizontal: false, vertical: true)
@@ -174,7 +174,7 @@ struct SignInScreen: View {
                     .transition(.opacity.combined(with: .move(edge: .top)))
             }
             if noBrowserSignIn {
-                Text("This server signs in with an email address and a master password.")
+                Text("Email and master password")
                     .font(RFont.sans(13.5))
                     .foregroundStyle(Palette.secondary)
                     .fixedSize(horizontal: false, vertical: true)
@@ -192,10 +192,6 @@ struct SignInScreen: View {
                 .buttonStyle(CapsuleButtonStyle(kind: .primary))
                 .disabled(sso.busy || serverUrl.count <= "https://".count)
                 .accessibilityIdentifier("continue")
-                Text(customServer ? "Continue through your server's sign-in page." : "Sign in or create an account on the secure sign-in page.")
-                    .font(RFont.sans(13.5))
-                    .foregroundStyle(Palette.tertiary)
-                    .fixedSize(horizontal: false, vertical: true)
             }
             if let error = sso.error {
                 FormBanner(text: error).transition(.opacity)
@@ -352,13 +348,6 @@ struct AccountEntryView: View {
                 .font(RFont.sans(30, .semibold))
                 .foregroundStyle(Palette.text)
                 .accessibilityAddTraits(.isHeader)
-            Text(creating
-                ? "One account for this phone and your computers. This phone approves what your AI assistants ask for."
-                : "Sign in with your Reins account. This phone approves what your AI assistants ask for.")
-                .font(RFont.sans(15.5))
-                .foregroundStyle(Palette.secondary)
-                .fixedSize(horizontal: false, vertical: true)
-                .padding(.bottom, 10)
 
             if otherServer {
                 field("Server", text: $server, field: .server, next: .email, content: .URL, keyboard: .URL)
@@ -442,7 +431,10 @@ struct AccountEntryView: View {
         // How hard the first one is to guess, once there is something to judge.
         if !password.isEmpty {
             let strength = NewAccountRules.strength(password)
-            Text("\(Text(strength.rawValue).fontWeight(.semibold).foregroundStyle(strengthTint(strength))) · \(NewAccountRules.strengthHint(password))")
+            let word = Text(strength.rawValue).fontWeight(.semibold).foregroundStyle(strengthTint(strength))
+            let hint = NewAccountRules.strengthHint(password)
+            // A strong password needs no advice: the word says it.
+            (hint.isEmpty ? Text("\(word)") : Text("\(word) · \(hint)"))
                 .font(RFont.sans(13.5))
                 .foregroundStyle(Palette.secondary)
                 .fixedSize(horizontal: false, vertical: true)
@@ -462,7 +454,7 @@ struct AccountEntryView: View {
             .font(RFont.sans(13.5))
             .foregroundStyle(mismatch ? Palette.danger : Palette.tertiary)
             .accessibilityIdentifier("passwordHint")
-        Banner("Nobody can recover or reset your master password, not even Reins: it is what encrypts your data. Write it down and keep it somewhere safe.", kind: .warning)
+        Banner("Nobody can reset your master password. Forget it and the account is lost. Write it down.", kind: .warning)
         HStack(alignment: .center, spacing: 12) {
             Text("I accept the [Terms](https://reins2fa.com/terms) and the [Privacy Policy](https://reins2fa.com/privacy).")
                 .font(RFont.sans(14.5))

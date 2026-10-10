@@ -27,7 +27,7 @@ struct GrantsScreen: View {
                     } label: {
                         Label("New grant", systemImage: "plus")
                     }
-                    .buttonStyle(SmallCapsuleStyle(kind: .primary))
+                    .buttonStyle(SmallCapsuleStyle(kind: .primary, height: HeaderControl.height))
                     .feedbackTap(.tap, feedback)
                     .accessibilityIdentifier("newGrant")
                 }
@@ -43,10 +43,7 @@ struct GrantsScreen: View {
                 if running.isEmpty {
                     EmptyState(
                         symbol: "key.horizontal",
-                        title: model.grants.isEmpty ? "No grants" : "No active grants",
-                        message: model.grants.isEmpty
-                            ? "Allow something for a while from an approval, when an AI asks, or create one yourself."
-                            : "Everything asks you first. Resume an expired one below, or create a new grant."
+                        title: model.grants.isEmpty ? "No grants" : "No active grants"
                     )
                     .padding(.top, 40)
                     .accessibilityIdentifier("noGrants")

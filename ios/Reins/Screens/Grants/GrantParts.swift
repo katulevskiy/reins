@@ -269,14 +269,16 @@ struct EndedGrantRow: View {
 struct SmallCapsuleStyle: PrimitiveButtonStyle {
     enum Kind { case primary, secondary, danger }
     var kind: Kind = .secondary
+    var height: CGFloat = 36
 
     func makeBody(configuration: Configuration) -> some View {
-        DefaultTapStyle(look: SmallCapsuleLook(kind: kind)).makeBody(configuration: configuration)
+        DefaultTapStyle(look: SmallCapsuleLook(kind: kind, height: height)).makeBody(configuration: configuration)
     }
 }
 
 private struct SmallCapsuleLook: ButtonStyle {
     var kind: SmallCapsuleStyle.Kind
+    var height: CGFloat
 
     func makeBody(configuration: Configuration) -> some View {
         let (fg, bg): (Color, Color) = switch kind {
@@ -289,7 +291,7 @@ private struct SmallCapsuleLook: ButtonStyle {
             .labelStyle(TightLabelStyle())
             .foregroundStyle(fg)
             .padding(.horizontal, 14)
-            .frame(minHeight: 36)
+            .frame(minHeight: height)
             .background(bg, in: Capsule())
             .opacity(configuration.isPressed ? 0.7 : 1)
             .contentShape(Capsule())

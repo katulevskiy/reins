@@ -31,8 +31,8 @@ enum NotificationAccessState: Equatable {
         switch self {
         case .unknown, .on: "On"
         case .notAsked: "Not turned on yet"
-        case .quiet: "Delivered quietly: requests make no sound and show no banner"
-        case .off: "Off: requests can't reach you while Reins is closed"
+        case .quiet: "Quiet"
+        case .off: "Off"
         }
     }
 
@@ -87,8 +87,8 @@ struct NotificationsOffCard: View {
                             .font(RFont.sans(15.5, .semibold))
                             .foregroundStyle(Palette.text)
                         Text(access.state == .quiet
-                            ? "Requests from your AIs arrive without a sound or a banner, so they can wait unseen and time out."
-                            : "Requests from your AIs can't reach you while Reins is closed, so they wait and time out.")
+                            ? "Requests arrive silently and can time out"
+                            : "Requests time out while Reins is closed")
                             .font(RFont.sans(13))
                             .foregroundStyle(Palette.secondary)
                             .fixedSize(horizontal: false, vertical: true)

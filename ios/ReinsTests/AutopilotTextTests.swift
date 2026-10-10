@@ -131,7 +131,8 @@ final class AutopilotTextTests: XCTestCase {
     func testModesHaveNamesLinesAndSymbolsByKey() {
         XCTAssertEqual(AutopilotText.modes.map(AutopilotText.key), AutopilotText.modeKeys)
         XCTAssertEqual(AutopilotText.modes.map(AutopilotText.name), ["Manual", "Assisted", "Auto", "Bypass", "Lockdown"])
-        XCTAssertEqual(AutopilotText.line(.lockdown), "Denies everything at once")
+        XCTAssertEqual(AutopilotText.line(.lockdown), "Deny everything")
+        XCTAssertEqual(AutopilotText.byRisk, [.lockdown, .manual, .assisted, .auto, .bypass])
         XCTAssertEqual(AutopilotText.name(key: "nonsense"), "Manual")
         XCTAssertTrue(AutopilotText.needsModel(.assisted))
         XCTAssertFalse(AutopilotText.needsModel(.bypass))

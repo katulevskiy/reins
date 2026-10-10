@@ -18,7 +18,7 @@ final class OnboardingTests: XCTestCase {
         XCTAssertEqual(NewAccountRules.strength("correct horse battery staple"), .strong)
         XCTAssertEqual(NewAccountRules.strengthHint("short"), "Use at least 12 characters.")
         XCTAssertEqual(NewAccountRules.strengthHint("abababababab"), "Too repetitive. Mix in other characters.")
-        XCTAssertEqual(NewAccountRules.strengthHint("correct horse battery staple"), "Hard to guess. Remember it, or write it down.")
+        XCTAssertEqual(NewAccountRules.strengthHint("correct horse battery staple"), "")
     }
 
     func testACodeIsNormalizedWhateverItsCaseSpacesAndDashes() {
@@ -145,7 +145,7 @@ final class OnboardingTests: XCTestCase {
             _ = try await core.pairingByCode(userCode: "BBBB-CDFG")
             XCTFail("expired")
         } catch {
-            XCTAssertEqual(AppModel.pairingCodeMessage(error), "This code has expired or was already used. Show a new one on your computer.")
+            XCTAssertEqual(AppModel.pairingCodeMessage(error), "Code expired. Show a new one on your computer.")
         }
     }
 

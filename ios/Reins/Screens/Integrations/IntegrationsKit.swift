@@ -41,12 +41,7 @@ struct GroupFootnote: View {
 
     init(_ text: String) { self.text = text }
 
-    var body: some View {
-        Text(text)
-            .font(RFont.sans(13))
-            .foregroundStyle(Palette.secondary)
-            .fixedSize(horizontal: false, vertical: true)
-    }
+    var body: some View { GroupFooter(text) }
 }
 
 /// A message in a tinted box: what is going on, a warning, or what went wrong.
@@ -254,11 +249,7 @@ struct SecretForm: View {
                 }
                 .disabled(busy)
             }
-            Text(hint)
-                .font(RFont.sans(13))
-                .foregroundStyle(Palette.secondary)
-                .fixedSize(horizontal: false, vertical: true)
-                .padding(.horizontal, 4)
+            if !hint.isEmpty { GroupFooter(hint) }
             ActionButton(title: button, busy: busy, enabled: !secret.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty, action: submit)
                 .accessibilityIdentifier("connectSecret")
         }
@@ -361,11 +352,8 @@ struct NoAccountsRow: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 3) {
+            // The message (what the service is for) is behind the group's (?), with the rest of its explanation.
             Text(title).font(RFont.sans(16, .medium)).foregroundStyle(Palette.text)
-            Text(message)
-                .font(RFont.sans(13))
-                .foregroundStyle(Palette.secondary)
-                .fixedSize(horizontal: false, vertical: true)
         }
         .padding(.vertical, 6)
         .accessibilityElement(children: .combine)
