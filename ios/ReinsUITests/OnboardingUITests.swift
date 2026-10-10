@@ -166,7 +166,7 @@ final class OnboardingUITests: XCTestCase {
         XCTAssertFalse(element("password").exists, "no password on the hosted server")
         tap("continue")
         recordRecovery()
-        wait("scanQR", 10)
+        advance(to: "scanQR")
         shot("8-after-continue")
     }
 
@@ -189,7 +189,7 @@ final class OnboardingUITests: XCTestCase {
         typeInto("recoveryCode", "tkrq 7hxm 2pla w4zd qe6n b3vy jf5c k8su rm2g xt7h napq d6wl ze4b")
         tap("unlock")
         recordRecovery()
-        wait("scanQR", 10)
+        advance(to: "scanQR")
     }
 
     func testAPhoneTheServerRefusesTheApprovalRoleOffersTheOtherPhoneOrTheRecoveryCode() {
@@ -207,7 +207,7 @@ final class OnboardingUITests: XCTestCase {
         tap("enterRecoveryCode")
         typeInto("recoveryCode", "tkrq 7hxm 2pla w4zd qe6n b3vy jf5c k8su rm2g xt7h napq d6wl ze4b")
         tap("unlock")
-        wait("phoneReady", 10)
+        advance(to: "phoneReady")
         shot("14-takeover-done")
     }
 
