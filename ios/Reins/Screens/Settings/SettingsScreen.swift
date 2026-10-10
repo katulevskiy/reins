@@ -21,7 +21,9 @@ struct SettingsScreen: View {
             ApprovalDeviceGroup()
             SettingsAutopilotGroup()
             ConnectionsGroup()
+            NotificationsGroup()
             NavigationGroups()
+            HelpGroup()
             VersionGroup()
             SessionGroup()
         }
@@ -214,6 +216,48 @@ private struct NavigationGroups: View {
     }
 }
 
+/// Whether requests can ring this phone: "On", or what is wrong and a tap to turn them on (the system prompt while it
+/// can still show, else this app's page in the Settings app).
+private struct NotificationsGroup: View {
+    @Environment(\.openURL) private var openURL
+    @Environment(\.scenePhase) private var scenePhase
+    private var access: NotificationAccess { .shared }
+
+    var body: some View {
+        let state = access.state
+        Section {
+            SettingsLinkRow(
+                title: "Approval notifications", subtitle: state.summary, symbol: state.needsAttention ? "bell.slash" : "bell",
+                tint: state.needsAttention ? Palette.warning : Palette.success, id: "notificationsRow"
+            ) {
+                Task { await access.turnOn(openURL: openURL) }
+            }
+        } header: {
+            GroupHeader("Notifications")
+        }
+        .task { await access.refresh() }
+        .onChange(of: scenePhase) { _, phase in
+            if phase == .active { Task { await access.refresh() } }
+        }
+    }
+}
+
+/// "Take the tour": the setup pages again (how Reins works, integrations, the private model).
+private struct HelpGroup: View {
+    @Environment(AppModel.self) private var model
+
+    var body: some View {
+        Section {
+            SettingsLinkRow(
+                title: "Take the tour", subtitle: "How Reins works, integrations and the private model", symbol: "questionmark.circle",
+                tint: Palette.accent, id: "takeTour"
+            ) { model.startTour() }
+        } header: {
+            GroupHeader("Help")
+        }
+    }
+}
+
 /// The AI connections, each opening its own page.
 private struct ConnectionsGroup: View {
     @Environment(AppModel.self) private var model
@@ -233,23 +277,26 @@ private struct ConnectionsGroup: View {
             GroupHeader("Computers")
         }
         Section {
-            if aiApps.isEmpty {
-                // The address to paste, not a description of it: tapping copies it.
-                let address = model.mcpAddress
-                Button {
-                    UIPasteboard.general.string = address
-                    feedback.play(.copied)
-                } label: {
-                    InfoRow(
-                        "No AI app is connected yet",
-                        subtitle: "In Claude.ai or ChatGPT, add a custom connector with \(address). Tap to copy."
-                    )
-                }
-                .buttonStyle(.plain)
-                .accessibilityIdentifier("copyMcpUrl")
-                .cardRow()
-            }
             ForEach(aiApps, id: \.id) { connectionRow($0) }
+            // Always there, as "Connect a computer" is above: the address to paste, not a description of it, so a
+            // second AI app needs no typing. Tapping copies it.
+            let address = model.mcpAddress
+            Button {
+                UIPasteboard.general.string = address
+                feedback.play(.copied)
+                model.notice = "MCP address copied."
+            } label: {
+                InfoRow(
+                    title: aiApps.isEmpty ? "No AI app is connected yet" : "Connect another AI app",
+                    subtitle: "In Claude.ai or ChatGPT, add a custom connector with \(address). Tap to copy.",
+                    symbol: "link", tint: Palette.accent, ltrSubtitle: false
+                ) {
+                    Image(systemName: "doc.on.doc").foregroundStyle(Palette.tertiary).accessibilityHidden(true)
+                }
+            }
+            .buttonStyle(.plain)
+            .accessibilityIdentifier("copyMcpUrl")
+            .cardRow()
         } header: {
             GroupHeader("AI apps")
         }

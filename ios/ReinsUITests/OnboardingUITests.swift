@@ -36,6 +36,15 @@ final class OnboardingUITests: XCTestCase {
 
     private func tap(_ id: String) { wait(id).tap() }
 
+    /// Through the setup's pages with their forward button ("Not now" on notifications) until `id` shows.
+    private func advance(to id: String, timeout: TimeInterval = 10) {
+        for _ in 0..<8 {
+            if element(id).waitForExistence(timeout: 1.5) { return }
+            if element("onboardingNext").waitForExistence(timeout: timeout) { element("onboardingNext").tap() }
+        }
+        XCTAssertTrue(element(id).waitForExistence(timeout: timeout), "the setup never showed \(id)")
+    }
+
     private func recordRecovery() {
         wait("recoveryRecorded", 10)
         XCTAssertFalse(element("recoveryDone").isEnabled)
@@ -95,8 +104,9 @@ final class OnboardingUITests: XCTestCase {
         XCTAssertTrue(element("create").isEnabled)
         tap("create")
 
-        // Step 1: the phone approves, then a computer connects by its code.
-        wait("phoneReady", 10)
+        // The setup: through its first pages to the computer one, where the phone approves and a computer connects by
+        // its code.
+        advance(to: "phoneReady")
         shot("3-connect-computer")
         tap("scanQR")
         pairByTypedCode()
@@ -112,6 +122,8 @@ final class OnboardingUITests: XCTestCase {
         tap("copyMcp")
         XCTAssertTrue(app.buttons["Copied"].waitForExistence(timeout: 2))
         shot("5-connect-ai")
+        tap("onboardingNext")
+        wait("setupDone")
         tap("onboardingDone")
         wait("integrations", 8)
     }

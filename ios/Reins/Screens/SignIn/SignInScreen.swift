@@ -50,6 +50,32 @@ extension AppModel {
 enum NewAccountRules {
     static let minPasswordLength = 12
 
+    /// How hard a master password looks to guess (the Android app's `AccountRules.strength`): a hint only, the server's
+    /// one rule is the length.
+    enum Strength: String { case weak = "Weak", fair = "Fair", strong = "Strong" }
+
+    /// Shorter than the minimum or very repetitive is weak; 20+ characters, or 16+ mixing three kinds (lower case, upper
+    /// case, digits, other), is strong; anything else is fair.
+    static func strength(_ password: String) -> Strength {
+        guard password.count >= minPasswordLength, Set(password).count >= 5 else { return .weak }
+        let kinds = [
+            password.contains { $0.isLowercase }, password.contains { $0.isUppercase },
+            password.contains { $0.isNumber }, password.contains { !$0.isLetter && !$0.isNumber },
+        ].filter { $0 }.count
+        if password.count >= 20 || (password.count >= 16 && kinds >= 3) { return .strong }
+        return .fair
+    }
+
+    /// The line beside the strength.
+    static func strengthHint(_ password: String) -> String {
+        if password.count < minPasswordLength { return "Use at least \(minPasswordLength) characters." }
+        switch strength(password) {
+        case .weak: return "Too repetitive. Mix in other characters."
+        case .fair: return "Longer, or mixing letters, digits and symbols, is stronger."
+        case .strong: return "Hard to guess. Remember it, or write it down."
+        }
+    }
+
     /// The first thing that keeps the account from being created, in the order of the fields; nil when it can be.
     static func problem(server: String, email: String, password: String, again: String, terms: Bool) -> String? {
         if server.trimmingCharacters(in: .whitespaces).count <= "https://".count { return "Enter the server's address." }
@@ -403,8 +429,25 @@ struct AccountEntryView: View {
         }
     }
 
+    private func strengthTint(_ s: NewAccountRules.Strength) -> Color {
+        switch s {
+        case .weak: Palette.danger
+        case .fair: Palette.warning
+        case .strong: Palette.success
+        }
+    }
+
     /// The second password, what is still missing, the warning that nobody can recover the password, the Terms.
     @ViewBuilder private var createFields: some View {
+        // How hard the first one is to guess, once there is something to judge.
+        if !password.isEmpty {
+            let strength = NewAccountRules.strength(password)
+            Text("\(Text(strength.rawValue).fontWeight(.semibold).foregroundStyle(strengthTint(strength))) · \(NewAccountRules.strengthHint(password))")
+                .font(RFont.sans(13.5))
+                .foregroundStyle(Palette.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+                .accessibilityIdentifier("passwordStrength")
+        }
         SecureField("Master password again", text: $passwordAgain)
             .textContentType(.oneTimeCode)
             .submitLabel(.done)

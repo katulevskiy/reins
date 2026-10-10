@@ -21,6 +21,8 @@ struct ApprovalActivityAttributes: ActivityAttributes {
         var suggestion: String?
         /// The connection's picked provider logo (see `Snapshot.Item.connectionIcon`).
         var connectionIcon: String? = nil
+        /// The newest item is a routine request: Approve shows beside Deny (see `Snapshot.Item.quick`).
+        var quick: Bool? = nil
     }
 }
 

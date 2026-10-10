@@ -46,6 +46,72 @@ enum IntentBridge {
         return base == .lockdown ? .manual : base
     }
 
+    /// Lockdown off ("Resume Reins"); false when it was not on.
+    static func endLockdown() async throws -> Bool {
+        let model = try await signedIn()
+        let on = await model.refreshAutopilot()?.mode == .lockdown
+        if on { try await setLockdown(false) }
+        return on
+    }
+
+    /// Autopilot's mode for every AI ("Set Reins to Assisted").
+    static func setMode(_ option: AutopilotModeOption) async throws {
+        let model = try await signedIn()
+        do {
+            try await model.core.setAutopilotMode(connectionId: nil, mode: option.mode, minutes: nil)
+        } catch {
+            throw ReinsIntentError.failed(error.userMessage)
+        }
+        await model.refreshAutopilot()
+        await model.refreshPending()
+    }
+
+    private static let focusBeforeKey = "focus.previousMode"
+    private static let focusSetKey = "focus.setMode"
+
+    /// A Focus filter: `option` while the Focus is on; nil (the Focus ended) puts back the mode from before it.
+    ///
+    /// Nobody confirms a Focus as it starts (a schedule, a place), so a Focus may only make Autopilot stricter: Manual,
+    /// Assisted or Lockdown, never Auto. The mode from before is put back only if the mode is still the one the Focus
+    /// set: one the user chose meanwhile (Lockdown, say) stays. A bypass that ran when the Focus began comes back as the
+    /// mode under it, not as a bypass.
+    static func applyFocus(_ option: AutopilotModeOption?, defaults: UserDefaults = AppGroup.defaults) async throws {
+        let model = try await signedIn()
+        if let option {
+            guard option != .auto else {
+                throw ReinsIntentError.failed("A Focus can make Autopilot stricter, not set it to Auto.")
+            }
+            let settings = await model.refreshAutopilot()
+            // Already as strict or stricter (Lockdown the user turned on): left as it is, and nothing to put back.
+            if let current = settings?.mode, strictness(current) > strictness(option.mode) { return }
+            let before = defaults.string(forKey: focusBeforeKey)
+                ?? settings.flatMap { AutopilotModeOption($0.mode) ?? AutopilotModeOption($0.baseMode) }?.rawValue
+            try await setMode(option)
+            // Remembered only once the mode is set, so a failed start leaves nothing to put back.
+            if let before { defaults.set(before, forKey: focusBeforeKey) }
+            defaults.set(option.rawValue, forKey: focusSetKey)
+        } else {
+            let before = defaults.string(forKey: focusBeforeKey).flatMap(AutopilotModeOption.init(rawValue:))
+            let set = defaults.string(forKey: focusSetKey).flatMap(AutopilotModeOption.init(rawValue:))
+            defaults.removeObject(forKey: focusBeforeKey)
+            defaults.removeObject(forKey: focusSetKey)
+            guard let before, let set else { return }
+            let now = await model.refreshAutopilot()?.mode
+            if now == set.mode { try await setMode(before) }
+        }
+    }
+
+    /// How much a mode holds back: Lockdown denies everything, Manual and Assisted ask about everything, Auto decides
+    /// some, a bypass approves nearly everything.
+    nonisolated static func strictness(_ mode: AutopilotMode) -> Int {
+        switch mode {
+        case .lockdown: 3
+        case .manual, .assisted: 2
+        case .auto: 1
+        case .bypass: 0
+        }
+    }
+
     /// Ends every bypass; false when none ran.
     static func stopBypass() async throws -> Bool {
         let model = try await signedIn()
@@ -68,10 +134,47 @@ enum IntentBridge {
         await model.refreshPending()
     }
 
+    /// Approves a routine request as the notification's Approve does. Gone (answered, expired) is no error; a request
+    /// the core keeps for the sheet (asked every time) says so.
+    static func approveQuick(_ requestId: String) async throws {
+        guard DeepLink.isId(requestId) else { return }
+        let model = try await signedIn()
+        do {
+            try await model.core.approveQuick(requestId: requestId)
+        } catch CoreError.NotFound {
+            // Already answered or expired.
+        } catch {
+            throw ReinsIntentError.failed(error.userMessage)
+        }
+        await model.refreshPending()
+    }
+
     /// Opens a link in the app, as a tapped notification would.
     static func open(_ link: DeepLink) async {
         guard let model = await ready() else { return }
         await model.handle(link)
+    }
+}
+
+extension AutopilotModeOption {
+    /// The core's mode; nil for Bypass, which intents do not set.
+    init?(_ mode: AutopilotMode) {
+        switch mode {
+        case .manual: self = .manual
+        case .assisted: self = .assisted
+        case .auto: self = .auto
+        case .lockdown: self = .lockdown
+        case .bypass: return nil
+        }
+    }
+
+    var mode: AutopilotMode {
+        switch self {
+        case .manual: .manual
+        case .assisted: .assisted
+        case .auto: .auto
+        case .lockdown: .lockdown
+        }
     }
 }
 #endif

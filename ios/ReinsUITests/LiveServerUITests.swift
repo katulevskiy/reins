@@ -41,6 +41,15 @@ final class LiveServerUITests: XCTestCase {
         return e
     }
 
+    /// Through the setup's pages with their forward button ("Not now" on notifications) until `id` shows.
+    private func advance(to id: String, timeout: TimeInterval = 10) {
+        for _ in 0..<8 {
+            if element(id).waitForExistence(timeout: 1.5) { return }
+            if element("onboardingNext").waitForExistence(timeout: timeout) { element("onboardingNext").tap() }
+        }
+        XCTAssertTrue(element(id).waitForExistence(timeout: timeout), "the setup never showed \(id)")
+    }
+
     private func waitForFile(_ name: String, _ timeout: TimeInterval) -> String? {
         let deadline = Date().addingTimeInterval(timeout)
         while Date() < deadline {
@@ -111,13 +120,15 @@ final class LiveServerUITests: XCTestCase {
         shot("01-sign-in")
         wait("signIn").tap()
 
-        // Signed in: the app asks for notifications (allowed), the onboarding steps show this first time (skipped
-        // through: the AI here pairs the old way), then the Activity tab, and no banner saying registration failed.
-        wait("onboardingNext", 60)
+        // Signed in: the setup shows this first time; its notifications page asks (allowed), the other pages are
+        // skipped through (the AI here pairs the old way), then the Activity tab, and no banner saying registration
+        // failed.
+        wait("onboardingNext", 60).tap()
+        wait("allowNotifications", 10).tap()
         let allow = XCUIApplication(bundleIdentifier: "com.apple.springboard").buttons["Allow"]
         if allow.waitForExistence(timeout: 10) { allow.tap() }
-        wait("phoneReady", 30)
-        wait("onboardingNext").tap()
+        advance(to: "phoneReady", timeout: 30)
+        advance(to: "onboardingDone")
         wait("onboardingDone").tap()
         wait("integrations", 30)
         Thread.sleep(forTimeInterval: 3)
