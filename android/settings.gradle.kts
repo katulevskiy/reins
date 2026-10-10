@@ -16,3 +16,4 @@ dependencyResolutionManagement {
 
 rootProject.name = "reins-android"
 include(":app")
+include(":baselineprofile")

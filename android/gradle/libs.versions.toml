@@ -26,6 +26,9 @@ robolectric = "4.17"
 testRetry = "1.6.6"
 onnxruntime = "1.30.0"
 androidxTestCore = "1.7.0"
+benchmark = "1.5.0"
+profileinstaller = "1.4.1"
+uiautomator = "2.4.0"
 
 [libraries]
 compose-bom = { module = "androidx.compose:compose-bom", version.ref = "composeBom" }
@@ -60,9 +63,14 @@ robolectric = { module = "org.robolectric:robolectric", version.ref = "robolectr
 androidx-test-core = { module = "androidx.test:core", version.ref = "androidxTestCore" }
 onnxruntime-android = { module = "com.microsoft.onnxruntime:onnxruntime-android", version.ref = "onnxruntime" }
 espresso-core = { module = "androidx.test.espresso:espresso-core", version.ref = "espresso" }
+profileinstaller = { module = "androidx.profileinstaller:profileinstaller", version.ref = "profileinstaller" }
+benchmark-macro-junit4 = { module = "androidx.benchmark:benchmark-macro-junit4", version.ref = "benchmark" }
+uiautomator = { module = "androidx.test.uiautomator:uiautomator", version.ref = "uiautomator" }
 
 [plugins]
 android-application = { id = "com.android.application", version.ref = "agp" }
+android-test = { id = "com.android.test", version.ref = "agp" }
+baselineprofile = { id = "androidx.baselineprofile", version.ref = "benchmark" }
 kotlin-compose = { id = "org.jetbrains.kotlin.plugin.compose", version.ref = "kotlin" }
 google-services = { id = "com.google.gms.google-services", version.ref = "googleServices" }
 test-retry = { id = "org.gradle.test-retry", version.ref = "testRetry" }

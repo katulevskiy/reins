@@ -27,6 +27,21 @@ checks the production certificate before building. Debug keys are used only for 
 for store publication. See [signing setup](../CONTRIBUTING.md#maintainers-signing-the-apk-in-releases) and
 [Google Play](PLAY_STORE.md).
 
+### Baseline profile
+
+`app/src/main/generated/baselineProfiles` lists the code the app runs when it opens and when a request is answered.
+Release builds compile it in and ProfileInstaller hands it to the phone, so that code is compiled ahead of time
+instead of interpreted. `:baselineprofile` generates it (`BaselineProfileGenerator`). Regenerate it after larger UI
+changes on an emulator or device where the app is signed in, ideally with a request waiting (`reins test` on a paired
+computer), and commit the result:
+
+```bash
+# Without the property, the test run uninstalls the app at the end, and the signed-in account with it.
+./gradlew :app:generateBaselineProfile -Pandroid.injected.androidTest.leaveApksInstalledAfterRun=true
+```
+
+Not generated yet: the first run needs the signed-in emulator above.
+
 ### Firebase (optional)
 
 `google-services.json` is copied from `~/.config/reins/google-services.json` (or `-Preins.googleServicesJson=...`)

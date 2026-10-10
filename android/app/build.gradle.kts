@@ -6,6 +6,7 @@ plugins {
     alias(libs.plugins.android.application)
     alias(libs.plugins.kotlin.compose)
     alias(libs.plugins.test.retry)
+    alias(libs.plugins.baselineprofile)
 }
 
 // google-services.json is optional (plan Decision 18). Copy it in from outside the repo when
@@ -193,6 +194,16 @@ android {
     }
 }
 
+// The baseline profile (src/main/generated/baselineProfiles) is generated on a device or emulator by :baselineprofile
+// (see README.md) and committed; release builds compile it in, and ProfileInstaller hands it to the phone.
+baselineProfile {
+    mergeIntoMain = true
+    saveInSrc = true
+    automaticGenerationDuringBuild = false
+    // Generated on `full` (the same code as `play`) and merged into src/main for both.
+    variants { create("fullRelease") { from(project(":baselineprofile")) } }
+}
+
 kotlin {
     jvmToolchain(21)
     compilerOptions {
@@ -327,6 +338,13 @@ androidComponents {
     onVariants(selector().withBuildType("release").withFlavor("distribution" to "full")) { variant ->
         android.signingConfigs.findByName("release")?.let { variant.signingConfig.setConfig(it) }
     }
+    // The release-like build types the baseline profile and benchmarks run on are signed like debug builds, so they
+    // install over one without losing its data (a signed-in account).
+    onVariants { variant ->
+        if (variant.buildType == "nonMinifiedRelease" || variant.buildType == "benchmarkRelease") {
+            variant.signingConfig.setConfig(android.signingConfigs.getByName("debug"))
+        }
+    }
     onVariants { variant ->
         if (prebuiltNativeDir != null) {
             variant.sources.jniLibs?.addStaticSourceDirectory(prebuiltNativeDir.resolve("jni").absolutePath)
@@ -365,6 +383,8 @@ dependencies {
     implementation(libs.jna) { artifact { type = "aar" } }
     // Autopilot's model runs on the phone (the core does everything else; see autopilot/OnnxModelRuntime).
     implementation(libs.onnxruntime.android)
+    // Installs the baseline profile on phones that did not get it from the store (the APK on reins2fa.com).
+    implementation(libs.profileinstaller)
 
     testImplementation(libs.junit)
     testImplementation(libs.coroutines.test)
