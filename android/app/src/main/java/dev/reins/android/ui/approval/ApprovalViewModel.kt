@@ -118,8 +118,8 @@ class ApprovalViewModel(private val container: AppContainer, private val request
                         // A permission that stays is a bigger step than one answer, and sounds like it.
                         val standing = choice.standing != null || view.kind == ApprovalKind.GRANT
                         container.feedback.play(if (standing) Event.GrantCreated else Event.Approved)
-                        container.core.approve(requestId, choice)
-                        container.refreshAfterAnswer(requestId)
+                        // The sheet closes now; the action (an email going out, a push) finishes in the background.
+                        container.answerInBackground(requestId, "Not approved") { container.core.approve(requestId, choice) }
                         _ui.update { it.copy(busy = false, finished = true) }
                     }
                     AuthResult.Cancelled -> _ui.update { it.copy(busy = false) }
@@ -137,21 +137,11 @@ class ApprovalViewModel(private val container: AppContainer, private val request
         }
     }
 
+    /** Closes at once; the answer goes out in the background (and the card comes back if it could not). */
     fun deny() {
         if (_ui.value.busy) return
-        _ui.update { it.copy(busy = true, error = null) }
         container.feedback.play(Event.Denied)
-        viewModelScope.launch {
-            try {
-                container.core.deny(requestId)
-                container.refreshAfterAnswer(requestId)
-                _ui.update { it.copy(busy = false, finished = true) }
-            } catch (e: CancellationException) {
-                throw e
-            } catch (e: Exception) {
-                container.feedback.play(Event.Error)
-                _ui.update { it.copy(busy = false, error = e.userMessage()) }
-            }
-        }
+        container.answerInBackground(requestId, "Not denied") { container.core.deny(requestId) }
+        _ui.update { it.copy(finished = true) }
     }
 }

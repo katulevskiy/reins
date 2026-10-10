@@ -77,7 +77,7 @@ class QuickApprovalsFlowTest : FlowHarness() {
         rule.onNodeWithTag("approveAll").assertTextEquals("Approve 3")
         tap("approveAll")
         awaitCore { core.quickApprovals.size == 3 }
-        assertEquals(listOf("r1", "r2", "r3"), core.quickApprovals.toList())
+        assertEquals(listOf("r1", "r2", "r3"), core.quickApprovals.toList().sorted())
         assertEquals(1, prompts.get())
         awaitGone("burst")
         assertTrue(has("pending:r4"))

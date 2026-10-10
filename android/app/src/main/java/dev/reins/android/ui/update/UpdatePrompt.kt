@@ -110,35 +110,37 @@ fun InstallPermissionDialog(onOpenSettings: () -> Unit, onDismiss: () -> Unit) {
     Dialog(onDismissRequest = onDismiss, properties = DialogProperties(usePlatformDefaultWidth = false)) {
         DialogFeedback()
         Column(Modifier.padding(horizontal = 28.dp).fillMaxWidth().glass(c, RoundedCornerShape(26.dp), 16.dp).padding(22.dp)) {
-            RText("Allow Reins to install updates", RType.sans(19f, FontWeight.SemiBold), c.text)
-            Spacer(Modifier.height(8.dp))
-            RText(
-                "Reins isn't installed from the Play Store, so Android asks once before it may install its own " +
-                    "updates. Turn on “Allow from this source”, then come back to finish the update.",
-                RType.sans(15f, lineHeight = 21f),
-                c.secondary,
-            )
-            Spacer(Modifier.height(22.dp))
+            RText("Allow updates", RType.sans(19f, FontWeight.SemiBold), c.text)
+            Spacer(Modifier.height(6.dp))
+            RText("Android asks once. Turn on “Allow from this source”.", RType.sans(15f, lineHeight = 21f), c.secondary)
+            Spacer(Modifier.height(20.dp))
             Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                 CapsuleButton("Not now", Modifier.weight(1f), style = ButtonStyle.Secondary, onClick = onDismiss)
-                CapsuleButton("Open settings", Modifier.weight(1f).testTag("allowInstalls"), style = ButtonStyle.Accent, onClick = onOpenSettings)
+                CapsuleButton("Allow", Modifier.weight(1f).testTag("allowInstalls"), style = ButtonStyle.Accent, onClick = onOpenSettings)
             }
         }
     }
 }
 
-/**
- * The prompt and the install-permission explanation for [updates]. [allowed] is false while something more important is
- * on screen (an approval sheet); both then wait.
- */
+/** The update prompt for [updates]. [allowed] is false while something more important is on screen (an approval sheet). */
 @Composable
 fun UpdatePromptHost(updates: UpdateController, allowed: Boolean, modifier: Modifier = Modifier) {
     val state by updates.state.collectAsStateWithLifecycle()
-    val context = LocalContext.current
     if (!allowed) return
     if (state.showPrompt) {
         UpdatePrompt(state.status, onInstall = updates::install, onLater = updates::later, onRetry = updates::retry, modifier = modifier)
     }
+}
+
+/**
+ * The moment Install is tapped without Android's permission to install apps, wherever that was (the prompt, Settings >
+ * Updates, the notification): a short dialog with a button to the setting; the install goes on when the user is back
+ * with it allowed.
+ */
+@Composable
+fun InstallPermissionHost(updates: UpdateController) {
+    val state by updates.state.collectAsStateWithLifecycle()
+    val context = LocalContext.current
     if (state.askPermission) {
         InstallPermissionDialog(onOpenSettings = { updates.openPermissionSettings(context) }, onDismiss = updates::dismissPermission)
     }

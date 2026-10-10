@@ -119,6 +119,17 @@
             android:name=".platform.ApprovalActionReceiver"
             android:exported="false" />
 
+        <!-- WorkManager starts on first use (ReinsApp is its Configuration.Provider), not at process start. -->
+        <provider
+            android:name="androidx.startup.InitializationProvider"
+            android:authorities="${applicationId}.androidx-startup"
+            tools:node="merge">
+            <meta-data
+                android:name="androidx.work.WorkManagerInitializer"
+                android:value="androidx.startup"
+                tools:node="remove" />
+        </provider>
+
         <!-- "Stop" on the bypass notification. -->
         <receiver
             android:name=".platform.BypassStopReceiver"

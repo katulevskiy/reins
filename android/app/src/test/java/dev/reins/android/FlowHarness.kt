@@ -78,6 +78,8 @@ abstract class FlowHarness {
         core.startingPolicy = null
         core.pushes.clear()
         core.pushFailure = null
+        core.approveFailure = null
+        container.state.flash(null)
         core.denials.clear()
         core.blobs.clear()
         core.blobAnswers.clear()

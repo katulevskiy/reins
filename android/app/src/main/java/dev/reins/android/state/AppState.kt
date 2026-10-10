@@ -28,6 +28,25 @@ class AppState {
     private val _session = MutableStateFlow<SessionState>(SessionState.Loading)
     val session: StateFlow<SessionState> = _session.asStateFlow()
 
+    /**
+     * The core has confirmed the session at least once since the app started. Until then the screen may show the
+     * last settled one ([StartupSnapshot]), and nothing is read for it yet.
+     */
+    private val _sessionChecked = MutableStateFlow(false)
+    val sessionChecked: StateFlow<Boolean> = _sessionChecked.asStateFlow()
+
+    fun markSessionChecked() {
+        _sessionChecked.value = true
+    }
+
+    /** The lists have been read from the core at least once for this account (an empty one then means empty). */
+    private val _loaded = MutableStateFlow(false)
+    val loaded: StateFlow<Boolean> = _loaded.asStateFlow()
+
+    fun markLoaded() {
+        _loaded.value = true
+    }
+
     private val _pending = MutableStateFlow<List<PendingItem>>(emptyList())
     val pending: StateFlow<List<PendingItem>> = _pending.asStateFlow()
 
@@ -187,6 +206,7 @@ class AppState {
         }
         if (state !is SessionState.SignedIn || (previous != null && changed)) {
             _seenActivityId.value = 0L
+            _loaded.value = false
             _deviceReplaced.value = false
             _registrationError.value = null
             _recoveryToRecord.value = null
@@ -222,6 +242,19 @@ class AppState {
      * approved card never comes back for a moment. The last few are enough: the core forgets an item once answered.
      */
     private val answered = LinkedHashSet<String>()
+
+    /** A few words about something that did not work in the background ("Not approved: offline"); null: none. */
+    private val _flash = MutableStateFlow<String?>(null)
+    val flash: StateFlow<String?> = _flash.asStateFlow()
+
+    fun flash(message: String?) {
+        _flash.value = message
+    }
+
+    /** An answer given at once on screen did not go through: [id]'s card may come back with the next refresh. */
+    fun restorePending(id: String) {
+        synchronized(answered) { answered.remove(id) }
+    }
 
     /** The user answered [id]: its card goes at once, without waiting for the refresh behind it. */
     fun removePending(id: String) {

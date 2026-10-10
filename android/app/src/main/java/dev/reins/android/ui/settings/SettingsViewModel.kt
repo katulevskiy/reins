@@ -123,12 +123,11 @@ class SettingsViewModel(private val container: AppContainer) : ViewModel() {
         }
     }
 
+    /** Signed out on screen at once; the account is locked and the server told in the background. */
     fun signOut() {
-        run(null) {
-            _hasRecoveryCode.value = false
-            _recoveryCode.value = null
-            container.signOut()
-        }
+        _hasRecoveryCode.value = false
+        _recoveryCode.value = null
+        container.signOutInBackground()
     }
 
     /** The "Delete account" sheet while it is open (null when closed); its error stays in the sheet. */
@@ -177,13 +176,22 @@ class SettingsViewModel(private val container: AppContainer) : ViewModel() {
         }
     }
 
+    /** Gone from the list at once; the server is told in the background (and the connection is back if it fails). */
     fun disconnect(connectionId: String, onDone: () -> Unit) {
-        if (!_ui.value.busy) container.feedback.play(Event.Revoked)
-        run(null) {
-            container.core.revokeConnection(connectionId)
+        container.feedback.play(Event.Revoked)
+        container.state.setConnections(container.state.connections.value.filterNot { it.id == connectionId })
+        onDone()
+        container.appScope.launch {
+            try {
+                container.core.revokeConnection(connectionId)
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                container.feedback.play(Event.Error)
+                container.state.flash("Not removed: ${e.userMessage()}")
+            }
             container.refreshConnections()
             container.refreshAfterAnswer()
-            onDone()
         }
     }
 

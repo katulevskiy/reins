@@ -98,6 +98,7 @@ fun ActivityScreen(
     val state: AppState = container.state
     val entries by state.activity.collectAsStateWithLifecycle()
     val pending by state.pending.collectAsStateWithLifecycle()
+    val loaded by state.loaded.collectAsStateWithLifecycle()
     val seen by state.seenActivityId.collectAsStateWithLifecycle()
     val replaced by state.deviceReplaced.collectAsStateWithLifecycle()
     val registrationError by state.registrationError.collectAsStateWithLifecycle()
@@ -209,7 +210,7 @@ fun ActivityScreen(
                     }
                 }
             }
-            if (shown.isEmpty()) {
+            if (shown.isEmpty() && loaded) {
                 item(key = "empty") {
                     if (automaticOnly) {
                         EmptyState(

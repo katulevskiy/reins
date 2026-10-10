@@ -6,10 +6,8 @@ import dev.reins.android.feedback.play
 import dev.reins.android.platform.AuthResult
 import dev.reins.android.platform.Authenticator
 import dev.reins.android.ui.common.untrusted
-import dev.reins.android.ui.common.userMessage
 import dev.reins.core.PendingItem
 import dev.reins.core.PendingKind
-import kotlin.coroutines.cancellation.CancellationException
 
 /**
  * Several requests from one AI at once (an agent run): [quick] can be approved together without opening each, [all] is
@@ -56,8 +54,8 @@ private fun names(labels: List<String>): String = when (labels.size) {
 
 /**
  * "Approve all" (one screen lock or biometric check for the lot, then each routine request as its sheet would approve it
- * untouched; anything asked every time keeps waiting) or "Deny all" (every request of that AI). Returns what went
- * wrong, or null.
+ * untouched; anything asked every time keeps waiting) or "Deny all". The cards go at once and the answers go out in the
+ * background; any that do not come back with a short message. Returns what went wrong before anything was sent, or null.
  */
 suspend fun answerBurst(container: AppContainer, authenticator: Authenticator, burst: Burst, approve: Boolean): String? {
     val ids = if (approve) burst.quick else burst.all
@@ -72,21 +70,9 @@ suspend fun answerBurst(container: AppContainer, authenticator: Authenticator, b
         }
     }
     container.feedback.play(if (approve) Event.Approved else Event.Denied)
-    var failed = 0
-    var reason: String? = null
+    val failed = if (approve) "Not approved" else "Not denied"
     for (id in ids) {
-        try {
-            if (approve) container.core.approveQuick(id) else container.core.deny(id)
-            container.state.removePending(id)
-        } catch (e: CancellationException) {
-            throw e
-        } catch (e: Exception) {
-            failed++
-            reason = reason ?: e.userMessage()
-        }
+        container.answerInBackground(id, failed) { if (approve) container.core.approveQuick(id) else container.core.deny(id) }
     }
-    container.refreshPending()
-    if (failed == 0) return null
-    container.feedback.play(Event.Error)
-    return "$failed of ${ids.size} could not be ${if (approve) "approved" else "denied"}: $reason"
+    return null
 }
