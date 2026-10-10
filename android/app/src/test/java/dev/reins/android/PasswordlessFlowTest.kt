@@ -9,7 +9,9 @@ import androidx.compose.ui.test.assertIsEnabled
 import androidx.compose.ui.test.assertIsNotEnabled
 import androidx.compose.ui.test.assertTextContains
 import androidx.compose.ui.test.assertTextEquals
+import androidx.compose.ui.test.onLast
 import androidx.compose.ui.test.onNodeWithTag
+import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performTextReplacement
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import dev.reins.android.platform.AuthResult
@@ -520,6 +522,34 @@ class PasswordlessFlowTest : FlowHarness() {
         awaitText("To add another phone, sign in on it; this phone asks you to approve it.")
         awaitCore { core.recoveryCodeReads.get() > 0 }
         assertFalse(has("recoveryCodeRow"))
+    }
+
+    @Test
+    fun aNewRecoveryCodeIsMadeAfterAConfirmationAndTheScreenLockAndMustBeWrittenDown() {
+        core.session = dev.reins.core.SessionInfo("http://127.0.0.1:8000", "me@example.com")
+        core.recoveryCode = FakeCore.RECOVERY_CODE
+        core.rotations.set(0)
+        launch()
+        recordRecovery()
+        tap("openSettings")
+        tap("recoveryCodeRow")
+        tap("rotateRecoveryCode")
+        awaitText("Make a new recovery code?")
+        assertTrue(showsText("Your vault passkeys are removed", substring = true))
+        authResult = AuthResult.Cancelled
+        rule.onAllNodes(androidx.compose.ui.test.hasText("Make a new code")).onLast().performClick()
+        awaitCore { prompts.get() >= 2 }
+        assertEquals("nothing changes without the screen lock", 0, core.rotations.get())
+        authResult = AuthResult.Success
+        tap("recoveryCodeRow")
+        tap("rotateRecoveryCode")
+        awaitText("Make a new recovery code?")
+        rule.onAllNodes(androidx.compose.ui.test.hasText("Make a new code")).onLast().performClick()
+        awaitCore { core.rotations.get() == 1 }
+        // The new code, to write down before going on.
+        awaitTag("recoveryRecorded")
+        assertTrue(showsText("HV3N", substring = true))
+        recordRecovery()
     }
 
     @Test

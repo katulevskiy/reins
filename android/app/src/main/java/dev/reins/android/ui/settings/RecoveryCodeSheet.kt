@@ -50,7 +50,7 @@ fun recoveryCodeLines(code: String): List<String> =
 
 /** The account's recovery code, shown after biometrics, in its own window that screenshots and recents never show. */
 @Composable
-fun RecoveryCodeSheet(code: String, onCopy: () -> Unit, onDone: () -> Unit, required: Boolean = false) {
+fun RecoveryCodeSheet(code: String, onCopy: () -> Unit, onDone: () -> Unit, required: Boolean = false, onNewCode: (() -> Unit)? = null) {
     val c = LocalColors.current
     // An acknowledgement is deliberately not saved across process restarts.
     var recorded by remember(code) { mutableStateOf(false) }
@@ -100,6 +100,14 @@ fun RecoveryCodeSheet(code: String, onCopy: () -> Unit, onDone: () -> Unit, requ
             Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                 CapsuleButton("Copy", Modifier.weight(1f).testTag("copyRecoveryCode"), style = ButtonStyle.Secondary, glyph = Glyph.Copy, onClick = onCopy)
                 CapsuleButton(if (required) "Continue" else "Done", Modifier.weight(1f).testTag("recoveryCodeDone"), enabled = !required || recorded, style = ButtonStyle.Primary, onClick = onDone)
+            }
+            if (onNewCode != null && !required) {
+                CapsuleButton(
+                    "Make a new code",
+                    Modifier.fillMaxWidth().padding(top = 10.dp).testTag("rotateRecoveryCode"),
+                    style = ButtonStyle.Ghost,
+                    onClick = onNewCode,
+                )
             }
         }
     }

@@ -88,6 +88,7 @@ fun SettingsScreen(
     val deletion by viewModel.deletion.collectAsStateWithLifecycle()
     val vaultPasskeys by viewModel.vaultPasskeys.collectAsStateWithLifecycle()
     var confirmSignOut by remember { mutableStateOf(false) }
+    var confirmRotate by remember { mutableStateOf(false) }
     val pushAvailable = FirebaseSupport.available(LocalContext.current)
     val serverPush by viewModel.serverPush.collectAsStateWithLifecycle()
     LaunchedEffect(session) { viewModel.checkRecoveryCode() }
@@ -335,6 +336,19 @@ fun SettingsScreen(
                 feedback.play(Event.Copied)
             },
             onDone = viewModel::hideRecoveryCode,
+            onNewCode = {
+                viewModel.hideRecoveryCode()
+                confirmRotate = true
+            },
+        )
+    }
+    if (confirmRotate) {
+        RotateRecoveryDialog(
+            onConfirm = {
+                confirmRotate = false
+                viewModel.rotateRecoveryCode(authenticator)
+            },
+            onDismiss = { confirmRotate = false },
         )
     }
 

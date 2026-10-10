@@ -408,6 +408,16 @@ impl AccountRuntime {
         }
         Ok(())
     }
+    /// A new recovery code for the signed-in account (see [`Engine::rotate_account_secret`]), kept in this phone's
+    /// cache too so a later sign-in restores the new one. Returns the code to show once.
+    pub async fn rotate_recovery_code(&self, engine: &Arc<Engine>) -> Result<String, CoreError> {
+        let fresh = engine.rotate_account_secret().await?;
+        if let Some(owner) = engine.store.bound_owner() {
+            self.control.secret_put(SECRET_CACHE, &owner.id(), fresh.as_bytes())?;
+        }
+        Ok(fresh.recovery_code().to_string())
+    }
+
     pub fn check_engine(&self, engine: &Arc<Engine>) -> Result<(), CoreError> {
         engine.ensure_active()?;
         if !Arc::ptr_eq(&self.engine(), engine) {

@@ -233,6 +233,24 @@ impl std::fmt::Debug for DeviceSignOut {
     }
 }
 
+/// `POST /reins/api/account/secret` body: a new account secret (recovery code) in place of the old one, from the
+/// approval device. The vault key stays; only its wrapping and the server's password hash change.
+#[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct AccountSecretRotation {
+    /// The master password hash of the current account secret (counted like a takeover proof).
+    pub master_password_hash: String,
+    /// The master password hash of the new account secret.
+    pub new_master_password_hash: String,
+    /// The vault key wrapped with the new secret's stretched master key (an EncString).
+    pub key: String,
+}
+
+impl std::fmt::Debug for AccountSecretRotation {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("AccountSecretRotation").finish_non_exhaustive()
+    }
+}
+
 /// The ids a device may sign in with: what the phone API can name in a path (`[A-Za-z0-9_-]`, 1 to 36 characters, the
 /// size of the server's column), so that every device signed in can also be signed out.
 #[must_use]

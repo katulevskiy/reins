@@ -116,6 +116,14 @@ class SettingsViewModel(private val container: AppContainer) : ViewModel() {
         _recoveryCode.value = null
     }
 
+    /** "Make a new code": a new recovery code in place of the old one, then the sheet to write it down. */
+    fun rotateRecoveryCode(authenticator: Authenticator) {
+        if (_ui.value.busy) return
+        viewModelScope.launch {
+            rotateRecoveryCode(container, authenticator)?.let { _ui.value = SettingsUi(error = it) }
+        }
+    }
+
     fun registerThisPhone() {
         run("This phone is now your approval device.") {
             container.registerDevice(force = true)

@@ -87,6 +87,15 @@ class DevicesViewModel(private val container: AppContainer) : ViewModel() {
         }
     }
 
+    /** After a sign-out: a new recovery code, so that the one the signed-out phone kept no longer works. */
+    fun rotateRecoveryCode(authenticator: dev.reins.android.platform.Authenticator) {
+        viewModelScope.launch {
+            dev.reins.android.ui.settings.rotateRecoveryCode(container, authenticator)?.let {
+                _ui.value = DevicesUi(error = it)
+            }
+        }
+    }
+
     /** Signs [device] out with the recovery code or master password the user typed now (never one the phone keeps). */
     fun signOut(device: DeviceView, codeOrPassword: String, onDone: (Boolean) -> Unit = {}) {
         if (_ui.value.busy) return
@@ -133,6 +142,7 @@ fun DevicesScreen(
     state: AppState,
     onBack: () -> Unit,
     onConnection: (String) -> Unit,
+    authenticator: dev.reins.android.platform.Authenticator,
 ) {
     val c = LocalColors.current
     val devices by viewModel.devices.collectAsStateWithLifecycle()
@@ -140,13 +150,28 @@ fun DevicesScreen(
     val ui by viewModel.ui.collectAsStateWithLifecycle()
     val connections by state.connections.collectAsStateWithLifecycle()
     var signingOut by remember { mutableStateOf<DeviceView?>(null) }
+    var confirmRotate by remember { mutableStateOf(false) }
     LaunchedEffect(viewModel) { viewModel.load() }
     // This phone's key digits, and the recovery code typed to sign a phone out.
     dev.reins.android.ui.common.SecureWindow()
 
     Screen(title = "Devices", onBack = onBack) {
         Column(Modifier.padding(horizontal = 16.dp)) {
-            ui.message?.let { Banner(untrusted(it), Modifier.padding(top = 10.dp), tag = "devicesMessage") }
+            ui.message?.let {
+                Banner(untrusted(it), Modifier.padding(top = 10.dp), tag = "devicesMessage")
+                // The signed-out phone may still hold the recovery code: a new one makes it useless.
+                RText(
+                    "That phone may still keep your recovery code. Make a new one so it no longer works.",
+                    RType.sans(13.5f, lineHeight = 19f),
+                    c.secondary,
+                    Modifier.padding(top = 8.dp, start = 4.dp),
+                )
+                CapsuleButton(
+                    "Make a new recovery code",
+                    Modifier.fillMaxWidth().padding(top = 8.dp).testTag("rotateAfterSignOut"),
+                    style = ButtonStyle.Accent,
+                ) { confirmRotate = true }
+            }
             ui.error?.let { Banner(it, Modifier.padding(top = 10.dp), BannerKind.Error, tag = "devicesError") }
         }
         val list = devices
@@ -210,6 +235,15 @@ fun DevicesScreen(
         Spacer(Modifier.padding(bottom = 32.dp))
     }
 
+    if (confirmRotate) {
+        RotateRecoveryDialog(
+            onConfirm = {
+                confirmRotate = false
+                viewModel.rotateRecoveryCode(authenticator)
+            },
+            onDismiss = { confirmRotate = false },
+        )
+    }
     signingOut?.let { device ->
         SignOutDialog(
             device = device,

@@ -249,6 +249,11 @@ impl<'a> PhoneApi<'a> {
         Self::send(self.request(Method::DELETE, &format!("/connections/{id}"))).await.map(drop)
     }
 
+    /// `POST /account/secret`: a new account secret in place of the old one.
+    pub async fn rotate_secret(&self, rotation: &reins_proto::device::AccountSecretRotation) -> Result<(), ApiFailure> {
+        Self::send(self.request(Method::POST, "/account/secret").json(rotation)).await.map(drop)
+    }
+
     /// A9 `GET /devices`.
     pub async fn devices(&self) -> Result<reins_proto::device::Devices, ApiFailure> {
         Self::json(self.request(Method::GET, "/devices")).await

@@ -297,6 +297,21 @@ impl ReinsCore {
         .await
     }
 
+    /// A new recovery code in place of the old one (after signing out a lost phone, or from Settings), from the
+    /// approval device, after the app checked the screen lock. The old code stops working everywhere; the vault
+    /// passkeys must be added again. Returns the new code: show it once, and have the user record it.
+    pub async fn rotate_recovery_code(&self) -> Result<String, CoreError> {
+        let runtime = Arc::clone(&self.runtime);
+        let generation = runtime.generation();
+        rt::run(async move {
+            let engine = runtime.prepare(generation).await?;
+            let result = engine.run_account(async { runtime.rotate_recovery_code(&engine).await }).await;
+            runtime.check_engine(&engine)?;
+            result
+        })
+        .await
+    }
+
     /// "Add another phone", on the new phone (keys `Locked`): asks the account's approval device for its keys. Show
     /// `code` and ask the user to check that the other phone shows the same, then call `join_poll` every few
     /// seconds.

@@ -81,6 +81,8 @@ class MainSafeCore(
 
     override suspend fun devices(): List<DeviceView> = io { devices() }
 
+    override suspend fun rotateRecoveryCode(): String = io { rotateRecoveryCode() }
+
     override suspend fun signOutDevice(deviceId: String, codeOrPassword: String) = io { signOutDevice(deviceId, codeOrPassword) }
 
     override suspend fun vaultItems(query: String): List<VaultItemSummary> = io { vaultItems(query) }

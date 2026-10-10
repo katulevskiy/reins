@@ -1,6 +1,8 @@
 package dev.reins.android
 
+import androidx.compose.ui.test.onLast
 import androidx.compose.ui.test.onNodeWithTag
+import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performTextInput
 import androidx.compose.ui.test.performTextReplacement
 import androidx.test.ext.junit.runners.AndroidJUnit4
@@ -64,6 +66,14 @@ class DevicesFlowTest : FlowHarness() {
         tap("confirmSignOut")
         awaitCore { core.signedOutDevices.toList() == listOf("d-old") }
         awaitGone("signOutDialog")
+        // The phone signed out may still keep the recovery code: a new one is offered right away.
+        core.recoveryCode = FakeCore.RECOVERY_CODE
+        core.rotations.set(0)
+        tap("rotateAfterSignOut")
+        awaitText("Make a new recovery code?")
+        rule.onAllNodes(androidx.compose.ui.test.hasText("Make a new code")).onLast().performClick()
+        awaitCore { core.rotations.get() == 1 }
+        awaitTag("recoveryRecorded")
         awaitTag("devicesMessage")
         assertTrue(showsText("Pixel 7 is signed out", substring = true))
         awaitGone("device:d-old")

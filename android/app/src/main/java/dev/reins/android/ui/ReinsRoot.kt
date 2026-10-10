@@ -271,6 +271,7 @@ private fun SignedInContent(
                     state,
                     onBack = { app.back() },
                     onConnection = { app.open(Route.Connection(it)) },
+                    authenticator = authenticator,
                 )
                 Route.VaultPasskeys -> VaultPasskeysScreen(
                     viewModel(key = "vaultPasskeys") { VaultPasskeysViewModel(container, deviceName = Build.MODEL) },

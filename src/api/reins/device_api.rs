@@ -9,8 +9,9 @@ use std::time::Duration;
 use reins_proto::{
     check_version,
     device::{
-        ApiError, Connections, DEVICE_KEY_HEADER, DeviceInfo, DeviceRegistered, DeviceRegistration, DeviceSignOut,
-        Devices, MAX_PENDING_WAIT_SECS, PairingResult, Pending, TAKEOVER_REFUSED, codes, device_key_hash,
+        AccountSecretRotation, ApiError, Connections, DEVICE_KEY_HEADER, DeviceInfo, DeviceRegistered,
+        DeviceRegistration, DeviceSignOut, Devices, MAX_PENDING_WAIT_SECS, PairingResult, Pending, TAKEOVER_REFUSED,
+        codes, device_key_hash,
     },
     ids::{ConnectionId, PairingId, RequestId},
     pairing::{PairingClaim, PairingRequest, PairingResponse, PushKind, PushMessage},
@@ -62,6 +63,7 @@ pub fn routes() -> Vec<Route> {
         delete_connection,
         get_devices,
         delete_device,
+        post_account_secret,
         post_logout
     ]
 }
@@ -555,6 +557,39 @@ async fn delete_device(
     }
     signout.sign_out(&conn).await.map_err(|e| internal(&e))?;
     HUB.joins.forget_device(&user, &target.uuid.to_string());
+    Ok(Status::NoContent)
+}
+
+/// A new recovery code, from the approval device: the account secret's password hash and the vault key's wrapping are
+/// replaced, so the old code no longer proves anything (taking the approval role, signing a device out, unlocking a new
+/// phone). The vault passkeys' copies, sealed to the old secret, are dropped, and pending "add another phone" requests
+/// with them. The vault key itself, and so the vault and the encrypted account state, stay as they are.
+#[post("/reins/api/account/secret", data = "<data>")]
+async fn post_account_secret(
+    data: Data<'_>,
+    mut headers: Headers,
+    key: DeviceKey,
+    ip: ClientIp,
+    conn: DbConn,
+) -> PhoneResult<Status> {
+    require_approval_device(&headers, &key, &conn).await?;
+    let body: AccountSecretRotation = serde_json::from_slice(&read_body_limited(data, 8192).await?)
+        .map_err(|e| bad_request(format!("invalid body: {e}")))?;
+    let well_formed = |s: &str| !s.is_empty() && s.len() <= 1024 && !s.chars().any(char::is_control);
+    if !well_formed(&body.new_master_password_hash) || !well_formed(&body.key) || !body.key.starts_with("2.") {
+        return Err(bad_request("the new hash and key are required"));
+    }
+    check_proof(&headers, &body.master_password_hash)?;
+    let user = user_key(&headers);
+    headers
+        .user
+        .set_password(&body.new_master_password_hash, Some(body.key), false, None, &conn)
+        .await
+        .map_err(|e| internal(&e))?;
+    headers.user.save(&conn).await.map_err(|e| internal(&e))?;
+    crate::db::models::ReinsVaultPasskey::delete_all(&headers.user.uuid, &conn).await.map_err(|e| internal(&e))?;
+    HUB.joins.forget_user(&user);
+    info!("Reins: the account secret of user {user} was replaced from device {} ({})", headers.device.uuid, ip.ip);
     Ok(Status::NoContent)
 }
 

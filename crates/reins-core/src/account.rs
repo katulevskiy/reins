@@ -269,7 +269,54 @@ impl Engine {
         let secret = self.secret_of(&user_id)?.ok_or_else(|| {
             CoreError::invalid("This account has no recovery code: it was made with a master password.")
         })?;
+        // A code made new on another phone: the one kept here no longer opens the account, so it is forgotten rather
+        // than shown.
+        if let (_, Some(wrapped)) = self.account_profile(&session).await? {
+            let check = AccountSecret::from_bytes(secret.as_bytes())?;
+            let opens = tokio::task::spawn_blocking(move || check.open_user_key(&wrapped).is_ok())
+                .await
+                .map_err(interrupted)?;
+            if !opens {
+                self.store.secret_delete(SECRET_SERVICE, &user_id)?;
+                return Err(CoreError::invalid(
+                    "Your recovery code was changed on your approval phone. See it there; add this phone again from it \
+                     to keep the new one here too.",
+                ));
+            }
+        }
         Ok(secret.recovery_code().to_string())
+    }
+
+    /// Replaces the account secret (the recovery code) with a new one, from the approval device: the vault key is
+    /// wrapped again with the new secret and the server keeps the new secret's hash, so the old code no longer proves
+    /// anything. The vault passkeys' copies go (they hold the old secret). Returns the new secret, kept here too.
+    pub(crate) async fn rotate_account_secret(&self) -> Result<AccountSecret, CoreError> {
+        let session = self.session()?;
+        let user_id = session.account_user_id().await?;
+        let old = self.secret_of(&user_id)?.ok_or_else(|| {
+            CoreError::invalid("This phone does not keep the recovery code (an account with a master password).")
+        })?;
+        let (_, wrapped) = self.account_profile(&session).await?;
+        let wrapped = wrapped.ok_or_else(|| CoreError::invalid("This account has no keys yet."))?;
+        let fresh = AccountSecret::generate()?;
+        let fresh_copy = AccountSecret::from_bytes(fresh.as_bytes())?;
+        let rotation =
+            tokio::task::spawn_blocking(move || -> Result<reins_proto::device::AccountSecretRotation, CoreError> {
+                let user_key = old.open_user_key(&wrapped)?;
+                let old_master = old.master_key()?;
+                let new_master = fresh_copy.master_key()?;
+                Ok(reins_proto::device::AccountSecretRotation {
+                    master_password_hash: old.master_password_hash(&old_master).to_string(),
+                    new_master_password_hash: fresh_copy.master_password_hash(&new_master).to_string(),
+                    key: new_master.stretch().encrypt(&user_key.to_bytes())?,
+                })
+            })
+            .await
+            .map_err(interrupted)??;
+        crate::session::api_call!(&session, |api| api.rotate_secret(&rotation))
+            .map_err(crate::phone_api::ApiFailure::into_core)?;
+        self.store.secret_put(SECRET_SERVICE, &user_id, fresh.as_bytes())?;
+        Ok(fresh)
     }
 
     /// The account secret this phone keeps for the signed-in account, for sealing to a new phone (`None`: an account

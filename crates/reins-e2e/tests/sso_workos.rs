@@ -370,6 +370,46 @@ async fn signing_a_phone_out_ends_its_workos_session_and_it_cannot_sign_back_in(
     first.core.sync(0).await.expect("the approval phone still works");
 }
 
+/// After a lost phone, a new recovery code: the old code (which the lost phone, or another phone added before, still
+/// holds) no longer takes the approval role or signs a device out, and a phone still keeping it is told it changed.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_new_recovery_code_makes_the_old_one_useless() {
+    use reins_core::JoinProgress;
+
+    let workos = FakeWorkos::start().await;
+    let server = Server::start_with_env(5, 3, &workos.server_env()).await;
+    let grace = User {
+        id: "user_01GRACE".to_owned(),
+        email: "grace@example.com".to_owned(),
+    };
+    workos.sign_in_as(&grace);
+    let first = Phone::signed_out(|_| {}).await;
+    assert_eq!(first.sso_sign_in(&server.base).await.unwrap().keys, AccountKeys::Created);
+    first.core.register_device(None).await.unwrap();
+    // A second phone gets the account secret the usual way.
+    let second = Phone::signed_out(|_| {}).await;
+    second.sso_sign_in(&server.base).await.unwrap();
+    second.core.join_begin("Pixel 9".to_owned()).await.unwrap();
+    let item = first.wait_for_item(Duration::from_secs(10)).await;
+    first.core.answer_join(item.id, true).await.unwrap();
+    assert_eq!(second.core.join_poll().await.unwrap(), JoinProgress::Joined);
+    let old = first.core.account_recovery_code().await.unwrap();
+    assert_eq!(second.core.account_recovery_code().await.unwrap(), old);
+
+    let new = first.core.rotate_recovery_code().await.unwrap();
+    assert_ne!(new, old);
+    assert_eq!(first.core.account_recovery_code().await.unwrap(), new, "the approval phone keeps the new one");
+    let stale = second.core.account_recovery_code().await.unwrap_err();
+    assert!(stale.to_string().contains("changed on your approval phone"), "{stale}");
+    // The old code takes nothing: not the role, not a sign-out.
+    assert!(second.core.register_device(None).await.is_err(), "no takeover with the old code");
+    let other = first.core.devices().await.unwrap().into_iter().find(|d| !d.this_device).unwrap();
+    assert!(first.core.sign_out_device(other.id.clone(), old).await.is_err());
+    first.core.sign_out_device(other.id, new).await.unwrap();
+    first.core.sync(0).await.expect("the approval phone works as before");
+    assert!(first.core.vault_items(String::new()).await.is_ok(), "the vault opens as before");
+}
+
 /// Whoever controls the identity Grace signs in with (her Google account, her email) gets a signed-in phone, but not
 /// the approval role: that takes the recovery code or her phone's yes.
 #[tokio::test(flavor = "multi_thread")]

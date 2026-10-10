@@ -414,6 +414,15 @@ class FakeCore : ReinsCoreInterface {
         takeoverProof = true
     }
 
+    val rotations = java.util.concurrent.atomic.AtomicInteger()
+
+    override suspend fun rotateRecoveryCode(): String {
+        if (recoveryCode == null) throw CoreException.Invalid("This phone does not keep the recovery code.")
+        rotations.incrementAndGet()
+        recoveryCode = RESET_RECOVERY_CODE
+        return RESET_RECOVERY_CODE
+    }
+
     override suspend fun accountRecoveryCode(): String {
         recoveryCodeReads.incrementAndGet()
         return recoveryCode ?: throw CoreException.Invalid("This account has no recovery code: it was made with a master password.")
