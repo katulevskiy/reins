@@ -118,7 +118,7 @@ private struct ConnectionAutopilotGroup: View {
         .confirmationDialog("Lock down \(label)?", isPresented: $askLockdown, titleVisibility: .visible) {
             Button("Lock down", role: .destructive) { setMode(.lockdown) }
         } message: {
-            Text("Everything it asks for is denied at once, what waits now included. Other AIs are not affected.")
+            Text("Only this AI. Waiting requests too.")
         }
         .presentationFeedback(askLockdown)
         .sheet(isPresented: $askBypass) {
@@ -348,7 +348,7 @@ private struct DisconnectGroup: View {
             .confirmationDialog("Disconnect \(untrusted(connection.label))?", isPresented: $confirm, titleVisibility: .visible) {
                 Button("Disconnect", role: .destructive, action: disconnect)
             } message: {
-                Text("It loses access immediately, and its saved grants stop working.")
+                Text("It loses access now.")
             }
             .presentationFeedback(confirm)
         }
@@ -394,20 +394,12 @@ private struct ConnectionBypassSheet: View {
                 .font(RFont.sans(20, .semibold))
                 .foregroundStyle(Palette.text)
                 .padding(.top, 14)
-            Text("Requests are approved without asking until the time runs out. Approved means done: an email sent cannot be unsent.")
+            Text("Approved without asking. Sent means sent.")
                 .font(RFont.sans(15))
                 .foregroundStyle(Palette.secondary)
                 .padding(.top, 8)
-            HStack(alignment: .top, spacing: 10) {
-                Image(systemName: "shield").font(.system(size: 16)).foregroundStyle(Palette.secondary)
-                Text("Still asked every time: new connections, permissions, passwords and secrets, deletions and other one-off changes, SSH and flagged files.")
-                    .font(RFont.sans(13.5))
-                    .foregroundStyle(Palette.secondary)
-            }
-            .padding(12)
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .background(Palette.controlFill, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
-            .padding(.top, 14)
+            GroupFooter("Still asked every time: new connections, permissions, passwords and secrets, deletions and other one-off changes, SSH and flagged files.")
+                .padding(.top, 6)
             Text("For").font(RFont.sans(13, .medium)).foregroundStyle(Palette.tertiary).padding(.top, 16).padding(.bottom, 8)
             HStack(spacing: 8) {
                 ForEach(SettingsText.bypassMinutes, id: \.self) { m in

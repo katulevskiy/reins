@@ -152,7 +152,7 @@ final class IntegrationsLogicTests: XCTestCase {
     }
 
     func testTheListSaysHowManyAccountsEachServiceHas() {
-        XCTAssertEqual(ServiceCopy.summary(service("github", kind: "token")), "Not connected")
+        XCTAssertEqual(ServiceCopy.summary(service("github", kind: "token")), "")
         XCTAssertEqual(ServiceCopy.summary(service("github", kind: "token", accounts: 1)), "1 account")
         XCTAssertEqual(ServiceCopy.summary(service("github", kind: "token", accounts: 3)), "3 accounts")
         XCTAssertEqual(ServiceCopy.summary(ServiceCopy.sms), "Not available")
@@ -160,9 +160,9 @@ final class IntegrationsLogicTests: XCTestCase {
     }
 
     func testEachKindOfServiceSaysWhatToDoWhenItNeedsTheUserAgain() {
-        XCTAssertEqual(ServiceCopy.needsAgain(service("telegram", kind: "telegram")), "Signed out: remove it and sign in again")
-        XCTAssertEqual(ServiceCopy.needsAgain(service("github", kind: "token")), "The token no longer works: remove it and add a new one")
-        XCTAssertEqual(ServiceCopy.needsAgain(service("gcalendar", kind: "google")), "Needs your permission again")
+        XCTAssertEqual(ServiceCopy.needsAgain(service("telegram", kind: "telegram")), "Signed out")
+        XCTAssertEqual(ServiceCopy.needsAgain(service("github", kind: "token")), "Token expired")
+        XCTAssertEqual(ServiceCopy.needsAgain(service("gcalendar", kind: "google")), "Allow again")
         XCTAssertTrue(ServiceCopy.canAllowAgain(service("gcalendar", kind: "google")))
         XCTAssertTrue(ServiceCopy.canAllowAgain(service("device_contacts", kind: "device")))
         XCTAssertFalse(ServiceCopy.canAllowAgain(service("telegram", kind: "telegram")))

@@ -21,14 +21,10 @@ struct TryItScreen: View {
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 20) {
-                Text("A request as Autopilot reads it: the facts first, then what the AI wrote. Edit anything; nothing is kept.")
-                    .font(RFont.sans(14.5))
-                    .foregroundStyle(Palette.secondary)
-                    .fixedSize(horizontal: false, vertical: true)
-                    .padding(.horizontal, 4)
-                    .padding(.top, 8)
+                GroupFooter("A request as Autopilot reads it: the facts first, then what the AI wrote. Edit anything; nothing is kept.")
+                    .padding(.top, 4)
                 if ap.settings != nil && !ap.modelReady {
-                    IntegrationBanner(text: "Download the model in Autopilot first; until then Autopilot cannot judge.", kind: .warning)
+                    IntegrationBanner(text: "Download the model first.", kind: .warning)
                         .accessibilityIdentifier("tryNoModel")
                 }
 

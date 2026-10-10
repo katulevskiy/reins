@@ -19,6 +19,6 @@ final class NotificationAccessTests: XCTestCase {
         for state in [NotificationAccessState.notAsked, .quiet, .off] {
             XCTAssertTrue(state.needsAttention, "\(state)")
         }
-        XCTAssertEqual(NotificationAccessState.off.summary, "Off: requests can't reach you while Reins is closed")
+        XCTAssertEqual(NotificationAccessState.off.summary, "Off")
     }
 }

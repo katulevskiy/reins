@@ -24,17 +24,17 @@ struct SoundsScreen: View {
             Section {
                 SwitchRow(title: "Sounds", subtitle: "Every sound in Reins", symbol: "speaker.wave.2", isOn: s.sounds,
                           enabled: s.master, id: "sounds") { on in store.update { $0.sounds = on } }
-                SwitchRow(title: "Interface", subtitle: "Soft taps for buttons, switches and sheets, approve and deny",
+                SwitchRow(title: "Interface", subtitle: nil,
                           symbol: "square.grid.2x2", isOn: s.interfaceSounds, enabled: s.soundsOn, id: "interfaceSounds") { on in
                     store.update { $0.interfaceSounds = on }
                 }
-                SwitchRow(title: "Requests", subtitle: "A chime when something waits for your approval", symbol: "bell",
+                SwitchRow(title: "Requests", subtitle: nil, symbol: "bell",
                           isOn: s.requestSounds, enabled: s.soundsOn, id: "requestSounds") { on in store.update { $0.requestSounds = on } }
-                SwitchRow(title: "Alerts", subtitle: "A grant ends soon, this phone stops being your approval device",
+                SwitchRow(title: "Alerts", subtitle: nil,
                           symbol: "exclamationmark.triangle", isOn: s.alertSounds, enabled: s.soundsOn, id: "alertSounds") { on in
                     store.update { $0.alertSounds = on }
                 }
-                SwitchRow(title: "Autopilot", subtitle: "A soft sound when Autopilot approves or denies for you", symbol: "sparkles",
+                SwitchRow(title: "Autopilot", subtitle: nil, symbol: "sparkles",
                           isOn: s.autopilotSounds, enabled: s.soundsOn, id: "autopilotSounds") { on in store.update { $0.autopilotSounds = on } }
                 VolumeRow(store: store, engine: engine)
             } header: {
@@ -82,9 +82,7 @@ private struct FooterText: View {
     var text: String
     init(_ text: String) { self.text = text }
 
-    var body: some View {
-        Text(text).font(RFont.sans(13)).foregroundStyle(Palette.secondary)
-    }
+    var body: some View { GroupFooter(text) }
 }
 
 /// An icon, a title with an explanation, and a switch. Greyed out like the switch when a switch above turns it off.
@@ -159,7 +157,7 @@ private struct VolumeRow: View {
         let enabled = s.soundsOn
         VStack(alignment: .leading, spacing: 8) {
             HStack(alignment: .center, spacing: 10) {
-                RowLabel(title: "Volume", subtitle: "Follows the volume buttons; silent mode mutes it. 100% is twice as loud as 50%.",
+                RowLabel(title: "Volume", subtitle: nil,
                          symbol: "speaker.wave.2", enabled: enabled)
                 Spacer(minLength: 0)
                 Text("\(Int((s.volume * 100).rounded()))%")

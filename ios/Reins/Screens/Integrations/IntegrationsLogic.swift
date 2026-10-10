@@ -206,7 +206,7 @@ enum ServiceCopy {
         let n = service.accounts.count
         if !service.available { return "Not available" }
         return switch n {
-        case 0: "Not connected"
+        case 0: ""
         case 1: "1 account"
         default: "\(n) accounts"
         }
@@ -243,9 +243,7 @@ enum ServiceCopy {
 
     /// What adding a Google account looks like, said before the button so Google's screens surprise no one.
     static var googleSignInNote: String {
-        googleAppVerified
-            ? "Google asks which account, then what Reins may do with it."
-            : "Google asks which account, then what Reins may do with it. While Google reviews Reins, it first warns \"Google hasn't verified this app\": tap Advanced, then Go to Reins."
+        googleAppVerified ? "" : "If Google says it hasn't verified this app: Advanced, then Go to Reins."
     }
 
     /// The small print at the bottom of a service's page; empty for none.
@@ -267,11 +265,11 @@ enum ServiceCopy {
     /// The status line of an account that needs the user again.
     static func needsAgain(_ service: ServiceView) -> String {
         switch service.kind {
-        case "device": "Needs the permission again"
-        case "telegram": "Signed out: remove it and sign in again"
-        case "token": "The token no longer works: remove it and add a new one"
-        case "vault": "Remove it and enter the master password again"
-        default: "Needs your permission again"
+        case "device": "Allow again"
+        case "telegram": "Signed out"
+        case "token": "Token expired"
+        case "vault": "Locked"
+        default: "Allow again"
         }
     }
 
@@ -289,8 +287,8 @@ enum ServiceCopy {
 
     static func removeMessage(gmail: Bool) -> String {
         gmail
-            ? "Your AIs lose access to this account, and the grants made for it are deleted."
-            : "Your AIs lose access to this, and the grants made for it are deleted."
+            ? "Its grants go too."
+            : "Its grants go too."
     }
 
     static let permissionRefused = "iOS did not allow it. You can allow it in Settings for Reins."

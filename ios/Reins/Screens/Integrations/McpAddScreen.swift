@@ -15,11 +15,6 @@ struct McpAddScreen: View {
         List {
             Section {
                 VStack(alignment: .leading, spacing: 12) {
-                    Text("Paste the address the service gives for its MCP server. Reins connects from this phone; if the server wants you to sign in, its page opens here.")
-                        .font(RFont.sans(14.5))
-                        .foregroundStyle(Palette.secondary)
-                        .fixedSize(horizontal: false, vertical: true)
-                        .padding(.horizontal, 4)
                     InputWell {
                         TextField("https://mcp.example.com/mcp", text: $url)
                             .font(RFont.mono(15))
@@ -57,16 +52,15 @@ struct McpAddScreen: View {
                             clearClipboard()
                         }
                     }
-                    Text("Only for servers that give you a token instead of a sign-in. It is kept encrypted on this phone.")
-                        .font(RFont.sans(13))
-                        .foregroundStyle(Palette.tertiary)
-                        .fixedSize(horizontal: false, vertical: true)
-                        .padding(.horizontal, 4)
+                    GroupFooter(
+                        "Paste the address the service gives for its MCP server. Reins connects from this phone; if the server wants you to sign in, its page opens here.\n\n" +
+                            "The token is only for servers that give you one instead of a sign-in. It is kept encrypted on this phone."
+                    )
                     ActionButton(title: "Add", busy: busy, enabled: !url.trimmingCharacters(in: .whitespaces).isEmpty, action: submit)
                         .padding(.top, 6)
                         .accessibilityIdentifier("mcpAddSubmit")
                     if mcp?.signingIn != nil {
-                        IntegrationBanner(text: "Sign in on the page that opened. When you are done there, Reins comes back by itself.")
+                        IntegrationBanner(text: "Finish signing in on the page that opened.")
                             .accessibilityIdentifier("mcpSigningIn")
                     }
                     if let error = mcp?.error {

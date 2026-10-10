@@ -24,6 +24,9 @@ struct SettingsScreen: View {
             NotificationsGroup()
             NavigationGroups()
             HelpGroup()
+            #if DEBUG
+            DeveloperGroup()
+            #endif
             VersionGroup()
             SessionGroup()
         }
@@ -249,7 +252,7 @@ private struct HelpGroup: View {
     var body: some View {
         Section {
             SettingsLinkRow(
-                title: "Take the tour", subtitle: "How Reins works, integrations and the private model", symbol: "questionmark.circle",
+                title: "Take the tour", subtitle: nil, symbol: "questionmark.circle",
                 tint: Palette.accent, id: "takeTour"
             ) { model.startTour() }
         } header: {
@@ -270,7 +273,7 @@ private struct ConnectionsGroup: View {
         Section {
             ForEach(computers, id: \.id) { connectionRow($0) }
             SettingsLinkRow(
-                title: "Connect a computer", subtitle: "Scan the QR code from reins login or the desktop app", symbol: "qrcode.viewfinder",
+                title: "Connect a computer", subtitle: nil, symbol: "qrcode.viewfinder",
                 tint: Palette.pair, id: "connectComputer"
             ) { model.openSheet(.connectComputer) }
         } header: {
@@ -389,7 +392,7 @@ private struct SessionGroup: View {
                     }
                 }
             } message: {
-                Text("This phone stops receiving approval requests until you sign in again: your AIs' requests wait and then fail. Your computers, AI connections and integrations stay with your account.")
+                Text("Requests can't reach this phone until you sign in again.")
             }
             .presentationFeedback(confirm)
             if case let .signedIn(info) = model.session {
@@ -421,14 +424,14 @@ private struct SessionGroup: View {
 /// A row that opens a page: a tinted symbol, a title, a line under it, and the disclosure mark.
 struct SettingsLinkRow: View {
     var title: String
-    var subtitle: String
+    var subtitle: String?
     var symbol: String
     var tint: Color
     var id: String
     var action: () -> Void
     @Environment(\.feedback) private var feedback
 
-    init(title: String, subtitle: String, symbol: String, tint: Color, id: String, action: @escaping () -> Void) {
+    init(title: String, subtitle: String?, symbol: String, tint: Color, id: String, action: @escaping () -> Void) {
         self.title = title
         self.subtitle = subtitle
         self.symbol = symbol
@@ -461,3 +464,23 @@ struct Chevron: View {
             .accessibilityHidden(true)
     }
 }
+
+#if DEBUG
+/// Debug builds only: what the header's Autopilot pill opens, to compare the designs on a phone.
+private struct DeveloperGroup: View {
+    @AppStorage(QuickStyle.key) private var style = QuickStyle.menu.rawValue
+
+    var body: some View {
+        Section {
+            Picker("Autopilot pill", selection: $style) {
+                ForEach(QuickStyle.allCases) { Text($0.label).tag($0.rawValue) }
+            }
+            .pickerStyle(.segmented)
+            .cardRow()
+            .accessibilityIdentifier("quickStyle")
+        } header: {
+            GroupHeader("Developer")
+        }
+    }
+}
+#endif

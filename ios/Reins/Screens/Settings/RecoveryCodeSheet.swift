@@ -96,7 +96,7 @@ struct RecoveryCodeSheet: View {
                 .font(RFont.sans(26, .semibold))
                 .foregroundStyle(Palette.text)
                 .accessibilityAddTraits(.isHeader)
-            Text("This code opens your account's vault if you lose this phone. Anyone with it and your sign-in can read your vault. Write it down and keep it somewhere safe; Reins cannot show it to you again if this phone is gone.")
+            Text("Opens your vault if you lose this phone. Write it down and keep it safe.")
                 .font(RFont.sans(15))
                 .foregroundStyle(Palette.secondary)
                 .fixedSize(horizontal: false, vertical: true)
@@ -115,17 +115,13 @@ struct RecoveryCodeSheet: View {
             .accessibilityAction(named: "Copy recovery code", copy)
             .accessibilityElement(children: .combine)
             .accessibilityIdentifier("recoveryCode")
-            Text("To add another phone, sign in on it: this phone asks you to approve it, and no code is needed.")
-                .font(RFont.sans(14))
-                .foregroundStyle(Palette.tertiary)
-                .fixedSize(horizontal: false, vertical: true)
             Button(copied ? "Copied" : "Copy") {
                 copy()
             }
             .buttonStyle(CapsuleButtonStyle(kind: .secondary))
             .accessibilityIdentifier("copyRecoveryCode")
             if required {
-                Toggle("I wrote this code down and stored it somewhere safe.", isOn: $recorded)
+                Toggle("I wrote it down", isOn: $recorded)
                     .font(RFont.sans(15))
                     .accessibilityIdentifier("recoveryRecorded")
                     .onChange(of: recorded) { _, on in feedback.play(.toggle(on)) }

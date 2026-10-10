@@ -219,8 +219,8 @@ final class VaultPasskeyTests: XCTestCase {
     // MARK: Settings
 
     func testTheRowSaysHowManyPasskeysOpenTheVault() {
-        XCTAssertEqual(SettingsText.passkeysSummary(nil), "Unlock your vault on a new phone")
-        XCTAssertEqual(SettingsText.passkeysSummary(0), "None: add one to unlock on a new phone")
+        XCTAssertEqual(SettingsText.passkeysSummary(nil), "Not set up")
+        XCTAssertEqual(SettingsText.passkeysSummary(0), "None")
         XCTAssertEqual(SettingsText.passkeysSummary(1), "1 passkey")
         XCTAssertEqual(SettingsText.passkeysSummary(3), "3 passkeys")
         XCTAssertTrue(SettingsText.passkeyAdded(1_760_000_000).hasPrefix("Added "))

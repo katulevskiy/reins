@@ -27,11 +27,11 @@ enum AutopilotText {
     /// What the mode does, in one line.
     static func line(key: String) -> String {
         switch key {
-        case "assisted": "Waits for you, with a suggestion"
-        case "auto": "Decides what it is sure of, asks the rest"
-        case "bypass": "Approves all but the riskiest, for a while"
-        case "lockdown": "Denies everything at once"
-        default: "Every request waits for you"
+        case "assisted": "Ask, with a hint"
+        case "auto": "Decides the easy ones"
+        case "bypass": "Approve all but the riskiest"
+        case "lockdown": "Deny everything"
+        default: "Ask me every time"
         }
     }
 
@@ -106,7 +106,7 @@ enum AutopilotText {
         if e.isEmpty { return "The download stopped. Try again later." }
         let lower = e.lowercased()
         if lower.contains("sha") || lower.contains("hash") || lower.contains("verif") {
-            return "The downloaded files did not match the ones this version of Reins trusts, so nothing was kept. An app update will fix this."
+            return "The files did not match, so nothing was kept. An app update will fix this."
         }
         let capital = e.prefix(1).uppercased() + e.dropFirst()
         return capital.hasSuffix(".") ? capital : capital + "."
@@ -189,6 +189,9 @@ extension AutopilotText {
     /// The modes in the order the picker shows them.
     static let modes: [AutopilotMode] = [.manual, .assisted, .auto, .bypass, .lockdown]
 
+    /// The modes from least to most left to Autopilot: the quick switcher's order.
+    static var byRisk: [AutopilotMode] { modes.sorted { autonomy($0) < autonomy($1) } }
+
     static func key(_ mode: AutopilotMode) -> String {
         switch mode {
         case .manual: "manual"
@@ -219,17 +222,7 @@ extension AutopilotText {
 
     /// The large line under the mode in force.
     static func heroLine(_ mode: AutopilotMode, modelReady: Bool) -> String {
-        switch mode {
-        case .manual: "Every request waits for you. Autopilot stays out of the way."
-        case .assisted: modelReady
-            ? "Requests wait for you, with what Autopilot would do. Every answer teaches it."
-            : "Requests wait for you. Download the model to see Autopilot's suggestions."
-        case .auto: modelReady
-            ? "Autopilot answers what it is sure of, in the kinds of request it has learned. The rest waits for you."
-            : "Download the model: until then every request waits for you."
-        case .bypass: "Everything is approved without asking, except the riskiest requests."
-        case .lockdown: "Every request is denied at once. New connections still reach you."
-        }
+        !modelReady && needsModel(mode) ? "Needs the model" : line(mode)
     }
 
     /// A bypass that runs anywhere: the global one, or any connection's.

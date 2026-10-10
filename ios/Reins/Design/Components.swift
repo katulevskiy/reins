@@ -228,10 +228,15 @@ private struct PillLook: ButtonStyle {
     }
 }
 
+/// The height of everything beside a page title: the glass pills and the round buttons, so none stands taller.
+enum HeaderControl {
+    static let height: CGFloat = 40
+}
+
 /// A round Liquid Glass icon button (close, more, settings).
 struct GlassIconButton: View {
     var symbol: String
-    var size: CGFloat = 40
+    var size: CGFloat = HeaderControl.height
     var label: String
     var action: () -> Void
 
@@ -273,7 +278,7 @@ struct GlassPill: View {
             }
             .foregroundStyle(tint ?? Palette.text)
             .padding(.horizontal, 14)
-            .padding(.vertical, 9)
+            .frame(height: HeaderControl.height)
         }
         .buttonStyle(.plain)
         .glassEffect(tint.map { .regular.tint($0.opacity(0.18)).interactive() } ?? .regular.interactive(), in: Capsule())
@@ -284,7 +289,7 @@ struct GlassPill: View {
 struct EmptyState: View {
     var symbol: String
     var title: String
-    var message: String
+    var message: String? = nil
 
     var body: some View {
         VStack(spacing: 10) {
@@ -292,10 +297,12 @@ struct EmptyState: View {
                 .font(.system(size: 34, weight: .regular))
                 .foregroundStyle(Palette.tertiary)
             Text(title).font(RFont.sans(17, .semibold)).foregroundStyle(Palette.text)
-            Text(message)
-                .font(RFont.sans(15))
-                .foregroundStyle(Palette.secondary)
-                .multilineTextAlignment(.center)
+            if let message {
+                Text(message)
+                    .font(RFont.sans(15))
+                    .foregroundStyle(Palette.secondary)
+                    .multilineTextAlignment(.center)
+            }
         }
         .padding(32)
         .frame(maxWidth: .infinity)

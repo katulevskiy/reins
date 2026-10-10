@@ -24,7 +24,7 @@ struct ScreenLockBanner: View {
         VStack(spacing: 0) {
             if !set && !model.demo {
                 Banner(
-                    "No passcode: approving needs this iPhone's passcode or Face ID, so every approval fails until you set one in Settings, Face ID & Passcode.",
+                    "No passcode. Approving needs one: Settings, Face ID & Passcode.",
                     kind: .warning
                 )
                 .padding(padding)

@@ -75,7 +75,11 @@ struct AccountsScreen: View {
             } header: {
                 GroupHeading("Accounts")
             } footer: {
-                GroupFootnote(ServiceCopy.accountsFooter(service))
+                GroupFootnote(
+                    [ServiceCopy.intro(service), ServiceCopy.accountsFooter(service), ServiceCopy.fineprint(service)]
+                        .filter { !$0.isEmpty }
+                        .joined(separator: "\n\n")
+                )
             }
             .listRowBackground(Palette.elevated)
 
@@ -95,14 +99,6 @@ struct AccountsScreen: View {
                                 if let url = URL(string: UIApplication.openSettingsURLString) { openURL(url) }
                             }
                         }
-                    }
-                    if !ServiceCopy.fineprint(service).isEmpty {
-                        Text(ServiceCopy.fineprint(service))
-                            .font(RFont.sans(13.5))
-                            .foregroundStyle(Palette.tertiary)
-                            .fixedSize(horizontal: false, vertical: true)
-                            .padding(.horizontal, 12)
-                            .padding(.top, 8)
                     }
                 }
                 .plainListRow(top: 4, bottom: 28)
@@ -155,11 +151,13 @@ private struct AddAccountControls: View {
         switch service.kind {
         case "google":
             VStack(alignment: .leading, spacing: 10) {
-                Text(ServiceCopy.googleSignInNote)
-                    .font(RFont.sans(13.5))
-                    .foregroundStyle(Palette.secondary)
-                    .fixedSize(horizontal: false, vertical: true)
-                    .accessibilityIdentifier("googleSignInNote")
+                if !ServiceCopy.googleSignInNote.isEmpty {
+                    Text(ServiceCopy.googleSignInNote)
+                        .font(RFont.sans(13))
+                        .foregroundStyle(Palette.tertiary)
+                        .fixedSize(horizontal: false, vertical: true)
+                        .accessibilityIdentifier("googleSignInNote")
+                }
                 ActionButton(title: "Add account", symbol: "plus", busy: accounts.busy) {
                     Task { await accounts.addGoogle() }
                 }
@@ -209,16 +207,19 @@ private struct GitHubConnect: View {
     @State private var manual = false
 
     var body: some View {
-        ActionButton(title: "Fine-grained token (pick repositories)", symbol: "key.fill", enabled: !accounts.busy) {
+        ActionButton(title: "Chosen repositories", symbol: "key.fill", enabled: !accounts.busy) {
             open(GitHubToken.fineGrainedURL())
         }
         .accessibilityIdentifier("openGithub")
-        Steps("GitHub opens with the token already set up. Under Repository access choose the repositories to allow, tap Generate token, then the copy button. Come back here and paste it. It only reaches the repositories you choose, and cannot do gists or notifications.")
-        ActionButton(title: "Classic token (everything, incl. gists and notifications)", kind: .secondary, enabled: !accounts.busy) {
+        ActionButton(title: "Everything", kind: .secondary, enabled: !accounts.busy) {
             open(GitHubToken.classicURL())
         }
         .accessibilityIdentifier("openGithubClassic")
-        Steps("A classic token reaches every repository of your account and organizations, plus gists and notifications. Tap Generate token at the bottom of the page, copy it, and come back.")
+        Steps(
+            "Either button opens GitHub with the token already set up. Tap Generate token, copy it, and come back to paste it.\n\n" +
+                "Chosen repositories: a fine-grained token, only for the repositories you pick (no gists or notifications).\n\n" +
+                "Everything: a classic token for every repository, plus gists and notifications."
+        )
         if opened {
             CopiedTokenButton(busy: accounts.busy, looksLikeToken: GitHubToken.looksLikeToken, hostName: "GitHub") { token in
                 Task { await accounts.addSecret(token) }
@@ -228,7 +229,7 @@ private struct GitHubConnect: View {
             ActionButton(title: "I already have a token", kind: .ghost, enabled: !accounts.busy) { manual = true }
                 .accessibilityIdentifier("pasteManually")
         } else {
-            SecretForm(placeholder: "Access token", button: "Connect", busy: accounts.busy, hint: "A fine-grained or classic token. It is kept encrypted on this phone.") { token in
+            SecretForm(placeholder: "Access token", button: "Connect", busy: accounts.busy, hint: "") { token in
                 Task { await accounts.addSecret(token) }
             }
         }
@@ -328,13 +329,8 @@ private struct Steps: View {
     var text: String
     init(_ text: String) { self.text = text }
 
-    var body: some View {
-        Text(text)
-            .font(RFont.sans(13))
-            .foregroundStyle(Palette.secondary)
-            .fixedSize(horizontal: false, vertical: true)
-            .padding(.horizontal, 4)
-    }
+    // How-tos wait behind a (?).
+    var body: some View { GroupFooter(text) }
 }
 
 // MARK: Telegram
