@@ -39,6 +39,15 @@ final class PasskeyUITests: XCTestCase {
 
     private func tap(_ id: String) { wait(id).tap() }
 
+    /// Through the setup's pages with their forward button ("Not now" on notifications) until `id` shows.
+    private func advance(to id: String, timeout: TimeInterval = 10) {
+        for _ in 0..<8 {
+            if element(id).waitForExistence(timeout: 1.5) { return }
+            if element("onboardingNext").waitForExistence(timeout: timeout) { element("onboardingNext").tap() }
+        }
+        XCTAssertTrue(element(id).waitForExistence(timeout: timeout), "the setup never showed \(id)")
+    }
+
     private func gone(_ id: String, _ timeout: TimeInterval = 5) {
         let e = element(id)
         let deadline = Date().addingTimeInterval(timeout)
@@ -78,7 +87,7 @@ final class PasskeyUITests: XCTestCase {
         shot("1-offer")
         tap("addPasskey")
         recordRecovery()
-        wait("scanQR", 10)
+        advance(to: "scanQR")
     }
 
     func testTheOfferCanBeSkippedForTheRecoveryCodeAlone() {
@@ -86,7 +95,7 @@ final class PasskeyUITests: XCTestCase {
         tap("skipPasskey")
         gone("passkeyOffer")
         recordRecovery()
-        wait("scanQR", 10)
+        advance(to: "scanQR")
     }
 
     func testAPasswordManagerWithoutPrfIsNamedAndTheCodeStillWorks() {
@@ -100,14 +109,14 @@ final class PasskeyUITests: XCTestCase {
         wait("passkeyOffer")
         tap("skipPasskey")
         recordRecovery()
-        wait("scanQR", 10)
+        advance(to: "scanQR")
     }
 
     func testAProviderThatGivesThePrfOnlyOnUseStillAddsOne() {
         continueAsNewAccount(["-demoPasskeyLatePrf"])
         tap("addPasskey")
         recordRecovery()
-        wait("scanQR", 10)
+        advance(to: "scanQR")
     }
 
     // MARK: A locked vault
@@ -120,7 +129,7 @@ final class PasskeyUITests: XCTestCase {
         shot("3-unlock")
         unlock.tap()
         recordRecovery()
-        wait("scanQR", 10)
+        advance(to: "scanQR")
     }
 
     func testNoPasskeyOnThisPhoneSaysWhatElseOpensTheVault() {
