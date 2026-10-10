@@ -25,6 +25,7 @@ mod tray;
 mod ui;
 mod upgrade;
 mod welcome;
+mod work;
 
 use std::sync::Arc;
 
@@ -61,7 +62,9 @@ pub struct Args {
     /// screenshots and trying the app without an account. Nothing is sent anywhere. `REINS_DEMO_SCREEN` opens a
     /// screen straight away (`pair`, `tools`, `tools-connected`, `turn-on`, `turning-on`, `done`, `status`),
     /// `REINS_DEMO_SECTION=<overview|activity|connections|keys|rules|settings>` the status window at that section,
-    /// `REINS_DEMO_TEST=1` sends the pretend test at start, `REINS_DEMO_EMPTY=1` leaves the samples out.
+    /// `REINS_DEMO_TEST=1` sends the pretend test at start, `REINS_DEMO_EMPTY=1` leaves the samples out,
+    /// `REINS_DEMO_SESSION=1` starts with a work session running (the pretend phone approves new ones after a few
+    /// seconds).
     pub demo: bool,
 }
 

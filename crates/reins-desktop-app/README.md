@@ -2,8 +2,8 @@
 
 The app for people who never open a terminal: a welcome flow that pairs this computer with the phone (a QR code),
 connects the AI tools it finds, starts the background service and sends git through it, and afterwards a status
-window (with health checks and a test to the phone) and a shield in the menu bar (macOS) or tray (Windows, Linux)
-with a Pause submenu, Resume, Open Reins and Quit. It is built with
+window (with health checks, a test to the phone and work sessions) and a shield in the menu bar (macOS) or tray
+(Windows, Linux) with a Pause submenu, Resume, End work session, Open Reins and Quit. It is built with
 [GPUI](https://gpui.rs) through Zeron's fork ([zui](https://github.com/katulevskiy/zui)), in the phone apps' look: Geist,
 cool neutrals, one violet accent.
 
@@ -15,8 +15,9 @@ window's "Install command line tool" links it to `~/.local/bin`.
 | Module | What |
 | --- | --- |
 | `pairing` | the device flow (`reins_desktop::server::device`, feature `device-flow`), the browser sign-in, `--demo` |
-| `backend` | harness detection and setup, the service (or the daemon inside the app), pause and resume, the daemon's status and overview, the activity log, settings changes (restarting the service when the daemon needs it), updates |
-| `model` | the app's state: screen and section, pairing, setup, the health checks and the test, pausing, the window's place, the actions the window and tray take |
+| `backend` | harness detection and setup, the service (or the daemon inside the app), pause and resume, the daemon's status and overview, the activity log, the running work session, starting and ending one, settings changes (restarting the service when the daemon needs it), updates |
+| `model` | the app's state: screen and section, pairing, setup, the health checks and the test, pausing, the window's place, the actions the window and tray take; `model/work_actions.rs`: the work session card's actions (the form, asking the phone, ending) |
+| `work` | work sessions as the window shows them: the start form and the request it makes (default branches refused), the repositories git reached lately, time left, the tray's first line |
 | `welcome` | the welcome flow's steps (and where a start resumes), the AI tools step's rows |
 | `health` | how the health checks add up ("All good", "2 things to look at", "Needs fixing"), the fixes the window does itself, how a test ended |
 | `shortcuts` | the keyboard shortcuts and how they are written on this computer |
@@ -25,9 +26,10 @@ window's "Install command line tool" links it to `~/.local/bin`.
 | `demo` | `--demo` only: made-up activity, connections, keys and AI tools where this computer has none |
 | `ui/mod.rs` | the window: one column before setup, sidebar and sections afterwards |
 | `ui/parts.rs` | building blocks: cards, rows, buttons, toggles, chips, segmented controls, outcome badges |
-| `ui/field.rs` | one-line text fields typed by hand (the server, the Rules lists) |
+| `ui/field.rs` | one-line text fields typed by hand (the server, the Rules lists, the work session's reason and branches) |
 | `ui/onboarding.rs`, `ui/setup.rs` | the welcome flow: pairing with the phone; the AI tools, turning on, done |
 | `ui/health.rs` | the health card, "Send a test to my phone", Settings' "Run checks" |
+| `ui/work.rs` | Overview's work session card: the form, waiting for the phone, the session running |
 | `ui/sidebar.rs` | the mark and state, the sections, pausing |
 | `ui/overview.rs`, `ui/activity.rs`, `ui/connections.rs`, `ui/keys.rs`, `ui/rules.rs`, `ui/settings.rs` | the sections |
 | `tray` | `tray-icon` on macOS and Windows, `ksni` (StatusNotifierItem) on Linux |
@@ -56,12 +58,13 @@ starts over at step 2.
 ## The status window
 
 After pairing and setup the window (resizable, 1000 × 680 at first) has a sidebar with the state (On, Paused, Needs
-you), the sections and the pause control, and these sections. Everything is read again every 3 seconds: the daemon's
+you; "Work session · 1 h 12 min" under it while one runs, which goes to Overview), the sections and the pause control,
+and these sections. Everything is read again every 3 seconds: the daemon's
 status and overview (`control::Client::overview`), and this computer's activity log (`reins_desktop::journal`, the
 newest 500).
 
-- **Overview**: the state in a sentence and what fixes it, what waits for the phone now (and for how long), the health
-  card and the test to the phone, today's approved, denied, timed out and failed requests, pausing, the latest
+- **Overview**: the state in a sentence and what fixes it, what waits for the phone now (and for how long), the work
+  session card, the health card and the test to the phone, today's approved, denied, timed out and failed requests, pausing, the latest
   requests, the update banner.
 - **Activity**: every request on this computer (git, SSH, API keys, `reins run` secrets, hook commands and files,
   `reins ask`, MCP tool calls), filtered by outcome and kind; a row opens to its detail, the reason and its times.
@@ -100,6 +103,33 @@ question (`ask::send_test`, logged in the activity log like any other) and waits
 "Approved on your phone. Reins works end to end.", "Denied on your phone — that's how a denial stops an agent.", "No
 answer within 90 s — run the checks above", or why it could not ask.
 
+### Work sessions
+
+Before focused work the user approves on the phone, once, a time-boxed bundle (`reins_desktop::work_session`, as
+`reins allow` does): reading chosen integrations and git pushes to named branches. The phone turns it into ordinary
+grants that end together; force pushes, deleting, the vault and purchases still ask every time.
+
+Overview's **Work session** card says so in a line, with **Start a work session**. Its form:
+
+- **How long**: 30 min, 1 hour, 2 hours (the default), 4 hours, 8 hours.
+- **What it's for**: one line; empty is "Focused work".
+- **Read**: Mail (`gmail`), Calendar (`gcalendar`), GitHub (`github`), off at first. Integrations not connected on the
+  phone are left out (the session then lists them as skipped).
+- **Push with git**: the repositories this computer reached with git lately (the daemon's connections and the
+  activity log's git requests, newest first, on the git hosts `config.toml` knows, which name the service), each with
+  a branch field. Only rows with a branch are included; a default branch (`main`, `master`, ...) is refused on the row
+  ("pushes to main still ask; name a feature branch"). Without any, the form says that `reins allow 2h` in a
+  repository adds its branch.
+
+**Ask my phone** (enabled once something is chosen and nothing is refused; Enter in a field does the same) runs
+`work_session::start` on the tokio runtime and shows "Approve it on your phone…" with the
+approval wait's countdown (`approval_timeout_secs`). A refusal, a timeout or a missing pairing shows on the card with
+**Try again** and **Change**. Once approved, the card shows the session: what it is for, the time left ("1 h 12 min
+left", moving on with the refresh), until when on this computer's clock, what it allows and what was left out, and
+**End now**, which asks first ("End the session now?" **End** / **Keep**) and
+then runs `work_session::end`. The running session is read with every refresh (`work_session::current`,
+`work-session.json`); when it runs out the card offers a new one.
+
 ### Keyboard shortcuts
 
 Cmd (macOS) or Ctrl (Windows, Linux) with **1**…**6** goes to a section, **R** checks again and reads everything again,
@@ -110,8 +140,10 @@ sidebar shows a section's shortcut under the pointer, and Settings lists them al
 
 The shield shows the state: a check while Reins is on, pause bars while paused, three dots and an amber dot while a
 request waits on the phone (the menu's first line and the tooltip then say "Waiting on your phone: …"), and an
-exclamation mark while it needs the user (not paired, the service not running). macOS uses the template images
-(`tray-*.png`), the others the coloured ones (`tray-color-*.png`).
+exclamation mark while it needs the user (not paired, the service not running). While a work session runs and nothing
+needs the user or waits on the phone, the first line and the tooltip say "Work session: 1 h 12 min left"; **End work
+session** (enabled while one runs) ends it at once. macOS uses the template images (`tray-*.png`), the others the
+coloured ones (`tray-color-*.png`).
 
 ### The window
 
@@ -153,6 +185,7 @@ cargo build -p reins-desktop -p reins-desktop-app     # reins next to reins-app,
 target/debug/reins-app --demo                                # a pretend pairing; nothing is sent
 REINS_HOME=$(mktemp -d) REINS_DEMO_SCREEN=status REINS_DEMO_SECTION=activity target/debug/reins-app --demo
 REINS_HOME=$(mktemp -d) REINS_DEMO_SCREEN=done REINS_DEMO_TEST=1 target/debug/reins-app --demo
+REINS_HOME=$(mktemp -d) REINS_DEMO_SCREEN=status REINS_DEMO_SESSION=1 target/debug/reins-app --demo
 ```
 
 `--demo` pretends to pair and, where this computer has none yet, shows made-up activity, connections, API keys, a run
@@ -164,7 +197,10 @@ is answered "Approve" after 4 seconds.
 `REINS_DEMO_SCREEN` opens a screen straight away: `pair`, `tools` (`tools-connected`: with one just connected, Undo
 showing), `turn-on` (`turning-on`: turning on as it opens), `done` or `status`; `REINS_DEMO_SECTION` (`overview`,
 `activity`, `connections`, `keys`, `rules`, `settings`) picks the status window's section. `REINS_DEMO_TEST=1` sends
-the test as the app opens, `REINS_DEMO_EMPTY=1` leaves the samples out (the empty states). The demo changes settings
+the test as the app opens, `REINS_DEMO_EMPTY=1` leaves the samples out (the empty states). `REINS_DEMO_SESSION=1`
+starts with a work session running ("Fix the login bug", 1 h 12 min left), `form` with the form open and filled in,
+`waiting` with it sent; in the demo the pretend phone approves a session after 3 seconds (a minute with `waiting`) and
+**End now** ends it, without sending or writing anything. The demo changes settings
 only under `REINS_HOME`. `REINS_APPEARANCE=light` or `dark` overrides the system's appearance (for screenshots of
 both).
 

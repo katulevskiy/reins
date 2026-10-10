@@ -30,6 +30,7 @@ pub const MAX_TEXT_LEN: usize = 8_000;
 pub const MAX_ACCOUNT_LEN: usize = 100;
 
 mod desktop;
+pub use desktop::{MAX_SESSION_ITEMS, MAX_SESSION_SECS, MIN_SESSION_SECS, SESSION_END_OP, SESSION_OP};
 mod github;
 pub mod gmail;
 mod vault;

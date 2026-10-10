@@ -147,6 +147,7 @@ mod tests {
             labels: vec![],
             any: false,
             classes: vec![],
+            ops: Vec::new(),
         });
         store.insert_grant(&vault, "AI").unwrap();
         store.insert_grant(&read_grant("mail-grant", "c1", None).for_account(Some(old.into())), "AI").unwrap();

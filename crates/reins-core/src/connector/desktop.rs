@@ -170,6 +170,11 @@ impl Connector for Desktop {
     }
 
     async fn preview(&self, _account: &str, call: &ConnectorCall) -> Result<Preview, CoreError> {
+        if call.op == reins_proto::connector::SESSION_OP {
+            client_key(call)?;
+            nonce_arg(call)?;
+            return Ok(crate::work_session::preview(&crate::work_session::plan(call)?));
+        }
         if call.op != "ask" {
             return Err(CoreError::service(format!("the desktop app cannot {}", call.op)));
         }

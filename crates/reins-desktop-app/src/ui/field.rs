@@ -1,5 +1,6 @@
-//! One-line text fields: the server under "Use another server", and the inputs of the Rules lists. Typed by hand
-//! (key presses, backspace, Enter, paste with cmd/ctrl+V): the window has no text input widget.
+//! One-line text fields: the server under "Use another server", the inputs of the Rules lists, and the work session
+//! form's reason and branches. Typed by hand (key presses, backspace, Enter, paste with cmd/ctrl+V): the window has no
+//! text input widget.
 
 use gpui::{
     ClickEvent, Context, Div, InteractiveElement as _, KeyDownEvent, Keystroke, ParentElement as _, SharedString,
@@ -15,6 +16,10 @@ use crate::theme::{MONO, Palette};
 pub enum Field {
     Server,
     Guard(GuardList),
+    /// What the work session is for.
+    SessionReason,
+    /// The branch to push to, for the work session form's repository at this place (a handful at most).
+    SessionBranch(u8),
 }
 
 /// What a key press did to a field's text.
@@ -65,6 +70,8 @@ impl Root {
         match field {
             Field::Server => &self.server_field,
             Field::Guard(list) => &self.guard_fields[slot(list)],
+            Field::SessionReason => &self.session_reason,
+            Field::SessionBranch(i) => self.branch_fields.get(usize::from(i)).unwrap_or(&self.focus),
         }
     }
 
@@ -72,6 +79,17 @@ impl Root {
         match field {
             Field::Server => self.model.read(cx).server_input.clone(),
             Field::Guard(list) => self.guard_inputs[slot(list)].clone(),
+            Field::SessionReason => {
+                self.model.read(cx).work.form.as_ref().map(|f| f.reason.clone()).unwrap_or_default()
+            }
+            Field::SessionBranch(i) => self
+                .model
+                .read(cx)
+                .work
+                .form
+                .as_ref()
+                .and_then(|f| f.branches.get(usize::from(i)).cloned())
+                .unwrap_or_default(),
         }
     }
 
@@ -82,6 +100,10 @@ impl Root {
             Field::Guard(list) => {
                 let typed = std::mem::take(&mut self.guard_inputs[slot(list)]);
                 self.model.update(cx, |m, cx| m.add_guard_item(list, &typed, cx));
+            }
+            // Enter asks the phone, once the form asks for something.
+            Field::SessionReason | Field::SessionBranch(_) => {
+                self.model.update(cx, crate::model::Model::start_work_session);
             }
         }
         cx.notify();
@@ -98,6 +120,16 @@ impl Root {
                 match field {
                     Field::Server => self.model.update(cx, |m, _| m.server_input = text),
                     Field::Guard(list) => self.guard_inputs[slot(list)] = text,
+                    Field::SessionReason => self.model.update(cx, |m, _| {
+                        if let Some(form) = m.work.form.as_mut() {
+                            form.reason = text;
+                        }
+                    }),
+                    Field::SessionBranch(i) => self.model.update(cx, |m, _| {
+                        if let Some(branch) = m.work.form.as_mut().and_then(|f| f.branches.get_mut(usize::from(i))) {
+                            *branch = text;
+                        }
+                    }),
                 }
                 cx.notify();
             }
@@ -129,6 +161,8 @@ impl Root {
         let id = match field {
             Field::Server => "server-field".into(),
             Field::Guard(list) => SharedString::from(format!("guard-field-{}", slot(list))),
+            Field::SessionReason => "session-reason".into(),
+            Field::SessionBranch(i) => SharedString::from(format!("session-branch-{i}")),
         };
         let click_focus = focus.clone();
         div()

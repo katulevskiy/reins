@@ -169,7 +169,7 @@ async fn the_phone_approves_git_reads_and_pushes_and_refuses_a_force_push() {
     config.github.api_base = format!("{}/api", upstream.url());
     let daemon = Daemon::bind(
         &paths,
-        config,
+        config.clone(),
         Options {
             authorizer: None,
             prompter: Arc::new(NoPrompter),
@@ -322,6 +322,59 @@ async fn the_phone_approves_git_reads_and_pushes_and_refuses_a_force_push() {
             (_, other) => panic!("approve={approve} answered {other:?}"),
         }
     }
+    // ---- a work session: one approval on the phone becomes its permissions; ending it needs none ----
+    let request = reins_desktop::work_session::Request {
+        secs: 3_600,
+        reason: "Work on dev".to_owned(),
+        read: vec![],
+        push: vec![reins_desktop::work_session::Branch {
+            service: "github".to_owned(),
+            host: "github.com".to_owned(),
+            repo: REPO.to_owned(),
+            branch: "dev".to_owned(),
+        }],
+    };
+    let starting = reins_desktop::work_session::start(&paths, &config, &request, None);
+    let user = async {
+        let item = next_item(&phone).await;
+        let view = phone.core.approval_view(item.id.clone()).await.unwrap();
+        assert_eq!(view.preview[0], "Work session: \u{201c}Work on dev\u{201d}");
+        assert_eq!(view.preview[1], "Asked from this computer. Didn't start it? Deny.");
+        assert_eq!(view.preview[2], "For 1 h, all of it ending together:");
+        assert!(view.no_standing, "the session itself is never remembered");
+        phone
+            .core
+            .approve(
+                item.id,
+                ApprovalChoice {
+                    selected_message_ids: vec![],
+                    standing: None,
+                },
+            )
+            .await
+            .unwrap();
+    };
+    let (started, ()) = tokio::join!(starting, user);
+    let started = started.unwrap();
+    assert_eq!(started.grants.len(), 2, "{started:?}");
+    assert_eq!(reins_desktop::work_session::current(&paths).as_ref(), Some(&started));
+    let grants = phone.core.grants().await.unwrap();
+    assert_eq!(grants.iter().filter(|g| g.origin == "session" && g.active).count(), 2);
+    // The phone app is open (polling): ending is answered without anyone deciding.
+    let ended = tokio::select! {
+        r = reins_desktop::work_session::end(&paths, &config) => r.unwrap(),
+        () = async {
+            loop {
+                phone.core.sync(1).await.ok();
+            }
+        } => unreachable!(),
+    };
+    assert_eq!(ended, 2);
+    assert!(reins_desktop::work_session::current(&paths).is_none());
+    assert!(phone.core.pending().await.unwrap().is_empty(), "ending asked nothing");
+    let grants = phone.core.grants().await.unwrap();
+    assert_eq!(grants.iter().filter(|g| g.origin == "session" && g.active).count(), 0);
+
     // ---- reins logout / uninstall: the connection ends on the server, not just here ----
     let kept = std::fs::read(paths.session_file()).unwrap();
     let out = reins_desktop::server::oauth::sign_out(&paths).await.unwrap();

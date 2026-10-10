@@ -1,8 +1,9 @@
 //! The tray (Windows, Linux) or menu bar (macOS) icon: the Reins shield, with a check while Reins is on, pause bars
 //! while paused, three dots and an amber dot while a request waits on the phone, and an exclamation mark while it
 //! needs the user (not paired, or the background service is not running). Its menu: the state (opens the status
-//! window; "Waiting on your phone: …" while something waits), a Pause submenu (15 minutes, 1 hour, 4 hours, 24 hours,
-//! Until I resume), Resume, Open Reins, Quit Reins.
+//! window; "Waiting on your phone: …" while something waits, else "Work session: 1 h 12 min left" while one runs), a
+//! Pause submenu (15 minutes, 1 hour, 4 hours, 24 hours, Until I resume), Resume, End work session, Open Reins, Quit
+//! Reins.
 //!
 //! macOS and Windows use the `tray-icon` crate (an `NSStatusItem`, a `Shell_NotifyIcon` icon). Linux uses `ksni`, a
 //! StatusNotifierItem on D-Bus (KDE, and GNOME with the AppIndicator extension), which needs no GTK.
@@ -28,6 +29,8 @@ pub enum Action {
     Status,
     Pause(PauseFor),
     Resume,
+    /// Ends the running work session.
+    EndSession,
     Open,
     Quit,
 }
@@ -36,7 +39,7 @@ impl Action {
     /// Every action, the pause lengths in menu order.
     #[cfg_attr(target_os = "linux", allow(dead_code))]
     fn all() -> impl Iterator<Item = Self> {
-        [Self::Status, Self::Resume, Self::Open, Self::Quit]
+        [Self::Status, Self::Resume, Self::EndSession, Self::Open, Self::Quit]
             .into_iter()
             .chain(PauseFor::ALL.into_iter().map(Self::Pause))
     }
@@ -46,6 +49,7 @@ impl Action {
             Self::Status => "status",
             Self::Pause(length) => length.id(),
             Self::Resume => "resume",
+            Self::EndSession => "end-session",
             Self::Open => "open",
             Self::Quit => "quit",
         }
@@ -59,6 +63,8 @@ impl Action {
 
 /// The Pause submenu's title.
 const PAUSE_MENU: &str = "Pause git";
+/// The item that ends a work session.
+const END_SESSION: &str = "End work session";
 
 /// What the tray shows.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -68,6 +74,8 @@ pub struct Shown {
     pub status: String,
     pub can_pause: bool,
     pub can_resume: bool,
+    /// A work session runs: "End work session" ends it.
+    pub can_end: bool,
 }
 
 /// The icon's pixels: RGBA, `width` by `height`.
@@ -122,13 +130,14 @@ mod imp {
     use tray_icon::menu::{Menu, MenuEvent, MenuItem, PredefinedMenuItem, Submenu};
     use tray_icon::{Icon, TrayIcon, TrayIconBuilder};
 
-    use super::{Action, Look, PAUSE_MENU, PauseFor, Shown, pixels};
+    use super::{Action, END_SESSION, Look, PAUSE_MENU, PauseFor, Shown, pixels};
 
     pub struct Tray {
         icon: TrayIcon,
         status: MenuItem,
         pause: Submenu,
         resume: MenuItem,
+        end: MenuItem,
         shown: Option<Shown>,
     }
 
@@ -146,6 +155,7 @@ mod imp {
             let pause = Submenu::with_items(PAUSE_MENU, true, &[&quarter, &hour, &four, &day, &manual])
                 .map_err(|e| e.to_string())?;
             let resume = MenuItem::with_id(Action::Resume.id(), "Resume", false, None);
+            let end = MenuItem::with_id(Action::EndSession.id(), END_SESSION, false, None);
             let open = MenuItem::with_id(Action::Open.id(), "Open Reins", true, None);
             let quit = MenuItem::with_id(Action::Quit.id(), "Quit Reins", true, None);
             let menu = Menu::new();
@@ -154,6 +164,7 @@ mod imp {
                 &PredefinedMenuItem::separator(),
                 &pause,
                 &resume,
+                &end,
                 &PredefinedMenuItem::separator(),
                 &open,
                 &quit,
@@ -177,6 +188,7 @@ mod imp {
                 status,
                 pause,
                 resume,
+                end,
                 shown: None,
             })
         }
@@ -202,6 +214,7 @@ mod imp {
             self.status.set_text(&shown.status);
             self.pause.set_enabled(shown.can_pause);
             self.resume.set_enabled(shown.can_resume);
+            self.end.set_enabled(shown.can_end);
             if let Err(e) = self.icon.set_tooltip(Some(format!("Reins: {}", shown.status))) {
                 log::warn!("tray tooltip: {e}");
             }
@@ -215,7 +228,7 @@ mod imp {
     use futures::channel::mpsc::UnboundedSender;
     use ksni::TrayMethods as _;
 
-    use super::{Action, Look, PAUSE_MENU, PauseFor, Shown, pixels};
+    use super::{Action, END_SESSION, Look, PAUSE_MENU, PauseFor, Shown, pixels};
 
     struct Item {
         shown: Shown,
@@ -285,6 +298,7 @@ mod imp {
                 }
                 .into(),
                 item("Resume", Action::Resume, self.shown.can_resume),
+                item(END_SESSION, Action::EndSession, self.shown.can_end),
                 ksni::MenuItem::Separator,
                 item("Open Reins", Action::Open, true),
                 item("Quit Reins", Action::Quit, true),
@@ -306,6 +320,7 @@ mod imp {
                     status: "Reins".to_owned(),
                     can_pause: false,
                     can_resume: false,
+                    can_end: false,
                 },
                 actions,
             };
@@ -398,11 +413,12 @@ mod tests {
     #[test]
     fn menu_ids_round_trip() {
         let all: Vec<Action> = Action::all().collect();
-        assert_eq!(all.len(), 4 + PauseFor::ALL.len());
+        assert_eq!(all.len(), 5 + PauseFor::ALL.len());
         for a in all {
             assert_eq!(Action::from_id(a.id()), Some(a));
         }
         assert_eq!(Action::from_id("pause-manual"), Some(Action::Pause(PauseFor::Manual)));
+        assert_eq!(Action::from_id("end-session"), Some(Action::EndSession));
         assert_eq!(Action::from_id("pause"), None);
     }
 }

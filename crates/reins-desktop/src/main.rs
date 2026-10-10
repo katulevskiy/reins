@@ -136,6 +136,19 @@ enum Cmd {
         #[arg(long)]
         purge: bool,
     },
+    /// Approve a bundle of permissions on your phone once, for a while: the AI tools here read and push to your branch
+    /// without asking each time.
+    ///
+    /// `reins allow 2h` pushes to the branch checked out here (never main) and reads what `--read` names (`mail`,
+    /// `calendar`, `github`). Force pushes, deleting, the vault and purchases are still asked every time.
+    #[command(display_order = 7)]
+    Allow(SessionArgs),
+    /// The running work session; `reins session start` / `reins session end`.
+    #[command(display_order = 8)]
+    Session {
+        #[command(subcommand)]
+        action: Option<SessionCmd>,
+    },
     #[command(flatten)]
     Agents(reins_desktop::agents_cli::Command),
     #[command(display_order = 13)]
@@ -167,6 +180,36 @@ enum GitCmd {
         #[arg(long, value_name = "DIR")]
         repo: Option<PathBuf>,
     },
+}
+
+#[derive(Subcommand)]
+enum SessionCmd {
+    /// Start a work session (the same as `reins allow`).
+    Start(SessionArgs),
+    /// End the running work session now: its permissions end on your phone.
+    End,
+}
+
+#[derive(clap::Args)]
+struct SessionArgs {
+    /// How long: 2h, 90m, 1h30m (15 minutes to 12 hours).
+    #[arg(default_value = "2h")]
+    duration: String,
+    /// What it is for, shown on your phone.
+    #[arg(long)]
+    reason: Option<String>,
+    /// Integrations to read, comma-separated: mail, calendar, github, ...
+    #[arg(long, value_delimiter = ',')]
+    read: Vec<String>,
+    /// The repository whose checked-out branch may be pushed to (default: this directory).
+    #[arg(long, value_name = "DIR")]
+    repo: Option<PathBuf>,
+    /// Push to this branch instead of the checked-out one.
+    #[arg(long)]
+    branch: Option<String>,
+    /// Do not include pushing.
+    #[arg(long)]
+    no_push: bool,
 }
 
 #[derive(Subcommand)]
@@ -428,6 +471,36 @@ async fn run(cmd: Cmd) -> Result<(), String> {
         Cmd::Uninstall {
             purge,
         } => uninstall(&paths, &config, purge).await,
+        Cmd::Allow(args)
+        | Cmd::Session {
+            action: Some(SessionCmd::Start(args)),
+        } => session_start(&paths, &config, &args).await,
+        Cmd::Session {
+            action: Some(SessionCmd::End),
+        } => {
+            let ended = reins_desktop::work_session::end(&paths, &config).await?;
+            if ended == 0 {
+                out!("No work session runs here.");
+            } else {
+                out!("Work session ended: {ended} permission(s) ended on your phone.");
+            }
+            Ok(())
+        }
+        Cmd::Session {
+            action: None,
+        } => {
+            if let Some(s) = reins_desktop::work_session::current(&paths) {
+                let left = u64::try_from(s.left(reins_desktop::now_unix())).unwrap_or(0);
+                out!("Work session: {} ({} left)", s.reason, reins_desktop::work_session::span(left));
+                for a in &s.allows {
+                    out!("  allows: {a}");
+                }
+                out!("`reins session end` ends it now.");
+            } else {
+                out!("No work session runs here. `reins allow 2h` starts one.");
+            }
+            Ok(())
+        }
         Cmd::Service {
             action,
         } => {
@@ -575,6 +648,80 @@ async fn setup(paths: &Paths, config: &Config, server_url: &str, browser: bool) 
     }
     out!("\nTry it: `reins test` sends a test to your phone. `reins doctor` checks everything any time.");
     Ok(())
+}
+
+/// `reins allow` / `reins session start`.
+async fn session_start(paths: &Paths, config: &Config, args: &SessionArgs) -> Result<(), String> {
+    use reins_desktop::work_session::{self, Branch, Request};
+    let secs = work_session::parse_duration(&args.duration)?;
+    let read: Vec<String> =
+        args.read.iter().filter(|r| !r.trim().is_empty()).map(|r| work_session::service_id(r)).collect();
+    let mut push: Vec<Branch> = Vec::new();
+    if !args.no_push {
+        let dir = match &args.repo {
+            Some(d) => d.clone(),
+            None => std::env::current_dir().map_err(|e| e.to_string())?,
+        };
+        match work_session::current_branch(&dir, config) {
+            Some(mut b) => {
+                if let Some(other) = &args.branch {
+                    b.branch.clone_from(other);
+                }
+                if b.is_default() && args.branch.is_none() {
+                    out!(
+                        "Not including pushes: {} is on {}; pushes there still ask. `--branch NAME` names one.",
+                        b.repo,
+                        b.branch
+                    );
+                } else {
+                    push.push(b);
+                }
+            }
+            None if args.repo.is_some() || args.branch.is_some() => {
+                return Err(format!("{} is not a git repository with an origin on a known git host", dir.display()));
+            }
+            None => {}
+        }
+    }
+    if read.is_empty() && push.is_empty() {
+        return Err("nothing to allow: run it in a repository on a feature branch, or name integrations with --read mail,calendar".to_owned());
+    }
+    let reason = args.reason.clone().unwrap_or_else(|| match push.first() {
+        Some(b) => format!("Work on {} ({})", b.repo, b.branch),
+        None => "Work session".to_owned(),
+    });
+    let request = Request {
+        secs,
+        reason,
+        read,
+        push,
+    };
+    out!("Asking your phone for a {} work session (requested from this terminal)…", work_session::span(secs));
+    let tell = reins_desktop::phone::teller(|line: &str| eprintln!("{line}"));
+    let s = work_session::start(paths, config, &request, Some(tell)).await?;
+    out!("Work session started: {} (until {} on this computer's clock).", s.reason, clock(s.expires_at));
+    for a in &s.allows {
+        out!("  allows: {a}");
+    }
+    if !s.skipped.is_empty() {
+        out!("  not included (not connected on your phone): {}", s.skipped.join(", "));
+    }
+    out!("Still asked every time: force pushes, deleting, the vault, purchases. `reins session end` ends it early.");
+    Ok(())
+}
+
+/// `HH:MM` local time of `unix` (UTC when the local offset is unknown).
+fn clock(unix: i64) -> String {
+    let secs = unix.rem_euclid(86_400);
+    let utc = format!("{:02}:{:02} UTC", secs / 3_600, (secs % 3_600) / 60);
+    std::process::Command::new("date")
+        .args(["-d", &format!("@{unix}"), "+%H:%M"])
+        .output()
+        .ok()
+        .filter(|o| o.status.success())
+        .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_owned())
+        .filter(|s| !s.is_empty())
+        .unwrap_or(utc)
 }
 
 /// `reins uninstall`: every undo step, each reported; failures do not stop the others.

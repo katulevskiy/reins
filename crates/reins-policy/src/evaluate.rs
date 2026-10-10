@@ -78,6 +78,7 @@ pub fn service_allows(
     service: &str,
     access: &str,
     class: &str,
+    op: &str,
     resource: &str,
     now: i64,
 ) -> Option<GrantId> {
@@ -85,7 +86,7 @@ pub fn service_allows(
         .into_iter()
         .find(|g| {
             g.covers_account(account)
-                && matches!(&g.scope, Scope::Service(s) if s.covers(service, access, class, resource))
+                && matches!(&g.scope, Scope::Service(s) if s.covers(service, access, class, op, resource))
         })
         .map(|g| g.id.clone())
 }
@@ -336,6 +337,7 @@ mod tests {
                 labels: vec![],
                 any,
                 classes: vec![],
+                ops: Vec::new(),
             }),
             0,
             expires,
@@ -349,7 +351,7 @@ mod tests {
     fn a_service_grant_covers_only_its_access_and_its_things() {
         let grants = [service_grant("s1", "read", &["chat-1", "chat-2"], false, Some(100), Some("+1555"))];
         let allows = |account: Option<&str>, service: &str, access: &str, resource: &str, now: i64| {
-            service_allows(&grants, &"c1".into(), account, service, access, "", resource, now)
+            service_allows(&grants, &"c1".into(), account, service, access, "", "", resource, now)
         };
         assert_eq!(allows(Some("+1555"), "telegram", "read", "chat-2", 50), Some("s1".into()));
         assert_eq!(allows(Some("+1555"), "telegram", "read", "chat-3", 50), None, "another chat");
@@ -379,6 +381,7 @@ mod tests {
                     labels: vec![],
                     any: true,
                     classes: vec![],
+                    ops: Vec::new(),
                 }),
                 0,
                 None,
@@ -397,6 +400,7 @@ mod tests {
                     labels: vec![],
                     any: true,
                     classes: vec![],
+                    ops: Vec::new(),
                 }),
                 0,
                 Some(8 * 86_400),
@@ -406,7 +410,7 @@ mod tests {
         );
         let all = service_grant("a", "read", &[], true, Some(86_400), None);
         assert!(
-            service_allows(&[all], &"c1".into(), Some("x"), "telegram", "read", "", "anything", 5).is_some(),
+            service_allows(&[all], &"c1".into(), Some("x"), "telegram", "read", "", "", "anything", 5).is_some(),
             "everything, any account"
         );
         for scope in [
@@ -417,6 +421,7 @@ mod tests {
                 labels: vec![],
                 any: true,
                 classes: vec![],
+                ops: Vec::new(),
             },
             crate::ServiceScope {
                 service: "telegram".into(),
@@ -425,6 +430,7 @@ mod tests {
                 labels: vec![],
                 any: false,
                 classes: vec![],
+                ops: Vec::new(),
             },
             crate::ServiceScope {
                 service: "telegram".into(),
@@ -433,6 +439,7 @@ mod tests {
                 labels: vec![],
                 any: true,
                 classes: vec![],
+                ops: Vec::new(),
             },
             crate::ServiceScope {
                 service: "Telegram".into(),
@@ -441,6 +448,7 @@ mod tests {
                 labels: vec![],
                 any: false,
                 classes: vec![],
+                ops: Vec::new(),
             },
             crate::ServiceScope {
                 service: "telegram".into(),
@@ -449,6 +457,7 @@ mod tests {
                 labels: vec![],
                 any: false,
                 classes: vec![],
+                ops: Vec::new(),
             },
             crate::ServiceScope {
                 service: "telegram".into(),
@@ -457,6 +466,7 @@ mod tests {
                 labels: vec![],
                 any: false,
                 classes: vec![],
+                ops: Vec::new(),
             },
         ] {
             assert!(Scope::Service(scope.clone()).validate().is_err(), "{scope:?}");
@@ -474,6 +484,7 @@ mod tests {
                 labels: vec![],
                 any: false,
                 classes: classes.iter().map(|c| (*c).to_owned()).collect(),
+                ops: Vec::new(),
             }),
             0,
             Some(100),
@@ -485,7 +496,8 @@ mod tests {
     #[test]
     fn a_permission_can_name_the_repository_the_branch_and_the_kind_of_change() {
         let allows = |g: &Grant, class: &str, resource: &str| {
-            service_allows(std::slice::from_ref(g), &"c1".into(), None, "github", "write", class, resource, 5).is_some()
+            service_allows(std::slice::from_ref(g), &"c1".into(), None, "github", "write", class, "", resource, 5)
+                .is_some()
         };
         let repo = github_grant("write", &["issues", "code"], &["me/app"]);
         assert!(allows(&repo, "issues", "me/app"));
@@ -514,6 +526,7 @@ mod tests {
                 labels: vec![],
                 any: false,
                 classes: classes.iter().map(|c| (*c).to_owned()).collect(),
+                ops: Vec::new(),
             })
         };
         assert!(scope("write", &["issues"]).validate().is_ok());

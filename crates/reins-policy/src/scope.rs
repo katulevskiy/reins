@@ -110,6 +110,11 @@ pub struct ServiceScope {
     /// lets a permission cover.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub classes: Vec<String>,
+    /// The operations it covers (`git_push`, `git_fetch`); empty = every operation of that access. A work session's
+    /// git permissions name theirs, so a permission to push to a branch is not also one to change its files through
+    /// the host's API.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub ops: Vec<String>,
 }
 
 /// Whether a permission for `granted` covers `thing`: the same thing, or a part of it. Parts are written after a `@`
@@ -160,17 +165,25 @@ impl ServiceScope {
         {
             return Err(PolicyError::InvalidScope("a kind of change is named in lower case, once".to_owned()));
         }
+        if self.ops.len() > 10
+            || !self.ops.iter().all(class_ok)
+            || self.ops.iter().collect::<BTreeSet<_>>().len() != self.ops.len()
+        {
+            return Err(PolicyError::InvalidScope("an operation is named in lower case, once".to_owned()));
+        }
         Ok(())
     }
 
-    /// Whether the scope covers this access to this thing. `class` is the kind of change a write is ("" when the
-    /// operation has none): a scope that names kinds covers only those.
+    /// Whether the scope covers this access to this thing by the operation `op`. `class` is the kind of change a write
+    /// is ("" when the operation has none): a scope that names kinds covers only those. A scope that names operations
+    /// covers only those (and nothing when `op` is not known, "").
     #[must_use]
-    pub fn covers(&self, service: &str, access: &str, class: &str, resource: &str) -> bool {
+    pub fn covers(&self, service: &str, access: &str, class: &str, op: &str, resource: &str) -> bool {
         // Reading includes listing: a list shows less of the same things than reading them does.
         self.service == service
             && (self.access == access || (self.access == "read" && access == "list"))
             && (self.classes.is_empty() || class.is_empty() || self.classes.iter().any(|c| c == class))
+            && (self.ops.is_empty() || (!op.is_empty() && self.ops.iter().any(|o| o == op)))
             && (self.any || self.resources.iter().any(|r| resource_covers(r, resource)))
     }
 }
@@ -278,6 +291,35 @@ mod tests {
     use serde_json::json;
 
     use super::*;
+
+    #[test]
+    fn a_scope_that_names_operations_covers_only_those() {
+        let push = ServiceScope {
+            service: "github".to_owned(),
+            access: "write".to_owned(),
+            resources: vec!["me/app@dev".to_owned()],
+            labels: Vec::new(),
+            any: false,
+            classes: vec!["code".to_owned()],
+            ops: vec!["git_push".to_owned()],
+        };
+        push.validate().unwrap();
+        assert!(push.covers("github", "write", "code", "git_push", "me/app@dev"));
+        // The same branch through the API, or an operation nobody named: not covered.
+        assert!(!push.covers("github", "write", "code", "file_put", "me/app@dev"));
+        assert!(!push.covers("github", "write", "code", "commit_files", "me/app@dev"));
+        assert!(!push.covers("github", "write", "code", "", "me/app@dev"));
+        let any_op = ServiceScope {
+            ops: Vec::new(),
+            ..push.clone()
+        };
+        assert!(any_op.covers("github", "write", "code", "file_put", "me/app@dev"), "no ops named: as before");
+        let bad = ServiceScope {
+            ops: vec!["Git Push".to_owned()],
+            ..push
+        };
+        assert!(bad.validate().is_err());
+    }
 
     fn msg(id: &str, from: &str, to: &[&str], subject: &str) -> MessageFacts {
         MessageFacts {
@@ -482,11 +524,12 @@ mod tests {
             labels: vec!["Family".to_owned()],
             any: false,
             classes: vec![],
+            ops: Vec::new(),
         };
-        assert!(scope("read").covers("telegram", "list", "", "100"));
-        assert!(scope("read").covers("telegram", "read", "", "100"));
-        assert!(!scope("read").covers("telegram", "write", "", "100"));
-        assert!(!scope("list").covers("telegram", "read", "", "100"), "a list does not open what it lists");
-        assert!(!scope("read").covers("telegram", "list", "", "200"));
+        assert!(scope("read").covers("telegram", "list", "", "", "100"));
+        assert!(scope("read").covers("telegram", "read", "", "", "100"));
+        assert!(!scope("read").covers("telegram", "write", "", "", "100"));
+        assert!(!scope("list").covers("telegram", "read", "", "", "100"), "a list does not open what it lists");
+        assert!(!scope("read").covers("telegram", "list", "", "", "200"));
     }
 }

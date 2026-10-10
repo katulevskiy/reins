@@ -220,6 +220,30 @@ the state directory (0600, never a secret; moved to `activity.jsonl.old` past 2 
 daemon's control API (`GET /_reins/overview`) adds what it did since it started: the git repositories, APIs and SSH
 servers it connected to, which API keys it holds and until when (never the keys), and the SSH keys the phone listed.
 
+## Work sessions
+
+Before a stretch of focused work, approve a bundle of permissions on your phone once instead of answering each
+request:
+
+```sh
+reins allow 2h                          # push to the branch checked out here (never main) for 2 hours
+reins allow 4h --read mail,calendar     # also read Gmail and Google Calendar
+reins allow 90m --branch fix/login --reason "Fix the login bug"
+reins session                           # what runs, and for how long
+reins session end                       # end it now
+```
+
+The phone shows it as one request ("Work session for 2 h: Work on me/app (feature/login)", what it allows, what stays
+asked) and is asked every time. On approval it becomes ordinary grants of this computer's connection, listed under
+Grants with origin "session" and ending together: a read of each integration named (`--read`), and for a branch a
+push to exactly that branch plus reads of its repository. It covers every AI tool on this computer (they share its
+connection). It never covers the hard floor: force pushes, deleted branches and moved tags, deleting anything, the
+vault and purchases, and the desktop app's own questions and secrets are asked every time as before; anything else
+the session does not name (sending messages, writing elsewhere) is asked as usual.
+Ending a session (`reins session end`, or End now in the app) is done at once without a question, since it only takes
+access away. Under the hood: the desktop-only tools `desktop_session` and `desktop_session_end`; the running session is
+kept in `work-session.json` in the state directory.
+
 ## Without a phone
 
 Without `reins login`, a local policy decides and asks on the desktop (a notification with Approve/Deny on Linux, a

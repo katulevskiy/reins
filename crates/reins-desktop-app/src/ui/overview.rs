@@ -1,10 +1,10 @@
-//! Overview: the state in a sentence, what waits for the phone now, the health checks and a test to the phone,
-//! today's answers, pausing, the latest requests.
+//! Overview: the state in a sentence, what waits for the phone now, the work session, the health checks and a test to
+//! the phone, today's answers, pausing, the latest requests.
 
 use gpui::prelude::FluentBuilder as _;
 use gpui::{
     AnyElement, Context, FontWeight, IntoElement, ParentElement, SharedString, StatefulInteractiveElement as _,
-    Styled as _, div, px,
+    Styled as _, Window, div, px,
 };
 use reins_desktop::journal::{Entry, Tally};
 
@@ -30,7 +30,13 @@ pub fn today(entries: &[Entry], now: i64) -> Tally {
 }
 
 impl Root {
-    pub(super) fn overview(&mut self, d: &Data, pal: Palette, cx: &mut Context<'_, Self>) -> AnyElement {
+    pub(super) fn overview(
+        &mut self,
+        d: &Data,
+        pal: Palette,
+        window: &Window,
+        cx: &mut Context<'_, Self>,
+    ) -> AnyElement {
         let mut page = div().flex().flex_col().gap(px(22.0)).child(Self::hero(d, pal, cx));
         if d.show_qr {
             page = page.child(phone_qr(pal));
@@ -91,6 +97,9 @@ impl Root {
                 pal,
             ));
         }
+
+        // The work session: start one, or the one running.
+        page = page.child(self.work_card(d, pal, window, cx));
 
         // Health and the test.
         page = page.child(Self::health_card(d, pal, cx));

@@ -1,6 +1,7 @@
 //! `--demo` only: made-up activity, connections, keys and AI tools, shown where this computer has none yet, so the
-//! window can be tried (and photographed) without an account or a running daemon. Nothing here is sent anywhere, and
-//! none of it is written to disk. `REINS_DEMO_EMPTY=1` leaves the samples out, to see the empty states.
+//! window can be tried (and photographed) without an account or a running daemon, and a pretend phone that approves
+//! work sessions. Nothing here is sent anywhere, and none of it is written to disk. `REINS_DEMO_EMPTY=1` leaves the
+//! samples out, to see the empty states; `REINS_DEMO_SESSION=1` starts with a work session running.
 
 use std::collections::BTreeMap;
 use std::sync::Arc;
@@ -11,6 +12,7 @@ use reins_desktop::harness::Harness;
 use reins_desktop::journal::{Decider, Entry, Kind, Outcome};
 use reins_desktop::run::Profile;
 use reins_desktop::stats::Connection;
+use reins_desktop::work_session::{Request, Session};
 
 use crate::backend::{DaemonState, Snapshot};
 
@@ -327,6 +329,42 @@ impl Demo {
         ]
     }
 
+    /// `REINS_DEMO_SESSION=1`: a work session that started a while ago, 1 h 12 min left.
+    #[must_use]
+    pub fn work_session(self) -> Session {
+        Session {
+            reason: "Fix the login bug".to_owned(),
+            started_at: self.base - 48 * 60,
+            expires_at: self.base + 72 * 60,
+            grants: vec!["demo-g1".to_owned(), "demo-g2".to_owned(), "demo-g3".to_owned()],
+            allows: vec![
+                "push to github.com acme/web, branch feature/login".to_owned(),
+                "read acme/web".to_owned(),
+                "read Gmail".to_owned(),
+            ],
+            skipped: Vec::new(),
+        }
+    }
+
+    /// What the pretend phone approves for `request` at `now`: a grant for each part, as the phone words them.
+    #[must_use]
+    pub fn approve(request: &Request, now: i64) -> Session {
+        let mut allows = Vec::new();
+        for b in &request.push {
+            allows.push(format!("push to {} {}, branch {}", b.host, b.repo, b.branch));
+            allows.push(format!("read {}", b.repo));
+        }
+        allows.extend(request.read.iter().map(|id| format!("read {}", crate::work::service_name(id))));
+        Session {
+            reason: request.reason.clone(),
+            started_at: now,
+            expires_at: now + i64::try_from(request.secs).unwrap_or(0),
+            grants: (1..=allows.len()).map(|i| format!("demo-g{i}")).collect(),
+            allows,
+            skipped: Vec::new(),
+        }
+    }
+
     /// Fills in what this computer does not have yet (the real data wins where there is some).
     pub fn fill(self, s: &mut Snapshot, paused: bool) {
         if !matches!(s.daemon, DaemonState::Running { .. }) {
@@ -416,6 +454,7 @@ mod tests {
             status: None,
             overview: Arc::new(Overview::default()),
             activity: Arc::new(Vec::new()),
+            work_session: None,
         }
     }
 
@@ -471,5 +510,28 @@ mod tests {
         assert!(bare.activity.is_empty() && bare.overview.connections.is_empty());
         assert!(matches!(bare.daemon, DaemonState::Running { .. }), "the service still looks on");
         assert_eq!(bare.git_routed, vec!["github.com"]);
+    }
+
+    #[test]
+    fn the_sample_session_runs_and_the_pretend_phone_approves() {
+        let now = 1_800_000_000;
+        let s = Demo::new(now).work_session();
+        assert_eq!(crate::work::left(&s, now), "1 h 12 min");
+        assert_eq!(s.allows.len(), 3);
+        assert_eq!(s.grants.len(), s.allows.len());
+        assert!(s.allows[0].contains("feature/login") && s.allows[2] == "read Gmail");
+
+        // The repositories the demo's connections list are the form's rows.
+        let repos =
+            crate::work::recent_repos(&Demo::new(now).connections(), &[], &reins_desktop::config::Config::default());
+        assert_eq!(repos.first().map(crate::work::Repo::label).as_deref(), Some("github.com/acme/web"));
+        let mut form = crate::work::Form::new(repos);
+        form.toggle_read("gmail");
+        form.branches[0] = "feature/login".to_owned();
+        let request = form.request().unwrap();
+        let approved = Demo::approve(&request, now);
+        assert_eq!(approved.expires_at, now + 7_200);
+        assert_eq!(approved.reason, "Focused work");
+        assert_eq!(approved.allows, s.allows, "the same words as the sample");
     }
 }

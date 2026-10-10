@@ -129,6 +129,10 @@ reins test      # a harmless question on your phone: approve or deny it to see t
 reins doctor    # checks everything, with a fix for each problem
 ```
 
+Before focused work, `reins allow 2h` asks your phone once for a work session: your AI tools push to the branch
+checked out here and read what `--read mail,calendar` names without asking, for that long. Force pushes, deleting,
+the vault and purchases still ask every time; `reins session end` ends it early.
+
 Or step by step. Pair it with your phone:
 
 ```sh

@@ -359,6 +359,7 @@ impl Engine {
                 &grant_service(&server.id),
                 access_of(tool.read_only),
                 "",
+                "",
                 std::slice::from_ref(&tool.name),
                 true,
                 unix_now(),

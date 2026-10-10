@@ -2,8 +2,19 @@
 //! (`reins ask`, harness hooks), and git through the desktop app for hosts besides GitHub.
 
 use crate::connector::{
-    BITBUCKET, CODEBERG, ClassInfo, DESKTOP, Effect, GITLAB, Param, ToolSpec, json_p, str_p, text_p, tool,
+    BITBUCKET, CODEBERG, ClassInfo, DESKTOP, Effect, GITLAB, Param, ToolSpec, int_p, json_p, list_p, str_p, text_p,
+    tool,
 };
+
+/// `desktop_session`: a work session, many permissions approved at once.
+pub const SESSION_OP: &str = "session";
+/// `desktop_session_end`: the session's permissions end now.
+pub const SESSION_END_OP: &str = "session_end";
+/// The shortest and longest a work session may run.
+pub const MIN_SESSION_SECS: i64 = 15 * 60;
+pub const MAX_SESSION_SECS: i64 = 12 * 3_600;
+/// The most permissions one session asks for.
+pub const MAX_SESSION_ITEMS: usize = 20;
 
 const CLIENT_KEY: Param =
     str_p("client_key", 64, true, "The desktop app's public key (X25519, base64url without padding).");
@@ -89,6 +100,57 @@ pub(super) fn tools() -> Vec<ToolSpec> {
         )
         .desktop(),
     ];
+    all.push(
+        tool(
+            "desktop_session",
+            DESKTOP,
+            SESSION_OP,
+            Effect::Write,
+            "Start a work session",
+            "Permissions for a while, approved at once: reading integrations, and pushing to named branches with git. \
+             Never covers what is asked for every time (force pushes, deleting, the vault, purchases).",
+            vec![
+                int_p(
+                    "duration_secs",
+                    MIN_SESSION_SECS,
+                    MAX_SESSION_SECS,
+                    None,
+                    "How long the session lasts (15 minutes to 12 hours).",
+                ),
+                str_p("reason", 300, true, "What the session is for, in the user's words."),
+                list_p(
+                    "read",
+                    MAX_SESSION_ITEMS,
+                    40,
+                    "Integrations to read (search, list, read) during the session: `gmail`, `gcalendar`, `github`, ...",
+                ),
+                list_p(
+                    "push",
+                    MAX_SESSION_ITEMS,
+                    300,
+                    "Branches git may push to: `<service>:<repo>@<branch>` (`github:me/app@feature/login`).",
+                ),
+                CLIENT_KEY,
+                NONCE,
+            ],
+            None,
+        )
+        .once()
+        .desktop(),
+    );
+    all.push(
+        tool(
+            "desktop_session_end",
+            DESKTOP,
+            SESSION_END_OP,
+            Effect::Write,
+            "End a work session",
+            "Ends the permissions of a work session now. Takes access away only, so it is never asked.",
+            vec![list_p("grants", 50, 64, "The session's permission ids."), CLIENT_KEY, NONCE],
+            None,
+        )
+        .desktop(),
+    );
     all.extend(host_tools(GITLAB, "gitlab_git_fetch", "gitlab_git_push", "gitlab_git_tag_push"));
     all.extend(host_tools(CODEBERG, "codeberg_git_fetch", "codeberg_git_push", "codeberg_git_tag_push"));
     all.extend(host_tools(BITBUCKET, "bitbucket_git_fetch", "bitbucket_git_push", "bitbucket_git_tag_push"));
