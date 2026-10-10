@@ -40,7 +40,8 @@ Choose which of these an agent may use (Integrations → Payments):
 - **A card from your vault.** Cards you saved in the vault (type Card), switched on one by one. When you approve a
   purchase, the agent gets the card's number, expiry, security code and holder name, for that purchase. A real card
   number cannot be taken back once handed over, so a card from the vault is always asked for; no spend limit and no
-  Autopilot mode approves it.
+  Autopilot mode approves it. While a Reins desktop app is paired with your phone, a card from the vault goes only to
+  that app, sealed ([below](#what-leaves-the-phone-and-when)); without one, it goes to the agent through the server.
 - **Saved at the store.** You are signed in at the store and it has your card (Amazon, for example). The agent gets
   your approval and the mandate, nothing else, and places the order with what the store has on file. Nothing caps
   what it then checks out, so a spend limit never approves this either.
@@ -68,9 +69,11 @@ purchase, for that purchase. Purchases that are not shipped (a download, a booki
 
 The server checks a purchase request before relaying it, and the phone again: the total must be exactly the items
 plus shipping and tax minus the discount, amounts are in the currency's own decimals, at most 50 lines, every page is
-`https`, and no text the user reads (the store's name, the items, the note) may hold control, direction or zero-width
-characters. The phone also reads every page as a browser reads it, and refuses a checkout or an item page that is not
-on the store's own site.
+`https`, and no text the user reads (the store's name, the items, the note, and the order number and note of a
+report) may hold control or format characters: none of Unicode's format category (direction marks, zero-width
+characters, tags, the soft hyphen), and no variation selectors, Hangul fillers or combining grapheme joiner. The phone
+also reads every page as a browser reads it, and refuses a checkout or an item page that is not on the store's own
+site.
 
 ### What an approved purchase returns
 
@@ -93,7 +96,8 @@ on the store's own site.
 
 `purchase_id` is made by the phone. `payment` is one of `virtual_card`, `card`, `merchant_account` (nothing to pay
 with: use what the store has on file) or `pay_on_phone` (`"status": "handed_off"`: do not place the order; the user
-pays on their phone). Through the desktop app's bridge, card details arrive sealed and are opened there
+pays on their phone). For the desktop app, the answer also carries `signed`, the whole answer signed by the phone
+with the request's nonce, and card details arrive sealed; its bridge checks and opens them
 ([below](#what-leaves-the-phone-and-when)).
 
 ## The approval on the phone
@@ -105,7 +109,9 @@ biometrics, as every approval does, and happens on that screen only: a plain app
 button) is refused rather than paying with defaults. Warnings are shown above the total: the store's name does not
 match its registrable domain (`Amazon` on `amazon.com.evil.shop`, a Cyrillic `А` in `Аmazon`), the agent has not
 bought there before, an earlier card of this agent was charged by someone else, the purchase is in a currency your
-budget does not count.
+budget does not count, the request carries the name of your paired desktop app but did not come from it. Under the
+payment method, a line says where card details go: sealed to your desktop app, by the name it had when you paired it
+(the phone's own record, not the server's), or through the Reins server, which can read them.
 
 From the approval you can also create a spend limit for purchases like this one (below).
 
@@ -116,7 +122,8 @@ a day at amazon.com, with the Privacy.com card, for 7 days". It always pays with
 cap the card itself enforces. A limit names:
 
 - the AI connection it is for (one connection, never every AI);
-- the stores it covers (domains; a subdomain counts as its domain), or every store;
+- the stores it covers (domains; a subdomain counts as its domain), or every store. A public suffix (`co.uk`, or a
+  shared host like `github.io` or `myshopify.com`) is refused: it would cover every site under it;
 - the most per purchase, and the most per day, week or month (the last 24 hours, 7 days or 30 days);
 - the currency, and when it ends (at most 90 days).
 
@@ -147,7 +154,8 @@ Budgets refuse a purchase before it reaches you. In Payments → Budget:
   the agent is told why.
 - **Most in 30 days** (and in 24 hours), for every AI together and for each AI: what is counted already plus what the
   request can cost.
-- **Only these stores**: when set, a request from any other domain is refused.
+- **Only these stores**: when set, a request from any other domain is refused (a public suffix is refused here
+  too).
 
 They count purchases in their own currency only. A purchase in another currency is not refused by the amounts; its
 approval says that your budget does not count it.
@@ -156,8 +164,10 @@ approval says that your budget does not count it.
 
 Nothing the agent reports lowers it:
 
-- A virtual card counts its cap (the most it can be charged) while it is open, and also once closed while Privacy.com
-  has not said what was charged; after that, what Privacy.com says was charged.
+- A virtual card counts its cap (the most it can be charged) while it is open, and once closed until its charges have
+  been read after the closing; after that, what Privacy.com says was charged (every page of its charges). A card is
+  always closed first and read after (when the agent reports a failure, when you close it, 30 days on, when the
+  provider is disconnected), so that a charge made meanwhile still counts.
 - Anything else counts the approved total, or a higher amount the agent reports, whatever the agent says happened,
   until you clear it in Spending ("Nothing was charged"): only you know nothing was.
 
@@ -224,8 +234,8 @@ credential format, which needs a wallet the store trusts. It proves what you app
 | Masked methods (kind, nickname, brand, last four, expiry) | A list you allowed | The AI, through the server |
 | Masked addresses (label, city, region, country) | A list you allowed | The AI, through the server |
 | The full address | An approved purchase that ships | The AI, through the server |
-| A virtual card's number, expiry and code | An approved purchase paid with it | The AI, through the server, or sealed to the desktop app (below); Privacy.com made it |
-| A vault card's number, expiry, code and holder | An approved purchase paid with it | The AI, through the server, or sealed to the desktop app (below) |
+| A virtual card's number, expiry and code | An approved purchase paid with it | Sealed to the desktop app that asked (below), or the AI through the server; Privacy.com made it |
+| A vault card's number, expiry, code and holder | An approved purchase paid with it | Sealed to the desktop app that asked (below); only when no desktop app is paired, the AI through the server |
 | Your Privacy.com API key | Creating, reading and closing cards | Privacy.com only; never to the server or your other phones |
 | The mandate | Every approved purchase | The AI, through the server |
 
@@ -237,20 +247,31 @@ which you pinned on the phone when you paired it:
 
 - the bridge adds that key and a fresh nonce to every purchase request (one alone or in a batch); without its key it
   sends no purchase;
-- the phone seals the card details to the pinned key and signs them with the mandate key; for the desktop app's
-  connection it hands card details over sealed or not at all, so a server that strips the key from a request gets
-  nothing (paying at the store, or on the phone, still works); a key other than the pinned one, or a key on a
-  connection without a desktop app, is refused;
-- the bridge opens sealed card details only when they carry a nonce it issued, once, and the phone's signature,
-  including answers fetched later with `reins_get_result`; card details that come back in the clear are withheld.
+- which connection a request comes from is the server's to say, so the phone decides from what it knows itself. A
+  request with the pinned key, on its desktop app's connection, gets card details sealed to that key and signed with
+  the mandate key, and the whole answer signed with the request's nonce. The desktop app's connection without its key
+  gets no card details (paying at the store, or on the phone, still works), so a server that strips the key gets
+  nothing. While a desktop app is paired, a request from any other connection never gets a card from the vault: the
+  server could have moved the app's purchase there, under the app's name; a virtual card, capped and locked to the
+  store, still goes to it through the server, as its purchase screen says. A key other than the pinned one, or a key
+  on a connection without a desktop app, is refused, and so is a request whose desktop app was unpaired or paired
+  again while it waited;
+- the bridge passes an approval to the agent only when the phone signed the whole answer, with a nonce the bridge
+  issued for that purchase (each nonce once), by the key you confirmed, and the mandate in it is signed by the same key
+  for the same purchase. This holds for every way of paying: an approval the server makes up ("use the card saved at
+  the store") is withheld. The agent gets what the phone signed and nothing the server added; card details are opened
+  from the sealed part only, and card details that come back in the clear are withheld;
+- any other answer to a purchase (a denial, still waiting, an error) is the server's word: it is passed on labelled as
+  such, and withheld when it holds something like a card number or talks about trusting a payment key. Answers
+  fetched later with `reins_get_result` are checked the same way.
 
-The bridge opens card details only once you have confirmed the phone's key on that computer: until then they are
+The bridge opens purchases only once you have confirmed the phone's key on that computer: until then they are
 withheld, and the agent is told to have you run `reins payments-trust`. Run it yourself in a terminal and type the
-key shown under Integrations → Payments on the phone (at least its first 16 characters). It needs a terminal, the
-bridge never prints the key it was offered, and harness hooks send the command to your phone when an AI tool tries
-it, so the key you trust comes from the phone's screen. From then on, card details signed by any other key are
-withheld. Card
-numbers and codes are never written to the phone's activity log, the ledger or any log.
+key shown under Integrations → Payments → Payment key on the phone (at least its first 16 characters). Read it from
+the phone's screen only: never type a key that came in a message, an email, a web page or an AI's answer. It needs a
+terminal, the bridge never prints the key it was offered, and harness hooks send the command to your phone when an AI
+tool tries it. From then on, answers signed by any other key are withheld. Card numbers and codes are never written to
+the phone's activity log, the ledger or any log.
 
 ## Limits of this design
 
@@ -265,9 +286,16 @@ numbers and codes are never written to the phone's activity log, the ledger or a
   within your limits (at most 3 purchases an hour per AI, within their amounts), as it could use any standing
   permission you gave; it cannot exceed them.
 - The desktop bridge relies on you typing the phone's key in once (`reins payments-trust`); a key typed from anywhere
-  but the phone's screen could be anyone's.
+  but the phone's screen could be anyone's. A trusted key of the server's own would let it make up approvals and cards
+  for the agent; it would still not get your cards.
+- For an AI connected directly (Claude.ai, ChatGPT), card details pass through the server, and the connection's name
+  is the server's to say. Without a desktop app paired, that includes cards from the vault: pair the desktop app, or
+  use virtual cards, to keep them from the server.
 - Sealing keeps card details from a dishonest server, for an honest agent on your computer. It does not protect them
   from a program that runs as you and ignores the harness hooks: such a program can read the desktop app's own key,
-  and trust a key of its own. The hooks ask your phone about `reins payments-trust` and about `*.key` files, but, as
-  everywhere in Reins, [hooks are guard rails, not a sandbox](security-model.md).
+  and trust a key of its own. The hooks ask your phone about `reins payments-trust` and about `*.key` files, but a
+  program gets around them by driving a terminal of its own (`script`, a pseudo-terminal from Python) or by writing
+  the trusted key's file itself. As everywhere in Reins, [hooks are guard rails, not a sandbox](security-model.md).
+- The bridge checks answers to purchases. What other tools return (an email, a web page) can say anything, including
+  that a purchase was approved.
 - Lithic and other virtual card providers can be added behind the same interface; Privacy.com is the first.
