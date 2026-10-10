@@ -10,7 +10,7 @@ use reins_desktop::doctor::Level;
 use reins_desktop::work_session::Session;
 
 use super::field::Field;
-use super::parts::{button, caption, card, check, fine, group, level_mark, row, segment, segmented, waiting_dot};
+use super::parts::{button, caption, card, check, fine, group, help, level_mark, row, segment, segmented, waiting_dot};
 use super::{Data, Root};
 use crate::format;
 use crate::model::Model;
@@ -103,6 +103,8 @@ impl Root {
         window: &Window,
         cx: &mut Context<'_, Self>,
     ) -> AnyElement {
+        let about = "Your phone approves a whole session once: for a while, your agents push to the branches you name, \
+                     read what you pick and call those tools without asking each time.";
         let body = if let Some(session) = d.work_session() {
             Self::work_running(session, d, pal, cx)
         } else if let Some(asking) = &d.work.asking {
@@ -110,20 +112,20 @@ impl Root {
         } else if let (Some(why), Some(form)) = (&d.work.failed, &d.work.form) {
             Self::work_failed(why, form, pal, cx)
         } else if let Some(form) = &d.work.form {
-            self.work_form(form, pal, window, cx)
+            self.work_form(form, d, pal, window, cx)
         } else {
             Self::work_invite(d, pal, cx)
         };
-        group("Work session", None, body, pal).into_any_element()
+        group("Work session", Some(help("session", about, d, pal, cx)), body).into_any_element()
     }
 
     fn work_invite(d: &Data, pal: Palette, cx: &mut Context<'_, Self>) -> Div {
-        let start = button("session-start", "Start a work session", pal, false, d.paired);
+        let start = button("session-start", "Start", pal, false, d.paired);
         card(pal).child(
             row(pal, true)
                 .flex_wrap()
                 .py(px(14.0))
-                .child(caption("Approve once, then work without asking.", pal).flex_1().min_w(px(260.0)))
+                .child(caption("Approve once, work without asking", pal).flex_1().min_w(px(200.0)))
                 .child(if d.paired {
                     start.on_click(Self::on_model(cx, Model::open_work_form))
                 } else {
@@ -132,7 +134,7 @@ impl Root {
         )
     }
 
-    fn work_form(&mut self, form: &Form, pal: Palette, window: &Window, cx: &mut Context<'_, Self>) -> Div {
+    fn work_form(&mut self, form: &Form, d: &Data, pal: Palette, window: &Window, cx: &mut Context<'_, Self>) -> Div {
         while self.branch_fields.len() < form.repos.len() {
             self.branch_fields.push(cx.focus_handle());
         }
@@ -163,11 +165,18 @@ impl Root {
         let push: AnyElement =
             if form.repos.is_empty() {
                 div()
+                    .flex()
+                    .items_center()
+                    .gap(px(6.0))
                     .pt(px(6.0))
-                    .child(caption(
-                        "No repositories yet: git has not reached one through Reins lately. `reins allow 2h` in a \
-                     repository adds its branch.",
+                    .child(caption("No repositories yet", pal))
+                    .child(help(
+                        "session-repos",
+                        "git has not reached one through Reins lately. `reins allow 2h` in a repository adds its \
+                         branch.",
+                        d,
                         pal,
+                        cx,
                     ))
                     .into_any_element()
             } else {
@@ -267,12 +276,7 @@ impl Root {
                         .flex_1()
                         .min_w(px(240.0))
                         .gap(px(1.0))
-                        .child(
-                            div()
-                                .text_size(px(14.0))
-                                .font_weight(FontWeight::SEMIBOLD)
-                                .child("The work session did not start"),
-                        )
+                        .child(div().text_size(px(14.0)).font_weight(FontWeight::SEMIBOLD).child("Not started"))
                         .child(caption(why.to_owned(), pal).text_color(pal.danger))
                         .when(!summary.is_empty(), |c| c.child(fine(summary, pal))),
                 )
@@ -338,7 +342,7 @@ impl Root {
             footer.child(caption("Ending…", pal).flex_1()).child(button("session-ending", "Ending…", pal, false, false))
         } else if d.work.confirm_end {
             footer
-                .child(div().flex_1().min_w(px(0.0)).font_weight(FontWeight::MEDIUM).child("End the session now?"))
+                .child(div().flex_1().min_w(px(0.0)).font_weight(FontWeight::MEDIUM).child("End it now?"))
                 .child(
                     button("session-keep", "Keep", pal, false, true)
                         .on_click(Self::on_model(cx, Model::keep_work_session)),

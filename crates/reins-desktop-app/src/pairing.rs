@@ -58,7 +58,7 @@ pub trait DeviceFlow: Send + Sync {
 
 /// Shown when the server (or this build) cannot pair by QR code; the onboarding screen then leads with the browser
 /// sign-in, which works with every server.
-pub const UNAVAILABLE: &str = "This server cannot pair by QR code. Sign in with the browser instead.";
+pub const UNAVAILABLE: &str = "No QR pairing on this server.";
 
 /// The real pairing: `reins_desktop::server::device`, the same device flow `reins login` uses.
 #[cfg_attr(not(feature = "device-flow"), allow(dead_code))]

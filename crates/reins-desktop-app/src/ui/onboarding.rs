@@ -8,9 +8,9 @@ use gpui::{
     Window, div, px,
 };
 
-use super::Root;
 use super::field::Field;
-use super::parts::{button, caption, card, check_circle, fine, link, waiting_dot, warning, welcome_title};
+use super::parts::{button, caption, card, check_circle, fine, help, link, waiting_dot, warning, welcome_title};
+use super::{Data, Root};
 use crate::format::host;
 use crate::model::{Model, Pairing};
 use crate::theme::{MONO, Palette};
@@ -89,7 +89,13 @@ fn centred(pal: Palette) -> Div {
 }
 
 impl Root {
-    pub(super) fn onboarding(&self, pal: Palette, window: &mut Window, cx: &mut Context<'_, Self>) -> AnyElement {
+    pub(super) fn onboarding(
+        &self,
+        d: &Data,
+        pal: Palette,
+        window: &mut Window,
+        cx: &mut Context<'_, Self>,
+    ) -> AnyElement {
         let m = self.model.read(cx);
         let pairing = m.pairing.clone();
         let fingerprint = m.fingerprint.clone().unwrap_or_default();
@@ -171,8 +177,16 @@ impl Root {
                                 .child(n.to_string()),
                         )
                         .child("on your phone"),
-                    None => div().child("Approve on your phone"),
-                };
+                    None => div().flex().items_center().child("Approve on your phone"),
+                }
+                .child(div().w(px(1.0)))
+                .child(help(
+                    "pair-number",
+                    "The number makes sure you pair this computer and no other.",
+                    d,
+                    pal,
+                    cx,
+                ));
                 let steps = div()
                     .flex()
                     .flex_col()
@@ -183,34 +197,14 @@ impl Root {
                         1,
                         "Open Reins on your phone",
                         Some(
-                            div()
-                                .flex()
-                                .flex_wrap()
-                                .gap_x(px(4.0))
-                                .child(caption("No app yet?", pal))
-                                .child(
-                                    link("get-app", "Get it for iPhone or Android", pal)
-                                        .on_click(|_, _, cx| cx.open_url(crate::links::PHONE_APP)),
-                                )
+                            link("get-app", "Get the app", pal)
+                                .on_click(|_, _, cx| cx.open_url(crate::links::PHONE_APP))
                                 .into_any_element(),
                         ),
                         pal,
                     ))
-                    .child(numbered(
-                        2,
-                        "Scan this code",
-                        Some(caption("In Reins, or with your phone's camera.", pal).into_any_element()),
-                        pal,
-                    ))
-                    .child(numbered(
-                        3,
-                        tap_title,
-                        Some(
-                            caption("The number makes sure you pair this computer and no other.", pal)
-                                .into_any_element(),
-                        ),
-                        pal,
-                    ))
+                    .child(numbered(2, "Scan this code", None, pal))
+                    .child(numbered(3, tap_title, None, pal))
                     .when(!fingerprint.is_empty(), |s| s.child(key_box(&fingerprint, pal)))
                     .child(
                         div()
@@ -232,8 +226,7 @@ impl Root {
                     .child(
                         centred(pal)
                             .child(check_circle(60.0, pal.success))
-                            .child(div().text_size(px(17.0)).font_weight(FontWeight::SEMIBOLD).text_center().child(on))
-                            .child(caption("Paired. Next: your AI tools.", pal)),
+                            .child(div().text_size(px(17.0)).font_weight(FontWeight::SEMIBOLD).text_center().child(on)),
                     )
                     .into_any_element()
             }
@@ -248,14 +241,13 @@ impl Root {
                                 .text_size(px(15.0))
                                 .font_weight(FontWeight::MEDIUM)
                                 .child(waiting_dot("waiting", pal.accent, 8.0))
-                                .child("Finish signing in in your browser"),
+                                .child("Finish in your browser"),
                         )
-                        .child(caption("Your phone then shows this computer's key:", pal).text_center())
                         .when(!fingerprint.is_empty(), |c| {
                             c.child(div().w(px(340.0)).child(key_box(&fingerprint, pal)))
                         })
                         .child(
-                            link("back-to-qr", "Use the QR code instead", pal)
+                            link("back-to-qr", "Use the QR code", pal)
                                 .on_click(Self::on_model(cx, Model::start_pairing)),
                         ),
                 )
@@ -263,7 +255,7 @@ impl Root {
             Pairing::Failed(e) => card(pal)
                 .child(
                     centred(pal)
-                        .child(div().text_size(px(15.0)).font_weight(FontWeight::MEDIUM).child("Pairing did not work"))
+                        .child(div().text_size(px(15.0)).font_weight(FontWeight::MEDIUM).child("Pairing failed"))
                         .child(caption(e.clone(), pal).text_color(pal.danger).text_center().max_w(px(460.0)))
                         .child(
                             button("retry", "Try again", pal, true, true)
@@ -282,9 +274,14 @@ impl Root {
         };
 
         let mut page = div().flex().flex_col().items_center().gap(px(20.0)).child(welcome_title(
-            "Pair Reins with your phone",
-            "Your phone approves what your AI agents do on this computer. Pairing takes a few seconds.",
-            pal,
+            "Pair with your phone",
+            Some(help(
+                "pair",
+                "Your phone approves what your AI agents do on this computer. Pairing takes a few seconds.",
+                d,
+                pal,
+                cx,
+            )),
         ));
         if let Some(problem) = location {
             page = page.child(warning(problem, pal));
@@ -293,7 +290,7 @@ impl Root {
         let mut more = div().flex().items_center().justify_center().gap(px(18.0));
         if !matches!(pairing, Pairing::Browser | Pairing::Unavailable | Pairing::Approved { .. }) {
             more = more.child(
-                link("browser", "Sign in with browser instead", pal)
+                link("browser", "Use the browser", pal)
                     .text_color(pal.secondary)
                     .on_click(Self::on_model(cx, Model::sign_in_with_browser)),
             );
@@ -305,7 +302,7 @@ impl Root {
                     if show_server {
                         "Hide server"
                     } else {
-                        "Use another server"
+                        "Other server"
                     },
                     pal,
                 )
@@ -315,7 +312,7 @@ impl Root {
         }
         page = page.child(more);
         if show_server {
-            page = page.child(div().w_full().max_w(px(460.0)).child(self.server_box(pal, &server, window, cx)));
+            page = page.child(div().w_full().max_w(px(460.0)).child(self.server_box(d, pal, &server, window, cx)));
         }
         if let Some(n) = notice {
             page = page.child(caption(n, pal).text_color(pal.danger).text_center());
@@ -323,13 +320,27 @@ impl Root {
         page.into_any_element()
     }
 
-    fn server_box(&self, pal: Palette, server: &str, window: &Window, cx: &mut Context<'_, Self>) -> AnyElement {
+    fn server_box(
+        &self,
+        d: &Data,
+        pal: Palette,
+        server: &str,
+        window: &Window,
+        cx: &mut Context<'_, Self>,
+    ) -> AnyElement {
         div()
             .w_full()
             .flex()
             .flex_col()
             .gap(px(6.0))
-            .child(caption(format!("For a Reins server you run yourself. Now: {}", host(server)), pal))
+            .child(
+                div()
+                    .flex()
+                    .items_center()
+                    .gap(px(6.0))
+                    .child(caption(format!("Now: {}", host(server)), pal))
+                    .child(help("server", "For a Reins server you run yourself.", d, pal, cx)),
+            )
             .child(
                 div()
                     .flex()

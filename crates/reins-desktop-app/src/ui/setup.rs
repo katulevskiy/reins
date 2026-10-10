@@ -10,7 +10,7 @@ use gpui::{
 use reins_desktop::harness::{Harness, after_add_note};
 
 use super::parts::{
-    big, button, caption, card, check, check_circle, fine, labelled, link, row, step_line, toggle, warning,
+    big, button, caption, card, check, check_circle, fine, help, labelled_help, link, row, step_line, toggle, warning,
     welcome_title,
 };
 use super::{Data, Root};
@@ -64,7 +64,7 @@ fn actions(back: Option<AnyElement>, forward: impl IntoElement) -> Div {
 }
 
 impl Root {
-    pub(super) fn tools_step(&self, pal: Palette, cx: &mut Context<'_, Self>) -> AnyElement {
+    pub(super) fn tools_step(&self, d: &Data, pal: Palette, cx: &mut Context<'_, Self>) -> AnyElement {
         let m = self.model.read(cx);
         let rows: Vec<ToolRow> = m.tools.clone();
         // A copy of Reins that will not be there after a restart must not be written into the tools' settings.
@@ -74,21 +74,25 @@ impl Root {
         } else {
             welcome::connectable(&rows)
         };
-        let restart = rows.iter().any(|r| r.undoable);
 
         let mut list = card(pal);
         for (i, r) in rows.iter().enumerate() {
             let h = r.harness;
-            let detail: SharedString = if let Some(e) = &r.error {
-                e.clone().into()
+            // A line only when there is something to do or to know: why it failed, or the restart it needs.
+            let detail: Option<AnyElement> = if let Some(e) = &r.error {
+                Some(caption(e.clone(), pal).text_color(pal.danger).into_any_element())
             } else if r.connected && r.undoable {
-                after_add_note(h).into()
-            } else if r.connected {
-                "Already connected: its tools and risky commands reach your phone".into()
-            } else if r.installed {
-                "Installed on this computer".into()
+                Some(
+                    div()
+                        .flex()
+                        .items_center()
+                        .gap(px(6.0))
+                        .child(caption("Restart it to finish", pal))
+                        .child(help(h.id(), after_add_note(h), d, pal, cx))
+                        .into_any_element(),
+                )
             } else {
-                "Not installed".into()
+                None
             };
             let right: AnyElement = if r.busy {
                 fine("Connecting…", pal).into_any_element()
@@ -133,7 +137,7 @@ impl Root {
                         .min_w(px(0.0))
                         .gap(px(2.0))
                         .child(div().text_size(px(13.5)).font_weight(FontWeight::MEDIUM).child(h.label()))
-                        .child(caption(detail, pal).when(r.error.is_some(), |c| c.text_color(pal.danger))),
+                        .when_some(detail, ParentElement::child),
                 )
                 .child(right);
             if !r.installed && !r.connected {
@@ -174,22 +178,22 @@ impl Root {
             .gap(px(16.0))
             .child(welcome_title(
                 "Connect your AI tools",
-                "Reins adds itself to each one: its tools reach your phone, and risky commands wait for your OK.",
-                pal,
+                Some(help(
+                    "tools",
+                    "Reins adds itself to each one: its tools reach your phone, and risky commands wait for your OK. \
+                     Undo takes it out again.",
+                    d,
+                    pal,
+                    cx,
+                )),
             ))
             .when_some(location, |p, problem| p.child(warning(problem, pal)))
             .child(div().flex().flex_col().gap(px(8.0)).pt(px(6.0)).child(header).child(list))
-            .when(restart, |p| {
-                p.child(
-                    fine("Restart a tool you connected so it picks Reins up; it keeps working as before.", pal)
-                        .px(px(2.0)),
-                )
-            })
             .child(div().pt(px(6.0)).child(actions(None, forward)))
             .into_any_element()
     }
 
-    pub(super) fn turn_on_step(&self, pal: Palette, cx: &mut Context<'_, Self>) -> AnyElement {
+    pub(super) fn turn_on_step(&self, d: &Data, pal: Palette, cx: &mut Context<'_, Self>) -> AnyElement {
         let m = self.model.read(cx);
         let steps = m.setup_steps.clone();
         let running = m.setup_running;
@@ -201,9 +205,10 @@ impl Root {
 
         let body = if steps.is_empty() {
             let option = |id: &'static str, title: &'static str, about: &'static str, what: Option<(TurnOn, bool)>| {
-                let r = row(pal, id == "turn-service").id(id).py(px(13.0)).child(labelled(
+                let r = row(pal, id == "turn-service").id(id).py(px(13.0)).child(labelled_help(
                     title,
-                    Some(about.to_owned()),
+                    None,
+                    Some(help(id, about, d, pal, cx)),
                     pal,
                 ));
                 match what {
@@ -217,7 +222,7 @@ impl Root {
             card(pal)
                 .child(option(
                     "turn-service",
-                    "Start the background service",
+                    "Background service",
                     "Hooks, git and API keys go through it. It starts again when you log in.",
                     None,
                 ))
@@ -229,7 +234,7 @@ impl Root {
                 ))
                 .child(option(
                     "turn-login",
-                    "Open Reins when you log in",
+                    "Open at login",
                     "The shield in the menu bar or tray shows that Reins is on.",
                     Some((TurnOn::Autostart, login)),
                 ))
@@ -277,16 +282,17 @@ impl Root {
 
         let mut page = div().flex().flex_col().gap(px(16.0)).child(welcome_title(
             "Turn on Reins",
-            "Reins runs quietly in the background and asks your phone whenever an agent wants something risky.",
-            pal,
+            Some(help(
+                "turn-on",
+                "Reins runs quietly in the background and asks your phone whenever an agent wants something risky.",
+                d,
+                pal,
+                cx,
+            )),
         ));
         page = page.child(div().pt(px(6.0)).child(body));
         if let Some(problem) = location {
             page = page.child(warning(problem, pal));
-        }
-        if finished && failed {
-            page = page
-                .child(caption("Something did not work. Try again, or continue and fix it later from Overview.", pal));
         }
         page = page.child(div().pt(px(6.0)).child(actions(back, forward)));
         if let Some(n) = notice {
@@ -309,13 +315,13 @@ impl Root {
             vec![(true, phone.map_or_else(|| "Paired with your phone".to_owned(), |p| format!("Paired with {p}")))];
         lines.push(match tools {
             Some(names) => (true, format!("{names} connected")),
-            None => (false, "No AI tool connected yet: connect one under Connections".to_owned()),
+            None => (false, "No AI tool connected".to_owned()),
         });
         if git {
-            lines.push((true, "git goes through Reins".to_owned()));
+            lines.push((true, "git through Reins".to_owned()));
         }
         if login {
-            lines.push((true, "Opens when you log in".to_owned()));
+            lines.push((true, "Opens at login".to_owned()));
         }
         for (i, (ok, text)) in lines.into_iter().enumerate() {
             summary = summary.child(
@@ -331,7 +337,10 @@ impl Root {
         }
 
         let hero = div().flex().flex_col().items_center().gap(px(12.0)).child(check_circle(68.0, pal.success)).child(
-            welcome_title("Reins is on", "Your phone now approves what your AI agents do on this computer.", pal),
+            welcome_title(
+                "Reins is on",
+                Some(help("done", "Your phone now approves what your AI agents do on this computer.", d, pal, cx)),
+            ),
         );
 
         div()
@@ -340,9 +349,7 @@ impl Root {
             .gap(px(18.0))
             .child(hero)
             .child(summary)
-            .when(restart, |p| {
-                p.child(fine("Restart the AI tools you connected so they pick Reins up.", pal).px(px(2.0)))
-            })
+            .when(restart, |p| p.child(fine("Restart the AI tools you connected to finish.", pal).px(px(2.0))))
             .child(card(pal).child(Self::test_panel(d, false, pal, cx)))
             .child(
                 div().flex().justify_center().child(

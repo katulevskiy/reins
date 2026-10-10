@@ -7,7 +7,7 @@ use gpui::{
     StatefulInteractiveElement as _, Styled as _, div, px,
 };
 
-use super::parts::{button, caption, fine, mark, pill, waiting_dot};
+use super::parts::{button, fine, help, mark, pill, waiting_dot};
 use super::{Data, Root};
 use crate::model::{Model, Section};
 use crate::pause::PauseFor;
@@ -159,11 +159,17 @@ impl Root {
                         .items_center()
                         .gap(px(7.0))
                         .child(div().size(px(7.0)).rounded_full().bg(pal.warning))
-                        .child(div().font_weight(FontWeight::MEDIUM).child("git is paused"))
+                        .child(div().font_weight(FontWeight::MEDIUM).child("git paused"))
+                        .child(help(
+                            "side-paused",
+                            "git goes straight to the hosts. Hooks and MCP tools still ask your phone.",
+                            d,
+                            pal,
+                            cx,
+                        ))
                         .child(div().flex_1())
                         .child(fine(left, pal)),
                 )
-                .child(caption("Hooks and MCP tools still ask your phone.", pal))
                 .child(
                     button("side-resume", "Resume", pal, true, true)
                         .w_full()
@@ -174,7 +180,7 @@ impl Root {
         let open = self.pause_menu && d.paired;
         let mut b = frame;
         if open {
-            b = b.child(fine("Send git straight to the hosts for", pal));
+            b = b.child(fine("Pause git for", pal));
             let mut lengths = div().flex().flex_col().gap(px(1.0));
             for length in PauseFor::ALL {
                 lengths = lengths.child(

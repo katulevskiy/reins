@@ -82,7 +82,7 @@ impl Model {
         self.refresh_tray();
     }
 
-    /// "Start a work session": the form, with the repositories this computer used lately.
+    /// "Start" on the work session card: the form, with the repositories this computer used lately.
     pub fn open_work_form(&mut self, cx: &mut Context<'_, Self>) {
         let repos = self
             .snapshot
@@ -253,7 +253,7 @@ impl Model {
                         m.note = Some(match n {
                             0 => "The work session had already ended.".to_owned(),
                             n => format!(
-                                "Work session ended: {} ended on your phone.",
+                                "Work session ended ({} ended on your phone).",
                                 crate::format::count(u64::try_from(n).unwrap_or(u64::MAX), "permission", "permissions")
                             ),
                         });

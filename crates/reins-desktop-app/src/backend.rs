@@ -249,9 +249,9 @@ impl Backend {
             return None;
         }
         is_transient(&exe).then_some(if cfg!(target_os = "macos") {
-            "Move Reins to your Applications folder first, then open it from there."
+            "Move Reins to Applications, then open it from there."
         } else {
-            "Install Reins first, then open the installed copy."
+            "Install Reins, then open the installed copy."
         })
     }
 
@@ -456,14 +456,14 @@ impl Backend {
     pub async fn start_service(&self) -> Result<String, String> {
         let config = self.config()?;
         if matches!(self.daemon_status(&config).await, DaemonState::Running { .. }) {
-            return Ok("The background service is running.".to_owned());
+            return Ok("Running".to_owned());
         }
         let how = if Self::daemon_in_app() {
             self.start_in_app(config.clone()).await?;
-            "Reins runs the service while it is open."
+            "Runs while Reins is open"
         } else {
             self.install_service(&config).await?;
-            "The background service runs at login."
+            "Runs at login"
         };
         let deadline = Instant::now() + SERVICE_START;
         loop {
@@ -710,7 +710,7 @@ impl Backend {
         })
     }
 
-    /// "Send a test to my phone" (`reins test`): the answer, and whether the wait ran out. Logged in the activity log.
+    /// "Send a test" (`reins test`): the answer, and whether the wait ran out. Logged in the activity log.
     pub async fn send_test(&self) -> Result<(Answer, bool), String> {
         let config = self.config()?;
         Ok(ask::send_test(&self.paths, &config, &ask::DesktopAsk).await)
@@ -740,8 +740,7 @@ impl Backend {
     pub async fn sign_out(&self) -> Result<Option<String>, String> {
         Ok(match oauth::sign_out(&self.paths).await? {
             oauth::SignedOut::LocalOnly(why) => Some(format!(
-                "Signed out here, but the server was not told ({why}): remove this computer in the Reins app on your \
-                 phone (Settings, AI connections)."
+                "Signed out here, but the server was not told ({why}). Remove this computer on your phone too."
             )),
             oauth::SignedOut::NotLoggedIn | oauth::SignedOut::Revoked => None,
         })

@@ -52,15 +52,12 @@ pub fn hint(key: &str) -> String {
 /// The list Settings shows: the keys and what they do.
 #[must_use]
 pub fn list() -> Vec<(String, String)> {
-    let mut out: Vec<(String, String)> = Section::ALL
-        .iter()
-        .enumerate()
-        .map(|(i, s)| (hint(&(i + 1).to_string()), format!("Go to {}", s.label())))
-        .collect();
-    out.push((hint("r"), "Check again and refresh".to_owned()));
-    out.push((hint("w"), "Close the window (Reins keeps running)".to_owned()));
+    let mut out: Vec<(String, String)> =
+        Section::ALL.iter().enumerate().map(|(i, s)| (hint(&(i + 1).to_string()), s.label().to_owned())).collect();
+    out.push((hint("r"), "Refresh".to_owned()));
+    out.push((hint("w"), "Close window".to_owned()));
     out.push((hint("q"), "Quit Reins".to_owned()));
-    out.push(("Esc".to_owned(), "Close an open activity row".to_owned()));
+    out.push(("Esc".to_owned(), "Close what is open".to_owned()));
     out
 }
 
@@ -116,7 +113,7 @@ mod tests {
     fn the_list_names_every_shortcut() {
         let list = list();
         assert_eq!(list.len(), Section::ALL.len() + 4);
-        assert!(list[0].0.ends_with('1') && list[0].1 == "Go to Overview");
+        assert!(list[0].0.ends_with('1') && list[0].1 == "Overview");
         assert!(list.iter().all(|(k, what)| !k.is_empty() && !what.is_empty()));
     }
 }

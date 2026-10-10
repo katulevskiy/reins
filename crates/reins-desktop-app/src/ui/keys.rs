@@ -9,8 +9,8 @@ use gpui::{
 use reins_desktop::control::ApiInfo;
 
 use super::parts::{
-    button, caption, card, code_block, empty, empty_state, fine, glyph, group, labelled, mono, one_line, page_header,
-    row, tag, toggle,
+    button, caption, card, code_block, empty, empty_state, fine, glyph, group, help, help_with, labelled_help, mono,
+    one_line, page_header, row, tag, toggle,
 };
 use super::{Data, Root};
 use crate::backend::Setting;
@@ -21,7 +21,7 @@ use crate::theme::{MONO, Palette};
 #[must_use]
 pub fn lease_state(apis: &[ApiInfo], name: &str, now: i64) -> Option<String> {
     let until = apis.iter().find(|a| a.name == name)?.leased_until.filter(|&u| u > now)?;
-    Some(format!("Key held until {}", format::clock(until)))
+    Some(format!("Held until {}", format::clock(until)))
 }
 
 /// The lines of "How to use them".
@@ -29,13 +29,13 @@ pub fn lease_state(apis: &[ApiInfo], name: &str, now: i64) -> Option<String> {
 pub fn how_to(listen: &str, api: Option<&str>, profile: Option<&str>, socket: Option<&str>) -> Vec<String> {
     let api = api.unwrap_or("openai");
     let mut lines = vec![
-        "# An API: Reins adds the key from your phone".to_owned(),
+        "# An API, its key from your phone".to_owned(),
         format!("{}_BASE_URL=http://{listen}/api/{api}", api.to_ascii_uppercase().replace('-', "_")),
-        "# A program with secrets in its environment".to_owned(),
+        "# A program with secrets".to_owned(),
         format!("reins run --profile {} -- ./deploy.sh", profile.unwrap_or("deploy")),
     ];
     if let Some(socket) = socket {
-        lines.push("# ssh with keys from your phone".to_owned());
+        lines.push("# ssh with your phone's keys".to_owned());
         lines.push(format!("export SSH_AUTH_SOCK={socket}"));
     }
     lines
@@ -43,15 +43,15 @@ pub fn how_to(listen: &str, api: Option<&str>, profile: Option<&str>, socket: Op
 
 impl Root {
     pub(super) fn keys(d: &Data, pal: Palette, cx: &mut Context<'_, Self>) -> AnyElement {
-        let mut page = div().flex().flex_col().gap(px(22.0)).child(page_header(
-            "Keys & secrets",
-            "Keys and secrets stay in the vault on your phone. Reins asks for one when a program needs it, and only \
-             the names and vault references are kept here.",
-            pal,
-        ));
-        page = page.when_some(d.notice.clone(), |p, n| p.child(caption(n, pal).text_color(pal.danger)));
-        page = page.when_some(d.note.clone(), |p, n| p.child(caption(n, pal)));
+        const ABOUT: &str = "Keys and secrets stay in the vault on your phone. Reins asks for one when a program needs \
+                             it, and only the names and vault references are kept here.";
         let Some(config) = d.config() else {
+            let mut page = div()
+                .flex()
+                .flex_col()
+                .gap(px(22.0))
+                .child(page_header("Keys & secrets", Some(help("keys", ABOUT, d, pal, cx))));
+            page = page.when_some(d.notice.clone(), |p, n| p.child(caption(n, pal).text_color(pal.danger)));
             let why = d
                 .snapshot
                 .as_ref()
@@ -62,20 +62,23 @@ impl Root {
         let overview = d.overview().cloned().unwrap_or_default();
         let listen = d.snapshot.as_ref().map_or_else(|| config.listen.to_string(), |s| s.listen());
 
-        page = page.child(group(
-            "How to use them",
-            None,
-            code_block(
-                &how_to(
-                    &listen,
-                    config.api.first().map(|a| a.name.as_str()),
-                    config.run.profiles.keys().next().map(String::as_str),
-                    overview.ssh_socket.as_deref().filter(|_| config.ssh.enabled),
-                ),
-                pal,
-            ),
-            pal,
-        ));
+        // What it is and how to use it, in the (?): the page itself lists what there is.
+        let lines = how_to(
+            &listen,
+            config.api.first().map(|a| a.name.as_str()),
+            config.run.profiles.keys().next().map(String::as_str),
+            overview.ssh_socket.as_deref().filter(|_| config.ssh.enabled),
+        );
+        let about = move || {
+            div().flex().flex_col().gap(px(10.0)).child(ABOUT).child(code_block(&lines, pal)).into_any_element()
+        };
+        let mut page = div()
+            .flex()
+            .flex_col()
+            .gap(px(22.0))
+            .child(page_header("Keys & secrets", Some(help_with("keys", about, 520.0, d, pal, cx))));
+        page = page.when_some(d.notice.clone(), |p, n| p.child(caption(n, pal).text_color(pal.danger)));
+        page = page.when_some(d.note.clone(), |p, n| p.child(caption(n, pal)));
 
         // APIs.
         let config_file = std::path::PathBuf::from(&d.config_file);
@@ -88,8 +91,14 @@ impl Root {
                 empty_state(
                     glyph("+", pal.accent),
                     "No API keys yet",
-                    "Give a program an API without giving it the key: it calls the API through Reins, and the key \
-                     comes from the vault on your phone after you approve. Add an [[api]] entry to config.toml:",
+                    Some(help(
+                        "keys-api-empty",
+                        "Give a program an API without giving it the key: it calls the API through Reins, and the key \
+                         comes from the vault on your phone after you approve. Add an [[api]] entry to config.toml.",
+                        d,
+                        pal,
+                        cx,
+                    )),
                     pal,
                 )
                 .child(div().w_full().max_w(px(460.0)).pt(px(4.0)).child(code_block(
@@ -140,11 +149,7 @@ impl Root {
                                         .items_center()
                                         .gap(px(8.0))
                                         .child(tag(a.secret.clone(), pal))
-                                        .child(fine(
-                                            format!("held {} after you approve", format::span(a.lease_secs.into())),
-                                            pal,
-                                        ))
-                                        .child(fine(format!("http://{listen}/api/{}", a.name), pal).font_family(MONO)),
+                                        .child(fine(format!("held {}", format::span(a.lease_secs.into())), pal)),
                                 ),
                         )
                         .child(match state {
@@ -157,7 +162,7 @@ impl Root {
                                 .text_color(pal.success)
                                 .child(div().size(px(6.0)).rounded_full().bg(pal.success))
                                 .child(s),
-                            None => fine("Asked on next use", pal).flex_none(),
+                            None => fine("Asks on next use", pal).flex_none(),
                         }),
                 );
             }
@@ -165,9 +170,15 @@ impl Root {
         };
         page = page.child(group(
             "API keys",
-            Some("Programs call these through Reins; the key is added on the way and never shown to them."),
+            Some(help(
+                "keys-api",
+                "Programs call these through Reins; the key is added on the way and never shown to them. After you \
+                 approve, it is held for the time shown.",
+                d,
+                pal,
+                cx,
+            )),
             apis,
-            pal,
         ));
 
         // Run profiles.
@@ -176,8 +187,15 @@ impl Root {
                 empty_state(
                     glyph("+", pal.accent),
                     "No run profiles yet",
-                    "A profile names the secrets a program gets in its environment for one run (`reins run --profile \
-                     deploy -- ./deploy.sh`), each from your vault after you approve. Add one to config.toml:",
+                    Some(help(
+                        "keys-run-empty",
+                        "A profile names the secrets a program gets in its environment for one run (`reins run \
+                         --profile deploy -- ./deploy.sh`), each from your vault after you approve. Add one to \
+                         config.toml.",
+                        d,
+                        pal,
+                        cx,
+                    )),
                     pal,
                 )
                 .child(div().w_full().max_w(px(460.0)).pt(px(4.0)).child(code_block(
@@ -227,9 +245,14 @@ impl Root {
         };
         page = page.child(group(
             "reins run profiles",
-            Some("Variables a program gets from your vault for one run, after you approve on your phone."),
+            Some(help(
+                "keys-run",
+                "Variables a program gets from your vault for one run, after you approve on your phone.",
+                d,
+                pal,
+                cx,
+            )),
             profiles,
-            pal,
         ));
 
         // SSH agent.
@@ -238,12 +261,17 @@ impl Root {
             row(pal, true)
                 .id("ssh-toggle")
                 .cursor_pointer()
-                .child(labelled(
-                    "Sign SSH logins with keys from your phone",
-                    Some(
-                        "ssh asks your phone each time it signs in. Changing it restarts the background service."
-                            .to_owned(),
-                    ),
+                .child(labelled_help(
+                    "SSH keys from your phone",
+                    None,
+                    Some(help(
+                        "keys-ssh",
+                        "ssh signs in with keys from your phone and asks it each time. Changing it restarts the \
+                         background service.",
+                        d,
+                        pal,
+                        cx,
+                    )),
                     pal,
                 ))
                 .child(toggle(on, pal))
@@ -255,19 +283,14 @@ impl Root {
                     .child(div().flex_none().text_color(pal.secondary).child("Socket"))
                     .child(div().flex_1())
                     .child(
-                        one_line(
-                            overview
-                                .ssh_socket
-                                .clone()
-                                .unwrap_or_else(|| "starts with the background service".to_owned()),
-                        )
-                        .text_ellipsis_start()
-                        .font_family(MONO)
-                        .text_size(px(12.0)),
+                        one_line(overview.ssh_socket.clone().unwrap_or_else(|| "starts with the service".to_owned()))
+                            .text_ellipsis_start()
+                            .font_family(MONO)
+                            .text_size(px(12.0)),
                     ),
             );
             if overview.ssh_keys.is_empty() {
-                ssh = ssh.child(row(pal, false).child(fine("Keys are listed after the first ssh use.", pal)));
+                ssh = ssh.child(row(pal, false).child(fine("Keys show after the first use", pal)));
             } else {
                 for k in &overview.ssh_keys {
                     ssh = ssh.child(
@@ -284,7 +307,7 @@ impl Root {
                 }
             }
         }
-        page = page.child(group("SSH agent", None, ssh, pal));
+        page = page.child(group("SSH agent", None, ssh));
         page.into_any_element()
     }
 }
@@ -300,7 +323,7 @@ mod tests {
             base: "https://api.openai.com/v1".to_owned(),
             leased_until: Some(2_000),
         }];
-        assert!(lease_state(&apis, "openai", 1_000).unwrap().starts_with("Key held until "));
+        assert!(lease_state(&apis, "openai", 1_000).unwrap().starts_with("Held until "));
         assert_eq!(lease_state(&apis, "openai", 2_001), None);
         assert_eq!(lease_state(&apis, "other", 1_000), None);
     }

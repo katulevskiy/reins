@@ -6,13 +6,14 @@ use std::time::Duration;
 
 use gpui::prelude::FluentBuilder as _;
 use gpui::{
-    Animation, AnimationExt as _, AnyElement, Div, ElementId, FontWeight, Hsla, Image, ImageFormat,
-    InteractiveElement as _, IntoElement, ParentElement as _, PathBuilder, SharedString, Stateful, Styled as _, canvas,
-    div, img, point, pulsating_between, px,
+    Animation, AnimationExt as _, AnyElement, Context, Div, ElementId, FontWeight, Hsla, Image, ImageFormat,
+    InteractiveElement as _, IntoElement, ParentElement, PathBuilder, SharedString, Stateful,
+    StatefulInteractiveElement as _, Styled as _, anchored, canvas, deferred, div, img, point, pulsating_between, px,
 };
 use reins_desktop::doctor::Level;
 use reins_desktop::journal::Outcome;
 
+use super::{Data, Root};
 use crate::model::Step;
 use crate::theme::{MONO, Palette};
 use crate::tray::Look;
@@ -82,18 +83,108 @@ pub fn mono(text: impl Into<SharedString>, pal: Palette) -> Div {
     div().font_family(MONO).text_size(px(12.0)).line_height(px(17.0)).text_color(pal.text).child(text.into())
 }
 
-/// The title of a section of the status window, with what it is for.
-pub fn page_header(title: &'static str, explain: impl Into<SharedString>, pal: Palette) -> Div {
-    div()
-        .flex()
-        .flex_col()
-        .gap(px(4.0))
-        .child(div().text_size(px(22.0)).line_height(px(28.0)).font_weight(FontWeight::SEMIBOLD).child(title))
-        .child(div().text_size(px(13.0)).line_height(px(19.0)).text_color(pal.secondary).child(explain.into()))
+/// A small (?): a click shows `text` in a bubble under it, for whoever looks for the longer explanation; a click
+/// anywhere else, Esc or another page closes it. One is open at a time ([`Root::help`]).
+pub fn help(
+    id: &'static str,
+    text: impl Into<SharedString>,
+    d: &Data,
+    pal: Palette,
+    cx: &Context<'_, Root>,
+) -> Stateful<Div> {
+    let text = text.into();
+    // As wide as the words need, up to a comfortable line.
+    #[allow(clippy::cast_precision_loss, reason = "a few hundred characters")]
+    let width = (text.len() as f32).mul_add(6.3, 28.0).clamp(150.0, 320.0);
+    help_with(id, move || text.into_any_element(), width, d, pal, cx)
 }
 
-/// A titled block of a page: its title, an optional line about it, then `body` (usually a card).
-pub fn group(title: impl Into<SharedString>, about: Option<&str>, body: impl IntoElement, pal: Palette) -> Div {
+/// [`help`] with something else than a line in its bubble (built only while open), `width` wide.
+pub fn help_with(
+    id: &'static str,
+    content: impl FnOnce() -> AnyElement,
+    width: f32,
+    d: &Data,
+    pal: Palette,
+    cx: &Context<'_, Root>,
+) -> Stateful<Div> {
+    let open = d.help == Some(id);
+    let mark = div()
+        .id(SharedString::from(format!("help-{id}")))
+        .flex()
+        .flex_none()
+        .items_center()
+        .justify_center()
+        .size(px(16.0))
+        .rounded_full()
+        .border_1()
+        .text_size(px(10.5))
+        .line_height(px(14.0))
+        .font_weight(FontWeight::SEMIBOLD)
+        .cursor_pointer()
+        .when_else(
+            open,
+            |m| m.border_color(pal.accent).bg(pal.accent_soft).text_color(pal.accent),
+            |m| {
+                m.border_color(pal.tertiary.opacity(0.55))
+                    .text_color(pal.tertiary)
+                    .hover(|s| s.border_color(pal.secondary).text_color(pal.text))
+            },
+        )
+        .child("?")
+        .on_click(cx.listener(move |this, _, _, cx| {
+            this.help = if this.help == Some(id) {
+                None
+            } else {
+                Some(id)
+            };
+            cx.notify();
+        }));
+    if !open {
+        return mark;
+    }
+    let bubble = div()
+        .occlude()
+        .w(px(width))
+        .px(px(12.0))
+        .py(px(9.0))
+        .rounded(px(10.0))
+        .bg(pal.elevated)
+        .border_1()
+        .border_color(pal.hairline)
+        .shadow_lg()
+        .text_size(px(12.0))
+        .line_height(px(17.0))
+        .font_weight(FontWeight::NORMAL)
+        .text_color(pal.text)
+        .whitespace_normal()
+        .child(content());
+    mark.on_mouse_down_out(cx.listener(|this, _, _, cx| {
+        this.help = None;
+        cx.notify();
+    }))
+    .relative()
+    // From the (?)'s top left corner: centred in it, the bubble would start half its size up and to the left.
+    .child(
+        div().absolute().top_0().left_0().size_0().child(
+            deferred(anchored().offset(point(px(-10.0), px(22.0))).snap_to_window_with_margin(px(12.0)).child(bubble))
+                .with_priority(1),
+        ),
+    )
+}
+
+/// The title of a section of the status window; `help`, a (?) with what it is for.
+pub fn page_header(title: &'static str, help: Option<Stateful<Div>>) -> Div {
+    div()
+        .flex()
+        .items_center()
+        .gap(px(8.0))
+        .child(div().text_size(px(22.0)).line_height(px(28.0)).font_weight(FontWeight::SEMIBOLD).child(title))
+        .when_some(help, ParentElement::child)
+}
+
+/// A titled block of a page: its title (and a (?) about it), then `body` (usually a card).
+pub fn group(title: impl Into<SharedString>, help: Option<Stateful<Div>>, body: impl IntoElement) -> Div {
     div()
         .flex()
         .flex_col()
@@ -101,11 +192,11 @@ pub fn group(title: impl Into<SharedString>, about: Option<&str>, body: impl Int
         .child(
             div()
                 .flex()
-                .flex_col()
-                .gap(px(2.0))
+                .items_center()
+                .gap(px(6.0))
                 .px(px(2.0))
                 .child(div().text_size(px(13.5)).font_weight(FontWeight::SEMIBOLD).child(title.into()))
-                .when_some(about.map(str::to_owned), |d, a| d.child(caption(a, pal))),
+                .when_some(help, ParentElement::child),
         )
         .child(body)
 }
@@ -168,13 +259,30 @@ pub fn row(pal: Palette, first: bool) -> Div {
 
 /// A label with a line under it, taking the room a row has.
 pub fn labelled(label: impl Into<SharedString>, detail: Option<String>, pal: Palette) -> Div {
+    labelled_help(label, detail, None, pal)
+}
+
+/// [`labelled`], with a (?) after the label.
+pub fn labelled_help(
+    label: impl Into<SharedString>,
+    detail: Option<String>,
+    help: Option<Stateful<Div>>,
+    pal: Palette,
+) -> Div {
     div()
         .flex()
         .flex_col()
         .flex_1()
         .min_w(px(0.0))
         .gap(px(1.0))
-        .child(div().font_weight(FontWeight::MEDIUM).child(label.into()))
+        .child(
+            div()
+                .flex()
+                .items_center()
+                .gap(px(6.0))
+                .child(div().font_weight(FontWeight::MEDIUM).child(label.into()))
+                .when_some(help, ParentElement::child),
+        )
         .when_some(detail.filter(|d| !d.is_empty()), |d, text| d.child(caption(text, pal)))
 }
 
@@ -472,15 +580,7 @@ pub fn phone_qr(pal: Palette) -> Div {
             gpui::black(),
             gpui::white(),
         )))
-        .child(
-            caption(
-                "Point your phone's camera at this code to open Activity in Reins: everything your agents asked for, \
-                 on every computer, and what you answered.",
-                pal,
-            )
-            .flex_1()
-            .min_w(px(0.0)),
-        )
+        .child(caption("Scan with your phone to open Activity there.", pal).flex_1().min_w(px(0.0)))
 }
 
 /// A bigger button, for the one thing a screen is for.
@@ -587,13 +687,13 @@ pub fn step_indicator(current: Stage, pal: Palette) -> Div {
     bar
 }
 
-/// A titled screen of the welcome flow: the title and what it is for.
-pub fn welcome_title(title: impl Into<SharedString>, about: impl Into<SharedString>, pal: Palette) -> Div {
+/// The title of a screen of the welcome flow, and a (?) with what it is for.
+pub fn welcome_title(title: impl Into<SharedString>, help: Option<Stateful<Div>>) -> Div {
     div()
         .flex()
-        .flex_col()
         .items_center()
-        .gap(px(6.0))
+        .justify_center()
+        .gap(px(8.0))
         .child(
             div()
                 .text_size(px(24.0))
@@ -602,15 +702,7 @@ pub fn welcome_title(title: impl Into<SharedString>, about: impl Into<SharedStri
                 .text_center()
                 .child(title.into()),
         )
-        .child(
-            div()
-                .max_w(px(540.0))
-                .text_size(px(13.5))
-                .line_height(px(20.0))
-                .text_color(pal.secondary)
-                .text_center()
-                .child(about.into()),
-        )
+        .when_some(help, ParentElement::child)
 }
 
 /// Three dots: nothing yet, something to wait for (as on the tray icon while a request waits).
@@ -623,11 +715,11 @@ pub fn glyph(text: &'static str, color: Hsla) -> Div {
     div().text_size(px(18.0)).line_height(px(18.0)).text_color(color).child(text)
 }
 
-/// A card's empty state: an icon in a soft circle, a title and what to do; the caller adds an action.
+/// A card's empty state: an icon in a soft circle and a title (with a (?) about it); the caller adds an action.
 pub fn empty_state(
     icon: impl IntoElement,
     title: impl Into<SharedString>,
-    body: impl Into<SharedString>,
+    help: Option<Stateful<Div>>,
     pal: Palette,
 ) -> Div {
     div()
@@ -636,14 +728,19 @@ pub fn empty_state(
         .items_center()
         .gap(px(8.0))
         .px(px(28.0))
-        .py(px(28.0))
+        .py(px(24.0))
         .child(
             div().flex().items_center().justify_center().size(px(40.0)).rounded_full().bg(pal.accent_soft).child(icon),
         )
         .child(
-            div().pt(px(2.0)).text_size(px(14.0)).font_weight(FontWeight::SEMIBOLD).text_center().child(title.into()),
+            div()
+                .flex()
+                .items_center()
+                .gap(px(6.0))
+                .pt(px(2.0))
+                .child(div().text_size(px(14.0)).font_weight(FontWeight::SEMIBOLD).text_center().child(title.into()))
+                .when_some(help, ParentElement::child),
         )
-        .child(caption(body, pal).max_w(px(460.0)).text_center())
 }
 
 /// A key on the keyboard ("Ctrl+1").
