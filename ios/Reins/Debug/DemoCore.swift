@@ -88,6 +88,10 @@ final class DemoReinsCore: ReinsCoreProtocol, @unchecked Sendable {
         var passkeys: [VaultPasskeyView] = []
         /// `vaultPasskeys` fails as if offline (`-demoPasskeysOffline`).
         var passkeysOffline = false
+        /// The vault on the phone and its secret values ("id/key").
+        var vault: [VaultItemDetail] = DemoReinsCore.demoVault
+        var vaultSecrets: [String: String] = ["openai/password": "sk-demo-0000", "github/password": "hunter2"]
+        var devices: [DeviceView] = DemoReinsCore.demoDevices
     }
 
     /// The passkey the demo account starts with.
@@ -756,6 +760,117 @@ final class DemoReinsCore: ReinsCoreProtocol, @unchecked Sendable {
     // ---- connections ------------------------------------------------------------------------------------------------
 
     func connections() async throws -> [ConnectionView] { locked { $0.connections } }
+
+    // MARK: Devices and the vault on the phone
+
+    static let demoDevices = [
+        DeviceView(id: "d-this", name: "iPhone", kind: .phone, platform: "iOS", createdAt: 1_699_000_000, lastSeenAt: 1_700_000_090, approval: true, thisDevice: true),
+        DeviceView(id: "d-old", name: "Old iPhone", kind: .phone, platform: "iOS", createdAt: 1_690_000_000, lastSeenAt: 1_699_900_000, approval: false, thisDevice: false),
+    ]
+
+    static let demoVault = [
+        VaultItemDetail(
+            id: "openai", name: "OpenAI", kind: .login,
+            fields: [
+                VaultField(key: "password", label: "Password", value: nil, secret: true, multiline: false),
+                VaultField(key: "uris", label: "Website", value: "https://platform.openai.com", secret: false, multiline: false),
+            ],
+            uses: [VaultUse(reference: "vault:OpenAI/password", hint: "reins run --env, and secret = in an [[api]] block")],
+            warning: nil, favorite: true
+        ),
+        VaultItemDetail(
+            id: "github", name: "GitHub", kind: .login,
+            fields: [
+                VaultField(key: "username", label: "Username", value: "octo", secret: false, multiline: false),
+                VaultField(key: "password", label: "Password", value: nil, secret: true, multiline: false),
+            ],
+            uses: [
+                VaultUse(reference: "vault:GitHub/password", hint: "reins run --env, and secret = in an [[api]] block"),
+                VaultUse(reference: "vault:GitHub/username", hint: "reins run --env, and secret = in an [[api]] block"),
+            ],
+            warning: nil, favorite: false
+        ),
+    ]
+
+    func devices() async throws -> [DeviceView] { locked { $0.devices } }
+
+    func signOutDevice(deviceId: String, codeOrPassword: String) async throws {
+        try locked { s in
+            guard codeOrPassword == s.recoveryCode else { throw CoreError.Invalid(reason: "That is neither the recovery code nor the master password.") }
+            s.devices.removeAll { $0.id == deviceId }
+        }
+    }
+
+    func phoneKeyFingerprint() async throws -> String { "4821-9930-1274" }
+
+    func vaultItems(query: String) async throws -> [VaultItemSummary] {
+        locked { s in
+            s.vault
+                .filter { query.isEmpty || $0.name.localizedCaseInsensitiveContains(query) }
+                .sorted { $0.name.lowercased() < $1.name.lowercased() }
+                .map { d in
+                    VaultItemSummary(id: d.id, name: d.name, kind: d.kind, subtitle: d.fields.first { !$0.secret }?.value ?? "", favorite: d.favorite)
+                }
+        }
+    }
+
+    func vaultItem(id: String) async throws -> VaultItemDetail {
+        try locked { s in
+            guard let item = s.vault.first(where: { $0.id == id }) else { throw CoreError.Service(reason: "That item is no longer in the vault.") }
+            return item
+        }
+    }
+
+    func vaultReveal(id: String, key: String) async throws -> String {
+        try locked { s in
+            guard let value = s.vaultSecrets["\(id)/\(key)"] else { throw CoreError.Service(reason: "That item has no such field.") }
+            return value
+        }
+    }
+
+    func vaultCreate(input: VaultItemInput) async throws -> String {
+        locked { s in
+            let id = "new-\(s.vault.count)"
+            let fields = input.fields.map { f in
+                let secret = ["password", "notes", "totp", "number", "code", "private_key"].contains(f.key)
+                if secret { s.vaultSecrets["\(id)/\(f.key)"] = f.value }
+                return VaultField(key: f.key, label: f.key.capitalized, value: secret ? nil : f.value, secret: secret, multiline: false)
+            }
+            let uses = input.kind == .login ? [VaultUse(reference: "vault:\(input.name)/password", hint: "reins run --env, and secret = in an [[api]] block")] : []
+            s.vault.append(VaultItemDetail(id: id, name: input.name, kind: input.kind, fields: fields, uses: uses, warning: nil, favorite: false))
+            return id
+        }
+    }
+
+    func vaultUpdate(id: String, input: VaultItemInput) async throws {
+        locked { s in
+            guard let i = s.vault.firstIndex(where: { $0.id == id }) else { return }
+            s.vault[i].name = input.name
+        }
+    }
+
+    func vaultDelete(id: String) async throws {
+        locked { $0.vault.removeAll { $0.id == id } }
+    }
+
+    func vaultGenerateSshKey(name: String) async throws -> VaultSshKey {
+        locked { s in
+            let id = "ssh-\(s.vault.count)"
+            let publicKey = "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIDemoKeyOnlyForTheDemoBuild000000000000000 \(name)"
+            let fingerprint = "SHA256:demofingerprint000000000000000000000000000"
+            s.vault.append(VaultItemDetail(
+                id: id, name: name, kind: .sshKey,
+                fields: [
+                    VaultField(key: "private_key", label: "Private key", value: nil, secret: true, multiline: true),
+                    VaultField(key: "public_key", label: "Public key", value: publicKey, secret: false, multiline: true),
+                    VaultField(key: "fingerprint", label: "Fingerprint", value: fingerprint, secret: false, multiline: false),
+                ],
+                uses: [VaultUse(reference: fingerprint, hint: "Offered by the SSH agent of the desktop app (reins ssh setup); the private key stays on the phone")],
+                warning: nil, favorite: false
+            ))
+            return VaultSshKey(id: id, publicKey: publicKey, fingerprint: fingerprint)
+        }
+    }
 
     func revokeConnection(connectionId: String) async throws {
         locked { s in

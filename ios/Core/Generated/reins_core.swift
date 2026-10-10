@@ -2616,6 +2616,11 @@ public protocol ReinsCoreProtocol: AnyObject, Sendable {
     func deny(requestId: String) async throws 
     
     /**
+     * The devices signed in to the account (Settings > Devices).
+     */
+    func devices() async throws  -> [DeviceView]
+    
+    /**
      * Downloads the model and checks it against the hashes built into the core; nothing is kept if it does not match.
      */
     func downloadModel(progress: DownloadProgress) async throws  -> ModelStatus
@@ -2702,6 +2707,11 @@ public protocol ReinsCoreProtocol: AnyObject, Sendable {
      * Items parked for the user, newest first.
      */
     func pending() async throws  -> [PendingItem]
+    
+    /**
+     * The eight digits of this phone's key, which `reins vault add` asks to compare once ("4821 9930").
+     */
+    func phoneKeyFingerprint() async throws  -> String
     
     func registerDevice(fcmToken: String?) async throws 
     
@@ -2810,6 +2820,12 @@ public protocol ReinsCoreProtocol: AnyObject, Sendable {
     func setStartingPolicy(policy: StartingPolicy) async throws 
     
     /**
+     * Signs another device of the account out (a lost phone), with the recovery code or master password the user
+     * typed now: it can no longer sync or answer for the account.
+     */
+    func signOutDevice(deviceId: String, codeOrPassword: String) async throws 
+    
+    /**
      * Starts a sign-in through the server's SSO ("Continue": Google, Apple, GitHub or an email code on
      * app.reins2fa.com). Open `url` in ASWebAuthenticationSession / a Custom Tab, wait for `callback_scheme`, then
      * call `sso_finish` with the URL it came back with and this `state` and `verifier`.
@@ -2845,6 +2861,31 @@ public protocol ReinsCoreProtocol: AnyObject, Sendable {
     func unlockWithVaultPasskey(credentialId: Data, prfOutput: Data) async throws 
     
     /**
+     * Creates an item; its id.
+     */
+    func vaultCreate(input: VaultItemInput) async throws  -> String
+    
+    /**
+     * Deletes an item for good.
+     */
+    func vaultDelete(id: String) async throws 
+    
+    /**
+     * Makes an Ed25519 key on the phone and keeps it as an SSH key item named `name`.
+     */
+    func vaultGenerateSshKey(name: String) async throws  -> VaultSshKey
+    
+    /**
+     * One item: the values of its plain fields, which fields are secret, and how the desktop app names it.
+     */
+    func vaultItem(id: String) async throws  -> VaultItemDetail
+    
+    /**
+     * The vault's items in use whose name, username or website contains `query` (empty: all), by name.
+     */
+    func vaultItems(query: String) async throws  -> [VaultItemSummary]
+    
+    /**
      * What the app hands the platform's passkey UI to make a vault passkey or use one (see `vault_passkey`).
      */
     func vaultPasskeyOptions() async throws  -> VaultPasskeyOptions
@@ -2853,6 +2894,16 @@ public protocol ReinsCoreProtocol: AnyObject, Sendable {
      * The passkeys that open the account's vault.
      */
     func vaultPasskeys() async throws  -> [VaultPasskeyView]
+    
+    /**
+     * The value of one field (`VaultField::key`), after the app checked the screen lock.
+     */
+    func vaultReveal(id: String, key: String) async throws  -> String
+    
+    /**
+     * Renames an item and changes the fields given.
+     */
+    func vaultUpdate(id: String, input: VaultItemInput) async throws 
     
     /**
      * Adds an MCP server by its address: added at once, or a sign-in page to open (its redirect goes to
@@ -3537,6 +3588,25 @@ open func deny(requestId: String)async throws   {
 }
     
     /**
+     * The devices signed in to the account (Settings > Devices).
+     */
+open func devices()async throws  -> [DeviceView]  {
+    return
+        try  await uniffiRustCallAsync(
+            rustFutureFunc: {
+                uniffi_reins_core_fn_method_reinscore_devices(
+                        self.uniffiCloneHandle()
+                )
+            },
+            pollFunc: ffi_reins_core_rust_future_poll_rust_buffer,
+            completeFunc: ffi_reins_core_rust_future_complete_rust_buffer,
+            freeFunc: ffi_reins_core_rust_future_free_rust_buffer,
+            liftFunc: FfiConverterSequenceTypeDeviceView.lift,
+            errorHandler: FfiConverterTypeCoreError_lift
+        )
+}
+    
+    /**
      * Downloads the model and checks it against the hashes built into the core; nothing is kept if it does not match.
      */
 open func downloadModel(progress: DownloadProgress)async throws  -> ModelStatus  {
@@ -3902,6 +3972,25 @@ open func pending()async throws  -> [PendingItem]  {
             completeFunc: ffi_reins_core_rust_future_complete_rust_buffer,
             freeFunc: ffi_reins_core_rust_future_free_rust_buffer,
             liftFunc: FfiConverterSequenceTypePendingItem.lift,
+            errorHandler: FfiConverterTypeCoreError_lift
+        )
+}
+    
+    /**
+     * The eight digits of this phone's key, which `reins vault add` asks to compare once ("4821 9930").
+     */
+open func phoneKeyFingerprint()async throws  -> String  {
+    return
+        try  await uniffiRustCallAsync(
+            rustFutureFunc: {
+                uniffi_reins_core_fn_method_reinscore_phone_key_fingerprint(
+                        self.uniffiCloneHandle()
+                )
+            },
+            pollFunc: ffi_reins_core_rust_future_poll_rust_buffer,
+            completeFunc: ffi_reins_core_rust_future_complete_rust_buffer,
+            freeFunc: ffi_reins_core_rust_future_free_rust_buffer,
+            liftFunc: FfiConverterString.lift,
             errorHandler: FfiConverterTypeCoreError_lift
         )
 }
@@ -4330,6 +4419,26 @@ open func setStartingPolicy(policy: StartingPolicy)async throws   {
 }
     
     /**
+     * Signs another device of the account out (a lost phone), with the recovery code or master password the user
+     * typed now: it can no longer sync or answer for the account.
+     */
+open func signOutDevice(deviceId: String, codeOrPassword: String)async throws   {
+    return
+        try  await uniffiRustCallAsync(
+            rustFutureFunc: {
+                uniffi_reins_core_fn_method_reinscore_sign_out_device(
+                        self.uniffiCloneHandle(),FfiConverterString.lower(deviceId),FfiConverterString.lower(codeOrPassword)
+                )
+            },
+            pollFunc: ffi_reins_core_rust_future_poll_void,
+            completeFunc: ffi_reins_core_rust_future_complete_void,
+            freeFunc: ffi_reins_core_rust_future_free_void,
+            liftFunc: { $0 },
+            errorHandler: FfiConverterTypeCoreError_lift
+        )
+}
+    
+    /**
      * Starts a sign-in through the server's SSO ("Continue": Google, Apple, GitHub or an email code on
      * app.reins2fa.com). Open `url` in ASWebAuthenticationSession / a Custom Tab, wait for `callback_scheme`, then
      * call `sso_finish` with the URL it came back with and this `state` and `verifier`.
@@ -4449,6 +4558,101 @@ open func unlockWithVaultPasskey(credentialId: Data, prfOutput: Data)async throw
 }
     
     /**
+     * Creates an item; its id.
+     */
+open func vaultCreate(input: VaultItemInput)async throws  -> String  {
+    return
+        try  await uniffiRustCallAsync(
+            rustFutureFunc: {
+                uniffi_reins_core_fn_method_reinscore_vault_create(
+                        self.uniffiCloneHandle(),FfiConverterTypeVaultItemInput_lower(input)
+                )
+            },
+            pollFunc: ffi_reins_core_rust_future_poll_rust_buffer,
+            completeFunc: ffi_reins_core_rust_future_complete_rust_buffer,
+            freeFunc: ffi_reins_core_rust_future_free_rust_buffer,
+            liftFunc: FfiConverterString.lift,
+            errorHandler: FfiConverterTypeCoreError_lift
+        )
+}
+    
+    /**
+     * Deletes an item for good.
+     */
+open func vaultDelete(id: String)async throws   {
+    return
+        try  await uniffiRustCallAsync(
+            rustFutureFunc: {
+                uniffi_reins_core_fn_method_reinscore_vault_delete(
+                        self.uniffiCloneHandle(),FfiConverterString.lower(id)
+                )
+            },
+            pollFunc: ffi_reins_core_rust_future_poll_void,
+            completeFunc: ffi_reins_core_rust_future_complete_void,
+            freeFunc: ffi_reins_core_rust_future_free_void,
+            liftFunc: { $0 },
+            errorHandler: FfiConverterTypeCoreError_lift
+        )
+}
+    
+    /**
+     * Makes an Ed25519 key on the phone and keeps it as an SSH key item named `name`.
+     */
+open func vaultGenerateSshKey(name: String)async throws  -> VaultSshKey  {
+    return
+        try  await uniffiRustCallAsync(
+            rustFutureFunc: {
+                uniffi_reins_core_fn_method_reinscore_vault_generate_ssh_key(
+                        self.uniffiCloneHandle(),FfiConverterString.lower(name)
+                )
+            },
+            pollFunc: ffi_reins_core_rust_future_poll_rust_buffer,
+            completeFunc: ffi_reins_core_rust_future_complete_rust_buffer,
+            freeFunc: ffi_reins_core_rust_future_free_rust_buffer,
+            liftFunc: FfiConverterTypeVaultSshKey_lift,
+            errorHandler: FfiConverterTypeCoreError_lift
+        )
+}
+    
+    /**
+     * One item: the values of its plain fields, which fields are secret, and how the desktop app names it.
+     */
+open func vaultItem(id: String)async throws  -> VaultItemDetail  {
+    return
+        try  await uniffiRustCallAsync(
+            rustFutureFunc: {
+                uniffi_reins_core_fn_method_reinscore_vault_item(
+                        self.uniffiCloneHandle(),FfiConverterString.lower(id)
+                )
+            },
+            pollFunc: ffi_reins_core_rust_future_poll_rust_buffer,
+            completeFunc: ffi_reins_core_rust_future_complete_rust_buffer,
+            freeFunc: ffi_reins_core_rust_future_free_rust_buffer,
+            liftFunc: FfiConverterTypeVaultItemDetail_lift,
+            errorHandler: FfiConverterTypeCoreError_lift
+        )
+}
+    
+    /**
+     * The vault's items in use whose name, username or website contains `query` (empty: all), by name.
+     */
+open func vaultItems(query: String)async throws  -> [VaultItemSummary]  {
+    return
+        try  await uniffiRustCallAsync(
+            rustFutureFunc: {
+                uniffi_reins_core_fn_method_reinscore_vault_items(
+                        self.uniffiCloneHandle(),FfiConverterString.lower(query)
+                )
+            },
+            pollFunc: ffi_reins_core_rust_future_poll_rust_buffer,
+            completeFunc: ffi_reins_core_rust_future_complete_rust_buffer,
+            freeFunc: ffi_reins_core_rust_future_free_rust_buffer,
+            liftFunc: FfiConverterSequenceTypeVaultItemSummary.lift,
+            errorHandler: FfiConverterTypeCoreError_lift
+        )
+}
+    
+    /**
      * What the app hands the platform's passkey UI to make a vault passkey or use one (see `vault_passkey`).
      */
 open func vaultPasskeyOptions()async throws  -> VaultPasskeyOptions  {
@@ -4482,6 +4686,44 @@ open func vaultPasskeys()async throws  -> [VaultPasskeyView]  {
             completeFunc: ffi_reins_core_rust_future_complete_rust_buffer,
             freeFunc: ffi_reins_core_rust_future_free_rust_buffer,
             liftFunc: FfiConverterSequenceTypeVaultPasskeyView.lift,
+            errorHandler: FfiConverterTypeCoreError_lift
+        )
+}
+    
+    /**
+     * The value of one field (`VaultField::key`), after the app checked the screen lock.
+     */
+open func vaultReveal(id: String, key: String)async throws  -> String  {
+    return
+        try  await uniffiRustCallAsync(
+            rustFutureFunc: {
+                uniffi_reins_core_fn_method_reinscore_vault_reveal(
+                        self.uniffiCloneHandle(),FfiConverterString.lower(id),FfiConverterString.lower(key)
+                )
+            },
+            pollFunc: ffi_reins_core_rust_future_poll_rust_buffer,
+            completeFunc: ffi_reins_core_rust_future_complete_rust_buffer,
+            freeFunc: ffi_reins_core_rust_future_free_rust_buffer,
+            liftFunc: FfiConverterString.lift,
+            errorHandler: FfiConverterTypeCoreError_lift
+        )
+}
+    
+    /**
+     * Renames an item and changes the fields given.
+     */
+open func vaultUpdate(id: String, input: VaultItemInput)async throws   {
+    return
+        try  await uniffiRustCallAsync(
+            rustFutureFunc: {
+                uniffi_reins_core_fn_method_reinscore_vault_update(
+                        self.uniffiCloneHandle(),FfiConverterString.lower(id),FfiConverterTypeVaultItemInput_lower(input)
+                )
+            },
+            pollFunc: ffi_reins_core_rust_future_poll_void,
+            completeFunc: ffi_reins_core_rust_future_complete_void,
+            freeFunc: ffi_reins_core_rust_future_free_void,
+            liftFunc: { $0 },
             errorHandler: FfiConverterTypeCoreError_lift
         )
 }
@@ -6480,6 +6722,105 @@ public func FfiConverterTypeDeviceEvent_lift(_ buf: RustBuffer) throws -> Device
 #endif
 public func FfiConverterTypeDeviceEvent_lower(_ value: DeviceEvent) -> RustBuffer {
     return FfiConverterTypeDeviceEvent.lower(value)
+}
+
+
+/**
+ * One device signed in to the account (Settings > Devices).
+ */
+public struct DeviceView: Equatable, Hashable {
+    public var id: String
+    public var name: String
+    public var kind: DeviceKind
+    /**
+     * "Android", "iOS", "Chrome extension", "Web vault", ...
+     */
+    public var platform: String
+    public var createdAt: Int64
+    /**
+     * When it last signed in or renewed its sign-in.
+     */
+    public var lastSeenAt: Int64
+    /**
+     * The account's approval device: the one requests go to.
+     */
+    public var approval: Bool
+    public var thisDevice: Bool
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(id: String, name: String, kind: DeviceKind, 
+        /**
+         * "Android", "iOS", "Chrome extension", "Web vault", ...
+         */platform: String, createdAt: Int64, 
+        /**
+         * When it last signed in or renewed its sign-in.
+         */lastSeenAt: Int64, 
+        /**
+         * The account's approval device: the one requests go to.
+         */approval: Bool, thisDevice: Bool) {
+        self.id = id
+        self.name = name
+        self.kind = kind
+        self.platform = platform
+        self.createdAt = createdAt
+        self.lastSeenAt = lastSeenAt
+        self.approval = approval
+        self.thisDevice = thisDevice
+    }
+
+    
+
+    
+}
+
+#if compiler(>=6)
+extension DeviceView: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeDeviceView: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> DeviceView {
+        return
+            try DeviceView(
+                id: FfiConverterString.read(from: &buf), 
+                name: FfiConverterString.read(from: &buf), 
+                kind: FfiConverterTypeDeviceKind.read(from: &buf), 
+                platform: FfiConverterString.read(from: &buf), 
+                createdAt: FfiConverterInt64.read(from: &buf), 
+                lastSeenAt: FfiConverterInt64.read(from: &buf), 
+                approval: FfiConverterBool.read(from: &buf), 
+                thisDevice: FfiConverterBool.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: DeviceView, into buf: inout [UInt8]) {
+        FfiConverterString.write(value.id, into: &buf)
+        FfiConverterString.write(value.name, into: &buf)
+        FfiConverterTypeDeviceKind.write(value.kind, into: &buf)
+        FfiConverterString.write(value.platform, into: &buf)
+        FfiConverterInt64.write(value.createdAt, into: &buf)
+        FfiConverterInt64.write(value.lastSeenAt, into: &buf)
+        FfiConverterBool.write(value.approval, into: &buf)
+        FfiConverterBool.write(value.thisDevice, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeDeviceView_lift(_ buf: RustBuffer) throws -> DeviceView {
+    return try FfiConverterTypeDeviceView.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeDeviceView_lower(_ value: DeviceView) -> RustBuffer {
+    return FfiConverterTypeDeviceView.lower(value)
 }
 
 
@@ -9749,6 +10090,374 @@ public func FfiConverterTypeSuggestionView_lower(_ value: SuggestionView) -> Rus
 
 
 /**
+ * One field of an item as the phone shows it.
+ */
+public struct VaultField: Equatable, Hashable {
+    /**
+     * What [`VaultFieldInput::key`] and `vault_reveal` call it: `username`, `password`, `notes`, `uris`,
+     * `private_key`, `number`, ..., or `custom:<name>` for a custom field.
+     */
+    public var key: String
+    public var label: String
+    /**
+     * The value of a field that is not secret; `None` for a secret one (`vault_reveal` gives it).
+     */
+    public var value: String?
+    public var secret: Bool
+    /**
+     * Several lines (notes, websites, a key).
+     */
+    public var multiline: Bool
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(
+        /**
+         * What [`VaultFieldInput::key`] and `vault_reveal` call it: `username`, `password`, `notes`, `uris`,
+         * `private_key`, `number`, ..., or `custom:<name>` for a custom field.
+         */key: String, label: String, 
+        /**
+         * The value of a field that is not secret; `None` for a secret one (`vault_reveal` gives it).
+         */value: String?, secret: Bool, 
+        /**
+         * Several lines (notes, websites, a key).
+         */multiline: Bool) {
+        self.key = key
+        self.label = label
+        self.value = value
+        self.secret = secret
+        self.multiline = multiline
+    }
+
+    
+
+    
+}
+
+#if compiler(>=6)
+extension VaultField: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeVaultField: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> VaultField {
+        return
+            try VaultField(
+                key: FfiConverterString.read(from: &buf), 
+                label: FfiConverterString.read(from: &buf), 
+                value: FfiConverterOptionString.read(from: &buf), 
+                secret: FfiConverterBool.read(from: &buf), 
+                multiline: FfiConverterBool.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: VaultField, into buf: inout [UInt8]) {
+        FfiConverterString.write(value.key, into: &buf)
+        FfiConverterString.write(value.label, into: &buf)
+        FfiConverterOptionString.write(value.value, into: &buf)
+        FfiConverterBool.write(value.secret, into: &buf)
+        FfiConverterBool.write(value.multiline, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeVaultField_lift(_ buf: RustBuffer) throws -> VaultField {
+    return try FfiConverterTypeVaultField.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeVaultField_lower(_ value: VaultField) -> RustBuffer {
+    return FfiConverterTypeVaultField.lower(value)
+}
+
+
+/**
+ * A field to set. An empty value clears it.
+ */
+public struct VaultFieldInput: Equatable, Hashable {
+    public var key: String
+    public var value: String
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(key: String, value: String) {
+        self.key = key
+        self.value = value
+    }
+
+    
+
+    
+}
+
+#if compiler(>=6)
+extension VaultFieldInput: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeVaultFieldInput: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> VaultFieldInput {
+        return
+            try VaultFieldInput(
+                key: FfiConverterString.read(from: &buf), 
+                value: FfiConverterString.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: VaultFieldInput, into buf: inout [UInt8]) {
+        FfiConverterString.write(value.key, into: &buf)
+        FfiConverterString.write(value.value, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeVaultFieldInput_lift(_ buf: RustBuffer) throws -> VaultFieldInput {
+    return try FfiConverterTypeVaultFieldInput.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeVaultFieldInput_lower(_ value: VaultFieldInput) -> RustBuffer {
+    return FfiConverterTypeVaultFieldInput.lower(value)
+}
+
+
+public struct VaultItemDetail: Equatable, Hashable {
+    public var id: String
+    public var name: String
+    public var kind: VaultItemKind
+    /**
+     * The fields that are set, in the order the item's kind has them; then the custom fields and the notes.
+     */
+    public var fields: [VaultField]
+    public var uses: [VaultUse]
+    /**
+     * Something to fix for the desktop app to find the item ("2 items are named OpenAI"), when there is one.
+     */
+    public var warning: String?
+    public var favorite: Bool
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(id: String, name: String, kind: VaultItemKind, 
+        /**
+         * The fields that are set, in the order the item's kind has them; then the custom fields and the notes.
+         */fields: [VaultField], uses: [VaultUse], 
+        /**
+         * Something to fix for the desktop app to find the item ("2 items are named OpenAI"), when there is one.
+         */warning: String?, favorite: Bool) {
+        self.id = id
+        self.name = name
+        self.kind = kind
+        self.fields = fields
+        self.uses = uses
+        self.warning = warning
+        self.favorite = favorite
+    }
+
+    
+
+    
+}
+
+#if compiler(>=6)
+extension VaultItemDetail: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeVaultItemDetail: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> VaultItemDetail {
+        return
+            try VaultItemDetail(
+                id: FfiConverterString.read(from: &buf), 
+                name: FfiConverterString.read(from: &buf), 
+                kind: FfiConverterTypeVaultItemKind.read(from: &buf), 
+                fields: FfiConverterSequenceTypeVaultField.read(from: &buf), 
+                uses: FfiConverterSequenceTypeVaultUse.read(from: &buf), 
+                warning: FfiConverterOptionString.read(from: &buf), 
+                favorite: FfiConverterBool.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: VaultItemDetail, into buf: inout [UInt8]) {
+        FfiConverterString.write(value.id, into: &buf)
+        FfiConverterString.write(value.name, into: &buf)
+        FfiConverterTypeVaultItemKind.write(value.kind, into: &buf)
+        FfiConverterSequenceTypeVaultField.write(value.fields, into: &buf)
+        FfiConverterSequenceTypeVaultUse.write(value.uses, into: &buf)
+        FfiConverterOptionString.write(value.warning, into: &buf)
+        FfiConverterBool.write(value.favorite, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeVaultItemDetail_lift(_ buf: RustBuffer) throws -> VaultItemDetail {
+    return try FfiConverterTypeVaultItemDetail.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeVaultItemDetail_lower(_ value: VaultItemDetail) -> RustBuffer {
+    return FfiConverterTypeVaultItemDetail.lower(value)
+}
+
+
+/**
+ * A new item, or the changes to one: only the fields given are changed.
+ */
+public struct VaultItemInput: Equatable, Hashable {
+    public var kind: VaultItemKind
+    public var name: String
+    public var fields: [VaultFieldInput]
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(kind: VaultItemKind, name: String, fields: [VaultFieldInput]) {
+        self.kind = kind
+        self.name = name
+        self.fields = fields
+    }
+
+    
+
+    
+}
+
+#if compiler(>=6)
+extension VaultItemInput: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeVaultItemInput: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> VaultItemInput {
+        return
+            try VaultItemInput(
+                kind: FfiConverterTypeVaultItemKind.read(from: &buf), 
+                name: FfiConverterString.read(from: &buf), 
+                fields: FfiConverterSequenceTypeVaultFieldInput.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: VaultItemInput, into buf: inout [UInt8]) {
+        FfiConverterTypeVaultItemKind.write(value.kind, into: &buf)
+        FfiConverterString.write(value.name, into: &buf)
+        FfiConverterSequenceTypeVaultFieldInput.write(value.fields, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeVaultItemInput_lift(_ buf: RustBuffer) throws -> VaultItemInput {
+    return try FfiConverterTypeVaultItemInput.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeVaultItemInput_lower(_ value: VaultItemInput) -> RustBuffer {
+    return FfiConverterTypeVaultItemInput.lower(value)
+}
+
+
+/**
+ * One item of the list.
+ */
+public struct VaultItemSummary: Equatable, Hashable {
+    public var id: String
+    public var name: String
+    public var kind: VaultItemKind
+    /**
+     * A login's username or website, a card's holder, an SSH key's fingerprint; empty when there is none.
+     */
+    public var subtitle: String
+    public var favorite: Bool
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(id: String, name: String, kind: VaultItemKind, 
+        /**
+         * A login's username or website, a card's holder, an SSH key's fingerprint; empty when there is none.
+         */subtitle: String, favorite: Bool) {
+        self.id = id
+        self.name = name
+        self.kind = kind
+        self.subtitle = subtitle
+        self.favorite = favorite
+    }
+
+    
+
+    
+}
+
+#if compiler(>=6)
+extension VaultItemSummary: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeVaultItemSummary: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> VaultItemSummary {
+        return
+            try VaultItemSummary(
+                id: FfiConverterString.read(from: &buf), 
+                name: FfiConverterString.read(from: &buf), 
+                kind: FfiConverterTypeVaultItemKind.read(from: &buf), 
+                subtitle: FfiConverterString.read(from: &buf), 
+                favorite: FfiConverterBool.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: VaultItemSummary, into buf: inout [UInt8]) {
+        FfiConverterString.write(value.id, into: &buf)
+        FfiConverterString.write(value.name, into: &buf)
+        FfiConverterTypeVaultItemKind.write(value.kind, into: &buf)
+        FfiConverterString.write(value.subtitle, into: &buf)
+        FfiConverterBool.write(value.favorite, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeVaultItemSummary_lift(_ buf: RustBuffer) throws -> VaultItemSummary {
+    return try FfiConverterTypeVaultItemSummary.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeVaultItemSummary_lower(_ value: VaultItemSummary) -> RustBuffer {
+    return FfiConverterTypeVaultItemSummary.lower(value)
+}
+
+
+/**
  * Everything the app needs to ask the platform for a passkey (to make one, or to use one).
  */
 public struct VaultPasskeyOptions: Equatable, Hashable {
@@ -9917,6 +10626,148 @@ public func FfiConverterTypeVaultPasskeyView_lift(_ buf: RustBuffer) throws -> V
 #endif
 public func FfiConverterTypeVaultPasskeyView_lower(_ value: VaultPasskeyView) -> RustBuffer {
     return FfiConverterTypeVaultPasskeyView.lower(value)
+}
+
+
+/**
+ * An SSH key made on the phone: its item, and the public half to put on servers.
+ */
+public struct VaultSshKey: Equatable, Hashable {
+    public var id: String
+    /**
+     * `ssh-ed25519 AAAA… name`, to paste into `authorized_keys` or a Git host's settings.
+     */
+    public var publicKey: String
+    /**
+     * `SHA256:…`.
+     */
+    public var fingerprint: String
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(id: String, 
+        /**
+         * `ssh-ed25519 AAAA… name`, to paste into `authorized_keys` or a Git host's settings.
+         */publicKey: String, 
+        /**
+         * `SHA256:…`.
+         */fingerprint: String) {
+        self.id = id
+        self.publicKey = publicKey
+        self.fingerprint = fingerprint
+    }
+
+    
+
+    
+}
+
+#if compiler(>=6)
+extension VaultSshKey: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeVaultSshKey: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> VaultSshKey {
+        return
+            try VaultSshKey(
+                id: FfiConverterString.read(from: &buf), 
+                publicKey: FfiConverterString.read(from: &buf), 
+                fingerprint: FfiConverterString.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: VaultSshKey, into buf: inout [UInt8]) {
+        FfiConverterString.write(value.id, into: &buf)
+        FfiConverterString.write(value.publicKey, into: &buf)
+        FfiConverterString.write(value.fingerprint, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeVaultSshKey_lift(_ buf: RustBuffer) throws -> VaultSshKey {
+    return try FfiConverterTypeVaultSshKey.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeVaultSshKey_lower(_ value: VaultSshKey) -> RustBuffer {
+    return FfiConverterTypeVaultSshKey.lower(value)
+}
+
+
+/**
+ * A way the desktop app uses the item: what to write, and where.
+ */
+public struct VaultUse: Equatable, Hashable {
+    /**
+     * `vault:OpenAI/password`, or an SSH key's fingerprint.
+     */
+    public var reference: String
+    /**
+     * "reins run --env and [[api]] secret".
+     */
+    public var hint: String
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(
+        /**
+         * `vault:OpenAI/password`, or an SSH key's fingerprint.
+         */reference: String, 
+        /**
+         * "reins run --env and [[api]] secret".
+         */hint: String) {
+        self.reference = reference
+        self.hint = hint
+    }
+
+    
+
+    
+}
+
+#if compiler(>=6)
+extension VaultUse: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeVaultUse: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> VaultUse {
+        return
+            try VaultUse(
+                reference: FfiConverterString.read(from: &buf), 
+                hint: FfiConverterString.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: VaultUse, into buf: inout [UInt8]) {
+        FfiConverterString.write(value.reference, into: &buf)
+        FfiConverterString.write(value.hint, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeVaultUse_lift(_ buf: RustBuffer) throws -> VaultUse {
+    return try FfiConverterTypeVaultUse.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeVaultUse_lower(_ value: VaultUse) -> RustBuffer {
+    return FfiConverterTypeVaultUse.lower(value)
 }
 
 
@@ -10512,6 +11363,98 @@ public func FfiConverterTypeCoreError_lift(_ buf: RustBuffer) throws -> CoreErro
 public func FfiConverterTypeCoreError_lower(_ value: CoreError) -> RustBuffer {
     return FfiConverterTypeCoreError.lower(value)
 }
+
+
+/**
+ * What a device signed in to the account is.
+ */
+
+public enum DeviceKind: Equatable, Hashable {
+    
+    /**
+     * A phone or tablet (the Reins app, or a Bitwarden app on it).
+     */
+    case phone
+    /**
+     * A Bitwarden desktop app or command line.
+     */
+    case computer
+    /**
+     * The web vault or a browser extension.
+     */
+    case browser
+    case other
+
+
+
+
+
+}
+
+#if compiler(>=6)
+extension DeviceKind: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeDeviceKind: FfiConverterRustBuffer {
+    typealias SwiftType = DeviceKind
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> DeviceKind {
+        let variant: Int32 = try readInt(&buf)
+        switch variant {
+        
+        case 1: return .phone
+        
+        case 2: return .computer
+        
+        case 3: return .browser
+        
+        case 4: return .other
+        
+        default: throw UniffiInternalError.unexpectedEnumCase
+        }
+    }
+
+    public static func write(_ value: DeviceKind, into buf: inout [UInt8]) {
+        switch value {
+        
+        
+        case .phone:
+            writeInt(&buf, Int32(1))
+        
+        
+        case .computer:
+            writeInt(&buf, Int32(2))
+        
+        
+        case .browser:
+            writeInt(&buf, Int32(3))
+        
+        
+        case .other:
+            writeInt(&buf, Int32(4))
+        
+        }
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeDeviceKind_lift(_ buf: RustBuffer) throws -> DeviceKind {
+    return try FfiConverterTypeDeviceKind.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeDeviceKind_lower(_ value: DeviceKind) -> RustBuffer {
+    return FfiConverterTypeDeviceKind.lower(value)
+}
+
 
 
 /**
@@ -11247,6 +12190,96 @@ public func FfiConverterTypeStartingPolicy_lift(_ buf: RustBuffer) throws -> Sta
 #endif
 public func FfiConverterTypeStartingPolicy_lower(_ value: StartingPolicy) -> RustBuffer {
     return FfiConverterTypeStartingPolicy.lower(value)
+}
+
+
+
+/**
+ * The kind of a vault item.
+ */
+
+public enum VaultItemKind: Equatable, Hashable {
+    
+    case login
+    case note
+    case card
+    case identity
+    case sshKey
+
+
+
+
+
+}
+
+#if compiler(>=6)
+extension VaultItemKind: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeVaultItemKind: FfiConverterRustBuffer {
+    typealias SwiftType = VaultItemKind
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> VaultItemKind {
+        let variant: Int32 = try readInt(&buf)
+        switch variant {
+        
+        case 1: return .login
+        
+        case 2: return .note
+        
+        case 3: return .card
+        
+        case 4: return .identity
+        
+        case 5: return .sshKey
+        
+        default: throw UniffiInternalError.unexpectedEnumCase
+        }
+    }
+
+    public static func write(_ value: VaultItemKind, into buf: inout [UInt8]) {
+        switch value {
+        
+        
+        case .login:
+            writeInt(&buf, Int32(1))
+        
+        
+        case .note:
+            writeInt(&buf, Int32(2))
+        
+        
+        case .card:
+            writeInt(&buf, Int32(3))
+        
+        
+        case .identity:
+            writeInt(&buf, Int32(4))
+        
+        
+        case .sshKey:
+            writeInt(&buf, Int32(5))
+        
+        }
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeVaultItemKind_lift(_ buf: RustBuffer) throws -> VaultItemKind {
+    return try FfiConverterTypeVaultItemKind.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeVaultItemKind_lower(_ value: VaultItemKind) -> RustBuffer {
+    return FfiConverterTypeVaultItemKind.lower(value)
 }
 
 
@@ -12254,6 +13287,31 @@ fileprivate struct FfiConverterSequenceTypeDeviceEvent: FfiConverterRustBuffer {
 #if swift(>=5.8)
 @_documentation(visibility: private)
 #endif
+fileprivate struct FfiConverterSequenceTypeDeviceView: FfiConverterRustBuffer {
+    typealias SwiftType = [DeviceView]
+
+    public static func write(_ value: [DeviceView], into buf: inout [UInt8]) {
+        let len = Int32(value.count)
+        writeInt(&buf, len)
+        for item in value {
+            FfiConverterTypeDeviceView.write(item, into: &buf)
+        }
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> [DeviceView] {
+        let len: Int32 = try readInt(&buf)
+        var seq = [DeviceView]()
+        seq.reserveCapacity(Int(len))
+        for _ in 0 ..< len {
+            seq.append(try FfiConverterTypeDeviceView.read(from: &buf))
+        }
+        return seq
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
 fileprivate struct FfiConverterSequenceTypeGitCommitView: FfiConverterRustBuffer {
     typealias SwiftType = [GitCommitView]
 
@@ -12604,6 +13662,81 @@ fileprivate struct FfiConverterSequenceTypeSmsThread: FfiConverterRustBuffer {
 #if swift(>=5.8)
 @_documentation(visibility: private)
 #endif
+fileprivate struct FfiConverterSequenceTypeVaultField: FfiConverterRustBuffer {
+    typealias SwiftType = [VaultField]
+
+    public static func write(_ value: [VaultField], into buf: inout [UInt8]) {
+        let len = Int32(value.count)
+        writeInt(&buf, len)
+        for item in value {
+            FfiConverterTypeVaultField.write(item, into: &buf)
+        }
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> [VaultField] {
+        let len: Int32 = try readInt(&buf)
+        var seq = [VaultField]()
+        seq.reserveCapacity(Int(len))
+        for _ in 0 ..< len {
+            seq.append(try FfiConverterTypeVaultField.read(from: &buf))
+        }
+        return seq
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+fileprivate struct FfiConverterSequenceTypeVaultFieldInput: FfiConverterRustBuffer {
+    typealias SwiftType = [VaultFieldInput]
+
+    public static func write(_ value: [VaultFieldInput], into buf: inout [UInt8]) {
+        let len = Int32(value.count)
+        writeInt(&buf, len)
+        for item in value {
+            FfiConverterTypeVaultFieldInput.write(item, into: &buf)
+        }
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> [VaultFieldInput] {
+        let len: Int32 = try readInt(&buf)
+        var seq = [VaultFieldInput]()
+        seq.reserveCapacity(Int(len))
+        for _ in 0 ..< len {
+            seq.append(try FfiConverterTypeVaultFieldInput.read(from: &buf))
+        }
+        return seq
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+fileprivate struct FfiConverterSequenceTypeVaultItemSummary: FfiConverterRustBuffer {
+    typealias SwiftType = [VaultItemSummary]
+
+    public static func write(_ value: [VaultItemSummary], into buf: inout [UInt8]) {
+        let len = Int32(value.count)
+        writeInt(&buf, len)
+        for item in value {
+            FfiConverterTypeVaultItemSummary.write(item, into: &buf)
+        }
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> [VaultItemSummary] {
+        let len: Int32 = try readInt(&buf)
+        var seq = [VaultItemSummary]()
+        seq.reserveCapacity(Int(len))
+        for _ in 0 ..< len {
+            seq.append(try FfiConverterTypeVaultItemSummary.read(from: &buf))
+        }
+        return seq
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
 fileprivate struct FfiConverterSequenceTypeVaultPasskeyView: FfiConverterRustBuffer {
     typealias SwiftType = [VaultPasskeyView]
 
@@ -12621,6 +13754,31 @@ fileprivate struct FfiConverterSequenceTypeVaultPasskeyView: FfiConverterRustBuf
         seq.reserveCapacity(Int(len))
         for _ in 0 ..< len {
             seq.append(try FfiConverterTypeVaultPasskeyView.read(from: &buf))
+        }
+        return seq
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+fileprivate struct FfiConverterSequenceTypeVaultUse: FfiConverterRustBuffer {
+    typealias SwiftType = [VaultUse]
+
+    public static func write(_ value: [VaultUse], into buf: inout [UInt8]) {
+        let len = Int32(value.count)
+        writeInt(&buf, len)
+        for item in value {
+            FfiConverterTypeVaultUse.write(item, into: &buf)
+        }
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> [VaultUse] {
+        let len: Int32 = try readInt(&buf)
+        var seq = [VaultUse]()
+        seq.reserveCapacity(Int(len))
+        for _ in 0 ..< len {
+            seq.append(try FfiConverterTypeVaultUse.read(from: &buf))
         }
         return seq
     }
@@ -12872,6 +14030,9 @@ private let initializationResult: InitializationResult = {
     if (uniffi_reins_core_checksum_method_reinscore_deny() != 24458) {
         return InitializationResult.apiChecksumMismatch
     }
+    if (uniffi_reins_core_checksum_method_reinscore_devices() != 30266) {
+        return InitializationResult.apiChecksumMismatch
+    }
     if (uniffi_reins_core_checksum_method_reinscore_download_model() != 52176) {
         return InitializationResult.apiChecksumMismatch
     }
@@ -12930,6 +14091,9 @@ private let initializationResult: InitializationResult = {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_reins_core_checksum_method_reinscore_pending() != 41948) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_reins_core_checksum_method_reinscore_phone_key_fingerprint() != 65272) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_reins_core_checksum_method_reinscore_register_device() != 53382) {
@@ -13001,6 +14165,9 @@ private let initializationResult: InitializationResult = {
     if (uniffi_reins_core_checksum_method_reinscore_set_starting_policy() != 46624) {
         return InitializationResult.apiChecksumMismatch
     }
+    if (uniffi_reins_core_checksum_method_reinscore_sign_out_device() != 32606) {
+        return InitializationResult.apiChecksumMismatch
+    }
     if (uniffi_reins_core_checksum_method_reinscore_sso_begin() != 4525) {
         return InitializationResult.apiChecksumMismatch
     }
@@ -13019,10 +14186,31 @@ private let initializationResult: InitializationResult = {
     if (uniffi_reins_core_checksum_method_reinscore_unlock_with_vault_passkey() != 6226) {
         return InitializationResult.apiChecksumMismatch
     }
+    if (uniffi_reins_core_checksum_method_reinscore_vault_create() != 43120) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_reins_core_checksum_method_reinscore_vault_delete() != 7618) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_reins_core_checksum_method_reinscore_vault_generate_ssh_key() != 6874) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_reins_core_checksum_method_reinscore_vault_item() != 43231) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_reins_core_checksum_method_reinscore_vault_items() != 26558) {
+        return InitializationResult.apiChecksumMismatch
+    }
     if (uniffi_reins_core_checksum_method_reinscore_vault_passkey_options() != 35373) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_reins_core_checksum_method_reinscore_vault_passkeys() != 30031) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_reins_core_checksum_method_reinscore_vault_reveal() != 31519) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_reins_core_checksum_method_reinscore_vault_update() != 22034) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_reins_core_checksum_method_reinscore_mcp_add() != 53705) {

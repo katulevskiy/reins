@@ -32,6 +32,16 @@ enum Route: Hashable {
     case sounds
     /// Settings > Vault passkeys.
     case vaultPasskeys
+    /// Settings > Devices: the account's phones (sign out a lost one) and computers.
+    case devices
+    /// Integrations > Password vault > Open the vault.
+    case vault
+    /// Vault > Add: what kind of item.
+    case vaultAdd
+    /// One vault item.
+    case vaultItem(String)
+    /// A new vault item of a kind (`id` nil), or the item `id` changed.
+    case vaultEdit(id: String?, newItem: NewVaultItem?)
     /// One Autopilot profile.
     case autopilotProfile(String)
     /// Autopilot's "Try it", for a profile (nil = the default one).

@@ -146,6 +146,7 @@ struct AccountsScreen: View {
 private struct AddAccountControls: View {
     var service: ServiceView
     var accounts: AccountsModel
+    @Environment(AppModel.self) private var model
 
     var body: some View {
         switch service.kind {
@@ -177,6 +178,16 @@ private struct AddAccountControls: View {
                 GitHubConnect(accounts: accounts)
             }
         case "vault":
+            if !service.accounts.isEmpty {
+                VStack(alignment: .leading, spacing: 8) {
+                    ActionButton(title: "Open the vault", symbol: "key.horizontal") { model.push(.vault) }
+                        .accessibilityIdentifier("openVault")
+                    Text("See, add and change your API keys, logins and SSH keys. reins run, the API proxy and the SSH agent use them by name.")
+                        .font(RFont.sans(13))
+                        .foregroundStyle(Palette.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+            }
             if service.accounts.isEmpty {
                 SecretForm(
                     placeholder: "Master password",
