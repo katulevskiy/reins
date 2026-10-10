@@ -96,6 +96,79 @@ final class WidgetsTests: XCTestCase {
         XCTAssertNil(IntentBridge.lockdownTarget(on: false, mode: .bypass, base: .auto), "off when not locked down changes nothing")
     }
 
+    @MainActor
+    func testPauseAndResumeAreLockdownOnAndOff() async throws {
+        let model = AppModel(core: DemoReinsCore(signedIn: true, syncCap: 0.3), feedback: NoFeedback.shared, authenticator: TrustingAuthenticator(), demo: true)
+        await model.refreshSession()
+        IntentBridge.model = model
+        defer { IntentBridge.model = nil }
+        let nothingToResume = try await IntentBridge.endLockdown()
+        XCTAssertFalse(nothingToResume, "not paused: nothing to resume")
+        try await IntentBridge.setLockdown(true)
+        XCTAssertEqual(model.autopilot?.mode, .lockdown)
+        let resumed = try await IntentBridge.endLockdown()
+        XCTAssertTrue(resumed)
+        XCTAssertNotEqual(model.autopilot?.mode, .lockdown)
+    }
+
+    func testIntentsSetEveryModeButBypass() {
+        for option in [AutopilotModeOption.manual, .assisted, .auto, .lockdown] {
+            XCTAssertEqual(AutopilotModeOption(option.mode), option)
+        }
+        XCTAssertNil(AutopilotModeOption(AutopilotMode.bypass))
+    }
+
+    func testAFocusOffersOnlyTheStricterModes() {
+        XCTAssertEqual(FocusModeOption.allCases.map(\.option), [.manual, .assisted, .lockdown], "never Auto, never Bypass")
+    }
+
+    @MainActor
+    func testAFocusSetsTheModeAndPutsTheOldOneBack() async throws {
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: "focus-tests"))
+        defaults.removePersistentDomain(forName: "focus-tests")
+        defer { defaults.removePersistentDomain(forName: "focus-tests") }
+        let model = AppModel(core: DemoReinsCore(signedIn: true, syncCap: 0.3), feedback: NoFeedback.shared, authenticator: TrustingAuthenticator(), demo: true)
+        await model.refreshSession()
+        IntentBridge.model = model
+        defer { IntentBridge.model = nil }
+        try await IntentBridge.setMode(.assisted)
+        try await IntentBridge.applyFocus(.lockdown, defaults: defaults)
+        XCTAssertEqual(model.autopilot?.mode, .lockdown)
+        // A second Focus while the first is on keeps the mode from before both.
+        try await IntentBridge.applyFocus(.manual, defaults: defaults)
+        try await IntentBridge.applyFocus(nil, defaults: defaults)
+        XCTAssertEqual(model.autopilot?.mode, .assisted)
+    }
+
+    @MainActor
+    func testAFocusNeverLoosensAutopilotNorUndoesTheUsersOwnChoice() async throws {
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: "focus-tests-2"))
+        defaults.removePersistentDomain(forName: "focus-tests-2")
+        defer { defaults.removePersistentDomain(forName: "focus-tests-2") }
+        let model = AppModel(core: DemoReinsCore(signedIn: true, syncCap: 0.3), feedback: NoFeedback.shared, authenticator: TrustingAuthenticator(), demo: true)
+        await model.refreshSession()
+        IntentBridge.model = model
+        defer { IntentBridge.model = nil }
+        try await IntentBridge.setMode(.manual)
+        // Nobody confirms a Focus as it starts: Auto is refused, and nothing is remembered.
+        do {
+            try await IntentBridge.applyFocus(.auto, defaults: defaults)
+            XCTFail("a Focus set Auto")
+        } catch {}
+        XCTAssertEqual(model.autopilot?.mode, .manual)
+        XCTAssertNil(defaults.string(forKey: "focus.previousMode"))
+        // The user locks down during the Focus: when it ends, Lockdown stays.
+        try await IntentBridge.applyFocus(.assisted, defaults: defaults)
+        try await IntentBridge.setMode(.lockdown)
+        try await IntentBridge.applyFocus(nil, defaults: defaults)
+        XCTAssertEqual(model.autopilot?.mode, .lockdown)
+        // Locked down already: a Focus asking for Manual does not loosen it, and its end changes nothing.
+        try await IntentBridge.applyFocus(.manual, defaults: defaults)
+        XCTAssertEqual(model.autopilot?.mode, .lockdown)
+        try await IntentBridge.applyFocus(nil, defaults: defaults)
+        XCTAssertEqual(model.autopilot?.mode, .lockdown)
+    }
+
     // MARK: Activity
 
     func testAgo() {
@@ -120,6 +193,18 @@ final class WidgetsTests: XCTestCase {
         XCTAssertEqual(state?.expiresAt, Date(timeIntervalSince1970: TimeInterval(now + 40)))
         XCTAssertEqual(Glance.approvalState([b, a], now: now + 41)?.itemId, "pair1")
         XCTAssertNil(Glance.approvalState([b, a], now: now + 600), "nothing waits: the activity ends")
+    }
+
+    func testARoutineRequestCarriesApproveToTheLiveActivity() {
+        var routine = item("req1", created: now - 5, expires: now + 40)
+        routine.quick = true
+        XCTAssertEqual(Glance.approvalState([routine], now: now)?.quick, true)
+        // Asked every time (or written before the field existed): Deny and Review only.
+        XCTAssertNotEqual(Glance.approvalState([item("req2", created: now - 5, expires: now + 40)], now: now)?.quick, true)
+    }
+
+    func testTheApproveIntentTargetsTheRequest() {
+        XCTAssertEqual(ApproveQuickIntent(requestId: "req1").requestId, "req1")
     }
 
     func testBypassLengthIsTheShortestChoiceThatFits() {

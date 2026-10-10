@@ -57,33 +57,50 @@ struct ActivityModePill: View {
     var action: () -> Void
 
     var body: some View {
+        Button(action: action) { ModePillLabel(settings: settings) }
+            .buttonStyle(.plain)
+            .modePillGlass(settings)
+    }
+}
+
+/// What the mode pill shows: the mode's symbol and name, or a pulse and the time left while a bypass runs.
+struct ModePillLabel: View {
+    var settings: AutopilotSettings
+
+    var body: some View {
         let mode = settings.mode
         let tint = ModeLook.tint(mode)
         let strong = mode == .bypass
-        Button(action: action) {
-            HStack(spacing: 6) {
-                if strong {
-                    PulseDot()
-                } else {
-                    Image(systemName: ModeLook.symbol(mode)).font(.system(size: 13, weight: .semibold))
-                }
-                if strong, let until = settings.bypassUntil {
-                    LiveClock(interval: 1) { now in
-                        Text(ModeLook.clock(until: until, now: Int64(now))).font(RFont.mono(14, .semibold)).monospacedDigit()
-                    }
-                } else {
-                    Text(ModeLook.name(mode)).font(RFont.sans(15, .medium))
-                }
+        HStack(spacing: 6) {
+            if strong {
+                PulseDot()
+            } else {
+                Image(systemName: ModeLook.symbol(mode)).font(.system(size: 13, weight: .semibold))
             }
-            .lineLimit(1)
-            .foregroundStyle(strong ? Color.white : (mode == .manual ? Palette.secondary : tint))
-            .padding(.horizontal, 13)
-            .padding(.vertical, 9)
+            if strong, let until = settings.bypassUntil {
+                LiveClock(interval: 1) { now in
+                    Text(ModeLook.clock(until: until, now: Int64(now))).font(RFont.mono(14, .semibold)).monospacedDigit()
+                }
+            } else {
+                Text(ModeLook.name(mode)).font(RFont.sans(15, .medium))
+            }
         }
-        .buttonStyle(.plain)
-        .glassEffect(.regular.tint(strong ? Palette.danger : tint.opacity(mode == .manual ? 0.06 : 0.16)).interactive(), in: Capsule())
-        .accessibilityLabel("Autopilot: \(ModeLook.name(mode))")
-        .accessibilityIdentifier("modePill")
+        .lineLimit(1)
+        .foregroundStyle(strong ? Color.white : (mode == .manual ? Palette.secondary : tint))
+        .padding(.horizontal, 13)
+        .frame(height: HeaderControl.height)
+    }
+}
+
+extension View {
+    /// The mode pill's glass: red during a bypass, the mode's tint otherwise, with its label and identifier.
+    func modePillGlass(_ settings: AutopilotSettings) -> some View {
+        let mode = settings.mode
+        let tint = ModeLook.tint(mode)
+        let strong = mode == .bypass
+        return glassEffect(.regular.tint(strong ? Palette.danger : tint.opacity(mode == .manual ? 0.06 : 0.16)).interactive(), in: Capsule())
+            .accessibilityLabel("Autopilot: \(ModeLook.name(mode))")
+            .accessibilityIdentifier("modePill")
     }
 }
 
@@ -183,7 +200,7 @@ struct EntryAutopilotSection: View {
                     }
                 }
                 if thanked {
-                    Banner("Thanks. Autopilot learned from this and asks you about requests like it again.")
+                    Banner("Learned. It asks about these again.")
                         .accessibilityIdentifier("corrected")
                 } else if note?.correctable == true {
                     Button {
@@ -211,8 +228,7 @@ struct EntryAutopilotSection: View {
             }
             Button("Cancel", role: .cancel) {}
         } message: {
-            Text((should == .deny ? "Autopilot remembers it as a denial" : "Autopilot remembers it as an approval")
-                + ", more strongly than an ordinary answer, and asks you about this kind of request again until it has learned more. What was done stays done.")
+            Text("Autopilot learns from it. What was done stays done.")
         }
         .presentationFeedback(asking)
     }

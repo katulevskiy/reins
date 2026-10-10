@@ -56,11 +56,7 @@ struct GroupCard<Content: View>: View {
                 .background(Palette.elevated, in: RoundedRectangle(cornerRadius: 18, style: .continuous))
                 .clipShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
             if let footer {
-                Text(footer)
-                    .font(RFont.sans(12.5))
-                    .foregroundStyle(Palette.tertiary)
-                    .padding(.horizontal, 16)
-                    .padding(.top, 8)
+                GroupFooter(footer).padding(.horizontal, 12).padding(.top, 4)
             }
         }
         .padding(.horizontal, 16)

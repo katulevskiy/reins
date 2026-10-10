@@ -25,7 +25,7 @@ final class SettingsTextTests: XCTestCase {
     }
 
     func testTheAutopilotRowNamesTheModeAndTheModel() async throws {
-        XCTAssertEqual(SettingsText.autopilotSummary(nil), "Answers requests for you, on this phone")
+        XCTAssertEqual(SettingsText.autopilotSummary(nil), "Manual")
         let core = DemoReinsCore(signedIn: true, modelInstalled: false, syncCap: 0.3)
         var s = try await core.autopilotSettings()
         s.mode = .manual

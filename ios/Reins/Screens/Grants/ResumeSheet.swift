@@ -168,7 +168,7 @@ struct ResumeSheet: View {
                         .accessibilityIdentifier("resumeSubject")
                 }
             } else {
-                Text("This grant is tied to specific emails or other limits, so it can only come back as it was.")
+                Text("Comes back as it was.")
                     .font(RFont.sans(13.5))
                     .foregroundStyle(Palette.tertiary)
                     .padding(.top, 14)

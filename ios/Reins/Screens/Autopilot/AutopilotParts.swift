@@ -282,10 +282,13 @@ struct ModePicker: View {
                                 .background(Palette.controlFill, in: Capsule())
                         }
                     }
-                    Text(AutopilotText.line(mode))
-                        .font(RFont.sans(13))
-                        .foregroundStyle(Palette.secondary)
-                        .fixedSize(horizontal: false, vertical: true)
+                    // Only the mode in force says what it does; the hero above says it too.
+                    if on {
+                        Text(AutopilotText.line(mode))
+                            .font(RFont.sans(13))
+                            .foregroundStyle(Palette.secondary)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
                 }
                 Spacer(minLength: 10)
                 RadioDot(selected: on, tint: tint)

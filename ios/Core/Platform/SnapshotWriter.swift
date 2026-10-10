@@ -25,7 +25,8 @@ enum SnapshotWriter {
             service: p.service,
             createdAt: p.createdAt,
             expiresAt: p.waitUntil ?? (p.createdAt + 600),
-            suggestion: p.suggestion
+            suggestion: p.suggestion,
+            quick: p.kind == .request && p.quick
         )
     }
 

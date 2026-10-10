@@ -73,7 +73,10 @@ struct VaultPasskeysScreen: View {
     @State private var vm = VaultPasskeysModel()
     @State private var removing: VaultPasskeyView?
 
-    var body: some View {
+    // The code, the unlock form, the passkeys: hidden in the app switcher and while the screen is recorded.
+    var body: some View { screen.privacyCover() }
+
+    @ViewBuilder private var screen: some View {
         List {
             Section {
                 switch vm.passkeys {
@@ -132,7 +135,7 @@ struct VaultPasskeysScreen: View {
                 Task { await vm.remove(passkey.credentialId, model) }
             }
         } message: { _ in
-            Text("It no longer opens your vault. It stays in your password manager until you delete it there.")
+            Text("It stops opening your vault.")
         }
         .presentationFeedback(removing != nil)
     }

@@ -187,6 +187,11 @@ struct RouteView: View {
         switch route {
         case .sounds: SoundsScreen()
         case .vaultPasskeys: VaultPasskeysScreen()
+        case .devices: DevicesScreen()
+        case .vault: VaultScreen()
+        case .vaultAdd: VaultAddScreen()
+        case let .vaultItem(id): VaultItemScreen(id: id)
+        case let .vaultEdit(id, newItem): VaultEditScreen(id: id, newItem: newItem)
         case .autopilot: AutopilotScreen()
         case let .autopilotProfile(id): ProfileScreen(profileId: id)
         case let .tryIt(id): TryItScreen(profileId: id)

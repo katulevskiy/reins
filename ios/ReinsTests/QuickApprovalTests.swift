@@ -17,9 +17,23 @@ final class QuickApprovalTests: XCTestCase {
             item("r4", conn: "c2", label: "Codex", quick: true),
         ])
         XCTAssertEqual(bursts, [Burst(connectionId: "c1", label: "Claude", quick: ["r1", "r2"], all: ["r1", "r2", "r3"])])
-        XCTAssertEqual(bursts[0].title, "Claude asked 3 times")
-        XCTAssertEqual(bursts[0].heldNote, "1 of them needs a closer look and stays in the list.")
+        XCTAssertEqual(bursts[0].title, "Claude · 3 waiting")
+        XCTAssertEqual(bursts[0].heldNote, "1 needs a closer look")
         XCTAssertEqual(Burst.of([item("r1", quick: true), item("r2", quick: false)]), [])
+    }
+
+    func testBurstsOfSeveralAisAreOneBarOfTheirRoutineRequests() {
+        let pending = [
+            item("r1", quick: true), item("r2", quick: true), item("r3", quick: false),
+            item("r4", conn: "c2", label: "Codex", quick: true), item("r5", conn: "c2", label: "Codex", quick: true),
+        ]
+        let bar = Burst.bar(pending)
+        XCTAssertEqual(bar, Burst(connectionId: "", label: "Claude and Codex", quick: ["r1", "r2", "r4", "r5"], all: ["r1", "r2", "r4", "r5"], ais: 2))
+        XCTAssertEqual(bar?.title, "4 routine · Claude and Codex", "says who asks")
+        XCTAssertEqual(Burst.names(["A", "B", "C", "D"]), "A, B and 2 more")
+        XCTAssertNil(bar?.heldNote, "what needs a look is not in it")
+        XCTAssertEqual(Burst.bar(Array(pending.prefix(3)))?.connectionId, "c1", "one AI: its own bar")
+        XCTAssertNil(Burst.bar([item("r1", quick: true)]))
     }
 
     func testTheShortcutSaysForHowLongAndWhat() {

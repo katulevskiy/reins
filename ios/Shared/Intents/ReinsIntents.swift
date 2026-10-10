@@ -47,6 +47,112 @@ struct LockDownIntent: LiveActivityIntent {
     }
 }
 
+/// "Resume Reins": Lockdown off, back to the mode it interrupted, from Siri, Shortcuts or the Action button. Requests
+/// get through again, so it needs an unlocked phone.
+struct EndLockdownIntent: LiveActivityIntent {
+    static var title: LocalizedStringResource = "Resume"
+    static var description = IntentDescription("Ends Lockdown: your AIs' requests wait for you again, as before it.")
+    static var authenticationPolicy: IntentAuthenticationPolicy = .requiresAuthentication
+
+    func perform() async throws -> some IntentResult & ProvidesDialog {
+        #if REINS_APP
+        let ended = try await IntentBridge.endLockdown()
+        return .result(dialog: ended ? "Reins is back on. Requests wait for you again." : "Reins was not paused.")
+        #else
+        return .result(dialog: "Reins is back on.")
+        #endif
+    }
+}
+
+/// The Autopilot modes Siri, Shortcuts and Focus can set. Bypass is left out: it approves nearly everything, so it is
+/// switched on in the app, for a set time, after Face ID.
+enum AutopilotModeOption: String, AppEnum {
+    case manual, assisted, auto, lockdown
+
+    static var typeDisplayRepresentation: TypeDisplayRepresentation = "Autopilot mode"
+    static var caseDisplayRepresentations: [AutopilotModeOption: DisplayRepresentation] = [
+        .manual: "Manual",
+        .assisted: "Assisted",
+        .auto: "Auto",
+        .lockdown: "Lockdown",
+    ]
+
+    var title: String {
+        switch self {
+        case .manual: "Manual"
+        case .assisted: "Assisted"
+        case .auto: "Auto"
+        case .lockdown: "Lockdown"
+        }
+    }
+}
+
+/// "Set Reins to Assisted": Autopilot's mode for every AI, from Siri or Shortcuts. A looser mode lets requests
+/// through, so it needs an unlocked phone.
+struct SetAutopilotModeIntent: LiveActivityIntent {
+    static var title: LocalizedStringResource = "Set Autopilot mode"
+    static var description = IntentDescription("Sets Autopilot's mode for every AI: Manual, Assisted, Auto or Lockdown.")
+    static var authenticationPolicy: IntentAuthenticationPolicy = .requiresAuthentication
+
+    @Parameter(title: "Mode")
+    var mode: AutopilotModeOption
+
+    init() {}
+
+    init(mode: AutopilotModeOption) {
+        self.mode = mode
+    }
+
+    func perform() async throws -> some IntentResult & ProvidesDialog {
+        #if REINS_APP
+        try await IntentBridge.setMode(mode)
+        #endif
+        return .result(dialog: "Autopilot is set to \(mode.title).")
+    }
+}
+
+#if REINS_APP
+/// The modes a Focus may pick: the stricter ones only, so its picker never offers Auto (which `applyFocus` refuses).
+enum FocusModeOption: String, AppEnum {
+    case manual, assisted, lockdown
+
+    static var typeDisplayRepresentation: TypeDisplayRepresentation = "Autopilot mode"
+    static var caseDisplayRepresentations: [FocusModeOption: DisplayRepresentation] = [
+        .manual: "Manual",
+        .assisted: "Assisted",
+        .lockdown: "Lockdown",
+    ]
+
+    var option: AutopilotModeOption {
+        switch self {
+        case .manual: .manual
+        case .assisted: .assisted
+        case .lockdown: .lockdown
+        }
+    }
+}
+
+/// A Focus filter: while the Focus is on (Sleep, Driving, Work, ...), Autopilot is in the mode picked here (Manual,
+/// Assisted or Lockdown: a Focus only makes it stricter); when it ends, the mode from before comes back unless the
+/// user changed it meanwhile. The system runs it again with no mode when the Focus ends.
+struct ReinsFocusFilter: SetFocusFilterIntent {
+    static var title: LocalizedStringResource = "Set Autopilot mode"
+    static var description: IntentDescription? = IntentDescription("While this Focus is on, Reins uses the Autopilot mode you pick: Manual, Assisted or Lockdown. When it ends, the mode from before comes back.")
+
+    @Parameter(title: "Mode")
+    var mode: FocusModeOption?
+
+    var displayRepresentation: DisplayRepresentation {
+        DisplayRepresentation(title: mode.map { "Autopilot: \($0.option.title)" } ?? "Autopilot unchanged")
+    }
+
+    func perform() async throws -> some IntentResult {
+        try await IntentBridge.applyFocus(mode?.option)
+        return .result()
+    }
+}
+#endif
+
 /// Ends every running bypass: the Bypass Live Activity's Stop, the Autopilot widget, the control, Siri.
 struct StopBypassIntent: LiveActivityIntent {
     static var title: LocalizedStringResource = "Stop the bypass"
@@ -80,6 +186,30 @@ struct DenyRequestIntent: LiveActivityIntent {
     func perform() async throws -> some IntentResult {
         #if REINS_APP
         try await IntentBridge.deny(requestId)
+        #endif
+        return .result()
+    }
+}
+
+/// "Approve" on the requests Live Activity: the notification's one-tap answer for a routine request (the core refuses
+/// anything that is asked every time). Like the notification's Approve, it needs an unlocked phone.
+struct ApproveQuickIntent: LiveActivityIntent {
+    static var title: LocalizedStringResource = "Approve request"
+    static var authenticationPolicy: IntentAuthenticationPolicy = .requiresAuthentication
+    static var isDiscoverable = false
+
+    @Parameter(title: "Request")
+    var requestId: String
+
+    init() {}
+
+    init(requestId: String) {
+        self.requestId = requestId
+    }
+
+    func perform() async throws -> some IntentResult {
+        #if REINS_APP
+        try await IntentBridge.approveQuick(requestId)
         #endif
         return .result()
     }
@@ -170,14 +300,27 @@ enum ReinsIntentError: Error, CustomLocalizedStringResourceConvertible {
 }
 
 #if REINS_APP
-/// "Lock down Reins", "Stop the Reins bypass", "Show what is waiting in Reins".
+/// "Lock down Reins" (also "Pause Reins": Lockdown is how the phone pauses every AI), "Resume Reins", "Stop the Reins
+/// bypass", "Show what is waiting in Reins".
 struct ReinsShortcuts: AppShortcutsProvider {
     static var appShortcuts: [AppShortcut] {
         AppShortcut(
             intent: LockDownIntent(),
-            phrases: ["Lock down \(.applicationName)", "Turn on \(.applicationName) lockdown"],
+            phrases: ["Lock down \(.applicationName)", "Turn on \(.applicationName) lockdown", "Pause \(.applicationName)"],
             shortTitle: "Lock down",
             systemImageName: "lock.fill"
+        )
+        AppShortcut(
+            intent: EndLockdownIntent(),
+            phrases: ["Resume \(.applicationName)", "End \(.applicationName) lockdown"],
+            shortTitle: "Resume",
+            systemImageName: "lock.open.fill"
+        )
+        AppShortcut(
+            intent: SetAutopilotModeIntent(),
+            phrases: ["Set \(.applicationName) to \(\.$mode)", "Switch \(.applicationName) to \(\.$mode)"],
+            shortTitle: "Autopilot mode",
+            systemImageName: "dial.medium"
         )
         AppShortcut(
             intent: StopBypassIntent(),

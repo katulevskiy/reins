@@ -22,7 +22,7 @@ struct DeleteAccountSheet: View {
                     .font(RFont.sans(26, .semibold))
                     .foregroundStyle(Palette.text)
                     .accessibilityAddTraits(.isHeader)
-                Text("This deletes your Reins account for good. It cannot be undone.")
+                Text("Gone for good. Can't be undone.")
                     .font(RFont.sans(15))
                     .foregroundStyle(Palette.secondary)
                     .fixedSize(horizontal: false, vertical: true)

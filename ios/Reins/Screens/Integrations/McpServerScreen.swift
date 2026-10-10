@@ -66,7 +66,7 @@ struct McpServerScreen: View {
                             .accessibilityIdentifier("mcpServerError")
                     }
                     if server.status == "needs_sign_in" {
-                        Text("This server wants you to sign in before its tools can be used.")
+                        Text("Sign in to use its tools.")
                             .font(RFont.sans(14))
                             .foregroundStyle(Palette.secondary)
                             .fixedSize(horizontal: false, vertical: true)
@@ -87,7 +87,7 @@ struct McpServerScreen: View {
                 Section {
                     VStack(spacing: 10) {
                         if mcp?.signingIn == serverId {
-                            IntegrationBanner(text: "Sign in on the page that opened. When you are done there, Reins comes back by itself.")
+                            IntegrationBanner(text: "Finish signing in on the page that opened.")
                                 .accessibilityIdentifier("mcpSigningIn")
                         }
                         if let error = mcp?.error {
@@ -101,7 +101,7 @@ struct McpServerScreen: View {
 
             Section {
                 if server.tools.isEmpty {
-                    Text(server.status == "ok" ? "This server has no tools." : "The tools show up once the server can be reached.")
+                    Text(server.status == "ok" ? "This server has no tools." : "No tools yet.")
                         .font(RFont.sans(14.5))
                         .foregroundStyle(Palette.secondary)
                         .padding(.vertical, 6)
@@ -151,7 +151,7 @@ struct McpServerScreen: View {
             }
             Button("Cancel", role: .cancel) {}
         } message: {
-            Text("Your AIs lose its tools, its sign-in is forgotten on this phone, and the permissions given for it are deleted.")
+            Text("Its tools, sign-in and permissions go.")
         }
         .presentationFeedback(removing)
     }

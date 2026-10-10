@@ -41,7 +41,7 @@ enum SettingsText {
 
     /// What the Autopilot row says: the mode, and whether the model is here.
     static func autopilotSummary(_ s: AutopilotSettings?) -> String {
-        guard let s else { return "Answers requests for you, on this phone" }
+        guard let s else { return "Manual" }
         let model = switch s.model.state {
         case .installed: "model on this phone"
         case .downloading: "downloading the model"
@@ -73,8 +73,8 @@ enum SettingsText {
     /// What the Vault passkeys row says: how many there are (`count` nil while unknown).
     static func passkeysSummary(_ count: Int?) -> String {
         switch count {
-        case nil: "Unlock your vault on a new phone"
-        case 0: "None: add one to unlock on a new phone"
+        case nil: "Not set up"
+        case 0: "None"
         case 1: "1 passkey"
         case let n?: "\(n) passkeys"
         }

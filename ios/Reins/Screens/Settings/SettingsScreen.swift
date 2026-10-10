@@ -21,7 +21,12 @@ struct SettingsScreen: View {
             ApprovalDeviceGroup()
             SettingsAutopilotGroup()
             ConnectionsGroup()
+            NotificationsGroup()
             NavigationGroups()
+            HelpGroup()
+            #if DEBUG
+            DeveloperGroup()
+            #endif
             VersionGroup()
             SessionGroup()
         }
@@ -62,6 +67,10 @@ private struct AccountGroup: View {
                 .accessibilityHint("Copies the server address")
                 .accessibilityIdentifier("copyServer")
                 .cardRow()
+                SettingsLinkRow(
+                    title: "Devices", subtitle: "Your phones and computers; sign out a lost phone", symbol: "iphone", tint: Palette.accent,
+                    id: "devicesRow"
+                ) { model.show(.devices) }
                 if model.recoveryCodeAvailable {
                     RecoveryCodeRow()
                     VaultPasskeysRow()
@@ -214,6 +223,48 @@ private struct NavigationGroups: View {
     }
 }
 
+/// Whether requests can ring this phone: "On", or what is wrong and a tap to turn them on (the system prompt while it
+/// can still show, else this app's page in the Settings app).
+private struct NotificationsGroup: View {
+    @Environment(\.openURL) private var openURL
+    @Environment(\.scenePhase) private var scenePhase
+    private var access: NotificationAccess { .shared }
+
+    var body: some View {
+        let state = access.state
+        Section {
+            SettingsLinkRow(
+                title: "Approval notifications", subtitle: state.summary, symbol: state.needsAttention ? "bell.slash" : "bell",
+                tint: state.needsAttention ? Palette.warning : Palette.success, id: "notificationsRow"
+            ) {
+                Task { await access.turnOn(openURL: openURL) }
+            }
+        } header: {
+            GroupHeader("Notifications")
+        }
+        .task { await access.refresh() }
+        .onChange(of: scenePhase) { _, phase in
+            if phase == .active { Task { await access.refresh() } }
+        }
+    }
+}
+
+/// "Take the tour": the setup pages again (how Reins works, integrations, the private model).
+private struct HelpGroup: View {
+    @Environment(AppModel.self) private var model
+
+    var body: some View {
+        Section {
+            SettingsLinkRow(
+                title: "Take the tour", subtitle: nil, symbol: "questionmark.circle",
+                tint: Palette.accent, id: "takeTour"
+            ) { model.startTour() }
+        } header: {
+            GroupHeader("Help")
+        }
+    }
+}
+
 /// The AI connections, each opening its own page.
 private struct ConnectionsGroup: View {
     @Environment(AppModel.self) private var model
@@ -226,30 +277,34 @@ private struct ConnectionsGroup: View {
         Section {
             ForEach(computers, id: \.id) { connectionRow($0) }
             SettingsLinkRow(
-                title: "Connect a computer", subtitle: "Scan the QR code from reins login or the desktop app", symbol: "qrcode.viewfinder",
+                title: "Connect a computer", subtitle: nil, symbol: "qrcode.viewfinder",
                 tint: Palette.pair, id: "connectComputer"
             ) { model.openSheet(.connectComputer) }
         } header: {
             GroupHeader("Computers")
         }
         Section {
-            if aiApps.isEmpty {
-                // The address to paste, not a description of it: tapping copies it.
-                let address = model.mcpAddress
-                Button {
-                    UIPasteboard.general.string = address
-                    feedback.play(.copied)
-                } label: {
-                    InfoRow(
-                        "No AI app is connected yet",
-                        subtitle: "In Claude.ai or ChatGPT, add a custom connector with \(address). Tap to copy."
-                    )
-                }
-                .buttonStyle(.plain)
-                .accessibilityIdentifier("copyMcpUrl")
-                .cardRow()
-            }
             ForEach(aiApps, id: \.id) { connectionRow($0) }
+            // Always there, as "Connect a computer" is above: the address to paste, not a description of it, so a
+            // second AI app needs no typing. Tapping copies it.
+            let address = model.mcpAddress
+            Button {
+                UIPasteboard.general.string = address
+                feedback.play(.copied)
+                model.notice = "MCP address copied."
+            } label: {
+                InfoRow(
+                    title: aiApps.isEmpty ? "No AI app is connected yet" : "Connect another AI app",
+                    // The address on a line of its own, so it does not break in the middle.
+                    subtitle: "\(address)\nIn Claude.ai or ChatGPT, add it as a custom connector. Tap to copy.",
+                    symbol: "link", tint: Palette.accent, ltrSubtitle: false
+                ) {
+                    Image(systemName: "doc.on.doc").foregroundStyle(Palette.tertiary).accessibilityHidden(true)
+                }
+            }
+            .buttonStyle(.plain)
+            .accessibilityIdentifier("copyMcpUrl")
+            .cardRow()
         } header: {
             GroupHeader("AI apps")
         }
@@ -342,7 +397,7 @@ private struct SessionGroup: View {
                     }
                 }
             } message: {
-                Text("This phone stops receiving approval requests until you sign in again: your AIs' requests wait and then fail. Your computers, AI connections and integrations stay with your account.")
+                Text("Requests can't reach this phone until you sign in again.")
             }
             .presentationFeedback(confirm)
             if case let .signedIn(info) = model.session {
@@ -374,14 +429,14 @@ private struct SessionGroup: View {
 /// A row that opens a page: a tinted symbol, a title, a line under it, and the disclosure mark.
 struct SettingsLinkRow: View {
     var title: String
-    var subtitle: String
+    var subtitle: String?
     var symbol: String
     var tint: Color
     var id: String
     var action: () -> Void
     @Environment(\.feedback) private var feedback
 
-    init(title: String, subtitle: String, symbol: String, tint: Color, id: String, action: @escaping () -> Void) {
+    init(title: String, subtitle: String?, symbol: String, tint: Color, id: String, action: @escaping () -> Void) {
         self.title = title
         self.subtitle = subtitle
         self.symbol = symbol
@@ -414,3 +469,23 @@ struct Chevron: View {
             .accessibilityHidden(true)
     }
 }
+
+#if DEBUG
+/// Debug builds only: what the header's Autopilot pill opens, to compare the designs on a phone.
+private struct DeveloperGroup: View {
+    @AppStorage(QuickStyle.key) private var style = QuickStyle.menu.rawValue
+
+    var body: some View {
+        Section {
+            Picker("Autopilot pill", selection: $style) {
+                ForEach(QuickStyle.allCases) { Text($0.label).tag($0.rawValue) }
+            }
+            .pickerStyle(.segmented)
+            .cardRow()
+            .accessibilityIdentifier("quickStyle")
+        } header: {
+            GroupHeader("Developer")
+        }
+    }
+}
+#endif

@@ -111,6 +111,9 @@ final class AppModel {
     let demo: Bool
     /// The passkey sheet for the passkeys that open the vault; the demo's answers by itself, tests put a fake here.
     @ObservationIgnored var passkeys: PasskeyPrompting
+    /// The vault screens' state (Integrations > Password vault > Open the vault), shared by the list, an item and its
+    /// form; emptied when the account changes.
+    let vault = VaultModel()
 
     // MARK: State read from the core
 
@@ -273,6 +276,7 @@ final class AppModel {
         accounts = []
         services = []
         connections = []
+        vault.reset()
         setMcpServers([])
         mcpNotice = nil
         approvalDevice = false
@@ -305,7 +309,7 @@ final class AppModel {
 
     /// Signing in or creating an account on the sign-in screen: the session, the approval role (taken even from a
     /// phone another one took it from), and the onboarding steps the first time this account signs in on this phone.
-    /// Notifications are asked for once the session is there (`onSignedIn`).
+    /// Notifications are asked for on the setup's notifications page, or once the session is there (`onSignedIn`).
     func finishSignIn(_ info: SessionInfo) async {
         registrationError = nil
         // The demo core keeps nothing across launches, so it shows the steps every time.
@@ -354,6 +358,12 @@ final class AppModel {
     func finishOnboarding() {
         guard recoveryToRecord == nil else { return }
         onboarding = false
+    }
+
+    /// Settings > Take the tour: the setup pages again, from the start.
+    func startTour() {
+        guard case .signedIn = session else { return }
+        onboarding = true
     }
 
     /// Whether the account has no passkey for its vault yet. Unknown (offline) counts as having one: never a block.
@@ -569,6 +579,22 @@ final class AppModel {
             } catch {
                 startingPolicy = try? await core.startingPolicy()
             }
+        }
+    }
+
+    /// An answer the screen has already moved on from (the Android app's `answerInBackground`): the item leaves the list
+    /// now and `work` runs without anyone waiting for it. If it fails, the item comes back with the next read and a few
+    /// words say why ("Not approved: …").
+    func answerInBackground(_ id: String, failed: String, work: @escaping @Sendable () async throws -> Void) {
+        dropPending(id)
+        Task {
+            do {
+                try await work()
+            } catch {
+                feedback.play(.error)
+                notice = "\(failed): \(decisionErrorMessage(error))"
+            }
+            await refreshPending()
         }
     }
 
@@ -843,7 +869,7 @@ final class AppModel {
     /// What to say when a pairing code does not work.
     static func pairingCodeMessage(_ error: Error) -> String {
         if case CoreError.NotFound = error {
-            return "This code has expired or was already used. Show a new one on your computer."
+            return "Code expired. Show a new one on your computer."
         }
         return error.userMessage
     }
@@ -1007,7 +1033,8 @@ extension PendingItem {
             service: service,
             createdAt: createdAt,
             expiresAt: expiresAt,
-            suggestion: suggestion
+            suggestion: suggestion,
+            quick: kind == .request && quick
         )
     }
 }
