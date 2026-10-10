@@ -74,6 +74,7 @@ class GitHostsFlowTest : FlowHarness() {
     @Test
     fun codebergOpensItsApplicationsPage() {
         openService("codeberg")
+        tap("help:Codeberg tokens")
         awaitText("read:user", substring = true)
         tap("openTokenPage")
         assertEquals("https://codeberg.org/user/settings/applications", opened().dataString)

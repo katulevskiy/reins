@@ -132,7 +132,7 @@ fun GrantDetailScreen(
         val used = activity.filter { it.grantId == grant.id }
         Group(header = "Used for") {
             if (used.isEmpty()) {
-                ListRow("Nothing yet", subtitle = "Operations this grant covers will be listed here.")
+                ListRow("Nothing yet")
             }
             used.take(10).forEachIndexed { i, entry ->
                 if (i > 0) Hairline(inset = 74.dp)

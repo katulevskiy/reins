@@ -30,14 +30,17 @@ object AutopilotText {
         AutopilotMode.LOCKDOWN -> "Lockdown"
     }
 
-    /** What the mode does, in one line. */
+    /** What the mode does, in a few words. */
     fun line(mode: AutopilotMode): String = when (mode) {
-        AutopilotMode.MANUAL -> "Every request waits for you"
-        AutopilotMode.ASSISTED -> "Waits for you, with a suggestion"
-        AutopilotMode.AUTO -> "Decides what it is sure of, asks the rest"
-        AutopilotMode.BYPASS -> "Approves all but the riskiest, for a while"
-        AutopilotMode.LOCKDOWN -> "Denies everything at once"
+        AutopilotMode.MANUAL -> "Ask me every time"
+        AutopilotMode.ASSISTED -> "Ask, with a hint"
+        AutopilotMode.AUTO -> "Decides the easy ones"
+        AutopilotMode.BYPASS -> "Approve all but the riskiest"
+        AutopilotMode.LOCKDOWN -> "Deny everything"
     }
+
+    /** The modes from least to most left to Autopilot: the quick switcher's order, left to right and top to bottom. */
+    val byRisk = modes.sortedBy(::autonomy)
 
     /** Assisted and Auto do nothing without the model (requests simply wait); the others never need it. */
     fun needsModel(mode: AutopilotMode): Boolean = mode == AutopilotMode.ASSISTED || mode == AutopilotMode.AUTO
@@ -96,7 +99,7 @@ object AutopilotText {
         }
         return BypassNotice(
             title = "Bypass on · ${minutesLeft(until, nowSeconds)}",
-            text = "Requests from $who are approved without asking, except the riskiest.",
+            text = "For $who. The riskiest still ask.",
             until = until,
             global = global != null,
             connectionIds = connections.map { it.connectionId },
@@ -233,7 +236,7 @@ object AutopilotText {
         return when {
             e.isEmpty() -> "The download stopped. Try again later."
             e.contains("sha", ignoreCase = true) || e.contains("hash", ignoreCase = true) || e.contains("verif", ignoreCase = true) ->
-                "The downloaded files did not match the ones this version of Reins trusts, so nothing was kept. An app update will fix this."
+                "The files did not match, so nothing was kept. An app update will fix this."
             else -> e.replaceFirstChar { it.uppercase() }.let { if (it.endsWith(".")) it else "$it." }
         }
     }

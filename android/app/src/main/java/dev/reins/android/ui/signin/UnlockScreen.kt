@@ -87,11 +87,9 @@ fun UnlockScreen(viewModel: UnlockViewModel, email: String, passkeys: PasskeyPro
                 when {
                     takeover -> OTHER_APPROVAL_DEVICE
                     passkeyUnlock ->
-                        "You're signed in as $email, but its vault opens on the phone you set it up with. Unlock it " +
-                            "with your passkey, approve this phone from there, or enter your recovery code."
+                        "Signed in as $email. Use your passkey, approve from your other phone, or enter your recovery code."
                     else ->
-                        "You're signed in as $email, but its vault opens on the phone you set it up with. Approve this " +
-                            "phone from there, or enter your recovery code."
+                        "Signed in as $email. Approve from your other phone, or enter your recovery code."
                 },
                 RType.sans(16f, lineHeight = 22f),
                 c.secondary,
@@ -187,7 +185,7 @@ private fun Asking(viewModel: UnlockViewModel, ui: UnlockUi) {
         Spinner(c.secondary, size = 22.dp)
         Spacer(Modifier.width(12.dp))
         RText(
-            "Open Reins on your other phone and approve. This screen moves on by itself.",
+            "Approve on your other phone.",
             RType.sans(14.5f, lineHeight = 20f),
             c.secondary,
             Modifier.weight(1f),
@@ -218,14 +216,12 @@ private fun Reset(viewModel: UnlockViewModel, ui: UnlockUi, open: (String) -> Bo
             RText("Start over with an empty vault", RType.sans(17f, FontWeight.SemiBold, lineHeight = 22f), c.text)
         }
         RText(
-            "Resetting deletes everything in this account's vault: saved items, integrations and their grants, and " +
-                "the activity and settings kept for it. Any other phone signed in to it is signed out, and connected " +
-                "AIs must be connected again. This cannot be undone.",
+            "Deletes the vault: items, integrations, grants and activity. Other phones sign out; AIs connect again. Can't be undone.",
             RType.sans(15f, lineHeight = 21f),
             c.secondary,
         )
         RText(
-            "The account itself stays: its email and its sign-in. You get a new recovery code to write down.",
+            "Your email and sign-in stay. You get a new recovery code.",
             RType.sans(15f, lineHeight = 21f),
             c.secondary,
         )
@@ -263,7 +259,7 @@ private fun Recovery(viewModel: UnlockViewModel, ui: UnlockUi) {
         ),
     )
     RText(
-        "The code looks like ABCD-EFGH-… Spaces, dashes and capitals do not matter.",
+        "Like ABCD-EFGH-…",
         RType.sans(13f, lineHeight = 18f),
         c.tertiary,
         Modifier.padding(start = 4.dp),

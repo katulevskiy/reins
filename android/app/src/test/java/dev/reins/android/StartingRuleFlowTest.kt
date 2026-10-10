@@ -26,6 +26,7 @@ class StartingRuleFlowTest : FlowHarness() {
         awaitCore { core.startingPolicy == StartingPolicy.ASK_EVERY_TIME }
         tap("rule:READS_FOR_A_DAY")
         awaitCore { core.startingPolicy == StartingPolicy.READS_FOR_A_DAY }
+        tap("help:${dev.reins.android.ui.grants.StartingRuleText.HEADER}")
         awaitText("Always asks, whatever you choose", substring = true)
     }
 

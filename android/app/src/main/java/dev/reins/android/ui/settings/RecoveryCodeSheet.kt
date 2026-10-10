@@ -84,8 +84,7 @@ fun RecoveryCodeSheet(code: String, onCopy: () -> Unit, onDone: () -> Unit, requ
             }
             Spacer(Modifier.height(14.dp))
             RText(
-                "This code opens your account's vault if you lose this phone. Anyone with it and your sign-in can read " +
-                    "your vault. Write it down and keep it somewhere safe; Reins cannot show it to you again if this phone is gone.",
+                "Opens your vault if you lose this phone. Write it down and keep it safe.",
                 RType.sans(14.5f, lineHeight = 20f),
                 c.secondary,
             )
@@ -93,7 +92,7 @@ fun RecoveryCodeSheet(code: String, onCopy: () -> Unit, onDone: () -> Unit, requ
             if (required) {
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Checkbox(checked = recorded, onCheckedChange = { recorded = it }, modifier = Modifier.testTag("recoveryRecorded"))
-                    RText("I wrote this code down and stored it somewhere safe.", RType.sans(14.5f, lineHeight = 20f), c.text, Modifier.weight(1f))
+                    RText("I wrote it down", RType.sans(14.5f, lineHeight = 20f), c.text, Modifier.weight(1f))
                 }
                 Spacer(Modifier.height(12.dp))
             }

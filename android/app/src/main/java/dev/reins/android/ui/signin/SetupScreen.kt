@@ -66,6 +66,7 @@ import dev.reins.android.autopilot.AutopilotText
 import dev.reins.android.design.ButtonStyle
 import dev.reins.android.design.CapsuleButton
 import dev.reins.android.design.Glyph
+import dev.reins.android.design.InlineHelp
 import dev.reins.android.design.GlyphIcon
 import dev.reins.android.design.Group
 import dev.reins.android.design.Hairline
@@ -225,7 +226,7 @@ private fun SetupButtons(page: SetupPage, notifications: NotificationState, onBa
 
 /** A page's heading: an eyebrow, a glyph on a soft tile, the title and a line under it. */
 @Composable
-private fun PageHeader(eyebrow: String, glyph: Glyph, title: String, body: String, tint: Color? = null) {
+private fun PageHeader(eyebrow: String, glyph: Glyph, title: String, body: String? = null, tint: Color? = null) {
     val c = LocalColors.current
     val t = tint ?: c.accent
     Column(Modifier.padding(start = 24.dp, end = 24.dp, top = 28.dp)) {
@@ -241,8 +242,10 @@ private fun PageHeader(eyebrow: String, glyph: Glyph, title: String, body: Strin
         }
         Spacer(Modifier.height(14.dp))
         RText(title, RType.sans(28f, FontWeight.SemiBold, lineHeight = 34f), c.text)
-        Spacer(Modifier.height(8.dp))
-        RText(body, RType.sans(15.5f, lineHeight = 22f), c.secondary)
+        if (body != null) {
+            Spacer(Modifier.height(8.dp))
+            RText(body, RType.sans(15.5f, lineHeight = 22f), c.secondary)
+        }
     }
 }
 
@@ -261,37 +264,27 @@ private fun WelcomePage() {
             )
             Spacer(Modifier.height(12.dp))
             RText("Your AIs ask.\nYou decide.", RType.sans(34f, FontWeight.SemiBold, lineHeight = 40f), c.text)
-            Spacer(Modifier.height(10.dp))
-            RText(
-                "Reins sits between your AI agents and your accounts. Whenever one wants to read, send or change " +
-                    "something, this phone asks you first.",
-                RType.sans(15.5f, lineHeight = 22f),
-                c.secondary,
-            )
         }
         RequestFlow(Modifier.padding(horizontal = 12.dp, vertical = 22.dp))
         Group {
-            Promise(Glyph.Hand, c.accent, "Nothing happens behind your back", "Every read, send or change waits for a tap, with exactly what the AI wants to do.")
+            Promise(Glyph.Hand, c.accent, "Nothing without your tap")
             Hairline(inset = 70.dp)
-            Promise(Glyph.Key, c.success, "Your keys stay on this phone", "Access to your mail, chats and code is kept encrypted here. The server only passes requests along.")
+            Promise(Glyph.Key, c.success, "Your keys stay on this phone")
             Hairline(inset = 70.dp)
-            Promise(Glyph.Clock, c.search, "Trust on your terms", "Grant a few minutes of access, or let Autopilot learn what you always allow.")
+            Promise(Glyph.Clock, c.search, "Allow for a while, or let Autopilot learn")
             Hairline(inset = 70.dp)
-            Promise(Glyph.Lock, c.warning, "One tap to stop everything", "Lockdown denies every request at once, until you lift it.")
+            Promise(Glyph.Lock, c.warning, "One tap stops everything")
         }
     }
 }
 
 @Composable
-private fun Promise(glyph: Glyph, tint: Color, title: String, body: String) {
+private fun Promise(glyph: Glyph, tint: Color, title: String) {
     val c = LocalColors.current
-    Row(Modifier.fillMaxWidth().padding(16.dp), verticalAlignment = Alignment.Top) {
-        IconTile(glyph, tint, size = 40.dp)
+    Row(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 12.dp), verticalAlignment = Alignment.CenterVertically) {
+        IconTile(glyph, tint, size = 36.dp)
         Spacer(Modifier.width(14.dp))
-        Column(Modifier.weight(1f)) {
-            RText(title, RType.sans(16f, FontWeight.SemiBold), c.text)
-            RText(body, RType.sans(13.5f, lineHeight = 19f), c.secondary, Modifier.padding(top = 2.dp))
-        }
+        RText(title, RType.sans(16f, FontWeight.SemiBold), c.text, Modifier.weight(1f))
     }
 }
 
@@ -369,7 +362,7 @@ private fun NotificationsPage(notifications: NotificationState, screenLock: Scre
             "Step 1 · Notifications",
             Glyph.Bell,
             "Requests come to you",
-            "When an AI asks for something, this phone rings, even with Reins closed. You approve or deny right from the notification.",
+            "Approve right from the notification.",
         )
         // What one looks like.
         Column(
@@ -399,15 +392,15 @@ private fun NotificationsPage(notifications: NotificationState, screenLock: Scre
             Row(Modifier.padding(horizontal = 24.dp).testTag("notificationsOn"), verticalAlignment = Alignment.CenterVertically) {
                 IconTile(Glyph.Check, c.success, size = 30.dp, filled = true)
                 Spacer(Modifier.width(10.dp))
-                RText("Notifications are on. You're all set here.", RType.sans(15f, FontWeight.Medium), c.text)
+                RText("Notifications on", RType.sans(15f, FontWeight.Medium), c.text)
             }
         } else {
-            RText(
+            InlineHelp(
+                "notifications",
                 "Without notifications an AI waits for an answer that never comes, and its request times out. " +
                     "Reins only notifies you about requests, grants and your own devices.",
-                RType.sans(13.5f, lineHeight = 19f),
-                c.tertiary,
-                Modifier.padding(horizontal = 24.dp),
+                Modifier.padding(horizontal = 20.dp),
+                label = "Why it matters",
             )
         }
         // Approving needs the screen lock: better found out here than at the first request.
@@ -426,7 +419,7 @@ private fun IntegrationsPage(container: AppContainer, onOpen: (String) -> Unit) 
             "Step 2 · Integrations",
             Glyph.Apps,
             "What your AIs can use",
-            "Connect the accounts you want your AIs to work with. They can only reach them through this phone, one approved request at a time.",
+            "Only ever through this phone.",
             tint = c.read,
         )
         Spacer(Modifier.height(20.dp))
@@ -462,12 +455,6 @@ private fun IntegrationsPage(container: AppContainer, onOpen: (String) -> Unit) 
                 }
             }
         }
-        RText(
-            "Nothing to connect right now? Add integrations any time from Activity > Integrations.",
-            RType.sans(13.5f, lineHeight = 19f),
-            c.tertiary,
-            Modifier.padding(start = 24.dp, end = 24.dp, top = 16.dp),
-        )
     }
 }
 
@@ -514,8 +501,8 @@ private fun RulesPage(container: AppContainer) {
         PageHeader(
             "Step 3 · How much to ask",
             Glyph.ShieldCheck,
-            "Fewer questions, same control",
-            "Reading is where most requests come from. Pick how a new AI starts; you can change it any time under Grants.",
+            "Fewer questions",
+            "How a new AI starts.",
         )
         dev.reins.android.ui.grants.StartingRuleChooser(policy, Modifier.padding(top = 20.dp), container::chooseStartingPolicy)
     }
@@ -532,9 +519,8 @@ private fun AutopilotPage(viewModel: AutopilotViewModel) {
         PageHeader(
             "Step 4 · Autopilot",
             Glyph.Chip,
-            "A private model that learns your rules",
-            "Optionally, a small model on this phone learns from your answers and suggests, or takes, the easy decisions. " +
-                "Requests are judged right here; nothing is sent off to be decided.",
+            "A private model",
+            "Learns your answers. Runs on this phone.",
         )
         Group(Modifier.padding(top = 20.dp), header = "Modes", footer = "You start in Manual. Change modes any time with the round button next to the tabs.") {
             AutopilotText.modes.forEachIndexed { i, mode ->
@@ -571,7 +557,6 @@ private fun ComputerPage(app: AppViewModel) {
             "Step 5 · Your computer",
             Glyph.Laptop,
             "Connect your computer",
-            "Coding agents and desktop AI apps on your computer go through Reins too: they ask, this phone answers.",
         )
         ComputerHowTo(Modifier.padding(start = 24.dp, end = 24.dp, top = 10.dp))
         ConnectComputerPanel(app, Modifier.padding(horizontal = 16.dp, vertical = 20.dp))
@@ -592,7 +577,6 @@ private fun AiPage(mcpUrl: String) {
             "Step 6 · Your AI app",
             Glyph.Sparkle,
             "Connect Claude.ai or ChatGPT",
-            "Add Reins to your AI app with this address. Whatever it then wants to read or send asks this phone first.",
             tint = c.search,
         )
         Group(Modifier.padding(top = 18.dp)) {
@@ -613,11 +597,11 @@ private fun AiPage(mcpUrl: String) {
                 }
             }
         }
-        RText(
+        InlineHelp(
+            "custom connectors",
             "In Claude.ai or ChatGPT, open Settings > Connectors, add a custom connector and paste this address.",
-            RType.sans(13.5f, lineHeight = 19f),
-            c.tertiary,
-            Modifier.padding(start = 32.dp, end = 32.dp, top = 10.dp).testTag("connectorHowTo"),
+            Modifier.padding(start = 20.dp, end = 20.dp, top = 6.dp).testTag("connectorHowTo"),
+            label = "Paste as a custom connector",
         )
     }
 }
@@ -639,21 +623,20 @@ private fun DonePage(container: AppContainer, autopilot: AutopilotViewModel, not
             "All set",
             Glyph.ShieldCheck,
             "You're in control",
-            "Your AIs can now do real work for you, and nothing happens without your say. Here's where things stand:",
             tint = c.success,
         )
         Group(Modifier.padding(top = 20.dp)) {
-            Checklist(Glyph.Bell, "Notifications", if (notifications.enabled) "On" else "Off: turn them on from Activity", notifications.enabled)
+            Checklist(Glyph.Bell, "Notifications", if (notifications.enabled) "On" else "Off", notifications.enabled)
             Hairline(inset = 66.dp)
-            Checklist(Glyph.Lock, "Screen lock", if (screenLock.set) "On: approvals ask for it" else "Off: approving needs one", screenLock.set)
+            Checklist(Glyph.Lock, "Screen lock", if (screenLock.set) "On" else "Off", screenLock.set)
             Hairline(inset = 66.dp)
             Checklist(
                 Glyph.Apps,
                 "Integrations",
                 when (accounts) {
-                    0 -> "None yet: add them from Activity > Integrations"
-                    1 -> "1 account connected"
-                    else -> "$accounts accounts connected"
+                    0 -> "None yet"
+                    1 -> "1 account"
+                    else -> "$accounts accounts"
                 },
                 accounts > 0,
             )
@@ -662,9 +645,9 @@ private fun DonePage(container: AppContainer, autopilot: AutopilotViewModel, not
                 Glyph.Chip,
                 "Private model",
                 when (model) {
-                    ModelState.INSTALLED -> "Installed on this phone"
-                    ModelState.DOWNLOADING -> "Downloading in the background"
-                    else -> "Not downloaded: Manual mode needs none"
+                    ModelState.INSTALLED -> "Installed"
+                    ModelState.DOWNLOADING -> "Downloading"
+                    else -> "Not downloaded"
                 },
                 model == ModelState.INSTALLED || model == ModelState.DOWNLOADING,
             )
@@ -673,19 +656,13 @@ private fun DonePage(container: AppContainer, autopilot: AutopilotViewModel, not
                 Glyph.Laptop,
                 "Computers and AI apps",
                 when (val n = connections.size) {
-                    0 -> "None yet: connect one from Settings"
+                    0 -> "None yet"
                     1 -> "1 connected"
                     else -> "$n connected"
                 },
                 connections.isNotEmpty(),
             )
         }
-        RText(
-            "Everything here can be changed later in Settings, where you can also take this tour again.",
-            RType.sans(13.5f, lineHeight = 19f),
-            c.tertiary,
-            Modifier.padding(start = 24.dp, end = 24.dp, top = 14.dp),
-        )
     }
 }
 

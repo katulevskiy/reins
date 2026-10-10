@@ -35,6 +35,7 @@ import dev.reins.android.design.ButtonStyle
 import dev.reins.android.design.CapsuleButton
 import dev.reins.android.design.ConfirmDialog
 import dev.reins.android.design.Glyph
+import dev.reins.android.design.InlineHelp
 import dev.reins.android.design.GlyphIcon
 import dev.reins.android.design.Group
 import dev.reins.android.design.Hairline
@@ -152,14 +153,8 @@ fun McpAddScreen(viewModel: McpViewModel, onBack: () -> Unit, onAdded: (String) 
     var token by remember { mutableStateOf("") }
     LaunchedEffect(Unit) { viewModel.clearError() }
 
-    Screen(title = "Add MCP server", subtitle = "Integrations", onBack = onBack) {
+    Screen(title = "Add MCP server", onBack = onBack) {
         Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
-            RText(
-                "Paste the address the service gives for its MCP server. Reins connects from this phone; if the server wants you to sign in, its page opens here.",
-                RType.sans(14f, lineHeight = 20f),
-                c.secondary,
-                Modifier.padding(horizontal = 4.dp, vertical = 4.dp),
-            )
             RTextField(
                 url, { url = it }, "https://mcp.example.com/mcp", tag = "mcpUrl", enabled = !busy, mono = true,
                 keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Uri, autoCorrectEnabled = false),
@@ -169,11 +164,10 @@ fun McpAddScreen(viewModel: McpViewModel, onBack: () -> Unit, onAdded: (String) 
                 token, { token = it }, "Access token (optional)", tag = "mcpToken", enabled = !busy, password = true, mono = true,
                 keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password, autoCorrectEnabled = false),
             )
-            RText(
-                "Only for servers that give you a token instead of a sign-in. It is kept encrypted on this phone.",
-                RType.sans(13f, lineHeight = 18f),
-                c.tertiary,
-                Modifier.padding(horizontal = 4.dp),
+            InlineHelp(
+                "MCP servers",
+                "Paste the address the service gives for its MCP server. Reins connects from this phone; if the server wants you to sign in, its page opens here.\n\n" +
+                    "The token is only for servers that give you one instead of a sign-in. It is kept encrypted on this phone.",
             )
             CapsuleButton(
                 "Add",
@@ -187,7 +181,7 @@ fun McpAddScreen(viewModel: McpViewModel, onBack: () -> Unit, onAdded: (String) 
             }
             if (signingIn != null) {
                 Banner(
-                    "Sign in on the page that opened. When you are done there, Reins comes back by itself.",
+                    "Finish signing in on the page that opened.",
                     Modifier.padding(top = 6.dp),
                     tag = "mcpSigningIn",
                 )
@@ -240,7 +234,7 @@ fun McpServerScreen(viewModel: McpViewModel, state: AppState, id: String, onBack
                 }
                 if (server.status == "needs_sign_in") {
                     RText(
-                        "This server wants you to sign in before its tools can be used.",
+                        "Sign in to use its tools.",
                         RType.sans(14f, lineHeight = 20f),
                         c.secondary,
                     )
@@ -252,7 +246,7 @@ fun McpServerScreen(viewModel: McpViewModel, state: AppState, id: String, onBack
         }
         if (signingIn == id) {
             Banner(
-                "Sign in on the page that opened. When you are done there, Reins comes back by itself.",
+                "Finish signing in on the page that opened.",
                 Modifier.padding(start = 16.dp, end = 16.dp, top = 12.dp),
                 tag = "mcpSigningIn",
             )
@@ -264,7 +258,7 @@ fun McpServerScreen(viewModel: McpViewModel, state: AppState, id: String, onBack
         ) {
             if (server.tools.isEmpty()) {
                 RText(
-                    if (server.status == "ok") "This server has no tools." else "The tools show up once the server can be reached.",
+                    if (server.status == "ok") "This server has no tools." else "No tools yet.",
                     RType.sans(14.5f),
                     c.secondary,
                     Modifier.padding(16.dp).testTag("noTools"),
@@ -290,7 +284,7 @@ fun McpServerScreen(viewModel: McpViewModel, state: AppState, id: String, onBack
     if (removing) {
         ConfirmDialog(
             title = "Remove ${untrusted(server.name)}?",
-            text = "Your AIs lose its tools, its sign-in is forgotten on this phone, and the permissions given for it are deleted.",
+            text = "Its tools, sign-in and permissions go.",
             confirmLabel = "Remove",
             onConfirm = {
                 removing = false
@@ -326,7 +320,7 @@ private fun ToolRow(tool: McpToolView, enabled: Boolean, onHeavy: (Boolean) -> U
             }
         }
         Row(Modifier.padding(top = 6.dp), verticalAlignment = Alignment.CenterVertically) {
-            RText("Send large results through the server", RType.sans(13.5f), c.secondary, Modifier.weight(1f))
+            RText("Large results via server", RType.sans(13.5f), c.secondary, Modifier.weight(1f))
             Spacer(Modifier.width(10.dp))
             Toggle(tool.heavy, Modifier.testTag("heavy:${tool.name}"), enabled = enabled, onChange = onHeavy)
         }

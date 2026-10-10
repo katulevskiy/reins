@@ -183,7 +183,7 @@ class FeedbackFlowTest : FlowHarness() {
         launch()
         tap("openSettings")
         heard.clear()
-        awaitText("custom connector with http://127.0.0.1:8000/mcp", substring = true)
+        awaitText("http://127.0.0.1:8000/mcp")
         tap("copyMcpUrl")
         assertTrue(heard.played(Event.Copied))
         val clipboard = context.getSystemService(android.content.ClipboardManager::class.java)

@@ -121,11 +121,10 @@ fun AutopilotScreen(
                 mode != s.mode -> viewModel.setMode(mode)
             }
         }
-        RText(
+        dev.reins.android.design.InlineHelp(
+            "modes",
             "For every AI, unless one has a mode of its own (Settings, then the AI). Riskier requests, such as passwords, deletions and new connections, always wait for you.",
-            RType.sans(12.5f),
-            c.tertiary,
-            Modifier.padding(start = 32.dp, end = 32.dp, top = 8.dp),
+            Modifier.padding(horizontal = 16.dp),
         )
 
         ModelCard(
@@ -153,7 +152,7 @@ fun AutopilotScreen(
         Group(header = "Try it", footer = "Type a request and see what Autopilot would do with it. Nothing is kept.") {
             ListRow(
                 "See how Autopilot judges",
-                subtitle = if (modelReady) "A push, an email, a command, an injection attempt" else "Download the model first",
+                subtitle = if (modelReady) null else "Download the model first",
                 glyph = Glyph.Flask,
                 tint = c.accent,
                 chevron = true,
@@ -177,7 +176,7 @@ fun AutopilotScreen(
     if (lockdownAsk) {
         ConfirmDialog(
             title = "Lock down?",
-            text = "Every request is denied at once, the ones waiting now included. New connections still reach you. Switch back any time.",
+            text = "Every request is denied, waiting ones too.",
             confirmLabel = "Lock down",
             onConfirm = {
                 lockdownAsk = false
@@ -189,7 +188,7 @@ fun AutopilotScreen(
     if (deleteAsk) {
         ConfirmDialog(
             title = "Delete the model?",
-            text = "Assisted and Auto stop until you download it again; requests wait for you. What your profiles learned stays.",
+            text = "Assisted and Auto pause until you download it again.",
             confirmLabel = "Delete",
             onConfirm = {
                 deleteAsk = false
@@ -264,13 +263,8 @@ private fun ModeHero(s: AutopilotSettings, modelReady: Boolean, onStopBypass: ()
     }
 }
 
-private fun heroLine(mode: AutopilotMode, modelReady: Boolean): String = when (mode) {
-    AutopilotMode.MANUAL -> "Every request waits for you. Autopilot stays out of the way."
-    AutopilotMode.ASSISTED -> if (modelReady) "Requests wait for you, with what Autopilot would do. Every answer teaches it." else "Requests wait for you. Download the model to see Autopilot's suggestions."
-    AutopilotMode.AUTO -> if (modelReady) "Autopilot answers what it is sure of, in the kinds of request it has learned. The rest waits for you." else "Download the model: until then every request waits for you."
-    AutopilotMode.BYPASS -> "Everything is approved without asking, except the riskiest requests."
-    AutopilotMode.LOCKDOWN -> "Every request is denied at once. New connections still reach you."
-}
+private fun heroLine(mode: AutopilotMode, modelReady: Boolean): String =
+    if (!modelReady && AutopilotText.needsModel(mode)) "Needs the model" else AutopilotText.line(mode)
 
 /** The bypass countdown: a ring that empties as the time runs out, and the minutes and seconds left. */
 @Composable
@@ -368,7 +362,6 @@ internal fun ModelCard(
             "Download on Wi-Fi only",
             wifiOnly,
             onWifiOnly,
-            subtitle = "The model is a few hundred megabytes",
             glyph = Glyph.Wifi,
             tag = "wifiOnly",
         )
@@ -456,25 +449,14 @@ fun BypassDialog(who: String?, onConfirm: (UInt) -> Unit, onDismiss: () -> Unit)
         ) {
             IconTile(Glyph.Bolt, c.danger, size = 48.dp, filled = true)
             RText(if (who == null) "Bypass for every AI?" else "Bypass ${untrusted(who)}?", RType.sans(20f, FontWeight.SemiBold), c.text, Modifier.padding(top = 14.dp))
-            RText(
-                "Requests are approved without asking until the time runs out. Approved means done: an email sent cannot be unsent.",
-                RType.sans(15f, lineHeight = 21f),
-                c.secondary,
-                Modifier.padding(top = 8.dp),
+            RText("Approved without asking. Sent means sent.", RType.sans(15f, lineHeight = 21f), c.secondary, Modifier.padding(top = 8.dp))
+            dev.reins.android.design.InlineHelp(
+                "what bypass still asks",
+                "Still asked every time: new connections, permissions, passwords and secrets, deletions and other one-off changes, SSH and flagged files.",
+                Modifier.padding(top = 6.dp),
+                label = "Riskiest still ask",
             )
-            Row(
-                Modifier.padding(top = 14.dp).fillMaxWidth().clip(RoundedCornerShape(14.dp)).background(c.controlFill).padding(12.dp),
-                verticalAlignment = Alignment.Top,
-            ) {
-                GlyphIcon(Glyph.Shield, c.secondary, size = 18.dp)
-                Spacer(Modifier.width(10.dp))
-                RText(
-                    "Still asked every time: new connections, permissions, passwords and secrets, deletions and other one-off changes, SSH and flagged files.",
-                    RType.sans(13.5f, lineHeight = 18f),
-                    c.secondary,
-                )
-            }
-            RText("For", RType.sans(13f, FontWeight.Medium), c.tertiary, Modifier.padding(top = 16.dp, bottom = 8.dp))
+            Spacer(Modifier.height(10.dp))
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 AutopilotText.bypassMinutes.forEach { m ->
                     SelectChip(if (m == 60u) "1 hour" else "$m min", minutes == m, Modifier.testTag("bypass:$m")) { minutes = m }

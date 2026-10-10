@@ -63,20 +63,15 @@ fun GmailScreen(viewModel: GmailViewModel, state: AppState, onBack: () -> Unit) 
     }
     val gmail = accounts.filter { it.service == "gmail" }
 
-    Screen(title = "Gmail", subtitle = "Integration", onBack = onBack) {
+    Screen(title = "Gmail", onBack = onBack) {
         Group(
             header = "Accounts",
-            footer = "Your AIs see this list and pick the account a request is about. Grants belong to one account.",
+            footer = "Your AIs see this list and pick the account a request is about. Grants belong to one account.\n\n" +
+                "Reins asks Google for access on this phone only. Nothing about your mail is stored on the server.",
         ) {
             if (gmail.isEmpty()) {
                 Column(Modifier.padding(16.dp).testTag("noAccounts")) {
                     RText("No account yet", RType.sans(16f, FontWeight.Medium), c.text)
-                    RText(
-                        "Add a Google account so your AIs can search and send mail through this phone.",
-                        RType.sans(13f, lineHeight = 18f),
-                        c.secondary,
-                        Modifier.padding(top = 2.dp),
-                    )
                 }
             }
             gmail.forEachIndexed { i, account ->
@@ -105,18 +100,13 @@ fun GmailScreen(viewModel: GmailViewModel, state: AppState, onBack: () -> Unit) 
             ) { chooser.launch(GoogleAuthorizer.chooseAccountIntent()) }
             error?.let { Banner(untrusted(it), Modifier.padding(top = 12.dp), BannerKind.Error, tag = "accountError") }
         }
-        RText(
-            "Reins asks Google for access on this phone only. Nothing about your mail is stored on the server.",
-            RType.sans(13.5f, lineHeight = 19f),
-            c.tertiary,
-            Modifier.padding(start = 32.dp, end = 32.dp, bottom = 32.dp),
-        )
+        androidx.compose.foundation.layout.Spacer(Modifier.padding(bottom = 32.dp))
     }
 
     removing?.let { address ->
         ConfirmDialog(
             title = "Remove $address?",
-            text = "Your AIs lose access to this account, and the grants made for it are deleted.",
+            text = "Its grants go too.",
             confirmLabel = "Remove",
             onConfirm = {
                 removing = null

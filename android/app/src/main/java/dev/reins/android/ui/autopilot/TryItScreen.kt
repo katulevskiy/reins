@@ -70,15 +70,15 @@ fun TryItScreen(viewModel: AutopilotViewModel, initialProfileId: String?, onBack
     LaunchedEffect(Unit) { viewModel.clearEvaluation() }
 
     Screen(title = "Try it", subtitle = profile?.let { untrusted(it.name) }, onBack = onBack) {
-        RText(
+        dev.reins.android.design.InlineHelp(
+            "Try it",
             "A request as Autopilot reads it: the facts first, then what the AI wrote. Edit anything; nothing is kept.",
-            RType.sans(14f, lineHeight = 19f),
-            c.secondary,
-            Modifier.padding(start = 20.dp, end = 20.dp, top = 8.dp),
+            Modifier.padding(horizontal = 16.dp),
+            label = "Nothing is kept",
         )
         if (!modelReady) {
             Banner(
-                "Download the model in Autopilot first; until then Autopilot cannot judge.",
+                "Download the model first.",
                 Modifier.padding(start = 16.dp, end = 16.dp, top = 12.dp),
                 BannerKind.Warning,
                 tag = "tryNoModel",

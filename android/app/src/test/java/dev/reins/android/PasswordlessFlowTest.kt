@@ -386,8 +386,8 @@ class PasswordlessFlowTest : FlowHarness() {
         signInLocked()
         tap("resetVault")
         awaitTag("confirmReset")
-        assertTrue(showsText("Resetting deletes everything in this account's vault", substring = true))
-        assertTrue(showsText("connected AIs must be connected again", substring = true))
+        assertTrue(showsText("Deletes the vault", substring = true))
+        assertTrue(showsText("AIs connect again", substring = true))
         assertTrue(showsText("To confirm, sign in again with this account."))
         tap("resetBack")
         awaitTag("askOtherPhone")
@@ -517,6 +517,7 @@ class PasswordlessFlowTest : FlowHarness() {
         core.session = dev.reins.core.SessionInfo("http://127.0.0.1:8000", "me@example.com")
         launch()
         tap("openSettings")
+        tap("help:Account")
         awaitText("To add another phone, sign in on it; this phone asks you to approve it.")
         awaitCore { core.recoveryCodeReads.get() > 0 }
         assertFalse(has("recoveryCodeRow"))
@@ -539,7 +540,7 @@ class PasswordlessFlowTest : FlowHarness() {
         awaitTag("recoveryCodeSheet")
         assertEquals(2, prompts.get())
         assertTrue(showsText("ABCD EFGH IJKL MNOP", substring = true))
-        assertTrue(showsText("Reins cannot show it to you again", substring = true))
+        assertTrue(showsText("Write it down", substring = true))
         tap("recoveryCode")
         val clip = context.getSystemService(ClipboardManager::class.java).primaryClip
         assertEquals(FakeCore.RECOVERY_CODE, clip?.getItemAt(0)?.text?.toString())

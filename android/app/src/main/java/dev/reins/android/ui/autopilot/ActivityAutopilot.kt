@@ -104,7 +104,7 @@ fun ActivityAutopilotSection(entry: ActivityEntry, onCorrect: suspend (Long, Ver
                 }
             }
             if (thanked) {
-                Banner("Thanks. Autopilot learned from this and asks you about requests like it again.", tag = "corrected")
+                Banner("Learned. It asks about these again.", tag = "corrected")
             } else if (note?.correctable == true) {
                 CapsuleButton(
                     "This was wrong",
@@ -121,8 +121,7 @@ fun ActivityAutopilotSection(entry: ActivityEntry, onCorrect: suspend (Long, Ver
     if (asking) {
         ConfirmDialog(
             title = if (should == Verdict.DENY) "Should this have been denied?" else "Should this have been approved?",
-            text = (if (should == Verdict.DENY) "Autopilot remembers it as a denial" else "Autopilot remembers it as an approval") +
-                ", more strongly than an ordinary answer, and asks you about this kind of request again until it has learned more. What was done stays done.",
+            text = "Autopilot learns from it. What was done stays done.",
             confirmLabel = if (should == Verdict.DENY) "Deny next time" else "Approve next time",
             destructive = false,
             onConfirm = {

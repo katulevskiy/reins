@@ -214,7 +214,7 @@ class AppViewModel(private val container: AppContainer) : ViewModel() {
             val (id, notice) = when (val result = container.mcpSignIn.finish(redirect)) {
                 McpSignInResult.Ignored -> return@launch
                 is McpSignInResult.Done ->
-                    result.server.id to McpNotice(result.server.id, "Signed in to ${result.server.name}. Its tools can be used now.", failed = false)
+                    result.server.id to McpNotice(result.server.id, "Signed in to ${result.server.name}.", failed = false)
                 is McpSignInResult.Failed ->
                     result.serverId to McpNotice(result.serverId, "Signing in did not work: ${result.message}", failed = true)
             }
@@ -243,7 +243,7 @@ class AppViewModel(private val container: AppContainer) : ViewModel() {
     fun connectScanned(text: String) {
         val code = PairingCode.parse(text)
         if (code == null) {
-            failConnect("That QR code is not a Reins pairing code. Scan the one your computer shows.")
+            failConnect("Not a Reins code. Scan the one your computer shows.")
             return
         }
         connectWithCode(code, fromLink = false)
@@ -261,7 +261,7 @@ class AppViewModel(private val container: AppContainer) : ViewModel() {
 
     /** The scanner could not run: say so and open the field to type the code. */
     fun scannerUnavailable() {
-        failConnect("The QR scanner is not available on this phone. Type the code your computer shows instead.", openField = true)
+        failConnect("No scanner here. Type the code instead.", openField = true)
     }
 
     fun showCodeField() = _connect.update { it.copy(manual = true) }
@@ -341,7 +341,7 @@ class AppViewModel(private val container: AppContainer) : ViewModel() {
     }
 
     private companion object {
-        const val CODE_EXPIRED = "This code has expired or was already used. Show a new one on your computer."
+        const val CODE_EXPIRED = "Code expired. Show a new one on your computer."
     }
 }
 

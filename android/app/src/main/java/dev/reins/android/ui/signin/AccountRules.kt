@@ -29,8 +29,8 @@ object AccountRules {
     fun strengthHint(password: String): String = when {
         password.codePointCount(0, password.length) < MIN_PASSWORD -> "Use at least $MIN_PASSWORD characters."
         strength(password) == Strength.Weak -> "Too repetitive. Mix in other characters."
-        strength(password) == Strength.Fair -> "Longer, or mixing letters, digits and symbols, is stronger."
-        else -> "Hard to guess. Remember it, or write it down."
+        strength(password) == Strength.Fair -> "Longer is stronger."
+        else -> ""
     }
 
     /** Good enough to try: the server checks the rest. */

@@ -114,7 +114,6 @@ fun SettingsScreen(
                     ListRow(
                         "Recovery code",
                         Modifier.testTag("recoveryCodeRow"),
-                        subtitle = "Opens your account if you lose this phone",
                         glyph = Glyph.Key,
                         chevron = true,
                     ) { viewModel.showRecoveryCode(authenticator) }
@@ -160,19 +159,6 @@ fun SettingsScreen(
             ui.error?.let { Banner(it, Modifier.padding(top = 10.dp), BannerKind.Error) }
         }
 
-        Group(header = "Autopilot") {
-            val mode = autopilot?.mode ?: dev.reins.core.AutopilotMode.MANUAL
-            ListRow(
-                "Autopilot",
-                subtitle = autopilotSummary(autopilot),
-                glyph = dev.reins.android.ui.autopilot.modeGlyph(mode),
-                tint = dev.reins.android.ui.autopilot.modeTint(mode, c),
-                chevron = true,
-                modifier = Modifier.testTag("openAutopilot"),
-                onClick = onAutopilot,
-            )
-        }
-
         // Computers pinned their key when they paired; Claude.ai, ChatGPT and other AI apps have none.
         val computers = connections.filter { it.keyFingerprint != null }
         val aiApps = connections.filter { it.keyFingerprint == null }
@@ -185,7 +171,6 @@ fun SettingsScreen(
             ListRow(
                 "Connect a computer",
                 Modifier.testTag("connectComputer"),
-                subtitle = "Scan the QR code the desktop app or reins login shows",
                 glyph = Glyph.Qr,
                 tint = c.accent,
                 chevron = true,
@@ -198,13 +183,10 @@ fun SettingsScreen(
                 // The address to paste, not a description of it: tapping copies it.
                 val mcpUrl = (session as? SessionState.SignedIn)?.info?.serverUrl?.let(AccountRules::mcpUrl)
                 ListRow(
-                    "No AI app is connected yet",
+                    "Add to Claude.ai or ChatGPT",
                     Modifier.testTag("copyMcpUrl"),
-                    subtitle = if (mcpUrl != null) {
-                        "In Claude.ai or ChatGPT, add a custom connector with $mcpUrl. Tap to copy."
-                    } else {
-                        "Add Reins to Claude.ai or ChatGPT as a custom connector."
-                    },
+                    subtitle = mcpUrl,
+                    ltrSubtitle = true,
                     trailing = mcpUrl?.let { { GlyphIcon(Glyph.Copy, c.tertiary, size = 17.dp) } },
                     onClick = mcpUrl?.let { url ->
                         {
@@ -221,14 +203,26 @@ fun SettingsScreen(
             }
         }
 
-        Group(header = "Integrations") {
+        // One row each, so no headers: the rows say what they are.
+        Group(Modifier.padding(top = 22.dp)) {
+            val mode = autopilot?.mode ?: dev.reins.core.AutopilotMode.MANUAL
+            ListRow(
+                "Autopilot",
+                subtitle = autopilotSummary(autopilot),
+                glyph = dev.reins.android.ui.autopilot.modeGlyph(mode),
+                tint = dev.reins.android.ui.autopilot.modeTint(mode, c),
+                chevron = true,
+                modifier = Modifier.testTag("openAutopilot"),
+                onClick = onAutopilot,
+            )
+            Hairline(inset = 51.dp)
             ListRow(
                 "Integrations",
                 // The vault comes with the account: it is not something the user connected.
                 subtitle = when (val n = accounts.count { it.service != "vault" }) {
-                    0 -> "Connect Gmail and more"
-                    1 -> "1 account connected"
-                    else -> "$n accounts connected"
+                    0 -> "None yet"
+                    1 -> "1 account"
+                    else -> "$n accounts"
                 },
                 glyph = Glyph.Apps,
                 tint = ActionKind.Read.tint(c),
@@ -236,21 +230,17 @@ fun SettingsScreen(
                 modifier = Modifier.testTag("openIntegrations"),
                 onClick = onIntegrations,
             )
-        }
-
-        Group(header = "Notifications") {
+            Hairline(inset = 51.dp)
             ListRow(
-                "Approval notifications",
-                subtitle = if (notifications.enabled) "On" else "Off: requests can't reach you while Reins is closed",
+                "Notifications",
+                subtitle = if (notifications.enabled) "On" else "Off",
                 glyph = Glyph.Bell,
                 tint = if (notifications.enabled) c.success else c.warning,
                 chevron = !notifications.enabled,
                 modifier = Modifier.testTag("notificationsRow"),
                 onClick = { if (!notifications.enabled) notifications.request() },
             )
-        }
-
-        Group(header = "Sounds & haptics") {
+            Hairline(inset = 51.dp)
             ListRow(
                 "Sounds & haptics",
                 subtitle = soundsSummary(sounds),
@@ -260,18 +250,29 @@ fun SettingsScreen(
                 modifier = Modifier.testTag("openSounds"),
                 onClick = onSounds,
             )
-        }
-
-        Group(header = "Help") {
+            Hairline(inset = 51.dp)
             ListRow(
                 "Take the tour",
-                subtitle = "How Reins works, integrations and the private model",
                 glyph = Glyph.Navigate,
                 tint = c.accent,
                 chevron = true,
                 modifier = Modifier.testTag("takeTour"),
                 onClick = onTour,
             )
+        }
+
+        if (dev.reins.android.BuildConfig.DEBUG) {
+            // Debug builds only: what the round Autopilot button opens, to compare the designs on a phone.
+            Group(header = "Developer") {
+                val quick by dev.reins.android.ui.autopilot.QuickStyles.state(context)
+                dev.reins.android.ui.autopilot.Segmented(
+                    dev.reins.android.ui.autopilot.QuickStyle.entries,
+                    quick,
+                    label = { it.label },
+                    modifier = Modifier.padding(12.dp),
+                    tag = { "quickStyle:${it.name}" },
+                ) { dev.reins.android.ui.autopilot.QuickStyles.set(context, it) }
+            }
         }
 
         val updates = viewModel.updates
@@ -338,7 +339,7 @@ fun SettingsScreen(
     if (confirmSignOut) {
         ConfirmDialog(
             title = "Sign out?",
-            text = "This phone stops receiving approval requests until you sign in again: your AIs' requests wait and then fail. Your computers, AI connections and integrations stay with your account.",
+            text = "Requests can't reach this phone until you sign in again.",
             confirmLabel = "Sign out",
             onConfirm = {
                 confirmSignOut = false
@@ -351,7 +352,7 @@ fun SettingsScreen(
 
 /** What the Autopilot row says: the mode, and whether the model is here. */
 internal fun autopilotSummary(s: dev.reins.core.AutopilotSettings?): String {
-    if (s == null) return "Answers requests for you, on this phone"
+    if (s == null) return "Manual"
     val mode = dev.reins.android.autopilot.AutopilotText.name(s.mode)
     val model = when (s.model.state) {
         dev.reins.core.ModelState.INSTALLED -> "model on this phone"
@@ -363,8 +364,8 @@ internal fun autopilotSummary(s: dev.reins.core.AutopilotSettings?): String {
 
 /** What the Vault passkeys row says: how many there are ([count] null while unknown). */
 internal fun vaultPasskeysSummary(count: Int?): String = when (count) {
-    null -> "Unlock your vault on a new phone"
-    0 -> "None: add one to unlock on a new phone"
+    null -> "Not set up"
+    0 -> "None"
     1 -> "1 passkey"
     else -> "$count passkeys"
 }
