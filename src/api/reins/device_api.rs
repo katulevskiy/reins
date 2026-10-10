@@ -9,8 +9,8 @@ use std::time::Duration;
 use reins_proto::{
     check_version,
     device::{
-        ApiError, Connections, DEVICE_KEY_HEADER, DeviceRegistered, DeviceRegistration, MAX_PENDING_WAIT_SECS,
-        PairingResult, Pending, TAKEOVER_REFUSED, codes, device_key_hash,
+        ApiError, Connections, DEVICE_KEY_HEADER, DeviceInfo, DeviceRegistered, DeviceRegistration, DeviceSignOut,
+        Devices, MAX_PENDING_WAIT_SECS, PairingResult, Pending, TAKEOVER_REFUSED, codes, device_key_hash,
     },
     ids::{ConnectionId, PairingId, RequestId},
     pairing::{PairingClaim, PairingRequest, PairingResponse, PushKind, PushMessage},
@@ -36,10 +36,10 @@ use super::{
     relay::AnswerError,
 };
 use crate::{
-    auth::Headers,
+    auth::{ClientIp, Headers},
     db::{
         DbConn, DbPool,
-        models::{ReinsConnection, ReinsDevice},
+        models::{Device, DeviceId, ReinsConnection, ReinsDevice, ReinsDeviceSignout, ReinsSsoSession},
     },
 };
 
@@ -60,6 +60,8 @@ pub fn routes() -> Vec<Route> {
         post_pairing_claim,
         get_connections,
         delete_connection,
+        get_devices,
+        delete_device,
         post_logout
     ]
 }
@@ -151,7 +153,7 @@ pub fn user_key(headers: &Headers) -> String {
 #[post("/reins/api/logout")]
 async fn post_logout(headers: Headers, conn: DbConn) -> PhoneResult<Json<Value>> {
     let browser_url = if crate::sso_workos::enabled() {
-        crate::db::models::ReinsSsoSession::latest_for_device(&headers.user.uuid, &headers.device.uuid, &conn)
+        ReinsSsoSession::latest_for_device(&headers.user.uuid, &headers.device.uuid, &conn)
             .await
             .map_err(|e| internal(&e))?
             .map(|session| crate::sso_workos::logout_url(&session.session_id))
@@ -161,9 +163,7 @@ async fn post_logout(headers: Headers, conn: DbConn) -> PhoneResult<Json<Value>>
         None
     };
     // Invalidate this device's access and refresh tokens immediately, even if the browser is later closed.
-    crate::db::models::ReinsSsoSession::revoke_device(&headers.user.uuid, &headers.device.uuid, &conn)
-        .await
-        .map_err(|e| internal(&e))?;
+    ReinsSsoSession::revoke_device(&headers.user.uuid, &headers.device.uuid, &conn).await.map_err(|e| internal(&e))?;
     Ok(Json(serde_json::json!({"browser_url": browser_url})))
 }
 
@@ -469,6 +469,108 @@ async fn delete_connection(id: &str, headers: Headers, key: DeviceKey, conn: DbC
     };
     connection.delete(&conn).await.map_err(|e| internal(&e))?;
     Ok(Status::NoContent)
+}
+
+/// A9: the devices signed in to the account (phones, Bitwarden apps, the web vault), the approval device marked.
+#[get("/reins/api/devices")]
+async fn get_devices(headers: Headers, key: DeviceKey, conn: DbConn) -> PhoneResult<Json<Devices>> {
+    require_approval_device(&headers, &key, &conn).await?;
+    let approval = ReinsDevice::find_by_user(&headers.user.uuid, &conn).await;
+    let mut devices: Vec<DeviceInfo> = Device::find_by_user(&headers.user.uuid, &conn)
+        .await
+        .into_iter()
+        .map(|d| DeviceInfo {
+            approval: approval.as_ref().is_some_and(|a| a.device_uuid == d.uuid),
+            this_device: d.uuid == headers.device.uuid,
+            id: d.uuid.to_string(),
+            name: d.name.chars().filter(|c| !c.is_control()).take(100).collect(),
+            kind: d.atype,
+            created_at: d.created_at.and_utc().timestamp(),
+            last_seen_at: d.updated_at.and_utc().timestamp(),
+        })
+        .collect();
+    devices.sort_by_key(|d| (!d.this_device, !d.approval, std::cmp::Reverse(d.last_seen_at)));
+    Ok(Json(Devices {
+        devices,
+    }))
+}
+
+/// A10: signs another device of the account out (a lost phone), from the approval device and with proof typed now (the
+/// recovery code's or the master password's hash, counted like a takeover proof). In one transaction its Vaultwarden
+/// device goes (its access token is refused at once, its refresh token is gone), with its SSO session mappings and any
+/// approval role still naming it, and the sign-out is recorded: a sign-in with that device id is refused from then on
+/// ([`crate::api::identity`]). Its WorkOS sessions are ended at WorkOS too (so the sign-in cookie it kept no longer
+/// signs anyone in), its push registration is dropped, and its join requests are forgotten. The device asking signs
+/// itself out with A-logout instead.
+#[delete("/reins/api/devices/<id>", data = "<data>")]
+async fn delete_device(
+    id: &str,
+    data: Data<'_>,
+    headers: Headers,
+    key: DeviceKey,
+    ip: ClientIp,
+    conn: DbConn,
+) -> PhoneResult<Status> {
+    require_approval_device(&headers, &key, &conn).await?;
+    let body: DeviceSignOut = serde_json::from_slice(&read_body_limited(data, 4096).await?)
+        .map_err(|e| bad_request(format!("invalid body: {e}")))?;
+    let id = DeviceId::from(id.to_owned());
+    let Some(target) = Device::find_by_uuid_and_user(&id, &headers.user.uuid, &conn).await else {
+        return Err(api_err(Status::NotFound, codes::UNKNOWN_DEVICE, "The account has no device with that id"));
+    };
+    // The row found, not the id given: under MySQL's case-insensitive lookup another spelling finds this phone's row.
+    if target.uuid == headers.device.uuid {
+        return Err(bad_request("This is the device asking; sign it out with Sign out instead"));
+    }
+    check_proof(&headers, &body.master_password_hash)?;
+    let user = user_key(&headers);
+    info!("Reins: device {} of user {user} signed out from device {} ({})", target.uuid, headers.device.uuid, ip.ip);
+    let signout = ReinsDeviceSignout {
+        user_uuid: headers.user.uuid.clone(),
+        device_uuid: target.uuid.clone(),
+        signed_out_at: now_unix(),
+        by_device_name: super::pairing::sanitize_display(&headers.device.name, 100),
+    };
+    // First, so that no sign-in with this id starts while the rest happens.
+    signout.record(&conn).await.map_err(|e| internal(&e))?;
+    if crate::sso_workos::enabled() {
+        let sessions =
+            ReinsDeviceSignout::sessions_of(&headers.user.uuid, &target.uuid, &conn).await.map_err(|e| internal(&e))?;
+        for session in sessions {
+            // Not ended at WorkOS: nothing more is done, and the user is told to try again (the id stays refused).
+            if let Err(e) = crate::sso_workos::revoke_session(&session).await {
+                warn!("Reins: ending a signed-out device's WorkOS session failed: {e:?}");
+                return Err(api_err(
+                    Status::BadGateway,
+                    codes::INTERNAL,
+                    "WorkOS did not end that phone's sign-in, so it is not signed out yet. Try again in a minute.",
+                ));
+            }
+        }
+    }
+    if crate::CONFIG.push_enabled()
+        && let Err(e) = crate::api::unregister_push_device(target.push_uuid.as_ref()).await
+    {
+        warn!("Reins: unregistering a signed-out device from push failed: {e:?}");
+    }
+    signout.sign_out(&conn).await.map_err(|e| internal(&e))?;
+    HUB.joins.forget_device(&user, &target.uuid.to_string());
+    Ok(Status::NoContent)
+}
+
+/// Proof typed now that the caller may sign a device out: the master password hash of the account secret or of the
+/// master password. Wrong hashes count against the account, with the takeover proofs.
+fn check_proof(headers: &Headers, hash: &str) -> PhoneResult<()> {
+    let user = user_key(headers);
+    if let Err(wait) = super::limits::DEVICE_PROOFS.check(&user) {
+        return Err(rate_limited("too many wrong recovery codes or passwords for this account", wait));
+    }
+    if !hash.is_empty() && headers.user.check_valid_password(hash) {
+        return Ok(());
+    }
+    super::limits::DEVICE_PROOFS.fail(&user);
+    warn!("Reins: a wrong proof to sign a device out of user {user}");
+    Err(api_err(Status::Forbidden, codes::WRONG_PROOF, "That is neither the recovery code nor the master password"))
 }
 
 #[catch(401)]

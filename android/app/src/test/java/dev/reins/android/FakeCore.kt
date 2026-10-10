@@ -21,6 +21,7 @@ import dev.reins.core.StandingGrant
 import dev.reins.core.ApprovalView
 import dev.reins.core.BlobView
 import dev.reins.core.ConnectionView
+import dev.reins.core.DeviceView
 import dev.reins.core.CoreException
 import dev.reins.core.EmailContent
 import dev.reins.core.GmailStatus
@@ -838,6 +839,32 @@ class FakeCore : ReinsCoreInterface {
         } else {
             TestData.suggestion("")
         }
+    }
+
+    // ---- devices ----
+
+    @Volatile var devices: List<DeviceView> = TestData.devices()
+    @Volatile var devicesError: CoreException? = null
+    val signedOutDevices = CopyOnWriteArrayList<String>()
+
+    fun resetDevices() {
+        devices = TestData.devices()
+        devicesError = null
+        signedOutDevices.clear()
+    }
+
+    override suspend fun devices(): List<DeviceView> {
+        devicesError?.let { throw it }
+        return devices
+    }
+
+    /** The proof `signOutDevice` takes (the recovery code or master password typed then). */
+    @Volatile var signOutProof = RECOVERY_CODE
+
+    override suspend fun signOutDevice(deviceId: String, codeOrPassword: String) {
+        if (codeOrPassword != signOutProof) throw CoreException.Invalid("That is neither the recovery code nor the master password.")
+        signedOutDevices += deviceId
+        devices = devices.filterNot { it.id == deviceId }
     }
 
     // ---- the vault on the phone ----

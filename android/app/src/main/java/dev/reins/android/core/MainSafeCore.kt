@@ -19,6 +19,7 @@ import dev.reins.core.StandingGrant
 import dev.reins.core.ApprovalView
 import dev.reins.core.BlobView
 import dev.reins.core.ConnectionView
+import dev.reins.core.DeviceView
 import dev.reins.core.EmailContent
 import dev.reins.core.GmailStatus
 import dev.reins.core.GrantView
@@ -77,6 +78,10 @@ class MainSafeCore(
     override suspend fun setStartingPolicy(policy: StartingPolicy) = io { setStartingPolicy(policy) }
 
     override suspend fun connections(): List<ConnectionView> = io { connections() }
+
+    override suspend fun devices(): List<DeviceView> = io { devices() }
+
+    override suspend fun signOutDevice(deviceId: String, codeOrPassword: String) = io { signOutDevice(deviceId, codeOrPassword) }
 
     override suspend fun vaultItems(query: String): List<VaultItemSummary> = io { vaultItems(query) }
 

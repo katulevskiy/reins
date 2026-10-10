@@ -475,6 +475,56 @@ pub struct ConnectionView {
     pub key_fingerprint: Option<String>,
 }
 
+/// What a device signed in to the account is.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, uniffi::Enum)]
+pub enum DeviceKind {
+    /// A phone or tablet (the Reins app, or a Bitwarden app on it).
+    Phone,
+    /// A Bitwarden desktop app or command line.
+    Computer,
+    /// The web vault or a browser extension.
+    Browser,
+    Other,
+}
+
+/// One device signed in to the account (Settings > Devices).
+#[derive(Clone, Debug, PartialEq, Eq, uniffi::Record)]
+pub struct DeviceView {
+    pub id: String,
+    pub name: String,
+    pub kind: DeviceKind,
+    /// "Android", "iOS", "Chrome extension", "Web vault", ...
+    pub platform: String,
+    pub created_at: i64,
+    /// When it last signed in or renewed its sign-in.
+    pub last_seen_at: i64,
+    /// The account's approval device: the one requests go to.
+    pub approval: bool,
+    pub this_device: bool,
+}
+
+impl DeviceView {
+    /// Bitwarden's device types (`DeviceType` in its server).
+    pub(crate) fn kind_of(code: i32) -> (DeviceKind, &'static str) {
+        match code {
+            0 | 15 => (DeviceKind::Phone, "Android"),
+            1 => (DeviceKind::Phone, "iOS"),
+            2 => (DeviceKind::Browser, "Chrome extension"),
+            3 => (DeviceKind::Browser, "Firefox extension"),
+            4 => (DeviceKind::Browser, "Opera extension"),
+            5 => (DeviceKind::Browser, "Edge extension"),
+            19 => (DeviceKind::Browser, "Vivaldi extension"),
+            20 => (DeviceKind::Browser, "Safari extension"),
+            6 | 16 => (DeviceKind::Computer, "Bitwarden for Windows"),
+            7 => (DeviceKind::Computer, "Bitwarden for macOS"),
+            8 => (DeviceKind::Computer, "Bitwarden for Linux"),
+            23..=25 => (DeviceKind::Computer, "Bitwarden command line"),
+            9..=14 | 17 | 18 => (DeviceKind::Browser, "Web vault"),
+            _ => (DeviceKind::Other, "Other"),
+        }
+    }
+}
+
 #[derive(Clone, Debug, PartialEq, uniffi::Record)]
 pub struct ActivityEntry {
     /// Stable, increasing row number.

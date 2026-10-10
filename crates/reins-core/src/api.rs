@@ -15,9 +15,9 @@ use crate::connector::device::{DeviceBridge, DeviceCalendar, DeviceContacts, Sms
 use crate::connector::{Connector, LoginProgress};
 use crate::engine::{CoreConfig, Engine};
 use crate::types::{
-    AccountKeys, AccountView, ActivityEntry, ApprovalChoice, ApprovalKind, ApprovalView, ConnectionView, EmailContent,
-    GmailStatus, GrantView, JoinProgress, JoinStart, JoinView, PairingView, PendingItem, ServerInfo, ServiceView,
-    SessionInfo, SsoOutcome, SsoStart, StandingGrant, StartingPolicy,
+    AccountKeys, AccountView, ActivityEntry, ApprovalChoice, ApprovalKind, ApprovalView, ConnectionView, DeviceView,
+    EmailContent, GmailStatus, GrantView, JoinProgress, JoinStart, JoinView, PairingView, PendingItem, ServerInfo,
+    ServiceView, SessionInfo, SsoOutcome, SsoStart, StandingGrant, StartingPolicy,
 };
 use crate::vault_editor::{VaultItemDetail, VaultItemInput, VaultItemSummary, VaultSshKey};
 use crate::vault_passkey::{VaultPasskeyOptions, VaultPasskeyView};
@@ -630,6 +630,34 @@ impl ReinsCore {
             let engine = runtime.prepare(generation).await?;
             engine.ensure_active()?;
             let result = engine.run_account(async { engine.revoke_connection(&connection_id).await }).await;
+            runtime.finish(&engine, result)
+        })
+        .await
+    }
+
+    /// The devices signed in to the account (Settings > Devices).
+    pub async fn devices(&self) -> Result<Vec<DeviceView>, CoreError> {
+        let runtime = Arc::clone(&self.runtime);
+        let generation = runtime.generation();
+        rt::run(async move {
+            let engine = runtime.prepare(generation).await?;
+            engine.ensure_active()?;
+            let result = engine.run_account(async { engine.devices().await }).await;
+            runtime.finish(&engine, result)
+        })
+        .await
+    }
+
+    /// Signs another device of the account out (a lost phone), with the recovery code or master password the user
+    /// typed now: it can no longer sync or answer for the account.
+    pub async fn sign_out_device(&self, device_id: String, code_or_password: String) -> Result<(), CoreError> {
+        let runtime = Arc::clone(&self.runtime);
+        let generation = runtime.generation();
+        let typed = Zeroizing::new(code_or_password);
+        rt::run(async move {
+            let engine = runtime.prepare(generation).await?;
+            engine.ensure_active()?;
+            let result = engine.run_account(async { engine.sign_out_device(&device_id, typed).await }).await;
             runtime.finish(&engine, result)
         })
         .await

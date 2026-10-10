@@ -42,6 +42,8 @@ pub mod codes {
     pub const FRESH_TOKEN_REQUIRED: &str = "fresh_token_required";
     /// 409 to `POST /account/delete`: the account is the last owner of an organization.
     pub const LAST_OWNER: &str = "last_owner";
+    /// 404 to `DELETE /devices/{id}`: the account has no device with that id (already signed out).
+    pub const UNKNOWN_DEVICE: &str = "unknown_device";
     /// 502: the identity provider (WorkOS) could not be reached or refused; nothing was deleted, retry later.
     pub const PROVIDER_UNAVAILABLE: &str = "provider_unavailable";
     /// 403 to `POST /account/reset`: this device has not just signed in (or its sign-in was already spent on a reset).
@@ -192,6 +194,50 @@ pub struct ConnectionInfo {
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Connections {
     pub connections: Vec<ConnectionInfo>,
+}
+
+/// One device signed in to the account (a phone, a Bitwarden app or the web vault), as listed by A9.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct DeviceInfo {
+    pub id: String,
+    /// The name the device gave when it signed in ("Pixel 9", "iPhone").
+    pub name: String,
+    /// Bitwarden's device type (0 Android, 1 iOS, 8 Linux desktop, 9 Chrome, ...).
+    pub kind: i32,
+    /// Unix seconds of the sign-in.
+    pub created_at: i64,
+    /// Unix seconds it last signed in or renewed its sign-in.
+    pub last_seen_at: i64,
+    /// The account's approval device.
+    pub approval: bool,
+    /// The device that asked.
+    pub this_device: bool,
+}
+
+/// A9 response.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Devices {
+    pub devices: Vec<DeviceInfo>,
+}
+
+/// A10 body: proof typed now that the user may sign a device out (the master password hash of the recovery code, or
+/// of the master password of an account that has one), checked and counted like a takeover proof.
+#[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct DeviceSignOut {
+    pub master_password_hash: String,
+}
+
+impl std::fmt::Debug for DeviceSignOut {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("DeviceSignOut").finish_non_exhaustive()
+    }
+}
+
+/// The ids a device may sign in with: what the phone API can name in a path (`[A-Za-z0-9_-]`, 1 to 36 characters, the
+/// size of the server's column), so that every device signed in can also be signed out.
+#[must_use]
+pub fn valid_device_id(id: &str) -> bool {
+    !id.is_empty() && id.len() <= 36 && id.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'-' || b == b'_')
 }
 
 /// Error body of every phone API error response.

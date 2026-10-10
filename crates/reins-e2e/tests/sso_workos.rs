@@ -333,6 +333,43 @@ async fn another_phone_gets_the_keys_from_the_approval_device() {
     assert!(first.core.sync(0).await.is_err(), "the first phone no longer approves");
 }
 
+/// A lost phone signed out from the approval phone (with the recovery code typed then): its WorkOS session ends at
+/// WorkOS, so the sign-in it kept no longer works, and a sign-in with its device id is refused.
+#[tokio::test(flavor = "multi_thread")]
+async fn signing_a_phone_out_ends_its_workos_session_and_it_cannot_sign_back_in() {
+    let workos = FakeWorkos::start().await;
+    let server = Server::start_with_env(5, 3, &workos.server_env()).await;
+    let grace = User {
+        id: "user_01GRACE".to_owned(),
+        email: "grace@example.com".to_owned(),
+    };
+    workos.sign_in_as(&grace);
+    let first = Phone::signed_out(|_| {}).await;
+    assert_eq!(first.sso_sign_in(&server.base).await.unwrap().keys, AccountKeys::Created);
+    first.core.register_device(None).await.unwrap();
+    let lost = Phone::signed_out(|_| {}).await;
+    lost.sso_sign_in(&server.base).await.unwrap();
+    let lost_session = workos.sessions().last().unwrap().clone();
+
+    let other = first.core.devices().await.unwrap().into_iter().find(|d| !d.this_device).expect("the other phone");
+    let code = first.core.account_recovery_code().await.unwrap();
+    assert!(first.core.sign_out_device(other.id.clone(), "AAAA-BBBB".to_owned()).await.is_err(), "a wrong code");
+    // WorkOS down: nothing is signed out yet, and the phone says so rather than claiming it was.
+    workos.fail_revokes(true);
+    let failed = first.core.sign_out_device(other.id.clone(), code.clone()).await.unwrap_err();
+    assert!(failed.to_string().contains("not signed out yet"), "{failed}");
+    assert!(first.core.devices().await.unwrap().iter().any(|d| d.id == other.id), "still listed, to try again");
+    workos.fail_revokes(false);
+    first.core.sign_out_device(other.id, code).await.unwrap();
+    assert_eq!(workos.revoked_sessions(), [lost_session], "only the lost phone's session ends");
+    assert!(lost.core.account_keys().await.is_err(), "its sign-in is over");
+    let back = lost.sso_sign_in(&server.base).await;
+    assert!(format!("{back:?}").contains("signed out of the account"), "{back:?}");
+    let refused_session = workos.sessions().last().unwrap().clone();
+    assert!(workos.revoked_sessions().contains(&refused_session), "the refused sign-in's session is ended too");
+    first.core.sync(0).await.expect("the approval phone still works");
+}
+
 /// Whoever controls the identity Grace signs in with (her Google account, her email) gets a signed-in phone, but not
 /// the approval role: that takes the recovery code or her phone's yes.
 #[tokio::test(flavor = "multi_thread")]

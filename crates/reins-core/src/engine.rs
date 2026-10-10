@@ -882,6 +882,60 @@ impl Engine {
             .collect())
     }
 
+    /// The devices signed in to the account: this phone first, then the approval device, then by last use.
+    pub async fn devices(&self) -> Result<Vec<crate::types::DeviceView>, CoreError> {
+        let session = self.session()?;
+        let list = api_call!(&session, |api| api.devices()).map_err(ApiFailure::into_core)?;
+        Ok(list
+            .devices
+            .into_iter()
+            .map(|d| {
+                let (kind, platform) = crate::types::DeviceView::kind_of(d.kind);
+                crate::types::DeviceView {
+                    name: crate::text::truncate_chars(&crate::text::one_line(&d.name), 64),
+                    id: d.id,
+                    kind,
+                    platform: platform.to_owned(),
+                    created_at: d.created_at,
+                    last_seen_at: d.last_seen_at,
+                    approval: d.approval,
+                    this_device: d.this_device,
+                }
+            })
+            .collect())
+    }
+
+    /// Signs another device of the account out at the server, with the recovery code or the master password typed
+    /// now (never one this phone keeps): its sign-in ends at once and its id is refused from then on, so it can no
+    /// longer sync the vault or answer for the account. Already gone is fine; a server without the call is not.
+    pub async fn sign_out_device(&self, device_id: &str, code_or_password: Zeroizing<String>) -> Result<(), CoreError> {
+        check_id(device_id)?;
+        let session = self.session()?;
+        let proof = reins_proto::device::DeviceSignOut {
+            master_password_hash: self.typed_proof(&session, code_or_password).await?.to_string(),
+        };
+        match api_call!(&session, |api| api.delete_device(device_id, &proof)) {
+            Ok(()) => Ok(()),
+            Err(ApiFailure::Status {
+                code,
+                ..
+            }) if code == codes::UNKNOWN_DEVICE => Ok(()),
+            Err(ApiFailure::Status {
+                code,
+                ..
+            }) if code == codes::WRONG_PROOF => {
+                Err(CoreError::invalid("That is neither the recovery code nor the master password."))
+            }
+            // WorkOS did not end the phone's sign-in: nothing changed, and the server says to try again.
+            Err(ApiFailure::Status {
+                status: 502,
+                message,
+                ..
+            }) => Err(CoreError::service(crate::text::one_line(&message))),
+            Err(e) => Err(e.into_core()),
+        }
+    }
+
     /// Remembers the icon the user picked for a connection (`None` = automatic).
     pub fn set_connection_icon(&self, connection_id: &str, icon: Option<String>) -> Result<(), CoreError> {
         check_id(connection_id)?;
