@@ -49,12 +49,29 @@ The agent **cannot**:
 | Desktop app session (OAuth tokens for the server) | `~/.local/state/reins/session.json`, 0600 | readable by your OS user. |
 | Released git credentials, API keys, `reins run` secrets | desktop app memory | until the lease ends (git fetch 1 h, push 10 min, API proxy as configured). `reins run` wipes the values once the command starts. |
 | SSH private keys | phone (vault) | signatures are made on the phone. The key never leaves it. |
+| Virtual card provider key (Privacy.com) | phone, encrypted store | on the phone that connected it only (not in the synced account state); sent to the provider only, to make, read and close cards. |
+| Payment settings, purchase ledger, the mandate signing key | phone, encrypted store | travel with the account state like the grants (the server holds them encrypted with the account key). The ledger keeps a virtual card's id and last four digits, never a card number. |
 
 Vault secrets an AI asks to see (passwords, one-time codes, notes, card numbers, SSH private keys) are asked for
 every time. They can never be covered by a standing permission, and their values are not written to the activity log.
 Secrets released to the desktop app (`reins run`, the API proxy) and SSH signatures can be covered by a standing
 permission for one item, or for one key on one server, if you choose to give one. Autopilot never releases them on its
 own.
+
+Purchases ([Payments](payments.md)) are approved by you each time, on the purchase screen, or by a spend limit you
+set for one AI, paying with a virtual card capped by its provider (a few an hour at most, each one notified); never by
+a standing permission or Autopilot. What pays leaves the phone only with an approved purchase, for that cart: a
+virtual card made for it, capped at its total plus a small tolerance (the safest), a card from the vault (always asked
+for, never by a spend limit), or nothing at all (the store's saved payment method, or you pay on the phone). What a
+purchase counts against budgets and limits never goes down because of what the agent reports. For an AI connected
+directly, the server relays card details in memory like any answer and never writes them down; while a desktop app
+is paired, a card from the vault goes to no other connection, since which connection asked is the server's to say.
+For the desktop app's connection the phone hands card details over only sealed to the app's pinned key, and signs the
+whole answer with the account's payment key and the request's nonce. The app's bridge passes on only approvals signed
+that way by the key you typed in once on that computer from the phone's screen (`reins payments-trust`), so a server
+that strips, changes or makes up an answer gets nothing to pay with and cannot fake an approval. Every
+approval carries a mandate signed on the phone, so the cart you approved can be proved later. [What leaves the phone,
+and when](payments.md#what-leaves-the-phone-and-when).
 
 ## Accounts without a master password
 

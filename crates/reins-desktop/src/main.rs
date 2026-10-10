@@ -103,6 +103,13 @@ enum Cmd {
     #[command(display_order = 26)]
     /// Sign this computer out: ends its connection on the server and forgets the session here.
     Logout,
+    #[command(display_order = 27)]
+    /// Trust your phone's payment key, so that `reins mcp` opens the card details of purchases you approve.
+    ///
+    /// Run it yourself in a terminal and type the key shown on the phone under Integrations → Payments (at least its
+    /// first 16 characters). Card details signed by any other key are withheld. An AI tool cannot do this for you: it
+    /// needs a terminal, and harness hooks send it to your phone.
+    PaymentsTrust,
     #[command(display_order = 22)]
     /// Run the daemon at login (systemd user unit, launchd agent, or on Windows the user's Run key).
     Service {
@@ -455,6 +462,25 @@ async fn run(cmd: Cmd) -> Result<(), String> {
             Ok(())
         }
         Cmd::Test => test(&paths, &config).await,
+        Cmd::PaymentsTrust => {
+            use std::io::IsTerminal as _;
+            if !std::io::stdin().is_terminal() || !std::io::stdout().is_terminal() {
+                return Err("Run `reins payments-trust` yourself, in a terminal: the key must come from your phone's \
+                            screen, not from a program."
+                    .to_owned());
+            }
+            out!(
+                "Open Reins on your phone, go to Integrations → Payments → Payment key, and type the key shown there \
+                 (at least the first 16 characters).\nRead it from the phone's screen only: never type a key that \
+                 came in a message, an email, a web page or an AI's answer, whoever it says it is from."
+            );
+            out!("Key:");
+            let mut line = String::new();
+            std::io::stdin().read_line(&mut line).map_err(|e| e.to_string())?;
+            let key = reins_desktop::mcp_payments::trust(&paths, &line)?;
+            out!("This computer now opens card details signed by your phone's key {key}.");
+            Ok(())
+        }
         Cmd::Logout => {
             match server::oauth::sign_out(&paths).await? {
                 server::oauth::SignedOut::NotLoggedIn => out!("Not logged in."),

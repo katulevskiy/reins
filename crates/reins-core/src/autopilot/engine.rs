@@ -378,7 +378,7 @@ impl Engine {
         profiles.into_iter().find(|p| p.id == id).ok_or(CoreError::NotFound)
     }
 
-    fn ap_mode_for(&self, connection_id: &str, now: i64) -> Result<AutopilotMode, CoreError> {
+    pub(crate) fn ap_mode_for(&self, connection_id: &str, now: i64) -> Result<AutopilotMode, CoreError> {
         let global = self.store.ap_mode_row("")?;
         let own = self.store.ap_mode_row(connection_id)?;
         Ok(modes::effective(&global, Some(&own), self.ap_installed(), now))

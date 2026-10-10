@@ -54,6 +54,8 @@ struct Bridge {
     /// The client's `initialize`, replayed when the server forgets the session.
     initialize: Mutex<Option<Value>>,
     journal: Journal,
+    /// Card details of purchases are sealed to this app's key, and opened here ([`crate::mcp_payments`]).
+    sealing: crate::mcp_payments::Sealing,
 }
 
 /// A `tools/call` request: the tool, the progress token the client gave (if any), the argument names.
@@ -202,8 +204,12 @@ impl Bridge {
         Ok(resp)
     }
 
-    /// Passes the messages of the answer to `out` as they come (JSON, or an event stream).
-    async fn relay(resp: reqwest::Response, out: &mpsc::UnboundedSender<Value>) -> Result<Vec<Value>, Failure> {
+    /// Passes the messages of the answer to `out` as they come (JSON, or an event stream), each through `fix`.
+    async fn relay(
+        resp: reqwest::Response,
+        out: &mpsc::UnboundedSender<Value>,
+        fix: impl Fn(&mut Value),
+    ) -> Result<Vec<Value>, Failure> {
         let mut responses = Vec::new();
         let sse = resp
             .headers()
@@ -218,7 +224,8 @@ impl Bridge {
                 Value::Array(items) => items,
                 v => vec![v],
             };
-            for v in items {
+            for mut v in items {
+                fix(&mut v);
                 // A copy of the responses for the caller (it looks at `initialize`'s).
                 if v.get("id").is_some() && v.get("method").is_none() {
                     responses.push(v.clone());
@@ -359,8 +366,14 @@ impl Bridge {
     }
 
     /// Forwards one message from the harness; writes the answers (or an error for each request) to `out`.
-    async fn forward_plain(&self, msg: Value, out: &mpsc::UnboundedSender<Value>) {
+    async fn forward_plain(&self, mut msg: Value, out: &mpsc::UnboundedSender<Value>) {
         let ids = request_ids(&msg);
+        if let Err(why) = self.sealing.prepare(&mut msg) {
+            for id in ids {
+                let _closed = out.send(error_for(&id, &why));
+            }
+            return;
+        }
         let is_initialize = msg.get("method").and_then(Value::as_str) == Some("initialize");
         if is_initialize {
             *lock(&self.initialize) = Some(msg.clone());
@@ -374,8 +387,9 @@ impl Bridge {
                 Err(e) => Err(e),
             };
         }
+        let fix = |v: &mut Value| self.sealing.open(v);
         let outcome = match result {
-            Ok(resp) => Self::relay(resp, out).await,
+            Ok(resp) => Self::relay(resp, out, fix).await,
             Err(e) => Err(e),
         };
         match outcome {
@@ -439,6 +453,7 @@ where
         protocol: Mutex::new(None),
         initialize: Mutex::new(None),
         journal: Journal::new(paths),
+        sealing: crate::mcp_payments::Sealing::load(paths),
     });
     let (tx, mut rx) = mpsc::unbounded_channel::<Value>();
     let writer = tokio::spawn(async move {

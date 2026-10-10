@@ -424,6 +424,7 @@ impl Engine {
                 covered: BTreeMap::new(),
                 preview: Some(preview),
                 mcp: Some(held),
+                purchase: None,
             }),
         })
     }

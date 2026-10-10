@@ -9,6 +9,7 @@ use url::Url;
 use zeroize::Zeroizing;
 
 use super::model::{Entry, Kind, Snapshot, State, decrypt_buffer};
+use super::wallet::last_four;
 use super::{MAX_FILE_BYTES, host_of};
 use crate::connector::Item;
 use crate::connector::calendar::{limit, segment};
@@ -130,12 +131,6 @@ pub(super) async fn folders_list(vault: &Vault, account: &str) -> Result<Vec<Ite
             }
         })
         .collect())
-}
-
-/// The last four digits of a card number, when it has that many.
-fn last_four(number: &str) -> Option<String> {
-    let digits: Vec<char> = number.chars().filter(char::is_ascii_digit).collect();
-    (digits.len() >= 4).then(|| digits[digits.len() - 4..].iter().collect())
 }
 
 pub(super) async fn item_view(vault: &Vault, account: &str, call: &ConnectorCall) -> Result<Vec<Item>, CoreError> {

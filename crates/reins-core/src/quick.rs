@@ -245,6 +245,9 @@ fn connector_headline(who: &str, view: &ApprovalView) -> String {
     if let Some(ask) = &view.ask {
         return format!("The desktop app gets a yes to: {}", text::one_line(&ask.question));
     }
+    if let Some(p) = &view.purchase {
+        return format!("{who} pays {} at {} for this cart.", p.total, p.domain);
+    }
     if let Some(s) = &view.secrets {
         return format!(
             "The desktop app gets {} for {}, for {}.",

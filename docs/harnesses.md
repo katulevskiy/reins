@@ -44,8 +44,11 @@ each file byte for byte, as long as nobody edited around the entry in the meanti
 already exists with a different value, `add` stops and says so. It does not overwrite.
 
 The MCP server entry runs `reins mcp --via "<Harness name>"`, a stdio MCP server that forwards to
-`<server>/mcp` with the desktop app's session. The name is shown on your phone ("Laptop · Claude Code"). The hook
-entry runs `reins hook <harness>` with a timeout 30 s longer than the guard's own.
+`<server>/mcp` with the desktop app's session. The name is shown on your phone ("Laptop · Claude Code"). Approved
+purchases come to it signed by your phone, their card details sealed; it passes them to the agent once you have typed
+the phone's key into `reins payments-trust` ([Payments](payments.md#what-leaves-the-phone-and-when)), which the
+built-in hook rules send to your phone when an AI tool runs it. The hook entry runs `reins hook
+<harness>` with a timeout 30 s longer than the guard's own.
 
 ### Windows
 
@@ -174,8 +177,8 @@ matches.
 `--mirror`, `--prune`, `:ref`), `git reset --hard`, `git clean -f`, `git branch -D`, `git checkout -f`,
 `git filter-branch`, `git filter-repo`, `rm -r`, `terraform`/`tofu` `apply` and `destroy`, `kubectl apply`/`delete`,
 `helm uninstall`/`delete`, `DROP TABLE`/`DATABASE`/`SCHEMA`, `TRUNCATE TABLE`, package publishing (`npm`, `pnpm`,
-`yarn`, `cargo`, `poetry`, `uv`, `twine`, `gem`, `docker push`), `gh repo delete`, `gh release delete`, `mkfs*`,
-`dd of=*`. On Windows: `Remove-Item -Recurse` and its aliases (`ri`, `del`, `erase`, `rd`, `rmdir`; `rm -Recurse` is
+`yarn`, `cargo`, `poetry`, `uv`, `twine`, `gem`, `docker push`), `gh repo delete`, `gh release delete`,
+`reins payments-trust`, `mkfs*`, `dd of=*`. On Windows: `Remove-Item -Recurse` and its aliases (`ri`, `del`, `erase`, `rd`, `rmdir`; `rm -Recurse` is
 `rm -r`), cmd's `rd /s`, `rmdir /s`, `del /s`, `erase /s`, `format <drive>:`, `Format-Volume`, `Clear-Disk`.
 
 **Built-in file rules:** `.env`, `.env.*`, `*.pem`, `*.key`, `*.p12`, `*.pfx`, `*.jks`, `*.keystore`, `*.tfstate`,

@@ -1116,4 +1116,17 @@ mod tests {
         });
         assert_eq!(out["structuredContent"], json!({"items": [{"id": "1"}]}));
     }
+
+    #[test]
+    fn a_purchase_that_does_not_add_up_is_refused_before_the_phone_sees_it() {
+        let cart = json!({"merchant": "Shop", "merchant_url": "https://shop.example.com/cart", "currency": "USD",
+            "items": [{"name": "Mug", "quantity": 2, "unit_price": "8.00"}], "total": "15.00"});
+        assert!(invalid_msg("payments_purchase_request", &cart).contains("make 16.00"));
+        let mut ok = cart.clone();
+        ok["total"] = json!("16.00");
+        assert!(matches!(
+            parse_invocation("payments_purchase_request", &ok),
+            Ok(ToolInvocation::Relay(ToolCall::Connector(_), None))
+        ));
+    }
 }

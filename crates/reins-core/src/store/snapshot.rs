@@ -82,7 +82,7 @@ pub(super) fn export(conn: &Connection, portable: bool) -> Result<Zeroizing<Vec<
         let predicate = if portable && *name == "meta" {
             " WHERE key NOT IN ('device_id','dek_check','app.account-state.revision','app.account-state.synced') AND key NOT LIKE 'app.session.%'"
         } else if portable && *name == "secrets" {
-            " WHERE service NOT IN ('reins.device-key','reins.inbox-key','reins.account-secret','vault','reins.join','mcp_signin')"
+            " WHERE service NOT IN ('reins.device-key','reins.inbox-key','reins.account-secret','vault','reins.join','mcp_signin','payments.provider')"
         } else {
             ""
         };
@@ -137,7 +137,7 @@ pub(super) fn import(conn: &mut Connection, bytes: &[u8], portable: bool) -> Res
         let predicate = if portable && name == "meta" {
             " WHERE key NOT IN ('device_id','dek_check','app.account-state.revision','app.account-state.synced') AND key NOT LIKE 'app.session.%'"
         } else if portable && name == "secrets" {
-            " WHERE service NOT IN ('reins.device-key','reins.inbox-key','reins.account-secret','vault','reins.join','mcp_signin')"
+            " WHERE service NOT IN ('reins.device-key','reins.inbox-key','reins.account-secret','vault','reins.join','mcp_signin','payments.provider')"
         } else {
             ""
         };
@@ -152,7 +152,7 @@ pub(super) fn import(conn: &mut Connection, bytes: &[u8], portable: bool) -> Res
             // Never accept secret or session-key rows from a portable snapshot, even if its author supplies them.
             if portable
                 && name == "secrets"
-                && matches!(row.first(),Some(Cell::Text(s)) if matches!(s.as_str(),"reins.device-key"|"reins.inbox-key"|"reins.account-secret"|"vault"|"reins.join"|"mcp_signin"))
+                && matches!(row.first(),Some(Cell::Text(s)) if matches!(s.as_str(),"reins.device-key"|"reins.inbox-key"|"reins.account-secret"|"vault"|"reins.join"|"mcp_signin"|"payments.provider"))
             {
                 return Err(CoreError::storage("account data contains an installation key"));
             }

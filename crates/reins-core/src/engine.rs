@@ -55,6 +55,9 @@ pub struct CoreConfig {
     pub models: Vec<crate::autopilot::model::KnownModel>,
     /// A connection younger than this never gets automatic decisions (10 minutes; tests shorten it).
     pub new_connection_secs: i64,
+    /// Privacy.com's API, and its sandbox (virtual cards for Payments): tests point them at fake servers.
+    pub privacy_base: String,
+    pub privacy_sandbox_base: String,
 }
 
 impl Default for CoreConfig {
@@ -73,6 +76,8 @@ impl Default for CoreConfig {
             models_base: crate::autopilot::model::DEFAULT_MODELS_BASE.to_owned(),
             models: crate::autopilot::model::KNOWN_MODELS.to_vec(),
             new_connection_secs: crate::autopilot::gates::NEW_CONNECTION_SECS,
+            privacy_base: crate::connector::payments::provider::PRIVACY_BASE.to_owned(),
+            privacy_sandbox_base: crate::connector::payments::provider::PRIVACY_SANDBOX_BASE.to_owned(),
         }
     }
 }
@@ -104,6 +109,8 @@ pub struct Engine {
     pub(crate) notifier: Arc<dyn Notifier>,
     /// The integrations besides Gmail that this phone can run.
     pub(crate) connectors: crate::connector::Registry,
+    /// Payments, also in `connectors`: purchases go through the engine's own path (`connector::payments::flow`).
+    pub(crate) payments: Arc<crate::connector::payments::Payments>,
     session: crate::connector::vault::SessionSlot,
     /// What was last reported to the server, so that a report is sent only when it changes.
     reported_services: Mutex<Option<reins_proto::device::ServicesReport>>,
@@ -173,7 +180,16 @@ impl Engine {
         };
         let session: crate::connector::vault::SessionSlot = Arc::new(Mutex::new(session));
         let mut connectors = crate::connector::Registry::default();
-        connectors.add(Arc::new(crate::connector::vault::Vault::new(Arc::clone(&session), Arc::clone(&store))));
+        let vault = Arc::new(crate::connector::vault::Vault::new(Arc::clone(&session), Arc::clone(&store)));
+        connectors.add(Arc::<crate::connector::vault::Vault>::clone(&vault));
+        let payments = Arc::new(crate::connector::payments::Payments::new(
+            vault,
+            Arc::clone(&store),
+            http.clone(),
+            &cfg.privacy_base,
+            &cfg.privacy_sandbox_base,
+        ));
+        connectors.add(Arc::<crate::connector::payments::Payments>::clone(&payments));
         connectors.add(Arc::new(crate::connector::gmail::GmailTools::new(
             http.clone(),
             &cfg.gmail_base,
@@ -239,6 +255,7 @@ impl Engine {
             google,
             notifier,
             connectors,
+            payments,
             session,
             reported_services: Mutex::new(None),
             mcp: crate::mcp::McpState::default(),

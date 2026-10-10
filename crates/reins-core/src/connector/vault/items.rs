@@ -17,6 +17,7 @@ pub(super) mod desktop;
 pub(crate) mod editor;
 mod model;
 mod read;
+pub(crate) mod wallet;
 mod write;
 
 /// The largest file an attachment may be, in either direction.
