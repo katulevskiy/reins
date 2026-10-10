@@ -58,8 +58,8 @@ pub use traits::{GoogleTokenProvider, KeyWrapper, Notifier};
 pub use types::{AccountKeys, JoinProgress, JoinStart, JoinView, ServerInfo, SsoOutcome, SsoStart};
 pub use types::{
     AccountView, ActivityEntry, ActivityInfo, ActivityMessage, ApprovalChoice, ApprovalKind, ApprovalView, BlobView,
-    ConnectionView, EmailContent, EmailView, GitCommitView, GitFileView, GitPushView, GitRefView, GmailStatus,
-    GrantRequestView, GrantScopeChoice, GrantView, MessageView, PairingView, PendingItem, PendingKind, QuickApproval,
-    ResourceView, ServiceView, SessionInfo, StandingGrant, StartingPolicy,
+    ConnectionView, DeviceKind, DeviceView, EmailContent, EmailView, GitCommitView, GitFileView, GitPushView,
+    GitRefView, GmailStatus, GrantRequestView, GrantScopeChoice, GrantView, MessageView, PairingView, PendingItem,
+    PendingKind, QuickApproval, ResourceView, ServiceView, SessionInfo, StandingGrant, StartingPolicy,
 };
 pub use types::{AskView, SecretReleaseView, SshSignView};

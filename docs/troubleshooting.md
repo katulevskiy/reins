@@ -58,10 +58,33 @@ digits), or **Enter recovery code**.
 
 1. Install Reins on the new phone and sign in to the same account.
 2. Open the vault with **Unlock with passkey**, or **Enter recovery code**. The new phone becomes the approval
-   device. The computers and AI apps you connected stay connected to the account.
-3. Your integrations' tokens were kept encrypted on the lost phone, behind its screen lock. If someone else may have
-   it, revoke them at the source (GitHub's personal access tokens, Google account → Security → third-party access,
-   Telegram → Devices) and connect them again on the new phone.
+   device: requests come to it, and the lost phone no longer gets any. The computers and AI apps you connected stay
+   connected to the account.
+3. On the new phone, **Settings → Devices** lists every device signed in to the account. Tap **Sign out** next to the
+   lost phone (the dialog shows its platform, when it signed in and when it was last seen, in case two phones share a
+   name), and type your recovery code (or master password) to confirm. Its sign-in ends at once and its WorkOS
+   session with it: the app on it can no longer open your vault, sync or answer requests, and signing in again from
+   it as it is gets refused, saying which phone signed it out and when. If WorkOS cannot be reached, nothing is
+   signed out yet and the phone says to try again. (Only the approval phone can sign others out, which is why step 2
+   comes first.)
+4. What signing out does not stop: whoever has the lost phone and its screen lock can open Reins' Settings on it,
+   read your recovery code, install Reins again (a fresh install is a new device), sign in to your account if they
+   can (the email inbox, Google account or passkeys on that phone), and take the approval role back with the code.
+   So also, from another device: sign the lost phone out of the accounts you sign in to Reins with (Google account →
+   Security → Your devices; your email provider's sessions) and remove passkeys it holds. If it may be in the wrong
+   hands, the safe way out today is **Reset the vault** on the new phone after copying what you need out of it:
+   changing the recovery code is not possible yet. The integrations' tokens on it are a separate risk: revoke them at
+   the source (GitHub's personal access tokens, Google account → Security → third-party access, Telegram → Devices)
+   and connect them again on the new phone.
+5. `reins vault add` on your computers asks for the new phone's key the first time (type the twelve digits it shows).
+
+**Someone signed your phone out?** The sign-in screen says which phone did it and when. A phone that has your account
+secret (another phone you added) can take the approval role and sign yours out. Install Reins again on your phone (or
+clear its data), sign in, open the vault with your passkey or recovery code to take the role back, then sign the other
+phone out in Settings → Devices with your recovery code. If it keeps happening, that phone has your recovery code:
+reset the vault.
+
+<img src="assets/vault/devices-dark.png" width="200" alt="Settings, Devices: this phone, a lost Pixel 7 with Sign out, a computer">
 
 Lost the phone, the recovery code and every passkey? **Lost both? Reset the vault** on the new phone starts the
 account over with an empty vault: saved items, integrations and their grants are deleted, and your AIs and computers

@@ -293,6 +293,23 @@ pub async fn delete_user(user_id: &str) -> ApiResult<()> {
     err!(format!("WorkOS refused to delete the user ({})", refusal(status, &text)))
 }
 
+/// Ends a WorkOS session (`POST {base}/user_management/sessions/revoke`): its refresh token stops working and the
+/// browser cookie of that sign-in no longer signs anyone in silently. A session WorkOS no longer has counts as ended.
+pub async fn revoke_session(session_id: &str) -> ApiResult<()> {
+    let url = format!("{}/user_management/sessions/revoke", api_base()?);
+    let response =
+        match http_client()?.post(url).bearer_auth(api_key()).json(&json!({"session_id": session_id})).send().await {
+            Ok(r) => r,
+            Err(e) => err!(format!("Failed to contact WorkOS: {e}")),
+        };
+    let status = response.status();
+    if status.is_success() || status == reqwest::StatusCode::NOT_FOUND {
+        return Ok(());
+    }
+    let text = response.text().await.unwrap_or_default();
+    err!(format!("WorkOS refused to end the session ({})", refusal(status, &text)))
+}
+
 /// A new access token (and the rotated refresh token) for a WorkOS session.
 pub async fn exchange_refresh_token(refresh_token: String) -> ApiResult<RefreshTokenResponse> {
     let body = json!({

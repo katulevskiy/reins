@@ -235,7 +235,7 @@ async fn check_phone_key(phone: &Phone, paths: &Paths, given: Option<&str>) -> R
     let typed = match given {
         Some(typed) => typed.to_owned(),
         None => ask_terminal(
-            "Type the twelve digits your phone shows for its key (also at the bottom of the Vault page in the Reins app): ",
+            "Type the twelve digits your phone shows for its key (Reins app: Settings, Devices, or the bottom of the Vault page): ",
         )
         .ok_or(
             "Check your phone's key once: run reins vault add in a terminal, or pass --phone-key with the twelve \

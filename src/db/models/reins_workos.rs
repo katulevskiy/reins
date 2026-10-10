@@ -5,8 +5,8 @@ use crate::{
     db::{
         DbConn, DbConnInner,
         schema::{
-            devices, reins_connections, reins_devices, reins_refresh_tokens, reins_settings, reins_sso_sessions,
-            sso_users,
+            devices, reins_connections, reins_device_signouts, reins_devices, reins_refresh_tokens, reins_settings,
+            reins_sso_sessions, sso_users,
         },
     },
     error::MapResult,
@@ -112,6 +112,99 @@ impl ReinsSsoSession {
         })
         .await
     }
+}
+
+/// A device signed out of an account from its approval phone: a sign-in with its id is refused from then on.
+#[derive(Clone, Debug, Identifiable, Queryable, Insertable)]
+#[diesel(table_name = reins_device_signouts)]
+#[diesel(primary_key(user_uuid, device_uuid))]
+pub struct ReinsDeviceSignout {
+    pub user_uuid: UserId,
+    pub device_uuid: DeviceId,
+    /// Unix seconds.
+    pub signed_out_at: i64,
+    /// The name of the phone that signed it out.
+    pub by_device_name: String,
+}
+
+impl ReinsDeviceSignout {
+    pub async fn find(user: &UserId, device: &DeviceId, conn: &DbConn) -> Option<Self> {
+        let device = device.clone();
+        conn.run(move |c| {
+            reins_device_signouts::table
+                .filter(reins_device_signouts::user_uuid.eq(user))
+                .filter(reins_device_signouts::device_uuid.eq(device))
+                .first::<Self>(c)
+                .ok()
+        })
+        .await
+    }
+
+    /// The SSO sessions `device` signed in with, to end at the provider.
+    pub async fn sessions_of(user: &UserId, device: &DeviceId, conn: &DbConn) -> Result<Vec<String>, crate::Error> {
+        let device = device.clone();
+        conn.run(move |c| {
+            reins_sso_sessions::table
+                .filter(reins_sso_sessions::user_uuid.eq(user))
+                .filter(reins_sso_sessions::device_uuid.eq(device))
+                .select(reins_sso_sessions::session_id)
+                .load::<String>(c)
+        })
+        .await
+        .map_res("Error reading the device's SSO sessions")
+    }
+
+    /// Records the sign-out (or refreshes it), before anything else happens: from then on the device id cannot sign in.
+    pub async fn record(&self, conn: &DbConn) -> EmptyResult {
+        conn.run(move |c| q_record(c, self)).await.map_res("Error recording the sign-out")
+    }
+
+    /// Signs the device out in one transaction: its sign-in (the device row, so its tokens die), its SSO session
+    /// mappings, any approval role still naming it, and records the sign-out.
+    pub async fn sign_out(&self, conn: &DbConn) -> EmptyResult {
+        conn.run(move |c| q_sign_out_device(c, self)).await.map_res("Error signing the device out")
+    }
+}
+
+fn q_record(c: &mut DbConnInner, row: &ReinsDeviceSignout) -> QueryResult<()> {
+    c.transaction(|c| {
+        diesel::delete(
+            reins_device_signouts::table
+                .filter(reins_device_signouts::user_uuid.eq(&row.user_uuid))
+                .filter(reins_device_signouts::device_uuid.eq(&row.device_uuid)),
+        )
+        .execute(c)?;
+        diesel::insert_into(reins_device_signouts::table).values(row).execute(c)?;
+        Ok(())
+    })
+}
+
+fn q_sign_out_device(c: &mut DbConnInner, row: &ReinsDeviceSignout) -> QueryResult<()> {
+    c.transaction(|c| {
+        let (user, device) = (&row.user_uuid, &row.device_uuid);
+        diesel::delete(devices::table.filter(devices::user_uuid.eq(user)).filter(devices::uuid.eq(device)))
+            .execute(c)?;
+        diesel::delete(
+            reins_sso_sessions::table
+                .filter(reins_sso_sessions::user_uuid.eq(user))
+                .filter(reins_sso_sessions::device_uuid.eq(device)),
+        )
+        .execute(c)?;
+        diesel::delete(
+            reins_devices::table
+                .filter(reins_devices::user_uuid.eq(user))
+                .filter(reins_devices::device_uuid.eq(device)),
+        )
+        .execute(c)?;
+        diesel::delete(
+            reins_device_signouts::table
+                .filter(reins_device_signouts::user_uuid.eq(user))
+                .filter(reins_device_signouts::device_uuid.eq(device)),
+        )
+        .execute(c)?;
+        diesel::insert_into(reins_device_signouts::table).values(row).execute(c)?;
+        Ok(())
+    })
 }
 
 /// Resolve the identity even if Vaultwarden deleted the user before Reins cleanup completed.

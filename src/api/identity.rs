@@ -31,8 +31,8 @@ use crate::{
         DbConn,
         models::{
             AuthRequest, AuthRequestId, Device, DeviceId, EventType, Invitation, OIDCCodeResponseError,
-            OrganizationApiKey, OrganizationId, SendId, SsoAuth, SsoUser, TwoFactor, TwoFactorIncomplete,
-            TwoFactorType, User, UserId,
+            OrganizationApiKey, OrganizationId, ReinsDeviceSignout, SendId, SsoAuth, SsoUser, TwoFactor,
+            TwoFactorIncomplete, TwoFactorType, User, UserId,
         },
     },
     error::MapResult,
@@ -173,6 +173,10 @@ async fn refresh_login(data: ConnectData, conn: &DbConn, ip: &ClientIp) -> JsonR
             )
         }
         Ok((mut device, auth_tokens)) => {
+            // A device signed out from the approval phone while this refresh was on its way: not brought back.
+            if ReinsDeviceSignout::find(&device.user_uuid, &device.uuid, conn).await.is_some() {
+                err_json!(json!({"error": "invalid_grant"}), "This device was signed out of the account")
+            }
             // Save to update `device.updated_at` to track usage and toggle new status
             device.save(true, conn).await?;
 
@@ -351,6 +355,7 @@ async fn sso_login(
             )
         }
         Some((mut user, sso_user)) => {
+            refuse_signed_out_sso(&user, &data, user_infos.session_id.as_deref(), conn).await?;
             let mut device = get_device(&data, conn, &user).await?;
 
             let twofactor_token = twofactor_auth(&mut user, &data, &mut device, ip, client_version, conn).await?;
@@ -794,6 +799,25 @@ async fn organization_api_key_login(data: ConnectData, conn: &DbConn, ip: &Clien
     })))
 }
 
+/// An SSO sign-in of a device this account signed out (Settings > Devices): refused, and the provider session the code
+/// exchange just made is ended at WorkOS, so it does not linger. Only this account's sign-outs count: device ids are
+/// chosen by the clients, so another account's record of the same id says nothing about this one.
+async fn refuse_signed_out_sso(user: &User, data: &ConnectData, session: Option<&str>, conn: &DbConn) -> EmptyResult {
+    let Some(device) = data.device_identifier.as_ref() else {
+        return Ok(());
+    };
+    if ReinsDeviceSignout::find(&user.uuid, device, conn).await.is_none() {
+        return Ok(());
+    }
+    if let Some(session) = session.filter(|_| crate::sso_workos::enabled())
+        && let Err(e) = crate::sso_workos::revoke_session(session).await
+    {
+        warn!("Reins: ending the WorkOS session of a refused sign-in failed: {e:?}");
+    }
+    // `get_device` refuses it with the full message.
+    get_device(data, conn, user).await.map(drop)
+}
+
 /// Retrieves an existing device or creates a new device from ConnectData and the User
 async fn get_device(data: &ConnectData, conn: &DbConn, user: &User) -> ApiResult<Device> {
     // On iOS, device_type sends "iOS", on others it sends a number
@@ -801,6 +825,22 @@ async fn get_device(data: &ConnectData, conn: &DbConn, user: &User) -> ApiResult
     let device_type = util::try_parse_string(data.device_type.as_ref()).unwrap_or(14);
     let device_id = data.device_identifier.clone().expect("No device id provided");
     let device_name = data.device_name.clone().expect("No device name provided");
+    // Only ids the phone apps can name, so that every device signed in can be signed out (Settings > Devices).
+    if !reins_proto::device::valid_device_id(&device_id.to_string()) {
+        err!("The device id must be 1 to 64 letters, digits, dashes or underscores")
+    }
+    // A device signed out from the account's approval phone does not come back with the keys it kept.
+    if let Some(gone) = ReinsDeviceSignout::find(&user.uuid, &device_id, conn).await {
+        let when =
+            chrono::DateTime::from_timestamp(gone.signed_out_at, 0).map(|t| t.format("%Y-%m-%d %H:%M UTC").to_string());
+        err!(format!(
+            "This device was signed out of the account from a phone named \u{201c}{}\u{201d} on {}. If that was not you, \
+             sign in on another phone, take the approval role back with your recovery code, and sign that phone out. \
+             To use this one again, delete the Reins app's data (or install it again), then sign in.",
+            crate::api::reins::pairing::sanitize_display(&gone.by_device_name, 100),
+            when.unwrap_or_default()
+        ))
+    }
 
     // Find device or create new
     if let Some(device) = Device::find_by_uuid_and_user(&device_id, &user.uuid, conn).await {

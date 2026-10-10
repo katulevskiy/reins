@@ -13,6 +13,9 @@ sealed interface Route {
     /** Settings > Account > Vault passkeys: the passkeys that open the vault on a new phone. */
     data object VaultPasskeys : Route
 
+    /** Settings > Account > Devices: the account's phones (sign out a lost one) and computers. */
+    data object Devices : Route
+
     /** Settings > Autopilot (also the header's mode pill). */
     data object Autopilot : Route
 

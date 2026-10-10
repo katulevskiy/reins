@@ -69,6 +69,7 @@ fun SettingsScreen(
     onAutopilot: () -> Unit = {},
     onConnectComputer: () -> Unit = {},
     onVaultPasskeys: () -> Unit = {},
+    onDevices: () -> Unit = {},
     authenticator: Authenticator,
 ) {
     val c = LocalColors.current
@@ -109,6 +110,15 @@ fun SettingsScreen(
                     // Android 13 and later confirm a copy themselves.
                     if (Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU) viewModel.notice("Server address copied.")
                 }
+                Hairline(inset = 51.dp)
+                ListRow(
+                    "Devices",
+                    Modifier.testTag("devicesRow"),
+                    subtitle = "Your phones and computers; sign out a lost phone",
+                    glyph = Glyph.Phone,
+                    chevron = true,
+                    onClick = onDevices,
+                )
                 if (hasRecoveryCode) {
                     Hairline(inset = 51.dp)
                     ListRow(

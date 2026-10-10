@@ -20,6 +20,8 @@ import dev.reins.core.Verdict
 import dev.reins.core.BlobView
 import dev.reins.core.ClassOption
 import dev.reins.core.ConnectionView
+import dev.reins.core.DeviceKind
+import dev.reins.core.DeviceView
 import dev.reins.core.EmailView
 import dev.reins.core.GitCommitView
 import dev.reins.core.GitFileView
@@ -582,5 +584,13 @@ object TestData {
         "openai/password" to "sk-test-0000",
         "github/password" to "hunter2",
         "visa/number" to "4111111111111111",
+    )
+
+    // ---- devices ----
+
+    fun devices() = listOf(
+        DeviceView("d-this", "Pixel 9", DeviceKind.PHONE, "Android", 1_699_000_000, 1_700_000_090, true, true),
+        DeviceView("d-old", "Pixel 7", DeviceKind.PHONE, "Android", 1_690_000_000, 1_699_900_000, false, false),
+        DeviceView("d-web", "Firefox", DeviceKind.BROWSER, "Web vault", 1_695_000_000, 1_699_000_000, false, false),
     )
 }

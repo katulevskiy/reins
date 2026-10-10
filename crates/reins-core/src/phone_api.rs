@@ -248,6 +248,17 @@ impl<'a> PhoneApi<'a> {
         check_id(id)?;
         Self::send(self.request(Method::DELETE, &format!("/connections/{id}"))).await.map(drop)
     }
+
+    /// A9 `GET /devices`.
+    pub async fn devices(&self) -> Result<reins_proto::device::Devices, ApiFailure> {
+        Self::json(self.request(Method::GET, "/devices")).await
+    }
+
+    /// A10 `DELETE /devices/{id}`: signs another device of the account out, with proof typed now.
+    pub async fn delete_device(&self, id: &str, proof: &reins_proto::device::DeviceSignOut) -> Result<(), ApiFailure> {
+        check_id(id)?;
+        Self::send(self.request(Method::DELETE, &format!("/devices/{id}")).json(proof)).await.map(drop)
+    }
 }
 
 #[cfg(test)]

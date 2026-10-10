@@ -235,6 +235,33 @@ impl Engine {
         Ok(())
     }
 
+    /// The proof the server takes for a sensitive change, from what the user typed now: the recovery code (the
+    /// account secret), or the master password of an account that has one. The server checks it.
+    pub(crate) async fn typed_proof(
+        &self,
+        session: &Session,
+        code_or_password: Zeroizing<String>,
+    ) -> Result<Zeroizing<String>, CoreError> {
+        if let Some(secret) = AccountSecret::from_recovery_code(&code_or_password) {
+            return tokio::task::spawn_blocking(move || -> Result<Zeroizing<String>, CoreError> {
+                Ok(secret.master_password_hash(&secret.master_key()?))
+            })
+            .await
+            .map_err(interrupted)?;
+        }
+        if code_or_password.trim().is_empty() {
+            return Err(CoreError::invalid("Type your recovery code or master password."));
+        }
+        let email = session.email();
+        let kdf = VaultClient::new(&session.http, &session.server).prelogin(&email).await?;
+        tokio::task::spawn_blocking(move || -> Result<Zeroizing<String>, CoreError> {
+            let master = crypto::master_key(&code_or_password, &email, kdf)?;
+            Ok(crypto::master_password_hash(&master, &code_or_password))
+        })
+        .await
+        .map_err(interrupted)?
+    }
+
     /// The signed-in account's recovery code, when this phone keeps its secret (the app asks for biometrics first).
     pub async fn account_recovery_code(&self) -> Result<String, CoreError> {
         let session = self.session()?;
