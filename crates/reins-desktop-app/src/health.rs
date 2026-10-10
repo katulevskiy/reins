@@ -101,6 +101,33 @@ pub enum Fix {
     Connect(Harness),
     /// Forget the session and pair again.
     PairAgain,
+    /// Open the system's notification settings (notifications are off for Reins).
+    NotificationSettings,
+}
+
+/// Where the system's notification settings open, if this system has a link to them.
+pub const NOTIFICATION_SETTINGS: Option<&str> = if cfg!(target_os = "macos") {
+    Some("x-apple.systempreferences:com.apple.Notifications-Settings.extension")
+} else if cfg!(windows) {
+    Some("ms-settings:notifications")
+} else {
+    None
+};
+
+/// The check for notifications the system refused for Reins (`problem` as the framework logged it).
+#[must_use]
+pub fn notification_check(problem: &str) -> Check {
+    Check {
+        id: "notify-permission".to_owned(),
+        label: "Notifications".to_owned(),
+        level: Level::Warn,
+        detail: if problem.contains("denied") {
+            "Off for Reins".to_owned()
+        } else {
+            "Blocked for this copy: open Reins from Applications".to_owned()
+        },
+        fix: Some("Turn on notifications for Reins in the system settings.".to_owned()),
+    }
 }
 
 impl Fix {
@@ -112,6 +139,7 @@ impl Fix {
             Self::Resume => "Resume",
             Self::Connect(_) => "Connect",
             Self::PairAgain => "Pair again",
+            Self::NotificationSettings => "Open Settings",
         }
     }
 }
@@ -127,6 +155,7 @@ pub fn fix_for(check: &Check) -> Option<Fix> {
         "service" => Some(Fix::Restart),
         "git" => Some(Fix::Resume),
         "pairing" | "session" if check.level == Level::Fail => Some(Fix::PairAgain),
+        "notify-permission" => NOTIFICATION_SETTINGS.map(|_| Fix::NotificationSettings),
         id => {
             let h = id.strip_prefix("harness:")?;
             Harness::ALL.into_iter().find(|x| x.id() == h).map(Fix::Connect)
