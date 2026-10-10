@@ -119,7 +119,7 @@ struct DevicesScreen: View {
             } header: {
                 GroupHeader("Other phones and apps")
             } footer: {
-                GroupFooter("Lost a phone? Sign it out here. It can no longer open your vault or answer requests, nor sign in again as it is. Whoever has it and its passcode could still read what it kept, your recovery code included.")
+                GroupFooter("Lost a phone? Sign it out here: the app on it can no longer open your vault or answer requests, nor sign in again as it is. Whoever has it and its passcode could still read your recovery code on it and sign in with a new install; reset the vault if that may happen.")
             }
             Section {
                 if computers.isEmpty {
@@ -169,7 +169,7 @@ struct DevicesScreen: View {
             }
         } message: { device in
             // Two phones may share a name: say which one this is.
-            Text("\(device.platform) · signed in \(TimeText.relative(device.createdAt)) · last seen \(TimeText.relative(device.lastSeenAt)). It can no longer open your vault, sync or answer requests, and cannot sign in again as it is. Type your recovery code (or master password) to confirm.")
+            Text("\(device.platform) · signed in \(TimeText.relative(device.createdAt)) · last seen \(TimeText.relative(device.lastSeenAt)). The app on it can no longer open your vault, sync or answer requests, and cannot sign in again as it is. Someone with its passcode could still read your recovery code on it (see I lost my phone in the help). Type your recovery code (or master password) to confirm.")
         }
         .presentationFeedback(signingOut != nil)
     }
