@@ -885,10 +885,26 @@ async fn an_old_request_is_never_approved_by_a_limit_and_a_paid_one_never_twice(
         .with_priority(1)
         .mount(&env.server)
         .await;
-    assert!(env.core.sync(0).await.unwrap().iter().any(|p| p.id == id), "an old request waits for the user");
-    // Approved once, the same request is refused if it is ever relayed again (the ledger keeps it).
-    env.core.approve_purchase(id.into(), choose("virtual_card")).await.unwrap();
-    assert!(env.core.approve_purchase(id.into(), choose("virtual_card")).await.is_err());
+    let made_before = privacy_requests(&env, "POST").await.len();
+    env.core.sync(0).await.unwrap();
+    assert_eq!(privacy_requests(&env, "POST").await.len(), made_before, "no card for an old request");
+    assert!(
+        env.server
+            .received_requests()
+            .await
+            .unwrap()
+            .iter()
+            .all(|r| r.url.path() != format!("/reins/api/requests/{id}/response")
+                || serde_json::from_slice::<Value>(&r.body).unwrap()["outcome"] != "result"),
+        "never approved on its own"
+    );
+    // Approved once by hand, the same request is refused if it is ever asked again (the ledger keeps it).
+    let mut by_hand = tiny();
+    by_hand.as_object_mut().unwrap().remove("ship_to");
+    let (fresh, parked) = ask(&env, "purchase_request", &by_hand).await;
+    assert!(parked);
+    env.core.approve_purchase(fresh.clone(), choose("virtual_card")).await.unwrap();
+    assert!(env.core.approve_purchase(fresh, choose("virtual_card")).await.is_err());
 }
 
 #[tokio::test]

@@ -256,14 +256,15 @@ which you pinned on the phone when you paired it:
   store, still goes to it through the server, as its purchase screen says. A key other than the pinned one, or a key
   on a connection without a desktop app, is refused, and so is a request whose desktop app was unpaired or paired
   again while it waited;
-- the bridge passes an approval to the agent only when the phone signed the whole answer, with a nonce the bridge
-  issued for that purchase (each nonce once), by the key you confirmed, and the mandate in it is signed by the same key
+- the bridge passes an approval to the agent only when the phone signed the whole answer, with the nonce the bridge
+  issued for that very purchase (each nonce once, used up even when the answer is withheld), by the key you confirmed, and the mandate in it is signed by the same key
   for the same purchase. This holds for every way of paying: an approval the server makes up ("use the card saved at
   the store") is withheld. The agent gets what the phone signed and nothing the server added; card details are opened
   from the sealed part only, and card details that come back in the clear are withheld;
 - any other answer to a purchase (a denial, still waiting, an error) is the server's word: it is passed on labelled as
   such, and withheld when it holds something like a card number or talks about trusting a payment key. Answers
-  fetched later with `reins_get_result` are checked the same way.
+  fetched later with `reins_get_result` are checked the same way. Nothing the server sends makes the bridge stop
+  checking a call: it forgets nothing until the harness ends the session.
 
 The bridge opens purchases only once you have confirmed the phone's key on that computer: until then they are
 withheld, and the agent is told to have you run `reins payments-trust`. Run it yourself in a terminal and type the
