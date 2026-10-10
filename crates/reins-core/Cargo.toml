@@ -55,6 +55,8 @@ crypto_box = { version = "0.9.1", features = ["seal", "std"] }
 ssh-key = { version = "0.6.7", default-features = false, features = ["std", "ed25519", "rsa", "p256", "p384"] }
 signature = "2.2.0"
 rsa = { version = "0.9.10", default-features = false, features = ["std", "sha2"] }
+# Payments: a store's registrable domain (the public suffix list, compiled in), to compare stores and checkouts.
+psl = "2.1.241"
 
 [dev-dependencies]
 tempfile = "3.27.0"

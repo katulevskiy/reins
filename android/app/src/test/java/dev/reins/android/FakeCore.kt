@@ -1,6 +1,12 @@
 package dev.reins.android
 
 import dev.reins.core.AccountKeys
+import dev.reins.core.BudgetView
+import dev.reins.core.PaymentsOverview
+import dev.reins.core.PurchaseChoice
+import dev.reins.core.SpendLimitInput
+import dev.reins.core.SpendLimitView
+import dev.reins.core.SpendingView
 import dev.reins.core.AccountView
 import dev.reins.core.StartingPolicy
 import dev.reins.core.AutopilotMode
@@ -103,6 +109,84 @@ class FakeCore : ReinsCoreInterface {
         approveFailure?.let { throw it }
         approvals += requestId to choice
         pending = pending.filterNot { it.id == requestId }
+    }
+
+    // ---- Payments: what the screens show, and what they asked for ------------------------------------------------
+
+    @Volatile var payments: PaymentsOverview? = null
+    @Volatile var spending: SpendingView = SpendingView(0, emptyList(), emptyList(), emptyList())
+    /** Thrown by `paymentsConnectProvider` (a key Privacy.com refuses). */
+    @Volatile var connectProviderError: CoreException? = null
+    val purchaseApprovals = CopyOnWriteArrayList<Pair<String, PurchaseChoice>>()
+    /** One line per settings call ("method card:c1 true", "provider privacy sandbox=false"). */
+    val paymentsCalls = CopyOnWriteArrayList<String>()
+    val addedLimits = CopyOnWriteArrayList<SpendLimitInput>()
+
+    override suspend fun approvePurchase(requestId: String, choice: PurchaseChoice) {
+        purchaseApprovals += requestId to choice
+        pending = pending.filterNot { it.id == requestId }
+    }
+
+    override suspend fun paymentsOverview() = payments ?: throw CoreException.NotFound()
+
+    override suspend fun paymentsSetMethod(methodId: String, enabled: Boolean) {
+        paymentsCalls += "method $methodId $enabled"
+        payments = payments?.let { o -> o.copy(methods = o.methods.map { if (it.id == methodId) it.copy(enabled = enabled) else it }) }
+    }
+
+    override suspend fun paymentsSetNickname(methodId: String, nickname: String?) {
+        paymentsCalls += "nickname $methodId $nickname"
+    }
+
+    override suspend fun paymentsSetDefaults(methodId: String?, addressId: String?) {
+        paymentsCalls += "defaults $methodId $addressId"
+        payments = payments?.copy(defaultMethod = methodId, defaultAddress = addressId)
+    }
+
+    override suspend fun paymentsConnectProvider(kind: String, apiKey: String, sandbox: Boolean, singleUse: Boolean) {
+        connectProviderError?.let { throw it }
+        paymentsCalls += "provider $kind sandbox=$sandbox singleUse=$singleUse"
+    }
+
+    override suspend fun paymentsDisconnectProvider() {
+        paymentsCalls += "disconnect provider"
+        payments = payments?.copy(provider = null)
+    }
+
+    override suspend fun paymentsSetCardOptions(tolerancePct: UInt, singleUse: Boolean) {
+        paymentsCalls += "card options $tolerancePct $singleUse"
+        payments = payments?.copy(tolerancePct = tolerancePct)
+    }
+
+    override suspend fun paymentsSetBudget(budget: BudgetView) {
+        paymentsCalls += "budget ${budget.connectionId} ${budget.perPurchase} ${budget.perMonth} ${budget.merchants}"
+    }
+
+    override suspend fun paymentsAddLimit(limit: SpendLimitInput): SpendLimitView {
+        addedLimits += limit
+        return SpendLimitView(
+            "limit-${addedLimits.size}", limit.connectionId, "Claude", limit.merchants, limit.method, "Privacy.com card",
+            limit.currency, limit.perPurchase, limit.perPeriod, limit.period, "Up to a limit", 0, 0, limit.durationSecs, true,
+        )
+    }
+
+    override suspend fun paymentsRemoveLimit(limitId: String) {
+        paymentsCalls += "remove limit $limitId"
+        payments = payments?.let { o -> o.copy(limits = o.limits.filterNot { it.id == limitId }) }
+    }
+
+    override suspend fun paymentsSpending(since: Long) = spending
+
+    override suspend fun paymentsAcknowledgeCharge(purchaseId: String) {
+        paymentsCalls += "acknowledge $purchaseId"
+    }
+
+    override suspend fun paymentsClearPurchase(purchaseId: String) {
+        paymentsCalls += "clear $purchaseId"
+    }
+
+    override suspend fun paymentsCloseCard(purchaseId: String) {
+        paymentsCalls += "close $purchaseId"
     }
 
     /** Requests approved without being opened (a notification's Approve, "Approve all"). */

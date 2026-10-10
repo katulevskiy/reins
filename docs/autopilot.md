@@ -27,6 +27,7 @@ These always wait for you, in every mode (Lockdown denies them):
 
 - new connections, requests for standing permissions, and requests to see which accounts you have;
 - secrets for the desktop app and SSH signatures;
+- purchases ([Payments](payments.md)): only you, or a spend limit you set, approve one;
 - everything that is asked every time anyway: vault secrets, deleting repositories or branches, visibility,
   collaborators, transfers, webhooks, deploy keys, repository secrets, branch protection, and similar far-reaching
   changes;

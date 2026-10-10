@@ -133,6 +133,9 @@ or ChatGPT. The full walkthrough is in [docs/quick-start.md](docs/quick-start.md
 - The phone's own calendar, contacts and SMS. Telegram, as your own account.
 - The password vault of your account: items, folders, attachments, Sends, the generator. The phone app lists and
   edits it too, and makes SSH keys whose private half never leaves it.
+- Payments: an agent asks to buy a cart, you approve it on the phone like a receipt, and it pays with a virtual card
+  made for that cart (Privacy.com), a card from your vault, the store's saved payment method, or you pay on the phone.
+  Budgets, spend limits, a ledger and a signed mandate of every approval. See [docs/payments.md](docs/payments.md).
 - Any remote MCP server you add on the phone. The phone is the MCP client, so its tokens stay on the phone.
 - Large files go through one-time upload and download links that the phone controls.
 

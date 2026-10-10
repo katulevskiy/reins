@@ -68,6 +68,9 @@ pub fn request_floor(view: &ApprovalView) -> Option<&'static str> {
     if view.ssh.is_some() {
         return Some("SSH sign-ins are only ever approved by you");
     }
+    if view.purchase.is_some() || view.service == reins_proto::connector::PAYMENTS && view.action == "write" {
+        return Some("purchases are only ever approved by you, or within a spend limit you set");
+    }
     if view.no_standing {
         return Some("this is asked every time (secrets or a far-reaching change)");
     }

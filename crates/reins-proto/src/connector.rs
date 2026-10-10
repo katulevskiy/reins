@@ -24,6 +24,7 @@ pub const DESKTOP: &str = "desktop";
 pub const GITLAB: &str = "gitlab";
 pub const CODEBERG: &str = "codeberg";
 pub const BITBUCKET: &str = "bitbucket";
+pub const PAYMENTS: &str = crate::payments::PAYMENTS;
 
 /// Longest text an argument may carry (messages, comments, event descriptions).
 pub const MAX_TEXT_LEN: usize = 8_000;
@@ -33,6 +34,7 @@ mod desktop;
 pub use desktop::{MAX_SESSION_ITEMS, MAX_SESSION_SECS, MIN_SESSION_SECS, SESSION_END_OP, SESSION_OP};
 mod github;
 pub mod gmail;
+mod payments;
 mod vault;
 
 /// What a call does to the integration, which decides how it is approved.
@@ -184,7 +186,13 @@ pub struct ToolSpec {
     /// Only the paired Reins desktop app may call it (its answer is a credential sealed to the app's key). Never
     /// listed to an AI and never accepted over MCP; the phone checks the caller's key was pinned at pairing.
     pub desktop_only: bool,
+    /// A check of the arguments as a whole, after each was checked on its own (a cart that must add up): run by the
+    /// server before relaying and by the phone again.
+    pub check: Option<CallCheck>,
 }
+
+/// See [`ToolSpec::check`].
+pub type CallCheck = fn(&ConnectorCall) -> Result<(), String>;
 
 impl ToolSpec {
     /// The kind of change this tool makes, for permissions (see [`ToolSpec::class`]).
@@ -205,6 +213,13 @@ impl ToolSpec {
     #[must_use]
     pub fn desktop(mut self) -> Self {
         self.desktop_only = true;
+        self
+    }
+
+    /// Adds a check of the arguments as a whole (see [`ToolSpec::check`]).
+    #[must_use]
+    pub fn checked(mut self, check: CallCheck) -> Self {
+        self.check = Some(check);
         self
     }
 }
@@ -337,14 +352,15 @@ impl ToolSpec {
                 }
             }
         }
-        Ok((
-            ConnectorCall {
-                service: self.service.to_owned(),
-                op: self.op.to_owned(),
-                args,
-            },
-            account,
-        ))
+        let call = ConnectorCall {
+            service: self.service.to_owned(),
+            op: self.op.to_owned(),
+            args,
+        };
+        if let Some(check) = self.check {
+            check(&call)?;
+        }
+        Ok((call, account))
     }
 }
 
@@ -589,6 +605,7 @@ pub(crate) fn tool(
         class: "",
         once_only: false,
         desktop_only: false,
+        check: None,
     }
 }
 
@@ -816,6 +833,7 @@ fn build_specs() -> Vec<ToolSpec> {
     all.extend(github::tools());
     all.extend(vault::tools());
     all.extend(desktop::tools());
+    all.extend(payments::tools());
     all
 }
 

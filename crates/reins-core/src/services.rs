@@ -64,6 +64,10 @@ impl Engine {
         if service == views::SERVICE_GMAIL {
             return self.add_account(hint).await;
         }
+        // Payments needs nothing to be switched on: its methods and addresses are set up on its own screen.
+        if service == reins_proto::connector::PAYMENTS {
+            return self.register_account(service, crate::connector::payments::PAYMENTS_ACCOUNT);
+        }
         let connector = self.connector(service)?;
         if let Some(note) = connector.unavailable() {
             return Err(CoreError::invalid(note));

@@ -10,6 +10,7 @@ pub mod gmail;
 pub mod ids;
 pub mod join;
 pub mod pairing;
+pub mod payments;
 pub mod relay;
 pub mod remote_mcp;
 mod validate;

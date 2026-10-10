@@ -196,6 +196,10 @@ pub struct Model {
     demo: Option<Demo>,
     /// Requests waiting for the phone that "Check your phone" was shown for (by journal id).
     notified: std::collections::HashSet<String>,
+    /// The first read of the activity log has marked what was already waiting before this run as shown.
+    notified_seeded: bool,
+    /// Unix seconds when this run of the app started.
+    started_at: i64,
     /// `--demo`: the checks fixed with the health card's buttons.
     demo_fixed: Vec<String>,
     /// The window is open (the health checks run only then).
@@ -295,6 +299,8 @@ impl Model {
                 demo_paired,
                 demo,
                 notified: std::collections::HashSet::new(),
+                notified_seeded: false,
+                started_at: reins_desktop::now_unix(),
                 demo_fixed: Vec::new(),
                 window_open: false,
                 place_dirty: false,
@@ -510,6 +516,12 @@ impl Model {
     fn check_your_phone(&mut self, activity: &[Entry], now: i64, cx: &mut Context<'_, Self>) {
         if self.demo.is_some() {
             return;
+        }
+        // A restart is not news: what was already waiting before this run started counts as shown (the run before
+        // showed it), so only requests that start waiting from now on ring.
+        if !self.notified_seeded {
+            self.notified_seeded = true;
+            self.notified.extend(seed_shown(activity, self.started_at));
         }
         let (fresh, ended) = waiting_changes(activity, &self.notified, now);
         // Ended (answered, refused, timed out): the notification goes.
@@ -1187,7 +1199,10 @@ impl Model {
         self.health.running = false;
         self.health.at = Some(reins_desktop::now_unix());
         match checks {
-            Ok(checks) => {
+            Ok(mut checks) => {
+                if let Some(problem) = reins_desktop::notify::authorization_problem() {
+                    checks.push(health::notification_check(&problem));
+                }
                 self.health.checks = Some(checks);
                 self.health.error = None;
             }
@@ -1231,6 +1246,11 @@ impl Model {
                 cx,
             ),
             Fix::PairAgain => self.sign_out(cx),
+            Fix::NotificationSettings => {
+                if let Some(url) = health::NOTIFICATION_SETTINGS {
+                    cx.open_url(url);
+                }
+            }
         }
     }
 
@@ -1512,6 +1532,16 @@ impl Model {
     }
 }
 
+/// The requests waiting for the phone that started before `started_at` (this run of the app).
+fn seed_shown(activity: &[Entry], started_at: i64) -> Vec<String> {
+    use reins_desktop::journal::{Decider, Outcome};
+    activity
+        .iter()
+        .filter(|e| e.outcome == Outcome::Waiting && e.decider == Decider::Phone && e.at < started_at)
+        .map(|e| e.id.clone())
+        .collect()
+}
+
 /// Which requests waiting for the phone are new (started in the last two minutes, not shown yet), and which of the
 /// shown ones ended.
 fn waiting_changes<'a>(
@@ -1555,6 +1585,23 @@ fn demo_screen(name: &str) -> Option<Screen> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_restart_does_not_ring_again_for_what_was_already_waiting() {
+        use reins_desktop::journal::{Decider, Entry, Kind, Outcome};
+        let wait = |id: &str, at: i64| {
+            let mut e = Entry::new(Kind::Ask, "Deploy?").decider(Decider::Phone);
+            e.id = id.to_owned();
+            e.at = at;
+            e.outcome = Outcome::Waiting;
+            e
+        };
+        let activity = vec![wait("before", 990), wait("after", 1_005)];
+        assert_eq!(seed_shown(&activity, 1_000), ["before"]);
+        let shown: std::collections::HashSet<String> = seed_shown(&activity, 1_000).into_iter().collect();
+        let (fresh, _) = waiting_changes(&activity, &shown, 1_010);
+        assert_eq!(fresh.iter().map(|e| e.id.as_str()).collect::<Vec<_>>(), ["after"]);
+    }
 
     #[test]
     fn check_your_phone_shows_each_new_wait_once_and_takes_it_down_when_it_ends() {

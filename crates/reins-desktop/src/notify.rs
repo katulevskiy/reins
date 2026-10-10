@@ -61,6 +61,23 @@ pub fn release(state_dir: &Path) {
     std::fs::remove_file(state_dir.join(CLAIM)).ok();
 }
 
+/// Why the app's own notifications cannot show, when the system refused them (the user turned them off for Reins, or
+/// macOS does not accept this copy of the app: one run from the disk image, or moved aside by Gatekeeper).
+static AUTH_PROBLEM: std::sync::Mutex<Option<String>> = std::sync::Mutex::new(None);
+
+/// Looks at a log line of the UI framework for a refused notification authorization (it only logs it).
+pub fn observe_log(target: &str, message: &str) {
+    if target.starts_with("gpui") && message.contains("notification authorization") {
+        *AUTH_PROBLEM.lock().unwrap_or_else(std::sync::PoisonError::into_inner) = Some(message.to_owned());
+    }
+}
+
+/// The refused notification authorization this app saw, if any.
+#[must_use]
+pub fn authorization_problem() -> Option<String> {
+    AUTH_PROBLEM.lock().unwrap_or_else(std::sync::PoisonError::into_inner).clone()
+}
+
 /// Whether a running Reins app shows the notifications.
 #[must_use]
 pub fn app_notifies(state_dir: &Path) -> bool {
@@ -278,6 +295,14 @@ mod tests {
         assert_eq!(body, "Reins 2FA is waiting for your OK: Claude Code wants to run: git push --force");
         let (_, long) = text(&"x".repeat(500));
         assert!(long.chars().count() < 220 && long.ends_with('…'));
+    }
+
+    #[test]
+    fn a_refused_authorization_is_noticed_in_the_frameworks_log_only() {
+        observe_log("reins_app", "system notification authorization denied");
+        assert_eq!(authorization_problem(), None);
+        observe_log("gpui_macos::system_notifications", "system notification authorization denied");
+        assert_eq!(authorization_problem().as_deref(), Some("system notification authorization denied"));
     }
 
     #[test]

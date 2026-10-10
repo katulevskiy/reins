@@ -360,7 +360,7 @@ mod tests {
         .unwrap();
         a.add_account("github", "private-person", 1).unwrap();
         a.secret_put("github", "private-person", b"integration-secret").unwrap();
-        a.pin_desktop_key("private-computer", "desktop-public-key", 1).unwrap();
+        a.pin_desktop_key("private-computer", "desktop-public-key", "Laptop", 1).unwrap();
         a.flush().unwrap();
         let sealed = fs::read(account_dir.join(format!("{}.sealed", owner("a").id()))).unwrap();
         for plaintext in [
@@ -421,6 +421,8 @@ mod tests {
         fill(&a);
         a.secret_put("github", "person", b"token").unwrap();
         a.secret_put("reins.account-secret", "a", b"account secret").unwrap();
+        a.secret_put("payments.provider", "privacy", b"virtual card key").unwrap();
+        a.secret_put("payments.mandate-key", "this", b"mandate seed").unwrap();
         let sealed = a.seal_account(1, &a.export_account().unwrap()).unwrap();
         let b = open_account(&root_b, second.path(), owner("a"), &key);
         assert!(b.unseal_account(2, &sealed).is_err(), "the server cannot relabel an old revision");
@@ -428,8 +430,38 @@ mod tests {
         assert_eq!(b.activity(50).unwrap().len(), 1);
         assert_eq!(b.secret_get("github", "person").unwrap().unwrap(), b"token");
         assert_eq!(b.secret_get("reins.account-secret", "a").unwrap(), None);
+        assert_eq!(
+            b.secret_get("payments.provider", "privacy").unwrap(),
+            None,
+            "a card provider key stays on its phone"
+        );
+        assert!(
+            b.secret_get("payments.mandate-key", "this").unwrap().is_some(),
+            "the account signs mandates with one key"
+        );
         assert_eq!(b.pending_rows(super::super::unix_now()).unwrap().len(), 0);
         assert_ne!(a.device_id().unwrap(), b.device_id().unwrap());
+    }
+
+    #[test]
+    fn imported_state_may_not_carry_a_card_provider_key() {
+        let first = tempfile::tempdir().unwrap();
+        let second = tempfile::tempdir().unwrap();
+        let root_a = Arc::new(Store::open(first.path(), &FakeKeys::default()).unwrap());
+        let root_b = Arc::new(Store::open(second.path(), &FakeKeys::default()).unwrap());
+        let key = VaultKey::from_bytes(&[7; 64]).unwrap();
+        let a = open_account(&root_a, first.path(), owner("a"), &key);
+        a.secret_put("github", "person", b"token").unwrap();
+        let mut state: serde_json::Value = serde_json::from_slice(&a.export_account().unwrap()).unwrap();
+        // Whoever wrote the state (another phone, or anyone with the account key) adds a provider key of their own.
+        let rows = state["tables"]["secrets"]["rows"].as_array_mut().unwrap();
+        let mut planted = rows[0].clone();
+        planted[0] = serde_json::json!({"Text": "payments.provider"});
+        rows.push(planted);
+        let b = open_account(&root_b, second.path(), owner("a"), &key);
+        let err = b.import_account(&serde_json::to_vec(&state).unwrap()).unwrap_err();
+        assert!(err.to_string().contains("installation key"), "{err}");
+        assert_eq!(b.secret_get("payments.provider", "person").unwrap(), None);
     }
 
     #[test]
