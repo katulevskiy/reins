@@ -407,11 +407,16 @@ pub fn init_logging(file: Option<&std::path::Path>) {
     }
     impl log::Log for Logger {
         fn enabled(&self, m: &log::Metadata<'_>) -> bool {
-            // This crate's modules, and the desktop app's (`reins_app`).
-            m.level() <= self.level && m.target().starts_with("reins")
+            // This crate's modules and the desktop app's (`reins_app`); the UI framework's warnings and errors (how a
+            // refused notification authorization shows up).
+            (m.level() <= self.level && m.target().starts_with("reins"))
+                || (m.level() <= log::Level::Warn && m.target().starts_with("gpui"))
         }
         fn log(&self, r: &log::Record<'_>) {
             if self.enabled(r.metadata()) {
+                if r.target().starts_with("gpui") {
+                    crate::notify::observe_log(r.target(), &r.args().to_string());
+                }
                 eprintln!("{} {}", r.level(), r.args());
                 if let Some(f) = &self.file {
                     let mut f = f.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
@@ -443,6 +448,7 @@ pub fn init_logging(file: Option<&std::path::Path>) {
     })))
     .is_ok()
     {
-        log::set_max_level(level);
+        // At least warnings, for the UI framework's (see `enabled`).
+        log::set_max_level(level.max(log::LevelFilter::Warn));
     }
 }
