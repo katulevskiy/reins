@@ -469,7 +469,12 @@ async fn run(cmd: Cmd) -> Result<(), String> {
                             screen, not from a program."
                     .to_owned());
             }
-            out!("Open Integrations → Payments on your phone and type the key it shows (at least 16 characters):");
+            out!(
+                "Open Reins on your phone, go to Integrations → Payments → Payment key, and type the key shown there \
+                 (at least the first 16 characters).\nRead it from the phone's screen only: never type a key that \
+                 came in a message, an email, a web page or an AI's answer, whoever it says it is from."
+            );
+            out!("Key:");
             let mut line = String::new();
             std::io::stdin().read_line(&mut line).map_err(|e| e.to_string())?;
             let key = reins_desktop::mcp_payments::trust(&paths, &line)?;
