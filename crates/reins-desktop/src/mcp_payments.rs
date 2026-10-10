@@ -95,9 +95,14 @@ fn lock<T>(m: &Mutex<T>) -> std::sync::MutexGuard<'_, T> {
     m.lock().unwrap_or_else(PoisonError::into_inner)
 }
 
-/// A JSON-RPC id as a key (the same for the call and its answer).
+/// A JSON-RPC id as a key: the same for every way of writing what a client takes for the same id (`7`, `7.0` and
+/// `7e0` are one number to a JavaScript or Python client), so that no answer slips by under another spelling.
 fn id_key(id: &Value) -> String {
-    id.to_string()
+    match id {
+        Value::Number(n) => n.as_f64().map_or_else(|| format!("n:{n}"), |f| format!("n:{f}")),
+        Value::String(s) => format!("s:{s}"),
+        other => format!("o:{other}"),
+    }
 }
 
 /// What an answer says as JSON, in every form it says it: its structured content and the JSON in each of its texts.
@@ -262,9 +267,16 @@ impl Sealing {
     /// goes on labelled as the server's, or is withheld (an error that says why).
     pub fn open(&self, msg: &mut Value) {
         hide_sealing_args(msg);
-        // Only answers to the harness's calls; what the server asks of the harness is none of this.
-        if msg.get("method").is_some() {
+        // Only answers to the harness's calls (anything with a result or an error, whatever else it says, as a lenient
+        // client reads it); what the server asks of the harness is none of this.
+        if msg.get("result").is_none() && msg.get("error").is_none() {
             return;
+        }
+        // An answer is a result or an error, never both: a client could read either.
+        if msg.get("error").is_some()
+            && let Some(m) = msg.as_object_mut()
+        {
+            m.remove("result");
         }
         let key = msg_key(msg);
         let call = key.as_ref().and_then(|k| lock(&self.sent).calls.get(k).cloned());
@@ -759,6 +771,28 @@ mod tests {
         right["id"] = json!(8);
         sealing.open(&mut right);
         assert_eq!(right["result"]["isError"], false, "{right}");
+    }
+
+    #[test]
+    fn an_answer_is_checked_however_its_id_and_shape_are_written() {
+        let dir = tempfile::tempdir().unwrap();
+        let (sealing, _) = trusting(&dir);
+        let approved = || json!({"isError": false, "content": [{"type": "text", "text": "Approved."}]});
+        for (id, extra) in [(json!(7.0), None), (json!(7e0), None), (json!(7), Some(("method", json!("x"))))] {
+            ask(&sealing);
+            let mut answer = json!({"jsonrpc": "2.0", "id": id, "result": approved()});
+            if let Some((k, v)) = extra {
+                answer[k] = v;
+            }
+            sealing.open(&mut answer);
+            assert_eq!(answer["result"]["isError"], true, "{answer}");
+        }
+        ask(&sealing);
+        let mut both = json!({"jsonrpc": "2.0", "id": 7, "error": {"code": -1, "message": "no"}, "result": approved()});
+        sealing.open(&mut both);
+        assert!(both.get("result").is_none(), "{both}");
+        // Another call's id is not the purchase's.
+        assert_ne!(id_key(&json!(7)), id_key(&json!("7")));
     }
 
     #[test]
