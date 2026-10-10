@@ -37,6 +37,8 @@ struct State {
     deletes_fail: bool,
     /// Sessions ended through `POST /user_management/sessions/revoke`, in order.
     revoked: Vec<String>,
+    /// Ending sessions fails (WorkOS is down).
+    revokes_fail: bool,
 }
 
 pub struct FakeWorkos {
@@ -180,7 +182,11 @@ impl Respond for RevokeSession {
         else {
             return ResponseTemplate::new(422).set_body_json(json!({"message": "session_id is required"}));
         };
-        self.0.lock().expect("state").revoked.push(id);
+        let mut st = self.0.lock().expect("state");
+        if st.revokes_fail {
+            return ResponseTemplate::new(503).set_body_json(json!({"message": "Service Unavailable"}));
+        }
+        st.revoked.push(id);
         ResponseTemplate::new(200).set_body_json(json!({}))
     }
 }
@@ -257,6 +263,11 @@ impl FakeWorkos {
     /// The sessions ended through the User Management API so far.
     pub fn revoked_sessions(&self) -> Vec<String> {
         self.state.lock().expect("state").revoked.clone()
+    }
+
+    /// Makes ending sessions fail (or work again).
+    pub fn fail_revokes(&self, fail: bool) {
+        self.state.lock().expect("state").revokes_fail = fail;
     }
 
     /// The users deleted through the User Management API so far.

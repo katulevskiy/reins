@@ -233,11 +233,11 @@ impl std::fmt::Debug for DeviceSignOut {
     }
 }
 
-/// The ids a device may sign in with: what the phone API can name in a path (`[A-Za-z0-9_-]`, 1 to 64 characters),
-/// so that every device signed in can also be signed out.
+/// The ids a device may sign in with: what the phone API can name in a path (`[A-Za-z0-9_-]`, 1 to 36 characters, the
+/// size of the server's column), so that every device signed in can also be signed out.
 #[must_use]
 pub fn valid_device_id(id: &str) -> bool {
-    !id.is_empty() && id.len() <= 64 && id.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'-' || b == b'_')
+    !id.is_empty() && id.len() <= 36 && id.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'-' || b == b'_')
 }
 
 /// Error body of every phone API error response.

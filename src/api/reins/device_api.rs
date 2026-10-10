@@ -514,22 +514,37 @@ async fn delete_device(
     require_approval_device(&headers, &key, &conn).await?;
     let body: DeviceSignOut = serde_json::from_slice(&read_body_limited(data, 4096).await?)
         .map_err(|e| bad_request(format!("invalid body: {e}")))?;
-    // MySQL compares ids without case: so does this, so that this phone cannot be signed out under another spelling.
-    if id.eq_ignore_ascii_case(&headers.device.uuid.to_string()) {
-        return Err(bad_request("This is the device asking; sign it out with Sign out instead"));
-    }
     let id = DeviceId::from(id.to_owned());
     let Some(target) = Device::find_by_uuid_and_user(&id, &headers.user.uuid, &conn).await else {
         return Err(api_err(Status::NotFound, codes::UNKNOWN_DEVICE, "The account has no device with that id"));
     };
+    // The row found, not the id given: under MySQL's case-insensitive lookup another spelling finds this phone's row.
+    if target.uuid == headers.device.uuid {
+        return Err(bad_request("This is the device asking; sign it out with Sign out instead"));
+    }
     check_proof(&headers, &body.master_password_hash)?;
     let user = user_key(&headers);
     info!("Reins: device {} of user {user} signed out from device {} ({})", target.uuid, headers.device.uuid, ip.ip);
+    let signout = ReinsDeviceSignout {
+        user_uuid: headers.user.uuid.clone(),
+        device_uuid: target.uuid.clone(),
+        signed_out_at: now_unix(),
+        by_device_name: super::pairing::sanitize_display(&headers.device.name, 100),
+    };
+    // First, so that no sign-in with this id starts while the rest happens.
+    signout.record(&conn).await.map_err(|e| internal(&e))?;
     if crate::sso_workos::enabled() {
-        for session in ReinsDeviceSignout::sessions_of(&headers.user.uuid, &target.uuid, &conn).await {
-            // Best effort: the device's own sign-in ends below whatever WorkOS answers, and its id stays refused.
+        let sessions =
+            ReinsDeviceSignout::sessions_of(&headers.user.uuid, &target.uuid, &conn).await.map_err(|e| internal(&e))?;
+        for session in sessions {
+            // Not ended at WorkOS: nothing more is done, and the user is told to try again (the id stays refused).
             if let Err(e) = crate::sso_workos::revoke_session(&session).await {
                 warn!("Reins: ending a signed-out device's WorkOS session failed: {e:?}");
+                return Err(api_err(
+                    Status::BadGateway,
+                    codes::INTERNAL,
+                    "WorkOS did not end that phone's sign-in, so it is not signed out yet. Try again in a minute.",
+                ));
             }
         }
     }
@@ -538,12 +553,6 @@ async fn delete_device(
     {
         warn!("Reins: unregistering a signed-out device from push failed: {e:?}");
     }
-    let signout = ReinsDeviceSignout {
-        user_uuid: headers.user.uuid.clone(),
-        device_uuid: target.uuid.clone(),
-        signed_out_at: now_unix(),
-        by_device_name: headers.device.name.chars().filter(|c| !c.is_control()).take(100).collect(),
-    };
     signout.sign_out(&conn).await.map_err(|e| internal(&e))?;
     HUB.joins.forget_device(&user, &target.uuid.to_string());
     Ok(Status::NoContent)

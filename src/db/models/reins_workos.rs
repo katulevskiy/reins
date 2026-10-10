@@ -140,8 +140,25 @@ impl ReinsDeviceSignout {
         .await
     }
 
+    /// Whether any account signed this device id out: checked before an SSO code is exchanged, when the account is not
+    /// known yet.
+    pub async fn exists_for_device(device: &DeviceId, conn: &DbConn) -> bool {
+        let device = device.clone();
+        conn.run(move |c| {
+            // Unreadable counts as signed out: a sign-in is refused rather than let through.
+            !matches!(
+                reins_device_signouts::table
+                    .filter(reins_device_signouts::device_uuid.eq(device))
+                    .count()
+                    .get_result::<i64>(c),
+                Ok(0)
+            )
+        })
+        .await
+    }
+
     /// The SSO sessions `device` signed in with, to end at the provider.
-    pub async fn sessions_of(user: &UserId, device: &DeviceId, conn: &DbConn) -> Vec<String> {
+    pub async fn sessions_of(user: &UserId, device: &DeviceId, conn: &DbConn) -> Result<Vec<String>, crate::Error> {
         let device = device.clone();
         conn.run(move |c| {
             reins_sso_sessions::table
@@ -149,9 +166,14 @@ impl ReinsDeviceSignout {
                 .filter(reins_sso_sessions::device_uuid.eq(device))
                 .select(reins_sso_sessions::session_id)
                 .load::<String>(c)
-                .unwrap_or_default()
         })
         .await
+        .map_res("Error reading the device's SSO sessions")
+    }
+
+    /// Records the sign-out (or refreshes it), before anything else happens: from then on the device id cannot sign in.
+    pub async fn record(&self, conn: &DbConn) -> EmptyResult {
+        conn.run(move |c| q_record(c, self)).await.map_res("Error recording the sign-out")
     }
 
     /// Signs the device out in one transaction: its sign-in (the device row, so its tokens die), its SSO session
@@ -159,6 +181,19 @@ impl ReinsDeviceSignout {
     pub async fn sign_out(&self, conn: &DbConn) -> EmptyResult {
         conn.run(move |c| q_sign_out_device(c, self)).await.map_res("Error signing the device out")
     }
+}
+
+fn q_record(c: &mut DbConnInner, row: &ReinsDeviceSignout) -> QueryResult<()> {
+    c.transaction(|c| {
+        diesel::delete(
+            reins_device_signouts::table
+                .filter(reins_device_signouts::user_uuid.eq(&row.user_uuid))
+                .filter(reins_device_signouts::device_uuid.eq(&row.device_uuid)),
+        )
+        .execute(c)?;
+        diesel::insert_into(reins_device_signouts::table).values(row).execute(c)?;
+        Ok(())
+    })
 }
 
 fn q_sign_out_device(c: &mut DbConnInner, row: &ReinsDeviceSignout) -> QueryResult<()> {

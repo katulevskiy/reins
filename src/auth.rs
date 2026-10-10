@@ -663,6 +663,10 @@ impl<'r> FromRequest<'r> for Headers {
         let Some(device) = Device::find_by_uuid_and_user(&device_id, &user_id, &conn).await else {
             err_handler!("Invalid device id")
         };
+        // Signed out from the account's approval phone: even a row brought back by a racing refresh does not count.
+        if crate::db::models::ReinsDeviceSignout::find(&user_id, &device_id, &conn).await.is_some() {
+            err_handler!("Invalid device id")
+        }
 
         let Some(user) = User::find_by_uuid(&user_id, &conn).await else {
             err_handler!("Device has no user associated")

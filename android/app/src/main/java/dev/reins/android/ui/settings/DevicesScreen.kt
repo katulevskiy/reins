@@ -166,8 +166,9 @@ fun DevicesScreen(
         val others = list.orEmpty().filterNot { it.thisDevice }
         Group(
             header = "Other phones and apps",
-            footer = "Lost a phone? Sign it out here. It can no longer open your vault or answer requests; " +
-                "what it kept stays encrypted behind its screen lock.",
+            footer = "Lost a phone? Sign it out here: the app on it can no longer open your vault or answer requests, " +
+                "nor sign in again as it is. Whoever has it and its screen lock could still read your recovery code " +
+                "on it and sign in with a new install; reset the vault if that may happen.",
         ) {
             when {
                 list == null && ui.error == null -> RText("Loading…", RType.sans(15f), c.secondary, Modifier.padding(16.dp))
@@ -249,8 +250,9 @@ private fun SignOutDialog(device: DeviceView, busy: Boolean, error: String?, onC
                 Modifier.padding(top = 4.dp),
             )
             RText(
-                "It can no longer open your vault, sync or answer requests, and cannot sign in again as it is. " +
-                    "Type your recovery code (or master password) to confirm.",
+                "The app on it can no longer open your vault, sync or answer requests, and cannot sign in again as " +
+                    "it is. Someone with its screen lock could still read your recovery code on it (see I lost my " +
+                    "phone in the help). Type your recovery code (or master password) to confirm.",
                 RType.sans(15f, lineHeight = 21f),
                 c.secondary,
                 Modifier.padding(top = 10.dp),

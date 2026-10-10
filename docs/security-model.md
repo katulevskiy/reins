@@ -133,17 +133,21 @@ the secret, or signed in with the master password, moves the role without asking
 
 **Signing a device out** (Settings → Devices, `DELETE /reins/api/devices/{id}`). Only the approval device may do it,
 not to itself, and with the master password hash of the recovery code or master password typed then (counted with
-the takeover proofs; the app never sends one it keeps). In one transaction the server deletes the device's Vaultwarden
-sign-in, its SSO session mappings and any approval role naming it, and records the sign-out; it ends the device's
-WorkOS sessions at WorkOS, drops its push registration and its "add another phone" requests, and logs who signed out
-what. The next call with its access token is refused, its refresh token no longer exists, the browser sign-in it kept
-no longer works, and a sign-in with its device id is refused (sign-ins must use ids the phone API can name, so every
-device signed in can be signed out). A phone that was lost while it held the role first loses the role to the new
-phone (with the proofs above), which then signs it out. Limits: what the lost phone keeps (integration tokens, the
-vault key, the account secret) stays encrypted behind its screen lock, and whoever has both can dig it out; a phone
-that keeps the account secret can take the approval role and sign the others out, so the remedy for a phone in the
-wrong hands that has the secret is resetting the vault. Vaultwarden's own device list (`GET /api/devices`) shows any
-signed-in device the same list.
+the takeover proofs; the app never sends one it keeps, though the server cannot tell a typed code from one read off a
+phone that keeps it). The server first records the sign-out, so that its device id cannot sign in (password sign-in,
+SSO before the code is exchanged, token refresh, and every call); then ends the device's WorkOS sessions at WorkOS
+(if WorkOS fails, nothing more happens and the phone is told to try again); then, in one transaction, deletes its
+Vaultwarden sign-in, its SSO session mappings and any approval role naming it; it drops its push registration and its
+"add another phone" requests and logs who signed out what. Sign-ins must use ids the phone API can name (36
+characters at most), so every device signed in can be signed out. An open notifications connection of the device
+(sync notices, no secrets) stays open until it reconnects.
+
+The limit: a phone keeps the account secret (the recovery code), its integration tokens and the vault key in its
+encrypted store, and the app shows the recovery code to whoever has the phone and its screen lock. With it, a
+reinstall (a new device id) and a sign-in to the account, they can take the approval role again, and sign the other
+phones out the same way. Until the recovery code can be changed, the remedy for a phone in the wrong hands is
+resetting the vault, and securing the sign-in methods reachable from it (email, Google, passkeys). Vaultwarden's own
+device list (`GET /api/devices`) shows any signed-in device the same list.
 
 - Approving needs the phone's screen lock or biometrics. Denying is one tap. A routine request can also be approved
   from its notification, which works only once the phone is unlocked; that approves exactly what its screen would approve untouched (never an item that looks like a

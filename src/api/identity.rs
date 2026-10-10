@@ -173,6 +173,10 @@ async fn refresh_login(data: ConnectData, conn: &DbConn, ip: &ClientIp) -> JsonR
             )
         }
         Ok((mut device, auth_tokens)) => {
+            // A device signed out from the approval phone while this refresh was on its way: not brought back.
+            if ReinsDeviceSignout::find(&device.user_uuid, &device.uuid, conn).await.is_some() {
+                err_json!(json!({"error": "invalid_grant"}), "This device was signed out of the account")
+            }
             // Save to update `device.updated_at` to track usage and toggle new status
             device.save(true, conn).await?;
 
@@ -218,6 +222,18 @@ async fn sso_login(
         (Some(code), Some(code_verifier)) => (code, code_verifier.clone()),
     };
 
+    // A device id some account signed out does not get as far as a provider session.
+    if let Some(device) = data.device_identifier.as_ref()
+        && ReinsDeviceSignout::exists_for_device(device, conn).await
+    {
+        err!(
+            "This device was signed out of the account from another phone. To use it again, delete the Reins app's \
+             data (or install it again), then sign in.",
+            ErrorEvent {
+                event: EventType::UserFailedLogIn
+            }
+        )
+    }
     let (sso_auth, user_infos) = sso::exchange_code(code, code_verifier, conn).await?;
     let user_with_sso = match SsoUser::find_by_identifier(&user_infos.identifier, conn).await {
         None => match SsoUser::find_by_mail(&user_infos.email, conn).await {
@@ -810,10 +826,10 @@ async fn get_device(data: &ConnectData, conn: &DbConn, user: &User) -> ApiResult
         let when =
             chrono::DateTime::from_timestamp(gone.signed_out_at, 0).map(|t| t.format("%Y-%m-%d %H:%M UTC").to_string());
         err!(format!(
-            "This device was signed out of the account from {} on {}. If that was not you, sign in on another phone, \
-             take the approval role back with your recovery code, and sign that phone out. To use this one again, \
-             delete the Reins app's data (or install it again), then sign in.",
-            gone.by_device_name,
+            "This device was signed out of the account from a phone named \u{201c}{}\u{201d} on {}. If that was not you, \
+             sign in on another phone, take the approval role back with your recovery code, and sign that phone out. \
+             To use this one again, delete the Reins app's data (or install it again), then sign in.",
+            crate::api::reins::pairing::sanitize_display(&gone.by_device_name, 100),
             when.unwrap_or_default()
         ))
     }

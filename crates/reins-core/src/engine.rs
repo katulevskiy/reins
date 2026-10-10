@@ -926,6 +926,12 @@ impl Engine {
             }) if code == codes::WRONG_PROOF => {
                 Err(CoreError::invalid("That is neither the recovery code nor the master password."))
             }
+            // WorkOS did not end the phone's sign-in: nothing changed, and the server says to try again.
+            Err(ApiFailure::Status {
+                status: 502,
+                message,
+                ..
+            }) => Err(CoreError::service(crate::text::one_line(&message))),
             Err(e) => Err(e.into_core()),
         }
     }

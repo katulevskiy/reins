@@ -354,6 +354,12 @@ async fn signing_a_phone_out_ends_its_workos_session_and_it_cannot_sign_back_in(
     let other = first.core.devices().await.unwrap().into_iter().find(|d| !d.this_device).expect("the other phone");
     let code = first.core.account_recovery_code().await.unwrap();
     assert!(first.core.sign_out_device(other.id.clone(), "AAAA-BBBB".to_owned()).await.is_err(), "a wrong code");
+    // WorkOS down: nothing is signed out yet, and the phone says so rather than claiming it was.
+    workos.fail_revokes(true);
+    let failed = first.core.sign_out_device(other.id.clone(), code.clone()).await.unwrap_err();
+    assert!(failed.to_string().contains("not signed out yet"), "{failed}");
+    assert!(first.core.devices().await.unwrap().iter().any(|d| d.id == other.id), "still listed, to try again");
+    workos.fail_revokes(false);
     first.core.sign_out_device(other.id, code).await.unwrap();
     assert_eq!(workos.revoked_sessions(), [lost_session], "only the lost phone's session ends");
     assert!(lost.core.account_keys().await.is_err(), "its sign-in is over");
