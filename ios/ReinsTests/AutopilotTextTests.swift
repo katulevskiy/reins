@@ -105,7 +105,7 @@ final class AutopilotTextTests: XCTestCase {
 
     func testAModelThatFailsItsCheckSaysSoPlainly() {
         XCTAssertTrue(AutopilotText.modelError("sha-256 of model.onnx does not match").contains("did not match"))
-        XCTAssertTrue(AutopilotText.modelError("sha-256 of model.onnx does not match").contains("Reins"))
+        XCTAssertTrue(AutopilotText.modelError("sha-256 of model.onnx does not match").contains("app update"))
         XCTAssertEqual(AutopilotText.modelError("connection reset"), "Connection reset.")
         XCTAssertTrue(AutopilotText.modelError(nil).contains("Try again"))
     }
