@@ -36,7 +36,7 @@ pub struct Hold {
 }
 
 impl Root {
-    fn hold_start(&mut self, what: Held, cx: &mut Context<'_, Self>) {
+    pub(super) fn hold_start(&mut self, what: Held, cx: &mut Context<'_, Self>) {
         self.presses += 1;
         let press = self.presses;
         self.hold = Some(Hold {

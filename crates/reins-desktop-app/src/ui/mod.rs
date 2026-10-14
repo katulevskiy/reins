@@ -216,12 +216,12 @@ impl Root {
             let m = model.read(cx);
             ((m.screen, m.section), m.demo())
         };
-        // `--demo` with `REINS_DEMO_HELP=<id>`: that (?) open, for screenshots.
-        let help = std::env::var("REINS_DEMO_HELP")
-            .ok()
-            .filter(|h| demo && !h.is_empty())
-            .map(|h| &*Box::leak(h.into_boxed_str()));
-        Self {
+        // `--demo` with `REINS_DEMO_HELP=<id>`: that (?) open, `REINS_DEMO_PAUSE=1`: the pause sheet open (`manual`:
+        // at "Until I resume"), for screenshots.
+        let demo_var = |name: &str| std::env::var(name).ok().filter(|h| demo && !h.is_empty());
+        let help = demo_var("REINS_DEMO_HELP").map(|h| &*Box::leak(h.into_boxed_str()));
+        let pause_demo = demo_var("REINS_DEMO_PAUSE");
+        let mut root = Self {
             model,
             focus,
             server_field: cx.focus_handle(),
@@ -231,21 +231,31 @@ impl Root {
             branch_fields: Vec::new(),
             outcome_filter: None,
             kind_filter: None,
-            filter_open: false,
+            filter_open: demo_var("REINS_DEMO_FILTER").is_some(),
             selected: None,
             rows_shown: ROWS,
-            pause_sheet: false,
-            pause_choice: PauseFor::Hour,
+            pause_sheet: pause_demo.is_some(),
+            pause_choice: if matches!(pause_demo.as_deref(), Some("manual" | "hold")) {
+                PauseFor::Manual
+            } else {
+                PauseFor::Hour
+            },
             hold: None,
             presses: 0,
-            health_open: false,
+            health_open: demo_var("REINS_DEMO_HEALTH").is_some(),
             notify_open: false,
             profile_open: None,
             help,
             help_page,
             tick: None,
             _subscriptions: subscriptions,
+        };
+        // `REINS_DEMO_PAUSE=hold`: "Until I resume", held from the start (it pauses when the hold ends).
+        if pause_demo.as_deref() == Some("hold") {
+            root.pause_choice = PauseFor::Manual;
+            root.hold_start(hold::Held::PauseUntilResume, cx);
         }
+        root
     }
 
     /// A click handler that runs `f` on the model.

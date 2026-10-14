@@ -1,7 +1,8 @@
 //! `--demo` only: made-up activity, connections, keys and AI tools, shown where this computer has none yet, so the
 //! window can be tried (and photographed) without an account or a running daemon, and a pretend phone that approves
 //! work sessions. Nothing here is sent anywhere, and none of it is written to disk. `REINS_DEMO_EMPTY=1` leaves the
-//! samples out, to see the empty states; `REINS_DEMO_SESSION=1` starts with a work session running.
+//! samples out, to see the empty states; `REINS_DEMO_CALM=1` leaves out the request waiting on the phone;
+//! `REINS_DEMO_SESSION=1` starts with a work session running.
 
 use std::collections::BTreeMap;
 use std::sync::Arc;
@@ -23,6 +24,8 @@ pub struct Demo {
     base: i64,
     /// No samples: a computer where nothing happened yet.
     empty: bool,
+    /// Nothing waiting on the phone (the calm Overview).
+    calm: bool,
 }
 
 /// One made-up request: seconds before the start, kind, source, service, what, detail, outcome, decider, reason,
@@ -207,6 +210,16 @@ impl Demo {
         Self {
             base: now,
             empty: false,
+            calm: false,
+        }
+    }
+
+    /// Without the request that waits on the phone.
+    #[must_use]
+    pub fn calm(self) -> Self {
+        Self {
+            calm: true,
+            ..self
         }
     }
 
@@ -225,6 +238,7 @@ impl Demo {
         SAMPLES
             .iter()
             .enumerate()
+            .filter(|(_, sample)| !(self.calm && sample.6 == Outcome::Waiting))
             .map(|(i, &(ago, kind, source, service, what, detail, outcome, decider, reason, took))| {
                 let at = self.base - ago;
                 Entry {
@@ -504,6 +518,8 @@ mod tests {
         demo.fill(&mut real, true);
         assert_eq!(*real.activity, vec![mine]);
         assert!(real.git_routed.is_empty(), "paused: nothing routed");
+
+        assert!(demo.calm().activity().iter().all(|e| e.outcome != Outcome::Waiting));
 
         let mut bare = snapshot();
         demo.empty().fill(&mut bare, false);

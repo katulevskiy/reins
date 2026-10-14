@@ -249,6 +249,15 @@ impl Model {
             saved.account.get_or_insert_with(|| "dana@acme.dev".to_owned());
             saved.phone.get_or_insert_with(|| "Dana's iPhone".to_owned());
         }
+        // `REINS_DEMO_PAUSED=1`: git paused for 4 hours since 48 minutes ago (`manual`: until resumed).
+        if let Some(how) = std::env::var("REINS_DEMO_PAUSED").ok().filter(|v| args.demo && !v.is_empty() && v != "0") {
+            let now = reins_desktop::now_unix();
+            if how == "manual" {
+                saved.pause(PauseFor::Manual, now);
+            } else {
+                saved.pause(PauseFor::FourHours, now - 48 * 60);
+            }
+        }
         let section = std::env::var("REINS_DEMO_SECTION")
             .ok()
             .filter(|_| args.demo)
@@ -262,7 +271,13 @@ impl Model {
         let runtime = Tokio::handle(cx);
         let demo = args.demo.then(|| {
             let demo = Demo::new(reins_desktop::now_unix());
-            if std::env::var_os("REINS_DEMO_EMPTY").is_some_and(|v| !v.is_empty() && v != "0") {
+            let set = |name: &str| std::env::var_os(name).is_some_and(|v| !v.is_empty() && v != "0");
+            let demo = if set("REINS_DEMO_CALM") {
+                demo.calm()
+            } else {
+                demo
+            };
+            if set("REINS_DEMO_EMPTY") {
                 demo.empty()
             } else {
                 demo
