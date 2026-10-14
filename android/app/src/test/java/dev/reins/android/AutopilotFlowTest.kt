@@ -1,5 +1,6 @@
 package dev.reins.android
 
+import androidx.compose.ui.test.assertIsSelected
 import androidx.compose.ui.test.onNodeWithContentDescription
 import androidx.compose.ui.test.assertTextContains
 import androidx.compose.ui.test.onNodeWithTag
@@ -394,7 +395,8 @@ class AutopilotFlowTest : FlowHarness() {
         tap("connMode:AUTO")
         awaitCore { core.modeCalls.isNotEmpty() }
         assertEquals(Triple("c1", AutopilotMode.AUTO, null), core.modeCalls.single())
-        awaitText("Its own mode")
+        rule.onNodeWithTag("connMode:AUTO").assertIsSelected()
+        tap("learnsInto")
         tap("connProfile:work")
         awaitCore { core.assigned.isNotEmpty() }
         assertEquals("c1" to "work", core.assigned.single())
@@ -426,7 +428,7 @@ class AutopilotFlowTest : FlowHarness() {
         tap("openSettings")
         tap("connection:c1")
         awaitTag("stopConnectionBypass")
-        rule.onNodeWithTag("connectionModeLine").assertTextContains("10 min left", substring = true)
+        rule.onNodeWithTag("connectionModeLine", useUnmergedTree = true).assertTextContains("10 min left", substring = true)
         tap("stopConnectionBypass")
         awaitCore { core.modeCalls.isNotEmpty() }
         assertEquals("back to its own mode", Triple("c1", AutopilotMode.AUTO, null), core.modeCalls.single())

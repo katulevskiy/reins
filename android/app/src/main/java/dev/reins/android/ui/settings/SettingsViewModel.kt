@@ -31,7 +31,7 @@ class SettingsViewModel(private val container: AppContainer) : ViewModel() {
     /** The Sounds & haptics switches, for the row that leads to them. */
     val sounds: StateFlow<FeedbackSettings> get() = container.feedbackStore.settings
 
-    /** A confirmation shown under the approval-device card ("Server address copied."). */
+    /** A confirmation shown under the account card ("Server address copied."). */
     fun notice(message: String) {
         _ui.value = SettingsUi(message = message)
     }
@@ -61,6 +61,23 @@ class SettingsViewModel(private val container: AppContainer) : ViewModel() {
     /** How many passkeys open the account's vault (shown where the recovery code is); null while unknown. */
     private val _vaultPasskeys = MutableStateFlow<Int?>(null)
     val vaultPasskeys: StateFlow<Int?> = _vaultPasskeys.asStateFlow()
+
+    /** How many phones and computers are signed in to the account (the Devices row); null while unknown or refused. */
+    private val _devices = MutableStateFlow<Int?>(null)
+    val devices: StateFlow<Int?> = _devices.asStateFlow()
+
+    /** Settings opened: count the devices again (only the approval phone may list them). */
+    fun countDevices() {
+        viewModelScope.launch {
+            _devices.value = try {
+                container.core.devices().size
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                null
+            }
+        }
+    }
 
     /** The recovery code while its sheet is open; only ever read after biometrics. */
     private val _recoveryCode = MutableStateFlow<String?>(null)
