@@ -341,10 +341,15 @@ Autopilot runs only on the phone. Nothing it uses or learns leaves the phone. It
   built-in rules (`reins_policy::guard`), whatever its layout; the most severe match wins, and the words of a
   destructive command count where a shell runs them (not in the source a heredoc feeds Python). The hook runs where
   the AI does, so its label is only shown, and can make a question stricter, never looser. Questions about private
-  keys, cloud credentials and saved tokens, and any the phone cannot read with certainty (an unbalanced quote, code
-  fed to an interpreter, something piped into a shell, a word the shell makes up, a wrapper option it does not know,
-  a detail cut short), are asked every time too: never remembered, never one tap, never Autopilot's, but an ordinary
-  yes or no on screen. A `.env` question is judged like any request. A remembered answer to a desktop question covers
+  keys, cloud credentials and saved tokens are asked every time too, and so is any the phone cannot read with
+  certainty. Certain is a strict, small part of shell only (`reins_policy::strict`): plain and quoted words, `;`,
+  `&&`, `||`, `|`, simple redirections, `NAME=value` before a command, a heredoc into a program that does not run
+  its input or into a shell, a few wrappers with their exact options (`sudo`, `env`, `nice`, `nohup`, `time`,
+  `timeout`, `command`) and `sh -c` two levels deep. Anything else (`$`, a substitution, parentheses, braces, a
+  program that runs code it is given, an interpreter, a pipe into a shell, a Windows path, a character outside ASCII,
+  a detail cut short) is uncertain: shown as "Couldn't read this", never remembered, never one tap, never
+  Autopilot's, but an ordinary yes or no on screen, and Bypass approves it. A question is never less guarded than
+  before this reading, except a `.env` read, read with certainty (a test compares a corpus with the previous rule). A `.env` question is judged like any request. A remembered answer to a desktop question covers
   exactly what was asked, on that computer (bound to the desktop app's key): that file by its full path, that command
   in that folder, or that question; never the topic the computer chose. Autopilot learns a question in the `.env`
   kind only when everything its command does is reading `.env` files.
