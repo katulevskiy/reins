@@ -81,8 +81,9 @@ CREATE TABLE IF NOT EXISTS connection_prefs (connection_id TEXT PRIMARY KEY, ico
 CREATE TABLE IF NOT EXISTS audit_snapshots (seq INTEGER PRIMARY KEY, data BLOB NOT NULL);
 ";
 
-/// Columns added after the first release, applied once each (`PRAGMA user_version`).
-const MIGRATIONS: [&str; 9] = [
+/// Columns and tables added after the first release, applied once each (`PRAGMA user_version`). A table added to
+/// [`SCHEMA`] needs one here too: a sealed database restored from disk keeps the tables it was written with.
+const MIGRATIONS: [&str; 10] = [
     "
 ALTER TABLE audit ADD COLUMN connection_id TEXT NOT NULL DEFAULT '';
 ALTER TABLE audit ADD COLUMN service TEXT NOT NULL DEFAULT 'gmail';
@@ -210,6 +211,10 @@ INSERT INTO pending_kinds (id, kind, created_at, parked_at, payload)
 DROP TABLE pending;
 ALTER TABLE pending_kinds RENAME TO pending;
 ",
+    // Each activity entry's request as its approval showed it (sealed). Databases sealed before it existed lack it.
+    "
+CREATE TABLE IF NOT EXISTS audit_snapshots (seq INTEGER PRIMARY KEY, data BLOB NOT NULL);
+",
     // Standing answers to the desktop app's questions were keyed by the topic the computer chose (`file:.env`,
     // `command:make deploy`), which covered every later question with that topic. They are now keyed by exactly the
     // file, command or question, on that computer; the old, broader ones are dropped rather than honoured.
@@ -218,6 +223,15 @@ DELETE FROM grants WHERE json_extract(grant_json, '$.scope.action') = 'service'
     AND json_extract(grant_json, '$.scope.service') = 'desktop';
 ",
 ];
+
+/// Brings a connection to the current schema, whatever wrote it: a new database, a legacy file, or a sealed copy
+/// restored from disk (written by this version, an older one, or another process).
+fn prepare(conn: &Connection) -> Result<(), CoreError> {
+    conn.execute_batch(SCHEMA)?;
+    migrate(conn)?;
+    conn.execute_batch("PRAGMA temp_store=MEMORY; PRAGMA secure_delete=ON;")?;
+    Ok(())
+}
 
 fn migrate(conn: &Connection) -> Result<(), CoreError> {
     // A database that was never versioned (0) is the first release's schema (1).
@@ -294,9 +308,7 @@ impl Store {
             None
         };
         let conn = Connection::open_in_memory()?;
-        conn.execute_batch(SCHEMA)?;
-        migrate(&conn)?;
-        conn.execute_batch("PRAGMA temp_store=MEMORY; PRAGMA secure_delete=ON;")?;
+        prepare(&conn)?;
         let dek_path = data_dir.join(DEK_FILE);
         let (existing, had_key) = match fs::read(&dek_path) {
             Ok(wrapped) => match keys.unwrap(wrapped) {
@@ -705,7 +717,7 @@ pub(crate) mod tests {
         assert_eq!((old[0].at, old[0].connection_label.as_str(), old[0].service.as_str()), (7, "Old", "gmail"));
         assert_eq!(old[0].detail, DETAIL_UNAVAILABLE, "rows from before the details existed have none");
         let version: i64 = store.lock().unwrap().query_row("PRAGMA user_version", [], |r| r.get(0)).unwrap();
-        assert_eq!(version, 10);
+        assert_eq!(version, 11);
         assert_eq!(store.desktop_key("c1").unwrap(), None, "the desktop keys table exists");
         assert!(store.ap_profiles().unwrap().is_empty(), "the Autopilot tables exist");
         assert_eq!(store.ap_mode_row("").unwrap(), crate::autopilot::modes::ModeRow::default());
@@ -758,6 +770,35 @@ pub(crate) mod tests {
         let store = open(dir.path());
         let left: Vec<String> = store.grants().unwrap().into_iter().map(|g| g.grant.id.0).collect();
         assert_eq!(left, ["g1"]);
+    }
+
+    fn tables(conn: &Connection) -> Vec<String> {
+        let mut stmt = conn.prepare("SELECT name FROM sqlite_master WHERE type = 'table' ORDER BY name").unwrap();
+        stmt.query_map([], |r| r.get(0)).unwrap().collect::<Result<_, _>>().unwrap()
+    }
+
+    #[test]
+    fn a_database_of_any_age_ends_with_every_table_of_a_new_one() {
+        let new = Connection::open_in_memory().unwrap();
+        prepare(&new).unwrap();
+        // What the first release created; everything since comes from SCHEMA and MIGRATIONS.
+        let old = Connection::open_in_memory().unwrap();
+        old.execute_batch(
+            "PRAGMA user_version = 1;
+             CREATE TABLE meta (key TEXT PRIMARY KEY, value BLOB NOT NULL);
+             CREATE TABLE audit (seq INTEGER PRIMARY KEY AUTOINCREMENT, at INTEGER NOT NULL, connection_label TEXT NOT NULL, action TEXT NOT NULL, outcome TEXT NOT NULL, grant_id TEXT, detail BLOB);
+             CREATE TABLE grants (id TEXT PRIMARY KEY, connection_id TEXT NOT NULL, connection_label TEXT NOT NULL, created_at INTEGER NOT NULL, grant_json TEXT NOT NULL);
+             CREATE TABLE pending (id TEXT PRIMARY KEY, kind TEXT NOT NULL, created_at INTEGER NOT NULL, parked_at INTEGER NOT NULL, payload BLOB NOT NULL);",
+        )
+        .unwrap();
+        prepare(&old).unwrap();
+        assert_eq!(tables(&old), tables(&new));
+        // Migrations alone (a sealed copy is upgraded by them) also bring the tables added since #71.
+        let sealed_before_snapshots = Connection::open_in_memory().unwrap();
+        prepare(&sealed_before_snapshots).unwrap();
+        sealed_before_snapshots.execute_batch("DROP TABLE audit_snapshots; PRAGMA user_version = 9;").unwrap();
+        migrate(&sealed_before_snapshots).unwrap();
+        assert_eq!(tables(&sealed_before_snapshots), tables(&new));
     }
 
     #[test]

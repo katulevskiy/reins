@@ -1,5 +1,5 @@
 //! Account stores live only in memory while unlocked. Disk contains authenticated ciphertext, including metadata.
-use super::{SCHEMA, Store, migrate, snapshot, write_atomically};
+use super::{Store, prepare, snapshot, write_atomically};
 use crate::{
     CoreError,
     crypto::{Dek, VaultKey},
@@ -174,9 +174,7 @@ fn write_through(store: &Store, p: &Persistence, seq: u64) -> Result<(), CoreErr
 }
 fn memory() -> Result<Connection, CoreError> {
     let conn = Connection::open_in_memory()?;
-    conn.execute_batch(SCHEMA)?;
-    migrate(&conn)?;
-    conn.execute_batch("PRAGMA temp_store=MEMORY; PRAGMA secure_delete=ON;")?;
+    prepare(&conn)?;
     Ok(conn)
 }
 impl Store {
@@ -211,10 +209,10 @@ impl Store {
         if current.is_some() && current != *p.stamp.lock().unwrap_or_else(PoisonError::into_inner) {
             let bytes = fs::read(&p.path).map_err(|_| CoreError::storage("cannot read account data"))?;
             let plain = Zeroizing::new(self.unseal(&p.aad, &bytes)?);
-            let mut loaded = memory()?;
+            let mut loaded = Connection::open_in_memory()?;
+            // The copy replaces the whole database, schema included: it has the tables of whoever sealed it.
             loaded.deserialize_read_exact("main", std::io::Cursor::new(plain.as_slice()), plain.len(), false)?;
-            loaded.execute_batch("PRAGMA temp_store=MEMORY; PRAGMA secure_delete=ON;")?;
-            migrate(&loaded)?;
+            prepare(&loaded)?;
             *conn = Some(loaded);
             *p.stamp.lock().unwrap_or_else(PoisonError::into_inner) = current;
             self.writes.fetch_add(1, Ordering::AcqRel);
@@ -508,6 +506,96 @@ mod tests {
             }
         }
     }
+    /// Makes `store`'s sealed file what a version from before entry snapshots (#71) wrote: schema version 9 and no
+    /// `audit_snapshots` table.
+    fn seal_as_before_snapshots(store: &Store) {
+        store.lock().unwrap().execute_batch("DROP TABLE audit_snapshots; PRAGMA user_version = 9;").unwrap();
+        // Schema changes are not row changes: a write makes the store seal the database as it now is.
+        store.meta_set("sealed-by", "an older version").unwrap();
+    }
+
+    /// What approving a request writes: an entry with its approval's snapshot.
+    fn approved_entry() -> crate::store::AuditRecord {
+        let parked: crate::views::ParkedRequest = serde_json::from_value(serde_json::json!({
+            "request": {"v": 1, "id": "r1", "connection_id": "c1", "connection_label": "Claude", "created_at": 9,
+                        "call": {"tool": "gmail_search", "query": "from:bank", "max_results": 10}},
+            "messages": [], "covered": {}, "account": null
+        }))
+        .unwrap();
+        crate::store::AuditRecord {
+            seq: 0,
+            at: 10,
+            connection_id: "c1".to_owned(),
+            connection_label: "Claude".to_owned(),
+            action: "search".to_owned(),
+            outcome: "released".to_owned(),
+            detail: "approved: 1 message".to_owned(),
+            grant_id: None,
+            service: "gmail".to_owned(),
+            account: None,
+            count: 1,
+            info: crate::store::AuditInfo {
+                snapshot: Some(Box::new(parked)),
+                ..crate::store::AuditInfo::default()
+            },
+            op: String::new(),
+        }
+    }
+
+    fn approves_and_keeps_the_snapshot(store: &Store) {
+        let seq = store.append_audit(&approved_entry()).expect("the approval is logged");
+        assert!(store.audit_snapshot(seq).unwrap().is_some(), "and its approval is kept");
+    }
+
+    #[test]
+    fn a_device_store_sealed_before_snapshots_existed_gets_the_table() {
+        let dir = tempfile::tempdir().unwrap();
+        seal_as_before_snapshots(&Store::open(dir.path(), &FakeKeys::default()).unwrap());
+        let store = Store::open(dir.path(), &FakeKeys::default()).unwrap();
+        approves_and_keeps_the_snapshot(&store);
+        let version: i64 = store.lock().unwrap().query_row("PRAGMA user_version", [], |r| r.get(0)).unwrap();
+        assert_eq!(version, i64::try_from(super::super::MIGRATIONS.len()).unwrap() + 1);
+        // And the table is sealed with the rest: the next open has it without upgrading again.
+        drop(store);
+        approves_and_keeps_the_snapshot(&Store::open(dir.path(), &FakeKeys::default()).unwrap());
+    }
+
+    #[test]
+    fn an_account_store_sealed_before_snapshots_existed_gets_the_table() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = Arc::new(Store::open(dir.path(), &FakeKeys::default()).unwrap());
+        let key = VaultKey::from_bytes(&[7; 64]).unwrap();
+        let old = open_account(&root, dir.path(), owner("a"), &key);
+        fill(&old);
+        seal_as_before_snapshots(&old);
+        old.close().unwrap();
+        let store = open_account(&root, dir.path(), owner("a"), &key);
+        assert_eq!(store.activity(50).unwrap().len(), 1, "what the older version kept is still there");
+        approves_and_keeps_the_snapshot(&store);
+    }
+
+    #[test]
+    fn a_copy_written_by_another_process_before_snapshots_existed_gets_the_table() {
+        // The app is up to date; the other process (the iOS notification extension) still runs the older version.
+        let dir = tempfile::tempdir().unwrap();
+        let root = Arc::new(Store::open(dir.path(), &FakeKeys::default()).unwrap());
+        let key = VaultKey::from_bytes(&[7; 64]).unwrap();
+        let app = open_account(&root, dir.path(), owner("a"), &key);
+        let extension = Store::account(Arc::clone(&root), dir.path(), owner("a"), &key).unwrap();
+        seal_as_before_snapshots(&extension);
+        approves_and_keeps_the_snapshot(&app);
+    }
+
+    #[test]
+    fn an_approval_is_logged_even_when_its_snapshot_cannot_be_kept() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = Store::open(dir.path(), &FakeKeys::default()).unwrap();
+        store.lock().unwrap().execute_batch("DROP TABLE audit_snapshots").unwrap();
+        let seq = store.append_audit(&approved_entry()).expect("a lost snapshot never fails the approval");
+        assert_eq!(store.audit_entry(seq).unwrap().unwrap().detail, "approved: 1 message");
+        assert!(store.audit_snapshot(seq).unwrap().is_none(), "the entry opens without its approval");
+    }
+
     #[test]
     fn another_process_sees_each_write_and_its_own_are_kept() {
         // Two stores on one file stand for the app and the iOS notification extension.
