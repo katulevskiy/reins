@@ -474,15 +474,28 @@ pub struct AskAnswer {
     pub approved: bool,
 }
 
-/// What the phone seals to the desktop app for `vault_secret_release`: each requested `item/field` and its value.
+/// What the phone seals to the desktop app for `vault_secret_release` (each requested `item/field` and its value) and
+/// for `vault_env_release` (each variable of the environment and its value, with the environment it came from).
 #[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct SecretGrant {
     pub v: u32,
     pub nonce: String,
-    /// In the order requested.
+    /// In the order requested (`vault_env_release` with every variable: sorted by name).
     pub secrets: Vec<(String, String)>,
     /// Unix seconds; the desktop app forgets them then.
     pub expires_at: i64,
+    /// `vault_env_release`: the project and environment released.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub project: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub env: Option<String>,
+    /// `vault_env_release`: the environment's version (the vault item's revision date).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub revision: Option<String>,
+    /// `vault_env_release`: the commands the desktop app may hand these values to until they expire, without asking
+    /// again: the exact command, or the pattern (`npm run *`) a standing permission the user chose names.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub command_pattern: Option<String>,
 }
 
 impl std::fmt::Debug for SecretGrant {
@@ -624,6 +637,353 @@ pub struct VaultNames {
     pub nonce: String,
     /// `(name, kind)`, the kind as the vault tools name it (`login`, `note`, `card`, `identity`, `ssh_key`).
     pub items: Vec<(String, String)>,
+}
+
+// ---- Reins Secrets (docs/secrets.md) --------------------------------------------------------------------------------
+
+/// The tools of Reins Secrets (all desktop-only).
+pub const ENV_RELEASE_TOOL: &str = "vault_env_release";
+pub const SECRETS_STORE_TOOL: &str = "vault_secrets_store";
+pub const SECRETS_LIST_TOOL: &str = "vault_secrets_list";
+pub const TOKEN_STORE_TOOL: &str = "integration_token_store";
+/// The vault folder of Reins Secrets; a project is the folder `Reins/<project>`.
+pub const SECRETS_FOLDER: &str = "Reins";
+/// The hidden custom field that marks a Secure Note as an environment, and its value.
+pub const ENV_KIND_FIELD: &str = "reins.kind";
+pub const ENV_KIND: &str = "env/1";
+/// Custom fields whose names start with this belong to Reins, not to the environment's variables.
+pub const RESERVED_PREFIX: &str = "reins.";
+/// The most variables one release or one environment holds, and the most bytes of values one release carries.
+pub const MAX_ENV_VARS: usize = 200;
+pub const MAX_ENV_BYTES: usize = 64 * 1024;
+/// The most environments one `vault_secrets_store` changes, and the most bytes of values it carries.
+pub const MAX_STORE_ENVS: usize = 20;
+pub const MAX_STORE_BYTES: usize = 128 * 1024;
+/// How long a store box is good for (as [`SECRET_STORE_TTL_SECS`]).
+pub const SECRETS_STORE_TTL_SECS: i64 = SECRET_STORE_TTL_SECS;
+/// The runner of a person at the computer; an agent's is `agent:<harness>` (`agent:claude-code`).
+pub const PERSON: &str = "person";
+
+/// Whether `runner` is `person` or `agent:<harness>` (harness: 1 to 40 of `a-z 0-9 - _ .`).
+#[must_use]
+pub fn runner_ok(runner: &str) -> bool {
+    runner == PERSON
+        || runner.strip_prefix("agent:").is_some_and(|h| {
+            !h.is_empty()
+                && h.len() <= 40
+                && h.bytes().all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || matches!(b, b'-' | b'_' | b'.'))
+        })
+}
+
+/// A project or environment name: 1 to 64 of `A-Z a-z 0-9 . _ -`, not starting with `.` or `-` (never a `/`, so
+/// `project/env` is one item name).
+#[must_use]
+pub fn name_ok(name: &str) -> bool {
+    !name.is_empty()
+        && name.len() <= 64
+        && !name.starts_with(['.', '-'])
+        && name.bytes().all(|b| b.is_ascii_alphanumeric() || matches!(b, b'.' | b'_' | b'-'))
+}
+
+/// An environment variable name: a letter or `_`, then letters, digits and `_`, at most 100.
+#[must_use]
+pub fn var_ok(name: &str) -> bool {
+    let mut bytes = name.bytes();
+    bytes.next().is_some_and(|b| b.is_ascii_alphabetic() || b == b'_')
+        && bytes.all(|b| b.is_ascii_alphanumeric() || b == b'_')
+        && name.len() <= 100
+}
+
+/// A command pattern of a standing permission for secrets: the exact command, or a prefix ending in `*`
+/// (`npm run *`). Spaces are compared as single spaces.
+#[must_use]
+pub fn command_matches(pattern: &str, command: &str) -> bool {
+    let norm = |s: &str| s.split_whitespace().collect::<Vec<_>>().join(" ");
+    let (pattern, command) = (norm(pattern), norm(command));
+    match pattern.strip_suffix('*') {
+        Some(prefix) => !prefix.trim().is_empty() && command.starts_with(prefix),
+        None => pattern == command,
+    }
+}
+
+/// Changes to one environment, as `vault_secrets_store` carries them (in [`SecretsToStore`]). Values are wiped when
+/// this is dropped.
+#[derive(Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct EnvChanges {
+    pub project: String,
+    pub env: String,
+    /// Variables to set: a new name is added, an existing one replaced (its earlier value kept in the item's history).
+    #[serde(default)]
+    pub set: Vec<(String, String)>,
+    /// Variables to remove (their values kept in the item's history).
+    #[serde(default)]
+    pub unset: Vec<String>,
+    /// `(from, to)`: variables to rename.
+    #[serde(default)]
+    pub rename: Vec<(String, String)>,
+    /// Another environment of the same project whose variables are copied in first, on the phone (`reins secrets
+    /// cp`): the values never leave it. Names `set` here win.
+    #[serde(default)]
+    pub copy_from: Option<String>,
+    /// A `set` may replace a variable that has another value; without it the phone refuses the whole store.
+    #[serde(default)]
+    pub replace: bool,
+}
+
+impl Drop for EnvChanges {
+    fn drop(&mut self) {
+        for (_, v) in &mut self.set {
+            zeroize::Zeroize::zeroize(v);
+        }
+    }
+}
+
+impl std::fmt::Debug for EnvChanges {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let names: Vec<&str> = self.set.iter().map(|(n, _)| n.as_str()).collect();
+        f.debug_struct("EnvChanges")
+            .field("project", &self.project)
+            .field("env", &self.env)
+            .field("set", &names)
+            .field("unset", &self.unset)
+            .field("rename", &self.rename)
+            .field("copy_from", &self.copy_from)
+            .field("replace", &self.replace)
+            .finish()
+    }
+}
+
+impl EnvChanges {
+    /// No changes yet to `project/env` (fill in `set`, `unset`, …; the type wipes its values when dropped, so it is
+    /// not built with `..Default::default()`).
+    #[must_use]
+    pub fn new(project: &str, env: &str) -> Self {
+        Self {
+            project: project.to_owned(),
+            env: env.to_owned(),
+            set: Vec::new(),
+            unset: Vec::new(),
+            rename: Vec::new(),
+            copy_from: None,
+            replace: false,
+        }
+    }
+
+    /// `project/env`: the vault item's name, and what the call names beside the box.
+    #[must_use]
+    pub fn item(&self) -> String {
+        format!("{}/{}", self.project, self.env)
+    }
+
+    /// Names and counts, as the phone checks them.
+    pub fn validate(&self) -> Result<(), String> {
+        let item = self.item();
+        if !name_ok(&self.project) || !name_ok(&self.env) {
+            return Err(format!("`{}` is not a project/environment name", printable(&item)));
+        }
+        if self.set.is_empty() && self.unset.is_empty() && self.rename.is_empty() && self.copy_from.is_none() {
+            return Err(format!("nothing to change in {item}"));
+        }
+        let mut seen = std::collections::BTreeSet::new();
+        let names =
+            self.set.iter().map(|(n, _)| n).chain(&self.unset).chain(self.rename.iter().flat_map(|(a, b)| [a, b]));
+        for name in names {
+            if !var_ok(name) {
+                return Err(format!("`{}` in {item} is not a variable name", printable(name)));
+            }
+        }
+        for name in self.set.iter().map(|(n, _)| n).chain(&self.unset) {
+            if !seen.insert(name) {
+                return Err(format!("{name} is changed twice in {item}"));
+            }
+        }
+        if self.set.len() + self.rename.len() > MAX_ENV_VARS {
+            return Err(format!("at most {MAX_ENV_VARS} variables per environment"));
+        }
+        if let Some(from) = &self.copy_from
+            && (!name_ok(from) || from == &self.env)
+        {
+            return Err(format!("{item} cannot be copied from `{}`", printable(from)));
+        }
+        Ok(())
+    }
+}
+
+/// A whole `vault_secrets_store`: 1 to [`MAX_STORE_ENVS`] distinct environments, each valid, at most
+/// [`MAX_STORE_BYTES`] of values.
+pub fn validate_store(envs: &[EnvChanges]) -> Result<(), String> {
+    if envs.is_empty() || envs.len() > MAX_STORE_ENVS {
+        return Err(format!("one store changes 1 to {MAX_STORE_ENVS} environments"));
+    }
+    let mut items = std::collections::BTreeSet::new();
+    let mut bytes = 0usize;
+    for e in envs {
+        e.validate()?;
+        if !items.insert(e.item()) {
+            return Err(format!("{} appears twice", e.item()));
+        }
+        bytes += e.set.iter().map(|(n, v)| n.len() + v.len()).sum::<usize>();
+    }
+    if bytes > MAX_STORE_BYTES {
+        return Err(format!("at most {} KB of values in one store", MAX_STORE_BYTES / 1024));
+    }
+    Ok(())
+}
+
+/// What the desktop app sends the phone for `vault_secrets_store`: changes to one or more environments, in a box from
+/// the app's key to the phone's key (as [`SecretToStore`]). One approval, one set of [`secrets_check`] digits.
+#[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SecretsToStore {
+    pub v: u32,
+    /// [`TO_PHONE`].
+    pub dir: String,
+    pub nonce: String,
+    /// Unix seconds, on the computer.
+    pub created_at: i64,
+    pub envs: Vec<EnvChanges>,
+}
+
+impl std::fmt::Debug for SecretsToStore {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("SecretsToStore").field("nonce", &self.nonce).field("envs", &self.envs).finish_non_exhaustive()
+    }
+}
+
+/// Four digits both the terminal and the phone show for a whole store: every value set, with its environment and
+/// name. Like [`value_check`], so that a batch an AI on the computer sent in the user's place does not pass for theirs.
+#[must_use]
+pub fn secrets_check(envs: &[EnvChanges]) -> String {
+    let mut all: Vec<(String, &str, &str)> =
+        envs.iter().flat_map(|e| e.set.iter().map(move |(n, v)| (e.item(), n.as_str(), v.as_str()))).collect();
+    all.sort_unstable();
+    let mut h = Sha256::new();
+    h.update(b"reins-secrets-batch/1");
+    for (item, name, value) in all {
+        for part in [item.as_bytes(), name.as_bytes(), value.as_bytes()] {
+            h.update((part.len() as u64).to_be_bytes());
+            h.update(part);
+        }
+    }
+    let d = h.finalize();
+    format!("{:04}", u16::from_be_bytes([d[0], d[1]]) % 10_000)
+}
+
+/// What happened to one environment, as the phone acknowledges a `vault_secrets_store`.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct EnvStored {
+    pub project: String,
+    pub env: String,
+    /// The environment was made (its folder too, when it was missing).
+    pub created: bool,
+    pub added: u32,
+    pub replaced: u32,
+    pub removed: u32,
+    pub renamed: u32,
+    pub copied: u32,
+    /// The environment's new version.
+    pub revision: String,
+}
+
+/// What the phone answers a `vault_secrets_store` it carried out, boxed from its inbox key (as [`StoreAck`]).
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SecretsStoreAck {
+    pub v: u32,
+    /// [`TO_DESKTOP`].
+    pub dir: String,
+    pub nonce: String,
+    pub envs: Vec<EnvStored>,
+}
+
+/// What the desktop app sends the phone for `integration_token_store`: a git host's token (found by import: `gh`,
+/// `.git-credentials`) for the phone's own integration (GitHub, GitLab, Codeberg, Bitbucket), boxed to the phone's key.
+#[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct TokenToStore {
+    pub v: u32,
+    /// [`TO_PHONE`].
+    pub dir: String,
+    pub nonce: String,
+    pub created_at: i64,
+    /// `github`, `gitlab`, `codeberg` or `bitbucket`.
+    pub service: String,
+    /// The host it was found for (`github.com`).
+    pub host: String,
+    /// What the computer found out about the token's scopes (`repo`, `read:org`); shown, not trusted.
+    #[serde(default)]
+    pub scopes: Vec<String>,
+    pub token: String,
+}
+
+impl Drop for TokenToStore {
+    fn drop(&mut self) {
+        zeroize::Zeroize::zeroize(&mut self.token);
+    }
+}
+
+impl std::fmt::Debug for TokenToStore {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("TokenToStore")
+            .field("nonce", &self.nonce)
+            .field("service", &self.service)
+            .field("host", &self.host)
+            .finish_non_exhaustive()
+    }
+}
+
+/// What the phone answers an `integration_token_store` it carried out, boxed from its inbox key.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct TokenStoreAck {
+    pub v: u32,
+    /// [`TO_DESKTOP`].
+    pub dir: String,
+    pub nonce: String,
+    pub service: String,
+    /// The account the token signs in as, as the integration lists it.
+    pub account: String,
+}
+
+/// One environment as `vault_secrets_list` names it: never a value.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct EnvListing {
+    pub name: String,
+    /// The environment's version (the vault item's revision date).
+    pub revision: String,
+    /// Its variables' names, sorted.
+    pub variables: Vec<String>,
+}
+
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ProjectListing {
+    pub name: String,
+    pub envs: Vec<EnvListing>,
+}
+
+/// What the phone answers `vault_secrets_list`, boxed from its inbox key: the projects, environments and variable
+/// names (of one project when the call names it).
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SecretsListing {
+    pub v: u32,
+    /// [`TO_DESKTOP`].
+    pub dir: String,
+    pub nonce: String,
+    pub projects: Vec<ProjectListing>,
+}
+
+/// "Drop the secrets you hold": sent by the phone (Revoke on all computers) to every paired desktop app, sealed to its
+/// key, picked up by its daemon. Anyone who knows the app's public key could make one, so it only ever takes leases
+/// away. `project`/`env` narrow it; neither: every lease.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct LeaseRevocation {
+    pub v: u32,
+    /// [`TO_DESKTOP`].
+    pub dir: String,
+    /// Random: the same revocation is applied once.
+    pub id: String,
+    /// Unix seconds, on the phone.
+    pub issued_at: i64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub project: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub env: Option<String>,
 }
 
 /// SHA-256 (lowercase hex) binding an approval to exactly what git sends: the repository, every `old new ref`
@@ -934,6 +1294,87 @@ mod tests {
         assert_ne!(fp, key_fingerprint(&encode_key(&[8u8; 32])).unwrap());
         assert!(key_fingerprint("short").is_none());
         assert_eq!(decode_key(&key), Some([7u8; 32]));
+    }
+
+    fn changes(project: &str, env: &str, set: &[(&str, &str)]) -> EnvChanges {
+        let mut c = EnvChanges::new(project, env);
+        c.set = set.iter().map(|(n, v)| ((*n).to_owned(), (*v).to_owned())).collect();
+        c
+    }
+
+    #[test]
+    fn the_batch_check_covers_every_value_name_and_environment_in_any_order() {
+        let a = changes("acme", "dev", &[("A", "1"), ("B", "2")]);
+        let check = secrets_check(std::slice::from_ref(&a));
+        assert_eq!(check.len(), 4);
+        assert_eq!(check, secrets_check(&[changes("acme", "dev", &[("B", "2"), ("A", "1")])]));
+        assert_ne!(check, secrets_check(&[changes("acme", "dev", &[("A", "1"), ("B", "3")])]));
+        assert_ne!(check, secrets_check(&[changes("acme", "prod", &[("A", "1"), ("B", "2")])]));
+        assert_ne!(check, secrets_check(&[changes("acme", "dev", &[("A", "1"), ("C", "2")])]));
+        // Boundaries are part of the hash: "A"+"12" is not "A1"+"2".
+        assert_ne!(
+            secrets_check(&[changes("acme", "dev", &[("A", "12")])]),
+            secrets_check(&[changes("acme", "dev", &[("A1", "2")])])
+        );
+        assert!(!format!("{a:?}").contains("\"1\""), "values never show in Debug");
+    }
+
+    #[test]
+    fn stores_are_checked_before_they_are_sealed() {
+        validate_store(&[changes("acme", "dev", &[("A", "1")])]).unwrap();
+        let mut copy = changes("acme", "staging", &[]);
+        copy.copy_from = Some("dev".into());
+        validate_store(&[copy]).unwrap();
+        let mut bad_copy = changes("acme", "dev", &[]);
+        bad_copy.copy_from = Some("dev".into());
+        let mut renamed = changes("acme", "dev", &[]);
+        renamed.rename = vec![("A".into(), "1B".into())];
+        let mut twice = changes("acme", "dev", &[("A", "1")]);
+        twice.unset = vec!["A".into()];
+        for (bad, why) in [
+            (vec![], "empty"),
+            (vec![changes("acme", "dev", &[])], "nothing to change"),
+            (vec![changes("a/b", "dev", &[("A", "1")])], "name"),
+            (vec![changes("acme", "dev", &[("1A", "1")])], "variable"),
+            (vec![changes("acme", "dev", &[("A", "1"), ("A", "2")])], "twice"),
+            (vec![twice], "set and unset"),
+            (vec![renamed], "rename target"),
+            (vec![bad_copy], "copy from itself"),
+            (vec![changes("acme", "dev", &[("A", "1")]), changes("acme", "dev", &[("B", "1")])], "env twice"),
+            (vec![changes("acme", "dev", &[("A", &"x".repeat(MAX_STORE_BYTES))])], "too large"),
+        ] {
+            assert!(validate_store(&bad).is_err(), "{why}");
+        }
+        assert!(name_ok("acme-web") && !name_ok(".x") && !name_ok("a b"));
+        assert!(var_ok("_X1") && !var_ok("1X") && !var_ok("A-B"));
+    }
+
+    #[test]
+    fn command_patterns_are_exact_or_a_prefix() {
+        assert!(command_matches("npm run dev", "npm  run dev"));
+        assert!(!command_matches("npm run dev", "npm run dev --watch"));
+        assert!(command_matches("npm run *", "npm run test"));
+        assert!(!command_matches("npm run *", "npx evil"));
+        assert!(!command_matches("*", "anything"), "a bare * covers nothing");
+        assert!(!command_matches(" *", "anything"));
+    }
+
+    #[test]
+    fn runners_are_a_person_or_a_named_agent() {
+        for ok in ["person", "agent:claude-code", "agent:codex", "agent:gemini_cli"] {
+            assert!(runner_ok(ok), "{ok}");
+        }
+        for bad in ["", "agent:", "agent:Claude", "agent:a b", "robot", "person "] {
+            assert!(!runner_ok(bad), "{bad}");
+        }
+    }
+
+    #[test]
+    fn a_secret_grant_without_an_environment_reads_as_before() {
+        let old = r#"{"v":1,"nonce":"n","secrets":[["A/password","x"]],"expires_at":5}"#;
+        let g: SecretGrant = serde_json::from_str(old).unwrap();
+        assert_eq!((&g.project, &g.env, &g.revision, &g.command_pattern), (&None, &None, &None, &None));
+        assert_eq!(serde_json::to_string(&g).unwrap(), old);
     }
 
     #[test]

@@ -80,18 +80,13 @@ impl SecretRef {
 }
 
 /// The vault folder all of Reins Secrets lives in; a project is the folder `Reins/<project>`.
-pub const SECRETS_FOLDER: &str = "Reins";
+pub const SECRETS_FOLDER: &str = reins_proto::desktop::SECRETS_FOLDER;
 const MAX_NAME: usize = 64;
-const MAX_VAR: usize = 100;
 
 /// A project or environment name: 1 to 64 of `A-Z a-z 0-9 . _ -`, not starting with `.` or `-`. Names never contain a
 /// `/`, so `project/env` is one item name and `project/env/NAME` one variable.
 pub fn check_name(what: &str, name: &str) -> Result<(), String> {
-    let ok = !name.is_empty()
-        && name.chars().count() <= MAX_NAME
-        && !name.starts_with(['.', '-'])
-        && name.chars().all(|c| c.is_ascii_alphanumeric() || matches!(c, '.' | '_' | '-'));
-    if ok {
+    if reins_proto::desktop::name_ok(name) {
         Ok(())
     } else {
         Err(format!(
@@ -103,11 +98,7 @@ pub fn check_name(what: &str, name: &str) -> Result<(), String> {
 
 /// An environment variable name: a letter or `_`, then letters, digits and `_`, at most 100.
 pub fn check_var(name: &str) -> Result<(), String> {
-    let mut chars = name.chars();
-    let ok = chars.next().is_some_and(|c| c.is_ascii_alphabetic() || c == '_')
-        && chars.all(|c| c.is_ascii_alphanumeric() || c == '_')
-        && name.len() <= MAX_VAR;
-    if ok {
+    if reins_proto::desktop::var_ok(name) {
         Ok(())
     } else {
         Err(format!("`{}` is not an environment variable name (letters, digits, `_`)", cut(name, 80)))
@@ -406,6 +397,10 @@ mod tests {
             nonce: nonce.to_owned(),
             secrets: secrets.iter().map(|(a, b)| ((*a).to_owned(), (*b).to_owned())).collect(),
             expires_at,
+            project: None,
+            env: None,
+            revision: None,
+            command_pattern: None,
         }
     }
 

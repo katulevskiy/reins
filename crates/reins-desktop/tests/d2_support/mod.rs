@@ -282,6 +282,10 @@ fn answer(s: &mut State, key: &SshKey, id: &str) -> Resp {
                 } else {
                     now + lease
                 },
+                project: None,
+                env: None,
+                revision: None,
+                command_pattern: None,
             };
             result(json!({"sealed": seal_to(&seal_key, &serde_json::to_vec(&grant).unwrap()).unwrap()}))
         }
