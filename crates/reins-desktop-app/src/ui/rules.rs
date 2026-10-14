@@ -7,13 +7,14 @@ use gpui::{
     AnyElement, Context, Div, FontWeight, InteractiveElement as _, IntoElement, ParentElement as _, SharedString,
     StatefulInteractiveElement as _, Styled as _, Window, div, px,
 };
-use reins_desktop::guard::{GROUPS, OnNoAnswer};
+use reins_desktop::guard::{GROUPS, GuardConfig, OnNoAnswer};
 use reins_desktop::settings::GuardList;
 
 use super::field::{Field, slot};
 use super::icons::{Icon, icon};
 use super::parts::{
-    Btn, btn, caption, card, empty, fine, group, group_title, help, page_header, segment, segmented, tile, toggle,
+    Btn, btn, caption, card, empty, fine, group, group_title, help, page_header, segment, segment_frame, segmented,
+    tile, toggle,
 };
 use super::story::{group_icon, group_tone};
 use super::{Data, Root};
@@ -55,25 +56,62 @@ fn examples(id: &str) -> Option<&'static str> {
     })
 }
 
-/// Whether a typed item is a file (a path or a glob) rather than a command: one word that starts like a path, or has
-/// a slash or a dot-name in it (`~/secrets/**`, `./.env.local`, `*.pem`). A command has words (`make deploy*`).
+/// The list a card's field adds to: the "ask" or the "never ask" side, as a command or as a file. The user picks
+/// which; nothing is guessed from what was typed (the guard matches the two lists differently: a command filed as a
+/// file would never be asked about).
 #[must_use]
-pub fn is_file(item: &str) -> bool {
-    let item = item.trim();
-    if item.is_empty() || item.contains(char::is_whitespace) {
-        return false;
-    }
-    item.starts_with(['~', '/', '.', '*', '\\']) || item.contains(['/', '\\']) || item.as_bytes().get(1) == Some(&b':')
-}
-
-/// Which list a typed item goes in: the "ask" lists or the "never ask" lists, as a command or as a file.
-#[must_use]
-pub fn list_for(never: bool, item: &str) -> GuardList {
-    match (never, is_file(item)) {
+pub fn list_of(never: bool, file: bool) -> GuardList {
+    match (never, file) {
         (false, false) => GuardList::Commands,
         (false, true) => GuardList::Files,
         (true, false) => GuardList::AllowCommands,
         (true, true) => GuardList::AllowFiles,
+    }
+}
+
+/// Whether `list` holds files (else commands).
+#[must_use]
+pub fn is_files(list: GuardList) -> bool {
+    matches!(list, GuardList::Files | GuardList::AllowFiles)
+}
+
+/// What `typed` is stored as in `list`, as the guard reads it: trimmed (as `settings::set_guard_list` writes it), and
+/// only what `GuardConfig::validate` accepts when it loads `config.toml`. A command pattern is one command: the guard
+/// matches a pattern's first command only, so `make deploy; rm x` would not mean what it says.
+pub fn check_item(list: GuardList, typed: &str) -> Result<String, String> {
+    let item = typed.trim().to_owned();
+    if item.is_empty() {
+        return Err("Type a command or a path first".to_owned());
+    }
+    if !is_files(list)
+        && !item.starts_with("text:")
+        && (item.contains([';', '|', '&', '`', '\n']) || item.contains("$("))
+    {
+        return Err("One command per entry".to_owned());
+    }
+    // The guard matches a file pattern against the end of a path whose `.` parts are dropped: a `.` part in the
+    // pattern would never match.
+    if is_files(list) && item.split(['/', '\\']).any(|part| part == ".") {
+        return Err("Leave out ./ (a pattern matches the end of a path)".to_owned());
+    }
+    let mut guard = GuardConfig::default();
+    match list {
+        GuardList::Commands => guard.commands.push(item.clone()),
+        GuardList::Files => guard.files.push(item.clone()),
+        GuardList::AllowCommands => guard.allow_commands.push(item.clone()),
+        GuardList::AllowFiles => guard.allow_files.push(item.clone()),
+    }
+    guard.validate()?;
+    Ok(item)
+}
+
+/// The field's example for `list`.
+fn placeholder(list: GuardList) -> &'static str {
+    match list {
+        GuardList::Commands => "make deploy*",
+        GuardList::Files => "~/secrets/**",
+        GuardList::AllowCommands => "git push origin feature/*",
+        GuardList::AllowFiles => ".env.local",
     }
 }
 
@@ -283,7 +321,8 @@ impl Root {
         page.into_any_element()
     }
 
-    /// One side's lists as one card: their items as removable tags, and a field that adds a command or a file.
+    /// One side's lists as one card: their items as removable tags (a terminal for a command, a file for a file), and
+    /// a field with Command | File, which says the list it adds to.
     fn list_card(
         &self,
         never: bool,
@@ -292,10 +331,16 @@ impl Root {
         window: &Window,
         cx: &mut Context<'_, Self>,
     ) -> AnyElement {
+        let side = usize::from(never);
         let mut tags = div().flex().flex_wrap().gap(px(6.0));
         let mut any = false;
         for (list, items) in lists {
             let n = slot(list);
+            let kind = if is_files(list) {
+                Icon::File
+            } else {
+                Icon::Terminal
+            };
             for (i, item) in items.iter().enumerate() {
                 any = true;
                 let remove = item.clone();
@@ -303,15 +348,16 @@ impl Root {
                     div()
                         .flex()
                         .items_center()
-                        .gap(px(4.0))
+                        .gap(px(6.0))
                         .max_w_full()
                         .h(px(28.0))
-                        .pl(px(10.0))
+                        .pl(px(8.0))
                         .pr(px(4.0))
                         .rounded(px(8.0))
                         .bg(pal.tile())
                         .font_family(MONO)
                         .text_size(px(12.0))
+                        .child(icon(kind, 12.0, pal.secondary))
                         .child(div().min_w(px(0.0)).truncate().child(item.clone()))
                         .child(
                             div()
@@ -330,26 +376,61 @@ impl Root {
                 );
             }
         }
-        // The field is the commands list's; Add puts what was typed in the list it belongs to ([`list_for`]).
-        let field_list = if never {
-            GuardList::AllowCommands
-        } else {
-            GuardList::Commands
-        };
-        let field = Field::Guard(field_list);
-        let typed = !self.guard_inputs[slot(field_list)].trim().is_empty();
-        let add = btn(("add", slot(field_list)), "Add", Btn::Plain, pal).h(px(34.0));
+        // The list the field adds to, as picked: Command or File.
+        let file = self.guard_file[side];
+        let list = list_of(never, file);
+        let mut kinds = segmented(pal);
+        for (i, (label, ic, is_file)) in
+            [("Command", Icon::Terminal, false), ("File", Icon::File, true)].into_iter().enumerate()
+        {
+            let on = file == is_file;
+            kinds = kinds.child(
+                segment_frame(SharedString::from(format!("guard-kind-{side}-{i}")), on, pal)
+                    .h(px(28.0))
+                    .px(px(9.0))
+                    .child(icon(
+                        ic,
+                        12.0,
+                        if on {
+                            pal.text
+                        } else {
+                            pal.secondary
+                        },
+                    ))
+                    .child(label)
+                    .on_click(Self::on_view(cx, move |this, _| {
+                        this.guard_file[side] = is_file;
+                        this.guard_error[side] = None;
+                    })),
+            );
+        }
+        let field = Field::Guard(list);
+        let typed = !self.guard_inputs[slot(list)].trim().is_empty();
+        let add = btn(("add", slot(list)), "Add", Btn::Plain, pal).h(px(34.0));
         card(pal)
             .p(px(12.0))
             .gap(px(10.0))
             .when(any, |c| c.child(tags))
-            .child(div().flex().gap(px(8.0)).child(self.text_field(field, "command or path", pal, window, cx)).child(
+            .child(kinds)
+            .child(div().flex().gap(px(8.0)).child(self.text_field(field, placeholder(list), pal, window, cx)).child(
                 if typed {
                     add.on_click(cx.listener(move |this, _, _, cx| this.submit(field, cx)))
                 } else {
                     add.opacity(0.5).cursor_default()
                 },
             ))
+            .when_some(self.guard_error[side].clone(), |c, e| {
+                c.child(
+                    div()
+                        .flex()
+                        .items_center()
+                        .gap(px(6.0))
+                        .text_size(px(12.0))
+                        .text_color(pal.danger)
+                        .child(icon(Icon::CircleAlert, 13.0, pal.danger))
+                        .child(e),
+                )
+            })
             .into_any_element()
     }
 }
@@ -376,16 +457,65 @@ mod tests {
         assert_eq!(wait_label(300), "5 min");
     }
 
+    /// The guard as the settings would be after adding `typed` to `list` from the field.
+    fn after_adding(list: GuardList, typed: &str) -> GuardConfig {
+        let item = check_item(list, typed).unwrap();
+        let mut guard = GuardConfig::default();
+        match list {
+            GuardList::Commands => guard.commands.push(item),
+            GuardList::Files => guard.files.push(item),
+            GuardList::AllowCommands => guard.allow_commands.push(item),
+            GuardList::AllowFiles => guard.allow_files.push(item),
+        }
+        guard
+    }
+
     #[test]
-    fn typed_items_go_to_their_list() {
-        assert_eq!(list_for(false, "make deploy*"), GuardList::Commands);
-        assert_eq!(list_for(false, "~/secrets/**"), GuardList::Files);
-        assert_eq!(list_for(false, "terraform"), GuardList::Commands);
-        assert_eq!(list_for(false, "*.pem"), GuardList::Files);
-        assert_eq!(list_for(false, ".env.local"), GuardList::Files);
-        assert_eq!(list_for(false, r"C:\secrets"), GuardList::Files);
-        assert_eq!(list_for(true, "git push origin feature/*"), GuardList::AllowCommands);
-        assert_eq!(list_for(true, "./.env.local"), GuardList::AllowFiles);
+    fn the_field_adds_to_the_list_picked_and_never_guesses() {
+        assert_eq!(list_of(false, false), GuardList::Commands);
+        assert_eq!(list_of(false, true), GuardList::Files);
+        assert_eq!(list_of(true, false), GuardList::AllowCommands);
+        assert_eq!(list_of(true, true), GuardList::AllowFiles);
+
+        // A command that looks like a path is a command when Command is picked, and the guard asks about it.
+        let guard = after_adding(list_of(false, false), "  ./deploy.sh ");
+        assert_eq!(guard.commands, vec!["./deploy.sh"], "stored as shown: trimmed only");
+        assert!(guard.files.is_empty());
+        assert!(guard.check_command("./deploy.sh --prod").is_some());
+        let rm = after_adding(GuardList::Commands, "rm -rf ~/build");
+        assert!(rm.check_command("rm -rf ~/build").is_some());
+
+        // A glob is a file when File is picked.
+        let guard = after_adding(list_of(false, true), "~/secrets/**");
+        assert_eq!(guard.files, vec!["~/secrets/**"]);
+        assert!(guard.commands.is_empty());
+        assert!(guard.check_file("/home/dana/secrets/token").is_some());
+
+        // The exceptions likewise.
+        let mut never = after_adding(list_of(true, false), "git push origin feature/*");
+        assert_eq!(never.allow_commands, vec!["git push origin feature/*"]);
+        never.commands.push("git push".to_owned());
+        assert!(never.check_command("git push origin feature/login").is_none());
+        assert!(never.check_command("git push origin main").is_some());
+        let mut never_file = after_adding(list_of(true, true), ".env.local");
+        assert_eq!(never_file.allow_files, vec![".env.local"]);
+        never_file.files.push(".env.*".to_owned());
+        assert!(never_file.check_file("app/.env.local").is_none());
+        assert!(never_file.check_file("app/.env.prod").is_some());
+    }
+
+    #[test]
+    fn entries_the_guard_would_not_read_as_typed_are_refused() {
+        assert!(check_item(GuardList::Commands, "   ").is_err());
+        assert!(check_item(GuardList::Files, "/").is_err(), "an empty file pattern");
+        assert!(check_item(GuardList::AllowFiles, "//").is_err());
+        assert!(check_item(GuardList::AllowFiles, "./.env.local").is_err(), "a ./ part never matches");
+        assert!(check_item(GuardList::Commands, "make deploy; rm x").is_err(), "two commands");
+        assert!(check_item(GuardList::AllowCommands, "git push | tee log").is_err());
+        assert!(check_item(GuardList::Commands, "echo $(whoami)").is_err());
+        assert_eq!(check_item(GuardList::Commands, "text:drop table").unwrap(), "text:drop table");
+        // A file pattern may hold what a command may not.
+        assert_eq!(check_item(GuardList::Files, "~/a;b/*.pem").unwrap(), "~/a;b/*.pem");
     }
 
     #[test]

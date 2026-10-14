@@ -61,6 +61,9 @@ pub struct Root {
     /// The inputs under Rules, one per guard list ([`field::slot`]).
     guard_fields: [FocusHandle; 4],
     guard_inputs: [String; 4],
+    /// Each Rules card's field adds a file (else a command), as picked; and why the last entry was refused.
+    guard_file: [bool; 2],
+    guard_error: [Option<String>; 2],
     /// The work session form's fields: what it is for, and a branch for each repository (made as rows appear).
     session_reason: FocusHandle,
     branch_fields: Vec<FocusHandle>,
@@ -227,6 +230,8 @@ impl Root {
             server_field: cx.focus_handle(),
             guard_fields: [cx.focus_handle(), cx.focus_handle(), cx.focus_handle(), cx.focus_handle()],
             guard_inputs: Default::default(),
+            guard_file: [false; 2],
+            guard_error: [None, None],
             session_reason: cx.focus_handle(),
             branch_fields: Vec::new(),
             outcome_filter: None,

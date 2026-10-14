@@ -99,11 +99,20 @@ impl Root {
         match field {
             Field::Server => self.model.update(cx, crate::model::Model::use_server),
             Field::Guard(list) => {
-                let typed = std::mem::take(&mut self.guard_inputs[slot(list)]);
-                // One field per side: what was typed goes in the commands or the files list.
-                let never = matches!(list, GuardList::AllowCommands | GuardList::AllowFiles);
-                let list = super::rules::list_for(never, &typed);
-                self.model.update(cx, |m, cx| m.add_guard_item(list, &typed, cx));
+                // In the list picked, exactly as the guard will read it; refused with why, and kept to fix, when
+                // the guard would not read it as typed.
+                let side = usize::from(matches!(list, GuardList::AllowCommands | GuardList::AllowFiles));
+                if self.guard_inputs[slot(list)].trim().is_empty() {
+                    return;
+                }
+                match super::rules::check_item(list, &self.guard_inputs[slot(list)]) {
+                    Ok(item) => {
+                        self.guard_inputs[slot(list)].clear();
+                        self.guard_error[side] = None;
+                        self.model.update(cx, |m, cx| m.add_guard_item(list, &item, cx));
+                    }
+                    Err(why) => self.guard_error[side] = Some(why),
+                }
             }
             // Enter asks the phone, once the form asks for something.
             Field::SessionReason | Field::SessionBranch(_) => {
@@ -123,7 +132,11 @@ impl Root {
             Edit::Changed => {
                 match field {
                     Field::Server => self.model.update(cx, |m, _| m.server_input = text),
-                    Field::Guard(list) => self.guard_inputs[slot(list)] = text,
+                    Field::Guard(list) => {
+                        self.guard_inputs[slot(list)] = text;
+                        self.guard_error
+                            [usize::from(matches!(list, GuardList::AllowCommands | GuardList::AllowFiles))] = None;
+                    }
                     Field::SessionReason => self.model.update(cx, |m, _| {
                         if let Some(form) = m.work.form.as_mut() {
                             form.reason = text;
