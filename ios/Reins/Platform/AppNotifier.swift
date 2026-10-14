@@ -21,7 +21,8 @@ final class AppNotifier: Notifier, @unchecked Sendable {
             guard let model else { return }
             await model.refreshPending()
             if model.isActive {
-                model.feedback.play(.requestArrived)
+                // The chime still sounds (once per request and per burst), for a phone left open on the desk.
+                model.feedback.requestArrived(item.id, needsUser: true)
                 return
             }
             self.post(item.id, NotificationContent.pending(item, settings: self.settings()))
@@ -42,7 +43,8 @@ final class AppNotifier: Notifier, @unchecked Sendable {
             guard let model else { return }
             await model.refreshPending()
             if model.isActive {
-                // In front the list changes before the user's eyes; a quiet sound says why.
+                // In front the list changes before the user's eyes; a quiet sound says why. Never the request chime.
+                model.feedback.requestArrived(decision.requestId, needsUser: false)
                 model.feedback.play(decision.verdict == .approve ? .autoApproved : .autoDenied)
                 return
             }

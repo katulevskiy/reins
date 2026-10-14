@@ -101,6 +101,15 @@ class NotificationChannelsTest {
     }
 
     @Test
+    fun `in front an automatic answer is never the request chime`() {
+        Foreground.focused = true
+        notifier.autoDecided(TestData.autoDecision("req2"))
+        assertEquals(0, posted().size)
+        assertTrue(heard.played(Event.AutoApproved))
+        assertFalse(dev.reins.android.feedback.Cue.Request in heard.cues)
+    }
+
+    @Test
     fun `losing the approval role in front is heard in the app and posted silently`() {
         Foreground.focused = true
         notifier.deviceReplaced()

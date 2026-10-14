@@ -183,6 +183,18 @@ class FeedbackFlowTest : FlowHarness() {
     }
 
     @Test
+    fun soundWhenOpenIsItsOwnSwitchAndLeavesTheNotificationsChimeAlone() {
+        launch()
+        tap("tabSettings")
+        tap("openSounds")
+        tap("soundWhenOpen")
+        awaitCore { !container.feedbackStore.current.soundWhenOpen }
+        assertEquals(AppNotifier.channelId(AppNotifier.Kind.Approvals, sound = true, vibrate = true), container.notifier.channel(AppNotifier.Kind.Approvals))
+        tap("soundWhenOpen")
+        awaitCore { container.feedbackStore.current.soundWhenOpen }
+    }
+
+    @Test
     fun eachKindOfSoundHasItsSwitchAndTheVolumeIsRemembered() {
         launch()
         tap("tabSettings")
