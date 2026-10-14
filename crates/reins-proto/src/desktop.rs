@@ -743,6 +743,18 @@ const NO_PREFIX_PROGRAMS: &[&str] = &[
     "elvish",
     "xonsh",
     "python",
+    "pythonw",
+    "py",
+    "tsx",
+    "ts-node",
+    "corepack",
+    "pnpx",
+    "toybox",
+    "wscript",
+    "cscript",
+    "mshta",
+    "rundll32",
+    "powershell_ise",
     "pypy",
     "node",
     "nodejs",
@@ -766,6 +778,7 @@ const NO_PREFIX_PROGRAMS: &[&str] = &[
     "pwsh",
     "powershell",
     "cmd",
+    "command",
     "wsl",
     "env",
     "xargs",
@@ -826,6 +839,10 @@ const NO_PREFIX_SUBCOMMANDS: &[(&str, &str)] = &[
     ("yarn", "exec"),
     ("yarn", "node"),
     ("pnpm", "node"),
+    ("pipx", "run"),
+    ("deno", "run"),
+    ("bun", "run"),
+    ("bun", "x"),
     ("bundle", "exec"),
     ("cargo", "run"),
     ("cargo", "x"),
@@ -850,43 +867,58 @@ const NO_PREFIX_SUBCOMMANDS: &[(&str, &str)] = &[
     ("gradle", "run"),
 ];
 
-/// The program's name as compared with the lists above: its file name, lower case, without a Windows extension, a
-/// script's extension or a `-cli` ending, and without a version (`python3.12` is `python`). A package manager installed
-/// as a script resolves to that script: `npm` is `…/npm/bin/npm-cli.js`, `pnpm` is `…/pnpm/bin/pnpm.cjs`, and both are
-/// still `npm` and `pnpm` here.
+/// The program's name as compared with the lists above: its file name, lower case on every platform (macOS and
+/// Windows find `NPM` and `Bash` as `npm` and `bash`), without the trailing dots and spaces Windows ignores, a Windows
+/// or script extension, a `-cli` or `-preview` ending, and without a version (`python3.12`, `node22`, `bash5.2` and
+/// `php8.3` are `python`, `node`, `bash` and `php`). A package manager installed as a script resolves to that script:
+/// `npm` is `…/npm/bin/npm-cli.js`, `pnpm` is `…/pnpm/bin/pnpm.cjs`, and both are still `npm` and `pnpm` here.
 #[must_use]
 pub fn program_name(program: &str) -> String {
-    let file = program.rsplit(['/', '\\']).next().unwrap_or(program).to_ascii_lowercase();
-    let mut name = file.as_str();
-    for _ in 0..2 {
+    let file = program.trim_end_matches(['.', ' ']);
+    let file = file.rsplit(['/', '\\']).next().unwrap_or(file).to_lowercase();
+    let mut name = file.trim_end_matches(['.', ' ']);
+    loop {
         let before = name;
         name = [".exe", ".cmd", ".bat", ".com", ".ps1", ".js", ".cjs", ".mjs", ".py", ".rb", ".pl", ".sh"]
             .iter()
             .find_map(|x| name.strip_suffix(x))
             .unwrap_or(name);
-        name = name.trim_end_matches(|c: char| c.is_ascii_digit() || c == '.');
-        name = name.strip_suffix("-cli").unwrap_or(name);
+        name = name.trim_end_matches(|c: char| c.is_ascii_digit() || matches!(c, '.' | ' '));
+        name = ["-cli", "-preview"].iter().find_map(|x| name.strip_suffix(x)).unwrap_or(name);
         if name == before {
             break;
         }
     }
     if name.is_empty() {
-        file
+        file.clone()
     } else {
         name.to_owned()
     }
 }
 
-/// [`prefix_refusal`] for a program known by two names: as the user typed it (`npm`, which may be a link) and as the
-/// computer resolved it (`…/npm-cli.js`). Refused when either is.
+/// Whether a program's name leaves any doubt about what it is, so that no list can be trusted to know it: anything
+/// but ASCII letters, digits and `-_.+` (a look-alike letter from another script, a Windows 8.3 short name such as
+/// `PYTHON~1.EXE`), or nothing left.
 #[must_use]
-pub fn prefix_refusal_as(typed: Option<&str>, program: &str, args: &[String]) -> Option<String> {
-    typed.and_then(|t| prefix_refusal(t, args)).or_else(|| prefix_refusal(program, args))
+pub fn doubtful_name(program: &str) -> bool {
+    let file = program.trim_end_matches(['.', ' ']);
+    let file = file.rsplit(['/', '\\']).next().unwrap_or(file);
+    file.is_empty() || !file.chars().all(|c| c.is_ascii_alphanumeric() || matches!(c, '-' | '_' | '.' | '+'))
+}
+
+/// [`prefix_refusal`] for a program known by several names: as the user typed it (`npm`), each link on the way to it,
+/// and as the computer resolved it (`…/npm-cli.js`). Refused when any of them is.
+#[must_use]
+pub fn prefix_refusal_as(names: &[&str], program: &str, args: &[String]) -> Option<String> {
+    names.iter().find_map(|n| prefix_refusal(n, args)).or_else(|| prefix_refusal(program, args))
 }
 
 /// Why `program` with the first arguments `args` may not be a prefix pattern; `None` when it may.
 #[must_use]
 pub fn prefix_refusal(program: &str, args: &[String]) -> Option<String> {
+    if doubtful_name(program) {
+        return Some("the program's name is unusual: only the exact command can be allowed".to_owned());
+    }
     let name = program_name(program);
     if NO_PREFIX_PROGRAMS.contains(&name.as_str()) {
         return Some(format!("{name} runs whatever it is given: only the exact command can be allowed"));
@@ -897,7 +929,7 @@ pub fn prefix_refusal(program: &str, args: &[String]) -> Option<String> {
     if first.starts_with('-') {
         return Some(format!("a pattern names a subcommand of {name}, not an option"));
     }
-    if args.iter().any(|a| NO_PREFIX_SUBCOMMANDS.iter().any(|(p, s)| *p == name && a == s)) {
+    if args.iter().any(|a| NO_PREFIX_SUBCOMMANDS.iter().any(|(p, s)| *p == name && a.eq_ignore_ascii_case(s))) {
         return Some(format!("{name} {first} runs whatever it is given: only the exact command can be allowed"));
     }
     if args.iter().any(|a| a == "--") {
@@ -965,44 +997,47 @@ impl CommandScope {
     /// shorter allowed prefix (never the program alone).
     #[must_use]
     pub fn offers(&self) -> Vec<Self> {
-        self.offers_as(None)
+        self.offers_as(&[])
     }
 
     /// Whether this runs code its arguments carry: a shell, interpreter or launcher ([`prefix_refusal`]'s lists), by
     /// either name of the program.
     #[must_use]
-    pub fn runs_code(&self, typed: Option<&str>) -> bool {
+    pub fn runs_code(&self, names: &[&str]) -> bool {
         let lists = |program: &str| {
             let name = program_name(program);
             NO_PREFIX_PROGRAMS.contains(&name.as_str())
-                || self.args.iter().any(|a| NO_PREFIX_SUBCOMMANDS.iter().any(|(p, s)| *p == name && a == s))
+                || self
+                    .args
+                    .iter()
+                    .any(|a| NO_PREFIX_SUBCOMMANDS.iter().any(|(p, s)| *p == name && a.eq_ignore_ascii_case(s)))
         };
-        typed.is_some_and(lists) || lists(&self.program)
+        names.iter().any(|n| lists(n)) || lists(&self.program)
     }
 
     /// Whether a standing permission may name this command. A command that runs code its arguments carry
     /// ([`CommandScope::runs_code`]) is remembered only exactly, and only when the phone can show all of it
     /// ([`MAX_REMEMBERED_CODE`] characters); a longer one is approved once at a time.
     #[must_use]
-    pub fn rememberable(&self, typed: Option<&str>) -> bool {
+    pub fn rememberable(&self, names: &[&str]) -> bool {
         if self.prefix {
-            return prefix_refusal_as(typed, &self.program, &self.args).is_none();
+            return prefix_refusal_as(names, &self.program, &self.args).is_none();
         }
-        !self.runs_code(typed) || self.shown().chars().count() <= MAX_REMEMBERED_CODE
+        !self.runs_code(names) || self.shown().chars().count() <= MAX_REMEMBERED_CODE
     }
 
     /// [`CommandScope::offers`], refusing what either name of the program refuses ([`prefix_refusal_as`]): `typed` is
     /// the program as the user typed it.
     #[must_use]
-    pub fn offers_as(&self, typed: Option<&str>) -> Vec<Self> {
+    pub fn offers_as(&self, names: &[&str]) -> Vec<Self> {
         let exact = Self::exact(&self.program, &self.args);
-        if !exact.rememberable(typed) {
+        if !exact.rememberable(names) {
             return Vec::new();
         }
         let mut out = vec![exact];
         for k in (1..self.args.len()).rev() {
             let fixed = &self.args[..k];
-            if prefix_refusal_as(typed, &self.program, fixed).is_none() {
+            if prefix_refusal_as(names, &self.program, fixed).is_none() {
                 out.push(Self {
                     program: self.program.clone(),
                     args: fixed.to_vec(),
@@ -1803,24 +1838,94 @@ mod tests {
         // A program known by another name where it lives: either name refuses.
         let linked = CommandScope::exact("/opt/tools/runner", &argv(&["exec", "x"]));
         assert_eq!(linked.offers().len(), 2);
-        assert_eq!(linked.offers_as(Some("npm")).len(), 1, "typed as npm: npm exec");
-        assert!(prefix_refusal_as(Some("bash"), "/opt/tools/runner", &argv(&["x"])).is_some());
-        assert!(prefix_refusal_as(Some("deploy"), "/usr/bin/bash", &argv(&["x"])).is_some());
+        assert_eq!(linked.offers_as(&["npm"]).len(), 1, "typed as npm: npm exec");
+        assert!(prefix_refusal_as(&["bash"], "/opt/tools/runner", &argv(&["x"])).is_some());
+        assert!(prefix_refusal_as(&["deploy"], "/usr/bin/bash", &argv(&["x"])).is_some());
+        // A link anywhere on the way that is a launcher: refused.
+        assert!(prefix_refusal_as(&["deploy", "env", "tool"], "/opt/tools/runner", &argv(&["x"])).is_some());
+        assert!(prefix_refusal_as(&["./npm", "npm-cli.js"], "/opt/x/npm-cli.js", &argv(&["exec"])).is_some());
+        assert!(prefix_refusal_as(&["deploy", "tool"], "/opt/tools/runner", &argv(&["x"])).is_none());
     }
 
     #[test]
     fn code_on_the_command_line_is_remembered_only_when_all_of_it_shows() {
         let short = CommandScope::exact("/bin/bash", &argv(&["-c", "make deploy"]));
-        assert!(short.runs_code(None) && short.rememberable(None));
+        assert!(short.runs_code(&[]) && short.rememberable(&[]));
         assert_eq!(short.offers(), vec![short]);
         let long = CommandScope::exact("/usr/bin/python3", &argv(&["-c", &"x = 1; ".repeat(60)]));
-        assert!(!long.rememberable(None));
+        assert!(!long.rememberable(&[]));
         assert!(long.offers().is_empty(), "approved once at a time");
         long.validate().unwrap();
         let node = CommandScope::exact("/opt/n/bin/run", &argv(&["-e", &"a".repeat(400)]));
-        assert!(node.rememberable(None) && !node.rememberable(Some("node")));
+        assert!(node.rememberable(&[]) && !node.rememberable(&["node"]));
         let npm = CommandScope::exact("/usr/bin/npm", &argv(&["run", &"a".repeat(400)]));
-        assert!(npm.rememberable(None), "not code: any length");
+        assert!(npm.rememberable(&[]), "not code: any length");
+    }
+
+    #[test]
+    fn a_launcher_is_known_however_its_name_is_written() {
+        // Case-insensitive file systems, versions, previews, Windows extensions, trailing dots and spaces.
+        for name in [
+            "NPM",
+            "Bash",
+            "PYTHON3",
+            "/usr/bin/python3.12",
+            "node22",
+            "bash5.2",
+            "ruby3.3",
+            "perl5.38",
+            "pwsh-preview",
+            "php8.3",
+            "C:\\Python\\python.exe",
+            "C:\\Windows\\System32\\CMD.EXE",
+            "npm.cmd",
+            "COMMAND.COM",
+            "python.exe.",
+            "bash. . ",
+            "./npm",
+            "/usr/lib/node_modules/corepack/dist/corepack.js",
+        ] {
+            let refused = prefix_refusal(name, &argv(&["exec", "x"])).is_some();
+            assert!(refused, "{name}");
+        }
+        for (program, args) in [
+            ("env", vec!["X=1", "npm"]),
+            ("sudo", vec!["npm"]),
+            ("doas", vec!["npm"]),
+            ("nice", vec!["npm"]),
+            ("nohup", vec!["npm"]),
+            ("timeout", vec!["5"]),
+            ("xargs", vec!["npm"]),
+            ("exec", vec!["npm"]),
+            ("busybox", vec!["sh"]),
+            ("toybox", vec!["sh"]),
+            ("uv", vec!["run"]),
+            ("poetry", vec!["run"]),
+            ("pipx", vec!["run"]),
+            ("bunx", vec!["x"]),
+            ("deno", vec!["run"]),
+            ("corepack", vec!["pnpm"]),
+            ("cmd", vec!["/c"]),
+            ("npm", vec!["EXEC"]),
+            ("tsx", vec!["x.ts"]),
+            ("ts-node", vec!["x.ts"]),
+        ] {
+            assert!(prefix(program, &args).validate().is_err(), "{program} {args:?}");
+        }
+        // Any doubt about the name: refused. A look-alike letter, an 8.3 short name, nothing at all.
+        for name in [
+            "/usr/bin/n\u{440}m",
+            "/usr/bin/np\u{43c}",
+            "C:\\PROGRA~1\\nodejs\\NPM~1.CMD",
+            "PYTHON~1.EXE",
+            "/usr/bin/",
+            "",
+        ] {
+            assert!(doubtful_name(name), "{name:?}");
+            assert!(prefix_refusal(name, &argv(&["run"])).is_some(), "{name:?}");
+        }
+        assert!(!doubtful_name("/usr/local/bin/my-tool_2.0+x"));
+        assert!(prefix_refusal("/usr/bin/npm", &argv(&["run"])).is_none(), "npm run * stays allowed");
     }
 
     #[test]

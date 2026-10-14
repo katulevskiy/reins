@@ -153,9 +153,12 @@ that run whatever they are given: shells and interpreters (`sh`, `bash`, `zsh`, 
 `env`, `xargs`, `sudo`, `nohup`, `time`, `timeout`, `exec`, `eval`, `watch`, `nix-shell`, `make`, `ssh`, …), and
 subcommands that do the same (`npm exec`, `pnpm dlx`, `yarn dlx`, `cargo run`, `uv run`, `docker run`, `docker exec`,
 `go run`, `git -c`, …), and for a prefix that includes `--`. The list is in `reins_proto::desktop` (`prefix_refusal`).
-A program is compared by both its names, as typed (`npm`, often a link) and as resolved (`…/npm/bin/npm-cli.js`), and
-refused when either is listed; a resolved name loses a script's extension and a `-cli` ending (`npm-cli.js`,
-`npx-cli.js`, `yarn.js`, `pnpm.cjs` and `nodemon.js` are `npm`, `npx`, `yarn`, `pnpm` and `nodemon`). Another program of
+A program is compared by every name it goes by: as typed (`npm`, `./npm`), each link on the way to it, and as
+resolved (`…/npm/bin/npm-cli.js`); it is refused when any of them is listed. Each name is lower-cased on every platform
+(`NPM`, `Bash`), loses trailing dots and spaces, a Windows or script extension, a `-cli` or `-preview` ending and a
+version (`npm-cli.js`, `pnpm.cjs`, `python3.12`, `node22`, `pwsh-preview`, `CMD.EXE` are `npm`, `pnpm`, `python`,
+`node`, `pwsh`, `cmd`), and a name that leaves any doubt (anything but ASCII letters, digits and `-_.+`: a look-alike
+letter, a Windows 8.3 short name such as `PYTHON~1.EXE`) is refused outright. Another program of
 the same name elsewhere on PATH is another program.
 
 The exact command of a shell, interpreter or launcher (`bash -c <code>`, `python -c <code>`, `node -e <code>`, `npm exec
