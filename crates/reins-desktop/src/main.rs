@@ -623,7 +623,7 @@ async fn setup(paths: &Paths, config: &Config, server_url: &str, browser: bool) 
         let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
         while !daemon_running(paths, config).await {
             if std::time::Instant::now() > deadline {
-                return Err("the background service did not start; `reins daemon` shows why".to_owned());
+                return Err(reins_desktop::port::not_started(config.listen));
             }
             tokio::time::sleep(std::time::Duration::from_millis(200)).await;
         }
@@ -927,8 +927,7 @@ async fn resume(paths: &Paths, config: &Config) -> Result<(), String> {
         let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
         while !daemon_running(paths, config).await {
             if std::time::Instant::now() > deadline {
-                return Err("the background service did not start; see `reins daemon` for why. git was left as it was"
-                    .to_owned());
+                return Err(format!("{}; git was left as it was", reins_desktop::port::not_started(config.listen)));
             }
             tokio::time::sleep(std::time::Duration::from_millis(200)).await;
         }

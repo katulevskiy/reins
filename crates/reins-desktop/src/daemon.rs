@@ -186,8 +186,14 @@ impl Daemon {
         if options.harden {
             crate::harden::harden()?;
         }
-        let listener =
-            TcpListener::bind(config.listen).await.map_err(|e| format!("cannot listen on {}: {e}", config.listen))?;
+        let listener = TcpListener::bind(config.listen).await.map_err(|e| {
+            match (e.kind(), crate::port::holder(config.listen.port())) {
+                (std::io::ErrorKind::AddrInUse, Some(who)) => {
+                    format!("cannot listen on {}: {}", config.listen, crate::port::in_use(config.listen, &who))
+                }
+                _ => format!("cannot listen on {}: {e}", config.listen),
+            }
+        })?;
         let addr = listener.local_addr().map_err(|e| e.to_string())?;
         let token = control::new_token();
         let token_file = paths.control_token_file();
