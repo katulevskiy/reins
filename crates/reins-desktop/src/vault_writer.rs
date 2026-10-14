@@ -1,7 +1,7 @@
 //! Writing to Reins Secrets from this computer: what `reins secrets set/push/…` and import use to put values into the
 //! vault on the phone.
 //!
-//! [`VaultWriter`] is the interface; `PhoneVaultWriter` (next to the release client) carries it out through the phone
+//! [`VaultWriter`] is the interface; [`crate::secrets_client::PhoneVaultWriter`] carries it out through the phone
 //! (`vault_secrets_store` and `integration_token_store`, each value in a box only the phone opens, one approval per
 //! call), and [`MemoryWriter`] keeps what it is given, for tests.
 //!
