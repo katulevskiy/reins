@@ -90,6 +90,7 @@ jobs:
       - run: python3 scripts/check-swift-duplicates.py
       - run: python3 scripts/test-android-release.py
       - run: python3 scripts/test-play-upload.py
+      - run: python3 scripts/test-testflight.py
       - run: python3 scripts/test-ci-release-gate.py
       - run: python3 scripts/test-supersede-releases.py
       - run: python3 scripts/check-doc-links.py

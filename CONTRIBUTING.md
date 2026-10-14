@@ -246,6 +246,59 @@ does not open to the app yet is skipped with a warning), with the status in `PLA
 upload with a notice while the folder or the secret is missing; a repository secret of the same name is the fallback.
 `INFISICAL_PLAY_PATH` overrides the folder. Set up and first upload: `android/PLAY_STORE.md`.
 
+## Maintainers: TestFlight
+
+After each release is published, the `ios-testflight` job (runner `xcode-27`, its released Xcode 27.0) archives the
+iOS app, signs it for the App Store and uploads it to App Store Connect ("Reins 2FA", `com.reins2fa.app`). Then
+`scripts/testflight.py` waits for processing, sets export compliance (`usesNonExemptEncryption` false, as the
+Info.plist says), sets "What to Test" from the release notes, adds the build to the TestFlight groups and submits it for
+beta app review. A refused submission (a build already in review, for example) is only a warning, and a failure here
+never touches the GitHub release: rerun the job. To test or redo one release, run the Release workflow from main with
+`testflight_tag` = `vX.Y.Z`; only this job runs.
+
+The build number is the release's Android versionCode (minutes since 1970), or one more than the highest build App
+Store Connect already has, whichever is larger. The version is the release's.
+
+Its signing material comes only from the secrets of the GitHub environment `testflight` (Settings > Environments >
+testflight); the job fails naming any that is missing. They are copies: the master copies are in Infisical
+`reins-release` prod `/signing/apple` and in 1Password, so rotating one means updating all three.
+
+| Environment secret | Value |
+| --- | --- |
+| `IOS_DIST_CERT_P12`, `IOS_DIST_CERT_PASSWORD` | the Apple Distribution certificate and key (`.p12`, base64) and its password |
+| `IOS_PROFILE_APP`, `IOS_PROFILE_WIDGETS`, `IOS_PROFILE_NOTIFICATIONS` | the App Store profiles (`.mobileprovision`, base64) of `com.reins2fa.app`, `.widgets`, `.notifications` |
+| `AC_API_KEY_P8`, `AC_API_KEY_ID`, `AC_API_ISSUER_ID`, `APPLE_TEAM_ID` | the "Reins CI" API key (App Manager), as for notarization |
+
+The job does not use Infisical (its plan allows no second identity, and the release identity `github-release-android`
+keeps only its main-ref subject; an environment's OIDC subject would not match it), and asks for no OIDC token.
+
+Only a commit on main that carries a published release tag is built, and only from main (a release push, or the
+dispatch, which checks the tag before anything is checked out). The Rust core and the Swift packages (pinned to the
+revisions in `Package.resolved`, which the job checks, with their plugins listed) build before any step is given a
+secret. Each secret is mapped only into the step that needs it, written to a file in a `0700` folder, never to
+`GITHUB_ENV` or a command line: the certificate and its password into the keychain step, which removes their files once
+the certificate is in the keychain (non-extractable, for `codesign` only); the profiles into the profile step; the API
+key into the build-number step, which removes it, and again after the archive for the upload and TestFlight. So the
+archive's build phases and packages find only the keychain, the profiles and the settings (a step checks). The keychain
+is locked after the upload, and the last step deletes it with everything else. The third-party actions it uses are
+pinned to commits. Restrict the `testflight` environment to `main` (Deployment branches and tags).
+
+Repository variables: `TESTFLIGHT_EXTERNAL_GROUP_ID` (the external group's id; two groups are named "Testers", so a
+name alone fails), `TESTFLIGHT_INTERNAL_GROUPS` (default `Internal`, which gets every build by itself) and, optionally,
+`IOS_GOOGLE_CLIENT_ID` (Google sign-in in the app).
+
+One-time setup on the Mac. Done: the app record, the Apple Distribution certificate and the three App Store profiles
+(App Groups `group.com.reins2fa.app` on all three; Push Notifications, Associated Domains and Time Sensitive
+Notifications on the app), stored base64 in `/signing/apple` with master copies in 1Password, and the groups
+"Internal" and "Testers" (public link on). Still to do:
+
+1. `gh variable set TESTFLIGHT_EXTERNAL_GROUP_ID -R katulevskiy/reins --body <id of the "Testers" group with the public link>`.
+2. App Store Connect > Pricing and Availability: exclude France.
+3. The nine secrets above, copied from `/signing/apple` into the `testflight` environment's secrets, e.g.
+   `gh secret set AC_API_KEY_P8 -R katulevskiy/reins --env testflight < AuthKey.p8` (values from files or stdin,
+   never on the command line).
+4. Settings > Environments > `testflight` > Deployment branches and tags: `main` only.
+
 ## Maintainers: the update feed
 
 Every release carries `reins-feed-<version>.tar.gz` (listed in `SHA256SUMS`): the signed `latest.json` and
