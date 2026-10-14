@@ -662,12 +662,13 @@ impl Engine {
                 ..AuditInfo::default()
             },
         })?;
-        // The starting rule: a new AI may read for a day. The pairing itself stands whatever happens here.
+        // The starting rule: a new AI may see headlines for its first hour. The pairing itself stands whatever happens
+        // here.
         if let Some(connection) = new_connection
-            && self.starting_policy()? == Some(crate::types::StartingPolicy::ReadsForADay)
+            && self.starting_policy()? == Some(crate::types::StartingPolicy::HeadlinesFirstHour)
         {
             let label = label_for_grants(&pairing.client_name, response.label.as_deref());
-            if let Err(e) = self.grant_starter_reads(&connection.0, &label, now) {
+            if let Err(e) = self.grant_starter_headlines(&connection.0, &label, now) {
                 log::warn!("could not give the new connection its starting grants: {e}");
             }
         }

@@ -45,7 +45,7 @@ pub fn evaluate_read(grants: &[Grant], connection: &ConnectionId, messages: &[Me
         .into_iter()
         .filter_map(|g| match &g.scope {
             Scope::Read(s) => Some((g, s)),
-            Scope::Send(_) | Scope::Accounts(_) | Scope::Service(_) => None,
+            Scope::Send(_) | Scope::Accounts(_) | Scope::Service(_) | Scope::Headlines(_) => None,
         })
         .collect();
     let mut decision = ReadDecision::default();
@@ -88,6 +88,23 @@ pub fn service_allows(
             g.covers_account(account)
                 && matches!(&g.scope, Scope::Service(s) if s.covers(service, access, class, op, resource))
         })
+        .map(|g| g.id.clone())
+}
+
+/// The active grant that lets `connection`, acting as `account`, see the headlines of what a search or a list of
+/// `service` finds (see [`crate::HeadlinesScope`]), if there is one. Only for searching and listing: opening anything is
+/// never covered by it, and the caller must strip what it releases down to the metadata.
+#[must_use]
+pub fn headlines_allows(
+    grants: &[Grant],
+    connection: &ConnectionId,
+    account: Option<&str>,
+    service: &str,
+    now: i64,
+) -> Option<GrantId> {
+    candidates(grants, connection, now)
+        .into_iter()
+        .find(|g| g.covers_account(account) && matches!(&g.scope, Scope::Headlines(s) if s.service == service))
         .map(|g| g.id.clone())
 }
 
@@ -546,5 +563,33 @@ mod tests {
         assert!(!resource_covers("a", "ab"));
         assert!(!resource_covers("a/b@c", "a/b"));
         assert!(!resource_covers("", "a"), "nothing is covered by an empty name");
+    }
+
+    #[test]
+    fn headlines_never_open_anything_and_always_end() {
+        let headlines = |service: &str| {
+            Scope::Headlines(crate::HeadlinesScope {
+                service: service.to_owned(),
+            })
+        };
+        // Only with an end, and a short one.
+        assert!(Grant::new("h".into(), "c1".into(), headlines("gmail"), 0, None, None).is_err());
+        assert!(Grant::new("h".into(), "c1".into(), headlines("gmail"), 0, Some(8 * 86_400), None).is_err());
+        let gmail = Grant::new("h1".into(), "c1".into(), headlines("gmail"), 0, Some(3_600), None).unwrap();
+        let telegram = Grant::new("h2".into(), "c1".into(), headlines("telegram"), 0, Some(3_600), None).unwrap();
+        let grants = [gmail, telegram];
+        let c1: ConnectionId = "c1".into();
+        // A read of the very messages a search would find is not covered.
+        assert!(evaluate_read(&grants, &c1, &[msg("m1", "a@bank.com")], NOW).allowed.is_empty());
+        assert!(!needs_body(&grants, &c1, NOW));
+        // Nor any access to another integration.
+        assert_eq!(service_allows(&grants, &c1, None, "telegram", "list", "", "", "", NOW), None);
+        assert_eq!(service_allows(&grants, &c1, None, "telegram", "read", "", "", "100", NOW), None);
+        // Only the headlines of its own integration, for its own connection, while it lasts.
+        assert_eq!(headlines_allows(&grants, &c1, None, "gmail", NOW), Some("h1".into()));
+        assert_eq!(headlines_allows(&grants, &c1, None, "telegram", NOW), Some("h2".into()));
+        assert_eq!(headlines_allows(&grants, &c1, None, "github", NOW), None);
+        assert_eq!(headlines_allows(&grants, &"c2".into(), None, "gmail", NOW), None);
+        assert_eq!(headlines_allows(&grants, &c1, None, "gmail", 3_600), None, "ended");
     }
 }

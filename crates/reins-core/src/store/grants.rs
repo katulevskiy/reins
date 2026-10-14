@@ -209,6 +209,34 @@ impl Store {
         Ok(true)
     }
 
+    /// Lets an active grant run for `duration_secs` from `now` instead of until its end; its uses so far stay. The
+    /// same limits as a new grant apply (a grant for everything ends within its maximum). `Ok(false)` when there is no
+    /// such grant.
+    pub fn extend_grant(&self, id: &GrantId, duration_secs: i64, now: i64) -> Result<bool, CoreError> {
+        let mut conn = self.lock()?;
+        let tx = conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
+        let Some(old) = load_grant(&tx, id)? else {
+            return Ok(false);
+        };
+        if !old.is_active(now) {
+            return Err(CoreError::invalid("that grant has ended; resume it instead"));
+        }
+        let mut fresh = Grant::new(
+            old.id.clone(),
+            old.connection_id.clone(),
+            old.scope.clone(),
+            now,
+            Some(now.saturating_add(duration_secs)),
+            old.max_uses,
+        )
+        .map_err(|e| CoreError::invalid(e.to_string()))?;
+        fresh.uses = old.uses;
+        fresh.account = old.account;
+        save_grant(&tx, &fresh)?;
+        tx.commit()?;
+        Ok(true)
+    }
+
     /// Whether an active grant of `connection` for `account` needs message bodies to decide.
     pub fn needs_body(&self, connection: &ConnectionId, account: Option<&str>, now: i64) -> Result<bool, CoreError> {
         let conn = self.lock()?;
@@ -237,6 +265,32 @@ impl Store {
         held: &[bool],
         now: i64,
     ) -> Result<ReadDecision, CoreError> {
+        self.evaluate_holding(connection, account, facts, held, false, now).map(|(decision, _)| decision)
+    }
+
+    /// Evaluates what a Gmail search found: like [`Store::evaluate_read_holding`], and a message no read grant covers
+    /// may still be covered by a grant for Gmail's headlines. Returns the decision and the messages released as
+    /// headlines only, which the caller must strip to their metadata. Never use this for reading messages.
+    pub fn evaluate_search_holding(
+        &self,
+        connection: &ConnectionId,
+        account: Option<&str>,
+        facts: &[MessageFacts],
+        held: &[bool],
+        now: i64,
+    ) -> Result<(ReadDecision, BTreeSet<usize>), CoreError> {
+        self.evaluate_holding(connection, account, facts, held, true, now)
+    }
+
+    fn evaluate_holding(
+        &self,
+        connection: &ConnectionId,
+        account: Option<&str>,
+        facts: &[MessageFacts],
+        held: &[bool],
+        headlines: bool,
+        now: i64,
+    ) -> Result<(ReadDecision, BTreeSet<usize>), CoreError> {
         let mut conn = self.lock()?;
         let tx = conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
         let mut grants = connection_grants(&tx, connection, account)?;
@@ -246,6 +300,20 @@ impl Store {
         decision.allowed = kept;
         decision.needs_approval.extend(withheld.into_iter().map(|(i, _)| i));
         decision.needs_approval.sort_unstable();
+        // What no read grant covers may be seen as a headline, never what is held.
+        let mut headlines_only = BTreeSet::new();
+        if headlines
+            && let Some(grant) =
+                reins_policy::headlines_allows(&grants, connection, account, crate::views::SERVICE_GMAIL, now)
+        {
+            let (seen, waiting): (Vec<usize>, Vec<usize>) = decision.needs_approval.iter().partition(|i| !is_held(**i));
+            decision.needs_approval = waiting;
+            for i in seen {
+                decision.allowed.push((i, grant.clone()));
+                headlines_only.insert(i);
+            }
+            decision.allowed.sort_unstable();
+        }
         if decision.fully_allowed() {
             let used = decision.grants_used();
             record_uses(&mut grants, &used);
@@ -255,7 +323,31 @@ impl Store {
             }
         }
         tx.commit()?;
-        Ok(decision)
+        Ok((decision, headlines_only))
+    }
+
+    /// The grant that lets `connection`, acting as `account`, see the headlines of what a list of `service` finds; one
+    /// use of it is spent in the same transaction. `None` when there is none.
+    pub fn headlines_reserve(
+        &self,
+        connection: &ConnectionId,
+        account: Option<&str>,
+        service: &str,
+        now: i64,
+    ) -> Result<Option<GrantId>, CoreError> {
+        let mut conn = self.lock()?;
+        let tx = conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
+        let mut grants = all_connection_grants(&tx, connection)?;
+        let found = reins_policy::headlines_allows(&grants, connection, account, service, now);
+        if let Some(id) = &found {
+            record_uses(&mut grants, &BTreeSet::from([id.clone()]));
+            if let Some(grant) = grants.iter().find(|g| &g.id == id) {
+                save_grant(&tx, grant)?;
+                touch_used(&tx, &grant.id, now)?;
+            }
+        }
+        tx.commit()?;
+        Ok(found)
     }
 
     /// Which grants let `connection`, acting as `account`, do `access` to each of `resources` of `service`. When
@@ -581,5 +673,25 @@ pub(crate) mod tests {
         let left: Vec<_> = store.grants().unwrap().into_iter().map(|g| g.grant.id.0).collect();
         assert_eq!(left, vec!["g2"]);
         assert!(!store.needs_body(&"c1".into(), None, 100).unwrap());
+    }
+
+    #[test]
+    fn an_active_grant_is_extended_with_its_uses_and_an_ended_one_is_not() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = open(dir.path());
+        let mut capped = read_grant("g1", "c1", Some(3));
+        capped.expires_at = Some(100);
+        store.insert_grant(&capped, "ChatGPT").unwrap();
+        assert!(
+            store
+                .evaluate_read_and_reserve(&"c1".into(), None, &[fact("m1", "a@bank.com")], 50)
+                .unwrap()
+                .fully_allowed()
+        );
+        assert!(store.extend_grant(&"g1".into(), 3_600, 90).unwrap());
+        let g = store.grants().unwrap().into_iter().find(|g| g.grant.id.0 == "g1").unwrap().grant;
+        assert_eq!((g.expires_at, g.uses, g.max_uses), (Some(3_690), 1, Some(3)), "a new end, the same uses");
+        assert!(store.extend_grant(&"g1".into(), 3_600, 5_000).is_err(), "ended: resumed, not extended");
+        assert!(!store.extend_grant(&"nope".into(), 3_600, 90).unwrap());
     }
 }

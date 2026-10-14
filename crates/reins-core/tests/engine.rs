@@ -1410,42 +1410,55 @@ async fn pair_as(env: &Env, id: &str, connection: &str) {
 async fn a_new_ai_asks_for_everything_until_the_starting_rule_says_otherwise() {
     let env = env().await;
     env.core.engine().register_account("gmail", "me@gmail.com").unwrap();
-    assert_eq!(env.core.starting_policy().await.unwrap(), None, "not chosen yet");
+    assert_eq!(env.core.starting_policy().await.unwrap(), None, "not chosen yet: asks every time");
     pair_as(&env, "p1", "c8").await;
     assert!(env.core.grants().await.unwrap().is_empty(), "nothing is given without the user's choice");
+    env.core.set_starting_policy(StartingPolicy::AskEveryTime).await.unwrap();
+    assert_eq!(env.core.starting_policy().await.unwrap(), Some(StartingPolicy::AskEveryTime));
+    pair_as(&env, "p2", "c9").await;
+    assert!(env.core.grants().await.unwrap().is_empty(), "asking every time gives nothing either");
 }
 
 #[tokio::test]
-async fn reads_for_a_day_lets_a_new_ai_read_but_never_send_or_see_codes() {
+async fn headlines_for_its_first_hour_show_who_what_and_when_but_opening_anything_asks() {
     let env = env().await;
     env.core.engine().register_account("gmail", "me@gmail.com").unwrap();
     env.core.engine().register_account("telegram", "+15550100").unwrap();
     env.core.engine().register_account("vault", "me@example.com").unwrap();
-    env.core.set_starting_policy(StartingPolicy::ReadsForADay).await.unwrap();
-    assert_eq!(env.core.starting_policy().await.unwrap(), Some(StartingPolicy::ReadsForADay));
+    env.core.set_starting_policy(StartingPolicy::HeadlinesFirstHour).await.unwrap();
+    assert_eq!(env.core.starting_policy().await.unwrap(), Some(StartingPolicy::HeadlinesFirstHour));
     let before = reins_core::store::unix_now();
     pair_as(&env, "p1", "c9").await;
 
+    // Only headlines grants, for an hour, never the vault.
     let grants = env.core.grants().await.unwrap();
     let mut shown: Vec<(&str, &str, &str)> =
         grants.iter().map(|g| (g.service.as_str(), g.action.as_str(), g.origin.as_str())).collect();
     shown.sort_unstable();
-    assert_eq!(shown, [("gmail", "read", "starter"), ("telegram", "read", "starter")], "never the vault");
+    assert_eq!(shown, [("gmail", "headlines", "starter"), ("telegram", "headlines", "starter")]);
     for g in &grants {
         assert_eq!(g.connection_id, "c9");
+        assert!(!g.all_mail && g.editable_scope.is_none(), "not a read grant in any form");
         let left = g.expires_at.unwrap() - before;
-        assert!((86_000..=86_500).contains(&left), "a day: {left}");
+        assert!((3_500..=3_700).contains(&left), "an hour: {left}");
     }
+    let gmail = grants.iter().find(|g| g.service == "gmail").unwrap();
+    assert_eq!(gmail.summary, "See email headlines");
     let logged = &env.core.activity(1).await.unwrap()[0];
     assert_eq!((logged.action.as_str(), logged.outcome.as_str()), ("grant", "granted"));
+    assert!(logged.info.note.as_deref().unwrap().contains("headlines for its first hour"));
 
-    // A search is answered without asking, except the email that looks like a login code.
-    let ids = json!({"messages": [{"id": "m1"}, {"id": "m2"}]});
-    Mock::given(method("GET"))
-        .and(path("/users/me/messages"))
-        .respond_with(ResponseTemplate::new(200).set_body_json(ids))
-        .mount(&env.gmail)
-        .await;
+    for (q, ids) in [
+        ("lunch", json!({"messages": [{"id": "m1"}]})),
+        ("anything", json!({"messages": [{"id": "m1"}, {"id": "m2"}]})),
+    ] {
+        Mock::given(method("GET"))
+            .and(path("/users/me/messages"))
+            .and(query_param("q", q))
+            .respond_with(ResponseTemplate::new(200).set_body_json(ids))
+            .mount(&env.gmail)
+            .await;
+    }
     for (id, subject) in [("m1", "Lunch on Friday"), ("m2", "Your sign in code is 481516")] {
         Mock::given(method("GET"))
             .and(path(format!("/users/me/messages/{id}")))
@@ -1453,31 +1466,43 @@ async fn reads_for_a_day_lets_a_new_ai_read_but_never_send_or_see_codes() {
                 id,
                 "a@example.com",
                 subject,
-                Some("x"),
+                Some("the whole body"),
             )))
             .mount(&env.gmail)
             .await;
     }
-    serve_pending(&env, &[search_request("r1", "c9", "Claude", "anything")], &[]).await;
+
+    // A search is answered without asking: sender, subject and date, never the snippet.
+    serve_pending(&env, &[search_request("r1", "c9", "Claude", "lunch")], &[]).await;
+    assert!(env.core.sync(0).await.unwrap().is_empty(), "nothing waits");
+    let sent = answers(&env).await;
+    let found = &sent[0].1["result"]["messages"][0];
+    assert_eq!((found["id"].clone(), found["subject"].clone()), (json!("m1"), json!("Lunch on Friday")));
+    assert_eq!(found["from"], "a@example.com");
+    assert_eq!(found["snippet"], "", "a headline carries nothing from the body");
+    assert!(sent[0].1.to_string().find("whole body").is_none() && sent[0].1.to_string().find("snippet of").is_none());
+    assert_eq!(env.core.activity(1).await.unwrap()[0].grant_id.as_deref(), Some(gmail.id.as_str()));
+
+    // Opening the very message it found still asks.
+    serve_pending(&env, &[read_request("r2", "c9", &["m1"])], &[]).await;
     let waiting = env.core.sync(0).await.unwrap();
-    assert_eq!(waiting.len(), 1, "the code waits for the user");
-    let view = env.core.approval_view("r1".to_owned()).await.unwrap();
+    assert_eq!(waiting.len(), 1, "reading a body asks");
+    let view = env.core.approval_view("r2".to_owned()).await.unwrap();
+    assert!(view.messages.iter().all(|m| !m.covered_by_grant), "headlines never cover a read");
+    assert_eq!(answers(&env).await.len(), 1, "nothing more was told");
+
+    // A code found by a search is never a headline: it waits for the user, unticked.
+    serve_pending(&env, &[search_request("r3", "c9", "Claude", "anything")], &[]).await;
+    assert_eq!(env.core.sync(0).await.unwrap().len(), 2);
+    let view = env.core.approval_view("r3".to_owned()).await.unwrap();
     let messages: Vec<_> = view.messages.iter().map(|m| (m.id.as_str(), m.covered_by_grant, m.sensitive)).collect();
     assert_eq!(messages, [("m1", true, false), ("m2", false, true)]);
-    assert!(!waiting[0].quick, "a code needs a look, not a notification button");
-    // Approving untouched releases what the grant covers, never the code.
-    env.core.approve_quick("r1".to_owned()).await.unwrap();
-    let sent = answers(&env).await;
-    let released: Vec<_> =
-        sent[0].1["result"]["messages"].as_array().unwrap().iter().map(|m| m["id"].clone()).collect();
-    assert_eq!(released, [json!("m1")]);
 
-    // Sending still asks.
+    // Sending still asks, and another AI connected before has nothing.
     serve_pending(&env, &[send_request("s1", "c9", "boss@work.com")], &[]).await;
-    assert_eq!(env.core.sync(0).await.unwrap().len(), 1);
-    // Another AI connected before has nothing.
-    serve_pending(&env, &[search_request("r2", "c1", "ChatGPT", "anything")], &[]).await;
-    assert_eq!(env.core.sync(0).await.unwrap().len(), 2);
+    assert_eq!(env.core.sync(0).await.unwrap().len(), 3);
+    serve_pending(&env, &[search_request("r4", "c1", "ChatGPT", "lunch")], &[]).await;
+    assert_eq!(env.core.sync(0).await.unwrap().len(), 4);
 }
 
 #[tokio::test]

@@ -201,10 +201,14 @@ Most requests take one tap:
 
 **Your starting rule.** The setup asks how a new AI should start (change it later at the end of **Grants**):
 
-- **Let it read for a day** (recommended): when you connect an AI, it gets permissions to search and read each service
-  you connected (not the vault or the desktop app) for 24 hours. They are listed under **Grants**, where you can end
-  them. Sending and changing anything still ask.
-- **Ask me every time**: every search and every read waits for you too.
+- **Ask every time** (recommended): nothing is allowed until you say so. Every search and every read waits for you.
+- **Headlines for its first hour**: for one hour after you connect an AI, its Gmail searches show the sender, subject
+  and date of what they find (no snippet, no body, no attachment), and lists in your other services (chats,
+  calendars, repositories) show their names. Opening anything still asks, and so do sending and changing anything.
+  Never the vault, payments or the desktop app. The permissions are listed under **Grants**, where you can end them.
+
+If you chose "Let it read for a day" in an earlier version, Reins now asks every time; permissions it already gave
+stay until they end.
 
 Whatever the rule, an email or a message that looks like a login code or a password is never released by a
 permission: it waits for your tick, and it is never ticked for you.

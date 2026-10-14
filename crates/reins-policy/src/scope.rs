@@ -117,6 +117,30 @@ pub struct ServiceScope {
     pub ops: Vec<String>,
 }
 
+/// Headlines of one integration: what a search or a list finds, shown by its metadata only. For Gmail: the sender,
+/// recipients, subject and date of the messages a search finds, never a snippet, a body or an attachment. For any
+/// other integration: the names and titles its lists show, never what is inside. Nothing is opened with it: reading a
+/// message (or anything else) still asks. What looks like a code or a password is never released by it either.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct HeadlinesScope {
+    /// "gmail", "telegram", ...
+    pub service: String,
+}
+
+impl HeadlinesScope {
+    pub fn validate(&self) -> Result<(), PolicyError> {
+        let ok = !self.service.is_empty()
+            && self.service.len() <= 32
+            && self.service.bytes().all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'_');
+        if ok {
+            Ok(())
+        } else {
+            Err(PolicyError::InvalidScope("a headlines scope names an integration in lower case".to_owned()))
+        }
+    }
+}
+
 /// Whether a permission for `granted` covers `thing`: the same thing, or a part of it. Parts are written after a `@`
 /// (a branch: `owner/repo` covers `owner/repo@main`) or a `/` (`owner` covers `owner/repo`, a folder covers what is
 /// in it). A prefix that is not a whole part covers nothing (`owner/re` does not cover `owner/repo`).
@@ -197,6 +221,8 @@ pub enum Scope {
     Accounts(AccountsScope),
     /// Access to another integration.
     Service(ServiceScope),
+    /// The metadata of what searches and lists find (see [`HeadlinesScope`]). Never covers opening anything.
+    Headlines(HeadlinesScope),
 }
 
 impl ReadScope {
@@ -282,6 +308,7 @@ impl Scope {
             Self::Send(s) => s.validate(),
             Self::Accounts(s) => s.validate(),
             Self::Service(s) => s.validate(),
+            Self::Headlines(s) => s.validate(),
         }
     }
 }
@@ -513,6 +540,24 @@ mod tests {
         assert!(serde_json::from_value::<Scope>(send).is_err());
         let ok = json!({"action": "read", "from": [{"kind": "domain", "value": "bank.com"}]});
         assert!(serde_json::from_value::<Scope>(ok).is_ok());
+    }
+
+    #[test]
+    fn a_headlines_scope_names_one_integration_and_nothing_else() {
+        let gmail = Scope::Headlines(HeadlinesScope {
+            service: "gmail".to_owned(),
+        });
+        gmail.validate().unwrap();
+        let v = serde_json::to_value(&gmail).unwrap();
+        assert_eq!(v, json!({"action": "headlines", "service": "gmail"}));
+        assert_eq!(serde_json::from_value::<Scope>(v).unwrap(), gmail);
+        assert!(
+            serde_json::from_value::<Scope>(json!({"action": "headlines", "service": "gmail", "any": true})).is_err()
+        );
+        let bad = HeadlinesScope {
+            service: "Gmail Mail".to_owned(),
+        };
+        assert!(bad.validate().is_err());
     }
 
     #[test]

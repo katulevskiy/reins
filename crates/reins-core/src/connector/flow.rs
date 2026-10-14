@@ -306,7 +306,7 @@ impl Engine {
         let resources: Vec<String> =
             items.iter().map(|i| i.resource.clone()).collect::<BTreeSet<_>>().into_iter().collect();
         let any_sensitive = items.iter().any(|i| i.sensitive);
-        let covered = self.store.service_reserve(
+        let mut covered = self.store.service_reserve(
             &request.connection_id,
             Some(&account),
             &call.service,
@@ -317,6 +317,19 @@ impl Engine {
             !any_sensitive,
             now,
         )?;
+        let mut items = items;
+        // A list no grant covers may still be covered by a grant for this integration's headlines (the starting
+        // rule): then only the names go out, nothing inside them. Never with a code or a secret among them.
+        if !any_sensitive
+            && !items.iter().any(|i| i.secret)
+            && covered.len() < resources.len()
+            && crate::starter::headlines_cover(call)
+            && let Some(grant) =
+                self.store.headlines_reserve(&request.connection_id, Some(&account), &call.service, now)?
+        {
+            covered = resources.iter().map(|r| (r.clone(), grant.clone())).collect();
+            items = items.iter().map(crate::starter::headlines_only).collect();
+        }
         if !any_sensitive && (items.is_empty() || covered.len() == resources.len()) {
             // Content too large to go inline becomes a download link, now that it is released.
             let items = match self.deliver_files(session, connector.as_ref(), &account, &request, items).await {

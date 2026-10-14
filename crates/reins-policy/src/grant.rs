@@ -39,8 +39,8 @@ impl Grant {
         max_uses: Option<u32>,
     ) -> Result<Self, PolicyError> {
         scope.validate()?;
-        if let Scope::Service(s) = &scope
-            && s.any
+        let everything = matches!(&scope, Scope::Service(s) if s.any) || matches!(scope, Scope::Headlines(_));
+        if everything
             && !matches!(expires_at, Some(t) if t.saturating_sub(created_at) <= crate::scope::MAX_ANY_RESOURCE_SECS)
         {
             return Err(PolicyError::InvalidGrant(format!(

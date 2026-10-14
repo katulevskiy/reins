@@ -13,13 +13,14 @@ use reins_proto::ValidationError;
 use thiserror::Error;
 
 pub use evaluate::{
-    AccountCoverage, ReadDecision, SendDecision, account_coverage, evaluate_read, evaluate_send, needs_body,
-    service_allows,
+    AccountCoverage, ReadDecision, SendDecision, account_coverage, evaluate_read, evaluate_send, headlines_allows,
+    needs_body, service_allows,
 };
 pub use grant::{Grant, MAX_ANY_MAIL_SECS, record_uses};
 pub use pattern::{AddrRule, MAX_PATTERN_LEN, Pattern};
 pub use scope::{
-    AccountsScope, MAX_ANY_RESOURCE_SECS, MessageFacts, ReadScope, Scope, SendScope, ServiceScope, resource_covers,
+    AccountsScope, HeadlinesScope, MAX_ANY_RESOURCE_SECS, MessageFacts, ReadScope, Scope, SendScope, ServiceScope,
+    resource_covers,
 };
 
 #[derive(Debug, Error, PartialEq, Eq)]
