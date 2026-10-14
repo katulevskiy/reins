@@ -739,6 +739,15 @@ final class DemoReinsCore: ReinsCoreProtocol, @unchecked Sendable {
         }
     }
 
+    /// An active grant runs for `durationSecs` from now; its uses stay.
+    func extendGrant(grantId: String, durationSecs: UInt64) async throws {
+        try locked { s in
+            guard let i = s.grants.firstIndex(where: { $0.id == grantId }), s.grants[i].active else { throw CoreError.NotFound }
+            s.grants[i].createdAt = Self.now()
+            s.grants[i].expiresAt = Self.now() + Int64(durationSecs)
+        }
+    }
+
     func resumeGrantEdited(grantId: String, standing: StandingGrant) async throws {
         try locked { s in
             guard let i = s.grants.firstIndex(where: { $0.id == grantId }) else { throw CoreError.NotFound }

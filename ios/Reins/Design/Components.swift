@@ -114,7 +114,7 @@ struct ActionTile: View {
         switch kind {
         case .search, .list: Palette.search
         case .write, .send: Palette.send
-        case .read, .upload: Palette.read
+        case .read, .upload, .headlines: Palette.read
         case .grant: Palette.grant
         case .accounts: Palette.accounts
         case .pair, .join: Palette.pair

@@ -2626,6 +2626,11 @@ public protocol ReinsCoreProtocol: AnyObject, Sendable {
     func downloadModel(progress: DownloadProgress) async throws  -> ModelStatus
     
     /**
+     * Lets an active grant run for `duration_secs` from now instead of until its end; its uses so far stay.
+     */
+    func extendGrant(grantId: String, durationSecs: UInt64) async throws 
+    
+    /**
      * Opens one email listed in the activity: fetched from Gmail now, `account` being the entry's account.
      */
     func fetchEmail(account: String?, messageId: String) async throws  -> EmailContent
@@ -3654,6 +3659,25 @@ open func downloadModel(progress: DownloadProgress)async throws  -> ModelStatus 
             completeFunc: ffi_reins_core_rust_future_complete_rust_buffer,
             freeFunc: ffi_reins_core_rust_future_free_rust_buffer,
             liftFunc: FfiConverterTypeModelStatus_lift,
+            errorHandler: FfiConverterTypeCoreError_lift
+        )
+}
+    
+    /**
+     * Lets an active grant run for `duration_secs` from now instead of until its end; its uses so far stay.
+     */
+open func extendGrant(grantId: String, durationSecs: UInt64)async throws   {
+    return
+        try  await uniffiRustCallAsync(
+            rustFutureFunc: {
+                uniffi_reins_core_fn_method_reinscore_extend_grant(
+                        self.uniffiCloneHandle(),FfiConverterString.lower(grantId),FfiConverterUInt64.lower(durationSecs)
+                )
+            },
+            pollFunc: ffi_reins_core_rust_future_poll_void,
+            completeFunc: ffi_reins_core_rust_future_complete_void,
+            freeFunc: ffi_reins_core_rust_future_free_void,
+            liftFunc: { $0 },
             errorHandler: FfiConverterTypeCoreError_lift
         )
 }
@@ -8125,7 +8149,7 @@ public struct GrantView: Equatable, Hashable {
     public var connectionId: String
     public var connectionLabel: String
     /**
-     * "read" | "send"
+     * "read" | "send" | "accounts" | "list" | "write" | "headlines" (what searches and lists find, metadata only)
      */
     public var action: String
     public var summary: String
@@ -8166,7 +8190,7 @@ public struct GrantView: Equatable, Hashable {
     // declare one manually.
     public init(id: String, connectionId: String, connectionLabel: String, 
         /**
-         * "read" | "send"
+         * "read" | "send" | "accounts" | "list" | "write" | "headlines" (what searches and lists find, metadata only)
          */action: String, summary: String, expiresAt: Int64?, maxUses: UInt32?, uses: UInt32, createdAt: Int64, lastUsedAt: Int64?, 
         /**
          * "approval" | "ai_request" | "user" | "retry"
@@ -13882,14 +13906,15 @@ public func FfiConverterTypePreset_lower(_ value: Preset) -> RustBuffer {
 public enum StartingPolicy: Equatable, Hashable {
     
     /**
-     * Everything it asks waits for the user.
+     * Everything it asks waits for the user. The default.
      */
     case askEveryTime
     /**
-     * It may search and read the connected integrations for 24 hours (grants under Grants); sending, changing,
-     * the vault, codes and passwords, and the hard floor still ask.
+     * For its first hour it may see the headlines of what its searches and lists find (Gmail: sender, subject and
+     * date; elsewhere: names and titles), as grants under Grants. Opening anything, sending, changing, the vault,
+     * codes and passwords, and the hard floor still ask.
      */
-    case readsForADay
+    case headlinesFirstHour
 
 
 
@@ -13913,7 +13938,7 @@ public struct FfiConverterTypeStartingPolicy: FfiConverterRustBuffer {
         
         case 1: return .askEveryTime
         
-        case 2: return .readsForADay
+        case 2: return .headlinesFirstHour
         
         default: throw UniffiInternalError.unexpectedEnumCase
         }
@@ -13927,7 +13952,7 @@ public struct FfiConverterTypeStartingPolicy: FfiConverterRustBuffer {
             writeInt(&buf, Int32(1))
         
         
-        case .readsForADay:
+        case .headlinesFirstHour:
             writeInt(&buf, Int32(2))
         
         }
@@ -16093,6 +16118,9 @@ private let initializationResult: InitializationResult = {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_reins_core_checksum_method_reinscore_download_model() != 52176) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_reins_core_checksum_method_reinscore_extend_grant() != 25710) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_reins_core_checksum_method_reinscore_fetch_email() != 21111) {

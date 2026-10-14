@@ -807,6 +807,19 @@ impl ReinsCore {
         .await
     }
 
+    /// Lets an active grant run for `duration_secs` from now instead of until its end; its uses so far stay.
+    pub async fn extend_grant(&self, grant_id: String, duration_secs: u64) -> Result<(), CoreError> {
+        let runtime = Arc::clone(&self.runtime);
+        let generation = runtime.generation();
+        rt::run(async move {
+            let engine = runtime.prepare(generation).await?;
+            engine.ensure_active()?;
+            let result = engine.run_account(async { engine.extend_grant(&grant_id, duration_secs) }).await;
+            runtime.finish(&engine, result)
+        })
+        .await
+    }
+
     /// Starts an ended grant over with changes: the period, the number of uses and who or what it covers.
     pub async fn resume_grant_edited(&self, grant_id: String, standing: StandingGrant) -> Result<(), CoreError> {
         let runtime = Arc::clone(&self.runtime);

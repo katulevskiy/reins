@@ -60,7 +60,7 @@ private fun names(labels: List<String>): String = when (labels.size) {
 suspend fun answerBurst(container: AppContainer, authenticator: Authenticator, burst: Burst, approve: Boolean): String? {
     val ids = if (approve) burst.quick else burst.all
     if (approve) {
-        when (authenticator.authenticate("Approve ${ids.size} requests", burst.label)) {
+        when (authenticator.authenticate(if (ids.size == 1) "Approve request" else "Approve ${ids.size} requests", burst.label)) {
             AuthResult.Success -> Unit
             AuthResult.Cancelled -> return null
             AuthResult.Unavailable -> {

@@ -75,37 +75,12 @@ struct NotificationsOffCard: View {
         // A stack, not a Group, so the checks below run while nothing shows.
         VStack(spacing: 0) {
             if access.state.needsAttention && !model.demo {
-                HStack(alignment: .center, spacing: 12) {
-                    Image(systemName: "bell.slash.fill")
-                        .font(.system(size: 18, weight: .semibold))
-                        .foregroundStyle(Palette.warning)
-                        .frame(width: 40, height: 40)
-                        .background(Palette.warning.opacity(0.18), in: Circle())
-                        .accessibilityHidden(true)
-                    VStack(alignment: .leading, spacing: 2) {
-                        Text(access.state == .quiet ? "Notifications are quiet" : "Notifications are off")
-                            .font(RFont.sans(15.5, .semibold))
-                            .foregroundStyle(Palette.text)
-                        Text(access.state == .quiet
-                            ? "Requests arrive silently and can time out"
-                            : "Requests time out while Reins is closed")
-                            .font(RFont.sans(13))
-                            .foregroundStyle(Palette.secondary)
-                            .fixedSize(horizontal: false, vertical: true)
-                    }
-                    Spacer(minLength: 0)
-                    Button("Turn on") { Task { await access.turnOn(openURL: openURL) } }
-                        .font(RFont.sans(14, .semibold))
-                        .foregroundStyle(.white)
-                        .padding(.horizontal, 14)
-                        .padding(.vertical, 8)
-                        .background(Palette.accent, in: Capsule())
-                        .buttonStyle(.plain)
-                        .accessibilityIdentifier("turnOnNotifications")
-                }
-                .padding(14)
-                .background(Palette.warning.opacity(0.12), in: RoundedRectangle(cornerRadius: 18, style: .continuous))
-                .padding(EdgeInsets(top: 6, leading: 16, bottom: 6, trailing: 16))
+                CompactBanner(
+                    text: access.state == .quiet ? "Notifications are quiet" : "Notifications are off",
+                    symbol: "bell.slash.fill",
+                    button: "Turn on"
+                ) { Task { await access.turnOn(openURL: openURL) } }
+                .padding(EdgeInsets(top: 4, leading: 16, bottom: 4, trailing: 16))
                 .accessibilityElement(children: .contain)
                 .accessibilityIdentifier("notificationsOff")
             }

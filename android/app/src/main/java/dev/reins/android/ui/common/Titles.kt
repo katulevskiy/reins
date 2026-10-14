@@ -19,6 +19,7 @@ fun operationTitle(action: String, count: Int, service: String, title: String = 
         ActionKind.Search -> "Search $what"
         ActionKind.List -> "List $what"
         ActionKind.Write -> "Change $what"
+        ActionKind.Headlines -> "See $what headlines"
         ActionKind.Read -> if (!mail) "Read $what" else when (count) {
             0 -> "Read email"
             1 -> "Read 1 email"

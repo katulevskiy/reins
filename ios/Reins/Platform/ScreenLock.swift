@@ -14,6 +14,8 @@ enum ScreenLock {
 struct ScreenLockBanner: View {
     /// Around the banner when it shows; nothing takes space while it does not.
     var padding = EdgeInsets()
+    /// One line and a button (Activity); the full sentence otherwise (the onboarding).
+    var compact = false
     @Environment(AppModel.self) private var model
     @Environment(\.scenePhase) private var scenePhase
     @State private var set = true
@@ -22,7 +24,13 @@ struct ScreenLockBanner: View {
         // A stack, not a Group: a Group hands its modifiers to its content, so with the banner hidden the check
         // below would never run and the banner could never appear.
         VStack(spacing: 0) {
-            if !set && !model.demo {
+            if !set && !model.demo && compact {
+                CompactBanner(text: "No passcode", symbol: "lock.open.fill", button: "How") {
+                    model.notice = "Approving needs a passcode: Settings, Face ID & Passcode."
+                }
+                .padding(padding)
+                .accessibilityIdentifier("screenLockOff")
+            } else if !set && !model.demo {
                 Banner(
                     "No passcode. Approving needs one: Settings, Face ID & Passcode.",
                     kind: .warning

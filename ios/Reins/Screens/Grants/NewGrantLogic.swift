@@ -25,6 +25,15 @@ enum NewGrantLifetime: CaseIterable, Hashable {
         }
     }
 
+    /// On the Once | 1 hour | 1 day | Custom control.
+    var shortLabel: String {
+        switch self {
+        case .oneTime: "Once"
+        case .day: "1 day"
+        default: label
+        }
+    }
+
     /// All mail needs a time limit of a week at most.
     var allowedForAllMail: Bool { self != .oneTime && self != .month }
 }
@@ -40,7 +49,8 @@ struct NewGrantDraft: Equatable {
     /// Addresses (`a@b.com`) and domains (`@b.com` or `b.com`), separated by commas, spaces or lines.
     var partiesText = ""
     var subject = ""
-    var lifetime: NewGrantLifetime = .day
+    /// An hour unless the user picks otherwise: a grant made in advance starts small.
+    var lifetime: NewGrantLifetime = .hour
 }
 
 enum NewGrantResult: Equatable {

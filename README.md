@@ -118,8 +118,9 @@ or ChatGPT. The full walkthrough is in [docs/quick-start.md](docs/quick-start.md
 - Routine requests in one tap: Approve and Deny on the notification, "Approve and allow for 1 hour" for the same
   thing from the same AI, and Approve all for a burst from one agent run. Each request says what approving does in
   one sentence.
-- A starting rule chosen at setup: a new AI may read for a day (recommended), or asks for everything. Codes and
-  passwords are never released without your tick.
+- A starting rule chosen at setup: a new AI asks for everything (recommended), or may see headlines (sender, subject
+  and date) for its first hour while opening anything still asks. Codes and passwords are never released without your
+  tick.
 - Previews of exactly what runs: full emails, git pushes (commits, files, line counts, force pushes), MCP arguments,
   attached files.
 - Approving needs the phone's screen lock or biometrics. Activity log on the phone.

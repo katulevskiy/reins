@@ -204,6 +204,7 @@ struct RouteView: View {
         case let .activityDetail(id): ActivityDetailScreen(entryId: id)
         case let .email(entryId, index): EmailScreen(entryId: entryId, index: index)
         case let .grantDetail(id): GrantDetailScreen(grantId: id)
+        case .expiredGrants: ExpiredGrantsScreen()
         case .newGrant: NewGrantScreen()
         }
     }

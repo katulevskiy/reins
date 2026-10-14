@@ -100,7 +100,10 @@ class FakeCore : ReinsCoreInterface {
         pending = pending.filterNot { it.id == pairingId }
     }
 
-    override suspend fun approvalView(requestId: String) = approval ?: throw CoreException.NotFound()
+    /** Approval views by request id (the Activity cards read them); [approval] answers for any other id. */
+    val views = java.util.concurrent.ConcurrentHashMap<String, ApprovalView>()
+
+    override suspend fun approvalView(requestId: String) = views[requestId] ?: approval ?: throw CoreException.NotFound()
 
     /** Makes approving fail (after the sheet has already closed: the app answers in the background). */
     @Volatile var approveFailure: CoreException? = null
@@ -316,6 +319,13 @@ class FakeCore : ReinsCoreInterface {
         serviceStatuses["$service/$account"] ?: GmailStatus.Ready
 
     override suspend fun accountStatus(account: String) = accountStatuses[account] ?: GmailStatus.Ready
+
+    val extended = CopyOnWriteArrayList<Pair<String, ULong>>()
+
+    override suspend fun extendGrant(grantId: String, durationSecs: ULong) {
+        extended += grantId to durationSecs
+        grants = grants.map { if (it.id == grantId) it.copy(expiresAt = 1_700_000_000L + durationSecs.toLong()) else it }
+    }
 
     override suspend fun resumeGrant(grantId: String, durationSecs: ULong) {
         resumed += grantId to durationSecs
@@ -768,6 +778,8 @@ class FakeCore : ReinsCoreInterface {
         profiles = TestData.profiles()
         wifiOnly = true
         suggestions.clear()
+        views.clear()
+        extended.clear()
         evaluation = null
         modeFailure = null
         downloadFailure = null

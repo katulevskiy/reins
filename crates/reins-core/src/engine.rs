@@ -804,7 +804,9 @@ impl Engine {
             let kind = match old.scope {
                 reins_policy::Scope::Read(_) => crate::types::ApprovalKind::Read,
                 reins_policy::Scope::Send(_) => crate::types::ApprovalKind::Send,
-                reins_policy::Scope::Accounts(_) | reins_policy::Scope::Service(_) => {
+                reins_policy::Scope::Accounts(_)
+                | reins_policy::Scope::Service(_)
+                | reins_policy::Scope::Headlines(_) => {
                     return Err(CoreError::invalid("this grant can only be resumed as it was"));
                 }
             };
@@ -861,6 +863,19 @@ impl Engine {
         }
         let secs = i64::try_from(duration_secs).unwrap_or(i64::MAX);
         if self.store.resume_grant(&GrantId(grant_id.to_owned()), secs, unix_now())? {
+            Ok(())
+        } else {
+            Err(CoreError::NotFound)
+        }
+    }
+
+    /// Lets an active grant run for `duration_secs` from now (its uses so far stay).
+    pub fn extend_grant(&self, grant_id: &str, duration_secs: u64) -> Result<(), CoreError> {
+        if !(reins_proto::gmail::MIN_GRANT_SECS..=reins_proto::gmail::MAX_GRANT_SECS).contains(&duration_secs) {
+            return Err(CoreError::invalid("choose a period between a minute and 30 days"));
+        }
+        let secs = i64::try_from(duration_secs).unwrap_or(i64::MAX);
+        if self.store.extend_grant(&GrantId(grant_id.to_owned()), secs, unix_now())? {
             Ok(())
         } else {
             Err(CoreError::NotFound)

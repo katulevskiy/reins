@@ -62,6 +62,8 @@ enum Route: Hashable {
     /// One email listed in an activity entry (the entry id and the email's place in its list).
     case email(entryId: Int64, index: Int)
     case grantDetail(String)
+    /// The grants that ended (expired, used up or deleted): resumed or deleted for good from here.
+    case expiredGrants
     case newGrant(token: Int)
     /// Autopilot settings reached from Activity's mode pill or Settings (the Autopilot section's root, pushed).
     case autopilot

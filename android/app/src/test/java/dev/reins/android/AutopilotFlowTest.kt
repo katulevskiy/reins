@@ -457,12 +457,36 @@ class AutopilotFlowTest : FlowHarness() {
     }
 
     @Test
-    fun aWaitingRequestCarriesTheSuggestionLine() {
-        core.pending = listOf(TestData.pending("req1", suggestion = "Autopilot would deny · 92%"))
+    fun aWaitingCardOffersAutopilotsPick() {
+        core.pending = listOf(
+            TestData.pending("r1", quick = true),
+            TestData.pending("r2", "send", 1u, label = "Codex", conn = "c2", quick = true),
+            TestData.pending("r3", "read", label = "Cursor", conn = "c3", quick = true),
+            TestData.pending("r4", "write", 1u, label = "Hermes", conn = "c4", service = "github", op = "repo_delete", opTitle = "Delete a repository"),
+            TestData.pending("r5", label = "Gemini", conn = "c5", quick = true),
+        )
+        core.suggestions["r1"] = TestData.suggestion("r1")
+        core.suggestions["r2"] = TestData.suggestion("r2", verdict = Verdict.DENY, pApprove = 0.03f, pDeny = 0.92f)
+        core.suggestions["r3"] = TestData.suggestion("r3", verdict = Verdict.ASK, pApprove = 0.62f, pDeny = 0.1f)
+        core.suggestions["r4"] = TestData.suggestion("r4")
         dev.reins.android.platform.Foreground.autoPopup = false
         launch()
-        awaitTag("pending:req1")
-        awaitText("Autopilot would deny · 92%")
+        awaitTag("allow:r1")
+        awaitTag("deny:r2")
+        awaitTag("unsure:r3")
+        // Asked every time: never a one-tap Allow, whatever Autopilot thinks.
+        awaitTag("alwaysAsks:r4")
+        assertFalse(has("allow:r4"))
+        // No suggestion at all: Review alone.
+        awaitTag("review:r5")
+        assertFalse(has("allow:r5") || has("deny:r5") || has("unsure:r5"))
+        tap("allow:r1")
+        awaitCore { core.quickApprovals.contains("r1") }
+        assertEquals("Allow checks the owner first", 1, prompts.get())
+        assertTrue("approved once, no standing grant", core.approvals.isEmpty())
+        tap("deny:r2")
+        awaitCore { core.denials.contains("r2") }
+        assertEquals("Deny needs no check", 1, prompts.get())
     }
 
     // ---- activity -----------------------------------------------------------------------------------------------------
@@ -479,10 +503,9 @@ class AutopilotFlowTest : FlowHarness() {
     fun theAutomaticFilterShowsOnlyWhatWasDecidedForYou() {
         automaticEntries()
         launch()
-        awaitTag("filter:automatic")
-        rule.onNodeWithTag("filter:automatic").assertTextContains("Automatic · 2")
         awaitTag("entry:2")
-        tap("filter:automatic")
+        tap("filters")
+        tap("filter:autopilot")
         awaitGone("entry:2")
         assertTrue(has("entry:3"))
         assertTrue(has("entry:1"))
@@ -491,11 +514,15 @@ class AutopilotFlowTest : FlowHarness() {
     }
 
     @Test
-    fun withoutAutomaticDecisionsThereIsNoFilter() {
-        core.activity = listOf(TestData.entry(1))
+    fun theFiltersAreBehindTheirButton() {
+        core.activity = listOf(TestData.entry(1), TestData.entry(2, outcome = "denied"))
         launch()
         awaitTag("entry:1")
-        assertFalse(has("filter:automatic"))
+        assertFalse(has("filter:denied"))
+        tap("filters")
+        tap("filter:denied")
+        awaitGone("entry:1")
+        assertTrue(has("entry:2"))
     }
 
     @Test
@@ -504,7 +531,7 @@ class AutopilotFlowTest : FlowHarness() {
         launch()
         tap("entry:3")
         awaitTag("entryAutopilot")
-        rule.onNodeWithTag("entryAutopilotTitle").assertTextContains("Approved by Autopilot")
+        rule.onNodeWithTag("entryAutopilotTitle").assertTextContains("Allowed by Autopilot", substring = true)
         tap("thisWasWrong")
         awaitText("Should this have been denied?")
         rule.onNodeWithText("Deny next time").performClick()

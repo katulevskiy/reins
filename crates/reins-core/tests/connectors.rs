@@ -11,7 +11,7 @@ use common::{FakeGoogle, FakeKeys, RecordingNotifier};
 use reins_core::connector::{Connector, Item, Preview};
 use reins_core::{
     ApprovalChoice, ApprovalKind, CoreConfig, CoreError, GmailStatus, GoogleTokenProvider, GrantScopeChoice, Notifier,
-    ReinsCore, StandingGrant,
+    ReinsCore, StandingGrant, StartingPolicy,
 };
 use reins_proto::connector::ConnectorCall;
 use serde_json::{Value, json};
@@ -91,6 +91,9 @@ impl Connector for FakeTelegram {
                     resource_label: title.clone(),
                     title: title.clone(),
                     from: "chat".into(),
+                    // What a list may carry besides the name: the latest message, how many are unread.
+                    snippet: format!("latest in {title}"),
+                    extra: json!({"unread": 3}).as_object().unwrap().clone(),
                     ..Item::default()
                 })
                 .collect()),
@@ -680,4 +683,64 @@ async fn a_message_too_long_to_show_whole_in_a_notification_is_opened_first() {
     assert!(items[0].headline.ends_with('…'), "{}", items[0].headline);
     let quick = env.core.approval_view("r1".to_owned()).await.unwrap().quick.unwrap();
     assert!(!quick.from_notification && quick.allow.is_some(), "the sheet shows it all and still offers one tap");
+}
+
+/// Answers the pairing `id` with a new connection `connection`.
+async fn pair_as(env: &Env, id: &str, connection: &str) {
+    let pairing = json!({"v": 1, "id": id, "client_name": "Claude", "client_host": "claude.ai", "choices": [12, 47, 83],
+        "created_at": 50});
+    Mock::given(method("GET"))
+        .and(path("/reins/api/pending"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({"requests": [], "pairings": [pairing]})))
+        .up_to_n_times(1)
+        .with_priority(1)
+        .mount(&env.server)
+        .await;
+    env.core.sync(0).await.unwrap();
+    Mock::given(method("POST"))
+        .and(path(format!("/reins/api/pairings/{id}/response")))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({"connection_id": connection})))
+        .with_priority(1)
+        .mount(&env.server)
+        .await;
+    env.core.answer_pairing(id.to_owned(), true, Some(47), Some("Claude".to_owned())).await.unwrap();
+}
+
+#[tokio::test]
+async fn the_headlines_rule_lists_names_only_for_an_hour_and_opening_a_chat_still_asks() {
+    let env = env().await;
+    env.core.set_starting_policy(StartingPolicy::HeadlinesFirstHour).await.unwrap();
+    pair_as(&env, "p1", "c9").await;
+    let grants = env.core.grants().await.unwrap();
+    assert_eq!(grants.len(), 1);
+    assert_eq!(
+        (grants[0].action.as_str(), grants[0].service.as_str(), grants[0].origin.as_str()),
+        ("headlines", "telegram", "starter")
+    );
+    assert_eq!(grants[0].summary, "See Telegram names");
+
+    // The list is answered without asking, with the names and nothing that was in the chats.
+    serve_pending(&env, &[call_request("r1", "c9", "list_chats", &json!({"limit": 20}))]).await;
+    assert!(env.core.sync(0).await.unwrap().is_empty(), "nothing waits");
+    let told = answers(&env).await;
+    let items = told[0]["result"]["data"]["items"].as_array().unwrap();
+    assert_eq!(items.iter().map(|i| i["title"].clone()).collect::<Vec<_>>(), [json!("Family"), json!("Work")]);
+    for item in items {
+        assert!(item.get("text").is_none() && item.get("unread").is_none(), "names only: {item}");
+    }
+    let entry = &env.core.activity(1).await.unwrap()[0];
+    assert_eq!(entry.grant_id.as_deref(), Some(grants[0].id.as_str()));
+    assert!(entry.detail.ends_with("(names only)"), "{}", entry.detail);
+    assert!(entry.info.messages.iter().all(|m| m.text.is_empty()), "the activity keeps nothing inside either");
+
+    // Reading a chat, or searching in them, still asks.
+    serve_pending(&env, &[call_request("r2", "c9", "read", &json!({"chat": "100"}))]).await;
+    assert_eq!(env.core.sync(0).await.unwrap().len(), 1);
+    serve_pending(&env, &[call_request("r3", "c9", "search", &json!({"query": "dinner"}))]).await;
+    assert_eq!(env.core.sync(0).await.unwrap().len(), 2);
+    let view = env.core.approval_view("r2".to_owned()).await.unwrap();
+    assert!(view.messages.iter().all(|m| !m.covered_by_grant), "headlines never cover opening a chat");
+    // Another AI connected before has nothing.
+    serve_pending(&env, &[call_request("r4", "c1", "list_chats", &json!({"limit": 20}))]).await;
+    assert_eq!(env.core.sync(0).await.unwrap().len(), 3);
 }

@@ -22,6 +22,8 @@ func untrusted(_ text: String) -> String {
 /// What an operation is (the Android app's `ActionKind`); each has its icon and colour.
 enum ActionKind: String, CaseIterable {
     case search, list, read, write, send, grant, accounts, pair
+    /// A starter grant's "headlines": search results show who, what and when; opening anything still asks.
+    case headlines
     /// A file an AI uploaded through the server.
     case upload
     /// Another phone asks for the account's keys.
@@ -37,6 +39,7 @@ enum ActionKind: String, CaseIterable {
         case .list: "list.bullet"
         case .write: "pencil"
         case .read: "envelope.open"
+        case .headlines: "list.bullet.rectangle"
         case .send: "paperplane.fill"
         case .grant: "checkmark.shield.fill"
         case .accounts: "person.2.fill"
@@ -150,6 +153,7 @@ func operationTitle(action: String, count: Int, service: String, title: String =
         if !mail { return "Send with \(what)" }
         return count > 1 ? "Send email to \(count)" : "Send email"
     case .grant: return "Ask for access"
+    case .headlines: return mail ? "See email headlines" : "See \(what) names"
     case .accounts: return service.isEmpty ? "See integrations" : "See \(what) accounts"
     case .pair: return "Connect"
     case .upload: return "Share a file"

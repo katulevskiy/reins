@@ -493,9 +493,9 @@ private fun IntegrationTile(
 @Composable
 private fun RulesPage(container: AppContainer) {
     val policy by container.state.startingPolicy.collectAsStateWithLifecycle()
-    // Someone who just installed Reins starts with the recommended rule; a choice made before stays.
+    // Someone who just installed Reins starts with the recommended rule (ask every time); a choice made before stays.
     LaunchedEffect(Unit) {
-        if (container.core.startingPolicy() == null) container.chooseStartingPolicy(dev.reins.core.StartingPolicy.READS_FOR_A_DAY)
+        if (container.core.startingPolicy() == null) container.chooseStartingPolicy(dev.reins.core.StartingPolicy.ASK_EVERY_TIME)
     }
     Column(Modifier.testTag("setupRules")) {
         PageHeader(

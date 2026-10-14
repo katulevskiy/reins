@@ -856,6 +856,15 @@ fn service_summary(s: &ServiceScope) -> String {
     format!("{verb} {}{kinds}{ops}: {what}", service_name(&s.service))
 }
 
+/// "See email headlines", "See Telegram names".
+fn headlines_summary(service: &str) -> String {
+    if service == SERVICE_GMAIL {
+        "See email headlines".to_owned()
+    } else {
+        format!("See {} names", service_name(service))
+    }
+}
+
 pub fn grant_summary(scope: &Scope) -> String {
     text::one_line(&match scope {
         Scope::Read(s) => read_summary(s),
@@ -863,6 +872,7 @@ pub fn grant_summary(scope: &Scope) -> String {
         Scope::Service(s) => service_summary(s),
         Scope::Accounts(s) if s.accounts.is_empty() => format!("See your {} accounts", service_name(&s.service)),
         Scope::Accounts(s) => format!("See {} of your {} accounts", s.accounts.len(), service_name(&s.service)),
+        Scope::Headlines(s) => headlines_summary(&s.service),
     })
 }
 
@@ -919,6 +929,14 @@ pub fn scope_lines(scope: &Scope) -> Vec<String> {
             }
             lines.extend(service_resource_names(s));
         }
+        Scope::Headlines(s) if s.service == SERVICE_GMAIL => {
+            lines.push("Sender, subject and date of what a search finds".to_owned());
+            lines.push("Not what is inside".to_owned());
+        }
+        Scope::Headlines(s) => {
+            lines.push(format!("Names and titles in {} lists", service_name(&s.service)));
+            lines.push("Not what is inside".to_owned());
+        }
         Scope::Accounts(s) => {
             if s.accounts.is_empty() {
                 lines.push(format!("The addresses of all your {} accounts", service_name(&s.service)));
@@ -942,6 +960,7 @@ pub fn grant_view(g: &StoredGrant) -> GrantView {
             Scope::Send(_) => "send".to_owned(),
             Scope::Accounts(_) => "accounts".to_owned(),
             Scope::Service(s) => s.access.clone(),
+            Scope::Headlines(_) => "headlines".to_owned(),
         },
         summary: grant_summary(&g.grant.scope),
         expires_at: g.grant.expires_at,
@@ -953,6 +972,7 @@ pub fn grant_view(g: &StoredGrant) -> GrantView {
         service: match &g.grant.scope {
             Scope::Service(s) => s.service.clone(),
             Scope::Accounts(s) => s.service.clone(),
+            Scope::Headlines(s) => s.service.clone(),
             _ => SERVICE_GMAIL.to_owned(),
         },
         account: g.grant.account.clone(),
@@ -1017,7 +1037,7 @@ fn editable_scope(scope: &Scope) -> Option<GrantScopeChoice> {
                 ..empty
             })
         }
-        Scope::Accounts(_) | Scope::Service(_) => None,
+        Scope::Accounts(_) | Scope::Service(_) | Scope::Headlines(_) => None,
         Scope::Send(s) => {
             if s.body.is_some() {
                 return None;

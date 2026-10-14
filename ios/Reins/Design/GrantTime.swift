@@ -118,6 +118,7 @@ enum GrantText {
         case "write": "Writes"
         case "list": "Lists"
         case "accounts": "Shows accounts"
+        case "headlines": "Headlines"
         default: "Reads"
         }
     }
@@ -129,6 +130,7 @@ enum GrantText {
         case "write": "Writing"
         case "list": "Listing"
         case "accounts": "Showing accounts"
+        case "headlines": "Showing headlines"
         default: "Reading"
         }
     }
@@ -140,6 +142,7 @@ enum GrantText {
         case "user": "Created by you in advance"
         case "retry": "A one-time pass after you approved late"
         case "starter": "Your starting rule, when you connected \(untrusted(label))"
+        case let o where o == "bypass" || o.hasPrefix("bypass:"): "Approved by Bypass; ends with it"
         default: "Chosen while approving a request"
         }
     }
@@ -150,6 +153,41 @@ enum GrantText {
         case 0: "Not used yet"
         case 1: "Used once"
         default: "Used \(uses) times"
+        }
+    }
+
+    /// A running grant's line under its summary: "3 of 10 uses", "used 12 times", "not used yet".
+    static func usesLine(_ g: GrantView) -> String {
+        if let cap = g.maxUses { return "\(g.uses) of \(cap) uses" }
+        switch g.uses {
+        case 0: return "not used yet"
+        case 1: return "used once"
+        default: return "used \(g.uses) times"
+        }
+    }
+
+    /// The Uses row on a grant's page: "3 of 10", "Used 12 times".
+    static func usesValue(_ g: GrantView) -> String {
+        g.maxUses.map { "\(g.uses) of \($0)" } ?? usedTimes(Int(g.uses))
+    }
+
+    /// The big ring's number: "5 h", "47 m", "6 d", "∞".
+    static func ringLabel(_ clock: GrantClock) -> String {
+        guard let r = clock.remaining else { return "\u{221E}" }
+        let compact = compactDuration(r)
+        guard let unit = compact.last, unit.isLetter else { return compact }
+        return "\(compact.dropLast()) \(unit)"
+    }
+
+    /// What a grant never covers, where that is known: a send grant never reads, a read grant never sends or changes
+    /// anything, and codes and passwords always ask.
+    static func never(_ g: GrantView) -> [String] {
+        let mail = g.service.isEmpty || g.service == "gmail"
+        switch g.action {
+        case "send": return [mail ? "Read your mail" : "Read anything"]
+        case "read", "search", "list": return ["Send or change anything", "Codes and passwords"]
+        case "headlines": return ["Open anything", "Send or change anything"]
+        default: return []
         }
     }
 

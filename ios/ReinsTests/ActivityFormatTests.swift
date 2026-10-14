@@ -86,4 +86,52 @@ final class ActivityFormatTests: XCTestCase {
         XCTAssertEqual(SuggestionText.headline(s(.approve, floor: true)), "Autopilot always asks you for this")
         XCTAssertEqual(SuggestionText.headline(s(.approve, judged: false)), "Autopilot did not judge this")
     }
+
+    // MARK: Waiting cards and history
+
+    private func pending(_ action: String, count: UInt32 = 1, subtitle: String = "", service: String = "gmail", kind: PendingKind = .request) -> PendingItem {
+        PendingItem(
+            kind: kind, id: "r", title: "Pixel 9", subtitle: subtitle, createdAt: 0, connectionId: "c1", connectionLabel: "Claude",
+            action: action, count: count, service: service, account: nil, waitUntil: nil, op: "", opTitle: "", suggestion: nil,
+            headline: "", quick: true
+        )
+    }
+
+    func testAWaitingRequestIsOneSentenceWithItsKeyNounsStrong() {
+        XCTAssertEqual(WantsText.plain(WantsText.of(pending("read", count: 2, subtitle: "2 messages found"))), "Wants to read 2 emails")
+        XCTAssertEqual(WantsText.plain(WantsText.of(pending("search", subtitle: "invoice"))), "Wants to search Gmail for “invoice”")
+        XCTAssertEqual(WantsText.plain(WantsText.of(pending("send", subtitle: "Hello"))), "Wants to send an email: “Hello”")
+        XCTAssertEqual(WantsText.of(pending("read")).filter(\.strong).map(\.text), ["read an email"])
+        XCTAssertEqual(WantsText.plain(WantsText.of(pending("join", kind: .join))), "Claude asks to join your account")
+        XCTAssertEqual(WantsText.plain(WantsText.of(burst: [pending("read", count: 2), pending("read", count: 3)])), "Wants to read 5 emails")
+        XCTAssertEqual(WantsText.plain(WantsText.of(burst: [pending("search"), pending("read")])), "Wants to make 2 requests")
+    }
+
+    func testAHistoryRowEndsWithWhoDecided() {
+        let at: Int64 = 1_700_000_000
+        XCTAssertEqual(EntryText.mark(DemoData.entry(1, at: at, action: "read", outcome: "released", detail: "")), .approved)
+        XCTAssertEqual(EntryText.mark(DemoData.entry(2, at: at, action: "read", outcome: "denied", detail: "")), .denied)
+        XCTAssertEqual(EntryText.mark(DemoData.entry(3, at: at, action: "read", outcome: "released", detail: "", decidedBy: "autopilot")), .auto)
+        XCTAssertEqual(EntryText.mark(DemoData.entry(4, at: at, action: "read", outcome: "released", detail: "", grantId: "g1")), .grant)
+        XCTAssertEqual(EntryText.mark(DemoData.entry(5, at: at, action: "send", outcome: "sent", detail: "", decidedBy: "bypass")), .bypass)
+        let auto = DemoData.entry(6, at: at, action: "read", outcome: "released", detail: "", decidedBy: "autopilot", autopilot: DemoData.note(pApprove: 0.96))
+        XCTAssertEqual(EntryOutcome.text(auto), "Allowed by Autopilot · 96%")
+        XCTAssertEqual(EntryOutcome.whyTitle(auto), "Why Autopilot allowed it")
+    }
+
+    func testHistoryIsGroupedByDay() {
+        let calendar = Calendar.current
+        let today = calendar.startOfDay(for: Date(timeIntervalSince1970: 1_700_000_000)).addingTimeInterval(12 * 3_600)
+        let now = Int64(today.timeIntervalSince1970)
+        let entries = [
+            DemoData.entry(3, at: now - 60, action: "read", outcome: "released", detail: ""),
+            DemoData.entry(2, at: now - 120, action: "read", outcome: "released", detail: ""),
+            DemoData.entry(1, at: now - 86_400, action: "read", outcome: "released", detail: ""),
+        ]
+        let days = EntryText.days(entries)
+        XCTAssertEqual(days.map { $0.entries.map(\.id) }, [[3, 2], [1]])
+        XCTAssertEqual(EntryText.day(days[0].day, now: today), "Today")
+        XCTAssertEqual(EntryText.day(days[1].day, now: today), "Yesterday")
+        XCTAssertEqual(TimerPill.ago(now - 300, now: now), "5m")
+    }
 }

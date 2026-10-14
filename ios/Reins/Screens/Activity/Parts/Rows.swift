@@ -69,68 +69,156 @@ struct OutcomeTag: View {
     }
 }
 
-/// The small mark on entries that Autopilot, a bypass or Lockdown decided.
-struct DecidedByBadge: View {
-    var decidedBy: String
+/// An entry in words and marks: its sentence, the day it belongs to, and how it ended (pure, unit-tested).
+enum EntryText {
+    /// "Read 2 emails", "Search Gmail · invoice", "Access granted": one line of what happened.
+    static func title(_ entry: ActivityEntry) -> String {
+        if ActionKind.of(entry.action) == .grant {
+            let full = entryTitle(label: "", action: entry.action, count: 1, service: entry.service, outcome: entry.outcome)
+            return full.hasPrefix(": ") ? String(full.dropFirst(2)) : full
+        }
+        return operationTitle(action: entry.action, count: Int(entry.count), service: entry.service, title: entry.opTitle, op: entry.op)
+    }
 
-    var body: some View {
-        let (label, symbol, tint): (String, String, Color) = switch decidedBy {
-        case "bypass": ("Bypass", "bolt.fill", Palette.danger)
-        case "lockdown": ("Lockdown", "lock.fill", Palette.warning)
-        default: ("Autopilot", "sparkles", Palette.accent)
+    /// How an entry ended, as the history row's trailing mark.
+    enum Mark: Equatable { case approved, denied, failed, auto, grant, bypass, lockdown }
+
+    static func mark(_ entry: ActivityEntry) -> Mark {
+        switch entry.decidedBy {
+        case "autopilot": return .auto
+        case "bypass": return .bypass
+        case "lockdown": return .lockdown
+        default: break
         }
-        HStack(spacing: 4) {
-            Image(systemName: symbol).font(.system(size: 10, weight: .bold))
-            Text(label).font(RFont.sans(11.5, .semibold)).lineLimit(1)
+        if entry.grantId != nil && entry.outcome != "denied" { return .grant }
+        switch entry.outcome {
+        case "denied": return .denied
+        case "error": return .failed
+        default: return .approved
         }
-        .foregroundStyle(tint)
-        .padding(.leading, 6)
-        .padding(.trailing, 8)
-        .padding(.vertical, 3)
-        .background(tint.opacity(0.12), in: Capsule())
+    }
+
+    /// "TODAY", "YESTERDAY", else the date ("Mon, Oct 12").
+    static func day(_ start: Date, now: Date) -> String {
+        let calendar = Calendar.current
+        if calendar.isDate(start, inSameDayAs: now) { return "Today" }
+        if let yesterday = calendar.date(byAdding: .day, value: -1, to: now), calendar.isDate(start, inSameDayAs: yesterday) { return "Yesterday" }
+        let sameYear = calendar.component(.year, from: start) == calendar.component(.year, from: now)
+        return sameYear
+            ? start.formatted(.dateTime.weekday(.abbreviated).month(.abbreviated).day())
+            : start.formatted(date: .abbreviated, time: .omitted)
+    }
+
+    /// The time on the row: "5 min ago" today, "18:20" before.
+    static func time(_ at: Int64, now: Int64) -> String {
+        let date = Date(timeIntervalSince1970: TimeInterval(at))
+        if Calendar.current.isDate(date, inSameDayAs: Date(timeIntervalSince1970: TimeInterval(now))) { return TimeText.relative(at, now: now) }
+        return date.formatted(date: .omitted, time: .shortened)
+    }
+
+    /// The entries by day, newest first, keeping their order.
+    static func days(_ entries: [ActivityEntry]) -> [(day: Date, entries: [ActivityEntry])] {
+        let calendar = Calendar.current
+        var out: [(day: Date, entries: [ActivityEntry])] = []
+        for entry in entries {
+            let day = calendar.startOfDay(for: Date(timeIntervalSince1970: TimeInterval(entry.at)))
+            if let last = out.indices.last, out[last].day == day {
+                out[last].entries.append(entry)
+            } else {
+                out.append((day, [entry]))
+            }
+        }
+        return out
     }
 }
 
-/// One operation in a list: what it was, who asked, which account, when, and how it ended.
-struct ActivityRow: View {
-    var entry: ActivityEntry
-    var selected = false
+/// The trailing mark of a history row: a green check, a red cross, a violet bolt "Auto", a key "Grant".
+struct EntryMark: View {
+    var mark: EntryText.Mark
 
     var body: some View {
-        HStack(alignment: .top, spacing: 14) {
-            ActionTile(kind: ActionKind.of(entry.action), count: Int(entry.count), size: 44)
-            VStack(alignment: .leading, spacing: 4) {
-                HStack(alignment: .center, spacing: 8) {
-                    ConnectionIcon(connectionId: entry.connectionId, label: entry.connectionLabel, size: 20)
-                    Text(entry.headline)
-                        .font(RFont.sans(16, .semibold))
-                        .foregroundStyle(Palette.text)
-                        .lineLimit(2)
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                }
-                if !entry.detail.isEmpty {
-                    Text(untrusted(entry.detail))
-                        .font(RFont.sans(14))
-                        .foregroundStyle(Palette.secondary)
-                        .lineLimit(2)
-                }
-                ConnectorTags(service: entry.service, account: entry.account).padding(.top, 3)
-            }
-            VStack(alignment: .trailing, spacing: 6) {
-                Text(TimeText.relative(entry.at))
-                    .font(RFont.sans(12.5))
-                    .foregroundStyle(Palette.tertiary)
-                    .lineLimit(1)
-                OutcomeTag(outcome: entry.outcome)
-                if !entry.decidedBy.isEmpty { DecidedByBadge(decidedBy: entry.decidedBy) }
-            }
-            .fixedSize()
+        let (symbol, text, tint): (String, String?, Color) = switch mark {
+        case .approved: ("checkmark", nil, Palette.success)
+        case .denied: ("xmark", nil, Palette.danger)
+        case .failed: ("exclamationmark.triangle", nil, Palette.warning)
+        case .auto: ("bolt", "Auto", Palette.accent)
+        case .grant: ("key.horizontal", "Grant", Palette.accent)
+        case .bypass: ("bolt.fill", "Bypass", Palette.danger)
+        case .lockdown: ("lock.fill", "Lockdown", Palette.warning)
         }
-        .padding(.horizontal, 16)
-        .padding(.vertical, 12)
+        HStack(spacing: 4) {
+            Image(systemName: symbol).font(.system(size: text == nil ? 14 : 12, weight: .semibold))
+            if let text { Text(text).font(RFont.sans(12.5, .semibold)) }
+        }
+        .foregroundStyle(tint)
+        .fixedSize()
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel(text ?? (mark == .denied ? "Denied" : mark == .failed ? "Failed" : "Approved"))
+    }
+}
+
+/// An operation's kind as a small tinted tile (36 pt, rounded).
+struct KindTile: View {
+    var kind: ActionKind
+    var size: CGFloat = 36
+
+    var body: some View {
+        let tint = ActionTile.color(kind)
+        Image(systemName: kind.symbol)
+            .font(.system(size: size * 0.45, weight: .semibold))
+            .foregroundStyle(tint)
+            .frame(width: size, height: size)
+            .background(tint.opacity(0.14), in: RoundedRectangle(cornerRadius: size * 0.3, style: .continuous))
+            .accessibilityHidden(true)
+    }
+}
+
+/// One operation in the history: its kind, the sentence, who and when, and how it ended. `first` and `last` round the
+/// group's corners (each row is its own lazy cell).
+struct HistoryRow: View {
+    var entry: ActivityEntry
+    var selected = false
+    var first = false
+    var last = false
+    var now: Int64 = Timers.nowSeconds()
+
+    var body: some View {
+        HStack(spacing: 12) {
+            KindTile(kind: ActionKind.of(entry.action))
+            VStack(alignment: .leading, spacing: 3) {
+                sentence
+                    .lineLimit(1)
+                HStack(spacing: 5) {
+                    ConnectionIcon(connectionId: entry.connectionId, label: entry.connectionLabel, size: 14)
+                    Text("\(untrusted(entry.connectionLabel)) · \(EntryText.time(entry.at, now: now))")
+                        .font(RFont.sans(12.5))
+                        .foregroundStyle(Palette.tertiary)
+                        .lineLimit(1)
+                }
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+            EntryMark(mark: EntryText.mark(entry))
+        }
+        .padding(.horizontal, 14)
+        .padding(.vertical, 11)
         .background(selected ? Palette.accentSoft : Color.clear)
         .contentShape(Rectangle())
         .accessibilityElement(children: .combine)
+    }
+
+    /// The sentence, and what it was about in a quieter colour when there is room.
+    private var sentence: Text {
+        var out = AttributedString(EntryText.title(entry))
+        out.font = RFont.sans(15, .medium)
+        out.foregroundColor = Palette.text
+        let detail = untrusted(entry.detail).trimmingCharacters(in: .whitespacesAndNewlines)
+        if !detail.isEmpty {
+            var more = AttributedString(" · " + detail)
+            more.font = RFont.sans(15)
+            more.foregroundColor = Palette.tertiary
+            out += more
+        }
+        return Text(out)
     }
 }
 

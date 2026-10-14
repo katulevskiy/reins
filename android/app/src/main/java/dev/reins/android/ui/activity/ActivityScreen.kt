@@ -1,7 +1,6 @@
 package dev.reins.android.ui.activity
 
 import androidx.compose.foundation.background
-import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
@@ -14,70 +13,74 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.rounded.Add
 import androidx.compose.material.icons.rounded.KeyboardArrowUp
+import androidx.compose.material.icons.rounded.Lock
+import androidx.compose.material.icons.rounded.NotificationsOff
+import androidx.compose.material.icons.rounded.PhoneAndroid
+import androidx.compose.material.icons.rounded.Warning
 import androidx.compose.material3.Icon
+import androidx.compose.material3.pulltorefresh.PullToRefreshBox
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
-import androidx.compose.runtime.State
-import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableStateOf
-import androidx.compose.runtime.setValue
 import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.runtime.setValue
 import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import dev.reins.android.AppContainer
-import dev.reins.android.design.ActionKind
-import dev.reins.android.design.ActionTile
-import dev.reins.android.design.Banner
-import dev.reins.android.design.BannerKind
 import dev.reins.android.design.ButtonStyle
 import dev.reins.android.design.CapsuleButton
-import dev.reins.android.design.CountdownFrame
 import dev.reins.android.design.EmptyState
 import dev.reins.android.design.Glyph
-import dev.reins.android.design.Hairline
 import dev.reins.android.design.LargeTitle
 import dev.reins.android.design.LocalColors
 import dev.reins.android.design.RText
 import dev.reins.android.design.RType
-import dev.reins.android.design.ConnectorTags
+import dev.reins.android.design.Timers
 import dev.reins.android.design.glass
 import dev.reins.android.design.pressable
-import dev.reins.android.design.rememberNowState
-import dev.reins.android.design.urgency
-import dev.reins.android.platform.rememberScreenLockState
-import dev.reins.android.ui.common.ScreenLockCard
 import dev.reins.android.platform.NotificationAccess
 import dev.reins.android.platform.rememberNotificationState
+import dev.reins.android.platform.rememberScreenLockState
 import dev.reins.android.state.AppState
-import dev.reins.android.ui.common.ActivityRow
-import dev.reins.android.ui.common.ConnectionIcon
-import dev.reins.android.ui.common.fullTitle
-import dev.reins.android.ui.common.relativeTime
-import dev.reins.android.ui.common.untrusted
+import dev.reins.android.ui.main.HeaderControlHeight
+import dev.reins.android.ui.settings.PillButton
+import dev.reins.android.ui.settings.primaryFill
 import dev.reins.core.PendingItem
-import dev.reins.core.PendingKind
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
-/** The first tab: what waits for you, then everything your AIs did, newest first. */
+/** One row of the history as the list lays it out: a day's header, or an entry with its place in the day's card. */
+private sealed interface HistoryItem {
+    data class Day(val label: String, val first: Boolean) : HistoryItem
+
+    data class Entry(val entry: dev.reins.core.ActivityEntry, val first: Boolean, val last: Boolean, val index: Int) : HistoryItem
+}
+
+/** The first tab: what waits for you, then everything your AIs did, by day, newest first. */
 @Composable
 fun ActivityScreen(
     container: AppContainer,
@@ -85,14 +88,17 @@ fun ActivityScreen(
     onDismissNotice: () -> Unit,
     onOpenPending: (PendingItem) -> Unit,
     onOpenEntry: (Long) -> Unit,
+    /** The round + beside the title: the integrations. */
     onIntegrations: () -> Unit,
     /** The mode pill: the quick switcher (or the Autopilot tab). */
     onAutopilot: () -> Unit = {},
-    /** "Approve all" (true) or "Deny all" (false) for a burst of requests from one AI. */
+    /** Autopilot's one-tap pick: Allow (true, after the owner check) or Deny (false) for one request or a group. */
     onAnswerBurst: (Burst, Boolean) -> Unit = { _, _ -> },
     /** With nothing connected yet: pair a computer, or get the address for Claude.ai / ChatGPT. */
     onConnectComputer: () -> Unit = {},
     onConnectAi: () -> Unit = {},
+    /** "Another phone approves": where to switch back. */
+    onOpenSettings: () -> Unit = {},
 ) {
     val c = LocalColors.current
     val state: AppState = container.state
@@ -103,57 +109,81 @@ fun ActivityScreen(
     val replaced by state.deviceReplaced.collectAsStateWithLifecycle()
     val registrationError by state.registrationError.collectAsStateWithLifecycle()
     val connections by state.connections.collectAsStateWithLifecycle()
-    // "Automatic": only what Autopilot, a bypass or Lockdown decided.
-    var automaticOnly by androidx.compose.runtime.saveable.rememberSaveable { mutableStateOf(false) }
-    val automaticCount = remember(entries) { entries.count { it.decidedBy.isNotEmpty() } }
-    val showFilters = automaticCount > 0 || automaticOnly
-    val burst = remember(pending) { burstBar(pending) }
-    val shown = remember(entries, automaticOnly) { if (automaticOnly) entries.filter { it.decidedBy.isNotEmpty() } else entries }
-    // The "new above" marker sits over the oldest entry you have not seen.
+    val apSettings by state.autopilot.collectAsStateWithLifecycle()
+    var filter by rememberSaveable { mutableStateOf(HistoryFilter.All) }
+    var filtersOpen by rememberSaveable { mutableStateOf(false) }
+    val details = rememberPendingDetails(container, pending)
+    val cards = remember(pending) { waitCards(pending) }
+    val shown = remember(entries, filter) { entries.filter(filter::matches) }
+    val nowSeconds = (Timers.frozenNowMillis ?: System.currentTimeMillis()) / 1000
+    // The history, by day; the "new above" marker sits over the oldest entry you have not seen.
+    val history = remember(shown, nowSeconds / 3_600) {
+        buildList {
+            var day: Long? = null
+            shown.forEachIndexed { i, e ->
+                val d = dayOf(e.at)
+                if (d != day) {
+                    add(HistoryItem.Day(dayLabel(e.at, nowSeconds), first = day == null))
+                    day = d
+                }
+                val next = shown.getOrNull(i + 1)
+                add(HistoryItem.Entry(e, first = (lastOrNull() is HistoryItem.Day), last = next == null || dayOf(next.at) != d, index = i))
+            }
+        }
+    }
     val newMarkerAt = remember(shown, seen) { shown.indexOfLast { it.id > seen } }
     val listState = rememberLazyListState()
     val scope = rememberCoroutineScope()
     val context = androidx.compose.ui.platform.LocalContext.current
     val notifications = rememberNotificationState()
     val screenLock = rememberScreenLockState()
+    var refreshing by remember { mutableStateOf(false) }
     // People who never went through the setup (signed in before it existed) are asked once here.
     LaunchedEffect(Unit) {
         val ask = withContext(Dispatchers.Default) { !NotificationAccess.enabled(context) && !NotificationAccess.asked(context) }
         if (ask) notifications.request()
     }
 
-    // Header rows above the entries: notices and the waiting section.
-    val headerCount = 1 + (if (pending.isEmpty()) 0 else 1 + pending.size + (if (burst == null) 0 else 1)) + (if (notice != null) 1 else 0) +
-        (if (notifications.enabled) 0 else 1) + (if (screenLock.set) 0 else 1) +
-        (if (replaced) 1 else 0) + (if (registrationError != null) 1 else 0) + (if (showFilters) 1 else 0)
+    // The rows above the history: the title, the banners, the waiting section and the filters.
+    val headerCount = 1 + (if (notifications.enabled) 0 else 1) + (if (screenLock.set) 0 else 1) + (if (notice != null) 1 else 0) +
+        (if (replaced) 1 else 0) + (if (registrationError != null) 1 else 0) + (if (pending.isEmpty()) 0 else 1 + cards.size) +
+        (if (filtersOpen) 1 else 0)
 
     // Opening the tab lands where you stopped reading: at the oldest entry you have not seen, unless something is waiting.
     var positioned by remember { mutableStateOf(false) }
     LaunchedEffect(entries.isNotEmpty()) {
         if (positioned || entries.isEmpty()) return@LaunchedEffect
         positioned = true
-        val oldestUnseen = entries.indexOfLast { it.id > seen }
+        val oldestUnseen = shown.indexOfLast { it.id > seen }
         if (oldestUnseen > 2 && pending.isEmpty()) {
-            listState.scrollToItem((headerCount + oldestUnseen - 1).coerceAtLeast(0))
+            val at = history.indexOfFirst { it is HistoryItem.Entry && it.index == oldestUnseen }
+            if (at >= 0) listState.scrollToItem((headerCount + at - 1).coerceAtLeast(0))
         }
     }
     // What is on screen counts as seen: scroll up to the newest and the badge clears. Recorded once the list comes to
     // rest, not on every frame of a fling.
-    LaunchedEffect(shown, headerCount) {
-        snapshotFlow { listState.layoutInfo.visibleItemsInfo.map { it.index } }.collectLatest { visible ->
+    LaunchedEffect(shown) {
+        snapshotFlow { listState.layoutInfo.visibleItemsInfo.map { it.key } }.collectLatest { keys ->
             delay(SEEN_SETTLE_MS)
-            val firstEntry = visible.filter { it >= headerCount }.minOrNull()?.minus(headerCount)
-            val newest = when {
-                firstEntry != null -> shown.getOrNull(firstEntry)?.id
-                visible.any { it in 0 until headerCount } -> shown.firstOrNull()?.id.takeIf { listState.firstVisibleItemIndex == 0 }
-                else -> null
-            }
+            val visible = keys.mapNotNull { (it as? String)?.takeIf { k -> k.startsWith("e:") }?.removePrefix("e:")?.toLongOrNull() }
+            // Only the rows above the history on screen, at the very top: the newest counts as seen.
+            val newest = visible.maxOrNull() ?: shown.firstOrNull()?.id.takeIf { listState.firstVisibleItemIndex == 0 && keys.isNotEmpty() }
             if (newest != null) container.markActivitySeen(newest)
         }
     }
     val away by remember { derivedStateOf { listState.firstVisibleItemIndex > 3 } }
 
-    Box(Modifier.fillMaxSize().background(c.background)) {
+    PullToRefreshBox(
+        isRefreshing = refreshing,
+        onRefresh = {
+            refreshing = true
+            scope.launch {
+                container.refreshPending()
+                refreshing = false
+            }
+        },
+        modifier = Modifier.fillMaxSize().background(c.background),
+    ) {
         LazyColumn(
             state = listState,
             modifier = Modifier.fillMaxSize().testTag("activityList"),
@@ -161,99 +191,98 @@ fun ActivityScreen(
         ) {
             item(key = "title") {
                 LargeTitle("Activity") {
-                    dev.reins.android.ui.main.HeaderPill("Integrations", Glyph.Apps, "integrations", onIntegrations)
-                    val apSettings by container.state.autopilot.collectAsStateWithLifecycle()
+                    RoundPlus("integrations", "Integrations", onIntegrations)
                     dev.reins.android.ui.main.ModePill(apSettings, onAutopilot)
                 }
             }
             if (!notifications.enabled) {
-                item(key = "notifications") { NotificationsOffCard(Modifier.padding(horizontal = 16.dp, vertical = 6.dp), notifications::request) }
+                item(key = "notifications") {
+                    CompactBanner(Icons.Rounded.NotificationsOff, "Notifications are off", c.warning, "Turn on", "notificationsOff", "turnOnNotifications", notifications::request)
+                }
             }
             if (!screenLock.set) {
-                item(key = "screenLock") { ScreenLockCard(Modifier.padding(horizontal = 16.dp, vertical = 6.dp), screenLock::openSettings) }
+                item(key = "screenLock") {
+                    CompactBanner(Icons.Rounded.Lock, "No screen lock", c.warning, "Set one", "screenLockOff", "setScreenLock", screenLock::openSettings)
+                }
             }
             notice?.let {
                 item(key = "notice") {
-                    Column(Modifier.padding(horizontal = 16.dp, vertical = 6.dp)) {
-                        Banner(it)
-                        CapsuleButton("Dismiss", Modifier.padding(top = 8.dp), style = ButtonStyle.Ghost, compact = true, onClick = onDismissNotice)
-                    }
+                    CompactBanner(null, it, c.accent, "OK", "notice", "dismissNotice", onDismissNotice, maxLines = 4)
                 }
             }
             if (replaced) {
                 item(key = "replaced") {
-                    Banner(
-                        "Another phone approves now. Switch back in Settings.",
-                        Modifier.padding(16.dp),
-                        BannerKind.Warning,
-                    )
+                    CompactBanner(Icons.Rounded.PhoneAndroid, "Another phone approves", c.warning, "Switch", "replaced", "switchBack", onOpenSettings)
                 }
             }
             registrationError?.let {
                 item(key = "registration") {
-                    Banner("Not your approval phone yet: $it", Modifier.padding(16.dp), BannerKind.Error)
+                    CompactBanner(Icons.Rounded.Warning, "Not your approval phone yet: $it", c.danger, null, "registration", null, {}, maxLines = 3)
                 }
             }
             if (pending.isNotEmpty()) {
-                item(key = "waiting-label") { SectionTitle("Waiting for you") }
-                burst?.let { b ->
-                    item(key = "burst") { BurstBar(b, Modifier.padding(horizontal = 16.dp, vertical = 5.dp), onAnswerBurst) }
-                }
-                itemsIndexed(pending, key = { _, item -> "p:${item.id}" }, contentType = { _, _ -> "pending" }) { _, item ->
-                    PendingCard(item, Modifier.padding(horizontal = 16.dp, vertical = 5.dp)) { onOpenPending(item) }
-                }
-            }
-            if (showFilters) {
-                item(key = "filters") {
-                    Row(Modifier.padding(start = 16.dp, end = 16.dp, top = 14.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                        dev.reins.android.design.SelectChip("All", !automaticOnly, Modifier.testTag("filter:all")) { automaticOnly = false }
-                        dev.reins.android.design.SelectChip("Automatic · $automaticCount", automaticOnly, Modifier.testTag("filter:automatic")) { automaticOnly = true }
+                item(key = "waiting-label") { SectionHeader("Waiting · ${pending.size}", Modifier.testTag("waitingHeader")) }
+                cards.forEach { card ->
+                    when (card) {
+                        is WaitCard.One -> item(key = "p:${card.item.id}", contentType = "pending") {
+                            val item = card.item
+                            val single = Burst(item.connectionId, item.connectionLabel, listOf(item.id), listOf(item.id))
+                            WaitingCard(
+                                item,
+                                details.suggestions[item.id],
+                                details.views[item.id],
+                                Modifier.padding(start = 12.dp, end = 12.dp, bottom = 10.dp),
+                                onReview = { onOpenPending(item) },
+                                onAllow = { onAnswerBurst(single, true) },
+                                onDeny = { onAnswerBurst(single, false) },
+                            )
+                        }
+                        is WaitCard.Group -> item(key = "g:${card.burst.connectionId}", contentType = "group") {
+                            GroupCard(
+                                card,
+                                details,
+                                Modifier.padding(start = 12.dp, end = 12.dp, bottom = 10.dp),
+                                onReview = { onOpenPending(card.items.first()) },
+                                onAllow = { onAnswerBurst(card.burst, true) },
+                                onDeny = { onAnswerBurst(card.burst, false) },
+                            )
+                        }
                     }
                 }
+            }
+            if (filtersOpen) {
+                item(key = "filters") { FilterChips(filter, Modifier.padding(top = 10.dp)) { filter = it } }
             }
             if (shown.isEmpty() && loaded) {
                 item(key = "empty") {
-                    if (automaticOnly) {
-                        EmptyState(
-                            Glyph.Sparkle,
-                            "Nothing automatic yet",
-                            null,
-                            tag = "noAutomatic",
-                        )
-                    } else if (connections.isEmpty()) {
-                        // A new account: nothing can ask yet, so say how to connect something.
-                        EmptyState(
-                            Glyph.List,
-                            "Nothing yet",
-                            null,
-                            tag = "noActivity",
-                        ) {
-                            CapsuleButton("Connect a computer", Modifier.testTag("emptyConnectComputer"), glyph = Glyph.Laptop, onClick = onConnectComputer)
-                            CapsuleButton(
-                                "Connect Claude.ai or ChatGPT",
-                                Modifier.testTag("emptyConnectAi"),
-                                style = ButtonStyle.Secondary,
-                                glyph = Glyph.Link,
-                                onClick = onConnectAi,
-                            )
+                    Column {
+                        if (entries.isNotEmpty()) DayHeader("History", filterOpen = filtersOpen, onFilter = { filtersOpen = !filtersOpen })
+                        when {
+                            filter != HistoryFilter.All -> EmptyState(Glyph.List, "Nothing here", null, tag = if (filter == HistoryFilter.Autopilot) "noAutomatic" else "noFiltered")
+                            connections.isEmpty() -> EmptyState(Glyph.List, "Nothing yet", null, tag = "noActivity") {
+                                // A new account: nothing can ask yet, so say how to connect something.
+                                CapsuleButton("Connect a computer", Modifier.testTag("emptyConnectComputer"), glyph = Glyph.Laptop, onClick = onConnectComputer)
+                                CapsuleButton("Connect Claude.ai or ChatGPT", Modifier.testTag("emptyConnectAi"), style = ButtonStyle.Secondary, glyph = Glyph.Link, onClick = onConnectAi)
+                            }
+                            else -> EmptyState(Glyph.List, "Nothing yet", null, tag = "noActivity")
                         }
-                    } else {
-                        EmptyState(
-                            Glyph.List,
-                            "Nothing yet",
-                            null,
-                            tag = "noActivity",
-                        )
                     }
                 }
             } else {
-                itemsIndexed(shown, key = { _, e -> "e:${e.id}" }, contentType = { _, _ -> "entry" }) { index, entry ->
-                    if (index == 0) SectionTitle(if (automaticOnly) "Decided for you" else "Latest")
-                    if (index == newMarkerAt) NewMarker()
-                    Box(Modifier.testTag("entry:${entry.id}")) {
-                        ActivityRow(entry) { onOpenEntry(entry.id) }
+                history.forEach { row ->
+                    when (row) {
+                        is HistoryItem.Day -> item(key = "d:${row.label}", contentType = "day") {
+                            DayHeader(row.label, filterOpen = if (row.first) filtersOpen else null, onFilter = { filtersOpen = !filtersOpen })
+                        }
+                        is HistoryItem.Entry -> item(key = "e:${row.entry.id}", contentType = "entry") {
+                            Column {
+                                if (row.index == newMarkerAt) NewMarker()
+                                Box(Modifier.testTag("entry:${row.entry.id}")) {
+                                    HistoryRow(row.entry, nowSeconds, row.first, row.last) { onOpenEntry(row.entry.id) }
+                                }
+                            }
+                        }
                     }
-                    if (index < shown.lastIndex) Hairline(inset = 74.dp)
                 }
             }
         }
@@ -278,162 +307,79 @@ fun ActivityScreen(
     }
 }
 
-/** Approvals cannot reach a phone that shows no notifications: said first, until they are on. */
+/** The white round + beside a tab's title. */
 @Composable
-private fun NotificationsOffCard(modifier: Modifier, onTurnOn: () -> Unit) {
+fun RoundPlus(tag: String, label: String, onClick: () -> Unit) {
     val c = LocalColors.current
-    Row(
-        modifier
-            .fillMaxWidth()
-            .background(c.warning.copy(alpha = 0.12f), RoundedCornerShape(18.dp))
-            .padding(14.dp)
-            .testTag("notificationsOff"),
-        verticalAlignment = Alignment.CenterVertically,
-    ) {
-        Box(Modifier.size(40.dp).background(c.warning.copy(alpha = 0.18f), CircleShape), contentAlignment = Alignment.Center) {
-            dev.reins.android.design.GlyphIcon(Glyph.Bell, c.warning, size = 20.dp)
-        }
-        Spacer(Modifier.width(12.dp))
-        Column(Modifier.weight(1f)) {
-            RText("Notifications are off", RType.sans(15.5f, FontWeight.SemiBold), c.text)
-            RText("Requests time out while Reins is closed", RType.sans(13f, lineHeight = 18f), c.secondary, Modifier.padding(top = 2.dp))
-        }
-        Spacer(Modifier.width(10.dp))
-        CapsuleButton("Turn on", Modifier.testTag("turnOnNotifications"), style = ButtonStyle.Accent, compact = true, onClick = onTurnOn)
-    }
+    val (bg, fg) = primaryFill(c)
+    Box(
+        Modifier
+            .size(HeaderControlHeight)
+            .clip(CircleShape)
+            .background(bg)
+            .pressable(shape = CircleShape, label = label, onClick = onClick)
+            .semantics { contentDescription = label }
+            .testTag(tag),
+        contentAlignment = Alignment.Center,
+    ) { Icon(Icons.Rounded.Add, null, Modifier.size(22.dp), tint = fg) }
 }
 
+/** A section's header in the accent colour ("Waiting · 2", "Active · 3"). */
 @Composable
-private fun SectionTitle(text: String) {
+fun SectionHeader(text: String, modifier: Modifier = Modifier) {
     RText(
-        text.uppercase(),
-        RType.sans(12.5f, FontWeight.Medium).copy(letterSpacing = 0.6.sp),
-        LocalColors.current.secondary,
-        Modifier.padding(start = 20.dp, top = 18.dp, bottom = 6.dp),
+        text,
+        RType.sans(14f, FontWeight.Medium),
+        LocalColors.current.accent,
+        modifier.padding(start = 22.dp, top = 14.dp, bottom = 8.dp),
+        maxLines = 1,
     )
+}
+
+/** A notice in one line, with the one thing to do about it. */
+@Composable
+private fun CompactBanner(
+    icon: ImageVector?,
+    text: String,
+    tone: Color,
+    action: String?,
+    tag: String,
+    actionTag: String?,
+    onAction: () -> Unit,
+    maxLines: Int = 1,
+) {
+    val c = LocalColors.current
+    Row(
+        Modifier
+            .padding(horizontal = 12.dp, vertical = 4.dp)
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(20.dp))
+            .background(tone.copy(alpha = 0.12f))
+            .padding(start = 14.dp, end = 6.dp, top = 6.dp, bottom = 6.dp)
+            .testTag(tag),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        if (icon != null) {
+            Icon(icon, null, Modifier.size(18.dp), tint = tone)
+            Spacer(Modifier.width(10.dp))
+        }
+        RText(text, RType.sans(14f, FontWeight.Medium), c.text, Modifier.weight(1f).padding(vertical = 8.dp), maxLines = maxLines)
+        if (action != null) {
+            Spacer(Modifier.width(8.dp))
+            PillButton(action, if (actionTag != null) Modifier.testTag(actionTag) else Modifier, background = tone.copy(alpha = 0.2f), foreground = if (tone == c.accent) c.accent else c.text, height = 34.dp, textSize = 13.5f, onClick = onAction)
+        }
+    }
 }
 
 /** Where the entries you have not seen begin. */
 @Composable
 private fun NewMarker() {
     val c = LocalColors.current
-    Row(Modifier.fillMaxWidth().padding(horizontal = 20.dp, vertical = 6.dp).testTag("newMarker"), verticalAlignment = Alignment.CenterVertically) {
+    Row(Modifier.fillMaxWidth().padding(horizontal = 24.dp, vertical = 6.dp).testTag("newMarker"), verticalAlignment = Alignment.CenterVertically) {
         Box(Modifier.weight(1f).height(1.dp).background(c.accent.copy(alpha = 0.4f)))
         RText("NEW ABOVE", RType.sans(11.5f, FontWeight.SemiBold).copy(letterSpacing = 0.8.sp), c.accent, Modifier.padding(horizontal = 10.dp))
         Box(Modifier.weight(1f).height(1.dp).background(c.accent.copy(alpha = 0.4f)))
     }
-}
-
-/**
- * Several requests at once, in one compact row above the list: approve the routine ones together (one screen lock or
- * biometric check), or deny them. One AI's bar denies everything it asked; a bar for several AIs only their routine
- * requests. What is asked every time stays in the list below and is opened one by one.
- */
-@Composable
-private fun BurstBar(burst: Burst, modifier: Modifier, onAnswer: (Burst, Boolean) -> Unit) {
-    val c = LocalColors.current
-    Row(
-        modifier
-            .fillMaxWidth()
-            .background(c.accent.copy(alpha = 0.08f), RoundedCornerShape(18.dp))
-            .padding(start = 14.dp, end = 10.dp, top = 10.dp, bottom = 10.dp)
-            .testTag("burst"),
-        verticalAlignment = Alignment.CenterVertically,
-    ) {
-        if (burst.ais == 1) {
-            ConnectionIcon(burst.connectionId, burst.label, size = 22.dp)
-            Spacer(Modifier.width(8.dp))
-        }
-        Column(Modifier.weight(1f)) {
-            RText(burst.title, RType.sans(14.5f, FontWeight.SemiBold), c.text, Modifier.testTag("burstTitle"), maxLines = 1)
-            burst.heldNote?.let { RText(it, RType.sans(12.5f), c.secondary, Modifier.testTag("burstHeld"), maxLines = 1) }
-        }
-        Spacer(Modifier.width(8.dp))
-        CapsuleButton(if (burst.ais > 1) "Deny" else "Deny all", Modifier.testTag("denyAll"), style = ButtonStyle.Ghost, compact = true) { onAnswer(burst, false) }
-        Spacer(Modifier.width(6.dp))
-        CapsuleButton("Approve ${burst.quick.size}", Modifier.testTag("approveAll"), style = ButtonStyle.Accent, compact = true) { onAnswer(burst, true) }
-    }
-}
-
-/** A request or connection that waits for you; its border shows how long the AI keeps waiting. */
-@Composable
-private fun PendingCard(item: PendingItem, modifier: Modifier = Modifier, onClick: () -> Unit) {
-    val c = LocalColors.current
-    val action = ActionKind.of(item.action)
-    // An upload waits until the server deletes it (an hour or so), not for an AI that is holding on: no countdown.
-    val waitUntil = if (item.kind == PendingKind.BLOB) null else item.waitUntil
-    // One clock for the border and the seconds left; it stops once the AI has stopped waiting.
-    val now = rememberNowState(untilMillis = waitUntil?.let { it * 1000 })
-    val pairing = item.kind == PendingKind.PAIRING
-    val join = item.kind == PendingKind.JOIN
-    // Neither comes from an AI connection: no connection icon, no integration tags.
-    val fromAi = !pairing && !join
-    CountdownFrame(item.createdAt, waitUntil, modifier.testTag("pending:${item.id}"), now = now) {
-        Row(
-            Modifier
-                .fillMaxWidth()
-                .background(c.elevated, RoundedCornerShape(18.dp))
-                .pressable(highlight = c.controlFill, shape = RoundedCornerShape(18.dp), onClick = onClick)
-                .padding(14.dp),
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            ActionTile(action, item.count.toInt(), size = 46.dp)
-            Spacer(Modifier.width(14.dp))
-            Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(3.dp)) {
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    if (fromAi) {
-                        ConnectionIcon(item.connectionId, item.connectionLabel, size = 20.dp)
-                        Spacer(Modifier.width(8.dp))
-                    }
-                    RText(
-                        when {
-                            pairing -> "${untrusted(item.connectionLabel)}: wants to connect"
-                            join -> "Add ${untrusted(item.connectionLabel)}?"
-                            else -> fullTitle(item.connectionLabel, item.action, item.count.toInt(), item.service, item.opTitle, item.op)
-                        },
-                        RType.sans(16f, FontWeight.SemiBold),
-                        c.text,
-                        Modifier.weight(1f),
-                        maxLines = 2,
-                    )
-                }
-                if (item.kind == PendingKind.BLOB && item.subtitle.isNotBlank()) {
-                    RText(untrusted(item.subtitle), RType.sans(13.5f), c.secondary, maxLines = 2)
-                }
-                if (join) RText("New phone", RType.sans(13.5f), c.secondary, maxLines = 2)
-                if (fromAi) ConnectorTags(item.service, item.account)
-                item.suggestion?.let { line ->
-                    Row(Modifier.testTag("pendingSuggestion:${item.id}"), verticalAlignment = Alignment.CenterVertically) {
-                        dev.reins.android.design.GlyphIcon(Glyph.Sparkle, c.accent, size = 13.dp, weight = 1.9f)
-                        Spacer(Modifier.width(5.dp))
-                        RText(line, RType.sans(12.5f, FontWeight.Medium), c.accent, maxLines = 1)
-                    }
-                }
-                WaitLine(item.createdAt, waitUntil, now)
-            }
-            Spacer(Modifier.width(8.dp))
-            CapsuleButton("Review", style = ButtonStyle.Accent, compact = true, onClick = onClick)
-        }
-    }
-}
-
-/** How long the AI keeps waiting, in its own scope: the clock's ticks recompose this line and nothing else on the card. */
-@Composable
-private fun WaitLine(createdAt: Long, waitUntil: Long?, now: State<Long>) {
-    val c = LocalColors.current
-    // The clock ticks four times a second; the line changes once a second.
-    val line by remember(createdAt, waitUntil, now, c) {
-        derivedStateOf {
-            val u = urgency(createdAt, waitUntil, now.value)
-            when {
-                u == null -> relativeTime(createdAt) to c.tertiary
-                u.stale -> "Stopped waiting" to c.warning
-                u.urgent -> "${u.remainingSeconds} s left" to c.danger
-                else -> "${u.remainingSeconds} s left" to c.secondary
-            }
-        }
-    }
-    RText(line.first, RType.sans(13f, FontWeight.Medium), line.second)
 }
 
 /** How long the list must stay still before what it shows counts as seen. */

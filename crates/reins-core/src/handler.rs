@@ -245,7 +245,7 @@ impl Engine {
             Err(e) => return self.fail(session, request, "search", &e).await,
         };
         let detail = format!("{} for \"{}\"", plural_messages(parsed.len()), text::one_line(query));
-        self.decide_read(session, request, "search", &detail, parsed, |summaries, _| ToolResult::Search {
+        self.decide_read(session, request, "search", &detail, parsed, true, |summaries, _| ToolResult::Search {
             messages: summaries,
         })
         .await
@@ -267,13 +267,16 @@ impl Engine {
             return self.fail_with(session, request, "read", message).await;
         }
         let detail = format!("{} read", plural_messages(parsed.len()));
-        self.decide_read(session, request, "read", &detail, parsed, |_, full| ToolResult::Read {
+        self.decide_read(session, request, "read", &detail, parsed, false, |_, full| ToolResult::Read {
             messages: full,
         })
         .await
     }
 
-    /// Shared tail of search and read: evaluate, then release or park.
+    /// Shared tail of search and read: evaluate, then release or park. A search (`search`) may also be covered by a
+    /// grant for Gmail's headlines (see `crate::starter`): what only that covers is released as its headline (no
+    /// snippet). A read never is: opening a message always needs a read grant or the user.
+    #[allow(clippy::too_many_arguments, reason = "the tail of two handlers, described by what differs between them")]
     async fn decide_read(
         &self,
         session: &Session,
@@ -281,24 +284,37 @@ impl Engine {
         action: &str,
         detail: &str,
         parsed: Vec<ParsedMessage>,
+        search: bool,
         build: impl FnOnce(Vec<MessageSummary>, Vec<reins_proto::gmail::MessageFull>) -> ToolResult,
     ) -> Result<(), CoreError> {
         let facts: Vec<MessageFacts> = parsed.iter().map(|p| p.facts.clone()).collect();
         // A login code or a password is never released by a grant: it always waits for the user's tick.
         let held: Vec<bool> = parsed.iter().map(|p| views::looks_sensitive(&p.summary)).collect();
-        let decision = self.store.evaluate_read_holding(
-            &request.connection_id,
-            request.account.as_deref(),
-            &facts,
-            &held,
-            unix_now(),
-        )?;
-        let summaries: Vec<MessageSummary> = parsed.iter().map(|p| p.summary.clone()).collect();
+        let (connection, account, now) = (&request.connection_id, request.account.as_deref(), unix_now());
+        let (decision, headlines_only) = if search {
+            self.store.evaluate_search_holding(connection, account, &facts, &held, now)?
+        } else {
+            (self.store.evaluate_read_holding(connection, account, &facts, &held, now)?, BTreeSet::new())
+        };
+        let mut summaries: Vec<MessageSummary> = parsed.iter().map(|p| p.summary.clone()).collect();
         if decision.fully_allowed() {
+            for i in &headlines_only {
+                if let Some(m) = summaries.get_mut(*i) {
+                    crate::starter::strip_to_headline(m);
+                }
+            }
             let grant_id = decision.grants_used().into_iter().next().map(|g| g.0);
             let full = parsed.into_iter().map(ParsedMessage::into_full).collect();
             let refs: Vec<&MessageSummary> = summaries.iter().collect();
-            let audit = self.audit(request, action, "released", detail, grant_id, summaries.len(), &refs);
+            let detail = if headlines_only.is_empty() {
+                detail.to_owned()
+            } else {
+                format!("{detail} (headlines only)")
+            };
+            let mut audit = self.audit(request, action, "released", &detail, grant_id, summaries.len(), &refs);
+            if !headlines_only.is_empty() {
+                audit.info.note = Some(crate::starter::HEADLINES_NOTE.to_owned());
+            }
             return self
                 .finish(
                     session,

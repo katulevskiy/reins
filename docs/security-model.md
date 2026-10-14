@@ -172,10 +172,15 @@ device list (`GET /api/devices`) shows any signed-in device the same list.
   [hard floor](#autopilot), have no such button, and the phone's core refuses to approve them that way.
 - "Approve and allow for 1 hour" (8 hours after repeated identical approvals) creates an ordinary standing permission
   for the same connection, kind of request and target, shown under Grants.
-- The starting rule (chosen during setup, "ask every time" until then): "reads for a day" gives a connection you just
-  approved standing read permissions for 24 hours, one per connected integration (never the vault or the desktop app)
-  and per MCP server's read-only tools. They are ordinary grants: listed, logged, revocable. A read permission
-  includes listing the same things, never writing.
+- The starting rule (chosen during setup, "ask every time" until then and by default): "headlines for its first hour"
+  gives a connection you just approved, for one hour, one headlines permission per connected integration that has
+  them (Gmail, and integrations with lists; never the vault, payments, the desktop app or MCP servers). They are
+  ordinary grants: listed, logged, revocable. A headlines permission is its own kind of scope, which no read, write or
+  other check consults: the phone's core uses it only for a Gmail search, whose results it then strips to sender,
+  recipients, subject and date (the snippet, taken from the body, is dropped), and for a list in another integration,
+  whose items it strips to id, name, sender and date. Reading a message or anything else is never covered by it, and
+  what looks like a code or a password still waits. The retired "reads for a day" rule becomes "ask every time" when
+  the phone next reads it (also from a restored backup); the 24-hour grants it gave stay until they end.
 - No standing permission releases an email or message that looks like a login code or a password; it always waits
   for the user's tick.
 - One-time approvals execute exactly what was shown and create no permission. Standing permissions are limited to one

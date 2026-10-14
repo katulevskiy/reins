@@ -58,6 +58,8 @@ let maxResumeUses = 1000
 struct ResumeDraft: Equatable {
     /// One of the quick choices; ignored when a custom time is typed.
     var period: ResumePeriod = .day
+    /// "Once": one use, within a day (only for a grant whose scope the editor can describe).
+    var once = false
     var customAmount = ""
     var customUnit: CustomUnit = .hours
     var moreOpen = false
@@ -73,6 +75,21 @@ enum ResumeResult: Equatable {
     /// `standing` is set only when the user changed who or what it covers, or the number of uses.
     case ok(seconds: Int64, standing: StandingGrant?)
     case invalid(String)
+}
+
+/// What the duration control shows as chosen: Once, or one of the periods.
+enum ResumePick: Hashable {
+    case once
+    case period(ResumePeriod)
+}
+
+/// For how long a running grant is extended: a period or a typed time, from now (its uses stay).
+func buildExtend(_ grant: GrantView, _ draft: ResumeDraft) -> ResumeResult {
+    guard let seconds = resumeSeconds(draft) else { return .invalid("Enter the time as a whole number.") }
+    if seconds < minResumeSeconds { return .invalid("Choose at least a minute.") }
+    if seconds > maxResumeSeconds { return .invalid("Choose 30 days at most.") }
+    if grant.allMail && seconds > maxAllMailSeconds { return .invalid("Access to all mail can last 7 days at most.") }
+    return .ok(seconds: seconds, standing: nil)
 }
 
 /// The sheet as it opens: the grant exactly as it was, for a day.
@@ -110,7 +127,9 @@ func buildResume(_ grant: GrantView, _ draft: ResumeDraft) -> ResumeResult {
     if seconds > maxResumeSeconds { return .invalid("Choose 30 days at most.") }
     if allMail && seconds > maxAllMailSeconds { return .invalid("Access to all mail can last 7 days at most.") }
     var maxUses: UInt32?
-    if draft.limitUses {
+    if draft.once && editable != nil {
+        maxUses = 1
+    } else if draft.limitUses {
         guard let n = Int(draft.uses.trimmingCharacters(in: .whitespacesAndNewlines)), (1...maxResumeUses).contains(n) else {
             return .invalid("Uses must be between 1 and \(maxResumeUses).")
         }

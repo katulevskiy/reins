@@ -233,11 +233,12 @@ pub struct ApprovalView {
 /// What a newly connected AI may do before it asked for anything (see `crate::starter`).
 #[derive(Clone, Copy, Debug, PartialEq, Eq, uniffi::Enum)]
 pub enum StartingPolicy {
-    /// Everything it asks waits for the user.
+    /// Everything it asks waits for the user. The default.
     AskEveryTime,
-    /// It may search and read the connected integrations for 24 hours (grants under Grants); sending, changing,
-    /// the vault, codes and passwords, and the hard floor still ask.
-    ReadsForADay,
+    /// For its first hour it may see the headlines of what its searches and lists find (Gmail: sender, subject and
+    /// date; elsewhere: names and titles), as grants under Grants. Opening anything, sending, changing, the vault,
+    /// codes and passwords, and the hard floor still ask.
+    HeadlinesFirstHour,
 }
 
 /// One-tap answers to a request that is not asked every time (see `crate::quick`).
@@ -431,7 +432,7 @@ pub struct GrantView {
     pub id: String,
     pub connection_id: String,
     pub connection_label: String,
-    /// "read" | "send"
+    /// "read" | "send" | "accounts" | "list" | "write" | "headlines" (what searches and lists find, metadata only)
     pub action: String,
     pub summary: String,
     pub expires_at: Option<i64>,

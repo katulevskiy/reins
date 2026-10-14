@@ -60,7 +60,7 @@ class QuickApprovalsFlowTest : FlowHarness() {
     }
 
     @Test
-    fun aBurstFromOneAiIsApprovedWithOneCheckAndWhatNeedsALookStays() {
+    fun anAisRoutineRequestsAreOneCardAllowedWithOneCheckAndWhatNeedsALookStays() {
         core.pending = listOf(
             TestData.pending("r1", quick = true),
             TestData.pending("r2", "read", quick = true),
@@ -68,13 +68,15 @@ class QuickApprovalsFlowTest : FlowHarness() {
             TestData.pending("r4", "grant", 1u),
             TestData.pending("r5", label = "Codex", conn = "c2", quick = true),
         )
+        for (id in listOf("r1", "r2", "r3")) core.suggestions[id] = TestData.suggestion(id)
         dev.reins.android.platform.Foreground.autoPopup = false
         launch()
         awaitTag("burst")
-        // Codex's one routine request is no burst: the bar is Claude's alone.
-        rule.onNodeWithTag("burstTitle").assertTextEquals("Claude · 4 waiting")
-        rule.onNodeWithTag("burstHeld").assertTextEquals("1 needs a closer look")
-        rule.onNodeWithTag("approveAll").assertTextEquals("Approve 3")
+        // Codex's one routine request is no group: it keeps its own card.
+        assertTrue(has("pending:r5"))
+        rule.onNodeWithTag("burstTitle", useUnmergedTree = true).assertTextEquals("Wants to search Gmail 2 times and read 2 emails")
+        awaitTag("approveAll")
+        rule.onNodeWithTag("approveAll").assertTextEquals("Allow 3")
         tap("approveAll")
         awaitCore { core.quickApprovals.size == 3 }
         assertEquals(listOf("r1", "r2", "r3"), core.quickApprovals.toList().sorted())
@@ -85,7 +87,7 @@ class QuickApprovalsFlowTest : FlowHarness() {
     }
 
     @Test
-    fun burstsOfSeveralAisAreOneCompactBarThatAnswersOnlyTheirRoutineRequests() {
+    fun eachAiHasItsOwnGroupAndDenyTakesBackOnlyItsRequests() {
         core.pending = listOf(
             TestData.pending("r1", quick = true),
             TestData.pending("r2", quick = true),
@@ -93,26 +95,18 @@ class QuickApprovalsFlowTest : FlowHarness() {
             TestData.pending("r4", label = "Codex", conn = "c2", quick = true),
             TestData.pending("r5", label = "Codex", conn = "c2", quick = true),
         )
+        for (id in listOf("r1", "r2")) core.suggestions[id] = TestData.suggestion(id, verdict = dev.reins.core.Verdict.DENY, pApprove = 0.02f, pDeny = 0.95f)
         dev.reins.android.platform.Foreground.autoPopup = false
         launch()
-        awaitTag("burst")
-        assertEquals(1, rule.onAllNodes(androidx.compose.ui.test.hasTestTag("burst")).fetchSemanticsNodes().size)
-        rule.onNodeWithTag("burstTitle").assertTextEquals("4 routine · Claude and Codex")
-        assertFalse(has("burstHeld"))
+        awaitTag("denyAll")
+        assertEquals(2, rule.onAllNodes(androidx.compose.ui.test.hasTestTag("burst")).fetchSemanticsNodes().size)
+        // Codex's group has no suggestion: Review only.
+        assertEquals(1, rule.onAllNodes(androidx.compose.ui.test.hasTestTag("denyAll")).fetchSemanticsNodes().size)
         tap("denyAll")
-        awaitCore { core.denials.size == 4 }
-        assertEquals(listOf("r1", "r2", "r4", "r5"), core.denials.toList().sorted())
+        awaitCore { core.denials.size == 2 }
+        assertEquals(listOf("r1", "r2"), core.denials.toList().sorted())
+        assertEquals("deny needs no check", 0, prompts.get())
         assertTrue("what needs a look is not denied with them", has("pending:r3"))
-    }
-
-    @Test
-    fun denyAllDeniesEverythingThatAiAsked() {
-        core.pending = listOf(TestData.pending("r1", quick = true), TestData.pending("r2", quick = true), TestData.pending("r4", "grant", 1u))
-        dev.reins.android.platform.Foreground.autoPopup = false
-        launch()
-        tap("denyAll")
-        awaitCore { core.denials.size == 3 }
-        assertEquals(0, prompts.get())
     }
 
     @Test
