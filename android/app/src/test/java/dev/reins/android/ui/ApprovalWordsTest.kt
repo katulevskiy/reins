@@ -116,6 +116,10 @@ class ApprovalWordsTest {
         val force = AskRuleView("Rewriting git history", "git push --force*", "git push --force origin main", "git-history", true, false)
         val red = dangerTag(TestData.askView(rule = force).copy(noStanding = true))!!
         assertTrue(red.destructive && red.help.contains("asked every time"))
+        val plain = TestData.askView()
+        val unread = dangerTag(plain.copy(ask = plain.ask!!.copy(uncertain = true)))!!
+        assertEquals("Couldn't read this" to "askUncertain", unread.label to unread.tag)
+        assertFalse(unread.destructive)
         val own = AskRuleView("Your rule", "make deploy", "make deploy", null, false, true)
         assertTrue(ruleTag(own).help.contains("Your computer says so"))
     }

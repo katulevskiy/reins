@@ -98,6 +98,9 @@ final class ApprovalWordsTests: XCTestCase {
             destructive: true, reported: false
         )
         XCTAssertTrue(ApprovalWords.ruleTag(force).destructive)
+        var unread = T.view("req41", kind: .write, service: "desktop", op: "ask", opTitle: "Ask you on your phone", action: "write")
+        unread.ask = AskView(question: "Claude Code wants to run: x", detail: nil, topic: nil, rule: nil, uncertain: true)
+        XCTAssertEqual(ApprovalWords.dangerTag(unread)?.id, "askUncertain")
         let own = AskRuleView(label: "Your rule", pattern: "make deploy", matched: "make deploy", group: nil, destructive: false, reported: true)
         XCTAssertTrue(ApprovalWords.ruleTag(own).help.contains("Your computer says so"))
     }
