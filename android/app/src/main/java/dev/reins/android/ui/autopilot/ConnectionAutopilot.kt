@@ -29,7 +29,6 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import dev.reins.android.autopilot.AutopilotText
 import dev.reins.android.design.Banner
 import dev.reins.android.design.BannerKind
-import dev.reins.android.design.ConfirmDialog
 import dev.reins.android.design.LocalColors
 import dev.reins.android.design.RText
 import dev.reins.android.design.RType
@@ -39,7 +38,7 @@ import dev.reins.android.ui.settings.ConnectedButtons
 import dev.reins.android.ui.settings.PillButton
 import dev.reins.android.ui.settings.SettingsGroup
 import dev.reins.android.ui.settings.SettingsRow
-import dev.reins.android.ui.settings.modeIcon
+import dev.reins.android.ui.settings.settingsModeIcon
 import dev.reins.core.AutopilotMode
 
 /** Its own mode wins over the global one: what the (?) beside "Autopilot" on an AI's page explains. */
@@ -64,7 +63,6 @@ fun ConnectionAutopilotSection(connectionId: String, label: String, viewModel: A
     val lockedDown = chosen == AutopilotMode.LOCKDOWN
     val globalLockdown = mode == AutopilotMode.LOCKDOWN && s.mode == AutopilotMode.LOCKDOWN && own?.baseMode != AutopilotMode.LOCKDOWN
     var bypassAsk by remember { mutableStateOf(false) }
-    var lockdownAsk by remember { mutableStateOf(false) }
     var help by rememberSaveable { mutableStateOf(false) }
 
     // The choices of the group: like every AI (null), then the modes that are not one of the two buttons below.
@@ -79,7 +77,7 @@ fun ConnectionAutopilotSection(connectionId: String, label: String, viewModel: A
                 selected = { it == chosen },
                 label = { it?.let(AutopilotText::name) ?: "Like all" },
                 tag = { if (it == null) "connMode:follow" else "connMode:${it.name}" },
-                icon = { m -> m?.let { modeIcon(it) to if (it == AutopilotMode.MANUAL) modeTint(it, c) else c.secondary } },
+                icon = { m -> m?.let { settingsModeIcon(it) to if (it == AutopilotMode.MANUAL) modeTint(it, c) else c.secondary } },
             ) { m -> viewModel.setMode(m, connectionId = connectionId) }
             Row(Modifier.padding(top = 12.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 if (bypassUntil != null) {
@@ -108,7 +106,7 @@ fun ConnectionAutopilotSection(connectionId: String, label: String, viewModel: A
                         icon = Icons.Rounded.Lock,
                         background = if (c.dark) Color.White.copy(alpha = 0.06f) else c.controlFill,
                         foreground = c.text,
-                    ) { lockdownAsk = true }
+                    ) { viewModel.setMode(AutopilotMode.LOCKDOWN, connectionId = connectionId) }
                 }
             }
             if (globalLockdown) {
@@ -132,18 +130,6 @@ fun ConnectionAutopilotSection(connectionId: String, label: String, viewModel: A
                 viewModel.setMode(AutopilotMode.BYPASS, minutes, connectionId)
             },
             onDismiss = { bypassAsk = false },
-        )
-    }
-    if (lockdownAsk) {
-        ConfirmDialog(
-            title = "Lock down ${untrusted(label)}?",
-            text = "Only this AI. Waiting requests too.",
-            confirmLabel = "Lock down",
-            onConfirm = {
-                lockdownAsk = false
-                viewModel.setMode(AutopilotMode.LOCKDOWN, connectionId = connectionId)
-            },
-            onDismiss = { lockdownAsk = false },
         )
     }
 }

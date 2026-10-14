@@ -174,11 +174,10 @@ class AppViewModel(private val container: AppContainer) : ViewModel() {
         }
     }
 
-    /** The bypass notification or the download's: Settings > Autopilot. */
+    /** The bypass notification or the download's: the Autopilot tab. */
     fun openAutopilot() {
         home()
-        open(Route.Settings)
-        open(Route.Autopilot)
+        selectTab(Tab.Autopilot)
     }
 
     /** A "grant ends soon" notification was tapped: show that grant, if it exists. */

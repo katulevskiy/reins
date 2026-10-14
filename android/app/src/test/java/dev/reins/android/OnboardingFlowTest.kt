@@ -98,7 +98,7 @@ class OnboardingFlowTest : FlowHarness() {
     /** Settings > Connect > Computer > "Scan QR code": the connect page opens and starts the scanner. */
     private fun scanFromSettings() {
         launch()
-        tap("openSettings")
+        tap("tabSettings")
         tap("connect")
         tap("sheetScanQr")
         awaitTag("scanQr")
@@ -301,7 +301,7 @@ class OnboardingFlowTest : FlowHarness() {
     fun theTourCanBeTakenAgainFromSettings() {
         launch()
         awaitTag("noActivity")
-        tap("openSettings")
+        tap("tabSettings")
         tap("takeTour")
         awaitTag("setupWelcome")
         tap("setupSkip")
@@ -316,7 +316,7 @@ class OnboardingFlowTest : FlowHarness() {
         awaitTag("setup")
         tap("setupSkip")
         awaitTag("noActivity")
-        tap("openSettings")
+        tap("tabSettings")
         tap("signOut")
         rule.onAllNodes(hasText("Sign out")).let { it[it.fetchSemanticsNodes().lastIndex] }.performClick()
         awaitTag("welcome")
@@ -403,7 +403,7 @@ class OnboardingFlowTest : FlowHarness() {
     @Test
     fun typeCodeInTheConnectSheetOpensTheCodeField() {
         launch()
-        tap("openSettings")
+        tap("tabSettings")
         tap("connect")
         tap("sheetTypeCode")
         awaitTag("pairCode")

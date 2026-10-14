@@ -149,6 +149,16 @@ enum class Event(val haptic: Haptic?, val cue: Cue?) {
     Alert(Haptic.Attention, Cue.Attention),
     Refresh(Haptic.Confirm, Cue.Refresh),
     Copied(Haptic.Confirm, Cue.Copy),
+
+    // Hold to confirm (Bypass, Disconnect, Delete account).
+    /** A tick while held; pass the tick's index, so they climb the detent ladder as the hold fills. */
+    HoldTick(Haptic.Tick, Cue.Detent),
+
+    /** Held long enough: a heavy thump and the success sound. */
+    HoldConfirmed(Haptic.Heavy, Cue.Done),
+
+    /** Let go too early: nothing happens, said softly. */
+    HoldReleased(null, Cue.Close),
     Undo(Haptic.Select, Cue.Undo),
 
     // Autopilot. Automatic answers are subtle; switching modes answers the hand that switched.

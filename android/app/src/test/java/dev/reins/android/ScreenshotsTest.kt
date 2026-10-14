@@ -7,6 +7,8 @@ import androidx.compose.ui.test.junit4.v2.createEmptyComposeRule
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
+import androidx.compose.ui.test.performTouchInput
+import androidx.compose.ui.test.performSemanticsAction
 import androidx.compose.ui.test.performTextInput
 import androidx.compose.ui.test.performScrollTo
 import androidx.compose.ui.test.performScrollToIndex
@@ -324,7 +326,7 @@ abstract class ScreenshotsBase(private val suffix: String) {
             TestData.computer("d1", "MacBook Pro").copy(lastUsedAt = now - 10),
         )
         launch()
-        tap("openSettings")
+        tap("tabSettings")
         await("accountCard")
         await("devicesRow")
         val state = (context.applicationContext as ReinsApp).container.state
@@ -335,7 +337,7 @@ abstract class ScreenshotsBase(private val suffix: String) {
         state.setApprovalDevice(true)
         await("notificationsChip")
         shoot("12-settings")
-        rule.onNodeWithTag("privacy").performScrollTo()
+        rule.onNodeWithTag("pageEnd").performScrollTo()
         shoot("12b-settings-scrolled")
         rule.onNodeWithTag("accountCard").performScrollTo()
         tap("connect")
@@ -348,6 +350,14 @@ abstract class ScreenshotsBase(private val suffix: String) {
         await("disconnect")
         await("connMode:follow")
         shoot("13-connection")
+        // Holding Disconnect: the fill, the ring, "Keep holding".
+        rule.onNodeWithTag("disconnect").performScrollTo()
+        rule.mainClock.autoAdvance = false
+        rule.onNodeWithTag("disconnect").performTouchInput { down(center) }
+        rule.mainClock.advanceTimeBy(1_100)
+        shoot("13b-connection-holding")
+        rule.onNodeWithTag("disconnect").performTouchInput { up() }
+        rule.mainClock.autoAdvance = true
     }
 
     /** The account card when notifications are off, and when another phone approves. */
@@ -355,7 +365,7 @@ abstract class ScreenshotsBase(private val suffix: String) {
     fun settingsAttention() {
         shadowOf(context as android.app.Application).denyPermissions(android.Manifest.permission.POST_NOTIFICATIONS)
         launch()
-        tap("openSettings")
+        tap("tabSettings")
         (context.applicationContext as ReinsApp).container.state.setApprovalDevice(true)
         await("turnOnNotifications")
         shoot("12d-settings-notifications-off")
@@ -695,7 +705,7 @@ abstract class ScreenshotsBase(private val suffix: String) {
     @Test
     fun soundsAndHaptics() {
         launch()
-        tap("openSettings")
+        tap("tabSettings")
         tap("openSounds")
         await("soundsMaster")
         shoot("53-sounds")
@@ -711,7 +721,7 @@ abstract class ScreenshotsBase(private val suffix: String) {
         launch()
         await("updatePrompt")
         shoot("35-update-prompt")
-        tap("openSettings")
+        tap("tabSettings")
         await("installUpdate")
         rule.onNodeWithTag("signOut").performScrollTo()
         shoot("36-settings-updates")
@@ -721,7 +731,7 @@ abstract class ScreenshotsBase(private val suffix: String) {
     fun updatesUpToDate() {
         assumeTrue(BuildConfig.SELF_UPDATE)
         launch()
-        tap("openSettings")
+        tap("tabSettings")
         tap("checkUpdates")
         await("updateStatus")
         rule.onNodeWithTag("signOut").performScrollTo()
@@ -757,7 +767,7 @@ abstract class ScreenshotsBase(private val suffix: String) {
 
     private fun openAutopilot() {
         launch()
-        tap("openSettings")
+        tap("tabSettings")
         tap("openAutopilot")
         await("mode:MANUAL")
         repeat(20) { rule.mainClock.advanceTimeBy(50) }
@@ -783,7 +793,7 @@ abstract class ScreenshotsBase(private val suffix: String) {
         tap("bypass:30")
         repeat(10) { rule.mainClock.advanceTimeBy(50) }
         shoot("63-bypass-dialog", dialogs = true)
-        tap("confirmBypass")
+        rule.onNodeWithTag("confirmBypass").performSemanticsAction(androidx.compose.ui.semantics.SemanticsActions.OnClick)
         await("bypassClock")
         repeat(20) { rule.mainClock.advanceTimeBy(50) }
         shoot("64-autopilot-bypass")
@@ -805,7 +815,7 @@ abstract class ScreenshotsBase(private val suffix: String) {
         await("modePill")
         shoot("66-home-bypass-pill")
         core.apGlobal = FakeCore.ApRow(mode = dev.reins.core.AutopilotMode.LOCKDOWN)
-        tap("openSettings")
+        tap("tabSettings")
         tap("openAutopilot")
         await("endLockdown")
         rule.onNodeWithTag("endLockdown").performClick()
@@ -1005,7 +1015,7 @@ abstract class ScreenshotsBase(private val suffix: String) {
         core.model = installed
         core.apConnections["c1"] = FakeCore.ApRow(mode = dev.reins.core.AutopilotMode.AUTO, profileId = "work")
         launch()
-        tap("openSettings")
+        tap("tabSettings")
         tap("connection:c1")
         await("connectionMode")
         rule.onNodeWithTag("connProfile:work").performScrollTo()
@@ -1087,7 +1097,7 @@ abstract class ScreenshotsBase(private val suffix: String) {
         }
         try {
             launch()
-            tap("openSettings")
+            tap("tabSettings")
             tap("recoveryCodeRow")
             await("recoveryCodeSheet")
             shoot("50b-recovery-code", dialogs = true)
@@ -1152,7 +1162,7 @@ abstract class ScreenshotsBase(private val suffix: String) {
     @Test
     fun connectComputer() {
         launch()
-        tap("openSettings")
+        tap("tabSettings")
         tap("connectComputer")
         await("scanQr")
         shoot("14f-connect-computer")
@@ -1191,7 +1201,7 @@ abstract class ScreenshotsBase(private val suffix: String) {
         core.resetDevices()
         core.connections = listOf(TestData.connection("c1", "Claude"), TestData.computer("d1", "MacBook Pro"))
         launch()
-        tap("openSettings")
+        tap("tabSettings")
         tap("devicesRow")
         await("device:d-old")
         shoot("99-devices")

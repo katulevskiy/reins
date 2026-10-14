@@ -37,7 +37,7 @@ import androidx.compose.material.icons.rounded.Laptop
 import androidx.compose.material.icons.rounded.Lock
 import androidx.compose.material.icons.rounded.Notifications
 import androidx.compose.material.icons.rounded.NotificationsOff
-import androidx.compose.material.icons.rounded.PanTool
+import androidx.compose.material.icons.rounded.HowToReg
 import androidx.compose.material.icons.rounded.PhoneAndroid
 import androidx.compose.material.icons.rounded.QrCodeScanner
 import androidx.compose.material.icons.rounded.WarningAmber
@@ -93,7 +93,8 @@ import dev.reins.core.ConnectionView
 fun SettingsScreen(
     state: AppState,
     viewModel: SettingsViewModel,
-    onBack: () -> Unit,
+    /** Null at the root of the Settings tab. */
+    onBack: (() -> Unit)? = null,
     onConnection: (String) -> Unit,
     onIntegrations: () -> Unit,
     onSounds: () -> Unit,
@@ -103,6 +104,8 @@ fun SettingsScreen(
     onTypeComputerCode: () -> Unit = {},
     onVaultPasskeys: () -> Unit = {},
     onDevices: () -> Unit = {},
+    /** A sheet covers the page: the tab bar steps aside for it. */
+    onCovered: (Boolean) -> Unit = {},
     authenticator: Authenticator,
 ) {
     val c = LocalColors.current
@@ -121,6 +124,7 @@ fun SettingsScreen(
     val devices by viewModel.devices.collectAsStateWithLifecycle()
     var confirmSignOut by remember { mutableStateOf(false) }
     var connectOpen by remember { mutableStateOf(false) }
+    LaunchedEffect(connectOpen) { onCovered(connectOpen) }
     LaunchedEffect(session) {
         viewModel.checkRecoveryCode()
         viewModel.countDevices()
@@ -453,7 +457,7 @@ private fun ConnectionRow(connection: ConnectionView, onClick: () -> Unit) {
 private fun ModeValue(mode: AutopilotMode) {
     val c = LocalColors.current
     Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.testTag("autopilotMode")) {
-        Icon(modeIcon(mode), null, Modifier.size(16.dp), tint = dev.reins.android.ui.autopilot.modeTint(mode, c))
+        Icon(settingsModeIcon(mode), null, Modifier.size(16.dp), tint = dev.reins.android.ui.autopilot.modeTint(mode, c))
         Spacer(Modifier.width(5.dp))
         RText(dev.reins.android.autopilot.AutopilotText.name(mode), RType.sans(15f), c.secondary, maxLines = 1)
     }
@@ -613,8 +617,8 @@ internal fun hostOf(serverUrl: String): String =
     serverUrl.substringAfter("://").trimEnd('/')
 
 /** A mode's icon in Settings and on an AI's page. */
-internal fun modeIcon(mode: AutopilotMode): ImageVector = when (mode) {
-    AutopilotMode.MANUAL -> Icons.Rounded.PanTool
+internal fun settingsModeIcon(mode: AutopilotMode): ImageVector = when (mode) {
+    AutopilotMode.MANUAL -> Icons.Rounded.HowToReg
     AutopilotMode.AUTO -> Icons.Rounded.Bolt
     AutopilotMode.BYPASS -> Icons.Rounded.Bolt
     AutopilotMode.LOCKDOWN -> Icons.Rounded.Lock

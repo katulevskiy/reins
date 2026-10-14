@@ -34,7 +34,6 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
-import dev.reins.android.design.ConfirmDialog
 import dev.reins.android.design.ConnectionAvatar
 import dev.reins.android.design.EmptyState
 import dev.reins.android.design.Glyph
@@ -69,7 +68,6 @@ fun ConnectionDetailScreen(
     val connections by state.connections.collectAsStateWithLifecycle()
     val grants by state.grants.collectAsStateWithLifecycle()
     val connection = connections.firstOrNull { it.id == connectionId }
-    var confirming by remember { mutableStateOf(false) }
     var picking by remember { mutableStateOf<Picker?>(null) }
 
     Box(Modifier.fillMaxSize()) {
@@ -137,15 +135,12 @@ fun ConnectionDetailScreen(
                 ) { picking = Picker.Icon }
             }
 
-            SettingsGroup(header = null, gap = 12.dp) {
-                SettingsRow(
-                    "Disconnect",
-                    Modifier.testTag("disconnect"),
-                    icon = Icons.Rounded.Delete,
-                    destructive = true,
-                    chevron = false,
-                ) { confirming = true }
-            }
+            dev.reins.android.design.HoldButton(
+                "Hold to disconnect",
+                c.danger,
+                Modifier.padding(start = 16.dp, end = 16.dp, top = 22.dp).fillMaxWidth().testTag("disconnect"),
+                icon = Icons.Rounded.Delete,
+            ) { viewModel.disconnect(connection.id, onBack) }
             Spacer(Modifier.height(32.dp))
         }
 
@@ -159,19 +154,6 @@ fun ConnectionDetailScreen(
         BottomSheet(shown == Picker.Profile && autopilot != null, "Learns into", onClose = { picking = null }, tag = "profileSheet") {
             if (connection != null && autopilot != null) ProfilePicker(connection.id, autopilot) { picking = null }
         }
-    }
-
-    if (confirming && connection != null) {
-        ConfirmDialog(
-            title = "Disconnect ${untrusted(connection.label)}?",
-            text = "It loses access now.",
-            confirmLabel = "Disconnect",
-            onConfirm = {
-                confirming = false
-                viewModel.disconnect(connection.id, onBack)
-            },
-            onDismiss = { confirming = false },
-        )
     }
 }
 

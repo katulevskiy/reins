@@ -1,5 +1,11 @@
 package dev.reins.android.ui.autopilot
 
+import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.material.icons.rounded.Navigation
+import androidx.compose.material.icons.rounded.Lock
+import androidx.compose.material.icons.rounded.HowToReg
+import androidx.compose.material.icons.rounded.Bolt
+import androidx.compose.material.icons.Icons
 import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.animateContentSize
 import androidx.compose.animation.core.Animatable
@@ -82,11 +88,12 @@ fun modeTint(mode: AutopilotMode, c: RColors): Color = when (mode) {
     AutopilotMode.LOCKDOWN -> c.warning
 }
 
-fun modeGlyph(mode: AutopilotMode): Glyph = when (mode) {
-    AutopilotMode.MANUAL -> Glyph.Hand
-    AutopilotMode.AUTO -> Glyph.Navigate
-    AutopilotMode.BYPASS -> Glyph.Bolt
-    AutopilotMode.LOCKDOWN -> Glyph.Lock
+/** Each mode's icon: a person with a check for Manual (you approve), a heading for Auto, a bolt for Bypass, a lock. */
+fun modeIcon(mode: AutopilotMode): ImageVector = when (mode) {
+    AutopilotMode.MANUAL -> Icons.Rounded.HowToReg
+    AutopilotMode.AUTO -> Icons.Rounded.Navigation
+    AutopilotMode.BYPASS -> Icons.Rounded.Bolt
+    AutopilotMode.LOCKDOWN -> Icons.Rounded.Lock
 }
 
 fun verdictTint(v: Verdict, c: RColors): Color = when (v) {
@@ -99,6 +106,16 @@ fun verdictGlyph(v: Verdict): Glyph = when (v) {
     Verdict.APPROVE -> Glyph.Check
     Verdict.DENY -> Glyph.Close
     Verdict.ASK -> Glyph.Hand
+}
+
+/** A rounded square holding a Material icon on a wash of its colour; [filled] turns it solid. */
+@Composable
+fun IconTile(icon: ImageVector, tint: Color, modifier: Modifier = Modifier, size: Dp = 40.dp, filled: Boolean = false) {
+    val bg by animateColorAsState(if (filled) tint else tint.copy(alpha = 0.13f), label = "tileBg")
+    val fg by animateColorAsState(if (filled) Color.White else tint, label = "tileFg")
+    Box(modifier.size(size).clip(RoundedCornerShape(size * 0.3f)).background(bg), contentAlignment = Alignment.Center) {
+        androidx.compose.material3.Icon(icon, null, Modifier.size(size * 0.55f), tint = fg)
+    }
 }
 
 /** A rounded square holding a glyph on a wash of its colour; [filled] turns it solid. */
@@ -254,7 +271,7 @@ private fun ModeRow(mode: AutopilotMode, selected: Boolean, needsModel: Boolean,
             .padding(horizontal = 12.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        IconTile(modeGlyph(mode), tint, size = 42.dp, filled = selected)
+        IconTile(modeIcon(mode), tint, size = 42.dp, filled = selected)
         Spacer(Modifier.width(14.dp))
         Column(Modifier.weight(1f)) {
             Row(verticalAlignment = Alignment.CenterVertically) {

@@ -57,7 +57,7 @@ class AutopilotFlowTest : FlowHarness() {
 
     private fun openAutopilot() {
         launch()
-        tap("openSettings")
+        tap("tabSettings")
         tap("openAutopilot")
         awaitTag("mode:MANUAL")
     }
@@ -190,7 +190,7 @@ class AutopilotFlowTest : FlowHarness() {
         assertTrue("nothing changes before the warning is accepted", core.modeCalls.isEmpty())
         tap("bypass:30")
         heard.clear()
-        tap("confirmBypass")
+        hold("confirmBypass")
         awaitCore { core.modeCalls.isNotEmpty() }
         assertEquals(Triple(null, AutopilotMode.BYPASS, 30u), core.modeCalls.single())
         assertTrue(heard.played(Event.BypassOn))
@@ -389,7 +389,7 @@ class AutopilotFlowTest : FlowHarness() {
     fun aConnectionGetsItsOwnModeAndProfile() {
         installModel()
         launch()
-        tap("openSettings")
+        tap("tabSettings")
         tap("connection:c1")
         awaitTag("connectionMode")
         tap("connMode:AUTO")
@@ -410,11 +410,11 @@ class AutopilotFlowTest : FlowHarness() {
         installModel()
         core.modeFailure = CoreException.Invalid("a connection paired less than 10 minutes ago cannot be put in bypass")
         launch()
-        tap("openSettings")
+        tap("tabSettings")
         tap("connection:c1")
         tap("connMode:BYPASS")
         awaitTag("bypassDialog")
-        tap("confirmBypass")
+        hold("confirmBypass")
         awaitTag("connAutopilotError")
         awaitText("10 minutes", substring = true)
         assertTrue(heard.played(Event.Error))
@@ -425,7 +425,7 @@ class AutopilotFlowTest : FlowHarness() {
         installModel()
         core.apConnections["c1"] = FakeCore.ApRow(mode = AutopilotMode.AUTO, bypassUntil = now + 600)
         launch()
-        tap("openSettings")
+        tap("tabSettings")
         tap("connection:c1")
         awaitTag("stopConnectionBypass")
         rule.onNodeWithTag("connectionModeLine", useUnmergedTree = true).assertTextContains("10 min left", substring = true)
@@ -539,7 +539,7 @@ class AutopilotFlowTest : FlowHarness() {
     @Test
     fun autopilotSoundsHaveTheirOwnSwitch() {
         launch()
-        tap("openSettings")
+        tap("tabSettings")
         tap("openSounds")
         tap("autopilotSounds")
         awaitCore { !container.feedbackStore.current.autopilotSounds }
