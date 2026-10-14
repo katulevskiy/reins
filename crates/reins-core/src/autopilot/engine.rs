@@ -130,8 +130,8 @@ fn pct(p: f32) -> u32 {
 
 /// The one line a notification or the pending list shows.
 pub(crate) fn suggestion_line(s: &Suggestion) -> Option<String> {
-    if let Some(r) = s.risk.as_ref().filter(|r| r.held) {
-        return Some(format!("Waited: {}", r.line()));
+    if s.risk.as_ref().is_some_and(|r| r.held) {
+        return Some(s.reason.clone());
     }
     if s.floor.is_some() {
         return Some("Autopilot always asks you for this".to_owned());
@@ -353,9 +353,10 @@ impl Engine {
 
     /// One forward pass per text, off the async runtime. A runtime that does not answer in time is given up on (the
     /// request then waits for the user).
-    async fn ap_infer(&self, states: Vec<String>) -> Result<(String, Vec<Pass>), String> {
+    /// Returns the (verified) package that ran too.
+    async fn ap_infer(&self, states: Vec<String>) -> Result<(Arc<Laya>, Vec<Pass>), String> {
         let (laya, runtime) = self.ap_model().await?;
-        let id = laya.id.clone();
+        let id = Arc::clone(&laya);
         let work = tokio::task::spawn_blocking(move || {
             let refs: Vec<&str> = states.iter().map(String::as_str).collect();
             laya.run(runtime.as_ref(), &refs)
@@ -711,11 +712,12 @@ impl Engine {
         // A model that rates risk reads a hook's question as the action it is about, with the context line the core
         // works out (docs/autopilot-risk.md §3), the connection's last hour included.
         // (Read from the package's configuration: opening it, which verifies it, is the judging's job.)
+        // This reading of the package's configuration only decides what the model is shown; nothing is decided on it.
         let rates_risk = mode != AutopilotMode::Bypass && model::rates_risk(&self.data_dir, &self.ap_known());
-        let mut tripwire = None;
+        let mut context = risk::Context::default();
         if rates_risk {
             if let Some(view) = &subject.view {
-                tripwire = risk::refine(&mut subject.described, view).tripwire;
+                context = risk::refine(&mut subject.described, view);
                 subject.described.label =
                     situation::label_of(&subject.described.facts.operation, &subject.described.facts.target);
                 s.label.clone_from(&subject.described.label);
@@ -736,7 +738,8 @@ impl Engine {
 
         let young = gates::young(age, self.cfg.new_connection_secs)
             .then(|| "a connection paired less than 10 minutes ago".to_owned());
-        // Overnight approves the hard floor too, unless its risk model holds it; a just-paired AI still waits.
+        // Overnight may approve the hard floor, but only once a verified model rated this very request (below); until
+        // then the floor is only set aside, never dropped. A just-paired AI always waits.
         let floor = if mode == AutopilotMode::Overnight && rates_risk {
             None
         } else {
@@ -761,29 +764,36 @@ impl Engine {
         };
         s.verdict = decide::would(probs, novel, judged.escalate, thresholds);
         s.reason = reason_of(&judged, s.verdict, novel);
-        // Overnight acts on risk; without it (no model that rates it, or a runtime that does not read the output), it
-        // decides like Auto, the hard floor included.
-        let overnight = mode == AutopilotMode::Overnight && judged.risk.is_some();
-        if let Some(probs) = judged.risk {
-            let theta = self
-                .ap_laya()
-                .await
-                .ok()
-                .and_then(|l| l.config.risk().map(model::RiskConfig::overnight_threshold))
-                .unwrap_or(1.0);
-            let catastrophic = probs[3] >= theta || tripwire.is_some();
+        // Overnight acts on risk when the verified package that judged this request declares it. Then anything short of
+        // a readable risk, a valid threshold and a command read with certainty holds the request: it waits.
+        let overnight = mode == AutopilotMode::Overnight && judged.risk_declared;
+        let tripwire = context.tripwire.clone();
+        let readable = judged.risk.filter(|p| risk::readable(*p));
+        let unreadable = context.unreadable.clone().or_else(|| match (readable, judged.risk_threshold) {
+            (Some(_), Some(_)) => None,
+            _ => Some("the risk could not be read".to_owned()),
+        });
+        let catastrophic =
+            tripwire.is_some() || readable.zip(judged.risk_threshold).is_some_and(|(p, theta)| p[3] >= theta);
+        if overnight || readable.is_some() {
+            let held = overnight && (catastrophic || unreadable.is_some());
             s.risk = Some(RiskNote {
-                level: risk::level(probs, catastrophic),
-                probs,
-                why: tripwire.clone().or_else(|| subject.described.facts.context.first().cloned()).unwrap_or_default(),
-                held: overnight && catastrophic,
+                level: readable.map_or(RiskLevel::Catastrophic, |p| risk::level(p, catastrophic)),
+                probs: readable.unwrap_or([0.0; 4]),
+                why: tripwire
+                    .clone()
+                    .or_else(|| unreadable.clone().filter(|_| overnight))
+                    .or_else(|| subject.described.facts.context.first().cloned())
+                    .unwrap_or_default(),
+                held,
                 tripwire: tripwire.is_some(),
             });
         }
         s.judged = Some(judged);
         if overnight {
             // Boxed: the decision's future (the approval it carries out) would otherwise sit inside this one.
-            return Box::pin(self.ap_overnight(&mut subject, s, now)).await;
+            let cannot_read = unreadable.filter(|_| !catastrophic);
+            return Box::pin(self.ap_overnight(&mut subject, s, cannot_read, now)).await;
         }
         if mode == AutopilotMode::Overnight {
             if let Some(floor) = subject.floor.clone() {
@@ -864,6 +874,7 @@ impl Engine {
             reason: "Bypass: approved without asking".to_owned(),
             decided: None,
             risk: None,
+            deletes: false,
         };
         subject.choice = subject.everything.clone();
         if subject.grant {
@@ -888,7 +899,9 @@ impl Engine {
         } else {
             vec![s.s_facts.clone(), s.s_full.clone()]
         };
-        let (model_id, passes) = self.ap_infer(states).await?;
+        let (laya, passes) = self.ap_infer(states).await?;
+        let model_id = laya.id.clone();
+        let risk_config = laya.config.risk();
         let facts = passes.first().cloned().ok_or("the model returned nothing")?;
         let full = passes.get(1).cloned().unwrap_or_else(|| facts.clone());
         self.ap_train_if_due(profile, &model_id, now).await;
@@ -930,6 +943,8 @@ impl Engine {
                 e_full: Embedding::from_vector(&full.pooled),
                 neighbours,
                 risk: facts.risk.zip(full.risk).map(|(f, u)| decide::risk_combine(f, u)),
+                risk_declared: risk_config.is_some(),
+                risk_threshold: risk_config.and_then(model::RiskConfig::overnight_threshold),
             },
             probs,
         ))
@@ -986,10 +1001,23 @@ impl Engine {
 
     /// Overnight's decision on a judged request: what the risk model (or a tripwire) holds waits or is denied, as the
     /// user chose; the rest is approved once, within the safety valves.
-    async fn ap_overnight(&self, subject: &mut Subject, mut s: Suggestion, now: i64) -> Result<(), CoreError> {
+    /// `cannot_read`: why the request could not be judged (it waits, whatever the setting).
+    async fn ap_overnight(
+        &self,
+        subject: &mut Subject,
+        mut s: Suggestion,
+        cannot_read: Option<String>,
+        now: i64,
+    ) -> Result<(), CoreError> {
         let Some(note) = s.risk.clone() else {
+            s.verdict = Verdict::Ask;
             return self.ap_wait(subject, &s);
         };
+        if let Some(why) = cannot_read {
+            s.verdict = Verdict::Ask;
+            s.reason = format!("Waited: {why}");
+            return self.ap_wait(subject, &s);
+        }
         if note.held {
             return match self.ap_overnight_risky()? {
                 OvernightRisky::Wait => {

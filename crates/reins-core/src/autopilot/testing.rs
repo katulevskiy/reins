@@ -85,10 +85,15 @@ pub fn package() -> Vec<(String, Vec<u8>)> {
 
 /// The files of a fake package that rates risk (Overnight holds at P(catastrophic) ≥ 0.5).
 pub fn package_with_risk() -> Vec<(String, Vec<u8>)> {
+    package_with_config(&laya_config_with_risk_json(0.5))
+}
+
+/// The files of a fake package with this `laya_config.json`.
+pub fn package_with_config(config: &str) -> Vec<(String, Vec<u8>)> {
     vec![
         (MODEL_FILE.to_owned(), b"not really an onnx model, with risk".to_vec()),
         (TOKENIZER_FILE.to_owned(), char_tokenizer_json().into_bytes()),
-        (CONFIG_FILE.to_owned(), laya_config_with_risk_json(0.5).into_bytes()),
+        (CONFIG_FILE.to_owned(), config.as_bytes().to_vec()),
     ]
 }
 

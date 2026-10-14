@@ -9,6 +9,7 @@ use ort::session::Session;
 use ort::value::Tensor;
 use reins_core::autopilot::decide::{self, Pass, Probs};
 use reins_core::autopilot::model::Laya;
+use reins_core::autopilot::risk::readable as decide_readable;
 use reins_core::autopilot::situation;
 use reins_core::{CoreError, ForeignError, ModelInput, ModelOutput, ModelRuntime, Verdict};
 
@@ -160,8 +161,10 @@ impl Judge {
             reins_core::Preset::Balanced.thresholds(),
         );
         let risk = facts.risk.zip(full.risk).map(|(f, u)| decide::risk_combine(f, u));
+        // As the phone decides: a package that declares risk holds what it cannot rate or has no threshold for.
         let held = match (risk, self.laya.config.risk()) {
-            (Some(r), Some(cfg)) => r[3] >= cfg.overnight_threshold(),
+            (Some(r), Some(cfg)) => cfg.overnight_threshold().is_none_or(|t| !decide_readable(r) || r[3] >= t),
+            (None, Some(_)) => true,
             _ => false,
         };
         Ok(Judgement {

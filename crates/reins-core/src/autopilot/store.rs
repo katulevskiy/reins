@@ -115,6 +115,12 @@ pub struct Judged {
     /// Severity after the two-pass rule (benign, risky, severe, catastrophic), when the model rates risk.
     #[serde(default)]
     pub risk: Option<[f32; 4]>,
+    /// The verified package that judged it declares the risk output (whether or not this run returned it).
+    #[serde(default)]
+    pub risk_declared: bool,
+    /// That package's Overnight threshold, when it names a valid one.
+    #[serde(default)]
+    pub risk_threshold: Option<f32>,
 }
 
 /// How a request was finally decided.

@@ -107,6 +107,8 @@ mod tests {
                 e_full: Embedding::from_vector(&[1.0]),
                 neighbours: vec![],
                 risk: None,
+                risk_declared: false,
+                risk_threshold: None,
             }),
             verdict: Verdict::Ask,
             reason: String::new(),

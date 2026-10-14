@@ -135,8 +135,6 @@ pub struct RiskConfig {
 
 /// Risk classes in the order the model returns them.
 pub const RISK_LABELS: [&str; 4] = ["benign", "risky", "severe", "catastrophic"];
-/// Overnight's threshold when a package names none (a cautious one: a model always names its own).
-const DEFAULT_OVERNIGHT_THRESHOLD: f32 = 0.2;
 
 impl RiskConfig {
     /// The classes are the four this core knows, in its order.
@@ -148,14 +146,10 @@ impl RiskConfig {
         Some(self.temperature).filter(|t| t.is_finite() && *t > 0.0).unwrap_or(1.0).clamp(0.05, 20.0)
     }
 
-    /// Overnight holds a request at or above this P(catastrophic).
-    pub fn overnight_threshold(&self) -> f32 {
-        self.thresholds
-            .get("overnight")
-            .copied()
-            .filter(|t| t.is_finite())
-            .unwrap_or(DEFAULT_OVERNIGHT_THRESHOLD)
-            .clamp(0.0, 1.0)
+    /// Overnight holds a request at or above this P(catastrophic). `None` when the package names none, or one that is
+    /// not a number in (0, 1]: there is no default, and Overnight then holds everything it judges.
+    pub fn overnight_threshold(&self) -> Option<f32> {
+        self.thresholds.get("overnight").copied().filter(|t| t.is_finite() && *t > 0.0 && *t <= 1.0)
     }
 }
 
@@ -609,13 +603,17 @@ mod tests {
         }))
         .unwrap();
         let risk = cfg.risk().unwrap();
-        assert!((risk.temperature() - 1.7).abs() < 1e-6 && (risk.overnight_threshold() - 0.31).abs() < 1e-6);
+        assert!((risk.temperature() - 1.7).abs() < 1e-6 && (risk.overnight_threshold().unwrap() - 0.31).abs() < 1e-6);
         let mut other = cfg.clone();
         other.risk.as_mut().unwrap().labels.reverse();
         assert!(other.risk().is_none(), "classes in another order are not read");
         let mut none = cfg.clone();
         none.risk.as_mut().unwrap().thresholds.clear();
-        assert!((none.risk().unwrap().overnight_threshold() - DEFAULT_OVERNIGHT_THRESHOLD).abs() < 1e-6);
+        assert_eq!(none.risk().unwrap().overnight_threshold(), None, "no default threshold");
+        for odd in [f32::NAN, 0.0, -0.5, 1.5] {
+            none.risk.as_mut().unwrap().thresholds.insert("overnight".to_owned(), odd);
+            assert_eq!(none.risk().unwrap().overnight_threshold(), None, "{odd}");
+        }
         let v1: LayaConfig = serde_json::from_value(serde_json::json!({
             "max_len": 512, "head_max_len": 256, "mask_id": 4, "cls_id": 2, "sep_id": 1, "pad_id": 0}))
         .unwrap();

@@ -966,13 +966,56 @@ async fn without_a_model_that_rates_risk_overnight_decides_like_auto() {
     assert_eq!(env.decided(), [("r3".to_owned(), Verdict::Approve, "autopilot".to_owned())]);
 }
 
-#[tokio::test]
-async fn a_runtime_that_does_not_read_the_risk_output_makes_overnight_act_like_auto() {
-    let env = env_with(true, testing::package_with_risk()).await;
+/// Overnight with a package that declares the risk output, a just-paired AI aside: whatever goes wrong, a request
+/// waits, the hard floor included, and is never approved.
+async fn overnight_holds_everything(env: &Env, why: &[&str]) {
     env.mode(None, AutopilotMode::Overnight).await;
     env.relay("r1", OLD, email("friend@x.com", "hi")).await;
-    assert!(env.decided().is_empty());
-    assert!(env.suggestion("r1").await.risk.is_none());
+    env.relay("r2", OLD, grant()).await;
+    assert!(env.decided().is_empty(), "nothing approved or denied: {:?}", env.decided());
+    assert_eq!(env.waiting().await.len(), 2);
+    assert_eq!(env.sent().await, 0);
+    assert!(env.store().grants().unwrap().is_empty(), "the hard floor stays with the user");
+    for id in ["r1", "r2"] {
+        let s = env.suggestion(id).await;
+        assert!(why.iter().any(|w| s.reason.contains(w)), "{id}: {}", s.reason);
+    }
+}
+
+#[tokio::test]
+async fn a_runtime_that_does_not_return_the_risk_output_holds_everything_in_overnight() {
+    let env = env_with(true, testing::package_with_risk()).await;
+    overnight_holds_everything(&env, &["the risk could not be read"]).await;
+}
+
+#[tokio::test]
+async fn a_package_without_an_overnight_threshold_holds_everything() {
+    let mut cfg: Value = serde_json::from_str(&testing::laya_config_with_risk_json(0.5)).unwrap();
+    cfg["risk"]["thresholds"] = json!({});
+    let env = env_with(true, testing::package_with_config(&cfg.to_string())).await;
+    env.model.set_risk_default(testing::risk(0.97, 0.01, 0.01, 0.01));
+    overnight_holds_everything(&env, &["the risk could not be read"]).await;
+    // Never a default: the risk shown is the model's, the hold is for want of a threshold.
+    assert!(env.suggestion("r1").await.risk.unwrap().held);
+}
+
+#[tokio::test]
+async fn a_risk_that_is_not_a_number_holds_everything() {
+    let env = env_risk().await;
+    env.model.set_risk_default([f32::NAN, 0.0, 0.0, 0.0]);
+    overnight_holds_everything(&env, &["could not judge"]).await;
+}
+
+#[tokio::test]
+async fn a_damaged_package_holds_everything_in_overnight() {
+    let env = env_risk().await;
+    let tokenizer = env.dir.path().join("models/fake-laya-1").join(super::model::TOKENIZER_FILE);
+    let mut bytes = std::fs::read(&tokenizer).unwrap();
+    let last = bytes.len() - 2;
+    bytes[last] = b' ';
+    std::fs::write(&tokenizer, bytes).unwrap();
+    // The first request finds it damaged (it is deleted); the next one finds no model: the floor asks.
+    overnight_holds_everything(&env, &["could not judge", "Always asks"]).await;
 }
 
 #[tokio::test]
