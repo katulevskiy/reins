@@ -12,6 +12,10 @@ use reins_desktop::control::{ApiInfo, SshKeyInfo};
 use reins_desktop::harness::Harness;
 use reins_desktop::journal::{Decider, Entry, Kind, Outcome};
 use reins_desktop::run::Profile;
+use reins_desktop::secrets_import::{Change, Done, Moved, Receipt};
+use reins_desktop::secrets_scan::{
+    Confidence, Detector, Finding, Group, Item, Progress, Risk, ScanReport, Source, Stage, StageState, finding_id,
+};
 use reins_desktop::stats::Connection;
 use reins_desktop::work_session::{Request, Session};
 
@@ -438,6 +442,360 @@ impl Demo {
                 row.added = sample;
                 row.complete = sample;
             }
+        }
+    }
+
+    /// `--demo`: what a scan of Dana's computer found (made up: the demo never scans this computer).
+    #[must_use]
+    pub fn secrets_report(home: &std::path::Path) -> ScanReport {
+        type ItemSpec<'a> = (&'a str, Option<&'a str>, Option<Detector>, &'a str, Confidence, &'a str);
+        let finding = |source: Source,
+                       rel: &str,
+                       title: &str,
+                       summary: &str,
+                       risks: &[Risk],
+                       items: &[ItemSpec<'_>]| {
+            let abs = home.join(rel);
+            let id = finding_id(source, &abs);
+            let items: Vec<Item> = items
+                .iter()
+                .map(|(name, group, detector, label, confidence, preview)| Item {
+                    id: match group {
+                        Some(g) => format!("{id}/{g}/{name}"),
+                        None => format!("{id}/{name}"),
+                    },
+                    name: (*name).to_owned(),
+                    group: group.map(str::to_owned),
+                    line: 1,
+                    detector: *detector,
+                    label: (*label).to_owned(),
+                    confidence: *confidence,
+                    preview: (*preview).to_owned(),
+                    suggested: confidence.suggested(),
+                })
+                .collect();
+            let shown = format!("~/{rel}");
+            let place = match source {
+                Source::Dotenv | Source::SshKey => shown.rsplit_once('/').map_or(shown.clone(), |(d, _)| d.to_owned()),
+                _ => shown.clone(),
+            };
+            let project_root =
+                (source == Source::Dotenv).then(|| abs.parent().map(std::path::Path::to_path_buf)).flatten();
+            Finding {
+                id,
+                source,
+                group: Group::of(source),
+                title: title.to_owned(),
+                path: shown,
+                place,
+                project: project_root.as_ref().and_then(|r| r.file_name()).map(|n| n.to_string_lossy().into_owned()),
+                project_root,
+                abs_path: abs,
+                git_commit: risks.contains(&Risk::InGitHistory).then(|| "a1b2c3d".to_owned()),
+                key_type: (source == Source::SshKey).then(|| "ssh-ed25519".to_owned()),
+                summary: summary.to_owned(),
+                suggested: items.iter().any(|i| i.suggested),
+                items,
+                risks: risks.to_vec(),
+            }
+        };
+        let (h, m, l, n) = (Confidence::High, Confidence::Medium, Confidence::Low, Confidence::None);
+        let findings = vec![
+            finding(
+                Source::Dotenv,
+                "dev/acme-web/.env",
+                "acme-web/.env",
+                "6 keys",
+                &[Risk::ReadableByAgents, Risk::InGitHistory, Risk::PlainText],
+                &[
+                    ("OPENAI_API_KEY", None, Some(Detector::OpenAi), "OpenAI key", h, "sk-p••••••••a9F2"),
+                    ("STRIPE_SECRET_KEY", None, Some(Detector::StripeLive), "Stripe live key", h, "sk_l••••••••hQx7"),
+                    ("DATABASE_URL", None, Some(Detector::Postgres), "Postgres password", h, "post••••••••/app"),
+                    (
+                        "SUPABASE_SERVICE_KEY",
+                        None,
+                        Some(Detector::SupabaseService),
+                        "Supabase service key",
+                        h,
+                        "eyJh••••••••Xk2Q",
+                    ),
+                    ("NEXT_PUBLIC_SITE_URL", None, None, "not a secret", n, "http••••••••.dev"),
+                    ("LOG_LEVEL", None, None, "not a secret", n, "••••••••"),
+                ],
+            ),
+            finding(
+                Source::Dotenv,
+                "dev/api/.env.local",
+                "api/.env.local",
+                "3 keys",
+                &[Risk::ReadableByAgents, Risk::PlainText],
+                &[
+                    ("API_SECRET", None, Some(Detector::Generic), "Secret", m, "t7Kq••••••••w2Lp"),
+                    ("STRIPE_WEBHOOK_SECRET", None, Some(Detector::Generic), "Secret", m, "whse••••••••9dRz"),
+                    ("RESEND_API_KEY", None, Some(Detector::Generic), "Secret", m, "re_8••••••••Ub3c"),
+                ],
+            ),
+            finding(
+                Source::SshKey,
+                ".ssh/id_ed25519",
+                "id_ed25519",
+                "SSH key",
+                &[Risk::NoPassphrase],
+                &[(
+                    "private key",
+                    None,
+                    Some(Detector::PrivateKey),
+                    "SSH key",
+                    h,
+                    "ED25519 SHA256:q3Vf0bX8mJx2c1R7yTq9",
+                )],
+            ),
+            finding(
+                Source::GhCli,
+                ".config/gh/hosts.yml",
+                "GitHub CLI token",
+                "github.com",
+                &[Risk::ReadableByAgents, Risk::PlainText],
+                &[(
+                    "oauth_token",
+                    Some("github.com"),
+                    Some(Detector::GithubOauth),
+                    "GitHub OAuth token",
+                    h,
+                    "gho_••••••••4kPz",
+                )],
+            ),
+            finding(
+                Source::GitCredentials,
+                ".git-credentials",
+                "git credentials",
+                "2 hosts",
+                &[Risk::PlainText],
+                &[
+                    ("dana", Some("github.com"), Some(Detector::GithubPat), "GitHub token", h, "ghp_••••••••Rk2m"),
+                    ("dana", Some("gitlab.com"), Some(Detector::Credential), "Token", h, "glpa••••••••8sJq"),
+                ],
+            ),
+            finding(
+                Source::Npm,
+                ".npmrc",
+                "npm token",
+                "registry.npmjs.org",
+                &[Risk::PlainText],
+                &[(
+                    "_authToken",
+                    Some("registry.npmjs.org"),
+                    Some(Detector::Generic),
+                    "maybe a secret",
+                    l,
+                    "npm_••••••••x8Qe",
+                )],
+            ),
+            finding(
+                Source::Aws,
+                ".aws/credentials",
+                "AWS profiles",
+                "default, prod",
+                &[Risk::PlainText],
+                &[
+                    (
+                        "aws_access_key_id",
+                        Some("default"),
+                        Some(Detector::AwsAccessKeyId),
+                        "AWS access key ID",
+                        h,
+                        "AKIA••••••••Q7XM",
+                    ),
+                    (
+                        "aws_secret_access_key",
+                        Some("default"),
+                        Some(Detector::AwsSecretKey),
+                        "AWS secret key",
+                        h,
+                        "wJal••••••••EKEY",
+                    ),
+                    (
+                        "aws_access_key_id",
+                        Some("prod"),
+                        Some(Detector::AwsAccessKeyId),
+                        "AWS access key ID",
+                        h,
+                        "AKIA••••••••3NPD",
+                    ),
+                    (
+                        "aws_secret_access_key",
+                        Some("prod"),
+                        Some(Detector::AwsSecretKey),
+                        "AWS secret key",
+                        h,
+                        "Zp9r••••••••u4Tb",
+                    ),
+                ],
+            ),
+            finding(
+                Source::Kube,
+                ".kube/config",
+                "kubeconfig",
+                "1 user",
+                &[Risk::InKeychain],
+                &[("token", Some("admin"), Some(Detector::Generic), "maybe a secret", l, "eyJh••••••••7wQa")],
+            ),
+            finding(
+                Source::Shell,
+                ".zshrc",
+                "Shell exports",
+                "OPENAI_API_KEY, +1",
+                &[Risk::ReadableByAgents, Risk::PlainText],
+                &[
+                    ("OPENAI_API_KEY", None, Some(Detector::OpenAi), "OpenAI key", h, "sk-p••••••••Lm4d"),
+                    ("HF_TOKEN", None, Some(Detector::HuggingFace), "Hugging Face token", h, "hf_k••••••••v9Te"),
+                ],
+            ),
+        ];
+        ScanReport {
+            version: reins_desktop::secrets_scan::SCHEMA_VERSION,
+            started_at: reins_desktop::now_unix(),
+            took: 3_400,
+            home: home.to_string_lossy().into_owned(),
+            findings,
+            skipped: Vec::new(),
+            skipped_total: 41,
+            budget: None,
+            stopped: false,
+        }
+    }
+
+    /// `--demo`: a scan part of the way through.
+    #[must_use]
+    pub fn secrets_progress(step: usize) -> Progress {
+        let stages = Stage::ALL
+            .iter()
+            .enumerate()
+            .map(|(i, s)| {
+                let state = match i.cmp(&step) {
+                    std::cmp::Ordering::Less => StageState::Done([9, 2, 4, 5, 1, 2][i]),
+                    std::cmp::Ordering::Equal => StageState::Running,
+                    std::cmp::Ordering::Greater => StageState::Waiting,
+                };
+                (*s, state)
+            })
+            .collect();
+        let found = [0, 9, 11, 15, 20, 21, 23][step.min(6)];
+        #[allow(clippy::cast_precision_loss, reason = "six stages")]
+        let fraction = (step as f32 + 0.7) / 6.0;
+        Progress {
+            stages,
+            found,
+            at: match step {
+                0 => "~/dev/acme-web/node_modules/… (skipped)",
+                1 => "~/.ssh/id_ed25519",
+                2 => "~/.config/gh/hosts.yml",
+                3 => "~/.aws/credentials",
+                4 => "~/.npmrc",
+                _ => "~/.zshrc",
+            }
+            .to_owned(),
+            fraction: fraction.min(1.0),
+        }
+    }
+
+    /// `--demo`: what the pretend phone's approval of `report`'s ticked items changed.
+    #[must_use]
+    pub fn secrets_receipt(
+        report: &ScanReport,
+        ticked: &std::collections::BTreeSet<String>,
+        keep_local: bool,
+    ) -> Receipt {
+        let moved: Vec<Moved> = report
+            .findings
+            .iter()
+            .flat_map(|f| f.items.iter().filter(|i| ticked.contains(&i.id)).map(move |i| (f, i)))
+            .map(|(f, i)| Moved {
+                item: i.id.clone(),
+                finding: f.id.clone(),
+                to: format!("vault:{}", i.name),
+                on_disk: keep_local || matches!(f.source, Source::Kube | Source::Docker | Source::Gcp | Source::Netrc),
+            })
+            .collect();
+        let chosen = |source: Source| {
+            report
+                .findings
+                .iter()
+                .filter(|f| f.source == source && f.items.iter().any(|i| ticked.contains(&i.id)))
+                .count()
+        };
+        let mut done = Vec::new();
+        let mut changes = Vec::new();
+        if !keep_local {
+            let envs = chosen(Source::Dotenv);
+            if envs > 0 {
+                done.push(Done {
+                    source: Source::Dotenv,
+                    what: format!(
+                        "{envs} .env file{} → .env.reins",
+                        if envs == 1 {
+                            ""
+                        } else {
+                            "s"
+                        }
+                    ),
+                    how: "reins run -- <your command>".to_owned(),
+                    ok: true,
+                });
+            }
+            if chosen(Source::SshKey) > 0 {
+                done.push(Done {
+                    source: Source::SshKey,
+                    what: "SSH key → the Reins SSH agent".to_owned(),
+                    how: "signs on your phone; the file is in the trash".to_owned(),
+                    ok: true,
+                });
+            }
+            if chosen(Source::GhCli) + chosen(Source::GitCredentials) > 0 {
+                done.push(Done {
+                    source: Source::GhCli,
+                    what: "gh and git → git through Reins".to_owned(),
+                    how: "pushes ask your phone; no token on disk".to_owned(),
+                    ok: true,
+                });
+            }
+            if chosen(Source::Aws) > 0 {
+                done.push(Done {
+                    source: Source::Aws,
+                    what: "AWS → run profiles aws-default, aws-prod".to_owned(),
+                    how: "reins run --profile aws-prod -- terraform plan".to_owned(),
+                    ok: true,
+                });
+            }
+            if chosen(Source::Shell) > 0 {
+                done.push(Done {
+                    source: Source::Shell,
+                    what: "Shell exports → run profile shell".to_owned(),
+                    how: "reins run --profile shell -- <command>".to_owned(),
+                    ok: true,
+                });
+            }
+            for f in report.findings.iter().filter(|f| f.source == Source::Dotenv || f.source == Source::SshKey) {
+                if f.items.iter().any(|i| ticked.contains(&i.id)) {
+                    changes.push(Change::Trashed {
+                        path: f.abs_path.clone(),
+                        trash_id: None,
+                    });
+                }
+            }
+        }
+        Receipt {
+            version: reins_desktop::secrets_import::RECEIPT_VERSION,
+            at: reins_desktop::now_unix(),
+            computer: "Dana's MacBook".to_owned(),
+            keep_local,
+            moved,
+            changes,
+            done,
+            notes: Vec::new(),
+            pending_keys: Vec::new(),
+            undone_at: None,
+            purged_at: None,
         }
     }
 }

@@ -3,6 +3,7 @@
 //! phone, the status the window and the tray icon show, pausing, work sessions (`work_actions`), and the settings the
 //! window changes. One [`Model`] per app (a GPUI global); the window and the tray are views of it.
 
+mod secrets_actions;
 mod work_actions;
 
 use std::sync::Arc;
@@ -192,6 +193,10 @@ pub struct Model {
     pub cli_installed: bool,
     /// The work session card: its form, the request waiting on the phone, ending.
     pub work: Work,
+    /// Keys & secrets' scan and move.
+    pub secrets: crate::secrets::Flow,
+    /// This computer's name, as the vault folder of its own credentials calls it.
+    pub computer: String,
     /// `--demo`: the pretend pairing went through.
     demo_paired: bool,
     /// `--demo`: the made-up activity and connections.
@@ -285,6 +290,7 @@ impl Model {
         });
         let demo_test = args.demo && std::env::var_os("REINS_DEMO_TEST").is_some_and(|v| !v.is_empty() && v != "0");
         let work = work_actions::initial(demo);
+        let secrets = secrets_actions::initial(args.demo, backend.home());
         let (args_demo, backend_cli) = (args.demo, backend.cli_installed());
         let model = cx.new(|cx| {
             let mut model = Self {
@@ -315,6 +321,12 @@ impl Model {
                 autostart: autostart::enabled(&home),
                 cli_installed: args_demo || backend_cli,
                 work,
+                secrets,
+                computer: if args_demo {
+                    "Dana's MacBook".to_owned()
+                } else {
+                    reins_desktop::secrets_scan::computer_name()
+                },
                 demo_paired,
                 demo,
                 notified: std::collections::HashSet::new(),

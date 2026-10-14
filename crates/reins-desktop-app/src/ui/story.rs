@@ -84,6 +84,7 @@ pub fn group_icon(id: &str) -> Icon {
         "databases" => Icon::Database,
         "publishing" => Icon::Package,
         "payments" => Icon::CreditCard,
+        "secrets" => Icon::ScanSearch,
         "disks" => Icon::HardDrive,
         "env-files" => Icon::FileLock,
         "keys" => Icon::KeyRound,
@@ -102,6 +103,7 @@ fn group_risk(id: &str) -> Option<&'static str> {
         "databases" => "Drops data",
         "publishing" => "Publishes",
         "payments" => "Payment key",
+        "secrets" => "Finds or reads secrets",
         _ => return None,
     })
 }

@@ -382,23 +382,56 @@ async fn add(paths: &Paths, config: &Config, args: &AddArgs<'_>) -> Result<Vec<S
     let phone = logged_in(paths, config)?;
     let phone_key = phone_key_for(&phone, paths, args.given, args.new_phone).await?;
     let value = read_value(name, field, kind)?;
+    send(paths, config, &phone, &phone_key, (name, field, kind, args.replace), value, "reins vault add").await
+}
+
+/// Saves `value` as the `field` of the item `name` (a new item of `kind`, or, with `replace`, the one there): the phone
+/// asks, and both screens show the value's check digits. For what already holds a value (`reins secrets import`);
+/// `source` is what the activity log says asked. The lines to print afterwards.
+pub async fn save(
+    paths: &Paths,
+    config: &Config,
+    (name, kind, field, replace): (&str, ItemKind, Option<&str>, bool),
+    value: Zeroizing<String>,
+    source: &str,
+) -> Result<Vec<String>, String> {
+    let name = name.trim();
+    if name.is_empty() || name.chars().any(char::is_control) {
+        return Err("an item needs a name".to_owned());
+    }
+    let field = field.map_or(kind.default_field(), str::trim);
+    let phone = logged_in(paths, config)?;
+    let phone_key = phone_key_for(&phone, paths, None, false).await?;
+    send(paths, config, &phone, &phone_key, (name, field, kind, replace), value, source).await
+}
+
+/// Sends `value` for the item and field (asked at the terminal's check digits), and reads the phone's answer.
+async fn send(
+    paths: &Paths,
+    config: &Config,
+    phone: &Phone,
+    phone_key: &str,
+    (name, field, kind, replace): (&str, &str, ItemKind, bool),
+    value: Zeroizing<String>,
+    source: &str,
+) -> Result<Vec<String>, String> {
     eprintln!("Check: {}. Your phone shows the same four digits; approve only if it does.", value_check(&value));
     let journal = Journal::new(paths);
     let timeout = Duration::from_secs(config.approval_timeout_secs);
     let what = format!("save {name} in the vault");
-    let entry = Entry::new(Kind::Secrets, &what).source(Some("reins vault add"));
+    let entry = Entry::new(Kind::Secrets, &what).source(Some(source));
     let tell = teller(|line: &str| eprintln!("{line}"));
     let out = Outgoing {
         name,
         field,
         kind,
-        replace: args.replace,
+        replace,
         value: &value,
     };
-    let sent = awaiting(&journal, entry, Some(tell), timeout, store(&phone, &phone_key, &out)).await;
+    let sent = awaiting(&journal, entry, Some(tell), timeout, store(phone, phone_key, &out)).await;
     drop(value);
     let (data, nonce) = sent.map_err(|r| refusal_message(name, &r))?;
-    let ack: StoreAck = open_from_phone(&phone, &phone_key, &data)?;
+    let ack: StoreAck = open_from_phone(phone, phone_key, &data)?;
     if ack.dir != TO_DESKTOP || ack.nonce != nonce || ack.name != name {
         return Err("The phone's answer is for another request; refused.".to_owned());
     }

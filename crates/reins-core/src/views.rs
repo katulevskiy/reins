@@ -719,7 +719,7 @@ pub fn approval_view(parked: &ParkedRequest) -> ApprovalView {
             _ => None,
         },
         ask: match &parked.request.call {
-            ToolCall::Connector(call) => crate::connector::desktop::ask_view(call),
+            ToolCall::Connector(call) => crate::connector::desktop::ask_view(call, &parked.label()),
             _ => None,
         },
         secrets: match (&parked.request.call, held.and_then(|h| h.preview.as_ref())) {

@@ -167,6 +167,13 @@ enum Cmd {
         #[command(subcommand)]
         action: reins_desktop::vault_cli::VaultCmd,
     },
+    #[command(display_order = 15, hide = true)]
+    /// Find the secrets lying around this computer and move them into the vault on your phone (a preview:
+    /// `[secrets] preview = true`).
+    Secrets {
+        #[command(subcommand)]
+        action: reins_desktop::secrets_cmd::SecretsCmd,
+    },
     #[command(display_order = 20)]
     /// The SSH agent whose keys stay on your phone.
     Ssh {
@@ -567,6 +574,14 @@ async fn run(cmd: Cmd) -> Result<(), String> {
             action,
         } => {
             for line in reins_desktop::vault_cli::run(&action, &paths, &config).await? {
+                out!("{line}");
+            }
+            Ok(())
+        }
+        Cmd::Secrets {
+            action,
+        } => {
+            for line in reins_desktop::secrets_cmd::run(&action, &paths, &config).await? {
                 out!("{line}");
             }
             Ok(())
