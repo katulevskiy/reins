@@ -5,6 +5,10 @@ on:
     branches: [main]
   pull_request:
   workflow_dispatch:
+  # Every lane on main once a week, so the caches pull requests restore stay warm: GitHub drops a cache nobody has
+  # used for seven days, and a lane only runs on main when a merge touches it.
+  schedule:
+    - cron: "23 5 * * 1"
 
 permissions:
   contents: read
@@ -17,6 +21,9 @@ defaults:
   run:
     shell: bash
 
+# Caches are written by runs on main only (pushes and the weekly run) and restored everywhere: a pull request starts
+# from main's caches and never writes its own, which no other branch could read and which would push main's out of the
+# repository's 10 GB. Any change to these variables changes every Rust cache key.
 env:
   CARGO_TERM_COLOR: always
   RUST_BACKTRACE: "1"
@@ -131,7 +138,7 @@ jobs:
       - uses: Swatinem/rust-cache@v2
         with:
           shared-key: linux-server-core
-          save-if: ${{ github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository }}
+          save-if: ${{ github.ref == 'refs/heads/main' }}
       - uses: taiki-e/install-action@v2
         with:
           tool: nextest@0.9.146
@@ -160,7 +167,7 @@ jobs:
       - uses: Swatinem/rust-cache@v2
         with:
           shared-key: linux-server-core-clippy
-          save-if: ${{ github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository }}
+          save-if: ${{ github.ref == 'refs/heads/main' }}
       # Preserve the existing lint coverage: all core targets and the production server target.
       - run: cargo clippy --locked --workspace --exclude vaultwarden --exclude reins-desktop-app --all-targets -- -D warnings
       - run: cargo clippy --locked --features sqlite -- -D warnings
@@ -180,7 +187,7 @@ jobs:
       - uses: Swatinem/rust-cache@v2
         with:
           shared-key: linux-desktop-ui
-          save-if: ${{ github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository }}
+          save-if: ${{ github.ref == 'refs/heads/main' }}
       - name: GUI libraries
         run: |
           sudo apt-get update -qq
@@ -230,7 +237,7 @@ jobs:
         run: rustup toolchain install && rustc -vV
       - uses: Swatinem/rust-cache@v2
         with:
-          save-if: ${{ github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository }}
+          save-if: ${{ github.ref == 'refs/heads/main' }}
       - run: cargo clippy --locked -p reins-desktop --all-targets -- -D warnings
       - run: cargo test --locked --no-fail-fast -p reins-desktop
       # The app's macOS parts (the menu bar item, notifications, the Dock) are otherwise first compiled by the release.
@@ -258,7 +265,7 @@ jobs:
         run: rustup toolchain install && rustup target add aarch64-pc-windows-msvc && rustc -vV
       - uses: Swatinem/rust-cache@v2
         with:
-          save-if: ${{ github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository }}
+          save-if: ${{ github.ref == 'refs/heads/main' }}
       - run: cargo clippy --locked -p reins-desktop --all-targets -- -D warnings
       - run: cargo test --locked --no-fail-fast -p reins-desktop
       # The app's Windows parts (the tray's tray-icon menu, the toast, the window's place) are otherwise first compiled by
@@ -310,7 +317,8 @@ jobs:
       - uses: actions/checkout@v7
         with:
           persist-credentials: false
-      - uses: actions/cache@v5
+      # Outputs of exactly these sources (no prefix fallback), restored everywhere and saved from main.
+      - uses: actions/cache/restore@v5
         id: native
         with:
           path: native
@@ -325,8 +333,9 @@ jobs:
         with:
           # Bindgen can read the host dependencies built by the server/core tests; do not duplicate that cache.
           shared-key: ${{ matrix.kind == 'bindings' && 'linux-server-core' || format('android-debug-native-{0}', matrix.kind) }}
-          save-if: ${{ matrix.kind != 'bindings' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) }}
-      - uses: actions/cache@v5
+          save-if: ${{ matrix.kind != 'bindings' && github.ref == 'refs/heads/main' }}
+      - uses: actions/cache/restore@v5
+        id: cargo-ndk
         if: steps.native.outputs.cache-hit != 'true' && matrix.kind != 'bindings'
         with:
           path: ~/.cargo/bin/cargo-ndk
@@ -337,11 +346,23 @@ jobs:
           cargo ndk --version || cargo install --locked cargo-ndk@4.1.2
           ndk="$(grep -oP 'reinsNdkVersion = "\K[^"]+' android/app/build.gradle.kts)"
           "${ANDROID_HOME}/cmdline-tools/latest/bin/sdkmanager" --install "ndk;${ndk}" > /dev/null
+      - uses: actions/cache/save@v5
+        if: >-
+          steps.cargo-ndk.outcome == 'success' && steps.cargo-ndk.outputs.cache-hit != 'true' &&
+          github.ref == 'refs/heads/main'
+        with:
+          path: ~/.cargo/bin/cargo-ndk
+          key: cargo-ndk-${{ runner.os }}-4.1.2
       - name: Build debug native output
         if: steps.native.outputs.cache-hit != 'true'
         env:
           KIND: ${{ matrix.kind }}
         run: scripts/build-android-native.sh "$KIND" "$GITHUB_WORKSPACE/native" dev
+      - uses: actions/cache/save@v5
+        if: steps.native.outputs.cache-hit != 'true' && github.ref == 'refs/heads/main'
+        with:
+          path: native
+          key: ${{ steps.native.outputs.cache-primary-key }}
       - uses: actions/upload-artifact@v7
         with:
           name: android-debug-native-${{ matrix.kind }}
@@ -386,7 +407,7 @@ jobs:
       - uses: gradle/actions/setup-gradle@v6
         with:
           cache-provider: basic
-          cache-read-only: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name != github.repository }}
+          cache-read-only: ${{ github.ref != 'refs/heads/main' }}
       # Robolectric downloads its Android framework jar outside Gradle's cache.
       - name: Restore Robolectric's Android jar
         if: matrix.id != 'apk'
@@ -416,7 +437,7 @@ jobs:
           ./gradlew --no-daemon --parallel --no-configuration-cache "$TASKS" \
             "-Preins.prebuiltNativeDir=$GITHUB_WORKSPACE/native"
       - name: Save Robolectric's Android jar
-        if: matrix.id == 'full' && github.event_name == 'push' && steps.robolectric.outputs.cache-hit != 'true'
+        if: matrix.id == 'full' && github.ref == 'refs/heads/main' && steps.robolectric.outputs.cache-hit != 'true'
         uses: actions/cache/save@v5
         with:
           path: ~/.m2/repository/org/robolectric
