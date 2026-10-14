@@ -298,6 +298,10 @@ pub(crate) fn release_ask(call: &ConnectorCall) -> Result<ReleaseAsk, CoreError>
     if !reins_proto::desktop::runner_ok(&runner) {
         return Err(bad("`runner` must be person or agent:<harness>."));
     }
+    let print = call.bool_arg("print").unwrap_or(false);
+    if print && runner != reins_proto::desktop::PERSON {
+        return Err(bad("A value is printed for a person only; an agent runs its command with reins run."));
+    }
     let lease = call.int_arg("lease_secs").unwrap_or(DEFAULT_LEASE);
     if !(MIN_LEASE..=MAX_LEASE).contains(&lease) {
         return Err(bad(format!("`lease_secs` must be {MIN_LEASE} to {MAX_LEASE}.")));
@@ -313,7 +317,7 @@ pub(crate) fn release_ask(call: &ConnectorCall) -> Result<ReleaseAsk, CoreError>
         lease,
         purpose: call.str_arg("purpose").map(text::one_line).filter(|p| !p.is_empty()),
         confirm_always: call.str_arg("confirm") == Some("always"),
-        print: call.bool_arg("print").unwrap_or(false),
+        print,
         typed: call.str_arg("typed").map(text::one_line).filter(|t| !t.is_empty()),
         aliases: call.list_arg("aliases").iter().map(|a| text::one_line(a)).filter(|a| !a.is_empty()).collect(),
         path_check: call.str_arg("path_check").map(str::to_owned),

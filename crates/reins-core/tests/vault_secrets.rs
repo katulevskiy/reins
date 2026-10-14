@@ -481,6 +481,35 @@ async fn launchers_by_either_name_and_long_code_are_never_remembered_wider() {
 }
 
 #[tokio::test]
+async fn a_value_is_printed_for_a_person_only_and_asked_every_time() {
+    let desk = desk().await;
+    desk.pair().await;
+    let one: &[&str] = &["A"];
+    let get = Ask {
+        fields: Some(one),
+        args: &["secrets", "get", "vault:acme/dev/A"],
+        ..DEV
+    };
+    let agent = Ask {
+        runner: "agent:codex",
+        ..get
+    };
+    desk.send(&[
+        release_with(&desk, "g1", &agent, &json!({"program": "reins", "print": true})),
+        release_with(&desk, "g2", &get, &json!({"program": "reins", "print": true})),
+    ])
+    .await;
+    assert!(desk.error("g1").await.contains("person only"));
+    let view = desk.core.approval_view("g2".to_owned()).await.unwrap();
+    let r = view.env_release.clone().unwrap();
+    assert!(r.print && r.always_ask && view.no_standing);
+    assert!(desk.core.approve("g2".to_owned(), choice(&[], remember("exact", false))).await.is_err());
+    desk.core.approve("g2".to_owned(), choice(&[], None)).await.unwrap();
+    let grant: SecretGrant = desk.open(&desk.data("g2").await["sealed"]);
+    assert!(grant.one_shot && grant.secrets.len() == 1);
+}
+
+#[tokio::test]
 async fn mistakes_are_told_before_the_user_is_asked() {
     let desk = desk().await;
     desk.pair().await;
