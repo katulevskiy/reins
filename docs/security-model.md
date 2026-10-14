@@ -321,7 +321,7 @@ Harness hooks compare commands and file paths with patterns ([harnesses.md](harn
 They are a heuristic first line: they catch the obvious (force pushes, `rm -r`, `terraform apply`, reading `.env` or
 private keys) and, on purpose, match every word of a command, so false positives are expected (a test edit that
 mentions `.env`, a commit message). Those are handled on the phone: the question shows the rule and the word that
-matched, a secret-file question is an ordinary yes or no that Autopilot learns per group, and Bypass answers it.
+matched, a `.env` question is an ordinary yes or no that Autopilot can learn, and Bypass answers it.
 Determined code can still evade the guard: a name built at run time, a command hidden in a script or an alias, a
 tool the hook does not see. The other layers are what hold then: credentials stay on the phone and are released per
 action, grants are narrow and time-boxed, Autopilot judges each request, and an OS sandbox (a separate user, a
@@ -337,10 +337,15 @@ Autopilot runs only on the phone. Nothing it uses or learns leaves the phone. It
   MCP tools, pushes that rewrite or delete history (or whose history could not be checked), hook questions in one of
   the guard's destructive groups, uploaded files that may hold something to run, and anything from a connection
   paired less than 10 minutes ago. Lockdown denies, and never approves. Bypass is the exception, by design (below).
-  The phone puts a hook question in a group itself, reading the command or files it carries with its own copy of the
-  guard's built-in rules (`reins_policy::guard`): the hook runs where the AI does, so its label is only shown, and
-  can make a question stricter, never looser. A question about a secret file (`.env`, keys, cloud credentials, tokens)
-  is judged like any request, per group: an ordinary yes or no, held and red only when it cannot be undone.
+  The phone puts a hook question in a group itself, reading everything it carries with its own copy of the guard's
+  built-in rules (`reins_policy::guard`), whatever its layout; the most severe match wins, and the words of a
+  destructive command count as before. The hook runs where the AI does, so its label is only shown, and can make a
+  question stricter, never looser. Questions about private keys, cloud credentials and saved tokens, and any the
+  phone cannot read with certainty (an unbalanced quote, code fed to an interpreter, something piped into a shell, a
+  wrapper option it does not know, a detail cut short), are asked every time too: never remembered, never one tap,
+  never Autopilot's, but an ordinary yes or no on screen. A `.env` question is judged like any request; a remembered
+  answer to it covers exactly that file, or exactly that command in that folder, and Autopilot learns it in the
+  `.env` kind only when everything the command does is reading `.env` files.
 - **Prompt-injection rule.** The model scores each request twice: once on the facts the phone verified (service,
   action, target, history), and once with the AI-written text added (reason, email body, commit messages, arguments).
   The approve score it uses is the lower of the two, and the deny score the higher. AI-written text can therefore make

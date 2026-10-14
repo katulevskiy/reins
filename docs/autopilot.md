@@ -38,9 +38,11 @@ always reach you, as does another phone joining your account):
 - a harness hook's or `reins ask` question about something that cannot be undone: the desktop guard's destructive
   groups (rewriting git history, recursive deletes, infrastructure changes, dropping data, publishing, trusting a
   payment key, wiping disks). The phone reads the command itself with its own copy of the guard's rules; what the
-  computer says about the rule can make a question stricter, never looser. A question about a secret file (`.env`,
-  keys, cloud credentials, saved tokens) is not on the floor: it is judged like any other request (below), in a kind
-  of its own per group.
+  computer says about the rule can make a question stricter, never looser. Also on the floor: questions about private
+  keys, cloud credentials and saved tokens, and any question the phone cannot read with certainty (an unbalanced
+  quote, code fed to an interpreter, something piped into a shell, a detail cut short). Those are an ordinary yes or
+  no on the screen, held and red only when they cannot be undone. A question about a `.env` file is not on the floor:
+  it is judged like any other request (below).
 
 The same floor decides what you can answer without opening a request: requests on it never get Approve on the
 notification, Approve all or "Approve and allow for 1 hour" ([quick start](quick-start.md#5-answer-requests-quickly)).
@@ -87,8 +89,9 @@ of request goes back to asking you.
 ## How Auto earns trust
 
 Auto works per **kind of request** (service, action and class, for example `github/write/push` or `gmail/read`; a
-harness hook's question is of its guard group, as the phone reads it: `desktop/ask/env-files`, `desktop/ask/keys`,
-`desktop/ask/cloud`, `desktop/ask/tokens`):
+harness hook's question is of its guard group, `desktop/ask/env-files`, only when everything its command or file list
+does falls in that group as the phone reads it, else `desktop/ask`; its target is exactly that file, or exactly that
+command in that folder, so a learnt answer never covers another command):
 
 - **Auto-approve** unlocks after at least 20 of your decisions of that kind, when Autopilot would have agreed with you
   at least 95% of the time over the last 50, and never suggested approving something you denied in the last 20.

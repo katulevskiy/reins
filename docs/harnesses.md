@@ -192,10 +192,12 @@ SSH private keys (`id_rsa`, `id_ed25519`, ...), `.ssh/*`, cloud and registry cre
 `.env.sample`, `.env.template`, `.env.dist`.
 
 The phone shows the harness that asked, the command (or files), the working directory, and which rule matched and
-what matched it ("Matched: .env files · `.env`"). Questions about what cannot be undone (the command rules) are asked
-every time, with a hold to say yes; the file rules are an ordinary yes or no, and a standing answer can cover a topic
-such as `file:.env` or `command:make deploy`. See [security-model.md](security-model.md#hooks) for Autopilot
-and Bypass.
+what matched it ("Matched: .env files · `.env`"), read by the phone itself. Questions about what cannot be undone
+(the command rules) are asked every time, with a hold to say yes. Questions about private keys, cloud credentials and
+saved tokens, and commands the phone cannot read with certainty, are asked every time as an ordinary yes or no. A
+`.env` question is an ordinary yes or no whose remembered answer covers exactly that file or that command in that
+folder; a standing answer for your own command rules can cover a topic such as `command:make deploy`. See
+[security-model.md](security-model.md#hooks) for Autopilot and Bypass.
 
 ## What hooks do not do
 
