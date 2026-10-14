@@ -19,6 +19,8 @@ path = "src/main.rs"
 
 [dependencies]
 reins-proto = { path = "../reins-proto" }
+# `reins run` replaces released values in the command's output.
+aho-corasick = "1.1.5"
 async-trait = "0.1.92"
 bytes = "1.12.1"
 clap = { version = "4.6.7", features = ["derive"] }
