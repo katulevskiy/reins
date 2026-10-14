@@ -170,25 +170,11 @@ Backslashes in paths are kept (`type C:\Users\me\app\.env` matches `.env`), and 
 `powershell -Command`, `pwsh -c`, `powershell -EncodedCommand` and `Invoke-Expression` are checked as well.
 
 **File patterns** without a `/` match the file name (`*.pem`, `.env`). With a `/` they match the end of the path
-(`.ssh/*`, `.aws/credentials`). The words of a command are checked against them too, failing closed: any word that
-may name a guarded file asks (`cat .env`, `cp ~/.ssh/id_rsa /tmp/x`, `sed -i 's/a/b/' .env`, `echo x > .env`, an
-attached option value such as `--file=.env` or `-f.env`, a folder that holds guarded files such as `~/.ssh`). Paths
-are compared the way a case-insensitive file system and a careful reader would: `./.env`, `src/../.env`, `.ENV`,
-`.e""nv` and look-alike letters all count. A glob that could name a guarded file asks (`cat .e*`, `cat *`; not
-`cat *.rs`), and so does a file named only when the command runs (`xargs cat`, `find … -exec cat {}`, `cat $FILE`).
-
-A few forms are read with certainty, and only their text is left out: the message of `git commit -m` and `git tag
--m`; what `echo` and `printf` print when nothing is redirected, substituted or piped into a shell, an interpreter,
-`xargs` or `tee`; the pattern of `grep`, `rg`, `ag` and `ack` given as their first argument (not with `-e`, `-f`,
-`--file` or an option the guard does not know); and the script of `sed` and `awk` (`-f` files and every later
-argument are still files). So `git commit -m "fix .env loading"`, `grep -rn '.env' src` and `rg id_rsa` do not ask.
-
-A heredoc fed to a shell (`bash <<EOF`, `ssh host <<EOF`, `cat <<EOF | sh`) is read as commands. One written to a file
-(`cat > notes.md <<EOF`, `tee`) is text. Code given to an interpreter (`python3 -c`, `node -e`, `ruby -e`, `perl -e`,
-`php -r`, `deno eval`, or a heredoc fed to `python3 -`) asks when one of its one-line strings is a guarded file or
-has one as a word, also when joined from pieces (`'.e' + 'nv'`): `python3 -c "print(open('.env').read())"` asks, a
-Python script that edits a test file whose code mentions `.env` does not. Code that cannot be read with certainty (a
-quote that does not close) is checked word by word. Anything else fed to a command is checked word by word.
+(`.ssh/*`, `.aws/credentials`). Every word of a command is checked against the file patterns too, so `cat .env`
+matches, and so does a word in a heredoc, in an interpreter's code or in a commit message (`git commit -m "fix .env
+loading"`). That is on purpose: telling a file a command opens from text it is given takes a shell parser, and every
+such parser has been a way around the guard. Such a question is cheap: the phone shows the word that matched,
+Autopilot learns each group on its own, and Bypass answers it.
 
 **Built-in command rules:** force pushes and ref deletions (`git push -f`, `--force*`, `+refspec`, `-d`, `--delete`,
 `--mirror`, `--prune`, `:ref`), `git reset --hard`, `git clean -f`, `git branch -D`, `git checkout -f`,

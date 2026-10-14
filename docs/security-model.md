@@ -319,13 +319,14 @@ agent.
 
 Harness hooks compare commands and file paths with patterns ([harnesses.md](harnesses.md#the-guard-rules-guard)).
 They are a heuristic first line: they catch the obvious (force pushes, `rm -r`, `terraform apply`, reading `.env` or
-private keys) and fail closed where they can, asking whenever a word may name a guarded file, unless the form is one
-read with certainty (a commit message, a `grep` pattern). Determined code can still evade them: a name built at run
-time (`chr()`, slicing, a variable read from a file), a command hidden in a script or an alias, a tool the hook does
-not see. The other layers are what hold then: credentials stay on the phone and are released per action, grants are
-narrow and time-boxed, Autopilot and its risk model judge each request, and an OS sandbox (a separate user, a
-container) keeps the agent from the files at all. When the phone does not answer, the hook denies by default
-(`on_no_answer = "deny"`).
+private keys) and, on purpose, match every word of a command, so false positives are expected (a test edit that
+mentions `.env`, a commit message). Those are handled on the phone: the question shows the rule and the word that
+matched, a secret-file question is an ordinary yes or no that Autopilot learns per group, and Bypass answers it.
+Determined code can still evade the guard: a name built at run time, a command hidden in a script or an alias, a
+tool the hook does not see. The other layers are what hold then: credentials stay on the phone and are released per
+action, grants are narrow and time-boxed, Autopilot judges each request, and an OS sandbox (a separate user, a
+container) keeps the agent from the files at all. Smarter, context-aware judgment of commands is coming from
+Autopilot's risk model. When the phone does not answer, the hook denies by default (`on_no_answer = "deny"`).
 
 ## Autopilot
 

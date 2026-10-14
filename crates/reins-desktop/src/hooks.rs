@@ -506,9 +506,14 @@ mod tests {
     }
 
     #[test]
-    fn a_heredoc_that_edits_code_is_not_asked_about() {
+    fn a_heredoc_that_edits_code_says_which_word_matched() {
         let screenshot = include_str!("../tests/fixtures/heredoc-python-edit.sh");
-        assert_eq!(question(&claude_call(Action::Command(screenshot.to_owned())), &GuardConfig::default()), None);
+        let (_, q) = question(&claude_call(Action::Command(screenshot.to_owned())), &GuardConfig::default()).unwrap();
+        let detail = q.detail.unwrap();
+        let head: Vec<&str> = detail.lines().take(3).collect();
+        assert_eq!(head[0], "Rule: Cloud and cluster credentials · .config/gcloud/*", "{head:?}");
+        assert!(head[1].starts_with("Matched: ") && head[1].contains(".config/gcloud/"), "{head:?}");
+        assert_eq!(head[2], "Group: cloud", "an ordinary question, not one that cannot be undone");
     }
 
     #[test]
