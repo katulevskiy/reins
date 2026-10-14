@@ -225,7 +225,7 @@ fun BoxScope.BypassSheets(open: Boolean, who: String?, onStart: (UInt?) -> Unit,
                 Spacer(Modifier.width(10.dp))
                 Column {
                     RText("Everything is approved without asking until you stop it.", RType.sans(13.5f, FontWeight.SemiBold, lineHeight = 19f), c.danger)
-                    RText("Passwords, deletions and new connections still ask.", RType.sans(13.5f, lineHeight = 19f), c.secondary)
+                    RText(AutopilotText.BYPASS_STILL_ASKS, RType.sans(13.5f, lineHeight = 19f), c.secondary)
                 }
             }
         }

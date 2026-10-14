@@ -825,7 +825,7 @@ class FakeCore : ReinsCoreInterface {
             connections = apConnections.map { (id, row) ->
                 val mode = when {
                     globalMode() == AutopilotMode.LOCKDOWN || row.mode == AutopilotMode.LOCKDOWN -> AutopilotMode.LOCKDOWN
-                    (row.bypassUntil ?: 0) > now -> AutopilotMode.BYPASS
+                    (row.bypassUntil ?: 0) > now || (apGlobal.bypassUntil ?: 0) > now -> AutopilotMode.BYPASS
                     else -> row.mode ?: globalMode()
                 }
                 ConnectionAutopilot(id, row.mode, row.bypassUntil?.takeIf { it > now }, row.bypassSince.takeIf { (row.bypassUntil ?: 0) > now }, mode, row.profileId ?: defaultProfile().id)

@@ -75,7 +75,7 @@ object AutopilotText {
     fun line(mode: AutopilotMode): String = when (mode) {
         AutopilotMode.MANUAL -> "Ask, with a hint"
         AutopilotMode.AUTO -> "Decides the easy ones"
-        AutopilotMode.BYPASS -> "Approve all but the riskiest"
+        AutopilotMode.BYPASS -> "Approve everything"
         AutopilotMode.LOCKDOWN -> "Deny everything"
     }
 
@@ -198,7 +198,7 @@ object AutopilotText {
         }
         return BypassNotice(
             title = "Bypass on · ${timeLeft(until, nowSeconds)}",
-            text = "For $who. The riskiest still ask.",
+            text = "For $who. $BYPASS_STILL_ASKS",
             until = until,
             global = global != null,
             connectionIds = connections.map { it.connectionId },
@@ -236,7 +236,7 @@ object AutopilotText {
 
     /** Why a suggestion is limited, if it is: the hard floor, a target never seen, no model. */
     fun suggestionNotes(s: SuggestionView): List<String> = buildList {
-        if (s.floor) add("Passwords, deletions, new connections, SSH and other risky requests always wait for you, in every mode.")
+        if (s.floor) add("Passwords, deletions, new connections, SSH and other risky requests always wait for you in Manual and Auto.")
         if (s.novel) add("This target was never approved for this AI before, so Autopilot asks you even in Auto.")
         if (!s.judged && !s.floor && s.reason.isNotBlank()) add(s.reason)
     }
@@ -267,8 +267,11 @@ object AutopilotText {
     /** What "How sure" explains behind its (?). */
     const val HOW_SURE_HELP = "How sure Autopilot must be to approve or deny on its own in Auto. Requests that always ask still ask."
 
-    /** What a bypass still asks, behind the (?) of the bypass sheet. */
-    const val BYPASS_HELP = "Still asked every time: new connections, permissions, passwords and secrets, deletions and other one-off changes, SSH and flagged files."
+    /** What a bypass still asks: nothing an AI does, only a new connection or a new phone joining the account. */
+    const val BYPASS_STILL_ASKS = "New connections and new phones still ask."
+
+    /** Behind the (?) of the bypass sheet. */
+    const val BYPASS_HELP = BYPASS_STILL_ASKS
 
     /** The custom thresholds' range, in whole percent. */
     const val MIN_THRESHOLD_PERCENT = 80

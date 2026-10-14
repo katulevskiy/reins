@@ -135,7 +135,7 @@ class AutopilotTextTest {
         val global = AutopilotText.bypassNotice(settings(bypass = 1_000 + 600), { it }, 1_000)!!
         assertTrue(global.global)
         assertEquals("Bypass on · 10 min left", global.title)
-        assertTrue(global.text.contains("every AI"))
+        assertEquals("For every AI. New connections and new phones still ask.", global.text)
         val one = AutopilotText.bypassNotice(
             settings(connections = listOf(ConnectionAutopilot("c1", null, 1_000 + 120, null, AutopilotMode.BYPASS, "personal"))),
             { if (it == "c1") "Claude Code" else "?" },

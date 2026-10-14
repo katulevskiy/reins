@@ -63,10 +63,13 @@ object AutopilotDraft {
         return s.copy(connections = connections)
     }
 
-    /** What applies to a connection's requests, in the core's order (`modes::effective`): lockdowns, its bypass, its mode. */
+    /**
+     * What applies to a connection's requests, in the core's order (`modes::effective`): lockdowns, its bypass, a
+     * global bypass, its own mode.
+     */
     private fun effective(s: AutopilotSettings, c: ConnectionAutopilot): AutopilotMode = when {
         s.mode == AutopilotMode.LOCKDOWN || c.baseMode == AutopilotMode.LOCKDOWN -> AutopilotMode.LOCKDOWN
-        c.bypassUntil != null -> AutopilotMode.BYPASS
+        c.bypassUntil != null || s.bypassUntil != null -> AutopilotMode.BYPASS
         else -> c.baseMode ?: s.mode
     }
 }

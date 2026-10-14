@@ -77,4 +77,15 @@ class AutopilotDraftTest {
         assertNull(off.bypassUntil)
         assertNull(off.bypassSince)
     }
+
+    @Test
+    fun `a global bypass shows on every AI not locked down, whatever its own mode`() {
+        val s = AutopilotDraft.withBypass(
+            settings(mode = AutopilotMode.MANUAL, connections = listOf(own("a", AutopilotMode.AUTO), own("b", AutopilotMode.LOCKDOWN))),
+            null,
+            15u,
+            now,
+        )
+        assertEquals(listOf(AutopilotMode.BYPASS, AutopilotMode.LOCKDOWN), s.connections.map { it.mode })
+    }
 }
