@@ -2,6 +2,7 @@
 //! form's reason and branches. Typed by hand (key presses, backspace, Enter, paste with cmd/ctrl+V): the window has no
 //! text input widget.
 
+use gpui::prelude::FluentBuilder as _;
 use gpui::{
     ClickEvent, Context, Div, InteractiveElement as _, KeyDownEvent, Keystroke, ParentElement as _, SharedString,
     Stateful, StatefulInteractiveElement as _, Styled as _, Window, div, px,
@@ -99,6 +100,9 @@ impl Root {
             Field::Server => self.model.update(cx, crate::model::Model::use_server),
             Field::Guard(list) => {
                 let typed = std::mem::take(&mut self.guard_inputs[slot(list)]);
+                // One field per side: what was typed goes in the commands or the files list.
+                let never = matches!(list, GuardList::AllowCommands | GuardList::AllowFiles);
+                let list = super::rules::list_for(never, &typed);
                 self.model.update(cx, |m, cx| m.add_guard_item(list, &typed, cx));
             }
             // Enter asks the phone, once the form asks for something.
@@ -153,8 +157,6 @@ impl Root {
         let input = self.text_of(field, cx);
         let shown: SharedString = if input.is_empty() && !focused {
             placeholder.to_owned().into()
-        } else if focused {
-            format!("{input}▏").into()
         } else {
             input.clone().into()
         };
@@ -170,21 +172,23 @@ impl Root {
             .track_focus(&focus)
             .flex_1()
             .min_w(px(0.0))
-            .h(px(32.0))
-            .px(px(10.0))
+            .h(px(34.0))
+            .px(px(11.0))
             .flex()
             .items_center()
             .overflow_hidden()
-            .rounded(px(8.0))
-            .bg(pal.elevated)
+            .rounded(px(9.0))
+            .bg(pal.well())
             .border_1()
             .border_color(if focused {
                 pal.accent
+            } else if pal.dark {
+                pal.tile_border().opacity(0.8)
             } else {
                 pal.hairline
             })
             .font_family(MONO)
-            .text_size(px(12.0))
+            .text_size(px(12.5))
             .text_color(if input.is_empty() && !focused {
                 pal.tertiary
             } else {
@@ -192,6 +196,8 @@ impl Root {
             })
             .cursor_text()
             .child(div().whitespace_nowrap().text_ellipsis_start().min_w(px(0.0)).child(shown))
+            // The caret, drawn.
+            .when(focused, |f| f.child(div().flex_none().ml(px(1.0)).w(px(1.5)).h(px(15.0)).bg(pal.accent)))
             .on_click(cx.listener(move |_, _: &ClickEvent, window, cx| window.focus(&click_focus, cx)))
             .on_key_down(cx.listener(move |this, ev: &KeyDownEvent, _, cx| this.on_field_key(field, ev, cx)))
     }

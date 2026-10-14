@@ -49,6 +49,9 @@ pub mod links {
         };
         format!("https://reins2fa.com/download/{platform}")
     }
+    /// The terms of service and the privacy policy.
+    pub const TERMS: &str = "https://reins2fa.com/terms";
+    pub const PRIVACY: &str = "https://reins2fa.com/privacy";
     /// Opens the Activity screen of the phone app (the phone's camera reads it from a QR code).
     pub const PHONE_ACTIVITY: &str = "reins://home";
 }
@@ -133,7 +136,7 @@ fn main() {
     };
     let handle = runtime.handle().clone();
 
-    let app = gpui_platform::application().with_quit_mode(QuitMode::Explicit);
+    let app = gpui_platform::application().with_assets(ui::icons::Assets).with_quit_mode(QuitMode::Explicit);
     app.on_reopen(model::Model::show_window);
     app.run(move |cx: &mut App| {
         gpui_tokio::init_from_handle(cx, handle);

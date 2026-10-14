@@ -126,17 +126,12 @@ pub fn connectable(rows: &[ToolRow]) -> Vec<Harness> {
     rows.iter().filter(|r| r.can_connect()).map(|r| r.harness).collect()
 }
 
-/// A line under the list: how many are connected, or that none is installed.
+/// The line under the step's sentence: how many AI tools are on `place` ("this Mac").
 #[must_use]
-pub fn tools_line(rows: &[ToolRow]) -> String {
-    let installed = rows.iter().filter(|r| r.installed || r.connected).count();
-    let connected = rows.iter().filter(|r| r.connected).count();
-    match (installed, connected) {
-        (0, _) => "No AI tool found here".to_owned(),
-        (1, 1) => "Connected".to_owned(),
-        (n, c) if c == n => format!("All {n} connected"),
-        (n, 0) => format!("{n} found"),
-        (n, c) => format!("{c} of {n} connected"),
+pub fn tools_line(rows: &[ToolRow], place: &str) -> String {
+    match rows.iter().filter(|r| r.installed || r.connected).count() {
+        0 => format!("None found on {place}"),
+        n => format!("{n} found on {place}"),
     }
 }
 
@@ -200,11 +195,10 @@ mod tests {
         let order: Vec<_> = rows.iter().map(|r| r.harness).collect();
         assert_eq!(order, vec![Harness::Codex, Harness::Gemini, Harness::ClaudeCode, Harness::Cursor]);
         assert_eq!(connectable(&rows), vec![Harness::Gemini]);
-        assert_eq!(tools_line(&rows), "1 of 2 connected");
+        assert_eq!(tools_line(&rows, "this Mac"), "2 found on this Mac");
         assert_eq!(connected_names(&rows).as_deref(), Some("Codex"));
         rows[1].connected = true;
         assert!(connectable(&rows).is_empty());
-        assert_eq!(tools_line(&rows), "All 2 connected");
         assert_eq!(connected_names(&rows).as_deref(), Some("Codex and Gemini CLI"));
         rows[1].connected = false;
         rows[1].busy = true;
@@ -214,11 +208,11 @@ mod tests {
     #[test]
     fn the_line_says_when_nothing_is_installed() {
         let rows: Vec<ToolRow> = Harness::ALL.into_iter().map(|h| ToolRow::new(h, false, false)).collect();
-        assert!(tools_line(&rows).starts_with("No AI tool found"));
+        assert_eq!(tools_line(&rows, "this computer"), "None found on this computer");
         assert_eq!(connected_names(&rows), None);
         let mut rows = rows;
         rows[0].installed = true;
         rows[1].installed = true;
-        assert_eq!(tools_line(&rows), "2 found");
+        assert_eq!(tools_line(&rows, "this computer"), "2 found on this computer");
     }
 }

@@ -1,270 +1,348 @@
-//! Settings: notifications, opening at login, the command line tool, the account and pairing, the background service,
-//! the version, and quitting.
+//! Settings: the account card first (who, the server and this computer's key, which phone approves, the background
+//! service), then This computer (open at login, the command line tool, notifications, the health checks), Keyboard,
+//! Account (disconnect, held to confirm; quit), and the version with the links.
 
 use gpui::prelude::FluentBuilder as _;
 use gpui::{
     AnyElement, Context, FontWeight, InteractiveElement as _, IntoElement, ParentElement as _,
-    StatefulInteractiveElement as _, Styled as _, div, px,
+    StatefulInteractiveElement as _, Styled as _, div, linear_color_stop, linear_gradient, px,
 };
 
-use super::parts::{button, caption, card, group, help, info_row, kbd, labelled, link, page_header, row, toggle};
+use super::health::checked;
+use super::hold::{Held, fill, progress_ring};
+use super::icons::{Icon, icon};
+use super::parts::{
+    Btn, btn, caption, card, chip, group, kbd, page_header, row, row_text, solid_tile, this_computer, tile, toggle,
+};
 use super::{Data, Root};
 use crate::backend::{DaemonState, Setting};
 use crate::format::host;
-use crate::model::Model;
+use crate::health;
+use crate::model::{Model, Section};
 use crate::shortcuts;
-use crate::theme::{MONO, Palette};
+use crate::theme::{MONO, Palette, Tone};
+
+/// The keyboard card's lines: the sections in one line ("Overview … Settings", "⌘1 – ⌘6"), then the rest.
+#[must_use]
+pub fn keyboard_lines() -> Vec<(String, String)> {
+    let list = shortcuts::list();
+    let n = Section::ALL.len();
+    let mut out = vec![(
+        format!("{} … {}", Section::ALL[0].label(), Section::ALL[n - 1].label()),
+        format!("{} – {}", list[0].0, list[n - 1].0),
+    )];
+    out.extend(list[n..].iter().map(|(keys, what)| (what.clone(), keys.clone())));
+    out
+}
 
 impl Root {
-    pub(super) fn settings(d: &Data, pal: Palette, cx: &mut Context<'_, Self>) -> AnyElement {
-        let mut page = div().flex().flex_col().gap(px(22.0)).child(page_header("Settings", None));
-        page = page.when_some(d.notice.clone(), |p, n| p.child(caption(n, pal).text_color(pal.danger)));
-        page = page.when_some(d.note.clone(), |p, n| p.child(caption(n, pal)));
-
-        // Notifications.
-        let notify = d.config().map(|c| c.notify.clone()).unwrap_or_default();
-        let (phone, sound) = (notify.phone, notify.sound);
-        page = page.child(group(
-            "Notifications",
-            None,
-            card(pal)
-                .child(
-                    row(pal, true)
-                        .id("notify-phone")
-                        .cursor_pointer()
-                        .child(labelled("Notify me here", None, pal))
-                        .child(toggle(phone, pal))
-                        .on_click(Self::on_model(cx, move |m, cx| {
-                            m.change(
-                                Setting::Notify {
-                                    phone: !phone,
-                                    sound,
-                                },
-                                cx,
-                            );
-                        })),
-                )
-                .child(
-                    row(pal, false)
-                        .id("notify-sound")
-                        .child(labelled("Play a sound", None, pal))
-                        .child(toggle(sound && phone, pal))
-                        .when_else(
-                            phone,
-                            |r| {
-                                r.cursor_pointer().on_click(Self::on_model(cx, move |m, cx| {
-                                    m.change(
-                                        Setting::Notify {
-                                            phone,
-                                            sound: !sound,
-                                        },
-                                        cx,
-                                    );
-                                }))
-                            },
-                            |r| r.opacity(0.5),
-                        ),
-                ),
-        ));
+    pub(super) fn settings(&self, d: &Data, pal: Palette, cx: &mut Context<'_, Self>) -> AnyElement {
+        let mut page = div().flex().flex_col().gap(px(18.0)).child(page_header("Settings", None));
+        page = page.child(Self::account_card(d, pal, cx));
+        page = page.when_some(d.notice.clone(), |p, n| p.child(caption(n, pal).px(px(4.0)).text_color(pal.danger)));
+        page = page.when_some(d.note.clone(), |p, n| p.child(caption(n, pal).px(px(4.0))));
 
         // This computer.
         let autostart = d.autostart;
-        page = page.child(group(
-            "This computer",
-            None,
-            card(pal)
-                .child(
-                    row(pal, true)
-                        .id("autostart")
-                        .cursor_pointer()
-                        .child(labelled("Open at login", None, pal))
-                        .child(toggle(autostart, pal))
-                        .on_click(Self::on_model(cx, Model::toggle_autostart)),
-                )
-                .child(
-                    row(pal, false)
-                        .child(labelled("Command line tool", Some("~/.local/bin/reins".to_owned()), pal))
-                        .child(
-                            button("cli", "Install", pal, false, true).on_click(Self::on_model(cx, Model::install_cli)),
-                        ),
-                )
-                .child(Self::service_row(d, pal, cx))
-                .child(info_row("git", Self::git_line(d), pal, false)),
-        ));
-
-        // Account.
-        let account = d.saved.account.clone().unwrap_or_else(|| host(&d.server));
-        let phone_name = d.saved.phone.clone().unwrap_or_else(|| "Your phone".to_owned());
-        let mut acct = card(pal)
-            .child(info_row("Account", account, pal, true))
-            .child(info_row("Approves", phone_name, pal, false))
-            .child(info_row("Server", host(&d.server), pal, false));
-        if let Some(fp) = d.fingerprint.clone() {
-            acct = acct.child(
+        let notify = d.config().map(|c| c.notify.clone()).unwrap_or_default();
+        let (phone, sound) = (notify.phone, notify.sound);
+        let notify_word = match (phone, sound) {
+            (true, true) => "With sound",
+            (true, false) => "On",
+            (false, _) => "Off",
+        };
+        let health_line = match (&d.health.checks, &d.health.error) {
+            (_, Some(e)) => e.clone(),
+            (Some(c), None) => {
+                let s = health::summary(c).title;
+                checked(d).map_or(s.clone(), |at| format!("{s} · {}", at.trim_start_matches("Checked ")))
+            }
+            (None, None) => "Not checked yet".to_owned(),
+        };
+        let mut computer = card(pal)
+            .child(
+                row(pal, true)
+                    .id("autostart")
+                    .cursor_pointer()
+                    .child(solid_tile(Icon::Power, Tone::Violet, pal, 30.0))
+                    .child(row_text("Open at login", None, pal))
+                    .child(toggle(autostart, pal))
+                    .on_click(Self::on_model(cx, Model::toggle_autostart)),
+            )
+            .child(
                 row(pal, false)
-                    .justify_between()
-                    .child(div().flex_none().text_color(pal.secondary).child("This computer's key"))
-                    .child(div().font_family(MONO).font_weight(FontWeight::MEDIUM).child(fp)),
+                    .child(solid_tile(Icon::SquareTerminal, Tone::Teal, pal, 30.0))
+                    .child(row_text(
+                        "Command line tool",
+                        Some(
+                            div().font_family(MONO).text_size(px(11.5)).child("~/.local/bin/reins").into_any_element(),
+                        ),
+                        pal,
+                    ))
+                    .child(if d.cli_installed {
+                        chip(Some(Icon::Check), "Installed", pal.success).into_any_element()
+                    } else {
+                        btn("cli", "Install", Btn::Plain, pal)
+                            .on_click(Self::on_model(cx, Model::install_cli))
+                            .into_any_element()
+                    }),
+            )
+            .child(
+                row(pal, false)
+                    .id("notify")
+                    .cursor_pointer()
+                    .child(solid_tile(Icon::Bell, Tone::Pink, pal, 30.0))
+                    .child(row_text("Notifications", None, pal))
+                    .child(div().text_size(px(13.0)).text_color(pal.secondary).child(notify_word))
+                    .child(icon(
+                        if self.notify_open {
+                            Icon::X
+                        } else {
+                            Icon::ChevronRight
+                        },
+                        16.0,
+                        pal.tertiary,
+                    ))
+                    .on_click(Self::on_view(cx, |this, _| this.notify_open = !this.notify_open)),
+            );
+        if self.notify_open {
+            let sub = |id: &'static str, label: &'static str, on: bool, enabled: bool| {
+                row(pal, false)
+                    .id(id)
+                    .pl(px(56.0))
+                    .min_h(px(44.0))
+                    .child(row_text(label, None, pal))
+                    .child(toggle(on, pal))
+                    .when(!enabled, |r| r.opacity(0.5))
+            };
+            computer = computer
+                .child(sub("notify-phone", "Notify me here", phone, true).cursor_pointer().on_click(Self::on_model(
+                    cx,
+                    move |m, cx| {
+                        m.change(
+                            Setting::Notify {
+                                phone: !phone,
+                                sound,
+                            },
+                            cx,
+                        );
+                    },
+                )))
+                .child({
+                    let r = sub("notify-sound", "Play a sound", sound && phone, phone);
+                    if phone {
+                        r.cursor_pointer().on_click(Self::on_model(cx, move |m, cx| {
+                            m.change(
+                                Setting::Notify {
+                                    phone,
+                                    sound: !sound,
+                                },
+                                cx,
+                            );
+                        }))
+                    } else {
+                        r
+                    }
+                });
+        }
+        computer = computer.child(
+            row(pal, false)
+                .child(solid_tile(Icon::HeartPulse, Tone::Yellow, pal, 30.0))
+                .child(row_text("Health checks", Some(health_line.into_any_element()), pal))
+                .child(Self::check_again("run-checks", "Run", d, pal, cx)),
+        );
+
+        // Keyboard.
+        let mut keys = div().flex().flex_col().gap(px(8.0)).px(px(14.0)).py(px(12.0));
+        for (what, k) in keyboard_lines() {
+            keys = keys.child(
+                div()
+                    .flex()
+                    .items_center()
+                    .gap(px(12.0))
+                    .text_size(px(13.0))
+                    .child(div().flex_1().min_w(px(0.0)).truncate().text_color(pal.secondary).child(what))
+                    .child(kbd(k, pal)),
             );
         }
-        acct = acct.child(
-            row(pal, false)
-                .child(
-                    div()
-                        .flex()
-                        .flex_1()
-                        .min_w(px(0.0))
-                        .items_center()
-                        .gap(px(6.0))
-                        .child(caption(
-                            if d.paired {
-                                "Paired"
-                            } else {
-                                "Not paired"
-                            },
-                            pal,
-                        ))
-                        .when(d.paired, |r| {
-                            r.child(help(
-                                "disconnect",
-                                "Disconnecting forgets the session here; remove the computer on your phone too.",
-                                d,
-                                pal,
-                                cx,
-                            ))
-                        }),
-                )
-                .child(
-                    button(
-                        "sign-out",
-                        if d.paired {
-                            "Disconnect"
-                        } else {
-                            "Pair again"
-                        },
-                        pal,
-                        !d.paired,
-                        true,
+
+        // Account.
+        let disconnect = if d.paired {
+            let area = row(pal, true).id("disconnect").relative().overflow_hidden();
+            let area = Self::hold_area(area, Held::Disconnect, cx);
+            match self.holding(Held::Disconnect) {
+                Some(press) => area
+                    .child(fill(press, pal.danger.opacity(0.16)))
+                    .child(div().relative().child(tile(Icon::Unlink, pal.danger, 30.0)))
+                    .child(
+                        div()
+                            .relative()
+                            .flex_1()
+                            .text_color(pal.danger)
+                            .font_weight(FontWeight::MEDIUM)
+                            .child("Keep holding"),
                     )
-                    .on_click(Self::on_model(cx, Model::sign_out)),
-                ),
-        );
-        page = page.child(group("Account", None, acct));
-
-        // Health.
-        page = page.child(group(
-            "Health",
-            Some(help(
-                "settings-health",
-                "The checks `reins doctor` runs: pairing, the server, the clock, the service, git and your AI tools.",
-                d,
-                pal,
-                cx,
-            )),
-            Self::checks_row(d, pal, cx),
-        ));
-
-        // Keyboard shortcuts, two columns.
-        let list = shortcuts::list();
-        let half = list.len().div_ceil(2);
-        let column = |items: &[(String, String)]| {
-            let mut col = div().flex().flex_col().flex_1().min_w(px(220.0));
-            for (i, (keys, what)) in items.iter().enumerate() {
-                col = col.child(
-                    row(pal, i == 0)
-                        .py(px(8.0))
-                        .child(div().flex_1().min_w(px(0.0)).text_color(pal.secondary).child(what.clone()))
-                        .child(kbd(keys.clone(), pal)),
-                );
+                    .child(div().relative().child(progress_ring(press, pal.danger, 16.0))),
+                None => area
+                    .hover(|s| s.bg(pal.danger.opacity(0.05)))
+                    .child(tile(Icon::Unlink, pal.danger, 30.0))
+                    .child(
+                        div()
+                            .flex_1()
+                            .min_w(px(0.0))
+                            .text_color(pal.danger)
+                            .font_weight(FontWeight::MEDIUM)
+                            .child(format!("Disconnect {}", this_computer())),
+                    )
+                    .child(div().text_size(px(12.0)).text_color(pal.tertiary).child("Hold")),
             }
-            col
+            .into_any_element()
+        } else {
+            row(pal, true)
+                .id("pair-again")
+                .cursor_pointer()
+                .child(tile(Icon::Smartphone, pal.accent, 30.0))
+                .child(row_text("Pair again", None, pal))
+                .child(icon(Icon::ChevronRight, 16.0, pal.tertiary))
+                .on_click(Self::on_model(cx, Model::sign_out))
+                .into_any_element()
         };
-        page = page.child(group(
-            "Keyboard shortcuts",
-            None,
-            card(pal)
-                .flex_row()
-                .flex_wrap()
-                .child(column(&list[..half]))
-                .child(div().w(px(1.0)).bg(pal.hairline))
-                .child(column(&list[half..])),
-        ));
+        let account = card(pal).child(disconnect).child(
+            row(pal, false)
+                .id("quit")
+                .cursor_pointer()
+                .hover(|s| s.bg(pal.control_fill.opacity(0.5)))
+                .child(tile(Icon::LogOut, pal.secondary, 30.0))
+                .child(row_text("Quit Reins", None, pal))
+                .child(div().text_size(px(12.0)).text_color(pal.tertiary).child("service keeps running"))
+                .on_click(Self::on_model(cx, Model::quit)),
+        );
 
-        // Version and quit.
         page = page.child(
             div()
                 .flex()
-                .items_center()
-                .gap(px(14.0))
+                .flex_wrap()
+                .gap(px(16.0))
+                .child(div().flex_1().min_w(px(280.0)).child(group("This computer", None, computer, pal)))
                 .child(
                     div()
                         .flex()
                         .flex_col()
+                        .gap(px(18.0))
                         .flex_1()
-                        .min_w(px(0.0))
-                        .flex_row()
-                        .items_center()
-                        .gap(px(6.0))
-                        .child(caption(format!("Reins {}", reins_desktop::update::LONG_VERSION), pal))
-                        .child(help(
-                            "quit",
-                            "Quitting hides the shield; the background service keeps running.",
-                            d,
-                            pal,
-                            cx,
-                        )),
-                )
-                .when(d.update.is_none(), |r| {
-                    r.child(
-                        link("download", "Downloads", pal).on_click(|_, _, cx| cx.open_url(&crate::links::download())),
-                    )
-                })
-                .child(button("quit", "Quit Reins", pal, false, true).on_click(Self::on_model(cx, Model::quit))),
+                        .min_w(px(280.0))
+                        .child(group("Keyboard", None, card(pal).child(keys), pal))
+                        .child(group("Account", None, account, pal)),
+                ),
+        );
+
+        // The version and the links.
+        let footer_link = |id: &'static str, label: &'static str, url: String| {
+            div()
+                .id(id)
+                .cursor_pointer()
+                .hover(|s| s.text_color(pal.secondary))
+                .child(label)
+                .on_click(move |_, _, cx| cx.open_url(&url))
+        };
+        page = page.child(
+            div()
+                .flex()
+                .justify_center()
+                .gap(px(5.0))
+                .pt(px(4.0))
+                .text_size(px(12.0))
+                .text_color(pal.tertiary)
+                .child(format!("Reins {}", reins_desktop::update::VERSION))
+                .child("·")
+                .child(footer_link("downloads", "Downloads", crate::links::download()))
+                .child("·")
+                .child(footer_link("terms", "Terms", crate::links::TERMS.to_owned()))
+                .child("·")
+                .child(footer_link("privacy", "Privacy", crate::links::PRIVACY.to_owned())),
         );
         page.into_any_element()
     }
 
-    fn service_row(d: &Data, pal: Palette, cx: &mut Context<'_, Self>) -> AnyElement {
-        let (state, running) = match d.snapshot.as_ref().map(|s| &s.daemon) {
+    /// Who this computer is paired as, the server and its key, which phone approves, and the service.
+    fn account_card(d: &Data, pal: Palette, cx: &mut Context<'_, Self>) -> AnyElement {
+        let account = d.saved.account.clone().unwrap_or_else(|| host(&d.server));
+        let mut line = host(&d.server);
+        if let Some(fp) = &d.fingerprint {
+            line = format!("{line} · key {fp}");
+        }
+        let service = match d.snapshot.as_ref().map(|s| &s.daemon) {
             Some(DaemonState::Running {
-                pending: 0,
-            }) => ("Running".to_owned(), true),
-            Some(DaemonState::Running {
-                pending,
-            }) => (format!("Running, {pending} waiting"), true),
-            Some(DaemonState::Stopped) => ("Not running".to_owned(), false),
-            Some(DaemonState::Unknown(e)) => (e.clone(), false),
-            None => ("Checking…".to_owned(), true),
+                ..
+            })
+            | None => Ok(()),
+            Some(DaemonState::Stopped) => Err("Service off".to_owned()),
+            Some(DaemonState::Unknown(_)) => Err("Service unreachable".to_owned()),
         };
-        // "On" says it runs; the line only says more.
-        let detail = (state != "Running").then_some(state);
-        let r = row(pal, false).child(labelled("Background service", detail, pal));
-        if running {
-            r.child(
+        let mut chips = div().flex().flex_wrap().items_center().gap(px(8.0));
+        chips = if d.paired {
+            chips.child(chip(Some(Icon::Smartphone), format!("{} approves", d.phone()), pal.success))
+        } else {
+            chips.child(chip(Some(Icon::Unlink), "Not paired", pal.danger))
+        };
+        chips = match service {
+            Ok(()) => chips.child(chip(Some(Icon::Server), "Service on", pal.success)),
+            Err(why) => chips.child(chip(Some(Icon::Server), why, pal.danger)).child(
+                btn("start-service", "Start", Btn::Accent, pal)
+                    .h(px(26.0))
+                    .on_click(Self::on_model(cx, Model::start_service)),
+            ),
+        };
+        let (from, to) = if pal.dark {
+            (0.16, 0.03)
+        } else {
+            (0.12, 0.02)
+        };
+        div()
+            .flex()
+            .flex_wrap()
+            .items_center()
+            .gap(px(14.0))
+            .p(px(16.0))
+            .rounded(px(18.0))
+            .bg(linear_gradient(
+                160.0,
+                linear_color_stop(pal.background.blend(pal.accent.opacity(from)), 0.0),
+                linear_color_stop(pal.background.blend(pal.accent.opacity(to)), 0.7),
+            ))
+            .border_1()
+            .border_color(pal.accent.opacity(0.24))
+            .child(div().flex_none().size(px(46.0)).rounded_full().bg(linear_gradient(
+                150.0,
+                linear_color_stop(gpui::rgb(0x00C4_B5FD), 0.0),
+                linear_color_stop(gpui::rgb(0x004C_1D95), 1.0),
+            )))
+            .child(
                 div()
                     .flex()
-                    .items_center()
-                    .gap(px(6.0))
-                    .text_size(px(12.0))
-                    .text_color(pal.success)
-                    .child(div().size(px(7.0)).rounded_full().bg(pal.success))
-                    .child("On"),
+                    .flex_col()
+                    .flex_1()
+                    .min_w(px(200.0))
+                    .gap(px(2.0))
+                    .child(div().text_size(px(15.5)).font_weight(FontWeight::SEMIBOLD).truncate().child(account))
+                    .child(
+                        div().font_family(MONO).text_size(px(12.0)).text_color(pal.secondary).truncate().child(line),
+                    ),
             )
+            .child(chips)
             .into_any_element()
-        } else {
-            r.child(
-                button("start-service", "Start", pal, true, true).on_click(Self::on_model(cx, Model::start_service)),
-            )
-            .into_any_element()
-        }
     }
+}
 
-    fn git_line(d: &Data) -> String {
-        match d.snapshot.as_ref() {
-            Some(s) if !s.git_routed.is_empty() => format!("{} through Reins", s.git_routed.join(", ")),
-            Some(_) if d.pause.on() => "Paused: direct".to_owned(),
-            Some(_) => "Direct".to_owned(),
-            None => String::new(),
-        }
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn the_keyboard_card_folds_the_sections_into_one_line() {
+        let lines = keyboard_lines();
+        assert_eq!(lines[0].0, "Overview … Settings");
+        assert!(lines[0].1.contains('–'));
+        assert_eq!(lines.len(), shortcuts::list().len() - Section::ALL.len() + 1);
     }
 }

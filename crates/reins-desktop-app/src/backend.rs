@@ -282,6 +282,12 @@ impl Backend {
         bundled.is_file().then_some(bundled)
     }
 
+    /// Whether the command line tool is installed (`~/.local/bin/reins`).
+    #[must_use]
+    pub fn cli_installed(&self) -> bool {
+        self.home.join(".local/bin").join(CLI_NAME).exists()
+    }
+
     /// "Install command line tool": `~/.local/bin/reins`, a link to the program in the app (a copy where the
     /// app's own path changes, as with an AppImage). Returns where it is.
     pub fn install_cli(&self) -> Result<PathBuf, String> {

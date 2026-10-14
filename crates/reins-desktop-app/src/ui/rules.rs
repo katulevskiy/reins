@@ -1,24 +1,25 @@
-//! Rules ("What asks your phone"): which commands and files the AI tools' hooks ask the phone about, what goes
-//! through without asking, what happens when nobody answers, and how long things wait. Checked on this computer;
-//! approving always happens on the phone.
+//! Rules ("What asks your phone"): the built-in rule groups as a grid of cards coloured by how risky they are, your
+//! own commands and files to ask about or never ask about (removable tags and a field), what happens when nobody
+//! answers, and how long things wait. Checked on this computer; approving always happens on the phone.
 
 use gpui::prelude::FluentBuilder as _;
 use gpui::{
-    AnyElement, Context, FontWeight, InteractiveElement as _, IntoElement, ParentElement as _, SharedString,
+    AnyElement, Context, Div, FontWeight, InteractiveElement as _, IntoElement, ParentElement as _, SharedString,
     StatefulInteractiveElement as _, Styled as _, Window, div, px,
 };
 use reins_desktop::guard::{GROUPS, OnNoAnswer};
 use reins_desktop::settings::GuardList;
 
 use super::field::{Field, slot};
+use super::icons::{Icon, icon};
 use super::parts::{
-    button, caption, card, empty, fine, group, help, labelled, labelled_help, mono, page_header, row, segment,
-    segmented, toggle,
+    Btn, btn, caption, card, empty, fine, group, group_title, help, page_header, segment, segmented, tile, toggle,
 };
+use super::story::{group_icon, group_tone};
 use super::{Data, Root};
 use crate::backend::Setting;
 use crate::format;
-use crate::theme::Palette;
+use crate::theme::{MONO, Palette};
 
 /// The wait times offered, in seconds.
 const WAITS: [u64; 4] = [60, 120, 300, 600];
@@ -39,6 +40,43 @@ fn wait_label(secs: u64) -> String {
     format::duration(i64::try_from(secs).unwrap_or(i64::MAX))
 }
 
+/// A few examples of what a built-in group covers, for its card (the (?) has them all).
+fn examples(id: &str) -> Option<&'static str> {
+    Some(match id {
+        "git-history" => "Force push, reset --hard",
+        "deletes" => "rm -r, rd /s",
+        "infrastructure" => "terraform apply, kubectl delete",
+        "databases" => "DROP TABLE, TRUNCATE",
+        "publishing" => "npm, cargo, docker push",
+        "disks" => "dd, mkfs, Format-Volume",
+        "cloud" => "~/.aws, kubeconfig",
+        "tokens" => ".netrc, .npmrc",
+        _ => return None,
+    })
+}
+
+/// Whether a typed item is a file (a path or a glob) rather than a command: one word that starts like a path, or has
+/// a slash or a dot-name in it (`~/secrets/**`, `./.env.local`, `*.pem`). A command has words (`make deploy*`).
+#[must_use]
+pub fn is_file(item: &str) -> bool {
+    let item = item.trim();
+    if item.is_empty() || item.contains(char::is_whitespace) {
+        return false;
+    }
+    item.starts_with(['~', '/', '.', '*', '\\']) || item.contains(['/', '\\']) || item.as_bytes().get(1) == Some(&b':')
+}
+
+/// Which list a typed item goes in: the "ask" lists or the "never ask" lists, as a command or as a file.
+#[must_use]
+pub fn list_for(never: bool, item: &str) -> GuardList {
+    match (never, is_file(item)) {
+        (false, false) => GuardList::Commands,
+        (false, true) => GuardList::Files,
+        (true, false) => GuardList::AllowCommands,
+        (true, true) => GuardList::AllowFiles,
+    }
+}
+
 impl Root {
     pub(super) fn rules(
         &mut self,
@@ -47,7 +85,7 @@ impl Root {
         window: &mut Window,
         cx: &mut Context<'_, Self>,
     ) -> AnyElement {
-        let mut page = div().flex().flex_col().gap(px(22.0)).child(page_header(
+        let mut page = div().flex().flex_col().gap(px(18.0)).child(page_header(
             "What asks your phone",
             Some(help(
                 "rules",
@@ -58,100 +96,136 @@ impl Root {
                 cx,
             )),
         ));
-        page = page.when_some(d.notice.clone(), |p, n| p.child(caption(n, pal).text_color(pal.danger)));
-        page = page.when_some(d.note.clone(), |p, n| p.child(caption(n, pal)));
+        page = page.when_some(d.notice.clone(), |p, n| p.child(caption(n, pal).px(px(4.0)).text_color(pal.danger)));
+        page = page.when_some(d.note.clone(), |p, n| p.child(caption(n, pal).px(px(4.0))));
         let Some(config) = d.config() else {
             return page.child(card(pal).child(empty("Reading the settings…", pal))).into_any_element();
         };
         let guard = config.guard.clone();
         let approval = config.approval_timeout_secs;
 
-        // Built-in groups.
-        let mut groups = card(pal);
-        for (i, g) in GROUPS.iter().enumerate() {
+        // Built-in groups, a grid of cards.
+        // Three columns where they fit; two in a narrow window.
+        let content = window.viewport_size().width.as_f32() - 232.0 - 68.0;
+        let mut grid = div()
+            .grid()
+            .grid_cols(if content >= 660.0 {
+                3
+            } else {
+                2
+            })
+            .gap(px(8.0));
+        let mut on_count = 0;
+        for g in GROUPS {
             let on = guard.defaults && !guard.group_off(g.id);
+            on_count += usize::from(on);
             let id = g.id;
-            let mut r = row(pal, i == 0)
+            let color = pal.tone(group_tone(id));
+            let mut c = div()
                 .id(SharedString::from(format!("group-{id}")))
-                .child(labelled_help(g.label, None, Some(help(g.id, g.detail, d, pal, cx)), pal))
+                .flex()
+                .items_center()
+                .gap(px(11.0))
+                .p(px(12.0))
+                .min_h(px(62.0))
+                .min_w(px(0.0))
+                .rounded(px(14.0))
+                .bg(pal.elevated)
+                .border_1()
+                .border_color(pal.hairline)
+                .child(tile(group_icon(id), color, 30.0))
+                .child(
+                    div()
+                        .flex()
+                        .flex_col()
+                        .flex_1()
+                        .min_w(px(0.0))
+                        .gap(px(2.0))
+                        .child(
+                            div()
+                                .text_size(px(13.0))
+                                .line_height(px(17.0))
+                                .font_weight(FontWeight::MEDIUM)
+                                .child(g.label),
+                        )
+                        .when_some(examples(id), |t, ex| {
+                            t.child(div().text_size(px(11.5)).line_height(px(15.0)).text_color(pal.tertiary).child(ex))
+                        }),
+                )
                 .child(toggle(on, pal));
             if guard.defaults {
-                r = r
+                c = c
                     .cursor_pointer()
+                    .hover(|s| s.border_color(color.opacity(0.35)))
                     .on_click(Self::on_model(cx, move |m, cx| m.change(Setting::GuardGroup(id.to_owned(), !on), cx)));
             } else {
-                r = r.opacity(0.5);
+                c = c.opacity(0.5);
             }
-            groups = groups.child(r);
+            grid = grid.child(c);
         }
         let about = if guard.defaults {
             "On: the AI tool waits for your phone. Off: it goes ahead without asking."
         } else {
             "The built-in rules are off in config.toml (`guard.defaults = false`); only your own lists below count."
         };
-        page = page.child(group("Built-in rules", Some(help("rules-builtin", about, d, pal, cx)), groups));
+        page = page.child(
+            div()
+                .flex()
+                .flex_col()
+                .gap(px(8.0))
+                .child(
+                    group_title("Built-in", pal)
+                        .child(div().text_size(px(13.0)).text_color(pal.tertiary).child(format!("{on_count} on")))
+                        .child(help("rules-builtin", about, d, pal, cx)),
+                )
+                .child(grid),
+        );
 
-        // Own lists.
-        page = page.child(group(
-            "Also ask about",
-            Some(help(
-                "rules-also",
-                "Commands match from the start of the command, and * matches anything (make deploy*). Files are \
-                 paths or globs (~/secrets/**).",
-                d,
+        // Own lists, side by side.
+        let also = self.list_card(
+            false,
+            [(GuardList::Commands, &guard.commands), (GuardList::Files, &guard.files)],
+            pal,
+            window,
+            cx,
+        );
+        let never = self.list_card(
+            true,
+            [(GuardList::AllowCommands, &guard.allow_commands), (GuardList::AllowFiles, &guard.allow_files)],
+            pal,
+            window,
+            cx,
+        );
+        page = page.child(two(
+            group(
+                "Also ask about",
+                Some(help(
+                    "rules-also",
+                    "Commands match from the start of the command, and * matches anything (make deploy*). Files \
+                         are paths or globs (~/secrets/**).",
+                    d,
+                    pal,
+                    cx,
+                )),
+                also,
                 pal,
-                cx,
-            )),
-            card(pal)
-                .child(self.list_editor(
-                    GuardList::Commands,
-                    "Commands",
-                    "make deploy*",
-                    &guard.commands,
-                    true,
+            ),
+            group(
+                "Never ask about",
+                Some(help(
+                    "rules-never",
+                    "Exceptions to every rule above: these go through without asking.",
+                    d,
                     pal,
-                    window,
-                    cx,
-                ))
-                .child(self.list_editor(
-                    GuardList::Files,
-                    "Files",
-                    "~/secrets/**",
-                    &guard.files,
-                    false,
-                    pal,
-                    window,
                     cx,
                 )),
-        ));
-        page = page.child(group(
-            "Never ask about",
-            Some(help("rules-never", "Exceptions to every rule above: these go through without asking.", d, pal, cx)),
-            card(pal)
-                .child(self.list_editor(
-                    GuardList::AllowCommands,
-                    "Commands",
-                    "git push origin feature/*",
-                    &guard.allow_commands,
-                    true,
-                    pal,
-                    window,
-                    cx,
-                ))
-                .child(self.list_editor(
-                    GuardList::AllowFiles,
-                    "Files",
-                    "./.env.local",
-                    &guard.allow_files,
-                    false,
-                    pal,
-                    window,
-                    cx,
-                )),
+                never,
+                pal,
+            ),
         ));
 
-        // No answer.
-        let mut answer = segmented(pal);
+        // No answer, and the waits.
+        let mut answer = segmented(pal).w_full();
         for (i, (choice, label)) in
             [(OnNoAnswer::Deny, "Deny"), (OnNoAnswer::Ask, "AI tool decides")].into_iter().enumerate()
         {
@@ -160,23 +234,8 @@ impl Root {
                     .on_click(Self::on_model(cx, move |m, cx| m.change(Setting::OnNoAnswer(choice), cx))),
             );
         }
-        page = page.child(group(
-            "When nobody answers",
-            Some(help(
-                "rules-no-answer",
-                "If your phone does not answer in time: refuse the command (the AI tool is told why), or let the AI \
-                 tool's own permission prompt decide.",
-                d,
-                pal,
-                cx,
-            )),
-            card(pal)
-                .child(row(pal, true).child(div().flex_1().child(fine("Then", pal).text_size(px(12.5)))).child(answer)),
-        ));
-
-        // Waits.
         let waits = |id: &'static str, current: u64, make: fn(u64) -> Setting, cx: &mut Context<'_, Self>| {
-            let mut bar = segmented(pal);
+            let mut bar = segmented(pal).w_full();
             for secs in wait_choices(current) {
                 bar = bar.child(
                     segment(SharedString::from(format!("{id}-{secs}")), wait_label(secs), secs == current, pal)
@@ -187,90 +246,122 @@ impl Root {
         };
         let hook_wait = waits("hook-wait", guard.timeout_secs, Setting::GuardTimeout, cx);
         let approval_wait = waits("approval-wait", approval, Setting::ApprovalTimeout, cx);
-        page = page.child(group(
-            "Wait for your phone",
-            None,
-            card(pal).child(row(pal, true).child(labelled("Commands and files", None, pal)).child(hook_wait)).child(
-                row(pal, false)
-                    .child(labelled("git, SSH, secrets", Some("Restarts the service".to_owned()), pal))
+        page = page.child(two(
+            group(
+                "If nobody answers",
+                Some(help(
+                    "rules-no-answer",
+                    "If your phone does not answer in time: refuse the command (the AI tool is told why), or let the \
+                     AI tool's own permission prompt decide.",
+                    d,
+                    pal,
+                    cx,
+                )),
+                answer,
+                pal,
+            ),
+            group(
+                "Wait for your phone",
+                Some(help(
+                    "rules-waits",
+                    "The first is for commands and files; the second for git, SSH and secrets (changing it restarts \
+                     the background service).",
+                    d,
+                    pal,
+                    cx,
+                )),
+                div()
+                    .flex()
+                    .flex_col()
+                    .gap(px(8.0))
+                    .child(hook_wait)
+                    .child(fine("git, SSH and secrets", pal).px(px(4.0)))
                     .child(approval_wait),
+                pal,
             ),
         ));
         page.into_any_element()
     }
 
-    /// One of the guard's own lists: its items (each removable) and a field to add one.
-    #[allow(clippy::too_many_arguments, reason = "one call per list, all of it needed")]
-    fn list_editor(
+    /// One side's lists as one card: their items as removable tags, and a field that adds a command or a file.
+    fn list_card(
         &self,
-        list: GuardList,
-        title: &'static str,
-        placeholder: &str,
-        items: &[String],
-        first: bool,
+        never: bool,
+        lists: [(GuardList, &Vec<String>); 2],
         pal: Palette,
         window: &Window,
         cx: &mut Context<'_, Self>,
     ) -> AnyElement {
-        let n = slot(list);
-        let mut block = div()
-            .flex()
-            .flex_col()
-            .gap(px(6.0))
-            .px(px(16.0))
-            .py(px(12.0))
-            .when(!first, |b| b.border_t_1().border_color(pal.hairline))
-            .child(
-                div()
-                    .flex()
-                    .items_center()
-                    .child(div().flex_1().font_weight(FontWeight::MEDIUM).child(title))
-                    .child(fine(format::count(items.len() as u64, "rule", "rules"), pal)),
-            );
-        for (i, item) in items.iter().enumerate() {
-            let remove = item.clone();
-            block = block.child(
-                div()
-                    .flex()
-                    .items_center()
-                    .gap(px(8.0))
-                    .pl(px(10.0))
-                    .pr(px(4.0))
-                    .h(px(30.0))
-                    .rounded(px(7.0))
-                    .bg(pal.control_fill.opacity(0.6))
-                    .child(mono(item.clone(), pal).flex_1().min_w(px(0.0)).truncate())
-                    .child(
-                        div()
-                            .id(SharedString::from(format!("remove-{n}-{i}")))
-                            .flex()
-                            .items_center()
-                            .justify_center()
-                            .size(px(22.0))
-                            .rounded(px(6.0))
-                            .text_color(pal.tertiary)
-                            .cursor_pointer()
-                            .hover(|s| s.bg(pal.danger.opacity(0.12)).text_color(pal.danger))
-                            .child("×")
-                            .on_click(Self::on_model(cx, move |m, cx| m.remove_guard_item(list, &remove, cx))),
-                    ),
-            );
+        let mut tags = div().flex().flex_wrap().gap(px(6.0));
+        let mut any = false;
+        for (list, items) in lists {
+            let n = slot(list);
+            for (i, item) in items.iter().enumerate() {
+                any = true;
+                let remove = item.clone();
+                tags = tags.child(
+                    div()
+                        .flex()
+                        .items_center()
+                        .gap(px(4.0))
+                        .max_w_full()
+                        .h(px(28.0))
+                        .pl(px(10.0))
+                        .pr(px(4.0))
+                        .rounded(px(8.0))
+                        .bg(pal.tile())
+                        .font_family(MONO)
+                        .text_size(px(12.0))
+                        .child(div().min_w(px(0.0)).truncate().child(item.clone()))
+                        .child(
+                            div()
+                                .id(SharedString::from(format!("remove-{n}-{i}")))
+                                .flex()
+                                .flex_none()
+                                .items_center()
+                                .justify_center()
+                                .size(px(20.0))
+                                .rounded(px(6.0))
+                                .cursor_pointer()
+                                .hover(|s| s.bg(pal.danger.opacity(0.14)))
+                                .child(icon(Icon::X, 12.0, pal.tertiary))
+                                .on_click(Self::on_model(cx, move |m, cx| m.remove_guard_item(list, &remove, cx))),
+                        ),
+                );
+            }
         }
-        let field = Field::Guard(list);
-        block
-            .child(
-                div()
-                    .flex()
-                    .gap(px(8.0))
-                    .pt(px(2.0))
-                    .child(self.text_field(field, placeholder, pal, window, cx))
-                    .child(
-                        button(("add", n), "Add", pal, false, !self.guard_inputs[n].trim().is_empty())
-                            .on_click(cx.listener(move |this, _, _, cx| this.submit(field, cx))),
-                    ),
-            )
+        // The field is the commands list's; Add puts what was typed in the list it belongs to ([`list_for`]).
+        let field_list = if never {
+            GuardList::AllowCommands
+        } else {
+            GuardList::Commands
+        };
+        let field = Field::Guard(field_list);
+        let typed = !self.guard_inputs[slot(field_list)].trim().is_empty();
+        let add = btn(("add", slot(field_list)), "Add", Btn::Plain, pal).h(px(34.0));
+        card(pal)
+            .p(px(12.0))
+            .gap(px(10.0))
+            .when(any, |c| c.child(tags))
+            .child(div().flex().gap(px(8.0)).child(self.text_field(field, "command or path", pal, window, cx)).child(
+                if typed {
+                    add.on_click(cx.listener(move |this, _, _, cx| this.submit(field, cx)))
+                } else {
+                    add.opacity(0.5).cursor_default()
+                },
+            ))
             .into_any_element()
     }
+}
+
+/// Two blocks side by side while there is room.
+fn two(left: impl IntoElement, right: impl IntoElement) -> Div {
+    div()
+        .flex()
+        .flex_wrap()
+        .gap(px(16.0))
+        .child(div().flex_1().min_w(px(260.0)).child(left))
+        .child(div().flex_1().min_w(px(260.0)).child(right))
 }
 
 #[cfg(test)]
@@ -283,5 +374,22 @@ mod tests {
         assert_eq!(wait_choices(90), vec![60, 90, 120, 300, 600]);
         assert_eq!(wait_label(90), "1 min 30 s");
         assert_eq!(wait_label(300), "5 min");
+    }
+
+    #[test]
+    fn typed_items_go_to_their_list() {
+        assert_eq!(list_for(false, "make deploy*"), GuardList::Commands);
+        assert_eq!(list_for(false, "~/secrets/**"), GuardList::Files);
+        assert_eq!(list_for(false, "terraform"), GuardList::Commands);
+        assert_eq!(list_for(false, "*.pem"), GuardList::Files);
+        assert_eq!(list_for(false, ".env.local"), GuardList::Files);
+        assert_eq!(list_for(false, r"C:\secrets"), GuardList::Files);
+        assert_eq!(list_for(true, "git push origin feature/*"), GuardList::AllowCommands);
+        assert_eq!(list_for(true, "./.env.local"), GuardList::AllowFiles);
+    }
+
+    #[test]
+    fn some_groups_have_examples() {
+        assert!(GROUPS.iter().filter_map(|g| examples(g.id)).count() >= 6);
     }
 }
