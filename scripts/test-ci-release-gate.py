@@ -37,6 +37,8 @@ with tempfile.TemporaryDirectory(prefix="reins-ci-gate-") as directory:
         (["action_required"], False),
         (["unknown"], False),
         (["api-error"], False),
+        (["api-error", "success"], True),
+        (["api-error"] * 3, False),
         (["missing"] * 3, False),
         (["in_progress"] * 3, False),
     ]
@@ -107,4 +109,4 @@ desktop = workflow.split("  desktop:\n", 1)[1].split("  desktop-app:\n", 1)[0]
 assert "fail-fast: false" in desktop
 assert "uses: actions/upload-artifact@" not in workflow
 assert workflow.count("uses: ./.github/actions/upload-artifact") == 11
-print("35 release CI gate and artifact retry checks passed")
+print("37 release CI gate and artifact retry checks passed")

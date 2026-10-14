@@ -13,9 +13,11 @@ on:
 permissions:
   contents: read
 
+# A new push to a pull request supersedes its run in progress. Runs on main are never cancelled: each main commit needs
+# its own CI result (the release waits for it, scripts/wait-for-ci.sh) and its cache writes.
 concurrency:
-  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
-  cancel-in-progress: true
+  group: ${{ github.workflow }}-${{ github.event_name == 'pull_request' && format('pr-{0}', github.event.pull_request.number) || format('{0}-{1}', github.event_name, github.sha) }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 defaults:
   run:

@@ -29,9 +29,12 @@ on:
 
 permissions: {}
 
+# One release at a time, and a release in progress is never cancelled (cancelling one part-way could stop it between
+# the image tags and the GitHub release). Pushes during it wait; only the newest of them runs next, and it releases
+# the commits of those before it.
 concurrency:
   group: ${{ inputs.verify_only && format('release-verification-{0}', github.ref) || 'release' }}
-  cancel-in-progress: true
+  cancel-in-progress: false
 
 defaults:
   run:
