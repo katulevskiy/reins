@@ -142,15 +142,8 @@ private struct ApprovalScreen: View {
             .background(Palette.background.ignoresSafeArea())
             .navigationDestination(for: ApprovalPage.self) { page in
                 ScrollView {
-                    Group {
-                        switch page {
-                        case let .commits(ref): CommitsPage(view: view, refIndex: ref)
-                        case let .commit(ref, index): CommitPage(view: view, refIndex: ref, index: index)
-                        case let .files(ref): FilesPage(view: view, refIndex: ref)
-                        case let .text(_, text, mono, id): TextPage(text: text, mono: mono, id: id)
-                        }
-                    }
-                    .padding(.bottom, 20)
+                    page.content(view)
+                        .padding(.bottom, 20)
                 }
                 .background(Palette.background.ignoresSafeArea())
                 .navigationTitle(Self.title(view, page))
@@ -178,16 +171,30 @@ private struct ApprovalScreen: View {
         }
     }
 
+    static func title(_ view: ApprovalView, _ page: ApprovalPage) -> String { page.title(in: view) }
+}
+
+extension ApprovalPage {
     /// The page's own title in the bar: "8 commits", a commit's short id, "12 files".
-    static func title(_ view: ApprovalView, _ page: ApprovalPage) -> String {
+    func title(in view: ApprovalView) -> String {
         let refs = view.git?.refs ?? []
-        switch page {
+        switch self {
         case let .commits(ref): return refs.indices.contains(ref) ? ApprovalWords.commits(Int(refs[ref].commitCount)) : ""
         case let .commit(ref, index):
             guard refs.indices.contains(ref), refs[ref].commits.indices.contains(index) else { return "" }
             return refs[ref].commits[index].shortSha
         case let .files(ref): return refs.indices.contains(ref) ? ApprovalWords.files(Int(refs[ref].filesChanged)) : ""
         case let .text(title, _, _, _): return title
+        }
+    }
+
+    /// The page itself (the approval screen and an Activity entry push the same ones).
+    @ViewBuilder func content(_ view: ApprovalView) -> some View {
+        switch self {
+        case let .commits(ref): CommitsPage(view: view, refIndex: ref)
+        case let .commit(ref, index): CommitPage(view: view, refIndex: ref, index: index)
+        case let .files(ref): FilesPage(view: view, refIndex: ref)
+        case let .text(_, text, mono, id): TextPage(text: text, mono: mono, id: id)
         }
     }
 }

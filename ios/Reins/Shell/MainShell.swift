@@ -68,7 +68,8 @@ private struct TabShell: View {
                     }
                     .pageFeedback(model.path(section).count)
                 }
-                .badge(badge(section))
+                // The system's own badge (never clipped by the bar), with "99+" past 99 like the sidebar's.
+                .badge(CountBadge.text(badge(section)).map { Text($0) })
             }
         }
         .tabBarMinimizeBehavior(.onScrollDown)

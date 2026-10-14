@@ -47,6 +47,29 @@ final class AutopilotFlowTests: XCTestCase {
         XCTAssertTrue(feedback.lastWas(.autopilotOff))
     }
 
+    /// Manual, Auto, Manual, Auto: each pick is the one in force, on screen and in the core, every time; tapped faster
+    /// than the core answers, the last pick wins and nothing is left in between.
+    func testManualAndAutoSwitchBackAndForthAndTheLastPickWins() async throws {
+        await start()
+        for mode in [AutopilotMode.auto, .manual, .auto] {
+            await ap.setMode(mode)
+            XCTAssertEqual(model.autopilot?.mode, mode)
+            let read = try await core.autopilotSettings()
+            XCTAssertEqual(read.mode, mode)
+            XCTAssertNil(ap.error)
+        }
+        let picks: [AutopilotMode] = [.manual, .auto, .manual, .auto]
+        var changes: [Task<Void, Never>] = []
+        for mode in picks {
+            changes.append(Task { await self.ap.setMode(mode) })
+        }
+        for change in changes { await change.value }
+        XCTAssertEqual(model.autopilot?.mode, .auto)
+        let read = try await core.autopilotSettings()
+        XCTAssertEqual(read.mode, .auto, "the core got them in order")
+        XCTAssertFalse(ap.busy)
+    }
+
     func testBypassIsConfirmedByTheOwnerThenRunsAndStopsBackToTheModeItInterrupted() async throws {
         await start()
         await ap.setMode(.bypass, minutes: 30)

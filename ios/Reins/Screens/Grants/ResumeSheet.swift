@@ -202,9 +202,9 @@ struct ResumeSheet: View {
                 if !send {
                     label("Which emails?")
                     HStack(spacing: 8) {
-                        OptionChip("Specific senders", selected: !draft.allMail) { edit { $0.allMail = false } }
+                        OptionChip("Specific senders", selected: !draft.allMail, symbol: "at") { edit { $0.allMail = false } }
                             .accessibilityIdentifier("resumeScope:specific")
-                        OptionChip("All mail", selected: draft.allMail) {
+                        OptionChip("All mail", selected: draft.allMail, symbol: "tray") {
                             edit {
                                 $0.allMail = true
                                 if $0.period == .month { $0.period = .week }

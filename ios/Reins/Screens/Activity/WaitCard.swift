@@ -100,18 +100,30 @@ struct WaitCard: View {
         let shape = RoundedRectangle(cornerRadius: 24, style: .continuous)
         VStack(alignment: .leading, spacing: 0) {
             HStack(alignment: .center, spacing: 12) {
-                ServiceMini(
-                    service: item.kind == .request ? item.service : "",
-                    symbol: kind.symbol,
-                    connectionId: item.connectionId,
-                    label: item.connectionLabel,
-                    known: item.kind == .request || item.kind == .blob
-                )
-                WantsText.text(group.isBurst ? WantsText.of(burst: group.items) : WantsText.of(item))
-                    .lineSpacing(1)
-                    .lineLimit(3)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .accessibilityIdentifier("pendingTitle:\(item.id)")
+                // What it touches with what it does, as its Activity row and its page will show it; requests the core
+                // gave no label (pairings, other phones, uploads) keep the service tile.
+                if let label = item.label {
+                    PendingTile(item: item, label: label)
+                } else {
+                    ServiceMini(
+                        service: item.kind == .request ? item.service : "",
+                        symbol: kind.symbol,
+                        connectionId: item.connectionId,
+                        label: item.connectionLabel,
+                        known: item.kind == .request || item.kind == .blob
+                    )
+                }
+                Group {
+                    if let label = item.label, !group.isBurst {
+                        LabelText(label: label, size: 16, lines: 3)
+                    } else {
+                        WantsText.text(group.isBurst ? WantsText.of(burst: group.items) : WantsText.of(item))
+                            .lineSpacing(1)
+                            .lineLimit(3)
+                    }
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .accessibilityIdentifier("pendingTitle:\(item.id)")
                 TimerPill(createdAt: item.createdAt, waitUntil: item.kind == .blob ? nil : group.items.compactMap(\.waitUntil).min())
             }
             if group.isBurst { peek }
@@ -132,7 +144,9 @@ struct WaitCard: View {
                 Button("Deny all", systemImage: "nosign") { answer(approve: false) }
             }
             Button("Copy", systemImage: "doc.on.doc") {
-                UIPasteboard.general.string = WantsText.plain(group.isBurst ? WantsText.of(burst: group.items) : WantsText.of(item))
+                UIPasteboard.general.string = group.isBurst || item.label == nil
+                    ? WantsText.plain(group.isBurst ? WantsText.of(burst: group.items) : WantsText.of(item))
+                    : item.label.map(RequestLabelLook.plain)
                 feedback.play(.copied)
             }
         }

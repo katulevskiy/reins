@@ -520,13 +520,19 @@ enum DemoData {
     static func entry(
         _ id: Int64, at: Int64, conn: String = "c1", label: String = "Claude", action: String, outcome: String, detail: String,
         grantId: String? = nil, service: String = "gmail", account: String? = "me@gmail.com", count: UInt32 = 1,
-        info: ActivityInfo = info(), op: String = "", opTitle: String = "", decidedBy: String = "", autopilot: AutopilotNote? = nil
+        info: ActivityInfo = info(), op: String = "", opTitle: String = "", decidedBy: String = "", autopilot: AutopilotNote? = nil,
+        requestLabel: RequestLabel? = nil, request: ActivityRequest? = nil
     ) -> ActivityEntry {
         ActivityEntry(
             id: id, at: at, connectionId: conn, connectionLabel: label, action: action, outcome: outcome, detail: detail,
             grantId: grantId, service: service, account: account, count: count, info: info, op: op, opTitle: opTitle,
-            decidedBy: decidedBy, autopilot: autopilot
+            decidedBy: decidedBy, autopilot: autopilot, label: requestLabel, request: request
         )
+    }
+
+    /// What a request is, as the core's `titles` words it (the tile and the title of its row).
+    static func requestLabel(_ provider: String, _ action: String, _ lead: String, _ subject: String = "", code: Bool = false, tail: String = "") -> RequestLabel {
+        RequestLabel(provider: provider, action: action, lead: lead, subject: subject, code: code, tail: tail)
     }
 
     static func note(_ suggested: Verdict = .approve, pApprove: Float = 0.98, correctable: Bool = true, mode: AutopilotMode = .auto) -> AutopilotNote {
@@ -557,15 +563,22 @@ enum DemoData {
         return [
             entry(14, at: now - 60, conn: "c6", label: desktop, action: "write", outcome: "sent",
                   detail: "feature/laya → dkat/reins · 3 commits", service: "github", account: "dkat", op: "git_push",
-                  opTitle: "Push to a branch", decidedBy: "autopilot", autopilot: note()),
+                  opTitle: "Push to a branch", decidedBy: "autopilot", autopilot: note(),
+                  requestLabel: requestLabel("github", "push", "Push 3 commits to", "dkat/reins"),
+                  request: ActivityRequest(
+                      agent: "Claude Code", cwd: "~/dev/reins", why: "Pushing to a shared repository",
+                      full: "git push origin feature/laya", purpose: "Push the Laya branch so the PR updates", askedAt: now - 69
+                  )),
             entry(13, at: now - 300, conn: "c4", label: "notes-bot", action: "send", outcome: "denied",
                   detail: "To backup-svc@protonmail.example", count: 1,
                   info: info(email: EmailView(to: ["backup-svc@protonmail.example"], cc: [], subject: "Export", body: "All notes attached."), note: "Autopilot denied this"),
-                  decidedBy: "autopilot", autopilot: note(.deny, pApprove: 0.04)),
+                  decidedBy: "autopilot", autopilot: note(.deny, pApprove: 0.04),
+                  requestLabel: requestLabel("gmail", "send", "Send an email to", "backup-svc@protonmail.example")),
             entry(12, at: now - 600, conn: "c2", label: "My ChatGPT", action: "read", outcome: "released", detail: "2 emails",
                   count: 2, info: info(messages: Array(statements.prefix(2))), decidedBy: "bypass"),
             entry(11, at: now - 700, conn: "c5", label: "Cursor", action: "write", outcome: "denied", detail: "Create issue on Linear",
-                  service: "mcp:linear", account: nil, op: "create_issue", decidedBy: "lockdown"),
+                  service: "mcp:linear", account: nil, op: "create_issue", decidedBy: "lockdown",
+                  requestLabel: requestLabel("mcp:linear", "write", "Use", "create_issue", code: true, tail: " on Linear")),
             entry(10, at: now - 800, conn: "c2", label: "My ChatGPT", action: "read", outcome: "released", detail: "3 emails",
                   count: 3, info: info(messages: statements)),
             entry(9, at: now - 900, action: "send", outcome: "sent", detail: "To ann@corp.example", count: 2,
@@ -587,7 +600,8 @@ enum DemoData {
                   info: info(query: "from:landlord", note: "Gmail did not answer in time. Nothing was shared.")),
             entry(1, at: now - 86_400 * 4, conn: "c5", label: "Cursor", action: "write", outcome: "sent",
                   detail: "Commit README.md to main of octo/app", service: "github", account: "octo-cat", op: "file_put",
-                  opTitle: "Commit a file to GitHub"),
+                  opTitle: "Commit a file to GitHub",
+                  requestLabel: requestLabel("github", "write", "Commit", "README.md", code: true, tail: " to octo/app")),
         ]
     }
 

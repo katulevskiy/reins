@@ -468,7 +468,8 @@ struct AutopilotWidgetView: View {
 
     private var stopButton: some View {
         Button(intent: StopBypassIntent()) {
-            GlanceButtonLabel(title: "Stop bypass", symbol: "stop.fill", tint: Palette.danger, filled: true)
+            // Words only: stopping a bypass carries no icon anywhere.
+            GlanceButtonLabel(title: "Stop bypass", symbol: nil, tint: Palette.danger, filled: true)
         }
         .buttonStyle(.plain)
     }
@@ -769,7 +770,7 @@ struct BypassLiveViews {
 
     var stop: some View {
         Button(intent: StopBypassIntent()) {
-            GlanceButtonLabel(title: "Stop", symbol: "stop.fill", tint: Palette.danger, filled: true)
+            GlanceButtonLabel(title: "Stop", symbol: nil, tint: Palette.danger, filled: true)
         }
         .buttonStyle(.plain)
         .frame(width: 112)

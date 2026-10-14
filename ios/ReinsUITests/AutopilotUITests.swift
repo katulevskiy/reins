@@ -67,6 +67,36 @@ final class AutopilotUITests: XCTestCase {
         waitForExpectations(timeout: 5)
     }
 
+    private func notSelected(_ id: String) {
+        expectation(for: NSPredicate(format: "isSelected == false"), evaluatedWith: element(id))
+        waitForExpectations(timeout: 5)
+    }
+
+    /// Manual → Auto → Manual → Auto: each time the card in force is selected, the other is not, and both stay
+    /// enabled (nothing is left dimmed or pressed).
+    func testManualAndAutoSwitchBackAndForth() {
+        launch()
+        waitFor("mode:manual")
+        selected("mode:manual")
+        for (picked, other) in [("auto", "manual"), ("manual", "auto"), ("auto", "manual")] {
+            tap("mode:\(picked)")
+            selected("mode:\(picked)")
+            notSelected("mode:\(other)")
+            XCTAssertTrue(element("mode:\(picked)").isEnabled, "\(picked) stays enabled")
+            XCTAssertTrue(element("mode:\(other)").isEnabled, "\(other) stays enabled")
+            XCTAssertTrue(element("mode:\(other)").isHittable, "\(other) can be tapped again")
+        }
+        shot("autopilot-switched")
+    }
+
+    /// "Mode" has its (?) beside it, and what the modes do opens under it.
+    func testTheModeHeaderExplainsTheModes() {
+        launch()
+        let header = waitFor("modeHeader")
+        header.buttons["help"].firstMatch.tap()
+        XCTAssertTrue(waitFor("modeHelp").label.contains("Lock down denies everything that would ask"))
+    }
+
     func testBypassIsHeldAndLockDownIsAPlainTap() {
         launch()
         waitFor("mode:manual")

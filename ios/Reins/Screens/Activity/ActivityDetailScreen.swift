@@ -1,26 +1,44 @@
 import SwiftUI
 
-/// One operation, opened: who asked, what exactly, what was released or sent and to whom, who decided, and the
-/// grant that covered it.
+/// One operation, opened. An entry that kept its approval is shown with the approval's own hero, facts and pages,
+/// read-only, with how it ended on the hero, what was asked in full below and "This was wrong" where the decision dock
+/// was. An older entry shows what it kept: who asked, what exactly, what was released or sent and to whom, who
+/// decided, and the grant that covered it.
 struct ActivityDetailScreen: View {
     var entryId: Int64
     @Environment(AppModel.self) private var model
     @Environment(\.feedback) private var feedback
     /// "This was wrong" stays once shown, so its thanks can replace it after the correction.
     @State private var dockShown = false
+    /// The approval as it was shown, read once; nil for older entries.
+    @State private var recorded: ApprovalModel?
+    /// Until the core has answered nothing is drawn, so an entry with its approval never flashes the older page first.
+    @State private var looked = false
 
     var body: some View {
         let entry = model.activity.first(where: { $0.id == entryId })
         Group {
-            if let entry {
-                ScrollView { content(entry).padding(.bottom, 24) }
-                    .pageDock(when: dockShown) { ThisWasWrongDock(entry: entry) }
+            if let entry, let vm = recorded, let view = vm.view {
+                EntryApprovalPage(entry: entry, vm: vm, view: view) {
+                    AskedSections(entry: entry)
+                    extras(entry)
+                }
+                .pageDock(when: dockShown) { ThisWasWrongDock(entry: entry) }
+            } else if let entry {
+                if looked {
+                    ScrollView { content(entry).padding(.bottom, 24) }
+                        .pageDock(when: dockShown) { ThisWasWrongDock(entry: entry) }
+                } else {
+                    Color.clear
+                }
             } else {
                 EmptyState(symbol: "list.bullet", title: "Not found")
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
                     .accessibilityIdentifier("entryGone")
             }
         }
+        // Read again once the entry is there (a link can open it before the history has loaded).
+        .task(id: "\(entryId):\(entry != nil)") { await lookUp() }
         .onChange(of: entry.map(ThisWasWrongDock.offered) ?? false, initial: true) { _, offered in
             if offered { dockShown = true }
         }
@@ -29,11 +47,53 @@ struct ActivityDetailScreen: View {
         .navigationBarTitleDisplayMode(.inline)
         .toolbar {
             if let entry {
+                if recorded != nil {
+                    // Who asked, as the approval's own bar has it.
+                    ToolbarItem(placement: .principal) {
+                        HStack(spacing: 8) {
+                            ConnectionIcon(connectionId: entry.connectionId, label: entry.connectionLabel, size: 22)
+                            Text(untrusted(entry.connectionLabel))
+                                .font(RFont.sans(15, .semibold))
+                                .foregroundStyle(Palette.text)
+                                .lineLimit(1)
+                        }
+                        .accessibilityElement(children: .combine)
+                    }
+                }
                 ToolbarItem(placement: .topBarTrailing) {
                     ShareLink(item: summary(entry)) { Image(systemName: "square.and.arrow.up") }
                         .accessibilityLabel("Share")
                 }
             }
+        }
+    }
+
+    /// Reads the approval the entry kept. Without one (an older entry, or the core could not say) the entry shows what
+    /// it kept itself.
+    private func lookUp() async {
+        let shown = try? await model.core.activityApproval(entryId: entryId)
+        if Task.isCancelled { return }
+        if let shown, let entry = model.activity.first(where: { $0.id == entryId }) {
+            // What was shared is ticked: the emails' ids and the addresses the entry released.
+            let released = Set(entry.info.messages.map(\.id).filter { !$0.isEmpty } + entry.info.accounts)
+            recorded = ApprovalModel(recorded: shown, released: released)
+        }
+        looked = true
+    }
+
+    /// Under an entry shown with its approval: the grant that covered it and Autopilot's reasons, when there are any.
+    @ViewBuilder private func extras(_ entry: ActivityEntry) -> some View {
+        if entry.grantId != nil || entry.autopilot != nil {
+            GroupCard {
+                if let id = entry.grantId {
+                    coveredBy(id)
+                }
+                if let note = entry.autopilot {
+                    if entry.grantId != nil { Hairline() }
+                    AutopilotWhyRow(note: note, title: EntryOutcome.whyTitle(entry))
+                }
+            }
+            .padding(.top, 14)
         }
     }
 
@@ -43,6 +103,8 @@ struct ActivityDetailScreen: View {
             hero(entry)
                 .padding(.horizontal, 12)
                 .padding(.top, 4)
+
+            AskedSections(entry: entry)
 
             GroupCard {
                 ValueRow(label: "When", value: TimeText.dateTime(entry.at))
@@ -84,12 +146,41 @@ struct ActivityDetailScreen: View {
         }
     }
 
+    /// The entry's hero: what it touched with what it did (the label's tile) and the request beside it, with how it
+    /// ended under it; an entry without a label has the older hero.
+    @ViewBuilder private func hero(_ entry: ActivityEntry) -> some View {
+        if let label = entry.label {
+            labelHero(entry, label)
+        } else {
+            sentenceHero(entry)
+        }
+    }
+
+    private func labelHero(_ entry: ActivityEntry, _ label: RequestLabel) -> some View {
+        let tint = entry.outcome == "denied" ? Palette.danger : KindTint.of(ActionKind.of(entry.action))
+        let shape = RoundedRectangle(cornerRadius: 24, style: .continuous)
+        return HStack(alignment: .center, spacing: 14) {
+            ProviderTile(label: label, size: 44, ring: Palette.background.mix(with: tint, by: 0.12))
+            VStack(alignment: .leading, spacing: 8) {
+                LabelText(label: label, size: 17, lines: 4)
+                    .accessibilityAddTraits(.isHeader)
+                    .accessibilityIdentifier("detailTitle")
+                EntryOutcomePill(entry: entry)
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+        }
+        .padding(16)
+        .background(KindTint.wash(tint), in: shape)
+        .overlay(shape.strokeBorder(tint.opacity(0.24), lineWidth: 1))
+        .accessibilityElement(children: .contain)
+        .accessibilityIdentifier("entryHero")
+    }
+
     /// The approval hero, after the fact: the AI, three dots, the service; the sentence; how it ended.
-    private func hero(_ entry: ActivityEntry) -> some View {
+    private func sentenceHero(_ entry: ActivityEntry) -> some View {
         let kind = ActionKind.of(entry.action)
         let tint = KindTint.of(kind)
         let shape = RoundedRectangle(cornerRadius: 28, style: .continuous)
-        let outcome = EntryOutcome.tint(entry)
         return VStack(spacing: 0) {
             HStack(spacing: 14) {
                 ConnectionIcon(connectionId: entry.connectionId, label: entry.connectionLabel, size: 52)
@@ -120,17 +211,8 @@ struct ActivityDetailScreen: View {
                     .textSelection(.enabled)
                     .accessibilityIdentifier("detailSummary")
             }
-            HStack(spacing: 6) {
-                Image(systemName: EntryOutcome.symbol(entry)).font(.system(size: 12, weight: .semibold))
-                Text(EntryOutcome.text(entry)).font(RFont.sans(13, .semibold))
-            }
-            .foregroundStyle(outcome)
-            .padding(.horizontal, 12)
-            .padding(.vertical, 6)
-            .background(outcome.opacity(0.16), in: Capsule())
-            .padding(.top, 14)
-            .accessibilityElement(children: .combine)
-            .accessibilityIdentifier("entryOutcome")
+            EntryOutcomePill(entry: entry)
+                .padding(.top, 14)
             Text(untrusted(entry.connectionLabel))
                 .font(RFont.sans(13))
                 .foregroundStyle(Palette.tertiary)

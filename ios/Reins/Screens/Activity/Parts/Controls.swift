@@ -125,30 +125,79 @@ struct CheckRow<Label: View>: View {
     }
 }
 
-/// One choice among a few ("1 hour", "24 hours"): filled in the accent when picked.
-struct SelectChip: View {
+/// One choice among a few (who a grant is for, which emails, how long, a filter), the same on every screen (the
+/// Android app's `SelectChip`): the chosen one is tinted in the accent with a 1.5 pt accent edge and a check after its
+/// words; the others are clear with a hairline edge. Never a white or grey fill, so which one is on is never a guess
+/// between two greys. `leading` is an avatar or a small icon before the words.
+struct SelectChip<Leading: View>: View {
     var title: String
     var selected: Bool
+    private var hasLeading: Bool
+    private var leading: Leading
     var action: () -> Void
     @Environment(\.feedback) private var feedback
 
+    init(title: String, selected: Bool, @ViewBuilder leading: () -> Leading, action: @escaping () -> Void) {
+        self.title = title
+        self.selected = selected
+        self.hasLeading = true
+        self.leading = leading()
+        self.action = action
+    }
+
+    fileprivate init(plain title: String, selected: Bool, leading: Leading, action: @escaping () -> Void) {
+        self.title = title
+        self.selected = selected
+        self.hasLeading = false
+        self.leading = leading
+        self.action = action
+    }
+
     var body: some View {
+        let shape = RoundedRectangle(cornerRadius: 12, style: .continuous)
         Button {
             action()
             feedback.play(.selection)
         } label: {
-            Text(title)
-                .font(RFont.sans(14.5, .medium))
-                .foregroundStyle(selected ? .white : Palette.text)
-                .padding(.horizontal, 14)
-                .padding(.vertical, 8)
-                .background(selected ? Palette.accent : Palette.controlFill, in: Capsule())
-                .contentShape(Capsule())
+            HStack(spacing: 7) {
+                if hasLeading { leading }
+                Text(title)
+                    .font(RFont.sans(14, .semibold))
+                    .foregroundStyle(selected ? Palette.text : Palette.secondary)
+                    .lineLimit(1)
+                if selected {
+                    Image(systemName: "checkmark")
+                        .font(.system(size: 11.5, weight: .bold))
+                        .foregroundStyle(SelectChipLook.check)
+                        .transition(.scale(scale: 0.5).combined(with: .opacity))
+                        .accessibilityHidden(true)
+                }
+            }
+            .padding(.leading, hasLeading ? 8 : 13)
+            .padding(.trailing, 13)
+            .frame(minHeight: 38)
+            .background(selected ? SelectChipLook.fill : Color.clear, in: shape)
+            .overlay(shape.strokeBorder(selected ? Palette.accent : SelectChipLook.edge, lineWidth: selected ? 1.5 : 1))
+            .contentShape(shape)
         }
         .buttonStyle(.plain)
         .accessibilityAddTraits(selected ? .isSelected : [])
         .animation(.smooth(duration: 0.2), value: selected)
     }
+}
+
+extension SelectChip where Leading == EmptyView {
+    init(title: String, selected: Bool, action: @escaping () -> Void) {
+        self.init(plain: title, selected: selected, leading: EmptyView(), action: action)
+    }
+}
+
+/// The chip's colours: the accent at 12 % (light) or 18 % (dark) when chosen, a hairline edge when not.
+enum SelectChipLook {
+    static let fill = Palette.dual(UIColor(hex: 0x5B43E8, alpha: 0.12), UIColor(hex: 0x8B7CF6, alpha: 0.18))
+    static let edge = Palette.dynamic(0xDCDCE2, 0x34343A)
+    /// The check after the chosen one's words: lighter than the accent on dark, so it reads on the tint.
+    static let check = Palette.dynamic(0x5B43E8, 0xA99BFA)
 }
 
 /// A small label on a tinted capsule ("Read only", "Looks like a code or a password").

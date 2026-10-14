@@ -189,8 +189,8 @@ private struct ConnectionAutopilotGroup: View {
     @ViewBuilder private var bypassButton: some View {
         if let until = own?.bypassUntil {
             Button(role: .destructive, action: stopBypass) {
+                // Stopping a bypass is words only, everywhere.
                 HStack(spacing: 6) {
-                    Image(systemName: "stop.fill").font(.system(size: 12, weight: .semibold))
                     if AutopilotText.isUntilOff(until) {
                         Text("Stop · until off")
                             .accessibilityIdentifier("connectionModeLine")
