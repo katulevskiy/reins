@@ -79,13 +79,12 @@ const SYSTEM_ROOTS: [&str; 16] = [
     "dev",
     "Applications",
 ];
-/// Programs that run code they are handed inline (`-c`, `-e`, a heredoc or standard input).
-const INTERPRETERS: [&str; 12] =
-    ["python", "python3", "python2", "node", "perl", "ruby", "php", "deno", "bun", "osascript", "lua", "rscript"];
-/// Shells that run what they read from standard input when given no script.
-const SHELLS: [&str; 6] = ["sh", "bash", "zsh", "dash", "ksh", "fish"];
-/// Programs that only look at a file.
-const VIEWERS: [&str; 9] = ["less", "more", "head", "tail", "grep", "wc", "ls", "stat", "file"];
+/// Shells: they run what they are given (a script, a pipe, `-c`).
+const SHELLS: [&str; 10] = ["sh", "bash", "zsh", "dash", "ksh", "fish", "ash", "mksh", "tcsh", "csh"];
+/// Programs that fetch from the network.
+const FETCHERS: [&str; 7] = ["curl", "wget", "invoke-webrequest", "iwr", "irm", "fetch", "aria2c"];
+/// Device files that are not disks.
+const NOT_DISKS: [&str; 10] = ["null", "zero", "stdout", "stderr", "stdin", "tty", "random", "urandom", "fd", "full"];
 
 /// The risk of a request as kept with its evaluation and its activity entry.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -342,6 +341,15 @@ pub fn normalize(raw: &str) -> NormPath {
             break;
         }
     }
+    // `~+`, `$PWD`: where the command runs
+    for here in ["~+", "${PWD}", "$PWD"] {
+        if let Some(rest) = t.strip_prefix(here)
+            && (rest.is_empty() || rest.starts_with('/'))
+        {
+            t = format!(".{rest}");
+            break;
+        }
+    }
     let lower = t.to_lowercase();
     if lower.starts_with("c:/") || lower == "c:" {
         t.drain(..2);
@@ -351,7 +359,7 @@ pub fn normalize(raw: &str) -> NormPath {
     }
     let (mut base, rest) = if let Some(r) = t.strip_prefix('/') {
         (Base::Root, r.to_owned())
-    } else if let Some(r) = t.strip_prefix('~') {
+    } else if let Some(r) = t.strip_prefix('~').filter(|r| !r.starts_with('-')) {
         let (user, rest) = r.split_once('/').unwrap_or((r, ""));
         (Base::Home((!user.is_empty()).then(|| user.to_owned())), rest.to_owned())
     } else {
@@ -422,8 +430,11 @@ enum Reach {
     /// Above where the command runs: the project's parent or beyond.
     Above(String),
     Inside(String),
+    /// Everything in the project but its dotfiles (`./*`).
     Everything,
-    /// Starts with what is not known (`"$X"`).
+    /// The project directory itself (`.`), or its dotfiles (`.*`): its `.git` with them.
+    ProjectDir,
+    /// Starts with what is not known (`"$X"`): `true` when an empty value would make it a path from the root.
     Unknown(String, bool),
 }
 
@@ -435,9 +446,11 @@ fn reach(p: &NormPath) -> Reach {
     match &p.base {
         Base::Here if p.ups > 0 => Reach::Above(shown),
         Base::Here if p.parts.is_empty() => match &p.open {
-            // `"$X"`, `$X/`: a variable at the start
-            Some(o) if o.contains('$') || o.contains('`') => Reach::Unknown(o.clone(), true),
-            _ => Reach::Everything,
+            // `"$X"`, `$X/`, `~-`: not known at the start
+            Some(o) if o.contains('$') || o.contains('`') || o.starts_with('~') => Reach::Unknown(o.clone(), true),
+            Some(o) if o.starts_with('.') => Reach::ProjectDir,
+            Some(_) => Reach::Everything,
+            None => Reach::ProjectDir,
         },
         Base::Here => Reach::Inside(format!("{shown}/").replace("//", "/")),
         Base::Root if p.parts.is_empty() => Reach::Root,
@@ -491,15 +504,16 @@ fn tree_context(targets: &[&str], verb: &str, moved: bool, c: &mut Context) {
                 c.trip(format!("{verb} a path above the project {v}"));
             }
             Reach::Everything if !moved => c.add(format!("{verb} everything inside the project")),
+            Reach::ProjectDir if !moved => c.trip(format!("{verb} the project directory (its .git included)")),
             Reach::Inside(rel) if !moved => inside.push(c.value(&rel, true)),
-            Reach::Everything | Reach::Inside(_) => {
+            Reach::Everything | Reach::Inside(_) | Reach::ProjectDir => {
                 let v = c.value(t, true);
                 c.add(format!("{verb} {v} after changing folder"));
             }
             Reach::Unknown(var, rooted) => {
                 let v = c.value(&var, true);
                 if rooted {
-                    c.add(format!("target not resolved {v} (an empty value deletes from the root)"));
+                    c.trip(format!("target not resolved {v} (an empty value deletes from the root)"));
                 } else {
                     c.add(format!("target not resolved {v}"));
                 }
@@ -518,7 +532,7 @@ fn overwrite_context(target: &str, c: &mut Context) {
     let dotfile = matches!(n.base, Base::Home(_)) && n.parts.first().is_some_and(|p| p.starts_with('.'));
     let system = n.base == Base::Root && n.parts.first().is_some_and(|p| SYSTEM_ROOTS.contains(&p.as_str()));
     match reach(&n) {
-        Reach::Root | Reach::Home | Reach::SystemRoot(_) | Reach::DotGit => {
+        Reach::Root | Reach::Home | Reach::SystemRoot(_) | Reach::DotGit | Reach::ProjectDir => {
             let v = c.value(&shown, true);
             c.trip(format!("overwrites {v}"));
         }
@@ -787,8 +801,9 @@ fn git_context(seg: &[String], moved: bool, c: &mut Context) {
                 c.trip("replaces or deletes every branch and tag on the remote that is not local");
             }
             let refs: Vec<&str> = a.operands.iter().skip(1).copied().collect();
+            // The current branch (no ref named, or `HEAD`, `@`) may be the default one: it is not known here.
             if refs.is_empty() && (force || delete) {
-                c.add("force push to the current branch");
+                c.trip("force push to the current branch, which may be the default branch");
             }
             for r in refs {
                 let (plus, colon_delete, name) = if let Some(n) = r.strip_prefix('+') {
@@ -799,7 +814,9 @@ fn git_context(seg: &[String], moved: bool, c: &mut Context) {
                     (false, false, r)
                 };
                 let name = name.rsplit_once(':').map_or(name, |(_, dst)| dst).trim_start_matches("refs/heads/");
-                if delete || colon_delete || force || plus {
+                if matches!(name, "HEAD" | "@" | "") && (delete || colon_delete || force || plus) {
+                    c.trip("force push to the current branch, which may be the default branch");
+                } else if delete || colon_delete || force || plus {
                     branch_change(name, delete || colon_delete, force || plus, None, c);
                 }
             }
@@ -975,66 +992,122 @@ fn known_host(host: &str, list: &[&str]) -> bool {
     list.iter().any(|k| host == *k || host.ends_with(&format!(".{k}")))
 }
 
-fn upload_flag(w: &str) -> bool {
-    matches!(
-        w,
-        "-T" | "-F" | "-d" | "--data" | "--data-binary" | "--upload-file" | "--post-file" | "-InFile" | "-infile"
-    ) || w.starts_with("--data")
-        || w.starts_with("-F")
-        || w.starts_with("file=@")
-        || w.starts_with('@')
+/// The program sends data with the request (curl's `-T`, `-d`, `-F` and their long forms by any prefix, wget's
+/// `--post-file`, `file=@…`, `@…`).
+fn sends_data(seg: &[String]) -> bool {
+    let a = args(seg);
+    a.has(
+        &['T', 'd', 'F'],
+        &[
+            "upload-file",
+            "data",
+            "data-binary",
+            "data-raw",
+            "data-urlencode",
+            "form",
+            "form-string",
+            "json",
+            "post-file",
+            "post-data",
+            "body-file",
+            "body-data",
+            "infile",
+        ],
+    ) || seg.iter().any(|w| w.starts_with("file=@") || w.starts_with('@') || w.to_lowercase().starts_with("-infile"))
 }
 
-/// The command of a crontab line: without its five schedule fields (or an `@reboot`-style one).
-fn cron_command(entry: &str) -> String {
-    let words: Vec<&str> = entry.split_whitespace().collect();
-    let schedule = |w: &str| w.chars().all(|c| c.is_ascii_digit() || matches!(c, '*' | '/' | ',' | '-'));
-    let skip = if words.first().is_some_and(|w| w.starts_with('@')) {
-        1
-    } else if words.len() > 5 && words[..5].iter().all(|w| schedule(w)) {
-        5
-    } else {
-        0
-    };
-    words[skip..].join(" ")
+/// A word naming a protected file: one that grants access, runs code at every start, or is the system's own. It
+/// trips in any program: the shared tokenizer gives a redirection's target as a plain word (`echo x > ~/.bashrc`), so
+/// a program reading one cannot be told from one writing it, and a protected file is never left to judgement.
+fn protected(word: &str) -> Option<String> {
+    let n = normalize(word);
+    let shown = n.display();
+    let last = n.parts.last().map_or("", String::as_str);
+    let first = n.parts.first().map_or("", String::as_str);
+    let home = matches!(n.base, Base::Home(_));
+    if last == "authorized_keys" {
+        return Some("adds an SSH key that can log in to this computer".to_owned());
+    }
+    if shown.starts_with("/etc/sudoers") {
+        return Some("gives passwordless root to a user".to_owned());
+    }
+    if n.base == Base::Root && first == "dev" && n.parts.len() >= 2 && !NOT_DISKS.contains(&n.parts[1].as_str()) {
+        return Some(format!("writes to a block device {}", quoted(&shown)));
+    }
+    if shown.starts_with("/var/spool/cron") || shown.starts_with("/etc/cron") {
+        return Some("changes the system's scheduled jobs".to_owned());
+    }
+    let startup =
+        [".bashrc", ".zshrc", ".profile", ".bash_profile", ".zprofile", ".bash_login", ".zshenv", ".gitconfig"];
+    if home
+        && ((n.parts.len() == 1 && startup.contains(&first))
+            || first == ".ssh"
+            || n.parts.starts_with(&[".config".into(), "autostart".into()])
+            || n.parts.starts_with(&[".config".into(), "fish".into()])
+            || (first == "Library" && n.parts.get(1).is_some_and(|x| x.starts_with("Launch"))))
+    {
+        return Some(format!("touches a file that grants access or runs at every start {}", quoted(&shown)));
+    }
+    if n.base == Base::Root && matches!(first, "etc" | "boot") && n.parts.len() >= 2 {
+        return Some(format!("touches system configuration {}", quoted(&shown)));
+    }
+    None
 }
 
-/// Across the simple commands of one line: code downloaded and run, files sent to the network, persistence and
-/// protections turned off. `line` is only searched for a `>` (which can only make the reading stricter).
-fn line_context(line: &str, segs: &[Vec<String>], c: &mut Context) {
-    let words: Vec<&String> = segs.iter().flatten().collect();
-    let programs: Vec<String> = segs.iter().map(|s| s[0].to_lowercase()).collect();
-    let hosts: Vec<String> = words.iter().filter_map(|w| url_host(w)).collect();
-    let fetches = programs.iter().any(|p| matches!(p.as_str(), "curl" | "wget" | "invoke-webrequest" | "iwr" | "irm"));
-    // a shell or an interpreter reading its program from the pipe
-    let runs_input = segs.iter().any(|s| {
-        let p = s[0].to_lowercase();
-        (SHELLS.contains(&p.as_str()) || INTERPRETERS.contains(&p.as_str()) || p == "iex")
-            && s.iter().skip(1).all(|a| a.starts_with('-'))
+/// Across the simple commands of one line (nested ones and a heredoc's body included): code downloaded and run, files
+/// sent to the network, protected files, persistence and protections turned off. Only the shared tokenizer's words
+/// are read.
+fn line_context(segs: &[Vec<String>], c: &mut Context) {
+    let crontab = segs.iter().any(|s| s[0] == "crontab" && !s.iter().skip(1).any(|a| a == "-l"));
+    // What is written into a crontab is a command line too, read by the same tokenizer.
+    let mut all: Vec<Vec<String>> = segs.to_vec();
+    if crontab {
+        for s in segs.iter().filter(|s| matches!(s[0].as_str(), "echo" | "printf")) {
+            for entry in &s[1..] {
+                all.extend(read_command(entry).0);
+            }
+        }
+    }
+    let words: Vec<String> = all.iter().flatten().map(|w| w.to_lowercase()).collect();
+    let hosts: Vec<String> = all.iter().flatten().filter_map(|w| url_host(w)).collect();
+    let fetches = words.iter().any(|w| FETCHERS.contains(&shell::program_name(w).to_lowercase().as_str()));
+    let runs = all.iter().flatten().any(|w| {
+        let p = shell::program_name(w).to_lowercase();
+        SHELLS.contains(&p.as_str())
+            || shell::interpreter(&p)
+            || p == "iex"
+            || p == "invoke-expression"
+            || p == "source"
     });
-    if fetches && runs_input {
+    if fetches && runs {
         let host = hosts.first().cloned().unwrap_or_default();
         let v = c.value(&host, false);
+        if crontab {
+            c.trip("adds a scheduled job that downloads and runs code");
+        }
         if !host.is_empty() && known_host(&host, &KNOWN_INSTALLERS) {
             c.add(format!("downloads from {v} and runs it"));
         } else {
             c.trip(format!("downloads from {v} (unknown host) and runs it"));
         }
+    } else if crontab {
+        c.add("adds a scheduled job");
     }
     // a network sink, and what goes into it
-    let sink = segs.iter().find_map(|s| {
+    let sink = all.iter().find_map(|s| {
         let p = s[0].to_lowercase();
         match p.as_str() {
-            "nc" | "ncat" | "netcat" | "socat" => s.iter().skip(1).find(|a| !a.starts_with('-')).cloned(),
-            "scp" | "rsync" | "sftp" => s
+            "nc" | "ncat" | "netcat" | "socat" | "telnet" | "ssh" => {
+                args(s).operands.first().map(|h| h.rsplit('@').next().unwrap_or(h).to_owned())
+            }
+            "scp" | "rsync" | "sftp" => args(s)
+                .operands
                 .iter()
-                .skip(1)
                 .rev()
-                .find(|a| a.contains(':') && !a.starts_with('-'))
+                .find(|a| a.contains(':'))
                 .map(|a| a.rsplit('@').next().unwrap_or(a).split(':').next().unwrap_or(a).to_owned()),
-            "curl" | "wget" | "invoke-webrequest" | "iwr" | "irm" | "http" => {
-                let sends = s.iter().any(|w| upload_flag(w)) || segs.len() > 1;
-                sends.then(|| s.iter().find_map(|w| url_host(w))).flatten()
+            p if FETCHERS.contains(&p) || p == "http" => {
+                (sends_data(s) || all.len() > 1).then(|| s.iter().find_map(|w| url_host(w))).flatten()
             }
             _ => None,
         }
@@ -1042,11 +1115,17 @@ fn line_context(line: &str, segs: &[Vec<String>], c: &mut Context) {
     if let Some(host) = sink {
         let host = host.to_lowercase();
         let unknown = !known_host(&host, &KNOWN_HOSTS);
-        let secret = words.iter().find_map(|w| {
-            let path = w.trim_start_matches("file=@").trim_start_matches("f=@").trim_start_matches('@');
-            secret_path(path).map(|what| (path.to_owned(), what))
+        // a path is a word, or the value of an option (`--post-file=.env`, `f=@~/.aws/credentials`)
+        let secret = all.iter().flatten().find_map(|w| {
+            [w.as_str(), w.rsplit('=').next().unwrap_or(w)].into_iter().find_map(|cand| {
+                let path = cand.trim_start_matches('@');
+                secret_path(path).map(|what| (path.to_owned(), what))
+            })
         });
-        let env_dump = programs.iter().any(|p| p == "printenv" || p == "env" || p == "set");
+        let env_dump = all
+            .iter()
+            .any(|s| matches!(s[0].to_lowercase().as_str(), "printenv" | "env" | "set" | "export" | "declare"))
+            || words.iter().any(|w| w.contains("/proc/self/environ"));
         let h = c.value(&host, false);
         match secret {
             Some((path, what)) => {
@@ -1061,7 +1140,8 @@ fn line_context(line: &str, segs: &[Vec<String>], c: &mut Context) {
                 c.trip(format!("sends the environment (tokens included) to {h}, an unknown host"));
             }
             None => {
-                if let Some(file) = words.iter().find_map(|w| w.strip_prefix("file=@").or_else(|| w.strip_prefix('@')))
+                if let Some(file) =
+                    all.iter().flatten().find_map(|w| w.strip_prefix("file=@").or_else(|| w.strip_prefix('@')))
                 {
                     let v = c.value(file, false);
                     c.add(format!("sends {v} to {h}"));
@@ -1069,53 +1149,35 @@ fn line_context(line: &str, segs: &[Vec<String>], c: &mut Context) {
             }
         }
     }
-    let redirects = line.contains('>');
-    for s in segs {
-        let p = s[0].to_lowercase();
-        let writer = !VIEWERS.contains(&p.as_str()) && (p != "cat" || redirects);
-        if writer && s.iter().skip(1).any(|w| normalize(w).parts.last().is_some_and(|l| l == "authorized_keys")) {
-            c.trip("adds an SSH key that can log in to this computer");
-        }
-        if writer && s.iter().skip(1).any(|w| normalize(w).display().starts_with("/etc/sudoers")) {
-            c.trip("gives passwordless root to a user");
+    for s in &all {
+        for w in s.iter().skip(1) {
+            if let Some(phrase) = protected(w) {
+                c.trip(phrase);
+            }
         }
     }
-    if segs.iter().any(|s| s[0] == "crontab" && s.get(1).is_some_and(|a| a != "-l")) {
-        // what is written into the crontab is a command line too: read it the same way
-        let entries: String = segs
-            .iter()
-            .filter(|s| matches!(s[0].as_str(), "echo" | "printf"))
-            .flat_map(|s| s[1..].iter().map(|entry| cron_command(entry)))
-            .collect::<Vec<_>>()
-            .join("\n");
-        let (inner, _) = read_command(&entries);
-        let inner_fetches = inner.iter().any(|s| matches!(s[0].to_lowercase().as_str(), "curl" | "wget"));
-        let inner_runs = inner.iter().any(|s| SHELLS.contains(&s[0].to_lowercase().as_str()));
-        if fetches || (inner_fetches && inner_runs) {
-            c.trip("adds a scheduled job that downloads and runs code");
-        } else {
-            c.add("adds a scheduled job");
-        }
-    }
-    if words.iter().any(|w| w.contains("/autostart/") || w.contains("LaunchAgents") || w.contains("LaunchDaemons"))
-        || segs.iter().any(|s| s[0] == "systemctl" && s.iter().any(|a| a == "enable"))
-    {
+    if all.iter().any(|s| s[0] == "systemctl" && s.iter().any(|a| a == "enable")) {
         c.add("runs a program at every login");
     }
-    let off = segs.iter().any(|s| {
+    let off = all.iter().any(|s| {
         let l: Vec<String> = s.iter().map(|w| w.to_lowercase()).collect();
         let has = |w: &str| l.iter().any(|x| x == w);
-        (l[0] == "ufw" && has("disable"))
-            || (l[0] == "systemctl" && (has("stop") || has("disable")) && has("firewalld"))
-            || (l[0] == "setenforce" && has("0"))
-            || (l[0] == "spctl" && has("--master-disable"))
+        let names = |w: &str| l.iter().any(|x| x.starts_with(w));
+        (l[0] == "ufw" && (has("disable") || has("reset")))
+            || (l[0] == "systemctl"
+                && (has("stop") || has("disable") || has("mask"))
+                && (names("firewalld") || names("ufw") || names("apparmor") || names("auditd") || names("nftables")))
+            || (l[0] == "setenforce" && (has("0") || has("permissive")))
+            || (l[0] == "iptables" && (has("-f") || has("--flush")))
+            || (l[0] == "spctl" && (has("--master-disable") || has("--global-disable")))
+            || (l[0] == "csrutil" && has("disable"))
             || (l[0] == "set-mppreference" && l.iter().any(|x| x.starts_with("-disable")))
-            || (l[0] == "netsh" && has("off") && has("advfirewall"))
+            || (l[0] == "netsh" && has("off") && names("advfirewall"))
     });
     if off {
         c.trip("turns off a security protection (firewall, SELinux, Gatekeeper or antivirus)");
     }
-    if segs.iter().any(|s| s[0] == "history" && s.get(1).is_some_and(|a| a == "-c"))
+    if all.iter().any(|s| s[0] == "history" && s.get(1).is_some_and(|a| a == "-c"))
         || words.iter().any(|w| w.ends_with(".bash_history") || w.ends_with(".zsh_history"))
     {
         c.add("erases the shell history");
@@ -1142,15 +1204,24 @@ pub fn command_context(command: &str) -> Context {
         c.unreadable("the command could not be read with certainty");
     }
     for seg in &segs {
-        let p = seg[0].to_lowercase();
-        let inline = (INTERPRETERS.contains(&p.as_str()) || p.starts_with("python"))
-            && (seg.iter().any(|a| matches!(a.as_str(), "-c" | "-e" | "--eval" | "-" | "-r"))
-                || command.contains("<<"));
+        // (an interpreter fed a pipe or a heredoc the tokenizer already reads as uncertain)
+        let inline = shell::interpreter(&seg[0])
+            && seg
+                .iter()
+                .skip(1)
+                .any(|a| matches!(a.as_str(), "-c" | "-e" | "--eval" | "-" | "-r" | "-E" | "--command"));
         if inline {
             c.unreadable("runs code handed to an interpreter, which the phone does not read");
         }
     }
-    line_context(command, &segs, &mut c);
+    line_context(&segs, &mut c);
+    // What a delete with no target of its own (`xargs rm -r`, `find … -exec rm -r {}`) deletes comes from the rest of
+    // the line: every other operand is taken as one of its targets.
+    let others: Vec<String> = segs
+        .iter()
+        .filter(|s| !matches!(s[0].as_str(), "rm" | "shred" | "unlink" | "mv"))
+        .flat_map(|s| args(s).operands.into_iter().map(str::to_owned).collect::<Vec<_>>())
+        .collect();
     let moved = segs
         .iter()
         .any(|s| matches!(s[0].to_lowercase().as_str(), "cd" | "pushd" | "set-location" | "chdir" | "sl" | "popd"));
@@ -1168,7 +1239,15 @@ pub fn command_context(command: &str) -> Context {
                     !rest.is_empty()
                         && rest.split('/').all(|x| x.len() == 1 && x.chars().all(|c| c.is_ascii_alphabetic()))
                 };
-                let targets: Vec<&str> = a.operands.iter().copied().filter(|t| !(cmd && switch(t))).collect();
+                let mut targets: Vec<&str> =
+                    a.operands.iter().copied().filter(|t| !(cmd && switch(t)) && *t != "{}").collect();
+                if targets.is_empty() || a.operands.contains(&"{}") {
+                    if others.is_empty() {
+                        c.add("deletes paths read from its input");
+                        c.deletes = true;
+                    }
+                    targets.extend(others.iter().map(String::as_str));
+                }
                 if recursive {
                     tree_context(&targets, "deletes", moved, &mut c);
                 } else {
@@ -1216,15 +1295,6 @@ pub fn command_context(command: &str) -> Context {
                     overwrite_context(dst, &mut c);
                 }
             }
-            "echo" | "printf" | "true" | ":" | "cat" if command.contains('>') => {
-                // a redirection's target: a home directory's dotfiles, keys and system files are clobbered
-                for t in a.operands.iter().filter(|t| t.starts_with(['/', '~', '$', '.'])) {
-                    let n = normalize(t);
-                    if n.base != Base::Here || n.parts.first().is_some_and(|p| p.starts_with('.')) {
-                        overwrite_context(t, &mut c);
-                    }
-                }
-            }
             "find" if seg.iter().any(|w| matches!(w.as_str(), "-delete" | "-exec" | "-execdir" | "-ok" | "-okdir")) => {
                 let root = a.operands.first().copied().unwrap_or(".");
                 let n = normalize(root);
@@ -1240,10 +1310,6 @@ pub fn command_context(command: &str) -> Context {
                 }
                 c.deletes = true;
             }
-            "xargs" if a.operands.first().is_some_and(|p| matches!(*p, "rm" | "shred" | "unlink" | "mv")) => {
-                c.add("deletes paths read from its input");
-                c.deletes = true;
-            }
             "git" => git_context(seg, moved, &mut c),
             "psql" | "pgcli" | "mysql" | "mariadb" | "redis-cli" | "mongo" | "mongosh" | "sqlite3"
             | "clickhouse-client" => {
@@ -1253,37 +1319,47 @@ pub fn command_context(command: &str) -> Context {
             "terraform" | "tofu" => terraform_context(&segs, seg, &mut c),
             "dd" => {
                 if let Some(of) = seg.iter().find_map(|w| w.strip_prefix("of=")) {
-                    if of.starts_with("/dev/")
-                        && !matches!(of, "/dev/null" | "/dev/zero" | "/dev/stdout" | "/dev/stderr")
-                    {
-                        let v = c.value(of, true);
-                        c.trip(format!("writes to a block device {v}"));
-                    } else {
-                        overwrite_context(of, &mut c);
+                    match protected(of) {
+                        Some(phrase) => c.trip(phrase),
+                        None => overwrite_context(of, &mut c),
                     }
                 }
             }
-            p if p.starts_with("mkfs") || matches!(p, "wipefs" | "fdisk" | "sfdisk" | "parted" | "sgdisk") => {
-                match a.operands.first() {
-                    Some(dev) if dev.starts_with("/dev/") => {
-                        let v = c.value(dev, true);
+            p if p.starts_with("mkfs")
+                || matches!(p, "wipefs" | "fdisk" | "sfdisk" | "parted" | "sgdisk" | "cfdisk") =>
+            {
+                // any device among its operands (`mkfs -t ext4 /dev/sdb`)
+                let device = a
+                    .operands
+                    .iter()
+                    .map(|t| normalize(t))
+                    .find(|n| n.base == Base::Root && n.parts.first().is_some_and(|f| f == "dev"));
+                match device {
+                    Some(dev) => {
+                        let v = c.value(&dev.display(), true);
                         c.trip(format!("formats a block device {v}"));
                     }
-                    Some(file) => {
-                        let v = c.value(file, false);
-                        c.add(format!("writes a file {v}, not a device"));
+                    None => {
+                        if let Some(file) = a.operands.last() {
+                            let v = c.value(file, false);
+                            c.add(format!("writes a file {v}, not a device"));
+                        }
                     }
-                    None => {}
                 }
             }
             "format-volume" | "clear-disk" | "format" | "initialize-disk" => c.trip("formats a disk"),
             "diskutil" if seg.iter().any(|w| w.to_lowercase().starts_with("erase")) => c.trip("formats a disk"),
-            "chmod" | "chown" if a.has(&['R'], &["recursive"]) => {
-                match a.operands.get(1).map(|t| reach(&normalize(t))) {
-                    Some(Reach::Root | Reach::Home | Reach::SystemRoot(_) | Reach::Above(_)) => {
-                        c.trip("makes system or home files writable by everyone");
-                    }
-                    _ => c.add("changes permissions inside the project or of one config file"),
+            "chmod" | "chown" | "chgrp" if a.has(&['R'], &["recursive"]) => {
+                let wide = a.operands.iter().skip(1).any(|t| {
+                    matches!(
+                        reach(&normalize(t)),
+                        Reach::Root | Reach::Home | Reach::SystemRoot(_) | Reach::Above(_) | Reach::Unknown(_, true)
+                    )
+                });
+                if wide {
+                    c.trip("makes system or home files writable by everyone");
+                } else {
+                    c.add("changes permissions inside the project or of one config file");
                 }
             }
             "cat" | "less" | "more" | "head" | "tail" | "base64" | "xxd" | "strings" | "bat" | "type"
@@ -1464,6 +1540,10 @@ pub fn deletes(described: &Described) -> bool {
 pub fn sends(described: &Described) -> bool {
     described.class_key.ends_with("/send") || described.facts.action == "send"
 }
+
+#[cfg(test)]
+#[path = "risk_hostile_tests.rs"]
+mod hostile;
 
 #[cfg(test)]
 mod tests {
@@ -1736,7 +1816,9 @@ mod tests {
         ] {
             assert!(trips(cmd), "{cmd}: {:?}", ctx(cmd));
         }
-        assert!(!trips("chmod -R 777 .") && !trips("cat ~/.ssh/authorized_keys"));
+        assert!(!trips("chmod -R 777 ."));
+        // A redirection's target is a plain word to the tokenizer: reading a protected file trips as writing it would.
+        assert!(trips("cat ~/.ssh/authorized_keys"));
         assert_eq!(lines("npm unpublish shop-ui@1.2.3"), ["removes one published version that others may depend on"]);
         assert_eq!(lines("npm unpublish shop-ui --force"), ["removes every published version of the package"]);
     }

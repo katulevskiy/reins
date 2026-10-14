@@ -14,14 +14,18 @@ publish.workspace = true
 name = "laya-try"
 path = "src/bin/laya-try.rs"
 
+[[bin]]
+name = "laya-context"
+path = "src/bin/laya-context.rs"
+
 [dependencies]
 reins-core = { path = "../reins-core" }
 # ONNX Runtime with its prebuilt library (desktop only).
 ort = { version = "=2.0.0-rc.13", default-features = false, features = ["std", "download-binaries", "copy-dylibs", "tls-rustls", "api-24"] }
+serde_json = "1.0.151"
 
 [dev-dependencies]
 reins-core = { path = "../reins-core", features = ["testing"] }
-serde_json = "1.0.151"
 tempfile = "3.27.0"
 
 [lints]
