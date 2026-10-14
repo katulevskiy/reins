@@ -276,6 +276,8 @@ with tempfile.TemporaryDirectory(prefix="reins-play-upload-") as directory:
     received = []
 
     class Google(http.server.BaseHTTPRequestHandler):
+        flaky = {}  # a path fragment: how many more times it is answered 503
+
         def log_message(self, *args):
             pass
 
@@ -291,6 +293,11 @@ with tempfile.TemporaryDirectory(prefix="reins-play-upload-") as directory:
             length = int(self.headers.get("Content-Length") or 0)
             body = self.rfile.read(length)
             received.append((self.command, self.path, self.headers.get("Content-Type"), len(body)))
+            for fragment, left in Google.flaky.items():
+                if fragment in self.path and left:
+                    Google.flaky[fragment] = left - 1
+                    self.answer(503, {"error": {"code": 503, "message": "Backend Error", "status": "UNAVAILABLE"}})
+                    return
             if self.path == "/token":
                 self.answer(200, {"access_token": "loopback-token"})
             elif self.path.endswith("/edits"):
@@ -324,6 +331,19 @@ with tempfile.TemporaryDirectory(prefix="reins-play-upload-") as directory:
         check(upload[2] == "application/octet-stream" and upload[3] == bundle.stat().st_size, "loopback: streamed")
         check(received[-1][:2] == ("POST", "/api/com.reins2fa.app/edits/e1:commit"), "loopback: committed")
         check("loopback-token" not in out + err, "loopback: the token is not shown")
+        # Google's passing 503s are sent again, the bundle whole each time; a lasting one still fails the upload.
+        received.clear()
+        Google.flaky = {"/token": 1, "/bundles": 2}
+        code, _, err = run(base + ["--status", "draft"], play.Http(delays=(0, 0, 0)), local)
+        check(code == 0 and "again in 0 s" in err, f"loopback: transient answers are retried: {err}")
+        uploads = [r for r in received if "/bundles" in r[1]]
+        check(len(uploads) == 3 and {r[3] for r in uploads} == {bundle.stat().st_size}, "loopback: resent whole")
+        received.clear()
+        Google.flaky = {":commit": 9}
+        code, _, err = run(base + ["--status", "draft"], play.Http(delays=(0, 0, 0)), local)
+        check(code == 1 and "HTTP 503" in err and received[-1][0] == "DELETE", f"loopback: a lasting 503 fails: {err}")
+        check(sum(":commit" in r[1] for r in received) == 4, "loopback: three retries, then the failure")
+        Google.flaky = {}
     finally:
         play.API, play.UPLOAD_API = real
         server.shutdown()
