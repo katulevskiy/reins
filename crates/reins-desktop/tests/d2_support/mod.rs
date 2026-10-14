@@ -288,6 +288,7 @@ fn answer(s: &mut State, key: &SshKey, id: &str) -> Resp {
                 runner: None,
                 root: None,
                 command: None,
+                one_shot: false,
             };
             result(json!({"sealed": seal_to(&seal_key, &serde_json::to_vec(&grant).unwrap()).unwrap()}))
         }
