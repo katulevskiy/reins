@@ -33,6 +33,11 @@ pub enum Step {
     OtherKey,
     /// Signs other data than asked (`vault_ssh_sign`).
     WrongSignature,
+    /// `vault_env_release`: approves, remembering the program and its first `n` arguments as a prefix (the user's
+    /// pick on the phone).
+    ApprovePrefix(usize),
+    /// `vault_env_release`: approves bound to another runner than asked.
+    OtherRunner,
 }
 
 #[derive(Clone, Debug)]
@@ -122,6 +127,8 @@ impl Mock {
                 ("OpenAI/password".to_owned(), "sk-live-5ecret-0penai".to_owned()),
                 ("Deploy/password".to_owned(), "deploy-5ecret value".to_owned()),
                 ("Deploy/username".to_owned(), "deployer".to_owned()),
+                ("acme/dev/API_KEY".to_owned(), "sk-env-5ecret-dev".to_owned()),
+                ("acme/dev/DB_URL".to_owned(), "postgres://u:pw-5ecret@db".to_owned()),
             ]),
             requests: HashMap::new(),
             seq: 0,
@@ -298,6 +305,52 @@ fn answer(s: &mut State, key: &SshKey, id: &str) -> Resp {
             "public_key": key.line(),
             "fingerprint": key.fingerprint(),
         }]})),
+        "vault_env_release" => {
+            let a = &r.arguments;
+            let item = format!("{}/{}/", a["project"].as_str().unwrap(), a["env"].as_str().unwrap());
+            let wanted: Option<Vec<String>> =
+                a["fields"].as_array().map(|f| f.iter().map(|v| v.as_str().unwrap().to_owned()).collect());
+            let mut secrets: Vec<(String, String)> = vault
+                .iter()
+                .filter_map(|(k, v)| k.strip_prefix(&item).map(|n| (n.to_owned(), v.clone())))
+                .filter(|(n, _)| wanted.as_ref().is_none_or(|w| w.contains(n)))
+                .collect();
+            secrets.sort();
+            let program = a["program"].as_str().unwrap().to_owned();
+            let args: Vec<String> = a["args"]
+                .as_array()
+                .map(|l| l.iter().map(|v| v.as_str().unwrap().to_owned()).collect())
+                .unwrap_or_default();
+            let command = match step {
+                Step::ApprovePrefix(n) => reins_proto::desktop::CommandScope {
+                    program,
+                    args: args[..n].to_vec(),
+                    prefix: true,
+                },
+                _ => reins_proto::desktop::CommandScope::exact(&program, &args),
+            };
+            let grant = SecretGrant {
+                v: 1,
+                nonce,
+                secrets,
+                expires_at: if matches!(step, Step::Expired) {
+                    now - 1
+                } else {
+                    now + a["lease_secs"].as_i64().unwrap_or(3600)
+                },
+                project: a["project"].as_str().map(str::to_owned),
+                env: a["env"].as_str().map(str::to_owned),
+                revision: Some("rev-1".to_owned()),
+                runner: Some(if matches!(step, Step::OtherRunner) {
+                    "agent:codex".to_owned()
+                } else {
+                    a["runner"].as_str().unwrap().to_owned()
+                }),
+                root: a["root"].as_str().map(str::to_owned),
+                command: Some(command),
+            };
+            result(json!({"sealed": seal_to(&seal_key, &serde_json::to_vec(&grant).unwrap()).unwrap()}))
+        }
         "vault_ssh_sign" => {
             let data = BASE64.decode(r.arguments["data_base64"].as_str().unwrap().as_bytes()).unwrap();
             let signed = if matches!(step, Step::WrongSignature) {
