@@ -226,8 +226,9 @@ environments in one box from the app's key to the phone's key, one approval, one
 The call names what it saves beside the box (`envs: ["project/env", ...]`, `ssh: [names]`, `hosts: [git hosts]`), and
 the box must name the same. One store (one approval) may also carry SSH keys (`SshKeyToStore`, kept as SSH key items in
 the folder `Reins/ssh`) and git hosts' tokens (`HostToken`, handed to the phone's GitHub, GitLab, Codeberg or Bitbucket
-integration), so an import is one approval. The check digits are `reins_proto::desktop::batch_check` over every value of
-the batch, in a canonical, order-independent form; the phone answers with one result per environment, key and token
+integration), so an import is one approval. The check digits are `reins_proto::desktop::batch_check` over every operation of
+the batch (each value set, each removal, rename and copy with its names, and whether values may be replaced), in a
+canonical, order-independent form, so a store without values has digits of its own too; the phone answers with one result per environment, key and token
 (`SecretsStoreAck`), and a part that fails does not undo the others. The box (`SecretsToStore`) holds per
 environment `set` (name, value), `unset`, `rename` (from, to), `copy_from` (another environment of the project, copied on
 the phone so the values never travel) and `replace` (without it a `set` that would change an existing value is refused).

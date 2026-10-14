@@ -1396,16 +1396,35 @@ impl std::fmt::Debug for SecretsToStore {
 /// Four digits both the computer and the phone show for a whole store, so that a batch an AI on the computer sent in
 /// the user's place does not pass for theirs. Like [`value_check`]: about 13 bits, not a secret on its own.
 ///
-/// The canonical form, independent of order: one entry per value, `("env", "<project>/<env>", NAME, value)` for every
-/// variable set, `("ssh", name, "", private_key)` for every SSH key, `("token", host, user or "", token)` for every
-/// token; the entries sorted; SHA-256 over `reins-secrets-batch/1` then each part of each entry as its length (8 bytes,
+/// The canonical form, independent of order: one entry per operation, so that a store without values (removals,
+/// renames, copies) has digits of its own too:
+///
+/// - `("env", "<project>/<env>", NAME, value)` for every variable set;
+/// - `("unset", "<project>/<env>", NAME, "")`, `("rename", "<project>/<env>", FROM, TO)`, `("copy", "<project>/<env>",
+///   FROM_ENV, "")` and `("replace", "<project>/<env>", "", "")` (existing values may be replaced);
+/// - `("ssh", name, "", private_key)` for every SSH key, `("token", host, user or "", token)` for every token;
+///
+/// the entries sorted; SHA-256 over `reins-secrets-batch/2` then each part of each entry as its length (8 bytes,
 /// big-endian) and its bytes; the first two bytes of the hash as a big-endian number, modulo 10 000, in four digits.
 #[must_use]
 pub fn batch_check(envs: &[EnvChanges], ssh: &[SshKeyToStore], tokens: &[HostToken]) -> String {
     let mut all: Vec<[String; 4]> = Vec::new();
     for e in envs {
+        let item = e.item();
         for (n, v) in &e.set {
-            all.push(["env".to_owned(), e.item(), n.clone(), v.clone()]);
+            all.push(["env".to_owned(), item.clone(), n.clone(), v.clone()]);
+        }
+        for n in &e.unset {
+            all.push(["unset".to_owned(), item.clone(), n.clone(), String::new()]);
+        }
+        for (from, to) in &e.rename {
+            all.push(["rename".to_owned(), item.clone(), from.clone(), to.clone()]);
+        }
+        if let Some(from) = &e.copy_from {
+            all.push(["copy".to_owned(), item.clone(), from.clone(), String::new()]);
+        }
+        if e.replace {
+            all.push(["replace".to_owned(), item, String::new(), String::new()]);
         }
     }
     for k in ssh {
@@ -1416,7 +1435,7 @@ pub fn batch_check(envs: &[EnvChanges], ssh: &[SshKeyToStore], tokens: &[HostTok
     }
     all.sort_unstable();
     let mut h = Sha256::new();
-    h.update(b"reins-secrets-batch/1");
+    h.update(b"reins-secrets-batch/2");
     for entry in &mut all {
         for part in entry.iter_mut() {
             h.update((part.len() as u64).to_be_bytes());
@@ -1972,6 +1991,28 @@ mod tests {
         assert!(validate_batch(&[], &[], &[token("example.com", "t")]).is_err());
         assert_eq!(token("GitHub.com", "t").service(), Some("github"));
         assert!(!format!("{:?} {:?}", keys[0], tokens[0]).contains("KEY-1"));
+    }
+
+    #[test]
+    fn the_batch_check_covers_every_operation_not_only_values() {
+        let edit = |f: &dyn Fn(&mut EnvChanges)| {
+            let mut c = changes("acme", "dev", &[]);
+            f(&mut c);
+            secrets_check(&[c])
+        };
+        let unset_a = edit(&|c| c.unset = vec!["A".into()]);
+        assert_ne!(unset_a, edit(&|c| c.unset = vec!["B".into()]));
+        assert_ne!(unset_a, edit(&|c| c.rename = vec![("A".into(), "B".into())]));
+        let rename = edit(&|c| c.rename = vec![("A".into(), "B".into())]);
+        assert_ne!(rename, edit(&|c| c.rename = vec![("A".into(), "C".into())]));
+        assert_ne!(rename, edit(&|c| c.rename = vec![("B".into(), "A".into())]));
+        let copy = edit(&|c| c.copy_from = Some("prod".into()));
+        assert_ne!(copy, edit(&|c| c.copy_from = Some("staging".into())));
+        assert_ne!(copy, edit(&|_| {}));
+        let mut set = changes("acme", "dev", &[("A", "1")]);
+        let plain = secrets_check(std::slice::from_ref(&set));
+        set.replace = true;
+        assert_ne!(plain, secrets_check(&[set]), "replacing values is part of what is approved");
     }
 
     #[test]
