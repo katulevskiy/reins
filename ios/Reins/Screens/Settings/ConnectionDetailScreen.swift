@@ -251,14 +251,19 @@ private struct ConnectionAutopilotGroup: View {
         }
     }
 
-    /// A bypass of this AI for `minutes`, or until turned off (nil), after its sheet was held. A refusal from the core
-    /// (a just-paired connection cannot be bypassed) says why.
+    /// A bypass of this AI for `minutes`, or until turned off (nil), after its sheet was held. Holding proves intent,
+    /// not identity: the phone's owner confirms it too (Face ID or the passcode), and without that nothing changes,
+    /// not even for a moment. A refusal from the core (a just-paired connection cannot be bypassed) says why.
     private func startBypass(minutes: UInt32?) {
-        feedback.play(.bypassOn)
         let id = connection.id
-        model.patchAutopilot { $0.applyBypass(minutes: minutes, connectionId: id) }
-        run {
-            try await model.core.startBypass(connectionId: id, minutes: minutes)
+        let who = untrusted(connection.label)
+        Task {
+            guard await model.authenticator.confirm("Turn on Bypass for \(who)") else { return }
+            feedback.play(.bypassOn)
+            model.patchAutopilot { $0.applyBypass(minutes: minutes, connectionId: id) }
+            run {
+                try await model.core.startBypass(connectionId: id, minutes: minutes)
+            }
         }
     }
 

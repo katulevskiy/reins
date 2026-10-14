@@ -66,8 +66,10 @@ final class AutopilotFlowTests: XCTestCase {
         owner.answer = false
         await ap.setMode(.bypass, minutes: 15)
         await ap.startBypass(minutes: nil)
-        XCTAssertEqual(owner.asked.count, 2)
+        await ap.startBypass(connectionId: "c1", minutes: 15, label: "Claude")
+        XCTAssertEqual(owner.asked.count, 3)
         XCTAssertEqual(model.autopilot?.mode, .manual)
+        XCTAssertEqual(ap.modeOf("c1"), .auto, "an AI's own bypass needs the owner too")
         XCTAssertNil(model.autopilot?.bypassUntil)
         XCTAssertFalse(feedback.played(.bypassOn))
     }
