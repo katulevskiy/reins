@@ -85,7 +85,8 @@ final class AutopilotUITests: XCTestCase {
         shot("autopilot-lockdown")
         tap("endLockdown")
         // Lockdown replaced the mode picked before it, so it ends in Manual (as on Android).
-        text("Autopilot stays out of the way")
+        let manual = app.staticTexts.matching(identifier: "heroMode").matching(NSPredicate(format: "label == 'Manual'"))
+        XCTAssertTrue(manual.firstMatch.waitForExistence(timeout: 8), "Lockdown did not end in Manual")
     }
 
     func testTheModelDownloadsWithProgressAndCanBeDeleted() {
