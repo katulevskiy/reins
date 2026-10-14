@@ -487,8 +487,13 @@ impl PhoneVaultWriter {
     /// The Reins projects in the vault and where each came from (`reins.origin`): names only, never a value. One
     /// approval on the phone (which can be remembered there).
     pub async fn projects(&self) -> Result<Vec<reins_proto::desktop::ProjectListing>, StoreError> {
+        self.names(None).await
+    }
+
+    /// The names of one project (or of every one): environments, variable names and versions, never a value.
+    pub async fn names(&self, project: Option<&str>) -> Result<Vec<reins_proto::desktop::ProjectListing>, StoreError> {
         let (phone, phone_key) = self.phone().await?;
-        let listing = list(&phone, &phone_key, &Journal::new(&self.paths), self.timeout(), None)
+        let listing = list(&phone, &phone_key, &Journal::new(&self.paths), self.timeout(), project)
             .await
             .map_err(StoreError::Failed)?;
         Ok(listing.projects)
