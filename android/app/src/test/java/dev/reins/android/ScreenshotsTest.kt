@@ -846,42 +846,83 @@ abstract class ScreenshotsBase(private val suffix: String) {
 
     private fun openAutopilot() {
         launch()
-        tap("tabSettings")
-        tap("openAutopilot")
+        tap("tabAutopilot")
         await("mode:MANUAL")
         repeat(20) { rule.mainClock.advanceTimeBy(50) }
     }
 
+    /** The AIs and profiles of the design: Default for Claude Code and ChatGPT, Work for Cursor. */
+    private fun autopilotPeople() {
+        core.connections = listOf(TestData.connection("c1", "Claude Code"), TestData.connection("c2", "ChatGPT"), TestData.connection("c3", "Cursor"))
+        core.profiles = listOf(
+            TestData.profile("personal", "Default", memory = 140u),
+            TestData.profile("work", "Work", "💼", dev.reins.core.Preset.CAUTIOUS, isDefault = false, memory = 38u, connections = listOf("c3"), classes = listOf(TestData.classView(decisions = 9u, approved = 9u, denied = 0u, toUnlock = 11u)), trainedAt = null),
+        )
+    }
+
+    private fun frames(n: Int = 20) = repeat(n) { rule.mainClock.advanceTimeBy(50) }
+
     @Test
     fun autopilotModes() {
         core.model = installed
+        autopilotPeople()
         openAutopilot()
+        frames()
         shoot("60-autopilot-manual")
-        rule.onNodeWithTag("newProfile").performScrollTo()
-        shoot("60b-autopilot-model-profiles")
         tap("mode:AUTO")
-        await("heroMode")
-        rule.onNodeWithTag("modeHero").performScrollTo()
-        repeat(20) { rule.mainClock.advanceTimeBy(50) }
+        frames()
         shoot("61-autopilot-auto")
         tap("mode:MANUAL")
-        repeat(20) { rule.mainClock.advanceTimeBy(50) }
-        shoot("62-autopilot-manual")
+        frames()
         tap("mode:BYPASS")
-        await("bypassDialog")
-        tap("bypass:30")
-        repeat(10) { rule.mainClock.advanceTimeBy(50) }
-        shoot("63-bypass-dialog", dialogs = true)
-        rule.onNodeWithTag("confirmBypass").performSemanticsAction(androidx.compose.ui.semantics.SemanticsActions.OnClick)
-        await("bypassClock")
-        repeat(20) { rule.mainClock.advanceTimeBy(50) }
-        shoot("64-autopilot-bypass")
+        await("bypassSheet")
+        frames()
+        shoot("63-bypass-sheet")
+        tap("bypassLength:custom")
+        await("bypassForSheet")
+        frames()
+        shoot("63b-bypass-for")
+        rule.onNodeWithTag("bypassFor:untilOff").performSemanticsAction(androidx.compose.ui.semantics.SemanticsActions.OnClick)
+        await("untilOffWarning")
+        frames()
+        shoot("63c-bypass-for-until-off")
+        tap("closeSheet")
+        frames()
+        shoot("63d-bypass-sheet-until-off")
+        tap("cancelBypass")
+        frames()
         tap("mode:LOCKDOWN")
-        rule.waitForIdle()
-        rule.onNodeWithText("Lock down").performClick()
         await("endLockdown")
-        repeat(20) { rule.mainClock.advanceTimeBy(50) }
+        frames()
         shoot("65-autopilot-lockdown")
+    }
+
+    @Test
+    fun autopilotBypass() {
+        core.model = installed
+        autopilotPeople()
+        // A 15-minute bypass with 8:12 to go.
+        core.apGlobal = FakeCore.ApRow(bypassUntil = now + 8 * 60 + 12, bypassSince = now - 6 * 60 - 48)
+        launch()
+        tap("tabAutopilot")
+        await("bypassClock")
+        frames()
+        shoot("64-autopilot-bypass")
+    }
+
+    @Test
+    fun autopilotBypassUntilOff() {
+        core.model = installed
+        autopilotPeople()
+        core.apGlobal = FakeCore.ApRow(bypassUntil = Long.MAX_VALUE, bypassSince = now - 2 * 86_400 - 3_600)
+        launch()
+        top()
+        await("modePill")
+        shoot("64c-home-bypass-until-off-pill")
+        tap("tabAutopilot")
+        await("bypassUntilOff")
+        frames()
+        shoot("64b-autopilot-bypass-until-off")
     }
 
     @Test
@@ -924,20 +965,23 @@ abstract class ScreenshotsBase(private val suffix: String) {
             repeat(10) { rule.mainClock.advanceTimeBy(50) }
             shoot("67-quick-menu")
             tap("quick:BYPASS")
-            await("quickBypassTimes")
-            repeat(10) { rule.mainClock.advanceTimeBy(50) }
+            await("bypassSheet")
+            repeat(20) { rule.mainClock.advanceTimeBy(50) }
             shoot("67b-quick-menu-bypass")
-            pressBack()
+            tap("cancelBypass")
+            repeat(20) { rule.mainClock.advanceTimeBy(50) }
             styles.set(context, dev.reins.android.ui.autopilot.QuickStyle.Slider)
             tap("modePill")
             await("riskSlider")
             repeat(10) { rule.mainClock.advanceTimeBy(50) }
             shoot("68-quick-slider")
             tap("detent:BYPASS")
-            await("quickBypassTimes")
+            await("bypassSheet")
             repeat(20) { rule.mainClock.advanceTimeBy(50) }
             shoot("68b-quick-slider-bypass")
-            tap("quickBypassCancel")
+            tap("cancelBypass")
+            repeat(20) { rule.mainClock.advanceTimeBy(50) }
+            tap("modePill")
             tap("detent:LOCKDOWN")
             repeat(20) { rule.mainClock.advanceTimeBy(50) }
             tap("modePill")
@@ -964,39 +1008,57 @@ abstract class ScreenshotsBase(private val suffix: String) {
 
     @Test
     fun autopilotModel() {
+        autopilotPeople()
         openAutopilot()
-        rule.onNodeWithTag("modelCard").performScrollTo()
+        await("getScore")
+        frames()
         shoot("67-autopilot-no-model")
-        core.model = TestData.modelStatus(dev.reins.core.ModelState.DOWNLOADING, downloaded = 151_000_000u, size = 412_000_000u)
+        core.model = TestData.modelStatus(dev.reins.core.ModelState.DOWNLOADING, downloaded = 156_000_000u, size = 412_000_000u)
         core.downloadFailure = null
-        tap("wifiOnly")
+        tap("getModel")
         await("modelProgress")
-        rule.onNodeWithTag("modelCard").performScrollTo()
-        repeat(20) { rule.mainClock.advanceTimeBy(50) }
+        frames()
         shoot("67b-autopilot-downloading")
+    }
+
+    @Test
+    fun autopilotModelDetails() {
+        core.model = installed
+        openAutopilot()
+        tap("openModel")
+        await("modelSheet")
+        frames()
+        shoot("67c-autopilot-model-details")
     }
 
     @Test
     fun autopilotModelFailed() {
         core.model = TestData.modelStatus(dev.reins.core.ModelState.FAILED, error = "sha-256 of model.onnx does not match the pinned hash")
         openAutopilot()
-        await("modelError")
-        rule.onNodeWithTag("modelCard").performScrollTo()
+        await("getModelError")
+        frames()
         shoot("68-autopilot-model-failed")
     }
 
     @Test
     fun autopilotProfile() {
         core.model = installed
+        autopilotPeople()
         openAutopilot()
         tap("profile:personal")
         await("class:github/write/push")
-        repeat(30) { rule.mainClock.advanceTimeBy(50) }
+        frames(30)
         shoot("70-profile")
+        core.replay = dev.reins.core.ThresholdReplay(30u, 41u, 12u, 0u)
+        core.profiles = core.profiles.map { if (it.id == "personal") it.copy(preset = dev.reins.core.Preset.CUSTOM, approveAt = 0.93f, denyAt = 0.88f) else it }
+        tap("preset:CUSTOM")
+        await("replayLine")
+        frames(30)
+        shoot("70b-profile-custom")
         tap("class:gmail/read")
         await("lock:off:gmail/read")
         rule.onNodeWithTag("class:telegram/send").performScrollTo()
-        repeat(20) { rule.mainClock.advanceTimeBy(50) }
+        frames()
         shoot("71-profile-classes")
         tap("lock:off:gmail/read")
         rule.waitForIdle()

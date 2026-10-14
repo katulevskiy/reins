@@ -44,6 +44,7 @@ import dev.reins.android.design.RType
 import dev.reins.android.design.pressable
 import dev.reins.android.state.AppState
 import dev.reins.android.ui.autopilot.AutopilotViewModel
+import dev.reins.android.ui.autopilot.BypassSheets
 import dev.reins.android.ui.autopilot.ConnectionAutopilotSection
 import dev.reins.android.ui.autopilot.LearnsIntoRow
 import dev.reins.android.ui.autopilot.ProfilePicker
@@ -69,6 +70,7 @@ fun ConnectionDetailScreen(
     val grants by state.grants.collectAsStateWithLifecycle()
     val connection = connections.firstOrNull { it.id == connectionId }
     var picking by remember { mutableStateOf<Picker?>(null) }
+    var bypassOpen by remember { mutableStateOf(false) }
 
     Box(Modifier.fillMaxSize()) {
         SettingsPage(title = null, onBack = onBack) {
@@ -100,7 +102,7 @@ fun ConnectionDetailScreen(
                 )
             }
 
-            autopilot?.let { ConnectionAutopilotSection(connection.id, connection.label, it) }
+            autopilot?.let { ConnectionAutopilotSection(connection.id, it, onBypass = { bypassOpen = true }) }
 
             SettingsGroup(header = null, gap = 12.dp) {
                 autopilot?.let { LearnsIntoRow(connection.id, it) { picking = Picker.Profile } }
@@ -153,6 +155,9 @@ fun ConnectionDetailScreen(
         }
         BottomSheet(shown == Picker.Profile && autopilot != null, "Learns into", onClose = { picking = null }, tag = "profileSheet") {
             if (connection != null && autopilot != null) ProfilePicker(connection.id, autopilot) { picking = null }
+        }
+        if (autopilot != null && connection != null) {
+            BypassSheets(bypassOpen, who = connection.label, onStart = { minutes -> autopilot.startBypass(minutes, connection.id) }, onClose = { bypassOpen = false })
         }
     }
 }

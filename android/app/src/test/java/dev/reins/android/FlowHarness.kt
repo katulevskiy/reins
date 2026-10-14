@@ -7,6 +7,7 @@ import androidx.compose.ui.test.hasTestTag
 import androidx.compose.ui.test.hasText
 import androidx.compose.ui.test.junit4.v2.createEmptyComposeRule
 import androidx.compose.ui.test.onNodeWithTag
+import androidx.compose.ui.test.onRoot
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performTouchInput
 import androidx.compose.ui.test.performScrollTo
@@ -181,8 +182,9 @@ abstract class FlowHarness {
         }
         node.performTouchInput { down(center) }
         rule.mainClock.advanceTimeBy(dev.reins.android.design.HOLD_MILLIS + 300L)
-        // What it confirmed may have closed it before the finger lifts.
+        // What it confirmed may have closed it before the finger lifts: then the finger lifts off the screen.
         runCatching { rule.onNodeWithTag(tag).performTouchInput { up() } }
+            .onFailure { runCatching { rule.onRoot().performTouchInput { up() } } }
         rule.waitForIdle()
     }
 

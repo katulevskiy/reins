@@ -129,6 +129,20 @@ class AutopilotNotificationsTest {
     }
 
     @Test
+    fun `a bypass without an end counts up from its start and never times out`() {
+        val nowMillis = 1_700_000_000_000L
+        val notice = AutopilotText.BypassNotice("Bypass on · until you stop it", "For every AI. The riskiest still ask.", AutopilotText.UNTIL_OFF, true, emptyList(), since = 1_699_800_000)
+        notifier.showBypass(notice, nowMillis)
+        val n = posted().single()
+        assertEquals("Bypass on · until you stop it", n.extras.getCharSequence(Notification.EXTRA_TITLE).toString())
+        assertTrue((n.flags and Notification.FLAG_ONGOING_EVENT) != 0)
+        assertEquals(1_699_800_000_000L, n.`when`)
+        assertTrue(!n.extras.getBoolean(Notification.EXTRA_CHRONOMETER_COUNT_DOWN))
+        assertEquals(0L, n.timeoutAfter)
+        assertEquals("Stop", n.actions.single().title.toString())
+    }
+
+    @Test
     fun `a pending item carries Autopilot's suggestion`() {
         notifier.itemPending(TestData.pending("req1", "read", 3u, suggestion = "Autopilot would approve · 97%"))
         val big = posted().single().extras.getCharSequence(Notification.EXTRA_BIG_TEXT).toString()

@@ -11,6 +11,7 @@ import androidx.compose.animation.slideOutVertically
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -51,6 +52,7 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.contentDescription
@@ -371,11 +373,11 @@ fun <T> ConnectedButtons(
 }
 
 /**
- * A sheet that slides up from the bottom of the page over a dim: a grab handle, a [title] with a close button, and
- * [content]. Tapping outside, the close button or Back dismisses it.
+ * A sheet that slides up from the bottom of the page over a dim: a grab handle, a [title] with a close button (none
+ * without a title), and [content]. Tapping outside, the close button or Back dismisses it.
  */
 @Composable
-fun BoxScope.BottomSheet(open: Boolean, title: String, onClose: () -> Unit, tag: String, content: @Composable ColumnScope.() -> Unit) {
+fun BoxScope.BottomSheet(open: Boolean, title: String?, onClose: () -> Unit, tag: String, content: @Composable ColumnScope.() -> Unit) {
     val c = LocalColors.current
     val feedback = LocalFeedback.current
     SheetOpenFeedback(open)
@@ -405,8 +407,9 @@ fun BoxScope.BottomSheet(open: Boolean, title: String, onClose: () -> Unit, tag:
                 .clip(shape)
                 .background(if (c.dark) Color(0xFF19191C) else c.elevated)
                 .border(0.75.dp, c.glassEdge, shape)
-                // Taps on the sheet stay on it.
-                .clickable(interactionSource = remember { MutableInteractionSource() }, indication = null) {}
+                // Taps on the sheet stay on it (a gesture, not a click: a click would merge the rows into one node
+                // for screen readers).
+                .pointerInput(Unit) { detectTapGestures { } }
                 .windowInsetsPadding(WindowInsets.navigationBars)
                 .padding(bottom = 16.dp)
                 .testTag(tag),
@@ -414,12 +417,16 @@ fun BoxScope.BottomSheet(open: Boolean, title: String, onClose: () -> Unit, tag:
             Box(Modifier.fillMaxWidth().padding(top = 10.dp), contentAlignment = Alignment.Center) {
                 Box(Modifier.size(width = 32.dp, height = 4.dp).clip(CircleShape).background(c.tertiary.copy(alpha = 0.6f)))
             }
-            Row(Modifier.fillMaxWidth().padding(start = 22.dp, end = 10.dp, top = 12.dp, bottom = 10.dp), verticalAlignment = Alignment.CenterVertically) {
-                RText(title, RType.sans(18f, FontWeight.SemiBold), c.text, Modifier.weight(1f), maxLines = 1)
-                Box(
-                    Modifier.size(44.dp).pressable(shape = CircleShape, label = "Close", onClick = dismiss).semantics { contentDescription = "Close" }.testTag("closeSheet"),
-                    contentAlignment = Alignment.Center,
-                ) { Icon(Icons.Rounded.Close, null, Modifier.size(22.dp), tint = c.secondary) }
+            if (title != null) {
+                Row(Modifier.fillMaxWidth().padding(start = 22.dp, end = 10.dp, top = 12.dp, bottom = 10.dp), verticalAlignment = Alignment.CenterVertically) {
+                    RText(title, RType.sans(18f, FontWeight.SemiBold), c.text, Modifier.weight(1f), maxLines = 1)
+                    Box(
+                        Modifier.size(44.dp).pressable(shape = CircleShape, label = "Close", onClick = dismiss).semantics { contentDescription = "Close" }.testTag("closeSheet"),
+                        contentAlignment = Alignment.Center,
+                    ) { Icon(Icons.Rounded.Close, null, Modifier.size(22.dp), tint = c.secondary) }
+                }
+            } else {
+                Spacer(Modifier.height(14.dp))
             }
             Column(Modifier.verticalScroll(rememberScrollState()), content = content)
         }

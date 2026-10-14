@@ -273,6 +273,8 @@ private fun SignedInContent(
                         onBack = null,
                         onProfile = { app.open(Route.AutopilotProfile(it)) },
                         onTryIt = { app.open(Route.TryIt(null)) },
+                        state = state,
+                        onCovered = { covered = it },
                     )
                     Tab.Settings -> SettingsScreen(
                         state = state,
@@ -314,6 +316,7 @@ private fun SignedInContent(
                     onBack = { app.back() },
                     onProfile = { app.open(Route.AutopilotProfile(it)) },
                     onTryIt = { app.open(Route.TryIt(null)) },
+                    state = state,
                 )
                 is Route.AutopilotProfile -> ProfileScreen(
                     route.id,
@@ -453,7 +456,7 @@ private fun SignedInContent(
                 Column(Modifier.align(Alignment.BottomCenter).windowInsetsPadding(WindowInsets.navigationBars)) {
                     // Above the tab bar, and never while an approval sheet is up.
                     container.updates?.let { UpdatePromptHost(it, allowed = sheet == null, modifier = Modifier.padding(top = 10.dp)) }
-                    if (!(covered && app.tab == Tab.Settings) && !(app.expiredOpen && app.tab == Tab.Grants)) NavBar(container, app)
+                    if (!(covered && (app.tab == Tab.Settings || app.tab == Tab.Autopilot)) && !(app.expiredOpen && app.tab == Tab.Grants)) NavBar(container, app)
                 }
                 val apSettings by state.autopilot.collectAsStateWithLifecycle()
                 dev.reins.android.ui.autopilot.AutopilotQuick(
@@ -461,6 +464,7 @@ private fun SignedInContent(
                     style = quickStyle,
                     settings = apSettings,
                     onSet = { mode, minutes -> autopilot.setMode(mode, minutes) },
+                    onBypass = { minutes -> autopilot.startBypass(minutes) },
                     onStopBypass = { autopilot.stopBypass() },
                     onMore = {
                         quickOpen = false

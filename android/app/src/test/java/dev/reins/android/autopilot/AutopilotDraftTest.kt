@@ -14,11 +14,11 @@ class AutopilotDraftTest {
     private val now = 1_000_000L
 
     private fun settings(mode: AutopilotMode = AutopilotMode.AUTO, connections: List<ConnectionAutopilot> = emptyList()) = AutopilotSettings(
-        mode, mode, null, "personal", true, TestData.modelStatus(ModelState.INSTALLED), connections,
+        mode, mode, null, null, "personal", true, TestData.modelStatus(ModelState.INSTALLED), connections,
     )
 
     private fun own(id: String, base: AutopilotMode?, mode: AutopilotMode = base ?: AutopilotMode.AUTO) =
-        ConnectionAutopilot(id, base, null, mode, "personal")
+        ConnectionAutopilot(id, base, null, null, mode, "personal")
 
     @Test
     fun `a global mode reaches the connections that follow it, not those with their own`() {
@@ -60,5 +60,21 @@ class AutopilotDraftTest {
         val s = settings(connections = listOf(own("a", null), own("b", null).copy(profileId = "work")))
         assertEquals(listOf("home", "work"), AutopilotDraft.withDefaultProfile(s, "home").connections.map { it.profileId })
         assertEquals("personal", AutopilotDraft.withProfile(s, "b", null).connections.last().profileId)
+    }
+
+    @Test
+    fun `a bypass until turned off shows at once with no end, and stops like any other`() {
+        val on = AutopilotDraft.withBypass(settings(), null, null, now)
+        assertEquals(AutopilotMode.BYPASS, on.mode)
+        assertEquals(AutopilotText.UNTIL_OFF, on.bypassUntil)
+        assertEquals(now, on.bypassSince)
+        val timed = AutopilotDraft.withBypass(settings(), "c1", 3u * 1_440u, now)
+        val own = timed.connections.single()
+        assertEquals(now + 3 * 86_400, own.bypassUntil)
+        assertEquals(AutopilotMode.BYPASS, own.mode)
+        val off = AutopilotDraft.withoutBypass(on, null)
+        assertEquals(AutopilotMode.AUTO, off.mode)
+        assertNull(off.bypassUntil)
+        assertNull(off.bypassSince)
     }
 }

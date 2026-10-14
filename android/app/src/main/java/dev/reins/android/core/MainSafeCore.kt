@@ -280,6 +280,10 @@ class MainSafeCore(
     override suspend fun setAutopilotMode(connectionId: String?, mode: AutopilotMode?, minutes: UInt?) =
         io { setAutopilotMode(connectionId, mode, minutes) }
 
+    override suspend fun startBypass(connectionId: String?, minutes: UInt?) = io { startBypass(connectionId, minutes) }
+
+    override suspend fun autopilotStats(days: UInt): dev.reins.core.AutopilotStats = io { autopilotStats(days) }
+
     override suspend fun setAutopilotWifiOnly(wifiOnly: Boolean) = io { setAutopilotWifiOnly(wifiOnly) }
 
     override suspend fun autopilotProfiles(): List<ProfileView> = io { autopilotProfiles() }
@@ -299,6 +303,11 @@ class MainSafeCore(
     override suspend fun setClassLock(profileId: String, classKey: String, locked: Boolean?) = io { setClassLock(profileId, classKey, locked) }
 
     override suspend fun setPreset(profileId: String, preset: Preset) = io { setPreset(profileId, preset) }
+
+    override suspend fun setThresholds(profileId: String, approveAt: Float, denyAt: Float) = io { setThresholds(profileId, approveAt, denyAt) }
+
+    override suspend fun thresholdReplay(profileId: String, approveAt: Float, denyAt: Float): dev.reins.core.ThresholdReplay =
+        io { thresholdReplay(profileId, approveAt, denyAt) }
 
     override suspend fun autopilotSuggestion(requestId: String): SuggestionView? = io { autopilotSuggestion(requestId) }
 

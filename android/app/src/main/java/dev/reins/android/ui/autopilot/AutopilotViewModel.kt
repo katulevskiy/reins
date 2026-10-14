@@ -11,6 +11,8 @@ import dev.reins.android.feedback.play
 import dev.reins.android.ui.common.userMessage
 import dev.reins.core.AutopilotMode
 import dev.reins.core.AutopilotSettings
+import dev.reins.core.AutopilotStats
+import dev.reins.core.ThresholdReplay
 import dev.reins.core.ModelState
 import dev.reins.core.ModelStatus
 import dev.reins.core.Preset
@@ -39,6 +41,10 @@ data class AutopilotUi(
     /** "Try it": the last answer, and whether one is on its way. */
     val evaluation: SuggestionView? = null,
     val evaluating: Boolean = false,
+    /** "This week": requests scored, how often Autopilot matched the user, kinds on Auto. */
+    val stats: AutopilotStats? = null,
+    /** A profile's last 30 days at the thresholds being set (profile id to the answer). */
+    val replay: Pair<String, ThresholdReplay>? = null,
 )
 
 /** Settings > Autopilot, its profiles and "Try it", and the Autopilot part of a connection's page. */
@@ -87,6 +93,21 @@ class AutopilotViewModel(private val container: AppContainer) : ViewModel() {
         viewModelScope.launch { loadProfiles() }
     }
 
+    /** The Autopilot page opened: its profiles, and this week's numbers. */
+    fun showingAutopilot() {
+        viewModelScope.launch {
+            loadProfiles()
+            try {
+                val stats = container.core.autopilotStats(7u)
+                _ui.update { it.copy(stats = stats) }
+            } catch (e: CancellationException) {
+                throw e
+            } catch (_: Exception) {
+                // The strip shows dashes; nothing else depends on it.
+            }
+        }
+    }
+
     private suspend fun loadProfiles() {
         try {
             val profiles = container.core.autopilotProfiles()
@@ -124,6 +145,19 @@ class AutopilotViewModel(private val container: AppContainer) : ViewModel() {
         draft { AutopilotDraft.withMode(it, connectionId, mode, forMinutes, System.currentTimeMillis() / 1000) }
         run {
             container.core.setAutopilotMode(connectionId, mode, forMinutes)
+            container.refreshAutopilot()
+        }
+    }
+
+    /**
+     * Starts a bypass of every AI ([connectionId] null) or of one, for [minutes] or, with null, until the user stops
+     * it. Felt at once; a refusal (a just-paired AI) says why.
+     */
+    fun startBypass(minutes: UInt?, connectionId: String? = null) {
+        container.feedback.play(Event.BypassOn)
+        draft { AutopilotDraft.withBypass(it, connectionId, minutes, System.currentTimeMillis() / 1000) }
+        run {
+            container.core.startBypass(connectionId, minutes)
             container.refreshAutopilot()
         }
     }
@@ -254,6 +288,32 @@ class AutopilotViewModel(private val container: AppContainer) : ViewModel() {
         }
     }
 
+    /** The profile's own thresholds (whole percent, 80 to 99), saved when the user lets go of a slider. */
+    fun setThresholds(id: String, approveAt: Float, denyAt: Float) {
+        editProfile(id) { it.copy(preset = Preset.CUSTOM, approveAt = approveAt, denyAt = denyAt) }
+        run {
+            container.core.setThresholds(id, approveAt, denyAt)
+            loadProfiles()
+        }
+    }
+
+    private var replaying: Job? = null
+
+    /** What the profile's last 30 days would have been at these thresholds; a newer ask replaces one on its way. */
+    fun replay(id: String, approveAt: Float, denyAt: Float) {
+        replaying?.cancel()
+        replaying = viewModelScope.launch {
+            delay(REPLAY_DEBOUNCE_MS)
+            try {
+                val answer = container.core.thresholdReplay(id, approveAt, denyAt)
+                _ui.update { it.copy(replay = id to answer) }
+            } catch (e: CancellationException) {
+                throw e
+            } catch (_: Exception) {
+            }
+        }
+    }
+
     /** [locked]: true always asks, false lets Auto approve now, null lets the numbers decide. */
     fun setClassLock(id: String, classKey: String, locked: Boolean?) {
         // The chips sound their own choice; unlocking (after its warning) is felt as more autonomy.
@@ -335,5 +395,6 @@ class AutopilotViewModel(private val container: AppContainer) : ViewModel() {
 
     private companion object {
         const val POLL_MS = 500L
+        const val REPLAY_DEBOUNCE_MS = 120L
     }
 }

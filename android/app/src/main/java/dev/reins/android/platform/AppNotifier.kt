@@ -273,10 +273,11 @@ class AppNotifier(
 
     /**
      * The ongoing "Bypass on" notification while [notice] says a bypass runs, with a live countdown and Stop; null
-     * takes it away. It also times itself out at the end (the core ends the bypass by itself either way).
+     * takes it away. It also times itself out at the end (the core ends the bypass by itself either way). A bypass
+     * without an end shows how long it has run instead, and stays until it is stopped.
      */
     fun showBypass(notice: AutopilotText.BypassNotice?, nowMillis: Long = System.currentTimeMillis()) {
-        if (notice == null || notice.until * 1000 <= nowMillis) {
+        if (notice == null || !notice.untilOff && notice.until * 1000 <= nowMillis) {
             manager.cancel(BYPASS_ID)
             return
         }
@@ -287,7 +288,7 @@ class AppNotifier(
             Intent(context, BypassStopReceiver::class.java).setAction(BypassStopReceiver.ACTION_STOP),
             PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT,
         )
-        val notification = Notification.Builder(context, channel(Kind.Bypass))
+        val builder = Notification.Builder(context, channel(Kind.Bypass))
             .setSmallIcon(R.drawable.ic_notification)
             .setContentTitle(notice.title)
             .setContentText(notice.text)
@@ -295,10 +296,14 @@ class AppNotifier(
             .setOngoing(true)
             .setOnlyAlertOnce(true)
             .setShowWhen(true)
-            .setWhen(notice.until * 1000)
             .setUsesChronometer(true)
-            .setChronometerCountDown(true)
-            .setTimeoutAfter(notice.until * 1000 - nowMillis)
+        if (notice.untilOff) {
+            // No end to count down to: the chronometer counts up from when it started, and it stays until stopped.
+            builder.setWhen((notice.since ?: nowMillis / 1000) * 1000).setChronometerCountDown(false)
+        } else {
+            builder.setWhen(notice.until * 1000).setChronometerCountDown(true).setTimeoutAfter(notice.until * 1000 - nowMillis)
+        }
+        val notification = builder
             .setColor(BYPASS_RED)
             .setCategory(Notification.CATEGORY_STATUS)
             .setContentIntent(openAutopilot())

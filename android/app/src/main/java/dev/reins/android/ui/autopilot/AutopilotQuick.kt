@@ -49,6 +49,7 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
+import androidx.compose.material.icons.rounded.AllInclusive
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.shadow
@@ -124,7 +125,8 @@ object QuickStyles {
 
 /**
  * The compact Autopilot switcher, rising from the round button at the bottom right. A tap outside or Back closes it;
- * "More" opens the full page. Lockdown is one tap (it only takes power away); Bypass first asks for how long.
+ * "More" opens the full page. Lockdown is one tap (it only takes power away); Bypass opens the bypass sheet (how long,
+ * then a hold), and [onBypass] gets its minutes (null: until turned off).
  */
 @Composable
 fun AutopilotQuick(
@@ -135,11 +137,17 @@ fun AutopilotQuick(
     onStopBypass: () -> Unit,
     onMore: () -> Unit,
     onDismiss: () -> Unit,
+    onBypass: (UInt?) -> Unit = {},
 ) {
     val c = LocalColors.current
     val shown = remember { MutableTransitionState(false) }
+    var bypassSheet by remember { mutableStateOf(false) }
     shown.targetState = open && settings != null
-    if (!shown.currentState && !shown.targetState && shown.isIdle) return
+    if (!shown.currentState && !shown.targetState && shown.isIdle && !bypassSheet) return
+    val askBypass = {
+        bypassSheet = true
+        onDismiss()
+    }
     BackHandler(enabled = open, onBack = onDismiss)
     Box(Modifier.fillMaxSize()) {
         AnimatedVisibility(shown, enter = fadeIn(tween(120)), exit = fadeOut(tween(120))) {
@@ -164,10 +172,11 @@ fun AutopilotQuick(
             val s = settings ?: return@AnimatedVisibility
             val modelReady = s.model.state == ModelState.INSTALLED
             when (style) {
-                QuickStyle.Slider -> SliderCard(s, modelReady, onSet, onStopBypass, onMore, onDismiss)
-                else -> MenuCard(s, modelReady, onSet, onStopBypass, onMore, onDismiss)
+                QuickStyle.Slider -> SliderCard(s, modelReady, onSet, onStopBypass, onMore, onDismiss, askBypass)
+                else -> MenuCard(s, modelReady, onSet, onStopBypass, onMore, onDismiss, askBypass)
             }
         }
+        BypassSheets(bypassSheet, who = null, onStart = onBypass, onClose = { bypassSheet = false })
     }
 }
 
@@ -181,9 +190,9 @@ private fun MenuCard(
     onStopBypass: () -> Unit,
     onMore: () -> Unit,
     onDismiss: () -> Unit,
+    onAskBypass: () -> Unit,
 ) {
     val c = LocalColors.current
-    var askBypass by remember { mutableStateOf(false) }
     Column(
         Modifier
             .width(276.dp)
@@ -203,7 +212,7 @@ private fun MenuCard(
                     .background(if (selected) tint.copy(alpha = if (c.dark) 0.14f else 0.09f) else Color.Transparent)
                     .pressable(highlight = c.controlFill, shape = RoundedCornerShape(16.dp)) {
                         when {
-                            mode == AutopilotMode.BYPASS && s.mode != AutopilotMode.BYPASS -> askBypass = !askBypass
+                            mode == AutopilotMode.BYPASS && s.mode != AutopilotMode.BYPASS -> onAskBypass()
                             mode != s.mode -> {
                                 onSet(mode, null)
                                 onDismiss()
@@ -232,12 +241,6 @@ private fun MenuCard(
             if (mode == AutopilotMode.BYPASS && s.mode == AutopilotMode.BYPASS) {
                 QuickButton("Stop bypass", Glyph.Stop, c.danger, Modifier.padding(start = 56.dp, end = 10.dp, bottom = 6.dp).testTag("quickStopBypass")) {
                     onStopBypass()
-                    onDismiss()
-                }
-            }
-            if (mode == AutopilotMode.BYPASS && askBypass) {
-                BypassTimes(Modifier.padding(start = 56.dp, end = 6.dp, bottom = 6.dp)) { minutes ->
-                    onSet(AutopilotMode.BYPASS, minutes)
                     onDismiss()
                 }
             }
@@ -272,6 +275,7 @@ private fun SliderCard(
     onStopBypass: () -> Unit,
     onMore: () -> Unit,
     onDismiss: () -> Unit,
+    onAskBypass: () -> Unit,
 ) {
     val c = LocalColors.current
     val feedback = LocalFeedback.current
@@ -281,12 +285,9 @@ private fun SliderCard(
     val current = modes.indexOf(s.mode).coerceAtLeast(0)
     val pos = remember { Animatable(current.toFloat()) }
     var detent by remember { mutableIntStateOf(current) }
-    var askBypass by remember { mutableStateOf(false) }
     LaunchedEffect(current) {
-        if (!askBypass) {
-            detent = current
-            pos.animateTo(current.toFloat(), spring(dampingRatio = 0.75f, stiffness = 500f))
-        }
+        detent = current
+        pos.animateTo(current.toFloat(), spring(dampingRatio = 0.75f, stiffness = 500f))
     }
     val at = pos.value.coerceIn(0f, last.toFloat())
     val lo = at.toInt().coerceAtMost(last - 1)
@@ -299,24 +300,21 @@ private fun SliderCard(
         scope.launch { pos.animateTo(index.toFloat(), spring(dampingRatio = 0.7f, stiffness = 600f)) }
         val mode = modes[index]
         when {
-            mode == AutopilotMode.BYPASS && s.mode != AutopilotMode.BYPASS -> askBypass = true
+            // Turning a bypass on is held to confirm on its sheet; the thumb goes back to the mode in force meanwhile.
+            mode == AutopilotMode.BYPASS && s.mode != AutopilotMode.BYPASS -> {
+                detent = current
+                scope.launch { pos.animateTo(current.toFloat(), spring(dampingRatio = 0.75f, stiffness = 500f)) }
+                onAskBypass()
+            }
             mode != s.mode -> {
-                askBypass = false
                 onSet(mode, null)
                 scope.launch {
                     delay(320)
                     onDismiss()
                 }
             }
-            else -> askBypass = false
+            else -> Unit
         }
-    }
-
-    fun cancelBypass() {
-        askBypass = false
-        detent = current
-        feedback.play(Event.Detent, current)
-        scope.launch { pos.animateTo(current.toFloat(), spring(dampingRatio = 0.75f, stiffness = 500f)) }
     }
 
     Column(
@@ -345,16 +343,7 @@ private fun SliderCard(
                 feedback.play(Event.Detent, index)
             }
         }, onDrag = { value -> scope.launch { pos.snapTo(value) } }, onRelease = ::land)
-        if (askBypass) {
-            BypassTimes(Modifier.padding(top = 14.dp), onCancel = ::cancelBypass) { minutes ->
-                askBypass = false
-                onSet(AutopilotMode.BYPASS, minutes)
-                scope.launch {
-                    delay(320)
-                    onDismiss()
-                }
-            }
-        } else if (s.mode == AutopilotMode.BYPASS) {
+        if (s.mode == AutopilotMode.BYPASS) {
             QuickButton("Stop bypass", Glyph.Stop, c.danger, Modifier.padding(top = 14.dp).testTag("quickStopBypass")) {
                 onStopBypass()
                 onDismiss()
@@ -490,39 +479,6 @@ private fun RiskTrack(
 
 // ---- shared parts ----------------------------------------------------------------------------------------------------
 
-/** How long a bypass runs: one tap on a length turns it on. */
-@Composable
-private fun BypassTimes(modifier: Modifier = Modifier, onCancel: (() -> Unit)? = null, onPick: (UInt) -> Unit) {
-    val c = LocalColors.current
-    Row(modifier.fillMaxWidth().testTag("quickBypassTimes"), horizontalArrangement = Arrangement.spacedBy(6.dp), verticalAlignment = Alignment.CenterVertically) {
-        AutopilotText.bypassMinutes.forEach { m ->
-            Box(
-                Modifier
-                    .weight(1f)
-                    .height(36.dp)
-                    .clip(CircleShape)
-                    .background(c.danger.copy(alpha = 0.14f))
-                    .border(0.75.dp, c.danger.copy(alpha = 0.4f), CircleShape)
-                    .pressable(shape = CircleShape) { onPick(m) }
-                    .testTag("quickBypass:$m"),
-                contentAlignment = Alignment.Center,
-            ) { RText(if (m == 60u) "1 h" else "$m min", RType.sans(13.5f, FontWeight.SemiBold), c.danger, maxLines = 1) }
-        }
-        if (onCancel != null) {
-            Box(
-                Modifier
-                    .size(36.dp)
-                    .clip(CircleShape)
-                    .background(c.controlFill)
-                    .pressable(shape = CircleShape, label = "Cancel", onClick = onCancel)
-                    .semantics { contentDescription = "Cancel" }
-                    .testTag("quickBypassCancel"),
-                contentAlignment = Alignment.Center,
-            ) { GlyphIcon(Glyph.Close, c.secondary, size = 14.dp, weight = 2f) }
-        }
-    }
-}
-
 @Composable
 private fun QuickButton(title: String, glyph: Glyph, tint: Color, modifier: Modifier = Modifier, onClick: () -> Unit) {
     Row(
@@ -545,6 +501,10 @@ private fun QuickButton(title: String, glyph: Glyph, tint: Color, modifier: Modi
 @Composable
 private fun BypassLeft(until: Long) {
     val c = LocalColors.current
+    if (AutopilotText.isUntilOff(until)) {
+        androidx.compose.material3.Icon(androidx.compose.material.icons.Icons.Rounded.AllInclusive, "No end", Modifier.size(18.dp).testTag("quickBypassLeft"), tint = c.danger)
+        return
+    }
     val now = rememberNowState(1_000, untilMillis = until * 1000).value / 1000
     RText(AutopilotText.clock(until, now), RType.mono(13f, FontWeight.SemiBold), c.danger, Modifier.testTag("quickBypassLeft"), maxLines = 1)
 }

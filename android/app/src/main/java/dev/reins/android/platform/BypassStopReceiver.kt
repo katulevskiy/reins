@@ -48,7 +48,8 @@ class BypassEndWorker(context: Context, params: WorkerParameters) : CoroutineWor
         /** Runs just after [until] (unix seconds); null cancels the run. */
         fun schedule(context: Context, until: Long?, nowMillis: Long = System.currentTimeMillis()) {
             val work = WorkManager.getInstance(context)
-            if (until == null) {
+            // A bypass without an end ([AutopilotText.UNTIL_OFF]) has nothing to wait for.
+            if (until == null || dev.reins.android.autopilot.AutopilotText.isUntilOff(until)) {
                 work.cancelUniqueWork(NAME)
                 return
             }

@@ -19,8 +19,44 @@ object AutopilotText {
     /** The modes in the order the picker shows them, from the user deciding everything to Autopilot refusing everything. */
     val modes = listOf(AutopilotMode.MANUAL, AutopilotMode.AUTO, AutopilotMode.BYPASS, AutopilotMode.LOCKDOWN)
 
-    /** How long a bypass can run, in minutes (the core allows 1 to 60). */
-    val bypassMinutes = listOf(15u, 30u, 60u)
+    /** The bypass lengths offered first, in minutes: 15 min, 1 hour, 1 day (the core allows a minute to a year). */
+    val bypassMinutes = listOf(15u, 60u, 1440u)
+
+    /** The longer ones "Custom" offers before a number of the user's own: 4 hours, 1 week. */
+    val bypassMoreMinutes = listOf(240u, 10_080u)
+
+    /** The longest timed bypass the core takes: a year, in minutes. */
+    const val MAX_BYPASS_MINUTES = 525_600u
+
+    /** The end of a bypass that runs until the user turns it off (the core's `i64::MAX`). */
+    const val UNTIL_OFF = Long.MAX_VALUE
+
+    fun isUntilOff(until: Long?): Boolean = until == UNTIL_OFF
+
+    /** The units of a custom bypass, with their minutes and the largest number the stepper goes to. */
+    enum class BypassUnit(val label: String, val minutes: UInt, val max: Int) {
+        Minutes("minutes", 1u, 99),
+        Hours("hours", 60u, 99),
+        Days("days", 1_440u, 99),
+        Weeks("weeks", 10_080u, 52),
+    }
+
+    /** A custom length in minutes, within what the core takes. */
+    fun customMinutes(count: Int, unit: BypassUnit): UInt =
+        (count.coerceIn(1, unit.max).toUInt() * unit.minutes).coerceAtMost(MAX_BYPASS_MINUTES)
+
+    /** "15 min", "1 hour", "3 days", "1 week"; null (until turned off) is "Until off". */
+    fun lengthLabel(minutes: UInt?): String {
+        minutes ?: return "Until off"
+        val m = minutes.toLong()
+        fun plural(n: Long, one: String) = if (n == 1L) "1 $one" else "$n ${one}s"
+        return when {
+            m > 0 && m % 10_080 == 0L -> plural(m / 10_080, "week")
+            m > 0 && m % 1_440 == 0L -> plural(m / 1_440, "day")
+            m > 0 && m % 60 == 0L -> plural(m / 60, "hour")
+            else -> "$m min"
+        }
+    }
 
     fun name(mode: AutopilotMode): String = when (mode) {
         AutopilotMode.MANUAL -> "Manual"
@@ -35,6 +71,13 @@ object AutopilotText {
         AutopilotMode.AUTO -> "Decides the easy ones"
         AutopilotMode.BYPASS -> "Approve all but the riskiest"
         AutopilotMode.LOCKDOWN -> "Deny everything"
+    }
+
+    /** What Manual and Auto do, on their cards. */
+    fun heroLine(mode: AutopilotMode): String = when (mode) {
+        AutopilotMode.MANUAL -> "You decide. Autopilot shows its score."
+        AutopilotMode.AUTO -> "Decides the easy ones. Asks the rest."
+        else -> line(mode)
     }
 
     /** The modes from least to most left to Autopilot: the quick switcher's order, left to right and top to bottom. */
@@ -63,24 +106,77 @@ object AutopilotText {
 
     fun percent(p: Float): String = "${(p.coerceIn(0f, 1f) * 100).roundToInt()}%"
 
-    /** "42 min left", "1 min left" (the last minute counts as one). */
-    fun minutesLeft(until: Long, nowSeconds: Long): String {
+    /** "42 min left" (the last minute counts as one), "5 h left", "3 days left"; "until you stop it" without an end. */
+    fun timeLeft(until: Long, nowSeconds: Long): String {
+        if (isUntilOff(until)) return "until you stop it"
         val left = (until - nowSeconds).coerceAtLeast(0)
-        return "${((left + 59) / 60).coerceAtLeast(1)} min left"
+        return when {
+            left < 3_600 -> "${((left + 59) / 60).coerceAtLeast(1)} min left"
+            left < 48 * 3_600 -> "${(left + 3_599) / 3_600} h left"
+            else -> "${(left + 86_399) / 86_400} days left"
+        }
+    }
+
+    /** How long a bypass without an end has run: "just started", "12 min so far", "5 h so far", "2 days so far". */
+    fun ranFor(since: Long, nowSeconds: Long): String {
+        val ran = (nowSeconds - since).coerceAtLeast(0)
+        return when {
+            ran < 60 -> "just started"
+            ran < 3_600 -> "${ran / 60} min so far"
+            ran < 48 * 3_600 -> "${ran / 3_600} h so far"
+            else -> "${ran / 86_400} days so far"
+        }
+    }
+
+    /** The line under "Bypass" while one runs. */
+    fun bypassLine(until: Long, since: Long?, nowSeconds: Long): String = when {
+        !isUntilOff(until) -> "Approving without asking"
+        since != null -> "On until you stop it · ${ranFor(since, nowSeconds)}"
+        else -> "On until you stop it"
     }
 
     /** The length (seconds) a bypass with [leftSeconds] to go was most likely given: the shortest choice that fits. */
     fun bypassLength(leftSeconds: Long): Long =
-        bypassMinutes.map { it.toLong() * 60 }.firstOrNull { leftSeconds <= it } ?: (bypassMinutes.last().toLong() * 60)
+        bypassMinutes.map { it.toLong() * 60 }.firstOrNull { leftSeconds <= it } ?: leftSeconds.coerceAtLeast(1)
 
-    /** "14:05" for minutes and seconds left. */
-    fun clock(until: Long, nowSeconds: Long): String {
+    /** The share of a bypass still to run, for its ring: full without an end; measured from its start when known. */
+    fun bypassFraction(until: Long, since: Long?, nowSeconds: Long): Float {
+        if (isUntilOff(until)) return 1f
         val left = (until - nowSeconds).coerceAtLeast(0)
-        return String.format(java.util.Locale.ROOT, "%d:%02d", left / 60, left % 60)
+        val total = if (since != null && until > since) until - since else bypassLength(left)
+        return (left.toDouble() / total.coerceAtLeast(1)).toFloat().coerceIn(0f, 1f)
     }
 
-    /** A bypass that runs anywhere: the global one, or any connection's. */
-    data class BypassNotice(val title: String, val text: String, val until: Long, val global: Boolean, val connectionIds: List<String>)
+    /** "14:05" for minutes and seconds left, "5:04:09" within a day, "2d 4h" beyond; "∞" without an end. */
+    fun clock(until: Long, nowSeconds: Long): String {
+        if (isUntilOff(until)) return "∞"
+        val left = (until - nowSeconds).coerceAtLeast(0)
+        return when {
+            left < 3_600 -> String.format(java.util.Locale.ROOT, "%d:%02d", left / 60, left % 60)
+            left < 86_400 -> String.format(java.util.Locale.ROOT, "%d:%02d:%02d", left / 3_600, left % 3_600 / 60, left % 60)
+            else -> "${left / 86_400}d ${left % 86_400 / 3_600}h"
+        }
+    }
+
+    /**
+     * A bypass that runs anywhere: the global one, or any connection's. [until] is the latest end ([UNTIL_OFF] when
+     * one runs until turned off); [since] when the earliest of them started.
+     */
+    data class BypassNotice(
+        val title: String,
+        val text: String,
+        val until: Long,
+        val global: Boolean,
+        val connectionIds: List<String>,
+        val since: Long? = null,
+        /** The end of each of them. */
+        val ends: List<Long> = listOf(until),
+    ) {
+        val untilOff: Boolean get() = isUntilOff(until)
+
+        /** The first of them to end by itself (null when none has an end), when the display must be read again. */
+        val nextEnd: Long? get() = ends.filterNot(::isUntilOff).minOrNull()
+    }
 
     /** What the ongoing notification says while a bypass runs; null when none does. */
     fun bypassNotice(settings: AutopilotSettings?, label: (String) -> String, nowSeconds: Long): BypassNotice? {
@@ -95,11 +191,13 @@ object AutopilotText {
             else -> "${connections.size} AIs"
         }
         return BypassNotice(
-            title = "Bypass on · ${minutesLeft(until, nowSeconds)}",
+            title = "Bypass on · ${timeLeft(until, nowSeconds)}",
             text = "For $who. The riskiest still ask.",
             until = until,
             global = global != null,
             connectionIds = connections.map { it.connectionId },
+            since = (listOfNotNull(settings.bypassSince.takeIf { global != null }) + connections.mapNotNull { it.bypassSince }).minOrNull(),
+            ends = listOfNotNull(global) + connections.mapNotNull { it.bypassUntil },
         )
     }
 
@@ -153,13 +251,58 @@ object AutopilotText {
         Preset.CAUTIOUS -> "Cautious"
         Preset.BALANCED -> "Balanced"
         Preset.RELAXED -> "Relaxed"
+        Preset.CUSTOM -> "Custom"
     }
 
-    /** The thresholds behind a preset (spec §5.4), in words. */
-    fun presetLine(p: Preset): String = when (p) {
-        Preset.CAUTIOUS -> "Approves when 98% sure, denies when 95% sure"
-        Preset.BALANCED -> "Approves when 95% sure, denies when 90% sure"
-        Preset.RELAXED -> "Approves when 90% sure, denies when 85% sure"
+    /** The thresholds a profile uses, in words. */
+    fun presetLine(p: ProfileView): String =
+        "Approves when ${percent(p.approveAt)} sure, denies when ${percent(p.denyAt)} sure"
+
+    /** What "How sure" explains behind its (?). */
+    const val HOW_SURE_HELP = "How sure Autopilot must be to approve or deny on its own in Auto. Requests that always ask still ask."
+
+    /** What a bypass still asks, behind the (?) of the bypass sheet. */
+    const val BYPASS_HELP = "Still asked every time: new connections, permissions, passwords and secrets, deletions and other one-off changes, SSH and flagged files."
+
+    /** The custom thresholds' range, in whole percent. */
+    const val MIN_THRESHOLD_PERCENT = 80
+    const val MAX_THRESHOLD_PERCENT = 99
+
+    /** "Last 30 days at these: 41 decided for you, 12 asked, 0 you'd have undone." as its three highlighted parts. */
+    fun replayParts(r: dev.reins.core.ThresholdReplay): List<Pair<String, Boolean>> = listOf(
+        "Last ${r.days} days at these: " to false,
+        "${r.decided} decided" to true,
+        " for you, " to false,
+        "${r.asked} asked" to true,
+        ", ${r.undone} you'd have undone." to false,
+    )
+
+    fun replayLine(r: dev.reins.core.ThresholdReplay): String = replayParts(r).joinToString("") { it.first }
+
+    /** A stat tile's percentage, "—" before there is one. */
+    fun share(p: Float?): String = p?.let(::percent) ?: "—"
+
+    /** A kind of request in one line, for its row: on Auto, always asks, or how far from unlocking. */
+    fun kindLine(c: ClassView): String = when {
+        c.manual == false -> "Always asks"
+        c.autoApprove -> "On Auto · ${c.decisions} ${if (c.decisions == 1u) "decision" else "decisions"}"
+        c.decisionsToUnlock > 0u -> "${c.decisionsToUnlock} more to unlock"
+        else -> "Learning"
+    }
+
+    /** "Claude Code, ChatGPT · 140 decisions": the AIs a profile learns from, then how much it remembers. */
+    fun profileLine(p: ProfileView, ais: List<String>): String = buildList {
+        if (ais.isNotEmpty()) add(ais.joinToString(", "))
+        add(if (p.memoryCount == 1u) "1 decision" else "${p.memoryCount} decisions")
+    }.joinToString(" · ")
+
+    /** The AIs a profile learns from: those assigned to it, and for the default one every AI without one of its own. */
+    fun profileAis(p: ProfileView, settings: AutopilotSettings?, connections: List<Pair<String, String>>): List<String> {
+        val own = settings?.connections.orEmpty().associate { it.connectionId to it.profileId }
+        return connections.filter { (id, _) ->
+            val assigned = own[id]
+            id in p.connections || assigned == p.id || (assigned == null && p.isDefault)
+        }.map { untrusted(it.second) }
     }
 
     /** How far a class is on its way to approving by itself, 0..1 (full once it may). */
