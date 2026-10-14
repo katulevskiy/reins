@@ -268,6 +268,7 @@ async fn agent_check(socket: &Path, public_key: &[u8]) -> Result<(), String> {
 }
 
 #[cfg(not(unix))]
+#[allow(clippy::unused_async, reason = "the same call as on unix, where it waits for the agent")]
 async fn agent_check(_socket: &Path, _public_key: &[u8]) -> Result<(), String> {
     Err("checking the agent's signature works on macOS and Linux for now".to_owned())
 }
