@@ -170,8 +170,11 @@ Backslashes in paths are kept (`type C:\Users\me\app\.env` matches `.env`), and 
 `powershell -Command`, `pwsh -c`, `powershell -EncodedCommand` and `Invoke-Expression` are checked as well.
 
 **File patterns** without a `/` match the file name (`*.pem`, `.env`). With a `/` they match the end of the path
-(`.ssh/*`, `.aws/credentials`). A command's arguments are checked against the file patterns too, so `cat .env`
-matches.
+(`.ssh/*`, `.aws/credentials`). Every word of a command is checked against the file patterns too, so `cat .env`
+matches, and so does a word in a heredoc, in an interpreter's code or in a commit message (`git commit -m "fix .env
+loading"`). That is on purpose: telling a file a command opens from text it is given takes a shell parser, and every
+such parser has been a way around the guard. Such a question is cheap: the phone shows the word that matched,
+Autopilot learns each group on its own, and Bypass answers it.
 
 **Built-in command rules:** force pushes and ref deletions (`git push -f`, `--force*`, `+refspec`, `-d`, `--delete`,
 `--mirror`, `--prune`, `:ref`), `git reset --hard`, `git clean -f`, `git branch -D`, `git checkout -f`,
@@ -188,8 +191,15 @@ SSH private keys (`id_rsa`, `id_ed25519`, ...), `.ssh/*`, cloud and registry cre
 `credentials.json`). Exceptions: `*.pub`, `known_hosts`, `.env.example`,
 `.env.sample`, `.env.template`, `.env.dist`.
 
-The phone shows the harness that asked, the command (or files), the working directory and the rule that matched. A standing answer can
-cover a topic such as `command:make deploy`.
+The phone shows the harness that asked, the command (or files), the working directory, and which rule matched and
+what matched it ("Matched: .env files · `.env`"), read by the phone itself. Questions about what cannot be undone
+(the command rules) are asked every time, with a hold to say yes. Questions about private keys, cloud credentials and
+saved tokens, and commands the phone cannot read with certainty, are asked every time as an ordinary yes or no. A
+`.env` question is an ordinary yes or no. A remembered answer to any question from the desktop app covers exactly
+what was asked, on that computer: that file (its full path, a relative one read in its folder), that command in that
+folder, or that question; never the topic the computer gives it (`file:.env`, `command:make deploy`). Answers
+remembered by earlier versions, which were keyed by topic, are dropped on update. See
+[security-model.md](security-model.md#hooks) for Autopilot and Bypass.
 
 ## What hooks do not do
 

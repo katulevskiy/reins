@@ -325,6 +325,41 @@ pub struct AskView {
     pub detail: Option<String>,
     /// What a standing answer may cover (`command:git push --force`); `None`: a question without a topic.
     pub topic: Option<String>,
+    /// The guard rule the question matches, as the phone reads its command or files (else as the computer reports
+    /// it); `None` when there is none.
+    #[uniffi(default)]
+    pub rule: Option<AskRuleView>,
+    /// The phone could not read the question with certainty (an unbalanced quote, a detail cut short): Autopilot
+    /// leaves it to the user in Manual and Auto.
+    #[uniffi(default)]
+    pub uncertain: bool,
+    /// It cannot be undone: held to approve and shown in red. (A question asked every time for another reason, a
+    /// private key or an unreadable command, is an ordinary yes or no that is never remembered.)
+    #[uniffi(default)]
+    pub destructive: bool,
+    /// The guard group everything the command (or the file list) does falls in, which Autopilot learns on its own;
+    /// `None`: the generic kind.
+    #[uniffi(default)]
+    pub kind: Option<String>,
+}
+
+/// The guard rule a desktop question matches.
+#[derive(Clone, Debug, PartialEq, Eq, uniffi::Record)]
+pub struct AskRuleView {
+    /// What the rule is about: its group's label (".env files", "Rewriting git history"), or "Your rule".
+    pub label: String,
+    /// The rule itself (`.env`, `git push --force*`).
+    pub pattern: String,
+    /// What in the command matched it (`app/.env`, `git push --force origin main`).
+    pub matched: String,
+    /// The built-in group (`env-files`, `git-history`); `None` for the user's own rules.
+    pub group: Option<String>,
+    /// What it covers cannot be undone: asked every time, held to approve, and never judged by Autopilot in Manual or
+    /// Auto.
+    pub destructive: bool,
+    /// Only the computer says so: the phone did not find this rule in the command itself (the user's own rule, or a
+    /// group this phone does not know). Shown as reported; it can make a question stricter, never looser.
+    pub reported: bool,
 }
 
 /// Secrets handed to the desktop app for one command or API route.

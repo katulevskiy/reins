@@ -375,6 +375,36 @@ async fn the_phone_approves_git_reads_and_pushes_and_refuses_a_force_push() {
     let grants = phone.core.grants().await.unwrap();
     assert_eq!(grants.iter().filter(|g| g.origin == "session" && g.active).count(), 0);
 
+    // ---- Bypass: a hook's questions are answered yes at once, a force push and a secret file alike ----
+    phone.core.start_bypass(None, None).await.unwrap();
+    for command in ["git push --force origin main", "cat .env"] {
+        let input = json!({"hook_event_name": "PreToolUse", "tool_name": "Bash", "cwd": "/home/me/app",
+            "tool_input": {"command": command}})
+        .to_string();
+        let started = std::time::Instant::now();
+        let hook = reins_desktop::hooks::run(
+            reins_desktop::harness::Harness::ClaudeCode,
+            input.as_bytes(),
+            &paths,
+            &config,
+            &NoPrompter,
+        );
+        // The phone app is open (polling); nobody decides.
+        let (out, code, _) = tokio::select! {
+            r = hook => r,
+            () = async {
+                loop {
+                    phone.core.sync(1).await.ok();
+                }
+            } => unreachable!(),
+        };
+        let out: serde_json::Value = serde_json::from_str(&out.expect("a decision")).unwrap();
+        assert_eq!((code, &out["hookSpecificOutput"]["permissionDecision"]), (0, &json!("allow")), "{command}: {out}");
+        assert!(started.elapsed() < Duration::from_secs(20), "{command}: answered in {:?}", started.elapsed());
+    }
+    assert!(phone.core.pending().await.unwrap().is_empty(), "nothing waits for the user");
+    phone.core.set_autopilot_mode(None, Some(reins_core::AutopilotMode::Manual), None).await.unwrap();
+
     // ---- reins logout / uninstall: the connection ends on the server, not just here ----
     let kept = std::fs::read(paths.session_file()).unwrap();
     let out = reins_desktop::server::oauth::sign_out(&paths).await.unwrap();

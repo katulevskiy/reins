@@ -427,7 +427,13 @@ enum DemoData {
             createdAt: now - 35, waitUntil: now + 180,
             op: "ask", resources: [ResourceView(id: "command:git push --force", label: "command:git push --force", wider: false)],
             preview: ["Force-push main?"], opTitle: "Ask you on your phone",
-            ask: AskView(question: "Force-push main?", detail: "git push --force origin main", topic: "command:git push --force")
+            ask: AskView(
+                question: "Force-push main?", detail: "git push --force origin main", topic: "command:git push --force",
+                rule: AskRuleView(
+                    label: "Rewriting git history", pattern: "git push --force*", matched: "git push --force origin main",
+                    group: "git-history", destructive: true, reported: false
+                )
+            )
         ), "\(desktop) wants to ask you on your phone", "Force-push main?")
 
         add(view(

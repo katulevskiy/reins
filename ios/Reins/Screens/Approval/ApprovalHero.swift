@@ -172,10 +172,12 @@ private struct HeroPills: View {
     @Environment(\.approvalRecord) private var record
 
     var body: some View {
+        let danger = ApprovalWords.dangerTag(view)
         if let record {
             let outcome = EntryOutcomePill(text: record.outcome, symbol: record.symbol, tint: record.tint)
-            if let danger = ApprovalWords.dangerTag(view) {
-                let tag = WarnTag(text: danger.label, tint: Palette.danger).accessibilityIdentifier(danger.id)
+            if let danger {
+                let tag = WarnTag(text: danger.label, tint: danger.destructive ? Palette.danger : Palette.warning, symbol: danger.symbol)
+                    .accessibilityIdentifier(danger.id)
                 ViewThatFits(in: .horizontal) {
                     HStack(spacing: 8) { tag; outcome }
                     VStack(spacing: 8) { tag; outcome }
@@ -183,12 +185,25 @@ private struct HeroPills: View {
             } else {
                 outcome
             }
-        } else if let danger = ApprovalWords.dangerTag(view) {
-            HStack(spacing: 8) {
-                WarnTag(text: danger.label, tint: Palette.danger).accessibilityIdentifier(danger.id)
-                HelpDot(id: danger.id, text: danger.help)
+        } else {
+            VStack(spacing: 10) {
+                if let danger {
+                    HStack(spacing: 8) {
+                        WarnTag(text: danger.label, tint: danger.destructive ? Palette.danger : Palette.warning, symbol: danger.symbol)
+                            .accessibilityIdentifier(danger.id)
+                        HelpDot(id: danger.id, text: danger.help)
+                    }
+                }
+                // A guard rule that can be undone is an ordinary question: Autopilot's score shows under it.
+                if danger?.destructive != true {
+                    pills
+                }
             }
-        } else if let s = vm.suggestion, s.judged, !s.floor {
+        }
+    }
+
+    @ViewBuilder private var pills: some View {
+        if let s = vm.suggestion, s.judged, !s.floor {
             AutopilotPill(suggestion: s) {
                 nav.overlay = .autopilot
                 feedback.play(.open)
@@ -216,14 +231,15 @@ private struct HeroPills: View {
     }
 }
 
-/// A tinted tag with the real warning symbol.
+/// A tinted tag with a real symbol (the warning sign unless said otherwise).
 struct WarnTag: View {
     var text: String
     var tint: Color
     var small = false
+    var symbol = "exclamationmark.triangle.fill"
 
     var body: some View {
-        Label(text, systemImage: "exclamationmark.triangle.fill")
+        Label(text, systemImage: symbol)
             .labelStyle(.titleAndIcon)
             .font(RFont.sans(small ? 11.5 : 13.5, .semibold))
             .foregroundStyle(tint)

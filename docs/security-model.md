@@ -318,9 +318,15 @@ agent.
 ## Hooks
 
 Harness hooks compare commands and file paths with patterns ([harnesses.md](harnesses.md#the-guard-rules-guard)).
-They catch the obvious: force pushes, `rm -r`, `terraform apply`, reading `.env` or private keys. They cannot catch
-a command hidden in a script, an alias, or a tool the hook does not see. Treat them as guard rails against mistakes,
-not as a sandbox. When the phone does not answer, the hook denies by default (`on_no_answer = "deny"`).
+They are a heuristic first line: they catch the obvious (force pushes, `rm -r`, `terraform apply`, reading `.env` or
+private keys) and, on purpose, match every word of a command, so false positives are expected (a test edit that
+mentions `.env`, a commit message). Those are handled on the phone: the question shows the rule and the word that
+matched, a `.env` question is an ordinary yes or no that Autopilot can learn, and Bypass answers it.
+Determined code can still evade the guard: a name built at run time, a command hidden in a script or an alias, a
+tool the hook does not see. The other layers are what hold then: credentials stay on the phone and are released per
+action, grants are narrow and time-boxed, Autopilot judges each request, and an OS sandbox (a separate user, a
+container) keeps the agent from the files at all. Smarter, context-aware judgment of commands is coming from
+Autopilot's risk model. When the phone does not answer, the hook denies by default (`on_no_answer = "deny"`).
 
 ## Autopilot
 
@@ -328,9 +334,25 @@ Autopilot runs only on the phone. Nothing it uses or learns leaves the phone. It
 
 - **Hard floor.** In Manual and Auto, some requests always wait for you: new connections, standing permission
   requests, account listings, secret releases, SSH signatures, everything that is asked every time (above), destructive
-  MCP tools, pushes that rewrite or delete history (or whose history could not be checked), hook questions about a
-  destructive command or a secret file, uploaded files that may hold something to run, and anything from a connection
+  MCP tools, pushes that rewrite or delete history (or whose history could not be checked), hook questions in one of
+  the guard's destructive groups, uploaded files that may hold something to run, and anything from a connection
   paired less than 10 minutes ago. Lockdown denies, and never approves. Bypass is the exception, by design (below).
+  The phone puts a hook question in a group itself, reading everything it carries with its own copy of the guard's
+  built-in rules (`reins_policy::guard`), whatever its layout; the most severe match wins, and the words of a
+  destructive command count where a shell runs them (not in the source a heredoc feeds Python). The hook runs where
+  the AI does, so its label is only shown, and can make a question stricter, never looser. Questions about private
+  keys, cloud credentials and saved tokens are asked every time too, and so is any the phone cannot read with
+  certainty. Certain is a strict, small part of shell only (`reins_policy::strict`): plain and quoted words, `;`,
+  `&&`, `||`, `|`, simple redirections, `NAME=value` before a command, a heredoc into a program that does not run
+  its input or into a shell, a few wrappers with their exact options (`sudo`, `env`, `nice`, `nohup`, `time`,
+  `timeout`, `command`) and `sh -c` two levels deep. Anything else (`$`, a substitution, parentheses, braces, a
+  program that runs code it is given, an interpreter, a pipe into a shell, a Windows path, a character outside ASCII,
+  a detail cut short) is uncertain: shown as "Couldn't read this", never remembered, never one tap, never
+  Autopilot's, but an ordinary yes or no on screen, and Bypass approves it. A question is never less guarded than
+  before this reading, except a `.env` read, read with certainty (a test compares a corpus with the previous rule). A `.env` question is judged like any request. A remembered answer to a desktop question covers
+  exactly what was asked, on that computer (bound to the desktop app's key): that file by its full path, that command
+  in that folder, or that question; never the topic the computer chose. Autopilot learns a question in the `.env`
+  kind only when everything its command does is reading `.env` files.
 - **Prompt-injection rule.** The model scores each request twice: once on the facts the phone verified (service,
   action, target, history), and once with the AI-written text added (reason, email body, commit messages, arguments).
   The approve score it uses is the lower of the two, and the deny score the higher. AI-written text can therefore make
@@ -345,7 +367,9 @@ of every kind and every item in it: the hard floor above included (secrets, SSH 
 screen would pick and within your budgets, destructive tools, force pushes and deletions, flagged uploads, account
 listings, standing permission requests), from a connection however new. A global bypass applies to every AI that is
 not locked down, whatever mode it has of its own, and turning one on also approves what already waits in its scope.
-It needs no model, so it answers while the app is closed (a push, the notification extension).
+It needs no model, so it answers while the app is closed (a push, the notification extension). That includes the
+desktop app's questions: a harness hook's question (a secret file, or a force push) is answered yes within a poll of
+the hook, which then lets the command run, so an agent left working is never held by a guard question.
 
 Its guards:
 

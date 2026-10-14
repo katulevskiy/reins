@@ -9,6 +9,7 @@ license = "Apache-2.0"
 publish.workspace = true
 
 [dependencies]
+data-encoding = "2.11.1"
 reins-proto = { path = "../reins-proto" }
 regex = "1.13.1"
 serde = { version = "1.0.229", features = ["derive"] }
