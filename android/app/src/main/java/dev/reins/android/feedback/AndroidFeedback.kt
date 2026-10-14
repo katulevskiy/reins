@@ -4,7 +4,9 @@ import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
 import android.content.IntentFilter
+import android.app.NotificationManager
 import android.content.pm.ApplicationInfo
+import android.media.AudioManager
 import android.os.Handler
 import android.os.Looper
 import android.os.PowerManager
@@ -75,7 +77,8 @@ class SystemEnvironment(private val context: Context, vibrator: Vibrator?, clock
  * Haptics and sound for the whole app. [FeedbackGate] decides when something plays, [HapticPlanner] how a haptic is
  * felt on this hardware, [CueTable] which sound and how loud, and [Event] what each of Reins's moments is made of.
  * Nothing plays while the app is in the background: the events that matter there arrive as notifications, whose
- * channels sound the same chimes (`AppNotifier`).
+ * channels sound the same chimes (`AppNotifier`). A request that arrives while the app is open chimes on the
+ * notification stream instead ([requestArrived]), so the phone's own silent and vibrate modes hold it back.
  *
  * Debug builds log one line per request to the `ReinsFeedback` tag: what played (and as what) or why it did not.
  */
@@ -91,6 +94,10 @@ class AndroidFeedback(
     private val gate = FeedbackGate({ store.current }, env, clock)
     private val claims = ClaimTracker(clock)
     private val bank = SoundBank(this.context)
+    private val arrivals = ArrivalPolicy(clock)
+    private val chime = NotificationChime(this.context)
+    private val audio = this.context.getSystemService(AudioManager::class.java)
+    private val notifications = this.context.getSystemService(NotificationManager::class.java)
     private val main = Handler(Looper.getMainLooper())
     private val warm = WarmPolicy(clock)
     private var warming = false
@@ -117,6 +124,7 @@ class AndroidFeedback(
         // capabilities too (a binder call per primitive), which the first haptic would otherwise ask on the tap.
         Thread({
             bank.load()
+            chime.load()
             caps(hasView = false)
         }, "feedback-load").start()
         log { "ready: vibrator=${vibrator?.hasVibrator()} outputRate=${bank.outputRate} resampled=${OutputPath.needsResampling(bank.outputRate)}" }
@@ -169,6 +177,31 @@ class AndroidFeedback(
         claims.claimCue()
         play(cue, step)
     }
+
+    override fun requestArrived(id: String, needsUser: Boolean) {
+        FeedbackProvider.observer?.requestArrived(id, needsUser)
+        if (!env.active) {
+            log { "arrival skip: ${Skipped.Inactive.label}" }
+            return
+        }
+        val outcome = arrivals.decide(id, needsUser, store.current, ringer())
+        if (outcome.chime) {
+            claims.claimCue() // the sheet that pops up for it stays quiet
+            val started = chime.play()
+            log { "arrival chime ${if (started) "play" else "skip: ${Skipped.NotLoaded.label}"}" }
+        }
+        if (outcome.haptic) {
+            claims.claimHaptic()
+            play(Haptic.Attention)
+        }
+        if (outcome == ArrivalOutcome.Nothing) log { "arrival skip (needsUser=$needsUser)" }
+    }
+
+    /** The phone's ringer and Do Not Disturb, read per arrival (rare enough for the two binder calls). */
+    private fun ringer(): Ringer = Ringer.of(
+        audio?.ringerMode ?: AudioManager.RINGER_MODE_NORMAL,
+        notifications?.currentInterruptionFilter ?: NotificationManager.INTERRUPTION_FILTER_ALL,
+    )
 
     override fun defaultTap() {
         (FeedbackProvider.observer as? TapFeedback)?.defaultTap()

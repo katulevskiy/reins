@@ -33,6 +33,7 @@ import dev.reins.android.design.Screen
 import dev.reins.android.design.SelectChip
 import dev.reins.android.design.SwitchRow
 import dev.reins.android.feedback.AndroidFeedback
+import dev.reins.android.feedback.CueCategory
 import dev.reins.android.feedback.Event
 import dev.reins.android.feedback.FeedbackSettings
 import dev.reins.android.feedback.HapticStrength
@@ -59,7 +60,9 @@ fun SoundsScreen(engine: AndroidFeedback, onBack: () -> Unit) {
 
         Group(
             header = "Sounds",
-            footer = "While Reins is open. In the background the same chimes come with the notification, at your phone's notification volume.",
+            footer = "While Reins is open. In the background the same chimes come with the notification, at your phone's " +
+                "notification volume. Sound when open: a new request chimes at that volume while Reins is on screen too; " +
+                "silent, vibrate and Do Not Disturb hold it back.",
         ) {
             SwitchRow("Sounds", s.sounds, { on -> update { copy(sounds = on) } }, glyph = Glyph.Speaker, enabled = s.master, tag = "sounds")
             Hairline(inset = 51.dp)
@@ -79,6 +82,15 @@ fun SoundsScreen(engine: AndroidFeedback, onBack: () -> Unit) {
                 glyph = Glyph.Bell,
                 enabled = s.soundsOn,
                 tag = "requestSounds",
+            )
+            Hairline(inset = 51.dp)
+            SwitchRow(
+                "Sound when open",
+                s.soundWhenOpen,
+                { on -> update { copy(soundWhenOpen = on) } },
+                glyph = Glyph.Phone,
+                enabled = s.allows(CueCategory.Requests),
+                tag = "soundWhenOpen",
             )
             Hairline(inset = 51.dp)
             SwitchRow(

@@ -110,9 +110,10 @@ class AppNotifier(
 
     override fun itemPending(item: PendingItem) {
         onChanged()
-        // Someone looking at the app already sees the request (it pops up and chimes); a notification would only repeat it.
+        // Someone looking at the app already sees the request (it pops up); a notification would only repeat it. The
+        // chime still sounds, on the notification stream, for a phone left open on the desk.
         if (Foreground.focused) {
-            feedback().play(Event.RequestArrived)
+            feedback().requestArrived(item.id)
             return
         }
         if (!manager.areNotificationsEnabled()) return
@@ -188,6 +189,7 @@ class AppNotifier(
         val approved = decision.verdict == Verdict.APPROVE
         // In front the list changes before the user's eyes; a quiet sound says why.
         if (Foreground.focused) {
+            feedback().requestArrived(decision.requestId, needsUser = false) // answered: never the request chime
             feedback().play(if (approved) Event.AutoApproved else Event.AutoDenied)
             return
         }
