@@ -25,7 +25,7 @@ import time
 WORKFLOW = "release.yml"
 PUBLISH = "Publish the release"
 # The publication job and the jobs that run after it.
-PUBLISH_STAGE = frozenset({PUBLISH, "Google Play upload", "Homebrew cask", "AUR (reins-bin)"})
+PUBLISH_STAGE = frozenset({PUBLISH, "Google Play upload", "TestFlight upload", "Homebrew cask", "AUR (reins-bin)"})
 
 
 def decide(run, jobs, event):

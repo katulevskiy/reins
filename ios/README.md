@@ -42,6 +42,15 @@ and re-run it; do not edit the project file by hand.
 Push notifications need APNs on the server: `REINS_APNS_KEY_FILE`, `_KEY_ID`, `_TEAM_ID`, `_TOPIC` (see
 [docs/self-hosting.md](../docs/self-hosting.md)). Without them requests still arrive while the app is open (long poll).
 
+### TestFlight
+
+Every release goes to TestFlight by itself: the release workflow's `ios-testflight` job archives with Xcode 27.0 on
+GitHub's `xcode-27` runner, signs manually with the Apple Distribution certificate and the App Store profiles of the
+three targets, uploads, and `scripts/testflight.py` sets export compliance, What to Test (the release notes), the
+groups ("Internal", and the external "Testers" by its id) and the beta review submission. Version: the release's; build
+number: the Android versionCode, kept above any build already in App Store Connect. No Mac is needed per release.
+Secrets, variables and the one-time setup: [CONTRIBUTING.md](../CONTRIBUTING.md#maintainers-testflight).
+
 ## Sign-in and recovery
 
 Hosted sign-in uses WorkOS AuthKit in an authentication browser session, with a passkey instead of a Reins master

@@ -246,6 +246,40 @@ does not open to the app yet is skipped with a warning), with the status in `PLA
 upload with a notice while the folder or the secret is missing; a repository secret of the same name is the fallback.
 `INFISICAL_PLAY_PATH` overrides the folder. Set up and first upload: `android/PLAY_STORE.md`.
 
+## Maintainers: TestFlight
+
+After each release is published, the `ios-testflight` job (runner `xcode-27`, its released Xcode 27.0) archives the
+iOS app, signs it for the App Store and uploads it to App Store Connect ("Reins 2FA", `com.reins2fa.app`). Then
+`scripts/testflight.py` waits for processing, sets export compliance (`usesNonExemptEncryption` false, as the
+Info.plist says), sets "What to Test" from the release notes, adds the build to the TestFlight groups and submits it for
+beta app review. A refused submission (a build already in review, for example) is only a warning, and a failure here
+never touches the GitHub release: rerun the job. To test or redo one release, run the Release workflow from main with
+`testflight_tag` = `vX.Y.Z`; only this job runs.
+
+The build number is the release's Android versionCode (minutes since 1970), or one more than the highest build App
+Store Connect already has, whichever is larger. The version is the release's.
+
+It reads Infisical `/signing/apple`, with repository secrets of the same names as the fallback, and fails naming any
+that is missing:
+
+| Infisical secret | Value |
+| --- | --- |
+| `IOS_DIST_CERT_P12`, `IOS_DIST_CERT_PASSWORD` | the Apple Distribution certificate and key (`.p12`, base64) and its password |
+| `IOS_PROFILE_APP`, `IOS_PROFILE_WIDGETS`, `IOS_PROFILE_NOTIFICATIONS` | the App Store profiles (`.mobileprovision`, base64) of `com.reins2fa.app`, `.widgets`, `.notifications` |
+| `AC_API_KEY_P8`, `AC_API_KEY_ID`, `AC_API_ISSUER_ID`, `APPLE_TEAM_ID` | the "Reins CI" API key (App Manager), as for notarization |
+
+Repository variables: `TESTFLIGHT_EXTERNAL_GROUP_ID` (the external group's id; two groups are named "Testers", so a
+name alone fails), `TESTFLIGHT_INTERNAL_GROUPS` (default `Internal`, which gets every build by itself) and, optionally,
+`IOS_GOOGLE_CLIENT_ID` (Google sign-in in the app).
+
+One-time setup on the Mac. Done: the app record, the Apple Distribution certificate and the three App Store profiles
+(App Groups `group.com.reins2fa.app` on all three; Push Notifications, Associated Domains and Time Sensitive
+Notifications on the app), stored base64 in `/signing/apple` with master copies in 1Password, and the groups
+"Internal" and "Testers" (public link on). Still to do:
+
+1. `gh variable set TESTFLIGHT_EXTERNAL_GROUP_ID -R katulevskiy/reins --body <id of the "Testers" group with the public link>`.
+2. App Store Connect > Pricing and Availability: exclude France.
+
 ## Maintainers: the update feed
 
 Every release carries `reins-feed-<version>.tar.gz` (listed in `SHA256SUMS`): the signed `latest.json` and
