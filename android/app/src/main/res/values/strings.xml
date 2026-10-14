@@ -1,4 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
     <string name="app_name">Reins</string>
+    <!-- The Overnight mode's name where Android shows it (its notification channel); the same as AutopilotText.OVERNIGHT. -->
+    <string name="overnight_name">Overnight</string>
 </resources>

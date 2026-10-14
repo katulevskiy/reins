@@ -620,6 +620,7 @@ internal fun hostOf(serverUrl: String): String =
 internal fun settingsModeIcon(mode: AutopilotMode): ImageVector = when (mode) {
     AutopilotMode.MANUAL -> Icons.Rounded.HowToReg
     AutopilotMode.AUTO -> Icons.Rounded.Bolt
+    AutopilotMode.OVERNIGHT -> dev.reins.android.ui.autopilot.OvernightIcon
     AutopilotMode.BYPASS -> Icons.Rounded.Bolt
     AutopilotMode.LOCKDOWN -> Icons.Rounded.Lock
 }

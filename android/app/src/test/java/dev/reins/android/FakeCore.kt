@@ -760,7 +760,21 @@ class FakeCore : ReinsCoreInterface {
     // ---- Autopilot ----------------------------------------------------------------------------------------------
 
     /** A connection's own Autopilot row, as the core stores it. */
-    data class ApRow(val mode: AutopilotMode? = null, val bypassUntil: Long? = null, val profileId: String? = null, val bypassSince: Long? = null)
+    data class ApRow(
+        val mode: AutopilotMode? = null,
+        val bypassUntil: Long? = null,
+        val profileId: String? = null,
+        val bypassSince: Long? = null,
+        /** With `mode` Overnight: its end ([Long.MAX_VALUE] without one), its start, and the mode it returns to. */
+        val overnightUntil: Long? = null,
+        val overnightSince: Long? = null,
+        val overnightReturn: AutopilotMode? = null,
+    ) {
+        fun overnighting(now: Long) = mode == AutopilotMode.OVERNIGHT && (overnightUntil ?: Long.MAX_VALUE) > now
+
+        /** The mode when no bypass runs: an Overnight that ended reads as the mode it interrupted. */
+        fun base(now: Long): AutopilotMode? = if (mode == AutopilotMode.OVERNIGHT && !overnighting(now)) overnightReturn else mode
+    }
 
     /** The global row: `mode` null = the default (Manual). */
     @Volatile var apGlobal = ApRow()
@@ -784,6 +798,10 @@ class FakeCore : ReinsCoreInterface {
     val thresholdCalls = CopyOnWriteArrayList<Triple<String, Float, Float>>()
     /** `startBypass` calls: the connection (null: every AI) and the minutes (null: until turned off). */
     val bypassCalls = CopyOnWriteArrayList<Pair<String?, UInt?>>()
+    /** `startOvernight` calls, like [bypassCalls]. */
+    val overnightCalls = CopyOnWriteArrayList<Pair<String?, UInt?>>()
+    @Volatile var whenRisky = dev.reins.core.OvernightRisky.WAIT
+    val whenRiskyCalls = CopyOnWriteArrayList<dev.reins.core.OvernightRisky>()
     @Volatile var stats = dev.reins.core.AutopilotStats(7u, 142u, 0.94f, 120u, 2u, 9u)
     /** What `thresholdReplay` answers; null: numbers that move with the thresholds. */
     @Volatile var replay: dev.reins.core.ThresholdReplay? = null
@@ -809,7 +827,8 @@ class FakeCore : ReinsCoreInterface {
         modeFailure = null
         downloadFailure = null
         downloadError = null
-        listOf(modeCalls, classLocks, presets, corrections, evaluations, assigned, profileCalls, thresholdCalls, bypassCalls).forEach { it.clear() }
+        listOf(modeCalls, classLocks, presets, corrections, evaluations, assigned, profileCalls, thresholdCalls, bypassCalls, overnightCalls, whenRiskyCalls).forEach { it.clear() }
+        whenRisky = dev.reins.core.OvernightRisky.WAIT
         stats = dev.reins.core.AutopilotStats(7u, 142u, 0.94f, 120u, 2u, 9u)
         replay = null
         downloads.set(0)
@@ -819,7 +838,7 @@ class FakeCore : ReinsCoreInterface {
 
     private fun installed() = model.state == ModelState.INSTALLED
 
-    private fun globalBase() = apGlobal.mode ?: AutopilotMode.MANUAL
+    private fun globalBase() = apGlobal.base(now()) ?: AutopilotMode.MANUAL
 
     private fun globalMode(): AutopilotMode = when {
         apGlobal.mode == AutopilotMode.LOCKDOWN -> AutopilotMode.LOCKDOWN
@@ -838,30 +857,67 @@ class FakeCore : ReinsCoreInterface {
             baseMode = globalBase(),
             bypassUntil = apGlobal.bypassUntil?.takeIf { it > now },
             bypassSince = apGlobal.bypassSince.takeIf { (apGlobal.bypassUntil ?: 0) > now },
+            overnightUntil = (apGlobal.overnightUntil ?: Long.MAX_VALUE).takeIf { apGlobal.overnighting(now) },
+            overnightSince = apGlobal.overnightSince.takeIf { apGlobal.overnighting(now) },
+            overnightWhenRisky = whenRisky,
             defaultProfileId = defaultProfile().id,
             wifiOnly = wifiOnly,
             model = model,
             connections = apConnections.map { (id, row) ->
+                // `modes::effective`: lockdowns, bypasses, its Overnight, a global one unless kept on Manual, its mode.
                 val mode = when {
                     globalMode() == AutopilotMode.LOCKDOWN || row.mode == AutopilotMode.LOCKDOWN -> AutopilotMode.LOCKDOWN
                     (row.bypassUntil ?: 0) > now || (apGlobal.bypassUntil ?: 0) > now -> AutopilotMode.BYPASS
-                    else -> row.mode ?: globalMode()
+                    row.overnighting(now) -> AutopilotMode.OVERNIGHT
+                    apGlobal.overnighting(now) && row.base(now) != AutopilotMode.MANUAL -> AutopilotMode.OVERNIGHT
+                    else -> row.base(now) ?: globalMode()
                 }
-                ConnectionAutopilot(id, row.mode, row.bypassUntil?.takeIf { it > now }, row.bypassSince.takeIf { (row.bypassUntil ?: 0) > now }, mode, row.profileId ?: defaultProfile().id)
+                ConnectionAutopilot(
+                    connectionId = id,
+                    baseMode = row.base(now),
+                    bypassUntil = row.bypassUntil?.takeIf { it > now },
+                    bypassSince = row.bypassSince.takeIf { (row.bypassUntil ?: 0) > now },
+                    overnightUntil = (row.overnightUntil ?: Long.MAX_VALUE).takeIf { row.overnighting(now) },
+                    overnightSince = row.overnightSince.takeIf { row.overnighting(now) },
+                    mode = mode,
+                    profileId = row.profileId ?: defaultProfile().id,
+                )
             },
         )
     }
 
     override suspend fun setAutopilotMode(connectionId: String?, mode: AutopilotMode?, minutes: UInt?) {
         modeFailure?.let { throw it }
+        if (mode == AutopilotMode.OVERNIGHT) return startOvernight(connectionId, minutes)
         modeCalls += Triple(connectionId, mode, minutes)
         val row = if (connectionId == null) apGlobal else apConnections[connectionId] ?: ApRow()
         val next = if (mode == AutopilotMode.BYPASS) {
             row.copy(mode = row.mode.takeIf { it != AutopilotMode.LOCKDOWN }, bypassUntil = now() + (minutes ?: 15u).toLong() * 60, bypassSince = now())
         } else {
-            row.copy(mode = mode, bypassUntil = null, bypassSince = null)
+            row.copy(mode = mode, bypassUntil = null, bypassSince = null, overnightUntil = null, overnightSince = null, overnightReturn = null)
         }
         if (connectionId == null) apGlobal = next else apConnections[connectionId] = next
+    }
+
+    override suspend fun startOvernight(connectionId: String?, minutes: UInt?) {
+        modeFailure?.let { throw it }
+        if (minutes != null && (minutes == 0u || minutes > 525_600u)) throw CoreException.Invalid("Overnight lasts between 1 minute and 365 days")
+        overnightCalls += connectionId to minutes
+        modeCalls += Triple(connectionId, AutopilotMode.OVERNIGHT, minutes)
+        val row = if (connectionId == null) apGlobal else apConnections[connectionId] ?: ApRow()
+        val back = when (row.mode) {
+            AutopilotMode.LOCKDOWN -> null
+            AutopilotMode.OVERNIGHT -> row.overnightReturn
+            else -> row.mode
+        }
+        val until = if (minutes == null) Long.MAX_VALUE else now() + minutes.toLong() * 60
+        val next = row.copy(mode = AutopilotMode.OVERNIGHT, overnightUntil = until, overnightSince = now(), overnightReturn = back)
+        if (connectionId == null) apGlobal = next else apConnections[connectionId] = next
+    }
+
+    override suspend fun setOvernightWhenRisky(risky: dev.reins.core.OvernightRisky) {
+        whenRiskyCalls += risky
+        whenRisky = risky
     }
 
     override suspend fun startBypass(connectionId: String?, minutes: UInt?) {

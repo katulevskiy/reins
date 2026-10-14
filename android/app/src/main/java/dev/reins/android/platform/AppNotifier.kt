@@ -224,6 +224,8 @@ class AppNotifier(
         onAutopilot(event)
         when (event) {
             is AutopilotEvent.BypassEnded -> if (Foreground.focused) feedback().play(Event.BypassOff)
+            // Back to the mode it interrupted, which lets less happen.
+            is AutopilotEvent.OvernightEnded -> if (Foreground.focused) feedback().play(Event.AutopilotOff)
             is AutopilotEvent.Paused -> paused(event)
             is AutopilotEvent.ModeChanged -> Unit
         }

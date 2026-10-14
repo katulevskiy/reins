@@ -135,13 +135,13 @@ class AutopilotViewModel(private val container: AppContainer) : ViewModel() {
     }
 
     /**
-     * Sets the global mode or a connection's ([mode] null: back to following the global mode); never Bypass, which
-     * [startBypass] turns on.
+     * Sets the global mode or a connection's ([mode] null: back to following the global mode); never Bypass or
+     * Overnight, which [startBypass] and [startOvernight] turn on.
      * The change is felt at once; a refusal from the core (a just-paired connection cannot be bypassed) says why.
      */
     fun setMode(mode: AutopilotMode?, connectionId: String? = null) {
-        // A bypass starts only through [startBypass], after the owner's check.
-        if (mode == AutopilotMode.BYPASS) return
+        // A bypass or an Overnight starts only through its own start, after the owner's check.
+        if (AutopilotText.isTimed(mode)) return
         val old = modeOf(connectionId)
         val new = mode ?: settings.value?.mode ?: AutopilotMode.MANUAL
         AutopilotText.modeChangeEvent(old, new)?.let { container.feedback.play(it) }

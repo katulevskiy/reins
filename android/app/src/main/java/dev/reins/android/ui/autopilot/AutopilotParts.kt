@@ -4,7 +4,11 @@ import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.material.icons.rounded.Lock
 import androidx.compose.material.icons.rounded.HowToReg
 import androidx.compose.material.icons.rounded.Bolt
+import androidx.compose.material.icons.rounded.Bedtime
+import androidx.compose.material.icons.rounded.Speed
 import androidx.compose.material.icons.Icons
+import dev.reins.core.RiskLevel
+import dev.reins.core.RiskView
 import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.animateContentSize
 import androidx.compose.animation.core.Animatable
@@ -79,20 +83,65 @@ import dev.reins.core.NeighbourView
 import dev.reins.core.SuggestionView
 import dev.reins.core.Verdict
 
-/** Each mode's colour: blue for Manual, the accent for Auto, red for Bypass, amber for Lockdown. */
+/** Each mode's colour: blue for Manual, the accent for Auto, night indigo for Overnight, red for Bypass, amber for Lockdown. */
 fun modeTint(mode: AutopilotMode, c: RColors): Color = when (mode) {
     AutopilotMode.MANUAL -> c.search
     AutopilotMode.AUTO -> c.accent
+    AutopilotMode.OVERNIGHT -> c.night
     AutopilotMode.BYPASS -> c.danger
     AutopilotMode.LOCKDOWN -> c.warning
 }
 
-/** Each mode's icon: a person with a check for Manual (you approve), a bolt for Auto and Bypass (by colour), a lock. */
+/** Each mode's icon: a person with a check for Manual (you approve), a bolt for Auto and Bypass (by colour), a moon, a lock. */
 fun modeIcon(mode: AutopilotMode): ImageVector = when (mode) {
     AutopilotMode.MANUAL -> Icons.Rounded.HowToReg
     AutopilotMode.AUTO -> Icons.Rounded.Bolt
+    AutopilotMode.OVERNIGHT -> OvernightIcon
     AutopilotMode.BYPASS -> Icons.Rounded.Bolt
     AutopilotMode.LOCKDOWN -> Icons.Rounded.Lock
+}
+
+/** Overnight's moon (Material Symbols "bedtime"). */
+val OvernightIcon: ImageVector get() = Icons.Rounded.Bedtime
+
+/** A risk level's colour: quiet when low, then amber, orange and red. */
+fun riskTint(level: RiskLevel, c: RColors): Color = when (level) {
+    RiskLevel.BENIGN -> c.secondary
+    RiskLevel.RISKY -> c.warning
+    RiskLevel.SEVERE -> c.send
+    RiskLevel.CATASTROPHIC -> c.danger
+}
+
+/**
+ * "Risk: severe · force push" as a small tinted line with a gauge icon, and under it, when Overnight held the request,
+ * "Held by Overnight" with the moon. Nothing at all without a risk.
+ */
+@Composable
+fun RiskChip(risk: RiskView?, modifier: Modifier = Modifier, small: Boolean = false) {
+    risk ?: return
+    val c = LocalColors.current
+    val tint = riskTint(risk.level, c)
+    Column(modifier.testTag("risk"), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+        Row(
+            Modifier
+                .clip(CircleShape)
+                .background(tint.copy(alpha = 0.13f))
+                .padding(start = if (small) 6.dp else 10.dp, end = if (small) 8.dp else 12.dp, top = if (small) 3.dp else 6.dp, bottom = if (small) 3.dp else 6.dp)
+                .semantics(mergeDescendants = true) {},
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            androidx.compose.material3.Icon(Icons.Rounded.Speed, null, Modifier.size(if (small) 12.dp else 15.dp), tint = tint)
+            Spacer(Modifier.width(if (small) 4.dp else 6.dp))
+            RText(AutopilotText.riskLine(risk), RType.sans(if (small) 11.5f else 13f, FontWeight.SemiBold), tint, Modifier.testTag("riskLine"), maxLines = 1)
+        }
+        AutopilotText.heldLine(risk)?.let { held ->
+            Row(Modifier.padding(start = 2.dp).semantics(mergeDescendants = true) {}.testTag("riskHeld"), verticalAlignment = Alignment.CenterVertically) {
+                androidx.compose.material3.Icon(OvernightIcon, null, Modifier.size(if (small) 12.dp else 14.dp), tint = c.night)
+                Spacer(Modifier.width(4.dp))
+                RText(held, RType.sans(if (small) 11.5f else 12.5f, FontWeight.Medium), c.night, maxLines = 1)
+            }
+        }
+    }
 }
 
 fun verdictTint(v: Verdict, c: RColors): Color = when (v) {
@@ -447,11 +496,12 @@ fun SuggestionStrip(s: SuggestionView, modifier: Modifier = Modifier) {
     }
 }
 
-/** The small mark on activity entries Autopilot, a bypass or Lockdown decided. */
+/** The small mark on activity entries Autopilot, Overnight, a bypass or Lockdown decided. */
 @Composable
 fun AutopilotBadge(decidedBy: String, modifier: Modifier = Modifier) {
     val c = LocalColors.current
     val (label, glyph, tint) = when (decidedBy) {
+        "overnight" -> Triple(AutopilotText.OVERNIGHT, null, c.night)
         "bypass" -> Triple("Bypass", Glyph.Bolt, c.danger)
         "lockdown" -> Triple("Lockdown", Glyph.Lock, c.warning)
         else -> Triple("Autopilot", Glyph.Sparkle, c.accent)
@@ -460,7 +510,7 @@ fun AutopilotBadge(decidedBy: String, modifier: Modifier = Modifier) {
         modifier.height(22.dp).clip(CircleShape).background(tint.copy(alpha = 0.12f)).padding(start = 6.dp, end = 8.dp).testTag("autoBadge"),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        GlyphIcon(glyph, tint, size = 12.dp, weight = 2f)
+        if (glyph != null) GlyphIcon(glyph, tint, size = 12.dp, weight = 2f) else androidx.compose.material3.Icon(OvernightIcon, null, Modifier.size(12.dp), tint = tint)
         Spacer(Modifier.width(4.dp))
         RText(label, RType.sans(11.5f, FontWeight.SemiBold), tint, maxLines = 1)
     }

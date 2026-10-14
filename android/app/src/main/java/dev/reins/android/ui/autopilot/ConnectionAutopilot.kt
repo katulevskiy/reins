@@ -64,9 +64,9 @@ fun ConnectionAutopilotSection(connectionId: String, viewModel: AutopilotViewMod
     val globalLockdown = mode == AutopilotMode.LOCKDOWN && s.mode == AutopilotMode.LOCKDOWN && own?.baseMode != AutopilotMode.LOCKDOWN
     var help by rememberSaveable { mutableStateOf(false) }
 
-    // The choices of the group: like every AI (null), then the modes that are not one of the two buttons below.
+    // The choices of the group: like every AI (null), then the modes that are not one of the buttons below.
     val choices: List<AutopilotMode?> = listOf<AutopilotMode?>(null) +
-        AutopilotText.modes.filter { it != AutopilotMode.BYPASS && it != AutopilotMode.LOCKDOWN }
+        AutopilotText.modes.filter { it != AutopilotMode.BYPASS && it != AutopilotMode.LOCKDOWN && it != AutopilotMode.OVERNIGHT }
 
     SettingsGroup(header = "Autopilot", help = CONNECTION_AUTOPILOT_HELP, helpOpen = help, onHelp = { help = it }) {
         Column(Modifier.padding(12.dp).testTag("connectionMode")) {

@@ -27,6 +27,9 @@ class RColors(val dark: Boolean) {
     val success = pick(0x15803D, 0x34D399)
     val warning = pick(0xA16207, 0xFACC15)
 
+    /** Overnight: a muted night indigo, apart from Auto's violet and Manual's bright blue. */
+    val night = pick(0x3F51B5, 0x9FA8DA)
+
     // What an operation is: each kind has its own colour so a list reads at a glance.
     val search = pick(0x2563EB, 0x60A5FA)
     val read = pick(0x0F766E, 0x2DD4BF)
