@@ -35,6 +35,7 @@ import dev.reins.core.JoinView
 import dev.reins.core.LoginProgress
 import dev.reins.core.McpAddStep
 import dev.reins.core.McpServerView
+import dev.reins.core.SecretsRevoked
 import dev.reins.core.ServiceView
 import dev.reins.core.PairingView
 import dev.reins.core.PendingItem
@@ -215,7 +216,7 @@ class MainSafeCore(
 
     override suspend fun revokeGrant(grantId: String) = io { revokeGrant(grantId) }
 
-    override suspend fun revokeSecretsEverywhere(project: String?, env: String?): UInt =
+    override suspend fun revokeSecretsEverywhere(project: String?, env: String?): SecretsRevoked =
         io { revokeSecretsEverywhere(project, env) }
 
     override suspend fun setSecretsAlwaysAsk(project: String, env: String, always: Boolean?) =

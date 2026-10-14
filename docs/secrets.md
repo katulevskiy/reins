@@ -201,12 +201,18 @@ and its grants end with it (existing).
   and drops them; the phone's grant/activity pages get **Revoke on all computers**: the environment's standing
   permissions end on the phone, and a `LeaseRevocation` sealed to each paired computer's key goes to the server
   (`POST /reins/api/desktop/revocations`, from the approval device). The server keeps each in memory for a day at most
-  until that computer's daemon has applied it: the daemon picks them up (`GET /reins/desktop/revocations`, polled
-  while it holds leases), applies them, then acknowledges them by id (`POST /reins/desktop/revocations/ack`), and the
-  server forgets only what was acknowledged. A revocation of everything (marked `all` beside its box) supersedes the
-  ones before it and is never pushed out by others; the others are kept up to 50 per computer, and when one has to go
-  the mailbox says `lost`, which makes the daemon drop every lease. One that does not open on the computer is logged
-  and treated as a revocation of everything. A revocation only ever takes leases away, so one the server makes up (it
+  for that computer's daemon: the daemon picks them up (`GET /reins/desktop/revocations?reader=<id of this daemon
+  run>`, polled while it holds leases), applies them, then acknowledges them by the ids the server gave
+  (`POST /reins/desktop/revocations/ack`); the server then stops handing those to that reader only, so a replayed or
+  another reader's acknowledgement never hides one, and one posted meanwhile has an id no acknowledgement names. Every
+  change to a computer's mailbox happens under one lock. A revocation of everything (marked `all` beside its box)
+  supersedes the ones before it and is never pushed out by others; the others are kept up to 50 per computer, and when
+  one has to go the mailbox reports a loss as of then (`lost`), which makes the daemon drop every lease made before it.
+  A server that restarts reports a loss as of its start the same way (what it held was in memory). One that does not
+  open on the computer is logged and treated as a revocation of everything.
+- On the phone, Revoke on all computers ends the permissions in its own store first, so nothing it signs afterwards
+  relies on them; a note the server did not take waits in the phone's outbox and is sent again on each sync, and the
+  answer names the computers not told yet ("Not yet delivered to <computer>"), never reporting them as told. A revocation only ever takes leases away, so one the server makes up (it
   knows the public key) can only make the computer ask again.
 - A child process that already received values keeps them (the OS gives no way back); leases stop new releases.
 

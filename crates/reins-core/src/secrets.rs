@@ -24,7 +24,17 @@ use crate::engine::Engine;
 use crate::phone_api::ApiFailure;
 use crate::session::api_call;
 use crate::store::unix_now;
-use crate::types::{StandingGrant, TokenStoreView};
+use crate::types::{SecretsRevoked, StandingGrant, TokenStoreView};
+
+/// Revocations not yet delivered to the server (sealed, so no secret), sent again on each sync.
+const REVOCATION_OUTBOX: &str = "secrets.revocations.outbox";
+
+/// A revocation waiting in the outbox, and when it was made (kept a day, as the server would).
+#[derive(Clone, serde::Serialize, serde::Deserialize)]
+pub(crate) struct Outgoing {
+    item: SealedRevocation,
+    made_at: i64,
+}
 use crate::{CoreError, text};
 
 /// A box made this far ahead of the phone's clock is refused too.
@@ -249,24 +259,53 @@ impl Engine {
         crate::connector::vault::always_ask_choice(&self.store, project, env)
     }
 
-    /// "Revoke on all computers": ends the permissions for secrets of `project` (and `env`; neither: every one), and
-    /// tells every paired computer to drop the values it holds. Returns how many computers were told.
-    pub async fn revoke_secrets_everywhere(&self, project: Option<&str>, env: Option<&str>) -> Result<u32, CoreError> {
+    /// "Revoke on all computers": ends the permissions for secrets of `project` (and `env`; neither: every one) on this
+    /// phone first, so nothing it signs afterwards relies on them, then tells every paired computer to drop the values
+    /// it holds. A computer not told yet is named in the answer, and told on a later sync.
+    pub async fn revoke_secrets_everywhere(
+        &self,
+        project: Option<&str>,
+        env: Option<&str>,
+    ) -> Result<SecretsRevoked, CoreError> {
         let matches = |s: &SecretsScope| project.is_none_or(|p| p == s.project) && env.is_none_or(|e| e == s.env);
+        let mut ended = 0;
         for g in self.store.grants()? {
             if let Scope::Secrets(s) = &g.grant.scope
                 && matches(s)
                 && !g.grant.revoked
             {
                 self.store.revoke_grant(&g.grant.id)?;
+                ended += 1;
             }
         }
-        self.tell_computers(project, env).await
+        let (told, pending) = self.tell_computers(project, env).await?;
+        let not_delivered = if pending.is_empty() {
+            Vec::new()
+        } else {
+            let known = self.connections().await.unwrap_or_default();
+            pending
+                .iter()
+                .map(|id| {
+                    known.iter().find(|c| &c.id == id).map_or_else(|| "a computer".to_owned(), |c| c.label.clone())
+                })
+                .collect()
+        };
+        Ok(SecretsRevoked {
+            ended,
+            told,
+            not_delivered,
+        })
     }
 
     /// Leaves for every paired computer a note, sealed to its key, to drop the values it holds of `project` (and `env`;
-    /// neither: all). Returns how many computers were told.
-    pub(crate) async fn tell_computers(&self, project: Option<&str>, env: Option<&str>) -> Result<u32, CoreError> {
+    /// neither: all), with any note still waiting from before. Returns how many computers were told, and the
+    /// connections of those not told yet (their notes wait in the outbox; one whose key cannot seal a note is listed
+    /// too).
+    pub(crate) async fn tell_computers(
+        &self,
+        project: Option<&str>,
+        env: Option<&str>,
+    ) -> Result<(u32, Vec<String>), CoreError> {
         let revocation = LeaseRevocation {
             v: 1,
             dir: TO_DESKTOP.to_owned(),
@@ -275,29 +314,74 @@ impl Engine {
             project: project.map(str::to_owned),
             env: env.map(str::to_owned),
         };
-        let mut items = Vec::new();
+        let now = unix_now();
+        let mut fresh = Vec::new();
+        let mut unsealed = Vec::new();
         for connection_id in self.store.desktop_connections()? {
-            let Some(key) =
-                self.store.desktop_key(&connection_id)?.as_deref().and_then(reins_proto::desktop::decode_key)
-            else {
-                continue;
-            };
-            items.push(SealedRevocation {
-                connection_id,
-                sealed: seal(key, &revocation)?,
-                all: revocation.project.is_none(),
-            });
+            let sealed = self
+                .store
+                .desktop_key(&connection_id)?
+                .as_deref()
+                .and_then(reins_proto::desktop::decode_key)
+                .and_then(|key| seal(key, &revocation).ok());
+            match sealed {
+                Some(sealed) => fresh.push(Outgoing {
+                    item: SealedRevocation {
+                        connection_id,
+                        sealed,
+                        all: revocation.project.is_none(),
+                    },
+                    made_at: now,
+                }),
+                None => unsealed.push(connection_id),
+            }
         }
-        if items.is_empty() {
-            return Ok(0);
+        let told = u32::try_from(fresh.len()).unwrap_or(u32::MAX);
+        let mut pending = self.flush_revocations(fresh).await?;
+        pending.extend(unsealed);
+        pending.sort();
+        pending.dedup();
+        Ok((
+            if pending.is_empty() {
+                told
+            } else {
+                told.saturating_sub(u32::try_from(pending.len()).unwrap_or(0))
+            },
+            pending,
+        ))
+    }
+
+    /// Posts what waits in the outbox with `fresh`; what the server did not take stays there (never dropped, never
+    /// counted as told). The connections whose notes still wait.
+    pub(crate) async fn flush_revocations(&self, fresh: Vec<Outgoing>) -> Result<Vec<String>, CoreError> {
+        let now = unix_now();
+        let mut out: Vec<Outgoing> =
+            self.store.meta_get(REVOCATION_OUTBOX)?.and_then(|s| serde_json::from_str(&s).ok()).unwrap_or_default();
+        out.retain(|o| o.made_at > now - reins_proto::desktop::REVOCATION_TTL_SECS);
+        out.extend(fresh);
+        if out.is_empty() {
+            return Ok(Vec::new());
         }
-        let told = u32::try_from(items.len()).unwrap_or(u32::MAX);
+        // Kept before it is sent: a failure, or the app ending, leaves it to the next sync.
+        let kept = serde_json::to_string(&out).map_err(|e| CoreError::storage(e.to_string()))?;
+        self.store.meta_set(REVOCATION_OUTBOX, &kept)?;
         let post = RevocationPost {
-            items,
+            items: out.iter().map(|o| o.item.clone()).collect(),
         };
-        let session = self.session()?;
-        api_call!(&session, |api| api.post_revocations(&post)).map_err(ApiFailure::into_core)?;
-        Ok(told)
+        let sent = match self.session() {
+            Ok(session) => api_call!(&session, |api| api.post_revocations(&post)).map_err(ApiFailure::into_core),
+            Err(e) => Err(e),
+        };
+        match sent {
+            Ok(()) => {
+                self.store.meta_set(REVOCATION_OUTBOX, "[]")?;
+                Ok(Vec::new())
+            }
+            Err(e) => {
+                log::warn!("revocations not delivered yet, kept to send again: {e}");
+                Ok(out.into_iter().map(|o| o.item.connection_id).collect())
+            }
+        }
     }
 }
 

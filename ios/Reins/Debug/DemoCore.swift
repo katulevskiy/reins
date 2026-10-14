@@ -735,8 +735,8 @@ final class DemoReinsCore: ReinsCoreProtocol, @unchecked Sendable {
         }
     }
 
-    func revokeSecretsEverywhere(project: String?, env: String?) async throws -> UInt32 {
-        0
+    func revokeSecretsEverywhere(project: String?, env: String?) async throws -> SecretsRevoked {
+        SecretsRevoked(ended: 0, told: 0, notDelivered: [])
     }
 
     func setSecretsAlwaysAsk(project: String, env: String, always: Bool?) async throws {}

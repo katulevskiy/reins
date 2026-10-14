@@ -1704,24 +1704,37 @@ pub struct MailedRevocation {
     pub sealed: String,
 }
 
-/// What a computer's daemon picks up (`GET /reins/desktop/revocations`): the sealed revocations for it, oldest first.
-/// They stay on the server until the daemon acknowledges them ([`RevocationAck`]), after it applied them.
+/// What a computer's daemon picks up (`GET /reins/desktop/revocations?reader=<id>`): the sealed revocations for it
+/// that this reader (one daemon run) has not acknowledged, the revocation of everything first. Each stays on the
+/// server for a day, whoever acknowledged it, so that no reader's acknowledgement hides it from another.
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct RevocationMail {
     pub items: Vec<MailedRevocation>,
-    /// Revocations for this computer were dropped to stay within bounds since the last acknowledgement: the daemon
-    /// drops every lease.
-    #[serde(default)]
-    pub lost: bool,
+    /// Revocations for this computer may have been lost (dropped to stay within bounds, or the server restarted and
+    /// forgot what it held): the daemon drops every lease made before `at`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub lost: Option<LostRevocations>,
 }
 
-/// `POST /reins/desktop/revocations/ack`: the revocations the daemon applied (by [`MailedRevocation::id`]), and that it
-/// acted on `lost`. The server forgets only these.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct LostRevocations {
+    /// To acknowledge it by.
+    pub id: String,
+    /// Unix seconds (the server's clock): leases made before this may have been revoked.
+    pub at: i64,
+}
+
+/// The longest id of a reader of revocations.
+pub const MAX_READER: usize = 64;
+
+/// `POST /reins/desktop/revocations/ack`: what one reader applied, by [`MailedRevocation::id`] and
+/// [`LostRevocations::id`]. The server stops handing those to that reader; others still get them.
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct RevocationAck {
+    pub reader: String,
     pub ids: Vec<String>,
-    #[serde(default)]
-    pub lost: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub lost: Option<String>,
 }
 
 /// SHA-256 (lowercase hex) binding an approval to exactly what git sends: the repository, every `old new ref`

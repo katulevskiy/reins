@@ -2776,7 +2776,7 @@ public protocol ReinsCoreProtocol: AnyObject, Sendable {
      * Reins Secrets: "Revoke on all computers". The permissions for secrets of `project` (and `env`; neither: all of
      * them) end, and every paired computer is told to drop the values it holds. Returns how many computers were told.
      */
-    func revokeSecretsEverywhere(project: String?, env: String?) async throws  -> UInt32
+    func revokeSecretsEverywhere(project: String?, env: String?) async throws  -> SecretsRevoked
     
     /**
      * What `server_url` offers before signing in: whether "Continue" (browser sign-in) works there, and whether it
@@ -4334,7 +4334,7 @@ open func revokeGrant(grantId: String)async throws   {
      * Reins Secrets: "Revoke on all computers". The permissions for secrets of `project` (and `env`; neither: all of
      * them) end, and every paired computer is told to drop the values it holds. Returns how many computers were told.
      */
-open func revokeSecretsEverywhere(project: String?, env: String?)async throws  -> UInt32  {
+open func revokeSecretsEverywhere(project: String?, env: String?)async throws  -> SecretsRevoked  {
     return
         try  await uniffiRustCallAsync(
             rustFutureFunc: {
@@ -4342,10 +4342,10 @@ open func revokeSecretsEverywhere(project: String?, env: String?)async throws  -
                         self.uniffiCloneHandle(),FfiConverterOptionString.lower(project),FfiConverterOptionString.lower(env)
                 )
             },
-            pollFunc: ffi_reins_core_rust_future_poll_u32,
-            completeFunc: ffi_reins_core_rust_future_complete_u32,
-            freeFunc: ffi_reins_core_rust_future_free_u32,
-            liftFunc: FfiConverterUInt32.lift,
+            pollFunc: ffi_reins_core_rust_future_poll_rust_buffer,
+            completeFunc: ffi_reins_core_rust_future_complete_rust_buffer,
+            freeFunc: ffi_reins_core_rust_future_free_rust_buffer,
+            liftFunc: FfiConverterTypeSecretsRevoked_lift,
             errorHandler: FfiConverterTypeCoreError_lift
         )
 }
@@ -8167,6 +8167,11 @@ public struct EnvReleaseView: Equatable, Hashable {
      */
     public var program: String
     /**
+     * Why the program deserves a second look, for a warning row ("In a temporary folder", "Inside the project
+     * folder", "Not the one on your PATH"); `command` then shows its whole path too.
+     */
+    public var programWarning: String?
+    /**
      * The variables' names (never a value), sorted.
      */
     public var variables: [String]
@@ -8210,6 +8215,10 @@ public struct EnvReleaseView: Equatable, Hashable {
          * The program's full path, as the computer resolved it.
          */program: String, 
         /**
+         * Why the program deserves a second look, for a warning row ("In a temporary folder", "Inside the project
+         * folder", "Not the one on your PATH"); `command` then shows its whole path too.
+         */programWarning: String? = nil, 
+        /**
          * The variables' names (never a value), sorted.
          */variables: [String], 
         /**
@@ -8233,6 +8242,7 @@ public struct EnvReleaseView: Equatable, Hashable {
         self.root = root
         self.command = command
         self.program = program
+        self.programWarning = programWarning
         self.variables = variables
         self.allVariables = allVariables
         self.leaseSecs = leaseSecs
@@ -8267,6 +8277,7 @@ public struct FfiConverterTypeEnvReleaseView: FfiConverterRustBuffer {
                 root: FfiConverterString.read(from: &buf), 
                 command: FfiConverterString.read(from: &buf), 
                 program: FfiConverterString.read(from: &buf), 
+                programWarning: FfiConverterOptionString.read(from: &buf), 
                 variables: FfiConverterSequenceString.read(from: &buf), 
                 allVariables: FfiConverterBool.read(from: &buf), 
                 leaseSecs: FfiConverterUInt64.read(from: &buf), 
@@ -8287,6 +8298,7 @@ public struct FfiConverterTypeEnvReleaseView: FfiConverterRustBuffer {
         FfiConverterString.write(value.root, into: &buf)
         FfiConverterString.write(value.command, into: &buf)
         FfiConverterString.write(value.program, into: &buf)
+        FfiConverterOptionString.write(value.programWarning, into: &buf)
         FfiConverterSequenceString.write(value.variables, into: &buf)
         FfiConverterBool.write(value.allVariables, into: &buf)
         FfiConverterUInt64.write(value.leaseSecs, into: &buf)
@@ -11777,6 +11789,75 @@ public func FfiConverterTypeSecretReleaseView_lift(_ buf: RustBuffer) throws -> 
 #endif
 public func FfiConverterTypeSecretReleaseView_lower(_ value: SecretReleaseView) -> RustBuffer {
     return FfiConverterTypeSecretReleaseView.lower(value)
+}
+
+
+/**
+ * What "Revoke on all computers" did: the permissions it ended on this phone, the computers told, and those not told
+ * yet (by name). A note that could not be delivered is kept and sent again on each sync until the server takes it;
+ * the permissions ended on this phone either way.
+ */
+public struct SecretsRevoked: Equatable, Hashable {
+    public var ended: UInt32
+    public var told: UInt32
+    /**
+     * "Not yet delivered to <name>" for each of these.
+     */
+    public var notDelivered: [String]
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(ended: UInt32, told: UInt32, 
+        /**
+         * "Not yet delivered to <name>" for each of these.
+         */notDelivered: [String]) {
+        self.ended = ended
+        self.told = told
+        self.notDelivered = notDelivered
+    }
+
+    
+
+    
+}
+
+#if compiler(>=6)
+extension SecretsRevoked: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeSecretsRevoked: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> SecretsRevoked {
+        return
+            try SecretsRevoked(
+                ended: FfiConverterUInt32.read(from: &buf), 
+                told: FfiConverterUInt32.read(from: &buf), 
+                notDelivered: FfiConverterSequenceString.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: SecretsRevoked, into buf: inout [UInt8]) {
+        FfiConverterUInt32.write(value.ended, into: &buf)
+        FfiConverterUInt32.write(value.told, into: &buf)
+        FfiConverterSequenceString.write(value.notDelivered, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeSecretsRevoked_lift(_ buf: RustBuffer) throws -> SecretsRevoked {
+    return try FfiConverterTypeSecretsRevoked.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeSecretsRevoked_lower(_ value: SecretsRevoked) -> RustBuffer {
+    return FfiConverterTypeSecretsRevoked.lower(value)
 }
 
 
@@ -18166,7 +18247,7 @@ private let initializationResult: InitializationResult = {
     if (uniffi_reins_core_checksum_method_reinscore_revoke_grant() != 13815) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_reins_core_checksum_method_reinscore_revoke_secrets_everywhere() != 59651) {
+    if (uniffi_reins_core_checksum_method_reinscore_revoke_secrets_everywhere() != 57345) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_reins_core_checksum_method_reinscore_server_info() != 48285) {

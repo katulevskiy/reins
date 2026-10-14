@@ -712,8 +712,8 @@ async fn revoking_on_all_computers_ends_the_permissions_and_tells_every_computer
     desk.pair().await;
     desk.send(&[release(&desk, "r1", &DEV)]).await;
     desk.core.approve("r1".to_owned(), choice(&[], remember("exact", false))).await.unwrap();
-    let told = desk.core.revoke_secrets_everywhere(Some("acme".to_owned()), None).await.unwrap();
-    assert_eq!(told, 1);
+    let revoked = desk.core.revoke_secrets_everywhere(Some("acme".to_owned()), None).await.unwrap();
+    assert_eq!((revoked.ended, revoked.told, revoked.not_delivered.len()), (1, 1, 0));
     let posted = sent(&desk, "POST", "/reins/api/desktop/revocations").await;
     assert_eq!(posted[0]["items"][0]["connection_id"], DESK);
     let revocation: reins_proto::desktop::LeaseRevocation = desk.open(&posted[0]["items"][0]["sealed"]);
@@ -725,6 +725,35 @@ async fn revoking_on_all_computers_ends_the_permissions_and_tells_every_computer
     desk.core.revoke_secrets_everywhere(None, None).await.unwrap();
     let posted = sent(&desk, "POST", "/reins/api/desktop/revocations").await;
     assert_eq!(posted.last().unwrap()["items"][0]["all"], true);
+}
+
+#[tokio::test]
+async fn a_revocation_the_server_does_not_take_ends_the_permission_here_and_is_sent_again() {
+    let desk = desk().await;
+    desk.pair().await;
+    desk.send(&[release(&desk, "r1", &DEV)]).await;
+    desk.core.approve("r1".to_owned(), choice(&[], remember("exact", false))).await.unwrap();
+    Mock::given(method("POST"))
+        .and(path("/reins/api/desktop/revocations"))
+        .respond_with(ResponseTemplate::new(503))
+        .up_to_n_times(1)
+        .with_priority(1)
+        .mount(&desk.server)
+        .await;
+    let revoked = desk.core.revoke_secrets_everywhere(None, None).await.unwrap();
+    assert_eq!((revoked.ended, revoked.told), (1, 0), "{revoked:?}");
+    assert_eq!(revoked.not_delivered.len(), 1, "named, never reported as told");
+    let before = sent(&desk, "POST", "/reins/api/desktop/revocations").await.len();
+    // The permission ended on this phone all the same: nothing is released under it. The sync that brings the
+    // request delivers the note that waited.
+    desk.send(&[release(&desk, "r2", &DEV)]).await;
+    assert_eq!(desk.waiting().await, ["r2"]);
+    let posted = sent(&desk, "POST", "/reins/api/desktop/revocations").await;
+    assert_eq!(posted.len(), before + 1);
+    let note: reins_proto::desktop::LeaseRevocation = desk.open(&posted.last().unwrap()["items"][0]["sealed"]);
+    assert!(note.project.is_none());
+    desk.core.sync(0).await.unwrap();
+    assert_eq!(sent(&desk, "POST", "/reins/api/desktop/revocations").await.len(), before + 1, "sent once delivered");
 }
 
 // ---- a git host's token ---------------------------------------------------------------------------------------------

@@ -399,6 +399,17 @@ pub struct TokenStoreView {
     pub check: String,
 }
 
+/// What "Revoke on all computers" did: the permissions it ended on this phone, the computers told, and those not told
+/// yet (by name). A note that could not be delivered is kept and sent again on each sync until the server takes it;
+/// the permissions ended on this phone either way.
+#[derive(Clone, Debug, Default, PartialEq, Eq, uniffi::Record)]
+pub struct SecretsRevoked {
+    pub ended: u32,
+    pub told: u32,
+    /// "Not yet delivered to <name>" for each of these.
+    pub not_delivered: Vec<String>,
+}
+
 /// A standing permission for secrets (`ApprovalView.env_release`): which of the offered commands it covers, and
 /// whether every variable of the environment or only those asked for.
 #[derive(Clone, Debug, PartialEq, Eq, uniffi::Record)]
