@@ -25,7 +25,7 @@ enum ModeLook {
 
     static func symbol(_ mode: AutopilotMode) -> String {
         switch mode {
-        case .manual: "hand.raised.fill"
+        case .manual: "person.fill.checkmark"
         case .auto: "location.north.fill"
         case .bypass: "bolt.fill"
         case .lockdown: "lock.fill"

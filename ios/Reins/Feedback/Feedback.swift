@@ -67,6 +67,9 @@ enum FeedbackEvent: CaseIterable {
     case requestArrived, approved, denied, grantCreated, connected, uploadApproved, revoked, error, alert
     case refresh, copied, undo
     case autoApproved, autoDenied, autopilotOn, autopilotOff, bypassOn, bypassOff, lockdownOn, lockdownOff
+    /// Hold to confirm (Bypass, Disconnect, Delete account): a tick while held (pass its index as `step`, so they climb
+    /// the detent ladder), a heavy thump and the success sound once held long enough, a soft cue when let go early.
+    case holdTick, holdConfirmed, holdReleased
 
     var haptic: Haptic? {
         switch self {
@@ -93,6 +96,9 @@ enum FeedbackEvent: CaseIterable {
         case .bypassOff: .zip
         case .lockdownOn: .heavy
         case .lockdownOff: .toggleOn
+        case .holdTick: .tick
+        case .holdConfirmed: .heavy
+        case .holdReleased: nil
         }
     }
 
@@ -125,6 +131,9 @@ enum FeedbackEvent: CaseIterable {
         case .bypassOff: .zip
         case .lockdownOn: .lockdown
         case .lockdownOff: .toggleOn
+        case .holdTick: .detent
+        case .holdConfirmed: .done
+        case .holdReleased: .close
         }
     }
 
