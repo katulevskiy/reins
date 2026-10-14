@@ -187,10 +187,30 @@ def assertion(account, now=None):
     return f"{signing_input}.{b64url(sign_rs256(account['private_key'], signing_input.encode()))}"
 
 
+# Answers Google's endpoints give now and then that say nothing about the request (0: no answer at all).
+TRANSIENT = frozenset({0, 408, 429, 500, 502, 503, 504})
+
+
 class Http:
-    """The network, behind one method so the tests can replace it."""
+    """The network, behind one method so the tests can replace it. A transient failure is sent again after each of
+    `delays` (seconds); any other answer, or one that keeps failing, is raised."""
+
+    def __init__(self, delays=(5, 20, 60)):
+        self.delays = tuple(delays)
 
     def request(self, method, url, headers=None, body=None, timeout=120):
+        for delay in (*self.delays, None):
+            try:
+                return self.send(method, url, headers, body, timeout)
+            except PlayError as error:
+                if delay is None or error.status not in TRANSIENT:
+                    raise
+                print(f"play-upload: {method} {url.split('?')[0]}: {error}; again in {delay} s", file=sys.stderr)
+                time.sleep(delay)
+
+    def send(self, method, url, headers, body, timeout):
+        if hasattr(body, "seek"):
+            body.seek(0)  # a resent upload starts from the beginning of the file
         request = urllib.request.Request(url, data=body, method=method, headers=headers or {})
         try:
             with urllib.request.urlopen(request, timeout=timeout) as response:
@@ -199,6 +219,8 @@ class Http:
             raise PlayError(error.code, error_message(error.read().decode(errors="replace"))) from None
         except urllib.error.URLError as error:
             raise PlayError(0, f"{url.split('?')[0]}: {error.reason}") from None
+        except (ConnectionError, TimeoutError) as error:  # the connection dropped while the answer was read
+            raise PlayError(0, f"{url.split('?')[0]}: {error}") from None
         return json.loads(text) if text.strip() else {}
 
 

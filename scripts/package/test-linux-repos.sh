@@ -62,6 +62,8 @@ read -r -d '' debian_test <<'SH' || true
 set -eu
 site="$1" want="$2" app="$3" style="$4"
 export DEBIAN_FRONTEND=noninteractive
+# The distribution's mirrors drop connections now and then; apt-get tries each download again.
+echo 'Acquire::Retries "5";' >/etc/apt/apt.conf.d/80-retries
 apt-get update -qq
 apt-get install -y -qq --no-install-recommends ca-certificates curl >/dev/null
 # As in docs/linux-packages.md:
@@ -95,6 +97,8 @@ SH
 read -r -d '' fedora_test <<'SH' || true
 set -eu
 site="$1" want="$2" app="$3"
+# Fedora's Cisco OpenH264 repository is not needed here, and its metalink answering 503 failed the whole install.
+rm -f /etc/yum.repos.d/fedora-cisco-openh264.repo
 # As in docs/linux-packages.md (the published .repo file, here pointing at the test server):
 curl -fsSL "$site/releases/packages/rpm/reins.repo" | sed "s|https://reins2fa.com|$site|g" >/etc/yum.repos.d/reins.repo
 cat /etc/yum.repos.d/reins.repo
@@ -117,24 +121,48 @@ hash -r # the shell remembers where reins was when it ran it above
 SH
 
 want="$version ($build)"
-failed=()
-style=sources
 for image in $images; do
-    echo "::group::$image ($(uname -m))"
     case "$image" in
-    ubuntu:* | debian:*)
-        # The one-line .list format on the oldest one, deb822 .sources elsewhere.
-        [[ "$image" == ubuntu:22.04 ]] && style=list || style=sources
-        script="$debian_test"
-        ;;
-    fedora:*) script="$fedora_test" ;;
+    ubuntu:* | debian:* | fedora:*) ;;
     *) die "no test for $image" ;;
     esac
-    if "$docker" run --rm --network host "$image" sh -c "$script" sh "$site" "$want" "$app" "$style"; then
-        echo "::endgroup::"
+done
+# One image's install, in its own container. A failure is tried once more from scratch: what fails in these
+# containers by itself is a distribution mirror; a broken package fails both times.
+install_in() {
+    local image="$1" script style=sources attempt
+    case "$image" in
+    # The one-line .list format on the oldest one, deb822 .sources elsewhere.
+    ubuntu:22.04) script="$debian_test" style=list ;;
+    ubuntu:* | debian:*) script="$debian_test" ;;
+    fedora:*) script="$fedora_test" ;;
+    esac
+    for attempt in 1 2; do
+        "$docker" run --rm --network host "$image" sh -c "$script" sh "$site" "$want" "$app" "$style" && return 0
+        ((attempt == 2)) || { echo "::warning::$image: installing from the repositories failed; trying again"; sleep 10; }
+    done
+    return 1
+}
+# The images run side by side (each mostly waits on its mirror); their logs are shown one after another.
+logs="$(mktemp -d)"
+trap 'cleanup; rm -rf "$logs"' EXIT
+pids=()
+for image in $images; do
+    install_in "$image" >"$logs/${image//[:\/]/_}.log" 2>&1 &
+    pids+=("$!")
+done
+failed=()
+index=0
+for image in $images; do
+    status=0
+    wait "${pids[$index]}" || status=$?
+    index=$((index + 1))
+    echo "::group::$image ($(uname -m))"
+    cat "$logs/${image//[:\/]/_}.log"
+    echo "::endgroup::"
+    if ((status == 0)); then
         echo "PASS $image"
     else
-        echo "::endgroup::"
         echo "FAIL $image"
         failed+=("$image")
     fi

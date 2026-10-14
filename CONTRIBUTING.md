@@ -87,8 +87,10 @@ function (paths, quoting, the PE header, `reg` output) lives in `src/win.rs` wit
 
 CI (`.github/workflows/ci.yml`) runs once per pull request update and on every push to `main`, not on pushes
 to other branches; `gh workflow run ci.yml --ref <branch>` runs it on a branch without a pull request. Pull requests that
-only touch the docs skip the Rust jobs. Rust build caches are written by `main`, manual branch runs and same-repository pull requests; fork pull requests only
-restore them. Server/core tests use Nextest's prebuilt binary and one workspace feature set, with doctests retained
+only touch the docs skip the Rust jobs, and changes to the release workflow alone skip the build lanes. Caches (Rust,
+Gradle, Robolectric, the Android native outputs) are written only by runs on `main`, pushes and a weekly run that
+selects every lane; pull requests and branch runs restore `main`'s and write none. A newer push to a pull request
+cancels its run in progress; runs on `main` are never cancelled. Server/core tests use Nextest's prebuilt binary and one workspace feature set, with doctests retained
 in a separate Cargo pass. Clippy runs on its own runner to avoid Cargo's build-directory lock.
 
 Android (needs the Android SDK and NDK; see [android/README.md](android/README.md)):
@@ -123,8 +125,8 @@ cd android
 ## Commit messages and releases
 
 Release builds start alongside CI on every push to `main`; publication waits for successful CI on that exact commit
-and all required assets. Only a successful push CI run on `main` qualifies. Obsolete runs are cancelled when a newer
-push arrives. Every push to `main` that passes CI is released: `.github/workflows/release.yml` tags the commit CI tested as
+and all required assets. Only a successful push CI run on `main` qualifies. One release runs at a time and is never
+cancelled; pushes during it wait, and the newest of them is released next, with the commits before it. Every push to `main` that passes CI is released: `.github/workflows/release.yml` tags the commit CI tested as
 `vX.Y.Z` and publishes a [GitHub release](https://github.com/katulevskiy/reins/releases) with the desktop app (Linux
 x86_64/aarch64, static; macOS Apple silicon/Intel; Windows x86_64/Arm as zips), its Linux `.deb` and `.rpm` packages
 (see [below](#maintainers-linux-packages-their-repositories-and-the-aur)), the server binary, the server image
@@ -153,7 +155,8 @@ commits). It releases the tip of `main` if CI passed on it.
 To measure the complete release pipeline before merging, run **Release** on a CI-tested branch with `verify_only`
 enabled (`gh workflow run release.yml --ref <branch> -f verify_only=true`). It builds and verifies the signed APK,
 installers, archives and both server image architectures, but creates no GitHub release and does not update image
-version/latest tags. Build caches are refreshed, including the per-architecture GHCR caches.
+version/latest tags. It restores the build caches and writes none: they, and the per-architecture GHCR image caches,
+are written from `main` only.
 
 Server, CLI and Android release builds use Thin LTO and 16 codegen units. `cargo build --profile release-fat` retains the previous fat
 LTO/one-codegen-unit configuration for explicit optimization benchmarks. The installer profile keeps optimization
@@ -271,7 +274,7 @@ needs `reins`), made with nfpm (version and SHA-256 pinned in `release.yml` and 
 `scripts/package/linux-packages/`. The release's `linux-packages` job lints them (lintian, rpmlint, with the accepted
 findings in `lintian/` and `rpmlint.toml` there), signs the `.rpm` files with `rpmsign`, builds the signed APT and RPM
 repositories (`scripts/package/linux-repos.sh`) and installs from them in Ubuntu, Debian and Fedora containers
-(`scripts/package/test-linux-repos.sh`; `linux-packages-arm64` does the same on arm64). A failure there holds the
+(`scripts/package/test-linux-repos.sh`, in `linux-packages-amd64` and `linux-packages-arm64`). A failure there holds the
 release back, as any other asset's does. `release-feed.sh --packages` puts the repositories in the update feed: their
 metadata as files, the `.deb` and `.rpm` files as `fetch.txt` lines naming the release assets, all of it in the signed
 index. Users find them at `reins2fa.com/releases/packages/` ([Linux packages](docs/linux-packages.md)).

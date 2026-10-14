@@ -90,29 +90,67 @@ sign "$app/Contents/MacOS/reins-app"
 sign "$app"
 codesign --verify --strict --verbose=1 "$app"
 
-notarize() {
-    if [ -z "${REINS_DEVELOPER_ID:-}" ]; then
-        return 1
-    elif [ -n "${REINS_NOTARY_PROFILE:-}" ]; then
-        xcrun notarytool submit "$1" --keychain-profile "$REINS_NOTARY_PROFILE" --wait
-    elif [ -n "${REINS_NOTARY_KEY:-}" ] && [ -n "${REINS_NOTARY_KEY_ID:-}" ] && [ -n "${REINS_NOTARY_ISSUER:-}" ]; then
-        xcrun notarytool submit "$1" --key "$REINS_NOTARY_KEY" --key-id "$REINS_NOTARY_KEY_ID" \
-            --issuer "$REINS_NOTARY_ISSUER" --wait
-    else
-        return 1
-    fi
+# Apple's notary service and the ticket CDN stapler talks to drop connections now and then (NSURLErrorDomain -1005,
+# "The network connection was lost"; stapler's "Error 68"). Each network step is retried with backoff; nothing is
+# skipped: a step that keeps failing, or a submission Apple does not accept, fails the build.
+retry() {
+    local attempt=1 delay=15
+    until "$@"; do
+        [ "$attempt" -lt 5 ] || return 1
+        echo "==> attempt $attempt of '${*:1:3}' failed; again in ${delay}s" >&2
+        sleep "$delay"
+        attempt=$((attempt + 1)) delay=$((delay * 2))
+    done
 }
+json_field() { python3 -c 'import json, sys; print(json.load(sys.stdin).get(sys.argv[1], ""))' "$1"; }
+
+notary_auth=()
+if [ -n "${REINS_DEVELOPER_ID:-}" ]; then
+    if [ -n "${REINS_NOTARY_PROFILE:-}" ]; then
+        notary_auth=(--keychain-profile "$REINS_NOTARY_PROFILE")
+    elif [ -n "${REINS_NOTARY_KEY:-}" ] && [ -n "${REINS_NOTARY_KEY_ID:-}" ] && [ -n "${REINS_NOTARY_ISSUER:-}" ]; then
+        notary_auth=(--key "$REINS_NOTARY_KEY" --key-id "$REINS_NOTARY_KEY_ID" --issuer "$REINS_NOTARY_ISSUER")
+    fi
+fi
+# Submits $1 and waits for Apple's verdict; succeeds only when the submission is Accepted. An upload that fails is sent
+# again; a wait that loses its connection asks again about the same submission.
+notarize() {
+    local submitted id status attempt
+    submitted="$(retry xcrun notarytool submit "$1" "${notary_auth[@]}" --output-format json)" || return 1
+    id="$(json_field id <<<"$submitted")"
+    [ -n "$id" ] || { echo "notarytool gave no submission id: $submitted" >&2; return 1; }
+    say "notarization $id submitted"
+    for attempt in 1 2 3 4 5; do
+        xcrun notarytool wait "$id" "${notary_auth[@]}" --timeout 40m >&2 || true
+        status="$(retry xcrun notarytool info "$id" "${notary_auth[@]}" --output-format json | json_field status)" ||
+            return 1
+        case "$status" in
+        Accepted) return 0 ;;
+        "In Progress") sleep $((attempt * 15)) ;;
+        *)
+            xcrun notarytool log "$id" "${notary_auth[@]}" >&2 || true
+            echo "notarization $id: ${status:-no status}" >&2
+            return 1
+            ;;
+        esac
+    done
+    echo "notarization $id: still in progress" >&2
+    return 1
+}
+# The ticket into the bundle or disk image, then the same check Gatekeeper makes of it.
+staple() { retry xcrun stapler staple "$1" && retry xcrun stapler validate "$1"; }
+
 notarized=false
-zip="$out/Reins-notarize.zip"
-ditto -c -k --keepParent "$app" "$zip"
-if notarize "$zip"; then
-    # A rejection can still exit 0 with some notarytool versions; stapling then fails and stops the build.
-    xcrun stapler staple "$app"
+if [ "${#notary_auth[@]}" -gt 0 ]; then
+    zip="$out/Reins-notarize.zip"
+    ditto -c -k --keepParent "$app" "$zip"
+    notarize "$zip" || { echo "macos.sh: Reins.app was not notarized" >&2; exit 1; }
+    rm -f "$zip"
+    staple "$app"
     notarized=true
 else
     say "not notarizing (needs REINS_DEVELOPER_ID and REINS_NOTARY_PROFILE or the REINS_NOTARY_KEY* variables)"
 fi
-rm -f "$zip"
 
 # 4. The disk image: dmgbuild writes the window layout (.DS_Store) without Finder, so it works on CI; without it,
 # a plain image with the Applications link.
@@ -181,8 +219,9 @@ rm -f "$background"
 if [ -n "${REINS_DEVELOPER_ID:-}" ]; then
     codesign --force --timestamp --sign "$REINS_DEVELOPER_ID" "$dmg"
 fi
-if $notarized && notarize "$dmg"; then
-    xcrun stapler staple "$dmg"
+if $notarized; then
+    notarize "$dmg" || { echo "macos.sh: the disk image was not notarized" >&2; exit 1; }
+    staple "$dmg"
 fi
 hdiutil verify -quiet "$dmg"
 cp -f "$dmg" "$out/Reins-macOS.dmg"

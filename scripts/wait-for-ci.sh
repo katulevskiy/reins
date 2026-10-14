@@ -3,14 +3,17 @@
 set -euo pipefail
 sha="${1:?commit SHA}"
 [[ "$sha" =~ ^[0-9a-f]{40}$ ]] || { echo 'Invalid CI commit SHA' >&2; exit 1; }
-attempts="${REINS_CI_POLL_ATTEMPTS:-90}"
+# 30 minutes: a main push whose caches are cold (a new Cargo.lock) runs its slowest lane for about 15.
+attempts="${REINS_CI_POLL_ATTEMPTS:-180}"
 interval="${REINS_CI_POLL_SECONDS:-10}"
 for ((attempt = 1; attempt <= attempts; attempt++)); do
+    # An API error is asked again, like a run still in progress: only a successful run lets the release out.
     state="$(gh run list --workflow ci.yml --commit "$sha" --branch main --event push --limit 1 \
-        --json status,conclusion --jq '.[0] | if . == null then "missing" elif .status != "completed" then .status else .conclusion end')"
+        --json status,conclusion --jq '.[0] | if . == null then "missing" elif .status != "completed" then .status else .conclusion end')" ||
+        state=unavailable
     case "$state" in
     success) echo "CI passed on $sha"; exit 0 ;;
-    missing | queued | in_progress | pending | waiting | requested)
+    missing | queued | in_progress | pending | waiting | requested | unavailable)
         echo "Waiting for CI on $sha: $state"
         ((attempt == attempts)) || sleep "$interval"
         ;;

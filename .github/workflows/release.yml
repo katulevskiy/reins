@@ -29,9 +29,12 @@ on:
 
 permissions: {}
 
+# One release at a time, and a release in progress is never cancelled (cancelling one part-way could stop it between
+# the image tags and the GitHub release). Pushes during it wait; only the newest of them runs next, and it releases
+# the commits of those before it.
 concurrency:
   group: ${{ inputs.verify_only && format('release-verification-{0}', github.ref) || 'release' }}
-  cancel-in-progress: true
+  cancel-in-progress: false
 
 defaults:
   run:
@@ -60,6 +63,7 @@ jobs:
       sha: ${{ steps.commit.outputs.sha }}
       build: ${{ steps.version.outputs.build }}
       build-time: ${{ steps.version.outputs.build-time }}
+      version-code: ${{ steps.version.outputs.version-code }}
     steps:
       - name: Commit to release
         id: commit
@@ -114,10 +118,14 @@ jobs:
           # The build id the desktop app and the APK show: version, commit time (UTC) and commit.
           time="$(git log -1 --format=%ct "$SHA")"
           stamp="$(TZ=UTC git log -1 --date=format-local:%Y%m%d%H%M --format=%cd "$SHA")"
+          # The Android versionCode: this release's start in minutes, as in scripts/release-android.sh, so every release
+          # installs over the one before (releases run one at a time). The APK and the Play bundle, built side by side,
+          # share it.
           {
             echo "release=true"
             echo "build=$version-$stamp-${SHA:0:8}"
             echo "build-time=$time"
+            echo "version-code=$(($(date -u +%s) / 60))"
           } >> "$GITHUB_OUTPUT"
           echo "::notice::Releasing v$version from $SHA"
       - name: Fetch signing identity from Infisical
@@ -144,6 +152,64 @@ jobs:
             exit 1
           fi
 
+  # The command-line program for Linux, static (musl), linked with zig as scripts/release-desktop.sh does. Its own job
+  # so the Linux packages (which package these archives) start as soon as the Linux builds are done.
+  desktop-linux:
+    name: Desktop (${{ matrix.target }})
+    needs: plan
+    if: needs.plan.outputs.release == 'true'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    permissions:
+      contents: read
+    strategy:
+      # A failed upload must not cancel independent builds needed by a release retry.
+      fail-fast: false
+      matrix:
+        include:
+          - { target: x86_64-unknown-linux-musl, native: true }
+          - { target: aarch64-unknown-linux-musl, native: false }
+    env:
+      TARGET: ${{ matrix.target }}
+      VERSION: ${{ needs.plan.outputs.version }}
+      REINS_BUILD: ${{ needs.plan.outputs.build }}
+      REINS_BUILD_TIME: ${{ needs.plan.outputs.build-time }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ needs.plan.outputs.sha }}
+          persist-credentials: false
+      - name: Install Rust toolchain
+        run: |
+          rustup toolchain install
+          rustup target add "$TARGET"
+          rustc -vV
+      # No Rust cache here or in desktop: these builds take about three minutes cold, off the release's longest path,
+      # and their five caches (1.6 GB) pushed the caches that do shorten it out of the repository's 10 GB.
+      - name: Install cargo-zigbuild
+        run: |
+          python3 -m venv "$RUNNER_TEMP/zig"
+          "$RUNNER_TEMP/zig/bin/pip" install --quiet --retries 10 cargo-zigbuild==0.23.4 ziglang==0.16.0
+      # Tags are the source of truth; the binary reports the release version.
+      - name: Set the version
+        run: scripts/set-desktop-version.sh "$VERSION"
+      - name: Build
+        run: PATH="$RUNNER_TEMP/zig/bin:$PATH" cargo zigbuild --release --locked -p reins-desktop --bin reins --target "$TARGET"
+      - name: Smoke test
+        if: matrix.native
+        run: |
+          out="$("target/$TARGET/release/reins" --version)"
+          echo "$out"
+          [[ "$out" == *"$VERSION ($REINS_BUILD)"* ]] || { echo "::error::unexpected version: $out"; exit 1; }
+      - name: Package
+        run: scripts/package-cli.sh "$TARGET" "$VERSION"
+      - uses: ./.github/actions/upload-artifact # zizmor: ignore[self-repository] use the exact release checkout
+        with:
+          name: dist-desktop-${{ matrix.target }}
+          compression-level: 0
+          path: dist/*.tar.gz
+          retention-days: 7
+
   desktop:
     name: Desktop (${{ matrix.target }})
     needs: plan
@@ -160,12 +226,10 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - { target: x86_64-unknown-linux-musl, os: ubuntu-24.04, zig: true, native: true, optional: false }
-          - { target: aarch64-unknown-linux-musl, os: ubuntu-24.04, zig: true, native: false, optional: false }
           # Standalone macOS CLI supports macOS 11; the GUI bundle requires macOS 12.
-          - { target: aarch64-apple-darwin, os: macos-15, zig: false, native: true, optional: false }
-          - { target: x86_64-apple-darwin, os: macos-15, zig: false, native: false, optional: false }
-          - { target: aarch64-pc-windows-msvc, os: windows-2025, zig: false, native: false, optional: true }
+          - { target: aarch64-apple-darwin, os: macos-15, native: true, optional: false }
+          - { target: x86_64-apple-darwin, os: macos-15, native: false, optional: false }
+          - { target: aarch64-pc-windows-msvc, os: windows-2025, native: false, optional: true }
     env:
       TARGET: ${{ matrix.target }}
       VERSION: ${{ needs.plan.outputs.version }}
@@ -186,29 +250,15 @@ jobs:
           rustup toolchain install
           rustup target add "$TARGET"
           rustc -vV
-      # The static Linux builds link with zig, as scripts/release-desktop.sh does.
-      - uses: Swatinem/rust-cache@v2
-        with:
-          shared-key: release-desktop-${{ matrix.target }}
-
-      - name: Install cargo-zigbuild
-        if: matrix.zig
-        run: |
-          python3 -m venv "$RUNNER_TEMP/zig"
-          "$RUNNER_TEMP/zig/bin/pip" install --quiet cargo-zigbuild==0.23.4 ziglang==0.16.0
       # Tags are the source of truth; the binary reports the release version.
       - name: Set the version
         run: scripts/set-desktop-version.sh "$VERSION"
       - name: Build
         run: |
-          if [[ "$TARGET" == *-linux-musl ]]; then
-            PATH="$RUNNER_TEMP/zig/bin:$PATH" cargo zigbuild --release --locked -p reins-desktop --bin reins --target "$TARGET"
-          else
-            # Windows: the C runtime linked in, so reins.exe needs no Visual C++ Redistributable. With --target,
-            # RUSTFLAGS reach only the program, not build scripts.
-            [[ "$TARGET" == *-windows-msvc ]] && export RUSTFLAGS="-C target-feature=+crt-static"
-            cargo build --release --locked -p reins-desktop --bin reins --target "$TARGET"
-          fi
+          # Windows: the C runtime linked in, so reins.exe needs no Visual C++ Redistributable. With --target,
+          # RUSTFLAGS reach only the program, not build scripts.
+          [[ "$TARGET" == *-windows-msvc ]] && export RUSTFLAGS="-C target-feature=+crt-static"
+          cargo build --release --locked -p reins-desktop --bin reins --target "$TARGET"
       - name: Smoke test
         if: matrix.native
         run: |
@@ -217,7 +267,7 @@ jobs:
           out="$("$exe" --version)"
           echo "$out"
           [[ "$out" == *"$VERSION ($REINS_BUILD)"* ]] || { echo "::error::unexpected version: $out"; exit 1; }
-      # A tar.gz with reins on Linux and macOS, a zip with reins.exe on Windows (what Windows opens, and what
+      # A tar.gz with reins on macOS, a zip with reins.exe on Windows (what Windows opens, and what
       # scripts/install.ps1 unpacks); the same layout inside.
       - name: Package
         run: scripts/package-cli.sh "$TARGET" "$VERSION"
@@ -240,21 +290,66 @@ jobs:
   #   MACOS_CERT_P12, MACOS_CERT_PASSWORD   the "Developer ID Application" certificate and key (.p12, base64)
   #   AC_API_KEY_P8, AC_API_KEY_ID, AC_API_ISSUER_ID   an App Store Connect API key for notarytool
   # Windows signing, optional: WINDOWS_CERT_PFX (base64) and WINDOWS_CERT_PASSWORD.
-  desktop-app:
-    name: Desktop app (${{ matrix.platform }})
+  # The AppImage needs the glibc of the oldest supported Ubuntu, hence ubuntu-22.04. Its own job, like desktop-linux,
+  # so the Linux packages do not wait for the Windows installer.
+  desktop-app-linux:
+    name: Desktop app (Linux-x86_64)
     needs: plan
     if: needs.plan.outputs.release == 'true'
-    runs-on: ${{ matrix.os }}
+    runs-on: ubuntu-22.04
     timeout-minutes: 90
     permissions:
       contents: read
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - { platform: Windows-x64, os: windows-2025 }
-          # The oldest supported Ubuntu: the AppImage needs this glibc or newer.
-          - { platform: Linux-x86_64, os: ubuntu-22.04 }
+    env:
+      VERSION: ${{ needs.plan.outputs.version }}
+      REINS_BUILD: ${{ needs.plan.outputs.build }}
+      REINS_BUILD_TIME: ${{ needs.plan.outputs.build-time }}
+      MACOSX_DEPLOYMENT_TARGET: "12.0"
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ needs.plan.outputs.sha }}
+          persist-credentials: false
+      - name: Install Rust toolchain
+        run: |
+          rustup toolchain install
+          rustup target add x86_64-unknown-linux-gnu
+          rustc -vV
+      - uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: release-desktop-app-Linux
+          save-if: ${{ github.ref == 'refs/heads/main' }}
+      - name: GPUI build dependencies
+        run: |
+          sudo apt-get -o Acquire::Retries=5 update -qq
+          sudo apt-get -o Acquire::Retries=5 install -y -qq libxkbcommon-dev libxkbcommon-x11-dev libwayland-dev \
+            libx11-dev libxcb1-dev libx11-xcb-dev libfontconfig1-dev libfreetype-dev libvulkan-dev pkg-config
+      - name: Set the version
+        run: scripts/set-desktop-version.sh "$VERSION"
+      - name: Package (Linux)
+        run: scripts/package/linux.sh
+      - name: Collect
+        run: |
+          mkdir -p dist
+          cp target/package/Reins-*.dmg target/package/Reins-*.msi target/package/Reins-*.AppImage \
+            target/package/Reins-*.tar.gz dist/ 2>/dev/null || true
+          ls -l dist
+          [[ -n "$(ls dist)" ]] || { echo "::error::no installer was made"; exit 1; }
+      - uses: ./.github/actions/upload-artifact # zizmor: ignore[self-repository] use the exact release checkout
+        with:
+          name: dist-app-Linux-x86_64
+          compression-level: 0
+          path: dist/*
+          retention-days: 7
+
+  desktop-app:
+    name: Desktop app (Windows-x64)
+    needs: plan
+    if: needs.plan.outputs.release == 'true'
+    runs-on: windows-2025
+    timeout-minutes: 90
+    permissions:
+      contents: read
     env:
       VERSION: ${{ needs.plan.outputs.version }}
       REINS_BUILD: ${{ needs.plan.outputs.build }}
@@ -262,7 +357,6 @@ jobs:
       MACOSX_DEPLOYMENT_TARGET: "12.0"
     steps:
       - name: Check out without CRLF
-        if: runner.os == 'Windows'
         run: git config --global core.autocrlf false
       - uses: actions/checkout@v7
         with:
@@ -271,24 +365,15 @@ jobs:
       - name: Install Rust toolchain
         run: |
           rustup toolchain install
-          [[ "$RUNNER_OS" == macOS ]] && rustup target add aarch64-apple-darwin x86_64-apple-darwin
-          [[ "$RUNNER_OS" == Windows ]] && rustup target add x86_64-pc-windows-msvc
-          [[ "$RUNNER_OS" == Linux ]] && rustup target add x86_64-unknown-linux-gnu
+          rustup target add x86_64-pc-windows-msvc
           rustc -vV
       - uses: Swatinem/rust-cache@v2
         with:
-          shared-key: release-desktop-app-${{ runner.os }}
-
-      - name: GPUI build dependencies
-        if: runner.os == 'Linux'
-        run: |
-          sudo apt-get update -qq
-          sudo apt-get install -y -qq libxkbcommon-dev libxkbcommon-x11-dev libwayland-dev libx11-dev libxcb1-dev \
-            libx11-xcb-dev libfontconfig1-dev libfreetype-dev libvulkan-dev pkg-config
+          shared-key: release-desktop-app-Windows
+          save-if: ${{ github.ref == 'refs/heads/main' }}
       - name: Set the version
         run: scripts/set-desktop-version.sh "$VERSION"
       - name: Package (Windows)
-        if: runner.os == 'Windows'
         shell: pwsh
         env:
           # The C runtime linked in: no Visual C++ Redistributable needed.
@@ -302,9 +387,6 @@ jobs:
             $env:REINS_WINDOWS_CERT = $pfx
           }
           ./scripts/package/windows.ps1 -Version $env:VERSION
-      - name: Package (Linux)
-        if: runner.os == 'Linux'
-        run: scripts/package/linux.sh
       - name: Collect
         run: |
           mkdir -p dist
@@ -315,7 +397,6 @@ jobs:
       # Windows CLI archives reuse the exact binary already built for the installer.
       # Keep macOS CLI jobs separate to preserve their older deployment target.
       - name: CLI archive from Windows installer binary
-        if: runner.os == 'Windows'
         run: |
           target=x86_64-pc-windows-msvc
           out="$("target/$target/release-app/reins.exe" --version)"
@@ -327,7 +408,7 @@ jobs:
         run: rm -f "$RUNNER_TEMP/notary.p8" "$RUNNER_TEMP/cert.pfx"
       - uses: ./.github/actions/upload-artifact # zizmor: ignore[self-repository] use the exact release checkout
         with:
-          name: dist-app-${{ matrix.platform }}
+          name: dist-app-Windows-x64
           compression-level: 0
           path: dist/*
           retention-days: 7
@@ -365,6 +446,7 @@ jobs:
           # Start a native-only Arm cache: the old immutable universal cache also stores Intel/fat artifacts.
           # The Intel worker's existing cache already contains only its native target.
           shared-key: ${{ matrix.cache }}
+          save-if: ${{ github.ref == 'refs/heads/main' }}
       - name: Remove obsolete macOS cache outputs
         run: |
           # This worker builds one native target with release-app. The old universal job cached both
@@ -519,11 +601,9 @@ jobs:
           persist-credentials: false
       - name: Install Rust toolchain
         run: rustup toolchain install && rustc -vV
+      # No Rust cache: cold, this build (7 minutes) still ends before the Android and macOS builds the release waits
+      # for, and its 600 MB went to caches that shorten the release.
       # SQLite is bundled; OpenSSL is vendored so the binary does not depend on the system's libssl.
-      - uses: Swatinem/rust-cache@v2
-        with:
-          shared-key: release-server-${{ runner.os }}
-
       - name: Build
         env:
           VW_VERSION: ${{ needs.plan.outputs.version }}
@@ -583,6 +663,8 @@ jobs:
           password: ${{ secrets.GITHUB_TOKEN }}
       - uses: docker/build-push-action@v7
         id: build
+        # A registry or download error is tried once more (next step), from the layers this builder already has.
+        continue-on-error: true
         with:
           context: .
           file: docker/Dockerfile.debian
@@ -590,9 +672,33 @@ jobs:
           # Push immutable digests first; the publisher updates public version/latest tags together.
           outputs: ${{ inputs.verify_only && 'type=docker' || format('type=image,name={0},push-by-digest=true,name-canonical=true,push=true', steps.image.outputs.name) }}
           tags: ${{ inputs.verify_only && format('reins-server-verify:{0}', matrix.arch) || '' }}
-          # Docker layers were evicting Rust/Gradle caches from the repository's shared cache quota.
+          # Docker layers were evicting Rust/Gradle caches from the repository's shared cache quota. Read everywhere,
+          # written from main only.
           cache-from: type=registry,ref=${{ steps.image.outputs.name }}:buildcache-${{ matrix.arch }}
-          cache-to: type=registry,ref=${{ steps.image.outputs.name }}:buildcache-${{ matrix.arch }},mode=max
+          cache-to: ${{ github.ref == 'refs/heads/main' && format('type=registry,ref={0}:buildcache-{1},mode=max', steps.image.outputs.name, matrix.arch) || '' }}
+          build-args: |
+            VW_VERSION=${{ needs.plan.outputs.version }}
+          labels: |
+            org.opencontainers.image.title=Reins server
+            org.opencontainers.image.description=The Reins server: Vaultwarden with the Reins permission relay for AI agents
+            org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}
+            org.opencontainers.image.version=${{ needs.plan.outputs.version }}
+            org.opencontainers.image.revision=${{ needs.plan.outputs.sha }}
+            org.opencontainers.image.licenses=AGPL-3.0-only
+      - uses: docker/build-push-action@v7
+        id: build-retry
+        if: steps.build.outcome == 'failure'
+        with:
+          context: .
+          file: docker/Dockerfile.debian
+          platforms: linux/${{ matrix.arch }}
+          # Push immutable digests first; the publisher updates public version/latest tags together.
+          outputs: ${{ inputs.verify_only && 'type=docker' || format('type=image,name={0},push-by-digest=true,name-canonical=true,push=true', steps.image.outputs.name) }}
+          tags: ${{ inputs.verify_only && format('reins-server-verify:{0}', matrix.arch) || '' }}
+          # Docker layers were evicting Rust/Gradle caches from the repository's shared cache quota. Read everywhere,
+          # written from main only.
+          cache-from: type=registry,ref=${{ steps.image.outputs.name }}:buildcache-${{ matrix.arch }}
+          cache-to: ${{ github.ref == 'refs/heads/main' && format('type=registry,ref={0}:buildcache-{1},mode=max', steps.image.outputs.name, matrix.arch) || '' }}
           build-args: |
             VW_VERSION=${{ needs.plan.outputs.version }}
           labels: |
@@ -614,7 +720,7 @@ jobs:
       - name: Export image digest
         if: inputs.verify_only != true
         env:
-          DIGEST: ${{ steps.build.outputs.digest }}
+          DIGEST: ${{ steps.build.outputs.digest || steps.build-retry.outputs.digest }}
         run: |
           [[ "$DIGEST" =~ ^sha256:[0-9a-f]{64}$ ]]
           mkdir -p digests
@@ -638,7 +744,10 @@ jobs:
       fail-fast: false
       matrix:
         kind: [arm64-v8a, x86_64, bindings]
+    # The same Cargo variables as ci.yml's: the bindings are the same host build as CI's, and these make its cache key
+    # the same, so this job restores what CI's server and core tests saved instead of keeping a copy.
     env:
+      RUST_BACKTRACE: "1"
       CARGO_PROFILE_DEV_DEBUG: "0"
     steps:
       - uses: actions/checkout@v7
@@ -647,7 +756,7 @@ jobs:
           persist-credentials: false
       # No prefix fallback: these libraries must match the exact native sources/configuration.
       # Version, build ID and signing only enter the later APK packaging job.
-      - uses: actions/cache@v5
+      - uses: actions/cache/restore@v5
         id: native
         with:
           path: native
@@ -660,8 +769,10 @@ jobs:
       - uses: Swatinem/rust-cache@v2
         if: steps.native.outputs.cache-hit != 'true'
         with:
-          shared-key: release-android-native-${{ matrix.kind }}
-      - uses: actions/cache@v5
+          shared-key: ${{ matrix.kind == 'bindings' && 'linux-server-core' || format('release-android-native-{0}', matrix.kind) }}
+          save-if: ${{ matrix.kind != 'bindings' && github.ref == 'refs/heads/main' }}
+      - uses: actions/cache/restore@v5
+        id: cargo-ndk
         if: steps.native.outputs.cache-hit != 'true' && matrix.kind != 'bindings'
         with:
           path: ~/.cargo/bin/cargo-ndk
@@ -671,20 +782,40 @@ jobs:
         run: |
           cargo ndk --version || cargo install --locked cargo-ndk@4.1.2
           ndk="$(grep -oP 'reinsNdkVersion = "\K[^"]+' android/app/build.gradle.kts)"
-          "${ANDROID_HOME}/cmdline-tools/latest/bin/sdkmanager" --install "ndk;${ndk}" > /dev/null
+          # The runner image does not carry this NDK; its download from dl.google.com fails now and then.
+          for attempt in 1 2 3; do
+            "${ANDROID_HOME}/cmdline-tools/latest/bin/sdkmanager" --install "ndk;${ndk}" > /dev/null && break
+            (( attempt < 3 )) || exit 1
+            echo "::warning::sdkmanager could not install ndk;${ndk} (attempt $attempt); trying again"
+            sleep $(( attempt * 20 ))
+          done
+      - uses: actions/cache/save@v5
+        if: >-
+          steps.cargo-ndk.outcome == 'success' && steps.cargo-ndk.outputs.cache-hit != 'true' &&
+          github.ref == 'refs/heads/main'
+        with:
+          path: ~/.cargo/bin/cargo-ndk
+          key: cargo-ndk-${{ runner.os }}-4.1.2
       - name: Build native output
         if: steps.native.outputs.cache-hit != 'true'
         env:
           KIND: ${{ matrix.kind }}
         run: scripts/build-android-native.sh "$KIND" "$GITHUB_WORKSPACE/native"
+      - uses: actions/cache/save@v5
+        if: steps.native.outputs.cache-hit != 'true' && github.ref == 'refs/heads/main'
+        with:
+          path: native
+          key: ${{ steps.native.outputs.cache-primary-key }}
       - uses: ./.github/actions/upload-artifact # zizmor: ignore[self-repository] use the exact release checkout
         with:
           name: android-native-${{ matrix.kind }}
           path: native/
           retention-days: 1
 
+  # The signed APK (full) and the Google Play bundle (play) on two runners: Gradle runs one project's tasks one after
+  # another, so in one job the second variant's compile, lint and R8 waited for the first's (7 minutes in all).
   android:
-    name: Android APK (full) and bundle (play)
+    name: Android ${{ matrix.name }}
     needs: [plan, android-native]
     if: needs.plan.outputs.release == 'true'
     runs-on: ubuntu-24.04
@@ -692,11 +823,16 @@ jobs:
     permissions:
       contents: read
       id-token: write # Infisical OIDC
-    outputs:
-      version-code: ${{ steps.build.outputs.version-code }} # for the Android updater's feed (publish)
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { variant: full, name: APK (full), task: ":app:assembleFullRelease" }
+          - { variant: play, name: bundle (play), task: ":app:bundlePlayRelease" }
     env:
       VERSION: ${{ needs.plan.outputs.version }}
       BUILD: ${{ needs.plan.outputs.build }}
+      VERSION_CODE: ${{ needs.plan.outputs.version-code }}
     steps:
       - uses: actions/checkout@v7
         with:
@@ -719,7 +855,7 @@ jobs:
       - uses: gradle/actions/setup-gradle@v6
         with:
           cache-provider: basic
-          cache-read-only: false # maintainer dispatches also warm the Gradle build cache
+          cache-read-only: ${{ github.ref != 'refs/heads/main' }}
       - name: Fetch signing identity from Infisical
         if: vars.INFISICAL_RELEASE_IDENTITY_ID != ''
         uses: ./.github/actions/release-secrets # zizmor: ignore[self-repository] use the exact release checkout
@@ -746,12 +882,11 @@ jobs:
           [[ "$actual" == "$expected" ]] || { echo "::error::Keystore does not match production signing identity"; exit 1; }
       # android/app/build.gradle.kts signs fullRelease with the REINS_RELEASE_* key and the Play bundle (playRelease)
       # with the REINS_UPLOAD_* key: the same production key, which is the Play upload key (Google Play re-signs
-      # with its app signing key). versionCode is the build time in minutes, as in scripts/release-android.sh, so every
-      # release installs over the previous one; both builds share it.
-      - name: Build the APK and the Play bundle
-        id: build
+      # with its app signing key). versionCode comes from plan (the release's start in minutes), so both builds share it.
+      - name: Build the ${{ matrix.name }}
         working-directory: android
         env:
+          TASK: ${{ matrix.task }}
           REINS_RELEASE_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
           REINS_RELEASE_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
           REINS_RELEASE_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
@@ -769,8 +904,7 @@ jobs:
           export REINS_UPLOAD_KEYSTORE_PASSWORD="$REINS_RELEASE_KEYSTORE_PASSWORD"
           export REINS_UPLOAD_KEY_ALIAS="$REINS_RELEASE_KEY_ALIAS"
           export REINS_UPLOAD_KEY_PASSWORD="$REINS_RELEASE_KEY_PASSWORD"
-          version_code="$(($(date -u +%s) / 60))"
-          echo "version-code=$version_code" >> "$GITHUB_OUTPUT"
+          [[ "$VERSION_CODE" =~ ^[0-9]+$ ]] || { echo "::error::no versionCode from plan"; exit 1; }
           extra=()
           if [[ -n "${TELEGRAM_API_ID:-}" && -n "${TELEGRAM_API_HASH:-}" ]]; then
             extra+=("-Preins.telegramApiId=$TELEGRAM_API_ID" "-Preins.telegramApiHash=$TELEGRAM_API_HASH")
@@ -786,10 +920,10 @@ jobs:
           fi
           # The site and the sign-in screen's server are gradle.properties' reins.site / reins.defaultServer. The
           # Play bundle uses the same Telegram credentials and Firebase config (same application id).
-          ./gradlew --no-daemon --parallel --no-configuration-cache :app:assembleFullRelease :app:bundlePlayRelease \
+          ./gradlew --no-daemon --parallel --no-configuration-cache "$TASK" \
             "-Preins.prebuiltNativeDir=$GITHUB_WORKSPACE/native" \
             -Preins.secureScreens=true \
-            "-Preins.versionCode=$version_code" \
+            "-Preins.versionCode=$VERSION_CODE" \
             "-Preins.versionName=$VERSION" \
             "-Preins.build=$BUILD" \
             "${extra[@]}"
@@ -797,8 +931,7 @@ jobs:
         if: always()
         run: rm -f "$RUNNER_TEMP/release.keystore" "$RUNNER_TEMP/release-certificate.der" "$RUNNER_TEMP/google-services.json"
       - name: Verify and name the APK
-        env:
-          VERSION_CODE: ${{ steps.build.outputs.version-code }}
+        if: matrix.variant == 'full'
         run: |
           build_tools="$(ls -d "$ANDROID_HOME"/build-tools/* | sort -V | tail -1)"
           apk="dist/reins-$VERSION-android.apk"
@@ -818,13 +951,13 @@ jobs:
           } >> "$GITHUB_STEP_SUMMARY"
       # bundletool validates the bundle and makes the universal APK the bundle checks run on (pinned by SHA-256).
       - name: Verify and name the Play bundle
+        if: matrix.variant == 'play'
         env:
-          VERSION_CODE: ${{ steps.build.outputs.version-code }}
           BUNDLETOOL_VERSION: 1.18.3
           BUNDLETOOL_SHA256: a099cfa1543f55593bc2ed16a70a7c67fe54b1747bb7301f37fdfd6d91028e29
         run: |
           build_tools="$(ls -d "$ANDROID_HOME"/build-tools/* | sort -V | tail -1)"
-          curl -fsSL -o "$RUNNER_TEMP/bundletool.jar" \
+          curl -fsSL --retry 5 --retry-all-errors -o "$RUNNER_TEMP/bundletool.jar" \
             "https://github.com/google/bundletool/releases/download/$BUNDLETOOL_VERSION/bundletool-all-$BUNDLETOOL_VERSION.jar"
           echo "$BUNDLETOOL_SHA256  $RUNNER_TEMP/bundletool.jar" | sha256sum -c -
           aab="dist/reins-$VERSION-play.aab"
@@ -841,12 +974,14 @@ jobs:
             echo '```'
           } >> "$GITHUB_STEP_SUMMARY"
       - uses: ./.github/actions/upload-artifact # zizmor: ignore[self-repository] use the exact release checkout
+        if: matrix.variant == 'full'
         with:
           name: dist-android
           compression-level: 0
           path: dist/*.apk
           retention-days: 7
       - uses: ./.github/actions/upload-artifact # zizmor: ignore[self-repository] use the exact release checkout
+        if: matrix.variant == 'play'
         with:
           name: dist-android-play
           compression-level: 0
@@ -858,7 +993,7 @@ jobs:
   # (the command-line program), reins-app_<version>_amd64.deb and reins-app-<version>-1.x86_64.rpm (the desktop app).
   # Linted (lintian, rpmlint), the .rpm files signed, the signed APT and RPM repositories built
   # (scripts/package/linux-repos.sh), and installed from those repositories in Ubuntu, Debian and Fedora containers
-  # (here amd64, arm64 in linux-packages-arm64). The update feed carries the repositories to
+  # (linux-packages-amd64 and linux-packages-arm64, side by side). The update feed carries the repositories to
   # reins2fa.com/releases/packages/ (publish).
   #
   # The repository key (OpenPGP), from Infisical reins-release prod /signing/packages, else the repository secrets of the
@@ -868,7 +1003,7 @@ jobs:
   # repositories. Once it is there, a missing or different secret key fails the release.
   linux-packages:
     name: Linux packages
-    needs: [plan, desktop, desktop-app]
+    needs: [plan, desktop-linux, desktop-app-linux]
     if: needs.plan.outputs.release == 'true'
     runs-on: ubuntu-24.04
     timeout-minutes: 30
@@ -898,9 +1033,10 @@ jobs:
           path: dist
       - name: Packaging tools
         run: |
-          sudo apt-get update -qq
-          sudo apt-get install -y -qq --no-install-recommends lintian createrepo-c rpm apt-utils binutils-aarch64-linux-gnu
-          curl -fsSL -o "$RUNNER_TEMP/nfpm.tar.gz" \
+          sudo apt-get -o Acquire::Retries=5 update -qq
+          sudo apt-get -o Acquire::Retries=5 install -y -qq --no-install-recommends lintian createrepo-c rpm apt-utils \
+            binutils-aarch64-linux-gnu
+          curl -fsSL --retry 5 --retry-all-errors -o "$RUNNER_TEMP/nfpm.tar.gz" \
             "https://github.com/goreleaser/nfpm/releases/download/v$NFPM_VERSION/nfpm_${NFPM_VERSION}_Linux_x86_64.tar.gz"
           echo "$NFPM_SHA256  $RUNNER_TEMP/nfpm.tar.gz" | sha256sum -c -
           tar -xzf "$RUNNER_TEMP/nfpm.tar.gz" -C "$RUNNER_TEMP" nfpm
@@ -911,10 +1047,19 @@ jobs:
             --time "$BUILD_TIME" --dist dist --out packages
       - name: Lint the .deb packages (lintian)
         run: lintian --fail-on error --no-tag-display-limit packages/*.deb
+      # Fedora's mirrors fail now and then (the Cisco OpenH264 metalink answered 503): its repository is dropped, and
+      # installing rpmlint gets three tries. rpmlint itself runs once; its findings fail the step.
       - name: Lint the .rpm packages (rpmlint)
         run: |
-          docker run --rm -v "$PWD:/src:ro" -w /src "$FEDORA" sh -c \
-            'dnf install -y -q rpmlint >/dev/null && rpmlint -c scripts/package/linux-packages/rpmlint.toml packages/*.rpm'
+          for attempt in 1 2 3; do docker pull -q "$FEDORA" && break; sleep $((attempt * 15)); done
+          docker run --rm -v "$PWD:/src:ro" -w /src "$FEDORA" sh -c '
+            rm -f /etc/yum.repos.d/fedora-cisco-openh264.repo
+            for attempt in 1 2 3; do
+              dnf install -y -q rpmlint >/dev/null && break
+              [ "$attempt" -lt 3 ] || exit 1
+              sleep $((attempt * 15))
+            done
+            rpmlint -c scripts/package/linux-packages/rpmlint.toml packages/*.rpm'
       # Written to a file (not exported to later steps), read by the next step only, and removed afterwards. A missing
       # folder is not an error here: the next step decides whether the key is required.
       - name: Fetch the repository key from Infisical
@@ -977,8 +1122,6 @@ jobs:
           # The release publishes the signed packages, the ones in the repository.
           [[ -f "$pinned" ]] && cp repo/packages/rpm/*/*.rpm packages/
           ls -l packages
-      - name: Install from the repositories (amd64)
-        run: scripts/package/test-linux-repos.sh --repo repo --version "$VERSION" --build "$BUILD"
       - uses: ./.github/actions/upload-artifact # zizmor: ignore[self-repository] use the exact release checkout
         with:
           name: dist-linux-packages
@@ -987,13 +1130,36 @@ jobs:
             packages/*.deb
             packages/*.rpm
           retention-days: 7
-      # Not a release asset: the update feed's repositories (publish) and the arm64 test.
+      # Not a release asset: the update feed's repositories (publish) and the install tests.
       - uses: ./.github/actions/upload-artifact # zizmor: ignore[self-repository] use the exact release checkout
         with:
           name: linux-package-repo
           compression-level: 0
           path: repo/
           retention-days: 1
+
+  linux-packages-amd64:
+    name: Linux packages (amd64 install test)
+    needs: [plan, linux-packages]
+    if: needs.plan.outputs.release == 'true'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    permissions:
+      contents: read
+    env:
+      VERSION: ${{ needs.plan.outputs.version }}
+      BUILD: ${{ needs.plan.outputs.build }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ needs.plan.outputs.sha }}
+          persist-credentials: false
+      - uses: actions/download-artifact@v8
+        with:
+          name: linux-package-repo
+          path: repo
+      - name: Install from the repositories (amd64)
+        run: scripts/package/test-linux-repos.sh --repo repo --version "$VERSION" --build "$BUILD"
 
   linux-packages-arm64:
     name: Linux packages (arm64 install test)
@@ -1020,14 +1186,28 @@ jobs:
 
   publish:
     name: Publish the release
-    needs: [plan, desktop, desktop-app, desktop-app-macos, server, docker, android, linux-packages, linux-packages-arm64]
+    needs:
+      - plan
+      - desktop-linux
+      - desktop
+      - desktop-app-linux
+      - desktop-app
+      - desktop-app-macos
+      - server
+      - docker
+      - android
+      - linux-packages
+      - linux-packages-amd64
+      - linux-packages-arm64
     if: >-
       always() && needs.plan.outputs.release == 'true' &&
-      needs.desktop.result == 'success' && needs.desktop-app.result == 'success' &&
+      needs.desktop-linux.result == 'success' && needs.desktop.result == 'success' &&
+      needs.desktop-app-linux.result == 'success' && needs.desktop-app.result == 'success' &&
       needs.desktop-app-macos.result == 'success' &&
       needs.server.result == 'success' && needs.docker.result == 'success' &&
       needs.android.result == 'success' &&
-      needs.linux-packages.result == 'success' && needs.linux-packages-arm64.result == 'success'
+      needs.linux-packages.result == 'success' && needs.linux-packages-amd64.result == 'success' &&
+      needs.linux-packages-arm64.result == 'success'
     runs-on: ubuntu-24.04
     timeout-minutes: 20
     permissions:
@@ -1084,7 +1264,7 @@ jobs:
         env:
           BUILD: ${{ needs.plan.outputs.build }}
           BUILD_TIME: ${{ needs.plan.outputs.build-time }}
-          VERSION_CODE: ${{ needs.android.outputs.version-code }}
+          VERSION_CODE: ${{ needs.plan.outputs.version-code }}
         run: |
           umask 077
           key_env="$GITHUB_WORKSPACE/.release-key.env"
@@ -1133,7 +1313,13 @@ jobs:
           refs=()
           for digest in digests/*; do refs+=("$image@sha256:${digest##*/}"); done
           [[ "${#refs[@]}" == 2 ]] || { echo "::error::Missing image architecture"; exit 1; }
-          docker buildx imagetools create --tag "$image:$VERSION" --tag "$image:latest" "${refs[@]}"
+          # Tagging the same digests again is harmless, so a registry error is tried again.
+          for attempt in 1 2 3 4; do
+            docker buildx imagetools create --tag "$image:$VERSION" --tag "$image:latest" "${refs[@]}" && break
+            (( attempt < 4 )) || exit 1
+            echo "::warning::publishing the image manifest failed (attempt $attempt); trying again"
+            sleep $(( attempt * 15 ))
+          done
           docker buildx imagetools inspect "$image:$VERSION"
       - name: Verification complete
         if: inputs.verify_only == true
@@ -1154,7 +1340,13 @@ jobs:
         run: |
           # Upload everything before making this release visible to latest/download clients.
           gh release create "$TAG" dist/* --target "$SHA" --title "Reins $TAG" --notes-file notes.md --draft
-          gh release edit "$TAG" --draft=false --latest
+          # Making the draft public is the same request each time; an API error is tried again.
+          for attempt in 1 2 3 4; do
+            gh release edit "$TAG" --draft=false --latest && break
+            (( attempt < 4 )) || exit 1
+            echo "::warning::publishing the release failed (attempt $attempt); trying again"
+            sleep $(( attempt * 15 ))
+          done
           echo "::notice::Published $GITHUB_SERVER_URL/$GITHUB_REPOSITORY/releases/tag/$TAG"
 
   # The published release's Play bundle goes to every Google Play track that takes it (internal, closed and open testing,
@@ -1200,7 +1392,7 @@ jobs:
           PLAY_SERVICE_ACCOUNT_JSON: ${{ secrets.PLAY_SERVICE_ACCOUNT_JSON }}
           PLAY_TRACK: ${{ vars.PLAY_TRACK || 'internal,alpha,beta,production' }}
           PLAY_RELEASE_STATUS: ${{ vars.PLAY_RELEASE_STATUS || 'completed' }}
-          VERSION_CODE: ${{ needs.android.outputs.version-code }}
+          VERSION_CODE: ${{ needs.plan.outputs.version-code }}
         run: |
           umask 077
           play_env="$GITHUB_WORKSPACE/.play.env"
@@ -1278,11 +1470,16 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
         run: |
-          gh release download "$TAG" --pattern SHA256SUMS --dir "$RUNNER_TEMP"
+          for attempt in 1 2 3; do
+            gh release download "$TAG" --pattern SHA256SUMS --dir "$RUNNER_TEMP" --clobber && break
+            (( attempt < 3 )) || exit 1
+            sleep $(( attempt * 15 ))
+          done
           scripts/package/aur.sh --version "$VERSION" --sums "$RUNNER_TEMP/SHA256SUMS" --out aur
           cat aur/PKGBUILD
       - name: Check with makepkg
         run: |
+          for attempt in 1 2 3; do docker pull -q archlinux:base-devel && break; sleep $((attempt * 15)); done
           docker run --rm -v "$PWD/aur:/aur:ro" archlinux:base-devel bash -euo pipefail -c '
             useradd -m builder
             cp -r /aur /home/builder/aur
@@ -1333,8 +1530,18 @@ jobs:
           printf '%s\n' "$AUR_SSH_PRIVATE_KEY" > "$ssh_dir/key"
           printf '%s\n' "$AUR_HOST_KEY" > "$ssh_dir/known_hosts"
           export GIT_SSH_COMMAND="ssh -i $ssh_dir/key -o IdentitiesOnly=yes -o UserKnownHostsFile=$ssh_dir/known_hosts -o StrictHostKeyChecking=yes"
+          # The AUR's SSH endpoint drops connections now and then: the clone and the push get three tries each.
+          retry() {
+            local attempt
+            for attempt in 1 2 3; do
+              "$@" && return 0
+              (( attempt < 3 )) || return 1
+              echo "::warning::$1 $2 failed (attempt $attempt); trying again"
+              sleep $(( attempt * 15 ))
+            done
+          }
           # A package that does not exist yet clones as an empty repository; the first push creates it.
-          git clone --quiet ssh://aur@aur.archlinux.org/reins-bin.git "$ssh_dir/reins-bin"
+          retry git clone --quiet ssh://aur@aur.archlinux.org/reins-bin.git "$ssh_dir/reins-bin"
           cp aur/PKGBUILD aur/.SRCINFO "$ssh_dir/reins-bin/"
           cd "$ssh_dir/reins-bin"
           git add PKGBUILD .SRCINFO
@@ -1343,7 +1550,7 @@ jobs:
             exit 0
           fi
           git -c user.name="Daniil Katulevskiy" -c user.email=support@reins2fa.com commit --quiet -m "Update to $VERSION"
-          git push --quiet origin HEAD:master
+          retry git push --quiet origin HEAD:master
           echo "::notice::Pushed reins-bin $VERSION to https://aur.archlinux.org/packages/reins-bin"
 
   # The Homebrew cask (katulevskiy/homebrew-tap, Casks/reins.rb: `brew install --cask katulevskiy/tap/reins`), written
@@ -1373,7 +1580,11 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
         run: |
-          gh release download "$TAG" --pattern SHA256SUMS --dir "$RUNNER_TEMP"
+          for attempt in 1 2 3; do
+            gh release download "$TAG" --pattern SHA256SUMS --dir "$RUNNER_TEMP" --clobber && break
+            (( attempt < 3 )) || exit 1
+            sleep $(( attempt * 15 ))
+          done
           scripts/package/homebrew-cask.sh --version "$VERSION" --sums "$RUNNER_TEMP/SHA256SUMS" --out cask/reins.rb
           ruby -c cask/reins.rb
           cat cask/reins.rb
@@ -1420,7 +1631,17 @@ jobs:
           printf '%s\n' "$HOMEBREW_TAP_DEPLOY_KEY" > "$ssh_dir/key"
           printf '%s\n' "$GITHUB_HOST_KEY" > "$ssh_dir/known_hosts"
           export GIT_SSH_COMMAND="ssh -i $ssh_dir/key -o IdentitiesOnly=yes -o UserKnownHostsFile=$ssh_dir/known_hosts -o StrictHostKeyChecking=yes"
-          git clone --quiet git@github.com:katulevskiy/homebrew-tap.git "$ssh_dir/tap"
+          # GitHub's SSH endpoint drops connections now and then: the clone and the push get three tries each.
+          retry() {
+            local attempt
+            for attempt in 1 2 3; do
+              "$@" && return 0
+              (( attempt < 3 )) || return 1
+              echo "::warning::$1 $2 failed (attempt $attempt); trying again"
+              sleep $(( attempt * 15 ))
+            done
+          }
+          retry git clone --quiet git@github.com:katulevskiy/homebrew-tap.git "$ssh_dir/tap"
           mkdir -p "$ssh_dir/tap/Casks"
           cp cask/reins.rb "$ssh_dir/tap/Casks/reins.rb"
           cd "$ssh_dir/tap"
@@ -1430,5 +1651,5 @@ jobs:
             exit 0
           fi
           git -c user.name="Daniil Katulevskiy" -c user.email=support@reins2fa.com commit --quiet -m "Reins $VERSION"
-          git push --quiet origin HEAD:main
+          retry git push --quiet origin HEAD:main
           echo "::notice::Updated https://github.com/katulevskiy/homebrew-tap to Reins $VERSION"
