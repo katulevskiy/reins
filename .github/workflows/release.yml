@@ -960,6 +960,8 @@ jobs:
           curl -fsSL --retry 5 --retry-all-errors -o "$RUNNER_TEMP/bundletool.jar" \
             "https://github.com/google/bundletool/releases/download/$BUNDLETOOL_VERSION/bundletool-all-$BUNDLETOOL_VERSION.jar"
           echo "$BUNDLETOOL_SHA256  $RUNNER_TEMP/bundletool.jar" | sha256sum -c -
+          # This job no longer builds the APK, which used to create dist/ first.
+          mkdir -p dist
           aab="dist/reins-$VERSION-play.aab"
           cp android/app/build/outputs/bundle/playRelease/app-play-release.aab "$aab"
           # The upload certificate is the production key (android/release-signing.sha256); Google Play refuses
