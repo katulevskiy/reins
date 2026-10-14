@@ -24,7 +24,7 @@ enum class LifetimeKind(val label: String, val seconds: Long?) {
 }
 
 /** The units of a custom time, and the most of each that can be picked. */
-enum class CustomUnit(val one: String, val many: String, val seconds: Long, val max: Int) {
+enum class LifetimeUnit(val one: String, val many: String, val seconds: Long, val max: Int) {
     HOURS("hour", "hours", 3_600, 720),
     DAYS("day", "days", 86_400, 365),
     WEEKS("week", "weeks", 604_800, 52),
@@ -60,12 +60,13 @@ data class ApprovalDraft(
     val classes: Set<String> = emptySet(),
     /** [LifetimeKind.CUSTOM]: how many of [customUnit]. */
     val customAmount: Int = 3,
-    val customUnit: CustomUnit = CustomUnit.DAYS,
+    val customUnit: LifetimeUnit = LifetimeUnit.DAYS,
     /**
-     * What a remembered approval covers: "anything like this" (the core's `quick.allow` scope: the same AI, the same
-     * kind of request, the same target) until the user picks what it covers under More (false).
+     * The user chose, in the "Remember for" sheet, that a remembered approval covers "anything like this" (the core's
+     * `quick.allow` scope: the same AI, the same kind of request, the same target), which can be wider than what the
+     * screen shows. Never on by default: a remembered approval covers what is on screen (see [buildChoice]).
      */
-    val likeThis: Boolean = true,
+    val likeThis: Boolean = false,
 )
 
 /**
@@ -83,9 +84,10 @@ fun lifetimeSeconds(view: ApprovalView, draft: ApprovalDraft): ULong? = when (dr
 const val LIKE_THIS_ALL_MAX_SECS = 604_800L
 
 /**
- * The answer the approval screen gives: [buildChoice], except that a remembered approval covers "anything like this"
- * (the core's `quick.allow` scope, for the time picked) unless the user chose what it covers. A scope over all mail
- * only goes with a time limit of a week at most; past that the picked scope (by default the ticked items) applies.
+ * The answer the approval screen gives: [buildChoice] (a remembered approval covers what the screen shows: the ticked
+ * items, the recipients, the target), except when the user explicitly chose "anything like this" in the "Remember
+ * for" sheet; then the core's `quick.allow` scope, for the time picked. A scope over all mail is never open-ended: it
+ * goes with a time limit of a week at most, else the request is refused rather than silently narrowed or widened.
  */
 fun buildDecision(view: ApprovalView, draft: ApprovalDraft): BuildResult {
     val like = view.quick?.allow
@@ -94,7 +96,9 @@ fun buildDecision(view: ApprovalView, draft: ApprovalDraft): BuildResult {
     if (!applies || like == null) return buildChoice(view, draft)
     if (draft.lifetime == LifetimeKind.USES && draft.uses !in 1..MAX_USES) return BuildResult.Invalid("Uses must be between 1 and $MAX_USES.")
     val secs = lifetimeSeconds(view, draft)
-    if (like.scope.allMail && (secs == null || secs > LIKE_THIS_ALL_MAX_SECS.toULong())) return buildChoice(view, draft)
+    if (like.scope.allMail && (secs == null || secs > LIKE_THIS_ALL_MAX_SECS.toULong())) {
+        return BuildResult.Invalid("Anything like this can be remembered for a week at most.")
+    }
     return when (val once = buildChoice(view, draft.copy(lifetime = LifetimeKind.ONCE))) {
         is BuildResult.Invalid -> once
         is BuildResult.Ok -> BuildResult.Ok(

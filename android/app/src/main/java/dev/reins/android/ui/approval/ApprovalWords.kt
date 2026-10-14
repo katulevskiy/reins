@@ -172,6 +172,10 @@ fun approveLabel(view: ApprovalView, draft: ApprovalDraft): String = when {
 
 fun denyLabel(view: ApprovalView): String = if (view.ask != null) "No" else "Deny"
 
+/** The remembered approval is "anything like this" (the user's explicit choice), wider than the screen shows. */
+fun likeThisOn(view: ApprovalView, draft: ApprovalDraft): Boolean =
+    draft.likeThis && view.quick?.allow != null && draft.lifetime != LifetimeKind.ONCE && draft.allMail == null && !view.noStanding
+
 /** Nothing here may be remembered: the dock says "Asked every time" instead of offering how long. */
 fun rememberLocked(view: ApprovalView): Boolean = view.noStanding || view.purchase != null
 

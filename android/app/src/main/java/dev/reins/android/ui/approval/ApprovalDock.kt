@@ -21,6 +21,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.Fingerprint
 import androidx.compose.material.icons.rounded.KeyboardArrowDown
 import androidx.compose.material.icons.rounded.Lock
+import androidx.compose.material.icons.rounded.UnfoldMore
 import androidx.compose.material3.Icon
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
@@ -73,10 +74,34 @@ internal fun Dock(view: ApprovalView, ui: ApprovalUi, viewModel: ApprovalViewMod
         when {
             view.kind == ApprovalKind.GRANT -> GrantPeriodRow(view, ui)
             rememberLocked(view) -> LockedRow()
-            else -> Segments(view, ui, viewModel)
+            else -> {
+                if (likeThisOn(view, ui.draft)) LikeThisNote()
+                Segments(view, ui, viewModel)
+            }
         }
         Spacer(Modifier.height(10.dp))
         Buttons(view, ui, viewModel, authenticator)
+    }
+}
+
+/** "Anything like this" was chosen: the dock says the remembered approval is wider than the screen. */
+@Composable
+private fun LikeThisNote() {
+    val c = LocalColors.current
+    val nav = LocalApprovalNav.current
+    Row(
+        Modifier
+            .padding(bottom = 8.dp)
+            .clip(CircleShape)
+            .background(c.warning.copy(alpha = 0.13f))
+            .pressable(shape = CircleShape, label = "What it covers") { nav.overlay = ApprovalOverlay.Remember }
+            .padding(horizontal = 12.dp, vertical = 6.dp)
+            .testTag("likeThisNote"),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Icon(Icons.Rounded.UnfoldMore, null, Modifier.size(15.dp), tint = c.warning)
+        Spacer(Modifier.width(6.dp))
+        RText("Anything like this", RType.sans(12.5f, FontWeight.SemiBold), c.warning, maxLines = 1)
     }
 }
 

@@ -354,7 +354,7 @@ private fun StepButton(icon: androidx.compose.ui.graphics.vector.ImageVector, la
 }
 
 @Composable
-private fun UnitMenu(unit: CustomUnit, onPick: (CustomUnit) -> Unit) {
+private fun UnitMenu(unit: LifetimeUnit, onPick: (LifetimeUnit) -> Unit) {
     val c = LocalColors.current
     var open by remember { mutableStateOf(false) }
     Box {
@@ -372,7 +372,7 @@ private fun UnitMenu(unit: CustomUnit, onPick: (CustomUnit) -> Unit) {
             Icon(Icons.Rounded.KeyboardArrowDown, null, Modifier.size(15.dp), tint = c.secondary)
         }
         DropdownMenu(open, onDismissRequest = { open = false }) {
-            CustomUnit.entries.forEach { u ->
+            LifetimeUnit.entries.forEach { u ->
                 DropdownMenuItem(
                     text = { RText(u.many, RType.sans(15f), c.text) },
                     onClick = {
@@ -421,16 +421,23 @@ private fun ScopeOptions(view: ApprovalView, ui: ApprovalUi, viewModel: Approval
             FactGroup(
                 rows = listOf(
                     {
-                        OptionRow(draft.likeThis && draft.allMail == null, "scope:like", onSelect = { viewModel.edit { it.copy(likeThis = true, allMail = null) } }) {
-                            Column(Modifier.weight(1f)) {
-                                RText("Anything like this", RType.sans(15.5f), c.text, maxLines = 1)
-                                RText(untrusted(view.quick!!.allowWhat), RType.sans(12.5f), c.tertiary, Modifier.padding(top = 2.dp).testTag("allowWhat"), maxLines = 2)
-                            }
+                        OptionRow(!draft.likeThis && draft.allMail == null, "scope:picked", onSelect = { viewModel.edit { it.copy(likeThis = false, allMail = null) } }) {
+                            RText("Only what's shown", RType.sans(15.5f), c.text, Modifier.weight(1f), maxLines = 1)
                         }
                     },
                     {
-                        OptionRow(!draft.likeThis && draft.allMail == null, "scope:picked", onSelect = { viewModel.edit { it.copy(likeThis = false, allMail = null) } }) {
-                            RText("Only what I pick below", RType.sans(15.5f), c.text, Modifier.weight(1f), maxLines = 1)
+                        // Wider than the screen: it says exactly what, and the dock says it is on.
+                        OptionRow(draft.likeThis && draft.allMail == null, "scope:like", danger = true, onSelect = { viewModel.edit { it.copy(likeThis = true, allMail = null) } }) {
+                            Column(Modifier.weight(1f)) {
+                                RText("Anything like this", RType.sans(15.5f, FontWeight.Medium), c.warning, maxLines = 1)
+                                RText(
+                                    "${untrusted(view.quick!!.allowWhat)}, by ${untrusted(view.connectionLabel)}",
+                                    RType.sans(12.5f),
+                                    c.tertiary,
+                                    Modifier.padding(top = 2.dp).testTag("allowWhat"),
+                                    maxLines = 2,
+                                )
+                            }
                         }
                     },
                 ),

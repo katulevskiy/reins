@@ -4,7 +4,7 @@ import dev.reins.android.TestData
 import dev.reins.android.ui.approval.ApprovalDraft
 import dev.reins.android.ui.approval.Badge
 import dev.reins.android.ui.approval.BuildResult
-import dev.reins.android.ui.approval.CustomUnit
+import dev.reins.android.ui.approval.LifetimeUnit
 import dev.reins.android.ui.approval.HeroTone
 import dev.reins.android.ui.approval.LifetimeKind
 import dev.reins.android.ui.approval.Segment
@@ -118,7 +118,7 @@ class ApprovalWordsTest {
         assertEquals("Forever", customLabel(ApprovalDraft(lifetime = LifetimeKind.UNTIL_REVOKED)))
         assertEquals("All mail", customLabel(ApprovalDraft(allMail = LifetimeKind.HOUR)))
         assertEquals("Remember until I revoke", rememberButton(view, ApprovalDraft(lifetime = LifetimeKind.UNTIL_REVOKED)))
-        assertEquals("Remember for 2 weeks", rememberButton(view, ApprovalDraft(lifetime = LifetimeKind.CUSTOM, customAmount = 2, customUnit = CustomUnit.WEEKS)))
+        assertEquals("Remember for 2 weeks", rememberButton(view, ApprovalDraft(lifetime = LifetimeKind.CUSTOM, customAmount = 2, customUnit = LifetimeUnit.WEEKS)))
         assertEquals("1 day", periodWords(86_400))
         assertEquals("30 days", periodWords(2_592_000))
         assertEquals("40s", secondsLabel(40))
@@ -131,32 +131,43 @@ class ApprovalWordsTest {
     fun `a custom time is counted in its unit and bounded`() {
         val view = TestData.writeView()
         assertEquals(259_200uL, lifetimeSeconds(view, ApprovalDraft(lifetime = LifetimeKind.CUSTOM)))
-        assertEquals(7_200uL, lifetimeSeconds(view, ApprovalDraft(lifetime = LifetimeKind.CUSTOM, customAmount = 2, customUnit = CustomUnit.HOURS)))
+        assertEquals(7_200uL, lifetimeSeconds(view, ApprovalDraft(lifetime = LifetimeKind.CUSTOM, customAmount = 2, customUnit = LifetimeUnit.HOURS)))
         assertNull(lifetimeSeconds(view, ApprovalDraft(lifetime = LifetimeKind.UNTIL_REVOKED)))
         val read = TestData.searchView()
         assertTrue(buildDecision(read, ApprovalDraft(setOf("m1"), LifetimeKind.CUSTOM, customAmount = 0)) is BuildResult.Invalid)
-        assertTrue(buildDecision(read, ApprovalDraft(setOf("m1"), LifetimeKind.CUSTOM, customAmount = 53, customUnit = CustomUnit.WEEKS)) is BuildResult.Invalid)
-        assertEquals(1_209_600uL, ok(buildDecision(read, ApprovalDraft(setOf("m1"), LifetimeKind.CUSTOM, customAmount = 2, customUnit = CustomUnit.WEEKS))).standing!!.durationSecs)
+        assertTrue(buildDecision(read, ApprovalDraft(setOf("m1"), LifetimeKind.CUSTOM, customAmount = 53, customUnit = LifetimeUnit.WEEKS)) is BuildResult.Invalid)
+        assertEquals(1_209_600uL, ok(buildDecision(read, ApprovalDraft(setOf("m1"), LifetimeKind.CUSTOM, customAmount = 2, customUnit = LifetimeUnit.WEEKS))).standing!!.durationSecs)
     }
 
     @Test
-    fun `remembering covers anything like this unless the user picks what it covers`() {
+    fun `a remembered approval covers what the screen shows unless anything like this is chosen`() {
         val view = TestData.quick(TestData.searchView())
         val like = view.quick!!.allow!!
-        // "1 hour" is the core's own "allow for a while": its scope and its period.
-        val hour = ok(buildDecision(view, ApprovalDraft(setOf("m1", "m2"), LifetimeKind.HOUR)))
-        assertEquals(like, hour.standing)
-        assertEquals(listOf("m1", "m2", "m3"), hour.selectedMessageIds)
-        assertEquals(28_800uL, ok(buildDecision(TestData.quick(TestData.searchView(), repeats = 3u), ApprovalDraft(setOf("m1"), LifetimeKind.HOUR))).standing!!.durationSecs)
-        // A day of the same, then the picked scope once the user chose it.
-        assertEquals(like.scope, ok(buildDecision(view, ApprovalDraft(setOf("m1"), LifetimeKind.DAY))).standing!!.scope)
-        assertTrue(ok(buildDecision(view, ApprovalDraft(setOf("m1"), LifetimeKind.DAY, likeThis = false))).standing!!.scope.selectedMessagesOnly)
-        // All mail is never open-ended: past a week, the ticked emails only.
+        assertTrue("the core's scope here is all mail", like.scope.allMail)
+        // Two emails ticked and 1 day: exactly those, never all mail.
+        val day = ok(buildDecision(view, ApprovalDraft(setOf("m1", "m2"), LifetimeKind.DAY))).standing!!
+        assertFalse(day.scope.allMail)
+        assertTrue(day.scope.selectedMessagesOnly)
+        assertEquals(86_400uL, day.durationSecs)
+        // 1 hour is the core's period (8 hours after repeats), still for what is shown.
+        val hour = ok(buildDecision(TestData.quick(TestData.searchView(), repeats = 3u), ApprovalDraft(setOf("m1"), LifetimeKind.HOUR))).standing!!
+        assertEquals(28_800uL, hour.durationSecs)
+        assertFalse(hour.scope.allMail)
+        // Until revoked: the ticked emails, never anything wider unless chosen.
         val forever = ok(buildDecision(view, ApprovalDraft(setOf("m1"), LifetimeKind.UNTIL_REVOKED))).standing!!
         assertFalse(forever.scope.allMail)
         assertTrue(forever.scope.selectedMessagesOnly)
-        assertNull("once remembers nothing", ok(buildDecision(view, ApprovalDraft(setOf("m1")))).standing)
-        // Nothing is ever remembered for what is asked every time.
-        assertNull("asked every time", ok(buildDecision(TestData.quick(TestData.vaultView()), ApprovalDraft(setOf("git:password"), LifetimeKind.HOUR))).standing)
+        // Chosen explicitly: the core's scope, for the time picked.
+        val chosen = ok(buildDecision(view, ApprovalDraft(setOf("m1", "m2"), LifetimeKind.HOUR, likeThis = true)))
+        assertEquals(like, chosen.standing)
+        assertEquals(listOf("m1", "m2", "m3"), chosen.selectedMessageIds)
+        // All mail chosen is still never open-ended: refused, not quietly changed.
+        assertTrue(buildDecision(view, ApprovalDraft(setOf("m1"), LifetimeKind.UNTIL_REVOKED, likeThis = true)) is BuildResult.Invalid)
+        assertTrue(buildDecision(view, ApprovalDraft(setOf("m1"), LifetimeKind.MONTH, likeThis = true)) is BuildResult.Invalid)
+        assertNull("once remembers nothing", ok(buildDecision(view, ApprovalDraft(setOf("m1"), likeThis = true))).standing)
+        assertNull("asked every time", ok(buildDecision(TestData.quick(TestData.vaultView()), ApprovalDraft(setOf("git:password"), LifetimeKind.HOUR, likeThis = true))).standing)
+        assertFalse(ApprovalDraft().likeThis)
+        assertFalse(dev.reins.android.ui.approval.likeThisOn(view, ApprovalDraft(lifetime = LifetimeKind.HOUR)))
+        assertTrue(dev.reins.android.ui.approval.likeThisOn(view, ApprovalDraft(lifetime = LifetimeKind.HOUR, likeThis = true)))
     }
 }
