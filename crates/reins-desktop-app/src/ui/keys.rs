@@ -90,6 +90,7 @@ impl Root {
         );
         page = page.when_some(d.notice.clone(), |p, n| p.child(caption(n, pal).px(px(4.0)).text_color(pal.danger)));
         page = page.when_some(d.note.clone(), |p, n| p.child(caption(n, pal).px(px(4.0))));
+        page = page.child(Self::secrets_hero(d, pal, cx));
 
         // APIs.
         let apis = if config.api.is_empty() {

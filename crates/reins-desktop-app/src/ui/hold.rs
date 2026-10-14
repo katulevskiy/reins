@@ -26,6 +26,8 @@ pub enum Held {
     PauseUntilResume,
     /// Disconnect this computer (forget the session, pair again).
     Disconnect,
+    /// Delete for good the originals a secrets import sent to the trash.
+    PurgeOriginals,
 }
 
 /// A hold in progress: what, and which press (a new press starts the fill again).
@@ -70,6 +72,7 @@ impl Root {
                 self.model.update(cx, |m, cx| m.pause_for(PauseFor::Manual, cx));
             }
             Held::Disconnect => self.model.update(cx, Model::sign_out),
+            Held::PurgeOriginals => self.model.update(cx, Model::purge_originals),
         }
         cx.notify();
     }
