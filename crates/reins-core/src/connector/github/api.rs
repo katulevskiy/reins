@@ -358,6 +358,7 @@ fn write_preview(call: &ConnectorCall) -> Result<Preview, CoreError> {
         once_only: target.once,
         class: Some(target.class.to_owned()),
         blob: None,
+        secrets: None,
     })
 }
 

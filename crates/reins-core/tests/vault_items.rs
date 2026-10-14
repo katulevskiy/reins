@@ -1341,6 +1341,7 @@ async fn deleting_for_good_and_emptying_the_trash_are_asked_every_time() {
             recipient_domains: vec![],
             resources: vec!["none".into(), "f2".into()],
             classes: vec!["organize".into()],
+            secrets: None,
         },
     };
     let (id, parked) = ask(&env, "item_delete", json!({"item": "old"})).await;
@@ -1496,6 +1497,7 @@ async fn a_standing_permission_for_a_folder_covers_that_folder_and_that_kind_of_
             recipient_domains: vec![],
             resources: vec!["f1".into()],
             classes: vec!["organize".into()],
+            secrets: None,
         },
     };
     let (id, parked) = ask(&env, "item_favorite", json!({"item": "git", "favorite": false})).await;

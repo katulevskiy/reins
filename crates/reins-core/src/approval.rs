@@ -724,6 +724,7 @@ mod tests {
             recipient_domains: vec![],
             resources: vec![],
             classes: vec![],
+            secrets: None,
         }
     }
 

@@ -938,6 +938,7 @@ impl Engine {
                     recipient_domains: Vec::new(),
                     resources: Vec::new(),
                     classes: Vec::new(),
+                    secrets: None,
                 },
             }),
         ))

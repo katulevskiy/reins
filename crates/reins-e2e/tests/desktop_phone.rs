@@ -37,6 +37,7 @@ fn scope(resources: &[&str]) -> GrantScopeChoice {
         recipient_addresses: vec![],
         resources: resources.iter().map(|r| (*r).to_owned()).collect(),
         classes: vec![],
+        secrets: None,
         recipient_domains: vec![],
     }
 }

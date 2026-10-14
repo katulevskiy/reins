@@ -737,6 +737,18 @@ pub fn approval_view(parked: &ParkedRequest) -> ApprovalView {
         headline: String::new(),
         quick: None,
         purchase: held.and_then(|h| h.purchase.as_ref()).map(crate::connector::payments::Plan::view),
+        env_release: match held.and_then(|h| h.preview.as_ref()).and_then(|p| p.secrets.as_ref()) {
+            Some(crate::connector::SecretsPreview::Release(v)) => Some(v.clone()),
+            _ => None,
+        },
+        secrets_store: match held.and_then(|h| h.preview.as_ref()).and_then(|p| p.secrets.as_ref()) {
+            Some(crate::connector::SecretsPreview::Store(v)) => Some(v.clone()),
+            _ => None,
+        },
+        token_store: match held.and_then(|h| h.preview.as_ref()).and_then(|p| p.secrets.as_ref()) {
+            Some(crate::connector::SecretsPreview::Token(v)) => Some(v.clone()),
+            _ => None,
+        },
     };
     crate::quick::decorate(parked, view)
 }
@@ -973,6 +985,7 @@ pub fn grant_summary(scope: &Scope) -> String {
         Scope::Accounts(s) if s.accounts.is_empty() => format!("See your {} accounts", service_name(&s.service)),
         Scope::Accounts(s) => format!("See {} of your {} accounts", s.accounts.len(), service_name(&s.service)),
         Scope::Headlines(s) => headlines_summary(&s.service),
+        Scope::Secrets(s) => format!("Use {} \u{b7} {} for {}", s.project, s.env, s.command.shown()),
     })
 }
 
@@ -1045,6 +1058,16 @@ pub fn scope_lines(scope: &Scope) -> Vec<String> {
             }
             lines.push("Not what is in them".to_owned());
         }
+        Scope::Secrets(s) => {
+            lines.push(format!("Run by {}", crate::connector::vault::runner_label(&s.runner)));
+            lines.push(format!("Command {}", s.command.shown()));
+            lines.push(format!("In {}", s.root));
+            lines.push(if s.fields.is_empty() {
+                "Every variable".to_owned()
+            } else {
+                format!("Variables {}", s.fields.join(", "))
+            });
+        }
     }
     lines.into_iter().map(|l| text::one_line(&l)).collect()
 }
@@ -1061,6 +1084,7 @@ pub fn grant_view(g: &StoredGrant) -> GrantView {
             Scope::Accounts(_) => "accounts".to_owned(),
             Scope::Service(s) => s.access.clone(),
             Scope::Headlines(_) => "headlines".to_owned(),
+            Scope::Secrets(_) => "secrets".to_owned(),
         },
         summary: grant_summary(&g.grant.scope),
         expires_at: g.grant.expires_at,
@@ -1073,6 +1097,7 @@ pub fn grant_view(g: &StoredGrant) -> GrantView {
             Scope::Service(s) => s.service.clone(),
             Scope::Accounts(s) => s.service.clone(),
             Scope::Headlines(s) => s.service.clone(),
+            Scope::Secrets(_) => reins_proto::connector::VAULT.to_owned(),
             _ => SERVICE_GMAIL.to_owned(),
         },
         account: g.grant.account.clone(),
@@ -1116,6 +1141,7 @@ fn editable_scope(scope: &Scope) -> Option<GrantScopeChoice> {
         recipient_domains: Vec::new(),
         resources: Vec::new(),
         classes: Vec::new(),
+        secrets: None,
     };
     match scope {
         Scope::Read(s) if s.any => Some(GrantScopeChoice {
@@ -1137,7 +1163,7 @@ fn editable_scope(scope: &Scope) -> Option<GrantScopeChoice> {
                 ..empty
             })
         }
-        Scope::Accounts(_) | Scope::Service(_) | Scope::Headlines(_) => None,
+        Scope::Accounts(_) | Scope::Service(_) | Scope::Headlines(_) | Scope::Secrets(_) => None,
         Scope::Send(s) => {
             if s.body.is_some() {
                 return None;

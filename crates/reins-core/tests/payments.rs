@@ -414,6 +414,7 @@ async fn a_purchase_shows_like_a_receipt_and_pays_with_the_vault_card_once_appro
                         recipient_domains: vec![],
                         resources: vec!["amazon.com".into()],
                         classes: vec![],
+                        secrets: None,
                     },
                 }),
             },

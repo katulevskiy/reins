@@ -185,6 +185,11 @@ impl<'a> PhoneApi<'a> {
         Self::send(self.request(Method::PUT, "/services").json(report)).await.map(drop)
     }
 
+    /// `POST /desktop/revocations`: "drop the secrets you hold", sealed to each paired computer (204).
+    pub async fn post_revocations(&self, post: &reins_proto::desktop::RevocationPost) -> Result<(), ApiFailure> {
+        Self::send(self.request(Method::POST, "/desktop/revocations").json(post)).await.map(drop)
+    }
+
     /// A2 `GET /pending?wait=` (long-poll, `wait` clamped to 25 s).
     pub async fn pending(&self, wait_secs: u32) -> Result<Pending, ApiFailure> {
         let wait = wait_secs.min(MAX_WAIT_SECS);
