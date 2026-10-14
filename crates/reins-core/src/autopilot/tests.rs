@@ -1455,3 +1455,27 @@ async fn every_decision_goes_through_on_a_store_sealed_before_entry_snapshots() 
     }
 }
 
+/// An entry's snapshot that cannot be written (its table gone while the app runs) never stops a bypass: the request is
+/// approved, a desktop question too, and the AI gets its answer.
+#[tokio::test]
+async fn a_bypass_approves_even_when_the_entry_snapshot_cannot_be_written() {
+    let env = env(false).await;
+    let secret = crypto_box::SecretKey::generate(&mut crypto_box::aead::OsRng);
+    let key = reins_proto::desktop::encode_key(secret.public_key().as_bytes());
+    env.store().pin_desktop_key(OLD, &key, "Laptop", unix_now() - 30 * 86_400).unwrap();
+    env.core.start_bypass(None, None).await.unwrap();
+    env.store().lock().unwrap().execute_batch("DROP TABLE audit_snapshots;").unwrap();
+    env.relay("r1", OLD, email("friend@x.com", "hi")).await;
+    env.relay("r2", OLD, hook_ask(&key, "", "command:rm -r", "rm -rf build")).await;
+    assert_eq!(
+        env.decided(),
+        [
+            ("r1".to_owned(), Verdict::Approve, "bypass".to_owned()),
+            ("r2".to_owned(), Verdict::Approve, "bypass".to_owned())
+        ]
+    );
+    for id in ["r1", "r2"] {
+        assert_eq!(env.answer(id).await.unwrap()["outcome"], "result", "{id}");
+    }
+    assert!(env.waiting().await.is_empty());
+}
