@@ -204,7 +204,11 @@ fn resolve(snap: &Snapshot, reference: &str) -> Result<Wanted, CoreError> {
         if item.is_empty() || field.is_empty() {
             continue;
         }
-        found.extend(named(snap, item).into_iter().map(|i| (i, field)));
+        found.extend(named(snap, item).into_iter().map(|i| (i, field)).filter(|(i, field)| {
+            // An environment is reached only as `project/env/NAME`, by that one split and a variable's name.
+            env::env_identity(snap, &snap.entries[*i])
+                .is_none_or(|(p, e)| item == format!("{p}/{e}") && reins_proto::desktop::var_ok(field))
+        }));
     }
     match found.as_slice() {
         [] if !reference.contains('/') => Err(bad(format!("`{shown}` must be item/field."))),

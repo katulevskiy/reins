@@ -658,6 +658,8 @@ pub const SECRETS_FOLDER: &str = "Reins";
 /// The hidden custom field that marks a Secure Note as an environment, and its value.
 pub const ENV_KIND_FIELD: &str = "reins.kind";
 pub const ENV_KIND: &str = "env/1";
+/// The hidden custom field that names the environment (its identity; the item's name is only shown).
+pub const ENV_NAME_FIELD: &str = "reins.env";
 /// Custom fields whose names start with this belong to Reins, not to the environment's variables.
 pub const RESERVED_PREFIX: &str = "reins.";
 /// The most variables one release or one environment holds, and the most bytes of values one release carries.
