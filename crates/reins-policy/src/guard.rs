@@ -2,7 +2,7 @@
 //!
 //! The desktop app asks the phone before a command or a file a rule matches, and says which rule. That label is the
 //! computer's word, and the computer is where the AI runs: the phone does not trust it to decide how a question is
-//! asked. It reads the command or the files the question carries with these rules itself ([`classify`]); what cannot
+//! asked. It reads everything the question carries with these rules itself ([`read`]); what cannot
 //! be undone is asked every time, held to approve and left to the user by Autopilot, whatever the label says.
 
 use crate::shell::{command_matches, file_matches, segments, text_words};
@@ -251,14 +251,53 @@ pub fn classify_command(command: &str) -> Option<Classified> {
     })
 }
 
-/// The built-in rule a hook's question matches, read from what it carries: the files listed after a `Files:` line
-/// (up to a blank line), else the whole text as a command line (its `Command:` and `In:` lines read as harmless
-/// words).
+/// What the phone reads in a question: the most severe built-in rule anything in it matches, and whether it could
+/// read it with certainty.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Reading {
+    pub found: Option<Classified>,
+    /// Every part read as a shell reads it (quotes, `$(` and heredocs close) and a `Files:` list names files. When
+    /// not, the question must be treated as guarded, not harmless.
+    pub certain: bool,
+}
+
+/// How severe a match is: what cannot be undone first, then the groups in [`BUILTIN`] order.
+fn severity(c: &Classified) -> (bool, std::cmp::Reverse<usize>) {
+    let at = BUILTIN.iter().position(|g| g.id == c.group.id).unwrap_or(usize::MAX);
+    (c.group.destructive, std::cmp::Reverse(at))
+}
+
+/// Reads every part of a question, whatever its layout: each text as a command line, and each of its lines as a
+/// file; the most severe match wins. The layout the computer wrote (`Files:`, `Command:`, blank lines) decides
+/// nothing: the computer is where the AI runs. The first text is what would run (the detail), so it must also read
+/// as a shell reads it; the others (a one-line rendering of it, a rule) are only searched.
 #[must_use]
-pub fn classify(detail: &str) -> Option<Classified> {
-    match detail.trim_start().strip_prefix("Files:") {
-        Some(files) => files.lines().skip(1).map(str::trim).take_while(|l| !l.is_empty()).find_map(classify_file),
-        None => classify_command(detail),
+pub fn read(texts: &[&str]) -> Reading {
+    let mut found: Vec<Classified> = Vec::new();
+    let mut certain = true;
+    for (i, text) in texts.iter().enumerate() {
+        found.extend(classify_command(text));
+        for line in text.lines() {
+            found.extend(classify_file(line.trim()));
+            // A labelled line (`Command: rm -rf ~`, `… wants to run: rm -rf ~`): what follows the label too.
+            if let Some((_, rest)) = line.split_once(": ") {
+                found.extend(classify_command(rest));
+            }
+        }
+        if i > 0 {
+            continue;
+        }
+        certain &= crate::shell::balanced(text);
+        // A `Files:` list that names nothing.
+        let mut lines = text.lines().map(str::trim).skip_while(|l| *l != "Files:");
+        if lines.next().is_some() && lines.next().is_none_or(str::is_empty) {
+            certain = false;
+        }
+    }
+    Reading {
+        // The most severe; of equal ones, the first found.
+        found: found.into_iter().rev().max_by_key(severity),
+        certain,
     }
 }
 
@@ -276,10 +315,37 @@ mod tests {
         assert_eq!(classify_command("cat .env; git push --force").unwrap().group.id, "git-history");
         assert_eq!(classify_command("cat .env.example"), None);
         assert_eq!(classify_command("cargo test"), None);
-        assert_eq!(classify("Files:\n/a/README.md\n/a/.env\n\nIn: /a").unwrap().group.id, "env-files");
-        assert_eq!(classify("Files:\n/a/README.md\n\nIn: /home/me/.ssh"), None, "only the files listed");
-        assert_eq!(classify("Command:\ngit push --force origin main\n\nIn: /a").unwrap().group.id, "git-history");
+        let id = |texts: &[&str]| read(texts).found.map(|c| c.group.id);
+        assert_eq!(id(&["Files:\n/a/README.md\n/a/.env\n\nIn: /a"]), Some("env-files"));
+        assert_eq!(id(&["Command:\ngit push --force origin main\n\nIn: /a"]), Some("git-history"));
+        assert!(read(&["Command:\ncargo test\n\nIn: /a"]).certain);
         assert!(BUILTIN.iter().all(|g| g.destructive == g.files.is_empty()));
         assert_eq!(group("keys").map(|g| g.label), Some("Keys and certificates"));
+    }
+
+    /// The question's layout is the computer's, and the computer is where the AI runs.
+    #[test]
+    fn every_part_is_read_and_the_most_severe_match_wins() {
+        let id = |texts: &[&str]| read(texts).found.map(|c| c.group.id);
+        // A crafted `Files:` prefix, and a blank line before the command.
+        assert_eq!(id(&["Files:\n\nCommand: rm -rf ~"]), Some("deletes"));
+        assert_eq!(id(&["Files:\nREADME.md\n\nrm -rf ~"]), Some("deletes"));
+        // A mild match listed before a destructive one.
+        assert_eq!(id(&["Files:\n.env\n\nCommand:\ncat .env && git reset --hard"]), Some("git-history"));
+        assert_eq!(id(&["cat ~/.ssh/id_rsa; cat .env"]), Some("keys"), "of equal severity: the first group");
+        // Across the texts of a question (its detail, its question line).
+        assert_eq!(
+            id(&["Command:\ncat .env", "Claude Code wants to run: x; terraform destroy"]),
+            Some("infrastructure")
+        );
+        // What cannot be read with certainty.
+        assert!(!read(&["Files:\n\nIn: /a"]).certain, "an empty Files list");
+        assert!(!read(&["Files:"]).certain);
+        assert!(!read(&["echo 'unclosed; rm -rf ~"]).certain, "an unbalanced quote");
+        assert!(!read(&["echo \"$(rm -rf ~\""]).certain);
+        assert!(!read(&["cat <<EOF\nnever ends"]).certain);
+        // A heredoc's body is not shell text: its apostrophes are not quotes.
+        assert!(read(&["python3 - <<'EOF'\nprint(\"don't\")\nEOF\n\nIn: /a"]).certain);
+        assert!(read(&["ls # don't"]).certain, "a comment");
     }
 }

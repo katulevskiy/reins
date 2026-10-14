@@ -109,6 +109,101 @@ pub fn words(text: &str) -> Vec<String> {
     segments(text).into_iter().next().unwrap_or_default()
 }
 
+/// Whether a command line can be read with certainty, as a POSIX shell reads it: every quote, backtick and `$(`
+/// closes. A heredoc's body is not shell text, so it is skipped (up to its delimiter line), as the shell does.
+#[must_use]
+pub fn balanced(text: &str) -> bool {
+    let mut chars = text.chars().peekable();
+    let mut depth = 0_usize;
+    let mut heredocs: Vec<String> = Vec::new();
+    let mut word_start = true;
+    while let Some(c) = chars.next() {
+        let at_start = std::mem::replace(&mut word_start, c.is_whitespace() || matches!(c, ';' | '|' | '&' | '('));
+        match c {
+            '#' if at_start => {
+                // A comment, up to the line's end.
+                while chars.next_if(|n| *n != '\n').is_some() {}
+            }
+            '\\' => {
+                chars.next();
+            }
+            '\'' => {
+                if !chars.by_ref().any(|q| q == '\'') {
+                    return false;
+                }
+            }
+            '"' | '`' => {
+                let mut closed = false;
+                // `$(` inside double quotes must close inside them.
+                let mut inner = 0_usize;
+                while let Some(q) = chars.next() {
+                    match q {
+                        '\\' => {
+                            chars.next();
+                        }
+                        '$' if c == '"' && chars.peek() == Some(&'(') => {
+                            chars.next();
+                            inner += 1;
+                        }
+                        ')' if inner > 0 => inner -= 1,
+                        q if q == c => {
+                            closed = true;
+                            break;
+                        }
+                        _ => {}
+                    }
+                }
+                if !closed || inner > 0 {
+                    return false;
+                }
+            }
+            '$' if chars.peek() == Some(&'(') => {
+                chars.next();
+                depth += 1;
+            }
+            ')' if depth > 0 => depth -= 1,
+            '<' if chars.peek() == Some(&'<') => {
+                chars.next();
+                if chars.next_if_eq(&'<').is_some() {
+                    continue;
+                }
+                chars.next_if_eq(&'-');
+                while chars.next_if(|n| *n == ' ' || *n == '\t').is_some() {}
+                let mut delimiter = String::new();
+                while let Some(&n) = chars.peek() {
+                    if n.is_whitespace() || matches!(n, ';' | '|' | '&' | '<' | '>' | '(' | ')') {
+                        break;
+                    }
+                    chars.next();
+                    if !matches!(n, '\'' | '"' | '\\') {
+                        delimiter.push(n);
+                    }
+                }
+                if delimiter.is_empty() {
+                    return false;
+                }
+                heredocs.push(delimiter);
+            }
+            '\n' => {
+                for delimiter in std::mem::take(&mut heredocs) {
+                    loop {
+                        let line: String = chars.by_ref().take_while(|n| *n != '\n').collect();
+                        if line.trim_start_matches('\t').trim_end_matches('\r') == delimiter {
+                            break;
+                        }
+                        if chars.peek().is_none() {
+                            // A heredoc that never ends.
+                            return false;
+                        }
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+    depth == 0 && heredocs.is_empty()
+}
+
 /// The simple commands in a shell command line, each as its words with the program's name first: quotes and escapes
 /// resolved, `;`, `&`, `|`, `&&`, `||`, newlines, parentheses, `$(…)` and backticks separate commands; variable
 /// assignments and wrappers (`sudo`, `env`, `nohup`, `time`, `command`, `exec`, `nice`, `doas`) before the program are
