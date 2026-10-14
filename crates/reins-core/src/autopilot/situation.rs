@@ -302,6 +302,14 @@ pub fn describe_request(view: &ApprovalView) -> Described {
         };
         f.class = kind;
         f.target = subject;
+        if let Some(rule) = &ask.rule {
+            // The group the phone read it as is its own kind (`desktop/ask/env-files`), learnt on its own; what only
+            // the computer reports is not.
+            if let Some(group) = rule.group.as_ref().filter(|_| !rule.reported) {
+                f.class.clone_from(group);
+            }
+            f.details.push(format!("matched the rule {} ({})", rule.label, rule.pattern));
+        }
         if f.operation.is_empty() {
             "Answer a question from the desktop app".clone_into(&mut f.operation);
         }

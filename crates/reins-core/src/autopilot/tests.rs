@@ -577,6 +577,54 @@ async fn a_failing_connection_listing_neither_blocks_a_bypass_nor_makes_a_known_
     assert!(env.decided().iter().any(|(id, v, by)| id == "r4" && *v == Verdict::Approve && by == "bypass"));
 }
 
+/// A harness hook's question, from the desktop app paired on `OLD` with `key`: `rule` lines first, then `command`.
+fn hook_ask(key: &str, rule: &str, topic: &str, command: &str) -> Value {
+    json!({"tool": "connector", "service": "desktop", "op": "ask", "args": {
+        "question": format!("Claude Code wants to run: {command}"), "detail": format!("{rule}\nCommand:\n{command}"),
+        "topic": topic, "client_key": key, "nonce": "n1"}})
+}
+
+const ENV_RULE: &str = "Rule: .env files · .env\nMatched: .env\nGroup: env-files\n";
+
+/// The phone reads a hook's question itself: a secret file is judged in its own class (Manual shows a score, Auto
+/// learns it); what cannot be undone waits in Manual and Auto, whatever the computer calls it; Bypass answers both.
+#[tokio::test]
+async fn hook_questions_are_judged_by_the_rule_the_phone_reads() {
+    let env = env(true).await;
+    let secret = crypto_box::SecretKey::generate(&mut crypto_box::aead::OsRng);
+    let key = reins_proto::desktop::encode_key(secret.public_key().as_bytes());
+    env.store().pin_desktop_key(OLD, &key, "Laptop", unix_now() - 30 * 86_400).unwrap();
+    env.model.set_default(logits(0.97, 0.01, 0.02));
+
+    env.relay("r1", OLD, hook_ask(&key, ENV_RULE, "file:.env", "cat .env")).await;
+    let s = env.suggestion("r1").await;
+    assert!(s.judged && !s.floor, "Manual shows a score: {s:?}");
+    assert_eq!(s.class_key, "desktop/ask/env-files");
+    // `rm -rf ~` reported as a secret file: the phone reads a recursive delete, which always waits.
+    env.relay("r2", OLD, hook_ask(&key, ENV_RULE, "file:.env", "rm -rf ~")).await;
+    let s = env.suggestion("r2").await;
+    assert!(s.floor && !s.judged, "{s:?}");
+    assert_eq!(s.class_key, "desktop/ask/deletes");
+
+    // Auto, the class unlocked: a secret file is approved by Autopilot once its target is known; a delete waits.
+    env.approve("r1").await;
+    env.mode(None, AutopilotMode::Auto).await;
+    env.unlock("desktop/ask/env-files").await;
+    env.relay("r3", OLD, hook_ask(&key, ENV_RULE, "file:.env", "head -1 .env")).await;
+    env.relay("r4", OLD, hook_ask(&key, "", "command:rm -r", "rm -rf build")).await;
+    assert_eq!(env.decided(), [("r3".to_owned(), Verdict::Approve, "autopilot".to_owned())]);
+    let mut waiting = env.waiting().await;
+    waiting.sort();
+    assert_eq!(waiting, ["r2", "r4"]);
+
+    // Bypass answers what waits, the floor included.
+    env.core.start_bypass(None, None).await.unwrap();
+    assert!(env.waiting().await.is_empty());
+    for id in ["r2", "r4"] {
+        assert_eq!(env.answer(id).await.unwrap()["outcome"], "result", "{id}");
+    }
+}
+
 /// Android's push entry point (FCM in the background, or its retry job): the pass runs there, so a bypass answers
 /// without the app on screen.
 #[tokio::test]

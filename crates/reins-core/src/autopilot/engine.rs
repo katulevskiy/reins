@@ -252,7 +252,12 @@ fn class_label(engine: &Engine, key: &str) -> String {
         Some(id) => engine.store.mcp_server(id).ok().flatten().map_or_else(|| "MCP".to_owned(), |s| s.name),
         None => views::service_name(service).to_owned(),
     };
-    std::iter::once(name).chain(parts.map(str::to_owned)).collect::<Vec<_>>().join(" · ")
+    // A hook's question by its rule's group: "Desktop app · ask · .env files".
+    let named = |part: &str| match crate::connector::desktop::guard_group_label(part) {
+        Some(label) if service == reins_proto::connector::DESKTOP => label.to_owned(),
+        _ => part.to_owned(),
+    };
+    std::iter::once(name).chain(parts.map(named)).collect::<Vec<_>>().join(" · ")
 }
 
 /// A class key from a typed situation (the playground).

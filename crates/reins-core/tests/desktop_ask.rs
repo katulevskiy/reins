@@ -8,7 +8,8 @@ use common::desktop::{DESK, Desk, REFUSED, call, choice, desk_with, mount_reins,
 use reins_core::{ApprovalKind, CoreConfig, CoreError};
 use reins_proto::desktop::{AskAnswer, encode_key};
 use serde_json::{Value, json};
-use wiremock::MockServer;
+use wiremock::matchers::{method, path};
+use wiremock::{Mock, MockServer, ResponseTemplate};
 
 async fn desk() -> Desk {
     let server = MockServer::start().await;
@@ -151,7 +152,8 @@ async fn a_hook_question_says_what_yes_means_and_repeats_count_per_topic() {
     ])
     .await;
     assert_eq!(desk.core.approval_view("r2".to_owned()).await.unwrap().quick.unwrap().repeats, 1);
-    assert_eq!(desk.core.approval_view("r3".to_owned()).await.unwrap().quick.unwrap().repeats, 0);
+    // Publishing cannot be undone: asked every time, never in one tap.
+    assert!(desk.core.approval_view("r3".to_owned()).await.unwrap().quick.is_none());
 }
 
 #[tokio::test]
@@ -173,4 +175,162 @@ async fn a_destructive_command_is_asked_every_time_and_never_in_one_tap() {
     desk.core.approve("r1".to_owned(), choice(&[], None)).await.unwrap();
     let answer: AskAnswer = desk.open(&desk.data("r1").await["sealed"]);
     assert!(answer.approved);
+}
+
+// ---- harness hooks' questions: the rule they matched, and Bypass ----------------------------------------------------
+
+/// The first lines of a hook's question (`reins_desktop::hooks::rule_lines`).
+const ENV_RULE: &str = "Rule: .env files · .env\nMatched: app/.env\nGroup: env-files\n";
+const FORCE_RULE: &str = "Rule: Rewriting git history · git push --force*\nMatched: git push --force origin main\n\
+                          Group: git-history (destructive)\n";
+
+/// A harness hook's question: `rule` first (empty: a desktop app too old to write it), then the command.
+fn hook_ask(desk: &Desk, id: &str, rule: &str, topic: &str, command: &str) -> Value {
+    let detail = format!("{rule}\nCommand:\n{command}\n\nIn: /home/me/app");
+    ask_about(desk, id, &format!("Claude Code wants to run: {command}"), Some(topic), detail.trim_start())
+}
+
+/// Every hook question there is: a secret file, something that cannot be undone, the screenshot's question as an
+/// older desktop app sent it (a heredoc that matched the cloud credentials rule), and a plain `reins ask`.
+fn every_kind(desk: &Desk, prefix: &str) -> Vec<Value> {
+    vec![
+        hook_ask(desk, &format!("{prefix}1"), ENV_RULE, "file:.env", "cat app/.env"),
+        hook_ask(desk, &format!("{prefix}2"), FORCE_RULE, "command:git push --force*", "git push --force origin main"),
+        hook_ask(
+            desk,
+            &format!("{prefix}3"),
+            "",
+            "file:.config/gcloud/*",
+            "cd crates/x && python3 - <<'EOF'\np='tests.rs'\nrep('''home.join(\".config/gcloud/adc.json\")''', '')\nEOF",
+        ),
+        ask(desk, &format!("{prefix}4"), "Deploy now?", None),
+    ]
+}
+
+/// Each was answered yes, sealed to the app with its own nonce.
+async fn all_yes(desk: &Desk, ids: &[&str]) {
+    for id in ids {
+        let answer: AskAnswer = desk.open(&desk.data(id).await["sealed"]);
+        assert_eq!((answer.nonce, answer.approved), (format!("nonce-{id}"), true), "{id}");
+    }
+    assert!(desk.waiting().await.is_empty(), "nothing waits");
+}
+
+/// A desk whose server lists its connection as made a month ago, and where a connection may be bypassed at once.
+async fn old_desk() -> Desk {
+    let server = MockServer::start().await;
+    mount_reins(&server).await;
+    Mock::given(method("GET"))
+        .and(path("/reins/api/connections"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({"connections": [{"id": DESK,
+            "label": "Laptop", "client_name": "Reins desktop app", "client_host": "127.0.0.1",
+            "created_at": 1_000, "last_used_at": null}]})))
+        .mount(&server)
+        .await;
+    let cfg = CoreConfig {
+        new_connection_secs: 0,
+        ..CoreConfig::default()
+    };
+    let desk = desk_with(server, "me@example.com", "pw", cfg).await;
+    desk.pair().await;
+    desk
+}
+
+#[tokio::test]
+async fn a_secret_files_question_is_an_ordinary_yes_or_no_that_shows_its_rule() {
+    let desk = desk().await;
+    desk.pair().await;
+    desk.send(&every_kind(&desk, "r")).await;
+    let env = desk.core.approval_view("r1".to_owned()).await.unwrap();
+    let rule = env.ask.as_ref().unwrap().rule.clone().expect("the rule");
+    assert_eq!((rule.label.as_str(), rule.matched.as_str()), (".env files", "app/.env"));
+    assert_eq!((rule.group.as_deref(), rule.destructive), (Some("env-files"), false));
+    assert_eq!(env.ask.unwrap().detail.as_deref(), Some("Command:\ncat app/.env\n\nIn: /home/me/app"));
+    assert!(!env.no_standing && env.quick.is_some(), "a normal yes or no, one tap from the notification");
+    let force = desk.core.approval_view("r2".to_owned()).await.unwrap();
+    assert!(force.ask.unwrap().rule.unwrap().destructive);
+    assert!(force.no_standing && force.quick.is_none(), "asked every time, held to approve");
+    // An older desktop app's file question (the screenshot's): no longer asked every time.
+    let old = desk.core.approval_view("r3".to_owned()).await.unwrap();
+    assert!(!old.no_standing && old.quick.is_some());
+    // The computer's label cannot loosen a question: `rm -rf ~` reported as a secret file is asked every time.
+    desk.send(&[hook_ask(&desk, "r6", ENV_RULE, "file:.env", "rm -rf ~")]).await;
+    let understated = desk.core.approval_view("r6".to_owned()).await.unwrap();
+    assert!(understated.no_standing && understated.quick.is_none());
+    assert_eq!(understated.ask.unwrap().rule.unwrap().group.as_deref(), Some("deletes"));
+    // A standing answer may cover a secret file's topic.
+    desk.core.approve("r1".to_owned(), choice(&[], standing(&["file:.env"], &[]))).await.unwrap();
+    desk.send(&[hook_ask(&desk, "r5", ENV_RULE, "file:.env", "head -1 app/.env")]).await;
+    let answer: AskAnswer = desk.open(&desk.data("r5").await["sealed"]);
+    assert!(answer.approved);
+}
+
+#[tokio::test]
+async fn a_global_bypass_answers_every_hook_question_yes_at_once() {
+    let desk = desk().await;
+    desk.pair().await;
+    desk.core.start_bypass(None, Some(60)).await.unwrap();
+    desk.send(&every_kind(&desk, "r")).await;
+    all_yes(&desk, &["r1", "r2", "r3", "r4"]).await;
+    let decided: Vec<String> = desk
+        .core
+        .activity(10)
+        .await
+        .unwrap()
+        .into_iter()
+        .filter(|a| a.op == "ask")
+        .map(|a| format!("{} {}", a.outcome, a.decided_by))
+        .collect();
+    assert_eq!(decided, ["sent bypass"; 4]);
+}
+
+#[tokio::test]
+async fn a_bypass_until_turned_off_answers_every_hook_question() {
+    let desk = desk().await;
+    desk.pair().await;
+    desk.core.start_bypass(None, None).await.unwrap();
+    desk.send(&every_kind(&desk, "r")).await;
+    all_yes(&desk, &["r1", "r2", "r3", "r4"]).await;
+}
+
+#[tokio::test]
+async fn the_desktop_apps_own_bypass_answers_its_questions() {
+    let desk = old_desk().await;
+    desk.core.start_bypass(Some(DESK.to_owned()), Some(30)).await.unwrap();
+    desk.send(&every_kind(&desk, "r")).await;
+    all_yes(&desk, &["r1", "r2", "r3", "r4"]).await;
+}
+
+#[tokio::test]
+async fn a_bypass_started_while_questions_wait_answers_them() {
+    let desk = old_desk().await;
+    desk.send(&every_kind(&desk, "r")).await;
+    assert_eq!(desk.waiting().await.len(), 4, "Manual: they wait");
+    desk.core.start_bypass(Some(DESK.to_owned()), None).await.unwrap();
+    all_yes(&desk, &["r1", "r2", "r3", "r4"]).await;
+}
+
+/// The app in the background: a push alone (Android's FCM job), or the iOS notification extension that cannot run
+/// the model.
+#[tokio::test]
+async fn a_push_in_the_background_is_answered_by_a_bypass() {
+    let desk = desk().await;
+    desk.pair().await;
+    desk.core.start_bypass(None, None).await.unwrap();
+    // (Not `p…`: the pairing was `p1`.)
+    let asks = every_kind(&desk, "q");
+    for (i, a) in asks.iter().enumerate() {
+        let id = format!("q{}", i + 1);
+        Mock::given(method("GET"))
+            .and(path(format!("/reins/api/requests/{id}")))
+            .respond_with(ResponseTemplate::new(200).set_body_json(a))
+            .mount(&desk.server)
+            .await;
+        if i % 2 == 0 {
+            desk.core.handle_push("req".to_owned(), id).await.unwrap();
+        } else {
+            desk.core.handle_push_deferring_autopilot("req".to_owned(), id).await.unwrap();
+        }
+    }
+    all_yes(&desk, &["q1", "q2", "q3", "q4"]).await;
 }

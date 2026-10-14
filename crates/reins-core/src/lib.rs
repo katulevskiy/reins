@@ -63,4 +63,4 @@ pub use types::{
     PairingView, PendingItem, PendingKind, QuickApproval, ResourceView, ServiceView, SessionInfo, StandingGrant,
     StartingPolicy,
 };
-pub use types::{AskView, SecretReleaseView, SshSignView};
+pub use types::{AskRuleView, AskView, SecretReleaseView, SshSignView};

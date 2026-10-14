@@ -6127,6 +6127,119 @@ public func FfiConverterTypeApprovalView_lower(_ value: ApprovalView) -> RustBuf
 
 
 /**
+ * The guard rule a desktop question matches.
+ */
+public struct AskRuleView: Equatable, Hashable {
+    /**
+     * What the rule is about: its group's label (".env files", "Rewriting git history"), or "Your rule".
+     */
+    public var label: String
+    /**
+     * The rule itself (`.env`, `git push --force*`).
+     */
+    public var pattern: String
+    /**
+     * What in the command matched it (`app/.env`, `git push --force origin main`).
+     */
+    public var matched: String
+    /**
+     * The built-in group (`env-files`, `git-history`); `None` for the user's own rules.
+     */
+    public var group: String?
+    /**
+     * What it covers cannot be undone: asked every time, held to approve, and never judged by Autopilot in Manual or
+     * Auto.
+     */
+    public var destructive: Bool
+    /**
+     * Only the computer says so: the phone did not find this rule in the command itself (the user's own rule, or a
+     * group this phone does not know). Shown as reported; it can make a question stricter, never looser.
+     */
+    public var reported: Bool
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(
+        /**
+         * What the rule is about: its group's label (".env files", "Rewriting git history"), or "Your rule".
+         */label: String, 
+        /**
+         * The rule itself (`.env`, `git push --force*`).
+         */pattern: String, 
+        /**
+         * What in the command matched it (`app/.env`, `git push --force origin main`).
+         */matched: String, 
+        /**
+         * The built-in group (`env-files`, `git-history`); `None` for the user's own rules.
+         */group: String?, 
+        /**
+         * What it covers cannot be undone: asked every time, held to approve, and never judged by Autopilot in Manual or
+         * Auto.
+         */destructive: Bool, 
+        /**
+         * Only the computer says so: the phone did not find this rule in the command itself (the user's own rule, or a
+         * group this phone does not know). Shown as reported; it can make a question stricter, never looser.
+         */reported: Bool) {
+        self.label = label
+        self.pattern = pattern
+        self.matched = matched
+        self.group = group
+        self.destructive = destructive
+        self.reported = reported
+    }
+
+    
+
+    
+}
+
+#if compiler(>=6)
+extension AskRuleView: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeAskRuleView: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> AskRuleView {
+        return
+            try AskRuleView(
+                label: FfiConverterString.read(from: &buf), 
+                pattern: FfiConverterString.read(from: &buf), 
+                matched: FfiConverterString.read(from: &buf), 
+                group: FfiConverterOptionString.read(from: &buf), 
+                destructive: FfiConverterBool.read(from: &buf), 
+                reported: FfiConverterBool.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: AskRuleView, into buf: inout [UInt8]) {
+        FfiConverterString.write(value.label, into: &buf)
+        FfiConverterString.write(value.pattern, into: &buf)
+        FfiConverterString.write(value.matched, into: &buf)
+        FfiConverterOptionString.write(value.group, into: &buf)
+        FfiConverterBool.write(value.destructive, into: &buf)
+        FfiConverterBool.write(value.reported, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeAskRuleView_lift(_ buf: RustBuffer) throws -> AskRuleView {
+    return try FfiConverterTypeAskRuleView.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeAskRuleView_lower(_ value: AskRuleView) -> RustBuffer {
+    return FfiConverterTypeAskRuleView.lower(value)
+}
+
+
+/**
  * A question from the desktop app; approving it answers yes.
  */
 public struct AskView: Equatable, Hashable {
@@ -6142,6 +6255,16 @@ public struct AskView: Equatable, Hashable {
      * What a standing answer may cover (`command:git push --force`); `None`: a question without a topic.
      */
     public var topic: String?
+    /**
+     * The guard rule the question matches, as the phone reads its command or files (else as the computer reports
+     * it); `None` when there is none.
+     */
+    public var rule: AskRuleView?
+    /**
+     * The phone could not read the question with certainty (an unbalanced quote, a detail cut short): Autopilot
+     * leaves it to the user in Manual and Auto.
+     */
+    public var uncertain: Bool
 
     // Default memberwise initializers are never public by default, so we
     // declare one manually.
@@ -6154,10 +6277,20 @@ public struct AskView: Equatable, Hashable {
          */detail: String?, 
         /**
          * What a standing answer may cover (`command:git push --force`); `None`: a question without a topic.
-         */topic: String?) {
+         */topic: String?, 
+        /**
+         * The guard rule the question matches, as the phone reads its command or files (else as the computer reports
+         * it); `None` when there is none.
+         */rule: AskRuleView? = nil, 
+        /**
+         * The phone could not read the question with certainty (an unbalanced quote, a detail cut short): Autopilot
+         * leaves it to the user in Manual and Auto.
+         */uncertain: Bool = false) {
         self.question = question
         self.detail = detail
         self.topic = topic
+        self.rule = rule
+        self.uncertain = uncertain
     }
 
     
@@ -6178,7 +6311,9 @@ public struct FfiConverterTypeAskView: FfiConverterRustBuffer {
             try AskView(
                 question: FfiConverterString.read(from: &buf), 
                 detail: FfiConverterOptionString.read(from: &buf), 
-                topic: FfiConverterOptionString.read(from: &buf)
+                topic: FfiConverterOptionString.read(from: &buf), 
+                rule: FfiConverterOptionTypeAskRuleView.read(from: &buf), 
+                uncertain: FfiConverterBool.read(from: &buf)
         )
     }
 
@@ -6186,6 +6321,8 @@ public struct FfiConverterTypeAskView: FfiConverterRustBuffer {
         FfiConverterString.write(value.question, into: &buf)
         FfiConverterOptionString.write(value.detail, into: &buf)
         FfiConverterOptionString.write(value.topic, into: &buf)
+        FfiConverterOptionTypeAskRuleView.write(value.rule, into: &buf)
+        FfiConverterBool.write(value.uncertain, into: &buf)
     }
 }
 
@@ -14973,6 +15110,30 @@ fileprivate struct FfiConverterOptionTypeDeviceBridge: FfiConverterRustBuffer {
         switch try readInt(&buf) as Int8 {
         case 0: return nil
         case 1: return try FfiConverterTypeDeviceBridge.read(from: &buf)
+        default: throw UniffiInternalError.unexpectedOptionalTag
+        }
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+fileprivate struct FfiConverterOptionTypeAskRuleView: FfiConverterRustBuffer {
+    typealias SwiftType = AskRuleView?
+
+    public static func write(_ value: SwiftType, into buf: inout [UInt8]) {
+        guard let value = value else {
+            writeInt(&buf, Int8(0))
+            return
+        }
+        writeInt(&buf, Int8(1))
+        FfiConverterTypeAskRuleView.write(value, into: &buf)
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> SwiftType {
+        switch try readInt(&buf) as Int8 {
+        case 0: return nil
+        case 1: return try FfiConverterTypeAskRuleView.read(from: &buf)
         default: throw UniffiInternalError.unexpectedOptionalTag
         }
     }
