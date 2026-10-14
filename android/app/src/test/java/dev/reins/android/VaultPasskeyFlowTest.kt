@@ -242,7 +242,7 @@ class VaultPasskeyFlowTest : FlowHarness() {
         launch()
         if (core.vaultPasskeys.isEmpty()) tap("skipPasskey")
         recordRecovery()
-        tap("openSettings")
+        tap("tabSettings")
         awaitTag("vaultPasskeysRow")
     }
 
@@ -290,7 +290,7 @@ class VaultPasskeyFlowTest : FlowHarness() {
     fun anAccountWithAMasterPasswordHasNoPasskeyRow() {
         core.session = dev.reins.core.SessionInfo("http://127.0.0.1:8000", "me@example.com")
         launch()
-        tap("openSettings")
+        tap("tabSettings")
         awaitCore { core.recoveryCodeReads.get() > 0 }
         assertFalse(has("vaultPasskeysRow"))
     }

@@ -53,7 +53,7 @@ class FastAndOptimisticFlowTest : FlowHarness() {
         UpdateProvider.installer = installer
         (UpdateProvider.fetcher as FakeUpdateServer).publish(29_834_567, versionName = "0.9.0")
         launch()
-        tap("openSettings")
+        tap("tabSettings")
         tap("installUpdate")
         awaitTag("allowInstalls")
         tap("allowInstalls")

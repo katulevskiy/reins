@@ -69,7 +69,6 @@ import dev.reins.android.ui.common.ConnectionIcon
 import dev.reins.android.ui.common.fullTitle
 import dev.reins.android.ui.common.relativeTime
 import dev.reins.android.ui.common.untrusted
-import dev.reins.android.ui.main.SettingsButton
 import dev.reins.core.PendingItem
 import dev.reins.core.PendingKind
 import kotlinx.coroutines.Dispatchers
@@ -87,7 +86,8 @@ fun ActivityScreen(
     onOpenPending: (PendingItem) -> Unit,
     onOpenEntry: (Long) -> Unit,
     onIntegrations: () -> Unit,
-    onSettings: () -> Unit = {},
+    /** The mode pill: the quick switcher (or the Autopilot tab). */
+    onAutopilot: () -> Unit = {},
     /** "Approve all" (true) or "Deny all" (false) for a burst of requests from one AI. */
     onAnswerBurst: (Burst, Boolean) -> Unit = { _, _ -> },
     /** With nothing connected yet: pair a computer, or get the address for Claude.ai / ChatGPT. */
@@ -162,7 +162,8 @@ fun ActivityScreen(
             item(key = "title") {
                 LargeTitle("Activity") {
                     dev.reins.android.ui.main.HeaderPill("Integrations", Glyph.Apps, "integrations", onIntegrations)
-                    SettingsButton(onSettings)
+                    val apSettings by container.state.autopilot.collectAsStateWithLifecycle()
+                    dev.reins.android.ui.main.ModePill(apSettings, onAutopilot)
                 }
             }
             if (!notifications.enabled) {

@@ -8,6 +8,7 @@ import androidx.compose.ui.test.hasText
 import androidx.compose.ui.test.junit4.v2.createEmptyComposeRule
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.performClick
+import androidx.compose.ui.test.performTouchInput
 import androidx.compose.ui.test.performScrollTo
 import androidx.test.core.app.ActivityScenario
 import androidx.test.core.app.ApplicationProvider
@@ -168,6 +169,21 @@ abstract class FlowHarness {
         } catch (_: AssertionError) {
         }
         node.performClick()
+    }
+
+    /** Holds the hold-to-confirm button tagged [tag] down until it confirms, then lets go. */
+    protected fun hold(tag: String) {
+        awaitTag(tag)
+        val node = rule.onNodeWithTag(tag)
+        try {
+            node.performScrollTo()
+        } catch (_: AssertionError) {
+        }
+        node.performTouchInput { down(center) }
+        rule.mainClock.advanceTimeBy(dev.reins.android.design.HOLD_MILLIS + 300L)
+        // What it confirmed may have closed it before the finger lifts.
+        runCatching { rule.onNodeWithTag(tag).performTouchInput { up() } }
+        rule.waitForIdle()
     }
 
     protected fun pressBack() {

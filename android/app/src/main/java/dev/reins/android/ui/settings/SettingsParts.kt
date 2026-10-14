@@ -83,24 +83,28 @@ internal fun Modifier.settingsCard(c: RColors, radius: Dp = 24.dp): Modifier = t
     .background(if (c.dark) Color(0xFF121215) else c.elevated)
     .border(1.dp, if (c.dark) Color(0xFF1B1B1F) else c.hairline, RoundedCornerShape(radius))
 
-/** A pushed page: the back arrow, an optional large [title], and content that scrolls under them. */
+/** A page: the back arrow when pushed ([onBack]; none at the root of a tab), an optional large [title], and content that scrolls under them. */
 @Composable
 fun SettingsPage(
     title: String?,
-    onBack: () -> Unit,
+    onBack: (() -> Unit)?,
     modifier: Modifier = Modifier,
     content: @Composable ColumnScope.() -> Unit,
 ) {
     val c = LocalColors.current
     Column(modifier.fillMaxSize().background(c.background).imePadding()) {
-        Row(
-            Modifier.fillMaxWidth().windowInsetsPadding(WindowInsets.statusBars).height(56.dp).padding(start = 6.dp, end = 8.dp),
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            Box(
-                Modifier.size(44.dp).pressable(shape = CircleShape, label = "Back", onClick = onBack).semantics { contentDescription = "Back" }.testTag("back"),
-                contentAlignment = Alignment.Center,
-            ) { Icon(Icons.AutoMirrored.Rounded.ArrowBack, null, Modifier.size(24.dp), tint = c.text) }
+        if (onBack != null) {
+            Row(
+                Modifier.fillMaxWidth().windowInsetsPadding(WindowInsets.statusBars).height(56.dp).padding(start = 6.dp, end = 8.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Box(
+                    Modifier.size(44.dp).pressable(shape = CircleShape, label = "Back", onClick = onBack).semantics { contentDescription = "Back" }.testTag("back"),
+                    contentAlignment = Alignment.Center,
+                ) { Icon(Icons.AutoMirrored.Rounded.ArrowBack, null, Modifier.size(24.dp), tint = c.text) }
+            }
+        } else {
+            Spacer(Modifier.windowInsetsPadding(WindowInsets.statusBars))
         }
         Column(
             Modifier
@@ -110,9 +114,17 @@ fun SettingsPage(
                 .windowInsetsPadding(WindowInsets.navigationBars),
         ) {
             if (title != null) {
-                RText(title, RType.sans(30f, FontWeight.SemiBold), c.text, Modifier.padding(start = 20.dp, end = 20.dp, top = 4.dp, bottom = 16.dp), maxLines = 1)
+                RText(
+                    title,
+                    RType.sans(30f, FontWeight.SemiBold),
+                    c.text,
+                    Modifier.padding(start = 20.dp, end = 20.dp, top = if (onBack == null) 22.dp else 4.dp, bottom = 16.dp).semantics { heading() },
+                    maxLines = 1,
+                )
             }
             content()
+            // At the root of a tab, the content clears the floating tab bar.
+            if (onBack == null) Spacer(Modifier.height(96.dp).testTag("pageEnd"))
         }
     }
 }

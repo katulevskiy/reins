@@ -137,7 +137,7 @@ class TakeoverFlowTest : FlowHarness() {
     fun aReplacedPhoneUsingThisPhoneAgainSeesTheSameScreen() {
         container.deviceStatus.setReplaced(true)
         launch()
-        tap("openSettings")
+        tap("tabSettings")
         tap("registerPhone")
         awaitTag("takeoverText")
         assertTrue(core.registrations.isEmpty())

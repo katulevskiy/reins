@@ -69,7 +69,7 @@ fun ActivityAutopilotSection(entry: ActivityEntry, onCorrect: suspend (Long, Ver
     Group(header = "Autopilot") {
         Column(Modifier.padding(16.dp).testTag("entryAutopilot"), verticalArrangement = Arrangement.spacedBy(12.dp)) {
             Row(verticalAlignment = Alignment.CenterVertically) {
-                IconTile(modeGlyph(mode), modeTint(mode, c), size = 42.dp, filled = entry.decidedBy.isNotEmpty())
+                IconTile(modeIcon(mode), modeTint(mode, c), size = 42.dp, filled = entry.decidedBy.isNotEmpty())
                 Spacer(Modifier.width(14.dp))
                 Column(Modifier.weight(1f)) {
                     RText(title, RType.sans(16f, FontWeight.SemiBold), c.text, Modifier.testTag("entryAutopilotTitle"), maxLines = 2)

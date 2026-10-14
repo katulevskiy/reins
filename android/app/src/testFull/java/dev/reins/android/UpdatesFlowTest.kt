@@ -54,7 +54,7 @@ class UpdatesFlowTest : FlowHarness() {
     @Test
     fun settingsShowTheVersionAndSayWhenTheAppIsUpToDate() {
         launch()
-        tap("openSettings")
+        tap("tabSettings")
         awaitTag("appVersion")
         awaitTextSub("${BuildConfig.VERSION_NAME} (dev)")
         tap("checkUpdates")
@@ -65,7 +65,7 @@ class UpdatesFlowTest : FlowHarness() {
     @Test
     fun aNewReleaseIsDownloadedVerifiedAndInstalledFromSettings() {
         launch()
-        tap("openSettings")
+        tap("tabSettings")
         awaitTag("checkUpdates")
         val release = updates.publish(5, versionName = "0.2.0")
         tap("checkUpdates")
@@ -80,7 +80,7 @@ class UpdatesFlowTest : FlowHarness() {
         val gate = java.util.concurrent.CountDownLatch(1)
         updates.gate = gate
         launch()
-        tap("openSettings")
+        tap("tabSettings")
         awaitTag("checkUpdates")
         updates.publish(5, versionName = "0.2.0")
         tap("checkUpdates")
@@ -97,7 +97,7 @@ class UpdatesFlowTest : FlowHarness() {
     @Test
     fun turningAutomaticDownloadsOffIsRememberedAndOffersTheDownload() {
         launch()
-        tap("openSettings")
+        tap("tabSettings")
         tap("autoDownload")
         rule.onNodeWithTag("autoDownload").assertIsOff()
         awaitCore { !updatePrefs.getBoolean("auto_download", true) }
@@ -112,7 +112,7 @@ class UpdatesFlowTest : FlowHarness() {
     @Test
     fun aFailedCheckSaysWhyAndCanBeRetried() {
         launch()
-        tap("openSettings")
+        tap("tabSettings")
         awaitTag("checkUpdates")
         updates.failure = java.io.IOException("offline")
         tap("checkUpdates")

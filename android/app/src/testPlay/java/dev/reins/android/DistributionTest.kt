@@ -69,7 +69,7 @@ class DistributionTest : FlowHarness() {
     fun settingsShowTheVersionButNoUpdater() {
         assertNull(container.updates)
         launch()
-        tap("openSettings")
+        tap("tabSettings")
         awaitTag("appVersion")
         assertFalse(has("checkUpdates"))
         assertFalse(has("autoDownload"))
