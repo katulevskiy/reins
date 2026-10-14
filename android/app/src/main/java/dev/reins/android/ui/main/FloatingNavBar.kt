@@ -3,6 +3,7 @@ package dev.reins.android.ui.main
 import androidx.compose.ui.semantics.selected
 import dev.reins.android.ui.autopilot.modeIcon
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.wrapContentSize
 import androidx.compose.material.icons.rounded.Bolt
 import androidx.compose.material.icons.outlined.Settings
 import androidx.compose.material.icons.outlined.Bolt
@@ -37,6 +38,9 @@ import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.layout.boundsInRoot
+import androidx.compose.ui.layout.onGloballyPositioned
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import dev.reins.android.autopilot.AutopilotText
@@ -96,6 +100,11 @@ fun FloatingNavBar(
     }
 }
 
+/** Where the header's mode pill is (root coordinates): the quick menu drops from under it. */
+object ModePillAnchor {
+    var bounds by androidx.compose.runtime.mutableStateOf<androidx.compose.ui.geometry.Rect?>(null)
+}
+
 /**
  * The Autopilot mode at a glance, beside the Activity title: its icon in its colour and its name (the time left during
  * a bypass, on red). It opens the quick switcher.
@@ -111,6 +120,7 @@ fun ModePill(settings: AutopilotSettings?, onClick: () -> Unit) {
     Row(
         Modifier
             .height(HeaderControlHeight)
+            .onGloballyPositioned { ModePillAnchor.bounds = it.boundsInRoot() }
             .clip(CircleShape)
             .background(wash)
             .pressable(shape = CircleShape, label = "Autopilot", onClick = onClick)
@@ -164,20 +174,27 @@ private fun NavItem(
 ) {
     val c = LocalColors.current
     val pill by animateColorAsState(if (selected) c.accent.copy(alpha = if (c.dark) 0.24f else 0.16f) else Color.Transparent, label = "nav")
+    // Not clipped: the count sits over the pill's corner and may reach past it.
     Column(
         modifier
-            .clip(RoundedCornerShape(16.dp))
             .pressable(shape = RoundedCornerShape(16.dp), onClick = onClick)
             .semantics { this.selected = selected }
             .testTag(tag),
         horizontalAlignment = Alignment.CenterHorizontally,
     ) {
-        Box(Modifier.size(width = 58.dp, height = 30.dp).clip(RoundedCornerShape(15.dp)).background(pill), contentAlignment = Alignment.Center) {
+        Box(Modifier.size(width = 58.dp, height = 30.dp), contentAlignment = Alignment.Center) {
+            Box(Modifier.matchParentSize().background(pill, RoundedCornerShape(15.dp)))
             Icon(if (selected) icon else outlined, null, Modifier.size(22.dp), tint = if (selected) c.text else c.secondary)
             if (dotOnly) {
                 if (count > 0) Box(Modifier.align(Alignment.TopEnd).padding(top = 3.dp, end = 14.dp).size(8.dp).background(countColor, CircleShape))
             } else {
-                CountPill(count, countColor, Modifier.align(Alignment.TopEnd).offset(x = (-4).dp, y = (-3).dp).testTag("$tag:count"))
+                // Its left edge over the icon's top right; wider counts grow to the right, past the pill.
+                CountPill(
+                    count,
+                    countColor,
+                    Modifier.align(Alignment.TopStart).offset(x = 31.dp, y = (-7).dp).wrapContentSize(unbounded = true, align = Alignment.TopStart).testTag("$tag:count"),
+                    ring = c.glass,
+                )
             }
         }
         Spacer(Modifier.height(4.dp))

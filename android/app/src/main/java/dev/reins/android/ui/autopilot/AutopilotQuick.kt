@@ -15,6 +15,18 @@ import androidx.compose.animation.scaleIn
 import androidx.compose.animation.scaleOut
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
+import dev.reins.android.design.OnWarning
+import androidx.compose.ui.semantics.role
+import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.layout.onSizeChanged
+import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.material.icons.rounded.Lock
+import androidx.compose.material.icons.rounded.Bolt
+import androidx.compose.material.icons.Icons
+import androidx.compose.foundation.layout.statusBars
+import androidx.compose.foundation.layout.fillMaxHeight
+import androidx.compose.foundation.layout.IntrinsicSize
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.detectHorizontalDragGestures
@@ -154,26 +166,37 @@ fun AutopilotQuick(
             Box(
                 Modifier
                     .fillMaxSize()
-                    .background(c.scrim.copy(alpha = c.scrim.alpha * 0.6f))
+                    // The page under the menu steps back, as in the design.
+                    .background(Color.Black.copy(alpha = if (c.dark) 0.62f else 0.3f))
                     .clickable(remember { MutableInteractionSource() }, null, onClick = onDismiss)
                     .testTag("quickScrim"),
             )
         }
-        AnimatedVisibility(
-            shown,
-            enter = fadeIn(tween(110)) + scaleIn(spring(dampingRatio = 0.8f, stiffness = 900f), initialScale = 0.86f, transformOrigin = TransformOrigin(1f, 1f)),
-            exit = fadeOut(tween(100)) + scaleOut(tween(100), targetScale = 0.94f, transformOrigin = TransformOrigin(1f, 1f)),
-            modifier = Modifier
-                .align(Alignment.BottomEnd)
-                .windowInsetsPadding(WindowInsets.navigationBars)
-                // Just above the round button: the bar is 60dp tall with 10dp around it.
-                .padding(start = 16.dp, end = 16.dp, bottom = 86.dp),
-        ) {
-            val s = settings ?: return@AnimatedVisibility
-            val modelReady = s.model.state == ModelState.INSTALLED
-            when (style) {
-                QuickStyle.Slider -> SliderCard(s, modelReady, onSet, onStopBypass, onMore, onDismiss, askBypass)
-                else -> MenuCard(s, modelReady, onSet, onStopBypass, onMore, onDismiss, askBypass)
+        // Under the mode pill in the header that opened it, its right edge on the pill's.
+        val density = androidx.compose.ui.platform.LocalDensity.current
+        val anchor = dev.reins.android.ui.main.ModePillAnchor.bounds
+        var rootWidth by remember { mutableIntStateOf(0) }
+        Box(Modifier.fillMaxSize().onSizeChanged { rootWidth = it.width }) {
+            AnimatedVisibility(
+                shown,
+                enter = fadeIn(tween(110)) + scaleIn(spring(dampingRatio = 0.8f, stiffness = 900f), initialScale = 0.9f, transformOrigin = TransformOrigin(1f, 0f)),
+                exit = fadeOut(tween(100)) + scaleOut(tween(100), targetScale = 0.95f, transformOrigin = TransformOrigin(1f, 0f)),
+                modifier = Modifier
+                    .align(Alignment.TopEnd)
+                    .then(
+                        if (anchor != null && rootWidth > 0) {
+                            with(density) { Modifier.padding(top = anchor.bottom.toDp() + 8.dp, end = (rootWidth - anchor.right).coerceAtLeast(0f).toDp(), start = 16.dp) }
+                        } else {
+                            Modifier.windowInsetsPadding(WindowInsets.statusBars).padding(top = 62.dp, end = 14.dp, start = 16.dp)
+                        },
+                    ),
+            ) {
+                val s = settings ?: return@AnimatedVisibility
+                val modelReady = s.model.state == ModelState.INSTALLED
+                when (style) {
+                    QuickStyle.Slider -> SliderCard(s, modelReady, onSet, onStopBypass, onMore, onDismiss, askBypass)
+                    else -> MenuCard(s, modelReady, onSet, onStopBypass, onMore, onDismiss, askBypass)
+                }
             }
         }
         BypassSheets(bypassSheet, who = null, onStart = onBypass, onClose = { bypassSheet = false })
@@ -182,6 +205,11 @@ fun AutopilotQuick(
 
 // ---- the menu --------------------------------------------------------------------------------------------------------
 
+/**
+ * The quick menu, dropped from the header's mode pill: Manual and Auto side by side (the one in force outlined in its
+ * colour), Bypass and Lock down under them, then the Autopilot page. A running bypass is the Bypass button itself
+ * ("Bypass on · 8:12", tap to stop), and a lockdown the Lock down button: there is no other Stop.
+ */
 @Composable
 private fun MenuCard(
     s: AutopilotSettings,
@@ -193,71 +221,151 @@ private fun MenuCard(
     onAskBypass: () -> Unit,
 ) {
     val c = LocalColors.current
+    val bypass = s.mode == AutopilotMode.BYPASS
+    val lockdown = s.mode == AutopilotMode.LOCKDOWN
+    val shape = RoundedCornerShape(22.dp)
     Column(
         Modifier
-            .width(276.dp)
-            .glass(c, RoundedCornerShape(22.dp), 16.dp)
-            .animateContentSize(spring(dampingRatio = 0.9f, stiffness = 700f))
-            .padding(6.dp)
+            .width(300.dp)
+            .shadow(24.dp, shape, ambientColor = Color.Black.copy(alpha = 0.5f), spotColor = Color.Black.copy(alpha = 0.65f))
+            .clip(shape)
+            .background(if (c.dark) Color(0xFF18181B) else c.elevated)
+            .border(1.dp, if (c.dark) Color(0xFF2A2A30) else c.hairline, shape)
+            .padding(12.dp)
             .testTag("autopilotQuick"),
     ) {
-        // Riskiest at the top, nearest the thumb the safest: the list reads like the slider stood on end.
-        AutopilotText.byRisk.reversed().forEach { mode ->
-            val selected = mode == s.mode
-            val tint = modeTint(mode, c)
-            Row(
-                Modifier
-                    .fillMaxWidth()
-                    .clip(RoundedCornerShape(16.dp))
-                    .background(if (selected) tint.copy(alpha = if (c.dark) 0.14f else 0.09f) else Color.Transparent)
-                    .pressable(highlight = c.controlFill, shape = RoundedCornerShape(16.dp)) {
-                        when {
-                            mode == AutopilotMode.BYPASS && s.mode != AutopilotMode.BYPASS -> onAskBypass()
-                            mode != s.mode -> {
-                                onSet(mode, null)
-                                onDismiss()
-                            }
-                            else -> onDismiss()
-                        }
-                    }
-                    .semantics(mergeDescendants = true) { this.selected = selected }
-                    .testTag("quick:${mode.name}")
-                    .padding(horizontal = 10.dp, vertical = 9.dp),
-                verticalAlignment = Alignment.CenterVertically,
-            ) {
-                IconTile(modeIcon(mode), tint, size = 34.dp, filled = selected)
-                Spacer(Modifier.width(12.dp))
-                Column(Modifier.weight(1f)) {
-                    RText(AutopilotText.name(mode), RType.sans(15.5f, FontWeight.SemiBold), c.text, maxLines = 1)
-                    val needs = !modelReady && AutopilotText.needsModel(mode)
-                    RText(if (needs) "Needs the model" else AutopilotText.line(mode), RType.sans(12.5f), if (needs) c.tertiary else c.secondary, maxLines = 1)
-                }
-                if (selected && mode == AutopilotMode.BYPASS && s.bypassUntil != null) {
-                    BypassLeft(s.bypassUntil!!)
-                } else if (selected) {
-                    GlyphIcon(Glyph.Check, tint, size = 17.dp, weight = 2.2f)
-                }
-            }
-            if (mode == AutopilotMode.BYPASS && s.mode == AutopilotMode.BYPASS) {
-                QuickButton("Stop bypass", Glyph.Stop, c.danger, Modifier.padding(start = 56.dp, end = 10.dp, bottom = 6.dp).testTag("quickStopBypass")) {
-                    onStopBypass()
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.height(IntrinsicSize.Min)) {
+            listOf(AutopilotMode.MANUAL, AutopilotMode.AUTO).forEach { mode ->
+                val needs = !modelReady && AutopilotText.needsModel(mode)
+                QuickModeCard(
+                    mode,
+                    selected = s.mode == mode,
+                    quiet = bypass || lockdown,
+                    line = if (needs) "Needs the model" else AutopilotText.heroLine(mode),
+                    modifier = Modifier.weight(1f).fillMaxHeight(),
+                ) {
+                    if (mode != s.mode) onSet(mode, null)
                     onDismiss()
                 }
             }
         }
-        Box(Modifier.padding(horizontal = 10.dp, vertical = 4.dp).fillMaxWidth().height(0.75.dp).background(c.hairline))
+        Row(Modifier.padding(top = 8.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            if (bypass) {
+                val until = s.bypassUntil
+                QuickStateButton(
+                    title = if (until == null || AutopilotText.isUntilOff(until)) "Bypass on" else null,
+                    until = until?.takeUnless { AutopilotText.isUntilOff(it) },
+                    hint = "Tap to stop",
+                    background = c.danger,
+                    foreground = if (c.dark) Color(0xFF2A0606) else Color.White,
+                    modifier = Modifier.weight(1f).testTag("quick:BYPASS"),
+                ) {
+                    onStopBypass()
+                    onDismiss()
+                }
+            } else {
+                QuickButton("Bypass", Icons.Rounded.Bolt, c.danger.copy(alpha = 0.12f), c.danger, Modifier.weight(1f).testTag("quick:BYPASS"), onClick = onAskBypass)
+            }
+            if (lockdown) {
+                QuickStateButton(
+                    title = "Locked down",
+                    until = null,
+                    hint = "Tap to end",
+                    background = c.warning,
+                    foreground = OnWarning,
+                    modifier = Modifier.weight(1f).testTag("quick:LOCKDOWN"),
+                ) {
+                    onSet(s.baseMode.takeIf { it != AutopilotMode.LOCKDOWN } ?: AutopilotMode.MANUAL, null)
+                    onDismiss()
+                }
+            } else {
+                QuickButton(
+                    "Lock down",
+                    Icons.Rounded.Lock,
+                    if (c.dark) Color.White.copy(alpha = 0.06f) else c.controlFill,
+                    c.text,
+                    Modifier.weight(1f).testTag("quick:LOCKDOWN"),
+                ) {
+                    onSet(AutopilotMode.LOCKDOWN, null)
+                    onDismiss()
+                }
+            }
+        }
+        Box(Modifier.padding(top = 10.dp).fillMaxWidth().height(1.dp).background(if (c.dark) Color(0xFF26262B) else c.hairline))
         Row(
             Modifier
+                .padding(top = 2.dp)
                 .fillMaxWidth()
-                .clip(RoundedCornerShape(16.dp))
-                .pressable(highlight = c.controlFill, shape = RoundedCornerShape(16.dp), onClick = onMore)
+                .clip(RoundedCornerShape(10.dp))
+                .pressable(shape = RoundedCornerShape(10.dp), onClick = onMore)
                 .testTag("quickMore")
-                .padding(horizontal = 14.dp, vertical = 12.dp),
+                .padding(start = 4.dp, end = 4.dp, top = 8.dp, bottom = 4.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
-            RText("More", RType.sans(15f, FontWeight.Medium), c.text, Modifier.weight(1f), maxLines = 1)
-            GlyphIcon(Glyph.ChevronRight, c.tertiary, size = 14.dp)
+            RText("Autopilot settings", RType.sans(13.5f, FontWeight.Medium), c.accent, Modifier.weight(1f), maxLines = 1)
+            GlyphIcon(Glyph.ChevronRight, c.accent, size = 14.dp)
         }
+    }
+}
+
+/** Manual or Auto in the menu: its tile, name and what it does; the one in force outlined and washed in its colour. */
+@Composable
+private fun QuickModeCard(mode: AutopilotMode, selected: Boolean, quiet: Boolean, line: String, modifier: Modifier, onClick: () -> Unit) {
+    val c = LocalColors.current
+    val tint = modeTint(mode, c)
+    val shape = RoundedCornerShape(16.dp)
+    Column(
+        modifier
+            // While a bypass or a lockdown is in force neither is: both stay tappable, quieter.
+            .graphicsLayer { alpha = if (quiet) 0.45f else 1f }
+            .clip(shape)
+            .background(if (selected && !quiet) tint.copy(alpha = 0.10f) else if (c.dark) Color(0xFF0D0D0F) else c.background)
+            .border(1.5.dp, if (selected && !quiet) tint else if (c.dark) Color(0xFF26262B) else c.hairline, shape)
+            .pressable(shape = shape, onClick = onClick)
+            .semantics(mergeDescendants = true) {
+                this.selected = selected
+                role = Role.RadioButton
+            }
+            .testTag("quick:${mode.name}")
+            .padding(11.dp),
+    ) {
+        Box(Modifier.size(32.dp).clip(RoundedCornerShape(10.dp)).background(tint.copy(alpha = 0.17f)), contentAlignment = Alignment.Center) {
+            androidx.compose.material3.Icon(modeIcon(mode), null, Modifier.size(18.dp), tint = tint)
+        }
+        RText(AutopilotText.name(mode), RType.sans(15f, FontWeight.SemiBold), c.text, Modifier.padding(top = 8.dp), maxLines = 1)
+        RText(line, RType.sans(11.5f, lineHeight = 15f), c.tertiary, Modifier.padding(top = 2.dp), maxLines = 2)
+    }
+}
+
+/** A button of the menu that is also a state: "Bypass on · 8:12" over "Tap to stop". */
+@Composable
+private fun QuickStateButton(
+    title: String?,
+    until: Long?,
+    hint: String,
+    background: Color,
+    foreground: Color,
+    modifier: Modifier,
+    onClick: () -> Unit,
+) {
+    val shape = RoundedCornerShape(14.dp)
+    Column(
+        modifier
+            .height(44.dp)
+            .clip(shape)
+            .background(background)
+            .pressable(shape = shape, onClick = onClick)
+            .semantics(mergeDescendants = true) {},
+        horizontalAlignment = Alignment.CenterHorizontally,
+        verticalArrangement = Arrangement.Center,
+    ) {
+        if (until != null) {
+            val now = rememberNowState(1_000, untilMillis = until * 1000).value / 1000
+            RText("Bypass on · ${AutopilotText.clock(until, now)}", RType.sans(14f, FontWeight.SemiBold), foreground, Modifier.testTag("quickBypassLeft"), maxLines = 1)
+        } else {
+            RText(title.orEmpty(), RType.sans(14f, FontWeight.SemiBold), foreground, maxLines = 1)
+        }
+        RText(hint, RType.sans(11f, FontWeight.Medium), foreground.copy(alpha = 0.75f), maxLines = 1)
     }
 }
 
@@ -344,7 +452,7 @@ private fun SliderCard(
             }
         }, onDrag = { value -> scope.launch { pos.snapTo(value) } }, onRelease = ::land)
         if (s.mode == AutopilotMode.BYPASS) {
-            QuickButton("Stop bypass", Glyph.Stop, c.danger, Modifier.padding(top = 14.dp).testTag("quickStopBypass")) {
+            QuickButton("Stop bypass", null, c.danger.copy(alpha = 0.12f), c.danger, Modifier.padding(top = 14.dp).fillMaxWidth().testTag("quickStopBypass")) {
                 onStopBypass()
                 onDismiss()
             }
@@ -479,21 +587,24 @@ private fun RiskTrack(
 
 // ---- shared parts ----------------------------------------------------------------------------------------------------
 
+/** A button of the menu: an optional icon and its words, on its own fill. */
 @Composable
-private fun QuickButton(title: String, glyph: Glyph, tint: Color, modifier: Modifier = Modifier, onClick: () -> Unit) {
+private fun QuickButton(title: String, icon: ImageVector?, background: Color, foreground: Color, modifier: Modifier = Modifier, onClick: () -> Unit) {
+    val shape = RoundedCornerShape(14.dp)
     Row(
         modifier
-            .fillMaxWidth()
-            .height(36.dp)
-            .clip(CircleShape)
-            .background(tint.copy(alpha = 0.12f))
-            .pressable(shape = CircleShape, onClick = onClick),
+            .height(44.dp)
+            .clip(shape)
+            .background(background)
+            .pressable(shape = shape, onClick = onClick),
         horizontalArrangement = Arrangement.Center,
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        GlyphIcon(glyph, tint, size = 14.dp)
-        Spacer(Modifier.width(6.dp))
-        RText(title, RType.sans(13.5f, FontWeight.SemiBold), tint, maxLines = 1)
+        if (icon != null) {
+            androidx.compose.material3.Icon(icon, null, Modifier.size(16.dp), tint = foreground)
+            Spacer(Modifier.width(7.dp))
+        }
+        RText(title, RType.sans(14f, FontWeight.SemiBold), foreground, maxLines = 1)
     }
 }
 
