@@ -658,14 +658,16 @@ impl Engine {
         call: &ConnectorCall,
         command: Option<desktop::CommandScope>,
     ) -> Result<serde_json::Value, CoreError> {
+        // Boxed: each is a large future (a store adds integrations), which would otherwise be inlined into every
+        // approval's future, autopilot's included.
         if is_env_release(call) {
-            return self.release_env(account, call, command).await;
+            return Box::pin(self.release_env(account, call, command)).await;
         }
         if is_token_store(call) {
-            return self.token_store_perform(call).await;
+            return Box::pin(self.token_store_perform(call)).await;
         }
         if is_secrets_store(call) {
-            return self.secrets_store_perform(account, call).await;
+            return Box::pin(self.secrets_store_perform(account, call)).await;
         }
         connector.perform(account, call).await
     }

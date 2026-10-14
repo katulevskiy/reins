@@ -1002,12 +1002,16 @@ impl Engine {
                 address_id: None,
                 limit: None,
             };
-            return self.approve_parked_purchase(&session, &subject.id, &parked, Some(&defaults)).await;
+            return Box::pin(self.approve_parked_purchase(&session, &subject.id, &parked, Some(&defaults))).await;
         }
+        // Each answer is boxed: an approval's future holds every integration's write (secrets stores add accounts),
+        // and inlined into Autopilot's own futures it outgrows a test thread's stack in debug builds.
         match (subject.kind, verdict) {
-            (PendingKind::Request, Verdict::Approve) => self.approve_claimed(&subject.id, subject.choice.clone()).await,
-            (PendingKind::Request, _) => self.deny_claimed(&subject.id).await,
-            (PendingKind::Blob, v) => self.answer_blob_claimed(&subject.id, v == Verdict::Approve).await,
+            (PendingKind::Request, Verdict::Approve) => {
+                Box::pin(self.approve_claimed(&subject.id, subject.choice.clone())).await
+            }
+            (PendingKind::Request, _) => Box::pin(self.deny_claimed(&subject.id)).await,
+            (PendingKind::Blob, v) => Box::pin(self.answer_blob_claimed(&subject.id, v == Verdict::Approve)).await,
             (PendingKind::Pairing | PendingKind::Join, _) => {
                 Err(CoreError::invalid("a pairing or another phone is never decided automatically"))
             }
