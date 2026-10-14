@@ -35,6 +35,12 @@ use crate::run::{Var, assemble};
 use crate::secrets::{EnvRef, SecretRef, VarRef};
 use crate::secrets_client::LeaseRequest;
 
+/// Received descriptors are close-on-exec at once where the kernel can do it (Linux); elsewhere right after.
+#[cfg(any(target_os = "linux", target_os = "android"))]
+const RECV_FLAGS: RecvFlags = RecvFlags::CMSG_CLOEXEC;
+#[cfg(not(any(target_os = "linux", target_os = "android")))]
+const RECV_FLAGS: RecvFlags = RecvFlags::empty();
+
 /// The largest request.
 const MAX_REQUEST: u32 = 1024 * 1024;
 /// Frames on the socket after the request.
@@ -258,7 +264,7 @@ async fn receive_fds(stream: &UnixStream) -> Result<Stdio, String> {
     stream.readable().await.map_err(|e| e.to_string())?;
     let got = stream
         .try_io(Interest::READABLE, || {
-            rustix::net::recvmsg(stream, &mut [IoSliceMut::new(&mut byte)], &mut control, RecvFlags::CMSG_CLOEXEC)
+            rustix::net::recvmsg(stream, &mut [IoSliceMut::new(&mut byte)], &mut control, RECV_FLAGS)
                 .map_err(std::io::Error::from)
         })
         .map_err(|e| e.to_string())?;
@@ -270,6 +276,11 @@ async fn receive_fds(stream: &UnixStream) -> Result<Stdio, String> {
         if let RecvAncillaryMessage::ScmRights(received) = msg {
             fds.extend(received);
         }
+    }
+    // Where the kernel cannot mark them on receipt, they are marked now: none leaks into what the daemon starts.
+    #[cfg(not(any(target_os = "linux", target_os = "android")))]
+    for fd in &fds {
+        rustix::io::fcntl_setfd(fd, rustix::io::FdFlags::CLOEXEC).map_err(|e| e.to_string())?;
     }
     let mut fds = fds.into_iter();
     match (fds.next(), fds.next(), fds.next(), fds.next()) {

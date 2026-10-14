@@ -508,10 +508,10 @@ pub async fn execute(command: &[OsString], vars: Vec<Var>, redactor: Option<Arc<
     // On Windows `npm` is `npm.cmd`, which `Command` does not find by itself.
     #[cfg(windows)]
     let resolved = {
-        let dirs: Vec<std::path::PathBuf> =
+        let dirs: Vec<PathBuf> =
             std::env::var_os("PATH").map(|p| std::env::split_paths(&p).collect()).unwrap_or_default();
         let pathext = std::env::var("PATHEXT").ok();
-        crate::win::resolve_program(program, &dirs, pathext.as_deref(), std::path::Path::is_file)
+        crate::win::resolve_program(program, &dirs, pathext.as_deref(), Path::is_file)
     };
     #[cfg(windows)]
     let mut cmd = tokio::process::Command::new(resolved.as_deref().map_or(program.as_os_str(), |p| p.as_os_str()));
