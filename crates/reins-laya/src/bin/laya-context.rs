@@ -14,7 +14,7 @@
 
 use std::io::{BufRead, Write};
 
-use reins_core::autopilot::risk::{self, Context};
+use reins_core::autopilot::risk::{self, Context, Outcome};
 use reins_core::types::{GitFileView, GitPushView, GitRefView};
 use serde_json::{Value, json};
 
@@ -66,7 +66,13 @@ fn push_view(v: &Value) -> GitPushView {
 }
 
 fn answer(c: &Context) -> Value {
-    json!({"lines": c.lines, "tripwire": c.tripwire.is_some(), "unreadable": c.unreadable.is_some(), "deletes": c.deletes})
+    let outcome = c.outcome();
+    json!({
+        "lines": c.lines(),
+        "tripwire": matches!(outcome, Outcome::Tripwire(_)),
+        "unreadable": matches!(outcome, Outcome::Uncertain(_)),
+        "deletes": c.deletes(),
+    })
 }
 
 fn main() {
@@ -80,22 +86,13 @@ fn main() {
         let c = if let Some(cmd) = v["command"].as_str() {
             risk::command_context(cmd)
         } else if let Some(files) = v["files"].as_array() {
-            let mut c = Context::default();
-            for f in files.iter().filter_map(Value::as_str) {
-                let one = risk::file_context(f);
-                for l in one.lines {
-                    if !c.lines.contains(&l) {
-                        c.lines.push(l);
-                    }
-                }
-                c.tripwire = c.tripwire.or(one.tripwire);
-                c.unreadable = c.unreadable.or(one.unreadable);
-            }
-            c
+            let paths: Vec<String> = files.iter().filter_map(Value::as_str).map(str::to_owned).collect();
+            risk::files_context(&paths)
         } else if v["push"].is_object() {
             risk::push_context(&push_view(&v["push"]))
         } else {
-            Context::default()
+            // not a question this reads: uncertain, as the phone would hold it
+            risk::files_context(&[])
         };
         if writeln!(out, "{}", answer(&c)).and_then(|()| out.flush()).is_err() {
             break;

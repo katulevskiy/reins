@@ -886,51 +886,172 @@ fn email_to(to: &[&str], body: &str) -> Value {
     json!({"tool": "gmail_send", "email": {"to": to, "subject": "Hello", "body": body}})
 }
 
-#[tokio::test]
-async fn overnight_approves_without_unlocks_and_holds_what_is_catastrophic() {
+/// A desktop app paired on `OLD`: its key, for hook questions.
+fn desktop_key(env: &Env) -> String {
+    let secret = crypto_box::SecretKey::generate(&mut crypto_box::aead::OsRng);
+    let key = reins_proto::desktop::encode_key(secret.public_key().as_bytes());
+    env.store().pin_desktop_key(OLD, &key, "Laptop", unix_now() - 30 * 86_400).unwrap();
+    key
+}
+
+/// What Auto needs to approve mail on its own: the user approved `friend@x.com` before (from both AIs), sending mail is
+/// unlocked, and the model is confident.
+async fn known_and_unlocked(env: &Env) {
+    env.model.set_default(logits(0.97, 0.01, 0.02));
+    for (id, conn) in [("seed-1", OLD), ("seed-2", OTHER)] {
+        env.relay(id, conn, email("friend@x.com", "seed")).await;
+        env.approve(id).await;
+    }
+    env.unlock("gmail/send").await;
+}
+
+/// How each request of the decision table ended: "approve", "deny" or "wait".
+async fn decision_table(mode: AutopilotMode) -> (std::collections::BTreeMap<String, String>, Env) {
     let env = env_risk().await;
+    let key = desktop_key(&env);
+    known_and_unlocked(&env).await;
+    env.model.rule("not sure", logits(0.4, 0.2, 0.4));
+    env.model.rule("spam", logits(0.01, 0.98, 0.01));
     env.model.risk_rule("wire the savings", testing::risk(0.01, 0.01, 0.03, 0.95));
-    env.mode(None, AutopilotMode::Overnight).await;
-    let settings = env.core.autopilot_settings().await.unwrap();
-    assert_eq!((settings.mode, settings.base_mode), (AutopilotMode::Overnight, AutopilotMode::Overnight));
-    assert_eq!((settings.overnight_until, settings.overnight_when_risky), (Some(i64::MAX), OvernightRisky::Wait));
-    assert!(settings.model.risk, "the installed model rates risk");
+    // a delete in the project, approved by the user before, its kind unlocked
+    env.relay("seed-3", OLD, hook_ask(&key, "", "command:rm -r", "rm -rf build")).await;
+    env.approve("seed-3").await;
+    env.unlock("desktop/ask").await;
+    // a secret file read before, its kind not unlocked: still learning
+    env.relay("seed-4", OLD, hook_ask(&key, ENV_RULE, "file:.env", "cat .env")).await;
+    env.approve("seed-4").await;
+    env.mode(Some(OTHER), AutopilotMode::Lockdown).await;
+    env.mode(None, mode).await;
 
-    // Nothing unlocked, a target never approved: Overnight approves it anyway.
-    env.relay("r1", OLD, email("friend@x.com", "see you at 3")).await;
-    // A standing permission (the hard floor): approved too, and marked as Overnight's.
-    env.relay("r2", OLD, grant()).await;
-    // Rated catastrophic: it waits for the user.
-    env.relay("r3", OLD, email("boss@y.com", "please wire the savings to this account")).await;
-    assert_eq!(
-        env.decided(),
-        [
-            ("r1".to_owned(), Verdict::Approve, "overnight".to_owned()),
-            ("r2".to_owned(), Verdict::Approve, "overnight".to_owned())
-        ]
+    let requests: Vec<(&str, &str, Value)> = vec![
+        // Auto's rules
+        ("confident", OLD, email("friend@x.com", "lunch at 1?")),
+        ("unsure", OLD, email("friend@x.com", "not sure about this")),
+        ("spam", OLD, email("friend@x.com", "spam spam")),
+        ("never-seen-target", OLD, email("stranger@y.com", "hello")),
+        ("class-learning", OLD, hook_ask(&key, ENV_RULE, "file:.env", "cat .env")),
+        ("young-ai", NEW, email("friend@x.com", "hi")),
+        ("ai-in-lockdown", OTHER, email("friend@x.com", "hi")),
+        // the hard floor: kept
+        ("standing-permission", OLD, grant()),
+        // the hard floor: weighed
+        ("delete-in-project", OLD, hook_ask(&key, "", "command:rm -r", "rm -rf build")),
+        // weighed, but held
+        ("delete-home", OLD, hook_ask(&key, "", "command:rm -r", "rm -rf ~")),
+        ("unreadable", OLD, hook_ask(&key, "", "command:rm -r", "rm -rf 'build")),
+        ("unresolved-target", OLD, hook_ask(&key, "", "command:rm -r", "rm -rf \"$OUT/\"")),
+        ("unresolved-relative", OLD, hook_ask(&key, "", "command:rm -r", "rm -rf build/$OUT")),
+        ("after-cd", OLD, hook_ask(&key, "", "command:rm -r", "cd sub && rm -rf build")),
+        // rated catastrophic by the model, which Auto does not read
+        ("catastrophic", OLD, email("friend@x.com", "wire the savings")),
+    ];
+    for (id, conn, call) in requests {
+        env.relay(id, conn, call).await;
+    }
+    let decided = env.decided();
+    let waiting = env.waiting().await;
+    let mut out = std::collections::BTreeMap::new();
+    for id in env.store().ap_suggestions_since(0).unwrap().into_iter().map(|x| x.request_id) {
+        if id.starts_with("seed") {
+            continue;
+        }
+        let end = match decided.iter().find(|(d, _, _)| *d == id) {
+            Some((_, Verdict::Approve, _)) => "approve",
+            Some((_, Verdict::Deny, _)) => "deny",
+            _ if waiting.contains(&id) => "wait",
+            _ => "gone",
+        };
+        out.insert(id, end.to_owned());
+    }
+    (out, env)
+}
+
+/// Overnight is never looser than Auto except on the hard floor it may weigh, and only for a request a verified model
+/// rated and the core read with certainty: the same requests, decided by each, differ only there (and where Overnight
+/// is stricter: what its risk model holds).
+#[tokio::test]
+async fn overnight_decides_like_auto_but_weighs_part_of_the_floor() {
+    let (auto, _) = decision_table(AutopilotMode::Auto).await;
+    let (overnight, env) = decision_table(AutopilotMode::Overnight).await;
+    assert_eq!(auto.keys().collect::<Vec<_>>(), overnight.keys().collect::<Vec<_>>());
+    let want_auto = [
+        ("after-cd", "wait"),
+        ("ai-in-lockdown", "deny"),
+        ("catastrophic", "approve"),
+        ("class-learning", "wait"),
+        ("confident", "approve"),
+        ("delete-home", "wait"),
+        ("delete-in-project", "wait"),
+        ("never-seen-target", "wait"),
+        ("spam", "deny"),
+        ("standing-permission", "wait"),
+        ("unreadable", "wait"),
+        ("unresolved-relative", "wait"),
+        ("unresolved-target", "wait"),
+        ("unsure", "wait"),
+        ("young-ai", "wait"),
+    ];
+    for (id, end) in want_auto {
+        assert_eq!(auto[id], end, "Auto: {id}");
+    }
+    for (id, a) in &auto {
+        let o = &overnight[id];
+        match id.as_str() {
+            // the one place it is looser: a floor it may weigh, read with certainty and rated not catastrophic
+            "delete-in-project" => {
+                assert_eq!((a.as_str(), o.as_str()), ("wait", "approve"), "{id}: {:?}", env.suggestion(id).await);
+            }
+            // stricter: rated catastrophic
+            "catastrophic" => assert_eq!((a.as_str(), o.as_str()), ("approve", "wait"), "{id}"),
+            _ => assert_eq!(a, o, "Overnight decided {id} unlike Auto"),
+        }
+    }
+    let why = |id: &str| {
+        let env = &env;
+        let id = id.to_owned();
+        async move { env.suggestion(&id).await }
+    };
+    for (id, reason) in [
+        ("delete-home", "Waited: risk catastrophic · deletes the home directory"),
+        ("unreadable", "Always asks: "),
+        ("unresolved-target", "Waited: risk catastrophic · target not resolved"),
+        ("unresolved-relative", "Waited: "),
+        ("after-cd", "Waited: "),
+        ("standing-permission", "Always asks: a standing permission"),
+        ("class-learning", "has not earned this kind of request"),
+    ] {
+        let s = why(id).await;
+        assert!(s.reason.starts_with(reason) || s.reason.contains(reason), "{id}: {}", s.reason);
+    }
+    // the unresolved target an empty value turns into the root is catastrophic, not a line the model may ignore
+    let unresolved = why("unresolved-target").await.risk.unwrap();
+    assert!(unresolved.held && unresolved.level == RiskLevel::Catastrophic, "{unresolved:?}");
+    let allowed = why("delete-in-project").await;
+    assert!(allowed.reason.starts_with("Allowed overnight · risk low"), "{}", allowed.reason);
+    assert!(
+        env.decided()
+            .iter()
+            .any(|(id, v, by)| id == "delete-in-project" && *v == Verdict::Approve && by == "overnight")
     );
-    assert_eq!(env.waiting().await, ["r3"]);
-    let held = env.suggestion("r3").await;
-    let risk = held.risk.clone().unwrap();
-    assert!(risk.held && risk.level == RiskLevel::Catastrophic && risk.p_catastrophic > 0.9, "{held:?}");
-    assert!(held.reason.starts_with("Waited: risk catastrophic"), "{}", held.reason);
-    let line = env.notes.pending.lock().unwrap().iter().rev().find(|i| i.id == "r3").unwrap().suggestion.clone();
-    assert!(line.unwrap().starts_with("Waited: risk catastrophic"));
-    let approved = env.suggestion("r1").await;
-    assert!(approved.reason.starts_with("Allowed overnight · risk low"), "{}", approved.reason);
-    assert_eq!(approved.risk.unwrap().level, RiskLevel::Benign);
-    let entry = env.core.activity(10).await.unwrap().into_iter().find(|e| e.outcome == "sent").unwrap();
-    assert_eq!(entry.decided_by, "overnight");
-    assert_eq!(entry.autopilot.unwrap().risk.unwrap().level, RiskLevel::Benign);
-    let grants = env.store().grants().unwrap();
-    assert_eq!(grants.len(), 1);
-    assert_eq!(grants[0].origin, "overnight");
+    // it approves once, as Auto does: no standing permission comes of it
+    assert!(env.store().grants().unwrap().is_empty());
+    let entry = env.core.activity(30).await.unwrap().into_iter().find(|e| e.decided_by == "overnight").unwrap();
+    assert!(entry.autopilot.unwrap().risk.is_some());
+}
 
-    // Stopping it takes back what it granted.
-    env.mode(None, AutopilotMode::Auto).await;
-    assert!(env.store().grants().unwrap().iter().all(|g| !g.grant.is_active(unix_now())));
-    let ended = env.core.activity(20).await.unwrap();
-    assert!(ended.iter().any(|e| e.outcome == "revoked"), "{ended:?}");
+/// Auto's rate limit holds in Overnight too (and Overnight's own, wider, on top).
+#[tokio::test]
+async fn overnight_keeps_autos_rate_limit() {
+    let env = env_risk().await;
+    known_and_unlocked(&env).await;
+    env.mode(None, AutopilotMode::Overnight).await;
+    let now = unix_now();
+    for _ in 0..gates::RATE_PER_10_MIN {
+        env.store().ap_rate_add(OLD, now - 60).unwrap();
+    }
+    env.relay("r1", OLD, email("friend@x.com", "lunch?")).await;
+    assert!(env.decided().is_empty());
+    assert!(env.suggestion("r1").await.reason.contains("unusual volume"));
 }
 
 #[tokio::test]
@@ -967,14 +1088,17 @@ async fn without_a_model_that_rates_risk_overnight_decides_like_auto() {
 }
 
 /// Overnight with a package that declares the risk output, a just-paired AI aside: whatever goes wrong, a request
-/// waits, the hard floor included, and is never approved.
+/// waits, a floor it would weigh included, and is never approved (what Auto would approve too).
 async fn overnight_holds_everything(env: &Env, why: &[&str]) {
+    let key = desktop_key(env);
+    known_and_unlocked(env).await;
+    let sent = env.sent().await;
     env.mode(None, AutopilotMode::Overnight).await;
     env.relay("r1", OLD, email("friend@x.com", "hi")).await;
-    env.relay("r2", OLD, grant()).await;
+    env.relay("r2", OLD, hook_ask(&key, "", "command:rm -r", "rm -rf build")).await;
     assert!(env.decided().is_empty(), "nothing approved or denied: {:?}", env.decided());
     assert_eq!(env.waiting().await.len(), 2);
-    assert_eq!(env.sent().await, 0);
+    assert_eq!(env.sent().await, sent);
     assert!(env.store().grants().unwrap().is_empty(), "the hard floor stays with the user");
     for id in ["r1", "r2"] {
         let s = env.suggestion(id).await;
@@ -1041,42 +1165,48 @@ async fn the_model_reads_the_context_line_only_when_it_rates_risk() {
 #[tokio::test]
 async fn overnight_ends_by_itself_and_returns_to_the_mode_it_interrupted() {
     let env = env_risk().await;
+    let key = desktop_key(&env);
+    known_and_unlocked(&env).await;
+    env.relay("seed-3", OLD, hook_ask(&key, "", "command:rm -r", "rm -rf build")).await;
+    env.approve("seed-3").await;
+    env.unlock("desktop/ask").await;
     env.mode(None, AutopilotMode::Auto).await;
     env.core.start_overnight(None, Some(60)).await.unwrap();
     let settings = env.core.autopilot_settings().await.unwrap();
     assert_eq!(settings.mode, AutopilotMode::Overnight);
     assert!(settings.overnight_until.unwrap() > unix_now() + 59 * 60 && settings.overnight_since.is_some());
-    env.relay("r1", OLD, grant()).await;
-    let expires = env.store().grants().unwrap()[0].grant.expires_at.unwrap();
-    assert!(expires <= settings.overnight_until.unwrap(), "a permission it grants ends with it");
+    env.relay("r1", OLD, hook_ask(&key, "", "command:rm -r", "rm -rf build")).await;
+    assert_eq!(env.decided(), [("r1".to_owned(), Verdict::Approve, "overnight".to_owned())]);
 
     let mut global = env.store().ap_mode_row("").unwrap();
     global.overnight_until = Some(unix_now() - 1);
     env.store().ap_set_mode_row("", &global, unix_now()).unwrap();
-    env.relay("r2", OLD, email("friend@x.com", "hi")).await;
-    assert!(env.waiting().await.contains(&"r2".to_owned()), "back to Auto, where nothing is unlocked");
+    env.relay("r2", OLD, hook_ask(&key, "", "command:rm -r", "rm -rf build")).await;
+    assert!(env.waiting().await.contains(&"r2".to_owned()), "back to Auto, where the floor asks");
     let settings = env.core.autopilot_settings().await.unwrap();
     assert_eq!((settings.mode, settings.overnight_until), (AutopilotMode::Auto, None));
     assert!(env.notes.events.lock().unwrap().contains(&AutopilotEvent::OvernightEnded {
         connection_id: None
     }));
-    assert!(
-        env.store().grants().unwrap().iter().all(|g| !g.grant.is_active(unix_now())),
-        "its permission ended with it"
-    );
+    assert!(env.store().grants().unwrap().is_empty(), "it granted nothing");
     // Stored as the mode it is, so that the next start returns to Auto again.
     assert_eq!(env.store().ap_mode_row("").unwrap().mode, Some(AutopilotMode::Auto));
 }
 
 #[tokio::test]
-async fn a_global_overnight_beats_an_ais_own_mode_but_not_its_lockdown_or_bypass() {
+async fn a_global_overnight_beats_an_ais_auto_but_not_its_manual_lockdown_or_bypass() {
     let env = env_risk().await;
-    env.mode(Some(OLD), AutopilotMode::Manual).await;
+    env.mode(Some(OLD), AutopilotMode::Auto).await;
     env.mode(Some(OTHER), AutopilotMode::Lockdown).await;
+    env.mode(Some(NEW), AutopilotMode::Manual).await;
     env.mode(None, AutopilotMode::Overnight).await;
     let settings = env.core.autopilot_settings().await.unwrap();
     let mode = |id: &str| settings.connections.iter().find(|c| c.connection_id == id).unwrap().mode;
-    assert_eq!((mode(OLD), mode(OTHER)), (AutopilotMode::Overnight, AutopilotMode::Lockdown));
+    assert_eq!(
+        (mode(OLD), mode(OTHER), mode(NEW)),
+        (AutopilotMode::Overnight, AutopilotMode::Lockdown, AutopilotMode::Manual),
+        "an AI the user keeps on Manual stays on it"
+    );
     env.core.start_bypass(Some(OLD.to_owned()), Some(15)).await.unwrap();
     let settings = env.core.autopilot_settings().await.unwrap();
     let mode = |id: &str| settings.connections.iter().find(|c| c.connection_id == id).unwrap().mode;
@@ -1086,7 +1216,12 @@ async fn a_global_overnight_beats_an_ais_own_mode_but_not_its_lockdown_or_bypass
 #[tokio::test]
 async fn turning_overnight_on_judges_what_already_waits_and_young_ais_still_wait() {
     let env = env_risk().await;
-    env.relay("r1", OLD, email("friend@x.com", "hi")).await;
+    let key = desktop_key(&env);
+    known_and_unlocked(&env).await;
+    env.relay("seed-3", OLD, hook_ask(&key, "", "command:rm -r", "rm -rf build")).await;
+    env.approve("seed-3").await;
+    env.unlock("desktop/ask").await;
+    env.relay("r1", OLD, hook_ask(&key, "", "command:rm -r", "rm -rf build")).await;
     env.relay("r2", NEW, email("friend@x.com", "from an AI paired a moment ago")).await;
     assert_eq!(env.waiting().await.len(), 2);
     env.core.start_overnight(None, None).await.unwrap();
@@ -1100,10 +1235,11 @@ async fn after_a_hold_an_ais_severe_requests_wait_and_the_rest_go_on() {
     let env = env_risk().await;
     env.model.risk_rule("wire the savings", testing::risk(0.01, 0.01, 0.03, 0.95));
     env.model.risk_rule("quarterly numbers", testing::risk(0.05, 0.1, 0.8, 0.05));
+    known_and_unlocked(&env).await;
     env.mode(None, AutopilotMode::Overnight).await;
     env.relay("r1", OLD, email("friend@x.com", "the quarterly numbers")).await;
     assert_eq!(env.decided().len(), 1, "a severe request is approved");
-    env.relay("r2", OLD, email("boss@y.com", "wire the savings now")).await;
+    env.relay("r2", OLD, email("friend@x.com", "wire the savings now")).await;
     env.relay("r3", OLD, email("friend@x.com", "the quarterly numbers again")).await;
     env.relay("r4", OLD, email("friend@x.com", "lunch?")).await;
     env.relay("r5", OTHER, email("friend@x.com", "the quarterly numbers from another AI")).await;

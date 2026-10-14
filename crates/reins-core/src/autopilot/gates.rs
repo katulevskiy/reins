@@ -54,47 +54,67 @@ pub fn blob_flagged(view: &BlobView) -> bool {
         || view.preview_text.as_deref().is_some_and(|t| t.trim_start().starts_with("#!"))
 }
 
-/// Why a request always waits for the user (spec §2), or `None`.
+const FAR_REACHING: &str = "this is asked every time (secrets or a far-reaching change)";
+const MCP_DESTRUCTIVE: &str = "the MCP server marks this tool destructive";
+const PUSH_REWRITES: &str = "this push rewrites or deletes history";
+const UPLOAD_RUNS: &str = "the uploaded file may hold something to run";
+
+/// Whether Overnight may weigh a request's floor with the risk model instead of always asking (a request without a
+/// floor: trivially). Only when every reason it has to wait is about what an action does: a destructive tool, a push
+/// that rewrites or deletes history, a far-reaching change, an upload that may hold something to run. Never when one
+/// is about who decides (a standing permission, the accounts an AI sees), money, secrets released or sign-ins, what
+/// could not be read (a question the phone could not read, hidden characters), or sensitive items.
+pub fn overnight_weighs(view: &ApprovalView) -> bool {
+    floors(view).iter().all(|(_, weighable)| *weighable)
+}
+
+/// Why a request always waits for the user (spec §2), or `None`: the first of its reasons.
 pub fn request_floor(view: &ApprovalView) -> Option<&'static str> {
+    floors(view).first().map(|(why, _)| *why)
+}
+
+/// Every reason a request always waits, in order, each with whether Overnight may weigh it.
+fn floors(view: &ApprovalView) -> Vec<(&'static str, bool)> {
+    let mut out = Vec::new();
     if matches!(view.kind, ApprovalKind::Grant) {
-        return Some("a standing permission is only ever given by you");
+        out.push(("a standing permission is only ever given by you", false));
     }
     if matches!(view.kind, ApprovalKind::Accounts) {
-        return Some("which accounts an AI sees is only ever decided by you");
+        out.push(("which accounts an AI sees is only ever decided by you", false));
     }
     if view.secrets.is_some() || view.env_release.is_some() {
-        return Some("secrets for the desktop app are only ever released by you");
+        out.push(("secrets for the desktop app are only ever released by you", false));
     }
     if view.secrets_store.is_some() || view.token_store.is_some() {
-        return Some("secrets sent from the computer are only ever saved by you");
+        out.push(("secrets sent from the computer are only ever saved by you", false));
     }
     if view.ssh.is_some() {
-        return Some("SSH sign-ins are only ever approved by you");
+        out.push(("SSH sign-ins are only ever approved by you", false));
     }
     if view.purchase.is_some() || view.service == reins_proto::connector::PAYMENTS && view.action == "write" {
-        return Some("purchases are only ever approved by you, or within a spend limit you set");
+        out.push(("purchases are only ever approved by you, or within a spend limit you set", false));
     }
     if view.no_standing {
-        return Some("this is asked every time (secrets or a far-reaching change)");
+        out.push((FAR_REACHING, !view.messages.iter().any(|m| m.sensitive)));
     }
     if view.ask.as_ref().is_some_and(|a| a.uncertain) {
-        return Some("the phone could not read this question with certainty");
+        out.push(("the phone could not read this question with certainty", false));
     }
     if view.mcp.as_ref().is_some_and(|m| m.destructive) {
-        return Some("the MCP server marks this tool destructive");
+        out.push((MCP_DESTRUCTIVE, true));
     }
     if view.git.as_ref().is_some_and(|g| g.refs.iter().any(|r| r.force || r.force_unknown || r.change == "delete")) {
-        return Some("this push rewrites or deletes history");
+        out.push((PUSH_REWRITES, true));
     }
     if view.git.as_ref().is_some_and(|g| {
         g.refs.iter().any(|r| r.commits.iter().any(|c| c.hidden_chars) || r.files.iter().any(|f| f.hidden_chars))
     }) {
-        return Some("this push holds hidden characters that can make code read unlike what it does");
+        out.push(("this push holds hidden characters that can make code read unlike what it does", false));
     }
     if view.blob.as_ref().is_some_and(blob_flagged) {
-        return Some("the uploaded file may hold something to run");
+        out.push((UPLOAD_RUNS, true));
     }
-    None
+    out
 }
 
 /// Why an upload always waits, or `None`.

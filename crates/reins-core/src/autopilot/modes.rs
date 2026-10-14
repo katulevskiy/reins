@@ -5,8 +5,8 @@
 //! - a connection's own Lockdown, then its own bypass;
 //! - a global bypass in force applies to every connection not locked down, whatever mode it has of its own (a global
 //!   Bypass that some AIs silently ignored would surprise);
-//! - then Overnight, the connection's own or the global one, for the same reason (an AI left on Manual would stall
-//!   all night under a global Overnight);
+//! - then the connection's own Overnight, then the global one for every connection not kept on Manual (Overnight is
+//!   never looser than what the user chose for an AI: one kept on Manual stays on it);
 //! - otherwise the connection's own mode, else the global one;
 //! - a global mode never picked is Manual.
 //!
@@ -182,10 +182,15 @@ pub fn effective(global: &ModeRow, conn: Option<&ModeRow>, now: i64) -> Autopilo
         if c.bypassing(now) || global.bypassing(now) {
             return AutopilotMode::Bypass;
         }
-        if c.overnighting(now) || global.overnighting(now) {
+        if c.overnighting(now) {
             return AutopilotMode::Overnight;
         }
-        if let Some(mode) = c.base(now) {
+        // A global Overnight is never looser than what the user chose for this AI: one kept on Manual stays on it.
+        let own = c.base(now);
+        if global.overnighting(now) && own != Some(AutopilotMode::Manual) {
+            return AutopilotMode::Overnight;
+        }
+        if let Some(mode) = own {
             return mode;
         }
     }
@@ -232,9 +237,11 @@ mod tests {
     }
 
     #[test]
-    fn lockdown_and_bypass_beat_overnight_and_a_global_overnight_beats_an_ais_own_mode() {
+    fn lockdown_and_bypass_beat_overnight_and_a_global_overnight_beats_an_ais_auto_but_not_its_manual() {
         let g = overnight(None, Some(AutopilotMode::Auto));
-        assert_eq!(effective(&g, Some(&row(Some(AutopilotMode::Manual), None)), 0), AutopilotMode::Overnight);
+        assert_eq!(effective(&g, Some(&row(Some(AutopilotMode::Auto), None)), 0), AutopilotMode::Overnight);
+        assert_eq!(effective(&g, Some(&row(None, None)), 0), AutopilotMode::Overnight);
+        assert_eq!(effective(&g, Some(&row(Some(AutopilotMode::Manual), None)), 0), AutopilotMode::Manual);
         assert_eq!(effective(&g, Some(&row(Some(AutopilotMode::Lockdown), None)), 0), AutopilotMode::Lockdown);
         assert_eq!(effective(&g, Some(&row(None, Some(10))), 0), AutopilotMode::Bypass);
         let mut both = overnight(None, None);

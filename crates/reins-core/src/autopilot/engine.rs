@@ -86,6 +86,8 @@ struct Subject {
     connection_label: String,
     described: Described,
     floor: Option<String>,
+    /// Overnight may weigh `floor` with the risk model instead of always asking ([`gates::overnight_weighs`]).
+    floor_weighable: bool,
     item: PendingItem,
     /// What approving it once selects (as the approval screen preselects).
     choice: ApprovalChoice,
@@ -99,8 +101,6 @@ struct Subject {
     grant_origin: Option<String>,
     /// What the approval screen shows (requests only): the risk context is worked out from it.
     view: Option<ApprovalView>,
-    /// Which accounts an AI sees (approved with every account offered, as a bypass does).
-    accounts: bool,
 }
 
 /// What one pass keeps between items.
@@ -126,6 +126,35 @@ fn verb(v: Verdict) -> &'static str {
 #[expect(clippy::cast_possible_truncation, clippy::cast_sign_loss, reason = "a percentage of a probability")]
 fn pct(p: f32) -> u32 {
     (p.clamp(0.0, 1.0) * 100.0).round() as u32
+}
+
+/// Why Overnight holds a request.
+#[derive(Clone, Debug, PartialEq, Eq)]
+enum Hold {
+    /// Not held: Auto's rules decide, the floor weighed.
+    None,
+    /// A tripwire, or the model rated it catastrophic: waits or is denied, as the user chose.
+    Catastrophic(String),
+    /// Not read with certainty (the action, or the model's risk): waits, whatever the setting.
+    Uncertain(String),
+}
+
+/// Overnight's hold, from what the core read (`outcome`) and the model's risk (`risk`, already checked readable) with
+/// the package's threshold. A tripwire holds whatever the model says; an uncertain reading holds too (never "no
+/// tripwire, so the model decides"); a risk or a threshold missing holds; else the model's catastrophic probability
+/// against the threshold.
+fn overnight_hold(outcome: &risk::Outcome, risk: Option<[f32; 4]>, threshold: Option<f32>, context: &[String]) -> Hold {
+    match outcome {
+        risk::Outcome::Tripwire(line) => Hold::Catastrophic(line.clone()),
+        risk::Outcome::Uncertain(why) => Hold::Uncertain(why.clone()),
+        risk::Outcome::Read => match (risk, threshold) {
+            (Some(p), Some(theta)) if p[3] >= theta => {
+                Hold::Catastrophic(context.first().cloned().unwrap_or_else(|| "rated catastrophic".to_owned()))
+            }
+            (Some(_), Some(_)) => Hold::None,
+            _ => Hold::Uncertain("the risk could not be read".to_owned()),
+        },
+    }
 }
 
 /// The one line a notification or the pending list shows.
@@ -491,7 +520,7 @@ impl Engine {
             if self.store.ap_suggestion(&row.id)?.is_some() || self.store.pending_item(&row.id, now)?.is_none() {
                 continue;
             }
-            if let Err(e) = self.ap_item(&row, &mut ctx).await {
+            if let Err(e) = Box::pin(self.ap_item(&row, &mut ctx)).await {
                 // Nothing was decided: the item waits, as it would without Autopilot; under a bypass it is tried
                 // again by the next pass, and nobody is told it waits.
                 log::warn!("Autopilot could not evaluate a request: {e}");
@@ -535,13 +564,13 @@ impl Engine {
                     connection_label: parked.label(),
                     described: situation::describe_request(&view),
                     floor: gates::request_floor(&view).map(str::to_owned),
+                    floor_weighable: gates::overnight_weighs(&view),
                     item: views::request_item(&parked),
                     choice: default_choice(&view),
                     everything: everything(&view),
                     grant: view.kind == ApprovalKind::Grant,
                     purchase: view.purchase.is_some(),
                     grant_origin: None,
-                    accounts: view.kind == ApprovalKind::Accounts,
                     view: Some(view),
                 })
             }
@@ -556,6 +585,8 @@ impl Engine {
                     connection_label: view.connection_label.clone(),
                     described: situation::describe_blob(&view, flagged),
                     floor: gates::blob_floor(&view).map(str::to_owned),
+                    // an upload that may hold something to run: what it does, weighed like the rest of its kind
+                    floor_weighable: true,
                     item: crate::blob::blob_item(&info),
                     choice: ApprovalChoice {
                         selected_message_ids: Vec::new(),
@@ -569,7 +600,6 @@ impl Engine {
                     purchase: false,
                     grant_origin: None,
                     view: None,
-                    accounts: false,
                 })
             }
         })
@@ -663,7 +693,7 @@ impl Engine {
         if mode == AutopilotMode::Bypass {
             // Before anything that could fail or wait (the profile, the connection list): nothing a bypass covers is
             // left waiting.
-            return self.ap_bypass_item(subject, now).await;
+            return Box::pin(self.ap_bypass_item(subject, now)).await;
         }
         if !ctx.model && matches!(mode, AutopilotMode::Manual | AutopilotMode::Auto | AutopilotMode::Overnight) {
             // Judged by the app's next pass, which has the model.
@@ -713,25 +743,31 @@ impl Engine {
 
         // A model that rates risk reads a hook's question as the action it is about, with the context line the core
         // works out (docs/autopilot-risk.md §3), the connection's last hour included.
-        // (Read from the package's configuration: opening it, which verifies it, is the judging's job.)
-        // This reading of the package's configuration only decides what the model is shown; nothing is decided on it.
+        // (Read from the package's configuration: opening it, which verifies it, is the judging's job. This reading
+        // only decides what the model is shown; nothing is decided on it.)
         let rates_risk = mode != AutopilotMode::Bypass && model::rates_risk(&self.data_dir, &self.ap_known());
-        let mut context = risk::Context::default();
-        if rates_risk {
-            if let Some(view) = &subject.view {
-                context = risk::refine(&mut subject.described, view);
-                subject.described.label =
-                    situation::label_of(&subject.described.facts.operation, &subject.described.facts.target);
-                s.label.clone_from(&subject.described.label);
-            }
-            s.deletes = context.deletes;
-            if let Some(line) = self.ap_recent_line(&subject, context.deletes, now)? {
+        let context = if rates_risk {
+            let context = match &subject.view {
+                Some(view) => {
+                    let c = risk::refine(&mut subject.described, view);
+                    subject.described.label =
+                        situation::label_of(&subject.described.facts.operation, &subject.described.facts.target);
+                    s.label.clone_from(&subject.described.label);
+                    c
+                }
+                None => risk::upload_context(),
+            };
+            s.deletes = context.deletes();
+            if let Some(line) = self.ap_recent_line(&subject, context.deletes(), now)? {
                 subject.described.facts.context.push(line);
             }
-        }
+            Some(context)
+        } else {
+            None
+        };
 
         // What the model reads, also kept for corrections.
-        let age = self.ap_age(ctx, &subject.connection_id).await;
+        let age = Box::pin(self.ap_age(ctx, &subject.connection_id)).await;
         let mut facts = subject.described.facts.clone();
         facts.connection.clone_from(&subject.connection_label);
         facts.connection_age = age;
@@ -741,13 +777,13 @@ impl Engine {
 
         let young = gates::young(age, self.cfg.new_connection_secs)
             .then(|| "a connection paired less than 10 minutes ago".to_owned());
-        // Overnight may approve the hard floor, but only once a verified model rated this very request (below); until
-        // then the floor is only set aside, never dropped. A just-paired AI always waits.
-        let floor = if mode == AutopilotMode::Overnight && rates_risk {
-            None
-        } else {
-            subject.floor.clone()
-        };
+        // Overnight is Auto, except that part of the hard floor (what an action does: a destructive tool, a push that
+        // rewrites history, a far-reaching change, an upload that may run) is weighed by the risk model instead of
+        // always asked, and only once a verified model rated this very request and the core read it with certainty
+        // (below). The rest of the floor (who decides, money, sign-ins, what could not be read) and a just-paired AI
+        // wait, as in Auto.
+        let weighed = mode == AutopilotMode::Overnight && rates_risk && subject.floor_weighable;
+        let floor = subject.floor.clone().filter(|_| !weighed);
         if let Some(floor) = floor.or(young) {
             s.reason = format!("Always asks: {floor}");
             s.floor = Some(floor);
@@ -767,38 +803,56 @@ impl Engine {
         };
         s.verdict = decide::would(probs, novel, judged.escalate, thresholds);
         s.reason = reason_of(&judged, s.verdict, novel);
-        // Overnight acts on risk when the verified package that judged this request declares it. Then anything short of
-        // a readable risk, a valid threshold and a command read with certainty holds the request: it waits.
+        // Overnight acts on risk when the verified package that judged this request declares it.
         let overnight = mode == AutopilotMode::Overnight && judged.risk_declared;
-        let tripwire = context.tripwire.clone();
         let readable = judged.risk.filter(|p| risk::readable(*p));
-        let unreadable = context.unreadable.clone().or_else(|| match (readable, judged.risk_threshold) {
-            (Some(_), Some(_)) => None,
-            _ => Some("the risk could not be read".to_owned()),
-        });
-        let catastrophic =
-            tripwire.is_some() || readable.zip(judged.risk_threshold).is_some_and(|(p, theta)| p[3] >= theta);
+        let outcome = context.as_ref().map_or_else(
+            || risk::Outcome::Uncertain("the request was not read for risk".to_owned()),
+            risk::Context::outcome,
+        );
+        let hold = overnight_hold(&outcome, readable, judged.risk_threshold, &subject.described.facts.context);
         if overnight || readable.is_some() {
-            let held = overnight && (catastrophic || unreadable.is_some());
+            let catastrophic = matches!(hold, Hold::Catastrophic(_));
             s.risk = Some(RiskNote {
                 level: readable.map_or(RiskLevel::Catastrophic, |p| risk::level(p, catastrophic)),
                 probs: readable.unwrap_or([0.0; 4]),
-                why: tripwire
-                    .clone()
-                    .or_else(|| unreadable.clone().filter(|_| overnight))
-                    .or_else(|| subject.described.facts.context.first().cloned())
-                    .unwrap_or_default(),
-                held,
-                tripwire: tripwire.is_some(),
+                why: match (&hold, &outcome) {
+                    (Hold::Catastrophic(why) | Hold::Uncertain(why), _) if overnight => why.clone(),
+                    (_, risk::Outcome::Tripwire(line)) => line.clone(),
+                    _ => subject.described.facts.context.first().cloned().unwrap_or_default(),
+                },
+                held: overnight && !matches!(hold, Hold::None),
+                tripwire: matches!(outcome, risk::Outcome::Tripwire(_)),
             });
         }
         s.judged = Some(judged);
         if overnight {
-            // Boxed: the decision's future (the approval it carries out) would otherwise sit inside this one.
-            let cannot_read = unreadable.filter(|_| !catastrophic);
-            return Box::pin(self.ap_overnight(&mut subject, s, cannot_read, now)).await;
-        }
-        if mode == AutopilotMode::Overnight {
+            match hold {
+                Hold::Catastrophic(_) => {
+                    let line = s.risk.as_ref().map(RiskNote::line).unwrap_or_default();
+                    return match self.ap_overnight_risky()? {
+                        OvernightRisky::Wait => {
+                            s.verdict = Verdict::Ask;
+                            s.reason = format!("Waited: {line}");
+                            self.ap_wait(&subject, &s)
+                        }
+                        OvernightRisky::Deny => {
+                            s.verdict = Verdict::Deny;
+                            s.reason = format!("Denied {}: {line}", OVERNIGHT_NAME.to_lowercase());
+                            Box::pin(self.ap_conclude(&subject, s, Verdict::Deny, "overnight")).await
+                        }
+                    };
+                }
+                Hold::Uncertain(why) => {
+                    // whatever the setting: nothing was read to deny it on
+                    s.verdict = Verdict::Ask;
+                    s.reason = format!("Waited: {why}");
+                    return self.ap_wait(&subject, &s);
+                }
+                Hold::None => {}
+            }
+        } else if mode == AutopilotMode::Overnight {
+            // Without a verified model that rates risk: Auto, the hard floor included.
             if let Some(floor) = subject.floor.clone() {
                 s.reason = format!("Always asks: {floor}");
                 s.floor = Some(floor);
@@ -807,6 +861,9 @@ impl Engine {
             s.reason = format!("{OVERNIGHT_NAME} needs a model that rates risk; decided like Auto: {}", s.reason);
         }
 
+        // Auto's rules, in Auto and in Overnight alike: the model's verdict, the class gates, the rate limit. A request
+        // whose floor Overnight weighed is only ever approved by it; any other verdict leaves it to the user.
+        let weighed_floor = overnight && subject.floor.is_some();
         if matches!(mode, AutopilotMode::Auto | AutopilotMode::Overnight) && s.verdict != Verdict::Ask {
             let (stats, manual) = {
                 let profile = self.ap_profile_loaded(ctx, &subject.connection_id)?;
@@ -814,6 +871,11 @@ impl Engine {
                 (gates::class_stats(&refs, &s.class_key), profile.0.profile.manual.get(&s.class_key).copied())
             };
             let (may_approve, may_deny) = gates::unlocked(&stats, manual.map(|locked| !locked));
+            let by = if overnight {
+                "overnight"
+            } else {
+                "autopilot"
+            };
             match s.verdict {
                 Verdict::Approve if !may_approve => {
                     s.reason = format!(
@@ -824,13 +886,31 @@ impl Engine {
                     );
                 }
                 Verdict::Approve => {
+                    let note = s.risk.clone().filter(|_| overnight);
+                    if let Some(note) = &note
+                        && let Some(why) = self.ap_overnight_paused(&subject.connection_id, note.level, now)?
+                    {
+                        s.reason = format!("{OVERNIGHT_NAME} paused for this AI ({why}): {}", note.line());
+                        self.ap_pause_notice(&subject, now, why);
+                        return self.ap_wait(&subject, &s);
+                    }
                     if self.ap_rate_ok(&subject.connection_id, now)? {
-                        return Box::pin(self.ap_conclude(&subject, s, Verdict::Approve, "autopilot")).await;
+                        if let Some(note) = &note {
+                            s.reason = format!("Allowed {} · {}", OVERNIGHT_NAME.to_lowercase(), note.line());
+                            // Marked as this Overnight's: anything granted while carrying it out ends when it does.
+                            // (It approves once, as Auto does: it never asks for a standing permission.)
+                            let scope = self.ap_overnight_scope(&subject.connection_id, now)?;
+                            subject.grant_origin = Some(modes::overnight_origin(&scope));
+                        }
+                        return Box::pin(self.ap_conclude(&subject, s, Verdict::Approve, by)).await;
                     }
                     s.reason = format!("{} — paused: unusual volume from this connection", s.reason);
                     self.ap_pause_notice(&subject, now, "unusual volume");
                 }
-                Verdict::Deny if may_deny => return self.ap_conclude(&subject, s, Verdict::Deny, "autopilot").await,
+                Verdict::Deny if weighed_floor => {
+                    s.reason = format!("{} — {OVERNIGHT_NAME} leaves this kind of request to you", s.reason);
+                }
+                Verdict::Deny if may_deny => return Box::pin(self.ap_conclude(&subject, s, Verdict::Deny, by)).await,
                 Verdict::Deny => {
                     s.reason = format!("{} — auto-deny is not unlocked for this kind of request", s.reason);
                 }
@@ -1000,59 +1080,6 @@ impl Engine {
             connection_label: subject.connection_label.clone(),
             reason: reason.to_owned(),
         });
-    }
-
-    /// Overnight's decision on a judged request: what the risk model (or a tripwire) holds waits or is denied, as the
-    /// user chose; the rest is approved once, within the safety valves.
-    /// `cannot_read`: why the request could not be judged (it waits, whatever the setting).
-    async fn ap_overnight(
-        &self,
-        subject: &mut Subject,
-        mut s: Suggestion,
-        cannot_read: Option<String>,
-        now: i64,
-    ) -> Result<(), CoreError> {
-        let Some(note) = s.risk.clone() else {
-            s.verdict = Verdict::Ask;
-            return self.ap_wait(subject, &s);
-        };
-        if let Some(why) = cannot_read {
-            s.verdict = Verdict::Ask;
-            s.reason = format!("Waited: {why}");
-            return self.ap_wait(subject, &s);
-        }
-        if note.held {
-            return match self.ap_overnight_risky()? {
-                OvernightRisky::Wait => {
-                    s.verdict = Verdict::Ask;
-                    s.reason = format!("Waited: {}", note.line());
-                    self.ap_wait(subject, &s)
-                }
-                OvernightRisky::Deny => {
-                    s.verdict = Verdict::Deny;
-                    s.reason = format!("Denied {}: {}", OVERNIGHT_NAME.to_lowercase(), note.line());
-                    self.ap_conclude(subject, s, Verdict::Deny, "overnight").await
-                }
-            };
-        }
-        if let Some(why) = self.ap_overnight_paused(&subject.connection_id, note.level, now)? {
-            s.verdict = Verdict::Ask;
-            s.reason = format!("{OVERNIGHT_NAME} paused for this AI ({why}): {}", note.line());
-            self.ap_pause_notice(subject, now, why);
-            return self.ap_wait(subject, &s);
-        }
-        s.verdict = Verdict::Approve;
-        s.reason = format!("Allowed {} · {}", OVERNIGHT_NAME.to_lowercase(), note.line());
-        if subject.accounts {
-            subject.choice = subject.everything.clone();
-        }
-        if subject.grant {
-            // Marked as this Overnight's, so that it ends when Overnight does; a timed one also caps it.
-            let (scope, cap) = self.ap_overnight_cap(&subject.connection_id, now)?;
-            subject.choice.standing = cap;
-            subject.grant_origin = Some(modes::overnight_origin(&scope));
-        }
-        self.ap_conclude(subject, s, Verdict::Approve, "overnight").await
     }
 
     /// Why Overnight leaves a connection's request to the user although its risk is not catastrophic: the rate limit
@@ -1232,34 +1259,13 @@ impl Engine {
         ))
     }
 
-    /// The Overnight in force for a connection (its own, else the global one) and the cap of a permission granted
-    /// during it: until its planned end (one without an end: as asked; it is taken back when stopped).
-    fn ap_overnight_cap(&self, connection_id: &str, now: i64) -> Result<(String, Option<StandingGrant>), CoreError> {
-        let own = self.store.ap_mode_row(connection_id)?;
-        let (scope, row) = if own.overnighting(now) {
-            (connection_id.to_owned(), own)
+    /// The Overnight in force for a connection: its own (the connection's id), else the global one (`""`).
+    fn ap_overnight_scope(&self, connection_id: &str, now: i64) -> Result<String, CoreError> {
+        Ok(if self.store.ap_mode_row(connection_id)?.overnighting(now) {
+            connection_id.to_owned()
         } else {
-            (String::new(), self.store.ap_mode_row("")?)
-        };
-        let end = row.overnight_until.filter(|e| *e != modes::BYPASS_UNTIL_OFF && *e > now);
-        Ok((
-            scope,
-            end.map(|end| StandingGrant {
-                duration_secs: Some(u64::try_from((end - now).max(1)).unwrap_or(1)),
-                max_uses: None,
-                scope: GrantScopeChoice {
-                    all_mail: false,
-                    selected_messages_only: false,
-                    sender_addresses: Vec::new(),
-                    sender_domains: Vec::new(),
-                    subject_pattern: None,
-                    recipient_addresses: Vec::new(),
-                    recipient_domains: Vec::new(),
-                    resources: Vec::new(),
-                    classes: Vec::new(),
-                },
-            }),
-        ))
+            String::new()
+        })
     }
 
     /// Writes a mode row; in the same transaction, what a bypass granted is taken back once that bypass is no longer
