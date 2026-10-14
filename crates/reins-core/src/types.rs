@@ -123,6 +123,65 @@ pub struct PendingItem {
     /// asked every time and nothing in it needs a closer look.
     #[uniffi(default)]
     pub quick: bool,
+    /// What the request is, as every screen shows it (see [`RequestLabel`]); `None` for pairings and other phones.
+    #[uniffi(default)]
+    pub label: Option<RequestLabel>,
+}
+
+/// What a request is, the same on every screen: the thing it touches (the tile), what it does to it (the badge on the
+/// tile's corner) and the request itself in a few words, "Run `git push --force origin main`". Built by the core from
+/// the call (`crate::titles`), so a waiting card, its Activity row and the entry's page agree.
+#[derive(Clone, Debug, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct RequestLabel {
+    /// What it touches: "terminal" (a command), "file", "secrets" (the vault's secrets for a command), "ssh", "desktop"
+    /// (a question from the computer), "mcp:<server id>" (a tool of an MCP server), else the integration's id ("github",
+    /// "gmail", "gcalendar", "telegram", ...).
+    pub provider: String,
+    /// What it does, the badge: "run", "read", "write", "send", "delete", "push", "secrets", "search", "grant" or "ask".
+    pub action: String,
+    /// The words before the subject ("Run", "Push 3 commits to", "Send an email to"); the whole title when there is no
+    /// subject.
+    pub lead: String,
+    /// What it is about, set apart: the command, the path, the repository, the address. May be empty.
+    pub subject: String,
+    /// The subject is code (a command, a path, a tool's name): shown in a monospaced font.
+    pub code: bool,
+    /// After the subject (" and 2 more"); usually empty.
+    #[serde(default)]
+    pub tail: String,
+}
+
+impl RequestLabel {
+    /// The title as one plain line.
+    #[must_use]
+    pub fn title(&self) -> String {
+        let mut s = self.lead.clone();
+        if !self.subject.is_empty() {
+            if !s.is_empty() {
+                s.push(' ');
+            }
+            s.push_str(&self.subject);
+        }
+        s.push_str(&self.tail);
+        s
+    }
+}
+
+/// What an Activity entry asked, in full (the entry's "What it asked" and "Full request"). Never a secret's value.
+#[derive(Clone, Debug, Default, PartialEq, Eq, uniffi::Record)]
+pub struct ActivityRequest {
+    /// The agent as it named itself ("Claude Code"); empty when only the connection is known.
+    pub agent: String,
+    /// The folder it ran in, else empty.
+    pub cwd: String,
+    /// Why it was asked rather than let through: the rule it matched or the reason, else empty.
+    pub why: String,
+    /// The complete command or tool call with its arguments, several lines (at most 8 KB).
+    pub full: String,
+    /// What the agent said it was for, else empty.
+    pub purpose: String,
+    /// When it was asked (Unix seconds); 0 when not known.
+    pub asked_at: i64,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, uniffi::Enum)]
@@ -606,6 +665,12 @@ pub struct ActivityEntry {
     pub decided_by: String,
     /// What Autopilot knew (the "Automatic" filter and badge, "This was wrong").
     pub autopilot: Option<crate::autopilot::AutopilotNote>,
+    /// What it was, as its row and its page show it.
+    #[uniffi(default)]
+    pub label: Option<RequestLabel>,
+    /// What it asked, in full; `None` for entries logged before it was kept (and for pairings, grants that ended, ...).
+    #[uniffi(default)]
+    pub request: Option<ActivityRequest>,
 }
 
 /// One message of a released search or read (headers only).

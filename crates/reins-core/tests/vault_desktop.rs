@@ -224,6 +224,13 @@ async fn secrets_are_shown_by_name_and_released_sealed_with_their_lease() {
     assert_eq!(data["expires_at"], grant.expires_at);
     assert!(!format!("{grant:?}").contains("hunter2!"), "a grant's Debug shows names only");
     no_secrets("everything shown and sent", &desk.everything_shown(&["r1"]).await);
+
+    // Its Activity entry: the secrets by name and the command, never a value.
+    let entry = desk.core.activity(10).await.unwrap().into_iter().find(|e| e.op == "secret_release").unwrap();
+    assert_eq!(entry.label.as_ref().unwrap().title(), "Use 4 secrets for npm run deploy");
+    let kept = desk.core.activity_approval(entry.id).await.unwrap().expect("the approval as shown");
+    assert_eq!(kept.secrets.as_ref().unwrap().items.len(), 4);
+    no_secrets("the entry", &format!("{entry:?}{kept:?}"));
 }
 
 #[tokio::test]

@@ -1016,6 +1016,12 @@ impl Engine {
         Ok(self.store.activity(limit.clamp(1, 500))?.iter().map(views::activity_entry).collect())
     }
 
+    /// The request of an Activity entry as its approval showed it, to be shown again read-only; `None` for an entry
+    /// without one (logged before they were kept, or not about a request).
+    pub fn activity_approval(&self, entry_id: i64) -> Result<Option<crate::types::ApprovalView>, CoreError> {
+        Ok(self.store.audit_snapshot(entry_id)?.map(|parked| views::entry_approval_view(&parked)))
+    }
+
     /// Gmail as a whole: ready when every connected account is; otherwise the first problem found.
     /// With no account registered yet, the phone's default Google account is tried (and registered).
     pub async fn gmail_status(&self) -> GmailStatus {

@@ -29,7 +29,7 @@ use zeroize::Zeroizing;
 
 pub use accounts::StoredAccount;
 pub use audit::{
-    AUDIT_RETENTION, AuditAutopilot, AuditEmail, AuditInfo, AuditMessage, AuditRecord, DETAIL_UNAVAILABLE,
+    AUDIT_RETENTION, AuditAutopilot, AuditEmail, AuditInfo, AuditMessage, AuditRecord, AuditRequest, DETAIL_UNAVAILABLE,
 };
 pub use grants::StoredGrant;
 pub use mcp::{McpTool, SECRET_SERVICE as MCP_SECRET_SERVICE, SIGN_IN_SERVICE as MCP_SIGN_IN_SERVICE, StoredMcpServer};
@@ -78,6 +78,7 @@ CREATE TABLE IF NOT EXISTS pending (
 );
 CREATE TABLE IF NOT EXISTS handled (id TEXT PRIMARY KEY, at INTEGER NOT NULL);
 CREATE TABLE IF NOT EXISTS connection_prefs (connection_id TEXT PRIMARY KEY, icon TEXT);
+CREATE TABLE IF NOT EXISTS audit_snapshots (seq INTEGER PRIMARY KEY, data BLOB NOT NULL);
 ";
 
 /// Columns added after the first release, applied once each (`PRAGMA user_version`).

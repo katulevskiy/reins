@@ -81,6 +81,7 @@ pub(crate) fn join_item(j: &JoinRequest) -> PendingItem {
         suggestion: None,
         headline: String::new(),
         quick: false,
+        label: None,
     }
 }
 

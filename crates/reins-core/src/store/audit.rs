@@ -13,6 +13,36 @@ pub const AUDIT_RETENTION: i64 = 5_000;
 pub const DETAIL_UNAVAILABLE: &str = "(details unavailable)";
 const DETAIL_AAD: &str = "audit.detail";
 const INFO_AAD: &str = "audit.info";
+const SNAPSHOT_AAD: &str = "audit.snapshot";
+/// The most bytes an entry's snapshot may take (JSON, before sealing); a larger one is not kept.
+pub const MAX_SNAPSHOT: usize = 256 * 1024;
+/// Snapshots kept: those of the newest entries only (each can be up to [`MAX_SNAPSHOT`]).
+pub const SNAPSHOT_RETENTION: i64 = 1_000;
+/// The most characters of an item's text kept in a snapshot: what its approval row shows.
+const SNAPSHOT_ITEM_TEXT: usize = 400;
+
+/// What is kept of a request's approval: as it was shown, without what must not be kept (a secret item's text, a
+/// vault call's values), at most [`MAX_SNAPSHOT`] bytes of JSON.
+pub(crate) fn snapshot_json(parked: &crate::views::ParkedRequest) -> Option<Vec<u8>> {
+    let mut p = parked.clone();
+    if let reins_proto::gmail::ToolCall::Connector(call) = &mut p.request.call
+        && call.service == reins_proto::connector::VAULT
+    {
+        call.args.retain(|name, _| crate::titles::VAULT_ARGS.contains(&name.as_str()));
+    }
+    if let Some(held) = p.connector.as_mut() {
+        for item in &mut held.items {
+            if item.secret {
+                item.body = None;
+                item.extra.clear();
+            } else {
+                item.body = item.body.take().map(|b| crate::text::truncate_chars(&b, SNAPSHOT_ITEM_TEXT));
+            }
+        }
+    }
+    let json = serde_json::to_vec(&p).ok()?;
+    (json.len() <= MAX_SNAPSHOT).then_some(json)
+}
 
 /// One message of a released search/read, as shown in the activity details (headers only, never bodies).
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -81,6 +111,34 @@ pub struct AuditInfo {
     /// is matched with earlier ones of the same thing (`crate::quick`).
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub targets: Vec<String>,
+    /// What the request was, as the screens show it (`crate::titles`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub label: Option<Box<crate::types::RequestLabel>>,
+    /// What it asked, in full (the entry's "Full request").
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub request: Option<Box<AuditRequest>>,
+    /// The request as its approval showed it (or would have, when it was decided without asking), so the entry's page
+    /// can show the same thing. Kept apart from the rest (see [`Store::audit_snapshot`]), never in this JSON.
+    #[serde(skip)]
+    pub snapshot: Option<Box<crate::views::ParkedRequest>>,
+}
+
+/// What a request asked, in full, kept with its entry. Each text is cleaned ([`crate::text::neutralize`]) and at most
+/// [`crate::titles::MAX_FIELD`] bytes; a secret's value is never among them.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct AuditRequest {
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub agent: String,
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub cwd: String,
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub why: String,
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub full: String,
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub purpose: String,
+    #[serde(default)]
+    pub asked_at: i64,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -113,6 +171,10 @@ impl Store {
         crate::autopilot::context::stamp(&mut info);
         let info_json = serde_json::to_vec(&info).map_err(|e| CoreError::storage(e.to_string()))?;
         let info = self.seal(INFO_AAD, &info_json)?;
+        let snapshot = match record.info.snapshot.as_deref().and_then(snapshot_json) {
+            Some(json) => Some(self.seal(SNAPSHOT_AAD, &json)?),
+            None => None,
+        };
         let conn = self.lock()?;
         conn.execute(
             "INSERT INTO audit (at, connection_id, connection_label, action, outcome, grant_id, detail, service, account, \
@@ -134,6 +196,10 @@ impl Store {
         )?;
         let seq = conn.last_insert_rowid();
         conn.execute("DELETE FROM audit WHERE seq <= (SELECT MAX(seq) FROM audit) - ?1", params![AUDIT_RETENTION])?;
+        if let Some(sealed) = snapshot {
+            conn.execute("INSERT OR REPLACE INTO audit_snapshots (seq, data) VALUES (?1, ?2)", params![seq, sealed])?;
+        }
+        conn.execute("DELETE FROM audit_snapshots WHERE seq <= ?1 - ?2", params![seq, SNAPSHOT_RETENTION])?;
         drop(conn);
         crate::autopilot::context::written(seq);
         Ok(seq)
@@ -142,6 +208,21 @@ impl Store {
     /// One entry by its row number.
     pub fn audit_entry(&self, seq: i64) -> Result<Option<AuditRecord>, CoreError> {
         Ok(self.audit_rows("WHERE seq = ?1", params![seq])?.pop())
+    }
+
+    /// The request of entry `seq` as its approval showed it; `None` for an entry without one (logged before they were
+    /// kept, too large, pruned, or not about a request).
+    pub fn audit_snapshot(&self, seq: i64) -> Result<Option<crate::views::ParkedRequest>, CoreError> {
+        let blob: Option<Vec<u8>> = {
+            let conn = self.lock()?;
+            let mut stmt = conn.prepare("SELECT data FROM audit_snapshots WHERE seq = ?1")?;
+            let mut rows = stmt.query(params![seq])?;
+            match rows.next()? {
+                Some(row) => Some(row.get(0)?),
+                None => None,
+            }
+        };
+        Ok(blob.and_then(|b| self.unseal(SNAPSHOT_AAD, &b).ok()).and_then(|plain| serde_json::from_slice(&plain).ok()))
     }
 
     /// Newest first, at most `limit` rows.
@@ -288,5 +369,108 @@ mod tests {
         let count: i64 = store.lock().unwrap().query_row("SELECT COUNT(*) FROM audit", [], |r| r.get(0)).unwrap();
         assert_eq!(count, AUDIT_RETENTION);
         assert_eq!(store.activity(1).unwrap()[0].at, AUDIT_RETENTION + 2);
+    }
+
+    fn parked(call: serde_json::Value, items: Vec<crate::connector::Item>) -> crate::views::ParkedRequest {
+        let call: reins_proto::connector::ConnectorCall = serde_json::from_value(call).unwrap();
+        crate::views::ParkedRequest {
+            request: reins_proto::relay::RelayRequest {
+                v: 1,
+                id: "r1".into(),
+                connection_id: "c1".into(),
+                connection_label: "laptop".to_owned(),
+                created_at: 9,
+                wait_until: None,
+                account: None,
+                call: reins_proto::gmail::ToolCall::Connector(call),
+            },
+            messages: Vec::new(),
+            covered: std::collections::BTreeMap::default(),
+            account: None,
+            accounts: Vec::new(),
+            shared_accounts: Vec::new(),
+            connector: Some(crate::views::ParkedConnector {
+                items,
+                ..crate::views::ParkedConnector::default()
+            }),
+        }
+    }
+
+    #[test]
+    fn an_entry_keeps_its_approval_apart_and_without_secret_values() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = open(dir.path());
+        let mut rec = record(1);
+        let call = serde_json::json!({"service": "vault", "op": "item_create",
+            "args": {"name": "Bank", "password": "hunter2", "notes": "pin 1234"}});
+        let item = crate::connector::Item {
+            id: "i1".into(),
+            title: "Bank".into(),
+            snippet: "Password for Bank".into(),
+            body: Some("hunter2".into()),
+            secret: true,
+            ..crate::connector::Item::default()
+        };
+        rec.info.snapshot = Some(Box::new(parked(call, vec![item])));
+        let seq = store.append_audit(&rec).unwrap();
+        let kept = store.audit_snapshot(seq).unwrap().expect("kept");
+        let shown = format!("{kept:?}");
+        assert!(shown.contains("Bank") && !shown.contains("hunter2") && !shown.contains("1234"), "{shown}");
+        // Never in the entry's own info (loaded with every list).
+        let info: Vec<u8> =
+            store.lock().unwrap().query_row("SELECT info FROM audit WHERE seq = ?1", [seq], |r| r.get(0)).unwrap();
+        let info: AuditInfo = serde_json::from_slice(&store.unseal(INFO_AAD, &info).unwrap()).unwrap();
+        assert!(info.snapshot.is_none());
+    }
+
+    #[test]
+    fn a_snapshot_is_bounded_and_older_entries_have_none() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = open(dir.path());
+        let old = store.append_audit(&record(1)).unwrap();
+        assert!(store.audit_snapshot(old).unwrap().is_none(), "an entry from before snapshots loads without one");
+        assert!(store.audit_entry(old).unwrap().is_some());
+        let big = (0..100)
+            .map(|i| crate::connector::Item {
+                id: format!("i{i}"),
+                title: "x".repeat(3_000),
+                ..crate::connector::Item::default()
+            })
+            .collect();
+        let mut rec = record(2);
+        rec.info.snapshot =
+            Some(Box::new(parked(serde_json::json!({"service": "telegram", "op": "read", "args": {}}), big)));
+        let seq = store.append_audit(&rec).unwrap();
+        assert!(store.audit_snapshot(seq).unwrap().is_none(), "more than {MAX_SNAPSHOT} bytes is not kept");
+        let mut small = record(3);
+        let long_body = crate::connector::Item {
+            id: "i".into(),
+            body: Some("y".repeat(10_000)),
+            ..crate::connector::Item::default()
+        };
+        small.info.snapshot = Some(Box::new(parked(
+            serde_json::json!({"service": "telegram", "op": "read", "args": {}}),
+            vec![long_body],
+        )));
+        let seq = store.append_audit(&small).unwrap();
+        let kept = store.audit_snapshot(seq).unwrap().unwrap();
+        assert_eq!(kept.connector.unwrap().items[0].body.as_ref().unwrap().len(), SNAPSHOT_ITEM_TEXT);
+    }
+
+    #[test]
+    fn snapshots_are_pruned_with_their_entries() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = open(dir.path());
+        for at in 0..SNAPSHOT_RETENTION + 5 {
+            let mut rec = record(at);
+            rec.info.snapshot = Some(Box::new(parked(
+                serde_json::json!({"service": "telegram", "op": "read", "args": {}}),
+                Vec::new(),
+            )));
+            store.append_audit(&rec).unwrap();
+        }
+        let count: i64 =
+            store.lock().unwrap().query_row("SELECT COUNT(*) FROM audit_snapshots", [], |r| r.get(0)).unwrap();
+        assert_eq!(count, SNAPSHOT_RETENTION);
     }
 }
