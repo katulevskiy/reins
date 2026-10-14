@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """TestFlight through the App Store Connect API, around the upload the release workflow makes (release.yml, job
-`ios-testflight`). Three commands:
+`ios-testflight`). Its commands:
 
     scripts/testflight.py prepare --version 0.6.0 --minimum 29860000
         The build number to upload: the larger of --minimum (the release's versionCode, minutes since 1970) and one
@@ -20,9 +20,20 @@
         Checks a provisioning profile (as `security cms -D` decodes it) is an App Store profile of that team for that
         bundle id, still valid, and prints its UUID.
 
-Credentials (prepare, finish): an App Store Connect API key, --key-file (the .p8), --key-id and --issuer-id (or
-AC_API_KEY_ID, AC_API_ISSUER_ID). Each request carries a short-lived JWT (ES256, signed with `openssl`); neither the
-key nor the token is printed. Every request is retried on network errors, 429 and 5xx. Standard library only.
+    scripts/testflight.py secrets --need cert|asc[,..] --out DIR [--dotenv FILE]
+        Writes the signing secrets a step group needs as files (mode 0600) in DIR: `cert` the .p12, its password and
+        the three profiles; `asc` the API key (.p8) and asc.env (its ids). Values come from --dotenv (what the Infisical
+        action writes) or else the environment variables of the same names. Every value is masked (::add-mask::)
+        before anything else is printed; missing names fail, all named at once.
+
+    scripts/testflight.py packages --resolved Package.resolved --checkouts DIR
+        The Swift packages the archive builds: every pin must name a revision and be checked out at it. Lists each
+        package's plugins and binary targets.
+
+Credentials (prepare, finish): an App Store Connect API key, --key-file (the .p8), with AC_API_KEY_ID and
+AC_API_ISSUER_ID in the environment (never on the command line). Each request carries a short-lived JWT (ES256,
+signed with `openssl`); neither the key nor the token is printed. Every request is retried on network errors, 429 and
+5xx. Standard library only.
 
 Exit codes: 0 done, 1 failed, 2 bad arguments or files.
 """
@@ -220,6 +231,97 @@ def check_profile(profile, bundle_id, team, now=None):
     if problems:
         raise ValueError(f"profile {name!r} for {bundle_id}: " + "; ".join(problems))
     return profile["UUID"], name
+
+
+DEFAULT_TEAM = "5DRCQV8HY2"
+# The secrets per step group, and the files they become.
+SECRETS = {
+    "cert": ("IOS_DIST_CERT_P12", "IOS_DIST_CERT_PASSWORD", "IOS_PROFILE_APP", "IOS_PROFILE_WIDGETS",
+             "IOS_PROFILE_NOTIFICATIONS"),
+    "asc": ("AC_API_KEY_P8", "AC_API_KEY_ID", "AC_API_ISSUER_ID"),
+}
+PROFILES = (("Reins", "IOS_PROFILE_APP"), ("ReinsWidgets", "IOS_PROFILE_WIDGETS"),
+            ("ReinsNotifications", "IOS_PROFILE_NOTIFICATIONS"))
+
+
+def read_dotenv(path):
+    """NAME='value' lines, as the Infisical action's file export writes them (values may span lines)."""
+    try:
+        text = Path(path).read_text()
+    except FileNotFoundError:
+        return {}
+    return {key: value for key, value in re.findall(r"^([A-Z0-9_]+)='(.*?)'$", text, re.M | re.S) if value}
+
+
+def write_private(path, data):
+    with open(os.open(path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600), "wb") as handle:
+        handle.write(data)
+
+
+def materialize(kinds, out, dotenv=None, environ=os.environ, mask=print):
+    """The secrets of `kinds` as files in `out`; returns the file names written."""
+    names = [name for kind in kinds for name in SECRETS[kind]] + ["APPLE_TEAM_ID"]
+    values = {name: environ.get(name, "") for name in names}
+    values.update({k: v for k, v in (read_dotenv(dotenv) if dotenv else {}).items() if k in values})
+    for value in values.values():
+        for line in value.splitlines():
+            if line.strip():
+                mask(f"::add-mask::{line.strip()}")
+    missing = [name for name in names if name != "APPLE_TEAM_ID" and not values[name]]
+    if missing:
+        raise ValueError(f"TestFlight signing is incomplete, missing: {' '.join(missing)} (Infisical reins-release "
+                         "prod /signing/apple, or secrets of the same names; see CONTRIBUTING.md)")
+    team = values["APPLE_TEAM_ID"] or DEFAULT_TEAM
+    if not re.fullmatch(r"[A-Z0-9]{10}", team):
+        raise ValueError("APPLE_TEAM_ID is malformed")
+    os.makedirs(out, mode=0o700, exist_ok=True)
+    written = {"team": team.encode() + b"\n"}
+    if "cert" in kinds:
+        try:
+            written["dist.p12"] = base64.b64decode(values["IOS_DIST_CERT_P12"], validate=False)
+            for target, name in PROFILES:
+                written[f"{target}.mobileprovision"] = base64.b64decode(values[name], validate=False)
+        except ValueError:
+            raise ValueError("IOS_DIST_CERT_P12 and IOS_PROFILE_* must be base64") from None
+        written["dist.pass"] = values["IOS_DIST_CERT_PASSWORD"].encode()
+    if "asc" in kinds:
+        key_id, issuer = values["AC_API_KEY_ID"], values["AC_API_ISSUER_ID"]
+        if not (re.fullmatch(r"[A-Z0-9]+", key_id) and re.fullmatch(r"[0-9a-f-]+", issuer)):
+            raise ValueError("AC_API_KEY_ID or AC_API_ISSUER_ID is malformed")
+        if "PRIVATE KEY" not in values["AC_API_KEY_P8"]:
+            raise ValueError("AC_API_KEY_P8 is not a .p8 private key")
+        written["AuthKey.p8"] = values["AC_API_KEY_P8"].strip().encode() + b"\n"
+        written["asc.env"] = f"AC_API_KEY_ID={key_id}\nAC_API_ISSUER_ID={issuer}\nTEAM={team}\n".encode()
+    for name, data in written.items():
+        write_private(os.path.join(out, name), data)
+    return sorted(written)
+
+
+def audit_packages(resolved, checkouts, run=subprocess.run):
+    """Each Package.resolved pin: pinned to a revision and checked out at it. Returns lines describing the packages'
+    plugins and binary targets; raises ValueError for anything unpinned or not at its pin."""
+    pins = json.loads(Path(resolved).read_text()).get("pins") or []
+    report, problems = [], []
+    for pin in pins:
+        identity = pin.get("identity", "?")
+        revision = (pin.get("state") or {}).get("revision", "")
+        if not re.fullmatch(r"[0-9a-f]{40}", revision):
+            problems.append(f"{identity} is not pinned to a revision")
+            continue
+        checkout = Path(checkouts) / identity
+        head = run(["git", "-C", str(checkout), "rev-parse", "HEAD"], capture_output=True, text=True, check=False)
+        if head.returncode != 0 or head.stdout.strip() != revision:
+            problems.append(f"{identity} is checked out at {head.stdout.strip() or 'nothing'}, not {revision}")
+            continue
+        manifests = sorted(checkout.glob("Package*.swift"))
+        text = "\n".join(m.read_text(errors="replace") for m in manifests)
+        plugins = re.findall(r"\.plugin\(\s*name:\s*\"([^\"]+)\"", text)
+        binaries = re.findall(r"\.binaryTarget\(\s*name:\s*\"([^\"]+)\"", text)
+        report.append(f"{identity} {revision[:12]} ({(pin.get('state') or {}).get('version', 'no version')}): "
+                      f"plugins {', '.join(plugins) or 'none'}; binary targets {', '.join(binaries) or 'none'}")
+    if problems:
+        raise ValueError("; ".join(problems))
+    return report
 
 
 class Http:
@@ -442,11 +544,11 @@ class Asc:
 
 
 def load_key(args, environ):
-    key_id = args.key_id or environ.get("AC_API_KEY_ID", "")
-    issuer = args.issuer_id or environ.get("AC_API_ISSUER_ID", "")
+    key_id = environ.get("AC_API_KEY_ID", "")
+    issuer = environ.get("AC_API_ISSUER_ID", "")
     if not (args.key_file and key_id and issuer):
-        raise ValueError("an App Store Connect API key is needed: --key-file, --key-id and --issuer-id "
-                         "(or AC_API_KEY_ID, AC_API_ISSUER_ID)")
+        raise ValueError("an App Store Connect API key is needed: --key-file, and AC_API_KEY_ID and "
+                         "AC_API_ISSUER_ID in the environment")
     key = Path(args.key_file).read_text()
     if "PRIVATE KEY" not in key:
         raise ValueError(f"{args.key_file} is not a .p8 private key")
@@ -461,8 +563,6 @@ def parse_args(argv):
         command.add_argument("--bundle-id", default=BUNDLE_ID)
         command.add_argument("--version", required=True, help="the marketing version (CFBundleShortVersionString)")
         command.add_argument("--key-file", help="the App Store Connect API key (.p8)")
-        command.add_argument("--key-id")
-        command.add_argument("--issuer-id")
     prepare = commands.choices["prepare"]
     prepare.add_argument("--minimum", type=int, required=True, help="the lowest build number to use")
     finish = commands.choices["finish"]
@@ -477,7 +577,18 @@ def parse_args(argv):
     profile.add_argument("--plist", required=True, help="the profile as `security cms -D -i` decodes it")
     profile.add_argument("--bundle-id", required=True)
     profile.add_argument("--team", required=True)
-    return parser.parse_args(argv)
+    secrets = commands.add_parser("secrets")
+    secrets.add_argument("--need", required=True, type=lambda text: [k for k in text.split(",") if k],
+                         help="cert, asc, or both (comma-separated)")
+    secrets.add_argument("--out", required=True)
+    secrets.add_argument("--dotenv", help="the Infisical action's file export")
+    packages = commands.add_parser("packages")
+    packages.add_argument("--resolved", required=True)
+    packages.add_argument("--checkouts", required=True, help="the cloned source packages' checkouts folder")
+    args = parser.parse_args(argv)
+    if args.command == "secrets" and (not args.need or set(args.need) - set(SECRETS)):
+        parser.error(f"--need takes {', '.join(SECRETS)}")
+    return args
 
 
 def main(argv=None, http=None, environ=os.environ):
@@ -488,6 +599,14 @@ def main(argv=None, http=None, environ=os.environ):
                 uuid, name = check_profile(plistlib.load(handle), args.bundle_id, args.team)
             log(f"{args.bundle_id}: {name} ({uuid})")
             print(uuid)
+            return 0
+        if args.command == "secrets":
+            written = materialize(args.need, args.out, args.dotenv, environ, mask=lambda line: print(line, flush=True))
+            log(f"wrote {', '.join(written)}")
+            return 0
+        if args.command == "packages":
+            for line in audit_packages(args.resolved, args.checkouts):
+                log(line)
             return 0
         asc = Asc(http or Http(), *load_key(args, environ), environ=environ)
         if args.command == "prepare":

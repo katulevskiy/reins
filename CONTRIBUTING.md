@@ -269,10 +269,14 @@ that is missing:
 | `AC_API_KEY_P8`, `AC_API_KEY_ID`, `AC_API_ISSUER_ID`, `APPLE_TEAM_ID` | the "Reins CI" API key (App Manager), as for notarization |
 
 Only a commit on main that carries a published release tag is built, and only from main (a release push, or the
-dispatch, which checks the tag before anything is checked out). The Rust core and the Swift packages build before any
-secret is fetched. The secrets then become files in a `0700` folder; each step reads only the ones it needs (the
-`.p12` password is read from a file, never passed as an argument), nothing reaches `GITHUB_ENV`, and the last step
-removes them with the keychain and profiles. The third-party actions it uses are pinned to commits. The job runs in
+dispatch, which checks the tag before anything is checked out). The Rust core and the Swift packages (pinned to the
+revisions in `Package.resolved`, which the job checks, with their plugins listed) build before any secret is fetched.
+The secrets then become files in a `0700` folder that only the steps needing them read, nothing reaches `GITHUB_ENV`,
+and no secret goes on a command line. The certificate's files are removed as soon as it is in the keychain, imported
+non-extractable for `codesign` only. The API key is removed after the build number and fetched again after the
+archive, so the archive's build phases and packages find only the keychain, the profiles and the settings (a step
+checks). The keychain is locked after the upload, and the last step deletes it with everything else. The third-party
+actions it uses are pinned to commits. The job runs in
 the GitHub environment `testflight`: restrict it to `main` there (Settings > Environments > testflight > Deployment
 branches and tags), and keep any repository-secret fallbacks as that environment's secrets. In an environment, GitHub's
 OIDC subject is `repo:katulevskiy@84909978/reins@1400899427:environment:testflight`, so the Infisical identity

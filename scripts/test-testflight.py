@@ -301,6 +301,62 @@ with tempfile.TemporaryDirectory(prefix="reins-testflight-") as directory:
                           "--team", "5DRCQV8HY2"], None)
     check(code == 0 and out == "u-1\n", (out, err))
 
+    # secrets: the dotenv wins over the environment, every value is masked first, files are private, and only the
+    # group asked for is written; missing names are all named.
+    p12 = base64.b64encode(b"p12-bytes").decode()
+    dotenv = root / "apple.env"
+    dotenv.write_text(f"AC_API_KEY_P8='{pem}'\nAC_API_KEY_ID='KEY123'\nAC_API_ISSUER_ID='0a1b-2c3d'\n"
+                      f"IOS_DIST_CERT_P12='{p12}'\nIOS_DIST_CERT_PASSWORD='hunter2'\n"
+                      + "".join(f"IOS_PROFILE_{n}='{base64.b64encode(n.encode()).decode()}'\n"
+                                for n in ("APP", "WIDGETS", "NOTIFICATIONS")))
+    out_dir = root / "signing"
+    code, out, err = run(["secrets", "--need", "asc", "--dotenv", str(dotenv), "--out", str(out_dir)], None,
+                         {"AC_API_KEY_ID": "OTHER"})
+    check(code == 0 and sorted(p.name for p in out_dir.iterdir()) == ["AuthKey.p8", "asc.env", "team"], (out, err))
+    check("AC_API_KEY_ID=KEY123\n" in (out_dir / "asc.env").read_text(), "the dotenv wins")
+    check(all(p.stat().st_mode & 0o777 == 0o600 for p in out_dir.iterdir()), "private files")
+    check(out_dir.stat().st_mode & 0o777 == 0o700, "a private folder")
+    check("::add-mask::-----BEGIN PRIVATE KEY-----" in out and "::add-mask::KEY123" in out, out)
+    check("hunter2" not in out + err, "only the group asked for is read")
+    code, out, err = run(["secrets", "--need", "cert,asc", "--dotenv", str(dotenv), "--out", str(out_dir)], None)
+    check((out_dir / "dist.p12").read_bytes() == b"p12-bytes" and (out_dir / "dist.pass").read_text() == "hunter2",
+          "the certificate")
+    check((out_dir / "ReinsWidgets.mobileprovision").read_bytes() == b"WIDGETS", "the profiles")
+    check(out.index("::add-mask::hunter2") >= 0 and "wrote" in err and "hunter2" not in err, (out, err))
+    code, out, err = run(["secrets", "--need", "cert", "--out", str(root / "none")], None,
+                         {"GITHUB_ACTIONS": "true", "IOS_DIST_CERT_P12": p12})
+    check(code == 2 and "::error::TestFlight signing is incomplete, missing: IOS_DIST_CERT_PASSWORD IOS_PROFILE_APP "
+          "IOS_PROFILE_WIDGETS IOS_PROFILE_NOTIFICATIONS" in err, err)
+    check(not (root / "none").exists(), "nothing written when something is missing")
+
+    # packages: pinned to a revision and checked out at it; plugins and binary targets are listed.
+    checkouts = root / "spm" / "checkouts"
+    package = checkouts / "onnxruntime-swift-package-manager"
+    package.mkdir(parents=True)
+    (package / "Package.swift").write_text('targets: [.binaryTarget(name: "onnxruntime", url: "u", checksum: "c"),\n'
+                                          '  .plugin(name: "Gen", capability: .buildTool())]')
+    git = ["git", "-C", str(package), "-c", "user.name=t", "-c", "user.email=t@t", "-c", "commit.gpgsign=false"]
+    subprocess.run(git[:3] + ["init", "-q"], check=True)
+    subprocess.run(git + ["add", "-A"], check=True)
+    subprocess.run(git + ["commit", "-q", "-m", "pin"], check=True)
+    head = subprocess.run(git[:3] + ["rev-parse", "HEAD"], capture_output=True, text=True, check=True).stdout.strip()
+    resolved = root / "Package.resolved"
+
+    def pins(*states):
+        resolved.write_text(json.dumps({"pins": [{"identity": "onnxruntime-swift-package-manager", "state": s}
+                                                 for s in states], "version": 3}))
+    pins({"revision": head, "version": "1.24.2"})
+    code, out, err = run(["packages", "--resolved", str(resolved), "--checkouts", str(checkouts)], None)
+    check(code == 0 and "plugins Gen; binary targets onnxruntime" in err, err)
+    for state, why in (({"version": "1.24.2"}, "not pinned to a revision"), ({"revision": "0" * 40}, "checked out at")):
+        pins(state)
+        code, out, err = run(["packages", "--resolved", str(resolved), "--checkouts", str(checkouts)], None)
+        check(code == 2 and why in err, err)
+    real = ROOT / "ios/Reins.xcodeproj/project.xcworkspace/xcshareddata/swiftpm/Package.resolved"
+    real_pins = json.loads(real.read_text())["pins"]
+    check(all(re.fullmatch(r"[0-9a-f]{40}", p["state"].get("revision", "")) for p in real_pins),
+          "the app's packages are pinned to revisions")
+
 # The workflow: the TestFlight job runs after publication, never holds it back, and uploads one at a time.
 workflow = (ROOT / ".github/workflows/release.yml").read_text()
 job = workflow.split("\n  ios-testflight:\n", 1)[1].split("\n\n  # ", 1)[0]
@@ -317,14 +373,50 @@ check("github.ref == 'refs/heads/main'" in job and "environment: testflight" in 
 check("pull_request" not in workflow.split("\njobs:\n", 1)[0], "no pull request trigger")
 check('git merge-base --is-ancestor "$SHA" origin/main' in job and "compare/$sha...main" in job, "on main")
 check("releases/tags/$tag" in job, "a published release")
-fetch = job.index("Fetch the Apple signing identity from Infisical")
-for build_step in ("Build the Rust core", "Resolve the Swift packages", "rust-cache@"):
-    check(job.index(build_step) < fetch, f"{build_step} before the secrets")
-check(job.index("Signing material to files") > fetch and "secrets." not in job[:fetch], "no secret before the build")
-check("GITHUB_ENV" not in job and "export-type: file" in job, "nothing exported to the job")
+steps = {s.split("\n", 1)[0].removeprefix("name: ").strip(): s for s in job.split("\n      - ")[1:]}
+order = [s.split("\n", 1)[0] for s in job.split("\n      - ")[1:]]
+
+
+def at(name):
+    return next(i for i, step in enumerate(order) if name in step)
+
+
+fetch = at("Fetch the Apple signing identity from Infisical")
+for build_step in ("Build the Rust core", "Resolve and check the Swift packages", "rust-cache@"):
+    check(at(build_step) < fetch, f"{build_step} before the secrets")
+check("secrets." not in job[:job.index("Fetch the Apple signing identity")], "no secret before the build")
+check("GITHUB_ENV" not in job and job.count("export-type: file") == 2, "nothing exported to the job")
 check('-P "$IOS_DIST_CERT_PASSWORD"' not in job and '-passin "file:' in job, "the password never on a command line")
 check("--key-id" not in job and "--issuer-id" not in job, "the key ids reach the script by environment")
-check("::add-mask::" in job, "masked")
+check("scripts/testflight.py secrets" in job, "masked and written by the script")
+# The archive sees no certificate file and no API key: the key is removed after the build number and fetched again
+# after the archive; a step checks the folder first.
+check('trap \'rm -f "$dir/AuthKey.p8" "$dir/asc.env"\' EXIT' in steps["Build number"], "the key removed")
+check(at("Build number") < at("Signing identity") < at("Only the keychain") < at("Archive")
+      < at("Fetch the App Store Connect key") < at("Upload to App Store Connect") < at("Lock the keychain"), order)
+check("--need asc " in steps["App Store Connect key to files"], "only the key the second time")
+identity_step = steps["Signing identity"]
+check("-x -P" in identity_step and "-T /usr/bin/codesign\n" in identity_step
+      and "-T /usr/bin/security" not in identity_step,
+      "non-extractable, for codesign only")
+check("-S apple-tool:,apple: -s" in identity_step and "security export" in identity_step, "partition list, checked")
+check('rm -f "$dir/dist.p12" "$dir/dist.pass"' in identity_step and 'rm -f "$dir/import.p12"' in identity_step,
+      "certificate files removed at once")
+check("security lock-keychain" in steps["Lock the keychain"], "locked after the upload")
+# Swift packages: only as resolved, checked, never with plugin or macro validation skipped.
+calls = re.findall(r"xcodebuild (?:archive|-resolvePackageDependencies)(?:[^\n]*\\\n)*[^\n]*", job)
+check(len(calls) == 2, calls)
+for call in calls:
+    check("-onlyUsePackageVersionsFromResolvedFile" in call and "-disableAutomaticPackageResolution" in call, call)
+check("skipPackagePluginValidation" not in job and "skipMacroValidation" not in job, "validation kept")
+check("scripts/testflight.py packages" in steps["Resolve and check the Swift packages"], "packages checked")
+check('cache-bin: "false"' in job and 'REINS_SKIP_CORE: "1"' in steps["Archive"], "no cached binaries, no cargo")
+build_core = (ROOT / "ios/scripts/build-core.sh").read_text()
+check(build_core.index('REINS_SKIP_CORE:-}" == "1"') < build_core.index("rustup target add")
+      < build_core.index("run_cargo rustc"), "build-core.sh stops before rustup and cargo when skipping")
+check(job.split("permissions:\n", 1)[1].split("\n    env:", 1)[0].split() ==
+      ["contents:", "read", "id-token:", "write", "#", "Infisical", "OIDC", "(the", "distribution", "identity,",
+       "profiles", "and", "API", "key)"], "least permissions")
 for line in job.splitlines():
     if "uses: " in line and "uses: ./" not in line:
         check(re.search(r"@[0-9a-f]{40} # v", line), f"pinned to a commit: {line.strip()}")
