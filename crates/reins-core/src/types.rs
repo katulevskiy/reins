@@ -351,6 +351,10 @@ pub struct GitCommitView {
     pub additions: Option<u64>,
     #[uniffi(default)]
     pub deletions: Option<u64>,
+    /// The subject, the author or one of its files holds characters that change how text reads without being seen
+    /// (bidi controls, zero-width characters): what is shown may not be what the code does. Show a warning.
+    #[uniffi(default)]
+    pub hidden_chars: bool,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, uniffi::Record)]
@@ -369,6 +373,10 @@ pub struct GitFileView {
     /// `diff` stops before the end of the change.
     #[uniffi(default)]
     pub diff_cut: bool,
+    /// The path or a line of `diff` held invisible characters (bidi controls, zero-width characters); in `diff` each
+    /// is shown as U+FFFD. Show a warning.
+    #[uniffi(default)]
+    pub hidden_chars: bool,
 }
 
 /// One line of a file's change.
@@ -389,7 +397,8 @@ pub struct DiffLineView {
     /// The line's number in the old file (context and deleted lines) and in the new one (context and added lines).
     pub old_line: Option<u32>,
     pub new_line: Option<u32>,
-    /// The line without its sign (the whole header for a hunk), tabs as four spaces.
+    /// The line without its sign (the whole header for a hunk), tabs as four spaces, control and invisible characters
+    /// (bidi controls, zero-width characters) as U+FFFD so they can be seen.
     pub text: String,
 }
 

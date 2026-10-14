@@ -7355,7 +7355,8 @@ public struct DiffLineView: Equatable, Hashable {
     public var oldLine: UInt32?
     public var newLine: UInt32?
     /**
-     * The line without its sign (the whole header for a hunk), tabs as four spaces.
+     * The line without its sign (the whole header for a hunk), tabs as four spaces, control and invisible characters
+     * (bidi controls, zero-width characters) as U+FFFD so they can be seen.
      */
     public var text: String
 
@@ -7366,7 +7367,8 @@ public struct DiffLineView: Equatable, Hashable {
          * The line's number in the old file (context and deleted lines) and in the new one (context and added lines).
          */oldLine: UInt32?, newLine: UInt32?, 
         /**
-         * The line without its sign (the whole header for a hunk), tabs as four spaces.
+         * The line without its sign (the whole header for a hunk), tabs as four spaces, control and invisible characters
+         * (bidi controls, zero-width characters) as U+FFFD so they can be seen.
          */text: String) {
         self.kind = kind
         self.oldLine = oldLine
@@ -7591,6 +7593,11 @@ public struct GitCommitView: Equatable, Hashable {
      */
     public var additions: UInt64?
     public var deletions: UInt64?
+    /**
+     * The subject, the author or one of its files holds characters that change how text reads without being seen
+     * (bidi controls, zero-width characters): what is shown may not be what the code does. Show a warning.
+     */
+    public var hiddenChars: Bool
 
     // Default memberwise initializers are never public by default, so we
     // declare one manually.
@@ -7610,7 +7617,11 @@ public struct GitCommitView: Equatable, Hashable {
          */filesChanged: UInt32? = nil, files: [GitFileView] = [], 
         /**
          * Lines added and removed in all its files; `None` when not every file could be counted.
-         */additions: UInt64? = nil, deletions: UInt64? = nil) {
+         */additions: UInt64? = nil, deletions: UInt64? = nil, 
+        /**
+         * The subject, the author or one of its files holds characters that change how text reads without being seen
+         * (bidi controls, zero-width characters): what is shown may not be what the code does. Show a warning.
+         */hiddenChars: Bool = false) {
         self.shortSha = shortSha
         self.subject = subject
         self.author = author
@@ -7619,6 +7630,7 @@ public struct GitCommitView: Equatable, Hashable {
         self.files = files
         self.additions = additions
         self.deletions = deletions
+        self.hiddenChars = hiddenChars
     }
 
     
@@ -7644,7 +7656,8 @@ public struct FfiConverterTypeGitCommitView: FfiConverterRustBuffer {
                 filesChanged: FfiConverterOptionUInt32.read(from: &buf), 
                 files: FfiConverterSequenceTypeGitFileView.read(from: &buf), 
                 additions: FfiConverterOptionUInt64.read(from: &buf), 
-                deletions: FfiConverterOptionUInt64.read(from: &buf)
+                deletions: FfiConverterOptionUInt64.read(from: &buf), 
+                hiddenChars: FfiConverterBool.read(from: &buf)
         )
     }
 
@@ -7657,6 +7670,7 @@ public struct FfiConverterTypeGitCommitView: FfiConverterRustBuffer {
         FfiConverterSequenceTypeGitFileView.write(value.files, into: &buf)
         FfiConverterOptionUInt64.write(value.additions, into: &buf)
         FfiConverterOptionUInt64.write(value.deletions, into: &buf)
+        FfiConverterBool.write(value.hiddenChars, into: &buf)
     }
 }
 
@@ -7697,6 +7711,11 @@ public struct GitFileView: Equatable, Hashable {
      * `diff` stops before the end of the change.
      */
     public var diffCut: Bool
+    /**
+     * The path or a line of `diff` held invisible characters (bidi controls, zero-width characters); in `diff` each
+     * is shown as U+FFFD. Show a warning.
+     */
+    public var hiddenChars: Bool
 
     // Default memberwise initializers are never public by default, so we
     // declare one manually.
@@ -7713,7 +7732,11 @@ public struct GitFileView: Equatable, Hashable {
          */diff: [DiffLineView] = [], 
         /**
          * `diff` stops before the end of the change.
-         */diffCut: Bool = false) {
+         */diffCut: Bool = false, 
+        /**
+         * The path or a line of `diff` held invisible characters (bidi controls, zero-width characters); in `diff` each
+         * is shown as U+FFFD. Show a warning.
+         */hiddenChars: Bool = false) {
         self.path = path
         self.status = status
         self.additions = additions
@@ -7721,6 +7744,7 @@ public struct GitFileView: Equatable, Hashable {
         self.binary = binary
         self.diff = diff
         self.diffCut = diffCut
+        self.hiddenChars = hiddenChars
     }
 
     
@@ -7745,7 +7769,8 @@ public struct FfiConverterTypeGitFileView: FfiConverterRustBuffer {
                 deletions: FfiConverterOptionUInt32.read(from: &buf), 
                 binary: FfiConverterBool.read(from: &buf), 
                 diff: FfiConverterSequenceTypeDiffLineView.read(from: &buf), 
-                diffCut: FfiConverterBool.read(from: &buf)
+                diffCut: FfiConverterBool.read(from: &buf), 
+                hiddenChars: FfiConverterBool.read(from: &buf)
         )
     }
 
@@ -7757,6 +7782,7 @@ public struct FfiConverterTypeGitFileView: FfiConverterRustBuffer {
         FfiConverterBool.write(value.binary, into: &buf)
         FfiConverterSequenceTypeDiffLineView.write(value.diff, into: &buf)
         FfiConverterBool.write(value.diffCut, into: &buf)
+        FfiConverterBool.write(value.hiddenChars, into: &buf)
     }
 }
 

@@ -533,6 +533,7 @@ async fn a_push_is_parked_with_what_it_does_and_answered_with_a_write_credential
             ("me", "Every repository of me", true)
         ]
     );
+    assert!(view.quick.is_some(), "a clean fast-forward can be answered in one tap");
     let git = view.git.expect("a push shows its refs");
     assert_eq!((git.repo.as_str(), git.pack_bytes), ("me/app", 2048));
     assert_eq!(git.notes, ["File list unavailable: one object was too large"]);
@@ -592,6 +593,33 @@ async fn a_push_is_parked_with_what_it_does_and_answered_with_a_write_credential
     assert_eq!((grant.username.as_str(), grant.token.as_str()), ("x-access-token", TOKEN));
     assert!((before + PUSH_LEASE_SECS..=unix_now() + PUSH_LEASE_SECS).contains(&grant.expires_at));
     assert!(!answered.to_string().contains(TOKEN));
+}
+
+#[tokio::test]
+async fn hidden_characters_in_a_push_are_shown_flagged_and_never_answered_without_the_user() {
+    let env = env().await;
+    let key = env.public();
+    pair(&env, "p1", Some(&key), Some(DESK), true).await;
+    // Trojan Source (CVE-2021-42574): bidi controls make the comment read as code and the code as a comment.
+    let trojan = "/*\u{202E} } \u{2066}if (isAdmin)\u{2069} \u{2066} begin admins only */";
+    let mut push_summary: PushSummary = serde_json::from_value(fast_forward()).unwrap();
+    let file = &mut push_summary.updates[0].commits[0].files[0];
+    file.patch = Some(format!("@@ -1 +1 @@\n-x\n+{trojan}"));
+    push_summary.updates[0].commits[1].subject = "Fix\u{200B}ed".to_owned();
+    serve(&env, &[push("r1", &key, "git_push", &serde_json::to_value(&push_summary).unwrap())], &[]).await;
+    env.core.sync(0).await.unwrap();
+
+    let view = env.core.approval_view("r1".to_owned()).await.unwrap();
+    let r = &view.git.as_ref().unwrap().refs[0];
+    let (first, second, third) = (&r.commits[0], &r.commits[1], &r.commits[2]);
+    assert!(first.hidden_chars && first.files[0].hidden_chars);
+    assert!(!first.files[1].hidden_chars, "only the file that holds them");
+    let added = &first.files[0].diff[2];
+    assert_eq!(added.text, "/*\u{fffd} } \u{fffd}if (isAdmin)\u{fffd} \u{fffd} begin admins only */");
+    assert!(second.hidden_chars);
+    assert_eq!(second.subject, "Fix\u{fffd}ed", "seen, not silently dropped");
+    assert!(!third.hidden_chars, "a clean commit is not flagged");
+    assert!(view.quick.is_none(), "never answered from a notification or by Autopilot");
 }
 
 #[tokio::test]

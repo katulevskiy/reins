@@ -434,13 +434,16 @@ pub fn git_push_view(call: &ConnectorCall) -> Option<GitPushView> {
                     .iter()
                     .map(|c| GitCommitView {
                         short_sha: c.sha.chars().take(7).collect(),
-                        subject: line(&c.subject),
-                        author: line(&c.author),
+                        subject: line(&text::mark_invisible(&c.subject)),
+                        author: line(&text::mark_invisible(&c.author)),
                         date: c.date,
                         files_changed: c.files_changed,
                         files: c.files.iter().map(git_file_view).collect(),
                         additions: c.additions,
                         deletions: c.deletions,
+                        hidden_chars: text::has_invisible(&c.subject)
+                            || text::has_invisible(&c.author)
+                            || c.files.iter().any(file_hidden_chars),
                     })
                     .collect(),
                 files_changed: u.files_changed,
@@ -460,7 +463,7 @@ pub fn git_push_view(call: &ConnectorCall) -> Option<GitPushView> {
 
 fn git_file_view(f: &desktop::FileChange) -> GitFileView {
     GitFileView {
-        path: text::one_line(&f.path),
+        path: text::one_line(&text::mark_invisible(&f.path)),
         status: match f.status {
             FileStatus::Added => "added",
             FileStatus::Modified => "modified",
@@ -473,7 +476,12 @@ fn git_file_view(f: &desktop::FileChange) -> GitFileView {
         binary: f.binary,
         diff: f.patch.as_deref().map(diff_lines).unwrap_or_default(),
         diff_cut: f.patch.is_some() && f.patch_cut,
+        hidden_chars: file_hidden_chars(f),
     }
+}
+
+fn file_hidden_chars(f: &desktop::FileChange) -> bool {
+    text::has_invisible(&f.path) || f.patch.as_deref().is_some_and(text::has_invisible)
 }
 
 /// A unified diff without file headers (`desktop::FileChange::patch`) as lines with their numbers. Lines that are none
@@ -484,7 +492,8 @@ pub fn diff_lines(patch: &str) -> Vec<DiffLineView> {
             .take(desktop::MAX_PATCH_LINE)
             .flat_map(|c| match c {
                 '\t' => vec![' '; 4],
-                c if c.is_control() => vec!['\u{fffd}'],
+                // Seen, not obeyed: a hidden character could make the line read unlike what it does.
+                c if c.is_control() || text::is_invisible(c) => vec!['\u{fffd}'],
                 c => vec![c],
             })
             .collect()
@@ -1192,6 +1201,9 @@ mod tests {
                 (DiffLineKind::Add, None, Some(11), "new"),
             ]
         );
+        let marked = diff_lines("@@ -1 +1 @@\n+a\u{202E}b\u{200B}c\u{FEFF}\n+plain é ü 中");
+        assert_eq!(marked[1].text, "a\u{fffd}b\u{fffd}c\u{fffd}");
+        assert_eq!(marked[2].text, "plain é ü 中", "ordinary text is untouched");
         assert!(diff_lines("").is_empty());
         assert!(diff_lines("@@ -x +y @@\n+a").is_empty(), "a header that does not parse starts nothing");
         let long = format!("@@ -1 +1 @@\n+{}", "y".repeat(5_000));

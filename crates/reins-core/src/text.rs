@@ -4,8 +4,50 @@
 
 /// Bidirectional-formatting characters (contracts: U+202A–U+202E, U+2066–U+2069,
 /// plus the implicit marks LRM/RLM/ALM).
-fn is_bidi_control(c: char) -> bool {
+pub(crate) fn is_bidi_control(c: char) -> bool {
     matches!(c, '\u{061C}' | '\u{200E}' | '\u{200F}' | '\u{202A}'..='\u{202E}' | '\u{2066}'..='\u{2069}')
+}
+
+/// A character that changes how text reads without being seen: the bidi controls, zero-width characters and other
+/// invisible format characters (soft hyphen, joiners, invisible operators, fillers, tag characters, the BOM).
+/// Variation selectors are left out: emoji use them.
+pub(crate) fn is_invisible(c: char) -> bool {
+    is_bidi_control(c)
+        || matches!(
+            c,
+            '\u{00AD}'
+                | '\u{034F}'
+                | '\u{115F}'
+                | '\u{1160}'
+                | '\u{17B4}'
+                | '\u{17B5}'
+                | '\u{180B}'..='\u{180F}'
+                | '\u{200B}'..='\u{200D}'
+                | '\u{2060}'..='\u{2065}'
+                | '\u{206A}'..='\u{206F}'
+                | '\u{3164}'
+                | '\u{FEFF}'
+                | '\u{FFA0}'
+                | '\u{E0000}'..='\u{E007F}'
+        )
+}
+
+/// `s` with every character [`is_invisible`] catches replaced by U+FFFD, so it shows instead of acting.
+pub fn mark_invisible(s: &str) -> String {
+    s.chars()
+        .map(|c| {
+            if is_invisible(c) {
+                '\u{fffd}'
+            } else {
+                c
+            }
+        })
+        .collect()
+}
+
+/// `s` holds a character [`is_invisible`] catches.
+pub fn has_invisible(s: &str) -> bool {
+    s.chars().any(is_invisible)
 }
 
 /// Removes bidi controls and control characters; keeps `\n` and `\t`.
