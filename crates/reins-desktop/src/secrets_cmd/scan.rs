@@ -44,7 +44,7 @@ pub async fn authorized_scan(
 ) -> Result<ScanReport, String> {
     let caller = Caller::from_env();
     let cwd = std::env::current_dir().map_err(|e| e.to_string())?;
-    let q = person::scan_question(&secrets_scan::computer_name(), &cwd, &caller);
+    let q = person::scan_question(&cwd, &caller);
     person::authorize(
         "reins secrets scan",
         QUESTION,

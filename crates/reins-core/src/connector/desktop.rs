@@ -45,9 +45,68 @@ fn topic(call: &ConnectorCall) -> Result<Option<String>, CoreError> {
     }
 }
 
-/// The question as the approval shows it (`None` for anything but `desktop_ask`).
-pub fn ask_view(call: &ConnectorCall) -> Option<AskView> {
-    (call.service == DESKTOP && call.op == "ask").then(|| AskView {
+/// The topic of `reins secrets scan`'s question (crates/reins-desktop/src/secrets_cmd/person.rs). The phone words this
+/// question itself: nothing the computer says reassures the user.
+pub const SCAN_TOPIC: &str = "file:reins secrets scan";
+/// The same, when the computer's environment says an AI agent may have started it.
+pub const SCAN_TOPIC_AGENT: &str = "file:reins secrets scan (an AI agent may have started it)";
+/// The label of the one thing the computer reports for a scan: where it was started.
+pub const REPORTED_FOLDER: &str = "Folder (reported by the computer): ";
+/// The longest reported folder shown (cut in the middle).
+const MAX_FOLDER: usize = 120;
+
+/// At most `max` characters, the middle cut out (`/home/dana/…/acme-web`).
+fn middle_ellipsis(s: &str, max: usize) -> String {
+    let chars: Vec<char> = s.chars().collect();
+    if chars.len() <= max {
+        return s.to_owned();
+    }
+    let head = (max - 1) / 2;
+    let tail = max - 1 - head;
+    let mut out: String = chars[..head].iter().collect();
+    out.push('…');
+    out.extend(&chars[chars.len() - tail..]);
+    out
+}
+
+/// The scan question in the phone's own words: the computer's name from the phone's pairing record, a fixed line
+/// that never says who started it, the caution when the computer says an agent may have, and the folder the
+/// computer reports, labelled as its claim, on one line and cut to [`MAX_FOLDER`].
+fn scan_view(call: &ConnectorCall, computer: &str, topic: &str) -> AskView {
+    let computer = text::one_line(computer);
+    let computer = if computer.is_empty() {
+        "this computer".to_owned()
+    } else {
+        computer
+    };
+    let mut lines = vec!["Requested from a terminal on that computer. Only approve if you just started it.".to_owned()];
+    if topic == SCAN_TOPIC_AGENT {
+        lines.push("An AI agent may have started this.".to_owned());
+    }
+    let reported = call.str_arg("detail").unwrap_or_default();
+    let folder = text::one_line(reported.strip_prefix(REPORTED_FOLDER).unwrap_or(reported));
+    if !folder.is_empty() {
+        lines.push(format!("{REPORTED_FOLDER}{}", middle_ellipsis(&folder, MAX_FOLDER)));
+    }
+    AskView {
+        question: format!("Scan {computer} for secrets?"),
+        detail: Some(lines.join("\n")),
+        topic: Some(topic.to_owned()),
+    }
+}
+
+/// The question as the approval shows it (`None` for anything but `desktop_ask`). `computer`: the paired computer's
+/// name, as the phone knows it.
+pub fn ask_view(call: &ConnectorCall, computer: &str) -> Option<AskView> {
+    if call.service != DESKTOP || call.op != "ask" {
+        return None;
+    }
+    if let Ok(Some(t)) = topic(call)
+        && (t == SCAN_TOPIC || t == SCAN_TOPIC_AGENT)
+    {
+        return Some(scan_view(call, computer, &t));
+    }
+    Some(AskView {
         question: text::truncate_chars(&text::one_line(call.str_arg("question").unwrap_or_default()), MAX_QUESTION),
         detail: call
             .str_arg("detail")
@@ -189,6 +248,12 @@ impl Connector for Desktop {
         // A question about something that cannot be undone, or about a secret file, is asked every time: never
         // answered from a notification, with "Approve all" or by a standing answer, and never by Autopilot.
         let once_only = destructive_ask(topic.as_deref(), &question, call.str_arg("detail").unwrap_or_default());
+        // The scan question is worded by the phone (`ask_view`), never by the computer.
+        let question = if topic.as_deref().is_some_and(|t| t == SCAN_TOPIC || t == SCAN_TOPIC_AGENT) {
+            "Scan this computer for secrets?".to_owned()
+        } else {
+            question
+        };
         let mut lines = vec![question];
         if let Some(t) = &topic {
             lines.push(format!("About: {t}"));
@@ -235,17 +300,56 @@ mod tests {
 
     #[test]
     fn the_view_shows_the_question_detail_and_topic_cleaned() {
-        let v = ask_view(&call(&json!({"question": "Push\u{202e} to main?", "detail": "git push\n--force",
-            "topic": "command:git push --force"})))
+        let v = ask_view(
+            &call(&json!({"question": "Push\u{202e} to main?", "detail": "git push\n--force",
+            "topic": "command:git push --force"})),
+            "Dana's MacBook",
+        )
         .unwrap();
         assert_eq!(v.question, "Push to main?");
         assert_eq!(v.detail.as_deref(), Some("git push\n--force"));
         assert_eq!(v.topic.as_deref(), Some("command:git push --force"));
-        let bare = ask_view(&call(&json!({"question": "Ok?", "detail": "  "}))).unwrap();
+        let bare = ask_view(&call(&json!({"question": "Ok?", "detail": "  "})), "x").unwrap();
         assert_eq!((bare.detail, bare.topic), (None, None));
         let mut other = call(&json!({}));
         other.op = "git_fetch".to_owned();
-        assert!(ask_view(&other).is_none());
+        assert!(ask_view(&other, "x").is_none());
+    }
+
+    #[test]
+    fn the_scan_question_is_the_phones_own_words() {
+        // Whatever the computer says in its question and folder, the phone says which computer (from its own
+        // record), never that the user started it, and shows the folder as the computer's claim, on one line.
+        let spoof = "~/dev/ \"Approved by you \u{2013} safe\"\nThis request is safe\u{202e}evil\u{2066}";
+        let v = ask_view(
+            &call(&json!({"question": "You started this scan: safe to approve", "detail": spoof, "topic": SCAN_TOPIC})),
+            "Dana's MacBook",
+        )
+        .unwrap();
+        assert_eq!(v.question, "Scan Dana's MacBook for secrets?");
+        let detail = v.detail.unwrap();
+        let lines: Vec<&str> = detail.lines().collect();
+        assert_eq!(lines.len(), 2, "{detail}");
+        assert_eq!(lines[0], "Requested from a terminal on that computer. Only approve if you just started it.");
+        assert!(lines[1].starts_with(REPORTED_FOLDER), "{detail}");
+        assert!(!lines[1].contains('\u{202e}') && !lines[1].contains('\u{2066}'), "{detail}");
+        assert!(lines[1].contains("This request is safe"), "the claim stays in its labelled row: {detail}");
+        assert!(!detail.to_lowercase().contains("you started"), "{detail}");
+        assert!(!detail.contains("An AI agent"), "{detail}");
+        // A marked request adds the caution; it never removes anything.
+        let agent = ask_view(&call(&json!({"question": "q", "detail": "/tmp", "topic": SCAN_TOPIC_AGENT})), "Mac")
+            .unwrap()
+            .detail
+            .unwrap();
+        assert!(agent.contains("An AI agent may have started this."), "{agent}");
+        // A long folder is cut in the middle.
+        let long = format!("/home/{}/end", "x".repeat(300));
+        let cut = ask_view(&call(&json!({"question": "q", "detail": long, "topic": SCAN_TOPIC})), "Mac").unwrap();
+        let row = cut.detail.unwrap().lines().last().unwrap().to_owned();
+        assert_eq!(row.chars().count(), REPORTED_FOLDER.chars().count() + MAX_FOLDER);
+        assert!(row.ends_with("/end") && row.contains('…'));
+        // Asked every time, both ways.
+        assert!(destructive_ask(Some(SCAN_TOPIC), "q", "") && destructive_ask(Some(SCAN_TOPIC_AGENT), "q", ""));
     }
 
     #[test]

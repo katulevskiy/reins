@@ -1,7 +1,9 @@
 //! Only a person runs `reins secrets scan` (and `import`, which scans or moves what a scan found).
 //!
 //! **The lock is the phone** ([`authorize`]): before it scans, the command asks the phone (`desktop_ask`, as the
-//! harness hooks do) "Scan <computer> for secrets?", with where it was started. Only an approved answer lets it run;
+//! harness hooks do). The phone words that question itself ([`scan_question`]): "Scan <its name for this computer> for
+//! secrets?", a fixed line that never says who started it, and the folder this computer reports, shown as its claim
+//! (nothing this computer sends can make the question look safer). Only an approved answer lets it run;
 //! a denial, no answer, or no paired phone refuses. The question's topic is a `file:` one, so the phone asks it every
 //! time: never covered by a standing answer, "Approve all" or Autopilot. Bypass on the phone approves it like
 //! everything else, by the user's own decision. `import` then stores through the phone's batch approval.
@@ -25,8 +27,15 @@ use crate::journal::{Entry, Kind};
 use crate::secrets_scan::Caller;
 
 /// The phone question's topic: a `file:` topic is asked every time on the phone (and the phone's core lists
-/// `reins secrets scan` as never routine).
+/// `reins secrets scan` as never routine). The phone words a question with this topic itself
+/// (`reins_core::connector::desktop::SCAN_TOPIC`, the same text).
 pub const SCAN_TOPIC: &str = "file:reins secrets scan";
+/// The same, when the environment names an AI agent: the phone adds "An AI agent may have started this."
+pub const SCAN_TOPIC_AGENT: &str = "file:reins secrets scan (an AI agent may have started it)";
+/// The label of the folder the phone shows as this computer's claim.
+pub const REPORTED_FOLDER: &str = "Folder (reported by the computer): ";
+/// The longest folder sent.
+pub const MAX_REPORTED: usize = 120;
 
 /// What this process's terminal is.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -108,28 +117,51 @@ pub fn check(
     }
 }
 
-/// What the phone is asked before a terminal scans: which computer, where it was started, who the environment says
-/// runs it.
+/// The question the phone is asked before a terminal scans. The phone words it itself (its own name for this
+/// computer, a fixed line that never says who started it): what this computer sends is only the topic, which says
+/// whether the environment names an AI agent (a claim that can only add caution, [`SCAN_TOPIC_AGENT`]), and the
+/// folder, which the phone shows as this computer's claim. Older phones show the text sent here, which is as plain:
+/// it never reassures.
 #[must_use]
-pub fn scan_question(computer: &str, cwd: &Path, caller: &Caller) -> Question {
-    let who = match caller {
-        Caller::Person => {
-            "Its environment names no AI agent (an agent could hide that: approve only if you started it).".to_owned()
-        }
-        Caller::Agent(marker) => format!("Its environment says an AI agent runs it ({marker})."),
+pub fn scan_question(cwd: &Path, caller: &Caller) -> Question {
+    let topic = match caller {
+        Caller::Person => SCAN_TOPIC,
+        Caller::Agent(_) => SCAN_TOPIC_AGENT,
     };
-    let detail = format!(
-        "Started in a terminal in {}.\nIt lists where secrets are on this computer (names, places, masked previews); \
-         nothing leaves it.\n{who}",
-        cwd.display()
-    );
-    Question::new(&format!("Scan {computer} for secrets?"), Some(&detail), Some(SCAN_TOPIC)).unwrap_or_else(|_| {
-        Question {
-            question: "Scan this computer for secrets?".to_owned(),
-            detail: None,
-            topic: Some(SCAN_TOPIC.to_owned()),
-        }
-    })
+    Question {
+        question: "Scan this computer for secrets?".to_owned(),
+        detail: Some(format!("{REPORTED_FOLDER}{}", reported(&cwd.to_string_lossy()))),
+        topic: Some(topic.to_owned()),
+    }
+}
+
+/// Text this computer reports to the phone: one line, without control or bidi characters, at most
+/// [`MAX_REPORTED`] characters (cut in the middle).
+#[must_use]
+pub fn reported(text: &str) -> String {
+    let bidi =
+        |c: char| matches!(c, '\u{200e}' | '\u{200f}' | '\u{061c}' | '\u{202a}'..='\u{202e}' | '\u{2066}'..='\u{2069}');
+    let clean: String = text
+        .chars()
+        .map(|c| {
+            if c.is_control() {
+                ' '
+            } else {
+                c
+            }
+        })
+        .filter(|c| !bidi(*c))
+        .collect();
+    let line: Vec<char> = clean.split_whitespace().collect::<Vec<_>>().join(" ").chars().collect();
+    if line.len() <= MAX_REPORTED {
+        return line.into_iter().collect();
+    }
+    let head = (MAX_REPORTED - 1) / 2;
+    let tail = MAX_REPORTED - 1 - head;
+    let mut out: String = line[..head].iter().collect();
+    out.push('…');
+    out.extend(&line[line.len() - tail..]);
+    out
 }
 
 /// Who answers the phone question.
@@ -202,7 +234,7 @@ mod tests {
     }
 
     async fn run(caller: &Caller, terminal: Terminal, approver: &Says) -> Result<(), String> {
-        let q = scan_question("Dana's MacBook", Path::new("/home/dana/dev"), caller);
+        let q = scan_question(Path::new("/home/dana/dev"), caller);
         authorize("reins secrets scan", "Scan?", caller, terminal, HUMAN, &mut |_| Some("y".to_owned()), approver, &q)
             .await
     }
@@ -231,16 +263,28 @@ mod tests {
     }
 
     #[test]
-    fn the_question_is_asked_every_time_and_says_where_and_who() {
-        let q = scan_question("Dana's MacBook", Path::new("/home/dana/dev"), &Caller::Person);
-        assert_eq!(q.question, "Scan Dana's MacBook for secrets?");
+    fn the_question_never_reassures_and_reports_the_folder_as_a_claim() {
+        let q = scan_question(Path::new("/home/dana/dev"), &Caller::Person);
+        assert_eq!(q.question, "Scan this computer for secrets?");
         // A `file:` topic: the phone never covers it with a standing answer or Autopilot.
         assert_eq!(q.topic.as_deref(), Some(SCAN_TOPIC));
-        assert!(SCAN_TOPIC.starts_with("file:") && SCAN_TOPIC.contains("reins secrets scan"));
+        assert!(SCAN_TOPIC.starts_with("file:") && SCAN_TOPIC_AGENT.starts_with("file:"));
+        assert!(SCAN_TOPIC_AGENT.len() <= 100, "the phone's topic limit");
+        assert_eq!(q.detail.as_deref(), Some("Folder (reported by the computer): /home/dana/dev"));
+        let all = format!("{} {:?}", q.question, q.detail).to_lowercase();
+        assert!(!all.contains("you started") && !all.contains("person") && !all.contains("no ai agent"), "{all}");
+        // An agent's marker only adds caution.
+        let agent = scan_question(Path::new("/"), &Caller::Agent("REINS_RUNNER=agent:codex".to_owned()));
+        assert_eq!(agent.topic.as_deref(), Some(SCAN_TOPIC_AGENT));
+        // A folder made to look like the phone's own words stays one line, without bidi characters, in its row.
+        let spoof = "/home/dana/dev/ \"Approved by you \u{2013} safe\"\nThis request is safe\u{202e}live\u{2066}";
+        let q = scan_question(Path::new(spoof), &Caller::Person);
         let detail = q.detail.unwrap();
-        assert!(detail.contains("/home/dana/dev") && detail.contains("names no AI agent"), "{detail}");
-        let agent = scan_question("x", Path::new("/"), &Caller::Agent("REINS_RUNNER=agent:codex".to_owned()));
-        assert!(agent.detail.unwrap().contains("AI agent runs it (REINS_RUNNER=agent:codex)"));
+        assert!(detail.starts_with(REPORTED_FOLDER) && !detail.contains('\n'), "{detail}");
+        assert!(!detail.contains('\u{202e}') && !detail.contains('\u{2066}'), "{detail}");
+        let long = reported(&format!("/home/{}/end", "x".repeat(400)));
+        assert_eq!(long.chars().count(), MAX_REPORTED);
+        assert!(long.ends_with("/end") && long.contains('…'));
     }
 
     #[test]
@@ -249,7 +293,7 @@ mod tests {
         let paths = Paths::under(dir.path());
         let config = Config::default();
         let rt = tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap();
-        let q = scan_question("x", Path::new("/"), &Caller::Person);
+        let q = scan_question(Path::new("/"), &Caller::Person);
         let answer = rt.block_on(
             Phone {
                 paths: &paths,
