@@ -98,6 +98,51 @@ pub struct Hub {
     mcp_servers: std::sync::Mutex<std::collections::HashMap<String, Arc<Vec<McpServerReport>>>>,
     /// When each account's approval device was last heard from.
     pub presence: presence::Presence,
+    /// Per desktop connection: sealed "drop your secrets" notes from the phone, until its daemon picks them up.
+    pub revocations: Revocations,
+}
+
+/// Sealed lease revocations for desktop apps (Reins Secrets): the phone posts one per paired computer, the computer's
+/// daemon takes them. Memory only, bounded per connection, forgotten after a day; the server cannot open them.
+#[derive(Default)]
+pub struct Revocations {
+    by_connection: std::sync::Mutex<std::collections::HashMap<String, Vec<(String, i64)>>>,
+}
+
+/// The longest sealed revocation kept.
+pub const MAX_REVOCATION_CHARS: usize = 2_000;
+
+impl Revocations {
+    pub fn post(&self, connection: &str, sealed: String, now: i64) {
+        if sealed.is_empty() || sealed.len() > MAX_REVOCATION_CHARS {
+            return;
+        }
+        let mut all = self.by_connection.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+        let list = all.entry(connection.to_owned()).or_default();
+        list.retain(|(_, until)| *until > now);
+        list.push((sealed, now + reins_proto::desktop::REVOCATION_TTL_SECS));
+        let excess = list.len().saturating_sub(reins_proto::desktop::MAX_REVOCATIONS);
+        list.drain(..excess);
+    }
+
+    /// What waits for `connection`, oldest first; taken, so it is handed over once.
+    pub fn take(&self, connection: &str, now: i64) -> Vec<String> {
+        let mut all = self.by_connection.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+        all.remove(connection)
+            .unwrap_or_default()
+            .into_iter()
+            .filter(|(_, until)| *until > now)
+            .map(|(s, _)| s)
+            .collect()
+    }
+
+    pub fn purge(&self, now: i64) {
+        let mut all = self.by_connection.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+        all.retain(|_, list| {
+            list.retain(|(_, until)| *until > now);
+            !list.is_empty()
+        });
+    }
 }
 
 impl Hub {
@@ -119,6 +164,7 @@ impl Hub {
             services: std::sync::Mutex::default(),
             mcp_servers: std::sync::Mutex::default(),
             presence: presence::Presence::default(),
+            revocations: Revocations::default(),
         }
     }
 
@@ -195,6 +241,7 @@ impl Hub {
         self.pairings.purge();
         self.blobs.purge(now_unix());
         self.joins.purge(now_unix());
+        self.revocations.purge(now_unix());
     }
 }
 

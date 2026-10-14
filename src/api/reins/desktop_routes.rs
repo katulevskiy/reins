@@ -42,7 +42,7 @@ const MAX_REQUEST_ID_BYTES: usize = 64;
 const MAX_ECHOED_TOOL_CHARS: usize = 64;
 
 pub fn routes() -> Vec<Route> {
-    routes![post_call, get_call, get_phone]
+    routes![post_call, get_call, get_phone, get_revocations]
 }
 
 // ---------------------------------------------------------------------------------------
@@ -322,6 +322,24 @@ async fn get_phone(request: McpRequest, conn: DbConn) -> DesktopResponse {
     DesktopResponse::json(Status::Ok, json!({"last_seen": last_seen, "services": services, "server_time": now_unix()}))
 }
 
+/// Reins Secrets: the sealed lease revocations the phone left for this computer (taken: each is handed over once). The
+/// daemon polls while it holds secrets.
+#[get("/reins/desktop/revocations")]
+async fn get_revocations(request: McpRequest, conn: DbConn) -> DesktopResponse {
+    let connection = match authenticated(&request, &conn).await {
+        Ok(c) => c,
+        Err(response) => return response,
+    };
+    drop(conn);
+    let items = HUB.revocations.take(&connection.uuid, now_unix());
+    DesktopResponse::json(
+        Status::Ok,
+        json!(reins_proto::desktop::RevocationMail {
+            items
+        }),
+    )
+}
+
 #[cfg(test)]
 mod tests {
     use reins_proto::{
@@ -452,6 +470,23 @@ mod tests {
             json!({"error": "rate_limited",
                 "message": "Rate limited: too many requests on this connection; try again in 3 s."})
         );
+    }
+
+    #[test]
+    fn revocations_wait_for_their_computer_bounded_and_are_handed_over_once() {
+        let r = crate::api::reins::Revocations::default();
+        r.post("c1", "a".into(), 100);
+        r.post("c2", "b".into(), 100);
+        r.post("c1", String::new(), 100);
+        r.post("c1", "x".repeat(crate::api::reins::MAX_REVOCATION_CHARS + 1), 100);
+        assert_eq!(r.take("c1", 101), ["a"]);
+        assert!(r.take("c1", 101).is_empty(), "taken once");
+        for i in 0..30 {
+            r.post("c3", format!("n{i}"), 100);
+        }
+        let kept = r.take("c3", 101);
+        assert_eq!((kept.len(), kept[0].as_str()), (desktop::MAX_REVOCATIONS, "n10"));
+        assert!(r.take("c2", 100 + desktop::REVOCATION_TTL_SECS).is_empty(), "a day at most");
     }
 
     #[test]
