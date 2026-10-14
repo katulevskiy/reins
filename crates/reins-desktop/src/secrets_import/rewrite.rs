@@ -12,64 +12,99 @@ use crate::secrets_scan::{self, Confidence, Finding, ScanReport, Source, sources
 /// Most variables in one run profile (`reins run`'s limit for one release).
 const PROFILE_MAX: usize = crate::secrets::MAX_SECRETS;
 
-/// Writes a new file (it must not exist).
-fn create(path: &Path, text: &str, private: bool, receipt: &mut Receipt) -> Result<(), String> {
+/// The mode a file gets: `public` files (reins.toml, .env.reins: references only) 0644; a replacement keeps its
+/// original's, and at most 0600 when the original was private.
+fn mode_for(original: Option<&Path>) -> u32 {
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt as _;
+        match original.and_then(|p| std::fs::metadata(p).ok()) {
+            Some(m) => {
+                let mode = m.permissions().mode() & 0o777;
+                // Nothing for the group or others (the low six bits).
+                let private = mode.trailing_zeros() >= 6;
+                if private {
+                    mode & 0o600
+                } else {
+                    mode
+                }
+            }
+            None if original.is_some() => 0o600,
+            None => 0o644,
+        }
+    }
+    #[cfg(not(unix))]
+    {
+        let _ = original;
+        0o600
+    }
+}
+
+/// Writes `text` to a new temporary file next to `path` (0600 from its creation, then `mode`); its path.
+fn temp_file(path: &Path, text: &str, mode: u32) -> Result<PathBuf, String> {
     use std::io::Write as _;
+    let name = path.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
+    let tmp = path.with_file_name(format!(".{name}.reins-{}", crate::server::random_token(6)));
     let mut options = std::fs::OpenOptions::new();
     options.write(true).create_new(true);
     #[cfg(unix)]
     {
         use std::os::unix::fs::OpenOptionsExt as _;
-        options.mode(if private {
-            0o600
-        } else {
-            0o644
-        });
+        options.mode(0o600);
     }
+    let mut file = options.open(&tmp).map_err(|e| format!("{}: {e}", path.display()))?;
+    let written = file.write_all(text.as_bytes()).and_then(|()| file.sync_all());
+    #[cfg(unix)]
+    let written = written.and_then(|()| {
+        use std::os::unix::fs::PermissionsExt as _;
+        std::fs::set_permissions(&tmp, std::fs::Permissions::from_mode(mode))
+    });
     #[cfg(not(unix))]
-    let _ = private;
-    let mut file = options.open(path).map_err(|e| format!("{}: {e}", path.display()))?;
-    file.write_all(text.as_bytes()).map_err(|e| format!("{}: {e}", path.display()))?;
+    let _ = mode;
+    if let Err(e) = written {
+        std::fs::remove_file(&tmp).ok();
+        return Err(format!("{}: {e}", path.display()));
+    }
+    Ok(tmp)
+}
+
+/// Writes a new file (nothing may be there), through a temporary file.
+fn create(path: &Path, text: &str, receipt: &mut Receipt) -> Result<(), String> {
+    let tmp = temp_file(path, text, mode_for(None))?;
+    if std::fs::symlink_metadata(path).is_ok() {
+        std::fs::remove_file(&tmp).ok();
+        return Err(format!("{}: a file is there; left alone", path.display()));
+    }
+    std::fs::rename(&tmp, path).map_err(|e| format!("{}: {e}", path.display()))?;
     receipt.changes.push(Change::Created {
         path: path.to_path_buf(),
     });
     Ok(())
 }
 
-/// Sends `path` to the trash and writes `text` in its place, with the original's permissions.
+/// Writes `text` in the place of `path`: the new file is made first (with the original's permissions), then the
+/// original goes to the trash and the new one takes its place.
 fn replace(path: &Path, text: &str, machine: &dyn Machine, receipt: &mut Receipt) -> Result<(), String> {
-    let private = private_file(path);
-    machine.trash(path)?;
-    receipt.changes.push(Change::Trashed {
-        path: path.to_path_buf(),
-    });
-    create(path, text, private, receipt)?;
-    // One change for both: undo sends the new file to the trash and brings the original back.
-    receipt.changes.truncate(receipt.changes.len() - 2);
+    let tmp = temp_file(path, text, mode_for(Some(path)))?;
+    let trash_id = match machine.trash(path) {
+        Ok(id) => id,
+        Err(e) => {
+            std::fs::remove_file(&tmp).ok();
+            return Err(e);
+        }
+    };
     receipt.changes.push(Change::Replaced {
         path: path.to_path_buf(),
+        trash_id,
     });
-    Ok(())
-}
-
-/// Whether others cannot read the file (so its replacement must not be readable either).
-fn private_file(path: &Path) -> bool {
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt as _;
-        std::fs::metadata(path).map_or(true, |m| m.permissions().mode() & 0o044 == 0)
-    }
-    #[cfg(not(unix))]
-    {
-        let _ = path;
-        true
-    }
+    std::fs::rename(&tmp, path).map_err(|e| format!("{}: {e}", path.display()))
 }
 
 fn trash(path: &Path, machine: &dyn Machine, receipt: &mut Receipt) -> Result<(), String> {
-    machine.trash(path)?;
+    let trash_id = machine.trash(path)?;
     receipt.changes.push(Change::Trashed {
         path: path.to_path_buf(),
+        trash_id,
     });
     Ok(())
 }
@@ -111,6 +146,7 @@ fn plural(n: usize, one: &str, many: &str) -> String {
 }
 
 /// Runs the step for every finding whose selected items all arrived.
+/// Returns the items now off this computer's disk.
 pub(super) async fn all(
     report: &ScanReport,
     selected: &BTreeSet<String>,
@@ -118,7 +154,7 @@ pub(super) async fn all(
     plan: &Plan,
     machine: &dyn Machine,
     receipt: &mut Receipt,
-) {
+) -> BTreeSet<String> {
     let mut ready: Vec<&Finding> = Vec::new();
     for f in &report.findings {
         let chosen: Vec<&str> = f.items.iter().filter(|i| selected.contains(&i.id)).map(|i| i.id.as_str()).collect();
@@ -131,15 +167,24 @@ pub(super) async fn all(
             receipt.notes.push(format!("{} was left as it is: not all of its secrets reached your vault.", f.path));
         }
     }
-    dotenv(&ready, selected, plan, machine, receipt);
-    ssh(&ready, machine, receipt).await;
-    git(&ready, selected, plan, machine, receipt);
-    machine_files(&ready, selected, plan, machine, receipt);
+    let mut off = BTreeSet::new();
+    dotenv(&ready, selected, plan, machine, receipt, &mut off);
+    ssh(&ready, machine, receipt, &mut off).await;
+    git(&ready, selected, plan, machine, receipt, &mut off);
+    machine_files(&ready, selected, plan, machine, receipt, &mut off);
+    off
 }
 
 /// `.env` files: per project, `reins.toml` (when missing) and `.env.reins` (the development variables' references
 /// and its plain settings); each file goes to the trash, or keeps only what was not moved and may be a secret.
-fn dotenv(ready: &[&Finding], selected: &BTreeSet<String>, plan: &Plan, machine: &dyn Machine, receipt: &mut Receipt) {
+fn dotenv(
+    ready: &[&Finding],
+    selected: &BTreeSet<String>,
+    plan: &Plan,
+    machine: &dyn Machine,
+    receipt: &mut Receipt,
+    off: &mut BTreeSet<String>,
+) {
     let mut by_root: BTreeMap<PathBuf, Vec<&Finding>> = BTreeMap::new();
     for f in ready.iter().filter(|f| f.source == Source::Dotenv) {
         let root = f.project_root.clone().or_else(|| f.abs_path.parent().map(Path::to_path_buf)).unwrap_or_default();
@@ -161,7 +206,7 @@ fn dotenv(ready: &[&Finding], selected: &BTreeSet<String>, plan: &Plan, machine:
             names.sort_by_key(|n| (*n != DEFAULT_ENV, *n));
             names.dedup();
             let settings: Vec<EnvSettings> = names.iter().map(|n| EnvSettings::for_env(n)).collect();
-            let r = create(&toml, &formats::reins_toml(&project, DEFAULT_ENV, &settings), false, receipt);
+            let r = create(&toml, &formats::reins_toml(&project, DEFAULT_ENV, &settings), receipt);
             note(receipt, r);
         }
         let mut lines: Vec<EnvLine> = Vec::new();
@@ -213,7 +258,10 @@ fn dotenv(ready: &[&Finding], selected: &BTreeSet<String>, plan: &Plan, machine:
                 ));
                 replace(&f.abs_path, &formats::env_reins(&kept), machine, receipt)
             };
-            files += usize::from(r.is_ok());
+            if r.is_ok() {
+                files += 1;
+                off.extend(f.items.iter().filter(|i| selected.contains(&i.id)).map(|i| i.id.clone()));
+            }
             note(receipt, r);
             if f.git_commit.is_some() {
                 in_history.push(f.title.clone());
@@ -223,7 +271,7 @@ fn dotenv(ready: &[&Finding], selected: &BTreeSet<String>, plan: &Plan, machine:
             let path = root.join(".env.reins");
             let r = match std::fs::read_to_string(&path) {
                 Ok(existing) => replace(&path, &formats::merge_env_reins(&existing, &lines), machine, receipt),
-                Err(_) => create(&path, &formats::env_reins(&lines), false, receipt),
+                Err(_) => create(&path, &formats::env_reins(&lines), receipt),
             };
             note(receipt, r);
         }
@@ -245,7 +293,7 @@ fn dotenv(ready: &[&Finding], selected: &BTreeSet<String>, plan: &Plan, machine:
 
 /// SSH keys: ssh asks the Reins agent; once the agent signed with the moved key, the private key file goes to the
 /// trash (the `.pub` stays).
-async fn ssh(ready: &[&Finding], machine: &dyn Machine, receipt: &mut Receipt) {
+async fn ssh(ready: &[&Finding], machine: &dyn Machine, receipt: &mut Receipt, off: &mut BTreeSet<String>) {
     let keys: Vec<&&Finding> = ready.iter().filter(|f| f.source == Source::SshKey).collect();
     if keys.is_empty() {
         return;
@@ -267,7 +315,10 @@ async fn ssh(ready: &[&Finding], machine: &dyn Machine, receipt: &mut Receipt) {
         };
         let (ok, how) = match machine.agent_signs_with(&public).await {
             Ok(()) => match trash(&f.abs_path, machine, receipt) {
-                Ok(()) => (true, "signs on your phone; the file is in the trash".to_owned()),
+                Ok(()) => {
+                    off.extend(f.items.iter().map(|i| i.id.clone()));
+                    (true, "signs on your phone; the file is in the trash".to_owned())
+                }
                 Err(e) => (false, e),
             },
             Err(why) => {
@@ -289,7 +340,14 @@ async fn ssh(ready: &[&Finding], machine: &dyn Machine, receipt: &mut Receipt) {
 
 /// GitHub CLI and git credentials: git for the host goes through Reins, and the token leaves the file (or the
 /// keychain: `gh auth logout`).
-fn git(ready: &[&Finding], selected: &BTreeSet<String>, plan: &Plan, machine: &dyn Machine, receipt: &mut Receipt) {
+fn git(
+    ready: &[&Finding],
+    selected: &BTreeSet<String>,
+    plan: &Plan,
+    machine: &dyn Machine,
+    receipt: &mut Receipt,
+    off: &mut BTreeSet<String>,
+) {
     let found: Vec<&&Finding> =
         ready.iter().filter(|f| matches!(f.source, Source::GhCli | Source::GitCredentials)).collect();
     if found.is_empty() {
@@ -316,9 +374,12 @@ fn git(ready: &[&Finding], selected: &BTreeSet<String>, plan: &Plan, machine: &d
             if item.id.ends_with("/keychain") {
                 let host = item.group.clone().unwrap_or_default();
                 match machine.gh_logout(&host) {
-                    Ok(()) => receipt.changes.push(Change::GhLogout {
-                        host,
-                    }),
+                    Ok(()) => {
+                        off.insert(item.id.clone());
+                        receipt.changes.push(Change::GhLogout {
+                            host,
+                        });
+                    }
                     Err(e) => {
                         ok = false;
                         receipt.notes.push(format!("the GitHub CLI is still signed in to {host}: {e}"));
@@ -332,6 +393,14 @@ fn git(ready: &[&Finding], selected: &BTreeSet<String>, plan: &Plan, machine: &d
             let r = std::fs::read_to_string(&f.abs_path)
                 .map_err(|e| format!("{}: {e}", f.path))
                 .and_then(|text| replace(&f.abs_path, &edit_lines(&text, &edits), machine, receipt));
+            if r.is_ok() {
+                off.extend(
+                    f.items
+                        .iter()
+                        .filter(|i| edits.contains_key(&i.line) && selected.contains(&i.id))
+                        .map(|i| i.id.clone()),
+                );
+            }
             ok &= r.is_ok();
             note(receipt, r);
         }
@@ -352,6 +421,7 @@ fn machine_files(
     plan: &Plan,
     machine: &dyn Machine,
     receipt: &mut Receipt,
+    off: &mut BTreeSet<String>,
 ) {
     for f in ready {
         let profiles = match f.source {
@@ -362,7 +432,7 @@ fn machine_files(
                 receipt.done.push(Done {
                     source: f.source,
                     what: format!("{} → your vault", f.title),
-                    how: format!("{} kept: the tool reads only that file; your vault has a copy", f.path),
+                    how: format!("still on disk in {}: the tool reads only that file (your vault has a copy)", f.path),
                     ok: false,
                 });
                 continue;
@@ -401,6 +471,9 @@ fn machine_files(
         }
         let r = replace(&f.abs_path, &edit_lines(&text, &edits), machine, receipt);
         let ok = r.is_ok();
+        if ok {
+            off.extend(f.items.iter().filter(|i| selected.contains(&i.id)).map(|i| i.id.clone()));
+        }
         note(receipt, r);
         let how = match f.source {
             Source::Npm => format!("reins run --profile {} -- npm publish", profiles[0]),

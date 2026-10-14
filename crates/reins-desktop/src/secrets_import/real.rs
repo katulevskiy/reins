@@ -62,37 +62,76 @@ impl System {
     }
 }
 
-/// The trashed file whose original place was `path` (the latest), where the trash can be listed.
+/// Where the trash keeps records (freedesktop on Linux, the Recycle Bin on Windows): items are found and put back
+/// through them, never by a path made up from a receipt.
 #[cfg(any(windows, all(unix, not(target_os = "macos"), not(target_os = "ios"), not(target_os = "android"))))]
-fn restore_from_trash(path: &Path, _home: &Path) -> Result<(), String> {
-    let items = trash::os_limited::list().map_err(|e| format!("cannot read the trash: {e}"))?;
-    let item = items
-        .into_iter()
-        .filter(|i| i.original_path() == path)
-        .max_by_key(|i| i.time_deleted)
-        .ok_or_else(|| format!("{} is not in the trash any more", path.display()))?;
-    trash::os_limited::restore_all([item]).map_err(|e| format!("{}: {e}", path.display()))
+mod bin {
+    use std::ffi::OsString;
+    use std::path::Path;
+
+    fn id_text(id: &OsString) -> String {
+        id.to_string_lossy().into_owned()
+    }
+
+    /// The item the trash made for `path` just now (the latest from there).
+    pub fn trashed_id(path: &Path) -> Option<String> {
+        let items = trash::os_limited::list().ok()?;
+        items.into_iter().filter(|i| i.original_path() == path).max_by_key(|i| i.time_deleted).map(|i| id_text(&i.id))
+    }
+
+    /// The trash's item `id`, from `path`.
+    fn item(path: &Path, id: Option<&str>) -> Result<trash::TrashItem, String> {
+        let id = id.ok_or_else(|| format!("{}: the trash did not say which item it is", path.display()))?;
+        let items = trash::os_limited::list().map_err(|e| format!("cannot read the trash: {e}"))?;
+        items
+            .into_iter()
+            .find(|i| id_text(&i.id) == id && i.original_path() == path)
+            .ok_or_else(|| format!("{} is not in the trash any more", path.display()))
+    }
+
+    pub fn restore(path: &Path, id: Option<&str>) -> Result<(), String> {
+        trash::os_limited::restore_all([item(path, id)?]).map_err(|e| format!("{}: {e}", path.display()))
+    }
+
+    pub fn purge(path: &Path, id: Option<&str>) -> Result<(), String> {
+        trash::os_limited::purge_all([item(path, id)?]).map_err(|e| format!("{}: {e}", path.display()))
+    }
 }
 
-/// macOS keeps no record of where a trashed file was: the file of that name in `~/.Trash`, if it is there.
+/// macOS's Trash keeps no record a program can read back: Finder's Put Back does it, and emptying the Trash.
 #[cfg(not(any(windows, all(unix, not(target_os = "macos"), not(target_os = "ios"), not(target_os = "android")))))]
-fn restore_from_trash(path: &Path, home: &Path) -> Result<(), String> {
-    let name = path.file_name().ok_or("no file name")?;
-    let trashed = home.join(".Trash").join(name);
-    if !trashed.exists() || path.exists() {
-        return Err(format!("put {} back from the Trash (Finder: Put Back)", path.display()));
+mod bin {
+    use std::path::Path;
+
+    pub fn trashed_id(_path: &Path) -> Option<String> {
+        None
     }
-    std::fs::rename(&trashed, path).map_err(|e| format!("{}: {e}", path.display()))
+
+    pub fn restore(path: &Path, _id: Option<&str>) -> Result<(), String> {
+        Err(format!("put {} back from the Trash (Finder: Put Back)", path.display()))
+    }
+
+    pub fn purge(path: &Path, _id: Option<&str>) -> Result<(), String> {
+        Err(format!("delete {} from the Trash in Finder", path.display()))
+    }
 }
 
 #[async_trait::async_trait]
 impl Machine for System {
-    fn trash(&self, path: &Path) -> Result<(), String> {
-        trash::delete(path).map_err(|e| format!("{} could not go to the trash: {e}", path.display()))
+    fn trash(&self, path: &Path) -> Result<Option<String>, String> {
+        trash::delete(path).map_err(|e| format!("{} could not go to the trash: {e}", path.display()))?;
+        Ok(bin::trashed_id(path))
     }
 
-    fn restore(&self, path: &Path) -> Result<(), String> {
-        restore_from_trash(path, &self.home)
+    fn restore(&self, path: &Path, trash_id: Option<&str>) -> Result<(), String> {
+        if std::fs::symlink_metadata(path).is_ok() {
+            return Err(format!("{}: a file is there again; it was not overwritten", path.display()));
+        }
+        bin::restore(path, trash_id)
+    }
+
+    fn purge(&self, path: &Path, trash_id: Option<&str>) -> Result<(), String> {
+        bin::purge(path, trash_id)
     }
 
     fn gh_token(&self, host: &str) -> Option<Zeroizing<String>> {

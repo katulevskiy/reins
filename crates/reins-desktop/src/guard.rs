@@ -120,6 +120,9 @@ pub const DEFAULT_FILES: &[&str] = &[
     ".pypirc",
     ".vault-token",
     "credentials.json",
+    // What `reins secrets import` keeps: its receipts (what moved where; undo trusts only authenticated ones) and their
+    // key (`import-receipts.key` is `*.key`).
+    "reins/imports/*",
 ];
 
 /// Built-in exceptions to the file patterns.
@@ -292,9 +295,9 @@ pub const GROUPS: &[Group] = &[
     Group {
         id: "tokens",
         label: "Saved tokens",
-        detail: ".netrc, .git-credentials, .npmrc, .pypirc, .vault-token",
+        detail: ".netrc, .git-credentials, .npmrc, .pypirc, .vault-token, Reins' import receipts",
         commands: &[],
-        files: &[".netrc", "_netrc", ".git-credentials", ".npmrc", ".pypirc", ".vault-token"],
+        files: &[".netrc", "_netrc", ".git-credentials", ".npmrc", ".pypirc", ".vault-token", "reins/imports/*"],
     },
 ];
 
@@ -856,6 +859,13 @@ mod tests {
             assert!(g.check_file(f).is_some(), "{f}");
         }
         assert!(g.check_command("echo abc > ~/.local/state/reins/phone-payments.key").is_some());
+        for f in [
+            "/home/me/.local/state/reins/imports/1700000000.json",
+            "/home/me/.local/state/reins/import-receipts.key",
+            "C:\\Users\\me\\AppData\\Local\\reins\\imports\\1700000000.json",
+        ] {
+            assert!(g.check_file(f).is_some(), "{f}");
+        }
     }
 
     #[test]

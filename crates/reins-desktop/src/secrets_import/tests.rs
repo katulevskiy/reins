@@ -45,6 +45,7 @@ impl VaultWriter for FakeWriter {
 struct FakeMachine {
     trash_dir: PathBuf,
     trashed: Mutex<BTreeMap<PathBuf, Vec<PathBuf>>>,
+    purged: Mutex<Vec<PathBuf>>,
     signs: bool,
     profiles: Mutex<BTreeMap<String, BTreeMap<String, String>>>,
     log: Mutex<Vec<String>>,
@@ -57,6 +58,7 @@ impl FakeMachine {
         Self {
             trash_dir,
             trashed: Mutex::default(),
+            purged: Mutex::default(),
             signs,
             profiles: Mutex::default(),
             log: Mutex::default(),
@@ -70,18 +72,34 @@ impl FakeMachine {
 
 #[async_trait::async_trait]
 impl Machine for FakeMachine {
-    fn trash(&self, path: &Path) -> Result<(), String> {
+    fn trash(&self, path: &Path) -> Result<Option<String>, String> {
         let mut t = self.trashed.lock().unwrap();
-        let n: usize = t.values().map(Vec::len).sum();
-        let to = self.trash_dir.join(n.to_string());
+        let n: usize = t.values().map(Vec::len).sum::<usize>() + self.purged.lock().unwrap().len();
+        let to = self.trash_dir.join(format!("item-{n}"));
         std::fs::rename(path, &to).map_err(|e| format!("{}: {e}", path.display()))?;
         t.entry(path.to_path_buf()).or_default().push(to);
-        Ok(())
+        Ok(Some(format!("item-{n}")))
     }
 
-    fn restore(&self, path: &Path) -> Result<(), String> {
-        let from = self.trashed.lock().unwrap().get_mut(path).and_then(Vec::pop).ok_or("not in the trash")?;
+    fn restore(&self, path: &Path, trash_id: Option<&str>) -> Result<(), String> {
+        let mut t = self.trashed.lock().unwrap();
+        let items = t.get_mut(path).ok_or("not in the trash")?;
+        let at =
+            items.iter().position(|i| i.file_name().and_then(|n| n.to_str()) == trash_id).ok_or("not that item")?;
+        let from = items.remove(at);
+        assert!(std::fs::symlink_metadata(path).is_err(), "never over a file");
         std::fs::rename(from, path).map_err(|e| e.to_string())
+    }
+
+    fn purge(&self, path: &Path, trash_id: Option<&str>) -> Result<(), String> {
+        let mut t = self.trashed.lock().unwrap();
+        let items = t.get_mut(path).ok_or("not in the trash")?;
+        let at =
+            items.iter().position(|i| i.file_name().and_then(|n| n.to_str()) == trash_id).ok_or("not that item")?;
+        let item = items.remove(at);
+        std::fs::remove_file(&item).map_err(|e| e.to_string())?;
+        self.purged.lock().unwrap().push(item);
+        Ok(())
     }
 
     fn gh_token(&self, _host: &str) -> Option<Zeroizing<String>> {
@@ -350,9 +368,10 @@ async fn undo_puts_every_file_back() {
     let (_, path) = run(&fx, &report, &selected, false, &FakeWriter::default(), &machine).await.unwrap();
     let path = path.unwrap();
     assert!(snapshot(&fx.home()).len() != before.len() || snapshot(&fx.home()).iter().ne(before.iter()));
-    let (loaded_path, mut receipt) = load_receipt(&ctx(&fx).state_dir, "last").unwrap();
+    let c = ctx(&fx);
+    let (loaded_path, mut receipt) = receipt::load(&c.state_dir, "last").unwrap();
     assert_eq!(loaded_path, path);
-    let lines = undo(&path, &mut receipt, &machine).unwrap();
+    let lines = receipt::undo(&c.home, &c.state_dir, &path, &mut receipt, &machine).unwrap();
     assert!(lines.iter().all(|l| !l.starts_with("not undone")), "{lines:?}");
     let after = snapshot(&fx.home());
     let differ: Vec<&PathBuf> = before.keys().chain(after.keys()).filter(|p| before.get(*p) != after.get(*p)).collect();
@@ -360,9 +379,9 @@ async fn undo_puts_every_file_back() {
     assert!(machine.profiles.lock().unwrap().is_empty());
     assert!(machine.log.lock().unwrap().contains(&"ssh unsetup".to_owned()));
     // Once only.
-    let (_, mut again) = load_receipt(&ctx(&fx).state_dir, path.to_str().unwrap()).unwrap();
+    let (_, mut again) = receipt::load(&c.state_dir, path.to_str().unwrap()).unwrap();
     assert!(again.undone_at.is_some());
-    assert!(undo(&path, &mut again, &machine).is_err());
+    assert!(receipt::undo(&c.home, &c.state_dir, &path, &mut again, &machine).is_err());
 }
 
 #[tokio::test]
@@ -392,15 +411,18 @@ async fn what_did_not_arrive_stays_and_an_unsigned_key_waits() {
     let home = fx.home();
     assert!(home.join("dev/acme-web/.env").exists() && !home.join("dev/acme-web/reins.toml").exists());
     assert!(receipt.notes.iter().any(|n| n.contains("acme-web/development was not stored: denied")));
-    // The key stays until the agent signs with it; `finish` tries again.
+    // The key stays until the agent signs with it (and says it is still on disk); `finish` tries again.
     assert!(home.join(".ssh/id_ed25519").exists());
+    assert!(receipt.moved.iter().filter(|m| m.to.starts_with("Reins/ssh/")).all(|m| m.on_disk));
     assert_eq!(receipt.pending_keys.len(), 2);
     let path = path.unwrap();
     let mut receipt = receipt;
     let signing = FakeMachine::new(&fx.dir.path().join("later"), true);
-    let lines = finish(&path, &mut receipt, &signing).await.unwrap();
+    let c = ctx(&fx);
+    let lines = receipt::finish(&c.home, &c.state_dir, &path, &mut receipt, &signing).await.unwrap();
     assert!(lines[0].contains("in the trash"), "{lines:?}");
     assert!(!home.join(".ssh/id_ed25519").exists() && receipt.pending_keys.is_empty());
+    assert!(receipt.moved.iter().filter(|m| m.to.starts_with("Reins/ssh/")).all(|m| !m.on_disk));
 }
 
 #[tokio::test]
@@ -481,6 +503,7 @@ fn the_receipt_format_is_stable() {
             item: "dotenv-0123/OPENAI_API_KEY".to_owned(),
             finding: "dotenv-0123".to_owned(),
             to: "vault:acme-web/development/OPENAI_API_KEY".to_owned(),
+            on_disk: false,
         }],
         changes: vec![
             Change::Created {
@@ -488,9 +511,11 @@ fn the_receipt_format_is_stable() {
             },
             Change::Replaced {
                 path: PathBuf::from("/h/.npmrc"),
+                trash_id: Some("item-1".to_owned()),
             },
             Change::Trashed {
                 path: PathBuf::from("/h/dev/acme-web/.env"),
+                trash_id: None,
             },
             Change::Profile {
                 name: "npm".to_owned(),
@@ -512,13 +537,14 @@ fn the_receipt_format_is_stable() {
         notes: vec![],
         pending_keys: vec![],
         undone_at: None,
+        purged_at: None,
     };
     let expected = serde_json::json!({
         "version": 1, "at": 1_700_000_000, "computer": "Dana's MacBook", "keep_local": false,
-        "moved": [{"item": "dotenv-0123/OPENAI_API_KEY", "finding": "dotenv-0123", "to": "vault:acme-web/development/OPENAI_API_KEY"}],
+        "moved": [{"item": "dotenv-0123/OPENAI_API_KEY", "finding": "dotenv-0123", "to": "vault:acme-web/development/OPENAI_API_KEY", "on_disk": false}],
         "changes": [
             {"kind": "created", "path": "/h/dev/acme-web/reins.toml"},
-            {"kind": "replaced", "path": "/h/.npmrc"},
+            {"kind": "replaced", "path": "/h/.npmrc", "trash_id": "item-1"},
             {"kind": "trashed", "path": "/h/dev/acme-web/.env"},
             {"kind": "profile", "name": "npm"},
             {"kind": "ssh_setup"},
@@ -530,4 +556,145 @@ fn the_receipt_format_is_stable() {
     });
     assert_eq!(serde_json::to_value(&receipt).unwrap(), expected);
     assert_eq!(serde_json::from_value::<Receipt>(expected).unwrap(), receipt);
+}
+
+#[tokio::test]
+async fn a_receipt_is_authenticated_and_only_its_own_folder_counts() {
+    let fx = fixture();
+    let report = report(&fx);
+    let selected = select(&report, &[], true).unwrap();
+    let machine = FakeMachine::new(fx.dir.path(), true);
+    let (_, path) = run(&fx, &report, &selected, false, &FakeWriter::default(), &machine).await.unwrap();
+    let path = path.unwrap();
+    let c = ctx(&fx);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt as _;
+        assert_eq!(std::fs::metadata(&path).unwrap().permissions().mode() & 0o777, 0o600);
+        assert_eq!(std::fs::metadata(path.parent().unwrap()).unwrap().permissions().mode() & 0o777, 0o700);
+    }
+    // Changed by anything else: refused, and nothing is undone.
+    let text = std::fs::read_to_string(&path).unwrap();
+    let tampered = text.replacen("/dev/acme-web/.env\"", "/.ssh/authorized_keys\"", 1);
+    assert_ne!(tampered, text);
+    std::fs::write(&path, &tampered).unwrap();
+    let err = receipt::load(&c.state_dir, "last").unwrap_err();
+    assert!(err.contains("refused"), "{err}");
+    std::fs::write(&path, &text).unwrap();
+    assert!(receipt::load(&c.state_dir, "last").is_ok());
+    // A copy elsewhere, even a valid one, is not a receipt.
+    let elsewhere = fx.dir.path().join("receipt.json");
+    std::fs::write(&elsewhere, &text).unwrap();
+    assert!(receipt::load(&c.state_dir, elsewhere.to_str().unwrap()).is_err());
+    // Another install's key does not verify it.
+    std::fs::write(c.state_dir.join("import-receipts.key"), [9u8; 32]).unwrap();
+    assert!(receipt::load(&c.state_dir, "last").is_err());
+}
+
+#[test]
+fn undo_touches_only_plain_places_in_the_home_folder() {
+    let fx = fixture();
+    let home = fx.home();
+    assert!(receipt::check_place(&home, &home.join("dev/acme-web/.env")).is_ok());
+    for bad in
+        [home.join("dev/../../outside"), PathBuf::from("/etc/passwd"), PathBuf::from("relative/.env"), home.clone()]
+    {
+        assert!(receipt::check_place(&home, &bad).is_err(), "{}", bad.display());
+    }
+    #[cfg(unix)]
+    {
+        let outside = fx.dir.path().join("outside");
+        std::fs::create_dir_all(&outside).unwrap();
+        std::os::unix::fs::symlink(&outside, home.join("dev/linked")).unwrap();
+        std::os::unix::fs::symlink(home.join("dev/acme-web"), home.join("dev/inner-link")).unwrap();
+        let err = receipt::check_place(&home, &home.join("dev/linked/.env")).unwrap_err();
+        assert!(err.contains("symbolic link") || err.contains("outside"), "{err}");
+        assert!(receipt::check_place(&home, &home.join("dev/inner-link/.env")).unwrap_err().contains("symbolic link"));
+    }
+}
+
+#[tokio::test]
+async fn undo_never_overwrites_a_file_that_is_back() {
+    let fx = fixture();
+    let report = report(&fx);
+    let selected = select(&report, &[], true).unwrap();
+    let machine = FakeMachine::new(fx.dir.path(), true);
+    let (_, path) = run(&fx, &report, &selected, false, &FakeWriter::default(), &machine).await.unwrap();
+    let path = path.unwrap();
+    let env = fx.home().join("dev/acme-web/.env");
+    std::fs::write(&env, "NEW=1\n").unwrap();
+    let c = ctx(&fx);
+    let (_, mut r) = receipt::load(&c.state_dir, "last").unwrap();
+    let lines = receipt::undo(&c.home, &c.state_dir, &path, &mut r, &machine).unwrap();
+    assert!(lines.iter().any(|l| l.starts_with("not undone") && l.contains("not overwritten")), "{lines:?}");
+    assert_eq!(std::fs::read_to_string(&env).unwrap(), "NEW=1\n");
+    assert!(r.undone_at.is_none(), "not all of it was undone");
+}
+
+#[tokio::test]
+async fn new_files_hold_no_secret_and_keep_their_permissions() {
+    let fx = fixture();
+    let home = fx.home();
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt as _;
+        std::fs::set_permissions(home.join(".aws/credentials"), std::fs::Permissions::from_mode(0o600)).unwrap();
+        std::fs::set_permissions(home.join(".npmrc"), std::fs::Permissions::from_mode(0o640)).unwrap();
+    }
+    let report = report(&fx);
+    let selected = select(&report, &[], true).unwrap();
+    let machine = FakeMachine::new(fx.dir.path(), true);
+    let before = snapshot(&home);
+    let (receipt, _) = run(&fx, &report, &selected, false, &FakeWriter::default(), &machine).await.unwrap();
+    // Every file the import wrote or changed is free of values; what it left alone stays as it was (the tools that
+    // read only their own file are reported as still on disk below).
+    for (path, text) in snapshot(&home) {
+        if before.get(&path) == Some(&text) {
+            continue;
+        }
+        let text = String::from_utf8_lossy(&text).into_owned();
+        for secret in &fx.secrets {
+            assert!(!leaks(&text, secret), "a value in {}", path.display());
+        }
+    }
+    let on_disk: BTreeSet<&str> = receipt.moved.iter().filter(|m| m.on_disk).map(|m| m.finding.as_str()).collect();
+    let kept_ids: BTreeSet<&str> = report
+        .findings
+        .iter()
+        .filter(|f| matches!(f.source, Source::Docker | Source::Kube | Source::Gcp | Source::Netrc))
+        .map(|f| f.id.as_str())
+        .collect();
+    assert_eq!(on_disk, kept_ids);
+    assert!(receipt.done.iter().filter(|d| !d.ok).all(|d| d.how.starts_with("still on disk")));
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt as _;
+        let mode = |p: &str| std::fs::metadata(home.join(p)).unwrap().permissions().mode() & 0o777;
+        assert_eq!(mode(".aws/credentials"), 0o600);
+        assert_eq!(mode(".npmrc"), 0o640);
+        assert_eq!(mode("dev/acme-web/.env.reins"), 0o644);
+        assert_eq!(mode("dev/acme-web/reins.toml"), 0o644);
+    }
+    // No temporary file is left behind.
+    assert!(!snapshot(&home).keys().any(|p| p.to_string_lossy().contains(".reins-")));
+}
+
+#[tokio::test]
+async fn the_originals_can_be_deleted_from_the_trash_for_good() {
+    let fx = fixture();
+    let report = report(&fx);
+    let selected = select(&report, &[], true).unwrap();
+    let machine = FakeMachine::new(fx.dir.path(), true);
+    let (receipt, path) = run(&fx, &report, &selected, false, &FakeWriter::default(), &machine).await.unwrap();
+    let path = path.unwrap();
+    let n = receipt.trashed().len();
+    assert!(n > 5);
+    let c = ctx(&fx);
+    let (_, mut r) = receipt::load(&c.state_dir, "last").unwrap();
+    let lines = receipt::purge(&c.state_dir, &path, &mut r, &machine).unwrap();
+    assert_eq!(lines.len(), n);
+    assert_eq!(machine.purged.lock().unwrap().len(), n);
+    assert!(std::fs::read_dir(&machine.trash_dir).unwrap().next().is_none(), "the trash holds none of them");
+    let (_, mut r) = receipt::load(&c.state_dir, "last").unwrap();
+    assert!(r.purged_at.is_some() && receipt::purge(&c.state_dir, &path, &mut r, &machine).is_err());
 }

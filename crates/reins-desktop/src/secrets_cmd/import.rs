@@ -9,7 +9,7 @@ use std::path::PathBuf;
 
 use super::person::{self, Needs, Terminal};
 use crate::config::{Config, Paths};
-use crate::secrets_import::{self, Context, Receipt, real};
+use crate::secrets_import::{self, Context, Receipt, real, receipt};
 use crate::secrets_scan::{Caller, ScanReport};
 
 #[derive(Clone, Debug, clap::Args)]
@@ -34,6 +34,11 @@ pub struct ImportArgs {
     #[arg(long, value_name = "RECEIPT", num_args = 0..=1, default_missing_value = "last",
           conflicts_with_all = ["from_scan", "select", "all_suggested", "keep_local"])]
     pub finish: Option<String>,
+    /// Delete for good the originals an import sent to the trash (they still hold the secrets). Undo can no longer
+    /// bring them back. `last` or a receipt.
+    #[arg(long, value_name = "RECEIPT", num_args = 0..=1, default_missing_value = "last",
+          conflicts_with_all = ["from_scan", "select", "all_suggested", "keep_local", "undo", "finish"])]
+    pub purge_originals: Option<String>,
 }
 
 /// What the picker shows: one line per finding, ticked or not, numbered from 1.
@@ -148,6 +153,10 @@ pub fn summary(receipt: &Receipt, path: Option<&std::path::Path>) -> Vec<String>
         1 => "1 secret is in your vault.".to_owned(),
         n => format!("{n} secrets are in your vault."),
     });
+    let on_disk = moved - receipt.off_disk();
+    if moved > 0 && on_disk > 0 {
+        lines.push(format!("{on_disk} of them are still on disk too (see below)."));
+    }
     for d in &receipt.done {
         lines.push(format!(
             "{} {}",
@@ -164,6 +173,12 @@ pub fn summary(receipt: &Receipt, path: Option<&std::path::Path>) -> Vec<String>
         lines.push(format!("! {n}"));
     }
     if let Some(p) = path {
+        if !receipt.trashed().is_empty() {
+            lines.push(format!(
+                "The originals in the trash still hold the secrets. Once all works: reins secrets import --purge-originals {}",
+                p.display()
+            ));
+        }
         lines.push(format!("Undo: reins secrets import --undo {}", p.display()));
     }
     lines
@@ -189,11 +204,28 @@ pub async fn run(args: &ImportArgs, paths: &Paths, config: &Config) -> Result<Ve
             },
             &mut person::ask_tty,
         )?;
-        let (path, mut receipt) = secrets_import::load_receipt(&paths.state_dir, which)?;
-        return secrets_import::finish(&path, &mut receipt, &system).await;
+        let (path, mut receipt) = receipt::load(&paths.state_dir, which)?;
+        return receipt::finish(&home, &paths.state_dir, &path, &mut receipt, &system).await;
+    }
+    if let Some(which) = &args.purge_originals {
+        let (path, mut receipt) = receipt::load(&paths.state_dir, which)?;
+        let n = receipt.trashed().len();
+        person::check(
+            "reins secrets import --purge-originals",
+            &format!(
+                "Delete the {n} original file(s) of this import from the trash for good? Undo cannot bring them back."
+            ),
+            &caller,
+            Terminal::now(),
+            Needs {
+                stdout: true,
+            },
+            &mut person::ask_tty,
+        )?;
+        return receipt::purge(&paths.state_dir, &path, &mut receipt, &system);
     }
     if let Some(which) = &args.undo {
-        let (path, mut receipt) = secrets_import::load_receipt(&paths.state_dir, which)?;
+        let (path, mut receipt) = receipt::load(&paths.state_dir, which)?;
         let cwd = std::env::current_dir().map_err(|e| e.to_string())?;
         person::authorize(
             "reins secrets import --undo",
@@ -214,7 +246,7 @@ pub async fn run(args: &ImportArgs, paths: &Paths, config: &Config) -> Result<Ve
             &person::undo_question(&cwd, &caller),
         )
         .await?;
-        return secrets_import::undo(&path, &mut receipt, &system);
+        return receipt::undo(&home, &paths.state_dir, &path, &mut receipt, &system);
     }
     let report = match &args.from_scan {
         Some(file) => {
@@ -310,6 +342,7 @@ mod tests {
                 item: "a".to_owned(),
                 finding: "f".to_owned(),
                 to: "vault:x/y/A".to_owned(),
+                on_disk: false,
             }],
             done: vec![secrets_import::Done {
                 source: crate::secrets_scan::Source::Dotenv,

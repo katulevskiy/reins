@@ -16,6 +16,7 @@
 
 pub mod formats;
 pub mod real;
+pub mod receipt;
 mod rewrite;
 
 use std::collections::{BTreeMap, BTreeSet};
@@ -27,8 +28,7 @@ use zeroize::Zeroizing;
 
 use crate::secrets_scan::{self, Caller, Confidence, Finding, ScanReport, Source};
 
-/// The receipt's format.
-pub const RECEIPT_VERSION: u32 = 1;
+pub use self::receipt::{Change, Done, Moved, PendingKey, RECEIPT_VERSION, Receipt};
 /// The environment a project's plain `.env` goes to.
 pub const DEFAULT_ENV: &str = "development";
 
@@ -491,10 +491,12 @@ pub trait VaultWriter: Send + Sync {
 /// What import does to this computer besides its files: the trash, the SSH agent, git, gh and the run profiles.
 #[async_trait::async_trait]
 pub trait Machine: Send + Sync {
-    /// Moves a file to the trash.
-    fn trash(&self, path: &Path) -> Result<(), String>;
-    /// Puts the file last trashed from `path` back.
-    fn restore(&self, path: &Path) -> Result<(), String>;
+    /// Moves a file to the trash; the trash's own id for it, where the trash keeps one.
+    fn trash(&self, path: &Path) -> Result<Option<String>, String>;
+    /// Puts back the trash's item `trash_id`, whose original place was `path` (never over a file there).
+    fn restore(&self, path: &Path, trash_id: Option<&str>) -> Result<(), String>;
+    /// Deletes the trash's item `trash_id` (from `path`) for good.
+    fn purge(&self, path: &Path, trash_id: Option<&str>) -> Result<(), String>;
     /// The GitHub CLI's token for `host`, when it keeps it in the keychain.
     fn gh_token(&self, host: &str) -> Option<Zeroizing<String>>;
     /// Whether the Reins SSH agent signs with this key (asks the phone); why not, else.
@@ -509,131 +511,6 @@ pub trait Machine: Send + Sync {
     /// Adds `[run.profiles.<name>]` to config.toml (replacing one of that name).
     fn add_profile(&self, name: &str, env: &BTreeMap<String, String>, purpose: &str) -> Result<(), String>;
     fn remove_profile(&self, name: &str) -> Result<(), String>;
-}
-
-/// One change to this computer, as the receipt keeps it.
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(tag = "kind", rename_all = "snake_case")]
-pub enum Change {
-    /// A new file (undo: it goes to the trash).
-    Created {
-        path: PathBuf,
-    },
-    /// The file went to the trash and a new one is there now (undo: the new one to the trash, the old one back).
-    Replaced {
-        path: PathBuf,
-    },
-    /// The file went to the trash (undo: it comes back).
-    Trashed {
-        path: PathBuf,
-    },
-    /// `[run.profiles.<name>]` was added.
-    Profile {
-        name: String,
-    },
-    /// ssh was pointed at the Reins agent.
-    SshSetup,
-    /// git for the host goes through Reins.
-    GitHost {
-        host: String,
-    },
-    /// The GitHub CLI was signed out of the host.
-    GhLogout {
-        host: String,
-    },
-}
-
-/// A secret that moved, and where to.
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub struct Moved {
-    pub item: String,
-    pub finding: String,
-    /// `vault:acme-web/development/OPENAI_API_KEY`, `Reins/ssh/id_ed25519 (Dana's MacBook)`, `git: github.com`.
-    pub to: String,
-}
-
-/// What the Done screen lists: one line per kind of thing that changed, and how to use it now.
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub struct Done {
-    pub source: Source,
-    /// `2 .env files → .env.reins`.
-    pub what: String,
-    /// `reins run -- <your command>`.
-    pub how: String,
-    /// It went as planned (else `how` says what is left to do).
-    pub ok: bool,
-}
-
-/// An SSH key still waiting for the agent's signature before it goes to the trash.
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub struct PendingKey {
-    pub path: PathBuf,
-    /// The public key blob, base64.
-    pub public_key: String,
-}
-
-/// What an import did: kept as `<state>/imports/<time>.json`, read by `--undo` and `--finish`.
-#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
-pub struct Receipt {
-    pub version: u32,
-    pub at: i64,
-    pub computer: String,
-    pub keep_local: bool,
-    pub moved: Vec<Moved>,
-    pub changes: Vec<Change>,
-    pub done: Vec<Done>,
-    /// What did not go, and why; what to do about it.
-    pub notes: Vec<String>,
-    #[serde(default)]
-    pub pending_keys: Vec<PendingKey>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub undone_at: Option<i64>,
-}
-
-/// Where the receipts are.
-#[must_use]
-pub fn receipts_dir(state_dir: &Path) -> PathBuf {
-    state_dir.join("imports")
-}
-
-/// Writes `receipt` as a new file in the receipts folder; its path.
-pub fn save_receipt(state_dir: &Path, receipt: &Receipt) -> Result<PathBuf, String> {
-    let dir = receipts_dir(state_dir);
-    std::fs::create_dir_all(&dir).map_err(|e| format!("{}: {e}", dir.display()))?;
-    let mut path = dir.join(format!("{}.json", receipt.at));
-    let mut n = 2;
-    while path.exists() {
-        path = dir.join(format!("{}-{n}.json", receipt.at));
-        n += 1;
-    }
-    write_receipt(&path, receipt)?;
-    Ok(path)
-}
-
-fn write_receipt(path: &Path, receipt: &Receipt) -> Result<(), String> {
-    let bytes = serde_json::to_vec_pretty(receipt).map_err(|e| e.to_string())?;
-    crate::config::write_private(path, &bytes).map_err(|e| format!("{}: {e}", path.display()))
-}
-
-/// A receipt: `last` (the newest), or a file.
-pub fn load_receipt(state_dir: &Path, which: &str) -> Result<(PathBuf, Receipt), String> {
-    let path = if which == "last" {
-        let dir = receipts_dir(state_dir);
-        let mut files: Vec<PathBuf> = std::fs::read_dir(&dir)
-            .map_err(|_| "no import to undo".to_owned())?
-            .filter_map(Result::ok)
-            .map(|e| e.path())
-            .filter(|p| p.extension().is_some_and(|e| e == "json"))
-            .collect();
-        files.sort_by_key(|p| std::fs::metadata(p).and_then(|m| m.modified()).ok());
-        files.pop().ok_or("no import to undo")?
-    } else {
-        PathBuf::from(which)
-    };
-    let text = std::fs::read_to_string(&path).map_err(|e| format!("{}: {e}", path.display()))?;
-    let receipt: Receipt =
-        serde_json::from_str(&text).map_err(|e| format!("{}: not an import receipt ({e})", path.display()))?;
-    Ok((path, receipt))
 }
 
 /// Where import runs.
@@ -761,6 +638,7 @@ pub async fn import(
                         item: v.item.clone(),
                         finding: v.finding.clone(),
                         to: target.reference(&v.name),
+                        on_disk: true,
                     });
                 }
             }
@@ -775,6 +653,7 @@ pub async fn import(
                     item: target.item.clone(),
                     finding: target.finding.clone(),
                     to: format!("Reins/ssh/{}", target.name),
+                    on_disk: true,
                 });
             }
             Err(e) => receipt.notes.push(format!("{} was not stored: {e}", target.name)),
@@ -789,120 +668,32 @@ pub async fn import(
                     item: target.item.clone(),
                     finding: target.finding.clone(),
                     to: format!("git: {}", target.host),
+                    on_disk: true,
                 });
             }
             Err(e) => receipt.notes.push(format!("the token for {} was not stored: {e}", target.host)),
         }
     }
-    if keep_local {
+    let off_disk = if keep_local {
         if !arrived.is_empty() {
-            receipt.notes.push("Local copies were kept: the vault has a backup of each.".to_owned());
+            receipt
+                .notes
+                .push("Local copies were kept: the vault has a backup of each, and they are still on disk.".to_owned());
         }
+        BTreeSet::new()
     } else {
-        rewrite::all(report, selected, &arrived, &plan, machine, &mut receipt).await;
+        rewrite::all(report, selected, &arrived, &plan, machine, &mut receipt).await
+    };
+    // What the vault has but this computer still holds too.
+    for m in &mut receipt.moved {
+        m.on_disk = !off_disk.contains(&m.item);
     }
     let path = if receipt.moved.is_empty() && receipt.changes.is_empty() {
         None
     } else {
-        Some(save_receipt(&ctx.state_dir, &receipt)?)
+        Some(receipt::save(&ctx.state_dir, &receipt)?)
     };
     Ok((receipt, path))
-}
-
-/// Retries the SSH keys an import kept until the Reins agent signs with them; the receipt is updated.
-pub async fn finish(path: &Path, receipt: &mut Receipt, machine: &dyn Machine) -> Result<Vec<String>, String> {
-    let mut lines = Vec::new();
-    let mut left = Vec::new();
-    for key in std::mem::take(&mut receipt.pending_keys) {
-        let blob = data_encoding::BASE64.decode(key.public_key.as_bytes()).map_err(|e| e.to_string())?;
-        match machine.agent_signs_with(&blob).await {
-            Ok(()) => match machine.trash(&key.path) {
-                Ok(()) => {
-                    lines.push(format!(
-                        "{}: the Reins agent signs with it; the file is in the trash.",
-                        key.path.display()
-                    ));
-                    receipt.changes.push(Change::Trashed {
-                        path: key.path.clone(),
-                    });
-                }
-                Err(e) => {
-                    lines.push(format!("{}: {e}", key.path.display()));
-                    left.push(key);
-                }
-            },
-            Err(why) => {
-                lines.push(format!("{}: still kept ({why})", key.path.display()));
-                left.push(key);
-            }
-        }
-    }
-    receipt.pending_keys = left;
-    write_receipt(path, receipt)?;
-    if lines.is_empty() {
-        lines.push("No SSH key is waiting.".to_owned());
-    }
-    Ok(lines)
-}
-
-/// Brings back the file import replaced at `path`: the new one steps aside, the original comes back from the trash,
-/// then the new one goes to the trash (in that order, so the trash gives back the original, not the new one).
-fn put_back(path: &Path, machine: &dyn Machine) -> Result<(), String> {
-    let mut aside = path.as_os_str().to_owned();
-    aside.push(".reins-undo");
-    let aside = PathBuf::from(aside);
-    std::fs::rename(path, &aside).map_err(|e| format!("{}: {e}", path.display()))?;
-    if let Err(e) = machine.restore(path) {
-        std::fs::rename(&aside, path).ok();
-        return Err(e);
-    }
-    machine.trash(&aside)
-}
-
-/// Undoes what the receipt at `path` recorded, last change first: files come back from the trash, files import made
-/// go to the trash, profiles go. The secrets stay in the vault.
-pub fn undo(path: &Path, receipt: &mut Receipt, machine: &dyn Machine) -> Result<Vec<String>, String> {
-    if receipt.undone_at.is_some() {
-        return Err("this import was undone already".to_owned());
-    }
-    let mut lines = Vec::new();
-    let mut failed = false;
-    for change in receipt.changes.iter().rev() {
-        let r = match change {
-            Change::Created {
-                path,
-            } => machine.trash(path).map(|()| format!("{} is in the trash", path.display())),
-            Change::Replaced {
-                path,
-            } => put_back(path, machine).map(|()| format!("{} is back as it was", path.display())),
-            Change::Trashed {
-                path,
-            } => machine.restore(path).map(|()| format!("{} is back", path.display())),
-            Change::Profile {
-                name,
-            } => machine.remove_profile(name).map(|()| format!("run profile {name} removed")),
-            Change::SshSetup => machine.ssh_unsetup().map(|()| "ssh uses its own keys again".to_owned()),
-            Change::GitHost {
-                host,
-            } => Ok(format!("git for {host} still goes through Reins (`reins pause` sends it directly)")),
-            Change::GhLogout {
-                host,
-            } => Ok(format!("the GitHub CLI is still signed out of {host}: gh auth login -h {host}")),
-        };
-        match r {
-            Ok(line) => lines.push(line),
-            Err(e) => {
-                failed = true;
-                lines.push(format!("not undone: {e}"));
-            }
-        }
-    }
-    if !failed {
-        receipt.undone_at = Some(crate::now_unix());
-        write_receipt(path, receipt)?;
-    }
-    lines.push("The secrets stay in your vault; delete them on your phone if you do not want them there.".to_owned());
-    Ok(lines)
 }
 
 #[cfg(test)]
