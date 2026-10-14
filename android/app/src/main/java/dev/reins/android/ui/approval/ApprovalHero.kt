@@ -31,6 +31,7 @@ import androidx.compose.material.icons.rounded.Key
 import androidx.compose.material.icons.rounded.People
 import androidx.compose.material.icons.rounded.QuestionMark
 import androidx.compose.material.icons.rounded.Search
+import androidx.compose.material.icons.rounded.Shield
 import androidx.compose.material.icons.rounded.ShoppingCart
 import androidx.compose.material.icons.rounded.Terminal
 import androidx.compose.material.icons.rounded.TimerOff
@@ -87,6 +88,7 @@ import dev.reins.android.ui.autopilot.verdictTint
 import dev.reins.android.ui.common.ConnectionIcon
 import dev.reins.android.ui.common.untrusted
 import dev.reins.core.ApprovalView
+import dev.reins.core.AskRuleView
 import dev.reins.core.ModelState
 import dev.reins.core.SuggestionView
 import dev.reins.core.Verdict
@@ -221,14 +223,16 @@ private fun HeroPills(view: ApprovalView, ui: ApprovalUi, viewModel: ApprovalVie
     val danger = dangerTag(view)
     val s = ui.suggestion
     val model = ui.model
-    val content: (@Composable () -> Unit)? = when {
-        danger != null -> {
-            {
-                WarnTag(danger.label, c.danger, Modifier.testTag(danger.tag))
-                Spacer(Modifier.width(8.dp))
-                HelpDot(danger.tag, danger.help)
-            }
+    if (danger != null) {
+        Row(Modifier.padding(top = 16.dp), verticalAlignment = Alignment.CenterVertically) {
+            WarnTag(danger.label, if (danger.destructive) c.danger else c.warning, Modifier.testTag(danger.tag), icon = danger.icon)
+            Spacer(Modifier.width(8.dp))
+            HelpDot(danger.tag, danger.help)
         }
+        // A guard rule that can be undone is an ordinary question: Autopilot's score shows under it.
+        if (danger.destructive) return
+    }
+    val content: (@Composable () -> Unit)? = when {
         s != null && s.judged && !s.floor -> {
             { AutopilotPill(s) { nav.overlay = ApprovalOverlay.Autopilot; feedback.play(Event.Open) } }
         }
@@ -243,14 +247,33 @@ private fun HeroPills(view: ApprovalView, ui: ApprovalUi, viewModel: ApprovalVie
         else -> null
     }
     if (content != null) {
-        Row(Modifier.padding(top = 16.dp), verticalAlignment = Alignment.CenterVertically) { content() }
+        Row(Modifier.padding(top = if (danger != null) 10.dp else 16.dp), verticalAlignment = Alignment.CenterVertically) { content() }
     }
 }
 
-/** A tag on the hero for what cannot be undone, and what its (?) says. */
-data class DangerTag(val label: String, val tag: String, val help: String)
+/** A tag on the hero for what cannot be undone (red, held to approve) or a guard rule that matched (amber), and what its (?) says. */
+data class DangerTag(
+    val label: String,
+    val tag: String,
+    val help: String,
+    val destructive: Boolean = true,
+    val icon: ImageVector = Icons.Rounded.Warning,
+)
+
+/** The guard rule a desktop question matched, and what matched it: ".env files · .env". */
+fun ruleTag(rule: AskRuleView): DangerTag {
+    val matched = untrusted(rule.matched)
+    val label = if (matched.isEmpty()) rule.label else "${rule.label} · $matched"
+    val help = buildString {
+        append("Matched the rule ${untrusted(rule.pattern)} on your computer.")
+        if (rule.reported) append(" Your computer says so; this phone doesn't know the rule.")
+        append(if (rule.destructive) " It can't be undone, so it's asked every time." else " Autopilot can learn it.")
+    }
+    return DangerTag(label, "guardRule", help, rule.destructive, Icons.Rounded.Shield)
+}
 
 fun dangerTag(view: ApprovalView): DangerTag? {
+    view.ask?.rule?.let { return ruleTag(it) }
     val git = view.git
     if (git != null) {
         val forced = git.refs.indexOfFirst { it.force && !it.forceUnknown }
@@ -275,9 +298,9 @@ fun dangerTag(view: ApprovalView): DangerTag? {
     return null
 }
 
-/** A tinted tag with the real warning icon. */
+/** A tinted tag with a real icon (the warning sign unless said otherwise). */
 @Composable
-internal fun WarnTag(text: String, tint: Color, modifier: Modifier = Modifier, small: Boolean = false) {
+internal fun WarnTag(text: String, tint: Color, modifier: Modifier = Modifier, small: Boolean = false, icon: ImageVector = Icons.Rounded.Warning) {
     Row(
         modifier
             .clip(CircleShape)
@@ -286,7 +309,7 @@ internal fun WarnTag(text: String, tint: Color, modifier: Modifier = Modifier, s
             .semantics(mergeDescendants = true) {},
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        Icon(Icons.Rounded.Warning, null, Modifier.size(if (small) 12.dp else 15.dp), tint = tint)
+        Icon(icon, null, Modifier.size(if (small) 12.dp else 15.dp), tint = tint)
         Spacer(Modifier.width(if (small) 4.dp else 6.dp))
         RText(text, RType.sans(if (small) 11.5f else 13.5f, FontWeight.SemiBold), tint, maxLines = 1)
     }

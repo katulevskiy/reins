@@ -13,6 +13,7 @@ import dev.reins.android.ui.approval.badge
 import dev.reins.android.ui.approval.buildDecision
 import dev.reins.android.ui.approval.customLabel
 import dev.reins.android.ui.approval.dangerTag
+import dev.reins.android.ui.approval.ruleTag
 import dev.reins.android.ui.approval.denyLabel
 import dev.reins.android.ui.approval.heroSentence
 import dev.reins.android.ui.approval.heroTone
@@ -25,6 +26,7 @@ import dev.reins.android.ui.approval.segmentOf
 import dev.reins.android.ui.approval.shortLabel
 import dev.reins.android.ui.approval.splitPath
 import dev.reins.core.ApprovalView
+import dev.reins.core.AskRuleView
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
@@ -101,6 +103,21 @@ class ApprovalWordsTest {
         assertNull(dangerTag(TestData.designPushView()))
         val hidden = TestData.gitRef(commits = listOf(TestData.gitCommit(1).copy(hiddenChars = true)))
         assertEquals("hiddenChars", dangerTag(TestData.gitPushView(TestData.gitPush(hidden)))?.tag)
+    }
+
+    @Test
+    fun `a desktop question shows the guard rule it matched, red only when it cannot be undone`() {
+        val secret = AskRuleView(".env files", ".env", "app/.env", "env-files", false, false)
+        val tag = dangerTag(TestData.askView(detail = "Command:\ncat app/.env", topic = "file:.env", rule = secret))!!
+        assertEquals(".env files · app/.env", tag.label)
+        assertEquals("guardRule", tag.tag)
+        assertFalse(tag.destructive)
+        assertTrue(tag.help.contains("Autopilot can learn it"))
+        val force = AskRuleView("Rewriting git history", "git push --force*", "git push --force origin main", "git-history", true, false)
+        val red = dangerTag(TestData.askView(rule = force).copy(noStanding = true))!!
+        assertTrue(red.destructive && red.help.contains("asked every time"))
+        val own = AskRuleView("Your rule", "make deploy", "make deploy", null, false, true)
+        assertTrue(ruleTag(own).help.contains("Your computer says so"))
     }
 
     @Test

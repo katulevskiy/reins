@@ -5,6 +5,7 @@ import dev.reins.core.ActivityInfo
 import dev.reins.core.ActivityMessage
 import dev.reins.core.ApprovalKind
 import dev.reins.core.ApprovalView
+import dev.reins.core.AskRuleView
 import dev.reins.core.AskView
 import dev.reins.core.AutoDecisionView
 import dev.reins.core.AutopilotMode
@@ -517,11 +518,11 @@ object TestData {
 
     // ---- the desktop app --------------------------------------------------------------------------------------
 
-    fun askView(detail: String? = "git push --force origin main", topic: String? = "command:git push --force") = writeView().copy(
+    fun askView(detail: String? = "git push --force origin main", topic: String? = "command:git push --force", rule: AskRuleView? = null) = writeView().copy(
         requestId = "req40", connectionLabel = "Reins desktop app on laptop", service = "desktop", account = null, op = "ask",
         resources = listOf(ResourceView(topic ?: "ask", topic ?: "Questions without a topic", false)),
         preview = listOf("Force-push main?"), opTitle = "Ask you on your phone", action = "write", `class` = "", classes = emptyList(),
-        ask = AskView("Force-push main?", detail, topic),
+        ask = AskView("Force-push main?", detail, topic, rule),
     )
 
     fun secretsView(lease: ULong = 1_800u) = writeView().copy(
