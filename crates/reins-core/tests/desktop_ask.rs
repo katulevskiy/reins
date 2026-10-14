@@ -431,3 +431,60 @@ async fn an_entry_a_standing_answer_covered_keeps_its_approval() {
     }
     assert!(desk.core.activity_approval(9_999).await.unwrap().is_none(), "an entry that is not there has none");
 }
+
+// ---- the command from the user's report: a heredoc that feeds Python a script that edits tripwire tests -----------
+
+/// `python3 - <<'EOF'` with a body whose Python strings say `rm -rf ~` and `git push --force`.
+const PYTHON_EDIT: &str = "cd /home/user/Documents/dev/reins-risk/crates/reins-core && python3 - <<'EOF'\n\
+p='src/autopilot/risk.rs'\n\
+s=open(p).read()\n\
+s=s.replace('\"echo hi\"', '\"rm -rf ~\"')\n\
+s=s.replace(\"(\\\"git status\\\", Calm)\", \"(\\\"git push --force origin main\\\", Danger)\")\n\
+open(p,'w').write(s)\n\
+EOF";
+
+/// Outside Bypass: the body is Python, not shell words. The question is not read with certainty, so it goes to the
+/// user (asked every time, no one tap, not Autopilot's), but nothing in it cannot be undone: no hold, no red.
+#[tokio::test]
+async fn a_heredoc_that_feeds_python_is_uncertain_not_destructive() {
+    let desk = desk().await;
+    desk.pair().await;
+    desk.send(&[hook_ask(&desk, "r1", "", "command:python3", PYTHON_EDIT)]).await;
+    let view = desk.core.approval_view("r1".to_owned()).await.unwrap();
+    let ask = view.ask.clone().unwrap();
+    assert!(ask.uncertain && !ask.destructive, "{ask:?}");
+    assert!(view.no_standing && view.quick.is_none(), "asked every time");
+    assert!(desk.notes.pending.lock().unwrap().iter().any(|i| i.id == "r1"), "it waits for the user");
+    // The same with the rule lines a desktop app sends for a file it found in the command.
+    desk.send(&[hook_ask(&desk, "r2", ENV_RULE, "file:.env", PYTHON_EDIT)]).await;
+    let ask = desk.core.approval_view("r2".to_owned()).await.unwrap().ask.unwrap();
+    assert!(ask.uncertain && !ask.destructive, "{ask:?}");
+}
+
+/// In Bypass: approved at once, the uncertain and the destructive alike; nothing waits and nothing is posted; what
+/// was posted before the bypass started is withdrawn.
+#[tokio::test]
+async fn bypass_approves_the_python_heredoc_at_once_and_withdraws_what_was_posted() {
+    let desk = desk().await;
+    desk.pair().await;
+    // Waiting (and posted) before the bypass.
+    desk.send(&[
+        hook_ask(&desk, "r1", "", "command:python3", PYTHON_EDIT),
+        hook_ask(&desk, "r2", FORCE_RULE, "command:git push --force*", "git push --force origin main"),
+    ])
+    .await;
+    assert_eq!(desk.waiting().await.len(), 2);
+    desk.core.start_bypass(None, None).await.unwrap();
+    all_yes(&desk, &["r1", "r2"]).await;
+    let resolved = desk.notes.resolved.lock().unwrap().clone();
+    assert!(resolved.contains(&"r1".to_owned()) && resolved.contains(&"r2".to_owned()), "withdrawn: {resolved:?}");
+    // Arriving during the bypass: answered, never posted.
+    let posted_before = desk.notes.pending.lock().unwrap().len();
+    desk.send(&[
+        hook_ask(&desk, "r3", "", "command:python3", PYTHON_EDIT),
+        hook_ask(&desk, "r4", FORCE_RULE, "command:git push --force*", "git push --force origin main"),
+    ])
+    .await;
+    all_yes(&desk, &["r3", "r4"]).await;
+    assert_eq!(desk.notes.pending.lock().unwrap().len(), posted_before, "nothing new was posted");
+}

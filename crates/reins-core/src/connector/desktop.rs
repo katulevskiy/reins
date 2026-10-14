@@ -261,12 +261,20 @@ pub fn read_ask(topic: Option<&str>, question: &str, detail: &str) -> AskReading
         }
     }
     let reading = reins_policy::guard::read(&texts, &fragments);
+    // The words of a destructive command, read where a shell runs them: not in the source a heredoc feeds Python, nor
+    // in the question line when it only repeats the command.
+    let said_question = if repeats(question, rest) {
+        ""
+    } else {
+        question
+    };
+    let shell = reins_policy::shell::shell_text(rest);
     // The hook cuts a detail at 8,000 characters, with an ellipsis: what follows is unknown.
     let certain = reading.certain && !detail.trim_end().ends_with('…') && detail.chars().count() < MAX_DETAIL;
     let reported_group = reported.as_ref().and_then(|r| r.group.as_deref()).and_then(reins_policy::guard::group);
     let destructive = reading.found.as_ref().is_some_and(|c| c.group.destructive)
         || reported.as_ref().is_some_and(|r| r.destructive)
-        || destructive_ask(topic, question, detail);
+        || destructive_ask(topic, said_question, &shell);
     let every_time = destructive
         || owned(topic).is_some()
         || !certain
