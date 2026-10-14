@@ -306,7 +306,15 @@ impl Engine {
             let grant_id = decision.grants_used().into_iter().next().map(|g| g.0);
             let full = parsed.into_iter().map(ParsedMessage::into_full).collect();
             let refs: Vec<&MessageSummary> = summaries.iter().collect();
-            let audit = self.audit(request, action, "released", detail, grant_id, summaries.len(), &refs);
+            let detail = if headlines_only.is_empty() {
+                detail.to_owned()
+            } else {
+                format!("{detail} (headlines only)")
+            };
+            let mut audit = self.audit(request, action, "released", &detail, grant_id, summaries.len(), &refs);
+            if !headlines_only.is_empty() {
+                audit.info.note = Some(crate::starter::HEADLINES_NOTE.to_owned());
+            }
             return self
                 .finish(
                     session,

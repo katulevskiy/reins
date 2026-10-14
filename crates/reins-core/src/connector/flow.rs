@@ -317,10 +317,9 @@ impl Engine {
             !any_sensitive,
             now,
         )?;
-        let mut items = items;
         // A list no grant covers may still be covered by a grant for this integration's headlines (the starting
         // rule): then only the names go out, nothing inside them. Never with a code or a secret among them.
-        if !any_sensitive
+        let headlines = if !any_sensitive
             && !items.iter().any(|i| i.secret)
             && covered.len() < resources.len()
             && crate::starter::headlines_cover(call)
@@ -328,8 +327,15 @@ impl Engine {
                 self.store.headlines_reserve(&request.connection_id, Some(&account), &call.service, now)?
         {
             covered = resources.iter().map(|r| (r.clone(), grant.clone())).collect();
-            items = items.iter().map(crate::starter::headlines_only).collect();
-        }
+            true
+        } else {
+            false
+        };
+        let items: Vec<Item> = if headlines {
+            items.iter().map(crate::starter::headlines_only).collect()
+        } else {
+            items
+        };
         if !any_sensitive && (items.is_empty() || covered.len() == resources.len()) {
             // Content too large to go inline becomes a download link, now that it is released.
             let items = match self.deliver_files(session, connector.as_ref(), &account, &request, items).await {
@@ -341,8 +347,14 @@ impl Engine {
             };
             let refs: Vec<&Item> = items.iter().collect();
             let grant = covered.values().next().map(|g| g.0.clone());
-            let detail = released_detail(call, refs.len());
-            let audit = self.audit_connector(&request, call, action_of(call), "released", &detail, grant, &refs);
+            let mut detail = released_detail(call, refs.len());
+            if headlines {
+                detail.push_str(" (names only)");
+            }
+            let mut audit = self.audit_connector(&request, call, action_of(call), "released", &detail, grant, &refs);
+            if headlines {
+                audit.info.note = Some("Names only. Nothing inside was shared.".to_owned());
+            }
             let data = items_json(effect, &refs);
             return self
                 .finish(

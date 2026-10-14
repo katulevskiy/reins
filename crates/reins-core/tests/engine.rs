@@ -1448,10 +1448,8 @@ async fn headlines_for_its_first_hour_show_who_what_and_when_but_opening_anythin
     assert_eq!((logged.action.as_str(), logged.outcome.as_str()), ("grant", "granted"));
     assert!(logged.info.note.as_deref().unwrap().contains("headlines for its first hour"));
 
-    for (q, ids) in [
-        ("lunch", json!({"messages": [{"id": "m1"}]})),
-        ("anything", json!({"messages": [{"id": "m1"}, {"id": "m2"}]})),
-    ] {
+    let both = json!({"messages": [{"id": "m1"}, {"id": "m3"}, {"id": "m2"}]});
+    for (q, ids) in [("lunch", json!({"messages": [{"id": "m1"}]})), ("anything", both)] {
         Mock::given(method("GET"))
             .and(path("/users/me/messages"))
             .and(query_param("q", q))
@@ -1459,7 +1457,7 @@ async fn headlines_for_its_first_hour_show_who_what_and_when_but_opening_anythin
             .mount(&env.gmail)
             .await;
     }
-    for (id, subject) in [("m1", "Lunch on Friday"), ("m2", "Your sign in code is 481516")] {
+    for (id, subject) in [("m1", "Lunch on Friday"), ("m2", "Your sign in code is 481516"), ("m3", "Invoice")] {
         Mock::given(method("GET"))
             .and(path(format!("/users/me/messages/{id}")))
             .respond_with(ResponseTemplate::new(200).set_body_json(gmail_message(
@@ -1481,7 +1479,12 @@ async fn headlines_for_its_first_hour_show_who_what_and_when_but_opening_anythin
     assert_eq!(found["from"], "a@example.com");
     assert_eq!(found["snippet"], "", "a headline carries nothing from the body");
     assert!(sent[0].1.to_string().find("whole body").is_none() && sent[0].1.to_string().find("snippet of").is_none());
-    assert_eq!(env.core.activity(1).await.unwrap()[0].grant_id.as_deref(), Some(gmail.id.as_str()));
+    let entry = &env.core.activity(1).await.unwrap()[0];
+    assert_eq!(entry.grant_id.as_deref(), Some(gmail.id.as_str()));
+    assert!(entry.detail.ends_with("(headlines only)"), "{}", entry.detail);
+    assert!(entry.info.messages.iter().all(|m| m.text.is_empty()), "the activity keeps no snippet");
+    let uses = |grants: &[reins_core::GrantView]| grants.iter().find(|g| g.service == "gmail").unwrap().uses;
+    assert_eq!(uses(&env.core.grants().await.unwrap()), 1);
 
     // Opening the very message it found still asks.
     serve_pending(&env, &[read_request("r2", "c9", &["m1"])], &[]).await;
@@ -1491,18 +1494,27 @@ async fn headlines_for_its_first_hour_show_who_what_and_when_but_opening_anythin
     assert!(view.messages.iter().all(|m| !m.covered_by_grant), "headlines never cover a read");
     assert_eq!(answers(&env).await.len(), 1, "nothing more was told");
 
-    // A code found by a search is never a headline: it waits for the user, unticked.
+    // A search that has to wait anyway (a code among what it found): no headline counts as covered there, since
+    // what is covered goes out in full once the user approves. Each waits for the user's tick.
     serve_pending(&env, &[search_request("r3", "c9", "Claude", "anything")], &[]).await;
     assert_eq!(env.core.sync(0).await.unwrap().len(), 2);
     let view = env.core.approval_view("r3".to_owned()).await.unwrap();
     let messages: Vec<_> = view.messages.iter().map(|m| (m.id.as_str(), m.covered_by_grant, m.sensitive)).collect();
-    assert_eq!(messages, [("m1", true, false), ("m2", false, true)]);
+    assert_eq!(messages, [("m1", false, false), ("m3", false, false), ("m2", false, true)]);
+    assert_eq!(uses(&env.core.grants().await.unwrap()), 1, "nothing is spent on a search that waits");
+    // Approving with only the code ticked releases the code and nothing else.
+    env.core.approve("r3".to_owned(), choice(&["m2"], None)).await.unwrap();
+    let sent = answers(&env).await;
+    let released: Vec<_> =
+        sent[1].1["result"]["messages"].as_array().unwrap().iter().map(|m| m["id"].clone()).collect();
+    assert_eq!(released, [json!("m2")]);
+    assert_eq!(uses(&env.core.grants().await.unwrap()), 1);
 
     // Sending still asks, and another AI connected before has nothing.
     serve_pending(&env, &[send_request("s1", "c9", "boss@work.com")], &[]).await;
-    assert_eq!(env.core.sync(0).await.unwrap().len(), 3);
+    assert_eq!(env.core.sync(0).await.unwrap().len(), 2);
     serve_pending(&env, &[search_request("r4", "c1", "ChatGPT", "lunch")], &[]).await;
-    assert_eq!(env.core.sync(0).await.unwrap().len(), 4);
+    assert_eq!(env.core.sync(0).await.unwrap().len(), 3);
 }
 
 #[tokio::test]

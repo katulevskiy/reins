@@ -728,7 +728,10 @@ async fn the_headlines_rule_lists_names_only_for_an_hour_and_opening_a_chat_stil
     for item in items {
         assert!(item.get("text").is_none() && item.get("unread").is_none(), "names only: {item}");
     }
-    assert_eq!(env.core.activity(1).await.unwrap()[0].grant_id.as_deref(), Some(grants[0].id.as_str()));
+    let entry = &env.core.activity(1).await.unwrap()[0];
+    assert_eq!(entry.grant_id.as_deref(), Some(grants[0].id.as_str()));
+    assert!(entry.detail.ends_with("(names only)"), "{}", entry.detail);
+    assert!(entry.info.messages.iter().all(|m| m.text.is_empty()), "the activity keeps nothing inside either");
 
     // Reading a chat, or searching in them, still asks.
     serve_pending(&env, &[call_request("r2", "c9", "read", &json!({"chat": "100"}))]).await;

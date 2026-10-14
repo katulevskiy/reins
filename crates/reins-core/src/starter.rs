@@ -38,6 +38,9 @@ const RETIRED_READS_FOR_A_DAY: &str = "reads_for_a_day";
 const NEVER: [&str; 4] =
     ["vault", reins_proto::connector::DESKTOP, crate::blob::SERVICE_FILES, reins_proto::connector::PAYMENTS];
 
+/// The activity's note on what a headlines grant released.
+pub(crate) const HEADLINES_NOTE: &str = "Headlines only: sender, subject and date. Nothing inside was shared.";
+
 /// Whether the headlines of a call may be covered by a starting grant: a list (names only) on an integration a
 /// starting grant may cover. Gmail's own lists (labels, filters, attachments) are not headlines: only its search is.
 pub(crate) fn headlines_cover(call: &ConnectorCall) -> bool {

@@ -313,6 +313,14 @@ impl Store {
                 headlines_only.insert(i);
             }
             decision.allowed.sort_unstable();
+            if !decision.fully_allowed() {
+                // A search that waits for the user anyway: a headline never counts as covered there, since what is
+                // covered is released in full once the user approves. Each of them waits for the user's tick.
+                decision.allowed.retain(|(i, _)| !headlines_only.contains(i));
+                decision.needs_approval.extend(headlines_only.iter().copied());
+                decision.needs_approval.sort_unstable();
+                headlines_only.clear();
+            }
         }
         if decision.fully_allowed() {
             let used = decision.grants_used();
