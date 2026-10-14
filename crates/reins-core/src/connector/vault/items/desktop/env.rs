@@ -14,8 +14,8 @@ use std::collections::BTreeMap;
 
 use reins_proto::connector::ConnectorCall;
 use reins_proto::desktop::{
-    CommandScope, ENV_KIND, ENV_KIND_FIELD, ENV_NAME_FIELD, EnvChanges, EnvListing, EnvStored, MAX_ENV_BYTES,
-    MAX_ENV_VARS, PHONE_KEY_CHANGED, ProjectListing, RESERVED_PREFIX, SEALED_FIELD, SECRETS_FOLDER,
+    CommandScope, ENV_KIND, ENV_KIND_FIELD, ENV_NAME_FIELD, ENV_ORIGIN_FIELD, EnvChanges, EnvListing, EnvStored,
+    MAX_ENV_BYTES, MAX_ENV_VARS, PHONE_KEY_CHANGED, ProjectListing, RESERVED_PREFIX, SEALED_FIELD, SECRETS_FOLDER,
     SECRETS_STORE_TTL_SECS, SecretGrant, SecretsListing, SecretsToStore, SshKeyToStore, SshStored, TO_DESKTOP,
     TO_PHONE, batch_check, name_ok, validate_batch, var_ok,
 };
@@ -532,6 +532,18 @@ fn plan_env(snap: &Snapshot, change: &EnvChanges) -> Result<EnvPlan, CoreError> 
         });
     }
     let position = |slots: &[Slot], name: &str| slots.iter().position(|s| s.name() == name);
+    // Where the project came from (import), kept beside the marker.
+    if let Some(origin) = &change.origin {
+        let slot = Slot::New {
+            name: ENV_ORIGIN_FIELD.to_owned(),
+            value: Zeroizing::new(origin.clone()),
+        };
+        match position(&slots, ENV_ORIGIN_FIELD) {
+            Some(i) if slots[i].value() == origin.as_str() => {}
+            Some(i) => slots[i] = slot,
+            None => slots.push(slot),
+        }
+    }
     let mut view = EnvStoreView {
         project: change.project.clone(),
         env: change.env.clone(),
@@ -1036,16 +1048,25 @@ fn listing(snap: &Snapshot, only: Option<&str>) -> Vec<ProjectListing> {
             continue;
         }
         let (vars, _) = variables(entry);
+        let origin =
+            entry.custom_fields().into_iter().find(|c| c.name == ENV_ORIGIN_FIELD).map(|c| c.value.to_string());
         let listed = EnvListing {
             name: env,
             revision: revision(entry),
             variables: vars.into_iter().map(|(n, _)| n).collect(),
+            origin: origin.clone(),
         };
         match projects.last_mut() {
-            Some(p) if p.name == project => p.envs.push(listed),
+            Some(p) if p.name == project => {
+                if p.origin.is_none() {
+                    p.origin = origin;
+                }
+                p.envs.push(listed);
+            }
             _ => projects.push(ProjectListing {
                 name: project,
                 envs: vec![listed],
+                origin,
             }),
         }
     }

@@ -660,6 +660,9 @@ pub const ENV_KIND_FIELD: &str = "reins.kind";
 pub const ENV_KIND: &str = "env/1";
 /// The hidden custom field that names the environment (its identity; the item's name is only shown).
 pub const ENV_NAME_FIELD: &str = "reins.env";
+/// The hidden custom field that says where a project came from (its git origin, `github.com/acme/api`), so that an
+/// import from somewhere else is not merged into it unasked.
+pub const ENV_ORIGIN_FIELD: &str = "reins.origin";
 /// Custom fields whose names start with this belong to Reins, not to the environment's variables.
 pub const RESERVED_PREFIX: &str = "reins.";
 /// The most variables one release or one environment holds, and the most bytes of values one release carries.
@@ -684,14 +687,17 @@ pub fn runner_ok(runner: &str) -> bool {
         })
 }
 
-/// A project or environment name: 1 to 64 of `A-Z a-z 0-9 . _ -`, not starting with `.` or `-` (never a `/`, so
-/// `project/env` is one item name).
+/// A project or environment name: 1 to 64 lowercase letters, digits and `-`, starting and ending with a letter or a
+/// digit (`acme-web`, `machine-danas-macbook-3f9a`, `production`). Never a `/`, so `project/env` is one item name and
+/// `project/env/NAME` one variable.
 #[must_use]
 pub fn name_ok(name: &str) -> bool {
-    !name.is_empty()
-        && name.len() <= 64
-        && !name.starts_with(['.', '-'])
-        && name.bytes().all(|b| b.is_ascii_alphanumeric() || matches!(b, b'.' | b'_' | b'-'))
+    let b = name.as_bytes();
+    !b.is_empty()
+        && b.len() <= 64
+        && b.iter().all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || *c == b'-')
+        && b[0] != b'-'
+        && b[b.len() - 1] != b'-'
 }
 
 /// An environment variable name: a letter or `_`, then letters, digits and `_`, at most 100.
@@ -1037,6 +1043,9 @@ pub struct EnvChanges {
     /// A `set` may replace a variable that has another value; without it the phone refuses the whole store.
     #[serde(default)]
     pub replace: bool,
+    /// The project's origin, kept on the environment as [`ENV_ORIGIN_FIELD`] (import).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub origin: Option<String>,
 }
 
 impl Drop for EnvChanges {
@@ -1058,6 +1067,7 @@ impl std::fmt::Debug for EnvChanges {
             .field("rename", &self.rename)
             .field("copy_from", &self.copy_from)
             .field("replace", &self.replace)
+            .field("origin", &self.origin)
             .finish()
     }
 }
@@ -1075,6 +1085,7 @@ impl EnvChanges {
             rename: Vec::new(),
             copy_from: None,
             replace: false,
+            origin: None,
         }
     }
 
@@ -1089,6 +1100,15 @@ impl EnvChanges {
         let item = self.item();
         if !name_ok(&self.project) || !name_ok(&self.env) {
             return Err(format!("`{}` is not a project/environment name", printable(&item)));
+        }
+        if self
+            .origin
+            .as_ref()
+            .is_some_and(|o| o.is_empty() || o.chars().count() > 300 || o.chars().any(char::is_control))
+        {
+            return Err(format!(
+                "the origin of {item} is empty, longer than 300 characters or holds control characters"
+            ));
         }
         if self.set.is_empty() && self.unset.is_empty() && self.rename.is_empty() && self.copy_from.is_none() {
             return Err(format!("nothing to change in {item}"));
@@ -1419,12 +1439,18 @@ pub struct EnvListing {
     pub revision: String,
     /// Its variables' names, sorted.
     pub variables: Vec<String>,
+    /// [`ENV_ORIGIN_FIELD`], when it has one.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub origin: Option<String>,
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ProjectListing {
     pub name: String,
     pub envs: Vec<EnvListing>,
+    /// Where the project came from: the [`ENV_ORIGIN_FIELD`] of its environments (the first one that has one).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub origin: Option<String>,
 }
 
 /// What the phone answers `vault_secrets_list`, boxed from its inbox key: the projects, environments and variable

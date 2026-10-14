@@ -36,10 +36,10 @@ A **project** is a named set of **environments** (`development`, `staging`, `pro
 |---|---|
 | All Reins Secrets | folder `Reins` |
 | Project `acme-web` | folder `Reins/acme-web` |
-| Environment `development` | one **Secure Note item** in that folder with the hidden custom fields `reins.kind = env/1` and `reins.env = development`; it is named `acme-web/development` for people, but the folder and the two fields are what make it the environment |
+| Environment `development` | one **Secure Note item** in that folder with the hidden custom fields `reins.kind = env/1` and `reins.env = development`; it is named `acme-web/development` for people, but the folder and the two fields are what make it the environment. An imported project also keeps where it came from in the hidden field `reins.origin` (its git origin, `github.com/acme/web`), which `vault_secrets_list` reports, so that an import from elsewhere is not merged into it unasked |
 | Variable | one **hidden custom field** on that item: name = variable name, value = value |
 | Non-secret variable (optional) | a **text** custom field (kept so an env can be complete; never needs approval to read its name) |
-| Machine credential (gh token, npm token, AWS profile) | an env item in project `machine-<computer>` (folder `Reins/machine-<computer>`) or `shared` (section 5) |
+| Machine credential (gh token, npm token, AWS profile) | an env item in project `machine-<computer>-<4 hex>` (folder `Reins/machine-…`) or `shared` (section 5) |
 | SSH key | existing **SshKey item** in folder `Reins/ssh` |
 
 Why one item per environment: one approval releases a whole environment (a dev server needs all of them), the item's
@@ -54,7 +54,8 @@ The reference syntax stays `vault:<item>/<field>` (`crates/reins-desktop/src/sec
 - `vault:acme-web/development` (no field, item is an env) = every variable of the environment.
 - Inside a project (a `reins.toml` above the working directory), `env:development/OPENAI_API_KEY` and `env:development`.
 
-Project and environment names are 1 to 64 of `A-Z a-z 0-9 . _ -` and never contain a `/`, so an environment
+Project and environment names are 1 to 64 lowercase letters, digits and `-` (not first or last) and never contain a
+`/`, so an environment
 reference splits one way only: `vault:<project>/<env>/<VAR>` (three parts) or `vault:<project>/<env>` (two). The phone
 finds an environment only among items that carry both marker fields, inside the folder named exactly `Reins/<project>`;
 it never uses, changes or adopts an ordinary item that happens to be named `project/env` (a store that meets one is

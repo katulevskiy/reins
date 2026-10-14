@@ -4,20 +4,22 @@ use std::path::Path;
 
 use crate::project::{PROJECT_FILE, Project, ProjectFile};
 
-/// A project name from a folder name: what is not allowed in a name becomes `-`.
+/// A project name from a folder name: lower case, anything else than a letter or a digit becomes `-`
+/// (`My App` → `my-app`).
 pub(crate) fn name_from_folder(folder: &str) -> Option<String> {
     let mapped: String = folder
         .chars()
         .map(|c| {
-            if c.is_ascii_alphanumeric() || matches!(c, '.' | '_' | '-') {
-                c
+            if c.is_ascii_alphanumeric() {
+                c.to_ascii_lowercase()
             } else {
                 '-'
             }
         })
         .collect();
-    let trimmed = mapped.trim_start_matches(['.', '-']).chars().take(64).collect::<String>();
-    crate::secrets::check_name("project", &trimmed).ok().map(|()| trimmed)
+    let name = mapped.split('-').filter(|p| !p.is_empty()).collect::<Vec<_>>().join("-");
+    let name: String = name.chars().take(64).collect::<String>().trim_end_matches('-').to_owned();
+    crate::secrets::check_name("project", &name).ok().map(|()| name)
 }
 
 pub(super) fn run(dir: &Path, name: Option<&str>, default_env: &str) -> Result<Vec<String>, String> {
@@ -58,9 +60,9 @@ mod tests {
         let repo = dir.path().join("My App");
         std::fs::create_dir(&repo).unwrap();
         let lines = run(&repo, None, "development").unwrap();
-        assert!(lines[0].contains("project My-App"), "{lines:?}");
+        assert!(lines[0].contains("project my-app"), "{lines:?}");
         let p = Project::find(&repo).unwrap().unwrap();
-        assert_eq!((p.file.name.as_str(), p.file.default_env.as_str()), ("My-App", "development"));
+        assert_eq!((p.file.name.as_str(), p.file.default_env.as_str()), ("my-app", "development"));
         assert!(run(&repo, None, "development").unwrap_err().contains("exists"));
         let inner = repo.join("svc");
         std::fs::create_dir(&inner).unwrap();
@@ -73,7 +75,8 @@ mod tests {
     fn folder_names_become_project_names() {
         assert_eq!(name_from_folder("acme-web").as_deref(), Some("acme-web"));
         assert_eq!(name_from_folder(".dotfiles").as_deref(), Some("dotfiles"));
-        assert_eq!(name_from_folder("my app").as_deref(), Some("my-app"));
+        assert_eq!(name_from_folder("My App").as_deref(), Some("my-app"));
+        assert_eq!(name_from_folder("web_2.0").as_deref(), Some("web-2-0"));
         assert_eq!(name_from_folder("..."), None);
     }
 }
