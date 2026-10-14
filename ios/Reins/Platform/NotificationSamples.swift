@@ -1,8 +1,11 @@
 #if DEBUG
+import ActivityKit
 import UIKit
 import UserNotifications
 
 /// Debug launch arguments for checking notifications on a simulator (there is no APNs session there):
+/// - `-resetNotifications`: starts clean, as UI tests need on a reused simulator: removes delivered and scheduled
+///   notifications and ends the Live Activities an earlier run left.
 /// - `-askNotifications`: asks for permission at launch, signed in or not.
 /// - `-notifierSamples`: a few seconds after the app goes to the background, hands `AppNotifier` the newest waiting item
 ///   and an automatic decision, as the core would during a background wake.
@@ -11,6 +14,16 @@ import UserNotifications
 enum NotificationSamples {
     static func launch(host: AppHost) {
         let args = ProcessInfo.processInfo.arguments
+        if args.contains("-resetNotifications") {
+            let center = UNUserNotificationCenter.current()
+            center.removeAllDeliveredNotifications()
+            center.removeAllPendingNotificationRequests()
+            Task {
+                for a in Activity<ApprovalActivityAttributes>.activities { await a.end(nil, dismissalPolicy: .immediate) }
+                for a in Activity<BypassActivityAttributes>.activities { await a.end(nil, dismissalPolicy: .immediate) }
+                for a in Activity<ModelDownloadActivityAttributes>.activities { await a.end(nil, dismissalPolicy: .immediate) }
+            }
+        }
         if args.contains("-askNotifications") {
             Task { await NotificationRouter.shared.requestPermission() }
         }
