@@ -21,6 +21,8 @@ pub struct Saved {
     pub paused_until: Option<i64>,
     /// Paused until the user resumes (no end).
     pub paused_manual: bool,
+    /// Unix seconds: when the pause began (how much of it is left, as a ring).
+    pub paused_at: Option<i64>,
     /// A self-hosted server picked under "Other server".
     pub server: Option<String>,
     /// The step of the welcome flow the setup reached (quitting half-way resumes there).

@@ -34,6 +34,20 @@ fn hex(rgb: u32) -> Hsla {
     .into()
 }
 
+/// The colours things are told apart by, as on the phone: what a request is, how risky a rule is, which section.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Tone {
+    Violet,
+    Green,
+    Red,
+    Yellow,
+    Blue,
+    Orange,
+    Teal,
+    Pink,
+    Gray,
+}
+
 #[derive(Clone, Copy, Debug)]
 pub struct Palette {
     pub background: Hsla,
@@ -53,6 +67,8 @@ pub struct Palette {
     pub danger: Hsla,
     pub success: Hsla,
     pub warning: Hsla,
+    /// Reins Dark.
+    pub dark: bool,
 }
 
 impl Palette {
@@ -74,6 +90,7 @@ impl Palette {
             danger: hex(0x00DC_2626),
             success: hex(0x0015_803D),
             warning: hex(0x00A1_6207),
+            dark: false,
         }
     }
 
@@ -90,11 +107,190 @@ impl Palette {
             hairline: hex(0x001E_1E22),
             accent: hex(0x008B_7CF6),
             accent_soft: hex(0x008B_7CF6).opacity(0.12),
-            on_accent: hex(0x0006_0606),
+            on_accent: hex(0x00FF_FFFF),
             control_fill: hex(0x00E8_E8EA).opacity(0.075),
             danger: hex(0x00F8_7171),
             success: hex(0x0034_D399),
             warning: hex(0x00FA_CC15),
+            dark: true,
+        }
+    }
+
+    // The phone apps' other colours and the surfaces of controls, by appearance (methods keep the palette small
+    // enough to pass around by value).
+
+    /// Searching and reading.
+    #[must_use]
+    pub fn blue(&self) -> Hsla {
+        if self.dark {
+            hex(0x0060_A5FA)
+        } else {
+            hex(0x0025_63EB)
+        }
+    }
+
+    /// Writing.
+    #[must_use]
+    pub fn orange(&self) -> Hsla {
+        if self.dark {
+            hex(0x00FB_923C)
+        } else {
+            hex(0x00EA_580C)
+        }
+    }
+
+    /// git and connections.
+    #[must_use]
+    pub fn teal(&self) -> Hsla {
+        if self.dark {
+            hex(0x002D_D4BF)
+        } else {
+            hex(0x000D_9488)
+        }
+    }
+
+    /// Rules.
+    #[must_use]
+    pub fn pink(&self) -> Hsla {
+        if self.dark {
+            hex(0x00F4_72B6)
+        } else {
+            hex(0x00DB_2777)
+        }
+    }
+
+    /// What has no colour of its own.
+    #[must_use]
+    pub fn gray(&self) -> Hsla {
+        if self.dark {
+            hex(0x006B_6B72)
+        } else {
+            hex(0x0086_868E)
+        }
+    }
+
+    /// The track of a segmented control, a text field and a mono well: a step below the cards.
+    #[must_use]
+    pub fn well(&self) -> Hsla {
+        if self.dark {
+            hex(0x0006_0606)
+        } else {
+            hex(0x00F3_F3F5)
+        }
+    }
+
+    /// The selected choice of a segmented control.
+    #[must_use]
+    pub fn raised(&self) -> Hsla {
+        if self.dark {
+            hex(0x0023_2327)
+        } else {
+            hex(0x00FF_FFFF)
+        }
+    }
+
+    /// A logo's square, and the stage's tiles.
+    #[must_use]
+    pub fn tile(&self) -> Hsla {
+        if self.dark {
+            hex(0x001C_1C20)
+        } else {
+            hex(0x00F1_F1F4)
+        }
+    }
+
+    /// Their border.
+    #[must_use]
+    pub fn tile_border(&self) -> Hsla {
+        if self.dark {
+            hex(0x002A_2A2F)
+        } else {
+            hex(0x00E2_E2E6)
+        }
+    }
+
+    /// A plain button.
+    #[must_use]
+    pub fn button(&self) -> Hsla {
+        if self.dark {
+            hex(0x001F_1F23)
+        } else {
+            hex(0x0027_272C).opacity(0.075)
+        }
+    }
+
+    /// The button that goes ahead (near-white on dark, near-black on light).
+    #[must_use]
+    pub fn primary(&self) -> Hsla {
+        if self.dark {
+            hex(0x00F2_F2F4)
+        } else {
+            hex(0x0027_272C)
+        }
+    }
+
+    /// Its text.
+    #[must_use]
+    pub fn on_primary(&self) -> Hsla {
+        if self.dark {
+            hex(0x000A_0A0A)
+        } else {
+            hex(0x00FF_FFFF)
+        }
+    }
+
+    /// A popover's background.
+    #[must_use]
+    pub fn popover(&self) -> Hsla {
+        if self.dark {
+            hex(0x0018_181B)
+        } else {
+            hex(0x00FF_FFFF)
+        }
+    }
+
+    /// Its border.
+    #[must_use]
+    pub fn popover_border(&self) -> Hsla {
+        if self.dark {
+            hex(0x002A_2A30)
+        } else {
+            hex(0x00DC_DCE1)
+        }
+    }
+
+    /// The colour of `tone`.
+    #[must_use]
+    pub fn tone(&self, tone: Tone) -> Hsla {
+        match tone {
+            Tone::Violet => self.accent,
+            Tone::Green => self.success,
+            Tone::Red => self.danger,
+            Tone::Yellow => self.warning,
+            Tone::Blue => self.blue(),
+            Tone::Orange => self.orange(),
+            Tone::Teal => self.teal(),
+            Tone::Pink => self.pink(),
+            Tone::Gray => self.gray(),
+        }
+    }
+
+    /// What goes on a solid square of `tone` (a selected section's icon, Health checks' yellow).
+    #[must_use]
+    pub fn on_solid(&self, tone: Tone) -> Hsla {
+        match tone {
+            Tone::Yellow if self.dark => hex(0x0023_1A00),
+            _ => hex(0x00FF_FFFF),
+        }
+    }
+
+    /// The dark text on a red button that is held (`#2a0606`), or white on light.
+    #[must_use]
+    pub fn on_danger(&self) -> Hsla {
+        if self.dark {
+            hex(0x002A_0606)
+        } else {
+            hex(0x00FF_FFFF)
         }
     }
 

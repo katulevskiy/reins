@@ -118,11 +118,24 @@ impl Saved {
     pub fn pause(&mut self, length: PauseFor, now: i64) {
         self.paused_until = length.secs().map(|s| now + s);
         self.paused_manual = length.secs().is_none();
+        self.paused_at = Some(now);
     }
 
     pub fn unpause(&mut self) {
         self.paused_until = None;
         self.paused_manual = false;
+        self.paused_at = None;
+    }
+
+    /// How much of a timed pause is left at `now`, from 1 (just began) to 0; `None` when not timed.
+    #[must_use]
+    pub fn pause_left(&self, now: i64) -> Option<f32> {
+        let until = self.paused_until.filter(|_| !self.paused_manual)?;
+        // A pause from before the start was kept: as if it were a day long.
+        let from = self.paused_at.unwrap_or(until - 86_400);
+        let total = (until - from).max(1);
+        #[allow(clippy::cast_precision_loss, reason = "seconds of a day at most")]
+        Some(((until - now).clamp(0, total) as f32) / (total as f32))
     }
 
     /// A timed pause ran out (a manual one never does).
@@ -152,6 +165,18 @@ mod tests {
         assert!(!saved.pause_ran_out(i64::MAX));
         saved.unpause();
         assert_eq!(Pause::of(&saved, 0), Pause::Off);
+    }
+
+    #[test]
+    fn what_is_left_of_a_pause() {
+        let mut saved = Saved::default();
+        assert_eq!(saved.pause_left(0), None);
+        saved.pause(PauseFor::Hour, 1_000);
+        assert_eq!(saved.pause_left(1_000), Some(1.0));
+        assert_eq!(saved.pause_left(1_000 + 1_800), Some(0.5));
+        assert_eq!(saved.pause_left(1_000 + 7_200), Some(0.0));
+        saved.pause(PauseFor::Manual, 1_000);
+        assert_eq!(saved.pause_left(1_000), None);
     }
 
     #[test]

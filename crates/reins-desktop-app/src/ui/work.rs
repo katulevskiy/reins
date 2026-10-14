@@ -116,7 +116,7 @@ impl Root {
         } else {
             Self::work_invite(d, pal, cx)
         };
-        group("Work session", Some(help("session", about, d, pal, cx)), body).into_any_element()
+        group("Work session", Some(help("session", about, d, pal, cx)), body, pal).into_any_element()
     }
 
     fn work_invite(d: &Data, pal: Palette, cx: &mut Context<'_, Self>) -> Div {

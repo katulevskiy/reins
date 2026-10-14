@@ -188,6 +188,8 @@ pub struct Model {
     pub show_server: bool,
     pub server_input: String,
     pub autostart: bool,
+    /// The command line tool is in `~/.local/bin`.
+    pub cli_installed: bool,
     /// The work session card: its form, the request waiting on the phone, ending.
     pub work: Work,
     /// `--demo`: the pretend pairing went through.
@@ -247,6 +249,15 @@ impl Model {
             saved.account.get_or_insert_with(|| "dana@acme.dev".to_owned());
             saved.phone.get_or_insert_with(|| "Dana's iPhone".to_owned());
         }
+        // `REINS_DEMO_PAUSED=1`: git paused for 4 hours since 48 minutes ago (`manual`: until resumed).
+        if let Some(how) = std::env::var("REINS_DEMO_PAUSED").ok().filter(|v| args.demo && !v.is_empty() && v != "0") {
+            let now = reins_desktop::now_unix();
+            if how == "manual" {
+                saved.pause(PauseFor::Manual, now);
+            } else {
+                saved.pause(PauseFor::FourHours, now - 48 * 60);
+            }
+        }
         let section = std::env::var("REINS_DEMO_SECTION")
             .ok()
             .filter(|_| args.demo)
@@ -260,7 +271,13 @@ impl Model {
         let runtime = Tokio::handle(cx);
         let demo = args.demo.then(|| {
             let demo = Demo::new(reins_desktop::now_unix());
-            if std::env::var_os("REINS_DEMO_EMPTY").is_some_and(|v| !v.is_empty() && v != "0") {
+            let set = |name: &str| std::env::var_os(name).is_some_and(|v| !v.is_empty() && v != "0");
+            let demo = if set("REINS_DEMO_CALM") {
+                demo.calm()
+            } else {
+                demo
+            };
+            if set("REINS_DEMO_EMPTY") {
                 demo.empty()
             } else {
                 demo
@@ -268,6 +285,7 @@ impl Model {
         });
         let demo_test = args.demo && std::env::var_os("REINS_DEMO_TEST").is_some_and(|v| !v.is_empty() && v != "0");
         let work = work_actions::initial(demo);
+        let (args_demo, backend_cli) = (args.demo, backend.cli_installed());
         let model = cx.new(|cx| {
             let mut model = Self {
                 fingerprint: backend.fingerprint().ok(),
@@ -295,6 +313,7 @@ impl Model {
                 show_phone_qr: false,
                 show_server: false,
                 autostart: autostart::enabled(&home),
+                cli_installed: args_demo || backend_cli,
                 work,
                 demo_paired,
                 demo,
@@ -1463,7 +1482,10 @@ impl Model {
         self.notice = None;
         self.note = None;
         match self.backend.install_cli() {
-            Ok(p) => self.note = Some(format!("Installed `reins` at {}.", p.display())),
+            Ok(p) => {
+                self.cli_installed = true;
+                self.note = Some(format!("Installed `reins` at {}.", p.display()));
+            }
             Err(e) => self.notice = Some(e),
         }
         cx.notify();
@@ -1554,19 +1576,6 @@ fn waiting_changes<'a>(
     let fresh = activity.iter().filter(|e| waiting(e) && now - e.at < 120 && !notified.contains(&e.id)).collect();
     let ended = notified.iter().filter(|id| !activity.iter().any(|e| &e.id == *id && waiting(e))).cloned().collect();
     (fresh, ended)
-}
-
-impl Look {
-    /// The word for the status pill.
-    #[must_use]
-    pub fn word(self) -> &'static str {
-        match self {
-            Self::On => "On",
-            Self::Paused => "Paused",
-            Self::Waiting => "Waiting",
-            Self::Attention => "Needs you",
-        }
-    }
 }
 
 /// `REINS_DEMO_SCREEN`: `pair`, `tools` (`tools-connected`: one connected just now), `turn-on` (`turning-on`: and

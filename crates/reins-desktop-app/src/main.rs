@@ -49,6 +49,9 @@ pub mod links {
         };
         format!("https://reins2fa.com/download/{platform}")
     }
+    /// The terms of service and the privacy policy.
+    pub const TERMS: &str = "https://reins2fa.com/terms";
+    pub const PRIVACY: &str = "https://reins2fa.com/privacy";
     /// Opens the Activity screen of the phone app (the phone's camera reads it from a QR code).
     pub const PHONE_ACTIVITY: &str = "reins://home";
 }
@@ -64,7 +67,10 @@ pub struct Args {
     /// `REINS_DEMO_SECTION=<overview|activity|connections|keys|rules|settings>` the status window at that section,
     /// `REINS_DEMO_TEST=1` sends the pretend test at start, `REINS_DEMO_EMPTY=1` leaves the samples out,
     /// `REINS_DEMO_SESSION=1` starts with a work session running (the pretend phone approves new ones after a few
-    /// seconds).
+    /// seconds), `REINS_DEMO_CALM=1` leaves out the request waiting on the phone, `REINS_DEMO_PAUSED=1` (or `manual`)
+    /// starts with git paused. For screenshots of what opens with a click: `REINS_DEMO_PAUSE=1` (or `manual`, or
+    /// `hold`: held from the start) opens the "Pause git" sheet, `REINS_DEMO_FILTER=1` Activity's filters,
+    /// `REINS_DEMO_HEALTH=1` Overview's health checks, `REINS_DEMO_HELP=<id>` a (?).
     pub demo: bool,
 }
 
@@ -133,7 +139,7 @@ fn main() {
     };
     let handle = runtime.handle().clone();
 
-    let app = gpui_platform::application().with_quit_mode(QuitMode::Explicit);
+    let app = gpui_platform::application().with_assets(ui::icons::Assets).with_quit_mode(QuitMode::Explicit);
     app.on_reopen(model::Model::show_window);
     app.run(move |cx: &mut App| {
         gpui_tokio::init_from_handle(cx, handle);

@@ -174,18 +174,18 @@ pub enum Test {
     Ended(Answer, bool),
 }
 
-/// How a test ended, in a line. `checks_above`: the health checks are on the same page, above the line.
+/// How a test ended, in a line. `checks_here`: the health checks are on the same page.
 #[must_use]
-pub fn test_result(answer: &Answer, timed_out: bool, checks_above: bool) -> (bool, String) {
+pub fn test_result(answer: &Answer, timed_out: bool, checks_here: bool) -> (bool, String) {
     match answer {
-        Answer::Yes => (true, "✓ Approved. It works.".to_owned()),
-        Answer::No(_) => (true, "✓ Denied. It works.".to_owned()),
+        Answer::Yes => (true, "Approved. It works.".to_owned()),
+        Answer::No(_) => (true, "Denied. It works.".to_owned()),
         Answer::Unanswered(_) if timed_out => {
             let secs = TEST_TIMEOUT.as_secs();
             (
                 false,
-                if checks_above {
-                    format!("No answer in {secs} s. See the checks above.")
+                if checks_here {
+                    format!("No answer in {secs} s. See Health.")
                 } else {
                     format!("No answer in {secs} s. See Health in Overview.")
                 },
@@ -308,12 +308,12 @@ mod tests {
 
     #[test]
     fn test_results_read_as_sentences() {
-        assert_eq!(test_result(&Answer::Yes, false, true), (true, "✓ Approved. It works.".to_owned()));
+        assert_eq!(test_result(&Answer::Yes, false, true), (true, "Approved. It works.".to_owned()));
         let (ok, text) = test_result(&Answer::No("Denied on your phone.".to_owned()), false, true);
-        assert!(ok && text.starts_with("✓ Denied"));
+        assert!(ok && text.starts_with("Denied"));
         let (ok, text) = test_result(&Answer::Unanswered("late".to_owned()), true, true);
         assert!(!ok);
-        assert_eq!(text, "No answer in 90 s. See the checks above.");
+        assert_eq!(text, "No answer in 90 s. See Health.");
         assert!(test_result(&Answer::Unanswered("late".to_owned()), true, false).1.contains("Overview"));
         assert_eq!(
             test_result(&Answer::Unanswered("Cannot ask your phone: offline".to_owned()), false, true).1,

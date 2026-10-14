@@ -1,12 +1,15 @@
 //! The window. Before pairing and setup: the welcome flow, one calm column under its steps (pair, AI tools, turn on,
-//! done). Afterwards the status window: a sidebar (the state, the sections, pausing) and the section it selects:
-//! Overview, Activity, Connections, Keys & secrets, Rules, Settings. Like the phone apps: Geist, cool neutrals, one
-//! violet accent. Keyboard shortcuts ([`crate::shortcuts`]) work everywhere in it.
+//! done). Afterwards the status window: a sidebar (what Reins is doing, the sections, pausing) and the section it
+//! selects: Overview, Activity, Connections, Keys & secrets, Rules, Settings. Like the phone apps: Geist, cool
+//! neutrals, one violet accent, coloured icon squares, Lucide icons and real logos. Keyboard shortcuts
+//! ([`crate::shortcuts`]) work everywhere in it.
 
 mod activity;
 mod connections;
 mod field;
 mod health;
+mod hold;
+pub mod icons;
 mod keys;
 mod onboarding;
 mod overview;
@@ -15,14 +18,15 @@ mod rules;
 mod settings;
 mod setup;
 mod sidebar;
+mod story;
 mod work;
 
-use std::collections::HashSet;
 use std::sync::Arc;
+use std::time::Duration;
 
 use gpui::{
     AnyElement, App, ClickEvent, Context, Entity, FocusHandle, InteractiveElement as _, IntoElement, KeyDownEvent,
-    ParentElement as _, Render, StatefulInteractiveElement as _, Styled as _, Subscription, Window, div, px,
+    ParentElement as _, Render, StatefulInteractiveElement as _, Styled as _, Subscription, Task, Window, div, px,
 };
 use reins_desktop::config::Config;
 use reins_desktop::control::Overview;
@@ -31,7 +35,7 @@ use reins_desktop::journal::{Entry, Kind, Outcome};
 use crate::backend::{Snapshot, Update};
 use crate::health::{Health, Test};
 use crate::model::{Model, Screen, Section};
-use crate::pause::Pause;
+use crate::pause::{Pause, PauseFor};
 use crate::shortcuts::{self, Shortcut};
 use crate::state::Saved;
 use crate::theme::{FONT, Palette};
@@ -48,6 +52,7 @@ pub const MIN_HEIGHT: f32 = 560.0;
 /// How many activity rows show before "Show more".
 const ROWS: usize = 60;
 
+#[allow(clippy::struct_excessive_bools, reason = "independent things open in the window")]
 pub struct Root {
     model: Entity<Model>,
     /// The window's own focus, so the keyboard shortcuts work before anything else is focused.
@@ -56,20 +61,36 @@ pub struct Root {
     /// The inputs under Rules, one per guard list ([`field::slot`]).
     guard_fields: [FocusHandle; 4],
     guard_inputs: [String; 4],
+    /// Each Rules card's field adds a file (else a command), as picked; and why the last entry was refused.
+    guard_file: [bool; 2],
+    guard_error: [Option<String>; 2],
     /// The work session form's fields: what it is for, and a branch for each repository (made as rows appear).
     session_reason: FocusHandle,
     branch_fields: Vec<FocusHandle>,
-    /// Activity's filters: one outcome, one kind (`None`: all).
+    /// Activity's filters: one outcome, one kind (`None`: all), and whether their popover is open.
     outcome_filter: Option<Outcome>,
     kind_filter: Option<Kind>,
-    /// Activity rows open to their detail.
-    expanded: HashSet<String>,
+    filter_open: bool,
+    /// The request Activity shows on the right (by journal id; `None`: the first one).
+    selected: Option<String>,
     rows_shown: usize,
-    /// The sidebar's pause lengths are showing.
-    pause_menu: bool,
+    /// The "Pause git" sheet is open, and the length picked in it.
+    pause_sheet: bool,
+    pause_choice: PauseFor,
+    /// A hold to confirm in progress ([`hold`]), and how many presses there were (each its own fill).
+    hold: Option<hold::Hold>,
+    presses: u64,
+    /// Overview's Health tile is open to its checks.
+    health_open: bool,
+    /// Settings' Notifications row is open to its two switches.
+    notify_open: bool,
+    /// The run profile open to its variables (Keys & secrets).
+    profile_open: Option<String>,
     /// The (?) open now ([`parts::help`]), and the page it is on: another page closes it.
     help: Option<&'static str>,
     help_page: (Screen, Section),
+    /// Renders once a second while something counts down in seconds (a request's timer, a hold).
+    tick: Option<Task<()>>,
     _subscriptions: Vec<Subscription>,
 }
 
@@ -90,6 +111,7 @@ struct Data {
     note: Option<String>,
     show_qr: bool,
     autostart: bool,
+    cli_installed: bool,
     section: Section,
     /// Where `config.toml` is, for the empty states that say to edit it.
     config_file: String,
@@ -119,6 +141,7 @@ impl Data {
             note: m.note.clone(),
             show_qr: m.show_phone_qr,
             autostart: m.autostart,
+            cli_installed: m.cli_installed,
             section: m.section,
             config_file: m.config_file().display().to_string(),
             health: m.health.clone(),
@@ -150,6 +173,27 @@ impl Data {
     fn waiting(&self) -> impl Iterator<Item = &Entry> {
         self.activity().iter().filter(|e| e.outcome == Outcome::Waiting)
     }
+
+    /// The phone that approves ("Dana's iPhone"), or "your phone".
+    fn phone(&self) -> String {
+        self.saved.phone.clone().unwrap_or_else(|| "your phone".to_owned())
+    }
+
+    /// How long the phone has to answer `e`, in seconds, and how much of it is left.
+    fn wait_left(&self, e: &Entry) -> (u64, i64) {
+        let (hooks, approvals) = self.config().map_or((120, 120), |c| (c.guard.timeout_secs, c.approval_timeout_secs));
+        let total = story::wait_secs(e.kind, hooks, approvals).max(1);
+        (total, (i64::try_from(total).unwrap_or(i64::MAX) - (self.now - e.at)).max(0))
+    }
+
+    /// The mark of the git host when there is one (a force-push's target).
+    fn git_host_mark(&self) -> Option<icons::Brand> {
+        let s = self.snapshot.as_ref()?;
+        match s.git_routed.as_slice() {
+            [one] => icons::Brand::of_host(one),
+            _ => None,
+        }
+    }
 }
 
 impl Root {
@@ -175,28 +219,48 @@ impl Root {
             let m = model.read(cx);
             ((m.screen, m.section), m.demo())
         };
-        // `--demo` with `REINS_DEMO_HELP=<id>`: that (?) open, for screenshots.
-        let help = std::env::var("REINS_DEMO_HELP")
-            .ok()
-            .filter(|h| demo && !h.is_empty())
-            .map(|h| &*Box::leak(h.into_boxed_str()));
-        Self {
+        // `--demo` with `REINS_DEMO_HELP=<id>`: that (?) open, `REINS_DEMO_PAUSE=1`: the pause sheet open (`manual`:
+        // at "Until I resume"), for screenshots.
+        let demo_var = |name: &str| std::env::var(name).ok().filter(|h| demo && !h.is_empty());
+        let help = demo_var("REINS_DEMO_HELP").map(|h| &*Box::leak(h.into_boxed_str()));
+        let pause_demo = demo_var("REINS_DEMO_PAUSE");
+        let mut root = Self {
             model,
             focus,
             server_field: cx.focus_handle(),
             guard_fields: [cx.focus_handle(), cx.focus_handle(), cx.focus_handle(), cx.focus_handle()],
             guard_inputs: Default::default(),
+            guard_file: [false; 2],
+            guard_error: [None, None],
             session_reason: cx.focus_handle(),
             branch_fields: Vec::new(),
             outcome_filter: None,
             kind_filter: None,
-            expanded: HashSet::new(),
+            filter_open: demo_var("REINS_DEMO_FILTER").is_some(),
+            selected: None,
             rows_shown: ROWS,
-            pause_menu: false,
+            pause_sheet: pause_demo.is_some(),
+            pause_choice: if matches!(pause_demo.as_deref(), Some("manual" | "hold")) {
+                PauseFor::Manual
+            } else {
+                PauseFor::Hour
+            },
+            hold: None,
+            presses: 0,
+            health_open: demo_var("REINS_DEMO_HEALTH").is_some(),
+            notify_open: false,
+            profile_open: None,
             help,
             help_page,
+            tick: None,
             _subscriptions: subscriptions,
+        };
+        // `REINS_DEMO_PAUSE=hold`: "Until I resume", held from the start (it pauses when the hold ends).
+        if pause_demo.as_deref() == Some("hold") {
+            root.pause_choice = PauseFor::Manual;
+            root.hold_start(hold::Held::PauseUntilResume, cx);
         }
+        root
     }
 
     /// A click handler that runs `f` on the model.
@@ -231,7 +295,8 @@ impl Root {
             Shortcut::Close => window.remove_window(),
             Shortcut::Quit => self.model.update(cx, Model::quit),
             Shortcut::Escape => {
-                if self.expanded.is_empty() && !self.pause_menu && self.help.is_none() {
+                let open = self.pause_sheet || self.filter_open || self.help.is_some() || self.hold.is_some();
+                if !open {
                     // Nothing open here: the phone's QR code, if it shows.
                     self.model.update(cx, |m, cx| {
                         if m.show_phone_qr {
@@ -239,9 +304,10 @@ impl Root {
                         }
                     });
                 }
-                self.expanded.clear();
-                self.pause_menu = false;
+                self.pause_sheet = false;
+                self.filter_open = false;
                 self.help = None;
+                self.hold = None;
                 // Out of a text field, so the next shortcuts are not typed into it.
                 window.focus(&self.focus, cx);
             }
@@ -255,38 +321,71 @@ impl Root {
         Self::on_model(cx, move |m, cx| m.show_section(section, cx))
     }
 
-    /// The status window: sidebar and section.
+    /// Opens `id` in Activity.
+    fn open_entry(cx: &Context<'_, Self>, id: String) -> impl Fn(&ClickEvent, &mut Window, &mut App) + 'static {
+        cx.listener(move |this, _: &ClickEvent, _, cx| {
+            this.selected = Some(id.clone());
+            this.outcome_filter = None;
+            this.kind_filter = None;
+            this.model.update(cx, |m, cx| m.show_section(Section::Activity, cx));
+            cx.notify();
+        })
+    }
+
+    /// Renders again in a second while `needed`, so timers count down.
+    fn keep_ticking(&mut self, needed: bool, window: &Window, cx: &mut Context<'_, Self>) {
+        if !needed {
+            self.tick = None;
+            return;
+        }
+        if self.tick.is_none() {
+            self.tick = Some(cx.spawn_in(window, async move |this, cx| {
+                loop {
+                    cx.background_executor().timer(Duration::from_secs(1)).await;
+                    if this.update(cx, |_, cx| cx.notify()).is_err() {
+                        break;
+                    }
+                }
+            }));
+        }
+    }
+
+    /// The status window: sidebar and section; the pause sheet over both.
     fn status(&mut self, d: &Data, pal: Palette, window: &mut Window, cx: &mut Context<'_, Self>) -> AnyElement {
-        let page = match d.section {
-            Section::Overview => self.overview(d, pal, window, cx),
-            Section::Activity => self.activity(d, pal, cx),
-            Section::Connections => Self::connections(d, pal, cx),
-            Section::Keys => Self::keys(d, pal, cx),
-            Section::Rules => self.rules(d, pal, window, cx),
-            Section::Settings => Self::settings(d, pal, cx),
+        let top = if cfg!(target_os = "macos") {
+            40.0
+        } else {
+            30.0
         };
-        div()
+        let content: AnyElement = if d.section == Section::Activity {
+            // List and detail side by side, each scrolling on its own.
+            self.activity(d, pal, top, cx)
+        } else {
+            let page = match d.section {
+                Section::Overview | Section::Activity => self.overview(d, pal, window, cx),
+                Section::Connections => Self::connections(d, pal, cx),
+                Section::Keys => self.keys(d, pal, cx),
+                Section::Rules => self.rules(d, pal, window, cx),
+                Section::Settings => self.settings(d, pal, cx),
+            };
+            div()
+                .id(("content", d.section as usize))
+                .size_full()
+                .overflow_y_scroll()
+                .child(div().w_full().max_w(px(900.0)).mx_auto().px(px(34.0)).pt(px(top)).pb(px(34.0)).child(page))
+                .into_any_element()
+        };
+        let mut root = div()
+            .relative()
             .size_full()
             .flex()
             .flex_row()
-            .child(self.sidebar(d, pal, cx))
-            .child(
-                div().id(("content", d.section as usize)).flex_1().min_w(px(0.0)).h_full().overflow_y_scroll().child(
-                    div()
-                        .w_full()
-                        .max_w(px(860.0))
-                        .mx_auto()
-                        .px(px(36.0))
-                        .pt(px(if cfg!(target_os = "macos") {
-                            40.0
-                        } else {
-                            30.0
-                        }))
-                        .pb(px(40.0))
-                        .child(page),
-                ),
-            )
-            .into_any_element()
+            .child(Self::sidebar(d, pal, cx))
+            .child(div().flex_1().min_w(px(0.0)).h_full().child(content));
+        if self.pause_sheet && d.paired {
+            root = root.child(self.pause_sheet(d, pal, cx));
+        }
+        root.into_any_element()
     }
 }
 
@@ -298,9 +397,17 @@ impl Render for Root {
         if page != self.help_page {
             self.help_page = page;
             self.help = None;
+            self.filter_open = false;
         }
         let mut d = Data::of(self.model.read(cx));
         d.help = self.help;
+        // Seconds count while a request waits, a work session is being asked for, or the test waits.
+        self.keep_ticking(
+            matches!(d.test, Test::Waiting(_))
+                || (screen == Screen::Status && (d.waiting().next().is_some() || d.work.asking.is_some())),
+            window,
+            cx,
+        );
         let body = match screen {
             Screen::Welcome(Stage::Pair) => Some((Stage::Pair, self.onboarding(&d, pal, window, cx))),
             Screen::Welcome(Stage::Tools) => Some((Stage::Tools, self.tools_step(&d, pal, cx))),
@@ -339,7 +446,7 @@ impl Render for Root {
                             .flex_col()
                             .items_center()
                             .justify_start()
-                            .gap(px(30.0))
+                            .gap(px(28.0))
                             .px(px(32.0))
                             .pt(px(WELCOME_TOP))
                             .pb(px(28.0))
@@ -353,12 +460,12 @@ impl Render for Root {
 }
 
 /// The welcome flow's space above the step indicator.
-const WELCOME_TOP: f32 = 44.0;
+const WELCOME_TOP: f32 = 40.0;
 
 /// How wide a step of the welcome flow is: the pairing has the QR code beside the steps.
 fn stage_width(stage: Stage) -> f32 {
     match stage {
-        Stage::Pair => 700.0,
-        Stage::Tools | Stage::TurnOn | Stage::Done => 580.0,
+        Stage::Pair => 660.0,
+        Stage::Tools | Stage::TurnOn | Stage::Done => 560.0,
     }
 }
