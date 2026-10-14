@@ -45,15 +45,12 @@ pub(crate) fn build_secrets_grant(
         Some(secs) => Some(now.saturating_add(i64::try_from(secs).unwrap_or(i64::MAX))),
     };
     let choice = standing.scope.secrets.as_ref();
-    let command = match choice {
-        None => ask.exact(),
-        Some(c) => ask
-            .command_options()
-            .into_iter()
-            .find(|(id, _)| *id == c.command)
-            .map(|(_, scope)| scope)
-            .ok_or_else(|| CoreError::invalid("choose one of the commands offered"))?,
-    };
+    // Only what the phone offered: a command that cannot be remembered is offered nothing.
+    let wanted = choice.map_or("exact", |c| c.command.as_str());
+    let command =
+        ask.command_options().into_iter().find(|(id, _)| id == wanted).map(|(_, scope)| scope).ok_or_else(|| {
+            CoreError::invalid("this command is approved one run at a time; choose one of those offered")
+        })?;
     let fields = match (&ask.fields, choice.is_some_and(|c| c.all_variables)) {
         (Some(asked), false) => asked.clone(),
         _ => Vec::new(),
@@ -321,6 +318,7 @@ mod tests {
             purpose: None,
             confirm_always: false,
             print: false,
+            typed: None,
         }
     }
 

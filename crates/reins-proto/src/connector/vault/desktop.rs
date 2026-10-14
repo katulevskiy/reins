@@ -64,6 +64,7 @@ pub(super) fn tools() -> Vec<ToolSpec> {
                 str_p("env", 64, true, "The environment (the item <project>/<env> in that folder)."),
                 list_p("fields", MAX_ENV_VARS, 100, "The variables; left out: every variable of the environment."),
                 str_p("program", 1_000, true, "The program reins run starts, by its absolute path when known."),
+                str_p("typed", 1_000, false, "The program as typed (`npm`), when it was not a path."),
                 json_p("args", 70_000, false, "Its arguments, exactly as passed (a list of strings; no shell)."),
                 str_p("root", 1_000, true, "The project's folder on the computer (canonical path)."),
                 str_p("runner", 50, true, "Who runs it: `person`, or `agent:<harness>`."),

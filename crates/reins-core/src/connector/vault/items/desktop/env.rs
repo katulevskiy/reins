@@ -194,12 +194,19 @@ pub(crate) struct ReleaseAsk {
     pub purpose: Option<String>,
     pub confirm_always: bool,
     pub print: bool,
+    /// The program as typed (`npm`), when it was not a path.
+    pub typed: Option<String>,
 }
 
 impl ReleaseAsk {
     /// The exact command asked for.
     pub fn exact(&self) -> CommandScope {
         CommandScope::exact(&self.program, &self.args)
+    }
+
+    /// Whether this release is asked every time: `always`, a value to print, or a command that cannot be remembered.
+    pub fn one_shot(&self, always: bool) -> bool {
+        always || self.print || self.command_options().is_empty()
     }
 
     /// What a standing permission compares (see `reins_policy::SecretsScope`).
@@ -218,7 +225,7 @@ impl ReleaseAsk {
     /// The commands a remembered approval may cover, by id: `exact`, then `prefix:<n>` for each allowed prefix.
     pub fn command_options(&self) -> Vec<(String, CommandScope)> {
         self.exact()
-            .offers()
+            .offers_as(&self.typed.iter().map(String::as_str).collect::<Vec<_>>())
             .into_iter()
             .map(|c| {
                 (
@@ -282,6 +289,7 @@ pub(crate) fn release_ask(call: &ConnectorCall) -> Result<ReleaseAsk, CoreError>
         purpose: call.str_arg("purpose").map(text::one_line).filter(|p| !p.is_empty()),
         confirm_always: call.str_arg("confirm") == Some("always"),
         print: call.bool_arg("print").unwrap_or(false),
+        typed: call.str_arg("typed").map(text::one_line).filter(|t| !t.is_empty()),
     })
 }
 
@@ -348,6 +356,7 @@ pub(super) async fn preview_release(vault: &Vault, account: &str, call: &Connect
     let choice = always_ask_choice(&vault.store, &ask.project, &ask.env)?;
     let always = always_ask(choice, ask.confirm_always, &ask.env);
     let command = ask.exact().shown();
+    let one_shot = ask.one_shot(always);
     let who = runner_label(&ask.runner);
     let mut lines = vec![format!("{who}: {} for {command}", ask.env)];
     lines.push(format!("{}/{}: {}", ask.project, ask.env, names.join(", ")));
@@ -383,7 +392,7 @@ pub(super) async fn preview_release(vault: &Vault, account: &str, call: &Connect
             })
             .collect(),
         print: ask.print,
-        always_ask: always || ask.print,
+        always_ask: one_shot,
         always_ask_set: choice.is_some(),
     };
     Ok(Preview {
@@ -391,7 +400,7 @@ pub(super) async fn preview_release(vault: &Vault, account: &str, call: &Connect
         resource_label: format!("{} \u{b7} {}", ask.project, ask.env),
         lines,
         parents: vec![(format!("{SECRETS}/{}", ask.project), ask.project.clone())],
-        once_only: always || ask.print,
+        once_only: one_shot,
         secrets: Some(SecretsPreview::Release(view)),
         ..Preview::default()
     })

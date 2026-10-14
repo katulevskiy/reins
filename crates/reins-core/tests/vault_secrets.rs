@@ -374,6 +374,46 @@ async fn production_is_asked_every_time_until_the_user_says_otherwise_on_the_pho
     assert!(desk.core.approval_view("r3".to_owned()).await.unwrap().no_standing);
 }
 
+/// `release` with some arguments changed.
+fn release_with(desk: &Desk, id: &str, ask: &Ask<'_>, changed: &Value) -> Value {
+    let mut r = release(desk, id, ask);
+    for (k, v) in changed.as_object().unwrap() {
+        r["call"]["args"][k] = v.clone();
+    }
+    r
+}
+
+#[tokio::test]
+async fn launchers_by_either_name_and_long_code_are_never_remembered_wider() {
+    let desk = desk().await;
+    desk.pair().await;
+    let cli = "/usr/lib/node_modules/npm/bin/npm-cli.js";
+    let exec = Ask {
+        args: &["exec", "vite"],
+        ..DEV
+    };
+    desk.send(&[release_with(&desk, "l1", &exec, &json!({"program": cli, "typed": "npm"}))]).await;
+    let r = desk.core.approval_view("l1".to_owned()).await.unwrap().env_release.unwrap();
+    let offered: Vec<&str> = r.commands.iter().map(|c| c.id.as_str()).collect();
+    assert_eq!(offered, ["exact"], "npm exec * is never offered");
+    // Typed as a launcher, resolved to something with another name: still a launcher.
+    desk.send(&[release_with(&desk, "l2", &exec, &json!({"program": "/opt/tools/run", "typed": "npx"}))]).await;
+    let r = desk.core.approval_view("l2".to_owned()).await.unwrap().env_release.unwrap();
+    assert_eq!(r.commands.len(), 1);
+    // Code longer than the phone shows: approved once at a time.
+    let code = "print(1); ".repeat(40);
+    let long = Ask {
+        args: &["-c", &code],
+        ..DEV
+    };
+    desk.send(&[release_with(&desk, "l3", &long, &json!({"program": "/usr/bin/python3"}))]).await;
+    let view = desk.core.approval_view("l3".to_owned()).await.unwrap();
+    let r = view.env_release.clone().unwrap();
+    assert!(r.commands.is_empty() && view.no_standing && r.always_ask);
+    assert!(r.command.contains(code.trim_end()), "all of the code is shown");
+    assert!(desk.core.approve("l3".to_owned(), choice(&[], remember("exact", false))).await.is_err());
+}
+
 #[tokio::test]
 async fn mistakes_are_told_before_the_user_is_asked() {
     let desk = desk().await;

@@ -125,6 +125,8 @@ single references):
 
 `fields` left out means every variable of the environment. The command is the argument list `reins run` spawns (it
 never uses a shell), with the program resolved to its absolute path; `root` is the project's folder (canonical path).
+`typed` is the program as typed when it was a name (`npm`): the phone refuses a prefix when either name is a launcher
+(3.3).
 
 The phone answers with the existing `SecretGrant` (sealed to the pinned computer key, bound to the nonce), extended with
 `project`, `env`, the item revision, and the binding the phone decided: the `runner` and `root` it approved and the

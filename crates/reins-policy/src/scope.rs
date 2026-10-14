@@ -276,6 +276,7 @@ impl SecretsScope {
             && self.runner == facts.runner
             && self.root == facts.root
             && self.command.matches(facts.program, facts.args)
+            && self.command.rememberable(&[])
             && (self.fields.is_empty()
                 || facts.fields.is_some_and(|asked| asked.iter().all(|f| self.fields.contains(f))))
     }
