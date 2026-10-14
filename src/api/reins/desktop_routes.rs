@@ -42,7 +42,7 @@ const MAX_REQUEST_ID_BYTES: usize = 64;
 const MAX_ECHOED_TOOL_CHARS: usize = 64;
 
 pub fn routes() -> Vec<Route> {
-    routes![post_call, get_call, get_phone, get_revocations]
+    routes![post_call, get_call, get_phone, get_revocations, post_revocations_ack]
 }
 
 // ---------------------------------------------------------------------------------------
@@ -322,8 +322,8 @@ async fn get_phone(request: McpRequest, conn: DbConn) -> DesktopResponse {
     DesktopResponse::json(Status::Ok, json!({"last_seen": last_seen, "services": services, "server_time": now_unix()}))
 }
 
-/// Reins Secrets: the sealed lease revocations the phone left for this computer (taken: each is handed over once). The
-/// daemon polls while it holds secrets.
+/// Reins Secrets: the sealed lease revocations the phone left for this computer. They stay until the daemon
+/// acknowledges them (`POST /reins/desktop/revocations/ack`), once applied. The daemon polls while it holds secrets.
 #[get("/reins/desktop/revocations")]
 async fn get_revocations(request: McpRequest, conn: DbConn) -> DesktopResponse {
     let connection = match authenticated(&request, &conn).await {
@@ -331,13 +331,26 @@ async fn get_revocations(request: McpRequest, conn: DbConn) -> DesktopResponse {
         Err(response) => return response,
     };
     drop(conn);
-    let items = HUB.revocations.take(&connection.uuid, now_unix());
-    DesktopResponse::json(
-        Status::Ok,
-        json!(reins_proto::desktop::RevocationMail {
-            items
-        }),
-    )
+    DesktopResponse::json(Status::Ok, json!(HUB.revocations.peek(&connection.uuid, now_unix())))
+}
+
+/// Reins Secrets: the revocations this computer's daemon applied ([`reins_proto::desktop::RevocationAck`]).
+#[post("/reins/desktop/revocations/ack", data = "<data>")]
+async fn post_revocations_ack(data: Data<'_>, request: McpRequest, conn: DbConn) -> DesktopResponse {
+    let connection = match authenticated(&request, &conn).await {
+        Ok(c) => c,
+        Err(response) => return response,
+    };
+    drop(conn);
+    let body = match data.open(64.kibibytes()).into_bytes().await {
+        Ok(b) if b.is_complete() => b.into_inner(),
+        _ => return DesktopResponse::error(Status::BadRequest, "invalid_request", "Unreadable or too large body."),
+    };
+    let Ok(ack) = serde_json::from_slice::<reins_proto::desktop::RevocationAck>(&body) else {
+        return DesktopResponse::error(Status::BadRequest, "invalid_request", "The body is not a RevocationAck.");
+    };
+    HUB.revocations.ack(&connection.uuid, &ack);
+    DesktopResponse::json(Status::Ok, json!({}))
 }
 
 #[cfg(test)]
@@ -473,20 +486,46 @@ mod tests {
     }
 
     #[test]
-    fn revocations_wait_for_their_computer_bounded_and_are_handed_over_once() {
+    fn revocations_wait_for_their_computer_until_acknowledged_and_are_never_lost_silently() {
         let r = crate::api::reins::Revocations::default();
-        r.post("c1", "a".into(), 100);
-        r.post("c2", "b".into(), 100);
-        r.post("c1", String::new(), 100);
-        r.post("c1", "x".repeat(crate::api::reins::MAX_REVOCATION_CHARS + 1), 100);
-        assert_eq!(r.take("c1", 101), ["a"]);
-        assert!(r.take("c1", 101).is_empty(), "taken once");
-        for i in 0..30 {
-            r.post("c3", format!("n{i}"), 100);
+        let sealed = |m: &desktop::RevocationMail| m.items.iter().map(|i| i.sealed.clone()).collect::<Vec<_>>();
+        r.post("c1", "a".into(), false, 100);
+        r.post("c2", "b".into(), false, 100);
+        r.post("c1", String::new(), false, 100);
+        r.post("c1", "x".repeat(crate::api::reins::MAX_REVOCATION_CHARS + 1), false, 100);
+        let mail = r.peek("c1", 101);
+        assert_eq!((sealed(&mail), mail.lost), (vec!["a".to_owned()], false));
+        assert_eq!(r.peek("c1", 101), mail, "kept until acknowledged");
+        r.ack(
+            "c1",
+            &desktop::RevocationAck {
+                ids: vec![mail.items[0].id.clone()],
+                lost: false,
+            },
+        );
+        assert!(r.peek("c1", 101).items.is_empty());
+
+        // Everything: it supersedes what came before, and later ones never push it out.
+        r.post("c3", "e1".into(), false, 100);
+        r.post("c3", "all".into(), true, 100);
+        for i in 0..desktop::MAX_REVOCATIONS + 5 {
+            r.post("c3", format!("n{i}"), false, 100);
         }
-        let kept = r.take("c3", 101);
-        assert_eq!((kept.len(), kept[0].as_str()), (desktop::MAX_REVOCATIONS, "n10"));
-        assert!(r.take("c2", 100 + desktop::REVOCATION_TTL_SECS).is_empty(), "a day at most");
+        let mail = r.peek("c3", 101);
+        assert_eq!(sealed(&mail)[0], "all");
+        assert!(!sealed(&mail).contains(&"e1".to_owned()), "superseded");
+        assert_eq!(mail.items.len(), desktop::MAX_REVOCATIONS + 1);
+        assert!(mail.lost, "some were dropped: the computer drops every lease");
+        let ids: Vec<String> = mail.items.iter().map(|i| i.id.clone()).collect();
+        r.ack(
+            "c3",
+            &desktop::RevocationAck {
+                ids,
+                lost: true,
+            },
+        );
+        assert_eq!(r.peek("c3", 101), desktop::RevocationMail::default());
+        assert!(r.peek("c2", 100 + desktop::REVOCATION_TTL_SECS).items.is_empty(), "a day at most");
     }
 
     #[test]

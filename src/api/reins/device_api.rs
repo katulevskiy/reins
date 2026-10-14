@@ -486,7 +486,7 @@ async fn post_revocations(data: Data<'_>, headers: Headers, key: DeviceKey, conn
     let now = now_unix();
     for item in post.items {
         if ReinsConnection::find_by_uuid_and_user(&item.connection_id, &headers.user.uuid, &conn).await.is_some() {
-            HUB.revocations.post(&item.connection_id, item.sealed, now);
+            HUB.revocations.post(&item.connection_id, item.sealed, item.all, now);
         }
     }
     Ok(Status::NoContent)

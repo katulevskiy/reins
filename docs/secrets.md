@@ -201,9 +201,13 @@ and its grants end with it (existing).
   and drops them; the phone's grant/activity pages get **Revoke on all computers**: the environment's standing
   permissions end on the phone, and a `LeaseRevocation` sealed to each paired computer's key goes to the server
   (`POST /reins/api/desktop/revocations`, from the approval device). The server keeps each in memory for a day at most
-  (20 per computer) until that computer's daemon takes it (`GET /reins/desktop/revocations`, polled while it holds
-  leases). A revocation only ever takes leases away, so one the server makes up (it knows the public key) can only
-  make the computer ask again.
+  until that computer's daemon has applied it: the daemon picks them up (`GET /reins/desktop/revocations`, polled
+  while it holds leases), applies them, then acknowledges them by id (`POST /reins/desktop/revocations/ack`), and the
+  server forgets only what was acknowledged. A revocation of everything (marked `all` beside its box) supersedes the
+  ones before it and is never pushed out by others; the others are kept up to 50 per computer, and when one has to go
+  the mailbox says `lost`, which makes the daemon drop every lease. One that does not open on the computer is logged
+  and treated as a revocation of everything. A revocation only ever takes leases away, so one the server makes up (it
+  knows the public key) can only make the computer ask again.
 - A child process that already received values keeps them (the OS gives no way back); leases stop new releases.
 
 ### 3.5 Other ways in

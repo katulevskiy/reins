@@ -264,11 +264,17 @@ decides what the release is bound to and says so inside the sealed answer: exact
 you picked on the phone (`npm run *`; never for shells, interpreters, launchers or the program alone). A standing
 permission binds the same things, and every one of them is compared. Production environments, and those whose
 `reins.toml` says `confirm = "always"`, are asked every time unless you change that on the phone; the repository can
-make an environment stricter, never looser. Values sent from the computer (`reins secrets set`, import) travel in a box
+make an environment stricter, never looser; those are released for one run only, and the phone caps how long any
+release is kept (8 hours, never past the permission that covers it). A program outside the usual system folders is shown
+by its whole path, with a warning row when it sits in a temporary folder, in the project's folder or off the login
+`PATH`. Values sent from the computer (`reins secrets set`, import) travel in a box
 to the phone's own key, as `reins vault add`'s do, with one set of four check digits over the whole batch. A git host's
 token found on the computer goes the same way to the phone's integration. **Revoke on all computers** ends the
 permissions on the phone and leaves, for each paired computer, a note sealed to its key on the server; its daemon picks
-it up and drops what it holds. The server cannot read the note, and one it made up could only make a computer ask again.
+it up, drops what it holds, and only then acknowledges it, so the server forgets only notes that were applied; a note
+for everything outranks the others, notes dropped to stay within bounds make the computer drop everything, and a note
+that does not open counts as one for everything. The server cannot read the note, and one it made up could only make a
+computer ask again.
 
 ## What the server sees
 

@@ -718,8 +718,13 @@ async fn revoking_on_all_computers_ends_the_permissions_and_tells_every_computer
     assert_eq!(posted[0]["items"][0]["connection_id"], DESK);
     let revocation: reins_proto::desktop::LeaseRevocation = desk.open(&posted[0]["items"][0]["sealed"]);
     assert_eq!(revocation.project.as_deref(), Some("acme"));
+    assert!(posted[0]["items"][0].get("all").is_none(), "one project: not a revocation of everything");
     desk.send(&[release(&desk, "r2", &DEV)]).await;
     assert_eq!(desk.waiting().await, ["r2"], "the permission ended");
+    // Everything: the server is told, so it keeps it above the others.
+    desk.core.revoke_secrets_everywhere(None, None).await.unwrap();
+    let posted = sent(&desk, "POST", "/reins/api/desktop/revocations").await;
+    assert_eq!(posted.last().unwrap()["items"][0]["all"], true);
 }
 
 // ---- a git host's token ---------------------------------------------------------------------------------------------

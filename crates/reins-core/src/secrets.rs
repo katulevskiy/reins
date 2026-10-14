@@ -285,6 +285,7 @@ impl Engine {
             items.push(SealedRevocation {
                 connection_id,
                 sealed: seal(key, &revocation)?,
+                all: revocation.project.is_none(),
             });
         }
         if items.is_empty() {

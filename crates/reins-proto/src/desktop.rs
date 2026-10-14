@@ -1674,8 +1674,9 @@ pub struct LeaseRevocation {
     pub env: Option<String>,
 }
 
-/// The most revocations the server keeps for one computer until its daemon picks them up, and for how long.
-pub const MAX_REVOCATIONS: usize = 20;
+/// The most revocations of single projects or environments the server keeps for one computer until its daemon
+/// acknowledges them, and for how long (a revocation of everything is kept apart, one at a time: the newest).
+pub const MAX_REVOCATIONS: usize = 50;
 pub const REVOCATION_TTL_SECS: i64 = 24 * 3_600;
 
 /// One [`LeaseRevocation`] sealed to one paired computer (`POST /reins/api/desktop/revocations`, from the phone).
@@ -1684,6 +1685,10 @@ pub struct SealedRevocation {
     pub connection_id: String,
     /// The [`LeaseRevocation`] JSON in a sealed box to the computer's pinned key (base64url).
     pub sealed: String,
+    /// It drops every lease (no project named): the server keeps it above any other and lets it supersede what came
+    /// before. What the server does with this can only make the computer drop more.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub all: bool,
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -1691,11 +1696,32 @@ pub struct RevocationPost {
     pub items: Vec<SealedRevocation>,
 }
 
+/// One revocation waiting for a computer, under the id the server gave it (to acknowledge it by).
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct MailedRevocation {
+    pub id: String,
+    /// [`SealedRevocation::sealed`].
+    pub sealed: String,
+}
+
 /// What a computer's daemon picks up (`GET /reins/desktop/revocations`): the sealed revocations for it, oldest first.
-/// Picking them up removes them from the server.
+/// They stay on the server until the daemon acknowledges them ([`RevocationAck`]), after it applied them.
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct RevocationMail {
-    pub items: Vec<String>,
+    pub items: Vec<MailedRevocation>,
+    /// Revocations for this computer were dropped to stay within bounds since the last acknowledgement: the daemon
+    /// drops every lease.
+    #[serde(default)]
+    pub lost: bool,
+}
+
+/// `POST /reins/desktop/revocations/ack`: the revocations the daemon applied (by [`MailedRevocation::id`]), and that it
+/// acted on `lost`. The server forgets only these.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RevocationAck {
+    pub ids: Vec<String>,
+    #[serde(default)]
+    pub lost: bool,
 }
 
 /// SHA-256 (lowercase hex) binding an approval to exactly what git sends: the repository, every `old new ref`
