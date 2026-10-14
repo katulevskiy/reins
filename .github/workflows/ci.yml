@@ -146,10 +146,16 @@ jobs:
           tool: nextest@0.9.146
       # Cargo builds the normal server binary for tests/reins_server (CARGO_BIN_EXE_vaultwarden).
       # Nextest compiles all targets before starting E2E tests, so a separate server build is redundant.
+      # The tests' temporary directories on tmpfs: the encrypted store rewrites and syncs its whole file on every
+      # change, and on the runner's disk store::audit::tests::retention_is_bounded (5,000 appends) alone took four
+      # minutes of the run's five. The tests and what they check are unchanged.
       - name: Run all Rust tests
         env:
           REINS_TEST_SERVER_BINARY: ${{ github.workspace }}/target/debug/vaultwarden
-        run: cargo nextest run --locked --workspace --exclude reins-desktop-app --features sqlite --no-fail-fast --test-threads 8
+        run: |
+          export TMPDIR=/dev/shm/reins-tests
+          mkdir -p "$TMPDIR"
+          cargo nextest run --locked --workspace --exclude reins-desktop-app --features sqlite --no-fail-fast --test-threads 8
       # Nextest does not run doctests; retain Cargo's separate documentation test pass.
       - name: Documentation tests
         run: cargo test --locked --workspace --exclude reins-desktop-app --features sqlite --doc
