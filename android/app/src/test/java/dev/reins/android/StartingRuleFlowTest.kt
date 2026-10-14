@@ -19,25 +19,25 @@ import org.robolectric.annotation.GraphicsMode
 class StartingRuleFlowTest : FlowHarness() {
     @Test
     fun theRuleIsChangedUnderGrants() {
-        core.startingPolicy = StartingPolicy.READS_FOR_A_DAY
+        core.startingPolicy = StartingPolicy.HEADLINES_FIRST_HOUR
         launch()
         tap("tabGrants")
         tap("rule:ASK_EVERY_TIME")
         awaitCore { core.startingPolicy == StartingPolicy.ASK_EVERY_TIME }
-        tap("rule:READS_FOR_A_DAY")
-        awaitCore { core.startingPolicy == StartingPolicy.READS_FOR_A_DAY }
+        tap("rule:HEADLINES_FIRST_HOUR")
+        awaitCore { core.startingPolicy == StartingPolicy.HEADLINES_FIRST_HOUR }
         tap("help:${dev.reins.android.ui.grants.StartingRuleText.HEADER}")
-        awaitText("Always asks, whatever you choose", substring = true)
+        awaitText("Codes and passwords always ask", substring = true)
     }
 
     @Test
     fun thePairingSheetSaysWhatConnectingGives() {
-        core.startingPolicy = StartingPolicy.READS_FOR_A_DAY
+        core.startingPolicy = StartingPolicy.HEADLINES_FIRST_HOUR
         core.pending = listOf(TestData.pairingItem("p1"))
         core.pairing = PairingView("p1", "Claude", "claude.ai", byteArrayOf(7, 42, 88), 1_700_000_200, null)
         launch(link("pairing", "p1"))
         awaitTag("startingRuleNote")
-        rule.onNodeWithTag("startingRuleNote").assertTextContains("search and read for 24 hours", substring = true)
+        rule.onNodeWithTag("startingRuleNote").assertTextContains("headlines only", substring = true)
     }
 
     @Test
