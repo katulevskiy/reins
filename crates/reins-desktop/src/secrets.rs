@@ -400,7 +400,7 @@ mod tests {
             project: None,
             env: None,
             revision: None,
-            command_pattern: None,
+            command: None,
         }
     }
 

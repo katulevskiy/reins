@@ -493,9 +493,10 @@ pub struct SecretGrant {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub revision: Option<String>,
     /// `vault_env_release`: the commands the desktop app may hand these values to until they expire, without asking
-    /// again: the exact command, or the pattern (`npm run *`) a standing permission the user chose names.
+    /// again: exactly the command approved, or the argument prefix the user chose on the phone. The variables it may
+    /// hand them for are the names in `secrets`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub command_pattern: Option<String>,
+    pub command: Option<CommandScope>,
 }
 
 impl std::fmt::Debug for SecretGrant {
@@ -694,15 +695,270 @@ pub fn var_ok(name: &str) -> bool {
         && name.len() <= 100
 }
 
-/// A command pattern of a standing permission for secrets: the exact command, or a prefix ending in `*`
-/// (`npm run *`). Spaces are compared as single spaces.
+/// The most arguments a command of a release may have, and the longest one.
+pub const MAX_ARGS: usize = 64;
+pub const MAX_ARG: usize = 1_000;
+
+/// The commands a release (or a standing permission for secrets) covers. `reins run` never uses a shell: a command is
+/// the program and its argument list as spawned, compared as whole arguments, never as text.
+///
+/// - exact (`prefix` false): this program with exactly these arguments;
+/// - prefix (`prefix` true): this program with these first arguments, then zero or more whole arguments of any kind
+///   (`npm run *` covers `npm run test --watch`, never `npm runx`). Allowed only where [`prefix_refusal`] says
+///   nothing: never for shells, interpreters and launchers, and never on the program alone.
+#[derive(Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub struct CommandScope {
+    /// The program, by its absolute path when the computer could resolve it (so another `npm` elsewhere on PATH is
+    /// another program).
+    pub program: String,
+    pub args: Vec<String>,
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub prefix: bool,
+}
+
+/// Programs that run whatever their arguments say (shells, interpreters, launchers, wrappers): a prefix of their
+/// arguments covers arbitrary code, so they are only ever allowed exactly.
+const NO_PREFIX_PROGRAMS: &[&str] = &[
+    "sh",
+    "bash",
+    "zsh",
+    "fish",
+    "dash",
+    "ksh",
+    "mksh",
+    "csh",
+    "tcsh",
+    "ash",
+    "busybox",
+    "nu",
+    "elvish",
+    "xonsh",
+    "python",
+    "pypy",
+    "node",
+    "nodejs",
+    "deno",
+    "bun",
+    "bunx",
+    "npx",
+    "uvx",
+    "pipx",
+    "ruby",
+    "irb",
+    "perl",
+    "php",
+    "lua",
+    "luajit",
+    "java",
+    "jshell",
+    "rscript",
+    "julia",
+    "osascript",
+    "pwsh",
+    "powershell",
+    "cmd",
+    "wsl",
+    "env",
+    "xargs",
+    "parallel",
+    "sudo",
+    "doas",
+    "su",
+    "runas",
+    "pkexec",
+    "nohup",
+    "time",
+    "timeout",
+    "exec",
+    "eval",
+    "watch",
+    "nice",
+    "ionice",
+    "taskset",
+    "chrt",
+    "setsid",
+    "stdbuf",
+    "script",
+    "strace",
+    "ltrace",
+    "gdb",
+    "lldb",
+    "chroot",
+    "flock",
+    "entr",
+    "nodemon",
+    "nix-shell",
+    "nix",
+    "make",
+    "gmake",
+    "ssh",
+    "find",
+    "awk",
+    "gawk",
+    "mawk",
+    "sed",
+    "expect",
+    "tclsh",
+    "wish",
+    "start",
+    "open",
+    "xdg-open",
+];
+
+/// A program's first argument that makes it run arbitrary code, packages or containers: a prefix through it is refused.
+const NO_PREFIX_SUBCOMMANDS: &[(&str, &str)] = &[
+    ("npm", "exec"),
+    ("npm", "x"),
+    ("npm", "explore"),
+    ("pnpm", "dlx"),
+    ("pnpm", "exec"),
+    ("pnpm", "x"),
+    ("yarn", "dlx"),
+    ("yarn", "exec"),
+    ("cargo", "run"),
+    ("cargo", "x"),
+    ("uv", "run"),
+    ("uv", "tool"),
+    ("poetry", "run"),
+    ("pipenv", "run"),
+    ("pdm", "run"),
+    ("hatch", "run"),
+    ("go", "run"),
+    ("docker", "run"),
+    ("docker", "exec"),
+    ("docker", "compose"),
+    ("podman", "run"),
+    ("podman", "exec"),
+    ("kubectl", "exec"),
+    ("kubectl", "run"),
+    ("git", "-c"),
+    ("dotnet", "run"),
+    ("dotnet", "exec"),
+    ("mvn", "exec:java"),
+    ("gradle", "run"),
+];
+
+/// The program's name as compared with the lists above: its file name, lower case, without a Windows extension, and
+/// without a version (`python3.12` is `python`).
 #[must_use]
-pub fn command_matches(pattern: &str, command: &str) -> bool {
-    let norm = |s: &str| s.split_whitespace().collect::<Vec<_>>().join(" ");
-    let (pattern, command) = (norm(pattern), norm(command));
-    match pattern.strip_suffix('*') {
-        Some(prefix) => !prefix.trim().is_empty() && command.starts_with(prefix),
-        None => pattern == command,
+pub fn program_name(program: &str) -> String {
+    let file = program.rsplit(['/', '\\']).next().unwrap_or(program).to_ascii_lowercase();
+    let file = [".exe", ".cmd", ".bat", ".com", ".ps1"].iter().find_map(|x| file.strip_suffix(x)).unwrap_or(&file);
+    file.trim_end_matches(|c: char| c.is_ascii_digit() || c == '.').to_owned()
+}
+
+/// Why `program` with the first arguments `args` may not be a prefix pattern; `None` when it may.
+#[must_use]
+pub fn prefix_refusal(program: &str, args: &[String]) -> Option<String> {
+    let name = program_name(program);
+    if NO_PREFIX_PROGRAMS.contains(&name.as_str()) {
+        return Some(format!("{name} runs whatever it is given: only the exact command can be allowed"));
+    }
+    let Some(first) = args.first() else {
+        return Some(format!("a pattern names {name} and at least one subcommand (`{name} run *`)"));
+    };
+    if first.starts_with('-') {
+        return Some(format!("a pattern names a subcommand of {name}, not an option"));
+    }
+    if args.iter().any(|a| NO_PREFIX_SUBCOMMANDS.iter().any(|(p, s)| *p == name && a == s)) {
+        return Some(format!("{name} {first} runs whatever it is given: only the exact command can be allowed"));
+    }
+    if args.iter().any(|a| a == "--") {
+        return Some("arguments after `--` are allowed only exactly".to_owned());
+    }
+    None
+}
+
+fn clean_arg(a: &str) -> bool {
+    a.chars().count() <= MAX_ARG && !a.chars().any(char::is_control)
+}
+
+impl CommandScope {
+    #[must_use]
+    pub fn exact(program: &str, args: &[String]) -> Self {
+        Self {
+            program: program.to_owned(),
+            args: args.to_vec(),
+            prefix: false,
+        }
+    }
+
+    /// Bounds, and for a prefix [`prefix_refusal`].
+    pub fn validate(&self) -> Result<(), String> {
+        if self.program.trim().is_empty() || !clean_arg(&self.program) {
+            return Err("a command needs a program".to_owned());
+        }
+        if self.args.len() > MAX_ARGS || !self.args.iter().all(|a| clean_arg(a)) {
+            return Err(format!("a command has at most {MAX_ARGS} arguments of at most {MAX_ARG} characters"));
+        }
+        match self.prefix.then(|| prefix_refusal(&self.program, &self.args)).flatten() {
+            Some(why) => Err(why),
+            None => Ok(()),
+        }
+    }
+
+    /// Whether `program` with `args` is covered: the same program, then the same arguments (all of them, or these
+    /// first ones and any whole arguments after). A prefix that fails [`prefix_refusal`] covers nothing.
+    #[must_use]
+    pub fn matches(&self, program: &str, args: &[String]) -> bool {
+        if program != self.program {
+            return false;
+        }
+        if self.prefix {
+            prefix_refusal(&self.program, &self.args).is_none() && args.starts_with(&self.args)
+        } else {
+            args == self.args.as_slice()
+        }
+    }
+
+    /// Whether every command this one covers is covered by `wider` too.
+    #[must_use]
+    pub fn within(&self, wider: &Self) -> bool {
+        if self.program != wider.program {
+            return false;
+        }
+        if wider.prefix {
+            prefix_refusal(&wider.program, &wider.args).is_none() && self.args.starts_with(&wider.args)
+        } else {
+            !self.prefix && self.args == wider.args
+        }
+    }
+
+    /// The patterns that can be offered for this exact command, narrowest first: the command itself, then each
+    /// shorter allowed prefix (never the program alone).
+    #[must_use]
+    pub fn offers(&self) -> Vec<Self> {
+        let mut out = vec![Self::exact(&self.program, &self.args)];
+        for k in (1..self.args.len()).rev() {
+            let fixed = &self.args[..k];
+            if prefix_refusal(&self.program, fixed).is_none() {
+                out.push(Self {
+                    program: self.program.clone(),
+                    args: fixed.to_vec(),
+                    prefix: true,
+                });
+            }
+        }
+        out
+    }
+
+    /// As shown to the user: the program's name and the arguments (quoted when they hold spaces or quotes), then ` *`
+    /// for a prefix.
+    #[must_use]
+    pub fn shown(&self) -> String {
+        let quote = |a: &str| {
+            if a.is_empty() || a.chars().any(|c| c.is_whitespace() || matches!(c, '"' | '\'' | '*')) {
+                format!("'{}'", a.replace('\'', r"'\''"))
+            } else {
+                a.to_owned()
+            }
+        };
+        let file = self.program.rsplit(['/', '\\']).next().unwrap_or(&self.program);
+        let mut words: Vec<String> = std::iter::once(quote(file)).chain(self.args.iter().map(|a| quote(a))).collect();
+        if self.prefix {
+            words.push("*".to_owned());
+        }
+        words.join(" ")
     }
 }
 
@@ -1349,14 +1605,99 @@ mod tests {
         assert!(var_ok("_X1") && !var_ok("1X") && !var_ok("A-B"));
     }
 
+    fn argv(words: &[&str]) -> Vec<String> {
+        words.iter().map(|w| (*w).to_owned()).collect()
+    }
+
+    fn prefix(program: &str, args: &[&str]) -> CommandScope {
+        CommandScope {
+            program: program.to_owned(),
+            args: argv(args),
+            prefix: true,
+        }
+    }
+
     #[test]
-    fn command_patterns_are_exact_or_a_prefix() {
-        assert!(command_matches("npm run dev", "npm  run dev"));
-        assert!(!command_matches("npm run dev", "npm run dev --watch"));
-        assert!(command_matches("npm run *", "npm run test"));
-        assert!(!command_matches("npm run *", "npx evil"));
-        assert!(!command_matches("*", "anything"), "a bare * covers nothing");
-        assert!(!command_matches(" *", "anything"));
+    fn commands_match_as_whole_arguments() {
+        let npm = "/usr/bin/npm";
+        let run = prefix(npm, &["run"]);
+        run.validate().unwrap();
+        assert!(run.matches(npm, &argv(&["run", "test", "--watch"])));
+        assert!(run.matches(npm, &argv(&["run"])), "zero extra arguments");
+        assert!(!run.matches(npm, &argv(&["runx"])), "never a partial argument");
+        assert!(!run.matches(npm, &argv(&["exec", "run"])));
+        assert!(!run.matches("/home/me/evil/npm", &argv(&["run", "dev"])), "another npm on PATH");
+        let exact = CommandScope::exact(npm, &argv(&["run", "dev"]));
+        assert!(exact.matches(npm, &argv(&["run", "dev"])));
+        assert!(!exact.matches(npm, &argv(&["run", "test"])));
+        assert!(!exact.matches(npm, &argv(&["run", "dev", "--", "x"])));
+        // An argument with a space is one argument: it is never split into two.
+        let spaced = CommandScope::exact("/bin/echo", &argv(&["a b"]));
+        assert!(spaced.matches("/bin/echo", &argv(&["a b"])) && !spaced.matches("/bin/echo", &argv(&["a", "b"])));
+        assert_eq!(spaced.shown(), "echo 'a b'");
+        assert_eq!(prefix(npm, &["run"]).shown(), "npm run *");
+        let git = prefix("/usr/bin/git", &["push"]);
+        assert!(!git.matches("/usr/bin/git", &argv(&["push-evil"])));
+        assert!(exact.within(&run) && !run.within(&exact) && prefix(npm, &["run", "dev"]).within(&run));
+    }
+
+    #[test]
+    fn launchers_and_bare_programs_are_never_a_prefix() {
+        for (program, args) in [
+            ("/bin/bash", vec!["-c"]),
+            ("/bin/sh", vec!["-c"]),
+            ("/usr/bin/python3.12", vec!["manage.py"]),
+            ("/usr/bin/node", vec!["server.js"]),
+            ("/usr/bin/npx", vec!["vite"]),
+            ("/usr/bin/env", vec!["FOO=1"]),
+            ("/usr/bin/xargs", vec!["echo"]),
+            ("/usr/bin/sudo", vec!["make"]),
+            ("/usr/bin/make", vec!["deploy"]),
+            ("/usr/bin/ssh", vec!["host"]),
+            ("/usr/bin/docker", vec!["run"]),
+            ("/usr/bin/docker", vec!["compose", "up"]),
+            ("/usr/bin/uv", vec!["run"]),
+            ("/usr/bin/bunx", vec!["x"]),
+            ("/usr/bin/deno", vec!["run"]),
+            ("/usr/bin/ruby", vec!["x.rb"]),
+            ("/usr/bin/perl", vec!["x"]),
+            ("/usr/bin/php", vec!["artisan"]),
+            ("C:\\Windows\\System32\\cmd.exe", vec!["/c"]),
+            ("C:\\x\\pwsh.exe", vec!["-File"]),
+            ("/usr/bin/osascript", vec!["x"]),
+            ("/usr/bin/nohup", vec!["x"]),
+            ("/usr/bin/time", vec!["x"]),
+            ("/usr/bin/timeout", vec!["5"]),
+            ("/usr/bin/watch", vec!["x"]),
+            ("/usr/bin/nix-shell", vec!["--run"]),
+            ("/usr/bin/npm", vec!["exec"]),
+            ("/usr/bin/pnpm", vec!["dlx"]),
+            ("/usr/bin/yarn", vec!["dlx"]),
+            ("/usr/bin/cargo", vec!["run"]),
+            ("/usr/bin/npm", vec![]),
+            ("/usr/bin/npm", vec!["--prefix"]),
+            ("/usr/bin/npm", vec!["run", "--"]),
+            ("/usr/bin/git", vec!["-c"]),
+        ] {
+            let p = prefix(program, &args);
+            assert!(p.validate().is_err(), "{program} {args:?}");
+            let mut more = args.iter().map(|a| (*a).to_owned()).collect::<Vec<_>>();
+            more.push("anything".to_owned());
+            assert!(!p.matches(program, &more), "a refused prefix covers nothing: {program} {args:?}");
+        }
+        // Their exact commands can still be allowed.
+        CommandScope::exact("/bin/bash", &argv(&["-c", "make"])).validate().unwrap();
+    }
+
+    #[test]
+    fn the_offers_are_the_command_then_each_allowed_prefix() {
+        let c = CommandScope::exact("/usr/bin/npm", &argv(&["run", "dev", "--watch"]));
+        let shown: Vec<String> = c.offers().iter().map(CommandScope::shown).collect();
+        assert_eq!(shown, ["npm run dev --watch", "npm run dev *", "npm run *"]);
+        let shell = CommandScope::exact("/bin/sh", &argv(&["-c", "x"]));
+        assert_eq!(shell.offers(), vec![shell], "a shell is only ever exact");
+        let cargo = CommandScope::exact("/usr/bin/cargo", &argv(&["run", "--", "x"]));
+        assert_eq!(cargo.offers().len(), 1);
     }
 
     #[test]
@@ -1373,7 +1714,7 @@ mod tests {
     fn a_secret_grant_without_an_environment_reads_as_before() {
         let old = r#"{"v":1,"nonce":"n","secrets":[["A/password","x"]],"expires_at":5}"#;
         let g: SecretGrant = serde_json::from_str(old).unwrap();
-        assert_eq!((&g.project, &g.env, &g.revision, &g.command_pattern), (&None, &None, &None, &None));
+        assert_eq!((&g.project, &g.env, &g.revision, &g.command), (&None, &None, &None, &None));
         assert_eq!(serde_json::to_string(&g).unwrap(), old);
     }
 
