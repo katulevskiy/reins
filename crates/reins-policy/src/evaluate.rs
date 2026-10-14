@@ -45,7 +45,7 @@ pub fn evaluate_read(grants: &[Grant], connection: &ConnectionId, messages: &[Me
         .into_iter()
         .filter_map(|g| match &g.scope {
             Scope::Read(s) => Some((g, s)),
-            Scope::Send(_) | Scope::Accounts(_) | Scope::Service(_) | Scope::Headlines(_) => None,
+            Scope::Send(_) | Scope::Accounts(_) | Scope::Service(_) | Scope::Headlines(_) | Scope::Secrets(_) => None,
         })
         .collect();
     let mut decision = ReadDecision::default();
@@ -88,6 +88,22 @@ pub fn service_allows(
             g.covers_account(account)
                 && matches!(&g.scope, Scope::Service(s) if s.covers(service, access, class, op, resource))
         })
+        .map(|g| g.id.clone())
+}
+
+/// The active grant that lets `connection`, acting as `account` (the vault), have the secrets `facts` describes
+/// released to it without asking, if there is one.
+#[must_use]
+pub fn secrets_allows(
+    grants: &[Grant],
+    connection: &ConnectionId,
+    account: Option<&str>,
+    facts: &crate::SecretsFacts<'_>,
+    now: i64,
+) -> Option<GrantId> {
+    candidates(grants, connection, now)
+        .into_iter()
+        .find(|g| g.covers_account(account) && matches!(&g.scope, Scope::Secrets(s) if s.covers(facts)))
         .map(|g| g.id.clone())
 }
 
