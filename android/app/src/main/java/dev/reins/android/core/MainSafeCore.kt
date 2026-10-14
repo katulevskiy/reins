@@ -109,6 +109,7 @@ class MainSafeCore(
         io { createGrant(connectionId, account, kind, standing) }
 
     override suspend fun resumeGrant(grantId: String, durationSecs: ULong) = io { resumeGrant(grantId, durationSecs) }
+    override suspend fun extendGrant(grantId: String, durationSecs: ULong) = io { extendGrant(grantId, durationSecs) }
 
     override suspend fun resumeGrantEdited(grantId: String, standing: StandingGrant) = io { resumeGrantEdited(grantId, standing) }
 

@@ -5,9 +5,9 @@ import dev.reins.core.GrantScopeChoice
 import dev.reins.core.StandingGrant
 
 enum class NewGrantLifetime(val label: String, val seconds: Long?) {
-    ONE_TIME("One time", null),
+    ONE_TIME("Once", null),
     HOUR("1 hour", 3_600),
-    DAY("24 hours", 86_400),
+    DAY("1 day", 86_400),
     WEEK("7 days", 604_800),
     MONTH("30 days", 2_592_000),
 }
@@ -23,7 +23,7 @@ data class NewGrantDraft(
     /** Addresses (`a@b.com`) and domains (`@b.com` or `b.com`), separated by commas, spaces or lines. */
     val partiesText: String = "",
     val subject: String = "",
-    val lifetime: NewGrantLifetime = NewGrantLifetime.DAY,
+    val lifetime: NewGrantLifetime = NewGrantLifetime.HOUR,
 )
 
 sealed interface NewGrantResult {
@@ -48,7 +48,7 @@ fun buildNewGrant(draft: NewGrantDraft): NewGrantResult {
     if (draft.anyMail && draft.send) return NewGrantResult.Invalid("Sending cannot be allowed for everyone.")
     if (draft.anyMail) {
         val ok = draft.lifetime.seconds != null && draft.lifetime.seconds <= NewGrantLifetime.WEEK.seconds!!
-        if (!ok) return NewGrantResult.Invalid("Allowing all mail needs a time limit of 1 hour, 24 hours or 7 days.")
+        if (!ok) return NewGrantResult.Invalid("Allowing all mail needs a time limit of 1 hour, 1 day or 7 days.")
     } else if (draft.send && addresses.isEmpty() && domains.isEmpty()) {
         return NewGrantResult.Invalid("Enter who it may send to: addresses like a@b.com or domains like @b.com.")
     } else if (!draft.send && addresses.isEmpty() && domains.isEmpty() && subject == null) {

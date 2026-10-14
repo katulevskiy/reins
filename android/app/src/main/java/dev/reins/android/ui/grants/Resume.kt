@@ -91,6 +91,28 @@ suspend fun resumeGrant(
     e.userMessage()
 }
 
+/**
+ * Lets a running grant go on for [seconds] from now (its uses so far stay). It gives access for longer, so it needs
+ * the same authentication as approving. Returns the reason it did not happen, or null.
+ */
+suspend fun extendGrant(container: AppContainer, authenticator: Authenticator, grantId: String, seconds: Long): String? = try {
+    when (authenticator.authenticate("Extend grant", "")) {
+        AuthResult.Success -> {
+            container.feedback.play(Event.GrantCreated)
+            container.core.extendGrant(grantId, seconds.toULong())
+            container.refreshPending()
+            null
+        }
+        AuthResult.Cancelled -> null
+        AuthResult.Unavailable -> "Set a screen lock or fingerprint on this phone first.".also { container.feedback.play(Event.Error) }
+    }
+} catch (e: CancellationException) {
+    throw e
+} catch (e: Exception) {
+    container.feedback.play(Event.Error)
+    e.userMessage()
+}
+
 /** Removes an ended grant for good. Returns the reason it did not happen, or null. */
 suspend fun deleteGrant(container: AppContainer, grantId: String): String? = try {
     container.feedback.play(Event.Revoked)

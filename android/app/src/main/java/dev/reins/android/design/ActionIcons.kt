@@ -19,6 +19,7 @@ import androidx.compose.material.icons.rounded.PhoneAndroid
 import androidx.compose.material.icons.rounded.Search
 import androidx.compose.material.icons.rounded.UploadFile
 import androidx.compose.material.icons.rounded.VerifiedUser
+import androidx.compose.material.icons.rounded.ViewHeadline
 import androidx.compose.material3.Icon
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
@@ -35,6 +36,8 @@ enum class ActionKind(val key: String) {
     Search("search"),
     List("list"),
     Read("read"),
+    /** A new AI's first hour: what a search or a list finds, headlines only (sender, subject, date; names). */
+    Headlines("headlines"),
     Write("write"),
     Send("send"),
     Grant("grant"),
@@ -52,6 +55,7 @@ enum class ActionKind(val key: String) {
             List -> Icons.AutoMirrored.Rounded.List
             Write -> Icons.Rounded.Edit
             Read -> Icons.Rounded.MarkEmailRead
+            Headlines -> Icons.Rounded.ViewHeadline
             Send -> Icons.AutoMirrored.Rounded.Send
             Grant -> Icons.Rounded.VerifiedUser
             Accounts -> Icons.Rounded.People
@@ -66,6 +70,7 @@ enum class ActionKind(val key: String) {
         List -> c.search
         Write -> c.send
         Read -> c.read
+        Headlines -> c.read
         Send -> c.send
         Grant -> c.grant
         Accounts -> c.accounts

@@ -131,7 +131,7 @@ class FeedbackFlowTest : FlowHarness() {
         awaitCore { Cue.Open in heard.cues } // the page opens with its cue
         tap("revoke")
         heard.clear()
-        rule.onAllNodes(hasText("Delete")).let { it[it.fetchSemanticsNodes().lastIndex] }.performClick()
+        rule.onAllNodes(hasText("End now")).let { it[it.fetchSemanticsNodes().lastIndex] }.performClick()
         awaitCore { core.revokedGrants.contains("g1") }
         assertTrue(heard.played(Event.Revoked))
     }

@@ -6,6 +6,7 @@ import android.view.WindowManager
 import androidx.compose.ui.semantics.SemanticsActions
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.assertTextContains
+import androidx.compose.ui.test.assertTextEquals
 import androidx.compose.ui.test.assertCountEquals
 import androidx.compose.ui.test.assertIsEnabled
 import androidx.compose.ui.test.assertIsOff
@@ -322,8 +323,10 @@ class AppFlowTest {
         awaitTag("pending:req1")
         awaitTag("entry:2")
         awaitTag("entry:1")
-        assertTrue(rule.onAllNodes(hasText("Claude: Search Gmail", substring = true)).fetchSemanticsNodes().size >= 2)
-        rule.onNodeWithText("Claude: Send email", substring = true).assertExists()
+        // The waiting card says what it wants; the history says what was done.
+        rule.onNodeWithTag("sentence:req1", useUnmergedTree = true).assertTextContains("Wants to search Gmail", substring = true)
+        rule.onNodeWithTag("entryTitle:1", useUnmergedTree = true).assertTextEquals("Searched Gmail")
+        rule.onNodeWithTag("entryTitle:2", useUnmergedTree = true).assertTextEquals("Sent an email")
     }
 
     /** The number on a nav item, read from its (merged) text; null when there is none. */
@@ -440,9 +443,10 @@ class AppFlowTest {
         )
         launch()
         tap("entry:8")
+        tap("accountsShared")
         awaitTag("sharedAccount:1")
         rule.onNodeWithText("work@corp.example").assertExists()
-        rule.onNodeWithText("See Gmail accounts").assertExists()
+        rule.onNodeWithTag("detailTitle").assertTextContains("Saw Gmail accounts")
     }
 
     @Test
@@ -456,6 +460,7 @@ class AppFlowTest {
         )
         launch()
         tap("entry:5")
+        tap("emailsShared")
         tap("detailMessage:0")
         awaitTag("emailBody")
         rule.onNodeWithText("Dear customer,\nyour statement is attached.\nRegards").assertExists()
@@ -470,6 +475,7 @@ class AppFlowTest {
         )
         launch()
         tap("entry:5")
+        tap("emailsShared")
         tap("detailMessage:0")
         awaitTag("emailError")
         rule.onNodeWithText("Old news").assertExists()
@@ -485,6 +491,7 @@ class AppFlowTest {
         core.activity = listOf(TestData.entry(5, "read", "released", 1u, info = TestData.info(null, old, null, null, null)))
         launch()
         tap("entry:5")
+        tap("emailsShared")
         awaitTag("detailMessage:0")
         rule.onNodeWithTag("detailMessage:0").performClick()
         settle()
@@ -951,11 +958,13 @@ class AppFlowTest {
         )
         Foreground.autoPopup = false
         launch()
-        awaitTextContaining("Reins desktop app on laptop: Clone and fetch with git")
-        awaitTextContaining("Reins desktop app on laptop: Push with git")
+        awaitTag("pending:req21")
+        rule.onNodeWithTag("sentence:req21", useUnmergedTree = true).assertTextContains("Wants to clone and fetch with git", substring = true)
+        rule.onNodeWithTag("entryTitle:7", useUnmergedTree = true).assertTextEquals("Pushed with git")
+        rule.onNodeWithText("Reins desktop app on laptop", substring = true).assertExists()
         tap("entry:7")
         awaitTag("detailTitle")
-        rule.onNodeWithTag("detailTitle").assertTextContains("Push with git")
+        rule.onNodeWithTag("detailTitle").assertTextContains("Pushed with git")
     }
 
     // ---- deep links -----------------------------------------------------------------------------------------------
@@ -1002,6 +1011,7 @@ class AppFlowTest {
         tap("entry:5")
         awaitTag("detailTitle")
         awaitTextContaining("Read 2 emails")
+        tap("emailsShared")
         awaitTag("detailMessage:0")
         rule.onNodeWithText("Your statement").assertExists()
         rule.onNodeWithText("Wire receipt").assertExists()
@@ -1043,12 +1053,12 @@ class AppFlowTest {
         launch()
         tap("tabGrants")
         awaitTag("grant:g1")
-        rule.onNodeWithText("Used 4 times").assertExists()
+        rule.onNodeWithText("Claude · used 4 times").assertExists()
         tap("grant:g1")
         awaitTag("grantTitle")
         rule.onNodeWithText("Read emails from @bank.com").assertExists()
         rule.onNodeWithText("From @bank.com").assertExists()
-        rule.onNodeWithText("Used 4 times").assertExists()
+        rule.onNodeWithTag("uses").assertTextContains("4", substring = true)
         awaitTag("revoke")
     }
 
@@ -1065,7 +1075,7 @@ class AppFlowTest {
         awaitTag("grant:g1")
         assertFalse(has("ended:old"))
         assertFalse("nothing explains the list under the title", rule.onAllNodes(hasText("active. Everything else asks you first.", substring = true)).fetchSemanticsNodes().isNotEmpty())
-        rule.onNodeWithText("Expired · 3").assertExists()
+        rule.onNodeWithTag("expiredHeader").assertTextContains("Expired", substring = true).assertTextContains("3", substring = true)
         tap("expiredHeader")
         awaitTag("ended:old")
         awaitTag("ended:spent")
@@ -1290,7 +1300,7 @@ class AppFlowTest {
         tap("tabGrants")
         tap("grant:g1")
         tap("revoke")
-        rule.onAllNodes(hasText("Delete")).let { it[it.fetchSemanticsNodes().lastIndex] }.performClick()
+        rule.onAllNodes(hasText("End now")).let { it[it.fetchSemanticsNodes().lastIndex] }.performClick()
         awaitCore { core.revokedGrants.isNotEmpty() }
         assertEquals(listOf("g1"), core.revokedGrants.toList())
     }
@@ -1794,7 +1804,8 @@ class AppFlowTest {
     fun aWaitingRequestIsNamedByTheCore() {
         core.pending = listOf(TestData.pending("req10", "write", 1u, service = "github", account = "octo-cat", op = "file_put", opTitle = "Commit a file to GitHub"))
         launch()
-        awaitTextContaining("Claude: Commit a file to GitHub")
+        awaitTag("pending:req10")
+        rule.onNodeWithTag("sentence:req10", useUnmergedTree = true).assertTextContains("Wants to commit a file to GitHub", substring = true)
     }
 
     @Test
@@ -1804,10 +1815,11 @@ class AppFlowTest {
                 .copy(service = "github", account = "octo-cat", op = "repo_delete"),
         )
         launch()
-        awaitTextContaining("Claude: Delete a GitHub repository")
+        awaitTag("entry:5")
+        rule.onNodeWithTag("entryTitle:5", useUnmergedTree = true).assertTextEquals("Deleted a GitHub repository")
         tap("entry:5")
         awaitTag("detailTitle")
-        rule.onNodeWithTag("detailTitle").assertTextContains("Delete a GitHub repository")
+        rule.onNodeWithTag("detailTitle").assertTextContains("Deleted a GitHub repository")
     }
 
     @Test

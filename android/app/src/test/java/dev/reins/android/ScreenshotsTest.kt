@@ -1293,6 +1293,225 @@ abstract class ScreenshotsBase(private val suffix: String) {
         shoot("106-purchase-limit")
     }
 
+    // ---- Activity and Grants redesign (rendered as android-activity-* / android-grants-*) ----------------------
+
+    /** A tap without a touch: the control's pressed look does not linger in the frame. */
+    private fun click(tag: String) {
+        await(tag)
+        try {
+            rule.onNodeWithTag(tag).performScrollTo()
+        } catch (_: AssertionError) {
+        }
+        rule.onNodeWithTag(tag).performSemanticsAction(androidx.compose.ui.semantics.SemanticsActions.OnClick)
+        rule.waitForIdle()
+    }
+
+    private fun agConnections() {
+        core.connections = listOf(
+            TestData.connection("c1", "Claude Code"),
+            TestData.connection("c2", "ChatGPT"),
+            TestData.connection("c3", "Cursor"),
+        )
+        core.accounts = listOf(dev.reins.core.AccountView("gmail", "dan@katul.dev", now - 86_400 * 30))
+    }
+
+    private fun stripeView(id: String, vararg subjects: String) = TestData.searchView().copy(
+        requestId = id, kind = dev.reins.core.ApprovalKind.READ, action = "read", query = null,
+        messages = subjects.mapIndexed { i, sub -> dev.reins.core.MessageView("$id-m$i", "Stripe <receipts@stripe.com>", sub, now - 3_600, "", false, false) },
+    )
+
+    private fun agHistory() {
+        val stripe = listOf(
+            dev.reins.core.ActivityMessage("s1", "", "Stripe <receipts@stripe.com>", "Your invoice from Acme Inc.", now - 400),
+            dev.reins.core.ActivityMessage("s2", "", "Stripe <receipts@stripe.com>", "Payment received", now - 500),
+        )
+        fun e(id: Long, action: String, outcome: String, count: UInt, at: Long, conn: String = "c1", label: String = "Claude Code") =
+            TestData.entry(id, action, outcome, count, at = at).copy(connectionId = conn, connectionLabel = label, account = "dan@katul.dev")
+        core.activity = listOf(
+            e(9, "read", "released", 2u, now - 300).copy(info = TestData.info(null, stripe, null, null, null), decidedBy = "autopilot", autopilot = TestData.note(pApprove = 0.96f)),
+            e(8, "write", "sent", 3u, now - 1_200).copy(service = "github", account = "octo-cat", op = "git_push", opTitle = "Push to a branch", decidedBy = "autopilot", autopilot = TestData.note()),
+            e(7, "read", "released", 1u, now - 3_000, "c2", "ChatGPT").copy(grantId = "g1", info = TestData.info(null, stripe.take(1), null, null, null)),
+            e(6, "search", "released", 4u, now - 5_400).copy(info = TestData.info("from:bank newer_than:7d", emptyList(), null, null, null)),
+            e(5, "send", "denied", 1u, now - 86_400 - 2_000, "c2", "ChatGPT").copy(info = TestData.info(null, emptyList(), dev.reins.core.EmailView(listOf("billing@acme-pay.co"), emptyList(), "Invoice", "Hi"), null, null)),
+            e(4, "write", "sent", 1u, now - 86_400 - 9_000).copy(service = "github", account = "octo-cat", op = "issue_comment", opTitle = "Comment on PR #212", decidedBy = "autopilot", autopilot = TestData.note()),
+        )
+    }
+
+    private fun agSuggestion(id: String, verdict: dev.reins.core.Verdict, p: Float) = TestData.suggestion(
+        id, verdict = verdict, pApprove = if (verdict == dev.reins.core.Verdict.DENY) 0.04f else p, pDeny = if (verdict == dev.reins.core.Verdict.DENY) p else 0.02f,
+    )
+
+    @Test
+    fun agActivityManual() {
+        agConnections()
+        agHistory()
+        core.model = installed
+        val push = TestData.pending("req1", "write", 8u, waitUntil = now + 40, label = "Claude Code", conn = "c1", service = "github", account = "octo-cat", op = "git_push", opTitle = "Push to a branch", quick = true)
+            .copy(subtitle = "octo/app", createdAt = now - 80)
+        val send = TestData.pending("req2", "send", 1u, waitUntil = now + 80, label = "ChatGPT", conn = "c2", quick = true)
+            .copy(title = "ChatGPT wants to send an email to billing@acme-pay.co", subtitle = "Invoice", createdAt = now - 10)
+        val read = TestData.pending("req3", "read", 2u, waitUntil = now + 12, label = "Cursor", conn = "c3", quick = true).copy(createdAt = now - 48)
+        core.pending = listOf(push, send, read)
+        core.views["req3"] = stripeView("req3", "Your invoice from Acme Inc.", "Payment received")
+        core.suggestions["req1"] = agSuggestion("req1", dev.reins.core.Verdict.APPROVE, 0.97f)
+        core.suggestions["req2"] = agSuggestion("req2", dev.reins.core.Verdict.DENY, 0.91f)
+        core.suggestions["req3"] = agSuggestion("req3", dev.reins.core.Verdict.ASK, 0.62f)
+        launch()
+        top()
+        await("allow:req1")
+        await("unsure:req3")
+        repeat(10) { rule.mainClock.advanceTimeBy(50) }
+        shoot("android-activity-manual")
+    }
+
+    @Test
+    fun agActivityGroup() {
+        agConnections()
+        agHistory()
+        core.model = installed
+        core.pending = listOf(
+            TestData.pending("req4", "read", 1u, waitUntil = now + 44, label = "Claude Code", conn = "c1", quick = true).copy(createdAt = now - 16),
+            TestData.pending("req5", "read", 1u, waitUntil = now + 50, label = "Claude Code", conn = "c1", quick = true).copy(createdAt = now - 10),
+            TestData.pending("req6", "search", 3u, waitUntil = now + 30, label = "ChatGPT", conn = "c2", quick = true).copy(subtitle = "from:stripe invoice", createdAt = now - 30),
+        )
+        core.views["req4"] = stripeView("req4", "Your invoice from Acme Inc.")
+        core.views["req5"] = stripeView("req5", "Payment received")
+        core.suggestions["req4"] = agSuggestion("req4", dev.reins.core.Verdict.APPROVE, 0.97f)
+        core.suggestions["req5"] = agSuggestion("req5", dev.reins.core.Verdict.APPROVE, 0.96f)
+        launch()
+        top()
+        await("approveAll")
+        repeat(10) { rule.mainClock.advanceTimeBy(50) }
+        shoot("android-activity-group")
+    }
+
+    private fun agAuto() {
+        agConnections()
+        agHistory()
+        core.model = installed
+        core.apGlobal = FakeCore.ApRow(mode = dev.reins.core.AutopilotMode.AUTO)
+        val delete = TestData.pending("req7", "write", 1u, waitUntil = now + 55, label = "Claude Code", conn = "c1", service = "github", account = "octo-cat", op = "repo_delete", opTitle = "Delete the repo")
+            .copy(subtitle = "octo/old-api", createdAt = now - 5)
+        val read = TestData.pending("req8", "read", 2u, waitUntil = now + 44, label = "Claude Code", conn = "c1", quick = true).copy(createdAt = now - 16)
+        core.pending = listOf(delete, read)
+        core.views["req8"] = stripeView("req8", "Your invoice from Acme Inc.", "Payment received")
+        core.suggestions["req7"] = TestData.suggestion("req7", floor = true, judged = false)
+        core.suggestions["req8"] = agSuggestion("req8", dev.reins.core.Verdict.ASK, 0.62f)
+    }
+
+    @Test
+    fun agActivityAuto() {
+        agAuto()
+        launch()
+        top()
+        await("alwaysAsks:req7")
+        await("entry:9")
+        repeat(10) { rule.mainClock.advanceTimeBy(50) }
+        shoot("android-activity-auto")
+        rule.onNodeWithTag("entry:5").performScrollTo()
+        repeat(10) { rule.mainClock.advanceTimeBy(50) }
+        shoot("android-activity-auto-history")
+    }
+
+    @Test
+    fun agActivityFilters() {
+        agAuto()
+        core.pending = emptyList()
+        launch()
+        top()
+        await("entry:9")
+        click("filters")
+        click("filter:autopilot")
+        await("entry:4")
+        repeat(10) { rule.mainClock.advanceTimeBy(50) }
+        shoot("android-activity-filters")
+    }
+
+    @Test
+    fun agActivityEntry() {
+        agAuto()
+        core.pending = emptyList()
+        launch()
+        top()
+        tap("entry:9")
+        await("thisWasWrong")
+        repeat(20) { rule.mainClock.advanceTimeBy(50) }
+        shoot("android-activity-entry")
+        click("whyAutopilot")
+        click("emailsShared")
+        repeat(20) { rule.mainClock.advanceTimeBy(50) }
+        shoot("android-activity-entry-open")
+    }
+
+    private fun agGrants() {
+        agConnections()
+        agHistory()
+        core.startingPolicy = dev.reins.core.StartingPolicy.ASK_EVERY_TIME
+        fun g(id: String, conn: String, label: String) = TestData.grant(id).copy(connectionId = conn, connectionLabel = label, account = "dan@katul.dev")
+        core.grants = listOf(
+            g("g1", "c1", "Claude Code").copy(summary = "Read mail from @stripe.com", expiresAt = now + 240, createdAt = now - 3_360, uses = 2u, lines = listOf("From @stripe.com")),
+            g("g2", "c1", "Claude Code").copy(
+                summary = "Push to feature/* in octo/app", action = "write", service = "github", account = "octo-cat",
+                expiresAt = now + 5 * 3_600 + 600, createdAt = now - 3 * 3_600, maxUses = 10u, uses = 3u,
+                lines = listOf("Push to branches matching feature/*"), editableScope = null,
+            ),
+            g("g3", "c2", "ChatGPT").copy(summary = "See your calendar", service = "gcalendar", expiresAt = now + 6 * 86_400 + 600, createdAt = now - 86_400, uses = 12u, lines = listOf("Events in all calendars")),
+            TestData.grant("x1", active = false),
+            TestData.grant("x2", active = false, state = "used_up", maxUses = 3u, uses = 3u),
+            TestData.grant("x3", active = false, state = "revoked"),
+            TestData.grant("x4", active = false).copy(summary = "Send to @corp.example", action = "send"),
+        )
+        core.activity = core.activity.map { if (it.id == 8L) it.copy(grantId = "g2") else it }
+    }
+
+    @Test
+    fun agGrantsList() {
+        agGrants()
+        launch()
+        tap("tabGrants")
+        await("grant:g3")
+        repeat(10) { rule.mainClock.advanceTimeBy(50) }
+        shoot("android-grants")
+        click("help:New AI connections")
+        rule.onNodeWithTag("startingRule").performScrollTo()
+        repeat(20) { rule.mainClock.advanceTimeBy(50) }
+        shoot("android-grants-scrolled")
+        click("expiredHeader")
+        await("ended:x1")
+        repeat(20) { rule.mainClock.advanceTimeBy(50) }
+        shoot("android-grants-expired")
+    }
+
+    @Test
+    fun agGrantDetail() {
+        agGrants()
+        launch()
+        tap("tabGrants")
+        tap("grant:g2")
+        await("extend")
+        repeat(20) { rule.mainClock.advanceTimeBy(50) }
+        shoot("android-grants-detail")
+        click("extend")
+        await("confirmExtend")
+        repeat(20) { rule.mainClock.advanceTimeBy(50) }
+        shoot("android-grants-extend")
+    }
+
+    @Test
+    fun agNewGrant() {
+        agGrants()
+        launch()
+        tap("tabGrants")
+        tap("newGrant")
+        await("createGrant")
+        click("conn:c1")
+        repeat(20) { rule.mainClock.advanceTimeBy(50) }
+        rule.onNodeWithTag("parties").performTextReplacement("@stripe.com, receipts@apple.com")
+        rule.waitForIdle()
+        repeat(20) { rule.mainClock.advanceTimeBy(50) }
+        shoot("android-grants-new")
+    }
+
     companion object {
         @JvmStatic
         @BeforeClass

@@ -249,6 +249,7 @@ private fun SignedInContent(
                             }
                         },
                         onConnectComputer = { app.open(Route.ConnectComputer) },
+                        onOpenSettings = { app.selectTab(Tab.Settings) },
                         onConnectAi = {
                             val url = AccountRules.mcpUrl(serverUrl)
                             context.getSystemService(android.content.ClipboardManager::class.java)
@@ -424,6 +425,7 @@ private fun SignedInContent(
                     onOpenEntry = { app.open(Route.ActivityDetail(it)) },
                     onResume = { id, seconds, standing -> resumeGrant(container, authenticator, id, seconds, standing) },
                     onDelete = { id -> deleteGrant(container, id) },
+                    onExtend = { id, seconds -> dev.reins.android.ui.grants.extendGrant(container, authenticator, id, seconds) },
                     onRevoke = { id ->
                         try {
                             container.feedback.play(Event.Revoked)
@@ -450,7 +452,7 @@ private fun SignedInContent(
                 Column(Modifier.align(Alignment.BottomCenter).windowInsetsPadding(WindowInsets.navigationBars)) {
                     // Above the tab bar, and never while an approval sheet is up.
                     container.updates?.let { UpdatePromptHost(it, allowed = sheet == null, modifier = Modifier.padding(top = 10.dp)) }
-                    if (!(covered && app.tab == Tab.Settings)) NavBar(container, app)
+                    if (!(covered && app.tab == Tab.Settings) && !(app.expiredOpen && app.tab == Tab.Grants)) NavBar(container, app)
                 }
                 val apSettings by state.autopilot.collectAsStateWithLifecycle()
                 dev.reins.android.ui.autopilot.AutopilotQuick(
