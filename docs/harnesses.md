@@ -185,8 +185,9 @@ matches.
 SSH private keys (`id_rsa`, `id_ed25519`, ...), `.ssh/*`, cloud and registry credentials (`.aws/credentials`,
 `.aws/config`, `.config/gcloud/*` (on Windows `AppData/Roaming/gcloud/*`), `.azure/*`, `.kube/config`,
 `.docker/config.json`, `.netrc` (on Windows also `_netrc`), `.git-credentials`, `.npmrc`, `.pypirc`, `.vault-token`,
-`credentials.json`). Exceptions: `*.pub`, `known_hosts`, `.env.example`,
-`.env.sample`, `.env.template`, `.env.dist`.
+`credentials.json`), and Reins's own sign-in on this computer (`reins/session.json`, `reins/control.token`,
+`reins/phone-key.json` in its state folder). Exceptions: `*.pub`, `known_hosts`, `.env.example`,
+`.env.sample`, `.env.template`, `.env.dist`, `.env.reins` (references only, see [Reins Secrets](secrets.md)).
 
 The phone shows the harness that asked, the command (or files), the working directory and the rule that matched. A standing answer can
 cover a topic such as `command:make deploy`.

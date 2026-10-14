@@ -89,6 +89,7 @@ pub fn group_icon(id: &str) -> Icon {
         "env-files" => Icon::FileLock,
         "keys" => Icon::KeyRound,
         "cloud" => Icon::Cloud,
+        "reins" => Icon::ShieldCheck,
         _ => Icon::Ticket,
     }
 }
