@@ -480,12 +480,18 @@ mod tests {
             &[],
             CommandScope {
                 program: npm.to_owned(),
-                args: words(&["run"]),
+                args: words(&["run", "dev"]),
                 prefix: true,
             },
         );
         all.validate().unwrap();
+        let more = words(&["run", "dev", "--silent"]);
         assert!(all.covers(&SecretsFacts {
+            args: &more,
+            fields: None,
+            ..facts
+        }));
+        assert!(!all.covers(&SecretsFacts {
             args: &test,
             fields: None,
             ..facts
