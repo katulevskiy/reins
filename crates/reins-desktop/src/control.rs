@@ -166,8 +166,6 @@ pub struct Client {
     base: String,
     token: Zeroizing<String>,
     http: reqwest::Client,
-    /// How long a lease may wait for the phone.
-    wait: Duration,
 }
 
 impl Client {
@@ -182,51 +180,7 @@ impl Client {
             base: format!("http://{listen}{PREFIX}"),
             token,
             http: crate::http::client(Some(Duration::from_secs(10))).map_err(ClientError::Other)?,
-            wait: Duration::from_secs(150),
         })
-    }
-
-    /// How long [`Client::lease`] waits for the daemon (which waits for the phone).
-    #[must_use]
-    pub fn waiting(mut self, wait: Duration) -> Self {
-        self.wait = wait;
-        self
-    }
-
-    /// The values of an environment for one command: from a lease the daemon holds, or released by the phone now.
-    /// `Ok(Err(refusal))` when the phone (or the daemon) said no.
-    pub async fn lease(
-        &self,
-        req: &crate::secrets_client::LeaseRequest,
-    ) -> Result<Result<crate::leases::LeaseAnswer, crate::auth::Refusal>, ClientError> {
-        let resp = self
-            .http
-            .post(format!("http://{}{}lease", self.base_host(), crate::leases::PREFIX))
-            .header(TOKEN_HEADER, self.token.as_str())
-            .timeout(self.wait)
-            .json(req)
-            .send()
-            .await
-            .map_err(|e| {
-                if e.is_connect() {
-                    ClientError::NotRunning
-                } else {
-                    ClientError::Other(e.without_url().to_string())
-                }
-            })?;
-        let status = resp.status();
-        let bytes =
-            Zeroizing::new(resp.bytes().await.map_err(|e| ClientError::Other(e.without_url().to_string()))?.to_vec());
-        if status == StatusCode::NOT_FOUND {
-            return Err(ClientError::Other("the running daemon is too old for Reins Secrets; restart it".to_owned()));
-        }
-        if !status.is_success() {
-            let message = String::from_utf8_lossy(&bytes).trim().to_owned();
-            return Ok(Err(crate::leases::refusal_from(status.as_u16(), message)));
-        }
-        serde_json::from_slice(&bytes)
-            .map(Ok)
-            .map_err(|e| ClientError::Other(format!("unexpected answer from the daemon: {e}")))
     }
 
     /// The leases the daemon holds (never a value).

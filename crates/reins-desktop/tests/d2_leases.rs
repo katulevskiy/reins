@@ -46,9 +46,9 @@ async fn a_lease_is_reused_only_for_the_same_runner_folder_variables_and_command
     let mock = Mock::start().await;
     let (svc, _app) = service(&mock);
     let asks = || mock.calls_of("vault_env_release").len();
-    let first = svc.lease(&req("person", A, Some(&["API_KEY"]), &["run", "dev"])).await.unwrap();
+    let first = svc.lease(&req("person", A, Some(&["API_KEY"]), &["run", "dev"]), None).await.unwrap();
     assert_eq!((first.cached, first.values[0].1.as_str()), (false, "sk-env-5ecret-dev"));
-    let again = svc.lease(&req("person", A, Some(&["API_KEY"]), &["run", "dev"])).await.unwrap();
+    let again = svc.lease(&req("person", A, Some(&["API_KEY"]), &["run", "dev"]), None).await.unwrap();
     assert!(again.cached && asks() == 1, "the same command: no question");
     for (other, why) in [
         (req("agent:claude-code", A, Some(&["API_KEY"]), &["run", "dev"]), "another runner"),
@@ -57,7 +57,7 @@ async fn a_lease_is_reused_only_for_the_same_runner_folder_variables_and_command
         (req("person", A, Some(&["API_KEY"]), &["run", "test"]), "another command"),
     ] {
         let before = asks();
-        let a = svc.lease(&other).await.unwrap();
+        let a = svc.lease(&other, None).await.unwrap();
         assert!(!a.cached && asks() == before + 1, "{why}: asked again");
     }
     assert_eq!(svc.cache().list(reins_desktop::now_unix()).len(), 5);
@@ -69,7 +69,7 @@ async fn a_lease_is_reused_only_for_the_same_runner_folder_variables_and_command
         5
     );
     let before = asks();
-    svc.lease(&req("person", A, Some(&["API_KEY"]), &["run", "dev"])).await.unwrap();
+    svc.lease(&req("person", A, Some(&["API_KEY"]), &["run", "dev"]), None).await.unwrap();
     assert_eq!(asks(), before + 1, "dropped: asked again");
 }
 
@@ -78,14 +78,14 @@ async fn a_prefix_the_user_chose_on_the_phone_covers_more_commands_and_nothing_e
     let mock = Mock::start().await;
     let (svc, _app) = service(&mock);
     mock.plan(&[Step::ApprovePrefix(1)]);
-    svc.lease(&req("person", A, None, &["run", "dev"])).await.unwrap();
-    let test = svc.lease(&req("person", A, None, &["run", "test", "--watch"])).await.unwrap();
+    svc.lease(&req("person", A, None, &["run", "dev"]), None).await.unwrap();
+    let test = svc.lease(&req("person", A, None, &["run", "test", "--watch"]), None).await.unwrap();
     assert!(test.cached, "npm run * covers npm run test --watch");
     assert_eq!(test.values.len(), 2, "every variable");
-    let only = svc.lease(&req("person", A, Some(&["DB_URL"]), &["run", "lint"])).await.unwrap();
+    let only = svc.lease(&req("person", A, Some(&["DB_URL"]), &["run", "lint"]), None).await.unwrap();
     assert_eq!((only.cached, only.values.len()), (true, 1), "a subset of a whole environment");
     let before = mock.calls_of("vault_env_release").len();
-    svc.lease(&req("person", A, None, &["exec", "x"])).await.unwrap();
+    svc.lease(&req("person", A, None, &["exec", "x"]), None).await.unwrap();
     assert_eq!(mock.calls_of("vault_env_release").len(), before + 1, "npm exec is not npm run");
 }
 
@@ -94,13 +94,13 @@ async fn an_answer_bound_to_someone_else_is_refused_and_not_kept() {
     let mock = Mock::start().await;
     let (svc, _app) = service(&mock);
     mock.plan(&[Step::OtherRunner]);
-    let e = svc.lease(&req("person", A, None, &["run", "dev"])).await.unwrap_err();
+    let e = svc.lease(&req("person", A, None, &["run", "dev"]), None).await.unwrap_err();
     assert!(e.message().contains("someone else"), "{}", e.message());
     assert!(svc.cache().is_empty());
 }
 
 #[tokio::test]
-async fn the_control_routes_lease_list_and_revoke_with_the_token() {
+async fn the_control_routes_list_and_revoke_but_never_hand_out_a_value() {
     let mock = Mock::start().await;
     let app = logged_in(&mock);
     quiet(&app.paths);
@@ -118,34 +118,35 @@ async fn the_control_routes_lease_list_and_revoke_with_the_token() {
             authorizer: None,
             prompter: Arc::new(NoPrompter),
             harden: false,
+            process_info: reins_desktop::runner::process_info,
         },
     )
     .await
     .unwrap();
     let running = daemon.spawn();
     let client = Client::new(&app.paths, running.addr).unwrap();
-    let r = req("person", A, Some(&["API_KEY"]), &["run", "dev"]);
-    let first = client.lease(&r).await.unwrap().unwrap();
-    assert!(!first.cached);
-    assert!(client.lease(&r).await.unwrap().unwrap().cached);
-    let listed = client.leases().await.unwrap();
-    assert_eq!((listed.len(), listed[0].variables.clone()), (1, vec!["API_KEY".to_owned()]));
-    assert!(!serde_json::to_string(&listed).unwrap().contains("5ecret"), "never a value");
+    assert!(client.leases().await.unwrap().is_empty());
     assert_eq!(
         client
             .revoke(&RevokeRequest {
-                project: Some("acme".into()),
+                all: true,
                 ..RevokeRequest::default()
             })
             .await
             .unwrap(),
-        1
+        0
     );
-    mock.plan(&[Step::Denied("not now")]);
-    let refused = client.lease(&r).await.unwrap().unwrap_err();
-    assert!(refused.message().contains("not now"), "{}", refused.message());
-    // Without the token: nothing.
     let http = reins_desktop::http::client(None).unwrap();
+    let token = std::fs::read_to_string(app.paths.control_token_file()).unwrap();
+    let lease = http
+        .post(format!("http://{}/_reins/secrets/lease", running.addr))
+        .header("x-reins-token", token.trim())
+        .body(serde_json::to_vec(&req("person", A, None, &["run", "dev"])).unwrap())
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(lease.status().as_u16(), 404, "no route gives values out");
+    assert!(mock.calls().is_empty());
     let resp = http.get(format!("http://{}/_reins/secrets/leases", running.addr)).send().await.unwrap();
-    assert_eq!(resp.status().as_u16(), 401);
+    assert_eq!(resp.status().as_u16(), 401, "without the token: nothing");
 }
