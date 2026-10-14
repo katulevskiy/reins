@@ -1523,7 +1523,8 @@ jobs:
   # since 1970, so it grows with every release), raised above the highest build App Store Connect already has. A
   # testflight_tag run uses its own start in minutes. The marketing version is the release's.
   #
-  # Signing, from Infisical reins-release prod /signing/apple, else the repository secrets of the same names:
+  # Signing, from Infisical reins-release prod /signing/apple through the identity INFISICAL_TESTFLIGHT_IDENTITY_ID
+  # (its own, bound to the testflight environment), else the repository secrets of the same names:
   #   IOS_DIST_CERT_P12, IOS_DIST_CERT_PASSWORD  the Apple Distribution certificate and key (.p12, base64)
   #   IOS_PROFILE_APP, IOS_PROFILE_WIDGETS, IOS_PROFILE_NOTIFICATIONS  the App Store profiles (.mobileprovision, base64)
   #     of com.reins2fa.app (Reins), com.reins2fa.app.widgets (ReinsWidgets), com.reins2fa.app.notifications
@@ -1555,6 +1556,13 @@ jobs:
       DEVELOPER_DIR: /Applications/Xcode_27.0.app/Contents/Developer
       BUNDLE_ID: com.reins2fa.app
     steps:
+      # Its own Infisical identity, bound to this environment's OIDC subject and to /signing/apple only; the release
+      # identity (INFISICAL_RELEASE_IDENTITY_ID) is bound to the main ref and is not used here.
+      - name: Require the TestFlight Infisical identity
+        env:
+          IDENTITY: ${{ vars.INFISICAL_TESTFLIGHT_IDENTITY_ID }}
+        run: |
+          [[ -n "$IDENTITY" ]] || { echo "::error::The repository variable INFISICAL_TESTFLIGHT_IDENTITY_ID is not set: the Infisical identity for the testflight environment (see CONTRIBUTING.md, Maintainers: TestFlight)"; exit 1; }
       # Before anything is checked out: the commit must be on main and carry a published release tag.
       - name: The release to upload
         id: release
@@ -1654,10 +1662,9 @@ jobs:
 
       # Written to a file (never exported to the job), turned into files by the next step, and removed by it.
       - name: Fetch the Apple signing identity from Infisical
-        if: vars.INFISICAL_RELEASE_IDENTITY_ID != ''
         uses: ./.github/actions/release-secrets # zizmor: ignore[self-repository] use the exact release checkout
         with:
-          identity-id: ${{ vars.INFISICAL_RELEASE_IDENTITY_ID }}
+          identity-id: ${{ vars.INFISICAL_TESTFLIGHT_IDENTITY_ID }}
           environment: ${{ vars.INFISICAL_RELEASE_ENVIRONMENT || 'prod' }}
           secret-path: /signing/apple
           export-type: file
@@ -1875,10 +1882,9 @@ jobs:
 
       # The API key again, only now that the archive is built: for the upload and TestFlight.
       - name: Fetch the App Store Connect key from Infisical
-        if: vars.INFISICAL_RELEASE_IDENTITY_ID != ''
         uses: ./.github/actions/release-secrets # zizmor: ignore[self-repository] use the exact release checkout
         with:
-          identity-id: ${{ vars.INFISICAL_RELEASE_IDENTITY_ID }}
+          identity-id: ${{ vars.INFISICAL_TESTFLIGHT_IDENTITY_ID }}
           environment: ${{ vars.INFISICAL_RELEASE_ENVIRONMENT || 'prod' }}
           secret-path: /signing/apple
           export-type: file

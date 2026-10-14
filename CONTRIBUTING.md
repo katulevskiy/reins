@@ -259,8 +259,9 @@ never touches the GitHub release: rerun the job. To test or redo one release, ru
 The build number is the release's Android versionCode (minutes since 1970), or one more than the highest build App
 Store Connect already has, whichever is larger. The version is the release's.
 
-It reads Infisical `/signing/apple`, with repository secrets of the same names as the fallback, and fails naming any
-that is missing:
+It reads Infisical `/signing/apple` through its own machine identity, whose id is the repository variable
+`INFISICAL_TESTFLIGHT_IDENTITY_ID` (the job fails at once without it), with repository secrets of the same names as the
+fallback, and fails naming any secret that is missing:
 
 | Infisical secret | Value |
 | --- | --- |
@@ -276,11 +277,15 @@ and no secret goes on a command line. The certificate's files are removed as soo
 non-extractable for `codesign` only. The API key is removed after the build number and fetched again after the
 archive, so the archive's build phases and packages find only the keychain, the profiles and the settings (a step
 checks). The keychain is locked after the upload, and the last step deletes it with everything else. The third-party
-actions it uses are pinned to commits. The job runs in
-the GitHub environment `testflight`: restrict it to `main` there (Settings > Environments > testflight > Deployment
-branches and tags), and keep any repository-secret fallbacks as that environment's secrets. In an environment, GitHub's
-OIDC subject is `repo:katulevskiy@84909978/reins@1400899427:environment:testflight`, so the Infisical identity
-`github-release-android` has to accept that subject as well as the `ref:refs/heads/main` one.
+actions it uses are pinned to commits. The job runs in the GitHub environment `testflight`: restrict it to `main`
+there (Settings > Environments > testflight > Deployment branches and tags), and keep any repository-secret fallbacks
+as that environment's secrets.
+
+In an environment, GitHub's OIDC subject is `repo:katulevskiy@84909978/reins@1400899427:environment:testflight`, not
+the main ref. Infisical binds one subject pattern per identity, so the job has an identity of its own, bound to exactly
+that subject and allowed to read only `/signing/apple` in `reins-release`; `INFISICAL_TESTFLIGHT_IDENTITY_ID` holds its
+id. The release identity `github-release-android` (`INFISICAL_RELEASE_IDENTITY_ID`) keeps only the main-ref subject:
+adding the environment subject to it broke releases.
 
 Repository variables: `TESTFLIGHT_EXTERNAL_GROUP_ID` (the external group's id; two groups are named "Testers", so a
 name alone fails), `TESTFLIGHT_INTERNAL_GROUPS` (default `Internal`, which gets every build by itself) and, optionally,
@@ -293,8 +298,11 @@ Notifications on the app), stored base64 in `/signing/apple` with master copies 
 
 1. `gh variable set TESTFLIGHT_EXTERNAL_GROUP_ID -R katulevskiy/reins --body <id of the "Testers" group with the public link>`.
 2. App Store Connect > Pricing and Availability: exclude France.
-3. Infisical, identity `github-release-android`, OIDC auth: add the subject
-   `repo:katulevskiy@84909978/reins@1400899427:environment:testflight`.
+3. Infisical, `reins-release`: a machine identity for TestFlight with OIDC auth bound to the subject
+   `repo:katulevskiy@84909978/reins@1400899427:environment:testflight` (audience `https://github.com/katulevskiy`),
+   read access to `/signing/apple` only; then
+   `gh variable set INFISICAL_TESTFLIGHT_IDENTITY_ID -R katulevskiy/reins --body <its identity id>`. Leave
+   `github-release-android` with the main-ref subject only.
 4. Optional: Settings > Environments > `testflight`: allow deployments from `main` only.
 
 ## Maintainers: the update feed

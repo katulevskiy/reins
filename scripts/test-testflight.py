@@ -420,6 +420,11 @@ check(job.split("permissions:\n", 1)[1].split("\n    env:", 1)[0].split() ==
 for line in job.splitlines():
     if "uses: " in line and "uses: ./" not in line:
         check(re.search(r"@[0-9a-f]{40} # v", line), f"pinned to a commit: {line.strip()}")
+# Its own Infisical identity, required, for both fetches; never the release identity.
+check(job.count("identity-id: ${{ vars.INFISICAL_TESTFLIGHT_IDENTITY_ID }}") == 2, "both fetches use it")
+check("INFISICAL_RELEASE_IDENTITY_ID" not in job.replace("the release\n      # identity (INFISICAL_RELEASE_IDENTITY_ID)", ""),
+      "never the release identity")
+check(at("Require the TestFlight Infisical identity") == 0 and "if: vars." not in job, "required, first")
 secrets_action = (ROOT / ".github/actions/release-secrets/action.yml").read_text()
 check(re.search(r"Infisical/secrets-action@[0-9a-f]{40} # v", secrets_action), "Infisical pinned")
 print(f"{checks} TestFlight checks passed")
