@@ -575,7 +575,8 @@ async fn a_receipt_is_authenticated_and_only_its_own_folder_counts() {
     }
     // Changed by anything else: refused, and nothing is undone.
     let text = std::fs::read_to_string(&path).unwrap();
-    let tampered = text.replacen("/dev/acme-web/.env\"", "/.ssh/authorized_keys\"", 1);
+    // Any change at all (here the folder of the computer's credentials; a path the same way).
+    let tampered = text.replacen("Dana's MacBook", "Dana's MacBooc", 1);
     assert_ne!(tampered, text);
     std::fs::write(&path, &tampered).unwrap();
     let err = receipt::load(&c.state_dir, "last").unwrap_err();
