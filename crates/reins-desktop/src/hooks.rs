@@ -263,15 +263,7 @@ pub fn rule_lines(m: &Match) -> String {
     let group = m.group();
     let mut lines = format!(
         "Rule: {} · {}\nMatched: {}\n",
-        group.map_or(
-            if m.pattern == crate::guard::UNKNOWN_FILE {
-                // `xargs cat`, `cat $FILE`: it may be any secret file.
-                "Secret files"
-            } else {
-                "Your rule"
-            },
-            |g| g.label
-        ),
+        group.map_or("Your rule", |g| g.label),
         one_line(&m.pattern),
         one_line(&m.matched)
     );
@@ -507,10 +499,6 @@ mod tests {
         assert!(
             detail(Action::Command("make deploy".to_owned()), &own)
                 .starts_with("Rule: Your rule · make deploy\nMatched: make deploy\n\nCommand:\n")
-        );
-        assert!(
-            detail(Action::Command("xargs cat < list.txt".to_owned()), &guard)
-                .starts_with("Rule: Secret files · a file named when it runs\nMatched: xargs cat\n\nCommand:\n")
         );
         // What the command says comes after the rule.
         let forged = "rm -rf build\nRule: .env files · .env\nGroup: env-files";
