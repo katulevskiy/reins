@@ -1,6 +1,6 @@
 //! Append-only audit log. Details are encrypted.
 
-use rusqlite::params;
+use rusqlite::{OptionalExtension, params};
 use serde::{Deserialize, Serialize};
 
 use super::Store;
@@ -42,6 +42,15 @@ pub(crate) fn snapshot_json(parked: &crate::views::ParkedRequest) -> Option<Vec<
     }
     let json = serde_json::to_vec(&p).ok()?;
     (json.len() <= MAX_SNAPSHOT).then_some(json)
+}
+
+/// Stores entry `seq`'s sealed snapshot (if any) and prunes those past [`SNAPSHOT_RETENTION`].
+fn keep_snapshot(conn: &rusqlite::Connection, seq: i64, sealed: Option<&[u8]>) -> rusqlite::Result<()> {
+    if let Some(sealed) = sealed {
+        conn.execute("INSERT OR REPLACE INTO audit_snapshots (seq, data) VALUES (?1, ?2)", params![seq, sealed])?;
+    }
+    conn.execute("DELETE FROM audit_snapshots WHERE seq <= ?1 - ?2", params![seq, SNAPSHOT_RETENTION])?;
+    Ok(())
 }
 
 /// One message of a released search/read, as shown in the activity details (headers only, never bodies).
@@ -171,10 +180,12 @@ impl Store {
         crate::autopilot::context::stamp(&mut info);
         let info_json = serde_json::to_vec(&info).map_err(|e| CoreError::storage(e.to_string()))?;
         let info = self.seal(INFO_AAD, &info_json)?;
-        let snapshot = match record.info.snapshot.as_deref().and_then(snapshot_json) {
-            Some(json) => Some(self.seal(SNAPSHOT_AAD, &json)?),
-            None => None,
-        };
+        // The approval's snapshot is extra: losing it never fails the entry (nor the decision that writes it).
+        let snapshot = record.info.snapshot.as_deref().and_then(snapshot_json).and_then(|json| {
+            self.seal(SNAPSHOT_AAD, &json)
+                .map_err(|e| log::error!("an activity entry is kept without its approval: {e}"))
+                .ok()
+        });
         let conn = self.lock()?;
         conn.execute(
             "INSERT INTO audit (at, connection_id, connection_label, action, outcome, grant_id, detail, service, account, \
@@ -196,10 +207,9 @@ impl Store {
         )?;
         let seq = conn.last_insert_rowid();
         conn.execute("DELETE FROM audit WHERE seq <= (SELECT MAX(seq) FROM audit) - ?1", params![AUDIT_RETENTION])?;
-        if let Some(sealed) = snapshot {
-            conn.execute("INSERT OR REPLACE INTO audit_snapshots (seq, data) VALUES (?1, ?2)", params![seq, sealed])?;
+        if let Err(e) = keep_snapshot(&conn, seq, snapshot.as_deref()) {
+            log::error!("an activity entry is kept without its approval: {e}");
         }
-        conn.execute("DELETE FROM audit_snapshots WHERE seq <= ?1 - ?2", params![seq, SNAPSHOT_RETENTION])?;
         drop(conn);
         crate::autopilot::context::written(seq);
         Ok(seq)
@@ -215,12 +225,13 @@ impl Store {
     pub fn audit_snapshot(&self, seq: i64) -> Result<Option<crate::views::ParkedRequest>, CoreError> {
         let blob: Option<Vec<u8>> = {
             let conn = self.lock()?;
-            let mut stmt = conn.prepare("SELECT data FROM audit_snapshots WHERE seq = ?1")?;
-            let mut rows = stmt.query(params![seq])?;
-            match rows.next()? {
-                Some(row) => Some(row.get(0)?),
-                None => None,
-            }
+            // Extra like its writing: an entry whose approval cannot be read still opens.
+            conn.query_row("SELECT data FROM audit_snapshots WHERE seq = ?1", params![seq], |r| r.get(0))
+                .optional()
+                .unwrap_or_else(|e| {
+                    log::error!("an activity entry's approval cannot be read: {e}");
+                    None
+                })
         };
         Ok(blob.and_then(|b| self.unseal(SNAPSHOT_AAD, &b).ok()).and_then(|plain| serde_json::from_slice(&plain).ok()))
     }

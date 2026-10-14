@@ -1343,3 +1343,62 @@ async fn a_damaged_installed_model_is_deleted_and_never_loaded() {
     assert_eq!(env.model.loads.load(Ordering::SeqCst), 0);
     assert!(!env.dir.path().join("models/fake-laya-1").exists());
 }
+
+// ---- a store sealed by an older version ---------------------------------------------------------------------------------
+
+/// The app starts again on `env`'s data directory (as after an update), reporting to the same notifier.
+fn restart(env: &Env) -> Arc<ReinsCore> {
+    let cfg = CoreConfig {
+        gmail_base: env.gmail.uri(),
+        backoff_base: Duration::from_millis(1),
+        models_base: format!("{}/models", env.server.uri()),
+        models: vec![testing::known_model("fake-laya-1", &env.files)],
+        ..CoreConfig::default()
+    };
+    let notifier: Arc<dyn Notifier> = Arc::<Notes>::clone(&env.notes);
+    ReinsCore::with_config(env.dir.path().to_str().unwrap(), &FakeKeys::default(), Arc::new(Google), notifier, cfg)
+        .unwrap()
+}
+
+/// The account store as a version from before entry snapshots (#71) sealed it: no `audit_snapshots` table. Every
+/// decision on it failed with "no such table: audit_snapshots", so a bypass approved nothing (the AI was told
+/// "Waiting for approval on your phone") and the user's own Approve said "Not approved".
+#[tokio::test]
+async fn every_decision_goes_through_on_a_store_sealed_before_entry_snapshots() {
+    let env = env(false).await;
+    env.core.start_bypass(Some(OLD.to_owned()), None).await.unwrap();
+    let store = env.store();
+    store.lock().unwrap().execute_batch("DROP TABLE audit_snapshots; PRAGMA user_version = 9;").unwrap();
+    store.meta_set("sealed-by", "an older version").unwrap();
+    drop(store);
+    let core = restart(&env);
+    assert!(core.session().await.is_some(), "still signed in");
+    assert_eq!(core.autopilot_settings().await.unwrap().mode, AutopilotMode::Manual);
+    let relay = |id: &'static str, conn: &'static str| {
+        let core = Arc::clone(&core);
+        async move { core.engine().process_relayed(request(id, conn, email("friend@x.com", "hi"))).await.unwrap() }
+    };
+
+    // Bypass (as from a push: Android's background worker, the iOS notification extension).
+    relay("r1", OLD).await;
+    assert_eq!(env.decided(), [("r1".to_owned(), Verdict::Approve, "bypass".to_owned())]);
+    assert_eq!(env.answer("r1").await.unwrap()["outcome"], "result", "the AI got its answer");
+    // The user's Approve and Deny (in the app, or from a notification's buttons).
+    relay("r2", OTHER).await;
+    relay("r3", OTHER).await;
+    let once = ApprovalChoice {
+        selected_message_ids: vec![],
+        standing: None,
+    };
+    core.approve("r2".to_owned(), once).await.unwrap();
+    core.deny("r3".to_owned()).await.unwrap();
+    assert_eq!(env.answer("r2").await.unwrap()["outcome"], "result");
+    assert_eq!(env.answer("r3").await.unwrap()["outcome"], "denied");
+    assert!(core.pending().await.unwrap().is_empty());
+    // And each entry opens on its approval.
+    let sends: Vec<_> = core.activity(10).await.unwrap().into_iter().filter(|e| e.action == "send").collect();
+    assert_eq!(sends.len(), 3);
+    for entry in sends {
+        assert!(core.activity_approval(entry.id).await.unwrap().is_some(), "{entry:?}");
+    }
+}
