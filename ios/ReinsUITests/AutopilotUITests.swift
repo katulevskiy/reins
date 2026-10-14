@@ -123,7 +123,8 @@ final class AutopilotUITests: XCTestCase {
         tap("bypass:custom")
         waitFor("bypassForDialog")
         let stepper = waitFor("bypassStepper")
-        stepper.increment()
+        // iOS has no increment(): the stepper's "+" is its right end (one adjustable element to VoiceOver).
+        stepper.coordinate(withNormalizedOffset: CGVector(dx: 0.92, dy: 0.5)).tap()
         XCTAssertEqual(stepper.value as? String, "4 days")
         waitFor("confirmBypassFor").press(forDuration: 2.6)
         waitFor("bypassClock")
@@ -170,7 +171,10 @@ final class AutopilotUITests: XCTestCase {
         waitFor("approveAt")
         waitFor("replay")
         text("decided")
-        element("approveAt").increment()
+        // iOS has no increment(): drag the threshold a little to the right.
+        let approveAt = element("approveAt")
+        approveAt.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5))
+            .press(forDuration: 0.05, thenDragTo: approveAt.coordinate(withNormalizedOffset: CGVector(dx: 0.6, dy: 0.5)))
         shot("profile-custom")
     }
 
