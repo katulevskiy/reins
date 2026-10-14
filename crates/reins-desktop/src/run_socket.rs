@@ -381,7 +381,7 @@ struct Prepared {
     cwd: PathBuf,
     env: Vec<(String, String)>,
     vars: Vec<Var>,
-    redact: bool,
+    redactor: Option<Arc<crate::redact::Redactor>>,
 }
 
 /// Where a waiting line goes: the caller's stderr.
@@ -404,9 +404,21 @@ async fn prepare(req: &RunRequest, runner: &str, service: &SecretsService, stdio
         );
     }
     let path_var = req.env.iter().find(|(k, _)| k == "PATH").map(|(_, v)| v.clone());
-    let program = crate::secrets_client::resolve_program_with(&req.argv[0], &cwd, path_var.as_deref());
+    // What the phone is shown and what is started come from this one argument list (`req.argv`), never re-joined.
+    let program_names = crate::secrets_client::program_names(
+        &req.argv[0],
+        &cwd,
+        path_var.as_deref(),
+        std::env::var("PATH").ok().as_deref(),
+    );
+    if !req.asks.is_empty() && !program_names.found() {
+        return Err(format!("cannot find {}", reins_proto::desktop::shell_word(&req.argv[0])));
+    }
+    let program = program_names.program.clone();
     let args: Vec<String> = req.argv[1..].to_vec();
+    let exec_env = crate::secrets_client::exec_env_digest(&req.env);
     let mut released: Vec<(VarRef, Zeroizing<String>)> = Vec::new();
+    let mut under_pattern = false;
     for ask in &req.asks {
         let lease = LeaseRequest {
             project: ask.project.clone(),
@@ -420,8 +432,13 @@ async fn prepare(req: &RunRequest, runner: &str, service: &SecretsService, stdio
             purpose: req.purpose.clone(),
             confirm_always: ask.confirm_always,
             print: false,
+            typed: Some(program_names.typed.clone()),
+            aliases: program_names.aliases.clone(),
+            path_check: program_names.path_check.clone(),
+            exec_env: exec_env.clone(),
         };
         let answer = service.lease(&lease, teller(&stdio.stderr)).await.map_err(|r| r.message().to_owned())?;
+        under_pattern |= answer.prefix;
         let env = EnvRef::new(&ask.project, &ask.env)?;
         for (name, value) in &answer.values {
             released.push((env.var(name), Zeroizing::new(value.clone())));
@@ -456,17 +473,35 @@ async fn prepare(req: &RunRequest, runner: &str, service: &SecretsService, stdio
     }
     let vars = assemble(&whole, &released, &named, &given).map_err(|r| r.message().to_owned())?;
     let mut env: Vec<(String, String)> = req.env.iter().filter(|(k, _)| k != "REINS_RUNNER").cloned().collect();
+    if under_pattern {
+        // Released under a remembered pattern, not for exactly this command: what would change the program it runs is
+        // not passed on (the lease is bound to `PATH` as it was).
+        let gone = crate::secrets_client::strip_exec_env(&mut env);
+        if !gone.is_empty()
+            && let Some(tell) = teller(&stdio.stderr)
+        {
+            tell(&format!("reins: not passed on under a remembered pattern: {}", gone.join(", ")));
+        }
+    }
     if agent {
         // What runs for an agent stays an agent's, also in a `reins run` inside it.
         env.push(("REINS_RUNNER".to_owned(), runner.to_owned()));
     }
+    // The filter is built before anything starts: a run that asked for it never runs without it.
+    let redactor = if agent || !req.no_redact {
+        let secrets: Vec<(String, &str)> =
+            vars.iter().filter_map(|v| v.label.as_ref().map(|l| (l.clone(), v.value.as_str()))).collect();
+        Some(Arc::new(crate::redact::Redactor::new(&secrets).map_err(|e| e.to_string())?)).filter(|r| !r.is_empty())
+    } else {
+        None
+    };
     Ok(Prepared {
         program,
         args,
         cwd,
         env,
         vars,
-        redact: agent || !req.no_redact,
+        redactor,
     })
 }
 
@@ -477,12 +512,7 @@ async fn run_child(mut stream: UnixStream, stdio: Stdio, p: Prepared) -> Result<
         cmd.env(&v.name, v.value.as_str());
     }
     cmd.stdin(std::process::Stdio::from(stdio.stdin));
-    let redactor = p.redact.then(|| {
-        let secrets: Vec<(String, &str)> =
-            p.vars.iter().filter_map(|v| v.label.as_ref().map(|l| (l.clone(), v.value.as_str()))).collect();
-        Arc::new(crate::redact::Redactor::new(&secrets))
-    });
-    let redactor = redactor.filter(|r| !r.is_empty());
+    let redactor = p.redactor.clone();
     let (out_fd, err_fd) = (stdio.stdout, stdio.stderr);
     let sinks = if redactor.is_some() {
         cmd.stdout(std::process::Stdio::piped()).stderr(std::process::Stdio::piped());

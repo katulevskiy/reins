@@ -129,6 +129,7 @@ impl Mock {
                 ("Deploy/username".to_owned(), "deployer".to_owned()),
                 ("acme/dev/API_KEY".to_owned(), "sk-env-5ecret-dev".to_owned()),
                 ("acme/dev/DB_URL".to_owned(), "postgres://u:pw-5ecret@db".to_owned()),
+                ("acme/production/API_KEY".to_owned(), "sk-env-5ecret-prod".to_owned()),
             ]),
             requests: HashMap::new(),
             seq: 0,
@@ -348,6 +349,8 @@ fn answer(s: &mut State, key: &SshKey, id: &str) -> Resp {
                 }),
                 root: a["root"].as_str().map(str::to_owned),
                 command: Some(command),
+                // As the phone does: asked every time means for this run only.
+                one_shot: a["confirm"] == "always" || matches!(a["env"].as_str(), Some("production" | "prod")),
             };
             result(json!({"sealed": seal_to(&seal_key, &serde_json::to_vec(&grant).unwrap()).unwrap()}))
         }

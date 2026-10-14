@@ -119,14 +119,24 @@ reins run [-e ENV] [--project NAME] [--env NAME=REF ...] [--purpose TEXT] [--no-
    - decides the **runner** from the caller's process and its ancestors (a known harness among them, as its program or
      as the script node runs, makes it `agent:<harness>`); `REINS_RUNNER` and the harnesses' environment markers can
      only make it an agent, never a person;
-   - resolves the program to its absolute path, and gets each environment from a lease it holds for exactly this runner,
-     folder, environment, variables and command (3.4), else from the phone with one `vault_env_release` (3.2);
+   - resolves the program to its absolute path (with the caller's `PATH`, recording each link on the way and whether
+     its own `PATH` finds the same program: `typed`, `aliases`, `path_check` in 3.2), refuses a program it cannot find,
+     and gets each environment from a lease it holds for exactly this runner, folder, environment, variables, command
+     and execution environment (3.4), else from the phone with one `vault_env_release` (3.2). The phone is shown, and
+     the daemon starts, the same parsed argument list;
+   - under a remembered pattern (not exactly this command) leaves out the variables that change what a program runs or
+     loads (`NODE_OPTIONS`, `LD_PRELOAD`, `DYLD_*`, `PYTHONPATH`, `RUSTC_WRAPPER`, `CARGO_TARGET_*_RUNNER`, `GIT_SSH`
+     and other `GIT_*` hooks, `BASH_ENV`, `ENV`, `npm_config_*`, …), and says so; a lease is reused only while those
+     and `PATH` are as they were when it was released;
    - **starts the command itself**, in that folder, with the caller's terminal as its stdin, stdout and stderr. No value
      is ever sent back: no route hands values out.
 3. By default the output is **redacted**: the child's stdout/stderr go through a filter that replaces any released value
-   (and its base64/URL-encoded forms) with `[vault:acme-web/development/OPENAI_API_KEY]`. The daemon forces it for an
-   agent (6.2) and refuses `--no-redact` from one; a person can pass `--no-redact` for interactive tools that need the
-   raw terminal.
+   with `[vault:acme-web/development/OPENAI_API_KEY]`, as it is and as programs commonly print it: base64 and base64url
+   (with or without padding); percent-encoded in upper or lower case hex, a space as `%20` or `+`, with `/` left raw or
+   as `encodeURIComponent` and `encodeURI` leave it; JSON-escaped (`\n`, `\"`, `\/`, `\uXXXX`), as a multi-line or
+   PEM value shows in JSON. The filter is built before the command starts, and a run whose filter cannot be built does
+   not start (never unfiltered). The daemon forces it for an agent (6.2) and refuses `--no-redact` from one; a person
+   can pass `--no-redact` for interactive tools that need the raw terminal.
 4. Signals the caller gets (Ctrl-C, SIGTERM, SIGHUP) are passed on to the command's process group; the caller exits
    with the command's code. Journals the run (references, command, who), never values.
 

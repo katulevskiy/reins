@@ -53,6 +53,108 @@ pub struct LeaseRequest {
     /// `reins secrets get`: the value is printed; never cached, always asked.
     #[serde(default)]
     pub print: bool,
+    /// The program as typed (`npm`, `./npm`) and each link on the way to it: the phone weighs every name.
+    #[serde(default)]
+    pub typed: Option<String>,
+    #[serde(default)]
+    pub aliases: Vec<String>,
+    /// Whether this computer's own `PATH` finds the same program for the name typed ([`reins_proto::desktop::PATH_SAME`]
+    /// or [`reins_proto::desktop::PATH_OTHER`]); `None`: it finds none, or a path was typed.
+    #[serde(default)]
+    pub path_check: Option<String>,
+    /// A digest of the caller's variables that change what a program runs ([`exec_env_digest`]): a lease is reused
+    /// only for the same.
+    #[serde(default)]
+    pub exec_env: String,
+}
+
+/// Variables that change what a program runs or loads, besides its arguments: under a remembered pattern they are not
+/// passed to the command ([`strip_exec_env`]), and a lease is reused only when they (and `PATH`) are as they were.
+pub const EXEC_ENV: &[&str] = &[
+    "NODE_OPTIONS",
+    "NODE_PATH",
+    "LD_PRELOAD",
+    "LD_LIBRARY_PATH",
+    "LD_AUDIT",
+    "PYTHONPATH",
+    "PYTHONSTARTUP",
+    "PYTHONHOME",
+    "PERL5OPT",
+    "PERL5LIB",
+    "RUBYOPT",
+    "RUBYLIB",
+    "JAVA_TOOL_OPTIONS",
+    "_JAVA_OPTIONS",
+    "RUSTC_WRAPPER",
+    "RUSTC_WORKSPACE_WRAPPER",
+    "RUSTC",
+    "RUSTFLAGS",
+    "CARGO_BUILD_RUSTC_WRAPPER",
+    "CARGO_HOME",
+    "GIT_EXEC_PATH",
+    "GIT_SSH",
+    "GIT_SSH_COMMAND",
+    "GIT_ASKPASS",
+    "GIT_EXTERNAL_DIFF",
+    "GIT_CONFIG_GLOBAL",
+    "GIT_CONFIG_SYSTEM",
+    "BASH_ENV",
+    "ENV",
+    "ZDOTDIR",
+    "SHELL",
+    "PROMPT_COMMAND",
+    "npm_config_script_shell",
+    "npm_config_node_options",
+    "npm_config_prefix",
+    "MAKEFLAGS",
+    "MAKEFILES",
+    "GOFLAGS",
+    "PYTEST_ADDOPTS",
+    "PYTEST_PLUGINS",
+];
+
+/// Whether `name` is one of [`EXEC_ENV`], or a family of them (`DYLD_*`, `CARGO_TARGET_*_RUNNER`, `GIT_CONFIG_*`).
+#[must_use]
+pub fn exec_env(name: &str) -> bool {
+    EXEC_ENV.iter().any(|e| e.eq_ignore_ascii_case(name))
+        || name.starts_with("DYLD_")
+        || name.starts_with("LD_")
+        || (name.starts_with("CARGO_TARGET_") && name.ends_with("_RUNNER"))
+        || (name.starts_with("CARGO_") && name.ends_with("_RUSTC_WRAPPER"))
+        || name.starts_with("GIT_CONFIG_")
+        || name.starts_with("NPM_CONFIG_")
+        || name.starts_with("npm_config_")
+}
+
+/// A digest of `PATH` and the [`exec_env`] variables in `env`, in name order.
+#[must_use]
+pub fn exec_env_digest(env: &[(String, String)]) -> String {
+    use sha2::Digest as _;
+    let mut picked: Vec<&(String, String)> = env.iter().filter(|(k, _)| k == "PATH" || exec_env(k)).collect();
+    picked.sort();
+    let mut h = sha2::Sha256::new();
+    for (k, v) in picked {
+        h.update((k.len() as u64).to_be_bytes());
+        h.update(k.as_bytes());
+        h.update((v.len() as u64).to_be_bytes());
+        h.update(v.as_bytes());
+    }
+    data_encoding::HEXLOWER.encode(&h.finalize()[..16])
+}
+
+/// `env` without the [`exec_env`] variables (`PATH` stays: the program is resolved already, and a lease is bound to
+/// it); the names left out.
+#[must_use]
+pub fn strip_exec_env(env: &mut Vec<(String, String)>) -> Vec<String> {
+    let mut gone = Vec::new();
+    env.retain(|(k, _)| {
+        let keep = !exec_env(k);
+        if !keep {
+            gone.push(k.clone());
+        }
+        keep
+    });
+    gone
 }
 
 impl LeaseRequest {
@@ -79,6 +181,8 @@ pub struct Released {
     pub command: CommandScope,
     /// Every variable of the environment (else only these names).
     pub all: bool,
+    /// For this run only: never kept for another.
+    pub one_shot: bool,
 }
 
 impl std::fmt::Debug for Released {
@@ -108,7 +212,7 @@ pub fn check_env_grant(mut grant: SecretGrant, nonce: &str, req: &LeaseRequest, 
         let Some(command) = grant.command.clone() else {
             return refused("names no command");
         };
-        if command.validate().is_err() || !req.command().within(&command) {
+        if !reins_proto::desktop::release_gate(&command, &req.program, &req.args) {
             return refused("is for another command");
         }
         let names: Vec<&str> = grant.secrets.iter().map(|(n, _)| n.as_str()).collect();
@@ -125,6 +229,7 @@ pub fn check_env_grant(mut grant: SecretGrant, nonce: &str, req: &LeaseRequest, 
             revision: grant.revision.clone().unwrap_or_default(),
             command,
             all: req.fields.is_none(),
+            one_shot: grant.one_shot || req.print,
         })
     })();
     for (_, v) in &mut grant.secrets {
@@ -159,6 +264,15 @@ pub async fn release_env(phone: &Phone, req: &LeaseRequest, reuse: Option<&str>)
                 }
                 if sorted.print {
                     args["print"] = json!(true);
+                }
+                if let Some(t) = &sorted.typed {
+                    args["typed"] = json!(t);
+                }
+                if !sorted.aliases.is_empty() {
+                    args["aliases"] = json!(sorted.aliases);
+                }
+                if let Some(c) = &sorted.path_check {
+                    args["path_check"] = json!(c);
                 }
                 args
             },
@@ -477,6 +591,85 @@ pub fn resolve_program(program: &str, cwd: &std::path::Path) -> String {
 /// [`resolve_program`] with the `PATH` of the process that asks.
 #[must_use]
 pub fn resolve_program_with(program: &str, cwd: &std::path::Path, path_var: Option<&str>) -> String {
+    found_program(program, cwd, path_var)
+        .and_then(|p| std::fs::canonicalize(p).ok())
+        .map_or_else(|| program.to_owned(), |p| p.to_string_lossy().into_owned())
+}
+
+/// A program and every name it goes by, for the phone to weigh: the path it resolves to, the name typed, and each link
+/// on the way.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ProgramNames {
+    /// The absolute, canonical path (as typed when it could not be found).
+    pub program: String,
+    pub typed: String,
+    /// The file name of each link followed from the name typed to the program, in order.
+    pub aliases: Vec<String>,
+    /// [`reins_proto::desktop::PATH_SAME`] / [`reins_proto::desktop::PATH_OTHER`]: whether `own_path` (the daemon's
+    /// own) finds the same program for a bare name typed; `None` when a path was typed or it finds none.
+    pub path_check: Option<String>,
+}
+
+impl ProgramNames {
+    /// Whether the program was found (an absolute path): only then is it run.
+    #[must_use]
+    pub fn found(&self) -> bool {
+        std::path::Path::new(&self.program).is_absolute()
+    }
+}
+
+/// The most links followed.
+const MAX_HOPS: usize = 40;
+
+/// Resolves `typed` as [`resolve_program_with`] does with the caller's `path_var`, following each link to record its
+/// name, and compares with `own_path`.
+#[must_use]
+pub fn program_names(
+    typed: &str,
+    cwd: &std::path::Path,
+    path_var: Option<&str>,
+    own_path: Option<&str>,
+) -> ProgramNames {
+    let found = found_program(typed, cwd, path_var);
+    let mut aliases: Vec<String> = Vec::new();
+    if let Some(start) = &found {
+        let mut at = start.clone();
+        for _ in 0..MAX_HOPS {
+            if let Some(name) = at.file_name() {
+                let name = name.to_string_lossy().into_owned();
+                if !aliases.contains(&name) {
+                    aliases.push(name);
+                }
+            }
+            match std::fs::read_link(&at) {
+                Ok(next) => at = at.parent().map_or(next.clone(), |dir| dir.join(&next)),
+                Err(_) => break,
+            }
+        }
+    }
+    let program = found
+        .and_then(|p| std::fs::canonicalize(p).ok())
+        .map_or_else(|| typed.to_owned(), |p| p.to_string_lossy().into_owned());
+    let bare = std::path::Path::new(typed).components().count() == 1 && !std::path::Path::new(typed).is_absolute();
+    let path_check =
+        bare.then(|| found_program(typed, cwd, own_path)).flatten().and_then(|p| std::fs::canonicalize(p).ok()).map(
+            |own| {
+                if own.to_string_lossy() == program {
+                    reins_proto::desktop::PATH_SAME.to_owned()
+                } else {
+                    reins_proto::desktop::PATH_OTHER.to_owned()
+                }
+            },
+        );
+    ProgramNames {
+        program,
+        typed: typed.to_owned(),
+        aliases,
+        path_check,
+    }
+}
+
+fn found_program(program: &str, cwd: &std::path::Path, path_var: Option<&str>) -> Option<PathBuf> {
     let path = std::path::Path::new(program);
     let found: Option<PathBuf> = if path.components().count() > 1 || path.is_absolute() {
         Some(cwd.join(path))
@@ -498,8 +691,6 @@ pub fn resolve_program_with(program: &str, cwd: &std::path::Path, path_var: Opti
         }
     };
     found
-        .and_then(|p| std::fs::canonicalize(p).ok())
-        .map_or_else(|| program.to_owned(), |p| p.to_string_lossy().into_owned())
 }
 
 #[cfg(not(windows))]
@@ -531,6 +722,10 @@ mod tests {
             purpose: None,
             confirm_always: false,
             print: false,
+            typed: None,
+            aliases: Vec::new(),
+            path_check: None,
+            exec_env: String::new(),
         }
     }
 
@@ -546,6 +741,7 @@ mod tests {
             runner: Some("person".into()),
             root: Some("/home/me/acme".into()),
             command: Some(command),
+            one_shot: false,
         }
     }
 
@@ -557,10 +753,19 @@ mod tests {
         assert!(!format!("{ok:?}").contains("\"x\""));
         let prefix = CommandScope {
             program: "/usr/bin/npm".into(),
-            args: vec!["run".into()],
+            args: vec!["run".into(), "dev".into()],
             prefix: true,
         };
         assert!(check_env_grant(grant(&[("A", "x")], prefix), "n", &r, 100).is_ok(), "a wider scope the user chose");
+        let refused = CommandScope {
+            program: "/usr/bin/npm".into(),
+            args: vec!["run".into()],
+            prefix: true,
+        };
+        assert!(check_env_grant(grant(&[("A", "x")], refused), "n", &r, 100).is_err(), "not on the allow-list");
+        let mut once = grant(&[("A", "x")], r.command());
+        once.one_shot = true;
+        assert!(check_env_grant(once, "n", &r, 100).unwrap().one_shot, "for this run only");
         let all = req(None);
         assert!(check_env_grant(grant(&[("A", "x"), ("B", "y")], all.command()), "n", &all, 100).is_ok());
         let edit = |f: &dyn Fn(&mut SecretGrant)| {
@@ -619,6 +824,85 @@ mod tests {
         assert_eq!((ssh[0].name.as_str(), tokens[0].user.as_deref()), ("key", Some("octo")));
         reins_proto::desktop::validate_batch(&envs, &ssh, &tokens).unwrap();
         assert_eq!(import_check(&batch), reins_proto::desktop::batch_check(&envs, &ssh, &tokens));
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn every_name_on_the_way_to_a_program_is_recorded_and_the_phone_refuses_a_launcher_among_them() {
+        use std::os::unix::fs::{PermissionsExt as _, symlink};
+        let dir = tempfile::tempdir().unwrap();
+        let d = std::fs::canonicalize(dir.path()).unwrap();
+        // npm's own layout: bin/npm -> ../lib/node_modules/npm/bin/npm-cli.js
+        let cli = d.join("lib/node_modules/npm/bin/npm-cli.js");
+        std::fs::create_dir_all(cli.parent().unwrap()).unwrap();
+        std::fs::write(&cli, "#!/usr/bin/env node").unwrap();
+        std::fs::set_permissions(&cli, std::fs::Permissions::from_mode(0o755)).unwrap();
+        std::fs::create_dir_all(d.join("bin")).unwrap();
+        symlink("../lib/node_modules/npm/bin/npm-cli.js", d.join("bin/npm")).unwrap();
+        // A chain through a launcher's name: tools/deploy -> env -> npm-cli.js
+        std::fs::create_dir_all(d.join("tools")).unwrap();
+        symlink(&cli, d.join("tools/env")).unwrap();
+        symlink(d.join("tools/env"), d.join("tools/deploy")).unwrap();
+        let bin = d.join("bin").to_string_lossy().into_owned();
+        let names = program_names("npm", &d, Some(&bin), Some(&bin));
+        assert_eq!(names.program, cli.to_string_lossy());
+        assert_eq!(names.aliases, ["npm", "npm-cli.js"]);
+        assert_eq!(names.path_check.as_deref(), Some(reins_proto::desktop::PATH_SAME));
+        let run = CommandScope::exact(&names.program, &["exec".to_owned(), "vite".to_owned()]);
+        let all: Vec<&str> =
+            std::iter::once(names.typed.as_str()).chain(names.aliases.iter().map(String::as_str)).collect();
+        assert_eq!(run.offers_as(&all).len(), 1, "npm exec: exact only");
+        let dev = CommandScope::exact(&names.program, &["run".to_owned(), "dev".to_owned()]);
+        assert_eq!(dev.offers_as(&all).len(), 2, "npm run dev *");
+        let tools = d.join("tools").to_string_lossy().into_owned();
+        let linked = program_names("deploy", &d, Some(&tools), Some(&bin));
+        assert_eq!(linked.aliases, ["deploy", "env", "npm-cli.js"]);
+        assert_eq!(linked.path_check, None, "this computer's own PATH finds no deploy");
+        let all: Vec<&str> =
+            std::iter::once(linked.typed.as_str()).chain(linked.aliases.iter().map(String::as_str)).collect();
+        assert_eq!(dev.offers_as(&all).len(), 1, "a launcher's name on the way: exact only");
+        // Found elsewhere than this computer's own PATH finds it.
+        let other = program_names("npm", &d, Some(&tools), Some(&bin));
+        assert!(!other.found(), "the caller's PATH has no npm");
+        symlink(&cli, d.join("tools/npm")).unwrap();
+        std::fs::write(d.join("npm-other"), "x").unwrap();
+        let shadow = d.join("shadow");
+        std::fs::create_dir_all(&shadow).unwrap();
+        std::fs::write(shadow.join("npm"), "#!/bin/sh").unwrap();
+        std::fs::set_permissions(shadow.join("npm"), std::fs::Permissions::from_mode(0o755)).unwrap();
+        let shadowed = program_names("npm", &d, Some(&shadow.to_string_lossy()), Some(&bin));
+        assert_eq!(shadowed.path_check.as_deref(), Some(reins_proto::desktop::PATH_OTHER));
+    }
+
+    #[test]
+    fn what_changes_the_program_is_named_left_out_and_bound() {
+        let env =
+            |pairs: &[(&str, &str)]| pairs.iter().map(|(k, v)| ((*k).to_owned(), (*v).to_owned())).collect::<Vec<_>>();
+        let base = env(&[("PATH", "/usr/bin"), ("HOME", "/home/me")]);
+        assert_eq!(exec_env_digest(&base), exec_env_digest(&env(&[("HOME", "/elsewhere"), ("PATH", "/usr/bin")])));
+        for (k, v) in [
+            ("PATH", "/tmp/x:/usr/bin"),
+            ("NODE_OPTIONS", "--require=/tmp/x.js"),
+            ("LD_PRELOAD", "/tmp/x.so"),
+            ("DYLD_INSERT_LIBRARIES", "/tmp/x.dylib"),
+            ("PYTHONPATH", "/tmp"),
+            ("RUSTC_WRAPPER", "/tmp/x"),
+            ("CARGO_TARGET_X86_64_UNKNOWN_LINUX_GNU_RUNNER", "/tmp/x"),
+            ("GIT_SSH_COMMAND", "/tmp/x"),
+            ("BASH_ENV", "/tmp/x"),
+            ("ENV", "/tmp/x"),
+            ("npm_config_script_shell", "/tmp/sh"),
+        ] {
+            let mut changed = base.clone();
+            changed.retain(|(n, _)| n != k);
+            changed.push((k.to_owned(), v.to_owned()));
+            assert_ne!(exec_env_digest(&base), exec_env_digest(&changed), "{k}");
+            if k != "PATH" {
+                let mut stripped = changed.clone();
+                assert_eq!(strip_exec_env(&mut stripped), [k.to_owned()]);
+                assert!(stripped.iter().any(|(n, _)| n == "PATH"), "PATH stays (it is bound instead)");
+            }
+        }
     }
 
     #[test]

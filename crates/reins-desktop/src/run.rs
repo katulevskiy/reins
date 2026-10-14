@@ -254,12 +254,20 @@ impl Plan {
             .filter(|p| p.file.name == env.project)
             .map(|p| p.file.env(&env.env))
             .unwrap_or_default();
-        let program = self.command[0].to_string_lossy();
+        let typed = self.command[0].to_string_lossy();
+        let names = crate::secrets_client::program_names(
+            &typed,
+            &self.root,
+            std::env::var("PATH").ok().as_deref(),
+            std::env::var("PATH").ok().as_deref(),
+        );
+        let env_now: Vec<(String, String)> =
+            std::env::vars_os().filter_map(|(k, v)| Some((k.into_string().ok()?, v.into_string().ok()?))).collect();
         LeaseRequest {
             project: env.project.clone(),
             env: env.env.clone(),
             fields: fields.map(|f| f.iter().cloned().collect()),
-            program: crate::secrets_client::resolve_program(&program, &self.root),
+            program: names.program.clone(),
             args: self.command[1..].iter().map(|a| a.to_string_lossy().into_owned()).collect(),
             root: self.root.to_string_lossy().into_owned(),
             runner: runner.to_owned(),
@@ -267,6 +275,10 @@ impl Plan {
             purpose: self.purpose.clone(),
             confirm_always: settings.confirm == crate::project::Confirm::Always,
             print: false,
+            typed: Some(names.typed),
+            aliases: names.aliases,
+            path_check: None,
+            exec_env: crate::secrets_client::exec_env_digest(&env_now),
         }
     }
 }
@@ -745,14 +757,19 @@ pub async fn main(paths: &Paths, config: &Config, args: &RunArgs) -> u8 {
         Ok(v) => v,
         Err(r) => return fail(r.message()),
     };
-    entry.end(Outcome::Allowed, None);
-    journal.record(&entry);
-    let redactor = (agent || !args.no_redact).then(|| {
+    // The filter is built before anything starts: a run that asked for it never runs without it.
+    let redactor = if agent || !args.no_redact {
         let secrets: Vec<(String, &str)> =
             vars.iter().filter_map(|v| v.label.as_ref().map(|l| (l.clone(), v.value.as_str()))).collect();
-        Arc::new(crate::redact::Redactor::new(&secrets))
-    });
-    let redactor = redactor.filter(|r| !r.is_empty());
+        match crate::redact::Redactor::new(&secrets) {
+            Ok(r) => Some(Arc::new(r)).filter(|r| !r.is_empty()),
+            Err(e) => return fail(&e.to_string()),
+        }
+    } else {
+        None
+    };
+    entry.end(Outcome::Allowed, None);
+    journal.record(&entry);
     execute(&plan.command, vars, redactor).await
 }
 
