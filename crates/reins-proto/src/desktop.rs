@@ -704,6 +704,9 @@ pub fn var_ok(name: &str) -> bool {
 /// The most arguments a command of a release may have, and the longest one.
 pub const MAX_ARGS: usize = 64;
 pub const MAX_ARG: usize = 1_000;
+/// The longest command of a shell, interpreter or launcher (`bash -c <code>`, `python -c <code>`) a standing
+/// permission may name, as shown: the phone shows all of it, never cut short. A longer one is asked every time.
+pub const MAX_REMEMBERED_CODE: usize = 300;
 
 /// The commands a release (or a standing permission for secrets) covers. `reins run` never uses a shell: a command is
 /// the program and its argument list as spawned, compared as whole arguments, never as text.
@@ -965,11 +968,38 @@ impl CommandScope {
         self.offers_as(None)
     }
 
+    /// Whether this runs code its arguments carry: a shell, interpreter or launcher ([`prefix_refusal`]'s lists), by
+    /// either name of the program.
+    #[must_use]
+    pub fn runs_code(&self, typed: Option<&str>) -> bool {
+        let lists = |program: &str| {
+            let name = program_name(program);
+            NO_PREFIX_PROGRAMS.contains(&name.as_str())
+                || self.args.iter().any(|a| NO_PREFIX_SUBCOMMANDS.iter().any(|(p, s)| *p == name && a == s))
+        };
+        typed.is_some_and(lists) || lists(&self.program)
+    }
+
+    /// Whether a standing permission may name this command. A command that runs code its arguments carry
+    /// ([`CommandScope::runs_code`]) is remembered only exactly, and only when the phone can show all of it
+    /// ([`MAX_REMEMBERED_CODE`] characters); a longer one is approved once at a time.
+    #[must_use]
+    pub fn rememberable(&self, typed: Option<&str>) -> bool {
+        if self.prefix {
+            return prefix_refusal_as(typed, &self.program, &self.args).is_none();
+        }
+        !self.runs_code(typed) || self.shown().chars().count() <= MAX_REMEMBERED_CODE
+    }
+
     /// [`CommandScope::offers`], refusing what either name of the program refuses ([`prefix_refusal_as`]): `typed` is
     /// the program as the user typed it.
     #[must_use]
     pub fn offers_as(&self, typed: Option<&str>) -> Vec<Self> {
-        let mut out = vec![Self::exact(&self.program, &self.args)];
+        let exact = Self::exact(&self.program, &self.args);
+        if !exact.rememberable(typed) {
+            return Vec::new();
+        }
+        let mut out = vec![exact];
         for k in (1..self.args.len()).rev() {
             let fixed = &self.args[..k];
             if prefix_refusal_as(typed, &self.program, fixed).is_none() {
@@ -1776,6 +1806,21 @@ mod tests {
         assert_eq!(linked.offers_as(Some("npm")).len(), 1, "typed as npm: npm exec");
         assert!(prefix_refusal_as(Some("bash"), "/opt/tools/runner", &argv(&["x"])).is_some());
         assert!(prefix_refusal_as(Some("deploy"), "/usr/bin/bash", &argv(&["x"])).is_some());
+    }
+
+    #[test]
+    fn code_on_the_command_line_is_remembered_only_when_all_of_it_shows() {
+        let short = CommandScope::exact("/bin/bash", &argv(&["-c", "make deploy"]));
+        assert!(short.runs_code(None) && short.rememberable(None));
+        assert_eq!(short.offers(), vec![short]);
+        let long = CommandScope::exact("/usr/bin/python3", &argv(&["-c", &"x = 1; ".repeat(60)]));
+        assert!(!long.rememberable(None));
+        assert!(long.offers().is_empty(), "approved once at a time");
+        long.validate().unwrap();
+        let node = CommandScope::exact("/opt/n/bin/run", &argv(&["-e", &"a".repeat(400)]));
+        assert!(node.rememberable(None) && !node.rememberable(Some("node")));
+        let npm = CommandScope::exact("/usr/bin/npm", &argv(&["run", &"a".repeat(400)]));
+        assert!(npm.rememberable(None), "not code: any length");
     }
 
     #[test]

@@ -158,6 +158,10 @@ refused when either is listed; a resolved name loses a script's extension and a 
 `npx-cli.js`, `yarn.js`, `pnpm.cjs` and `nodemon.js` are `npm`, `npx`, `yarn`, `pnpm` and `nodemon`). Another program of
 the same name elsewhere on PATH is another program.
 
+The exact command of a shell, interpreter or launcher (`bash -c <code>`, `python -c <code>`, `node -e <code>`, `npm exec
+…`) can be remembered, and the phone then shows all of it, never cut short. When it is longer than
+`MAX_REMEMBERED_CODE` (300 characters as shown) it cannot be remembered at all: it is approved one run at a time.
+
 `confirm = "always"` in `reins.toml` and any env named `production`/`prod` make the env `no_standing` by default (the
 user can change it on the phone, never from the repo alone). Bypass still approves everything (by the user's decision),
 and its grants end with it (existing).
