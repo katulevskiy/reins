@@ -12,7 +12,7 @@ use reins_policy::{Grant, Scope, SecretsScope};
 use reins_proto::connector::{ConnectorCall, TOKEN_HOSTS};
 use reins_proto::desktop::{
     CommandScope, LeaseRevocation, PHONE_KEY_CHANGED, RevocationPost, SEALED_FIELD, SECRET_STORE_TTL_SECS,
-    SealedRevocation, TO_DESKTOP, TO_PHONE, TokenStoreAck, TokenToStore, value_check,
+    SealedRevocation, SecretsStoreAck, TO_DESKTOP, TO_PHONE, TokenStoreAck, TokenStored, TokenToStore, value_check,
 };
 use reins_proto::ids::{ConnectionId, GrantId};
 use serde_json::{Value, json};
@@ -174,6 +174,70 @@ impl Engine {
             nonce: opened.nonce.clone(),
             service: opened.service.clone(),
             account: added.account,
+        };
+        Ok(json!({ SEALED_FIELD: box_from_phone(client_key(call)?, &*self.store.inbox_key()?, &ack)? }))
+    }
+
+    /// Every token of a store goes to an integration this phone has.
+    pub(crate) fn check_store_tokens(&self, preview: &Preview) -> Result<(), CoreError> {
+        if let Some(SecretsPreview::Store(v)) = &preview.secrets {
+            for t in &v.tokens {
+                if t.service.is_empty() || self.connectors.get(&t.service).is_none() {
+                    return Err(CoreError::service(format!("This phone cannot take a token for {}.", t.host)));
+                }
+            }
+        }
+        Ok(())
+    }
+
+    /// Carries out an approved store: the environments and SSH keys in the vault, the tokens to the integrations; the
+    /// acknowledgement boxed from this phone's key, one result per part. Computers holding the earlier values of the
+    /// environments changed drop them.
+    pub(crate) async fn secrets_store_perform(&self, account: &str, call: &ConnectorCall) -> Result<Value, CoreError> {
+        let (opened, envs, ssh) = crate::connector::vault::perform_store_parts(&self.vault(), account, call).await?;
+        let mut tokens = Vec::new();
+        for t in &opened.tokens {
+            let host = t.host.to_ascii_lowercase();
+            let Some(service) = t.service() else {
+                tokens.push(TokenStored {
+                    host,
+                    error: Some("not a git host the phone serves".to_owned()),
+                    ..TokenStored::default()
+                });
+                continue;
+            };
+            // Bitbucket signs in with the user and an app password together.
+            let token = match (&t.user, service) {
+                (Some(user), "bitbucket") => zeroize::Zeroizing::new(format!("{user}:{}", t.token)),
+                _ => zeroize::Zeroizing::new(t.token.clone()),
+            };
+            tokens.push(match self.add_token_account(service, &token).await {
+                Ok(added) => TokenStored {
+                    host,
+                    service: service.to_owned(),
+                    account: added.account,
+                    error: None,
+                },
+                Err(e) => TokenStored {
+                    host,
+                    service: service.to_owned(),
+                    account: String::new(),
+                    error: Some(e.to_string()),
+                },
+            });
+        }
+        for e in envs.iter().filter(|e| e.error.is_none()) {
+            if let Err(err) = self.tell_computers(Some(&e.project), Some(&e.env)).await {
+                log::warn!("could not tell the computers that {}/{} changed: {err}", e.project, e.env);
+            }
+        }
+        let ack = SecretsStoreAck {
+            v: 1,
+            dir: TO_DESKTOP.to_owned(),
+            nonce: opened.nonce.clone(),
+            envs,
+            ssh,
+            tokens,
         };
         Ok(json!({ SEALED_FIELD: box_from_phone(client_key(call)?, &*self.store.inbox_key()?, &ack)? }))
     }

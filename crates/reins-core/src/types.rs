@@ -365,8 +365,22 @@ pub struct SecretsStoreView {
     pub envs: Vec<EnvStoreView>,
     /// Four digits the terminal shows too.
     pub check: String,
-    /// Variables set in all.
+    /// Values in all (variables set, SSH keys, tokens).
     pub total: u32,
+    /// SSH keys kept in the folder Reins/ssh.
+    #[uniffi(default)]
+    pub ssh: Vec<SshStoreView>,
+    /// Git hosts' tokens handed to the phone's integrations (`check` empty: the batch has one).
+    #[uniffi(default)]
+    pub tokens: Vec<TokenStoreView>,
+}
+
+/// An SSH key of a store.
+#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct SshStoreView {
+    pub name: String,
+    /// `SHA256:…`
+    pub fingerprint: String,
 }
 
 /// A git host's token the computer hands to the phone's integration.

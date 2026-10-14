@@ -417,8 +417,21 @@ fn open_from_phone<T: serde::de::DeserializeOwned>(desk: &Desk, phone: &str, box
 }
 
 fn store(desk: &Desk, id: &str, phone: &str, envs: Vec<EnvChanges>) -> Value {
+    store_all(desk, id, phone, envs, vec![], vec![])
+}
+
+fn store_all(
+    desk: &Desk,
+    id: &str,
+    phone: &str,
+    envs: Vec<EnvChanges>,
+    ssh: Vec<reins_proto::desktop::SshKeyToStore>,
+    tokens: Vec<reins_proto::desktop::HostToken>,
+) -> Value {
     let nonce = format!("nonce-{id}");
     let names: Vec<String> = envs.iter().map(EnvChanges::item).collect();
+    let keys: Vec<String> = ssh.iter().map(|k| k.name.clone()).collect();
+    let hosts: Vec<String> = tokens.iter().map(|t| t.host.clone()).collect();
     let boxed = box_to(
         desk,
         phone,
@@ -428,6 +441,8 @@ fn store(desk: &Desk, id: &str, phone: &str, envs: Vec<EnvChanges>) -> Value {
             nonce: nonce.clone(),
             created_at: reins_core::store::unix_now(),
             envs,
+            ssh,
+            tokens,
         },
     );
     call(
@@ -435,7 +450,8 @@ fn store(desk: &Desk, id: &str, phone: &str, envs: Vec<EnvChanges>) -> Value {
         DESK,
         "vault",
         "secrets_store",
-        &json!({"envs": names, "sealed": boxed, "client_key": desk.public(), "nonce": nonce}),
+        &json!({"envs": names, "ssh": keys, "hosts": hosts, "sealed": boxed, "client_key": desk.public(),
+            "nonce": nonce}),
     )
 }
 
@@ -634,4 +650,56 @@ async fn a_git_hosts_token_goes_to_the_phones_integration_with_one_approval() {
     .await;
     assert!(desk.error("t2").await.contains("another host"));
     assert!(desk.error("t3").await.contains("Only a token for"));
+}
+
+#[tokio::test]
+async fn one_approval_saves_environments_ssh_keys_and_tokens_together() {
+    let desk = desk().await;
+    desk.pair().await;
+    let phone = phone_key(&desk).await;
+    let envs = vec![changes("shop", "dev", &[("KEY", "batch-secret-1")])];
+    let ssh = vec![reins_proto::desktop::SshKeyToStore {
+        name: "laptop key".to_owned(),
+        private_key: include_str!("fixtures/ssh/k_ed").to_owned(),
+    }];
+    let tokens = vec![reins_proto::desktop::HostToken {
+        host: "github.com".to_owned(),
+        user: None,
+        scopes: vec!["repo".to_owned()],
+        token: "ghp_batch-secret-2".to_owned(),
+    }];
+    let check = reins_proto::desktop::batch_check(&envs, &ssh, &tokens);
+    desk.send(&[store_all(&desk, "b1", &phone, envs, ssh, tokens)]).await;
+    let view = desk.core.approval_view("b1".to_owned()).await.unwrap();
+    let s = view.secrets_store.clone().expect("the batch");
+    assert_eq!((s.check.as_str(), s.total), (check.as_str(), 3));
+    assert_eq!((s.ssh[0].name.as_str(), s.ssh[0].fingerprint.starts_with("SHA256:")), ("laptop key", true));
+    assert_eq!((s.tokens[0].service.as_str(), s.tokens[0].host.as_str()), ("github", "github.com"));
+    desk.core.approve("b1".to_owned(), choice(&[], None)).await.unwrap();
+    let ack: SecretsStoreAck = open_from_phone(&desk, &phone, &desk.data("b1").await["sealed"]);
+    assert_eq!((ack.envs.len(), ack.envs[0].error.clone()), (1, None));
+    assert_eq!(ack.ssh[0].error, None, "{:?}", ack.ssh);
+    assert_eq!((ack.tokens[0].account.as_str(), ack.tokens[0].error.clone()), ("octo", None));
+    let folders: Vec<String> = sent(&desk, "POST", "/api/folders").await.iter().map(|f| dec(&f["name"])).collect();
+    assert_eq!(folders, ["Reins/shop", "Reins/ssh"]);
+    let shown = desk.everything_shown(&["b1"]).await;
+    assert!(!shown.contains("batch-secret") && !shown.contains("OPENSSH PRIVATE"), "no value in the clear");
+
+    // The box must name the same keys and hosts as the call.
+    let mut lying = store_all(
+        &desk,
+        "b2",
+        &phone,
+        vec![],
+        vec![],
+        vec![reins_proto::desktop::HostToken {
+            host: "gitlab.com".to_owned(),
+            user: None,
+            scopes: vec![],
+            token: "glpat".to_owned(),
+        }],
+    );
+    lying["call"]["args"]["hosts"] = json!(["github.com"]);
+    desk.send(&[lying]).await;
+    assert!(desk.error("b2").await.contains("other environments, keys or hosts"));
 }
