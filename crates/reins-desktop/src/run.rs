@@ -331,15 +331,10 @@ async fn release_fields(
     Ok(secrets.iter().cloned().zip(released.values).collect())
 }
 
-/// Where environments are asked for: the daemon (which keeps leases), or the phone directly.
-enum Asker {
-    Daemon(crate::control::Client),
-    Phone,
-}
-
-/// The values of one environment for the command.
-async fn release_env(
-    asker: &Asker,
+/// The values of one environment for the command, asked of the phone by this process (where the daemon cannot run
+/// the command itself: Windows).
+#[cfg_attr(unix, allow(dead_code, reason = "Unix runs every environment through the daemon"))]
+async fn release_env_here(
     phone: &dyn Fn() -> Result<Arc<Phone>, Refusal>,
     req: &LeaseRequest,
     journal: &Journal,
@@ -347,27 +342,6 @@ async fn release_env(
 ) -> Result<Vec<(String, Zeroizing<String>)>, Refusal> {
     let what = format!("{} for `{}`", req.item(), secrets::cut(&req.command().shown(), 80));
     let tell = teller(|line: &str| eprintln!("{line}"));
-    if let Asker::Daemon(client) = asker {
-        // The daemon logs what it asks the phone; this says on the terminal that it waits.
-        let lease = async {
-            match client.lease(req).await {
-                Ok(reply) => reply,
-                Err(e) => Err(Refusal::Unavailable(e.to_string())),
-            }
-        };
-        let mut lease = std::pin::pin!(lease);
-        let answer = tokio::select! {
-            a = &mut lease => a,
-            () = tokio::time::sleep(crate::phone::NOTICE_AFTER) => {
-                tell(&crate::phone::waiting_line(crate::journal::Decider::Phone, timeout, &what));
-                let a = lease.await;
-                let (outcome, reason) = crate::phone::outcome_of(&a);
-                tell(&crate::phone::ended_line(crate::journal::Decider::Phone, outcome, reason.as_deref(), timeout));
-                a
-            }
-        }?;
-        return Ok(answer.values.iter().map(|(n, v)| (n.clone(), Zeroizing::new(v.clone()))).collect());
-    }
     let phone = phone()?;
     let entry = Entry::new(Kind::Secrets, &what).source(Some("reins run"));
     let released =
@@ -375,55 +349,47 @@ async fn release_env(
     Ok(released.values)
 }
 
-/// Asks for everything the plan needs; the variables for the command.
-pub async fn release(
+/// The `vault:Item/field` values the plan names, asked of the phone (every time; no lease).
+async fn field_values(
     plan: &Plan,
-    paths: &Paths,
-    config: &Config,
-    runner: &str,
     phone: &dyn Fn() -> Result<Arc<Phone>, Refusal>,
-) -> Result<Vec<Var>, Refusal> {
-    let timeout = Duration::from_secs(config.approval_timeout_secs);
-    let journal = Journal::new(paths);
-    let mut released: Vec<(VarRef, Zeroizing<String>)> = Vec::new();
-    let envs = plan.envs();
-    if !envs.is_empty() {
-        let asker = match crate::control::Client::new(paths, config.listen) {
-            Ok(c) if c.status().await.is_ok() => Asker::Daemon(c.waiting(timeout + Duration::from_secs(30))),
-            _ => Asker::Phone,
-        };
-        for (env, fields) in &envs {
-            let req = plan.request(env, fields.as_ref(), runner);
-            for (name, value) in release_env(&asker, phone, &req, &journal, timeout).await? {
-                released.push((env.var(&name), value));
-            }
-        }
-    }
+    journal: &Journal,
+    timeout: Duration,
+) -> Result<Vec<(SecretRef, Zeroizing<String>)>, Refusal> {
     let fields = plan.fields();
-    let field_values = if fields.is_empty() {
-        Vec::new()
-    } else {
-        let phone = phone()?;
-        release_fields(&fields, &plan.shown(), plan.purpose.as_deref(), &phone, &journal, timeout).await?
-    };
-    // Every variable of the environments asked for whole, under their own names…
+    if fields.is_empty() {
+        return Ok(Vec::new());
+    }
+    let phone = phone()?;
+    release_fields(&fields, &plan.shown(), plan.purpose.as_deref(), &phone, journal, timeout).await
+}
+
+/// The command's variables: every variable of the environments asked for whole under its own name, then the variables
+/// named one by one (which win), from what was released.
+pub fn assemble(
+    whole: &[EnvRef],
+    released: &[(VarRef, Zeroizing<String>)],
+    named: &[(String, Source)],
+    given: &[(SecretRef, Zeroizing<String>)],
+) -> Result<Vec<Var>, Refusal> {
     let mut out: Vec<Var> = released
         .iter()
-        .filter(|(r, _)| plan.whole.contains(&r.env))
+        .filter(|(r, _)| whole.contains(&r.env))
         .map(|(r, v)| Var {
             name: r.name.clone(),
             value: v.clone(),
             label: Some(r.to_string()),
         })
         .collect();
-    // …then the variables named one by one, which win.
-    for (name, source) in &plan.vars {
+    for (name, source) in named {
         out.retain(|v| v.name != *name);
         let (value, label) = match source {
             Source::Literal(l) => (Zeroizing::new(l.clone()), None),
             Source::Field(r) => {
-                let v = field_values.iter().find(|(f, _)| f == r).map(|(_, v)| v.clone()).unwrap_or_default();
-                (v, Some(r.to_string()))
+                let Some((_, v)) = given.iter().find(|(f, _)| f == r) else {
+                    return Err(Refusal::Unavailable(format!("{r} was not released")));
+                };
+                (v.clone(), Some(r.to_string()))
             }
             Source::Var(v) => {
                 let Some((_, value)) = released.iter().find(|(r, _)| r == v) else {
@@ -439,6 +405,95 @@ pub async fn release(
         });
     }
     Ok(out)
+}
+
+/// Asks for everything the plan needs from this process; the variables for the command. Used where the daemon cannot
+/// run the command (Windows), and for `vault:Item/field` references alone.
+pub async fn release(
+    plan: &Plan,
+    paths: &Paths,
+    config: &Config,
+    runner: &str,
+    phone: &dyn Fn() -> Result<Arc<Phone>, Refusal>,
+) -> Result<Vec<Var>, Refusal> {
+    let timeout = Duration::from_secs(config.approval_timeout_secs);
+    let journal = Journal::new(paths);
+    let mut released: Vec<(VarRef, Zeroizing<String>)> = Vec::new();
+    for (env, fields) in &plan.envs() {
+        let req = plan.request(env, fields.as_ref(), runner);
+        for (name, value) in release_env_here(phone, &req, &journal, timeout).await? {
+            released.push((env.var(&name), value));
+        }
+    }
+    let given = field_values(plan, phone, &journal, timeout).await?;
+    let named: Vec<(String, Source)> = plan.vars.iter().map(|(k, v)| (k.clone(), v.clone())).collect();
+    assemble(&plan.whole, &released, &named, &given)
+}
+
+/// What the daemon is asked to run (Unix): the plan, with the `vault:Item/field` values this process got.
+#[cfg(unix)]
+fn run_request(
+    plan: &Plan,
+    token: &str,
+    cwd: &Path,
+    given: &[(SecretRef, Zeroizing<String>)],
+    no_redact: bool,
+) -> Result<crate::run_socket::RunRequest, String> {
+    use crate::run_socket::{EnvAsk, RunRequest, RunSource};
+    let argv: Vec<String> = plan
+        .command
+        .iter()
+        .map(|a| a.to_str().map(str::to_owned).ok_or_else(|| "the command is not text (UTF-8)".to_owned()))
+        .collect::<Result<_, _>>()?;
+    let asks = plan
+        .envs()
+        .iter()
+        .map(|(env, fields)| {
+            let req = plan.request(env, fields.as_ref(), reins_proto::desktop::PERSON);
+            EnvAsk {
+                project: req.project,
+                env: req.env,
+                fields: req.fields,
+                lease_secs: req.lease_secs,
+                confirm_always: req.confirm_always,
+            }
+        })
+        .collect();
+    let vars = plan
+        .vars
+        .iter()
+        .map(|(name, source)| {
+            (
+                name.clone(),
+                match source {
+                    Source::Literal(l) => RunSource::Literal {
+                        value: l.clone(),
+                    },
+                    Source::Var(v) => RunSource::Var {
+                        project: v.env.project.clone(),
+                        env: v.env.env.clone(),
+                        name: v.name.clone(),
+                    },
+                    Source::Field(r) => RunSource::Given {
+                        value: given.iter().find(|(f, _)| f == r).map(|(_, v)| v.to_string()).unwrap_or_default(),
+                        label: r.to_string(),
+                    },
+                },
+            )
+        })
+        .collect();
+    Ok(RunRequest {
+        token: token.to_owned(),
+        argv,
+        cwd: cwd.to_string_lossy().into_owned(),
+        root: plan.root.to_string_lossy().into_owned(),
+        env: std::env::vars_os().filter_map(|(k, v)| Some((k.into_string().ok()?, v.into_string().ok()?))).collect(),
+        asks,
+        vars,
+        whole: plan.whole.iter().map(|e| (e.project.clone(), e.env.clone())).collect(),
+        no_redact,
+        purpose: plan.purpose.clone(),
+    })
 }
 
 /// Starts the command with `vars` and waits for it, passing on SIGTERM and SIGHUP (Ctrl-C reaches it from the
@@ -501,7 +556,7 @@ pub async fn execute(command: &[OsString], vars: Vec<Var>, redactor: Option<Arc<
 }
 
 /// Copies `from` to `to` through the redactor, chunk by chunk, until the end.
-async fn pump(
+pub(crate) async fn pump(
     mut from: impl tokio::io::AsyncRead + Unpin,
     mut to: impl tokio::io::AsyncWrite + Unpin,
     redactor: Arc<crate::redact::Redactor>,
@@ -575,7 +630,7 @@ fn windows_exit_code(code: i32) -> u8 {
     u8::try_from(code).unwrap_or(1)
 }
 
-fn exit_code(status: std::process::ExitStatus) -> u8 {
+pub(crate) fn exit_code(status: std::process::ExitStatus) -> u8 {
     if let Some(code) = status.code() {
         if cfg!(windows) {
             return windows_exit_code(code);
@@ -598,11 +653,6 @@ pub async fn main(paths: &Paths, config: &Config, args: &RunArgs) -> u8 {
         eprintln!("reins: {e}");
         EXIT_FAILED
     };
-    let agent = crate::secrets_client::is_agent();
-    if agent && args.no_redact {
-        return fail("--no-redact is for people at a terminal; for an agent the secrets stay out of the output");
-    }
-    let runner = crate::secrets_client::runner();
     let cwd = match std::env::current_dir() {
         Ok(d) => d,
         Err(e) => return fail(&e.to_string()),
@@ -633,24 +683,80 @@ pub async fn main(paths: &Paths, config: &Config, args: &RunArgs) -> u8 {
         let p = Arc::new(Phone::new(paths, Arc::clone(&identity), timeout).map_err(Refusal::Unavailable)?);
         Ok(Arc::clone(phone_slot.get_or_init(|| p)))
     };
+    let journal = Journal::new(paths);
+    let mut entry = Entry::new(Kind::Secrets, &format!("run `{}`", secrets::cut(&plan.shown(), 80)))
+        .source(Some("reins run"))
+        .detail(Some(&format!(
+            "Command: {}\nIn: {}\nVariables: {}",
+            plan.shown(),
+            plan.root.display(),
+            plan.vars
+                .iter()
+                .map(|(name, s)| match s {
+                    Source::Literal(_) => name.clone(),
+                    Source::Var(v) => format!("{name}={v}"),
+                    Source::Field(r) => format!("{name}={r}"),
+                })
+                .chain(plan.whole.iter().map(ToString::to_string))
+                .collect::<Vec<_>>()
+                .join(", ")
+        )));
+    // On Unix the daemon runs the command: it decides who runs it from the process asking, and the values reach only
+    // what it starts. Every environment goes that way; `vault:Item/field` references alone do too when it runs.
+    #[cfg(unix)]
+    {
+        let socket = crate::run_socket::socket_path(paths);
+        let token =
+            std::fs::read_to_string(paths.control_token_file()).ok().map(|t| Zeroizing::new(t.trim().to_owned()));
+        match token {
+            Some(token) if socket.exists() => {
+                let given = match field_values(&plan, &phone, &journal, timeout).await {
+                    Ok(g) => g,
+                    Err(r) => return fail(r.message()),
+                };
+                let req = match run_request(&plan, &token, &cwd, &given, args.no_redact) {
+                    Ok(r) => r,
+                    Err(e) => return fail(&e),
+                };
+                drop(given);
+                entry.end(Outcome::Allowed, None);
+                journal.record(&entry);
+                return match crate::run_socket::run(&socket, &req).await {
+                    Ok(code) => code,
+                    Err(e) => fail(&e),
+                };
+            }
+            _ if !plan.envs().is_empty() => {
+                return fail(
+                    "a project's secrets are used through the Reins daemon, which is not running: `reins \
+                             resume` starts it",
+                );
+            }
+            _ => {}
+        }
+    }
+    // Here, this process asks the phone itself and starts the command: who runs it is what its own ancestry says.
+    let mut env: BTreeMap<String, String> =
+        std::env::vars_os().filter_map(|(k, v)| Some((k.into_string().ok()?, v.into_string().ok()?))).collect();
+    env.retain(|k, _| {
+        k.starts_with("REINS_")
+            || k.starts_with("CLAUDE")
+            || k.starts_with("CODEX")
+            || k.starts_with("GEMINI")
+            || k.starts_with("CURSOR")
+    });
+    let runner = crate::runner::runner_of(std::process::id(), &env, &crate::runner::process_info);
+    let agent = runner != reins_proto::desktop::PERSON;
+    if agent && args.no_redact {
+        return fail("--no-redact is for people at a terminal; for an agent the secrets stay out of the output");
+    }
     let vars = match release(&plan, paths, config, &runner, &phone).await {
         Ok(v) => v,
         Err(r) => return fail(r.message()),
     };
-    let mut entry = Entry::new(Kind::Secrets, &format!("run `{}`", secrets::cut(&plan.shown(), 80)))
-        .source(Some("reins run"))
-        .detail(Some(&format!(
-            "Command: {}\nRun by: {runner}\nIn: {}\nVariables: {}",
-            plan.shown(),
-            plan.root.display(),
-            vars.iter()
-                .map(|v| v.label.as_ref().map_or_else(|| v.name.clone(), |l| format!("{}={l}", v.name)))
-                .collect::<Vec<_>>()
-                .join(", ")
-        )));
     entry.end(Outcome::Allowed, None);
-    Journal::new(paths).record(&entry);
-    let redactor = (!args.no_redact).then(|| {
+    journal.record(&entry);
+    let redactor = (agent || !args.no_redact).then(|| {
         let secrets: Vec<(String, &str)> =
             vars.iter().filter_map(|v| v.label.as_ref().map(|l| (l.clone(), v.value.as_str()))).collect();
         Arc::new(crate::redact::Redactor::new(&secrets))

@@ -30,6 +30,9 @@ pub mod project;
 pub mod proxy;
 pub mod redact;
 pub mod run;
+#[cfg(unix)]
+pub mod run_socket;
+pub mod runner;
 pub mod secrets;
 pub mod secrets_client;
 pub mod secrets_cmd;

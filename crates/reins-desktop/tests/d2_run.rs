@@ -23,6 +23,12 @@ fn command(app: &App, config: &str, args: &[&str]) -> tokio::process::Command {
         .env("REINS_STATE_DIR", &app.paths.state_dir)
         .env_remove("REINS_LOG")
         .current_dir(app.dir.path());
+    // Whatever runs these tests (an AI agent, say) must not make the command an agent's.
+    for marker in
+        ["REINS_RUNNER", "CLAUDECODE", "CLAUDE_CODE_ENTRYPOINT", "CODEX_SANDBOX", "GEMINI_CLI", "CURSOR_AGENT"]
+    {
+        c.env_remove(marker);
+    }
     c
 }
 
@@ -91,6 +97,9 @@ async fn the_released_secrets_reach_the_command_and_its_exit_code_comes_back() {
 async fn profiles_come_from_the_config_and_stdin_passes_through() {
     let mock = Mock::start().await;
     let app = logged_in(&mock);
+    // The daemon runs it (on Unix), reading the caller alone, not the tests' own ancestry.
+    #[cfg(not(windows))]
+    let _daemon = daemon(&app).await;
     let config = "[run.profiles.ai]\npurpose = \"coding\"\nenv = { OPENAI_API_KEY = \"vault:OpenAI/password\" }\n";
     let echo: &[&str] = if cfg!(windows) {
         &[
@@ -200,6 +209,39 @@ async fn a_slow_phone_is_announced_on_stderr() {
 
 // ---- Reins Secrets: projects ------------------------------------------------------------------------------------------
 
+/// The caller alone, without its ancestors: the tests' own ancestry (an AI agent running them, say) must not decide.
+#[cfg(not(windows))]
+fn alone(pid: u32) -> Option<reins_desktop::runner::ProcessInfo> {
+    reins_desktop::runner::process_info(pid).map(|mut p| {
+        p.parent = None;
+        p
+    })
+}
+
+/// The daemon `reins run` hands the command to.
+#[cfg(not(windows))]
+async fn daemon(app: &App) -> reins_desktop::daemon::Running {
+    let mut config = reins_desktop::config::Config {
+        listen: "127.0.0.1:0".parse().unwrap(),
+        approval_timeout_secs: 20,
+        ..reins_desktop::config::Config::default()
+    };
+    config.ssh.enabled = false;
+    reins_desktop::daemon::Daemon::bind(
+        &app.paths,
+        config,
+        reins_desktop::daemon::Options {
+            authorizer: None,
+            prompter: std::sync::Arc::new(reins_desktop::auth::prompt::NoPrompter),
+            harden: false,
+            process_info: alone,
+        },
+    )
+    .await
+    .unwrap()
+    .spawn()
+}
+
 fn in_project(app: &App) -> std::path::PathBuf {
     let root = app.dir.path().join("acme");
     std::fs::create_dir_all(root.join("src")).unwrap();
@@ -216,6 +258,7 @@ const PRINT_ENV: &[&str] =
 async fn in_a_project_the_environment_is_released_bound_to_the_command_and_redacted() {
     let mock = Mock::start().await;
     let app = logged_in(&mock);
+    let _daemon = daemon(&app).await;
     let root = in_project(&app);
     let out = command(&app, "", PRINT_ENV).current_dir(root.join("src")).output().await.unwrap();
     assert!(out.status.success(), "{}", stderr(&out));
@@ -259,6 +302,7 @@ async fn in_a_project_the_environment_is_released_bound_to_the_command_and_redac
 async fn env_reins_names_the_variables_and_literals_pass_through() {
     let mock = Mock::start().await;
     let app = logged_in(&mock);
+    let _daemon = daemon(&app).await;
     let root = in_project(&app);
     std::fs::write(root.join(".env.reins"), "KEY=env:dev/API_KEY\nLOG_LEVEL=debug\n").unwrap();
     let out = command(
@@ -280,6 +324,7 @@ async fn env_reins_names_the_variables_and_literals_pass_through() {
 async fn a_release_bound_to_someone_else_is_refused_and_nothing_runs() {
     let mock = Mock::start().await;
     let app = logged_in(&mock);
+    let _daemon = daemon(&app).await;
     let root = in_project(&app);
     mock.plan(&[Step::OtherRunner]);
     let marker = root.join("ran");
@@ -287,4 +332,38 @@ async fn a_release_bound_to_someone_else_is_refused_and_nothing_runs() {
     assert_eq!(out.status.code(), Some(125), "{}", stderr(&out));
     assert!(stderr(&out).contains("someone else"), "{}", stderr(&out));
     assert!(!marker.exists());
+}
+
+#[cfg(not(windows))]
+#[tokio::test]
+async fn without_the_daemon_a_projects_secrets_are_not_released() {
+    let mock = Mock::start().await;
+    let app = logged_in(&mock);
+    let root = in_project(&app);
+    let out = command(&app, "", &["--", "true"]).current_dir(&root).output().await.unwrap();
+    assert_eq!(out.status.code(), Some(125));
+    assert!(stderr(&out).contains("reins resume"), "{}", stderr(&out));
+    assert!(mock.calls().is_empty());
+}
+
+#[cfg(not(windows))]
+#[tokio::test]
+async fn the_daemon_runs_the_exact_command_and_keeps_the_lease_for_it() {
+    let mock = Mock::start().await;
+    let app = logged_in(&mock);
+    let _daemon = daemon(&app).await;
+    let root = in_project(&app);
+    let script = ["--", "sh", "-c", "printf '%s' \"$API_KEY\"; exit 3"];
+    let first = command(&app, "", &script).current_dir(&root).output().await.unwrap();
+    assert_eq!(first.status.code(), Some(3), "{}", stderr(&first));
+    assert_eq!(stdout(&first), "[vault:acme/dev/API_KEY]");
+    let again = command(&app, "", &script).current_dir(&root).output().await.unwrap();
+    assert_eq!(stdout(&again), "[vault:acme/dev/API_KEY]");
+    assert_eq!(mock.calls_of("vault_env_release").len(), 1, "the same command: the lease");
+    // Another command, or the same one for an agent, asks again.
+    command(&app, "", &["--", "sh", "-c", "true"]).current_dir(&root).output().await.unwrap();
+    command(&app, "", &script).current_dir(&root).env("REINS_RUNNER", "agent:codex").output().await.unwrap();
+    let calls = mock.calls_of("vault_env_release");
+    assert_eq!(calls.len(), 3);
+    assert_eq!(calls[2].arguments["runner"], "agent:codex");
 }

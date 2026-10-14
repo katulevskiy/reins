@@ -269,6 +269,8 @@ impl VaultWriter for PhoneVaultWriter {
                         nonce: nonce.to_owned(),
                         created_at: crate::now_unix(),
                         envs: envs.to_vec(),
+                        ssh: Vec::new(),
+                        tokens: Vec::new(),
                     },
                 );
                 json!({"envs": names, "sealed": sealed.unwrap_or_default()})
@@ -346,12 +348,17 @@ impl VaultWriter for PhoneVaultWriter {
 /// the working directory), else as typed.
 #[must_use]
 pub fn resolve_program(program: &str, cwd: &std::path::Path) -> String {
+    resolve_program_with(program, cwd, std::env::var("PATH").ok().as_deref())
+}
+
+/// [`resolve_program`] with the `PATH` of the process that asks.
+#[must_use]
+pub fn resolve_program_with(program: &str, cwd: &std::path::Path, path_var: Option<&str>) -> String {
     let path = std::path::Path::new(program);
     let found: Option<PathBuf> = if path.components().count() > 1 || path.is_absolute() {
         Some(cwd.join(path))
     } else {
-        let dirs: Vec<PathBuf> =
-            std::env::var_os("PATH").map(|p| std::env::split_paths(&p).collect()).unwrap_or_default();
+        let dirs: Vec<PathBuf> = path_var.map(|p| std::env::split_paths(p).collect()).unwrap_or_default();
         #[cfg(windows)]
         {
             let pathext = std::env::var("PATHEXT").ok();
@@ -376,22 +383,6 @@ pub fn resolve_program(program: &str, cwd: &std::path::Path) -> String {
 fn is_executable(p: &std::path::Path) -> bool {
     use std::os::unix::fs::PermissionsExt as _;
     std::fs::metadata(p).is_ok_and(|m| m.is_file() && m.permissions().mode() & 0o111 != 0)
-}
-
-/// Who runs this process: `REINS_RUNNER` (`agent:<harness>`, set by the harness hooks), else a person.
-#[must_use]
-pub fn runner() -> String {
-    std::env::var("REINS_RUNNER")
-        .ok()
-        .map(|r| r.trim().to_owned())
-        .filter(|r| reins_proto::desktop::runner_ok(r))
-        .unwrap_or_else(|| reins_proto::desktop::PERSON.to_owned())
-}
-
-/// Whether this process runs for an agent (`REINS_RUNNER=agent:…`, even a malformed one: then it is not a person).
-#[must_use]
-pub fn is_agent() -> bool {
-    std::env::var("REINS_RUNNER").is_ok_and(|r| r.trim() != reins_proto::desktop::PERSON && !r.trim().is_empty())
 }
 
 /// Builds the writer for a terminal command.

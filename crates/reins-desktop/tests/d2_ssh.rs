@@ -67,6 +67,7 @@ impl Agent {
                 authorizer: None,
                 prompter: Arc::new(NoPrompter),
                 harden: false,
+                process_info: reins_desktop::runner::process_info,
             },
         )
         .await
