@@ -32,11 +32,8 @@ enum ModeLook {
         }
     }
 
-    /// "14:05": minutes and seconds left.
-    static func clock(until: Int64, now: Int64) -> String {
-        let left = max(until - now, 0)
-        return String(format: "%d:%02d", left / 60, left % 60)
-    }
+    /// "14:05" left, "2d 4h" beyond a day, "∞" for a bypass without an end.
+    static func clock(until: Int64, now: Int64) -> String { AutopilotText.clock(until: until, now: now) }
 
     static func verdictWord(_ v: Verdict) -> String {
         switch v {
