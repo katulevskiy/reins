@@ -242,6 +242,7 @@ async fn daemon(app: &App) -> reins_desktop::daemon::Running {
     .spawn()
 }
 
+#[cfg(not(windows))]
 fn in_project(app: &App) -> std::path::PathBuf {
     let root = app.dir.path().join("acme");
     std::fs::create_dir_all(root.join("src")).unwrap();
