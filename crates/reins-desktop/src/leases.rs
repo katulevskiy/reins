@@ -7,9 +7,10 @@
 //! the released command scope covers (exactly the approved command, or the prefix the user chose on the phone).
 //! Anything else asks the phone again.
 //!
-//! Control routes (with the control token): `POST /_reins/secrets/lease` ([`LeaseRequest`] → [`LeaseAnswer`]),
-//! `GET /_reins/secrets/leases` ([`LeaseInfo`]s, never a value), `POST /_reins/secrets/revoke` ([`RevokeRequest`] →
-//! `{"dropped": n}`).
+//! The values are used only by the daemon, for a command it starts itself (`run_socket`): no route hands them out.
+//! Control routes (with the control token): `GET /_reins/secrets/leases` ([`LeaseInfo`]s, never a value) and
+//! `POST /_reins/secrets/revoke` ([`RevokeRequest`] → `{"dropped": n}`). Leases live in memory only, so a daemon that
+//! restarts holds none.
 
 use std::collections::{BTreeSet, HashMap};
 use std::sync::{Arc, Mutex, PoisonError};
@@ -98,7 +99,7 @@ pub struct LeaseInfo {
     pub expires_at: i64,
 }
 
-/// What `POST /_reins/secrets/lease` answers: the values for the command, from a lease held or just released.
+/// The values for one command, from a lease held or just released (inside the daemon only).
 #[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct LeaseAnswer {
     pub id: String,
@@ -262,7 +263,8 @@ impl SecretsService {
     }
 
     /// The values for `req`: from a held lease, else released by the phone (and held for what it bound them to).
-    pub async fn lease(&self, req: &LeaseRequest) -> Result<LeaseAnswer, Refusal> {
+    /// `tell`: where to say that the phone is asked (the caller's terminal).
+    pub async fn lease(&self, req: &LeaseRequest, tell: Option<crate::phone::Tell>) -> Result<LeaseAnswer, Refusal> {
         check(req).map_err(Refusal::Unavailable)?;
         if req.print {
             return Err(Refusal::Unavailable("A value to print is never held by the daemon.".to_owned()));
@@ -290,7 +292,7 @@ impl SecretsService {
         )));
         let journal = self.phone.journal().clone();
         let released =
-            awaiting(&journal, entry, None, self.phone.timeout(), release_env(&phone, req, Some(&key))).await?;
+            awaiting(&journal, entry, tell, self.phone.timeout(), release_env(&phone, req, Some(&key))).await?;
         let lease = lease_from(req, released, crate::now_unix());
         let out = answer(&lease, req, false);
         self.cache.insert(lease);
@@ -298,21 +300,12 @@ impl SecretsService {
     }
 
     /// A control route under [`PREFIX`] (the token was checked).
-    pub async fn handle(&self, method: &Method, path: &str, body: &[u8]) -> Response<Body> {
+    pub fn handle(&self, method: &Method, path: &str, body: &[u8]) -> Response<Body> {
         let json = |value: &dyn erased::Json| match value.to_vec() {
             Ok(bytes) => full(StatusCode::OK, "application/json", bytes),
             Err(e) => text(StatusCode::INTERNAL_SERVER_ERROR, &e),
         };
         match (method, path.strip_prefix(PREFIX).unwrap_or("")) {
-            (&Method::POST, "lease") => {
-                let Ok(req) = serde_json::from_slice::<LeaseRequest>(body) else {
-                    return text(StatusCode::BAD_REQUEST, "A lease request is JSON (LeaseRequest).");
-                };
-                match self.lease(&req).await {
-                    Ok(a) => json(&a),
-                    Err(r) => refusal(&r),
-                }
-            }
             (&Method::GET, "leases") => json(&self.cache.list(crate::now_unix())),
             (&Method::POST, "revoke") => {
                 let Ok(r) = serde_json::from_slice::<RevokeRequest>(body) else {
@@ -324,26 +317,6 @@ impl SecretsService {
             }
             _ => text(StatusCode::NOT_FOUND, "Unknown control path."),
         }
-    }
-}
-
-/// How a refusal reaches the command line: 403 denied, 408 no answer, 503 anything else, with the message.
-fn refusal(r: &Refusal) -> Response<Body> {
-    let status = match r {
-        Refusal::Denied(_) => StatusCode::FORBIDDEN,
-        Refusal::Waiting(_) => StatusCode::REQUEST_TIMEOUT,
-        Refusal::Unavailable(_) => StatusCode::SERVICE_UNAVAILABLE,
-    };
-    text(status, r.message())
-}
-
-/// A refusal again from what [`refusal`] sent.
-#[must_use]
-pub fn refusal_from(status: u16, message: String) -> Refusal {
-    match status {
-        403 => Refusal::Denied(message),
-        408 => Refusal::Waiting(message),
-        _ => Refusal::Unavailable(message),
     }
 }
 
