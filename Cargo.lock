@@ -8329,6 +8329,7 @@ dependencies = [
 name = "reins-desktop"
 version = "0.1.0"
 dependencies = [
+ "aho-corasick",
  "async-trait",
  "bytes",
  "clap",
