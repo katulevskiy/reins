@@ -153,8 +153,14 @@ final class ActivityFlowTests: XCTestCase {
         XCTAssertTrue(element(app, "approvalSheet").waitForExistence(timeout: 10))
         element(app, "approve").tap()
         XCTAssertTrue(element(app, "approvalSheet").waitForNonExistence(timeout: 5))
-        // The seeded history ends at 14: the decision is the next entry.
+        // The seeded history ends at 14: the decision is the next entry. The history sits below the waiting cards in a
+        // lazy list, so its rows only exist once scrolled to.
         let row = element(app, "entry:15")
+        var swipes = 0
+        while !row.isHittable && swipes < 12 {
+            app.swipeUp()
+            swipes += 1
+        }
         XCTAssertTrue(row.waitForExistence(timeout: 8))
         row.tap()
         XCTAssertTrue(element(app, "entryApproval").waitForExistence(timeout: 5))
