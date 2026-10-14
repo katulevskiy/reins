@@ -31,11 +31,14 @@ pub const MAX_TEXT_LEN: usize = 8_000;
 pub const MAX_ACCOUNT_LEN: usize = 100;
 
 mod desktop;
-pub use desktop::{MAX_SESSION_ITEMS, MAX_SESSION_SECS, MIN_SESSION_SECS, SESSION_END_OP, SESSION_OP};
+pub use desktop::{
+    MAX_SESSION_ITEMS, MAX_SESSION_SECS, MIN_SESSION_SECS, SESSION_END_OP, SESSION_OP, TOKEN_HOSTS, TOKEN_STORE_OP,
+};
 mod github;
 pub mod gmail;
 mod payments;
 mod vault;
+pub use vault::env_release_args;
 
 /// What a call does to the integration, which decides how it is approved.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
