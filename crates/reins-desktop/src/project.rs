@@ -56,6 +56,9 @@ pub struct ProjectFile {
     pub name: String,
     pub default_env: String,
     pub envs: BTreeMap<String, EnvSettings>,
+    /// Where the project came from (its git origin, `github.com/acme/api`), as `reins secrets import` wrote it: the
+    /// same as the environments' `reins.origin`, so a project of the same name from elsewhere is told apart.
+    pub origin: Option<String>,
 }
 
 #[derive(Deserialize)]
@@ -71,6 +74,7 @@ struct RawFile {
 struct RawProject {
     name: String,
     default_env: Option<String>,
+    origin: Option<String>,
 }
 
 #[derive(Deserialize)]
@@ -134,6 +138,7 @@ impl ProjectFile {
             name: name.to_owned(),
             default_env: default_env.to_owned(),
             envs: BTreeMap::new(),
+            origin: None,
         })
     }
 
@@ -142,6 +147,10 @@ impl ProjectFile {
         let raw: RawFile = toml::from_str(text).map_err(|e| e.to_string().trim().to_owned())?;
         let default_env = raw.project.default_env.unwrap_or_else(|| DEFAULT_ENV.to_owned());
         let mut file = Self::new(raw.project.name.trim(), default_env.trim()).map_err(|e| format!("[project]: {e}"))?;
+        file.origin = raw.project.origin.map(|o| o.trim().to_owned()).filter(|o| !o.is_empty());
+        if file.origin.as_deref().is_some_and(|o| o.len() > 300 || o.chars().any(char::is_control)) {
+            return Err("[project]: `origin` must be one line of at most 300 characters".to_owned());
+        }
         for (name, env) in raw.env {
             check_name("environment", &name).map_err(|e| format!("[env.{name}]: {e}"))?;
             let lease_secs = env
@@ -198,6 +207,9 @@ impl ProjectFile {
         out.push_str("). Safe to commit.\n");
         out.push_str("[project]\n");
         let _ = writeln!(out, "name = {}", toml_string(&self.name));
+        if let Some(origin) = &self.origin {
+            let _ = writeln!(out, "origin = {}", toml_string(origin));
+        }
         let _ = writeln!(out, "default_env = {}", toml_string(&self.default_env));
         for (name, env) in &self.envs {
             if env == &EnvSettings::default() {
@@ -862,6 +874,17 @@ mod tests {
         assert_eq!(ProjectFile::parse(&f.render()).unwrap(), f, "the writer's output reads back");
         let minimal = ProjectFile::parse("[project]\nname = \"x\"\n").unwrap();
         assert_eq!(minimal.default_env, DEFAULT_ENV);
+    }
+
+    #[test]
+    fn reins_toml_keeps_where_the_project_came_from() {
+        let mut file = ProjectFile::new("acme-api", "development").unwrap();
+        file.origin = Some("github.com/acme/api".to_owned());
+        let text = file.render();
+        assert!(text.contains("origin = \"github.com/acme/api\""), "{text}");
+        assert_eq!(ProjectFile::parse(&text).unwrap(), file);
+        assert_eq!(ProjectFile::parse("[project]\nname = \"x\"\n").unwrap().origin, None);
+        assert!(ProjectFile::parse("[project]\nname = \"x\"\norigin = \"a\\nb\"\n").is_err());
     }
 
     #[test]
