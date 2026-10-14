@@ -1507,13 +1507,12 @@ jobs:
   # release as it is (rerun the job; a build already uploaded is not uploaded again). Uploads go one at a time.
   #
   # Trust: only commits on main that carry a published release tag are built (checked before anything is checked out).
-  # The Rust core and the Swift packages (pinned, checked against Package.resolved) build before any secret is fetched.
-  # The secrets then become files under $RUNNER_TEMP/ios-signing (0700) that only the steps needing them read; nothing
-  # goes to GITHUB_ENV, and no secret onto a command line. The certificate's files are gone once it is in the keychain
-  # (non-extractable, codesign only); the API key is used for the build number and removed, then fetched again after
-  # the archive, so the archive's build phases and packages see only the keychain, the profiles and the settings (a
-  # step checks). The keychain is locked after the upload and deleted at the end. The `testflight` environment scopes
-  # the job's secrets and can restrict it to main.
+  # The Rust core and the Swift packages (pinned, checked against Package.resolved) build before any secret is in the
+  # job. The secrets are the `testflight` environment's, each mapped only into the step that needs it, written to files
+  # under $RUNNER_TEMP/ios-signing (0700) and never to GITHUB_ENV or a command line. The certificate's files are gone
+  # once it is in the keychain (non-extractable, codesign only); the API key is written for the build number and
+  # removed, then written again after the archive, so the archive's build phases and packages see only the keychain,
+  # the profiles and the settings (a step checks). The keychain is locked after the upload and deleted at the end.
   #
   # The runner is `xcode-27`, the GitHub image with Xcode 27 (macos-26 stops at Xcode 26.6), with its Xcode 27.0
   # selected: App Store uploads need a released Xcode, and with the 27.0 SDK the app builds without the iPhone Duo's
@@ -1523,8 +1522,8 @@ jobs:
   # since 1970, so it grows with every release), raised above the highest build App Store Connect already has. A
   # testflight_tag run uses its own start in minutes. The marketing version is the release's.
   #
-  # Signing, from Infisical reins-release prod /signing/apple through the identity INFISICAL_TESTFLIGHT_IDENTITY_ID
-  # (its own, bound to the testflight environment), else the repository secrets of the same names:
+  # Signing, from the secrets of the GitHub environment `testflight` (copies of Infisical reins-release prod
+  # /signing/apple, whose master copies are there and in 1Password):
   #   IOS_DIST_CERT_P12, IOS_DIST_CERT_PASSWORD  the Apple Distribution certificate and key (.p12, base64)
   #   IOS_PROFILE_APP, IOS_PROFILE_WIDGETS, IOS_PROFILE_NOTIFICATIONS  the App Store profiles (.mobileprovision, base64)
   #     of com.reins2fa.app (Reins), com.reins2fa.app.widgets (ReinsWidgets), com.reins2fa.app.notifications
@@ -1549,20 +1548,12 @@ jobs:
     runs-on: xcode-27
     timeout-minutes: 150 # a cold fat-LTO core, the archive, the upload, and Apple's processing
     permissions:
-      contents: read
-      id-token: write # Infisical OIDC (the distribution identity, profiles and API key)
+      contents: read # the tag, its release and its notes
     env:
       XCODE_VERSION: "27.0"
       DEVELOPER_DIR: /Applications/Xcode_27.0.app/Contents/Developer
       BUNDLE_ID: com.reins2fa.app
     steps:
-      # Its own Infisical identity, bound to this environment's OIDC subject and to /signing/apple only; the release
-      # identity (INFISICAL_RELEASE_IDENTITY_ID) is bound to the main ref and is not used here.
-      - name: Require the TestFlight Infisical identity
-        env:
-          IDENTITY: ${{ vars.INFISICAL_TESTFLIGHT_IDENTITY_ID }}
-        run: |
-          [[ -n "$IDENTITY" ]] || { echo "::error::The repository variable INFISICAL_TESTFLIGHT_IDENTITY_ID is not set: the Infisical identity for the testflight environment (see CONTRIBUTING.md, Maintainers: TestFlight)"; exit 1; }
       # Before anything is checked out: the commit must be on main and carry a published release tag.
       - name: The release to upload
         id: release
@@ -1660,61 +1651,43 @@ jobs:
             --resolved ios/Reins.xcodeproj/project.xcworkspace/xcshareddata/swiftpm/Package.resolved \
             --checkouts "$RUNNER_TEMP/spm/checkouts"
 
-      # Written to a file (never exported to the job), turned into files by the next step, and removed by it.
-      - name: Fetch the Apple signing identity from Infisical
-        uses: ./.github/actions/release-secrets # zizmor: ignore[self-repository] use the exact release checkout
-        with:
-          identity-id: ${{ vars.INFISICAL_TESTFLIGHT_IDENTITY_ID }}
-          environment: ${{ vars.INFISICAL_RELEASE_ENVIRONMENT || 'prod' }}
-          secret-path: /signing/apple
-          export-type: file
-          file-output-path: /.apple-signing.env
-      # Masked, then files (0600 in a 0700 folder): the .p12, its password and the profiles for the signing steps,
-      # the API key for the build number. The repository secrets of the same names are the fallback.
-      - name: Signing material to files
+      # The API key, written for this step only and removed at its end: it does not exist while the archive runs.
+      - name: Build number
+        id: number
         env:
-          IOS_DIST_CERT_P12: ${{ secrets.IOS_DIST_CERT_P12 }}
-          IOS_DIST_CERT_PASSWORD: ${{ secrets.IOS_DIST_CERT_PASSWORD }}
-          IOS_PROFILE_APP: ${{ secrets.IOS_PROFILE_APP }}
-          IOS_PROFILE_WIDGETS: ${{ secrets.IOS_PROFILE_WIDGETS }}
-          IOS_PROFILE_NOTIFICATIONS: ${{ secrets.IOS_PROFILE_NOTIFICATIONS }}
+          VERSION: ${{ steps.release.outputs.version }}
+          MINIMUM: ${{ steps.release.outputs.minimum }}
           AC_API_KEY_P8: ${{ secrets.AC_API_KEY_P8 }}
           AC_API_KEY_ID: ${{ secrets.AC_API_KEY_ID }}
           AC_API_ISSUER_ID: ${{ secrets.AC_API_ISSUER_ID }}
           APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
         run: |
           umask 077
-          dotenv="$GITHUB_WORKSPACE/.apple-signing.env"
-          trap 'rm -f "$dotenv"' EXIT
-          python3 scripts/testflight.py secrets --need cert,asc --dotenv "$dotenv" --out "$RUNNER_TEMP/ios-signing"
-      # The API key is used here and removed at once: it does not exist while the archive runs.
-      - name: Build number
-        id: number
-        env:
-          VERSION: ${{ steps.release.outputs.version }}
-          MINIMUM: ${{ steps.release.outputs.minimum }}
-        run: |
           dir="$RUNNER_TEMP/ios-signing"
           trap 'rm -f "$dir/AuthKey.p8" "$dir/asc.env"' EXIT
+          python3 scripts/testflight.py secrets --need asc --out "$dir"
+          unset AC_API_KEY_P8
           set -a
           source "$dir/asc.env"
           set +a
           python3 scripts/testflight.py prepare --bundle-id "$BUNDLE_ID" --version "$VERSION" --minimum "$MINIMUM" \
             --key-file "$dir/AuthKey.p8" | tee "$RUNNER_TEMP/number.txt"
           cat "$RUNNER_TEMP/number.txt" >> "$GITHUB_OUTPUT"
-          # Already uploaded (a rerun): nothing gets signed, so the certificate and profiles go now.
-          if grep -qx 'uploaded=true' "$RUNNER_TEMP/number.txt"; then
-            rm -f "$dir/dist.p12" "$dir/dist.pass" "$dir"/*.mobileprovision
-          fi
       # The .p12 is opened with its password read from a file, repackaged for the keychain with a throwaway password,
       # imported non-extractable (-x) for codesign only, and every file of it removed before this step ends. The
       # keychain and import passwords on these command lines are random, made here, and nothing else runs meanwhile.
       - name: Signing identity
         if: steps.number.outputs.uploaded != 'true'
+        env:
+          IOS_DIST_CERT_P12: ${{ secrets.IOS_DIST_CERT_P12 }}
+          IOS_DIST_CERT_PASSWORD: ${{ secrets.IOS_DIST_CERT_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
         run: |
           umask 077
           dir="$RUNNER_TEMP/ios-signing"
           trap 'rm -f "$dir/dist.p12" "$dir/dist.pass" "$dir/dist.pem" "$dir/import.p12" "$dir/import.pass" "$dir/export-check.p12"' EXIT
+          python3 scripts/testflight.py secrets --need cert --out "$dir"
+          unset IOS_DIST_CERT_P12 IOS_DIST_CERT_PASSWORD
           team="$(cat "$dir/team")"
           # Keychain Access exports with modern (PBES2) or legacy (RC2, 3DES) algorithms: OpenSSL needs -legacy for
           # the latter; macOS's LibreSSL reads both.
@@ -1772,9 +1745,15 @@ jobs:
           fi
       - name: Provisioning profiles
         if: steps.number.outputs.uploaded != 'true'
+        env:
+          IOS_PROFILE_APP: ${{ secrets.IOS_PROFILE_APP }}
+          IOS_PROFILE_WIDGETS: ${{ secrets.IOS_PROFILE_WIDGETS }}
+          IOS_PROFILE_NOTIFICATIONS: ${{ secrets.IOS_PROFILE_NOTIFICATIONS }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
         run: |
           umask 077
           dir="$RUNNER_TEMP/ios-signing"
+          python3 scripts/testflight.py secrets --need profiles --out "$dir"
           team="$(cat "$dir/team")"
           identity="$(cat "$dir/identity")"
           # Xcode 16 and later read profiles from UserData; older tools from MobileDevice.
@@ -1850,7 +1829,7 @@ jobs:
             fi
           } > "$dir/release.xcconfig"
       # What the archive's build phases and packages could reach: the keychain (its key non-extractable), the profiles
-      # (public) and the settings. No certificate file, password file, API key or Infisical export.
+      # (public) and the settings. No certificate file, password file or API key.
       - name: Only the keychain, profiles and settings remain
         if: steps.number.outputs.uploaded != 'true'
         run: |
@@ -1860,7 +1839,7 @@ jobs:
             [[ -e "$file" ]] || continue
             [[ "$allowed" == *" ${file##*/} "* ]] || { echo "::error::${file##*/} must not exist while the app is built"; exit 1; }
           done
-          leftovers="$(find "$RUNNER_TEMP" "$GITHUB_WORKSPACE" -maxdepth 3 \( -name '*.p8' -o -name '*.p12' -o -name '.apple-*.env' \) -print)"
+          leftovers="$(find "$RUNNER_TEMP" "$GITHUB_WORKSPACE" -maxdepth 3 \( -name '*.p8' -o -name '*.p12' -o -name '*.pass' \) -print)"
           [[ -z "$leftovers" ]] || { echo "::error::Signing material left before the build: $leftovers"; exit 1; }
       - name: Archive
         if: steps.number.outputs.uploaded != 'true'
@@ -1881,15 +1860,7 @@ jobs:
             { echo "::error::The archive is $shown ($build), not $VERSION ($BUILD_NUMBER)"; exit 1; }
 
       # The API key again, only now that the archive is built: for the upload and TestFlight.
-      - name: Fetch the App Store Connect key from Infisical
-        uses: ./.github/actions/release-secrets # zizmor: ignore[self-repository] use the exact release checkout
-        with:
-          identity-id: ${{ vars.INFISICAL_TESTFLIGHT_IDENTITY_ID }}
-          environment: ${{ vars.INFISICAL_RELEASE_ENVIRONMENT || 'prod' }}
-          secret-path: /signing/apple
-          export-type: file
-          file-output-path: /.apple-asc.env
-      - name: App Store Connect key to files
+      - name: App Store Connect key
         env:
           AC_API_KEY_P8: ${{ secrets.AC_API_KEY_P8 }}
           AC_API_KEY_ID: ${{ secrets.AC_API_KEY_ID }}
@@ -1897,9 +1868,7 @@ jobs:
           APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
         run: |
           umask 077
-          dotenv="$GITHUB_WORKSPACE/.apple-asc.env"
-          trap 'rm -f "$dotenv"' EXIT
-          python3 scripts/testflight.py secrets --need asc --dotenv "$dotenv" --out "$RUNNER_TEMP/ios-signing"
+          python3 scripts/testflight.py secrets --need asc --out "$RUNNER_TEMP/ios-signing"
       # The export signs for the App Store and, with destination upload, sends the build to App Store Connect. The key
       # is a file; its id and issuer id (identifiers, masked) are the only parts on the command line. The export runs
       # no build phases and resolves no packages.
@@ -1953,8 +1922,7 @@ jobs:
                 "$HOME/Library/MobileDevice/Provisioning Profiles/$uuid.mobileprovision"
             done < "$dir/profiles.txt"
           fi
-          rm -f "$GITHUB_WORKSPACE/.apple-signing.env" "$GITHUB_WORKSPACE/.apple-asc.env" "$RUNNER_TEMP/release-notes.md" \
-            "$RUNNER_TEMP/number.txt"
+          rm -f "$RUNNER_TEMP/release-notes.md" "$RUNNER_TEMP/number.txt"
           rm -rf "$dir" "$RUNNER_TEMP/export" "$RUNNER_TEMP/Reins.xcarchive"
 
   # reins-bin on the AUR (https://aur.archlinux.org/packages/reins-bin): its PKGBUILD and .SRCINFO, written from the

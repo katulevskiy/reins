@@ -301,33 +301,36 @@ with tempfile.TemporaryDirectory(prefix="reins-testflight-") as directory:
                           "--team", "5DRCQV8HY2"], None)
     check(code == 0 and out == "u-1\n", (out, err))
 
-    # secrets: the dotenv wins over the environment, every value is masked first, files are private, and only the
-    # group asked for is written; missing names are all named.
+    # secrets: from the step's environment, every value masked first, private files, only the group asked for, and
+    # all missing names named (nothing written then).
     p12 = base64.b64encode(b"p12-bytes").decode()
-    dotenv = root / "apple.env"
-    dotenv.write_text(f"AC_API_KEY_P8='{pem}'\nAC_API_KEY_ID='KEY123'\nAC_API_ISSUER_ID='0a1b-2c3d'\n"
-                      f"IOS_DIST_CERT_P12='{p12}'\nIOS_DIST_CERT_PASSWORD='hunter2'\n"
-                      + "".join(f"IOS_PROFILE_{n}='{base64.b64encode(n.encode()).decode()}'\n"
-                                for n in ("APP", "WIDGETS", "NOTIFICATIONS")))
+    environment = {"AC_API_KEY_P8": pem, "AC_API_KEY_ID": "KEY123", "AC_API_ISSUER_ID": "0a1b-2c3d",
+                   "IOS_DIST_CERT_P12": p12, "IOS_DIST_CERT_PASSWORD": "hunter2",
+                   **{f"IOS_PROFILE_{n}": base64.b64encode(n.encode()).decode()
+                      for n in ("APP", "WIDGETS", "NOTIFICATIONS")}}
     out_dir = root / "signing"
-    code, out, err = run(["secrets", "--need", "asc", "--dotenv", str(dotenv), "--out", str(out_dir)], None,
-                         {"AC_API_KEY_ID": "OTHER"})
+    code, out, err = run(["secrets", "--need", "asc", "--out", str(out_dir)], None, environment)
     check(code == 0 and sorted(p.name for p in out_dir.iterdir()) == ["AuthKey.p8", "asc.env", "team"], (out, err))
-    check("AC_API_KEY_ID=KEY123\n" in (out_dir / "asc.env").read_text(), "the dotenv wins")
+    check("AC_API_KEY_ID=KEY123\n" in (out_dir / "asc.env").read_text() and "TEAM=5DRCQV8HY2" in
+          (out_dir / "asc.env").read_text(), "ids and the default team")
     check(all(p.stat().st_mode & 0o777 == 0o600 for p in out_dir.iterdir()), "private files")
     check(out_dir.stat().st_mode & 0o777 == 0o700, "a private folder")
     check("::add-mask::-----BEGIN PRIVATE KEY-----" in out and "::add-mask::KEY123" in out, out)
     check("hunter2" not in out + err, "only the group asked for is read")
-    code, out, err = run(["secrets", "--need", "cert,asc", "--dotenv", str(dotenv), "--out", str(out_dir)], None)
+    code, out, err = run(["secrets", "--need", "cert", "--out", str(out_dir)], None, environment)
     check((out_dir / "dist.p12").read_bytes() == b"p12-bytes" and (out_dir / "dist.pass").read_text() == "hunter2",
           "the certificate")
-    check((out_dir / "ReinsWidgets.mobileprovision").read_bytes() == b"WIDGETS", "the profiles")
-    check(out.index("::add-mask::hunter2") >= 0 and "wrote" in err and "hunter2" not in err, (out, err))
-    code, out, err = run(["secrets", "--need", "cert", "--out", str(root / "none")], None,
+    check("::add-mask::hunter2" in out and "hunter2" not in err and not list(out_dir.glob("*.mobileprovision")),
+          (out, err))
+    code, out, err = run(["secrets", "--need", "profiles", "--out", str(out_dir)], None, environment)
+    check((out_dir / "ReinsWidgets.mobileprovision").read_bytes() == b"WIDGETS" and "hunter2" not in out, "profiles")
+    code, out, err = run(["secrets", "--need", "cert,profiles", "--out", str(root / "none")], None,
                          {"GITHUB_ACTIONS": "true", "IOS_DIST_CERT_P12": p12})
     check(code == 2 and "::error::TestFlight signing is incomplete, missing: IOS_DIST_CERT_PASSWORD IOS_PROFILE_APP "
-          "IOS_PROFILE_WIDGETS IOS_PROFILE_NOTIFICATIONS" in err, err)
+          "IOS_PROFILE_WIDGETS IOS_PROFILE_NOTIFICATIONS" in err and "testflight" in err, err)
     check(not (root / "none").exists(), "nothing written when something is missing")
+    code, out, err = run(["secrets", "--need", "dotenv", "--out", str(root / "none")], None, environment)
+    check(code == 2, "unknown groups refused")
 
     # packages: pinned to a revision and checked out at it; plugins and binary targets are listed.
     checkouts = root / "spm" / "checkouts"
@@ -366,7 +369,6 @@ check("needs: [plan, publish]" in job and "needs.publish.result == 'success'" in
 check("group: release-testflight" in job and "cancel-in-progress: false" in job, "one upload at a time")
 check("runs-on: xcode-27" in job and "Xcode_27.0.app" in job, "a released Xcode")
 check("scripts/testflight.py prepare" in job and "scripts/testflight.py finish" in job, "the script")
-check("secret-path: /signing/apple" in job, "the Apple signing folder")
 check(job.count("if: always()") >= 1 and "delete-keychain" in job, "the keychain is removed")
 # Trust: main only, in its environment; the build runs before any secret exists; secrets stay in files.
 check("github.ref == 'refs/heads/main'" in job and "environment: testflight" in job, "main, in its environment")
@@ -381,20 +383,36 @@ def at(name):
     return next(i for i, step in enumerate(order) if name in step)
 
 
-fetch = at("Fetch the Apple signing identity from Infisical")
+# The signing material comes only from the testflight environment's secrets, each mapped only into the steps that need
+# it, all after the build; no Infisical, no OIDC token.
+first_secret = min(at(name) for name, step in steps.items() if "secrets." in step)
 for build_step in ("Build the Rust core", "Resolve and check the Swift packages", "rust-cache@"):
-    check(at(build_step) < fetch, f"{build_step} before the secrets")
-check("secrets." not in job[:job.index("Fetch the Apple signing identity")], "no secret before the build")
-check("GITHUB_ENV" not in job and job.count("export-type: file") == 2, "nothing exported to the job")
+    check(at(build_step) < first_secret, f"{build_step} before the secrets")
+allowed = {
+    "Build number": {"AC_API_KEY_P8", "AC_API_KEY_ID", "AC_API_ISSUER_ID", "APPLE_TEAM_ID"},
+    "Signing identity": {"IOS_DIST_CERT_P12", "IOS_DIST_CERT_PASSWORD", "APPLE_TEAM_ID"},
+    "Provisioning profiles": {"IOS_PROFILE_APP", "IOS_PROFILE_WIDGETS", "IOS_PROFILE_NOTIFICATIONS", "APPLE_TEAM_ID"},
+    "App settings": {"TELEGRAM_API_ID", "TELEGRAM_API_HASH"},
+    "App Store Connect key": {"AC_API_KEY_P8", "AC_API_KEY_ID", "AC_API_ISSUER_ID", "APPLE_TEAM_ID"},
+}
+for name, step in steps.items():
+    used = set(re.findall(r"\$\{\{ secrets\.([A-Z0-9_]+) \}\}", step))
+    check(used <= allowed.get(name, set()), f"{name} maps {sorted(used)}")
+check(set().union(*allowed.values()) - {"TELEGRAM_API_ID", "TELEGRAM_API_HASH"}
+      == set(re.findall(r"secrets\.((?:AC|IOS|APPLE)_[A-Z0-9_]+)", job)), "all nine, and only those")
+check("Infisical" not in job.replace("(copies of Infisical", "") and "release-secrets" not in job
+      and "id-token" not in job and "INFISICAL_" not in job, "no Infisical in the job")
+check("GITHUB_ENV" not in job, "nothing exported to the job")
 check('-P "$IOS_DIST_CERT_PASSWORD"' not in job and '-passin "file:' in job, "the password never on a command line")
 check("--key-id" not in job and "--issuer-id" not in job, "the key ids reach the script by environment")
 check("scripts/testflight.py secrets" in job, "masked and written by the script")
-# The archive sees no certificate file and no API key: the key is removed after the build number and fetched again
+# The archive sees no certificate file and no API key: the key is removed after the build number and written again
 # after the archive; a step checks the folder first.
 check('trap \'rm -f "$dir/AuthKey.p8" "$dir/asc.env"\' EXIT' in steps["Build number"], "the key removed")
 check(at("Build number") < at("Signing identity") < at("Only the keychain") < at("Archive")
-      < at("Fetch the App Store Connect key") < at("Upload to App Store Connect") < at("Lock the keychain"), order)
-check("--need asc " in steps["App Store Connect key to files"], "only the key the second time")
+      < at("App Store Connect key") < at("Upload to App Store Connect") < at("Lock the keychain"), order)
+check("--need asc " in steps["App Store Connect key"] and "--need cert " in steps["Signing identity"]
+      and "--need profiles " in steps["Provisioning profiles"], "each step writes only its own secrets")
 identity_step = steps["Signing identity"]
 check("-x -P" in identity_step and "-T /usr/bin/codesign\n" in identity_step
       and "-T /usr/bin/security" not in identity_step,
@@ -414,17 +432,9 @@ check('cache-bin: "false"' in job and 'REINS_SKIP_CORE: "1"' in steps["Archive"]
 build_core = (ROOT / "ios/scripts/build-core.sh").read_text()
 check(build_core.index('REINS_SKIP_CORE:-}" == "1"') < build_core.index("rustup target add")
       < build_core.index("run_cargo rustc"), "build-core.sh stops before rustup and cargo when skipping")
-check(job.split("permissions:\n", 1)[1].split("\n    env:", 1)[0].split() ==
-      ["contents:", "read", "id-token:", "write", "#", "Infisical", "OIDC", "(the", "distribution", "identity,",
-       "profiles", "and", "API", "key)"], "least permissions")
+check(job.split("permissions:\n", 1)[1].split("\n    env:", 1)[0].split("#", 1)[0].split() == ["contents:", "read"],
+      "least permissions")
 for line in job.splitlines():
     if "uses: " in line and "uses: ./" not in line:
         check(re.search(r"@[0-9a-f]{40} # v", line), f"pinned to a commit: {line.strip()}")
-# Its own Infisical identity, required, for both fetches; never the release identity.
-check(job.count("identity-id: ${{ vars.INFISICAL_TESTFLIGHT_IDENTITY_ID }}") == 2, "both fetches use it")
-check("INFISICAL_RELEASE_IDENTITY_ID" not in job.replace("the release\n      # identity (INFISICAL_RELEASE_IDENTITY_ID)", ""),
-      "never the release identity")
-check(at("Require the TestFlight Infisical identity") == 0 and "if: vars." not in job, "required, first")
-secrets_action = (ROOT / ".github/actions/release-secrets/action.yml").read_text()
-check(re.search(r"Infisical/secrets-action@[0-9a-f]{40} # v", secrets_action), "Infisical pinned")
 print(f"{checks} TestFlight checks passed")

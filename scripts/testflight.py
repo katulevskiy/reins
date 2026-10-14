@@ -20,11 +20,11 @@
         Checks a provisioning profile (as `security cms -D` decodes it) is an App Store profile of that team for that
         bundle id, still valid, and prints its UUID.
 
-    scripts/testflight.py secrets --need cert|asc[,..] --out DIR [--dotenv FILE]
-        Writes the signing secrets a step group needs as files (mode 0600) in DIR: `cert` the .p12, its password and
-        the three profiles; `asc` the API key (.p8) and asc.env (its ids). Values come from --dotenv (what the Infisical
-        action writes) or else the environment variables of the same names. Every value is masked (::add-mask::)
-        before anything else is printed; missing names fail, all named at once.
+    scripts/testflight.py secrets --need cert|profiles|asc --out DIR
+        Writes the signing secrets one step needs, from its environment variables of the same names, as files (mode
+        0600) in DIR (0700), with `team` (APPLE_TEAM_ID): `cert` the .p12 and its password, `profiles` the three
+        profiles, `asc` the API key (.p8) and asc.env (its ids). Every value is masked (::add-mask::) before anything
+        else is printed; missing names fail, all named at once, and nothing is written then.
 
     scripts/testflight.py packages --resolved Package.resolved --checkouts DIR
         The Swift packages the archive builds: every pin must name a revision and be checked out at it. Lists each
@@ -236,21 +236,12 @@ def check_profile(profile, bundle_id, team, now=None):
 DEFAULT_TEAM = "5DRCQV8HY2"
 # The secrets per step group, and the files they become.
 SECRETS = {
-    "cert": ("IOS_DIST_CERT_P12", "IOS_DIST_CERT_PASSWORD", "IOS_PROFILE_APP", "IOS_PROFILE_WIDGETS",
-             "IOS_PROFILE_NOTIFICATIONS"),
+    "cert": ("IOS_DIST_CERT_P12", "IOS_DIST_CERT_PASSWORD"),
+    "profiles": ("IOS_PROFILE_APP", "IOS_PROFILE_WIDGETS", "IOS_PROFILE_NOTIFICATIONS"),
     "asc": ("AC_API_KEY_P8", "AC_API_KEY_ID", "AC_API_ISSUER_ID"),
 }
 PROFILES = (("Reins", "IOS_PROFILE_APP"), ("ReinsWidgets", "IOS_PROFILE_WIDGETS"),
             ("ReinsNotifications", "IOS_PROFILE_NOTIFICATIONS"))
-
-
-def read_dotenv(path):
-    """NAME='value' lines, as the Infisical action's file export writes them (values may span lines)."""
-    try:
-        text = Path(path).read_text()
-    except FileNotFoundError:
-        return {}
-    return {key: value for key, value in re.findall(r"^([A-Z0-9_]+)='(.*?)'$", text, re.M | re.S) if value}
 
 
 def write_private(path, data):
@@ -258,32 +249,32 @@ def write_private(path, data):
         handle.write(data)
 
 
-def materialize(kinds, out, dotenv=None, environ=os.environ, mask=print):
-    """The secrets of `kinds` as files in `out`; returns the file names written."""
+def materialize(kinds, out, environ=os.environ, mask=print):
+    """The secrets of `kinds`, from the environment, as files in `out`; returns the file names written."""
     names = [name for kind in kinds for name in SECRETS[kind]] + ["APPLE_TEAM_ID"]
     values = {name: environ.get(name, "") for name in names}
-    values.update({k: v for k, v in (read_dotenv(dotenv) if dotenv else {}).items() if k in values})
     for value in values.values():
         for line in value.splitlines():
             if line.strip():
                 mask(f"::add-mask::{line.strip()}")
     missing = [name for name in names if name != "APPLE_TEAM_ID" and not values[name]]
     if missing:
-        raise ValueError(f"TestFlight signing is incomplete, missing: {' '.join(missing)} (Infisical reins-release "
-                         "prod /signing/apple, or secrets of the same names; see CONTRIBUTING.md)")
+        raise ValueError(f"TestFlight signing is incomplete, missing: {' '.join(missing)} (secrets of the GitHub "
+                         "environment testflight; see CONTRIBUTING.md)")
     team = values["APPLE_TEAM_ID"] or DEFAULT_TEAM
     if not re.fullmatch(r"[A-Z0-9]{10}", team):
         raise ValueError("APPLE_TEAM_ID is malformed")
     os.makedirs(out, mode=0o700, exist_ok=True)
     written = {"team": team.encode() + b"\n"}
-    if "cert" in kinds:
-        try:
+    try:
+        if "cert" in kinds:
             written["dist.p12"] = base64.b64decode(values["IOS_DIST_CERT_P12"], validate=False)
+            written["dist.pass"] = values["IOS_DIST_CERT_PASSWORD"].encode()
+        if "profiles" in kinds:
             for target, name in PROFILES:
                 written[f"{target}.mobileprovision"] = base64.b64decode(values[name], validate=False)
-        except ValueError:
-            raise ValueError("IOS_DIST_CERT_P12 and IOS_PROFILE_* must be base64") from None
-        written["dist.pass"] = values["IOS_DIST_CERT_PASSWORD"].encode()
+    except ValueError:
+        raise ValueError("IOS_DIST_CERT_P12 and IOS_PROFILE_* must be base64") from None
     if "asc" in kinds:
         key_id, issuer = values["AC_API_KEY_ID"], values["AC_API_ISSUER_ID"]
         if not (re.fullmatch(r"[A-Z0-9]+", key_id) and re.fullmatch(r"[0-9a-f-]+", issuer)):
@@ -579,9 +570,8 @@ def parse_args(argv):
     profile.add_argument("--team", required=True)
     secrets = commands.add_parser("secrets")
     secrets.add_argument("--need", required=True, type=lambda text: [k for k in text.split(",") if k],
-                         help="cert, asc, or both (comma-separated)")
+                         help="cert, profiles or asc (comma-separated)")
     secrets.add_argument("--out", required=True)
-    secrets.add_argument("--dotenv", help="the Infisical action's file export")
     packages = commands.add_parser("packages")
     packages.add_argument("--resolved", required=True)
     packages.add_argument("--checkouts", required=True, help="the cloned source packages' checkouts folder")
@@ -601,7 +591,7 @@ def main(argv=None, http=None, environ=os.environ):
             print(uuid)
             return 0
         if args.command == "secrets":
-            written = materialize(args.need, args.out, args.dotenv, environ, mask=lambda line: print(line, flush=True))
+            written = materialize(args.need, args.out, environ, mask=lambda line: print(line, flush=True))
             log(f"wrote {', '.join(written)}")
             return 0
         if args.command == "packages":

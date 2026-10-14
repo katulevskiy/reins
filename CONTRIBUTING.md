@@ -259,33 +259,29 @@ never touches the GitHub release: rerun the job. To test or redo one release, ru
 The build number is the release's Android versionCode (minutes since 1970), or one more than the highest build App
 Store Connect already has, whichever is larger. The version is the release's.
 
-It reads Infisical `/signing/apple` through its own machine identity, whose id is the repository variable
-`INFISICAL_TESTFLIGHT_IDENTITY_ID` (the job fails at once without it), with repository secrets of the same names as the
-fallback, and fails naming any secret that is missing:
+Its signing material comes only from the secrets of the GitHub environment `testflight` (Settings > Environments >
+testflight); the job fails naming any that is missing. They are copies: the master copies are in Infisical
+`reins-release` prod `/signing/apple` and in 1Password, so rotating one means updating all three.
 
-| Infisical secret | Value |
+| Environment secret | Value |
 | --- | --- |
 | `IOS_DIST_CERT_P12`, `IOS_DIST_CERT_PASSWORD` | the Apple Distribution certificate and key (`.p12`, base64) and its password |
 | `IOS_PROFILE_APP`, `IOS_PROFILE_WIDGETS`, `IOS_PROFILE_NOTIFICATIONS` | the App Store profiles (`.mobileprovision`, base64) of `com.reins2fa.app`, `.widgets`, `.notifications` |
 | `AC_API_KEY_P8`, `AC_API_KEY_ID`, `AC_API_ISSUER_ID`, `APPLE_TEAM_ID` | the "Reins CI" API key (App Manager), as for notarization |
 
+The job does not use Infisical (its plan allows no second identity, and the release identity `github-release-android`
+keeps only its main-ref subject; an environment's OIDC subject would not match it), and asks for no OIDC token.
+
 Only a commit on main that carries a published release tag is built, and only from main (a release push, or the
 dispatch, which checks the tag before anything is checked out). The Rust core and the Swift packages (pinned to the
-revisions in `Package.resolved`, which the job checks, with their plugins listed) build before any secret is fetched.
-The secrets then become files in a `0700` folder that only the steps needing them read, nothing reaches `GITHUB_ENV`,
-and no secret goes on a command line. The certificate's files are removed as soon as it is in the keychain, imported
-non-extractable for `codesign` only. The API key is removed after the build number and fetched again after the
-archive, so the archive's build phases and packages find only the keychain, the profiles and the settings (a step
-checks). The keychain is locked after the upload, and the last step deletes it with everything else. The third-party
-actions it uses are pinned to commits. The job runs in the GitHub environment `testflight`: restrict it to `main`
-there (Settings > Environments > testflight > Deployment branches and tags), and keep any repository-secret fallbacks
-as that environment's secrets.
-
-In an environment, GitHub's OIDC subject is `repo:katulevskiy@84909978/reins@1400899427:environment:testflight`, not
-the main ref. Infisical binds one subject pattern per identity, so the job has an identity of its own, bound to exactly
-that subject and allowed to read only `/signing/apple` in `reins-release`; `INFISICAL_TESTFLIGHT_IDENTITY_ID` holds its
-id. The release identity `github-release-android` (`INFISICAL_RELEASE_IDENTITY_ID`) keeps only the main-ref subject:
-adding the environment subject to it broke releases.
+revisions in `Package.resolved`, which the job checks, with their plugins listed) build before any step is given a
+secret. Each secret is mapped only into the step that needs it, written to a file in a `0700` folder, never to
+`GITHUB_ENV` or a command line: the certificate and its password into the keychain step, which removes their files once
+the certificate is in the keychain (non-extractable, for `codesign` only); the profiles into the profile step; the API
+key into the build-number step, which removes it, and again after the archive for the upload and TestFlight. So the
+archive's build phases and packages find only the keychain, the profiles and the settings (a step checks). The keychain
+is locked after the upload, and the last step deletes it with everything else. The third-party actions it uses are
+pinned to commits. Restrict the `testflight` environment to `main` (Deployment branches and tags).
 
 Repository variables: `TESTFLIGHT_EXTERNAL_GROUP_ID` (the external group's id; two groups are named "Testers", so a
 name alone fails), `TESTFLIGHT_INTERNAL_GROUPS` (default `Internal`, which gets every build by itself) and, optionally,
@@ -298,12 +294,10 @@ Notifications on the app), stored base64 in `/signing/apple` with master copies 
 
 1. `gh variable set TESTFLIGHT_EXTERNAL_GROUP_ID -R katulevskiy/reins --body <id of the "Testers" group with the public link>`.
 2. App Store Connect > Pricing and Availability: exclude France.
-3. Infisical, `reins-release`: a machine identity for TestFlight with OIDC auth bound to the subject
-   `repo:katulevskiy@84909978/reins@1400899427:environment:testflight` (audience `https://github.com/katulevskiy`),
-   read access to `/signing/apple` only; then
-   `gh variable set INFISICAL_TESTFLIGHT_IDENTITY_ID -R katulevskiy/reins --body <its identity id>`. Leave
-   `github-release-android` with the main-ref subject only.
-4. Optional: Settings > Environments > `testflight`: allow deployments from `main` only.
+3. The nine secrets above, copied from `/signing/apple` into the `testflight` environment's secrets, e.g.
+   `gh secret set AC_API_KEY_P8 -R katulevskiy/reins --env testflight < AuthKey.p8` (values from files or stdin,
+   never on the command line).
+4. Settings > Environments > `testflight` > Deployment branches and tags: `main` only.
 
 ## Maintainers: the update feed
 
