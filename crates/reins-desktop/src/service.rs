@@ -9,6 +9,9 @@ use std::process::Command;
 
 pub const SYSTEMD_UNIT: &str = "reins.service";
 pub const LAUNCHD_LABEL: &str = "dev.reins.daemon";
+/// The service Reins installed while it was called Rewarden: it listens on the same port, so it goes first.
+pub const LEGACY_SYSTEMD_UNIT: &str = "rewarden.service";
+pub const LEGACY_LAUNCHD_LABEL: &str = "dev.rewarden.daemon";
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Manager {
@@ -31,9 +34,19 @@ impl Manager {
     /// Where the service file goes under `home`.
     #[must_use]
     pub fn file(self, home: &Path) -> PathBuf {
+        self.file_named(home, SYSTEMD_UNIT, LAUNCHD_LABEL)
+    }
+
+    /// Where the Rewarden-era service file is under `home`.
+    #[must_use]
+    pub fn legacy_file(self, home: &Path) -> PathBuf {
+        self.file_named(home, LEGACY_SYSTEMD_UNIT, LEGACY_LAUNCHD_LABEL)
+    }
+
+    fn file_named(self, home: &Path, unit: &str, label: &str) -> PathBuf {
         match self {
-            Self::Systemd => home.join(".config/systemd/user").join(SYSTEMD_UNIT),
-            Self::Launchd => home.join("Library/LaunchAgents").join(format!("{LAUNCHD_LABEL}.plist")),
+            Self::Systemd => home.join(".config/systemd/user").join(unit),
+            Self::Launchd => home.join("Library/LaunchAgents").join(format!("{label}.plist")),
         }
     }
 
@@ -101,6 +114,7 @@ pub fn install(manager: Manager, home: &Path, exe: &Path, start: bool) -> Result
         std::fs::create_dir_all(dir).map_err(|e| format!("{}: {e}", dir.display()))?;
     }
     std::fs::write(&file, manager.contents(exe, home)).map_err(|e| format!("{}: {e}", file.display()))?;
+    retire_legacy(manager, home, start)?;
     if start {
         let path = file.display().to_string();
         match manager {
@@ -136,7 +150,16 @@ pub fn restart_if_installed(manager: Manager, home: &Path) -> Result<Option<Stri
 
 /// Stops (when `stop`) and removes the service. `Ok(false)` when it was not installed.
 pub fn uninstall(manager: Manager, home: &Path, stop: bool) -> Result<bool, String> {
-    let file = manager.file(home);
+    remove(manager, &manager.file(home), SYSTEMD_UNIT, stop)
+}
+
+/// Stops (when `stop`) and removes the service Reins installed while it was called Rewarden, which would hold the
+/// daemon's port. `Ok(false)` when there is none.
+pub fn retire_legacy(manager: Manager, home: &Path, stop: bool) -> Result<bool, String> {
+    remove(manager, &manager.legacy_file(home), LEGACY_SYSTEMD_UNIT, stop)
+}
+
+fn remove(manager: Manager, file: &Path, unit: &str, stop: bool) -> Result<bool, String> {
     if !file.exists() {
         return Ok(false);
     }
@@ -144,11 +167,11 @@ pub fn uninstall(manager: Manager, home: &Path, stop: bool) -> Result<bool, Stri
         let path = file.display().to_string();
         // Already stopped is fine.
         match manager {
-            Manager::Systemd => run("systemctl", &["--user", "disable", "--now", SYSTEMD_UNIT]).ok(),
+            Manager::Systemd => run("systemctl", &["--user", "disable", "--now", unit]).ok(),
             Manager::Launchd => run("launchctl", &["unload", "-w", &path]).ok(),
         };
     }
-    std::fs::remove_file(&file).map_err(|e| format!("{}: {e}", file.display()))?;
+    std::fs::remove_file(file).map_err(|e| format!("{}: {e}", file.display()))?;
     if stop && manager == Manager::Systemd {
         run("systemctl", &["--user", "daemon-reload"]).ok();
     }
@@ -186,5 +209,19 @@ mod tests {
             assert!(!uninstall(manager, home.path(), false).unwrap());
         }
         assert!(home.path().join(".config/systemd/user").is_dir());
+    }
+
+    #[test]
+    fn install_removes_the_rewarden_service_that_holds_the_port() {
+        let home = tempfile::tempdir().unwrap();
+        for manager in [Manager::Systemd, Manager::Launchd] {
+            let legacy = manager.legacy_file(home.path());
+            std::fs::create_dir_all(legacy.parent().unwrap()).unwrap();
+            std::fs::write(&legacy, "old").unwrap();
+            install(manager, home.path(), Path::new("/usr/bin/reins"), false).unwrap();
+            assert!(!legacy.exists(), "{}", legacy.display());
+            assert!(manager.file(home.path()).exists());
+            assert!(!retire_legacy(manager, home.path(), false).unwrap());
+        }
     }
 }

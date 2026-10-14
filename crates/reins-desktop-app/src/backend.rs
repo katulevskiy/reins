@@ -472,9 +472,7 @@ impl Backend {
                     ..
                 } => return Ok(how.to_owned()),
                 _ if Instant::now() > deadline => {
-                    return Err(
-                        "the background service did not start (run `reins daemon` in a terminal to see why)".to_owned()
-                    );
+                    return Err(reins_desktop::port::not_started(config.listen));
                 }
                 _ => tokio::time::sleep(Duration::from_millis(250)).await,
             }
