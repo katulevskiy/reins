@@ -257,6 +257,19 @@ updates, the SHA-256 of the pack and the push options. The phone's credential is
 part of the analysis cannot be completed, the screen shows a note instead of a guess. A push whose history could not
 be checked is treated as a force push.
 
+**Reins Secrets** ([secrets.md](secrets.md)). A project's environment is released to the desktop app sealed to its
+pinned key, like any secret, for one command: the program (by its absolute path) and its arguments as `reins run`
+spawns them, without a shell, the project's folder on the computer, and who runs it (you, or which agent). The phone
+decides what the release is bound to and says so inside the sealed answer: exactly that command, or an argument prefix
+you picked on the phone (`npm run *`; never for shells, interpreters, launchers or the program alone). A standing
+permission binds the same things, and every one of them is compared. Production environments, and those whose
+`reins.toml` says `confirm = "always"`, are asked every time unless you change that on the phone; the repository can
+make an environment stricter, never looser. Values sent from the computer (`reins secrets set`, import) travel in a box
+to the phone's own key, as `reins vault add`'s do, with one set of four check digits over the whole batch. A git host's
+token found on the computer goes the same way to the phone's integration. **Revoke on all computers** ends the
+permissions on the phone and leaves, for each paired computer, a note sealed to its key on the server; its daemon picks
+it up and drops what it holds. The server cannot read the note, and one it made up could only make a computer ask again.
+
 ## What the server sees
 
 The server is a relay, and it is in a position to read what it relays.
@@ -266,6 +279,7 @@ phone's push token, the AI clients that registered, your AI connections (name, l
 times), and hashed refresh tokens.
 
 **In memory only:** waiting requests and their results (at most 10 minutes), pairings and sign-in sessions (minutes),
+sealed "drop your secrets" notes for paired computers (a day at most),
 which integrations your phone has (ids only, no account names), and the names and tool lists of MCP servers you added
 on the phone.
 

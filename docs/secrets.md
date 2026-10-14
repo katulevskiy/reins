@@ -179,8 +179,12 @@ and its grants end with it (existing).
 - The daemon holds released values in memory only (`Zeroizing`), per lease key `(principal, project, env, fields,
   command pattern)`, until `min(phone expiry, reins.toml lease, phone policy)`.
 - `reins secrets leases` lists them; `reins secrets revoke [--all]` drops them; the desktop app's Keys & secrets page shows
-  and drops them; the phone's grant/activity pages get **Revoke on all computers**, which the daemon picks up through
-  the existing poll (a new `lease_revocations` message, sealed to the computer).
+  and drops them; the phone's grant/activity pages get **Revoke on all computers**: the environment's standing
+  permissions end on the phone, and a `LeaseRevocation` sealed to each paired computer's key goes to the server
+  (`POST /reins/api/desktop/revocations`, from the approval device). The server keeps each in memory for a day at most
+  (20 per computer) until that computer's daemon takes it (`GET /reins/desktop/revocations`, polled while it holds
+  leases). A revocation only ever takes leases away, so one the server makes up (it knows the public key) can only
+  make the computer ask again.
 - A child process that already received values keeps them (the OS gives no way back); leases stop new releases.
 
 ### 3.5 Other ways in
@@ -190,7 +194,7 @@ and its grants end with it (existing).
 - **git** (exists): host tokens stay in the phone's integration store (they are integrations, not vault items); import
   moves a found `gh`/`.git-credentials` token there (5.3).
 - **`reins secrets get REF`** for scripts that need one value on stdout: person-only (refused when the caller is an agent),
-  always asked, never granted.
+  always asked, never granted (`vault_env_release` with `print: true`, which the phone asks every time).
 
 ## 4. Managing secrets
 
@@ -211,8 +215,18 @@ screens:
 | `leases`, `revoke` | 3.4 |
 | `doctor` | checks the project: references resolve, no plaintext `.env` left, guard rules on |
 
-Writes use a new **batch** store tool `vault_secrets_store` (extends `vault_secret_store`: many variables of one env in
-one sealed box, one approval, one set of check digits over the batch, history kept for replaced values).
+Writes use a new **batch** store tool `vault_secrets_store` (extends `vault_secret_store`: the changes to one or more
+environments in one box from the app's key to the phone's key, one approval, one set of check digits over the batch).
+The call names the environments beside the box (`envs: ["project/env", ...]`); the box (`SecretsToStore`) holds per
+environment `set` (name, value), `unset`, `rename` (from, to), `copy_from` (another environment of the project, copied on
+the phone so the values never travel) and `replace` (without it a `set` that would change an existing value is refused).
+The phone makes the folder and the item when missing (the item: a Secure Note with the hidden `reins.kind = env/1`
+field, variables as hidden fields), keeps replaced and removed values in the item's history (`NAME: value`, as the
+Bitwarden apps keep hidden fields), refuses a box older than 15 minutes or seen before, and changes nothing if the
+vault changed between the approval and the save. Limits: 20 environments, 200 variables each, 128 KB of values.
+
+Names come from `vault_secrets_list` (projects, environments, variable names and versions, boxed from the phone's key;
+never a value; can be remembered on the phone per project).
 
 ## 5. Scan and import (workstream A)
 
