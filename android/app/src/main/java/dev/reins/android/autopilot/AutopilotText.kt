@@ -45,6 +45,12 @@ object AutopilotText {
     fun customMinutes(count: Int, unit: BypassUnit): UInt =
         (count.coerceIn(1, unit.max).toUInt() * unit.minutes).coerceAtMost(MAX_BYPASS_MINUTES)
 
+    /** What the owner's check says when a bypass is turned on: "Turn on Bypass for every AI" / "for Claude". */
+    fun bypassAuthTitle(who: String?): String = "Turn on Bypass for ${who?.let(::untrusted) ?: "every AI"}"
+
+    /** "For 1 hour", "Until you turn it off". */
+    fun bypassAuthDetail(minutes: UInt?): String = if (minutes == null) "Until you turn it off" else "For ${lengthLabel(minutes)}"
+
     /** "15 min", "1 hour", "3 days", "1 week"; null (until turned off) is "Until off". */
     fun lengthLabel(minutes: UInt?): String {
         minutes ?: return "Until off"

@@ -110,6 +110,7 @@ class AutopilotFlowTest : FlowHarness() {
         hold("confirmBypass")
         awaitCore { core.bypassCalls.isNotEmpty() }
         assertEquals(null to 15u, core.bypassCalls.single())
+        assertEquals("checked from the quick menu too", 1, prompts.get())
         awaitGone("bypassSheet")
         tap("modePill")
         tap("quickStopBypass")
@@ -149,6 +150,7 @@ class AutopilotFlowTest : FlowHarness() {
         hold("confirmBypass")
         awaitCore { core.bypassCalls.isNotEmpty() }
         assertEquals("1 hour unless another is picked", null to 60u, core.bypassCalls.single())
+        assertEquals(1, prompts.get())
     }
 
     @Test
@@ -181,6 +183,7 @@ class AutopilotFlowTest : FlowHarness() {
         tap("stopBypass")
         awaitCore { core.modeCalls.isNotEmpty() }
         assertEquals(Triple(null, AutopilotMode.MANUAL, null), core.modeCalls.single())
+        assertEquals("stopping needs no check", 0, prompts.get())
     }
 
     @Test
@@ -211,6 +214,7 @@ class AutopilotFlowTest : FlowHarness() {
         hold("confirmBypass")
         awaitCore { core.bypassCalls.isNotEmpty() }
         assertEquals(null to 15u, core.bypassCalls.single())
+        assertEquals("the owner is checked first", listOf("Turn on Bypass for every AI" to "For 15 min"), promptTexts.toList())
         assertTrue(heard.played(Event.BypassOn))
         awaitTag("bypassClock")
         rule.onNodeWithTag("bypassClock").assertTextContains("15:00")
@@ -220,6 +224,35 @@ class AutopilotFlowTest : FlowHarness() {
         assertEquals("back to the mode it interrupted", Triple(null, AutopilotMode.MANUAL, null), core.modeCalls.last())
         assertTrue(heard.played(Event.BypassOff))
         awaitGone("bypassClock")
+    }
+
+    @Test
+    fun aBypassWithoutTheOwnersCheckChangesNothing() {
+        installModel()
+        authResult = dev.reins.android.platform.AuthResult.Cancelled
+        openAutopilot()
+        tap("mode:BYPASS")
+        heard.clear()
+        hold("confirmBypass")
+        awaitCore { prompts.get() == 1 }
+        settle()
+        assertTrue("nothing reaches the core", core.bypassCalls.isEmpty() && core.modeCalls.isEmpty())
+        assertEquals("nothing shows, not even for a moment", AutopilotMode.MANUAL, container.state.autopilot.value?.mode)
+        assertFalse("and nothing sounds", heard.played(Event.BypassOn))
+        assertFalse(has("bypassClock"))
+
+        // No screen lock at all: it says so, and still nothing changes.
+        authResult = dev.reins.android.platform.AuthResult.Unavailable
+        tap("mode:BYPASS")
+        tap("bypassLength:custom")
+        rule.onNodeWithTag("bypassFor:untilOff").performSemanticsAction(androidx.compose.ui.semantics.SemanticsActions.OnClick)
+        hold("confirmBypassFor")
+        awaitTag("autopilotError")
+        awaitText("screen lock", substring = true)
+        assertEquals(2, prompts.get())
+        assertEquals("Until you turn it off", promptTexts.last().second)
+        assertTrue(core.bypassCalls.isEmpty())
+        assertEquals(AutopilotMode.MANUAL, container.state.autopilot.value?.mode)
     }
 
     @Test
@@ -274,6 +307,7 @@ class AutopilotFlowTest : FlowHarness() {
         heard.clear()
         tap("mode:LOCKDOWN")
         awaitCore { core.modeCalls.isNotEmpty() }
+        assertEquals("taking power away needs no check", 0, prompts.get())
         assertEquals(AutopilotMode.LOCKDOWN, core.modeCalls.single().second)
         assertTrue(heard.played(Event.LockdownOn))
         awaitTag("endLockdown")
@@ -521,9 +555,31 @@ class AutopilotFlowTest : FlowHarness() {
         awaitTag("bypassSheet")
         awaitText("Bypass Claude?")
         hold("confirmBypass")
+        awaitCore { prompts.get() == 1 }
+        assertEquals("Turn on Bypass for Claude", promptTexts.single().first)
         awaitTag("connAutopilotError")
         awaitText("10 minutes", substring = true)
         assertTrue(heard.played(Event.Error))
+    }
+
+    @Test
+    fun aConnectionBypassNeedsTheOwnersCheck() {
+        installModel()
+        authResult = dev.reins.android.platform.AuthResult.Cancelled
+        launch()
+        tap("tabSettings")
+        tap("connection:c1")
+        tap("connMode:BYPASS")
+        hold("confirmBypass")
+        awaitCore { prompts.get() == 1 }
+        settle()
+        assertTrue(core.bypassCalls.isEmpty())
+        assertEquals(null, container.state.autopilot.value?.connections?.firstOrNull { it.connectionId == "c1" }?.bypassUntil)
+        authResult = dev.reins.android.platform.AuthResult.Success
+        tap("connMode:BYPASS")
+        hold("confirmBypass")
+        awaitCore { core.bypassCalls.isNotEmpty() }
+        assertEquals("c1" to 60u, core.bypassCalls.single())
     }
 
     @Test

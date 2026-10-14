@@ -46,6 +46,8 @@ abstract class FlowHarness {
 
     @Volatile protected var authResult: AuthResult = AuthResult.Success
     protected val prompts = java.util.concurrent.atomic.AtomicInteger()
+    /** What each owner's check asked: (title, subtitle). */
+    protected val promptTexts = java.util.concurrent.CopyOnWriteArrayList<Pair<String, String>>()
 
     /** The passkey prompt the app gets; tests set its answers. */
     protected val passkeys = FakePasskeys()
@@ -102,11 +104,13 @@ abstract class FlowHarness {
         container.ssoSignIn.clear()
         authResult = AuthResult.Success
         prompts.set(0)
+        promptTexts.clear()
         UpdateProvider.fetcher = FakeUpdateServer()
         UpdateProvider.installer = FakeInstaller()
         androidx.work.testing.WorkManagerTestInitHelper.initializeTestWorkManager(context)
         AuthenticatorProvider.factory = {
-            Authenticator { _, _ ->
+            Authenticator { title, subtitle ->
+                promptTexts += title to subtitle
                 prompts.incrementAndGet()
                 authResult
             }

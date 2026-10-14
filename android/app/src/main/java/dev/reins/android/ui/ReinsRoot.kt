@@ -275,6 +275,7 @@ private fun SignedInContent(
                         onTryIt = { app.open(Route.TryIt(null)) },
                         state = state,
                         onCovered = { covered = it },
+                        authenticator = authenticator,
                     )
                     Tab.Settings -> SettingsScreen(
                         state = state,
@@ -317,6 +318,7 @@ private fun SignedInContent(
                     onProfile = { app.open(Route.AutopilotProfile(it)) },
                     onTryIt = { app.open(Route.TryIt(null)) },
                     state = state,
+                    authenticator = authenticator,
                 )
                 is Route.AutopilotProfile -> ProfileScreen(
                     route.id,
@@ -326,7 +328,7 @@ private fun SignedInContent(
                     onTryIt = { app.open(Route.TryIt(it)) },
                 )
                 is Route.TryIt -> TryItScreen(autopilot, route.profileId, onBack = { app.back() })
-                is Route.Connection -> ConnectionDetailScreen(route.id, state, settings, autopilot, onBack = { app.back() })
+                is Route.Connection -> ConnectionDetailScreen(route.id, state, settings, autopilot, onBack = { app.back() }, authenticator = authenticator)
                 Route.Integrations -> IntegrationsScreen(
                     state,
                     onBack = { app.back() },
@@ -463,8 +465,8 @@ private fun SignedInContent(
                     open = quickOpen,
                     style = quickStyle,
                     settings = apSettings,
-                    onSet = { mode, minutes -> autopilot.setMode(mode, minutes) },
-                    onBypass = { minutes -> autopilot.startBypass(minutes) },
+                    onSet = { mode, _ -> autopilot.setMode(mode) },
+                    onBypass = { minutes -> autopilot.startBypass(minutes, authenticator = authenticator) },
                     onStopBypass = { autopilot.stopBypass() },
                     onMore = {
                         quickOpen = false

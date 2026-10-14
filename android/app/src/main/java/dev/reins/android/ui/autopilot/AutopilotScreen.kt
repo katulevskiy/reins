@@ -86,6 +86,7 @@ import dev.reins.android.design.pressable
 import dev.reins.android.design.rememberNowMillis
 import dev.reins.android.design.rememberNowState
 import dev.reins.android.feedback.DialogFeedback
+import dev.reins.android.platform.Authenticator
 import dev.reins.android.state.AppState
 import dev.reins.android.ui.common.untrusted
 import dev.reins.android.ui.settings.BottomSheet
@@ -116,6 +117,8 @@ fun AutopilotScreen(
     state: AppState? = null,
     /** A sheet is up: the tab bar steps aside so the sheet's buttons are not under it. */
     onCovered: (Boolean) -> Unit = {},
+    /** The phone owner's check, before a bypass starts. */
+    authenticator: Authenticator,
 ) {
     val c = LocalColors.current
     val ui by viewModel.ui.collectAsStateWithLifecycle()
@@ -203,7 +206,7 @@ fun AutopilotScreen(
             Spacer(Modifier.height(if (onBack == null) 24.dp else 32.dp))
         }
 
-        BypassSheets(bypassOpen, who = null, onStart = { minutes -> viewModel.startBypass(minutes) }, onClose = { bypassOpen = false })
+        BypassSheets(bypassOpen, who = null, onStart = { minutes -> viewModel.startBypass(minutes, authenticator = authenticator) }, onClose = { bypassOpen = false })
         BottomSheet(modelOpen, "On-device model", onClose = { modelOpen = false }, tag = "modelSheet") {
             ModelDetails(
                 model,

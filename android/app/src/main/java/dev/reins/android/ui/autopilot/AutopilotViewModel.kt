@@ -8,6 +8,8 @@ import dev.reins.android.autopilot.AutopilotText
 import dev.reins.android.autopilot.DownloadJob
 import dev.reins.android.feedback.Event
 import dev.reins.android.feedback.play
+import dev.reins.android.platform.AuthResult
+import dev.reins.android.platform.Authenticator
 import dev.reins.android.ui.common.userMessage
 import dev.reins.core.AutopilotMode
 import dev.reins.core.AutopilotSettings
@@ -133,32 +135,52 @@ class AutopilotViewModel(private val container: AppContainer) : ViewModel() {
     }
 
     /**
-     * Sets the global mode or a connection's ([mode] null: back to following the global mode). Bypass takes [minutes].
+     * Sets the global mode or a connection's ([mode] null: back to following the global mode); never Bypass, which
+     * [startBypass] turns on.
      * The change is felt at once; a refusal from the core (a just-paired connection cannot be bypassed) says why.
      */
-    fun setMode(mode: AutopilotMode?, minutes: UInt? = null, connectionId: String? = null) {
+    fun setMode(mode: AutopilotMode?, connectionId: String? = null) {
+        // A bypass starts only through [startBypass], after the owner's check.
+        if (mode == AutopilotMode.BYPASS) return
         val old = modeOf(connectionId)
         val new = mode ?: settings.value?.mode ?: AutopilotMode.MANUAL
-        val restart = mode == AutopilotMode.BYPASS && old == AutopilotMode.BYPASS
-        (if (restart) Event.BypassOn else AutopilotText.modeChangeEvent(old, new))?.let { container.feedback.play(it) }
-        val forMinutes = if (mode == AutopilotMode.BYPASS) minutes ?: AutopilotText.bypassMinutes.first() else null
-        draft { AutopilotDraft.withMode(it, connectionId, mode, forMinutes, System.currentTimeMillis() / 1000) }
-        run {
-            container.core.setAutopilotMode(connectionId, mode, forMinutes)
+        AutopilotText.modeChangeEvent(old, new)?.let { container.feedback.play(it) }
+        draft { AutopilotDraft.withMode(it, connectionId, mode, null, System.currentTimeMillis() / 1000) }
+        perform {
+            container.core.setAutopilotMode(connectionId, mode, null)
             container.refreshAutopilot()
         }
     }
 
     /**
-     * Starts a bypass of every AI ([connectionId] null) or of one, for [minutes] or, with null, until the user stops
-     * it. Felt at once; a refusal (a just-paired AI) says why.
+     * Starts a bypass of every AI ([connectionId] null) or of one ([who] names it), for [minutes] or, with null, until
+     * the user stops it. Holding the button proves intent, not identity: the phone's owner is checked first
+     * ([authenticator]); without a pass nothing changes, not even for a moment. A refusal from the core (a just-paired
+     * AI) says why.
      */
-    fun startBypass(minutes: UInt?, connectionId: String? = null) {
-        container.feedback.play(Event.BypassOn)
-        draft { AutopilotDraft.withBypass(it, connectionId, minutes, System.currentTimeMillis() / 1000) }
-        run {
-            container.core.startBypass(connectionId, minutes)
-            container.refreshAutopilot()
+    fun startBypass(minutes: UInt?, connectionId: String? = null, who: String? = null, authenticator: Authenticator) {
+        viewModelScope.launch {
+            val result = try {
+                authenticator.authenticate(AutopilotText.bypassAuthTitle(who), AutopilotText.bypassAuthDetail(minutes))
+            } catch (e: CancellationException) {
+                throw e
+            } catch (_: Exception) {
+                AuthResult.Cancelled
+            }
+            when (result) {
+                AuthResult.Success -> Unit
+                AuthResult.Cancelled -> return@launch
+                AuthResult.Unavailable -> {
+                    _ui.update { it.copy(error = "Set a screen lock or fingerprint on this phone to turn on Bypass.") }
+                    return@launch
+                }
+            }
+            container.feedback.play(Event.BypassOn)
+            draft { AutopilotDraft.withBypass(it, connectionId, minutes, System.currentTimeMillis() / 1000) }
+            perform {
+                container.core.startBypass(connectionId, minutes)
+                container.refreshAutopilot()
+            }
         }
     }
 
@@ -167,7 +189,7 @@ class AutopilotViewModel(private val container: AppContainer) : ViewModel() {
         val s = settings.value ?: return
         container.feedback.play(Event.BypassOff)
         draft { AutopilotDraft.withoutBypass(it, connectionId) }
-        run {
+        perform {
             if (connectionId == null) {
                 container.core.setAutopilotMode(null, s.baseMode, null)
             } else {
@@ -181,7 +203,7 @@ class AutopilotViewModel(private val container: AppContainer) : ViewModel() {
     /** Which profile a connection's decisions train (null = the default profile). */
     fun assignProfile(connectionId: String, profileId: String?) {
         draft { AutopilotDraft.withProfile(it, connectionId, profileId) }
-        run {
+        perform {
             container.core.assignProfile(connectionId, profileId)
             container.refreshAutopilot()
             loadProfiles()
@@ -204,7 +226,7 @@ class AutopilotViewModel(private val container: AppContainer) : ViewModel() {
 
     fun deleteModel() {
         container.feedback.play(Event.Revoked)
-        run {
+        perform {
             container.core.deleteModel()
             refreshModel()
             container.refreshAutopilot()
@@ -213,7 +235,7 @@ class AutopilotViewModel(private val container: AppContainer) : ViewModel() {
 
     fun setWifiOnly(on: Boolean) {
         draft { it.copy(wifiOnly = on) }
-        run {
+        perform {
             container.core.setAutopilotWifiOnly(on)
             container.refreshAutopilot()
         }
@@ -250,7 +272,7 @@ class AutopilotViewModel(private val container: AppContainer) : ViewModel() {
         val clean = name.trim()
         if (clean.isEmpty()) return
         container.feedback.play(Event.GrantCreated)
-        run {
+        perform {
             val profile = container.core.createProfile(clean, icon)
             loadProfiles()
             onCreated(profile.id)
@@ -260,7 +282,7 @@ class AutopilotViewModel(private val container: AppContainer) : ViewModel() {
     fun renameProfile(id: String, name: String, icon: String?) {
         val clean = name.trim()
         if (clean.isEmpty()) return
-        run {
+        perform {
             container.core.renameProfile(id, clean, icon)
             loadProfiles()
         }
@@ -270,7 +292,7 @@ class AutopilotViewModel(private val container: AppContainer) : ViewModel() {
         container.feedback.play(Event.Selection)
         draft { AutopilotDraft.withDefaultProfile(it, id) }
         _ui.update { ui -> ui.copy(profiles = ui.profiles.map { it.copy(isDefault = it.id == id) }) }
-        run {
+        perform {
             container.core.setDefaultProfile(id)
             loadProfiles()
             container.refreshAutopilot()
@@ -282,7 +304,7 @@ class AutopilotViewModel(private val container: AppContainer) : ViewModel() {
     fun setPreset(id: String, preset: Preset) {
         // Shown at once; the reload after the core's answer settles it (a refusal reloads the old one).
         editProfile(id) { it.copy(preset = preset) }
-        run {
+        perform {
             container.core.setPreset(id, preset)
             loadProfiles()
         }
@@ -291,7 +313,7 @@ class AutopilotViewModel(private val container: AppContainer) : ViewModel() {
     /** The profile's own thresholds (whole percent, 80 to 99), saved when the user lets go of a slider. */
     fun setThresholds(id: String, approveAt: Float, denyAt: Float) {
         editProfile(id) { it.copy(preset = Preset.CUSTOM, approveAt = approveAt, denyAt = denyAt) }
-        run {
+        perform {
             container.core.setThresholds(id, approveAt, denyAt)
             loadProfiles()
         }
@@ -319,7 +341,7 @@ class AutopilotViewModel(private val container: AppContainer) : ViewModel() {
         // The chips sound their own choice; unlocking (after its warning) is felt as more autonomy.
         if (locked == false) container.feedback.play(Event.AutopilotOn)
         editProfile(id) { p -> p.copy(classes = p.classes.map { if (it.classKey == classKey) it.copy(manual = locked?.not(), autoApprove = locked?.not() ?: it.autoApprove) else it }) }
-        run {
+        perform {
             container.core.setClassLock(id, classKey, locked)
             loadProfiles()
         }
@@ -327,7 +349,7 @@ class AutopilotViewModel(private val container: AppContainer) : ViewModel() {
 
     fun resetProfile(id: String) {
         container.feedback.play(Event.Revoked)
-        run {
+        perform {
             container.core.resetProfile(id)
             loadProfiles()
             _ui.update { it.copy(notice = "Forgotten. This profile starts learning again from your next answer.") }
@@ -336,7 +358,7 @@ class AutopilotViewModel(private val container: AppContainer) : ViewModel() {
 
     fun deleteProfile(id: String, onDone: () -> Unit) {
         container.feedback.play(Event.Revoked)
-        run {
+        perform {
             container.core.deleteProfile(id)
             loadProfiles()
             container.refreshAutopilot()
@@ -376,7 +398,11 @@ class AutopilotViewModel(private val container: AppContainer) : ViewModel() {
         _ui.update { ui -> ui.copy(profiles = ui.profiles.map { if (it.id == id) edit(it) else it }) }
     }
 
-    private fun run(block: suspend () -> Unit) {
+    /**
+     * Runs [block] off the caller, showing a failure (named so that inside a coroutine it is never taken for the
+     * standard library's `run`, which would let a failure escape unseen).
+     */
+    private fun perform(block: suspend () -> Unit) {
         _ui.update { it.copy(busy = true, error = null, notice = null) }
         viewModelScope.launch {
             try {

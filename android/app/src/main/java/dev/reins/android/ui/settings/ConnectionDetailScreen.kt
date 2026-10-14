@@ -44,6 +44,7 @@ import dev.reins.android.design.RType
 import dev.reins.android.design.pressable
 import dev.reins.android.state.AppState
 import dev.reins.android.ui.autopilot.AutopilotViewModel
+import dev.reins.android.platform.Authenticator
 import dev.reins.android.ui.autopilot.BypassSheets
 import dev.reins.android.ui.autopilot.ConnectionAutopilotSection
 import dev.reins.android.ui.autopilot.LearnsIntoRow
@@ -64,6 +65,8 @@ fun ConnectionDetailScreen(
     viewModel: SettingsViewModel,
     autopilot: AutopilotViewModel? = null,
     onBack: () -> Unit,
+    /** The phone owner's check, before a bypass of this AI starts. */
+    authenticator: Authenticator? = null,
 ) {
     val c = LocalColors.current
     val connections by state.connections.collectAsStateWithLifecycle()
@@ -156,8 +159,14 @@ fun ConnectionDetailScreen(
         BottomSheet(shown == Picker.Profile && autopilot != null, "Learns into", onClose = { picking = null }, tag = "profileSheet") {
             if (connection != null && autopilot != null) ProfilePicker(connection.id, autopilot) { picking = null }
         }
-        if (autopilot != null && connection != null) {
-            BypassSheets(bypassOpen, who = connection.label, onStart = { minutes -> autopilot.startBypass(minutes, connection.id) }, onClose = { bypassOpen = false })
+        // Without the owner's check there is no bypass here at all.
+        if (autopilot != null && connection != null && authenticator != null) {
+            BypassSheets(
+                bypassOpen,
+                who = connection.label,
+                onStart = { minutes -> autopilot.startBypass(minutes, connection.id, connection.label, authenticator) },
+                onClose = { bypassOpen = false },
+            )
         }
     }
 }
