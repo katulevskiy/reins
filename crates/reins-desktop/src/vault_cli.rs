@@ -117,7 +117,7 @@ fn pin_file(paths: &Paths) -> PathBuf {
     paths.state_dir.join("phone-key.json")
 }
 
-fn pinned(paths: &Paths, server: &str) -> Option<String> {
+pub(crate) fn pinned(paths: &Paths, server: &str) -> Option<String> {
     let text = std::fs::read_to_string(pin_file(paths)).ok()?;
     let pin: PinnedKey = serde_json::from_str(&text).ok()?;
     (pin.server == server && decode_key(&pin.public_key).is_some()).then_some(pin.public_key)
@@ -164,7 +164,7 @@ fn check_typed(typed: &str, phone_digits: &str, own_digits: &str) -> Result<(), 
 
 /// What the phone answered, as the server relayed it: the server could have written it, so it is said where it came
 /// from and printed without control characters.
-fn relayed(r: &Refusal) -> String {
+pub(crate) fn relayed(r: &Refusal) -> String {
     match r {
         // Our own words (no answer in time).
         Refusal::Waiting(m) => printable(m),
@@ -173,7 +173,7 @@ fn relayed(r: &Refusal) -> String {
 }
 
 /// Whether this process can ask at the terminal.
-fn has_terminal() -> bool {
+pub(crate) fn has_terminal() -> bool {
     #[cfg(unix)]
     return std::fs::OpenOptions::new().read(true).write(true).open("/dev/tty").is_ok();
     #[cfg(windows)]
@@ -217,7 +217,7 @@ fn ask_terminal(prompt: &str) -> Option<String> {
 }
 
 /// Asks the phone for its key and keeps it once the user has typed its digits.
-async fn check_phone_key(phone: &Phone, paths: &Paths, given: Option<&str>) -> Result<String, String> {
+pub(crate) async fn check_phone_key(phone: &Phone, paths: &Paths, given: Option<&str>) -> Result<String, String> {
     eprintln!(
         "First, your phone hands this computer its key. Approve \"Let the computer save secrets\" on your phone, and \
          note the twelve digits it shows."
@@ -313,7 +313,7 @@ fn box_value(identity: &Identity, phone_key: &str, nonce: &str, out: &Outgoing<'
 }
 
 /// Opens what the pinned phone boxed for this app, and checks it answers this request.
-fn open_from_phone<T: DeserializeOwned>(phone: &Phone, phone_key: &str, data: &Value) -> Result<T, String> {
+pub(crate) fn open_from_phone<T: DeserializeOwned>(phone: &Phone, phone_key: &str, data: &Value) -> Result<T, String> {
     let refused = || "The answer is not from the phone this computer knows; refused.".to_owned();
     let boxed = data.get(SEALED_FIELD).and_then(Value::as_str).ok_or_else(refused)?;
     let plain = phone.identity().open_box_from(phone_key, boxed).map_err(|_| refused())?;
@@ -336,7 +336,7 @@ async fn store(phone: &Phone, phone_key: &str, out: &Outgoing<'_>) -> Result<(Va
     Ok((answer.data, answer.nonce))
 }
 
-fn logged_in(paths: &Paths, config: &Config) -> Result<Phone, String> {
+pub(crate) fn logged_in(paths: &Paths, config: &Config) -> Result<Phone, String> {
     if config.mode == Mode::Local {
         return Err("the vault is on your phone, and this app is in local mode (`mode = \"local\"` in config.toml); \
                     set `mode = \"auto\"` and run `reins login`"
@@ -352,7 +352,12 @@ fn logged_in(paths: &Paths, config: &Config) -> Result<Phone, String> {
 }
 
 /// The pinned phone key, asking for it the first time (or again with `new_phone`).
-async fn phone_key_for(phone: &Phone, paths: &Paths, given: Option<&str>, new_phone: bool) -> Result<String, String> {
+pub(crate) async fn phone_key_for(
+    phone: &Phone,
+    paths: &Paths,
+    given: Option<&str>,
+    new_phone: bool,
+) -> Result<String, String> {
     let given = phone_key_arg(given, new_phone, has_terminal())?;
     if new_phone {
         unpin(paths);
