@@ -2834,6 +2834,11 @@ public protocol ReinsCoreProtocol: AnyObject, Sendable {
      */
     func setModelRuntime(runtime: ModelRuntime) 
     
+    /**
+     * What Overnight does with a request its risk model rates catastrophic: wait for the user (the default) or deny.
+     */
+    func setOvernightWhenRisky(risky: OvernightRisky) async throws 
+    
     func setPreset(profileId: String, preset: Preset) async throws 
     
     /**
@@ -2878,6 +2883,17 @@ public protocol ReinsCoreProtocol: AnyObject, Sendable {
      * less than 10 minutes ago cannot be bypassed. Stop it with `set_autopilot_mode` (the mode it interrupted).
      */
     func startBypass(connectionId: String?, minutes: UInt32?) async throws 
+    
+    /**
+     * Starts Overnight (`docs/autopilot-risk.md`) for every AI (`connection_id` = `None`) or one, for `minutes` (1
+     * minute to a year) or, with `minutes` = `None`, until the user turns it off (`overnight_until` then reads
+     * `i64::MAX`). It decides like Auto, and weighs the destructive part of the hard floor with the risk model instead
+     * of always asking; what the model rates catastrophic, a tripwire, or what the phone cannot read with certainty is
+     * held: it waits for the user, or is denied (`set_overnight_when_risky`); what already waits is judged too. At
+     * its end it returns to the mode it interrupted; stop it earlier with `set_autopilot_mode`. Without a model that
+     * rates risk it decides like Auto. The app asks the owner (biometrics) before calling this, as for a bypass.
+     */
+    func startOvernight(connectionId: String?, minutes: UInt32?) async throws 
     
     /**
      * What a newly connected AI may do before it asked for anything; `None` until the user chose (acts as asking).
@@ -4541,6 +4557,25 @@ open func setModelRuntime(runtime: ModelRuntime)  {try! rustCall() {
 }
 }
     
+    /**
+     * What Overnight does with a request its risk model rates catastrophic: wait for the user (the default) or deny.
+     */
+open func setOvernightWhenRisky(risky: OvernightRisky)async throws   {
+    return
+        try  await uniffiRustCallAsync(
+            rustFutureFunc: {
+                uniffi_reins_core_fn_method_reinscore_set_overnight_when_risky(
+                        self.uniffiCloneHandle(),FfiConverterTypeOvernightRisky_lower(risky)
+                )
+            },
+            pollFunc: ffi_reins_core_rust_future_poll_void,
+            completeFunc: ffi_reins_core_rust_future_complete_void,
+            freeFunc: ffi_reins_core_rust_future_free_void,
+            liftFunc: { $0 },
+            errorHandler: FfiConverterTypeCoreError_lift
+        )
+}
+    
 open func setPreset(profileId: String, preset: Preset)async throws   {
     return
         try  await uniffiRustCallAsync(
@@ -4687,6 +4722,31 @@ open func startBypass(connectionId: String?, minutes: UInt32?)async throws   {
         try  await uniffiRustCallAsync(
             rustFutureFunc: {
                 uniffi_reins_core_fn_method_reinscore_start_bypass(
+                        self.uniffiCloneHandle(),FfiConverterOptionString.lower(connectionId),FfiConverterOptionUInt32.lower(minutes)
+                )
+            },
+            pollFunc: ffi_reins_core_rust_future_poll_void,
+            completeFunc: ffi_reins_core_rust_future_complete_void,
+            freeFunc: ffi_reins_core_rust_future_free_void,
+            liftFunc: { $0 },
+            errorHandler: FfiConverterTypeCoreError_lift
+        )
+}
+    
+    /**
+     * Starts Overnight (`docs/autopilot-risk.md`) for every AI (`connection_id` = `None`) or one, for `minutes` (1
+     * minute to a year) or, with `minutes` = `None`, until the user turns it off (`overnight_until` then reads
+     * `i64::MAX`). It decides like Auto, and weighs the destructive part of the hard floor with the risk model instead
+     * of always asking; what the model rates catastrophic, a tripwire, or what the phone cannot read with certainty is
+     * held: it waits for the user, or is denied (`set_overnight_when_risky`); what already waits is judged too. At
+     * its end it returns to the mode it interrupted; stop it earlier with `set_autopilot_mode`. Without a model that
+     * rates risk it decides like Auto. The app asks the owner (biometrics) before calling this, as for a bypass.
+     */
+open func startOvernight(connectionId: String?, minutes: UInt32?)async throws   {
+    return
+        try  await uniffiRustCallAsync(
+            rustFutureFunc: {
+                uniffi_reins_core_fn_method_reinscore_start_overnight(
                         self.uniffiCloneHandle(),FfiConverterOptionString.lower(connectionId),FfiConverterOptionUInt32.lower(minutes)
                 )
             },
@@ -6618,7 +6678,7 @@ public struct AutoDecisionView: Equatable, Hashable {
      */
     public var verdict: Verdict
     /**
-     * "autopilot" | "bypass" | "lockdown"
+     * "autopilot" | "overnight" | "bypass" | "lockdown"
      */
     public var decidedBy: String
     public var pApprove: Float
@@ -6638,7 +6698,7 @@ public struct AutoDecisionView: Equatable, Hashable {
          * `Approve` or `Deny`.
          */verdict: Verdict, 
         /**
-         * "autopilot" | "bypass" | "lockdown"
+         * "autopilot" | "overnight" | "bypass" | "lockdown"
          */decidedBy: String, pApprove: Float, confidence: Float, 
         /**
          * The activity entry it produced ("Report" opens it; `correct_decision` takes it).
@@ -6740,6 +6800,10 @@ public struct AutopilotNote: Equatable, Hashable {
      * "This was wrong" can be recorded for this entry (`correct_decision`).
      */
     public var correctable: Bool
+    /**
+     * The risk, when the model rated it.
+     */
+    public var risk: RiskView?
 
     // Default memberwise initializers are never public by default, so we
     // declare one manually.
@@ -6755,7 +6819,10 @@ public struct AutopilotNote: Equatable, Hashable {
          */neighbours: [String], reason: String, 
         /**
          * "This was wrong" can be recorded for this entry (`correct_decision`).
-         */correctable: Bool) {
+         */correctable: Bool, 
+        /**
+         * The risk, when the model rated it.
+         */risk: RiskView? = nil) {
         self.mode = mode
         self.suggested = suggested
         self.pApprove = pApprove
@@ -6766,6 +6833,7 @@ public struct AutopilotNote: Equatable, Hashable {
         self.neighbours = neighbours
         self.reason = reason
         self.correctable = correctable
+        self.risk = risk
     }
 
     
@@ -6793,7 +6861,8 @@ public struct FfiConverterTypeAutopilotNote: FfiConverterRustBuffer {
                 profileName: FfiConverterString.read(from: &buf), 
                 neighbours: FfiConverterSequenceString.read(from: &buf), 
                 reason: FfiConverterString.read(from: &buf), 
-                correctable: FfiConverterBool.read(from: &buf)
+                correctable: FfiConverterBool.read(from: &buf), 
+                risk: FfiConverterOptionTypeRiskView.read(from: &buf)
         )
     }
 
@@ -6808,6 +6877,7 @@ public struct FfiConverterTypeAutopilotNote: FfiConverterRustBuffer {
         FfiConverterSequenceString.write(value.neighbours, into: &buf)
         FfiConverterString.write(value.reason, into: &buf)
         FfiConverterBool.write(value.correctable, into: &buf)
+        FfiConverterOptionTypeRiskView.write(value.risk, into: &buf)
     }
 }
 
@@ -6848,6 +6918,19 @@ public struct AutopilotSettings: Equatable, Hashable {
      */
     public var bypassSince: Int64?
     /**
+     * A global Overnight runs until then (`i64::MAX` while it runs until the user turns it off); `None` when the
+     * global mode is not Overnight.
+     */
+    public var overnightUntil: Int64?
+    /**
+     * When the global Overnight started.
+     */
+    public var overnightSince: Int64?
+    /**
+     * What Overnight does with what its risk model rates catastrophic.
+     */
+    public var overnightWhenRisky: OvernightRisky
+    /**
      * The profile of every connection that has none of its own.
      */
     public var defaultProfileId: String
@@ -6877,6 +6960,16 @@ public struct AutopilotSettings: Equatable, Hashable {
          * When the global bypass started.
          */bypassSince: Int64?, 
         /**
+         * A global Overnight runs until then (`i64::MAX` while it runs until the user turns it off); `None` when the
+         * global mode is not Overnight.
+         */overnightUntil: Int64? = nil, 
+        /**
+         * When the global Overnight started.
+         */overnightSince: Int64? = nil, 
+        /**
+         * What Overnight does with what its risk model rates catastrophic.
+         */overnightWhenRisky: OvernightRisky, 
+        /**
          * The profile of every connection that has none of its own.
          */defaultProfileId: String, 
         /**
@@ -6889,6 +6982,9 @@ public struct AutopilotSettings: Equatable, Hashable {
         self.baseMode = baseMode
         self.bypassUntil = bypassUntil
         self.bypassSince = bypassSince
+        self.overnightUntil = overnightUntil
+        self.overnightSince = overnightSince
+        self.overnightWhenRisky = overnightWhenRisky
         self.defaultProfileId = defaultProfileId
         self.wifiOnly = wifiOnly
         self.model = model
@@ -6915,6 +7011,9 @@ public struct FfiConverterTypeAutopilotSettings: FfiConverterRustBuffer {
                 baseMode: FfiConverterTypeAutopilotMode.read(from: &buf), 
                 bypassUntil: FfiConverterOptionInt64.read(from: &buf), 
                 bypassSince: FfiConverterOptionInt64.read(from: &buf), 
+                overnightUntil: FfiConverterOptionInt64.read(from: &buf), 
+                overnightSince: FfiConverterOptionInt64.read(from: &buf), 
+                overnightWhenRisky: FfiConverterTypeOvernightRisky.read(from: &buf), 
                 defaultProfileId: FfiConverterString.read(from: &buf), 
                 wifiOnly: FfiConverterBool.read(from: &buf), 
                 model: FfiConverterTypeModelStatus.read(from: &buf), 
@@ -6927,6 +7026,9 @@ public struct FfiConverterTypeAutopilotSettings: FfiConverterRustBuffer {
         FfiConverterTypeAutopilotMode.write(value.baseMode, into: &buf)
         FfiConverterOptionInt64.write(value.bypassUntil, into: &buf)
         FfiConverterOptionInt64.write(value.bypassSince, into: &buf)
+        FfiConverterOptionInt64.write(value.overnightUntil, into: &buf)
+        FfiConverterOptionInt64.write(value.overnightSince, into: &buf)
+        FfiConverterTypeOvernightRisky.write(value.overnightWhenRisky, into: &buf)
         FfiConverterString.write(value.defaultProfileId, into: &buf)
         FfiConverterBool.write(value.wifiOnly, into: &buf)
         FfiConverterTypeModelStatus.write(value.model, into: &buf)
@@ -7655,6 +7757,11 @@ public struct ConnectionAutopilot: Equatable, Hashable {
      */
     public var bypassSince: Int64?
     /**
+     * Its own Overnight runs until then (`i64::MAX`: until the user turns it off).
+     */
+    public var overnightUntil: Int64?
+    public var overnightSince: Int64?
+    /**
      * What applies to its requests now (global lockdown and bypass included).
      */
     public var mode: AutopilotMode
@@ -7676,6 +7783,9 @@ public struct ConnectionAutopilot: Equatable, Hashable {
          * When that bypass started.
          */bypassSince: Int64?, 
         /**
+         * Its own Overnight runs until then (`i64::MAX`: until the user turns it off).
+         */overnightUntil: Int64? = nil, overnightSince: Int64? = nil, 
+        /**
          * What applies to its requests now (global lockdown and bypass included).
          */mode: AutopilotMode, 
         /**
@@ -7685,6 +7795,8 @@ public struct ConnectionAutopilot: Equatable, Hashable {
         self.baseMode = baseMode
         self.bypassUntil = bypassUntil
         self.bypassSince = bypassSince
+        self.overnightUntil = overnightUntil
+        self.overnightSince = overnightSince
         self.mode = mode
         self.profileId = profileId
     }
@@ -7709,6 +7821,8 @@ public struct FfiConverterTypeConnectionAutopilot: FfiConverterRustBuffer {
                 baseMode: FfiConverterOptionTypeAutopilotMode.read(from: &buf), 
                 bypassUntil: FfiConverterOptionInt64.read(from: &buf), 
                 bypassSince: FfiConverterOptionInt64.read(from: &buf), 
+                overnightUntil: FfiConverterOptionInt64.read(from: &buf), 
+                overnightSince: FfiConverterOptionInt64.read(from: &buf), 
                 mode: FfiConverterTypeAutopilotMode.read(from: &buf), 
                 profileId: FfiConverterString.read(from: &buf)
         )
@@ -7719,6 +7833,8 @@ public struct FfiConverterTypeConnectionAutopilot: FfiConverterRustBuffer {
         FfiConverterOptionTypeAutopilotMode.write(value.baseMode, into: &buf)
         FfiConverterOptionInt64.write(value.bypassUntil, into: &buf)
         FfiConverterOptionInt64.write(value.bypassSince, into: &buf)
+        FfiConverterOptionInt64.write(value.overnightUntil, into: &buf)
+        FfiConverterOptionInt64.write(value.overnightSince, into: &buf)
         FfiConverterTypeAutopilotMode.write(value.mode, into: &buf)
         FfiConverterString.write(value.profileId, into: &buf)
     }
@@ -8841,6 +8957,10 @@ public struct GitPushView: Equatable, Hashable {
      */
     public var notes: [String]
     public var refs: [GitRefView]
+    /**
+     * The repository's default branch, when the desktop app learnt it from the remote; `None`: not known.
+     */
+    public var defaultBranch: String?
 
     // Default memberwise initializers are never public by default, so we
     // declare one manually.
@@ -8853,11 +8973,15 @@ public struct GitPushView: Equatable, Hashable {
          */packBytes: UInt64, 
         /**
          * What the desktop app could not work out ("File list unavailable: ...").
-         */notes: [String], refs: [GitRefView]) {
+         */notes: [String], refs: [GitRefView], 
+        /**
+         * The repository's default branch, when the desktop app learnt it from the remote; `None`: not known.
+         */defaultBranch: String? = nil) {
         self.repo = repo
         self.packBytes = packBytes
         self.notes = notes
         self.refs = refs
+        self.defaultBranch = defaultBranch
     }
 
     
@@ -8879,7 +9003,8 @@ public struct FfiConverterTypeGitPushView: FfiConverterRustBuffer {
                 repo: FfiConverterString.read(from: &buf), 
                 packBytes: FfiConverterUInt64.read(from: &buf), 
                 notes: FfiConverterSequenceString.read(from: &buf), 
-                refs: FfiConverterSequenceTypeGitRefView.read(from: &buf)
+                refs: FfiConverterSequenceTypeGitRefView.read(from: &buf), 
+                defaultBranch: FfiConverterOptionString.read(from: &buf)
         )
     }
 
@@ -8888,6 +9013,7 @@ public struct FfiConverterTypeGitPushView: FfiConverterRustBuffer {
         FfiConverterUInt64.write(value.packBytes, into: &buf)
         FfiConverterSequenceString.write(value.notes, into: &buf)
         FfiConverterSequenceTypeGitRefView.write(value.refs, into: &buf)
+        FfiConverterOptionString.write(value.defaultBranch, into: &buf)
     }
 }
 
@@ -10091,6 +10217,11 @@ public struct ModelOutput: Equatable, Hashable {
      */
     public var pooled: [Float]
     public var hidden: UInt32
+    /**
+     * f32 [batch, 4], uncalibrated severity logits (benign, risky, severe, catastrophic), from a model whose
+     * `laya_config.json` declares the `risk` output; empty otherwise.
+     */
+    public var risk: [Float]
 
     // Default memberwise initializers are never public by default, so we
     // declare one manually.
@@ -10103,11 +10234,16 @@ public struct ModelOutput: Equatable, Hashable {
          */act: [Float], 
         /**
          * f32 [batch, hidden], the [CLS] state after the decision head.
-         */pooled: [Float], hidden: UInt32) {
+         */pooled: [Float], hidden: UInt32, 
+        /**
+         * f32 [batch, 4], uncalibrated severity logits (benign, risky, severe, catastrophic), from a model whose
+         * `laya_config.json` declares the `risk` output; empty otherwise.
+         */risk: [Float] = []) {
         self.logits = logits
         self.act = act
         self.pooled = pooled
         self.hidden = hidden
+        self.risk = risk
     }
 
     
@@ -10129,7 +10265,8 @@ public struct FfiConverterTypeModelOutput: FfiConverterRustBuffer {
                 logits: FfiConverterSequenceFloat.read(from: &buf), 
                 act: FfiConverterSequenceFloat.read(from: &buf), 
                 pooled: FfiConverterSequenceFloat.read(from: &buf), 
-                hidden: FfiConverterUInt32.read(from: &buf)
+                hidden: FfiConverterUInt32.read(from: &buf), 
+                risk: FfiConverterSequenceFloat.read(from: &buf)
         )
     }
 
@@ -10138,6 +10275,7 @@ public struct FfiConverterTypeModelOutput: FfiConverterRustBuffer {
         FfiConverterSequenceFloat.write(value.act, into: &buf)
         FfiConverterSequenceFloat.write(value.pooled, into: &buf)
         FfiConverterUInt32.write(value.hidden, into: &buf)
+        FfiConverterSequenceFloat.write(value.risk, into: &buf)
     }
 }
 
@@ -10181,6 +10319,10 @@ public struct ModelStatus: Equatable, Hashable {
      * The app gave the core a runtime to run it with (`set_model_runtime`).
      */
     public var runtimeReady: Bool
+    /**
+     * The model rates risk, which Overnight needs (without it Overnight decides like Auto).
+     */
+    public var risk: Bool
 
     // Default memberwise initializers are never public by default, so we
     // declare one manually.
@@ -10196,7 +10338,10 @@ public struct ModelStatus: Equatable, Hashable {
          */downloadedBytes: UInt64, error: String?, 
         /**
          * The app gave the core a runtime to run it with (`set_model_runtime`).
-         */runtimeReady: Bool) {
+         */runtimeReady: Bool, 
+        /**
+         * The model rates risk, which Overnight needs (without it Overnight decides like Auto).
+         */risk: Bool = false) {
         self.state = state
         self.id = id
         self.label = label
@@ -10205,6 +10350,7 @@ public struct ModelStatus: Equatable, Hashable {
         self.downloadedBytes = downloadedBytes
         self.error = error
         self.runtimeReady = runtimeReady
+        self.risk = risk
     }
 
     
@@ -10230,7 +10376,8 @@ public struct FfiConverterTypeModelStatus: FfiConverterRustBuffer {
                 sizeBytes: FfiConverterUInt64.read(from: &buf), 
                 downloadedBytes: FfiConverterUInt64.read(from: &buf), 
                 error: FfiConverterOptionString.read(from: &buf), 
-                runtimeReady: FfiConverterBool.read(from: &buf)
+                runtimeReady: FfiConverterBool.read(from: &buf), 
+                risk: FfiConverterBool.read(from: &buf)
         )
     }
 
@@ -10243,6 +10390,7 @@ public struct FfiConverterTypeModelStatus: FfiConverterRustBuffer {
         FfiConverterUInt64.write(value.downloadedBytes, into: &buf)
         FfiConverterOptionString.write(value.error, into: &buf)
         FfiConverterBool.write(value.runtimeReady, into: &buf)
+        FfiConverterBool.write(value.risk, into: &buf)
     }
 }
 
@@ -11871,6 +12019,89 @@ public func FfiConverterTypeResourceView_lower(_ value: ResourceView) -> RustBuf
 
 
 /**
+ * The risk of a request: its class, how likely catastrophic it is, and why in a few words.
+ */
+public struct RiskView: Equatable, Hashable {
+    public var level: RiskLevel
+    /**
+     * Calibrated P(catastrophic), with the AI's text only able to raise it.
+     */
+    public var pCatastrophic: Float
+    /**
+     * The fact that weighs most ("deletes the default branch main"); may be empty.
+     */
+    public var why: String
+    /**
+     * Overnight held it (it waited for the user or was denied).
+     */
+    public var held: Bool
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(level: RiskLevel, 
+        /**
+         * Calibrated P(catastrophic), with the AI's text only able to raise it.
+         */pCatastrophic: Float, 
+        /**
+         * The fact that weighs most ("deletes the default branch main"); may be empty.
+         */why: String, 
+        /**
+         * Overnight held it (it waited for the user or was denied).
+         */held: Bool) {
+        self.level = level
+        self.pCatastrophic = pCatastrophic
+        self.why = why
+        self.held = held
+    }
+
+    
+
+    
+}
+
+#if compiler(>=6)
+extension RiskView: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeRiskView: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> RiskView {
+        return
+            try RiskView(
+                level: FfiConverterTypeRiskLevel.read(from: &buf), 
+                pCatastrophic: FfiConverterFloat.read(from: &buf), 
+                why: FfiConverterString.read(from: &buf), 
+                held: FfiConverterBool.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: RiskView, into buf: inout [UInt8]) {
+        FfiConverterTypeRiskLevel.write(value.level, into: &buf)
+        FfiConverterFloat.write(value.pCatastrophic, into: &buf)
+        FfiConverterString.write(value.why, into: &buf)
+        FfiConverterBool.write(value.held, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeRiskView_lift(_ buf: RustBuffer) throws -> RiskView {
+    return try FfiConverterTypeRiskView.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeRiskView_lower(_ value: RiskView) -> RustBuffer {
+    return FfiConverterTypeRiskView.lower(value)
+}
+
+
+/**
  * Secrets handed to the desktop app for one command or API route.
  */
 public struct SecretReleaseView: Equatable, Hashable {
@@ -13319,6 +13550,10 @@ public struct SuggestionView: Equatable, Hashable {
      * The model ran (false: no model, floor, or a failure — see `reason`).
      */
     public var judged: Bool
+    /**
+     * The risk, when the model rates it.
+     */
+    public var risk: RiskView?
 
     // Default memberwise initializers are never public by default, so we
     // declare one manually.
@@ -13343,7 +13578,10 @@ public struct SuggestionView: Equatable, Hashable {
          */floor: Bool, 
         /**
          * The model ran (false: no model, floor, or a failure — see `reason`).
-         */judged: Bool) {
+         */judged: Bool, 
+        /**
+         * The risk, when the model rates it.
+         */risk: RiskView? = nil) {
         self.requestId = requestId
         self.verdict = verdict
         self.mode = mode
@@ -13358,6 +13596,7 @@ public struct SuggestionView: Equatable, Hashable {
         self.novel = novel
         self.floor = floor
         self.judged = judged
+        self.risk = risk
     }
 
     
@@ -13389,7 +13628,8 @@ public struct FfiConverterTypeSuggestionView: FfiConverterRustBuffer {
                 classKey: FfiConverterString.read(from: &buf), 
                 novel: FfiConverterBool.read(from: &buf), 
                 floor: FfiConverterBool.read(from: &buf), 
-                judged: FfiConverterBool.read(from: &buf)
+                judged: FfiConverterBool.read(from: &buf), 
+                risk: FfiConverterOptionTypeRiskView.read(from: &buf)
         )
     }
 
@@ -13408,6 +13648,7 @@ public struct FfiConverterTypeSuggestionView: FfiConverterRustBuffer {
         FfiConverterBool.write(value.novel, into: &buf)
         FfiConverterBool.write(value.floor, into: &buf)
         FfiConverterBool.write(value.judged, into: &buf)
+        FfiConverterOptionTypeRiskView.write(value.risk, into: &buf)
     }
 }
 
@@ -14491,6 +14732,11 @@ public enum AutopilotEvent: Equatable, Hashable {
     case bypassEnded(connectionId: String?
     )
     /**
+     * An Overnight reached its end and the core returned to the mode it interrupted.
+     */
+    case overnightEnded(connectionId: String?
+    )
+    /**
      * Auto-approvals stopped for a connection (unusual volume); its requests wait for the user.
      */
     case paused(connectionId: String, connectionLabel: String, reason: String
@@ -14522,7 +14768,10 @@ public struct FfiConverterTypeAutopilotEvent: FfiConverterRustBuffer {
         case 2: return .bypassEnded(connectionId: try FfiConverterOptionString.read(from: &buf)
         )
         
-        case 3: return .paused(connectionId: try FfiConverterString.read(from: &buf), connectionLabel: try FfiConverterString.read(from: &buf), reason: try FfiConverterString.read(from: &buf)
+        case 3: return .overnightEnded(connectionId: try FfiConverterOptionString.read(from: &buf)
+        )
+        
+        case 4: return .paused(connectionId: try FfiConverterString.read(from: &buf), connectionLabel: try FfiConverterString.read(from: &buf), reason: try FfiConverterString.read(from: &buf)
         )
         
         default: throw UniffiInternalError.unexpectedEnumCase
@@ -14543,8 +14792,13 @@ public struct FfiConverterTypeAutopilotEvent: FfiConverterRustBuffer {
             FfiConverterOptionString.write(connectionId, into: &buf)
             
         
-        case let .paused(connectionId,connectionLabel,reason):
+        case let .overnightEnded(connectionId):
             writeInt(&buf, Int32(3))
+            FfiConverterOptionString.write(connectionId, into: &buf)
+            
+        
+        case let .paused(connectionId,connectionLabel,reason):
+            writeInt(&buf, Int32(4))
             FfiConverterString.write(connectionId, into: &buf)
             FfiConverterString.write(connectionLabel, into: &buf)
             FfiConverterString.write(reason, into: &buf)
@@ -14571,7 +14825,7 @@ public func FfiConverterTypeAutopilotEvent_lower(_ value: AutopilotEvent) -> Rus
 
 
 /**
- * How requests of a connection (or of all connections) are decided (spec §1).
+ * How requests of a connection (or of all connections) are decided (spec §1, `docs/autopilot-risk.md`).
  */
 
 public enum AutopilotMode: Equatable, Hashable {
@@ -14584,6 +14838,14 @@ public enum AutopilotMode: Equatable, Hashable {
      * Autopilot approves or denies what it is confident about, in classes that earned it; the rest waits.
      */
     case auto
+    /**
+     * For agents left working: Auto, plus the destructive part of the hard floor weighed by the risk model instead of
+     * always asked. What it rates catastrophic in context, a tripwire, or what the phone cannot read with certainty
+     * waits for the user (catastrophic ones are denied instead with `OvernightRisky::Deny`). Needs a model with the risk
+     * output; without one it decides like Auto. Runs until turned off or until `overnight_until`, then returns to the
+     * mode it interrupted.
+     */
+    case overnight
     /**
      * Everything is approved at once (only pairings and other phones still ask), until `bypass_until` (or until the
      * user turns it off).
@@ -14618,9 +14880,11 @@ public struct FfiConverterTypeAutopilotMode: FfiConverterRustBuffer {
         
         case 2: return .auto
         
-        case 3: return .bypass
+        case 3: return .overnight
         
-        case 4: return .lockdown
+        case 4: return .bypass
+        
+        case 5: return .lockdown
         
         default: throw UniffiInternalError.unexpectedEnumCase
         }
@@ -14638,12 +14902,16 @@ public struct FfiConverterTypeAutopilotMode: FfiConverterRustBuffer {
             writeInt(&buf, Int32(2))
         
         
-        case .bypass:
+        case .overnight:
             writeInt(&buf, Int32(3))
         
         
-        case .lockdown:
+        case .bypass:
             writeInt(&buf, Int32(4))
+        
+        
+        case .lockdown:
+            writeInt(&buf, Int32(5))
         
         }
     }
@@ -15611,6 +15879,81 @@ public func FfiConverterTypeModelState_lower(_ value: ModelState) -> RustBuffer 
 
 
 
+/**
+ * What Overnight does with a request its risk model rates catastrophic.
+ */
+
+public enum OvernightRisky: Equatable, Hashable {
+    
+    /**
+     * It waits for the user (the default).
+     */
+    case wait
+    /**
+     * It is denied at once.
+     */
+    case deny
+
+
+
+
+
+}
+
+#if compiler(>=6)
+extension OvernightRisky: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeOvernightRisky: FfiConverterRustBuffer {
+    typealias SwiftType = OvernightRisky
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> OvernightRisky {
+        let variant: Int32 = try readInt(&buf)
+        switch variant {
+        
+        case 1: return .wait
+        
+        case 2: return .deny
+        
+        default: throw UniffiInternalError.unexpectedEnumCase
+        }
+    }
+
+    public static func write(_ value: OvernightRisky, into buf: inout [UInt8]) {
+        switch value {
+        
+        
+        case .wait:
+            writeInt(&buf, Int32(1))
+        
+        
+        case .deny:
+            writeInt(&buf, Int32(2))
+        
+        }
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeOvernightRisky_lift(_ buf: RustBuffer) throws -> OvernightRisky {
+    return try FfiConverterTypeOvernightRisky.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeOvernightRisky_lower(_ value: OvernightRisky) -> RustBuffer {
+    return FfiConverterTypeOvernightRisky.lower(value)
+}
+
+
+
 
 public enum PendingKind: Equatable, Hashable {
     
@@ -15788,6 +16131,101 @@ public func FfiConverterTypePreset_lift(_ buf: RustBuffer) throws -> Preset {
 #endif
 public func FfiConverterTypePreset_lower(_ value: Preset) -> RustBuffer {
     return FfiConverterTypePreset.lower(value)
+}
+
+
+
+/**
+ * How bad it would be if a request were a mistake, in its context (`docs/autopilot-risk.md` §2).
+ */
+
+public enum RiskLevel: Equatable, Hashable {
+    
+    /**
+     * Routine; nothing is lost if it is wrong.
+     */
+    case benign
+    /**
+     * Changes or deletes something easily undone, or limited to the agent's own work.
+     */
+    case risky
+    /**
+     * Hard to undo, shared or production things, or one secret exposed; bounded.
+     */
+    case severe
+    /**
+     * Irreversible loss, outages, mass messages, secrets leaving, persistence, protections turned off.
+     */
+    case catastrophic
+
+
+
+
+
+}
+
+#if compiler(>=6)
+extension RiskLevel: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeRiskLevel: FfiConverterRustBuffer {
+    typealias SwiftType = RiskLevel
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> RiskLevel {
+        let variant: Int32 = try readInt(&buf)
+        switch variant {
+        
+        case 1: return .benign
+        
+        case 2: return .risky
+        
+        case 3: return .severe
+        
+        case 4: return .catastrophic
+        
+        default: throw UniffiInternalError.unexpectedEnumCase
+        }
+    }
+
+    public static func write(_ value: RiskLevel, into buf: inout [UInt8]) {
+        switch value {
+        
+        
+        case .benign:
+            writeInt(&buf, Int32(1))
+        
+        
+        case .risky:
+            writeInt(&buf, Int32(2))
+        
+        
+        case .severe:
+            writeInt(&buf, Int32(3))
+        
+        
+        case .catastrophic:
+            writeInt(&buf, Int32(4))
+        
+        }
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeRiskLevel_lift(_ buf: RustBuffer) throws -> RiskLevel {
+    return try FfiConverterTypeRiskLevel.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeRiskLevel_lower(_ value: RiskLevel) -> RustBuffer {
+    return FfiConverterTypeRiskLevel.lower(value)
 }
 
 
@@ -16629,6 +17067,30 @@ fileprivate struct FfiConverterOptionTypeRequestLabel: FfiConverterRustBuffer {
         switch try readInt(&buf) as Int8 {
         case 0: return nil
         case 1: return try FfiConverterTypeRequestLabel.read(from: &buf)
+        default: throw UniffiInternalError.unexpectedOptionalTag
+        }
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+fileprivate struct FfiConverterOptionTypeRiskView: FfiConverterRustBuffer {
+    typealias SwiftType = RiskView?
+
+    public static func write(_ value: SwiftType, into buf: inout [UInt8]) {
+        guard let value = value else {
+            writeInt(&buf, Int8(0))
+            return
+        }
+        writeInt(&buf, Int8(1))
+        FfiConverterTypeRiskView.write(value, into: &buf)
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> SwiftType {
+        switch try readInt(&buf) as Int8 {
+        case 0: return nil
+        case 1: return try FfiConverterTypeRiskView.read(from: &buf)
         default: throw UniffiInternalError.unexpectedOptionalTag
         }
     }
@@ -18465,6 +18927,9 @@ private let initializationResult: InitializationResult = {
     if (uniffi_reins_core_checksum_method_reinscore_set_model_runtime() != 3100) {
         return InitializationResult.apiChecksumMismatch
     }
+    if (uniffi_reins_core_checksum_method_reinscore_set_overnight_when_risky() != 57757) {
+        return InitializationResult.apiChecksumMismatch
+    }
     if (uniffi_reins_core_checksum_method_reinscore_set_preset() != 57690) {
         return InitializationResult.apiChecksumMismatch
     }
@@ -18487,6 +18952,9 @@ private let initializationResult: InitializationResult = {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_reins_core_checksum_method_reinscore_start_bypass() != 23286) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_reins_core_checksum_method_reinscore_start_overnight() != 26944) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_reins_core_checksum_method_reinscore_starting_policy() != 60526) {
