@@ -114,16 +114,20 @@ struct BypassSheet: View {
                 }
                 HStack(spacing: 10) {
                     ActionButton(title: "Cancel", kind: .secondary) { dismiss() }
-                    Button {
+                    // Held for two seconds: a bypass approves without asking.
+                    HoldButton(title: "Hold to bypass", symbol: "bolt.fill", height: 50) {
                         dismiss()
                         onConfirm(minutes)
-                    } label: {
-                        Label("Turn on", systemImage: "bolt.fill").font(RFont.sans(16, .semibold))
                     }
-                    .buttonStyle(CapsuleButtonStyle(kind: .danger, height: 50))
+                    .layoutPriority(1)
                     .accessibilityIdentifier("confirmBypass")
                 }
                 .padding(.top, 24)
+                Text("Hold for 2 seconds")
+                    .font(RFont.sans(12))
+                    .foregroundStyle(Palette.tertiary)
+                    .frame(maxWidth: .infinity)
+                    .padding(.top, 8)
             }
             .padding(24)
         }

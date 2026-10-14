@@ -39,6 +39,8 @@ data class ConnectUi(
     val error: String? = null,
     /** The field to type the code in (always offered; opened by itself when the scanner cannot run). */
     val manual: Boolean = false,
+    /** Settings' connect sheet asked for the scanner: the connect page starts it as it opens. */
+    val scanRequested: Boolean = false,
 )
 
 /** Navigation and session lifecycle for the whole activity. */
@@ -172,11 +174,10 @@ class AppViewModel(private val container: AppContainer) : ViewModel() {
         }
     }
 
-    /** The bypass notification or the download's: Settings > Autopilot. */
+    /** The bypass notification or the download's: the Autopilot tab. */
     fun openAutopilot() {
         home()
-        open(Route.Settings)
-        open(Route.Autopilot)
+        selectTab(Tab.Autopilot)
     }
 
     /** A "grant ends soon" notification was tapped: show that grant, if it exists. */
@@ -265,6 +266,12 @@ class AppViewModel(private val container: AppContainer) : ViewModel() {
     }
 
     fun showCodeField() = _connect.update { it.copy(manual = true) }
+
+    /** "Scan QR code" in Settings' connect sheet: the connect page opens and starts the scanner. */
+    fun requestScan() = _connect.update { it.copy(scanRequested = true) }
+
+    /** The connect page started the scanner it was asked for. */
+    fun scanStarted() = _connect.update { it.copy(scanRequested = false) }
 
     /** The connect screens closed: their error does not wait for the next visit. */
     fun resetConnect() {

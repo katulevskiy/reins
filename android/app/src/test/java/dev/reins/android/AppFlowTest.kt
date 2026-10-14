@@ -18,6 +18,7 @@ import androidx.compose.ui.test.onNodeWithContentDescription
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
+import androidx.compose.ui.test.performTouchInput
 import androidx.compose.ui.test.performScrollTo
 import androidx.compose.ui.test.performSemanticsAction
 import androidx.compose.ui.test.performTextReplacement
@@ -182,6 +183,21 @@ class AppFlowTest {
             settle()
             rule.onAllNodes(hasText(text, substring = true)).fetchSemanticsNodes().isNotEmpty()
         }
+    }
+
+    /** Holds the hold-to-confirm button tagged [tag] down until it confirms, then lets go. */
+    private fun hold(tag: String) {
+        awaitTag(tag)
+        val node = rule.onNodeWithTag(tag)
+        try {
+            node.performScrollTo()
+        } catch (_: AssertionError) {
+        }
+        node.performTouchInput { down(center) }
+        rule.mainClock.advanceTimeBy(dev.reins.android.design.HOLD_MILLIS + 300L)
+        // What it confirmed may have closed it before the finger lifts.
+        runCatching { rule.onNodeWithTag(tag).performTouchInput { up() } }
+        rule.waitForIdle()
     }
 
     private fun tap(tag: String) {
@@ -1239,12 +1255,13 @@ class AppFlowTest {
         core.activity = listOf(TestData.entry(3).copy(connectionId = ""))
         launch()
         awaitTag("entry:3")
-        tap("openSettings")
+        tap("tabSettings")
         tap("connection:c1")
+        tap("connectionIcon")
         tap("icon:grok")
         awaitCore { core.icons["c1"] == "grok" }
         rule.onNodeWithContentDescription("Back").performClick()
-        rule.onNodeWithContentDescription("Back").performClick()
+        tap("tabActivity")
         awaitTag("entry:3")
         settle()
         assertTrue(rule.onAllNodes(androidx.compose.ui.test.hasContentDescription("Grok"), useUnmergedTree = true).fetchSemanticsNodes().isNotEmpty())
@@ -1299,23 +1316,30 @@ class AppFlowTest {
     }
 
     @Test
-    fun settingsListsComputersWithTheirKeyApartFromAiApps() {
+    fun settingsListsComputersAndAiAppsAndAComputersPageShowsItsKey() {
         core.connections = listOf(TestData.computer(), TestData.connection())
         launch()
-        tap("openSettings")
+        tap("tabSettings")
         awaitTag("connection:d1")
-        rule.onNodeWithTag("connectionDetail:d1", useUnmergedTree = true).assertTextContains("Key 4821 9930", substring = true)
+        rule.onNodeWithTag("connectionDetail:d1", useUnmergedTree = true).assertTextContains("computer", substring = true)
         rule.onNodeWithTag("connectionDetail:c1", useUnmergedTree = true).assertTextContains("claude.ai", substring = true)
         // An AI app is connected: the address is still there to copy, for the next one.
+        tap("connect")
         awaitTag("copyMcpUrl")
+        tap("closeSheet")
+        // A computer's page shows the key it paired with.
+        tap("connection:d1")
+        awaitTag("connectionHeadline")
+        rule.onNodeWithTag("connectionHeadline", useUnmergedTree = true).assertTextContains("Key 4821 9930", substring = true)
     }
 
     @Test
     fun theIntegrationsCountLeavesOutTheVault() {
         core.accounts = listOf(dev.reins.core.AccountView("vault", "me@example.com", 1_700_000_000))
         launch()
-        tap("openSettings")
-        awaitText("None yet")
+        tap("tabSettings")
+        awaitTag("openIntegrations")
+        rule.onNodeWithTag("openIntegrations").assertTextContains("None", substring = true)
     }
 
     @Test
@@ -1808,7 +1832,7 @@ class AppFlowTest {
     @Test
     fun settingsHoldsConnectionsIntegrationsAndTheApprovalDeviceButton() {
         launch()
-        tap("openSettings")
+        tap("tabSettings")
         awaitTag("registerPhone")
         rule.onNodeWithText("Use this phone for approvals").assertExists()
         rule.onNodeWithTag("connection:c1").assertExists()
@@ -1817,27 +1841,29 @@ class AppFlowTest {
     }
 
     @Test
-    fun onceThisPhoneIsTheApprovalDeviceTheButtonIsGrayAndSaysSo() {
+    fun onceThisPhoneIsTheApprovalDeviceTheCardSaysSoAndOffersNoTakeover() {
         launch()
         awaitTag("noActivity")
         (context.applicationContext as ReinsApp).container.state.setApprovalDevice(true)
-        tap("openSettings")
-        awaitTag("registerPhone")
-        rule.onNodeWithText("This phone is used for approvals").assertExists()
-        rule.onNodeWithTag("registerPhone").assertIsNotEnabled()
+        tap("tabSettings")
+        awaitTag("approvalChip")
+        rule.onNodeWithTag("approvalChip").assertTextContains("Approval phone", substring = true)
+        assertFalse(has("registerPhone"))
     }
 
     @Test
     fun aConnectionsIconCanBePickedAndItCanBeDisconnected() {
         launch()
-        tap("openSettings")
+        tap("tabSettings")
         tap("connection:c1")
+        tap("connectionIcon")
         tap("icon:grok")
         awaitCore { core.icons["c1"] == "grok" }
+        tap("connectionIcon")
         tap("icon:auto")
         awaitCore { core.icons["c1"] == "auto" }
-        tap("disconnect")
-        rule.onAllNodes(hasText("Disconnect")).let { it[it.fetchSemanticsNodes().lastIndex] }.performClick()
+        // Held long enough: disconnected, no dialog.
+        hold("disconnect")
         awaitCore { core.revokedConnections.isNotEmpty() }
         assertEquals(listOf("c1"), core.revokedConnections.toList())
     }
@@ -1852,12 +1878,13 @@ class AppFlowTest {
         awaitTag("entry:3")
         fun shown() = rule.onAllNodes(androidx.compose.ui.test.hasContentDescription("Grok"), useUnmergedTree = true).fetchSemanticsNodes().size
         assertEquals(0, shown())
-        tap("openSettings")
+        tap("tabSettings")
         tap("connection:c1")
+        tap("connectionIcon")
         tap("icon:grok")
         awaitCore { core.icons["c1"] == "grok" }
         rule.onNodeWithContentDescription("Back").performClick()
-        rule.onNodeWithContentDescription("Back").performClick()
+        tap("tabActivity")
         awaitTag("entry:3")
         settle()
         val onActivity = shown()
@@ -1871,7 +1898,7 @@ class AppFlowTest {
     fun signingOutReturnsToSignIn() {
         core.browserLogoutUrl = "https://api.workos.com/user_management/sessions/logout?session_id=session_test"
         launch()
-        tap("openSettings")
+        tap("tabSettings")
         tap("signOut")
         rule.onAllNodes(hasText("Sign out")).let { it[it.fetchSemanticsNodes().lastIndex] }.performClick()
         awaitTag("welcome")

@@ -93,7 +93,7 @@ import dev.reins.android.ui.AppViewModel
 import dev.reins.android.ui.autopilot.AutopilotViewModel
 import dev.reins.android.ui.autopilot.IconTile
 import dev.reins.android.ui.autopilot.ModelCard
-import dev.reins.android.ui.autopilot.modeGlyph
+import dev.reins.android.ui.autopilot.modeIcon
 import dev.reins.android.ui.autopilot.modeTint
 import dev.reins.android.ui.nav.Route
 import dev.reins.android.ui.pairing.ComputerHowTo
@@ -526,7 +526,7 @@ private fun AutopilotPage(viewModel: AutopilotViewModel) {
             AutopilotText.modes.forEachIndexed { i, mode ->
                 if (i > 0) Hairline(inset = 66.dp)
                 Row(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 11.dp), verticalAlignment = Alignment.CenterVertically) {
-                    IconTile(modeGlyph(mode), modeTint(mode, c), size = 36.dp)
+                    IconTile(modeIcon(mode), modeTint(mode, c), size = 36.dp)
                     Spacer(Modifier.width(14.dp))
                     Column(Modifier.weight(1f)) {
                         RText(AutopilotText.name(mode), RType.sans(15.5f, FontWeight.SemiBold), c.text)

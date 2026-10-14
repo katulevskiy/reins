@@ -133,8 +133,10 @@ final class OnboardingUITests: XCTestCase {
         let tab = app.tabBars.buttons["Settings"]
         XCTAssertTrue(tab.waitForExistence(timeout: 10))
         tab.tap()
-        scrollTo("connectComputer")
-        tap("connectComputer")
+        // Settings > + Connect > Computer > Type code.
+        scrollTo("connect")
+        tap("connect")
+        tap("sheetTypeCode")
         shot("6-settings-connect-computer")
         pairByTypedCode()
         shot("7-pairing-sheet")
@@ -145,8 +147,9 @@ final class OnboardingUITests: XCTestCase {
         let tab = app.tabBars.buttons["Settings"]
         XCTAssertTrue(tab.waitForExistence(timeout: 10))
         tab.tap()
-        scrollTo("connectComputer")
-        tap("connectComputer")
+        scrollTo("connect")
+        tap("connect")
+        tap("sheetTypeCode")
         typeInto("pairingCode", "BBBB-CDFG")
         tap("pairWithCode")
         XCTAssertTrue(app.staticTexts["Code expired. Show a new one on your computer."].waitForExistence(timeout: 5))

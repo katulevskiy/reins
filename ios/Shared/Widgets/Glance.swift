@@ -80,7 +80,7 @@ enum Glance {
 
         var symbol: String {
             switch self {
-            case .manual: "hand.raised.fill"
+            case .manual: "person.fill.checkmark"
             case .auto: "location.north.fill"
             case .bypass: "bolt.fill"
             case .lockdown: "lock.fill"

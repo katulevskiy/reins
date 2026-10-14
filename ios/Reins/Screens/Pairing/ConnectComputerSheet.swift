@@ -8,13 +8,21 @@ struct ConnectComputerSheet: View {
     @Environment(AppModel.self) private var model
     @Environment(\.feedback) private var feedback
     @State private var pairing: PairingModel?
-    @State private var typing = !QRScanner.available
+    @State private var typing: Bool
     @State private var code = ""
     @State private var busy = false
     @State private var error: String?
     /// The last code the camera read, so one QR code held in view is redeemed once.
     @State private var scanned: String?
     @FocusState private var focused: Bool
+
+    /// `typing`: open on the code field (Settings' "Type code"); without a usable camera it always does.
+    init(typing: Bool = false) {
+        startTyped = typing
+        _typing = State(initialValue: typing || !QRScanner.available)
+    }
+
+    private let startTyped: Bool
 
     var body: some View {
         if let pairing {
@@ -30,6 +38,10 @@ struct ConnectComputerSheet: View {
                         .accessibilityIdentifier("closeSheet")
                 }
                 .accessibilityContainer("connectComputerSheet")
+                .onAppear {
+                    model.connectStartsTyped = false
+                    if startTyped { focused = true }
+                }
         }
     }
 

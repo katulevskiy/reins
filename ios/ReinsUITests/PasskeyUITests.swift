@@ -168,7 +168,7 @@ final class PasskeyUITests: XCTestCase {
         launch()
         openSettings()
         scrollTo("vaultPasskeysRow")
-        XCTAssertTrue(element("vaultPasskeysRow").label.contains("1 passkey"), element("vaultPasskeysRow").label)
+        XCTAssertEqual(element("vaultPasskeysRow").value as? String, "1 passkey")
         tap("vaultPasskeysRow")
         wait("passkey:\(firstPasskey)", 8)
         shot("4-settings")

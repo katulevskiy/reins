@@ -216,7 +216,7 @@ private fun MenuCard(
                     .padding(horizontal = 10.dp, vertical = 9.dp),
                 verticalAlignment = Alignment.CenterVertically,
             ) {
-                IconTile(modeGlyph(mode), tint, size = 34.dp, filled = selected)
+                IconTile(modeIcon(mode), tint, size = 34.dp, filled = selected)
                 Spacer(Modifier.width(12.dp))
                 Column(Modifier.weight(1f)) {
                     RText(AutopilotText.name(mode), RType.sans(15.5f, FontWeight.SemiBold), c.text, maxLines = 1)
@@ -329,7 +329,7 @@ private fun SliderCard(
             .testTag("autopilotQuick"),
     ) {
         Row(verticalAlignment = Alignment.CenterVertically) {
-            IconTile(modeGlyph(shown), tint, size = 40.dp, filled = true)
+            IconTile(modeIcon(shown), tint, size = 40.dp, filled = true)
             Spacer(Modifier.width(12.dp))
             Column(Modifier.weight(1f)) {
                 RText(AutopilotText.name(shown), RType.sans(18f, FontWeight.SemiBold), c.text, Modifier.testTag("quickMode"), maxLines = 1)
@@ -480,7 +480,7 @@ private fun RiskTrack(
                             else -> Alignment.Center
                         },
                     ) {
-                        Box(Modifier.width(thumb), contentAlignment = Alignment.Center) { GlyphIcon(modeGlyph(mode), fg, size = 18.dp, weight = 2f) }
+                        Box(Modifier.width(thumb), contentAlignment = Alignment.Center) { androidx.compose.material3.Icon(modeIcon(mode), null, Modifier.size(18.dp), tint = fg) }
                     }
                 }
             }

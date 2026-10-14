@@ -12,13 +12,16 @@ struct RecoveryCodeRow: View {
 
     var body: some View {
         Button(action: open) {
-            InfoRow(title: "Recovery code", subtitle: "Opens your vault if you lose this phone", symbol: "key.viewfinder") {
-                if busy { ProgressView() } else { Chevron() }
+            SettingsRowLabel(title: "Recovery code", chevron: !busy) {
+                SettingsTile(symbol: "key.fill", tint: Palette.send)
+            } trailing: {
+                if busy { ProgressView() }
             }
-            .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
         .disabled(busy)
+        .accessibilityLabel("Recovery code")
+        .accessibilityHint("Opens your vault if you lose this phone")
         .accessibilityIdentifier("recoveryCodeRow")
         .sheet(item: Binding(get: { code.map(ShownCode.init) }, set: { if $0 == nil { code = nil } })) { shown in
             RecoveryCodeSheet(code: shown.code) { code = nil }

@@ -219,9 +219,16 @@ private fun SignedInContent(
     val route = app.current
     var quickOpen by remember { mutableStateOf(false) }
     val quickStyle by dev.reins.android.ui.autopilot.QuickStyles.state(context)
+    // A sheet of the Settings tab covers the page: the tab bar steps aside.
+    var covered by remember { mutableStateOf(false) }
+    val openAutopilot: () -> Unit = {
+        if (quickStyle == dev.reins.android.ui.autopilot.QuickStyle.Page) app.selectTab(Tab.Autopilot) else quickOpen = !quickOpen
+    }
     // A page or a sheet taking over closes the switcher under it.
     LaunchedEffect(route, sheet) { quickOpen = false }
     BackHandler(enabled = app.stack.isNotEmpty()) { app.back() }
+    // Back on another tab's root goes to Activity first, then leaves the app.
+    BackHandler(enabled = app.stack.isEmpty() && app.tab != Tab.Activity && !setup) { app.selectTab(Tab.Activity) }
     PageFeedback(app.stack.size)
 
     CompositionLocalProvider(LocalConnections provides connections) {
@@ -235,7 +242,7 @@ private fun SignedInContent(
                         onOpenPending = { app.openSheet(it.toTarget()) },
                         onOpenEntry = { app.open(Route.ActivityDetail(it)) },
                         onIntegrations = { app.open(Route.Integrations) },
-                        onSettings = { app.open(Route.Settings) },
+                        onAutopilot = openAutopilot,
                         onAnswerBurst = { burst, approve ->
                             scope.launch {
                                 dev.reins.android.ui.activity.answerBurst(container, authenticator, burst, approve)?.let(app::showNotice)
@@ -252,7 +259,6 @@ private fun SignedInContent(
                     Tab.Grants -> GrantsScreen(
                         state = state,
                         onStartingPolicy = container::chooseStartingPolicy,
-                        onSettings = { app.open(Route.Settings) },
                         expiredOpen = app.expiredOpen,
                         onToggleExpired = app::toggleExpired,
                         onOpen = { app.open(Route.GrantDetail(it)) },
@@ -260,21 +266,34 @@ private fun SignedInContent(
                         onResume = { id, seconds, standing -> resumeGrant(container, authenticator, id, seconds, standing) },
                         onDelete = { id -> deleteGrant(container, id) },
                     )
+                    Tab.Autopilot -> AutopilotScreen(
+                        autopilot,
+                        onBack = null,
+                        onProfile = { app.open(Route.AutopilotProfile(it)) },
+                        onTryIt = { app.open(Route.TryIt(null)) },
+                    )
+                    Tab.Settings -> SettingsScreen(
+                        state = state,
+                        viewModel = settings,
+                        onConnection = { app.open(Route.Connection(it)) },
+                        onIntegrations = { app.open(Route.Integrations) },
+                        onSounds = { app.open(Route.Sounds) },
+                        onTour = app::replaySetup,
+                        onAutopilot = { app.open(Route.Autopilot) },
+                        onScanComputer = {
+                            app.requestScan()
+                            app.open(Route.ConnectComputer)
+                        },
+                        onTypeComputerCode = {
+                            app.showCodeField()
+                            app.open(Route.ConnectComputer)
+                        },
+                        onVaultPasskeys = { app.open(Route.VaultPasskeys) },
+                        onDevices = { app.open(Route.Devices) },
+                        onCovered = { covered = it },
+                        authenticator = authenticator,
+                    )
                 }
-                Route.Settings -> SettingsScreen(
-                    state = state,
-                    viewModel = settings,
-                    onBack = { app.back() },
-                    onConnection = { app.open(Route.Connection(it)) },
-                    onIntegrations = { app.open(Route.Integrations) },
-                    onSounds = { app.open(Route.Sounds) },
-                    onTour = app::replaySetup,
-                    onAutopilot = { app.open(Route.Autopilot) },
-                    onConnectComputer = { app.open(Route.ConnectComputer) },
-                    onVaultPasskeys = { app.open(Route.VaultPasskeys) },
-                    onDevices = { app.open(Route.Devices) },
-                    authenticator = authenticator,
-                )
                 Route.Devices -> DevicesScreen(
                     viewModel(key = "devices") { DevicesViewModel(container) },
                     state,
@@ -431,9 +450,7 @@ private fun SignedInContent(
                 Column(Modifier.align(Alignment.BottomCenter).windowInsetsPadding(WindowInsets.navigationBars)) {
                     // Above the tab bar, and never while an approval sheet is up.
                     container.updates?.let { UpdatePromptHost(it, allowed = sheet == null, modifier = Modifier.padding(top = 10.dp)) }
-                    NavBar(container, app) {
-                        if (quickStyle == dev.reins.android.ui.autopilot.QuickStyle.Page) app.open(Route.Autopilot) else quickOpen = !quickOpen
-                    }
+                    if (!(covered && app.tab == Tab.Settings)) NavBar(container, app)
                 }
                 val apSettings by state.autopilot.collectAsStateWithLifecycle()
                 dev.reins.android.ui.autopilot.AutopilotQuick(
@@ -444,7 +461,7 @@ private fun SignedInContent(
                     onStopBypass = { autopilot.stopBypass() },
                     onMore = {
                         quickOpen = false
-                        app.open(Route.Autopilot)
+                        app.selectTab(Tab.Autopilot)
                     },
                     onDismiss = { quickOpen = false },
                 )
@@ -485,7 +502,7 @@ private fun SignedInContent(
  * screen.
  */
 @Composable
-private fun NavBar(container: AppContainer, app: AppViewModel, onAutopilot: () -> Unit) {
+private fun NavBar(container: AppContainer, app: AppViewModel) {
     val entries by container.state.activity.collectAsStateWithLifecycle()
     val grants by container.state.grants.collectAsStateWithLifecycle()
     val seen by container.state.seenActivityId.collectAsStateWithLifecycle()
@@ -496,7 +513,6 @@ private fun NavBar(container: AppContainer, app: AppViewModel, onAutopilot: () -
         grantCount = grants.count { it.active },
         autopilot = autopilot,
         onSelect = app::selectTab,
-        onAutopilot = onAutopilot,
     )
 }
 

@@ -1,5 +1,6 @@
 package dev.reins.android.ui.settings
 
+import androidx.compose.material.icons.rounded.Delete
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -94,13 +95,14 @@ fun DeleteAccountSheet(email: String, ui: DeleteAccountUi, onDelete: (String) ->
             ui.error?.let { Banner(it, Modifier.padding(top = 10.dp), BannerKind.Error, tag = "deleteAccountError") }
             Spacer(Modifier.height(18.dp))
             Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                CapsuleButton(
-                    "Delete account",
+                dev.reins.android.design.HoldButton(
+                    "Hold to delete",
+                    c.danger,
                     Modifier.fillMaxWidth().testTag("confirmDeleteAccount"),
-                    style = ButtonStyle.Destructive,
+                    icon = androidx.compose.material.icons.Icons.Rounded.Delete,
                     enabled = deletionConfirmed(typed, email) && !ui.busy,
                     busy = ui.busy,
-                    glyph = Glyph.Trash,
+                    height = 50.dp,
                 ) { onDelete(typed) }
                 CapsuleButton(
                     "Cancel",

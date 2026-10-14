@@ -33,13 +33,13 @@ enum AutopilotText {
         }
     }
 
-    /// The mode's SF Symbol (Android's glyphs: a hand, a navigation arrow, a bolt, a lock).
+    /// The mode's SF Symbol (Android's icons: a person with a check, a navigation arrow, a bolt, a lock).
     static func symbol(key: String) -> String {
         switch key {
         case "auto": "location.north.fill"
         case "bypass": "bolt.fill"
         case "lockdown": "lock.fill"
-        default: "hand.raised.fill"
+        default: "person.fill.checkmark"
         }
     }
 
