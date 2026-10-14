@@ -469,6 +469,31 @@ fn progress_goes_through_every_stage() {
 }
 
 #[test]
+fn remotes_are_normalized_and_read_from_the_repository() {
+    for (url, want) in [
+        ("git@github.com:acme/api.git", Some("github.com/acme/api")),
+        ("https://github.com/Acme/api", Some("github.com/Acme/api")),
+        ("https://user@GitHub.com/acme/api.git/", Some("github.com/acme/api")),
+        ("ssh://git@git.example.com:2222/team/sub/api.git", Some("git.example.com/team/sub/api")),
+        ("/srv/git/api.git", None),
+        ("C:\\repos\\api", None),
+        ("https://github.com/", None),
+    ] {
+        assert_eq!(normalize_remote(url).as_deref(), want, "{url}");
+    }
+    let fx = fixture();
+    let repo = fx.home().join("dev/acme-web");
+    write(
+        &repo.join(".git/config"),
+        "[core]\n\tbare = false\n[remote \"upstream\"]\n\turl = git@github.com:other/x.git\n\
+         [remote \"origin\"]\n\turl = git@github.com:acme/web.git\n",
+    );
+    let report = run(&fx.options());
+    assert_eq!(by_title(&report, "acme-web/.env").origin.as_deref(), Some("github.com/acme/web"));
+    assert_eq!(by_title(&report, "api/.env.local").origin, None);
+}
+
+#[test]
 fn agents_are_refused() {
     let env = |pairs: &'static [(&'static str, &'static str)]| {
         move |k: &str| pairs.iter().find(|(n, _)| *n == k).map(|(_, v)| (*v).to_owned())
@@ -572,6 +597,7 @@ fn the_json_schema_is_stable() {
             abs_path: PathBuf::from("/home/dana/dev/acme-web/.env"),
             project: Some("acme-web".to_owned()),
             project_root: Some(PathBuf::from("/home/dana/dev/acme-web")),
+            origin: Some("github.com/acme/web".to_owned()),
             git_commit: Some("a1b2c3d".to_owned()),
             key_type: None,
             summary: "2 keys".to_owned(),
@@ -628,6 +654,7 @@ fn the_json_schema_is_stable() {
             "abs_path": "/home/dana/dev/acme-web/.env",
             "project": "acme-web",
             "project_root": "/home/dana/dev/acme-web",
+            "origin": "github.com/acme/web",
             "git_commit": "a1b2c3d",
             "summary": "2 keys",
             "items": [

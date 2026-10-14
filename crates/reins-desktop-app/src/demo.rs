@@ -12,7 +12,7 @@ use reins_desktop::control::{ApiInfo, SshKeyInfo};
 use reins_desktop::harness::Harness;
 use reins_desktop::journal::{Decider, Entry, Kind, Outcome};
 use reins_desktop::run::Profile;
-use reins_desktop::secrets_import::{Change, Done, Moved, Receipt};
+use reins_desktop::secrets_import::{Change, Done, Existing, Moved, Receipt, VaultProject};
 use reins_desktop::secrets_scan::{
     Confidence, Detector, Finding, Group, Item, Progress, Risk, ScanReport, Source, Stage, StageState, finding_id,
 };
@@ -489,6 +489,8 @@ impl Demo {
                 path: shown,
                 place,
                 project: project_root.as_ref().and_then(|r| r.file_name()).map(|n| n.to_string_lossy().into_owned()),
+                // acme-web has a GitHub origin; the api folder has none (and the demo vault has another `api`).
+                origin: title.starts_with("acme-web/").then(|| "github.com/acme/web".to_owned()),
                 project_root,
                 abs_path: abs,
                 git_commit: risks.contains(&Risk::InGitHistory).then(|| "a1b2c3d".to_owned()),
@@ -663,6 +665,28 @@ impl Demo {
             budget: None,
             stopped: false,
         }
+    }
+
+    /// `--demo`: Dana's computer's machine project.
+    #[must_use]
+    pub fn machine() -> String {
+        reins_desktop::secrets_import::machine_project("Dana's MacBook", "demo")
+    }
+
+    /// `--demo`: the projects the pretend vault has: an `api` from another repository, so the review shows how a
+    /// clash is settled.
+    #[must_use]
+    pub fn secrets_vault() -> Existing {
+        Existing::Known(vec![
+            VaultProject {
+                name: "api".to_owned(),
+                origin: Some("github.com/acme/api".to_owned()),
+            },
+            VaultProject {
+                name: "acme-web".to_owned(),
+                origin: Some("github.com/acme/web".to_owned()),
+            },
+        ])
     }
 
     /// `--demo`: a scan part of the way through.

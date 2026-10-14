@@ -47,6 +47,12 @@ impl VaultWriter for PhoneWriter {
         }
         stored
     }
+
+    async fn projects(&self) -> Result<Vec<super::VaultProject>, String> {
+        // Reins Secrets core's listing (names and `reins.origin`) is not there yet: import then merges nothing it was
+        // not told to, and names new projects apart.
+        Err(NEEDS_CORE.to_owned())
+    }
 }
 
 /// This computer.

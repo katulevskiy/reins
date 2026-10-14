@@ -11,15 +11,56 @@ use super::*;
 use crate::secrets_scan::tests::{Fixture, fake, fixture, leaks};
 use crate::secrets_scan::{Caller, ScanReport};
 
-/// Stores everything (or fails the environments named), and remembers what it was given (names only).
-#[derive(Default)]
+/// Stores everything (or fails the environments named), and remembers what it was given (names only). Its vault's
+/// projects: `vault` (`None`: they cannot be listed).
 struct FakeWriter {
     fail_envs: Vec<String>,
     seen: Mutex<Vec<String>>,
+    vault: Option<Vec<VaultProject>>,
+}
+
+impl Default for FakeWriter {
+    fn default() -> Self {
+        Self {
+            fail_envs: Vec::new(),
+            seen: Mutex::default(),
+            vault: Some(Vec::new()),
+        }
+    }
+}
+
+/// Dana's computer's machine project in these tests.
+fn machine_name() -> String {
+    machine_project("Dana's MacBook", "test key")
+}
+
+/// A plan of `selected` against a vault with `existing`, merging `merge`.
+fn plan_with(report: &ScanReport, selected: &BTreeSet<String>, existing: &Existing, merge: &[&str]) -> Plan {
+    let machine = machine_name();
+    let merge: BTreeSet<String> = merge.iter().map(|m| (*m).to_owned()).collect();
+    plan(
+        report,
+        selected,
+        &Names {
+            computer: "Dana's MacBook",
+            machine: &machine,
+            existing,
+            merge: &merge,
+        },
+    )
+}
+
+/// The same against an empty vault.
+fn plan_of(report: &ScanReport, selected: &BTreeSet<String>) -> Plan {
+    plan_with(report, selected, &Existing::Known(Vec::new()), &[])
 }
 
 #[async_trait::async_trait]
 impl VaultWriter for FakeWriter {
+    async fn projects(&self) -> Result<Vec<VaultProject>, String> {
+        self.vault.clone().ok_or_else(|| "cannot list".to_owned())
+    }
+
     async fn store(&self, batch: &Batch) -> Stored {
         let mut seen = self.seen.lock().unwrap();
         seen.push(format!("{batch:?}"));
@@ -154,7 +195,9 @@ fn ctx(fx: &Fixture) -> Context {
         home: fx.home(),
         state_dir: fx.dir.path().join("state"),
         computer: "Dana's MacBook".to_owned(),
+        machine: machine_name(),
         caller: Caller::Person,
+        merge: BTreeSet::new(),
     }
 }
 
@@ -218,6 +261,16 @@ fn files_name_their_environments_and_credentials_their_variables() {
     assert_eq!(machine_var(Source::Cargo, Some("crates.io"), "token").1, "CARGO_REGISTRY_TOKEN");
     assert_eq!(machine_var(Source::Cargo, Some("acme"), "token").1, "CARGO_REGISTRIES_ACME_TOKEN");
     assert_eq!(var_name("apiKey.v2"), "APIKEY_V2");
+    let m = machine_project("Dana's MacBook", "key a");
+    assert!(m.starts_with("machine-danas-macbook-") && m.len() == "machine-danas-macbook-".len() + 4, "{m}");
+    assert!(machine_project("ws-01.corp/LAB", "k").starts_with("machine-ws-01-corp-lab-"));
+    assert!(machine_project("✓", "k").starts_with("machine-computer-"));
+    // Two computers with the same name: their keys tell them apart.
+    assert_ne!(machine_project("laptop", "key of one"), machine_project("laptop", "key of another"));
+    assert_eq!(machine_project("laptop", "same key"), machine_project("laptop", "same key"));
+    assert_eq!(dotenv_rank(".env"), 0);
+    assert!(dotenv_rank(".env.development") < dotenv_rank(".env.local"));
+    assert!(dotenv_rank(".env.local") < dotenv_rank(".env.development.local"));
     assert_eq!(var_name("1x"), "V_1X");
 }
 
@@ -226,21 +279,23 @@ fn the_selection_is_grouped_by_where_it_goes() {
     let fx = fixture();
     let report = report(&fx);
     let selected = select(&report, &[], true).unwrap();
-    let plan = plan(&report, &selected, "Dana's MacBook");
+    let plan = plan_of(&report, &selected);
     let envs: Vec<(String, usize)> = plan.envs.iter().map(|e| (e.item(), e.vars.len())).collect();
+    let m = machine_name();
     for want in [
-        ("acme-web/development", 4),
-        ("api/development", 1),
-        ("shop/production", 1),
-        ("machine/Dana's MacBook/aws-default", 2),
-        ("machine/Dana's MacBook/aws-prod", 2),
-        ("machine/Dana's MacBook/npm", 1),
-        ("machine/Dana's MacBook/pypi", 1),
-        ("machine/Dana's MacBook/cargo", 1),
-        ("machine/Dana's MacBook/shell", 1),
+        ("acme-web/development".to_owned(), 4),
+        ("api/development".to_owned(), 1),
+        ("shop/production".to_owned(), 1),
+        (format!("{m}/aws-default"), 2),
+        (format!("{m}/aws-prod"), 2),
+        (format!("{m}/npm"), 1),
+        (format!("{m}/pypi"), 1),
+        (format!("{m}/cargo"), 1),
+        (format!("{m}/shell"), 1),
     ] {
-        assert!(envs.contains(&(want.0.to_owned(), want.1)), "{want:?} not in {envs:?}");
+        assert!(envs.contains(&want), "{want:?} not in {envs:?}");
     }
+    assert!(plan.clashes.is_empty() && plan.conflicts.is_empty());
     let acme = plan.envs.iter().find(|e| e.project == "acme-web").unwrap();
     assert_eq!(acme.folder(), "Reins/acme-web");
     assert_eq!(acme.reference("OPENAI_API_KEY"), "vault:acme-web/development/OPENAI_API_KEY");
@@ -259,16 +314,133 @@ fn the_selection_is_grouped_by_where_it_goes() {
     assert!(select(&report, &["nope".to_owned()], false).is_err());
 }
 
+/// A repository at `rel` under the home folder with `origin` (or none) and an `.env` with one secret.
+fn repo(fx: &Fixture, rel: &str, origin: Option<&str>) {
+    let dir = fx.home().join(rel);
+    std::fs::create_dir_all(dir.join(".git")).unwrap();
+    if let Some(o) = origin {
+        std::fs::write(dir.join(".git/config"), format!("[remote \"origin\"]\n\turl = {o}\n")).unwrap();
+    }
+    std::fs::write(dir.join(".env"), format!("API_SECRET={}\n", fake("", 33))).unwrap();
+}
+
+fn project_of(plan: &Plan, root: &Path) -> String {
+    plan.envs.iter().find(|e| e.project_root.as_deref() == Some(root)).unwrap().project.clone()
+}
+
 #[test]
 fn projects_with_the_same_name_stay_apart() {
     let fx = fixture();
     let home = fx.home();
-    std::fs::create_dir_all(home.join("work/api/.git")).unwrap();
-    std::fs::write(home.join("work/api/.env"), format!("API_SECRET={}\n", fake("", 33))).unwrap();
+    // Without origins: the folder's name, and the parent's in front for the second.
+    repo(&fx, "work/api", None);
     let report = report(&fx);
     let selected = select(&report, &[], true).unwrap();
-    let projects: BTreeSet<String> = plan(&report, &selected, "x").envs.iter().map(|e| e.project.clone()).collect();
+    let projects: BTreeSet<String> = plan_of(&report, &selected).envs.iter().map(|e| e.project.clone()).collect();
     assert!(projects.contains("api") && projects.contains("work-api"), "{projects:?}");
+    // With origins: owner-repo, so same-named folders of different repositories never meet.
+    repo(&fx, "work/svc", Some("git@github.com:acme/svc.git"));
+    repo(&fx, "personal/svc", Some("https://github.com/dana/svc"));
+    let again = secrets_scan::scan(&fx.options(), &mut |_| {}).unwrap();
+    let selected = select(&again, &[], true).unwrap();
+    let plan = plan_of(&again, &selected);
+    assert_eq!(project_of(&plan, &home.join("work/svc")), "acme-svc");
+    assert_eq!(project_of(&plan, &home.join("personal/svc")), "dana-svc");
+    let acme = plan.envs.iter().find(|e| e.project == "acme-svc").unwrap();
+    assert_eq!(acme.origin.as_deref(), Some("github.com/acme/svc"));
+    assert!(plan.clashes.is_empty());
+}
+
+#[test]
+fn a_vault_project_from_elsewhere_is_never_merged_unasked() {
+    let fx = fixture();
+    let home = fx.home();
+    repo(&fx, "personal/api2", Some("https://github.com/acme/api"));
+    let report = report(&fx);
+    let selected = select(&report, &[], true).unwrap();
+    let root = home.join("personal/api2");
+    let from_elsewhere = Existing::Known(vec![VaultProject {
+        name: "acme-api".to_owned(),
+        origin: Some("github.com/acme/api-old".to_owned()),
+    }]);
+    // A new name, said in the review.
+    let plan = plan_with(&report, &selected, &from_elsewhere, &[]);
+    assert_eq!(project_of(&plan, &root), "personal-acme-api");
+    let clash = plan.clashes.iter().find(|c| c.name == "acme-api").unwrap();
+    assert!(clash.known && !clash.merged());
+    assert!(clash.line().contains("already exists from another folder"), "{}", clash.line());
+    // Merged only when chosen.
+    let merged = plan_with(&report, &selected, &from_elsewhere, &["acme-api"]);
+    assert_eq!(project_of(&merged, &root), "acme-api");
+    assert!(merged.clashes.iter().any(|c| c.name == "acme-api" && c.merged()));
+    // A project with no origin in the vault is from elsewhere too.
+    let no_origin = Existing::Known(vec![VaultProject {
+        name: "acme-api".to_owned(),
+        origin: None,
+    }]);
+    assert_eq!(project_of(&plan_with(&report, &selected, &no_origin, &[]), &root), "personal-acme-api");
+    // The same origin: the same project, merged as it should be.
+    let same = Existing::Known(vec![VaultProject {
+        name: "acme-api".to_owned(),
+        origin: Some("github.com/acme/api".to_owned()),
+    }]);
+    let plan = plan_with(&report, &selected, &same, &[]);
+    assert_eq!(project_of(&plan, &root), "acme-api");
+    assert!(!plan.clashes.iter().any(|c| c.name == "acme-api"));
+    // The vault cannot be asked: never merged, a hash of the origin keeps it apart.
+    let unknown = plan_with(&report, &selected, &Existing::Unknown("offline".to_owned()), &[]);
+    let name = project_of(&unknown, &root);
+    assert!(name.starts_with("acme-api-") && name.len() == "acme-api-".len() + 4, "{name}");
+    assert!(unknown.clashes.iter().all(|c| !c.known && !c.merged()));
+}
+
+#[tokio::test]
+async fn the_import_settles_names_against_the_vault() {
+    let fx = fixture();
+    let report = report(&fx);
+    let selected = select(&report, &[], true).unwrap();
+    let writer = FakeWriter {
+        vault: Some(vec![VaultProject {
+            name: "api".to_owned(),
+            origin: Some("github.com/acme/api".to_owned()),
+        }]),
+        ..FakeWriter::default()
+    };
+    let machine = FakeMachine::new(fx.dir.path(), true);
+    let (receipt, _) = run(&fx, &report, &selected, true, &writer, &machine).await.unwrap();
+    // The `api` folder (no origin) did not go into the vault's `api`.
+    assert!(receipt.moved.iter().any(|m| m.to.starts_with("vault:dev-api/development/")), "{:?}", receipt.moved);
+    assert!(!receipt.moved.iter().any(|m| m.to.starts_with("vault:api/")));
+    assert!(receipt.notes.iter().any(|n| n.contains("api already exists from another folder")), "{:?}", receipt.notes);
+    // What the phone is given carries the origin (`reins.origin`).
+    let seen = writer.seen.lock().unwrap().join("\n");
+    assert!(seen.contains("origin:"), "{seen}");
+}
+
+#[test]
+fn two_files_for_one_environment_show_their_conflicts() {
+    let fx = fixture();
+    let home = fx.home();
+    let dir = home.join("dev/acme-web");
+    std::fs::write(
+        dir.join(".env.local"),
+        format!("OPENAI_API_KEY={}\nLOCAL_ONLY_TOKEN={}\n", fake("sk-proj-", 55), fake("", 30)),
+    )
+    .unwrap();
+    let report = report(&fx);
+    let selected = select(&report, &[], true).unwrap();
+    let plan = plan_of(&report, &selected);
+    let dev = plan.envs.iter().find(|e| e.item() == "acme-web/development").unwrap();
+    let local = report.findings.iter().find(|f| f.title == "acme-web/.env.local").unwrap();
+    // The more specific file's value goes, and the review says so.
+    assert_eq!(dev.vars.iter().find(|v| v.name == "OPENAI_API_KEY").unwrap().finding, local.id);
+    assert_eq!(plan.conflicts.len(), 1);
+    let c = &plan.conflicts[0];
+    assert_eq!(
+        (c.name.as_str(), c.kept.as_str(), c.dropped.as_str()),
+        ("OPENAI_API_KEY", "acme-web/.env.local", "acme-web/.env")
+    );
+    assert!(c.line().contains("the more specific file wins"), "{}", c.line());
 }
 
 #[tokio::test]
@@ -330,7 +502,7 @@ async fn an_import_moves_everything_and_rewrites_each_source() {
     let profiles = machine.profiles.lock().unwrap().clone();
     assert_eq!(
         profiles["aws-prod"]["AWS_SECRET_ACCESS_KEY"],
-        "vault:machine/Dana's MacBook/aws-prod/AWS_SECRET_ACCESS_KEY"
+        format!("vault:{}/aws-prod/AWS_SECRET_ACCESS_KEY", machine_name())
     );
     for p in ["aws-default", "npm", "pypi", "cargo", "shell"] {
         assert!(profiles.contains_key(p), "{p} in {profiles:?}");
@@ -466,6 +638,7 @@ fn values_never_print() {
             project: "p".to_owned(),
             env: "development".to_owned(),
             vars: vec![("OPENAI_API_KEY".to_owned(), Zeroizing::new(secret.clone()))],
+            origin: Some("github.com/acme/web".to_owned()),
         }],
         ssh: vec![SshWrite {
             name: "k".to_owned(),
@@ -698,4 +871,43 @@ async fn the_originals_can_be_deleted_from_the_trash_for_good() {
     assert!(std::fs::read_dir(&machine.trash_dir).unwrap().next().is_none(), "the trash holds none of them");
     let (_, mut r) = receipt::load(&c.state_dir, "last").unwrap();
     assert!(r.purged_at.is_some() && receipt::purge(&c.state_dir, &path, &mut r, &machine).is_err());
+}
+
+#[test]
+fn project_and_environment_names_never_hold_a_slash() {
+    let fx = fixture();
+    let home = fx.home();
+    std::fs::create_dir_all(home.join("dev/My App (v2)/.git")).unwrap();
+    std::fs::write(home.join("dev/My App (v2)/.env.Staging_EU"), format!("API_SECRET={}\n", fake("", 33))).unwrap();
+    let report = report(&fx);
+    let selected = select(&report, &[], true).unwrap();
+    for computer in ["Dana's MacBook", "ws-01.corp/LAB", "laptop"] {
+        let machine = machine_project(computer, "key");
+        for existing in [Existing::Known(Vec::new()), Existing::Unknown("offline".to_owned())] {
+            let plan = plan(
+                &report,
+                &selected,
+                &Names {
+                    computer,
+                    machine: &machine,
+                    existing: &existing,
+                    merge: &BTreeSet::new(),
+                },
+            );
+            assert!(!plan.envs.is_empty());
+            for e in &plan.envs {
+                for name in [&e.project, &e.env] {
+                    assert!(
+                        !name.is_empty()
+                            && name.bytes().all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'-'),
+                        "{name} (computer {computer})"
+                    );
+                }
+                assert_eq!(e.reference("X").matches('/').count(), 2, "{}", e.reference("X"));
+            }
+        }
+    }
+    let plan = plan_of(&report, &selected);
+    assert!(plan.envs.iter().any(|e| e.project == "my-app-v2" && e.env == "staging-eu"));
+    assert!(plan.envs.iter().any(|e| e.item() == format!("{}/aws-default", machine_name())));
 }

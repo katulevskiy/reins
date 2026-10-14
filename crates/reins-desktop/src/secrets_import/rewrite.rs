@@ -193,11 +193,13 @@ fn dotenv(
     let mut files = 0;
     let mut in_history = Vec::new();
     for (root, mut found) in by_root {
-        // `.env` before `.env.local`: the later file's line wins in `.env.reins`.
-        found.sort_by_key(|f| (f.abs_path.file_name().map(std::ffi::OsStr::len), f.abs_path.clone()));
+        // The less specific file first: the more specific one's line wins in `.env.reins`, as in the vault.
+        found.sort_by_key(|f| {
+            (f.abs_path.file_name().map(|n| super::dotenv_rank(&n.to_string_lossy())), f.abs_path.clone())
+        });
         let envs: Vec<&super::EnvTarget> =
             plan.envs.iter().filter(|e| e.project_root.as_deref() == Some(root.as_path())).collect();
-        let Some(project) = envs.first().map(|e| e.project.clone()) else {
+        let Some((project, origin)) = envs.first().map(|e| (e.project.clone(), e.origin.clone())) else {
             continue;
         };
         let toml = root.join("reins.toml");
@@ -206,7 +208,8 @@ fn dotenv(
             names.sort_by_key(|n| (*n != DEFAULT_ENV, *n));
             names.dedup();
             let settings: Vec<EnvSettings> = names.iter().map(|n| EnvSettings::for_env(n)).collect();
-            let r = create(&toml, &formats::reins_toml(&project, DEFAULT_ENV, &settings), receipt);
+            let text = formats::reins_toml(&project, DEFAULT_ENV, &settings, origin.as_deref());
+            let r = create(&toml, &text, receipt);
             note(receipt, r);
         }
         let mut lines: Vec<EnvLine> = Vec::new();

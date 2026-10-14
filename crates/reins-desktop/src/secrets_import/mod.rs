@@ -2,7 +2,7 @@
 //!
 //! 1. **Group** the selection ([`plan`]): a project's `.env` files into its environments (the project is the
 //!    repository's folder name; `.env` and `.env.local` → `development`, `.env.production` → `production`), the
-//!    computer's own credentials into `machine/<computer>` environments (`aws-default`, `npm`, `pypi`, …), SSH keys
+//!    computer's own credentials into `machine-<computer>` environments (`aws-default`, `npm`, `pypi`, …), SSH keys
 //!    into `Reins/ssh`, GitHub and git tokens into the phone's git integration.
 //! 2. **Store** them as one batch ([`VaultWriter`]): one approval on the phone, one set of check digits.
 //! 3. **Rewrite** each source whose secrets all arrived, unless the person keeps local copies ([`rewrite`]): a `.env`
@@ -97,6 +97,63 @@ fn slug(s: &str) -> String {
     out.split('-').filter(|p| !p.is_empty()).collect::<Vec<_>>().join("-")
 }
 
+/// Four hex characters of `what`'s SHA-256: tells apart names that would otherwise be the same.
+fn short_hash(what: &str) -> String {
+    use sha2::Digest as _;
+    data_encoding::HEXLOWER.encode(&sha2::Sha256::digest(what.as_bytes())[..2])
+}
+
+/// The project of this computer's own credentials: `machine-<computer>-<4 hex of this computer's key fingerprint>`,
+/// the name lowercased to letters, digits and `-` (project and environment names never hold a `/`), the hash so that
+/// two computers with the same name stay apart: "Dana's MacBook" → `machine-danas-macbook-3f9a`. The window shows
+/// the friendly name.
+#[must_use]
+pub fn machine_project(computer: &str, key_fingerprint: &str) -> String {
+    let name = slug(&computer.replace(['\'', '’'], ""));
+    let name = if name.is_empty() {
+        "computer".to_owned()
+    } else {
+        name
+    };
+    format!("machine-{name}-{}", short_hash(key_fingerprint))
+}
+
+/// This computer's machine project, from its name and its key (made the first time, as pairing does).
+pub fn this_machine(paths: &crate::config::Paths, computer: &str) -> Result<String, String> {
+    let identity = crate::identity::Identity::load_or_create(&paths.identity_file()).map_err(|e| e.to_string())?;
+    Ok(machine_project(computer, &identity.fingerprint()))
+}
+
+/// The project a repository's files go to before any clash is settled: `owner-repo` from its git origin
+/// (`github.com/acme/api` → `acme-api`), else its folder's name.
+#[must_use]
+pub fn base_project(f: &Finding) -> String {
+    let from_origin = f.origin.as_deref().map(|o| {
+        let parts: Vec<&str> = o.split('/').skip(1).collect();
+        slug(&parts[parts.len().saturating_sub(2)..].join("-"))
+    });
+    let name = from_origin.filter(|n| !n.is_empty()).unwrap_or_else(|| slug(f.project.as_deref().unwrap_or_default()));
+    if name.is_empty() {
+        "project".to_owned()
+    } else {
+        name
+    }
+}
+
+/// How specific a dotenv file is, for the same environment: the more specific file's value wins (`.env` <
+/// `.env.<env>` < `.env.local` < `.env.<env>.local`), as dotenv tools read them.
+#[must_use]
+pub fn dotenv_rank(file_name: &str) -> u8 {
+    let rest = file_name.trim_start_matches(".env").trim_start_matches('.').to_ascii_lowercase();
+    let local = rest.rsplit_once('.').is_some_and(|(_, last)| last == "local");
+    match (rest.is_empty(), rest == "local", local) {
+        (true, ..) => 0,
+        (_, true, _) => 2,
+        (_, _, true) => 3,
+        _ => 1,
+    }
+}
+
 /// The environment a dotenv file's variables go to, from its name.
 #[must_use]
 pub fn env_for(file_name: &str) -> String {
@@ -167,12 +224,16 @@ pub struct PlannedVar {
 /// An environment the batch stores (`vault_secrets_store`).
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct EnvTarget {
-    /// `acme-web`, or `machine/<computer>`.
+    /// `acme-web`, or `machine-<computer>`.
     pub project: String,
     pub env: String,
     pub vars: Vec<PlannedVar>,
     /// A project's environment (else the computer's own).
     pub project_root: Option<PathBuf>,
+    /// The project's git origin (`github.com/acme/api`), kept with the environment (`reins.origin`) and in
+    /// `reins.toml`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub origin: Option<String>,
 }
 
 impl EnvTarget {
@@ -216,6 +277,85 @@ pub struct TokenTarget {
     pub covers: Vec<String>,
 }
 
+/// A project already in the vault, and the origin it was imported from.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct VaultProject {
+    pub name: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub origin: Option<String>,
+}
+
+/// What the vault already has, as far as this computer can tell.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum Existing {
+    Known(Vec<VaultProject>),
+    /// The vault's projects could not be listed (why): nothing is merged unless chosen, and new projects get a hash
+    /// of their origin to stay apart.
+    Unknown(String),
+}
+
+/// A project of this import whose name the vault already has, from another folder (another origin, or none).
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Clash {
+    /// The name it would have had.
+    pub name: String,
+    /// The name it gets: a new one (`api-2`, `personal-api`), or `name` when merging was chosen.
+    pub chosen: String,
+    pub root: PathBuf,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub origin: Option<String>,
+    /// The vault's project's origin; `None` with `known` false: the vault could not be asked.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub existing_origin: Option<String>,
+    pub known: bool,
+}
+
+impl Clash {
+    #[must_use]
+    pub fn merged(&self) -> bool {
+        self.chosen == self.name
+    }
+
+    /// What the review says about it.
+    #[must_use]
+    pub fn line(&self) -> String {
+        match (self.known, self.merged()) {
+            (true, true) => format!("{} already exists from another folder: merging into it, as chosen", self.name),
+            (true, false) => {
+                format!("{} already exists from another folder: this one becomes {}", self.name, self.chosen)
+            }
+            (false, true) => {
+                format!("{}: the vault's projects could not be checked; merging into it, as chosen", self.name)
+            }
+            (false, false) => format!(
+                "{}: the vault's projects could not be checked, so this one becomes {} to stay apart",
+                self.name, self.chosen
+            ),
+        }
+    }
+}
+
+/// A variable two selected files give the same environment: the more specific file's goes ([`dotenv_rank`]).
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Conflict {
+    /// `<project>/<env>`.
+    pub item: String,
+    pub name: String,
+    /// The finding whose value goes, and the one whose value does not.
+    pub kept: String,
+    pub dropped: String,
+}
+
+impl Conflict {
+    #[must_use]
+    pub fn line(&self) -> String {
+        format!(
+            "{} is in both {} and {}: {}'s goes to {} (the more specific file wins)",
+            self.name, self.dropped, self.kept, self.kept, self.item
+        )
+    }
+}
+
 /// Where each selected secret goes.
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Plan {
@@ -223,6 +363,25 @@ pub struct Plan {
     pub envs: Vec<EnvTarget>,
     pub ssh: Vec<SshTarget>,
     pub tokens: Vec<TokenTarget>,
+    /// Projects whose name the vault already has from elsewhere.
+    #[serde(default)]
+    pub clashes: Vec<Clash>,
+    /// Variables two files give the same environment.
+    #[serde(default)]
+    pub conflicts: Vec<Conflict>,
+}
+
+/// What a plan is made with besides the scan: this computer's names, what the vault has, and the projects the person
+/// chose to merge into anyway.
+#[derive(Clone, Debug)]
+pub struct Names<'a> {
+    /// The friendly name ("Dana's MacBook").
+    pub computer: &'a str,
+    /// Its machine project ([`machine_project`]).
+    pub machine: &'a str,
+    pub existing: &'a Existing,
+    /// Project names to merge into although the vault's project came from elsewhere.
+    pub merge: &'a BTreeSet<String>,
 }
 
 impl Plan {
@@ -257,55 +416,102 @@ impl Plan {
     }
 }
 
-/// The project a dotenv finding belongs to, unique per folder: two repositories named alike get their parent's name
-/// too.
-fn project_names(findings: &[&Finding]) -> BTreeMap<PathBuf, String> {
-    let mut out: BTreeMap<PathBuf, String> = BTreeMap::new();
-    let mut roots: Vec<(&PathBuf, &str)> =
-        findings.iter().filter_map(|f| Some((f.project_root.as_ref()?, f.project.as_deref()?))).collect();
-    roots.sort();
-    roots.dedup();
-    for (root, name) in roots {
-        let mut chosen = slug(name);
-        if chosen.is_empty() {
-            "project".clone_into(&mut chosen);
-        }
-        if out.values().any(|n| *n == chosen) {
-            let parent =
-                root.parent().and_then(Path::file_name).map(|p| slug(&p.to_string_lossy())).unwrap_or_default();
-            chosen = format!("{parent}-{chosen}");
-            let mut n = 2;
-            while out.values().any(|v| *v == chosen) {
-                chosen = format!("{}-{n}", slug(name));
-                n += 1;
-            }
-        }
-        out.insert(root.clone(), chosen);
+/// A name for `root`'s project that `taken` does not have: its parent folder's name in front (`personal-api`), else
+/// a number (`api-2`).
+fn another_name(name: &str, root: &Path, taken: &dyn Fn(&str) -> bool) -> String {
+    let parent = root.parent().and_then(Path::file_name).map(|p| slug(&p.to_string_lossy())).unwrap_or_default();
+    let with_parent = format!("{parent}-{name}");
+    if !parent.is_empty() && !taken(&with_parent) {
+        return with_parent;
     }
-    out
+    (2..10_000).map(|n| format!("{name}-{n}")).find(|n| !taken(n)).unwrap_or_else(|| format!("{name}-x"))
+}
+
+/// Each repository's project (by its folder), and where it came from.
+type Projects = BTreeMap<PathBuf, (String, Option<String>)>;
+
+/// The project of each repository in the selection (by its folder), and the clashes with the vault: names from the
+/// git origin (else the folder), apart from each other, and never merged into a vault project from elsewhere unless
+/// the person chose to.
+fn project_names(findings: &[&Finding], names: &Names<'_>) -> (Projects, Vec<Clash>) {
+    let mut roots: Vec<(PathBuf, String, Option<String>)> = findings
+        .iter()
+        .filter(|f| f.source == Source::Dotenv)
+        .filter_map(|f| Some((f.project_root.clone()?, base_project(f), f.origin.clone())))
+        .collect();
+    roots.sort();
+    roots.dedup_by(|a, b| a.0 == b.0);
+    let mut out: Projects = BTreeMap::new();
+    let mut clashes = Vec::new();
+    for (root, base, origin) in roots {
+        // Apart from the other repositories of this import (unless they share an origin: the same project).
+        let same_here =
+            |n: &str, out: &Projects| out.values().any(|(m, o)| m == n && (origin.is_none() || *o != origin));
+        let mut name = base.clone();
+        if same_here(&name, &out) {
+            name = another_name(&base, &root, &|n| same_here(n, &out));
+        }
+        // Apart from the vault's projects from elsewhere.
+        let in_vault = |n: &str| match names.existing {
+            Existing::Known(list) => list.iter().any(|p| p.name == n),
+            Existing::Unknown(_) => false,
+        };
+        let clash = match names.existing {
+            Existing::Known(list) => list
+                .iter()
+                .find(|p| p.name == name)
+                .filter(|p| origin.is_none() || p.origin != origin)
+                .map(|p| (true, p.origin.clone())),
+            Existing::Unknown(_) => Some((false, None)),
+        };
+        if let Some((known, existing_origin)) = clash {
+            let chosen = if names.merge.contains(&name) {
+                name.clone()
+            } else if known {
+                another_name(&name, &root, &|n| in_vault(n) || same_here(n, &out))
+            } else {
+                let what = origin.clone().unwrap_or_else(|| root.to_string_lossy().into_owned());
+                format!("{name}-{}", short_hash(&what))
+            };
+            clashes.push(Clash {
+                name: name.clone(),
+                chosen: chosen.clone(),
+                root: root.clone(),
+                origin: origin.clone(),
+                existing_origin,
+                known,
+            });
+            name = chosen;
+        }
+        out.insert(root, (name, origin));
+    }
+    (out, clashes)
 }
 
 /// Groups the selected items of `report` by where they go.
 #[must_use]
-pub fn plan(report: &ScanReport, selected: &BTreeSet<String>, computer: &str) -> Plan {
+pub fn plan(report: &ScanReport, selected: &BTreeSet<String>, names: &Names<'_>) -> Plan {
+    let computer = names.computer;
     let mut plan = Plan {
         computer: computer.to_owned(),
         ..Plan::default()
     };
     let chosen: Vec<&Finding> =
         report.findings.iter().filter(|f| f.items.iter().any(|i| selected.contains(&i.id))).collect();
-    let projects = project_names(&chosen);
-    let machine = format!("machine/{computer}");
-    // `.env` before `.env.local`: the later file's value wins, as dotenv tools read them.
+    let (projects, clashes) = project_names(&chosen, names);
+    plan.clashes = clashes;
+    let machine = names.machine.to_owned();
+    // The less specific file first: the more specific one's value then wins ([`dotenv_rank`]).
     let mut ordered = chosen.clone();
     ordered.sort_by_key(|f| {
         let dotenv_order = if f.source == Source::Dotenv {
-            f.abs_path.file_name().map_or(0, std::ffi::OsStr::len)
+            f.abs_path.file_name().map_or(0, |n| dotenv_rank(&n.to_string_lossy()))
         } else {
             0
         };
         (f.project_root.clone(), dotenv_order, f.abs_path.clone())
     });
+    let title_of = |id: &str| report.finding(id).map_or_else(|| id.to_owned(), |f| f.title.clone());
     for f in ordered {
         let items = f.items.iter().filter(|i| selected.contains(&i.id));
         match f.source {
@@ -339,17 +545,17 @@ pub fn plan(report: &ScanReport, selected: &BTreeSet<String>, computer: &str) ->
             }
             source => {
                 for i in items {
-                    let (project, env, var, root) = if source == Source::Dotenv {
+                    let (project, env, var, root, origin) = if source == Source::Dotenv {
                         let root = f.project_root.clone().or_else(|| f.abs_path.parent().map(Path::to_path_buf));
-                        let project = root
+                        let (project, origin) = root
                             .as_ref()
                             .and_then(|r| projects.get(r).cloned())
-                            .unwrap_or_else(|| "project".to_owned());
+                            .unwrap_or_else(|| (base_project(f), f.origin.clone()));
                         let file = f.abs_path.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
-                        (project, env_for(&file), var_name(&i.name), root)
+                        (project, env_for(&file), var_name(&i.name), root, origin)
                     } else {
                         let (env, var) = machine_var(source, i.group.as_deref(), &i.name);
-                        (machine.clone(), env, var, None)
+                        (machine.clone(), env, var, None, None)
                     };
                     let at = plan.envs.iter().position(|e| e.project == project && e.env == env).unwrap_or_else(|| {
                         plan.envs.push(EnvTarget {
@@ -357,17 +563,30 @@ pub fn plan(report: &ScanReport, selected: &BTreeSet<String>, computer: &str) ->
                             env,
                             vars: Vec::new(),
                             project_root: root,
+                            origin,
                         });
                         plan.envs.len() - 1
                     });
                     let target = &mut plan.envs[at];
+                    let target_item = target.item();
                     let var = PlannedVar {
                         name: var,
                         item: i.id.clone(),
                         finding: f.id.clone(),
                     };
                     match target.vars.iter_mut().find(|v| v.name == var.name) {
-                        Some(v) => *v = var,
+                        Some(v) => {
+                            // Never silently: the review says which file's value goes.
+                            if v.finding != var.finding {
+                                plan.conflicts.push(Conflict {
+                                    item: target_item,
+                                    name: var.name.clone(),
+                                    kept: title_of(&var.finding),
+                                    dropped: title_of(&v.finding),
+                                });
+                            }
+                            *v = var;
+                        }
                         None => target.vars.push(var),
                     }
                 }
@@ -382,6 +601,9 @@ pub struct EnvWrite {
     pub project: String,
     pub env: String,
     pub vars: Vec<(String, Zeroizing<String>)>,
+    /// The project's git origin, kept on the environment's item as the hidden field `reins.origin`, so a later
+    /// import from another folder is not merged into it unasked.
+    pub origin: Option<String>,
 }
 
 /// An SSH private key, to store as an SSH key item.
@@ -413,6 +635,7 @@ impl std::fmt::Debug for EnvWrite {
             .field("project", &self.project)
             .field("env", &self.env)
             .field("vars", &names)
+            .field("origin", &self.origin)
             .finish_non_exhaustive()
     }
 }
@@ -486,6 +709,17 @@ pub struct Stored {
 #[async_trait::async_trait]
 pub trait VaultWriter: Send + Sync {
     async fn store(&self, batch: &Batch) -> Stored;
+    /// The Reins projects in the vault, with the origin each was imported from (`reins.origin`): names only, never a
+    /// value. An error when the vault cannot be listed.
+    async fn projects(&self) -> Result<Vec<VaultProject>, String>;
+}
+
+/// What the vault has, for [`plan`]: its projects, or why they could not be listed.
+pub async fn existing(writer: &dyn VaultWriter) -> Existing {
+    match writer.projects().await {
+        Ok(list) => Existing::Known(list),
+        Err(why) => Existing::Unknown(why),
+    }
 }
 
 /// What import does to this computer besides its files: the trash, the SSH agent, git, gh and the run profiles.
@@ -518,8 +752,30 @@ pub trait Machine: Send + Sync {
 pub struct Context {
     pub home: PathBuf,
     pub state_dir: PathBuf,
+    /// This computer's friendly name, and its machine project ([`this_machine`]).
     pub computer: String,
+    pub machine: String,
     pub caller: Caller,
+    /// Projects the person chose to merge into although the vault's came from elsewhere (see [`Clash`]).
+    pub merge: BTreeSet<String>,
+}
+
+impl Context {
+    /// The plan of `selected` against what the vault has now.
+    pub async fn plan(&self, report: &ScanReport, selected: &BTreeSet<String>, writer: &dyn VaultWriter) -> Plan {
+        let existing = existing(writer).await;
+        plan(report, selected, &self.names(&existing))
+    }
+
+    #[must_use]
+    pub fn names<'a>(&'a self, existing: &'a Existing) -> Names<'a> {
+        Names {
+            computer: &self.computer,
+            machine: &self.machine,
+            existing,
+            merge: &self.merge,
+        }
+    }
 }
 
 /// Reads the selected values again from their files (the scan kept none). A file that changed since the scan is an
@@ -574,6 +830,7 @@ fn batch(plan: &Plan, values: &mut BTreeMap<String, Zeroizing<String>>) -> Batch
                 project: e.project.clone(),
                 env: e.env.clone(),
                 vars: e.vars.iter().map(|v| (v.name.clone(), take(&v.item))).collect(),
+                origin: e.origin.clone(),
             })
             .collect(),
         ssh: plan
@@ -610,7 +867,7 @@ pub async fn import(
     confirmed: &mut (dyn FnMut(&Plan, &str) -> Result<(), String> + Send),
 ) -> Result<(Receipt, Option<PathBuf>), String> {
     ctx.caller.check("Importing secrets")?;
-    let plan = plan(report, selected, &ctx.computer);
+    let plan = ctx.plan(report, selected, writer).await;
     if plan.count() == 0 {
         return Err("nothing selected to move".to_owned());
     }
@@ -627,6 +884,8 @@ pub async fn import(
         keep_local,
         ..Receipt::default()
     };
+    receipt.notes.extend(plan.clashes.iter().map(Clash::line));
+    receipt.notes.extend(plan.conflicts.iter().map(Conflict::line));
     // Which items arrived.
     let mut arrived: BTreeSet<String> = BTreeSet::new();
     for (target, result) in plan.envs.iter().zip(&stored.envs) {
