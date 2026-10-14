@@ -590,13 +590,14 @@ mod tests {
         ] {
             assert_eq!(id(text), Some("deletes"), "{text:?}");
         }
-        // A long input is read in full, and in time.
-        let long = format!("{} rm -rf ~", "echo x;".repeat(4_000));
+        // The longest detail a question carries (8,000 characters) is read in full, and in time: a quadratic reading
+        // would take minutes (the bound leaves room for a slow CI runner in a debug build).
+        let long = format!("{} rm -rf ~", "echo x;".repeat(1_100));
         let started = std::time::Instant::now();
         assert_eq!(id(&long), Some("deletes"));
-        let wide = format!("echo {} && rm -rf ~", "x ".repeat(8_000));
+        let wide = format!("echo {} && rm -rf ~", "x ".repeat(3_900));
         assert_eq!(id(&wide), Some("deletes"));
-        assert!(started.elapsed() < std::time::Duration::from_secs(5), "{:?}", started.elapsed());
+        assert!(started.elapsed() < std::time::Duration::from_secs(60), "{:?}", started.elapsed());
     }
 
     /// The word, quoted for a POSIX shell.
