@@ -1121,10 +1121,21 @@ impl CommandScope {
         out
     }
 
+    /// As shown to the user, with the program's whole path when it is not in a usual place ([`usual_program`]): an
+    /// `npm` anywhere else is not shown as plain `npm`.
+    #[must_use]
+    pub fn shown_where(&self) -> String {
+        self.render(!usual_program(&self.program))
+    }
+
     /// As shown to the user: the program's name and the arguments (quoted when they hold spaces or quotes), then ` *`
     /// for a prefix.
     #[must_use]
     pub fn shown(&self) -> String {
+        self.render(false)
+    }
+
+    fn render(&self, whole_path: bool) -> String {
         let quote = |a: &str| {
             if a.is_empty() || a.chars().any(|c| c.is_whitespace() || matches!(c, '"' | '\'' | '*')) {
                 format!("'{}'", a.replace('\'', r"'\''"))
@@ -1132,13 +1143,71 @@ impl CommandScope {
                 a.to_owned()
             }
         };
-        let file = self.program.rsplit(['/', '\\']).next().unwrap_or(&self.program);
+        let file = if whole_path {
+            &self.program
+        } else {
+            self.program.rsplit(['/', '\\']).next().unwrap_or(&self.program)
+        };
         let mut words: Vec<String> = std::iter::once(quote(file)).chain(self.args.iter().map(|a| quote(a))).collect();
         if self.prefix {
             words.push("*".to_owned());
         }
         words.join(" ")
     }
+}
+
+/// Folders a program is usually installed in, where the phone shows it by its name alone.
+pub const USUAL_PROGRAM_DIRS: &[&str] = &[
+    "/usr/bin",
+    "/bin",
+    "/usr/sbin",
+    "/sbin",
+    "/usr/local/bin",
+    "/usr/local/sbin",
+    "/opt/homebrew/bin",
+    "/opt/homebrew/sbin",
+    "/run/current-system/sw/bin",
+    "/nix/var/nix/profiles/default/bin",
+];
+
+/// Whether `program` is a full path into one of [`USUAL_PROGRAM_DIRS`].
+#[must_use]
+pub fn usual_program(program: &str) -> bool {
+    program.rsplit_once('/').is_some_and(|(dir, file)| !file.is_empty() && USUAL_PROGRAM_DIRS.contains(&dir))
+}
+
+/// What `path_check` of `vault_env_release` says about the program: the desktop app's own login `PATH` finds the same
+/// program for the name typed, or another one (or none).
+pub const PATH_SAME: &str = "same";
+pub const PATH_OTHER: &str = "other";
+
+/// Why the program of a release deserves a second look, in a few words for a warning row: it is in a temporary
+/// folder, inside the project's folder (which a repository or an agent can write), or not the program the login
+/// `PATH` finds for its name. `None`: nothing to flag.
+#[must_use]
+pub fn program_warning(program: &str, root: &str, path_check: Option<&str>) -> Option<&'static str> {
+    let p = program.replace('\\', "/");
+    let lower = p.to_ascii_lowercase();
+    let temp =
+        ["/tmp/", "/var/tmp/", "/private/tmp/", "/private/var/folders/", "/var/folders/", "/dev/shm/", "/run/user/"]
+            .iter()
+            .any(|t| lower.starts_with(t))
+            || lower.contains("/appdata/local/temp/");
+    if temp {
+        return Some("In a temporary folder");
+    }
+    let root = root.replace('\\', "/");
+    let root = root.trim_end_matches('/');
+    if !root.is_empty() && p.starts_with(root) && p[root.len()..].starts_with('/') {
+        return Some("Inside the project folder");
+    }
+    if !p.starts_with('/') && p.get(1..3).is_none_or(|d| d != ":/") {
+        return Some("Not found on this computer");
+    }
+    if path_check == Some(PATH_OTHER) {
+        return Some("Not the one on your PATH");
+    }
+    None
 }
 
 /// Changes to one environment, as `vault_secrets_store` carries them (in [`SecretsToStore`]). Values are wiped when
@@ -2245,6 +2314,30 @@ mod tests {
         assert!(!long.rememberable(&[]));
         assert!(long.offers().is_empty(), "approved once at a time");
         long.validate().unwrap();
+    }
+
+    #[test]
+    fn a_program_out_of_the_usual_places_is_shown_by_its_path_and_flagged() {
+        let at = |p: &str| CommandScope::exact(p, &argv(&["run", "dev"])).shown_where();
+        assert_eq!(at("/usr/bin/npm"), "npm run dev");
+        assert_eq!(at("/opt/homebrew/bin/npm"), "npm run dev");
+        assert_eq!(at("/tmp/x/npm"), "/tmp/x/npm run dev");
+        assert_eq!(at("/home/me/my tools/npm"), "'/home/me/my tools/npm' run dev");
+        let root = "/home/me/acme";
+        assert_eq!(program_warning("/tmp/x/npm", root, Some(PATH_SAME)), Some("In a temporary folder"));
+        assert_eq!(program_warning("/private/var/folders/ab/T/npm", root, None), Some("In a temporary folder"));
+        assert_eq!(
+            program_warning("/home/me/acme/node_modules/.bin/npm", root, None),
+            Some("Inside the project folder")
+        );
+        assert_eq!(program_warning("/home/me/acme-other/npm", root, None), None);
+        assert_eq!(program_warning("npm", root, None), Some("Not found on this computer"));
+        assert_eq!(program_warning("/home/me/bin/npm", root, Some(PATH_OTHER)), Some("Not the one on your PATH"));
+        assert_eq!(program_warning("/usr/bin/npm", root, Some(PATH_SAME)), None);
+        assert_eq!(
+            program_warning("C:\\Users\\me\\AppData\\Local\\Temp\\npm.cmd", "C:\\dev", None),
+            Some("In a temporary folder")
+        );
     }
 
     #[test]

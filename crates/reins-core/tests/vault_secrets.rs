@@ -384,6 +384,31 @@ fn release_with(desk: &Desk, id: &str, ask: &Ask<'_>, changed: &Value) -> Value 
 }
 
 #[tokio::test]
+async fn a_program_out_of_place_is_shown_by_its_path_with_a_warning() {
+    let desk = desk().await;
+    desk.pair().await;
+    desk.send(&[release_with(&desk, "t1", &DEV, &json!({"program": "/tmp/x/npm", "typed": "npm"}))]).await;
+    let view = desk.core.approval_view("t1".to_owned()).await.unwrap();
+    let r = view.env_release.clone().unwrap();
+    assert_eq!(r.command, "/tmp/x/npm run dev");
+    assert_eq!(r.program_warning.as_deref(), Some("In a temporary folder"));
+    assert!(view.headline.contains("/tmp/x/npm"), "{}", view.headline);
+    let inside = format!("{ROOT}/node_modules/.bin/npm");
+    desk.send(&[release_with(&desk, "t2", &DEV, &json!({"program": inside}))]).await;
+    let r = desk.core.approval_view("t2".to_owned()).await.unwrap().env_release.unwrap();
+    assert_eq!(r.program_warning.as_deref(), Some("Inside the project folder"));
+    desk.send(&[release_with(&desk, "t3", &DEV, &json!({"program": "/home/me/bin/npm", "path_check": "other"}))]).await;
+    let r = desk.core.approval_view("t3".to_owned()).await.unwrap().env_release.unwrap();
+    assert_eq!(
+        (r.command.as_str(), r.program_warning.as_deref()),
+        ("/home/me/bin/npm run dev", Some("Not the one on your PATH"))
+    );
+    desk.send(&[release(&desk, "t4", &DEV)]).await;
+    let r = desk.core.approval_view("t4".to_owned()).await.unwrap().env_release.unwrap();
+    assert_eq!((r.command.as_str(), r.program_warning), ("npm run dev", None));
+}
+
+#[tokio::test]
 async fn launchers_by_either_name_and_long_code_are_never_remembered_wider() {
     let desk = desk().await;
     desk.pair().await;

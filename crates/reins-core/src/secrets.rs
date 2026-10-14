@@ -319,6 +319,7 @@ mod tests {
             confirm_always: false,
             print: false,
             typed: None,
+            path_check: None,
         }
     }
 

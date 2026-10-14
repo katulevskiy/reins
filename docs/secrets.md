@@ -127,6 +127,11 @@ single references):
 never uses a shell), with the program resolved to its absolute path; `root` is the project's folder (canonical path).
 `typed` is the program as typed when it was a name (`npm`): the phone refuses a prefix when either name is a launcher
 (3.3).
+`path_check` (`same` or `other`) says whether the daemon's own login `PATH` finds the same program for that name.
+The phone shows a program outside the usual system folders (`/usr/bin`, `/usr/local/bin`, `/opt/homebrew/bin`, …) by
+its whole path, in the headline too, and flags it in a warning row when it is in a temporary folder, inside the
+project's folder (which a repository or an agent can write), or not the one the login `PATH` finds: `PATH=/tmp/x:$PATH
+reins run -- npm run dev` reads `/tmp/x/npm run dev`, "In a temporary folder", never `npm run dev`.
 
 The phone answers with the existing `SecretGrant` (sealed to the pinned computer key, bound to the nonce), extended with
 `project`, `env`, the item revision, and the binding the phone decided: the `runner` and `root` it approved and the

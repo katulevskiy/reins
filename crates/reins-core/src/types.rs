@@ -326,6 +326,10 @@ pub struct EnvReleaseView {
     pub command: String,
     /// The program's full path, as the computer resolved it.
     pub program: String,
+    /// Why the program deserves a second look, for a warning row ("In a temporary folder", "Inside the project
+    /// folder", "Not the one on your PATH"); `command` then shows its whole path too.
+    #[uniffi(default)]
+    pub program_warning: Option<String>,
     /// The variables' names (never a value), sorted.
     pub variables: Vec<String>,
     /// Every variable of the environment was asked for.

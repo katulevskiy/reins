@@ -196,12 +196,24 @@ pub(crate) struct ReleaseAsk {
     pub print: bool,
     /// The program as typed (`npm`), when it was not a path.
     pub typed: Option<String>,
+    /// [`reins_proto::desktop::PATH_SAME`] or [`reins_proto::desktop::PATH_OTHER`], when the computer said.
+    pub path_check: Option<String>,
 }
 
 impl ReleaseAsk {
     /// The exact command asked for.
     pub fn exact(&self) -> CommandScope {
         CommandScope::exact(&self.program, &self.args)
+    }
+
+    /// The command as shown: with the program's whole path when it is not in a usual place.
+    pub fn shown(&self) -> String {
+        self.exact().shown_where()
+    }
+
+    /// Why the program deserves a second look, if it does ([`reins_proto::desktop::program_warning`]).
+    pub fn program_warning(&self) -> Option<&'static str> {
+        reins_proto::desktop::program_warning(&self.program, &self.root, self.path_check.as_deref())
     }
 
     /// Whether this release is asked every time: `always`, a value to print, or a command that cannot be remembered.
@@ -290,6 +302,7 @@ pub(crate) fn release_ask(call: &ConnectorCall) -> Result<ReleaseAsk, CoreError>
         confirm_always: call.str_arg("confirm") == Some("always"),
         print: call.bool_arg("print").unwrap_or(false),
         typed: call.str_arg("typed").map(text::one_line).filter(|t| !t.is_empty()),
+        path_check: call.str_arg("path_check").map(str::to_owned),
     })
 }
 
@@ -355,10 +368,14 @@ pub(super) async fn preview_release(vault: &Vault, account: &str, call: &Connect
     let names: Vec<String> = chosen(entry, &ask)?.into_iter().map(|(n, _)| n).collect();
     let choice = always_ask_choice(&vault.store, &ask.project, &ask.env)?;
     let always = always_ask(choice, ask.confirm_always, &ask.env);
-    let command = ask.exact().shown();
+    let command = ask.shown();
+    let warning = ask.program_warning();
     let one_shot = ask.one_shot(always);
     let who = runner_label(&ask.runner);
     let mut lines = vec![format!("{who}: {} for {command}", ask.env)];
+    if let Some(w) = warning {
+        lines.push(format!("{w}: {}", text::one_line(&ask.program)));
+    }
     lines.push(format!("{}/{}: {}", ask.project, ask.env, names.join(", ")));
     lines.push(format!("In {}", text::one_line(&ask.root)));
     if let Some(p) = &ask.purpose {
@@ -378,6 +395,7 @@ pub(super) async fn preview_release(vault: &Vault, account: &str, call: &Connect
         root: text::one_line(&ask.root),
         command,
         program: text::one_line(&ask.program),
+        program_warning: warning.map(str::to_owned),
         variables: names,
         all_variables: ask.fields.is_none(),
         lease_secs: u64::try_from(ask.lease).unwrap_or(0),
@@ -387,7 +405,7 @@ pub(super) async fn preview_release(vault: &Vault, account: &str, call: &Connect
             .into_iter()
             .map(|(id, c)| CommandOption {
                 id,
-                label: c.shown(),
+                label: c.shown_where(),
                 prefix: c.prefix,
             })
             .collect(),
