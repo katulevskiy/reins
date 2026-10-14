@@ -110,7 +110,7 @@ final class GrantsSettingsUITests: XCTestCase {
         wait("createGrant")
         shot("new-grant")
         section("Settings")
-        wait("registerPhone")
+        wait("accountCard")
         shot("settings")
         app.swipeUp()
         app.swipeUp()
@@ -234,10 +234,10 @@ final class GrantsSettingsUITests: XCTestCase {
     func testSettingsHoldConnectionsIntegrationsAndTheApprovalDevice() {
         launch()
         section("Settings")
-        wait("registerPhone")
+        wait("approvalChip")
         scrollTo("connection:c1")
         scrollTo("openIntegrations")
-        XCTAssertTrue(app.staticTexts["2 accounts connected"].exists)
+        XCTAssertEqual(element("openIntegrations").value as? String, "2 accounts")
     }
 
     func testAConnectionsModeAndIconCanBePickedAndItCanBeDisconnected() {
@@ -246,16 +246,18 @@ final class GrantsSettingsUITests: XCTestCase {
         scrollTo("connection:c1")
         tap("connection:c1")
         wait("connectionMode")
-        tap("connMode:follow")
-        let line = wait("connectionModeLine")
-        let predicate = NSPredicate(format: "label BEGINSWITH 'Like every AI'")
-        expectation(for: predicate, evaluatedWith: line)
+        tap("connMode:AUTO")
+        expectation(for: NSPredicate(format: "isSelected == true"), evaluatedWith: element("connMode:AUTO"))
         waitForExpectations(timeout: 5)
-        scrollTo("icon:grok", detail: true)
+        tap("connMode:follow")
+        expectation(for: NSPredicate(format: "isSelected == true"), evaluatedWith: element("connMode:follow"))
+        waitForExpectations(timeout: 5)
+        scrollTo("connectionIcon", detail: true)
+        tap("connectionIcon")
         tap("icon:grok")
+        // Disconnect is held for two seconds; no dialog.
         scrollTo("disconnect", detail: true)
-        tap("disconnect")
-        confirm("Disconnect")
+        wait("disconnect").press(forDuration: 2.6)
         if pad {
             wait("connectionGone")
         } else {

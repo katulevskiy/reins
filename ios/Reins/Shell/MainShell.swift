@@ -224,7 +224,7 @@ struct SheetContent: View {
             case let .pairing(id): PairingSheet(pairingId: id)
             case let .upload(id): UploadSheet(blobId: id)
             case let .join(id): JoinSheet(joinId: id)
-            case .connectComputer: ConnectComputerSheet()
+            case .connectComputer: ConnectComputerSheet(typing: model.connectStartsTyped)
             }
         }
         .environment(model)
