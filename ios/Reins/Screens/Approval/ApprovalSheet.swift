@@ -156,7 +156,7 @@ private struct ApprovalScreen: View {
                 .navigationTitle(Self.title(view, page))
                 .navigationBarTitleDisplayMode(.inline)
                 .toolbar {
-                    ToolbarItem(placement: .topBarTrailing) { TimerPill(view: view) }
+                    ToolbarItem(placement: .topBarTrailing) { ApprovalTimerPill(view: view) }
                 }
             }
         }
@@ -211,7 +211,7 @@ private struct AgentBar: View {
             }
             .frame(maxWidth: .infinity, alignment: .leading)
             .accessibilityElement(children: .combine)
-            TimerPill(view: view)
+            ApprovalTimerPill(view: view)
         }
         .padding(.horizontal, 16)
         .padding(.top, 6)
@@ -222,7 +222,7 @@ private struct AgentBar: View {
 
 /// The time the AI still waits: a ring that empties and the seconds, red in the last 15; "Stopped" once it gave up
 /// (its (?) says approving still works).
-struct TimerPill: View {
+struct ApprovalTimerPill: View {
     var view: ApprovalView
     @State private var lateHelp = false
 

@@ -241,9 +241,6 @@ struct AutopilotWhyRow: View {
     }
 }
 
-/// What should have happened instead of what did: a denial was a mistaken approval's correction, and the reverse.
-func correctionFor(_ entry: ActivityEntry) -> Verdict { entry.outcome == "denied" ? .approve : .deny }
-
 /// "This was wrong", pinned at the bottom of an entry Autopilot (or a bypass) decided: asks what should have
 /// happened, teaches the profile and locks the kind again. What was done stays done.
 struct ThisWasWrongDock: View {
