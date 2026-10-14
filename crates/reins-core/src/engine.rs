@@ -814,7 +814,8 @@ impl Engine {
                 reins_policy::Scope::Send(_) => crate::types::ApprovalKind::Send,
                 reins_policy::Scope::Accounts(_)
                 | reins_policy::Scope::Service(_)
-                | reins_policy::Scope::Headlines(_) => {
+                | reins_policy::Scope::Headlines(_)
+                | reins_policy::Scope::Secrets(_) => {
                     return Err(CoreError::invalid("this grant can only be resumed as it was"));
                 }
             };

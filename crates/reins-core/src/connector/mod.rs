@@ -95,6 +95,18 @@ pub struct Preview {
     /// The uploaded file the write uses (`blob=<id>`), as the server described it; shown with the preview.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub blob: Option<reins_proto::blob::BlobInfo>,
+    /// Reins Secrets: what the approval shows of a release, a store or a token (names, never values).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub secrets: Option<SecretsPreview>,
+}
+
+/// The structured part of a Reins Secrets preview (see [`Preview::secrets`]).
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum SecretsPreview {
+    Release(crate::types::EnvReleaseView),
+    Store(crate::types::SecretsStoreView),
+    Token(crate::types::TokenStoreView),
 }
 
 #[async_trait::async_trait]

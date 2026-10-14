@@ -235,6 +235,7 @@ fn read_grant(resources: &[&str]) -> Option<StandingGrant> {
             recipient_domains: vec![],
             resources: resources.iter().map(|r| (*r).to_owned()).collect(),
             classes: vec![],
+            secrets: None,
         },
     })
 }

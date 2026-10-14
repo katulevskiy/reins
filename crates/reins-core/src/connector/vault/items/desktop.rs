@@ -30,6 +30,7 @@ use crate::store::unix_now;
 use crate::types::{SecretReleaseView, SshSignView};
 use crate::{CoreError, text};
 
+pub(crate) mod env;
 mod store;
 
 /// The resource of a release that names several items.
@@ -73,6 +74,9 @@ pub(in crate::connector::vault) async fn preview(
         "phone_key" => store::preview_phone_key(vault, call),
         "secret_store" => store::preview_store(vault, account, call).await,
         "names" => store::preview_names(vault, account, call).await,
+        "env_release" => env::preview_release(vault, account, call).await,
+        "secrets_store" => env::preview_store(vault, account, call).await,
+        "secrets_list" => env::preview_list(vault, account, call).await,
         _ => return None,
     })
 }
@@ -89,6 +93,10 @@ pub(in crate::connector::vault) async fn perform(
         "phone_key" => store::perform_phone_key(vault, call),
         "secret_store" => store::perform_store(vault, account, call).await,
         "names" => store::perform_names(vault, account, call).await,
+        // Bound to what the user approved, which only the flow knows (`env::perform_release`).
+        "env_release" => Err(bad("A release of an environment is carried out by the approval flow.")),
+        "secrets_store" => env::perform_store(vault, account, call).await,
+        "secrets_list" => env::perform_list(vault, account, call).await,
         _ => return None,
     })
 }

@@ -27,6 +27,9 @@ mod items;
 mod sends;
 mod totp;
 
+pub(crate) use items::desktop::env::{
+    ReleaseAsk, always_ask_choice, perform_release, release_ask, runner_label, set_always_ask,
+};
 pub use items::desktop::{secret_release_view, ssh_sign_view};
 pub(crate) use items::editor;
 pub(crate) use items::wallet;

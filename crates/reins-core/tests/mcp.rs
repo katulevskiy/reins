@@ -157,6 +157,7 @@ fn remember(resource: &str) -> ApprovalChoice {
                 recipient_domains: Vec::new(),
                 resources: vec![resource.to_owned()],
                 classes: Vec::new(),
+                secrets: None,
             },
         }),
     }

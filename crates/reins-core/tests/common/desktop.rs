@@ -200,6 +200,7 @@ pub fn standing(resources: &[&str], classes: &[&str]) -> Option<StandingGrant> {
             recipient_domains: vec![],
             resources: resources.iter().map(|r| (*r).to_owned()).collect(),
             classes: classes.iter().map(|c| (*c).to_owned()).collect(),
+            secrets: None,
         },
     })
 }
