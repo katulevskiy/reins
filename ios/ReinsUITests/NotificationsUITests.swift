@@ -8,9 +8,11 @@ final class NotificationsUITests: XCTestCase {
 
     func testPermissionThenBackgroundNotifications() throws {
         let app = XCUIApplication()
-        app.launchArguments = ["-demo", "-noPopup", "-askNotifications", "-notifierSamples"]
+        // A reused simulator keeps the last run's notifications and Live Activities: start without them.
+        app.launchArguments = ["-demo", "-noPopup", "-resetNotifications", "-askNotifications", "-notifierSamples"]
         app.launch()
 
+        // Asked only once per install: a simulator that already answered shows no prompt.
         let allow = springboard.buttons["Allow"]
         if allow.waitForExistence(timeout: 10) {
             shot("notifications-prompt")
@@ -18,9 +20,16 @@ final class NotificationsUITests: XCTestCase {
         }
 
         XCUIDevice.shared.press(.home)
-        // The samples are posted 3 s after the app leaves the front; the banner stays a few seconds.
-        let banner = springboard.staticTexts.containing(NSPredicate(format: "label CONTAINS 'Approval needed' OR label CONTAINS 'Connect an AI' OR label CONTAINS 'Permission requested'")).firstMatch
-        XCTAssertTrue(banner.waitForExistence(timeout: 15), "no Reins notification appeared")
+        // The samples are posted 3 s after the app leaves the front, and a banner stays only a few seconds; a slow
+        // simulator can miss it, but Notification Center keeps it.
+        let reins = NSPredicate(format: "label CONTAINS 'Approval needed' OR label CONTAINS 'Connect an AI' OR label CONTAINS 'Permission requested'")
+        let banner = springboard.descendants(matching: .any).matching(reins).firstMatch
+        let shown = XCTNSPredicateExpectation(predicate: NSPredicate(format: "exists == true"), object: banner)
+        if XCTWaiter().wait(for: [shown], timeout: 30) != .completed {
+            let top = springboard.coordinate(withNormalizedOffset: CGVector(dx: 0.3, dy: 0.01))
+            top.press(forDuration: 0.1, thenDragTo: springboard.coordinate(withNormalizedOffset: CGVector(dx: 0.3, dy: 0.6)))
+            XCTAssertTrue(banner.waitForExistence(timeout: 10), "no Reins notification appeared, nor in Notification Center")
+        }
         shot("notifications-banner")
     }
 
