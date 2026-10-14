@@ -12,6 +12,24 @@ final class ActivityFlowTests: XCTestCase {
         // A frozen clock keeps the countdowns still, so the app goes idle between steps.
         app.launchArguments = ["-demo", "-noPopup", "-freezeTime", String(Int(Date().timeIntervalSince1970))] + extra + (link.map { ["-open", $0] } ?? [])
         app.launch()
+        // The first launch of a run can race xcodebuild still installing the app, which then comes up again without
+        // these arguments (on the real sign-in screen): once, launch it again, and say so in the log. The demo shows
+        // its tab bar, or a linked item's sheet over it.
+        let demo = app.descendants(matching: .any).matching(NSPredicate(
+            format: "elementType == %d OR identifier IN %@",
+            XCUIElement.ElementType.tabBar.rawValue, ["approvalSheet", "pairingSheet", "uploadSheet"]
+        )).firstMatch
+        if !demo.waitForExistence(timeout: 20) {
+            XCTContext.runActivity(named: "Relaunching: the demo's first screen did not appear") { activity in
+                let screen = XCTAttachment(screenshot: app.screenshot())
+                screen.name = "before relaunch"
+                screen.lifetime = .keepAlways
+                activity.add(screen)
+                print("ActivityFlowTests: relaunching \(name), the demo's first screen did not appear")
+                app.terminate()
+                app.launch()
+            }
+        }
         return app
     }
 
@@ -27,6 +45,12 @@ final class ActivityFlowTests: XCTestCase {
 
     private func element(_ app: XCUIApplication, _ id: String) -> XCUIElement {
         app.descendants(matching: .any).matching(identifier: id).firstMatch
+    }
+
+    /// Waits for `element` with an explicit expectation, long enough for a simulator sharing the Mac with others.
+    private func expectToAppear(_ element: XCUIElement, timeout: TimeInterval = 30) {
+        let shown = XCTNSPredicateExpectation(predicate: NSPredicate(format: "exists == true"), object: element)
+        XCTAssertEqual(XCTWaiter().wait(for: [shown], timeout: timeout), .completed, "\(element) never appeared")
     }
 
     func testWaitingRequestsComeAboveTheHistoryAndOpenTheirSheet() {
@@ -139,10 +163,10 @@ final class ActivityFlowTests: XCTestCase {
     func testAnEntryOpensAndAnEmailInItOpensInFull() {
         let app = launch("reins://activity?id=10")
         let message = element(app, "detailMessage:0")
-        XCTAssertTrue(message.waitForExistence(timeout: 10))
+        expectToAppear(message)
         shot(app, "activity-entry")
         message.tap()
-        XCTAssertTrue(element(app, "emailBody").waitForExistence(timeout: 5))
+        expectToAppear(element(app, "emailBody"))
         shot(app, "activity-email")
     }
 
