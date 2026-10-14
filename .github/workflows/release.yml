@@ -189,7 +189,7 @@ jobs:
       - name: Install cargo-zigbuild
         run: |
           python3 -m venv "$RUNNER_TEMP/zig"
-          "$RUNNER_TEMP/zig/bin/pip" install --quiet cargo-zigbuild==0.23.4 ziglang==0.16.0
+          "$RUNNER_TEMP/zig/bin/pip" install --quiet --retries 10 cargo-zigbuild==0.23.4 ziglang==0.16.0
       # Tags are the source of truth; the binary reports the release version.
       - name: Set the version
         run: scripts/set-desktop-version.sh "$VERSION"
@@ -321,9 +321,9 @@ jobs:
           save-if: ${{ github.ref == 'refs/heads/main' }}
       - name: GPUI build dependencies
         run: |
-          sudo apt-get update -qq
-          sudo apt-get install -y -qq libxkbcommon-dev libxkbcommon-x11-dev libwayland-dev libx11-dev libxcb1-dev \
-            libx11-xcb-dev libfontconfig1-dev libfreetype-dev libvulkan-dev pkg-config
+          sudo apt-get -o Acquire::Retries=5 update -qq
+          sudo apt-get -o Acquire::Retries=5 install -y -qq libxkbcommon-dev libxkbcommon-x11-dev libwayland-dev \
+            libx11-dev libxcb1-dev libx11-xcb-dev libfontconfig1-dev libfreetype-dev libvulkan-dev pkg-config
       - name: Set the version
         run: scripts/set-desktop-version.sh "$VERSION"
       - name: Package (Linux)
@@ -663,6 +663,31 @@ jobs:
           password: ${{ secrets.GITHUB_TOKEN }}
       - uses: docker/build-push-action@v7
         id: build
+        # A registry or download error is tried once more (next step), from the layers this builder already has.
+        continue-on-error: true
+        with:
+          context: .
+          file: docker/Dockerfile.debian
+          platforms: linux/${{ matrix.arch }}
+          # Push immutable digests first; the publisher updates public version/latest tags together.
+          outputs: ${{ inputs.verify_only && 'type=docker' || format('type=image,name={0},push-by-digest=true,name-canonical=true,push=true', steps.image.outputs.name) }}
+          tags: ${{ inputs.verify_only && format('reins-server-verify:{0}', matrix.arch) || '' }}
+          # Docker layers were evicting Rust/Gradle caches from the repository's shared cache quota. Read everywhere,
+          # written from main only.
+          cache-from: type=registry,ref=${{ steps.image.outputs.name }}:buildcache-${{ matrix.arch }}
+          cache-to: ${{ github.ref == 'refs/heads/main' && format('type=registry,ref={0}:buildcache-{1},mode=max', steps.image.outputs.name, matrix.arch) || '' }}
+          build-args: |
+            VW_VERSION=${{ needs.plan.outputs.version }}
+          labels: |
+            org.opencontainers.image.title=Reins server
+            org.opencontainers.image.description=The Reins server: Vaultwarden with the Reins permission relay for AI agents
+            org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}
+            org.opencontainers.image.version=${{ needs.plan.outputs.version }}
+            org.opencontainers.image.revision=${{ needs.plan.outputs.sha }}
+            org.opencontainers.image.licenses=AGPL-3.0-only
+      - uses: docker/build-push-action@v7
+        id: build-retry
+        if: steps.build.outcome == 'failure'
         with:
           context: .
           file: docker/Dockerfile.debian
@@ -695,7 +720,7 @@ jobs:
       - name: Export image digest
         if: inputs.verify_only != true
         env:
-          DIGEST: ${{ steps.build.outputs.digest }}
+          DIGEST: ${{ steps.build.outputs.digest || steps.build-retry.outputs.digest }}
         run: |
           [[ "$DIGEST" =~ ^sha256:[0-9a-f]{64}$ ]]
           mkdir -p digests
@@ -757,7 +782,13 @@ jobs:
         run: |
           cargo ndk --version || cargo install --locked cargo-ndk@4.1.2
           ndk="$(grep -oP 'reinsNdkVersion = "\K[^"]+' android/app/build.gradle.kts)"
-          "${ANDROID_HOME}/cmdline-tools/latest/bin/sdkmanager" --install "ndk;${ndk}" > /dev/null
+          # The runner image does not carry this NDK; its download from dl.google.com fails now and then.
+          for attempt in 1 2 3; do
+            "${ANDROID_HOME}/cmdline-tools/latest/bin/sdkmanager" --install "ndk;${ndk}" > /dev/null && break
+            (( attempt < 3 )) || exit 1
+            echo "::warning::sdkmanager could not install ndk;${ndk} (attempt $attempt); trying again"
+            sleep $(( attempt * 20 ))
+          done
       - uses: actions/cache/save@v5
         if: >-
           steps.cargo-ndk.outcome == 'success' && steps.cargo-ndk.outputs.cache-hit != 'true' &&
@@ -926,7 +957,7 @@ jobs:
           BUNDLETOOL_SHA256: a099cfa1543f55593bc2ed16a70a7c67fe54b1747bb7301f37fdfd6d91028e29
         run: |
           build_tools="$(ls -d "$ANDROID_HOME"/build-tools/* | sort -V | tail -1)"
-          curl -fsSL -o "$RUNNER_TEMP/bundletool.jar" \
+          curl -fsSL --retry 5 --retry-all-errors -o "$RUNNER_TEMP/bundletool.jar" \
             "https://github.com/google/bundletool/releases/download/$BUNDLETOOL_VERSION/bundletool-all-$BUNDLETOOL_VERSION.jar"
           echo "$BUNDLETOOL_SHA256  $RUNNER_TEMP/bundletool.jar" | sha256sum -c -
           aab="dist/reins-$VERSION-play.aab"
@@ -1002,9 +1033,10 @@ jobs:
           path: dist
       - name: Packaging tools
         run: |
-          sudo apt-get update -qq
-          sudo apt-get install -y -qq --no-install-recommends lintian createrepo-c rpm apt-utils binutils-aarch64-linux-gnu
-          curl -fsSL -o "$RUNNER_TEMP/nfpm.tar.gz" \
+          sudo apt-get -o Acquire::Retries=5 update -qq
+          sudo apt-get -o Acquire::Retries=5 install -y -qq --no-install-recommends lintian createrepo-c rpm apt-utils \
+            binutils-aarch64-linux-gnu
+          curl -fsSL --retry 5 --retry-all-errors -o "$RUNNER_TEMP/nfpm.tar.gz" \
             "https://github.com/goreleaser/nfpm/releases/download/v$NFPM_VERSION/nfpm_${NFPM_VERSION}_Linux_x86_64.tar.gz"
           echo "$NFPM_SHA256  $RUNNER_TEMP/nfpm.tar.gz" | sha256sum -c -
           tar -xzf "$RUNNER_TEMP/nfpm.tar.gz" -C "$RUNNER_TEMP" nfpm
@@ -1015,10 +1047,19 @@ jobs:
             --time "$BUILD_TIME" --dist dist --out packages
       - name: Lint the .deb packages (lintian)
         run: lintian --fail-on error --no-tag-display-limit packages/*.deb
+      # Fedora's mirrors fail now and then (the Cisco OpenH264 metalink answered 503): its repository is dropped, and
+      # installing rpmlint gets three tries. rpmlint itself runs once; its findings fail the step.
       - name: Lint the .rpm packages (rpmlint)
         run: |
-          docker run --rm -v "$PWD:/src:ro" -w /src "$FEDORA" sh -c \
-            'dnf install -y -q rpmlint >/dev/null && rpmlint -c scripts/package/linux-packages/rpmlint.toml packages/*.rpm'
+          for attempt in 1 2 3; do docker pull -q "$FEDORA" && break; sleep $((attempt * 15)); done
+          docker run --rm -v "$PWD:/src:ro" -w /src "$FEDORA" sh -c '
+            rm -f /etc/yum.repos.d/fedora-cisco-openh264.repo
+            for attempt in 1 2 3; do
+              dnf install -y -q rpmlint >/dev/null && break
+              [ "$attempt" -lt 3 ] || exit 1
+              sleep $((attempt * 15))
+            done
+            rpmlint -c scripts/package/linux-packages/rpmlint.toml packages/*.rpm'
       # Written to a file (not exported to later steps), read by the next step only, and removed afterwards. A missing
       # folder is not an error here: the next step decides whether the key is required.
       - name: Fetch the repository key from Infisical
@@ -1272,7 +1313,13 @@ jobs:
           refs=()
           for digest in digests/*; do refs+=("$image@sha256:${digest##*/}"); done
           [[ "${#refs[@]}" == 2 ]] || { echo "::error::Missing image architecture"; exit 1; }
-          docker buildx imagetools create --tag "$image:$VERSION" --tag "$image:latest" "${refs[@]}"
+          # Tagging the same digests again is harmless, so a registry error is tried again.
+          for attempt in 1 2 3 4; do
+            docker buildx imagetools create --tag "$image:$VERSION" --tag "$image:latest" "${refs[@]}" && break
+            (( attempt < 4 )) || exit 1
+            echo "::warning::publishing the image manifest failed (attempt $attempt); trying again"
+            sleep $(( attempt * 15 ))
+          done
           docker buildx imagetools inspect "$image:$VERSION"
       - name: Verification complete
         if: inputs.verify_only == true
@@ -1293,7 +1340,13 @@ jobs:
         run: |
           # Upload everything before making this release visible to latest/download clients.
           gh release create "$TAG" dist/* --target "$SHA" --title "Reins $TAG" --notes-file notes.md --draft
-          gh release edit "$TAG" --draft=false --latest
+          # Making the draft public is the same request each time; an API error is tried again.
+          for attempt in 1 2 3 4; do
+            gh release edit "$TAG" --draft=false --latest && break
+            (( attempt < 4 )) || exit 1
+            echo "::warning::publishing the release failed (attempt $attempt); trying again"
+            sleep $(( attempt * 15 ))
+          done
           echo "::notice::Published $GITHUB_SERVER_URL/$GITHUB_REPOSITORY/releases/tag/$TAG"
 
   # The published release's Play bundle goes to every Google Play track that takes it (internal, closed and open testing,
@@ -1417,11 +1470,16 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
         run: |
-          gh release download "$TAG" --pattern SHA256SUMS --dir "$RUNNER_TEMP"
+          for attempt in 1 2 3; do
+            gh release download "$TAG" --pattern SHA256SUMS --dir "$RUNNER_TEMP" --clobber && break
+            (( attempt < 3 )) || exit 1
+            sleep $(( attempt * 15 ))
+          done
           scripts/package/aur.sh --version "$VERSION" --sums "$RUNNER_TEMP/SHA256SUMS" --out aur
           cat aur/PKGBUILD
       - name: Check with makepkg
         run: |
+          for attempt in 1 2 3; do docker pull -q archlinux:base-devel && break; sleep $((attempt * 15)); done
           docker run --rm -v "$PWD/aur:/aur:ro" archlinux:base-devel bash -euo pipefail -c '
             useradd -m builder
             cp -r /aur /home/builder/aur
@@ -1472,8 +1530,18 @@ jobs:
           printf '%s\n' "$AUR_SSH_PRIVATE_KEY" > "$ssh_dir/key"
           printf '%s\n' "$AUR_HOST_KEY" > "$ssh_dir/known_hosts"
           export GIT_SSH_COMMAND="ssh -i $ssh_dir/key -o IdentitiesOnly=yes -o UserKnownHostsFile=$ssh_dir/known_hosts -o StrictHostKeyChecking=yes"
+          # The AUR's SSH endpoint drops connections now and then: the clone and the push get three tries each.
+          retry() {
+            local attempt
+            for attempt in 1 2 3; do
+              "$@" && return 0
+              (( attempt < 3 )) || return 1
+              echo "::warning::$1 $2 failed (attempt $attempt); trying again"
+              sleep $(( attempt * 15 ))
+            done
+          }
           # A package that does not exist yet clones as an empty repository; the first push creates it.
-          git clone --quiet ssh://aur@aur.archlinux.org/reins-bin.git "$ssh_dir/reins-bin"
+          retry git clone --quiet ssh://aur@aur.archlinux.org/reins-bin.git "$ssh_dir/reins-bin"
           cp aur/PKGBUILD aur/.SRCINFO "$ssh_dir/reins-bin/"
           cd "$ssh_dir/reins-bin"
           git add PKGBUILD .SRCINFO
@@ -1482,7 +1550,7 @@ jobs:
             exit 0
           fi
           git -c user.name="Daniil Katulevskiy" -c user.email=support@reins2fa.com commit --quiet -m "Update to $VERSION"
-          git push --quiet origin HEAD:master
+          retry git push --quiet origin HEAD:master
           echo "::notice::Pushed reins-bin $VERSION to https://aur.archlinux.org/packages/reins-bin"
 
   # The Homebrew cask (katulevskiy/homebrew-tap, Casks/reins.rb: `brew install --cask katulevskiy/tap/reins`), written
@@ -1512,7 +1580,11 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
         run: |
-          gh release download "$TAG" --pattern SHA256SUMS --dir "$RUNNER_TEMP"
+          for attempt in 1 2 3; do
+            gh release download "$TAG" --pattern SHA256SUMS --dir "$RUNNER_TEMP" --clobber && break
+            (( attempt < 3 )) || exit 1
+            sleep $(( attempt * 15 ))
+          done
           scripts/package/homebrew-cask.sh --version "$VERSION" --sums "$RUNNER_TEMP/SHA256SUMS" --out cask/reins.rb
           ruby -c cask/reins.rb
           cat cask/reins.rb
@@ -1559,7 +1631,17 @@ jobs:
           printf '%s\n' "$HOMEBREW_TAP_DEPLOY_KEY" > "$ssh_dir/key"
           printf '%s\n' "$GITHUB_HOST_KEY" > "$ssh_dir/known_hosts"
           export GIT_SSH_COMMAND="ssh -i $ssh_dir/key -o IdentitiesOnly=yes -o UserKnownHostsFile=$ssh_dir/known_hosts -o StrictHostKeyChecking=yes"
-          git clone --quiet git@github.com:katulevskiy/homebrew-tap.git "$ssh_dir/tap"
+          # GitHub's SSH endpoint drops connections now and then: the clone and the push get three tries each.
+          retry() {
+            local attempt
+            for attempt in 1 2 3; do
+              "$@" && return 0
+              (( attempt < 3 )) || return 1
+              echo "::warning::$1 $2 failed (attempt $attempt); trying again"
+              sleep $(( attempt * 15 ))
+            done
+          }
+          retry git clone --quiet git@github.com:katulevskiy/homebrew-tap.git "$ssh_dir/tap"
           mkdir -p "$ssh_dir/tap/Casks"
           cp cask/reins.rb "$ssh_dir/tap/Casks/reins.rb"
           cd "$ssh_dir/tap"
@@ -1569,5 +1651,5 @@ jobs:
             exit 0
           fi
           git -c user.name="Daniil Katulevskiy" -c user.email=support@reins2fa.com commit --quiet -m "Reins $VERSION"
-          git push --quiet origin HEAD:main
+          retry git push --quiet origin HEAD:main
           echo "::notice::Updated https://github.com/katulevskiy/homebrew-tap to Reins $VERSION"
