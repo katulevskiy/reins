@@ -237,8 +237,17 @@ private struct ConnectionAutopilotGroup: View {
     }
 
     /// Sets this AI's mode (`nil`: back to following the global one). The change is felt at once; a refusal from the
-    /// core (a just-paired connection cannot be bypassed) says why.
+    /// core (a just-paired connection cannot be bypassed) says why. A bypass needs the owner (Face ID or the
+    /// passcode) as on the Autopilot screen: holding the button shows intent, not who holds the phone.
     private func setMode(_ new: AutopilotMode?, minutes: UInt32? = nil) {
+        guard new == .bypass else { return apply(new, minutes: minutes) }
+        Task {
+            guard await model.authenticator.confirm("Turn on Bypass for \(label)") else { return }
+            apply(new, minutes: minutes)
+        }
+    }
+
+    private func apply(_ new: AutopilotMode?, minutes: UInt32?) {
         let old = mode
         let restart = new == .bypass && old == .bypass
         if let event = restart ? .bypassOn : SettingsText.modeChangeEvent(old, new ?? settings.mode) { feedback.play(event) }
