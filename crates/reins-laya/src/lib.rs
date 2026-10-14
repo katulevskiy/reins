@@ -88,11 +88,18 @@ impl ModelRuntime for OrtRuntime {
         let (_, act) = take("act")?;
         let (shape, pooled) = take("pooled")?;
         let hidden = shape.last().copied().and_then(|h| u32::try_from(h).ok()).unwrap_or(0);
+        // A model with the risk output (`laya-approvals-ml-v2` on) has a fourth one; older ones do not.
+        let risk = if outputs.get("risk").is_some() {
+            take("risk")?.1
+        } else {
+            Vec::new()
+        };
         Ok(ModelOutput {
             logits,
             act,
             pooled,
             hidden,
+            risk,
         })
     }
 
@@ -111,6 +118,10 @@ pub struct Judgement {
     pub combined: Probs,
     /// What Autopilot would do with no memory, at the Balanced thresholds, for a target seen before.
     pub verdict: Verdict,
+    /// Severity after the two-pass rule (benign, risky, severe, catastrophic), for a model that rates risk.
+    pub risk: Option<[f32; 4]>,
+    /// Overnight would hold it (P(catastrophic) at or above the package's threshold).
+    pub held: bool,
 }
 
 /// A package directory opened with a runtime, ready to judge situations.
@@ -148,11 +159,18 @@ impl Judge {
             facts.escalate.max(full.escalate),
             reins_core::Preset::Balanced.thresholds(),
         );
+        let risk = facts.risk.zip(full.risk).map(|(f, u)| decide::risk_combine(f, u));
+        let held = match (risk, self.laya.config.risk()) {
+            (Some(r), Some(cfg)) => r[3] >= cfg.overnight_threshold(),
+            _ => false,
+        };
         Ok(Judgement {
             facts,
             full,
             combined,
             verdict,
+            risk,
+            held,
         })
     }
 }
@@ -233,5 +251,6 @@ mod tests {
         let c = with_ai.combined;
         assert!((c.approve + c.deny + c.ask - 1.0).abs() < 1e-4);
         assert!(c.approve <= with_ai.facts.probs[0] + 1e-6 && c.approve <= with_ai.full.probs[0] + 1e-6);
+        assert_eq!((with_ai.risk, with_ai.held), (None, false), "the tiny model has no risk output");
     }
 }
