@@ -117,10 +117,16 @@ impl Control {
         Arc::clone(&self.stop)
     }
 
+    /// Whether the request carries the control token.
+    #[must_use]
+    pub fn authorized(&self, headers: &HeaderMap) -> bool {
+        let given = headers.get(TOKEN_HEADER).map_or(&b""[..], |v| v.as_bytes());
+        same(given, self.token.as_bytes())
+    }
+
     #[must_use]
     pub fn handle(&self, method: &Method, path: &str, headers: &HeaderMap) -> Response<Body> {
-        let given = headers.get(TOKEN_HEADER).map_or(&b""[..], |v| v.as_bytes());
-        if !same(given, self.token.as_bytes()) {
+        if !self.authorized(headers) {
             return text(StatusCode::UNAUTHORIZED, "The control API needs the X-Reins-Token header.");
         }
         let rest = path.strip_prefix(PREFIX).unwrap_or("");
@@ -160,6 +166,8 @@ pub struct Client {
     base: String,
     token: Zeroizing<String>,
     http: reqwest::Client,
+    /// How long a lease may wait for the phone.
+    wait: Duration,
 }
 
 impl Client {
@@ -174,7 +182,103 @@ impl Client {
             base: format!("http://{listen}{PREFIX}"),
             token,
             http: crate::http::client(Some(Duration::from_secs(10))).map_err(ClientError::Other)?,
+            wait: Duration::from_secs(150),
         })
+    }
+
+    /// How long [`Client::lease`] waits for the daemon (which waits for the phone).
+    #[must_use]
+    pub fn waiting(mut self, wait: Duration) -> Self {
+        self.wait = wait;
+        self
+    }
+
+    /// The values of an environment for one command: from a lease the daemon holds, or released by the phone now.
+    /// `Ok(Err(refusal))` when the phone (or the daemon) said no.
+    pub async fn lease(
+        &self,
+        req: &crate::secrets_client::LeaseRequest,
+    ) -> Result<Result<crate::leases::LeaseAnswer, crate::auth::Refusal>, ClientError> {
+        let resp = self
+            .http
+            .post(format!("http://{}{}lease", self.base_host(), crate::leases::PREFIX))
+            .header(TOKEN_HEADER, self.token.as_str())
+            .timeout(self.wait)
+            .json(req)
+            .send()
+            .await
+            .map_err(|e| {
+                if e.is_connect() {
+                    ClientError::NotRunning
+                } else {
+                    ClientError::Other(e.without_url().to_string())
+                }
+            })?;
+        let status = resp.status();
+        let bytes =
+            Zeroizing::new(resp.bytes().await.map_err(|e| ClientError::Other(e.without_url().to_string()))?.to_vec());
+        if status == StatusCode::NOT_FOUND {
+            return Err(ClientError::Other("the running daemon is too old for Reins Secrets; restart it".to_owned()));
+        }
+        if !status.is_success() {
+            let message = String::from_utf8_lossy(&bytes).trim().to_owned();
+            return Ok(Err(crate::leases::refusal_from(status.as_u16(), message)));
+        }
+        serde_json::from_slice(&bytes)
+            .map(Ok)
+            .map_err(|e| ClientError::Other(format!("unexpected answer from the daemon: {e}")))
+    }
+
+    /// The leases the daemon holds (never a value).
+    pub async fn leases(&self) -> Result<Vec<crate::leases::LeaseInfo>, ClientError> {
+        self.secrets_call(Method::GET, "leases", None).await
+    }
+
+    /// Drops leases; how many.
+    pub async fn revoke(&self, r: &crate::leases::RevokeRequest) -> Result<usize, ClientError> {
+        #[derive(Deserialize)]
+        struct Dropped {
+            dropped: usize,
+        }
+        let body = serde_json::to_vec(r).map_err(|e| ClientError::Other(e.to_string()))?;
+        let d: Dropped = self.secrets_call(Method::POST, "revoke", Some(body)).await?;
+        Ok(d.dropped)
+    }
+
+    fn base_host(&self) -> &str {
+        self.base.trim_start_matches("http://").trim_end_matches(PREFIX)
+    }
+
+    async fn secrets_call<T: for<'de> Deserialize<'de>>(
+        &self,
+        method: Method,
+        path: &str,
+        body: Option<Vec<u8>>,
+    ) -> Result<T, ClientError> {
+        let mut request = self
+            .http
+            .request(method, format!("http://{}{}{path}", self.base_host(), crate::leases::PREFIX))
+            .header(TOKEN_HEADER, self.token.as_str());
+        if let Some(b) = body {
+            request = request.header("content-type", "application/json").body(b);
+        }
+        let resp = request.send().await.map_err(|e| {
+            if e.is_connect() {
+                ClientError::NotRunning
+            } else {
+                ClientError::Other(e.without_url().to_string())
+            }
+        })?;
+        let status = resp.status();
+        let bytes = resp.bytes().await.map_err(|e| ClientError::Other(e.without_url().to_string()))?;
+        if status == StatusCode::NOT_FOUND {
+            return Err(ClientError::Other("the running daemon is too old for Reins Secrets; restart it".to_owned()));
+        }
+        if !status.is_success() {
+            return Err(ClientError::Other(String::from_utf8_lossy(&bytes).trim().to_owned()));
+        }
+        serde_json::from_slice(&bytes)
+            .map_err(|e| ClientError::Other(format!("unexpected answer from the daemon: {e}")))
     }
 
     async fn call<T: for<'de> Deserialize<'de>>(&self, method: Method, path: &str) -> Result<T, ClientError> {

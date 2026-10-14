@@ -98,6 +98,15 @@ impl DesktopClient {
             .map_err(|e| LinkError::Failed(format!("unexpected answer from the Reins server: {e}")))
     }
 
+    /// The sealed lease revocations the phone left for this computer (taken: each comes once). A server too old to know
+    /// them answers `LinkError::NotFound`.
+    pub async fn revocations(&self) -> Result<Vec<String>, LinkError> {
+        let body = self.send_raw(|server| self.http.get(format!("{server}/reins/desktop/revocations"))).await?;
+        let mail: reins_proto::desktop::RevocationMail = serde_json::from_slice(&body)
+            .map_err(|e| LinkError::Failed(format!("unexpected answer from the Reins server: {e}")))?;
+        Ok(mail.items)
+    }
+
     async fn send(&self, build: impl Fn(&str) -> reqwest::RequestBuilder) -> Result<CallAnswer, LinkError> {
         parse_answer(&self.send_raw(build).await?)
     }
