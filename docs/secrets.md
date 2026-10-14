@@ -86,8 +86,16 @@ reference (written by import, kept in sync by `reins secrets pull`):
 ```dotenv
 OPENAI_API_KEY=vault:acme-web/development/OPENAI_API_KEY
 STRIPE_SECRET_KEY=vault:acme-web/development/STRIPE_SECRET_KEY
-LOG_LEVEL=debug                   # non-secret values may stay literal
+# non-secret values may stay literal
+LOG_LEVEL=debug
 ```
+
+Its grammar is strict, so that no dotenv reader reads a line differently from `reins run`: `NAME=value` from the first
+column, no spaces around `=`, nothing after the value (comments are lines of their own). A value is empty, bare
+(no whitespace, quotes, `#`, `$`, `\` or backticks), in double quotes (escapes `\"` and `\\` only; no `$` or
+backticks, since other readers interpolate them), or in single quotes (taken as is). No `export`, no `${VAR}`, no value
+spanning lines, no carriage returns, no byte order mark: each is an error naming its line. The writers only write this
+form. (A plaintext `.env` that `push` and import read is read the usual, lenient way.)
 
 `reins run` reads `.env.reins` if present (literal values pass through, references are resolved), else `reins.toml`
 (the whole environment). Neither file ever holds a secret value; the guard keeps treating `.env*` as protected except
@@ -103,14 +111,28 @@ reins run [-e ENV] [--project NAME] [--env NAME=REF ...] [--purpose TEXT] [--no-
 
 1. Finds the project (`reins.toml` upwards from the cwd, or `--project`) and the environment (`-e`, else
    `default_env`), plus explicit `--env` pairs and existing `[run.profiles]` (kept).
-2. Asks the **daemon** (control API, new route `POST /secrets/lease`) for a lease covering exactly those references for
-   this command. The daemon returns a cached lease if one matches (same computer principal, project, env, command
-   pattern, still valid), else asks the phone with one `vault_env_release` (3.2) and caches the answer.
-3. Spawns the command with the variables in its environment. By default it **redacts**: the child's stdout/stderr are
-   piped through a filter that replaces any released value (and its base64/URL-encoded forms) with
-   `[vault:acme-web/development/OPENAI_API_KEY]`. Redaction is forced on when the caller is an agent (6.2); a person can
-   pass `--no-redact` for interactive tools that need a raw TTY.
-4. Journals the run (references, command, who), never values.
+2. Hands the run to the **daemon** (Unix): it connects to the daemon's socket (`run.sock` in the state folder, this
+   user only), passes its stdin, stdout and stderr (`SCM_RIGHTS`) and the command's argument list, folder, environment
+   and which variables it needs. The `reins run` process is not trusted with anything: the daemon
+   - checks the caller is this user (the socket's peer credentials) and knows the control token;
+   - decides the **runner** from the caller's process and its ancestors (a known harness among them, as its program or
+     as the script node runs, makes it `agent:<harness>`); `REINS_RUNNER` and the harnesses' environment markers can
+     only make it an agent, never a person;
+   - resolves the program to its absolute path, and gets each environment from a lease it holds for exactly this runner,
+     folder, environment, variables and command (3.4), else from the phone with one `vault_env_release` (3.2);
+   - **starts the command itself**, in that folder, with the caller's terminal as its stdin, stdout and stderr. No value
+     is ever sent back: no route hands values out.
+3. By default the output is **redacted**: the child's stdout/stderr go through a filter that replaces any released value
+   (and its base64/URL-encoded forms) with `[vault:acme-web/development/OPENAI_API_KEY]`. The daemon forces it for an
+   agent (6.2) and refuses `--no-redact` from one; a person can pass `--no-redact` for interactive tools that need the
+   raw terminal.
+4. Signals the caller gets (Ctrl-C, SIGTERM, SIGHUP) are passed on to the command's process group; the caller exits
+   with the command's code. Journals the run (references, command, who), never values.
+
+Without a running daemon a project's secrets are not released (`reins resume` starts it). `vault:Item/field`
+references alone are still asked for by `reins run` itself, every time, as before. On Windows, where the daemon cannot
+take over the terminal yet, `reins run` asks and starts the command itself, and the runner comes from what its own
+environment says (a known gap).
 
 ### 3.2 Release protocol
 
@@ -167,8 +189,12 @@ and its grants end with it (existing).
 
 ### 3.4 Leases and revocation
 
-- The daemon holds released values in memory only (`Zeroizing`), per lease key `(principal, project, env, fields,
-  command pattern)`, until `min(phone expiry, reins.toml lease, phone policy)`.
+- The daemon holds released values in memory only (`Zeroizing`), and uses a lease again only when every dimension it
+  was released for matches at the time of use: the runner (as the daemon decided it), this computer, the project's
+  folder, the environment and its version, variables among those released (every variable only after a release of
+  every one), and a command the released scope covers (exactly the approved argument list, or the prefix the user chose
+  on the phone). It keeps them until `min(phone expiry, reins.toml lease, phone policy)`, never across a restart, and
+  drops them on a revocation from the phone or when this computer saves to the environment.
 - `reins secrets leases` lists them; `reins secrets revoke [--all]` drops them; the desktop app's Keys & secrets page shows
   and drops them; the phone's grant/activity pages get **Revoke on all computers**: the environment's standing
   permissions end on the phone, and a `LeaseRevocation` sealed to each paired computer's key goes to the server

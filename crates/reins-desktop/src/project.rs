@@ -426,6 +426,149 @@ fn lex(text: &str, multiline: bool) -> (Vec<RawLine>, Vec<(usize, String)>) {
     (out, errors)
 }
 
+/// What a bare value of `.env.reins` may hold: no whitespace, quotes, `#`, `$`, `\`, backticks or control characters, so
+/// that every dotenv reader reads it the same.
+fn bare_char(c: char) -> bool {
+    !c.is_whitespace() && !c.is_control() && !matches!(c, '"' | '\'' | '#' | '$' | '\\' | '`')
+}
+
+/// `.env.reins`'s grammar, strict so that no dotenv reader reads it otherwise:
+///
+/// ```text
+/// line   = "" | "#" anything | NAME "=" value          (no space before NAME or around "=", nothing after value)
+/// value  = "" | bare | '"' dq* '"' | "'" sq* "'"
+/// bare   = one or more of anything but whitespace, quotes, #, $, \, ` and control characters
+/// dq     = anything but ", \, $, ` and control characters | \" | \\
+/// sq     = anything but ' and control characters
+/// ```
+///
+/// No `export`, no interpolation, no line spanning values, no comment after a value, no carriage returns, no byte order
+/// mark: each is an error naming its line, never guessed at.
+fn lex_reins(text: &str) -> (Vec<RawLine>, Vec<(usize, String)>) {
+    let mut out = Vec::new();
+    let mut errors = Vec::new();
+    let mut lines: Vec<&str> = text.split('\n').collect();
+    if text.ends_with('\n') {
+        lines.pop();
+    }
+    for (i, line) in lines.iter().enumerate() {
+        let number = i + 1;
+        let mut err = |m: &str| errors.push((number, m.to_owned()));
+        if number == 1 && line.starts_with('\u{feff}') {
+            err("the file starts with a byte order mark; save it as plain UTF-8");
+            continue;
+        }
+        if line.contains('\r') {
+            err("a carriage return (Windows line ending); save the file with \\n line endings");
+            continue;
+        }
+        if line.is_empty() {
+            out.push(RawLine::Blank);
+            continue;
+        }
+        if line.starts_with('#') {
+            out.push(RawLine::Comment((*line).to_owned()));
+            continue;
+        }
+        if line.starts_with(char::is_whitespace) {
+            err("a line starts with a space; write NAME=value from the first column");
+            continue;
+        }
+        if line.starts_with("export ") {
+            err("`export` is not part of .env.reins; write NAME=value");
+            continue;
+        }
+        let Some((name, rest)) = line.split_once('=') else {
+            err("expected NAME=value");
+            continue;
+        };
+        if name.ends_with(char::is_whitespace) || rest.starts_with(char::is_whitespace) {
+            err("no spaces around `=`");
+            continue;
+        }
+        if let Err(e) = check_var(name) {
+            err(&e);
+            continue;
+        }
+        let value = if let Some(q) = rest.strip_prefix('"') {
+            let mut value = String::new();
+            let mut chars = q.chars();
+            let mut closed = false;
+            let mut bad = None;
+            while let Some(c) = chars.next() {
+                match c {
+                    '"' => {
+                        closed = true;
+                        break;
+                    }
+                    '\\' => {
+                        if let Some(e @ ('"' | '\\')) = chars.next() {
+                            value.push(e);
+                        } else {
+                            bad = Some("in double quotes only \\\" and \\\\ are escapes");
+                            break;
+                        }
+                    }
+                    '$' | '`' => {
+                        bad = Some(
+                            "`$` and backticks are not allowed in double quotes (no interpolation); use single quotes",
+                        );
+                        break;
+                    }
+                    c if c.is_control() => {
+                        bad = Some("a control character in a value");
+                        break;
+                    }
+                    c => value.push(c),
+                }
+            }
+            if let Some(b) = bad {
+                err(b);
+                continue;
+            }
+            if !closed {
+                err("a double quote is not closed on this line (values are one line)");
+                continue;
+            }
+            if !chars.as_str().is_empty() {
+                err("nothing may follow the closing quote (no comments after a value)");
+                continue;
+            }
+            value
+        } else if let Some(q) = rest.strip_prefix('\'') {
+            let Some(end) = q.find('\'') else {
+                err("a single quote is not closed on this line (values are one line)");
+                continue;
+            };
+            if q[..end].chars().any(char::is_control) {
+                err("a control character in a value");
+                continue;
+            }
+            if !q[end + 1..].is_empty() {
+                err("nothing may follow the closing quote (no comments after a value)");
+                continue;
+            }
+            q[..end].to_owned()
+        } else {
+            if let Some(c) = rest.chars().find(|c| !bare_char(*c)) {
+                err(&if c.is_whitespace() {
+                    "an unquoted value holds a space; quote it".to_owned()
+                } else {
+                    format!("an unquoted value holds `{}`; quote it", c.escape_default())
+                });
+                continue;
+            }
+            rest.to_owned()
+        };
+        out.push(RawLine::Var(RawVar {
+            name: name.to_owned(),
+            value: Zeroizing::new(value),
+            line: number,
+        }));
+    }
+    (out, errors)
+}
+
 /// The byte index of the first `"` not escaped by a backslash.
 fn closing_quote(s: &str) -> Option<usize> {
     let mut escaped = false;
@@ -531,7 +674,7 @@ impl EnvFile {
     /// Parses `.env.reins`: a value starting with `vault:` or `env:` is a reference ([`Reference::parse_value`]),
     /// anything else a literal.
     pub fn parse(text: &str) -> Result<Self, ParseError> {
-        let (raw, mut errors) = lex(text, false);
+        let (raw, mut errors) = lex_reins(text);
         let vars: Vec<&RawVar> = raw
             .iter()
             .filter_map(|l| match l {
@@ -609,10 +752,17 @@ impl EnvFile {
     /// Sets `name` where it is, or adds it at the end. A literal that would read back as a reference is refused.
     pub fn set(&mut self, name: &str, value: EnvValue) -> Result<(), String> {
         check_var(name)?;
-        if let EnvValue::Literal(s) = &value
-            && Reference::looks_like(s)
-        {
-            return Err(format!("{name}: a literal value cannot start with `vault:` or `env:`"));
+        let text = match &value {
+            EnvValue::Literal(s) if Reference::looks_like(s) => {
+                return Err(format!("{name}: a literal value cannot start with `vault:` or `env:`"));
+            }
+            EnvValue::Literal(s) => s.clone(),
+            EnvValue::Reference(r) => r.to_string(),
+        };
+        if quoted(&text).is_none() {
+            return Err(format!(
+                "{name}: the value cannot be written in .env.reins (a line break, or every kind of quote)"
+            ));
         }
         for l in &mut self.lines {
             if let Line::Var(v) = l
@@ -650,8 +800,8 @@ impl EnvFile {
                     out.push_str(&v.name);
                     out.push('=');
                     out.push_str(&match &v.value {
-                        EnvValue::Reference(r) => quote_if_needed(&r.to_string()),
-                        EnvValue::Literal(s) => quote_if_needed(s),
+                        EnvValue::Reference(r) => quoted(&r.to_string()).unwrap_or_default(),
+                        EnvValue::Literal(s) => quoted(s).unwrap_or_default(),
                     });
                 }
             }
@@ -669,30 +819,20 @@ impl EnvFile {
     }
 }
 
-/// A value as written after `=`: bare when it reads back the same, else double-quoted with escapes.
-fn quote_if_needed(s: &str) -> String {
-    let bare = !s.is_empty()
-        && s.trim() == s
-        && !s.starts_with(['"', '\''])
-        && !s.contains(char::is_whitespace)
-        && !s.chars().any(char::is_control);
-    if bare {
-        return s.to_owned();
+/// A value as written after `=` in `.env.reins`'s grammar: bare when it can be, else in double quotes, else (it holds `$`
+/// or a backtick) in single quotes. `None`: it cannot be written (a line break or another control character, or both
+/// kinds of quote and a `$`).
+fn quoted(s: &str) -> Option<String> {
+    if s.chars().any(char::is_control) {
+        return None;
     }
-    let mut out = String::with_capacity(s.len() + 2);
-    out.push('"');
-    for c in s.chars() {
-        match c {
-            '"' => out.push_str("\\\""),
-            '\\' => out.push_str("\\\\"),
-            '\n' => out.push_str("\\n"),
-            '\r' => out.push_str("\\r"),
-            '\t' => out.push_str("\\t"),
-            c => out.push(c),
-        }
+    if !s.is_empty() && s.chars().all(bare_char) {
+        return Some(s.to_owned());
     }
-    out.push('"');
-    out
+    if !s.contains(['$', '`']) {
+        return Some(format!("\"{}\"", s.replace('\\', "\\\\").replace('"', "\\\"")));
+    }
+    (!s.contains('\'')).then(|| format!("'{s}'"))
 }
 
 #[cfg(test)]
@@ -772,12 +912,12 @@ mod tests {
     #[test]
     fn env_reins_holds_references_and_literals() {
         let text = "# refs\nOPENAI_API_KEY=vault:acme-web/development/OPENAI_API_KEY\n\
-                    export STRIPE_SECRET_KEY = env:production/STRIPE_SECRET_KEY\n\
-                    LOG_LEVEL=debug                   # non-secret values may stay literal\n\
-                    LEGACY=\"vault:Work/AWS prod/Access key\"\nEMPTY=\nGREETING='hello # world'\n";
+                    STRIPE_SECRET_KEY=env:production/STRIPE_SECRET_KEY\nLOG_LEVEL=debug\n\
+                    LEGACY=\"vault:Work/AWS prod/Access key\"\nEMPTY=\nGREETING='hello # $world'\n\
+                    QUOTED=\"say \\\"hi\\\" \\\\o/\"\n";
         let f = EnvFile::parse(text).unwrap();
         let vars: Vec<(&str, &EnvValue)> = f.vars().map(|v| (v.name.as_str(), &v.value)).collect();
-        assert_eq!(vars.len(), 6);
+        assert_eq!(vars.len(), 7);
         assert_eq!(
             vars[0].1,
             &EnvValue::Reference(Reference::Field(
@@ -794,9 +934,10 @@ mod tests {
         assert_eq!(vars[2].1, &EnvValue::Literal("debug".to_owned()));
         assert!(matches!(vars[3].1, EnvValue::Reference(Reference::Field(r)) if r.item == "Work/AWS prod"));
         assert_eq!(vars[4].1, &EnvValue::Literal(String::new()));
-        assert_eq!(vars[5].1, &EnvValue::Literal("hello # world".to_owned()));
+        assert_eq!(vars[5].1, &EnvValue::Literal("hello # $world".to_owned()));
+        assert_eq!(vars[6].1, &EnvValue::Literal("say \"hi\" \\o/".to_owned()));
         assert_eq!(f.get("LOG_LEVEL").unwrap().line, 4);
-        assert_eq!(EnvFile::parse(&f.render()).unwrap().vars().count(), 6, "the writer's output reads back");
+        assert_eq!(EnvFile::parse(&f.render()).unwrap(), f, "the writer's output reads back the same");
     }
 
     #[test]
@@ -806,6 +947,34 @@ mod tests {
         assert_eq!(lines, [2, 3, 4, 5, 6, 7], "{e}");
         assert!(e.to_string().contains("line 5: A is set twice (first on line 1)"), "{e}");
         assert!(e.to_string().contains("one line"), "{e}");
+    }
+
+    #[test]
+    fn anything_another_dotenv_reader_could_read_otherwise_is_refused() {
+        for (text, says) in [
+            ("export A=1\n", "export"),
+            ("A = 1\n", "spaces around"),
+            ("A =1\n", "spaces around"),
+            (" A=1\n", "first column"),
+            ("A=two words\n", "space; quote it"),
+            ("A=x # comment\n", "space; quote it"),
+            ("A=x#y\n", "`#`"),
+            ("A=$HOME\n", "`$`"),
+            ("A=${HOME}/x\n", "`$`"),
+            ("A=\"$HOME\"\n", "no interpolation"),
+            ("A=\"`id`\"\n", "no interpolation"),
+            ("A=\"a\\nb\"\n", "escapes"),
+            ("A=\"x\" # c\n", "nothing may follow"),
+            ("A='x'y\n", "nothing may follow"),
+            ("A=\"multi\nline\"\n", "one line"),
+            ("A=1\r\nB=2\r\n", "carriage return"),
+            ("\u{feff}A=1\n", "byte order mark"),
+            ("A=a\\b\n", "quote it"),
+            ("A=\u{7}\n", "quote it"),
+        ] {
+            let e = EnvFile::parse(text).expect_err(text);
+            assert!(e.to_string().contains(says), "{text:?}: {e}");
+        }
     }
 
     #[test]
@@ -843,11 +1012,26 @@ mod tests {
     }
 
     #[test]
-    fn values_are_quoted_only_when_needed() {
-        assert_eq!(quote_if_needed("debug"), "debug");
-        assert_eq!(quote_if_needed(""), "\"\"");
-        assert_eq!(quote_if_needed("a #b"), "\"a #b\"");
-        assert_eq!(quote_if_needed(" x"), "\" x\"");
-        assert_eq!(quote_if_needed("say \"hi\"\n"), "\"say \\\"hi\\\"\\n\"");
+    fn values_are_written_in_the_strict_grammar_and_read_back_the_same() {
+        for (value, written) in [
+            ("debug", "debug"),
+            ("", "\"\""),
+            ("a #b", "\"a #b\""),
+            (" x", "\" x\""),
+            ("say \"hi\" \\", "\"say \\\"hi\\\" \\\\\""),
+            ("$HOME", "'$HOME'"),
+        ] {
+            assert_eq!(quoted(value).as_deref(), Some(written), "{value:?}");
+            let mut f = EnvFile::default();
+            f.set("V", EnvValue::Literal(value.to_owned())).unwrap();
+            assert_eq!(
+                EnvFile::parse(&f.render()).unwrap().get("V").unwrap().value,
+                EnvValue::Literal(value.to_owned())
+            );
+        }
+        for unwritable in ["a\nb", "x\ty", "it's $5"] {
+            assert_eq!(quoted(unwritable), None, "{unwritable:?}");
+            assert!(EnvFile::default().set("V", EnvValue::Literal(unwritable.to_owned())).is_err());
+        }
     }
 }

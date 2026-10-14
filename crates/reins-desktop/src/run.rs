@@ -211,21 +211,12 @@ impl Plan {
         Ok(plan)
     }
 
-    /// The command line as shown on the phone.
+    /// The command line as shown on the phone: each argument exactly, as a shell would read it back (control and
+    /// invisible characters escaped visibly; see `reins_proto::desktop::shell_word`).
     #[must_use]
     pub fn shown(&self) -> String {
-        self.command
-            .iter()
-            .map(|a| {
-                let a = a.to_string_lossy();
-                if a.is_empty() || a.chars().any(|c| c.is_whitespace() || c == '"' || c == '\'') {
-                    format!("'{}'", a.replace('\'', r"'\''"))
-                } else {
-                    a.into_owned()
-                }
-            })
-            .collect::<Vec<_>>()
-            .join(" ")
+        let argv: Vec<String> = self.command.iter().map(|a| a.to_string_lossy().into_owned()).collect();
+        reins_proto::desktop::shell_words(&argv)
     }
 
     /// Distinct `vault:Item/field` secrets, in order (two variables may use the same one).
