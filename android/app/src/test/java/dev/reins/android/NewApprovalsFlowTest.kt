@@ -2,6 +2,7 @@ package dev.reins.android
 
 import androidx.compose.ui.test.assertTextContains
 import androidx.compose.ui.test.assertTextEquals
+import androidx.compose.ui.test.onNodeWithContentDescription
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import dev.reins.android.platform.AuthResult
@@ -32,8 +33,8 @@ class NewApprovalsFlowTest : FlowHarness() {
         rule.onNodeWithTag("mcpArguments").assertTextContains("\"title\": \"Login fails on Safari\"", substring = true)
         rule.onNodeWithTag("mcpEffect").assertTextEquals("Changes things")
         assertFalse(has("mcpDestructive"))
-        // The tool's title is the headline.
-        rule.onNodeWithTag("what").assertTextEquals("Create issue")
+        // The tool's title is the headline, with its server.
+        rule.onNodeWithTag("what").assertTextEquals("Wants to create issue\non Linear")
         assertFalse(has("writePreview"))
         tap("approve")
         awaitCore { core.approvals.isNotEmpty() }
@@ -51,7 +52,9 @@ class NewApprovalsFlowTest : FlowHarness() {
     fun aDestructiveCallIsAskedEveryTime() {
         openRequest(TestData.mcpCallView(destructive = true))
         awaitTag("mcpDestructive")
+        tap("help:mcpDestructive")
         awaitText("asked for every time", substring = true)
+        awaitTag("noStanding")
     }
 
     // ---- a file a write uses -------------------------------------------------------------------------------------------
@@ -118,14 +121,15 @@ class NewApprovalsFlowTest : FlowHarness() {
         rule.onNodeWithTag("secretsPurpose").assertTextContains("Deploy the site", substring = true)
         rule.onNodeWithTag("secret:0").assertTextEquals("Netlify · password")
         rule.onNodeWithTag("secret:1").assertTextEquals("GitHub · totp")
-        rule.onNodeWithTag("secretsLease").assertTextContains("for 30 minutes", substring = true)
+        rule.onNodeWithTag("secretsLease").assertTextContains("30 minutes", substring = true)
     }
 
     @Test
     fun anSshSignInNamesTheServerAndTheKey() {
         openRequest(TestData.sshView())
         awaitTag("ssh")
-        rule.onNodeWithTag("sshWhat").assertTextEquals("Sign in to build.example.com with Deploy key")
+        rule.onNodeWithTag("sshWhat").assertTextEquals("build.example.com")
+        rule.onNodeWithTag("what").assertTextContains("sign in", substring = true)
         rule.onNodeWithTag("sshKey").assertTextContains("SHA256:nThbg6kXUpJWGl7E1IGOCspRomTxdCARLviKw6E5SY8", substring = true)
         rule.onNodeWithTag("sshHostKey").assertTextContains("SHA256:Ql3mV1hd2bS9WgS0aVq2Jv0Rr2q8Zb0yRrj2uMm3n0E", substring = true)
     }
@@ -134,14 +138,15 @@ class NewApprovalsFlowTest : FlowHarness() {
     fun anSshSignInToAnUnnamedServerNamesItsHostKey() {
         openRequest(TestData.sshView(host = null))
         awaitTag("sshWhat")
-        rule.onNodeWithTag("sshWhat").assertTextEquals("Sign in to SHA256:Ql3mV1hd2bS9WgS0aVq2Jv0Rr2q8Zb0yRrj2uMm3n0E with Deploy key")
+        rule.onNodeWithTag("sshWhat").assertTextEquals("SHA256:Ql3mV1hd2bS9WgS0aVq2Jv0Rr2q8Zb0yRrj2uMm3n0E")
     }
 
     @Test
     fun aPushToGitlabNamesGitlab() {
         val ref = TestData.gitRef("old", change = "delete", commitCount = 0u, commits = emptyList(), filesChanged = 0u, files = emptyList(), additions = null, deletions = null)
         openRequest(TestData.gitPushView(TestData.gitPush(ref)).copy(service = "gitlab"))
-        awaitText("The branch is removed from GitLab.")
+        rule.onNodeWithTag("what").assertTextContains("delete branch old", substring = true)
+        rule.onNodeWithContentDescription("GitLab").assertExists()
     }
 
     // ---- uploads ------------------------------------------------------------------------------------------------------

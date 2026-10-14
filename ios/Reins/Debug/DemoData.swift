@@ -144,12 +144,44 @@ enum DemoData {
 
     static func realisticCommits() -> [GitCommitView] {
         [
-            GitCommitView(shortSha: "9f3c2a1", subject: "Log in with a passkey when the browser offers one", author: "Ada Lovelace <ada@example.com>"),
-            GitCommitView(shortSha: "4be81d0", subject: "Remove the old login form", author: "Ada Lovelace <ada@example.com>"),
+            GitCommitView(
+                shortSha: "9f3c2a1", subject: "Log in with a passkey when the browser offers one", author: "Ada Lovelace <ada@example.com>",
+                date: Int64(Date().timeIntervalSince1970) - 7_200, filesChanged: 3, files: passkeyFiles(), additions: 184, deletions: 22
+            ),
+            GitCommitView(
+                shortSha: "4be81d0", subject: "Remove the old login form", author: "Ada Lovelace <ada@example.com>",
+                date: Int64(Date().timeIntervalSince1970) - 10_800, filesChanged: 1,
+                files: [GitFileView(path: "src/ui/LoginForm.tsx", status: "deleted", additions: 0, deletions: 61, binary: false)], additions: 3, deletions: 61
+            ),
             GitCommitView(shortSha: "c07a9e3", subject: "Keep the session for 30 days", author: "Grace Hopper <grace@example.com>"),
             GitCommitView(shortSha: "17d0f5b", subject: "Document the login flow", author: "Ada Lovelace <ada@example.com>"),
             GitCommitView(shortSha: "e2a4c66", subject: "Bump dependencies", author: "dependabot[bot] <support@github.com>"),
             GitCommitView(shortSha: "88b13f2", subject: "Fix a typo", author: "Grace Hopper <grace@example.com>"),
+        ]
+    }
+
+    /// The files of the newest demo commit; the first with its lines.
+    static func passkeyFiles() -> [GitFileView] {
+        func line(_ kind: DiffLineKind, _ n: UInt32?, _ text: String) -> DiffLineView {
+            DiffLineView(kind: kind, oldLine: kind == .add ? nil : n, newLine: kind == .delete ? nil : n, text: text)
+        }
+        let login = [
+            DiffLineView(kind: .hunk, oldLine: nil, newLine: nil, text: "@@ -12,9 +12,22 @@ export async function signIn("),
+            line(.context, 12, "  const options = await fetchOptions(user);"),
+            line(.delete, 13, "  const password = form.get(\"password\");"),
+            line(.delete, 14, "  return post(\"/login\", { user, password });"),
+            line(.add, 13, "  if (await browserSupportsPasskeys()) {"),
+            line(.add, 14, "    const cred = await navigator.credentials"),
+            line(.add, 15, "      .get({ publicKey: options });"),
+            line(.add, 16, "    return post(\"/login/passkey\", cred);"),
+            line(.add, 17, "  }"),
+            line(.add, 18, "  return showPasswordForm(user);"),
+            line(.context, 19, "}"),
+        ]
+        return [
+            GitFileView(path: "src/auth/login.ts", status: "modified", additions: 38, deletions: 2, binary: false, diff: login),
+            GitFileView(path: "src/auth/passkey.ts", status: "added", additions: 121, deletions: 0, binary: false),
+            GitFileView(path: "src/ui/LoginForm.tsx", status: "modified", additions: 25, deletions: 20, binary: false),
         ]
     }
 

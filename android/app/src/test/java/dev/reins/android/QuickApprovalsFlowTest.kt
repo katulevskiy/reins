@@ -21,42 +21,54 @@ import org.robolectric.annotation.GraphicsMode
 @Config(sdk = [35], qualifiers = "w411dp-h891dp-normal-xxhdpi")
 class QuickApprovalsFlowTest : FlowHarness() {
     @Test
-    fun theSheetSaysWhatHappensFirstAndAllowsTheSameForAnHourInOneTap() {
+    fun oneHourInTheDockRemembersOnlyWhatIsShown() {
         val view = TestData.quick(TestData.searchView())
         openRequest(view)
-        rule.onNodeWithTag("headline").assertTextEquals("Claude gets the 3 emails found for \"from:bank\".")
-        rule.onNodeWithTag("approveAllow").assertTextEquals("Approve and allow for 1 hour")
-        rule.onNodeWithTag("allowWhat").assertTextContains("searching and reading me@gmail.com", substring = true)
-        assertFalse(has("repeatHint"))
-        tap("approveAllow")
+        tap("check:m2")
+        tap("lifetime:HOUR")
+        assertFalse("nothing wider than the screen is on", has("likeThisNote"))
+        tap("approve")
         awaitCore { core.approvals.isNotEmpty() }
         val choice = core.approvals.single().second
-        assertEquals(view.quick!!.allow, choice.standing)
-        assertEquals(listOf("m1", "m2", "m3"), choice.selectedMessageIds)
+        val standing = choice.standing!!
+        assertEquals(3_600uL, standing.durationSecs)
+        assertFalse("never all mail implicitly", standing.scope.allMail)
+        assertTrue(standing.scope.selectedMessagesOnly)
+        assertEquals(listOf("m1", "m3"), choice.selectedMessageIds)
         assertEquals("one screen lock or biometric check", 1, prompts.get())
     }
 
     @Test
-    fun repeatedApprovalsAreNoticedAndAnswerForEightHours() {
+    fun anythingLikeThisIsAnExplicitChoiceTheDockShows() {
+        val view = TestData.quick(TestData.searchView())
+        openRequest(view)
+        tap("lifetime:HOUR")
+        tap("lifetimeCustom")
+        tap("moreToggle")
+        rule.onNodeWithTag("allowWhat", useUnmergedTree = true).assertTextContains("searching and reading me@gmail.com", substring = true)
+        tap("scope:like")
+        tap("rememberConfirm")
+        awaitTag("likeThisNote")
+        tap("approve")
+        awaitCore { core.approvals.isNotEmpty() }
+        assertEquals(view.quick!!.allow, core.approvals.single().second.standing)
+    }
+
+    @Test
+    fun repeatedApprovalsOfferEightHours() {
         openRequest(TestData.quick(TestData.searchView(), repeats = 3u))
-        awaitTag("repeatHint")
-        awaitText("You approved this 3 times in the last 24 hours.")
-        rule.onNodeWithTag("approveAllow").assertTextEquals("Approve and allow for 8 hours")
+        rule.onNodeWithTag("lifetime:HOUR").assertTextContains("8 hours", substring = true)
+        tap("lifetime:HOUR")
+        tap("approve")
+        awaitCore { core.approvals.isNotEmpty() }
+        assertEquals(28_800uL, core.approvals.single().second.standing!!.durationSecs)
     }
 
     @Test
     fun whatIsAskedEveryTimeHasNoShortcut() {
         openRequest(TestData.vaultView())
-        assertFalse(has("quickAllow"))
-        assertFalse(has("approveAllow"))
-    }
-
-    @Test
-    fun moreOptionsReplaceTheShortcut() {
-        openRequest(TestData.quick(TestData.searchView()))
-        awaitTag("approveAllow")
-        tap("moreToggle")
-        awaitGone("approveAllow")
+        awaitTag("noStanding")
+        assertFalse(has("lifetime:HOUR"))
     }
 
     @Test

@@ -3,9 +3,12 @@ import Foundation
 // The approval screen's state turned into what the core expects (the Android app's ApprovalLogic.kt, line for line).
 // Pure: no views, no core calls, so every rule is tested in ApprovalLogicTests.
 
-/// Lifetime choices of the approval screen: Once · 1 h · 24 h · 7 days · 30 days · until revoked · N uses.
+/// Lifetime choices of the approval screen: Once · 1 hour · 1 day in the dock; 1 week · 30 days · a custom time · a
+/// number of uses · until revoked under "Custom". `.hour` is the core's "allow for a while" period when it offers one.
 enum LifetimeKind: String, CaseIterable, Identifiable {
     case once, hour, day, week, month, untilRevoked, uses
+    /// `ApprovalDraft.customAmount` of `customUnit`.
+    case custom
 
     var id: String { rawValue }
 
@@ -18,6 +21,7 @@ enum LifetimeKind: String, CaseIterable, Identifiable {
         case .month: "30 days"
         case .untilRevoked: "Until revoked"
         case .uses: "N uses"
+        case .custom: "Custom"
         }
     }
 
@@ -27,12 +31,37 @@ enum LifetimeKind: String, CaseIterable, Identifiable {
         case .day: 86_400
         case .week: 604_800
         case .month: 2_592_000
-        case .once, .untilRevoked, .uses: nil
+        case .once, .untilRevoked, .uses, .custom: nil
+        }
+    }
+}
+
+/// The units of a custom time, and the most of each that can be picked.
+enum LifetimeUnit: String, CaseIterable, Identifiable {
+    case hours, days, weeks
+
+    var id: String { rawValue }
+
+    var seconds: UInt64 {
+        switch self {
+        case .hours: 3_600
+        case .days: 86_400
+        case .weeks: 604_800
         }
     }
 
-    /// What "Remember this for" offers (a month is only for showing accounts).
-    static let remember: [LifetimeKind] = allCases.filter { $0 != .month }
+    var max: Int {
+        switch self {
+        case .hours: 720
+        case .days: 365
+        case .weeks: 52
+        }
+    }
+
+    var one: String { String(rawValue.dropLast()) }
+
+    /// "1 day", "3 days".
+    func label(_ n: Int) -> String { n == 1 ? "1 \(one)" : "\(n) \(rawValue)" }
 }
 
 enum ApprovalRules {
@@ -67,6 +96,13 @@ struct ApprovalDraft: Equatable {
     var resources: Set<String> = []
     /// Another integration, a permission to change things: the kinds of change it allows (ids from `ApprovalView.classes`).
     var classes: Set<String> = []
+    /// `.custom`: how many of `customUnit`.
+    var customAmount = 3
+    var customUnit: LifetimeUnit = .days
+    /// The user chose, in the "Remember for" sheet, that a remembered approval covers "anything like this" (the core's
+    /// `quick.allow` scope: the same AI, the same kind of request, the same target), which can be wider than what the
+    /// screen shows. Never on by default: a remembered approval covers what is on screen (see `buildChoice`).
+    var likeThis = false
 
     /// What the sheet starts with: everything found ticked (approving is one tap, unticking is how you hold something
     /// back), except a code or a password, and never for a send, a change or a permission.
@@ -154,18 +190,64 @@ func buildChoice(_ view: ApprovalView, _ draft: ApprovalDraft) -> BuildResult {
         if draft.lifetime == .uses && !(1...ApprovalRules.maxUses).contains(draft.uses) {
             return .invalid("Uses must be between 1 and \(ApprovalRules.maxUses).")
         }
+        if let problem = customProblem(draft) { return .invalid(problem) }
         let scope: GrantScopeChoice
         switch send ? sendScope(view, draft) : readScope(draft) {
         case let .ok(s): scope = s
         case let .missing(message): return .invalid(message)
         }
         standing = StandingGrant(
-            durationSecs: draft.lifetime.seconds,
+            durationSecs: lifetimeSeconds(view, draft),
             maxUses: draft.lifetime == .uses ? UInt32(draft.uses) : nil,
             scope: scope
         )
     }
     return .ok(ApprovalChoice(selectedMessageIds: ids, standing: standing))
+}
+
+/// How long a standing permission made with `draft` lasts, in seconds; nil for once, until revoked and a number of uses.
+/// "1 hour" is the core's own period for "allow for a while" when it offers one (not for accounts).
+func lifetimeSeconds(_ view: ApprovalView, _ draft: ApprovalDraft) -> UInt64? {
+    switch draft.lifetime {
+    case .once, .untilRevoked, .uses: return nil
+    case .hour: return view.kind == .accounts ? 3_600 : (view.quick?.allow?.durationSecs ?? 3_600)
+    case .custom: return UInt64(min(max(draft.customAmount, 1), draft.customUnit.max)) * draft.customUnit.seconds
+    case .day, .week, .month: return draft.lifetime.seconds
+    }
+}
+
+/// The longest an "anything like this" permission that covers all mail (or all of an integration) may last.
+let likeThisAllMaxSecs: UInt64 = 604_800
+
+/// The answer the approval screen gives: `buildChoice` (a remembered approval covers what the screen shows: the ticked
+/// items, the recipients, the target), except when the user explicitly chose "anything like this" in the "Remember
+/// for" sheet; then the core's `quick.allow` scope, for the time picked. A scope over all mail is never open-ended: it
+/// goes with a time limit of a week at most, else the request is refused rather than silently narrowed or widened.
+func buildDecision(_ view: ApprovalView, _ draft: ApprovalDraft) -> BuildResult {
+    guard let like = view.quick?.allow, draft.likeThis, draft.lifetime != .once, draft.allMail == nil, !view.noStanding,
+          view.kind != .grant, view.kind != .accounts else { return buildChoice(view, draft) }
+    if draft.lifetime == .uses && !(1...ApprovalRules.maxUses).contains(draft.uses) {
+        return .invalid("Uses must be between 1 and \(ApprovalRules.maxUses).")
+    }
+    let secs = lifetimeSeconds(view, draft)
+    if like.scope.allMail && (secs.map { $0 > likeThisAllMaxSecs } ?? true) {
+        return .invalid("Anything like this can be remembered for a week at most.")
+    }
+    var once = draft
+    once.lifetime = .once
+    switch buildChoice(view, once) {
+    case let .invalid(message): return .invalid(message)
+    case var .ok(choice):
+        choice.standing = StandingGrant(durationSecs: secs, maxUses: draft.lifetime == .uses ? UInt32(draft.uses) : nil, scope: like.scope)
+        return .ok(choice)
+    }
+}
+
+/// A custom time out of bounds, in words; nil when it is fine (or not custom).
+private func customProblem(_ draft: ApprovalDraft) -> String? {
+    guard draft.lifetime == .custom else { return nil }
+    let unit = draft.customUnit
+    return (1...unit.max).contains(draft.customAmount) ? nil : "Choose 1 to \(unit.max) \(unit.rawValue)."
 }
 
 /// Lists, reads and searches in another integration (the ticked items are released) and changes to it (the preview is
@@ -181,6 +263,7 @@ private func buildConnectorAnswer(_ view: ApprovalView, _ draft: ApprovalDraft) 
     if draft.lifetime == .uses && !(1...ApprovalRules.maxUses).contains(draft.uses) {
         return .invalid("Uses must be between 1 and \(ApprovalRules.maxUses).")
     }
+    if let problem = customProblem(draft) { return .invalid(problem) }
     if let everything = draft.allMail {
         if write { return .invalid("Changing things cannot be allowed everywhere.") }
         if !ApprovalRules.everythingLifetimes.contains(everything) {
@@ -201,7 +284,7 @@ private func buildConnectorAnswer(_ view: ApprovalView, _ draft: ApprovalDraft) 
     return .ok(ApprovalChoice(
         selectedMessageIds: ids,
         standing: StandingGrant(
-            durationSecs: draft.lifetime.seconds,
+            durationSecs: lifetimeSeconds(view, draft),
             maxUses: draft.lifetime == .uses ? UInt32(draft.uses) : nil,
             scope: scope
         )

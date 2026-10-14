@@ -92,7 +92,8 @@ fun HoldButton(
             .graphicsLayer { alpha = if (enabled) 1f else 0.45f }
             .clip(CircleShape)
             .background(tint)
-            .semantics {
+            // One node with its title, so TalkBack reads the button by name and tests find its text by its tag.
+            .semantics(mergeDescendants = true) {
                 role = Role.Button
                 if (!active) disabled()
                 if (holding) stateDescription = "Keep holding"

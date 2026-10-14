@@ -56,14 +56,37 @@ final class QuickApprovalTests: XCTestCase {
         XCTAssertEqual(WaitAdvice.of(items, [:]), .review)
     }
 
-    func testTheShortcutSaysForHowLongAndWhat() {
-        XCTAssertEqual(QuickAllowText.button(3_600), "Approve and allow for 1 hour")
-        XCTAssertEqual(QuickAllowText.button(28_800), "Approve and allow for 8 hours")
-        XCTAssertEqual(QuickAllowText.repeatHint(3), "You approved this 3 times in the last 24 hours.")
-        XCTAssertEqual(
-            QuickAllowText.caption(label: "Claude", what: "searching and reading me@gmail.com"),
-            "Claude can then do the same without asking: searching and reading me@gmail.com. Revoke it any time in Grants."
+    func testOneHourInTheDockIsTheCoresAllowForAWhile() {
+        var view = ApprovalLogicTests.view(kind: .search, messages: [ApprovalLogicTests.message("m1", "Bank <alerts@bank.com>")], count: 1)
+        XCTAssertEqual(ApprovalWords.shortLabel(view), "1 hour")
+        let scope = GrantScopeChoice(
+            allMail: true, selectedMessagesOnly: false, senderAddresses: [], senderDomains: [], subjectPattern: nil,
+            recipientAddresses: [], recipientDomains: [], resources: [], classes: []
         )
+        view.quick = QuickApproval(fromNotification: true, allow: StandingGrant(durationSecs: 28_800, maxUses: nil, scope: scope), allowWhat: "searching and reading me@gmail.com", repeats: 3)
+        XCTAssertEqual(ApprovalWords.shortLabel(view), "8 hours", "repeats get the core's longer period")
+        // Remembering covers what the screen shows: the ticked email, never all mail, unless chosen.
+        var draft = ApprovalDraft.initial(for: view)
+        draft.lifetime = .day
+        guard case let .ok(day) = buildDecision(view, draft) else { return XCTFail("built") }
+        XCTAssertEqual(day.standing?.scope.allMail, false)
+        XCTAssertEqual(day.standing?.scope.selectedMessagesOnly, true)
+        XCTAssertFalse(ApprovalWords.likeThisOn(view, draft))
+        draft.lifetime = .hour
+        guard case let .ok(hour) = buildDecision(view, draft) else { return XCTFail("built") }
+        XCTAssertEqual(hour.standing?.durationSecs, 28_800)
+        XCTAssertEqual(hour.standing?.scope.allMail, false)
+        draft.lifetime = .untilRevoked
+        guard case let .ok(forever) = buildDecision(view, draft) else { return XCTFail("built") }
+        XCTAssertEqual(forever.standing?.scope.allMail, false, "until revoked is never all mail")
+        // Chosen explicitly: the core's scope, for the time picked; still never open-ended for all mail.
+        draft.likeThis = true
+        draft.lifetime = .hour
+        guard case let .ok(chosen) = buildDecision(view, draft) else { return XCTFail("built") }
+        XCTAssertEqual(chosen.standing, view.quick?.allow)
+        XCTAssertTrue(ApprovalWords.likeThisOn(view, draft))
+        draft.lifetime = .untilRevoked
+        guard case .invalid = buildDecision(view, draft) else { return XCTFail("all mail until revoked is refused") }
     }
 
     func testTheStartingRuleSaysWhatItGivesOnlyWhenItGivesSomething() {

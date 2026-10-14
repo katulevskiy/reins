@@ -6,7 +6,11 @@ import dev.reins.core.ApprovalView
 import dev.reins.core.GrantScopeChoice
 import dev.reins.core.StandingGrant
 
-/** Lifetime choices of the approval screen: Once · 1 h · 24 h · 7 days · until revoked · N uses. */
+/**
+ * Lifetime choices of the approval screen: Once · 1 hour · 1 day in the dock; 1 week · 30 days · a custom time · a
+ * number of uses · until revoked under "Custom". [HOUR] is the core's "allow for a while" period when it offers one
+ * (an hour, or eight once the same thing was approved a few times that day).
+ */
 enum class LifetimeKind(val label: String, val seconds: Long?) {
     ONCE("Once", null),
     HOUR("1 hour", 3_600),
@@ -15,6 +19,18 @@ enum class LifetimeKind(val label: String, val seconds: Long?) {
     MONTH("30 days", 2_592_000),
     UNTIL_REVOKED("Until revoked", null),
     USES("N uses", null),
+    /** [ApprovalDraft.customAmount] of [ApprovalDraft.customUnit]. */
+    CUSTOM("Custom", null),
+}
+
+/** The units of a custom time, and the most of each that can be picked. */
+enum class LifetimeUnit(val one: String, val many: String, val seconds: Long, val max: Int) {
+    HOURS("hour", "hours", 3_600, 720),
+    DAYS("day", "days", 86_400, 365),
+    WEEKS("week", "weeks", 604_800, 52),
+    ;
+
+    fun label(n: Int): String = if (n == 1) "1 $one" else "$n $many"
 }
 
 const val MAX_USES = 1000
@@ -42,7 +58,56 @@ data class ApprovalDraft(
     val resources: Set<String> = emptySet(),
     /** Another integration, a permission to change things: the kinds of change it allows (ids from `ApprovalView.classes`). */
     val classes: Set<String> = emptySet(),
+    /** [LifetimeKind.CUSTOM]: how many of [customUnit]. */
+    val customAmount: Int = 3,
+    val customUnit: LifetimeUnit = LifetimeUnit.DAYS,
+    /**
+     * The user chose, in the "Remember for" sheet, that a remembered approval covers "anything like this" (the core's
+     * `quick.allow` scope: the same AI, the same kind of request, the same target), which can be wider than what the
+     * screen shows. Never on by default: a remembered approval covers what is on screen (see [buildChoice]).
+     */
+    val likeThis: Boolean = false,
 )
+
+/**
+ * How long a standing permission made with [draft] lasts, in seconds; null for once, until revoked and a number of uses.
+ * "1 hour" is the core's own period for "allow for a while" when it offers one (not for accounts).
+ */
+fun lifetimeSeconds(view: ApprovalView, draft: ApprovalDraft): ULong? = when (draft.lifetime) {
+    LifetimeKind.ONCE, LifetimeKind.UNTIL_REVOKED, LifetimeKind.USES -> null
+    LifetimeKind.HOUR -> view.quick?.allow?.durationSecs?.takeIf { view.kind != ApprovalKind.ACCOUNTS } ?: 3_600uL
+    LifetimeKind.CUSTOM -> (draft.customAmount.coerceIn(1, draft.customUnit.max) * draft.customUnit.seconds).toULong()
+    else -> draft.lifetime.seconds?.toULong()
+}
+
+/** The longest an "anything like this" permission that covers all mail (or all of an integration) may last. */
+const val LIKE_THIS_ALL_MAX_SECS = 604_800L
+
+/**
+ * The answer the approval screen gives: [buildChoice] (a remembered approval covers what the screen shows: the ticked
+ * items, the recipients, the target), except when the user explicitly chose "anything like this" in the "Remember
+ * for" sheet; then the core's `quick.allow` scope, for the time picked. A scope over all mail is never open-ended: it
+ * goes with a time limit of a week at most, else the request is refused rather than silently narrowed or widened.
+ */
+fun buildDecision(view: ApprovalView, draft: ApprovalDraft): BuildResult {
+    val like = view.quick?.allow
+    val applies = like != null && draft.likeThis && draft.lifetime != LifetimeKind.ONCE && draft.allMail == null &&
+        !view.noStanding && view.kind != ApprovalKind.GRANT && view.kind != ApprovalKind.ACCOUNTS
+    if (!applies || like == null) return buildChoice(view, draft)
+    if (draft.lifetime == LifetimeKind.USES && draft.uses !in 1..MAX_USES) return BuildResult.Invalid("Uses must be between 1 and $MAX_USES.")
+    val secs = lifetimeSeconds(view, draft)
+    if (like.scope.allMail && (secs == null || secs > LIKE_THIS_ALL_MAX_SECS.toULong())) {
+        return BuildResult.Invalid("Anything like this can be remembered for a week at most.")
+    }
+    return when (val once = buildChoice(view, draft.copy(lifetime = LifetimeKind.ONCE))) {
+        is BuildResult.Invalid -> once
+        is BuildResult.Ok -> BuildResult.Ok(
+            once.choice.copy(
+                standing = StandingGrant(secs, if (draft.lifetime == LifetimeKind.USES) draft.uses.toUInt() else null, like.scope),
+            ),
+        )
+    }
+}
 
 sealed interface BuildResult {
     data class Ok(val choice: ApprovalChoice) : BuildResult
@@ -92,17 +157,25 @@ fun buildChoice(view: ApprovalView, draft: ApprovalDraft): BuildResult {
         if (draft.lifetime == LifetimeKind.USES && draft.uses !in 1..MAX_USES) {
             return BuildResult.Invalid("Uses must be between 1 and $MAX_USES.")
         }
+        customProblem(draft)?.let { return BuildResult.Invalid(it) }
         val scope = when (val built = if (send) sendScope(view, draft) else readScope(draft)) {
             is ScopeResult.Ok -> built.scope
             is ScopeResult.Missing -> return BuildResult.Invalid(built.message)
         }
         StandingGrant(
-            durationSecs = draft.lifetime.seconds?.toULong(),
+            durationSecs = lifetimeSeconds(view, draft),
             maxUses = if (draft.lifetime == LifetimeKind.USES) draft.uses.toUInt() else null,
             scope = scope,
         )
     }
     return BuildResult.Ok(ApprovalChoice(selectedMessageIds = ids, standing = standing))
+}
+
+/** A custom time out of bounds, in words; null when it is fine (or not custom). */
+private fun customProblem(draft: ApprovalDraft): String? {
+    if (draft.lifetime != LifetimeKind.CUSTOM) return null
+    val unit = draft.customUnit
+    return if (draft.customAmount in 1..unit.max) null else "Choose 1 to ${unit.max} ${unit.many}."
 }
 
 /** Time boxes offered for "everything in this integration": never open-ended, and never for changing anything. */
@@ -123,6 +196,7 @@ private fun buildConnectorAnswer(view: ApprovalView, draft: ApprovalDraft): Buil
     if (draft.lifetime == LifetimeKind.USES && draft.uses !in 1..MAX_USES) {
         return BuildResult.Invalid("Uses must be between 1 and $MAX_USES.")
     }
+    customProblem(draft)?.let { return BuildResult.Invalid(it) }
     val everything = draft.allMail
     if (everything != null) {
         if (write) return BuildResult.Invalid("Changing things cannot be allowed everywhere.")
@@ -142,7 +216,7 @@ private fun buildConnectorAnswer(view: ApprovalView, draft: ApprovalDraft): Buil
         ApprovalChoice(
             ids,
             StandingGrant(
-                durationSecs = draft.lifetime.seconds?.toULong(),
+                durationSecs = lifetimeSeconds(view, draft),
                 maxUses = if (draft.lifetime == LifetimeKind.USES) draft.uses.toUInt() else null,
                 scope = scope,
             ),

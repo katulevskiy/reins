@@ -256,6 +256,84 @@ object TestData {
         opTitle = "Clone and fetch with git", action = "read",
     )
 
+    // ---- the approval screen's design states ------------------------------------------------------------------
+
+    private fun diff(vararg lines: Triple<String, Int?, String>) = lines.map { (k, n, t) ->
+        when (k) {
+            "h" -> dev.reins.core.DiffLineView(dev.reins.core.DiffLineKind.HUNK, null, null, t)
+            "a" -> dev.reins.core.DiffLineView(dev.reins.core.DiffLineKind.ADD, null, n?.toUInt(), t)
+            "d" -> dev.reins.core.DiffLineView(dev.reins.core.DiffLineKind.DELETE, n?.toUInt(), null, t)
+            else -> dev.reins.core.DiffLineView(dev.reins.core.DiffLineKind.CONTEXT, n?.toUInt(), n?.toUInt(), t)
+        }
+    }
+
+    /** "Log in with a passkey…": three files, the first with its lines. */
+    fun designCommit() = GitCommitView(
+        "9f3c2a1", "Log in with a passkey when the browser offers one", "Ada Lovelace <ada@example.com>", 1_700_000_100 - 7_200,
+        3u,
+        listOf(
+            GitFileView(
+                "src/auth/login.ts", "modified", 38u, 2u, false,
+                diff(
+                    Triple("h", null, "@@ -12,9 +12,22 @@ export async function signIn("),
+                    Triple("c", 12, "  const options = await fetchOptions(user);"),
+                    Triple("d", 13, "  const password = form.get(\"password\");"),
+                    Triple("d", 14, "  return post(\"/login\", { user, password });"),
+                    Triple("a", 13, "  if (await browserSupportsPasskeys()) {"),
+                    Triple("a", 14, "    const cred = await navigator.credentials"),
+                    Triple("a", 15, "      .get({ publicKey: options });"),
+                    Triple("a", 16, "    return post(\"/login/passkey\", cred);"),
+                    Triple("a", 17, "  }"),
+                    Triple("a", 18, "  return showPasswordForm(user);"),
+                    Triple("c", 19, "}"),
+                ),
+                false, false,
+            ),
+            GitFileView("src/auth/passkey.ts", "added", 121u, 0u, false, diff(Triple("h", null, "@@ -0,0 +1,121 @@"), Triple("a", 1, "export async function browserSupportsPasskeys() {")), false, false),
+            GitFileView("src/ui/LoginForm.tsx", "modified", 25u, 20u, false, diff(Triple("h", null, "@@ -1,4 +1,4 @@"), Triple("d", 1, "import { Form } from \"./Form\";"), Triple("a", 1, "import { Form, Passkey } from \"./Form\";")), false, false),
+        ),
+        184u, 22u, false,
+    )
+
+    /** The design's push: 8 commits to feature/passkeys of octo/app, +412 −96. */
+    fun designPushView(): ApprovalView {
+        val more = listOf(
+            Triple("4be81d0", "Remove the old login form", Triple("Ada Lovelace", 3, 61)),
+            Triple("c07a9e3", "Keep the session for 30 days", Triple("Grace Hopper", 12, 4)),
+            Triple("17d0f5b", "Document the login flow", Triple("Ada Lovelace", 96, 0)),
+            Triple("e2a4c66", "Bump dependencies", Triple("dependabot", 41, 9)),
+            Triple("8a1f0c2", "Fix the redirect after sign-in", Triple("Ada Lovelace", 76, 0)),
+            Triple("3d9b7e4", "Show the passkey button first", Triple("Grace Hopper", 0, 0)),
+            Triple("b51c0a8", "Tidy the auth module", Triple("Ada Lovelace", 0, 0)),
+        ).mapIndexed { i, (sha, subject, who) ->
+            GitCommitView(sha, subject, "${who.first} <x@example.com>", 1_700_000_100 - 3_600L * (i + 3), 1u, emptyList(), who.second.toULong(), who.third.toULong(), false)
+        }
+        val ref = gitRef(
+            "feature/passkeys", commitCount = 8u, commits = listOf(designCommit()) + more, filesChanged = 12u,
+            files = listOf(gitFile("src/auth/login.ts", "modified", 38u, 2u), gitFile("src/auth/passkey.ts", "added", 121u, 0u)),
+            additions = 412u, deletions = 96u,
+        )
+        return gitPushView(gitPush(ref)).copy(connectionLabel = "Claude Code", account = "octo-cat")
+    }
+
+    /** The design's Gmail search: three emails from Stripe, the code unticked. */
+    fun designMailView(waitUntil: Long?) = searchView(waitUntil).copy(
+        connectionLabel = "Claude Code", query = "from:stripe.com invoice OR receipt newer_than:30d",
+        messages = listOf(
+            MessageView("m1", "Stripe <receipts@stripe.com>", "Your invoice from Acme Inc.", 1_697_000_000, "", false, false),
+            MessageView("m2", "Stripe <receipts@stripe.com>", "Payment received", 1_696_800_000, "", false, false),
+            MessageView("m3", "Stripe <receipts@stripe.com>", "Your verification code", 1_696_700_000, "", false, true),
+        ),
+        count = 3u,
+    )
+
+    /** The design's dangerous request: delete a repository. */
+    fun designDeleteView() = onceOnlyWriteView().copy(
+        connectionLabel = "Claude Code", op = "repo_delete",
+        resources = listOf(ResourceView("octo/old-api", "octo/old-api", false)),
+        preview = listOf("Delete the repository octo/old-api", "Its code, issues and releases are removed"),
+    )
+
     /** An AI wants to see the accounts of one integration. */
     fun accountsView(
         addresses: List<String> = listOf("me@gmail.com", "work@corp.example"),

@@ -6,8 +6,8 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use reins_proto::desktop::{
-    CommitInfo, FileChange, FileStatus, MAX_COMMITS, MAX_FILES, MAX_NOTES, MAX_PUSH_OPTIONS, PushSummary, RefChange,
-    RefUpdate,
+    CommitInfo, FileChange, FileStatus, MAX_COMMIT_FILES, MAX_COMMITS, MAX_FILES, MAX_NOTES, MAX_PATCH_LINE,
+    MAX_PATCH_LINES, MAX_PUSH_OPTIONS, PushSummary, RefChange, RefUpdate,
 };
 
 use super::object::{Commit, EntryKind, ObjectKind, Oid, TreeEntry, hash_object, parse_commit, parse_tag, parse_tree};
@@ -27,6 +27,14 @@ const MAX_BASES: usize = 60;
 const MAX_TEXT: u64 = 1 << 20;
 const LINE_BUDGET: u64 = 32 << 20;
 const DIFF_TIMEOUT: Duration = Duration::from_secs(1);
+/// Each commit's own files: compared for this long per push in all, each file's lines for at most this long.
+const COMMITS_TIME: Duration = Duration::from_secs(6);
+const COMMIT_DIFF_TIMEOUT: Duration = Duration::from_millis(250);
+/// Bytes of patches (each commit's changes line by line) per push; the summary as a whole stays under
+/// `MAX_SUMMARY_BYTES` (`PushSummary::fit` drops the largest patches first if it would not).
+const PATCH_BUDGET: usize = 100_000;
+/// Lines of context around each change in a patch, as git shows them.
+const PATCH_CONTEXT: usize = 3;
 /// A NUL byte this early means binary, as git decides.
 const BINARY_SNIFF: usize = 8 << 10;
 const MAX_TREE: u64 = 16 << 20;
@@ -73,7 +81,11 @@ pub async fn analyze_push(
         updates.push(update);
         diffs.push(diff);
     }
-    count_lines(&mut store, &mut updates, diffs, &mut notes).await;
+    let mut budget = LineBudget {
+        left: LINE_BUDGET,
+    };
+    count_lines(&mut store, &mut updates, diffs, &mut budget, &mut notes).await;
+    describe_commits(&mut store, &mut updates, &mut budget, &mut notes).await;
     let mut options: Vec<String> =
         push_options.iter().take(MAX_PUSH_OPTIONS).map(|o| non_empty(clip(o, MAX_LINE), "(empty)")).collect();
     if push_options.len() > MAX_PUSH_OPTIONS {
@@ -521,6 +533,10 @@ fn commit_info(oid: &Oid, c: &Commit) -> CommitInfo {
         subject: clip(&c.subject, MAX_LINE),
         author: non_empty(clip(&c.author, MAX_LINE), "unknown"),
         date: c.author_time,
+        files_changed: None,
+        files: Vec::new(),
+        additions: None,
+        deletions: None,
     }
 }
 
@@ -789,18 +805,7 @@ fn lines_of(data: &[u8]) -> Vec<&[u8]> {
 
 /// Lines added and removed between two texts (Myers, approximated past a deadline).
 fn diff_lines(old: &[u8], new: &[u8]) -> (usize, usize) {
-    let (a, b) = (lines_of(old), lines_of(new));
-    let ops =
-        similar::capture_diff_slices_deadline(similar::Algorithm::Myers, &a, &b, Some(Instant::now() + DIFF_TIMEOUT));
-    ops.iter().fold((0, 0), |(add, del), op| {
-        let (tag, o, n) = op.as_tag_tuple();
-        match tag {
-            similar::DiffTag::Equal => (add, del),
-            similar::DiffTag::Insert => (add + n.len(), del),
-            similar::DiffTag::Delete => (add, del + o.len()),
-            similar::DiffTag::Replace => (add + n.len(), del + o.len()),
-        }
-    })
+    count_ops(&line_ops(old, new, DIFF_TIMEOUT))
 }
 
 struct LineBudget {
@@ -831,10 +836,13 @@ async fn load_side(store: &mut Store<'_>, side: Option<(Oid, EntryKind)>, budget
 }
 
 /// Fills in line counts, listed files first, within [`LINE_BUDGET`]; lists at most [`MAX_FILES`] files per ref.
-async fn count_lines(store: &mut Store<'_>, updates: &mut [RefUpdate], diffs: Vec<RefDiff>, notes: &mut Notes) {
-    let mut budget = LineBudget {
-        left: LINE_BUDGET,
-    };
+async fn count_lines(
+    store: &mut Store<'_>,
+    updates: &mut [RefUpdate],
+    diffs: Vec<RefDiff>,
+    budget: &mut LineBudget,
+    notes: &mut Notes,
+) {
     let mut uncounted = 0usize;
     for (u, diff) in updates.iter_mut().zip(diffs) {
         if u.change == RefChange::Delete {
@@ -845,8 +853,8 @@ async fn count_lines(store: &mut Store<'_>, updates: &mut [RefUpdate], diffs: Ve
             let (counted, binary) = if f.old.map(|o| o.0) == f.new.map(|n| n.0) {
                 (Some((0, 0)), false)
             } else {
-                let old = load_side(store, f.old, &mut budget).await;
-                let new = load_side(store, f.new, &mut budget).await;
+                let old = load_side(store, f.old, budget).await;
+                let new = load_side(store, f.new, budget).await;
                 match (old, new) {
                     (Side::Binary, _) | (_, Side::Binary) => (None, true),
                     (Side::Unknown, _) | (_, Side::Unknown) => {
@@ -867,13 +875,13 @@ async fn count_lines(store: &mut Store<'_>, updates: &mut [RefUpdate], diffs: Ve
                 *td += del as u64;
             }
             if i < MAX_FILES {
-                u.files.push(FileChange {
-                    path: non_empty(show_path(&f.path), "?"),
-                    status: f.status,
-                    additions: counted.map(|c| u32::try_from(c.0).unwrap_or(u32::MAX)),
-                    deletions: counted.map(|c| u32::try_from(c.1).unwrap_or(u32::MAX)),
+                u.files.push(FileChange::new(
+                    non_empty(show_path(&f.path), "?"),
+                    f.status,
+                    counted.map(|c| u32::try_from(c.0).unwrap_or(u32::MAX)),
+                    counted.map(|c| u32::try_from(c.1).unwrap_or(u32::MAX)),
                     binary,
-                });
+                ));
             }
         }
         (u.additions, u.deletions) = totals.unzip();
@@ -881,6 +889,197 @@ async fn count_lines(store: &mut Store<'_>, updates: &mut [RefUpdate], diffs: Ve
     if uncounted > 0 {
         notes.add(format!("Lines were not counted in {uncounted} files (too large, or not available)."));
     }
+}
+
+/// What each listed commit changes against its first parent: its files, their lines, and patches while the push's
+/// [`PATCH_BUDGET`] lasts. Within [`COMMITS_TIME`]; a commit not reached keeps `files_changed: None`.
+async fn describe_commits(
+    store: &mut Store<'_>,
+    updates: &mut [RefUpdate],
+    budget: &mut LineBudget,
+    notes: &mut Notes,
+) {
+    let started = Instant::now();
+    let mut patch_left = PATCH_BUDGET;
+    let mut failed = 0usize;
+    let mut late = 0usize;
+    for u in updates.iter_mut().filter(|u| u.change != RefChange::Delete) {
+        for c in &mut u.commits {
+            if started.elapsed() >= COMMITS_TIME {
+                late += 1;
+                continue;
+            }
+            let Some(oid) = Oid::from_hex(&c.sha) else {
+                failed += 1;
+                continue;
+            };
+            let Ok(meta) = store.commit_meta(&oid).await else {
+                failed += 1;
+                continue;
+            };
+            let parent = meta.parents.first().copied();
+            // Tree problems are this commit's alone; the ref's own comparison already said what matters.
+            let mut quiet = Notes::default();
+            match diff_commits(store, parent, oid, &mut quiet, "").await {
+                Ok(diff) if diff.complete => describe_commit(store, c, &diff, budget, &mut patch_left).await,
+                _ => failed += 1,
+            }
+        }
+    }
+    if failed > 0 {
+        notes.add(format!("The files of {failed} commits could not be compared."));
+    }
+    if late > 0 {
+        notes.add(format!("The files of {late} commits were not compared (out of time)."));
+    }
+}
+
+async fn describe_commit(
+    store: &mut Store<'_>,
+    c: &mut CommitInfo,
+    diff: &RefDiff,
+    budget: &mut LineBudget,
+    patch_left: &mut usize,
+) {
+    let mut totals = Some((0u64, 0u64));
+    for (i, f) in diff.files.iter().enumerate() {
+        let listed = i < MAX_COMMIT_FILES;
+        let old = load_side(store, f.old, budget).await;
+        let new = load_side(store, f.new, budget).await;
+        let binary = matches!(old, Side::Binary) || matches!(new, Side::Binary);
+        let mut change = FileChange::new(non_empty(show_path(&f.path), "?"), f.status, None, None, binary);
+        match (&old, &new) {
+            // Submodules have no lines, binary files are not counted: neither changes the totals.
+            (Side::Absent, Side::Absent) => {}
+            _ if binary => {}
+            (Side::Unknown, _) | (_, Side::Unknown) => totals = None,
+            _ => {
+                let a = side_text(&old);
+                let b = side_text(&new);
+                let ops = line_ops(a, b, COMMIT_DIFF_TIMEOUT);
+                let (add, del) = count_ops(&ops);
+                change.additions = Some(u32::try_from(add).unwrap_or(u32::MAX));
+                change.deletions = Some(u32::try_from(del).unwrap_or(u32::MAX));
+                if let Some((ta, td)) = &mut totals {
+                    *ta += add as u64;
+                    *td += del as u64;
+                }
+                if listed && *patch_left > 0 {
+                    let (patch, cut) = patch_text(a, b, &ops);
+                    if !patch.is_empty() && patch.len() <= *patch_left {
+                        *patch_left -= patch.len();
+                        change.patch = Some(patch);
+                        change.patch_cut = cut;
+                    }
+                }
+            }
+        }
+        if listed {
+            c.files.push(change);
+        }
+    }
+    c.files_changed = Some(u32::try_from(diff.files.len()).unwrap_or(u32::MAX));
+    (c.additions, c.deletions) = totals.unzip();
+}
+
+/// A side's lines; no file there (or a submodule) has none.
+fn side_text(side: &Side) -> &[u8] {
+    match side {
+        Side::Text(t) => t,
+        Side::Absent | Side::Binary | Side::Unknown => b"",
+    }
+}
+
+/// The edit script between two texts, line by line (Myers, approximated past `timeout`).
+fn line_ops(old: &[u8], new: &[u8], timeout: Duration) -> Vec<similar::DiffOp> {
+    let (a, b) = (lines_of(old), lines_of(new));
+    similar::capture_diff_slices_deadline(similar::Algorithm::Myers, &a, &b, Some(Instant::now() + timeout))
+}
+
+fn count_ops(ops: &[similar::DiffOp]) -> (usize, usize) {
+    ops.iter().fold((0, 0), |(add, del), op| {
+        let (tag, o, n) = op.as_tag_tuple();
+        match tag {
+            similar::DiffTag::Equal => (add, del),
+            similar::DiffTag::Insert => (add + n.len(), del),
+            similar::DiffTag::Delete => (add, del + o.len()),
+            similar::DiffTag::Replace => (add + n.len(), del + o.len()),
+        }
+    })
+}
+
+/// One line of a file as a patch shows it: after its sign, without its line break, control characters replaced, cut
+/// to [`MAX_PATCH_LINE`] characters (the last one "…").
+fn patch_line(sign: char, line: &[u8]) -> String {
+    let line = line.strip_suffix(b"\n").unwrap_or(line);
+    let line = line.strip_suffix(b"\r").unwrap_or(line);
+    let text = String::from_utf8_lossy(line);
+    let mut out = String::with_capacity(text.len() + 1);
+    out.push(sign);
+    let count = text.chars().count();
+    for (i, ch) in text.chars().enumerate() {
+        if count > MAX_PATCH_LINE && i == MAX_PATCH_LINE - 1 {
+            out.push('…');
+            break;
+        }
+        out.push(if ch.is_control() && ch != '\t' {
+            '\u{fffd}'
+        } else {
+            ch
+        });
+    }
+    out
+}
+
+/// `@@ -a,b +c,d @@` as git writes it: a range of one line has no count, an empty one starts at the line before.
+fn hunk_header(old: std::ops::Range<usize>, new: std::ops::Range<usize>) -> String {
+    let side = |r: std::ops::Range<usize>| match r.len() {
+        0 => format!("{},0", r.start),
+        1 => format!("{}", r.start + 1),
+        n => format!("{},{n}", r.start + 1),
+    };
+    format!("@@ -{} +{} @@", side(old), side(new))
+}
+
+/// The unified diff of `old` and `new` from their edit script, without file headers, at most [`MAX_PATCH_LINES`]
+/// lines; `true` when it stops before the end.
+fn patch_text(old: &[u8], new: &[u8], ops: &[similar::DiffOp]) -> (String, bool) {
+    let (a, b) = (lines_of(old), lines_of(new));
+    let mut out: Vec<String> = Vec::new();
+    // A last line without a line break says so, as git does.
+    let push = |out: &mut Vec<String>, sign: char, lines: &[&[u8]], i: usize| {
+        out.push(patch_line(sign, lines[i]));
+        if i + 1 == lines.len() && lines[i].last() != Some(&b'\n') {
+            out.push("\\ No newline at end of file".to_owned());
+        }
+    };
+    for group in similar::group_diff_ops(ops.to_vec(), PATCH_CONTEXT) {
+        let (Some(first), Some(last)) = (group.first(), group.last()) else {
+            continue;
+        };
+        out.push(hunk_header(
+            first.old_range().start..last.old_range().end,
+            first.new_range().start..last.new_range().end,
+        ));
+        for op in &group {
+            let (tag, o, n) = op.as_tag_tuple();
+            match tag {
+                similar::DiffTag::Equal => o.for_each(|i| push(&mut out, ' ', &a, i)),
+                similar::DiffTag::Delete => o.for_each(|i| push(&mut out, '-', &a, i)),
+                similar::DiffTag::Insert => n.for_each(|i| push(&mut out, '+', &b, i)),
+                similar::DiffTag::Replace => {
+                    o.for_each(|i| push(&mut out, '-', &a, i));
+                    n.for_each(|i| push(&mut out, '+', &b, i));
+                }
+            }
+        }
+        if out.len() > MAX_PATCH_LINES {
+            break;
+        }
+    }
+    let cut = out.len() > MAX_PATCH_LINES;
+    out.truncate(MAX_PATCH_LINES);
+    (out.join("\n"), cut)
 }
 
 #[cfg(test)]
@@ -927,6 +1126,45 @@ mod tests {
         let mut late = vec![b'a'; BINARY_SNIFF];
         late.push(0);
         assert!(!is_binary(&late));
+    }
+
+    fn patch(old: &[u8], new: &[u8]) -> (String, bool) {
+        patch_text(old, new, &line_ops(old, new, DIFF_TIMEOUT))
+    }
+
+    #[test]
+    fn patches_read_like_git_diff() {
+        let (p, cut) = patch(b"a\nb\nc\nd\ne\nf\ng\nh\n", b"a\nb\nc\nD\ne\nf\ng\nh\ni");
+        assert!(!cut);
+        assert_eq!(p, "@@ -1,8 +1,9 @@\n a\n b\n c\n-d\n+D\n e\n f\n g\n h\n+i\n\\ No newline at end of file");
+        // Far apart changes are separate hunks with three lines of context.
+        let old: Vec<u8> = (1..=20).flat_map(|i| format!("{i}\n").into_bytes()).collect();
+        let new: Vec<u8> = (1..=20)
+            .flat_map(|i| match i {
+                2 => "two\n".to_owned().into_bytes(),
+                19 => "nineteen\n".to_owned().into_bytes(),
+                _ => format!("{i}\n").into_bytes(),
+            })
+            .collect();
+        let (p, _) = patch(&old, &new);
+        let headers: Vec<_> = p.lines().filter(|l| l.starts_with("@@")).collect();
+        assert_eq!(headers, ["@@ -1,5 +1,5 @@", "@@ -16,5 +16,5 @@"]);
+        assert_eq!(patch(b"", b"x\ny\n").0, "@@ -0,0 +1,2 @@\n+x\n+y");
+        assert_eq!(patch(b"x\n", b"").0, "@@ -1 +0,0 @@\n-x");
+        assert_eq!(patch(b"same\n", b"same\n").0, "");
+    }
+
+    #[test]
+    fn patches_are_bounded_and_clean() {
+        let big: Vec<u8> = (0..1_000).flat_map(|i| format!("line {i}\n").into_bytes()).collect();
+        let (p, cut) = patch(b"", &big);
+        assert!(cut);
+        assert_eq!(p.lines().count(), MAX_PATCH_LINES);
+        let line = patch_line('+', format!("{}\r\n", "x".repeat(1_000)).as_bytes());
+        assert_eq!(line.chars().count(), MAX_PATCH_LINE + 1, "the sign and the line");
+        assert!(line.ends_with('…'));
+        assert_eq!(patch_line(' ', b"a\tb\x1b[31m\xff\r\n"), " a\tb\u{fffd}[31m\u{fffd}");
+        assert_eq!(hunk_header(4..4, 4..6), "@@ -4,0 +5,2 @@");
     }
 
     #[test]

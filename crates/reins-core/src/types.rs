@@ -338,6 +338,24 @@ pub struct GitCommitView {
     pub subject: String,
     /// "Name <email>".
     pub author: String,
+    /// Author time, unix seconds (0 when not known).
+    #[uniffi(default)]
+    pub date: i64,
+    /// What the commit itself changes (against its first parent): how many files, and the first of them with their
+    /// lines; `None` when the desktop app did not compare them.
+    #[uniffi(default)]
+    pub files_changed: Option<u32>,
+    #[uniffi(default)]
+    pub files: Vec<GitFileView>,
+    /// Lines added and removed in all its files; `None` when not every file could be counted.
+    #[uniffi(default)]
+    pub additions: Option<u64>,
+    #[uniffi(default)]
+    pub deletions: Option<u64>,
+    /// The subject, the author or one of its files holds characters that change how text reads without being seen
+    /// (bidi controls, zero-width characters): what is shown may not be what the code does. Show a warning.
+    #[uniffi(default)]
+    pub hidden_chars: bool,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, uniffi::Record)]
@@ -349,6 +367,40 @@ pub struct GitFileView {
     pub additions: Option<u32>,
     pub deletions: Option<u32>,
     pub binary: bool,
+    /// A commit's file: the change line by line, as the desktop app sent it (empty when not shown: binary, too large,
+    /// or over the push's budget). Text from the user's repository: show it as untrusted.
+    #[uniffi(default)]
+    pub diff: Vec<DiffLineView>,
+    /// `diff` stops before the end of the change.
+    #[uniffi(default)]
+    pub diff_cut: bool,
+    /// The path or a line of `diff` held invisible characters (bidi controls, zero-width characters); in `diff` each
+    /// is shown as U+FFFD. Show a warning.
+    #[uniffi(default)]
+    pub hidden_chars: bool,
+}
+
+/// One line of a file's change.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, uniffi::Enum)]
+pub enum DiffLineKind {
+    /// `@@ -12,9 +12,22 @@ …`: where the next lines are.
+    Hunk,
+    Context,
+    Add,
+    Delete,
+    /// "No newline at end of file".
+    Note,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, uniffi::Record)]
+pub struct DiffLineView {
+    pub kind: DiffLineKind,
+    /// The line's number in the old file (context and deleted lines) and in the new one (context and added lines).
+    pub old_line: Option<u32>,
+    pub new_line: Option<u32>,
+    /// The line without its sign (the whole header for a hunk), tabs as four spaces, control and invisible characters
+    /// (bidi controls, zero-width characters) as U+FFFD so they can be seen.
+    pub text: String,
 }
 
 /// One kind of change a standing permission can allow (issues, code, releases, ...).

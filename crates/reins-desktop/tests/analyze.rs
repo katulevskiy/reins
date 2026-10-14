@@ -63,6 +63,41 @@ async fn a_fast_forward_lists_commits_files_and_lines() {
     assert_eq!((main.status, main.additions, main.deletions), (FileStatus::Added, Some(1), Some(0)));
     assert_eq!((u.additions, u.deletions), (Some(4), Some(1)));
     assert!(!s.once_only());
+
+    // Each commit says what it changes itself, line by line.
+    let reword = &u.commits[0];
+    assert_eq!((reword.files_changed, reword.additions, reword.deletions), (Some(1), Some(2), Some(1)));
+    assert_eq!(reword.files[0].path, "README.md");
+    assert_eq!(
+        reword.files[0].patch.as_deref(),
+        Some("@@ -1,3 +1,4 @@\n # Project\n \n-Hello.\n+Hello, world.\n+Bye.")
+    );
+    let add = &u.commits[1];
+    assert_eq!((add.files_changed, add.additions, add.deletions), (Some(2), Some(2), Some(0)));
+    let paths: Vec<_> = add.files.iter().map(|f| (f.path.as_str(), f.status)).collect();
+    assert_eq!(paths, [("src/big.txt", FileStatus::Modified), ("src/new.rs", FileStatus::Added)]);
+    let context = (397..400)
+        .map(|i| format!(" v1 line {i} of a file large enough for git to store it as a delta"))
+        .collect::<Vec<_>>()
+        .join("\n");
+    assert_eq!(add.files[0].patch, Some(format!("@@ -398,3 +398,4 @@\n{context}\n+one more line")));
+    assert_eq!(add.files[1].patch.as_deref(), Some("@@ -0,0 +1 @@\n+fn main() {}"));
+}
+
+#[tokio::test]
+async fn a_root_commit_adds_its_files_and_binary_files_have_no_lines() {
+    let f = Fixture::new();
+    f.commit(&[("a.txt", Some(b"a\n"))], "Root");
+    f.publish("main");
+    let base = git(&f.work, &["rev-parse", "HEAD"]);
+    let tip = f.commit(&[("logo.png", Some(b"\x89PNG\0\0binary")), ("a.txt", Some(b"a\nb\n"))], "Logo");
+    let pack = f.push_pack(&tip, &[&base]);
+    let s = analyze(&[cmd(&base, &tip, "refs/heads/main")], Some(pack.path()), &f.remote()).await;
+    let c = &s.updates[0].commits[0];
+    assert_eq!((c.files_changed, c.additions, c.deletions), (Some(2), Some(1), Some(0)));
+    let logo = c.files.iter().find(|x| x.path == "logo.png").unwrap();
+    assert!(logo.binary && logo.patch.is_none() && logo.additions.is_none());
+    s.validate().unwrap();
 }
 
 #[tokio::test]

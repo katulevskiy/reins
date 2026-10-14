@@ -1,203 +1,394 @@
 import SwiftUI
 
-/// Everything beyond "approve or deny": how long, how wide, all mail. Collapsed by default.
-struct MoreOptions: View {
+// The approval screen's sheets for how long and how wide (the Android app's ApprovalSheets.kt): "Remember for" behind
+// the dock's Custom ▾, with what a remembered approval covers under "What it covers", and a permission's length.
+
+/// "Remember for": a week, 30 days, a custom time, a number of uses, and, set apart in red, until revoked. Under "What it
+/// covers", what a remembered approval covers. The choice shows in the dock's last segment.
+struct RememberSheet: View {
     @Bindable var vm: ApprovalModel
     var view: ApprovalView
+    @Environment(\.dismiss) private var dismiss
     @Environment(\.feedback) private var feedback
+    @State private var pending: LifetimeKind?
+    @State private var more = false
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 0) {
-            Button {
-                vm.moreOpen.toggle()
-                feedback.play(.expand(vm.moreOpen))
-            } label: {
-                HStack {
-                    Text("More options").font(RFont.sans(15.5, .medium))
-                    Spacer()
-                    Image(systemName: "chevron.right")
-                        .font(.system(size: 14, weight: .semibold))
-                        .rotationEffect(.degrees(vm.moreOpen ? 90 : 0))
-                }
-                .foregroundStyle(Palette.accent)
-                .padding(.horizontal, 20)
-                .padding(.vertical, 14)
-                .contentShape(Rectangle())
-            }
-            .buttonStyle(.plain)
-            .accessibilityIdentifier("moreToggle")
-            .accessibilityValue(vm.moreOpen ? "Open" : "Closed")
-
-            if vm.moreOpen {
-                VStack(alignment: .leading, spacing: 0) {
-                    switch view.kind {
-                    case .grant: ShortenGrant(vm: vm, view: view)
-                    case .accounts: AccountsPeriod(vm: vm)
-                    case .fetch, .write: ConnectorOptions(vm: vm, view: view)
-                    case .search, .read, .send: StandardOptions(vm: vm, view: view)
+        let forever = pending == .untilRevoked && vm.draft.allMail == nil
+        NavigationStack {
+            ScrollView {
+                VStack(alignment: .leading, spacing: 12) {
+                    FactGroup {
+                        ForEach(ApprovalWords.sheetLifetimes(view)) { kind in
+                            LifetimeOption(kind: kind, selected: pending == kind && vm.draft.allMail == nil, vm: vm) { pending = kind }
+                        }
                     }
-                }
-                .transition(.opacity.combined(with: .move(edge: .top)))
-            }
-        }
-        .padding(.top, 8)
-    }
-}
-
-/// A small heading inside "More options".
-private struct OptionTitle: View {
-    var text: String
-    var top: CGFloat = 14
-
-    var body: some View {
-        Text(text)
-            .font(RFont.sans(13, .semibold))
-            .foregroundStyle(Palette.secondary)
-            .padding(.leading, 20)
-            .padding(.top, top)
-            .padding(.bottom, 8)
-    }
-}
-
-private struct Note: View {
-    var text: String
-
-    var body: some View {
-        Text(text).font(RFont.sans(13.5)).foregroundStyle(Palette.tertiary).padding(.horizontal, 20).padding(.top, 8)
-    }
-}
-
-/// "Remember this for": once, a while, until revoked, or a number of uses (typed in).
-private struct LifetimeChips: View {
-    @Bindable var vm: ApprovalModel
-
-    var body: some View {
-        OptionTitle(text: "Remember this for")
-        FlowRow {
-            ForEach(LifetimeKind.remember) { kind in
-                SelectChip(title: kind.label, selected: vm.draft.lifetime == kind) { vm.draft.lifetime = kind }
-                    .accessibilityIdentifier("lifetime:\(kind.rawValue)")
-            }
-        }
-        .padding(.horizontal, 16)
-        if vm.draft.lifetime == .uses {
-            UsesField(vm: vm)
-        }
-        if vm.draft.lifetime == .once {
-            Note(text: "Only this request. Nothing is remembered.")
-        }
-    }
-}
-
-private struct UsesField: View {
-    @Bindable var vm: ApprovalModel
-
-    var body: some View {
-        TextField("Number of uses (1–\(ApprovalRules.maxUses))", text: Binding(
-            get: { String(vm.draft.uses) },
-            set: { text in
-                if let n = Int(String(text.filter(\.isNumber).prefix(4))) { vm.draft.uses = n }
-            }
-        ))
-        .keyboardType(.numberPad)
-        .font(RFont.mono(16))
-        .padding(.horizontal, 14)
-        .padding(.vertical, 12)
-        .background(Palette.controlFill, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
-        .padding(.horizontal, 16)
-        .padding(.vertical, 10)
-        .accessibilityLabel("Number of uses")
-        .accessibilityIdentifier("uses")
-    }
-}
-
-/// "Allow all mail for a while" / "Allow all of Telegram for a while": a few time boxes, one tap each.
-private struct EverythingCard: View {
-    @Bindable var vm: ApprovalModel
-    var title: String
-    var text: String
-    /// What gets ticked when it is chosen.
-    var ticks: Set<String>
-
-    var body: some View {
-        Card(padding: 16) {
-            VStack(alignment: .leading, spacing: 0) {
-                HStack(spacing: 10) {
-                    Image(systemName: "clock").font(.system(size: 17, weight: .semibold)).foregroundStyle(Palette.accent)
-                    Text(title).font(RFont.sans(16, .semibold)).foregroundStyle(Palette.text)
-                }
-                Text(text)
-                    .font(RFont.sans(13.5))
-                    .foregroundStyle(Palette.secondary)
-                    .padding(.top, 6)
-                    .padding(.bottom, 12)
-                FlowRow {
-                    ForEach(ApprovalRules.allMailLifetimes) { kind in
-                        SelectChip(title: kind.label, selected: vm.draft.allMail == kind) {
-                            if vm.draft.allMail == kind {
-                                vm.draft.allMail = nil
-                            } else {
-                                vm.draft.allMail = kind
-                                vm.draft.selected = ticks
+                    if ApprovalWords.offersUntilRevoked(view) {
+                        FactGroup(border: Palette.danger.opacity(0.3)) {
+                            OptionRow(selected: forever, id: "lifetime:untilRevoked", tint: Palette.danger) {
+                                pending = .untilRevoked
+                            } label: {
+                                HStack(spacing: 12) {
+                                    Image(systemName: "infinity").font(.system(size: 17, weight: .semibold)).foregroundStyle(Palette.danger)
+                                    VStack(alignment: .leading, spacing: 2) {
+                                        Text("Until I revoke").font(RFont.sans(15.5, .semibold)).foregroundStyle(Palette.danger)
+                                        Text("Never expires").font(RFont.sans(12.5)).foregroundStyle(Palette.tertiary)
+                                    }
+                                }
                             }
                         }
-                        .accessibilityIdentifier("allMail:\(kind.rawValue)")
                     }
+                    if forever {
+                        HStack(alignment: .top, spacing: 10) {
+                            Image(systemName: "exclamationmark.triangle.fill").foregroundStyle(Palette.danger)
+                            VStack(alignment: .leading, spacing: 2) {
+                                Text("Anything like this runs without asking, forever.").font(RFont.sans(13.5, .semibold)).foregroundStyle(Palette.danger)
+                                Text("Only for things you'd never want to stop.").font(RFont.sans(13.5)).foregroundStyle(Palette.dynamic(0xDC2626, 0xFFBBBB))
+                            }
+                        }
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .padding(.horizontal, 14)
+                        .padding(.vertical, 12)
+                        .background(Palette.danger.opacity(0.10), in: RoundedRectangle(cornerRadius: 16, style: .continuous))
+                        .overlay(RoundedRectangle(cornerRadius: 16, style: .continuous).strokeBorder(Palette.danger.opacity(0.28), lineWidth: 1))
+                        .padding(.horizontal, 16)
+                        .transition(.opacity.combined(with: .move(edge: .top)))
+                        .accessibilityElement(children: .combine)
+                        .accessibilityIdentifier("foreverWarning")
+                    }
+                    if view.kind != .accounts {
+                        Button {
+                            withAnimation(.smooth) { more.toggle() }
+                            feedback.play(.expand(more))
+                        } label: {
+                            HStack {
+                                Text("What it covers").font(RFont.sans(15, .medium))
+                                Spacer()
+                                Image(systemName: "chevron.right").font(.system(size: 13, weight: .semibold)).rotationEffect(.degrees(more ? 90 : 0))
+                            }
+                            .foregroundStyle(Palette.accent)
+                            .padding(.horizontal, 22)
+                            .padding(.vertical, 12)
+                            .contentShape(Rectangle())
+                        }
+                        .buttonStyle(.plain)
+                        .accessibilityIdentifier("moreToggle")
+                        .accessibilityValue(more ? "Open" : "Closed")
+                        if more { ScopeOptions(vm: vm, view: view).transition(.opacity) }
+                    }
+                }
+                .padding(.vertical, 6)
+                .animation(.smooth(duration: 0.25), value: forever)
+            }
+            .safeAreaInset(edge: .bottom, spacing: 0) { confirm(forever: forever).padding(16).background(Palette.dynamic(0xFFFFFF, 0x151517)) }
+            .background(Palette.dynamic(0xFFFFFF, 0x151517).ignoresSafeArea())
+            .navigationTitle("Remember for")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .topBarTrailing) {
+                    Button { dismiss() } label: { Image(systemName: "xmark") }
+                        .accessibilityLabel("Close")
+                        .accessibilityIdentifier("closeOverlay")
                 }
             }
         }
-        .padding(.horizontal, 16)
-        .padding(.vertical, 6)
+        .onAppear { if pending == nil, vm.draft.lifetime != .once { pending = vm.draft.lifetime } }
+        .accessibilityContainer("rememberSheet")
+    }
+
+    @ViewBuilder private func confirm(forever: Bool) -> some View {
+        if forever {
+            VStack(spacing: 8) {
+                HoldButton(title: "Remember until I revoke", symbol: nil) { apply() }
+                    .accessibilityIdentifier("rememberConfirm")
+                Text("Hold for 2 seconds").font(RFont.sans(12)).foregroundStyle(Palette.tertiary)
+            }
+        } else {
+            let label: String = if vm.draft.allMail != nil {
+                "Done"
+            } else if let pending {
+                ApprovalWords.rememberButton(view, { var d = vm.draft; d.lifetime = pending; return d }())
+            } else {
+                "Choose how long"
+            }
+            let enabled = vm.draft.allMail != nil || pending != nil
+            Button { apply() } label: {
+                Text(label)
+                    .font(RFont.sans(17, .semibold))
+                    .foregroundStyle(enabled ? Palette.background : Palette.tertiary)
+                    .frame(maxWidth: .infinity, minHeight: 54)
+                    .background(enabled ? Palette.text : Palette.controlFill, in: Capsule())
+            }
+            .buttonStyle(.plain)
+            .disabled(!enabled)
+            .accessibilityIdentifier("rememberConfirm")
+        }
+    }
+
+    private func apply() {
+        if let pending {
+            vm.draft.lifetime = pending
+            if vm.draft.allMail != nil && pending != .once { vm.draft.allMail = nil }
+        }
+        dismiss()
     }
 }
 
-/// Gmail searches, reads and sends.
-private struct StandardOptions: View {
-    @Bindable var vm: ApprovalModel
-    var view: ApprovalView
+/// A radio row.
+private struct OptionRow<Label: View>: View {
+    var selected: Bool
+    var id: String
+    var tint: Color = Palette.accent
+    var onSelect: () -> Void
+    @ViewBuilder var label: Label
+    @Environment(\.feedback) private var feedback
 
     var body: some View {
-        let send = view.kind == .send
-        if !send {
-            EverythingCard(
-                vm: vm,
-                title: "Allow all mail for a while",
-                text: "Release these and let this AI search and read any of your mail without asking again, then ask again when time is up. Sending is never included.",
-                ticks: Set(view.messages.filter { !$0.sensitive }.map(\.id))
-            )
+        HStack(spacing: 10) {
+            label.frame(maxWidth: .infinity, alignment: .leading)
+            ZStack {
+                Circle().strokeBorder(selected ? tint : Palette.dynamic(0x97979F, 0x4A4A52), lineWidth: 2)
+                if selected { Circle().fill(tint).frame(width: 11, height: 11) }
+            }
+            .frame(width: 22, height: 22)
         }
-        if vm.draft.allMail == nil {
-            LifetimeChips(vm: vm)
-            if vm.draft.lifetime != .once { ScopeBuilder(vm: vm, view: view) }
+        .padding(.leading, 18)
+        .padding(.trailing, 16)
+        .padding(.vertical, 10)
+        .frame(minHeight: 52)
+        .contentShape(Rectangle())
+        .onTapGesture {
+            onSelect()
+            feedback.play(.selection)
+        }
+        .accessibilityElement(children: .combine)
+        .accessibilityAddTraits(selected ? [.isButton, .isSelected] : .isButton)
+        .accessibilityAction { onSelect() }
+        .accessibilityIdentifier(id)
+    }
+}
+
+private struct LifetimeOption: View {
+    var kind: LifetimeKind
+    var selected: Bool
+    @Bindable var vm: ApprovalModel
+    var onSelect: () -> Void
+
+    var body: some View {
+        OptionRow(selected: selected, id: "lifetime:\(kind.rawValue)", onSelect: onSelect) {
+            HStack(spacing: 6) {
+                Text(title).font(RFont.sans(15.5)).foregroundStyle(Palette.text).frame(maxWidth: .infinity, alignment: .leading)
+                switch kind {
+                case .custom:
+                    CountStepper(value: $vm.draft.customAmount, in: 1...vm.draft.customUnit.max, id: "custom") { onSelect() }
+                    Menu {
+                        ForEach(LifetimeUnit.allCases) { unit in
+                            Button(unit.rawValue) {
+                                vm.draft.customUnit = unit
+                                vm.draft.customAmount = min(vm.draft.customAmount, unit.max)
+                                onSelect()
+                            }
+                        }
+                    } label: {
+                        HStack(spacing: 3) {
+                            Text(vm.draft.customUnit.rawValue).font(RFont.sans(14.5, .semibold))
+                            Image(systemName: "chevron.down").font(.system(size: 10, weight: .bold)).foregroundStyle(Palette.secondary)
+                        }
+                        .foregroundStyle(Palette.text)
+                        .padding(.leading, 11)
+                        .padding(.trailing, 8)
+                        .padding(.vertical, 7)
+                        .background(Palette.background, in: RoundedRectangle(cornerRadius: 11, style: .continuous))
+                    }
+                    .accessibilityIdentifier("custom:unit")
+                case .uses:
+                    CountStepper(value: $vm.draft.uses, in: 1...ApprovalRules.maxUses, id: "uses") { onSelect() }
+                default:
+                    EmptyView()
+                }
+            }
+        }
+    }
+
+    private var title: String {
+        switch kind {
+        case .week: "1 week"
+        case .month: "30 days"
+        case .custom: "Custom"
+        case .uses: "Number of uses"
+        default: kind.label
         }
     }
 }
 
-/// What a standing Gmail grant covers: the ticked emails or similar mail (senders, domains), or the recipients of a send.
-private struct ScopeBuilder: View {
+/// − n + on a sunken plate.
+private struct CountStepper: View {
+    @Binding var value: Int
+    var range: ClosedRange<Int>
+    var id: String
+    var onChange: () -> Void
+    @Environment(\.feedback) private var feedback
+
+    init(value: Binding<Int>, in range: ClosedRange<Int>, id: String, onChange: @escaping () -> Void) {
+        _value = value
+        self.range = range
+        self.id = id
+        self.onChange = onChange
+    }
+
+    var body: some View {
+        HStack(spacing: 0) {
+            step("minus", "Fewer", value > range.lowerBound) { value -= 1 }
+                .accessibilityIdentifier("\(id):minus")
+            Text("\(value)").font(RFont.mono(15, .medium)).foregroundStyle(Palette.text).frame(minWidth: 34).monospacedDigit()
+                .accessibilityIdentifier("\(id):value")
+            step("plus", "More", value < range.upperBound) { value += 1 }
+                .accessibilityIdentifier("\(id):plus")
+        }
+        .background(Palette.background, in: RoundedRectangle(cornerRadius: 11, style: .continuous))
+        .accessibilityElement(children: .contain)
+    }
+
+    private func step(_ symbol: String, _ label: String, _ enabled: Bool, _ change: @escaping () -> Void) -> some View {
+        Button {
+            change()
+            onChange()
+            feedback.play(.detent, step: value)
+        } label: {
+            Image(systemName: symbol)
+                .font(.system(size: 12, weight: .bold))
+                .foregroundStyle(enabled ? Palette.secondary : Palette.tertiary.opacity(0.5))
+                .frame(width: 32, height: 34)
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .disabled(!enabled)
+        .accessibilityLabel(label)
+    }
+}
+
+/// What a remembered approval covers: anything like this (the default), or exactly what is ticked here.
+private struct ScopeOptions: View {
     @Bindable var vm: ApprovalModel
     var view: ApprovalView
     @Environment(\.feedback) private var feedback
 
     var body: some View {
-        OptionTitle(text: "What should it cover?", top: 18)
-        GroupCard {
-            if view.kind == .send {
-                ForEach(Array(recipientAddresses(view).enumerated()), id: \.element) { i, address in
-                    if i > 0 { Hairline() }
+        let write = view.kind == .write
+        let send = view.kind == .send
+        let gmail = [ApprovalKind.search, .read, .send].contains(view.kind)
+        VStack(alignment: .leading, spacing: 10) {
+            if let quick = view.quick, quick.allow != nil {
+                FactGroup {
+                    OptionRow(selected: !vm.draft.likeThis && vm.draft.allMail == nil, id: "scope:picked") {
+                        vm.draft.likeThis = false
+                        vm.draft.allMail = nil
+                    } label: {
+                        Text("Only what's shown").font(RFont.sans(15.5)).foregroundStyle(Palette.text)
+                    }
+                    // Wider than the screen: it says exactly what, and the dock says it is on.
+                    OptionRow(selected: vm.draft.likeThis && vm.draft.allMail == nil, id: "scope:like", tint: Palette.danger) {
+                        vm.draft.likeThis = true
+                        vm.draft.allMail = nil
+                    } label: {
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text("Anything like this").font(RFont.sans(15.5, .medium)).foregroundStyle(Palette.warning)
+                            Text("\(untrusted(quick.allowWhat)), by \(untrusted(view.connectionLabel))")
+                                .font(RFont.sans(12.5)).foregroundStyle(Palette.tertiary).lineLimit(2)
+                                .accessibilityIdentifier("allowWhat")
+                        }
+                    }
+                }
+            }
+            if !write && !send { everything }
+            if vm.draft.allMail == nil {
+                if gmail {
+                    gmailScope
+                } else {
+                    if write && !view.classes.isEmpty {
+                        FactHeader("Kinds of change")
+                        FlowRow {
+                            ForEach(view.classes, id: \.id) { kind in
+                                let on = vm.draft.classes.contains(kind.id)
+                                SelectChip(title: untrusted(kind.label), selected: on) {
+                                    vm.draft.likeThis = false
+                                    vm.draft.classes = toggleClass(vm.draft.classes, kind.id, on: !on)
+                                }
+                                .accessibilityIdentifier("class:\(kind.id)")
+                            }
+                        }
+                        .padding(.horizontal, 16)
+                        .accessibilityElement(children: .contain)
+                        .accessibilityIdentifier("classes")
+                    }
+                    resources(view.resources.filter { !$0.wider })
+                    let wide = view.resources.filter(\.wider)
+                    if !wide.isEmpty {
+                        FactHeader("Or wider").accessibilityIdentifier("widerCaption")
+                        resources(wide)
+                    }
+                }
+            }
+        }
+    }
+
+    /// All mail (or all of an integration) for a while: never open-ended, never for changing things.
+    private var everything: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            let gmail = view.service.isEmpty || view.service == "gmail"
+            FactHeader(gmail ? "All mail for" : "All of \(serviceName(view.service)) for")
+            FlowRow {
+                ForEach(ApprovalRules.allMailLifetimes) { kind in
+                    SelectChip(title: ApprovalWords.period(kind.seconds ?? 3_600), selected: vm.draft.allMail == kind) {
+                        if vm.draft.allMail == kind {
+                            vm.draft.allMail = nil
+                        } else {
+                            vm.draft.allMail = kind
+                            vm.draft.selected = Set(view.messages.filter { !$0.sensitive }.map(\.id))
+                        }
+                    }
+                    .accessibilityIdentifier("allMail:\(kind.rawValue)")
+                }
+            }
+            .padding(.horizontal, 16)
+        }
+    }
+
+    @ViewBuilder private func resources(_ list: [ResourceView]) -> some View {
+        if !list.isEmpty {
+            FactGroup {
+                ForEach(list, id: \.id) { r in
+                    CheckRow(checked: vm.draft.resources.contains(r.id), onChange: { on in
+                        vm.draft.likeThis = false
+                        vm.draft.resources = toggleResource(vm.draft.resources, r.id, on: on)
+                    }) {
+                        Text(untrusted(r.label)).font(RFont.sans(15.5)).foregroundStyle(Palette.text).lineLimit(2)
+                    }
+                    .padding(.horizontal, 16)
+                    .padding(.vertical, 12)
+                    .accessibilityIdentifier("resource:\(r.id)")
+                }
+            }
+        }
+    }
+
+    /// Gmail: only the ticked emails, or similar mail (senders, domains, subject); a send: each recipient, or its domain.
+    @ViewBuilder private var gmailScope: some View {
+        if view.kind == .send {
+            FactGroup {
+                ForEach(recipientAddresses(view), id: \.self) { address in
                     let wide = vm.draft.domainRecipients.contains(address)
                     Toggle(isOn: Binding(
                         get: { wide },
                         set: { on in
+                            vm.draft.likeThis = false
                             if on { vm.draft.domainRecipients.insert(address) } else { vm.draft.domainRecipients.remove(address) }
                             feedback.play(.toggle(on))
                         }
                     )) {
                         VStack(alignment: .leading, spacing: 2) {
                             Text(address).font(RFont.mono(14)).foregroundStyle(Palette.text).environment(\.layoutDirection, .leftToRight)
-                            Text(wide ? "Anyone at @\(domainOf(address))" : "This address only")
-                                .font(RFont.sans(12.5))
-                                .foregroundStyle(Palette.secondary)
+                            Text(wide ? "Anyone at @\(domainOf(address))" : "This address only").font(RFont.sans(12.5)).foregroundStyle(Palette.tertiary)
                         }
                     }
                     .tint(Palette.accent)
@@ -205,183 +396,69 @@ private struct ScopeBuilder: View {
                     .padding(.vertical, 12)
                     .accessibilityIdentifier("domain:\(address)")
                 }
-            } else {
-                CheckRow(checked: !vm.draft.similar, onChange: { _ in vm.draft.similar = false }) {
-                    Text("Only the emails I ticked").font(RFont.sans(15.5)).foregroundStyle(Palette.text)
+            }
+        } else {
+            let picked = !vm.draft.likeThis || view.quick?.allow == nil
+            FactGroup {
+                CheckRow(checked: picked && !vm.draft.similar, onChange: { _ in
+                    vm.draft.likeThis = false
+                    vm.draft.similar = false
+                }) { Text("Only the emails I ticked").font(RFont.sans(15.5)).foregroundStyle(Palette.text) }
+                    .padding(16)
+                    .accessibilityIdentifier("onlySelected")
+                CheckRow(checked: picked && vm.draft.similar, onChange: { _ in
+                    vm.draft.likeThis = false
+                    vm.draft.similar = true
+                }) { Text("Also similar mail").font(RFont.sans(15.5)).foregroundStyle(Palette.text) }
+                    .padding(16)
+                    .accessibilityIdentifier("similar")
+                if picked && vm.draft.similar {
+                    let senders = senderAddresses(view, selected: vm.draft.selected)
+                    ForEach(senders, id: \.self) { address in
+                        CheckRow(checked: vm.draft.senderAddresses.contains(address), onChange: { on in
+                            if on { vm.draft.senderAddresses.insert(address) } else { vm.draft.senderAddresses.remove(address) }
+                        }) {
+                            Text(address).font(RFont.mono(14)).foregroundStyle(Palette.text).environment(\.layoutDirection, .leftToRight)
+                        }
+                        .padding(.horizontal, 16)
+                        .padding(.vertical, 12)
+                        .accessibilityIdentifier("sender:\(address)")
+                    }
+                    let domains = senders.map(domainOf).reduce(into: [String]()) { if !$0.contains($1) { $0.append($1) } }
+                    ForEach(domains, id: \.self) { domain in
+                        CheckRow(checked: vm.draft.senderDomains.contains(domain), onChange: { on in
+                            if on { vm.draft.senderDomains.insert(domain) } else { vm.draft.senderDomains.remove(domain) }
+                        }) {
+                            Text("Anyone at @\(domain)").font(RFont.sans(15)).foregroundStyle(Palette.text)
+                        }
+                        .padding(.horizontal, 16)
+                        .padding(.vertical, 12)
+                        .accessibilityIdentifier("senderDomain:\(domain)")
+                    }
                 }
-                .padding(16)
-                .accessibilityIdentifier("onlySelected")
-                Hairline()
-                CheckRow(checked: vm.draft.similar, onChange: { _ in vm.draft.similar = true }) {
-                    Text("Also allow similar mail").font(RFont.sans(15.5)).foregroundStyle(Palette.text)
-                }
-                .padding(16)
-                .accessibilityIdentifier("similar")
-                if vm.draft.similar { similarRows }
             }
         }
         TextField("Subject contains (optional)", text: Binding(
             get: { vm.draft.subject },
-            set: { vm.draft.subject = String($0.prefix(200)) }
+            set: {
+                vm.draft.likeThis = false
+                vm.draft.subject = String($0.prefix(200))
+            }
         ))
         .font(RFont.sans(16))
         .padding(.horizontal, 14)
         .padding(.vertical, 12)
         .background(Palette.controlFill, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
         .padding(.horizontal, 16)
-        .padding(.vertical, 12)
         .accessibilityIdentifier("subject")
     }
-
-    @ViewBuilder private var similarRows: some View {
-        let senders = senderAddresses(view, selected: vm.draft.selected)
-        if senders.isEmpty {
-            Text("Tick an email to offer its sender.")
-                .font(RFont.sans(13))
-                .foregroundStyle(Palette.tertiary)
-                .padding(.leading, 16)
-                .padding(.bottom, 12)
-        }
-        ForEach(senders, id: \.self) { address in
-            Hairline()
-            CheckRow(checked: vm.draft.senderAddresses.contains(address), onChange: { on in
-                if on { vm.draft.senderAddresses.insert(address) } else { vm.draft.senderAddresses.remove(address) }
-            }) {
-                Text(address).font(RFont.mono(14)).foregroundStyle(Palette.text).environment(\.layoutDirection, .leftToRight)
-            }
-            .padding(.horizontal, 16)
-            .padding(.vertical, 12)
-        }
-        let domains = senders.map(domainOf).reduce(into: [String]()) { if !$0.contains($1) { $0.append($1) } }
-        ForEach(domains, id: \.self) { domain in
-            Hairline()
-            CheckRow(checked: vm.draft.senderDomains.contains(domain), onChange: { on in
-                if on { vm.draft.senderDomains.insert(domain) } else { vm.draft.senderDomains.remove(domain) }
-            }) {
-                Text("Anyone at @\(domain)").font(RFont.sans(15)).foregroundStyle(Palette.text)
-            }
-            .padding(.horizontal, 16)
-            .padding(.vertical, 12)
-            .accessibilityIdentifier("senderDomain:\(domain)")
-        }
-    }
 }
 
-/// How long to remember an approval in another integration and what it covers; a password is never remembered.
-private struct ConnectorOptions: View {
+/// A permission the AI asked for can only be made shorter: a slider with a detent per step, up to what was asked.
+struct GrantSheet: View {
     @Bindable var vm: ApprovalModel
     var view: ApprovalView
-
-    var body: some View {
-        let write = view.kind == .write
-        if view.noStanding {
-            Text(write
-                ? "This is asked for every time. A change like this is never remembered."
-                : "This is asked for every time. Passwords, codes and one-time values are never remembered.")
-                .font(RFont.sans(14))
-                .foregroundStyle(Palette.secondary)
-                .padding(.horizontal, 20)
-                .padding(.vertical, 8)
-                .accessibilityIdentifier("noStanding")
-        } else {
-            let service = serviceName(view.service)
-            if !write {
-                EverythingCard(
-                    vm: vm,
-                    title: "Allow all of \(service) for a while",
-                    text: "This AI can list, read and search \(service) without asking again, then asks again when time is up. Changing things is never included.",
-                    ticks: Set(view.messages.filter { !$0.sensitive }.map(\.id))
-                )
-            }
-            if vm.draft.allMail == nil {
-                LifetimeChips(vm: vm)
-                if vm.draft.lifetime != .once {
-                    if write && !view.classes.isEmpty { classPicker }
-                    OptionTitle(text: "What should it cover?", top: 18)
-                    let narrow = view.resources.filter { !$0.wider }
-                    let wide = view.resources.filter(\.wider)
-                    ResourceGroup(vm: vm, resources: narrow)
-                    if !wide.isEmpty {
-                        Text("Or a wider permission")
-                            .font(RFont.sans(12.5, .medium))
-                            .foregroundStyle(Palette.tertiary)
-                            .padding(.leading, 20)
-                            .padding(.top, 14)
-                            .padding(.bottom, 8)
-                            .accessibilityIdentifier("widerCaption")
-                        ResourceGroup(vm: vm, resources: wide)
-                    }
-                }
-            }
-        }
-    }
-
-    @ViewBuilder private var classPicker: some View {
-        OptionTitle(text: "Allow these kinds of change", top: 18)
-        FlowRow {
-            ForEach(view.classes, id: \.id) { kind in
-                let on = vm.draft.classes.contains(kind.id)
-                SelectChip(title: untrusted(kind.label), selected: on) {
-                    vm.draft.classes = toggleClass(vm.draft.classes, kind.id, on: !on)
-                }
-                .accessibilityIdentifier("class:\(kind.id)")
-            }
-        }
-        .padding(.horizontal, 16)
-        Text("At least one stays ticked. Only what you tick is allowed without asking.")
-            .font(RFont.sans(12.5))
-            .foregroundStyle(Palette.tertiary)
-            .padding(.leading, 20)
-            .padding(.top, 6)
-    }
-}
-
-/// The things a permission can cover, each with a tick; ticking one that contains or is inside another swaps them.
-private struct ResourceGroup: View {
-    @Bindable var vm: ApprovalModel
-    var resources: [ResourceView]
-
-    var body: some View {
-        if !resources.isEmpty {
-            GroupCard {
-                ForEach(Array(resources.enumerated()), id: \.element.id) { i, resource in
-                    if i > 0 { Hairline() }
-                    CheckRow(checked: vm.draft.resources.contains(resource.id), onChange: { on in
-                        vm.draft.resources = toggleResource(vm.draft.resources, resource.id, on: on)
-                    }) {
-                        Text(untrusted(resource.label)).font(RFont.sans(15.5)).foregroundStyle(Palette.text).lineLimit(2)
-                    }
-                    .padding(.horizontal, 16)
-                    .padding(.vertical, 12)
-                    .accessibilityIdentifier("resource:\(resource.id)")
-                }
-            }
-        }
-    }
-}
-
-/// Showing accounts: once, or for one of a few periods.
-private struct AccountsPeriod: View {
-    @Bindable var vm: ApprovalModel
-
-    var body: some View {
-        OptionTitle(text: "Let it see them for", top: 6)
-        FlowRow {
-            ForEach(ApprovalRules.accountsLifetimes) { kind in
-                SelectChip(title: kind == .once ? "Just this once" : kind.label, selected: vm.draft.lifetime == kind) {
-                    vm.draft.lifetime = kind
-                }
-                .accessibilityIdentifier("lifetime:\(kind.rawValue)")
-            }
-        }
-        .padding(.horizontal, 16)
-    }
-}
-
-/// A permission request can only be made shorter: a slider with a detent per step, up to what was asked.
-private struct ShortenGrant: View {
-    @Bindable var vm: ApprovalModel
-    var view: ApprovalView
+    @Environment(\.dismiss) private var dismiss
     @Environment(\.feedback) private var feedback
 
     var body: some View {
@@ -389,10 +466,10 @@ private struct ShortenGrant: View {
             let steps = shortenSteps(asked: asked)
             let current = min(vm.draft.grantSeconds ?? asked, asked)
             let index = max(steps.lastIndex { $0 <= current } ?? 0, 0)
-            VStack(alignment: .leading, spacing: 2) {
-                Text("Allow for").font(RFont.sans(13, .semibold)).foregroundStyle(Palette.secondary)
-                Text(TimeText.duration(steps[index]))
-                    .font(RFont.sans(22, .semibold))
+            VStack(alignment: .leading, spacing: 8) {
+                Text("Allow for").font(RFont.sans(18, .semibold)).foregroundStyle(Palette.text)
+                Text(ApprovalWords.period(UInt64(steps[index])))
+                    .font(RFont.sans(26, .semibold))
                     .foregroundStyle(Palette.text)
                     .contentTransition(.numericText())
                     .accessibilityIdentifier("grantDuration")
@@ -412,15 +489,22 @@ private struct ShortenGrant: View {
                     )
                     .tint(Palette.accent)
                     .accessibilityLabel("Allow for")
-                    .accessibilityValue(TimeText.duration(steps[index]))
+                    .accessibilityValue(ApprovalWords.period(UInt64(steps[index])))
                     .accessibilityIdentifier("grantSlider")
-                    Text("The request asked for \(TimeText.duration(asked)). You can only make it shorter.")
-                        .font(RFont.sans(12.5))
-                        .foregroundStyle(Palette.tertiary)
+                    Text("Asked for \(ApprovalWords.period(UInt64(asked))). Only shorter.").font(RFont.sans(13)).foregroundStyle(Palette.tertiary)
                 }
+                Button { dismiss() } label: {
+                    Text("Done").font(RFont.sans(17, .semibold)).foregroundStyle(Palette.background)
+                        .frame(maxWidth: .infinity, minHeight: 54)
+                        .background(Palette.text, in: Capsule())
+                }
+                .buttonStyle(.plain)
+                .padding(.top, 12)
+                .accessibilityIdentifier("grantDone")
             }
-            .padding(.horizontal, 20)
-            .padding(.vertical, 6)
+            .padding(22)
+            .presentationDetents([.height(320)])
+            .accessibilityContainer("grantSheet")
         }
     }
 }

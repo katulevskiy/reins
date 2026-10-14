@@ -80,6 +80,11 @@ pub fn request_floor(view: &ApprovalView) -> Option<&'static str> {
     if view.git.as_ref().is_some_and(|g| g.refs.iter().any(|r| r.force || r.force_unknown || r.change == "delete")) {
         return Some("this push rewrites or deletes history");
     }
+    if view.git.as_ref().is_some_and(|g| {
+        g.refs.iter().any(|r| r.commits.iter().any(|c| c.hidden_chars) || r.files.iter().any(|f| f.hidden_chars))
+    }) {
+        return Some("this push holds hidden characters that can make code read unlike what it does");
+    }
     if view.blob.as_ref().is_some_and(blob_flagged) {
         return Some("the uploaded file may hold something to run");
     }

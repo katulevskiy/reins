@@ -7371,6 +7371,82 @@ public func FfiConverterTypeDeviceView_lower(_ value: DeviceView) -> RustBuffer 
 }
 
 
+public struct DiffLineView: Equatable, Hashable {
+    public var kind: DiffLineKind
+    /**
+     * The line's number in the old file (context and deleted lines) and in the new one (context and added lines).
+     */
+    public var oldLine: UInt32?
+    public var newLine: UInt32?
+    /**
+     * The line without its sign (the whole header for a hunk), tabs as four spaces, control and invisible characters
+     * (bidi controls, zero-width characters) as U+FFFD so they can be seen.
+     */
+    public var text: String
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(kind: DiffLineKind, 
+        /**
+         * The line's number in the old file (context and deleted lines) and in the new one (context and added lines).
+         */oldLine: UInt32?, newLine: UInt32?, 
+        /**
+         * The line without its sign (the whole header for a hunk), tabs as four spaces, control and invisible characters
+         * (bidi controls, zero-width characters) as U+FFFD so they can be seen.
+         */text: String) {
+        self.kind = kind
+        self.oldLine = oldLine
+        self.newLine = newLine
+        self.text = text
+    }
+
+    
+
+    
+}
+
+#if compiler(>=6)
+extension DiffLineView: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeDiffLineView: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> DiffLineView {
+        return
+            try DiffLineView(
+                kind: FfiConverterTypeDiffLineKind.read(from: &buf), 
+                oldLine: FfiConverterOptionUInt32.read(from: &buf), 
+                newLine: FfiConverterOptionUInt32.read(from: &buf), 
+                text: FfiConverterString.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: DiffLineView, into buf: inout [UInt8]) {
+        FfiConverterTypeDiffLineKind.write(value.kind, into: &buf)
+        FfiConverterOptionUInt32.write(value.oldLine, into: &buf)
+        FfiConverterOptionUInt32.write(value.newLine, into: &buf)
+        FfiConverterString.write(value.text, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeDiffLineView_lift(_ buf: RustBuffer) throws -> DiffLineView {
+    return try FfiConverterTypeDiffLineView.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeDiffLineView_lower(_ value: DiffLineView) -> RustBuffer {
+    return FfiConverterTypeDiffLineView.lower(value)
+}
+
+
 /**
  * One email opened from the activity, fetched from Gmail when asked for (nothing of it is kept on the phone).
  */
@@ -7526,6 +7602,26 @@ public struct GitCommitView: Equatable, Hashable {
      * "Name <email>".
      */
     public var author: String
+    /**
+     * Author time, unix seconds (0 when not known).
+     */
+    public var date: Int64
+    /**
+     * What the commit itself changes (against its first parent): how many files, and the first of them with their
+     * lines; `None` when the desktop app did not compare them.
+     */
+    public var filesChanged: UInt32?
+    public var files: [GitFileView]
+    /**
+     * Lines added and removed in all its files; `None` when not every file could be counted.
+     */
+    public var additions: UInt64?
+    public var deletions: UInt64?
+    /**
+     * The subject, the author or one of its files holds characters that change how text reads without being seen
+     * (bidi controls, zero-width characters): what is shown may not be what the code does. Show a warning.
+     */
+    public var hiddenChars: Bool
 
     // Default memberwise initializers are never public by default, so we
     // declare one manually.
@@ -7535,10 +7631,30 @@ public struct GitCommitView: Equatable, Hashable {
          */shortSha: String, subject: String, 
         /**
          * "Name <email>".
-         */author: String) {
+         */author: String, 
+        /**
+         * Author time, unix seconds (0 when not known).
+         */date: Int64 = Int64(0), 
+        /**
+         * What the commit itself changes (against its first parent): how many files, and the first of them with their
+         * lines; `None` when the desktop app did not compare them.
+         */filesChanged: UInt32? = nil, files: [GitFileView] = [], 
+        /**
+         * Lines added and removed in all its files; `None` when not every file could be counted.
+         */additions: UInt64? = nil, deletions: UInt64? = nil, 
+        /**
+         * The subject, the author or one of its files holds characters that change how text reads without being seen
+         * (bidi controls, zero-width characters): what is shown may not be what the code does. Show a warning.
+         */hiddenChars: Bool = false) {
         self.shortSha = shortSha
         self.subject = subject
         self.author = author
+        self.date = date
+        self.filesChanged = filesChanged
+        self.files = files
+        self.additions = additions
+        self.deletions = deletions
+        self.hiddenChars = hiddenChars
     }
 
     
@@ -7559,7 +7675,13 @@ public struct FfiConverterTypeGitCommitView: FfiConverterRustBuffer {
             try GitCommitView(
                 shortSha: FfiConverterString.read(from: &buf), 
                 subject: FfiConverterString.read(from: &buf), 
-                author: FfiConverterString.read(from: &buf)
+                author: FfiConverterString.read(from: &buf), 
+                date: FfiConverterInt64.read(from: &buf), 
+                filesChanged: FfiConverterOptionUInt32.read(from: &buf), 
+                files: FfiConverterSequenceTypeGitFileView.read(from: &buf), 
+                additions: FfiConverterOptionUInt64.read(from: &buf), 
+                deletions: FfiConverterOptionUInt64.read(from: &buf), 
+                hiddenChars: FfiConverterBool.read(from: &buf)
         )
     }
 
@@ -7567,6 +7689,12 @@ public struct FfiConverterTypeGitCommitView: FfiConverterRustBuffer {
         FfiConverterString.write(value.shortSha, into: &buf)
         FfiConverterString.write(value.subject, into: &buf)
         FfiConverterString.write(value.author, into: &buf)
+        FfiConverterInt64.write(value.date, into: &buf)
+        FfiConverterOptionUInt32.write(value.filesChanged, into: &buf)
+        FfiConverterSequenceTypeGitFileView.write(value.files, into: &buf)
+        FfiConverterOptionUInt64.write(value.additions, into: &buf)
+        FfiConverterOptionUInt64.write(value.deletions, into: &buf)
+        FfiConverterBool.write(value.hiddenChars, into: &buf)
     }
 }
 
@@ -7598,6 +7726,20 @@ public struct GitFileView: Equatable, Hashable {
     public var additions: UInt32?
     public var deletions: UInt32?
     public var binary: Bool
+    /**
+     * A commit's file: the change line by line, as the desktop app sent it (empty when not shown: binary, too large,
+     * or over the push's budget). Text from the user's repository: show it as untrusted.
+     */
+    public var diff: [DiffLineView]
+    /**
+     * `diff` stops before the end of the change.
+     */
+    public var diffCut: Bool
+    /**
+     * The path or a line of `diff` held invisible characters (bidi controls, zero-width characters); in `diff` each
+     * is shown as U+FFFD. Show a warning.
+     */
+    public var hiddenChars: Bool
 
     // Default memberwise initializers are never public by default, so we
     // declare one manually.
@@ -7607,12 +7749,26 @@ public struct GitFileView: Equatable, Hashable {
          */status: String, 
         /**
          * `None` when not counted (binary, too large).
-         */additions: UInt32?, deletions: UInt32?, binary: Bool) {
+         */additions: UInt32?, deletions: UInt32?, binary: Bool, 
+        /**
+         * A commit's file: the change line by line, as the desktop app sent it (empty when not shown: binary, too large,
+         * or over the push's budget). Text from the user's repository: show it as untrusted.
+         */diff: [DiffLineView] = [], 
+        /**
+         * `diff` stops before the end of the change.
+         */diffCut: Bool = false, 
+        /**
+         * The path or a line of `diff` held invisible characters (bidi controls, zero-width characters); in `diff` each
+         * is shown as U+FFFD. Show a warning.
+         */hiddenChars: Bool = false) {
         self.path = path
         self.status = status
         self.additions = additions
         self.deletions = deletions
         self.binary = binary
+        self.diff = diff
+        self.diffCut = diffCut
+        self.hiddenChars = hiddenChars
     }
 
     
@@ -7635,7 +7791,10 @@ public struct FfiConverterTypeGitFileView: FfiConverterRustBuffer {
                 status: FfiConverterString.read(from: &buf), 
                 additions: FfiConverterOptionUInt32.read(from: &buf), 
                 deletions: FfiConverterOptionUInt32.read(from: &buf), 
-                binary: FfiConverterBool.read(from: &buf)
+                binary: FfiConverterBool.read(from: &buf), 
+                diff: FfiConverterSequenceTypeDiffLineView.read(from: &buf), 
+                diffCut: FfiConverterBool.read(from: &buf), 
+                hiddenChars: FfiConverterBool.read(from: &buf)
         )
     }
 
@@ -7645,6 +7804,9 @@ public struct FfiConverterTypeGitFileView: FfiConverterRustBuffer {
         FfiConverterOptionUInt32.write(value.additions, into: &buf)
         FfiConverterOptionUInt32.write(value.deletions, into: &buf)
         FfiConverterBool.write(value.binary, into: &buf)
+        FfiConverterSequenceTypeDiffLineView.write(value.diff, into: &buf)
+        FfiConverterBool.write(value.diffCut, into: &buf)
+        FfiConverterBool.write(value.hiddenChars, into: &buf)
     }
 }
 
@@ -13166,6 +13328,102 @@ public func FfiConverterTypeDeviceKind_lower(_ value: DeviceKind) -> RustBuffer 
 
 
 /**
+ * One line of a file's change.
+ */
+
+public enum DiffLineKind: Equatable, Hashable {
+    
+    /**
+     * `@@ -12,9 +12,22 @@ …`: where the next lines are.
+     */
+    case hunk
+    case context
+    case add
+    case delete
+    /**
+     * "No newline at end of file".
+     */
+    case note
+
+
+
+
+
+}
+
+#if compiler(>=6)
+extension DiffLineKind: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeDiffLineKind: FfiConverterRustBuffer {
+    typealias SwiftType = DiffLineKind
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> DiffLineKind {
+        let variant: Int32 = try readInt(&buf)
+        switch variant {
+        
+        case 1: return .hunk
+        
+        case 2: return .context
+        
+        case 3: return .add
+        
+        case 4: return .delete
+        
+        case 5: return .note
+        
+        default: throw UniffiInternalError.unexpectedEnumCase
+        }
+    }
+
+    public static func write(_ value: DiffLineKind, into buf: inout [UInt8]) {
+        switch value {
+        
+        
+        case .hunk:
+            writeInt(&buf, Int32(1))
+        
+        
+        case .context:
+            writeInt(&buf, Int32(2))
+        
+        
+        case .add:
+            writeInt(&buf, Int32(3))
+        
+        
+        case .delete:
+            writeInt(&buf, Int32(4))
+        
+        
+        case .note:
+            writeInt(&buf, Int32(5))
+        
+        }
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeDiffLineKind_lift(_ buf: RustBuffer) throws -> DiffLineKind {
+    return try FfiConverterTypeDiffLineKind.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeDiffLineKind_lower(_ value: DiffLineKind) -> RustBuffer {
+    return FfiConverterTypeDiffLineKind.lower(value)
+}
+
+
+
+/**
  * Error returned by the Kotlin implementations of the foreign traits.
  */
 public 
@@ -15208,6 +15466,31 @@ fileprivate struct FfiConverterSequenceTypeDeviceView: FfiConverterRustBuffer {
         seq.reserveCapacity(Int(len))
         for _ in 0 ..< len {
             seq.append(try FfiConverterTypeDeviceView.read(from: &buf))
+        }
+        return seq
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+fileprivate struct FfiConverterSequenceTypeDiffLineView: FfiConverterRustBuffer {
+    typealias SwiftType = [DiffLineView]
+
+    public static func write(_ value: [DiffLineView], into buf: inout [UInt8]) {
+        let len = Int32(value.count)
+        writeInt(&buf, len)
+        for item in value {
+            FfiConverterTypeDiffLineView.write(item, into: &buf)
+        }
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> [DiffLineView] {
+        let len: Int32 = try readInt(&buf)
+        var seq = [DiffLineView]()
+        seq.reserveCapacity(Int(len))
+        for _ in 0 ..< len {
+            seq.append(try FfiConverterTypeDiffLineView.read(from: &buf))
         }
         return seq
     }

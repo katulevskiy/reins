@@ -21,6 +21,11 @@ enum TimeText {
         date(epochSeconds).formatted(date: .abbreviated, time: .shortened)
     }
 
+    /// "Nov 14, 2023": the locale's medium date.
+    static func day(_ epochSeconds: Int64) -> String {
+        date(epochSeconds).formatted(date: .abbreviated, time: .omitted)
+    }
+
     /// "November 14, 2023 at 2:14 PM": date and time, spelled out.
     static func full(_ epochSeconds: Int64) -> String {
         date(epochSeconds).formatted(date: .long, time: .shortened)

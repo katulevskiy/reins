@@ -1,0 +1,567 @@
+package dev.reins.android.ui.approval
+
+import androidx.compose.animation.animateColorAsState
+import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.tween
+import androidx.compose.foundation.background
+import androidx.compose.foundation.border
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.defaultMinSize
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.selection.toggleable
+import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.rounded.Check
+import androidx.compose.material.icons.rounded.ChevronRight
+import androidx.compose.material.icons.rounded.Key
+import androidx.compose.material.icons.rounded.Lock
+import androidx.compose.material3.Icon
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.text.style.TextDecoration
+import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.dp
+import dev.reins.android.design.BlobAvatar
+import dev.reins.android.design.LocalColors
+import dev.reins.android.design.RText
+import dev.reins.android.design.RType
+import dev.reins.android.design.ServiceAvatar
+import dev.reins.android.design.StrikeText
+import dev.reins.android.design.pressable
+import dev.reins.android.feedback.Event
+import dev.reins.android.feedback.LocalFeedback
+import dev.reins.android.feedback.play
+import dev.reins.android.ui.common.formatDate
+import dev.reins.android.ui.common.untrusted
+import dev.reins.android.ui.mcp.mcpHost
+import dev.reins.core.ApprovalKind
+import dev.reins.core.ApprovalView
+import dev.reins.core.MessageView
+
+/** The main page: the hero, then the facts of the request, by kind. */
+@Composable
+internal fun MainPage(view: ApprovalView, ui: ApprovalUi, viewModel: ApprovalViewModel) {
+    Hero(view, ui, viewModel)
+    Column(Modifier.fillMaxWidth().padding(top = 14.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+        val purchase = view.purchase
+        val git = view.git
+        when {
+            view.kind == ApprovalKind.GRANT -> GrantFacts(view)
+            view.kind == ApprovalKind.ACCOUNTS -> AccountsFacts(view, ui, viewModel)
+            view.kind == ApprovalKind.SEND -> SendFacts(view)
+            view.kind == ApprovalKind.WRITE -> {
+                when {
+                    purchase != null -> PurchaseSection(purchase, ui.purchase, viewModel)
+                    git != null -> GitFacts(view, git)
+                    view.mcp != null -> McpFacts(view.mcp!!)
+                    view.ask != null -> AskFacts(view.ask!!)
+                    view.secrets != null -> SecretsFacts(view.secrets!!)
+                    view.ssh != null -> SshFacts(view.ssh!!)
+                    else -> WriteFacts(view)
+                }
+                view.blob?.let { AttachedFileSection(it) }
+            }
+            else -> MessagesFacts(view, ui, viewModel)
+        }
+        PublicDomainNote(view, ui)
+    }
+}
+
+// ---- the grouped card ------------------------------------------------------------------------------------------
+
+/** A grouped card of rows with hairlines between them. */
+@Composable
+internal fun FactGroup(modifier: Modifier = Modifier, tag: String? = null, borderTint: Color? = null, rows: List<@Composable () -> Unit>) {
+    val c = LocalColors.current
+    val shape = RoundedCornerShape(22.dp)
+    Column(
+        modifier
+            .padding(horizontal = 16.dp)
+            .fillMaxWidth()
+            .clip(shape)
+            .background(Surfaces.group(c))
+            .border(1.dp, borderTint ?: Surfaces.groupEdge(c), shape)
+            .then(if (tag != null) Modifier.testTag(tag) else Modifier),
+    ) {
+        rows.forEachIndexed { i, row ->
+            if (i > 0) Box(Modifier.fillMaxWidth().height(1.dp).background(c.hairline))
+            row()
+        }
+    }
+}
+
+/** "Branch   feature/passkeys": a key on the left, its value on the right. */
+@Composable
+internal fun FactRow(
+    key: String,
+    value: String,
+    modifier: Modifier = Modifier,
+    mono: Boolean = false,
+    valueTag: String? = null,
+    valueColor: Color? = null,
+    maxLines: Int = 1,
+    trailing: (@Composable () -> Unit)? = null,
+) {
+    val c = LocalColors.current
+    Row(
+        modifier.fillMaxWidth().defaultMinSize(minHeight = 50.dp).padding(horizontal = 18.dp, vertical = 13.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        RText(key, RType.sans(15.5f), c.tertiary, maxLines = 1)
+        Spacer(Modifier.width(14.dp))
+        RText(
+            value,
+            if (mono) RType.mono(14f, FontWeight.Medium) else RType.sans(15.5f, FontWeight.Medium),
+            valueColor ?: c.text,
+            Modifier.weight(1f).then(if (valueTag != null) Modifier.testTag(valueTag) else Modifier),
+            maxLines = maxLines,
+            align = TextAlign.End,
+            ltr = mono,
+            overflow = if (mono) TextOverflow.MiddleEllipsis else TextOverflow.Ellipsis,
+        )
+        if (trailing != null) {
+            Spacer(Modifier.width(8.dp))
+            trailing()
+        }
+    }
+}
+
+/** A row that opens a page: a title, a short detail on the right, a chevron. */
+@Composable
+internal fun DrillRow(title: String, tag: String, onClick: () -> Unit, detail: @Composable () -> Unit = {}) {
+    val c = LocalColors.current
+    val feedback = LocalFeedback.current
+    Row(
+        Modifier
+            .fillMaxWidth()
+            .defaultMinSize(minHeight = 50.dp)
+            .pressable(highlight = c.controlFill, shape = RoundedCornerShape(0.dp)) {
+                onClick()
+                feedback.play(Event.Open)
+            }
+            .padding(start = 18.dp, end = 12.dp, top = 13.dp, bottom = 13.dp)
+            .testTag(tag),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        RText(title, RType.sans(15.5f, FontWeight.Medium), c.text, maxLines = 1)
+        Spacer(Modifier.width(12.dp))
+        Box(Modifier.weight(1f), contentAlignment = Alignment.CenterEnd) { detail() }
+        Spacer(Modifier.width(6.dp))
+        Icon(Icons.Rounded.ChevronRight, null, Modifier.size(20.dp), tint = c.tertiary)
+    }
+}
+
+/** "+412 −96" in green and red. */
+@Composable
+internal fun Counts(additions: ULong?, deletions: ULong?, size: Float = 14f, modifier: Modifier = Modifier) {
+    val c = LocalColors.current
+    Row(modifier, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+        additions?.let { RText("+$it", RType.mono(size, FontWeight.Medium), c.success, maxLines = 1) }
+        deletions?.let { RText("−$it", RType.mono(size, FontWeight.Medium), c.danger, maxLines = 1) }
+    }
+}
+
+/** A small header above a group: a few words on the left, an action or a (?) on the right. */
+@Composable
+internal fun GroupHeader(text: String, modifier: Modifier = Modifier, trailing: @Composable () -> Unit = {}) {
+    val c = LocalColors.current
+    Row(modifier.fillMaxWidth().padding(start = 22.dp, end = 16.dp, top = 4.dp), verticalAlignment = Alignment.CenterVertically) {
+        RText(text, RType.sans(13f, FontWeight.Medium), c.tertiary, Modifier.weight(1f), maxLines = 1)
+        trailing()
+    }
+}
+
+// ---- emails and items found ----------------------------------------------------------------------------------------
+
+/** The emails (or items) found: ticking is the decision; a code is never ticked for you, a covered one is locked. */
+@Composable
+private fun MessagesFacts(view: ApprovalView, ui: ApprovalUi, viewModel: ApprovalViewModel) {
+    val c = LocalColors.current
+    val nav = LocalApprovalNav.current
+    val draft = ui.draft
+    if (view.messages.isEmpty()) {
+        FactGroup(rows = listOf { FactRow("Found", "Nothing") })
+    } else {
+        val allIds = view.messages.map { it.id }
+        val allTicked = view.messages.all { it.coveredByGrant || it.id in draft.selected }
+        GroupHeader("${view.messages.size} found") {
+            TextAction(if (allTicked) "Clear" else "Select all", if (allTicked) "clearAll" else "selectAll") {
+                viewModel.edit { it.copy(selected = if (allTicked) emptySet() else allIds.toSet(), allMail = null) }
+            }
+        }
+        FactGroup(
+            rows = view.messages.map { m ->
+                {
+                    MailRow(
+                        m,
+                        checked = m.coveredByGrant || m.id in draft.selected || (draft.allMail != null && !m.sensitive),
+                        enabled = !m.coveredByGrant && (draft.allMail == null || m.sensitive),
+                        service = view.service,
+                    ) { on -> viewModel.edit { d -> d.copy(selected = if (on) d.selected + m.id else d.selected - m.id) } }
+                }
+            },
+        )
+    }
+    val query = view.query?.let(::untrusted)?.takeIf { it.isNotBlank() }
+    if (query != null) {
+        FactGroup(
+            rows = listOf {
+                DrillRow("Search", "queryRow", { nav.push(ApprovalPage.Text("Search", query, mono = true, tag = "queryText")) }) {
+                    RText(query, RType.mono(13f), c.tertiary, maxLines = 1, ltr = true)
+                }
+            },
+        )
+    }
+    val account = view.account?.takeIf { it.isNotBlank() && view.service != "payments" }
+    if (account != null && view.kind == ApprovalKind.FETCH) FactGroup(rows = listOf { FactRow("Account", untrusted(account), mono = true) })
+}
+
+@Composable
+private fun TextAction(text: String, tag: String, onClick: () -> Unit) {
+    val c = LocalColors.current
+    RText(
+        text,
+        RType.sans(14f, FontWeight.SemiBold),
+        c.accent,
+        Modifier.clip(CircleShape).pressable(shape = CircleShape, onClick = onClick).padding(horizontal = 8.dp, vertical = 6.dp).testTag(tag),
+        maxLines = 1,
+    )
+}
+
+/** One email: its tick, subject, sender and date, and a flag when it looks like a code. */
+@Composable
+private fun MailRow(m: MessageView, checked: Boolean, enabled: Boolean, service: String, onChecked: (Boolean) -> Unit) {
+    val c = LocalColors.current
+    val feedback = LocalFeedback.current
+    val dim by animateFloatAsState(if (checked) 1f else 0.45f, tween(220), label = "dim")
+    val title = untrusted(m.subject).ifBlank { untrusted(m.snippet) }.ifBlank { untrusted(m.from) }
+    // Mail says who and when; an item elsewhere (a login, a file) says what it is.
+    val gmail = service.isBlank() || service == "gmail"
+    val meta = if (!gmail && m.subject.isNotBlank() && m.snippet.isNotBlank()) {
+        untrusted(m.snippet)
+    } else {
+        listOfNotNull(
+            displayName(m.from).takeIf { it.isNotBlank() && m.subject.isNotBlank() }?.let(::untrusted),
+            if (m.date != 0L) formatDate(m.date) else null,
+        ).joinToString(" · ")
+    }
+    Box(Modifier.testTag("message:${m.id}")) {
+        Row(
+            Modifier
+                .fillMaxWidth()
+                .toggleable(checked, enabled = enabled, role = Role.Checkbox) {
+                    onChecked(it)
+                    feedback.play(Event.toggle(it))
+                }
+                .padding(horizontal = 16.dp, vertical = 13.dp)
+                .testTag("check:${m.id}"),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            TickBox(checked, enabled)
+            Spacer(Modifier.width(14.dp))
+            Column(Modifier.weight(1f).graphicsLayer { alpha = dim }) {
+                RText(
+                    title,
+                    RType.sans(15f, FontWeight.SemiBold).copy(textDecoration = if (checked) null else TextDecoration.LineThrough),
+                    c.text,
+                    maxLines = 1,
+                )
+                if (meta.isNotEmpty()) RText(meta, RType.sans(12.5f), c.tertiary, Modifier.padding(top = 2.dp), maxLines = 1)
+            }
+            if (m.coveredByGrant) {
+                Spacer(Modifier.width(8.dp))
+                Icon(Icons.Rounded.Lock, "Already allowed", Modifier.size(15.dp).testTag("covered:${m.id}"), tint = c.tertiary)
+            }
+            if (m.sensitive) {
+                Spacer(Modifier.width(8.dp))
+                WarnTag(if (service == "vault") "Password" else "Code", c.warning, Modifier.testTag("sensitive:${m.id}"), small = true)
+            }
+        }
+    }
+}
+
+/** A square tick (Material) in the accent colour. */
+@Composable
+internal fun TickBox(checked: Boolean, enabled: Boolean = true) {
+    val c = LocalColors.current
+    val fill by animateColorAsState(if (checked) c.accent else Color.Transparent, label = "tick")
+    Box(
+        Modifier
+            .size(20.dp)
+            .graphicsLayer { alpha = if (enabled) 1f else 0.55f }
+            .clip(RoundedCornerShape(4.dp))
+            .background(fill)
+            .border(2.dp, if (checked) c.accent else (if (c.dark) Color(0xFF3A3A40) else c.tertiary), RoundedCornerShape(4.dp)),
+        contentAlignment = Alignment.Center,
+    ) { if (checked) Icon(Icons.Rounded.Check, null, Modifier.size(15.dp), tint = Color.White) }
+}
+
+// ---- an email to send --------------------------------------------------------------------------------------------
+
+@Composable
+private fun SendFacts(view: ApprovalView) {
+    val c = LocalColors.current
+    val email = view.email ?: return
+    FactGroup(
+        tag = "emailPreview",
+        rows = buildList<@Composable () -> Unit> {
+            add { FactRow("To", email.to.joinToString(", ") { untrusted(it) }, mono = true, maxLines = 3) }
+            if (email.cc.isNotEmpty()) add { FactRow("Cc", email.cc.joinToString(", ") { untrusted(it) }, mono = true, maxLines = 3) }
+            add { FactRow("Subject", untrusted(email.subject), maxLines = 2) }
+            add { RText(untrusted(email.body), RType.sans(15f, lineHeight = 21f), c.text, Modifier.padding(horizontal = 18.dp, vertical = 14.dp).testTag("emailBody")) }
+        },
+    )
+    view.account?.let { FactGroup(rows = listOf { FactRow("From", untrusted(it), mono = true) }) }
+}
+
+// ---- a change elsewhere --------------------------------------------------------------------------------------------
+
+/** What will be done in another integration, line by line; nothing happens until approved. */
+@Composable
+private fun WriteFacts(view: ApprovalView) {
+    val c = LocalColors.current
+    if (view.preview.isNotEmpty()) {
+        FactGroup(
+            tag = "writePreview",
+            rows = listOf {
+                Column(Modifier.padding(horizontal = 18.dp, vertical = 14.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                    view.preview.forEachIndexed { i, line ->
+                        RText(
+                            untrusted(line),
+                            if (i == 0) RType.sans(16f, FontWeight.SemiBold, lineHeight = 22f) else RType.sans(15f, lineHeight = 21f),
+                            if (i == 0) c.text else c.secondary,
+                            Modifier.testTag("previewLine:$i"),
+                        )
+                    }
+                }
+            },
+        )
+    }
+    view.account?.takeIf { it.isNotBlank() }?.let { FactGroup(rows = listOf { FactRow("Account", untrusted(it), mono = true) }) }
+}
+
+// ---- a permission, accounts ---------------------------------------------------------------------------------------
+
+@Composable
+private fun GrantFacts(view: ApprovalView) {
+    val c = LocalColors.current
+    val grant = view.grant ?: return
+    val (tone, reach) = when (grant.breadth) {
+        "everything" -> c.danger to "Everything"
+        "broad" -> c.warning to "Broad"
+        else -> c.success to "Narrow"
+    }
+    GroupHeader("Permission") {
+        HelpDot("grant", "Nothing is shared now. Requests that match are answered without asking until it ends. Revoke it any time in Grants.")
+    }
+    FactGroup(
+        tag = "grantCard",
+        borderTint = c.accent.copy(alpha = 0.35f),
+        rows = buildList<@Composable () -> Unit> {
+            grant.lines.forEach { line -> add { FactRow("Only", untrusted(line), maxLines = 2) } }
+            add { FactRow("For", periodWords(grant.durationSecs.toLong()) + (grant.maxUses?.let { " · at most $it uses" } ?: "")) }
+            add { FactRow("Reach", reach, valueColor = tone) }
+            if (grant.reason.isNotBlank()) add { FactRow("Says", "“${untrusted(grant.reason)}”", maxLines = 3) }
+        },
+    )
+    view.account?.let { FactGroup(rows = listOf { FactRow("Account", untrusted(it), mono = true) }) }
+}
+
+/** The accounts an AI would see: tick the ones to share; those it already sees are ticked and locked. */
+@Composable
+private fun AccountsFacts(view: ApprovalView, ui: ApprovalUi, viewModel: ApprovalViewModel) {
+    val c = LocalColors.current
+    val feedback = LocalFeedback.current
+    val who = untrusted(view.connectionLabel)
+    GroupHeader("Addresses") {
+        HelpDot("accounts", "$who sees only the addresses you tick, nothing in them, and how many it did not get.")
+    }
+    FactGroup(
+        tag = "accountsCard",
+        rows = view.accounts.mapIndexed { i, address ->
+            {
+                val locked = address in view.sharedAccounts
+                val ticked = locked || address in ui.draft.selected
+                val dim by animateFloatAsState(if (ticked) 1f else 0.42f, tween(280), label = "dim")
+                Box(Modifier.testTag("shared:$i")) {
+                    Row(
+                        Modifier
+                            .fillMaxWidth()
+                            .toggleable(ticked, enabled = !locked, role = Role.Checkbox) { on ->
+                                viewModel.edit { d -> d.copy(selected = if (on) d.selected + address else d.selected - address) }
+                                feedback.play(Event.toggle(on))
+                            }
+                            .padding(horizontal = 16.dp, vertical = 12.dp)
+                            .testTag("acct:$address"),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        TickBox(ticked, !locked)
+                        Spacer(Modifier.width(14.dp))
+                        Row(Modifier.weight(1f).graphicsLayer { alpha = dim }, verticalAlignment = Alignment.CenterVertically) {
+                            BlobAvatar(address, size = 32.dp)
+                            Spacer(Modifier.width(12.dp))
+                            StrikeText(address, RType.sans(15.5f, FontWeight.Medium), c.text, struck = !ticked, modifier = Modifier.weight(1f, fill = false))
+                        }
+                        if (locked) {
+                            Spacer(Modifier.width(8.dp))
+                            Icon(Icons.Rounded.Lock, "Already shared", Modifier.size(15.dp), tint = c.tertiary)
+                        }
+                    }
+                }
+            }
+        },
+    )
+}
+
+// ---- a tool of an MCP server, the desktop app ---------------------------------------------------------------------
+
+@Composable
+private fun McpFacts(call: dev.reins.core.McpCallView) {
+    val c = LocalColors.current
+    val args = untrusted(call.argumentsJson).ifEmpty { "{}" }
+    Box(Modifier.testTag("mcpCall")) {
+        FactGroup(
+            rows = listOf(
+                {
+                    Row(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 12.dp), verticalAlignment = Alignment.CenterVertically) {
+                        ServiceAvatar("mcp", size = 34.dp)
+                        Spacer(Modifier.width(12.dp))
+                        Column(Modifier.weight(1f)) {
+                            RText(untrusted(call.serverName), RType.sans(15.5f, FontWeight.SemiBold), c.text, Modifier.testTag("mcpServer"), maxLines = 1)
+                            RText(mcpHost(call.serverUrl), RType.mono(12.5f), c.tertiary, Modifier.testTag("mcpHost"), maxLines = 1, ltr = true)
+                        }
+                        Spacer(Modifier.width(8.dp))
+                        RText(
+                            if (call.readOnly) "Read only" else "Changes things",
+                            RType.sans(12.5f, FontWeight.SemiBold),
+                            if (call.readOnly) c.success else c.send,
+                            Modifier.clip(CircleShape).background((if (call.readOnly) c.success else c.send).copy(alpha = 0.12f)).padding(horizontal = 10.dp, vertical = 5.dp).testTag("mcpEffect"),
+                            maxLines = 1,
+                        )
+                    }
+                },
+                {
+                    Column(Modifier.fillMaxWidth().padding(horizontal = 18.dp, vertical = 13.dp)) {
+                        RText(untrusted(call.title).ifEmpty { untrusted(call.tool) }, RType.sans(16f, FontWeight.SemiBold), c.text, Modifier.testTag("mcpTool"), maxLines = 2)
+                        if (call.title != call.tool) RText(untrusted(call.tool), RType.mono(12.5f), c.tertiary, Modifier.padding(top = 2.dp), maxLines = 1, ltr = true)
+                        if (call.description.isNotBlank()) {
+                            RText(untrusted(call.description), RType.sans(13.5f, lineHeight = 19f), c.secondary, Modifier.padding(top = 4.dp), maxLines = 3)
+                        }
+                    }
+                },
+                {
+                    Column(Modifier.fillMaxWidth().padding(horizontal = 18.dp, vertical = 13.dp)) {
+                        RText("Arguments", RType.sans(13f, FontWeight.Medium), c.tertiary)
+                        RText(args, RType.mono(13f), c.text, Modifier.padding(top = 6.dp).testTag("mcpArguments"), maxLines = 12, ltr = true)
+                    }
+                },
+            ),
+        )
+    }
+}
+
+@Composable
+private fun AskFacts(ask: dev.reins.core.AskView) {
+    val detail = ask.detail?.let(::untrusted)?.takeIf { it.isNotBlank() }
+    val topic = ask.topic?.let(::untrusted)?.takeIf { it.isNotBlank() }
+    if (detail == null && topic == null) return
+    FactGroup(
+        tag = "ask",
+        rows = buildList<@Composable () -> Unit> {
+            if (detail != null) add { MonoBlock(detail, "askDetail", maxLines = 30) }
+            if (topic != null) add { FactRow("About", topic, mono = true, valueTag = "askTopic") }
+        },
+    )
+}
+
+@Composable
+private fun SecretsFacts(secrets: dev.reins.core.SecretReleaseView) {
+    val c = LocalColors.current
+    FactGroup(
+        tag = "secrets",
+        rows = buildList<@Composable () -> Unit> {
+            add { FactRow("For", untrusted(secrets.command), mono = true, valueTag = "secretsCommand", maxLines = 3) }
+            secrets.purpose?.let(::untrusted)?.takeIf { it.isNotBlank() }?.let { add { FactRow("Says", "“$it”", valueTag = "secretsPurpose", maxLines = 2) } }
+            secrets.items.forEachIndexed { i, item ->
+                add {
+                    Row(Modifier.fillMaxWidth().padding(horizontal = 18.dp, vertical = 13.dp), verticalAlignment = Alignment.CenterVertically) {
+                        Icon(Icons.Rounded.Key, null, Modifier.size(17.dp), tint = c.accent)
+                        Spacer(Modifier.width(12.dp))
+                        RText(untrusted(item), RType.sans(15.5f, FontWeight.Medium), c.text, Modifier.testTag("secret:$i"), maxLines = 2)
+                    }
+                }
+            }
+            add { FactRow("Kept", leaseLabel(secrets.leaseSecs).removePrefix("for "), valueTag = "secretsLease") }
+        },
+    )
+}
+
+@Composable
+private fun SshFacts(ssh: dev.reins.core.SshSignView) {
+    FactGroup(
+        tag = "ssh",
+        rows = buildList<@Composable () -> Unit> {
+            add { FactRow("Server", untrusted(sshTarget(ssh.host, ssh.hostKey)), mono = true, valueTag = "sshWhat") }
+            add { FactRow("Key", untrusted(ssh.keyName)) }
+            add { MonoBlock(untrusted(ssh.keyFingerprint), "sshKey") }
+            ssh.hostKey?.let(::untrusted)?.takeIf { it.isNotBlank() }?.let { add { FactRow("Host key", it, mono = true, valueTag = "sshHostKey", maxLines = 3) } }
+        },
+    )
+}
+
+/** Text shown exactly as it is (a command, arguments), monospaced. */
+@Composable
+internal fun MonoBlock(text: String, tag: String, maxLines: Int = Int.MAX_VALUE) {
+    RText(text, RType.mono(13f), LocalColors.current.text, Modifier.fillMaxWidth().padding(horizontal = 18.dp, vertical = 13.dp).testTag(tag), maxLines = maxLines, ltr = true)
+}
+
+/** A long text folded out of the main page, in full. */
+@Composable
+internal fun TextPage(page: ApprovalPage.Text) {
+    val c = LocalColors.current
+    FactGroup(
+        modifier = Modifier.padding(top = 6.dp),
+        rows = listOf {
+            RText(
+                page.body,
+                if (page.mono) RType.mono(14f) else RType.sans(15f, lineHeight = 21f),
+                c.text,
+                Modifier.fillMaxWidth().padding(18.dp).testTag(page.tag),
+                ltr = page.mono,
+            )
+        },
+    )
+}
+
+/** A remembered permission would let in everyone at a free mail provider. */
+@Composable
+private fun PublicDomainNote(view: ApprovalView, ui: ApprovalUi) {
+    val c = LocalColors.current
+    val choice = (buildDecision(view, ui.draft) as? BuildResult.Ok)?.choice ?: return
+    val domains = publicDomainWarnings(choice)
+    if (domains.isEmpty()) return
+    Row(Modifier.fillMaxWidth().padding(horizontal = 16.dp).testTag("publicDomainWarning"), verticalAlignment = Alignment.CenterVertically) {
+        WarnTag("Anyone at ${domains.joinToString(", ")}", c.warning)
+        Spacer(Modifier.width(8.dp))
+        HelpDot("publicDomain", "These are free mail providers: allowing the whole domain covers millions of unrelated people. Prefer specific addresses.")
+    }
+}

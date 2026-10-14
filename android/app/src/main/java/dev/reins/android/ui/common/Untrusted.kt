@@ -4,7 +4,12 @@ package dev.reins.android.ui.common
  * Text that came from outside the app (senders, subjects, snippets, client names). Bidirectional controls are
  * removed so it cannot reorder what is shown around it, and other control characters become spaces.
  */
-fun untrusted(text: String): String {
+fun untrusted(text: String): String = clean(text).trim()
+
+/** [untrusted] for a line whose leading spaces matter (a line of code in a diff): nothing is trimmed. */
+fun untrustedLine(text: String): String = clean(text)
+
+private fun clean(text: String): String {
     val out = StringBuilder(text.length)
     for (ch in text) {
         when {
@@ -14,7 +19,7 @@ fun untrusted(text: String): String {
             else -> out.append(ch)
         }
     }
-    return out.toString().trim()
+    return out.toString()
 }
 
 private const val LINE_SEPARATOR = 0x2028
