@@ -408,16 +408,17 @@ private struct ConnectionIconGroup: View {
             .accessibilityValue(SettingsText.iconName(connection.icon))
             .accessibilityIdentifier("connectionIcon")
             .cardRow()
+            // On the row: a section's modifiers go to each of its rows, the error banner's too.
+            .sheet(isPresented: $picking) {
+                IconPickerSheet(label: untrusted(connection.label), selection: connection.icon) { icon in
+                    picking = false
+                    setIcon(icon)
+                }
+                .environment(\.feedback, feedback)
+            }
+            .presentationFeedback(picking)
             if let error { FormBanner(text: error).cardRow() }
         }
-        .sheet(isPresented: $picking) {
-            IconPickerSheet(label: untrusted(connection.label), selection: connection.icon) { icon in
-                picking = false
-                setIcon(icon)
-            }
-            .environment(\.feedback, feedback)
-        }
-        .presentationFeedback(picking)
     }
 
     private func setIcon(_ icon: String?) {

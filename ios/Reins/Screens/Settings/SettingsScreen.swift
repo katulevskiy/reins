@@ -291,18 +291,20 @@ private struct ConnectedGroup: View {
             .accessibilityLabel("Connect an AI app or a computer")
             .accessibilityIdentifier("connect")
             .cardRow()
+            // On the row, not the section: a List gives a section's modifiers to each of its rows, and one sheet per
+            // connection fights over `connecting`.
+            .sheet(isPresented: $connecting, onDismiss: openChosen) {
+                ConnectSheet { choice in
+                    chosen = choice
+                    connecting = false
+                }
+                .environment(model)
+                .environment(\.feedback, feedback)
+            }
+            .presentationFeedback(connecting)
         } header: {
             GroupHeader("Connected")
         }
-        .sheet(isPresented: $connecting, onDismiss: openChosen) {
-            ConnectSheet { choice in
-                chosen = choice
-                connecting = false
-            }
-            .environment(model)
-            .environment(\.feedback, feedback)
-        }
-        .presentationFeedback(connecting)
     }
 
     private func openChosen() {
