@@ -10,6 +10,7 @@ pub mod guard;
 mod pattern;
 mod scope;
 pub mod shell;
+pub mod strict;
 
 use reins_proto::ValidationError;
 use thiserror::Error;

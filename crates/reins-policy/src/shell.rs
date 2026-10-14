@@ -174,7 +174,10 @@ pub fn segments(command: &str) -> Vec<Vec<String>> {
 /// runs included, without the text of a heredoc fed to anything else (Python's source, a file's contents).
 #[must_use]
 pub fn shell_text(command: &str) -> String {
-    parse(command).segments.iter().map(|seg| seg.join(" ")).collect::<Vec<_>>().join("\n")
+    match crate::strict::read(command) {
+        Some(segs) => segs.iter().map(|seg| seg.words.join(" ")).collect::<Vec<_>>().join("\n"),
+        None => parse(command).segments.iter().map(|seg| seg.join(" ")).collect::<Vec<_>>().join("\n"),
+    }
 }
 
 /// The command PowerShell runs for `-EncodedCommand`: base64 of UTF-16LE text.

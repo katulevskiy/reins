@@ -348,20 +348,24 @@ fn severity(c: &Classified) -> (bool, bool, std::cmp::Reverse<usize>) {
 pub fn read(texts: &[&str], fragments: &[&str]) -> Reading {
     let mut found: Vec<Classified> = Vec::new();
     let mut certain = true;
-    let command = |text: &str, found: &mut Vec<Classified>| {
+    // A best-effort reading, for what is not read with certainty: it can show a rule and make a question stricter,
+    // never more certain.
+    let lenient = |text: &str, found: &mut Vec<Classified>| {
         let parsed = parse(text);
         let flat = text_words(text);
         found.extend(parsed.segments.iter().zip(&parsed.programs).flat_map(|(seg, w)| matches_of(seg, w, &flat)));
-        parsed.certain
     };
     for text in texts {
-        certain &= command(text, &mut found);
-        for line in text.lines() {
-            found.extend(classify_file(line.trim()));
-            if let Some((_, rest)) = line.split_once(": ") {
-                certain &= command(rest, &mut found);
+        if let Some(segs) = crate::strict::read(text) {
+            let flat = text_words(text);
+            for seg in &segs {
+                found.extend(strict_matches(seg, &flat));
             }
+        } else {
+            certain = false;
+            lenient(text, &mut found);
         }
+        found.extend(text.lines().filter_map(|l| classify_file(l.trim())));
         // A `Files:` list that names nothing.
         let mut lines = text.lines().map(str::trim).skip_while(|l| *l != "Files:");
         if lines.next().is_some() && lines.next().is_none_or(str::is_empty) {
@@ -371,7 +375,7 @@ pub fn read(texts: &[&str], fragments: &[&str]) -> Reading {
     // Fragments (the computer's own report, a line cut short): searched for what they match, not for certainty
     // (what runs is in the texts, read in full).
     for text in fragments {
-        let _ = command(text, &mut found);
+        lenient(text, &mut found);
         found.extend(text.lines().filter_map(|l| classify_file(l.trim())));
     }
     Reading {
@@ -381,20 +385,28 @@ pub fn read(texts: &[&str], fragments: &[&str]) -> Reading {
     }
 }
 
+/// The rules a command read with certainty matches: its words (from any word on) and its redirections' targets.
+fn strict_matches(seg: &crate::strict::Seg, flat: &[String]) -> Vec<Classified> {
+    let written = seg.words.first().map_or("", String::as_str);
+    let mut found = matches_of(&seg.words, written, flat);
+    found.extend(seg.redirects.iter().filter_map(|r| classify_file(r)));
+    found
+}
+
 /// The one built-in group everything a command line does falls in: each of its simple commands matches rules of
 /// that group only (`cat .env`, `head -1 .env.local | wc -l` does not: `wc -l` matches nothing). `None` when any part
 /// matches no rule or another group, or the line is not read with certainty. Autopilot learns a group's questions on
 /// their own only when this holds, so a learnt approval never covers a command that does something else.
 #[must_use]
 pub fn sole_group(command: &str) -> Option<&'static BuiltinGroup> {
-    let parsed = parse(command);
-    if !parsed.certain || parsed.segments.is_empty() {
+    let segs = crate::strict::read(command)?;
+    if segs.is_empty() {
         return None;
     }
     let flat = text_words(command);
     let mut group: Option<&'static BuiltinGroup> = None;
-    for (seg, written) in parsed.segments.iter().zip(&parsed.programs) {
-        let found = matches_of(seg, written, &flat);
+    for seg in &segs {
+        let found = strict_matches(seg, &flat);
         if found.is_empty() {
             return None;
         }
@@ -465,7 +477,8 @@ mod tests {
         assert!(!read(&["Files:"], &[]).certain);
         assert!(!read(&["echo 'unclosed; rm -rf ~"], &[]).certain, "an unbalanced quote");
         assert!(!read(&["echo \"$(rm -rf ~\""], &[]).certain);
-        assert!(read(&["ls # don't"], &[]).certain, "a comment");
+        assert!(!read(&["ls # don't"], &[]).certain, "a comment with a quote is outside what is read with certainty");
+        assert!(read(&["ls # a comment"], &[]).certain);
     }
 
     /// One tokenizer: what decides certainty is the pass that finds the commands.
@@ -526,7 +539,9 @@ mod tests {
             "ssh host 'rm -rf /srv'",
         ] {
             assert_eq!(id(text), Some("deletes"), "{text}");
-            assert!(certain(text), "{text}");
+            // Read with certainty only for the wrappers of the subset, with their exact options.
+            let subset = ["command -p", "time -p", "sudo -u", "nice -n", "env FOO", "timeout -s", "nohup"];
+            assert_eq!(certain(text), subset.iter().any(|w| text.starts_with(w)), "{text}");
         }
         assert!(!certain("sudo -Z rm -rf x"), "an option the guard does not know");
     }
