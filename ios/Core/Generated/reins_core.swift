@@ -2497,6 +2497,11 @@ public protocol ReinsCoreProtocol: AnyObject, Sendable {
     func activity(limit: UInt32) async throws  -> [ActivityEntry]
     
     /**
+     * An Activity entry's request as its approval showed it (read-only; `None` for older entries).
+     */
+    func activityApproval(entryId: Int64) async throws  -> ApprovalView?
+    
+    /**
      * Connects a Google account that was just authorized on this phone (`hint` is its address).
      */
     func addAccount(hint: String) async throws  -> AccountView
@@ -3163,6 +3168,25 @@ open func activity(limit: UInt32)async throws  -> [ActivityEntry]  {
             completeFunc: ffi_reins_core_rust_future_complete_rust_buffer,
             freeFunc: ffi_reins_core_rust_future_free_rust_buffer,
             liftFunc: FfiConverterSequenceTypeActivityEntry.lift,
+            errorHandler: FfiConverterTypeCoreError_lift
+        )
+}
+    
+    /**
+     * An Activity entry's request as its approval showed it (read-only; `None` for older entries).
+     */
+open func activityApproval(entryId: Int64)async throws  -> ApprovalView?  {
+    return
+        try  await uniffiRustCallAsync(
+            rustFutureFunc: {
+                uniffi_reins_core_fn_method_reinscore_activity_approval(
+                        self.uniffiCloneHandle(),FfiConverterInt64.lower(entryId)
+                )
+            },
+            pollFunc: ffi_reins_core_rust_future_poll_rust_buffer,
+            completeFunc: ffi_reins_core_rust_future_complete_rust_buffer,
+            freeFunc: ffi_reins_core_rust_future_free_rust_buffer,
+            liftFunc: FfiConverterOptionTypeApprovalView.lift,
             errorHandler: FfiConverterTypeCoreError_lift
         )
 }
@@ -5421,6 +5445,14 @@ public struct ActivityEntry: Equatable, Hashable {
      * What Autopilot knew (the "Automatic" filter and badge, "This was wrong").
      */
     public var autopilot: AutopilotNote?
+    /**
+     * What it was, as its row and its page show it.
+     */
+    public var label: RequestLabel?
+    /**
+     * What it asked, in full; `None` for entries logged before it was kept (and for pairings, grants that ended, ...).
+     */
+    public var request: ActivityRequest?
 
     // Default memberwise initializers are never public by default, so we
     // declare one manually.
@@ -5445,7 +5477,13 @@ public struct ActivityEntry: Equatable, Hashable {
          */decidedBy: String, 
         /**
          * What Autopilot knew (the "Automatic" filter and badge, "This was wrong").
-         */autopilot: AutopilotNote?) {
+         */autopilot: AutopilotNote?, 
+        /**
+         * What it was, as its row and its page show it.
+         */label: RequestLabel? = nil, 
+        /**
+         * What it asked, in full; `None` for entries logged before it was kept (and for pairings, grants that ended, ...).
+         */request: ActivityRequest? = nil) {
         self.id = id
         self.at = at
         self.connectionId = connectionId
@@ -5462,6 +5500,8 @@ public struct ActivityEntry: Equatable, Hashable {
         self.opTitle = opTitle
         self.decidedBy = decidedBy
         self.autopilot = autopilot
+        self.label = label
+        self.request = request
     }
 
     
@@ -5495,7 +5535,9 @@ public struct FfiConverterTypeActivityEntry: FfiConverterRustBuffer {
                 op: FfiConverterString.read(from: &buf), 
                 opTitle: FfiConverterString.read(from: &buf), 
                 decidedBy: FfiConverterString.read(from: &buf), 
-                autopilot: FfiConverterOptionTypeAutopilotNote.read(from: &buf)
+                autopilot: FfiConverterOptionTypeAutopilotNote.read(from: &buf), 
+                label: FfiConverterOptionTypeRequestLabel.read(from: &buf), 
+                request: FfiConverterOptionTypeActivityRequest.read(from: &buf)
         )
     }
 
@@ -5516,6 +5558,8 @@ public struct FfiConverterTypeActivityEntry: FfiConverterRustBuffer {
         FfiConverterString.write(value.opTitle, into: &buf)
         FfiConverterString.write(value.decidedBy, into: &buf)
         FfiConverterOptionTypeAutopilotNote.write(value.autopilot, into: &buf)
+        FfiConverterOptionTypeRequestLabel.write(value.label, into: &buf)
+        FfiConverterOptionTypeActivityRequest.write(value.request, into: &buf)
     }
 }
 
@@ -5692,6 +5736,115 @@ public func FfiConverterTypeActivityMessage_lift(_ buf: RustBuffer) throws -> Ac
 #endif
 public func FfiConverterTypeActivityMessage_lower(_ value: ActivityMessage) -> RustBuffer {
     return FfiConverterTypeActivityMessage.lower(value)
+}
+
+
+/**
+ * What an Activity entry asked, in full (the entry's "What it asked" and "Full request"). Never a secret's value.
+ */
+public struct ActivityRequest: Equatable, Hashable {
+    /**
+     * The agent as it named itself ("Claude Code"); empty when only the connection is known.
+     */
+    public var agent: String
+    /**
+     * The folder it ran in, else empty.
+     */
+    public var cwd: String
+    /**
+     * Why it was asked rather than let through: the rule it matched or the reason, else empty.
+     */
+    public var why: String
+    /**
+     * The complete command or tool call with its arguments, several lines (at most 8 KB).
+     */
+    public var full: String
+    /**
+     * What the agent said it was for, else empty.
+     */
+    public var purpose: String
+    /**
+     * When it was asked (Unix seconds); 0 when not known.
+     */
+    public var askedAt: Int64
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(
+        /**
+         * The agent as it named itself ("Claude Code"); empty when only the connection is known.
+         */agent: String, 
+        /**
+         * The folder it ran in, else empty.
+         */cwd: String, 
+        /**
+         * Why it was asked rather than let through: the rule it matched or the reason, else empty.
+         */why: String, 
+        /**
+         * The complete command or tool call with its arguments, several lines (at most 8 KB).
+         */full: String, 
+        /**
+         * What the agent said it was for, else empty.
+         */purpose: String, 
+        /**
+         * When it was asked (Unix seconds); 0 when not known.
+         */askedAt: Int64) {
+        self.agent = agent
+        self.cwd = cwd
+        self.why = why
+        self.full = full
+        self.purpose = purpose
+        self.askedAt = askedAt
+    }
+
+    
+
+    
+}
+
+#if compiler(>=6)
+extension ActivityRequest: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeActivityRequest: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> ActivityRequest {
+        return
+            try ActivityRequest(
+                agent: FfiConverterString.read(from: &buf), 
+                cwd: FfiConverterString.read(from: &buf), 
+                why: FfiConverterString.read(from: &buf), 
+                full: FfiConverterString.read(from: &buf), 
+                purpose: FfiConverterString.read(from: &buf), 
+                askedAt: FfiConverterInt64.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: ActivityRequest, into buf: inout [UInt8]) {
+        FfiConverterString.write(value.agent, into: &buf)
+        FfiConverterString.write(value.cwd, into: &buf)
+        FfiConverterString.write(value.why, into: &buf)
+        FfiConverterString.write(value.full, into: &buf)
+        FfiConverterString.write(value.purpose, into: &buf)
+        FfiConverterInt64.write(value.askedAt, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeActivityRequest_lift(_ buf: RustBuffer) throws -> ActivityRequest {
+    return try FfiConverterTypeActivityRequest.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeActivityRequest_lower(_ value: ActivityRequest) -> RustBuffer {
+    return FfiConverterTypeActivityRequest.lower(value)
 }
 
 
@@ -10008,6 +10161,10 @@ public struct PendingItem: Equatable, Hashable {
      * asked every time and nothing in it needs a closer look.
      */
     public var quick: Bool
+    /**
+     * What the request is, as every screen shows it (see [`RequestLabel`]); `None` for pairings and other phones.
+     */
+    public var label: RequestLabel?
 
     // Default memberwise initializers are never public by default, so we
     // declare one manually.
@@ -10043,7 +10200,10 @@ public struct PendingItem: Equatable, Hashable {
         /**
          * Can be approved without opening it, from the notification or with "Approve all" (`approve_quick`): it is not
          * asked every time and nothing in it needs a closer look.
-         */quick: Bool = false) {
+         */quick: Bool = false, 
+        /**
+         * What the request is, as every screen shows it (see [`RequestLabel`]); `None` for pairings and other phones.
+         */label: RequestLabel? = nil) {
         self.kind = kind
         self.id = id
         self.title = title
@@ -10061,6 +10221,7 @@ public struct PendingItem: Equatable, Hashable {
         self.suggestion = suggestion
         self.headline = headline
         self.quick = quick
+        self.label = label
     }
 
     
@@ -10095,7 +10256,8 @@ public struct FfiConverterTypePendingItem: FfiConverterRustBuffer {
                 opTitle: FfiConverterString.read(from: &buf), 
                 suggestion: FfiConverterOptionString.read(from: &buf), 
                 headline: FfiConverterString.read(from: &buf), 
-                quick: FfiConverterBool.read(from: &buf)
+                quick: FfiConverterBool.read(from: &buf), 
+                label: FfiConverterOptionTypeRequestLabel.read(from: &buf)
         )
     }
 
@@ -10117,6 +10279,7 @@ public struct FfiConverterTypePendingItem: FfiConverterRustBuffer {
         FfiConverterOptionString.write(value.suggestion, into: &buf)
         FfiConverterString.write(value.headline, into: &buf)
         FfiConverterBool.write(value.quick, into: &buf)
+        FfiConverterOptionTypeRequestLabel.write(value.label, into: &buf)
     }
 }
 
@@ -10898,6 +11061,123 @@ public func FfiConverterTypeQuickApproval_lift(_ buf: RustBuffer) throws -> Quic
 #endif
 public func FfiConverterTypeQuickApproval_lower(_ value: QuickApproval) -> RustBuffer {
     return FfiConverterTypeQuickApproval.lower(value)
+}
+
+
+/**
+ * What a request is, the same on every screen: the thing it touches (the tile), what it does to it (the badge on the
+ * tile's corner) and the request itself in a few words, "Run `git push --force origin main`". Built by the core from
+ * the call (`crate::titles`), so a waiting card, its Activity row and the entry's page agree.
+ */
+public struct RequestLabel: Equatable, Hashable {
+    /**
+     * What it touches: "terminal" (a command), "file", "secrets" (the vault's secrets for a command), "ssh", "desktop"
+     * (a question from the computer), "mcp:<server id>" (a tool of an MCP server), else the integration's id ("github",
+     * "gmail", "gcalendar", "telegram", ...).
+     */
+    public var provider: String
+    /**
+     * What it does, the badge: "run", "read", "write", "send", "delete", "push", "secrets", "search", "grant" or "ask".
+     */
+    public var action: String
+    /**
+     * The words before the subject ("Run", "Push 3 commits to", "Send an email to"); the whole title when there is no
+     * subject.
+     */
+    public var lead: String
+    /**
+     * What it is about, set apart: the command, the path, the repository, the address. May be empty.
+     */
+    public var subject: String
+    /**
+     * The subject is code (a command, a path, a tool's name): shown in a monospaced font.
+     */
+    public var code: Bool
+    /**
+     * After the subject (" and 2 more"); usually empty.
+     */
+    public var tail: String
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(
+        /**
+         * What it touches: "terminal" (a command), "file", "secrets" (the vault's secrets for a command), "ssh", "desktop"
+         * (a question from the computer), "mcp:<server id>" (a tool of an MCP server), else the integration's id ("github",
+         * "gmail", "gcalendar", "telegram", ...).
+         */provider: String, 
+        /**
+         * What it does, the badge: "run", "read", "write", "send", "delete", "push", "secrets", "search", "grant" or "ask".
+         */action: String, 
+        /**
+         * The words before the subject ("Run", "Push 3 commits to", "Send an email to"); the whole title when there is no
+         * subject.
+         */lead: String, 
+        /**
+         * What it is about, set apart: the command, the path, the repository, the address. May be empty.
+         */subject: String, 
+        /**
+         * The subject is code (a command, a path, a tool's name): shown in a monospaced font.
+         */code: Bool, 
+        /**
+         * After the subject (" and 2 more"); usually empty.
+         */tail: String) {
+        self.provider = provider
+        self.action = action
+        self.lead = lead
+        self.subject = subject
+        self.code = code
+        self.tail = tail
+    }
+
+    
+
+    
+}
+
+#if compiler(>=6)
+extension RequestLabel: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeRequestLabel: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> RequestLabel {
+        return
+            try RequestLabel(
+                provider: FfiConverterString.read(from: &buf), 
+                action: FfiConverterString.read(from: &buf), 
+                lead: FfiConverterString.read(from: &buf), 
+                subject: FfiConverterString.read(from: &buf), 
+                code: FfiConverterBool.read(from: &buf), 
+                tail: FfiConverterString.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: RequestLabel, into buf: inout [UInt8]) {
+        FfiConverterString.write(value.provider, into: &buf)
+        FfiConverterString.write(value.action, into: &buf)
+        FfiConverterString.write(value.lead, into: &buf)
+        FfiConverterString.write(value.subject, into: &buf)
+        FfiConverterBool.write(value.code, into: &buf)
+        FfiConverterString.write(value.tail, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeRequestLabel_lift(_ buf: RustBuffer) throws -> RequestLabel {
+    return try FfiConverterTypeRequestLabel.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeRequestLabel_lower(_ value: RequestLabel) -> RustBuffer {
+    return FfiConverterTypeRequestLabel.lower(value)
 }
 
 
@@ -14981,6 +15261,54 @@ fileprivate struct FfiConverterOptionTypeDeviceBridge: FfiConverterRustBuffer {
 #if swift(>=5.8)
 @_documentation(visibility: private)
 #endif
+fileprivate struct FfiConverterOptionTypeActivityRequest: FfiConverterRustBuffer {
+    typealias SwiftType = ActivityRequest?
+
+    public static func write(_ value: SwiftType, into buf: inout [UInt8]) {
+        guard let value = value else {
+            writeInt(&buf, Int8(0))
+            return
+        }
+        writeInt(&buf, Int8(1))
+        FfiConverterTypeActivityRequest.write(value, into: &buf)
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> SwiftType {
+        switch try readInt(&buf) as Int8 {
+        case 0: return nil
+        case 1: return try FfiConverterTypeActivityRequest.read(from: &buf)
+        default: throw UniffiInternalError.unexpectedOptionalTag
+        }
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+fileprivate struct FfiConverterOptionTypeApprovalView: FfiConverterRustBuffer {
+    typealias SwiftType = ApprovalView?
+
+    public static func write(_ value: SwiftType, into buf: inout [UInt8]) {
+        guard let value = value else {
+            writeInt(&buf, Int8(0))
+            return
+        }
+        writeInt(&buf, Int8(1))
+        FfiConverterTypeApprovalView.write(value, into: &buf)
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> SwiftType {
+        switch try readInt(&buf) as Int8 {
+        case 0: return nil
+        case 1: return try FfiConverterTypeApprovalView.read(from: &buf)
+        default: throw UniffiInternalError.unexpectedOptionalTag
+        }
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
 fileprivate struct FfiConverterOptionTypeAskView: FfiConverterRustBuffer {
     typealias SwiftType = AskView?
 
@@ -15237,6 +15565,30 @@ fileprivate struct FfiConverterOptionTypeQuickApproval: FfiConverterRustBuffer {
         switch try readInt(&buf) as Int8 {
         case 0: return nil
         case 1: return try FfiConverterTypeQuickApproval.read(from: &buf)
+        default: throw UniffiInternalError.unexpectedOptionalTag
+        }
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+fileprivate struct FfiConverterOptionTypeRequestLabel: FfiConverterRustBuffer {
+    typealias SwiftType = RequestLabel?
+
+    public static func write(_ value: SwiftType, into buf: inout [UInt8]) {
+        guard let value = value else {
+            writeInt(&buf, Int8(0))
+            return
+        }
+        writeInt(&buf, Int8(1))
+        FfiConverterTypeRequestLabel.write(value, into: &buf)
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> SwiftType {
+        switch try readInt(&buf) as Int8 {
+        case 0: return nil
+        case 1: return try FfiConverterTypeRequestLabel.read(from: &buf)
         default: throw UniffiInternalError.unexpectedOptionalTag
         }
     }
@@ -16680,6 +17032,9 @@ private let initializationResult: InitializationResult = {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_reins_core_checksum_method_reinscore_activity() != 58338) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_reins_core_checksum_method_reinscore_activity_approval() != 46482) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_reins_core_checksum_method_reinscore_add_account() != 25987) {
