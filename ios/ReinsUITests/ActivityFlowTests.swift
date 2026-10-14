@@ -56,15 +56,18 @@ final class ActivityFlowTests: XCTestCase {
         XCTAssertTrue(element(app, "modeHero").waitForExistence(timeout: 5))
     }
 
-    func testMoreOptionsHoldTheStandingChoicesAndApprovingClosesTheSheet() {
+    func testTheDockOffersHowLongAndApprovingClosesTheScreen() {
         let app = launch("reins://item?kind=request&id=req1")
         XCTAssertTrue(element(app, "approvalSheet").waitForExistence(timeout: 10))
-        XCTAssertFalse(element(app, "lifetime:hour").exists, "the sheet shows only approve and deny until More is opened")
-        element(app, "moreToggle").tap()
         let hour = element(app, "lifetime:hour")
-        XCTAssertTrue(hour.waitForExistence(timeout: 3))
+        XCTAssertTrue(hour.waitForExistence(timeout: 3), "how long is in the dock")
+        XCTAssertFalse(element(app, "moreToggle").exists, "what it covers waits under Custom")
+        element(app, "lifetimeCustom").tap()
+        XCTAssertTrue(element(app, "moreToggle").waitForExistence(timeout: 3))
+        shot(app, "activity-sheet-custom")
+        element(app, "closeOverlay").tap()
         hour.tap()
-        shot(app, "activity-sheet-more")
+        shot(app, "activity-sheet-hour")
         element(app, "approve").tap()
         XCTAssertTrue(element(app, "approvalSheet").waitForNonExistence(timeout: 5))
         XCTAssertFalse(element(app, "pending:req1").exists)
@@ -84,12 +87,12 @@ final class ActivityFlowTests: XCTestCase {
     func testAPermissionCanOnlyBeShortened() {
         let app = launch("reins://item?kind=request&id=req3")
         XCTAssertTrue(element(app, "grantCard").waitForExistence(timeout: 10))
-        element(app, "moreToggle").tap()
+        element(app, "grantPeriod").tap()
         let slider = app.sliders["grantSlider"]
         XCTAssertTrue(slider.waitForExistence(timeout: 3))
         slider.adjust(toNormalizedSliderPosition: 0)
         shot(app, "activity-sheet-shorten")
-        XCTAssertEqual(element(app, "grantDuration").label, "1 min")
+        XCTAssertEqual(element(app, "grantDuration").label, "1 minute")
     }
 
     func testPairingNeedsTheMatchingCode() {

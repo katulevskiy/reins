@@ -3,6 +3,11 @@ import Foundation
 /// Text that came from outside the app (senders, subjects, snippets, client names). Bidirectional controls are
 /// removed so it cannot reorder what is shown around it, and other control characters become spaces.
 func untrusted(_ text: String) -> String {
+    untrustedLine(text).trimmingCharacters(in: .whitespacesAndNewlines)
+}
+
+/// `untrusted` for a line whose leading spaces matter (a line of code in a diff): nothing is trimmed.
+func untrustedLine(_ text: String) -> String {
     var out = String.UnicodeScalarView()
     for scalar in text.unicodeScalars {
         switch scalar.value {
@@ -16,7 +21,7 @@ func untrusted(_ text: String) -> String {
             out.append(scalar)
         }
     }
-    return String(out).trimmingCharacters(in: .whitespacesAndNewlines)
+    return String(out)
 }
 
 /// What an operation is (the Android app's `ActionKind`); each has its icon and colour.

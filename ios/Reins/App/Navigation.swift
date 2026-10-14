@@ -83,6 +83,12 @@ enum SheetTarget: Hashable, Identifiable {
         case .connectComputer: "connectComputer"
         }
     }
+
+    /// A request to approve: shown full screen.
+    var isApproval: Bool {
+        if case .approval = self { return true }
+        return false
+    }
 }
 
 extension PendingItem {

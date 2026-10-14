@@ -15,8 +15,6 @@ final class ApprovalModel {
     private(set) var busy = false
     var error: String?
     private(set) var finished = false
-    /// The "More options" section is open.
-    var moreOpen = false
     /// What Autopilot made of the request (Manual and Auto), if it looked at it.
     private(set) var suggestion: SuggestionView?
 
@@ -48,17 +46,19 @@ final class ApprovalModel {
         }
     }
 
-    var preview: BuildResult? { view.map { buildChoice($0, draft) } }
+    var preview: BuildResult? { view.map { buildDecision($0, draft) } }
 
-    /// Approving needs the owner's Face ID, Touch ID or passcode first; anything but a confirmation does nothing. With
-    /// `allow`, the core's "allow for a while" permission (same AI, same kind of request, same target) is made
-    /// alongside, in place of whatever "More options" says.
-    func approve(_ app: AppModel, allow quickAllow: Bool = false) async {
+    /// Asks the core again for Autopilot's score (after its model was installed from the approval screen).
+    func reloadSuggestion(_ app: AppModel) async {
+        suggestion = try? await app.core.autopilotSuggestion(requestId: requestId)
+    }
+
+    /// Approving needs the owner's Face ID, Touch ID or passcode first; anything but a confirmation does nothing. What
+    /// is remembered alongside is what the dock and its "Remember for" sheet say (`buildDecision`).
+    func approve(_ app: AppModel) async {
         guard let view, !busy else { return }
-        let standing = view.quick?.allow
-        if quickAllow && standing == nil { return }
-        var choice: ApprovalChoice
-        switch buildChoice(view, draft) {
+        let choice: ApprovalChoice
+        switch buildDecision(view, draft) {
         case let .invalid(message):
             app.feedback.play(.error)
             error = message
@@ -66,7 +66,6 @@ final class ApprovalModel {
         case let .ok(c):
             choice = c
         }
-        if quickAllow { choice.standing = standing }
         busy = true
         error = nil
         let allow = view.kind == .grant || view.kind == .accounts

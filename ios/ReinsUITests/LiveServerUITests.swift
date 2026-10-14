@@ -169,8 +169,7 @@ final class LiveServerUITests: XCTestCase {
         // Second call: a read (list_notes), allowed for an hour.
         wait("approvalSheet", 60)
         XCTAssertEqual(wait("mcpEffect").label, "Read only")
-        wait("moreToggle").tap()
-        // "Remember this for: 1 hour".
+        // "1 hour" in the dock: anything like this, for an hour.
         let hour = wait("lifetime:hour")
         tries = 0
         while !hour.isHittable && tries < 6 { app.swipeUp(); tries += 1 }

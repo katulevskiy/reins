@@ -114,7 +114,7 @@ struct DecisionBar: View {
 
 /// Two views side by side, the first `ratio` times as wide as the second (Deny is narrower than Approve), as tall as
 /// the taller one needs.
-private struct RatioRow: Layout {
+struct RatioRow: Layout {
     var spacing: CGFloat
     var ratio: CGFloat
 

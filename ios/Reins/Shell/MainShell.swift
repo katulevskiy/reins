@@ -19,8 +19,19 @@ struct MainShell: View {
                     TabShell()
                 }
             }
-            .sheet(item: $model.sheet) { target in
+            // A request is decided full screen; pairings, uploads and the rest are sheets.
+            .fullScreenCover(item: Binding(
+                get: { model.sheet?.isApproval == true ? model.sheet : nil },
+                set: { if $0 == nil, model.sheet?.isApproval == true { model.closeSheet() } }
+            )) { target in
                 // Presented content does not inherit the presenter's environment reliably: hand the fold over.
+                SheetContent(target: target, regular: sizeClass == .regular)
+                    .environment(\.hinge, posture)
+            }
+            .sheet(item: Binding(
+                get: { model.sheet?.isApproval == false ? model.sheet : nil },
+                set: { if $0 == nil, model.sheet?.isApproval == false { model.closeSheet() } }
+            )) { target in
                 SheetContent(target: target, regular: sizeClass == .regular)
                     .environment(\.hinge, posture)
             }
@@ -209,7 +220,8 @@ struct RouteView: View {
     }
 }
 
-/// The sheet for an item that waits: tall on a phone (the content stays visible above it), a form sheet on iPad.
+/// The sheet for an item that waits: an approval full screen; the others tall on a phone (the content stays visible
+/// above them), a form sheet on iPad.
 struct SheetContent: View {
     var target: SheetTarget
     /// The shell's width class (inside a form sheet the sheet's own is compact): a regular width gets a plain form
@@ -229,7 +241,7 @@ struct SheetContent: View {
         }
         .environment(model)
         .environment(\.feedback, model.feedback)
-        .modifier(SheetShape(regular: regular))
+        .modifier(SheetShape(regular: regular, fullScreen: target.isApproval))
         // Quiet when the request's chime just announced it (a request that pops up by itself).
         .onAppear { model.feedback.sheetOpened() }
     }
@@ -238,9 +250,13 @@ struct SheetContent: View {
 /// Detents on a phone; a plain form sheet, with no detents, on a regular width.
 private struct SheetShape: ViewModifier {
     var regular: Bool
+    /// A full-screen cover (an approval) takes no detents.
+    var fullScreen = false
 
     func body(content: Content) -> some View {
-        if regular {
+        if fullScreen {
+            content
+        } else if regular {
             content.presentationSizing(.form)
         } else {
             content
