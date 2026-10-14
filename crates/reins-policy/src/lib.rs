@@ -6,8 +6,10 @@
 
 mod evaluate;
 mod grant;
+pub mod guard;
 mod pattern;
 mod scope;
+pub mod shell;
 
 use reins_proto::ValidationError;
 use thiserror::Error;

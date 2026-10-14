@@ -8342,6 +8342,7 @@ dependencies = [
  "hyper-util",
  "log",
  "qrcode",
+ "reins-policy",
  "reins-proto",
  "reqwest",
  "ring",
@@ -8431,6 +8432,7 @@ dependencies = [
 name = "reins-policy"
 version = "0.1.0"
 dependencies = [
+ "data-encoding",
  "proptest",
  "regex",
  "reins-proto",
