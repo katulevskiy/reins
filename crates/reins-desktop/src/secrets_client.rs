@@ -317,6 +317,7 @@ fn import_parts(batch: &crate::secrets_import::Batch) -> (Vec<EnvChanges>, Vec<S
             let mut c = EnvChanges::new(&e.project, &e.env);
             c.set = e.vars.iter().map(|(n, v)| (n.clone(), v.to_string())).collect();
             c.replace = true;
+            c.origin.clone_from(&e.origin);
             c
         })
         .collect();
@@ -349,6 +350,30 @@ pub fn import_check(batch: &crate::secrets_import::Batch) -> String {
 }
 
 impl PhoneVaultWriter {
+    /// The Reins projects in the vault and where each came from (`reins.origin`): names only, never a value. One
+    /// approval on the phone (which can be remembered there).
+    pub async fn projects(&self) -> Result<Vec<reins_proto::desktop::ProjectListing>, StoreError> {
+        let (phone, phone_key) = self.phone().await?;
+        let listing = list(&phone, &phone_key, &Journal::new(&self.paths), self.timeout(), None)
+            .await
+            .map_err(StoreError::Failed)?;
+        Ok(listing.projects)
+    }
+
+    /// [`PhoneVaultWriter::projects`] as an import asks for them.
+    pub async fn import_projects(&self) -> Result<Vec<crate::secrets_import::VaultProject>, String> {
+        Ok(self
+            .projects()
+            .await
+            .map_err(|e| e.to_string())?
+            .into_iter()
+            .map(|p| crate::secrets_import::VaultProject {
+                name: p.name,
+                origin: p.origin,
+            })
+            .collect())
+    }
+
     /// Stores an import's batch with one approval: a result per environment, SSH key and token, in the batch's order.
     pub async fn store_import(&self, batch: &crate::secrets_import::Batch) -> crate::secrets_import::Stored {
         let (envs, ssh, tokens) = import_parts(batch);
@@ -575,6 +600,7 @@ mod tests {
                 project: "acme".into(),
                 env: "dev".into(),
                 vars: vec![("A".into(), Zeroizing::new("1".into()))],
+                origin: Some("github.com/acme/api".into()),
             }],
             ssh: vec![SshWrite {
                 name: "key".into(),
@@ -589,6 +615,7 @@ mod tests {
         };
         let (envs, ssh, tokens) = import_parts(&batch);
         assert!(envs[0].replace && envs[0].set == [("A".to_owned(), "1".to_owned())]);
+        assert_eq!(envs[0].origin.as_deref(), Some("github.com/acme/api"));
         assert_eq!((ssh[0].name.as_str(), tokens[0].user.as_deref()), ("key", Some("octo")));
         reins_proto::desktop::validate_batch(&envs, &ssh, &tokens).unwrap();
         assert_eq!(import_check(&batch), reins_proto::desktop::batch_check(&envs, &ssh, &tokens));

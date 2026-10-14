@@ -615,7 +615,8 @@ async fn a_new_project_is_made_with_one_approval_and_the_server_never_sees_a_val
     let desk = desk().await;
     desk.pair().await;
     let phone = phone_key(&desk).await;
-    let batch = vec![changes("shop", "dev", &[("KEY", "new-secret-1"), ("TOKEN", "new-secret-2")])];
+    let mut batch = vec![changes("shop", "dev", &[("KEY", "new-secret-1"), ("TOKEN", "new-secret-2")])];
+    batch[0].origin = Some("github.com/acme/shop".to_owned());
     let check = secrets_check(&batch);
     desk.send(&[store(&desk, "s1", &phone, batch)]).await;
     let view = desk.core.approval_view("s1".to_owned()).await.unwrap();
@@ -635,6 +636,7 @@ async fn a_new_project_is_made_with_one_approval_and_the_server_never_sees_a_val
         [
             ("reins.kind".to_owned(), "env/1".to_owned()),
             ("reins.env".to_owned(), "dev".to_owned()),
+            ("reins.origin".to_owned(), "github.com/acme/shop".to_owned()),
             ("KEY".to_owned(), "new-secret-1".to_owned()),
             ("TOKEN".to_owned(), "new-secret-2".to_owned())
         ]

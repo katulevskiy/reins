@@ -83,14 +83,14 @@ impl SecretRef {
 pub const SECRETS_FOLDER: &str = reins_proto::desktop::SECRETS_FOLDER;
 const MAX_NAME: usize = 64;
 
-/// A project or environment name: 1 to 64 of `A-Z a-z 0-9 . _ -`, not starting with `.` or `-`. Names never contain a
-/// `/`, so `project/env` is one item name and `project/env/NAME` one variable.
+/// A project or environment name: 1 to 64 lowercase letters, digits and `-`, not starting or ending with `-`. Names
+/// never contain a `/`, so `project/env` is one item name and `project/env/NAME` one variable.
 pub fn check_name(what: &str, name: &str) -> Result<(), String> {
     if reins_proto::desktop::name_ok(name) {
         Ok(())
     } else {
         Err(format!(
-            "`{}` is not a {what} name: 1 to {MAX_NAME} letters, digits, `.`, `_` or `-`, not starting with `.` or `-`",
+            "`{}` is not a {what} name: 1 to {MAX_NAME} lowercase letters, digits and `-`, not starting or ending with `-`",
             cut(name, 80)
         ))
     }
@@ -475,10 +475,10 @@ mod tests {
 
     #[test]
     fn names_are_checked() {
-        for ok in ["acme-web", "a", "web_2.0", &"x".repeat(64)] {
+        for ok in ["acme-web", "a", "web2", "machine-danas-macbook-3f9a", &"x".repeat(64)] {
             check_name("project", ok).unwrap();
         }
-        for bad in ["", ".hidden", "-x", "a/b", "a b", "é", &"x".repeat(65)] {
+        for bad in ["", ".hidden", "-x", "x-", "a/b", "a b", "é", "Acme", "web_2.0", "a.b", &"x".repeat(65)] {
             assert!(check_name("project", bad).is_err(), "{bad}");
         }
         check_var("_A1").unwrap();
