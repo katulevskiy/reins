@@ -35,9 +35,12 @@ always reach you, as does another phone joining your account):
 - git pushes that rewrite or delete history, or whose history could not be checked;
 - uploaded files that may hold something to run (executables, scripts, archives, unknown binary types);
 - anything from a connection paired less than 10 minutes ago;
-- a harness hook's or `reins ask` question about a command that deletes, rewrites history or wipes something (force
-  or deleting pushes, `reset --hard`, recursive deletes, `terraform destroy`, `DROP TABLE`, ...), or about reading a
-  secret file such as `.env` or a private key.
+- a harness hook's or `reins ask` question about something that cannot be undone: the desktop guard's destructive
+  groups (rewriting git history, recursive deletes, infrastructure changes, dropping data, publishing, trusting a
+  payment key, wiping disks). The phone reads the command itself with its own copy of the guard's rules; what the
+  computer says about the rule can make a question stricter, never looser. A question about a secret file (`.env`,
+  keys, cloud credentials, saved tokens) is not on the floor: it is judged like any other request (below), in a kind
+  of its own per group.
 
 The same floor decides what you can answer without opening a request: requests on it never get Approve on the
 notification, Approve all or "Approve and allow for 1 hour" ([quick start](quick-start.md#5-answer-requests-quickly)).
@@ -83,7 +86,9 @@ of request goes back to asking you.
 
 ## How Auto earns trust
 
-Auto works per **kind of request** (service, action and class, for example `github/write/push` or `gmail/read`):
+Auto works per **kind of request** (service, action and class, for example `github/write/push` or `gmail/read`; a
+harness hook's question is of its guard group, as the phone reads it: `desktop/ask/env-files`, `desktop/ask/keys`,
+`desktop/ask/cloud`, `desktop/ask/tokens`):
 
 - **Auto-approve** unlocks after at least 20 of your decisions of that kind, when Autopilot would have agreed with you
   at least 95% of the time over the last 50, and never suggested approving something you denied in the last 20.

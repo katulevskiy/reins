@@ -334,9 +334,13 @@ Autopilot runs only on the phone. Nothing it uses or learns leaves the phone. It
 
 - **Hard floor.** In Manual and Auto, some requests always wait for you: new connections, standing permission
   requests, account listings, secret releases, SSH signatures, everything that is asked every time (above), destructive
-  MCP tools, pushes that rewrite or delete history (or whose history could not be checked), hook questions about a
-  destructive command or a secret file, uploaded files that may hold something to run, and anything from a connection
+  MCP tools, pushes that rewrite or delete history (or whose history could not be checked), hook questions in one of
+  the guard's destructive groups, uploaded files that may hold something to run, and anything from a connection
   paired less than 10 minutes ago. Lockdown denies, and never approves. Bypass is the exception, by design (below).
+  The phone puts a hook question in a group itself, reading the command or files it carries with its own copy of the
+  guard's built-in rules (`reins_policy::guard`): the hook runs where the AI does, so its label is only shown, and
+  can make a question stricter, never looser. A question about a secret file (`.env`, keys, cloud credentials, tokens)
+  is judged like any request, per group: an ordinary yes or no, held and red only when it cannot be undone.
 - **Prompt-injection rule.** The model scores each request twice: once on the facts the phone verified (service,
   action, target, history), and once with the AI-written text added (reason, email body, commit messages, arguments).
   The approve score it uses is the lower of the two, and the deny score the higher. AI-written text can therefore make
@@ -351,7 +355,9 @@ of every kind and every item in it: the hard floor above included (secrets, SSH 
 screen would pick and within your budgets, destructive tools, force pushes and deletions, flagged uploads, account
 listings, standing permission requests), from a connection however new. A global bypass applies to every AI that is
 not locked down, whatever mode it has of its own, and turning one on also approves what already waits in its scope.
-It needs no model, so it answers while the app is closed (a push, the notification extension).
+It needs no model, so it answers while the app is closed (a push, the notification extension). That includes the
+desktop app's questions: a harness hook's question (a secret file, or a force push) is answered yes within a poll of
+the hook, which then lets the command run, so an agent left working is never held by a guard question.
 
 Its guards:
 
