@@ -113,9 +113,14 @@ assert "overwrite: true" in retry
 assert action.count("if-no-files-found: error") == 2
 for field in ("name", "path", "compression-level", "retention-days"):
     assert action.count(f"{field}: ${{{{ inputs.{field} }}}}") == 2
-for job in ("desktop-linux", "desktop"):
+for job in ("desktop-linux", "desktop", "android"):
     section = workflow.split(f"\n  {job}:\n", 1)[1].split("\n\n  ", 1)[0]
     assert "fail-fast: false" in section, job
 assert "uses: actions/upload-artifact@" not in workflow
 assert workflow.count("uses: ./.github/actions/upload-artifact") == 13
-print("38 release CI gate and artifact retry checks passed")
+# The APK and the Play bundle are built on two runners and must carry the same versionCode: plan's.
+android = workflow.split("\n  android:\n", 1)[1].split("\n\n  ", 1)[0]
+assert "VERSION_CODE: ${{ needs.plan.outputs.version-code }}" in android
+assert "date -u" not in android
+assert "needs.android.outputs.version-code" not in workflow
+print("40 release CI gate and artifact retry checks passed")

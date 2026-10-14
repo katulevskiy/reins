@@ -63,6 +63,7 @@ jobs:
       sha: ${{ steps.commit.outputs.sha }}
       build: ${{ steps.version.outputs.build }}
       build-time: ${{ steps.version.outputs.build-time }}
+      version-code: ${{ steps.version.outputs.version-code }}
     steps:
       - name: Commit to release
         id: commit
@@ -117,10 +118,14 @@ jobs:
           # The build id the desktop app and the APK show: version, commit time (UTC) and commit.
           time="$(git log -1 --format=%ct "$SHA")"
           stamp="$(TZ=UTC git log -1 --date=format-local:%Y%m%d%H%M --format=%cd "$SHA")"
+          # The Android versionCode: this release's start in minutes, as in scripts/release-android.sh, so every release
+          # installs over the one before (releases run one at a time). The APK and the Play bundle, built side by side,
+          # share it.
           {
             echo "release=true"
             echo "build=$version-$stamp-${SHA:0:8}"
             echo "build-time=$time"
+            echo "version-code=$(($(date -u +%s) / 60))"
           } >> "$GITHUB_OUTPUT"
           echo "::notice::Releasing v$version from $SHA"
       - name: Fetch signing identity from Infisical
@@ -776,8 +781,10 @@ jobs:
           path: native/
           retention-days: 1
 
+  # The signed APK (full) and the Google Play bundle (play) on two runners: Gradle runs one project's tasks one after
+  # another, so in one job the second variant's compile, lint and R8 waited for the first's (7 minutes in all).
   android:
-    name: Android APK (full) and bundle (play)
+    name: Android ${{ matrix.name }}
     needs: [plan, android-native]
     if: needs.plan.outputs.release == 'true'
     runs-on: ubuntu-24.04
@@ -785,11 +792,16 @@ jobs:
     permissions:
       contents: read
       id-token: write # Infisical OIDC
-    outputs:
-      version-code: ${{ steps.build.outputs.version-code }} # for the Android updater's feed (publish)
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { variant: full, name: APK (full), task: ":app:assembleFullRelease" }
+          - { variant: play, name: bundle (play), task: ":app:bundlePlayRelease" }
     env:
       VERSION: ${{ needs.plan.outputs.version }}
       BUILD: ${{ needs.plan.outputs.build }}
+      VERSION_CODE: ${{ needs.plan.outputs.version-code }}
     steps:
       - uses: actions/checkout@v7
         with:
@@ -839,12 +851,11 @@ jobs:
           [[ "$actual" == "$expected" ]] || { echo "::error::Keystore does not match production signing identity"; exit 1; }
       # android/app/build.gradle.kts signs fullRelease with the REINS_RELEASE_* key and the Play bundle (playRelease)
       # with the REINS_UPLOAD_* key: the same production key, which is the Play upload key (Google Play re-signs
-      # with its app signing key). versionCode is the build time in minutes, as in scripts/release-android.sh, so every
-      # release installs over the previous one; both builds share it.
-      - name: Build the APK and the Play bundle
-        id: build
+      # with its app signing key). versionCode comes from plan (the release's start in minutes), so both builds share it.
+      - name: Build the ${{ matrix.name }}
         working-directory: android
         env:
+          TASK: ${{ matrix.task }}
           REINS_RELEASE_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
           REINS_RELEASE_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
           REINS_RELEASE_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
@@ -862,8 +873,7 @@ jobs:
           export REINS_UPLOAD_KEYSTORE_PASSWORD="$REINS_RELEASE_KEYSTORE_PASSWORD"
           export REINS_UPLOAD_KEY_ALIAS="$REINS_RELEASE_KEY_ALIAS"
           export REINS_UPLOAD_KEY_PASSWORD="$REINS_RELEASE_KEY_PASSWORD"
-          version_code="$(($(date -u +%s) / 60))"
-          echo "version-code=$version_code" >> "$GITHUB_OUTPUT"
+          [[ "$VERSION_CODE" =~ ^[0-9]+$ ]] || { echo "::error::no versionCode from plan"; exit 1; }
           extra=()
           if [[ -n "${TELEGRAM_API_ID:-}" && -n "${TELEGRAM_API_HASH:-}" ]]; then
             extra+=("-Preins.telegramApiId=$TELEGRAM_API_ID" "-Preins.telegramApiHash=$TELEGRAM_API_HASH")
@@ -879,10 +889,10 @@ jobs:
           fi
           # The site and the sign-in screen's server are gradle.properties' reins.site / reins.defaultServer. The
           # Play bundle uses the same Telegram credentials and Firebase config (same application id).
-          ./gradlew --no-daemon --parallel --no-configuration-cache :app:assembleFullRelease :app:bundlePlayRelease \
+          ./gradlew --no-daemon --parallel --no-configuration-cache "$TASK" \
             "-Preins.prebuiltNativeDir=$GITHUB_WORKSPACE/native" \
             -Preins.secureScreens=true \
-            "-Preins.versionCode=$version_code" \
+            "-Preins.versionCode=$VERSION_CODE" \
             "-Preins.versionName=$VERSION" \
             "-Preins.build=$BUILD" \
             "${extra[@]}"
@@ -890,8 +900,7 @@ jobs:
         if: always()
         run: rm -f "$RUNNER_TEMP/release.keystore" "$RUNNER_TEMP/release-certificate.der" "$RUNNER_TEMP/google-services.json"
       - name: Verify and name the APK
-        env:
-          VERSION_CODE: ${{ steps.build.outputs.version-code }}
+        if: matrix.variant == 'full'
         run: |
           build_tools="$(ls -d "$ANDROID_HOME"/build-tools/* | sort -V | tail -1)"
           apk="dist/reins-$VERSION-android.apk"
@@ -911,8 +920,8 @@ jobs:
           } >> "$GITHUB_STEP_SUMMARY"
       # bundletool validates the bundle and makes the universal APK the bundle checks run on (pinned by SHA-256).
       - name: Verify and name the Play bundle
+        if: matrix.variant == 'play'
         env:
-          VERSION_CODE: ${{ steps.build.outputs.version-code }}
           BUNDLETOOL_VERSION: 1.18.3
           BUNDLETOOL_SHA256: a099cfa1543f55593bc2ed16a70a7c67fe54b1747bb7301f37fdfd6d91028e29
         run: |
@@ -934,12 +943,14 @@ jobs:
             echo '```'
           } >> "$GITHUB_STEP_SUMMARY"
       - uses: ./.github/actions/upload-artifact # zizmor: ignore[self-repository] use the exact release checkout
+        if: matrix.variant == 'full'
         with:
           name: dist-android
           compression-level: 0
           path: dist/*.apk
           retention-days: 7
       - uses: ./.github/actions/upload-artifact # zizmor: ignore[self-repository] use the exact release checkout
+        if: matrix.variant == 'play'
         with:
           name: dist-android-play
           compression-level: 0
@@ -1212,7 +1223,7 @@ jobs:
         env:
           BUILD: ${{ needs.plan.outputs.build }}
           BUILD_TIME: ${{ needs.plan.outputs.build-time }}
-          VERSION_CODE: ${{ needs.android.outputs.version-code }}
+          VERSION_CODE: ${{ needs.plan.outputs.version-code }}
         run: |
           umask 077
           key_env="$GITHUB_WORKSPACE/.release-key.env"
@@ -1328,7 +1339,7 @@ jobs:
           PLAY_SERVICE_ACCOUNT_JSON: ${{ secrets.PLAY_SERVICE_ACCOUNT_JSON }}
           PLAY_TRACK: ${{ vars.PLAY_TRACK || 'internal,alpha,beta,production' }}
           PLAY_RELEASE_STATUS: ${{ vars.PLAY_RELEASE_STATUS || 'completed' }}
-          VERSION_CODE: ${{ needs.android.outputs.version-code }}
+          VERSION_CODE: ${{ needs.plan.outputs.version-code }}
         run: |
           umask 077
           play_env="$GITHUB_WORKSPACE/.play.env"
