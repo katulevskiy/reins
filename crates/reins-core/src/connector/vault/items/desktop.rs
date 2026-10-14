@@ -95,7 +95,8 @@ pub(in crate::connector::vault) async fn perform(
         "names" => store::perform_names(vault, account, call).await,
         // Bound to what the user approved, which only the flow knows (`env::perform_release`).
         "env_release" => Err(bad("A release of an environment is carried out by the approval flow.")),
-        "secrets_store" => env::perform_store(vault, account, call).await,
+        // With its tokens, which only the flow can add.
+        "secrets_store" => Err(bad("A store of secrets is carried out by the approval flow.")),
         "secrets_list" => env::perform_list(vault, account, call).await,
         _ => return None,
     })

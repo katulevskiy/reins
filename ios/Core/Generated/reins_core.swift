@@ -11854,9 +11854,17 @@ public struct SecretsStoreView: Equatable, Hashable {
      */
     public var check: String
     /**
-     * Variables set in all.
+     * Values in all (variables set, SSH keys, tokens).
      */
     public var total: UInt32
+    /**
+     * SSH keys kept in the folder Reins/ssh.
+     */
+    public var ssh: [SshStoreView]
+    /**
+     * Git hosts' tokens handed to the phone's integrations (`check` empty: the batch has one).
+     */
+    public var tokens: [TokenStoreView]
 
     // Default memberwise initializers are never public by default, so we
     // declare one manually.
@@ -11865,11 +11873,19 @@ public struct SecretsStoreView: Equatable, Hashable {
          * Four digits the terminal shows too.
          */check: String, 
         /**
-         * Variables set in all.
-         */total: UInt32) {
+         * Values in all (variables set, SSH keys, tokens).
+         */total: UInt32, 
+        /**
+         * SSH keys kept in the folder Reins/ssh.
+         */ssh: [SshStoreView] = [], 
+        /**
+         * Git hosts' tokens handed to the phone's integrations (`check` empty: the batch has one).
+         */tokens: [TokenStoreView] = []) {
         self.envs = envs
         self.check = check
         self.total = total
+        self.ssh = ssh
+        self.tokens = tokens
     }
 
     
@@ -11890,7 +11906,9 @@ public struct FfiConverterTypeSecretsStoreView: FfiConverterRustBuffer {
             try SecretsStoreView(
                 envs: FfiConverterSequenceTypeEnvStoreView.read(from: &buf), 
                 check: FfiConverterString.read(from: &buf), 
-                total: FfiConverterUInt32.read(from: &buf)
+                total: FfiConverterUInt32.read(from: &buf), 
+                ssh: FfiConverterSequenceTypeSshStoreView.read(from: &buf), 
+                tokens: FfiConverterSequenceTypeTokenStoreView.read(from: &buf)
         )
     }
 
@@ -11898,6 +11916,8 @@ public struct FfiConverterTypeSecretsStoreView: FfiConverterRustBuffer {
         FfiConverterSequenceTypeEnvStoreView.write(value.envs, into: &buf)
         FfiConverterString.write(value.check, into: &buf)
         FfiConverterUInt32.write(value.total, into: &buf)
+        FfiConverterSequenceTypeSshStoreView.write(value.ssh, into: &buf)
+        FfiConverterSequenceTypeTokenStoreView.write(value.tokens, into: &buf)
     }
 }
 
@@ -12771,6 +12791,69 @@ public func FfiConverterTypeSshSignView_lift(_ buf: RustBuffer) throws -> SshSig
 #endif
 public func FfiConverterTypeSshSignView_lower(_ value: SshSignView) -> RustBuffer {
     return FfiConverterTypeSshSignView.lower(value)
+}
+
+
+/**
+ * An SSH key of a store.
+ */
+public struct SshStoreView: Equatable, Hashable {
+    public var name: String
+    /**
+     * `SHA256:…`
+     */
+    public var fingerprint: String
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(name: String, 
+        /**
+         * `SHA256:…`
+         */fingerprint: String) {
+        self.name = name
+        self.fingerprint = fingerprint
+    }
+
+    
+
+    
+}
+
+#if compiler(>=6)
+extension SshStoreView: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeSshStoreView: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> SshStoreView {
+        return
+            try SshStoreView(
+                name: FfiConverterString.read(from: &buf), 
+                fingerprint: FfiConverterString.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: SshStoreView, into buf: inout [UInt8]) {
+        FfiConverterString.write(value.name, into: &buf)
+        FfiConverterString.write(value.fingerprint, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeSshStoreView_lift(_ buf: RustBuffer) throws -> SshStoreView {
+    return try FfiConverterTypeSshStoreView.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeSshStoreView_lower(_ value: SshStoreView) -> RustBuffer {
+    return FfiConverterTypeSshStoreView.lower(value)
 }
 
 
@@ -17519,6 +17602,56 @@ fileprivate struct FfiConverterSequenceTypeSpendTotal: FfiConverterRustBuffer {
         seq.reserveCapacity(Int(len))
         for _ in 0 ..< len {
             seq.append(try FfiConverterTypeSpendTotal.read(from: &buf))
+        }
+        return seq
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+fileprivate struct FfiConverterSequenceTypeSshStoreView: FfiConverterRustBuffer {
+    typealias SwiftType = [SshStoreView]
+
+    public static func write(_ value: [SshStoreView], into buf: inout [UInt8]) {
+        let len = Int32(value.count)
+        writeInt(&buf, len)
+        for item in value {
+            FfiConverterTypeSshStoreView.write(item, into: &buf)
+        }
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> [SshStoreView] {
+        let len: Int32 = try readInt(&buf)
+        var seq = [SshStoreView]()
+        seq.reserveCapacity(Int(len))
+        for _ in 0 ..< len {
+            seq.append(try FfiConverterTypeSshStoreView.read(from: &buf))
+        }
+        return seq
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+fileprivate struct FfiConverterSequenceTypeTokenStoreView: FfiConverterRustBuffer {
+    typealias SwiftType = [TokenStoreView]
+
+    public static func write(_ value: [TokenStoreView], into buf: inout [UInt8]) {
+        let len = Int32(value.count)
+        writeInt(&buf, len)
+        for item in value {
+            FfiConverterTypeTokenStoreView.write(item, into: &buf)
+        }
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> [TokenStoreView] {
+        let len: Int32 = try readInt(&buf)
+        var seq = [TokenStoreView]()
+        seq.reserveCapacity(Int(len))
+        for _ in 0 ..< len {
+            seq.append(try FfiConverterTypeTokenStoreView.read(from: &buf))
         }
         return seq
     }

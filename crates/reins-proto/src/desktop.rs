@@ -1071,11 +1071,78 @@ impl EnvChanges {
     }
 }
 
-/// A whole `vault_secrets_store`: 1 to [`MAX_STORE_ENVS`] distinct environments, each valid, at most
-/// [`MAX_STORE_BYTES`] of values.
-pub fn validate_store(envs: &[EnvChanges]) -> Result<(), String> {
-    if envs.is_empty() || envs.len() > MAX_STORE_ENVS {
-        return Err(format!("one store changes 1 to {MAX_STORE_ENVS} environments"));
+/// An SSH private key for the phone to keep as an SSH key item in the vault folder `Reins/ssh` (import). The key is
+/// wiped when this is dropped.
+#[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SshKeyToStore {
+    /// The item's name.
+    pub name: String,
+    /// OpenSSH or PEM, without a passphrase.
+    pub private_key: String,
+}
+
+impl Drop for SshKeyToStore {
+    fn drop(&mut self) {
+        zeroize::Zeroize::zeroize(&mut self.private_key);
+    }
+}
+
+impl std::fmt::Debug for SshKeyToStore {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("SshKeyToStore").field("name", &self.name).finish_non_exhaustive()
+    }
+}
+
+/// A git host's token for the phone's integration of that host (GitHub, GitLab, Codeberg, Bitbucket). Wiped on drop.
+#[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct HostToken {
+    /// `github.com`, `gitlab.com`, `codeberg.org` or `bitbucket.org` ([`crate::connector::TOKEN_HOSTS`]).
+    pub host: String,
+    /// The user the token was found for, when the source says (Bitbucket signs in as `user:token`).
+    #[serde(default)]
+    pub user: Option<String>,
+    /// What the computer knows of its scopes; shown, not trusted.
+    #[serde(default)]
+    pub scopes: Vec<String>,
+    pub token: String,
+}
+
+impl Drop for HostToken {
+    fn drop(&mut self) {
+        zeroize::Zeroize::zeroize(&mut self.token);
+    }
+}
+
+impl std::fmt::Debug for HostToken {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("HostToken").field("host", &self.host).field("user", &self.user).finish_non_exhaustive()
+    }
+}
+
+impl HostToken {
+    /// The integration this host's token is for.
+    #[must_use]
+    pub fn service(&self) -> Option<&'static str> {
+        let host = self.host.to_ascii_lowercase();
+        crate::connector::TOKEN_HOSTS.iter().find(|(_, h)| *h == host).map(|(s, _)| *s)
+    }
+}
+
+/// The most SSH keys and tokens one store carries.
+pub const MAX_STORE_SSH: usize = 20;
+pub const MAX_STORE_TOKENS: usize = 10;
+
+/// A whole `vault_secrets_store`: something to save, at most [`MAX_STORE_ENVS`] distinct environments (each valid),
+/// [`MAX_STORE_SSH`] SSH keys with distinct names and [`MAX_STORE_TOKENS`] tokens for hosts the phone serves, at most
+/// [`MAX_STORE_BYTES`] of values in all.
+pub fn validate_batch(envs: &[EnvChanges], ssh: &[SshKeyToStore], tokens: &[HostToken]) -> Result<(), String> {
+    if envs.is_empty() && ssh.is_empty() && tokens.is_empty() {
+        return Err("nothing to save".to_owned());
+    }
+    if envs.len() > MAX_STORE_ENVS || ssh.len() > MAX_STORE_SSH || tokens.len() > MAX_STORE_TOKENS {
+        return Err(format!(
+            "one store saves at most {MAX_STORE_ENVS} environments, {MAX_STORE_SSH} SSH keys and {MAX_STORE_TOKENS} tokens"
+        ));
     }
     let mut items = std::collections::BTreeSet::new();
     let mut bytes = 0usize;
@@ -1086,10 +1153,41 @@ pub fn validate_store(envs: &[EnvChanges]) -> Result<(), String> {
         }
         bytes += e.set.iter().map(|(n, v)| n.len() + v.len()).sum::<usize>();
     }
+    let mut names = std::collections::BTreeSet::new();
+    for k in ssh {
+        let name = k.name.trim();
+        if name.is_empty() || name.chars().count() > 200 || name.chars().any(char::is_control) {
+            return Err("an SSH key needs a name of at most 200 characters".to_owned());
+        }
+        if !names.insert(name) {
+            return Err(format!("the SSH key {} appears twice", printable(name)));
+        }
+        if k.private_key.trim().is_empty() {
+            return Err(format!("the SSH key {} is empty", printable(name)));
+        }
+        bytes += k.private_key.len();
+    }
+    for t in tokens {
+        if t.service().is_none() {
+            return Err(format!("{} is not a git host the phone serves", printable(&t.host)));
+        }
+        if t.token.trim().is_empty() || t.token.len() > 4_000 || t.user.as_ref().is_some_and(|u| u.len() > 200) {
+            return Err(format!("the token for {} is empty or too long", t.host));
+        }
+        bytes += t.token.len();
+    }
     if bytes > MAX_STORE_BYTES {
         return Err(format!("at most {} KB of values in one store", MAX_STORE_BYTES / 1024));
     }
     Ok(())
+}
+
+/// [`validate_batch`] for environments alone.
+pub fn validate_store(envs: &[EnvChanges]) -> Result<(), String> {
+    if envs.is_empty() {
+        return Err(format!("one store changes 1 to {MAX_STORE_ENVS} environments"));
+    }
+    validate_batch(envs, &[], &[])
 }
 
 /// What the desktop app sends the phone for `vault_secrets_store`: changes to one or more environments, in a box from
@@ -1103,31 +1201,64 @@ pub struct SecretsToStore {
     /// Unix seconds, on the computer.
     pub created_at: i64,
     pub envs: Vec<EnvChanges>,
+    /// SSH keys for the folder `Reins/ssh`.
+    #[serde(default)]
+    pub ssh: Vec<SshKeyToStore>,
+    /// Git hosts' tokens for the phone's integrations.
+    #[serde(default)]
+    pub tokens: Vec<HostToken>,
 }
 
 impl std::fmt::Debug for SecretsToStore {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("SecretsToStore").field("nonce", &self.nonce).field("envs", &self.envs).finish_non_exhaustive()
+        f.debug_struct("SecretsToStore")
+            .field("nonce", &self.nonce)
+            .field("envs", &self.envs)
+            .field("ssh", &self.ssh)
+            .field("tokens", &self.tokens)
+            .finish_non_exhaustive()
     }
 }
 
-/// Four digits both the terminal and the phone show for a whole store: every value set, with its environment and
-/// name. Like [`value_check`], so that a batch an AI on the computer sent in the user's place does not pass for theirs.
+/// Four digits both the computer and the phone show for a whole store, so that a batch an AI on the computer sent in
+/// the user's place does not pass for theirs. Like [`value_check`]: about 13 bits, not a secret on its own.
+///
+/// The canonical form, independent of order: one entry per value, `("env", "<project>/<env>", NAME, value)` for every
+/// variable set, `("ssh", name, "", private_key)` for every SSH key, `("token", host, user or "", token)` for every
+/// token; the entries sorted; SHA-256 over `reins-secrets-batch/1` then each part of each entry as its length (8 bytes,
+/// big-endian) and its bytes; the first two bytes of the hash as a big-endian number, modulo 10 000, in four digits.
 #[must_use]
-pub fn secrets_check(envs: &[EnvChanges]) -> String {
-    let mut all: Vec<(String, &str, &str)> =
-        envs.iter().flat_map(|e| e.set.iter().map(move |(n, v)| (e.item(), n.as_str(), v.as_str()))).collect();
+pub fn batch_check(envs: &[EnvChanges], ssh: &[SshKeyToStore], tokens: &[HostToken]) -> String {
+    let mut all: Vec<[String; 4]> = Vec::new();
+    for e in envs {
+        for (n, v) in &e.set {
+            all.push(["env".to_owned(), e.item(), n.clone(), v.clone()]);
+        }
+    }
+    for k in ssh {
+        all.push(["ssh".to_owned(), k.name.clone(), String::new(), k.private_key.clone()]);
+    }
+    for t in tokens {
+        all.push(["token".to_owned(), t.host.clone(), t.user.clone().unwrap_or_default(), t.token.clone()]);
+    }
     all.sort_unstable();
     let mut h = Sha256::new();
     h.update(b"reins-secrets-batch/1");
-    for (item, name, value) in all {
-        for part in [item.as_bytes(), name.as_bytes(), value.as_bytes()] {
+    for entry in &mut all {
+        for part in entry.iter_mut() {
             h.update((part.len() as u64).to_be_bytes());
-            h.update(part);
+            h.update(part.as_bytes());
+            zeroize::Zeroize::zeroize(part);
         }
     }
     let d = h.finalize();
     format!("{:04}", u16::from_be_bytes([d[0], d[1]]) % 10_000)
+}
+
+/// [`batch_check`] of environments alone.
+#[must_use]
+pub fn secrets_check(envs: &[EnvChanges]) -> String {
+    batch_check(envs, &[], &[])
 }
 
 /// What happened to one environment, as the phone acknowledges a `vault_secrets_store`.
@@ -1144,9 +1275,35 @@ pub struct EnvStored {
     pub copied: u32,
     /// The environment's new version.
     pub revision: String,
+    /// Why it was not changed (the rest of the store is unaffected).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub error: Option<String>,
 }
 
-/// What the phone answers a `vault_secrets_store` it carried out, boxed from its inbox key (as [`StoreAck`]).
+/// What happened to one SSH key of a store.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SshStored {
+    pub name: String,
+    /// `SHA256:…` of the key kept; empty when it failed.
+    pub fingerprint: String,
+    /// Why it was not kept (the rest of the store is unaffected).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub error: Option<String>,
+}
+
+/// What happened to one token of a store.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct TokenStored {
+    pub host: String,
+    /// The integration (`github`, …) and the account the token signs in as; empty when it failed.
+    pub service: String,
+    pub account: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub error: Option<String>,
+}
+
+/// What the phone answers a `vault_secrets_store` it carried out, boxed from its inbox key (as [`StoreAck`]): one
+/// entry per environment, SSH key and token, in the order sent.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct SecretsStoreAck {
     pub v: u32,
@@ -1154,6 +1311,10 @@ pub struct SecretsStoreAck {
     pub dir: String,
     pub nonce: String,
     pub envs: Vec<EnvStored>,
+    #[serde(default)]
+    pub ssh: Vec<SshStored>,
+    #[serde(default)]
+    pub tokens: Vec<TokenStored>,
 }
 
 /// What the desktop app sends the phone for `integration_token_store`: a git host's token (found by import: `gh`,
@@ -1603,6 +1764,41 @@ mod tests {
             secrets_check(&[changes("acme", "dev", &[("A1", "2")])])
         );
         assert!(!format!("{a:?}").contains("\"1\""), "values never show in Debug");
+    }
+
+    fn ssh(name: &str, key: &str) -> SshKeyToStore {
+        SshKeyToStore {
+            name: name.into(),
+            private_key: key.into(),
+        }
+    }
+
+    fn token(host: &str, value: &str) -> HostToken {
+        HostToken {
+            host: host.into(),
+            user: None,
+            scopes: vec![],
+            token: value.into(),
+        }
+    }
+
+    #[test]
+    fn the_batch_check_covers_ssh_keys_and_tokens_in_any_order() {
+        let envs = [changes("acme", "dev", &[("A", "1")])];
+        let keys = [ssh("deploy", "KEY-1"), ssh("other", "KEY-2")];
+        let tokens = [token("github.com", "ghp_1")];
+        let check = batch_check(&envs, &keys, &tokens);
+        assert_eq!(check, batch_check(&envs, &[ssh("other", "KEY-2"), ssh("deploy", "KEY-1")], &tokens));
+        assert_ne!(check, batch_check(&envs, &keys, &[token("github.com", "ghp_2")]));
+        assert_ne!(check, batch_check(&envs, &[ssh("deploy", "KEY-1")], &tokens));
+        assert_ne!(check, batch_check(&envs, &keys, &[]));
+        assert_eq!(secrets_check(&envs), batch_check(&envs, &[], &[]));
+        validate_batch(&[], &keys, &tokens).unwrap();
+        assert!(validate_batch(&[], &[], &[]).is_err());
+        assert!(validate_batch(&[], &[ssh("a", "K"), ssh("a", "K")], &[]).is_err());
+        assert!(validate_batch(&[], &[], &[token("example.com", "t")]).is_err());
+        assert_eq!(token("GitHub.com", "t").service(), Some("github"));
+        assert!(!format!("{:?} {:?}", keys[0], tokens[0]).contains("KEY-1"));
     }
 
     #[test]

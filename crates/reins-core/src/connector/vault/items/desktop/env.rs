@@ -16,21 +16,24 @@ use reins_proto::connector::ConnectorCall;
 use reins_proto::desktop::{
     CommandScope, ENV_KIND, ENV_KIND_FIELD, EnvChanges, EnvListing, EnvStored, MAX_ENV_BYTES, MAX_ENV_VARS,
     PHONE_KEY_CHANGED, ProjectListing, RESERVED_PREFIX, SEALED_FIELD, SECRETS_FOLDER, SECRETS_STORE_TTL_SECS,
-    SecretGrant, SecretsListing, SecretsStoreAck, SecretsToStore, TO_DESKTOP, TO_PHONE, name_ok, secrets_check,
-    validate_store, var_ok,
+    SecretGrant, SecretsListing, SecretsToStore, SshKeyToStore, SshStored, TO_DESKTOP, TO_PHONE, batch_check, name_ok,
+    validate_batch, var_ok,
 };
 use reqwest::Method;
 use serde_json::{Value, json};
 use zeroize::Zeroizing;
 
-use super::super::model::{Entry, Kind, Snapshot, State};
+use super::super::editor::{args_for, public_of_private};
+use super::super::model::{Entry, Folder, Kind, Snapshot, State};
+use super::super::write::{carry_out, plan_with, ssh_fingerprint};
 use super::bad;
 use super::store::{CLOCK_SKEW_SECS, Seen, seen_all, seen_save};
 use crate::connector::sealed::{box_from_phone, client_key, nonce_arg, open_from, seal};
 use crate::connector::vault::Vault;
 use crate::connector::{Preview, SecretsPreview};
 use crate::store::{Store, unix_now};
-use crate::types::{CommandOption, EnvReleaseView, EnvStoreView, SecretsStoreView};
+use crate::types::{CommandOption, EnvReleaseView, EnvStoreView, SecretsStoreView, SshStoreView, TokenStoreView};
+use crate::vault_editor::{VaultFieldInput, VaultItemInput, VaultItemKind};
 use crate::{CoreError, text};
 
 /// The resource of a release (`secrets/<project>/<env>`) and of the names listed.
@@ -636,27 +639,87 @@ fn open_store(vault: &Vault, call: &ConnectorCall, now: i64) -> Result<SecretsTo
     if opened.created_at < now - SECRETS_STORE_TTL_SECS || opened.created_at > now + CLOCK_SKEW_SECS {
         return Err(bad("The secrets were sealed too long ago (or the computer's clock is wrong); refused."));
     }
-    let named: Vec<&str> = call.list_arg("envs");
     let boxed: Vec<String> = opened.envs.iter().map(EnvChanges::item).collect();
-    if named != boxed {
-        return Err(bad("The secrets were sealed for other environments; refused."));
+    let keys: Vec<&str> = opened.ssh.iter().map(|k| k.name.trim()).collect();
+    let hosts: Vec<&str> = opened.tokens.iter().map(|t| t.host.as_str()).collect();
+    if call.list_arg("envs") != boxed || call.list_arg("ssh") != keys || call.list_arg("hosts") != hosts {
+        return Err(bad("The secrets were sealed for other environments, keys or hosts; refused."));
     }
-    validate_store(&opened.envs).map_err(bad)?;
+    validate_batch(&opened.envs, &opened.ssh, &opened.tokens).map_err(bad)?;
     Ok(opened)
 }
 
 const ALREADY: &str = "This request was seen already; a request is never shown or saved twice. Run it again.";
 
-fn store_view(plans: &[EnvPlan], envs: &[EnvChanges]) -> SecretsStoreView {
+/// Where imported SSH keys go.
+pub(crate) const SSH_FOLDER: &str = "Reins/ssh";
+
+/// The SSH keys of a store: the folder (when it exists), each key's name and fingerprint, and what the approval is
+/// about (the folder, and that no key of those names is there yet).
+struct SshPlan {
+    folder: Option<String>,
+    keys: Vec<SshStoreView>,
+    target: String,
+}
+
+fn plan_ssh(snap: &Snapshot, keys: &[SshKeyToStore]) -> Result<SshPlan, CoreError> {
+    let mut same = snap.folders.iter().filter(|f| f.name == SSH_FOLDER);
+    let folder = match (same.next(), same.next()) {
+        (None, _) => None,
+        (Some(f), None) => Some(f.id.clone()),
+        _ => return Err(bad(format!("Several vault folders are named {SSH_FOLDER}. Rename one in the Reins app."))),
+    };
+    let mut views = Vec::new();
+    for k in keys {
+        let name = text::one_line(k.name.trim());
+        let public = public_of_private(&k.private_key)
+            .map_err(|_| bad(format!("{name} is not an SSH private key without a passphrase.")))?;
+        if snap.entries.iter().any(|e| {
+            e.state() != State::Trash
+                && e.kind == Kind::SshKey
+                && folder.as_deref() == Some(e.folder())
+                && e.name() == name
+        }) {
+            return Err(bad(format!("An SSH key named {name} is in {SSH_FOLDER} already.")));
+        }
+        views.push(SshStoreView {
+            fingerprint: ssh_fingerprint(&public).unwrap_or_default(),
+            name,
+        });
+    }
+    Ok(SshPlan {
+        target: format!("ssh:{}", folder.as_deref().unwrap_or("new")),
+        folder,
+        keys: views,
+    })
+}
+
+fn store_view(plans: &[EnvPlan], ssh: &SshPlan, opened: &SecretsToStore) -> SecretsStoreView {
+    let vars: usize = opened.envs.iter().map(|e| e.set.len()).sum();
     SecretsStoreView {
         envs: plans.iter().map(|p| p.view.clone()).collect(),
-        check: secrets_check(envs),
-        total: count(envs.iter().map(|e| e.set.len()).sum()),
+        check: batch_check(&opened.envs, &opened.ssh, &opened.tokens),
+        total: count(vars + opened.ssh.len() + opened.tokens.len()),
+        ssh: ssh.keys.clone(),
+        tokens: opened
+            .tokens
+            .iter()
+            .map(|t| TokenStoreView {
+                service: t.service().unwrap_or_default().to_owned(),
+                host: t.host.to_ascii_lowercase(),
+                scopes: t.scopes.iter().map(|x| text::one_line(x)).take(30).collect(),
+                check: String::new(),
+            })
+            .collect(),
     }
 }
 
 fn plan_all(snap: &Snapshot, envs: &[EnvChanges]) -> Result<Vec<EnvPlan>, CoreError> {
     envs.iter().map(|e| plan_env(snap, e)).collect()
+}
+
+fn store_target(plans: &[EnvPlan], ssh: &SshPlan) -> String {
+    plans.iter().map(|p| p.target.as_str()).chain(std::iter::once(ssh.target.as_str())).collect::<Vec<_>>().join(";")
 }
 
 pub(super) async fn preview_store(vault: &Vault, account: &str, call: &ConnectorCall) -> Result<Preview, CoreError> {
@@ -668,7 +731,8 @@ pub(super) async fn preview_store(vault: &Vault, account: &str, call: &Connector
     }
     let snap = Snapshot::load(vault, account).await?;
     let plans = plan_all(&snap, &opened.envs)?;
-    let view = store_view(&plans, &opened.envs);
+    let ssh = plan_ssh(&snap, &opened.ssh)?;
+    let view = store_view(&plans, &ssh, &opened);
     let mut lines = vec![format!(
         "Save {} in your vault",
         match view.total {
@@ -697,22 +761,30 @@ pub(super) async fn preview_store(vault: &Vault, account: &str, call: &Connector
         };
         lines.push(format!("{}/{}{new}: {}", p.project, p.env, parts.join(", ")));
     }
-    lines.push(format!("Check: {}. The terminal shows the same four digits; deny if it does not.", view.check));
+    for k in &view.ssh {
+        lines.push(format!("SSH key {} ({}) in {SSH_FOLDER}", k.name, k.fingerprint));
+    }
+    for t in &view.tokens {
+        lines.push(format!("A {} token for the phone's integration", t.host));
+    }
+    lines.push(format!("Check: {}. The computer shows the same four digits; deny if it does not.", view.check));
     if plans.iter().any(|p| !p.history.is_empty()) {
         lines.push("Earlier values are kept in each environment's history".to_owned());
     }
     seen.insert(
         opened.nonce.clone(),
         Seen {
-            target: plans.iter().map(|p| p.target.as_str()).collect::<Vec<_>>().join(";"),
+            target: store_target(&plans, &ssh),
             until: opened.created_at + SECRETS_STORE_TTL_SECS,
             done: false,
         },
     );
     seen_save(&vault.store, &seen)?;
-    let (resource, label) = match plans.as_slice() {
-        [one] => (format!("{SECRETS}/{}/{}", one.project, one.env), format!("{} \u{b7} {}", one.project, one.env)),
-        _ => (SECRETS.to_owned(), format!("{} environments", plans.len())),
+    let (resource, label) = match (plans.as_slice(), opened.ssh.is_empty() && opened.tokens.is_empty()) {
+        ([one], true) => {
+            (format!("{SECRETS}/{}/{}", one.project, one.env), format!("{} \u{b7} {}", one.project, one.env))
+        }
+        _ => (SECRETS.to_owned(), "Reins Secrets".to_owned()),
     };
     Ok(Preview {
         resource,
@@ -830,23 +902,74 @@ async fn carry_out_env(
             renamed: count(v.renamed.len()),
             copied: v.copied,
             revision: revision.clone(),
+            error: None,
         },
         revision,
     ))
 }
 
-pub(super) async fn perform_store(vault: &Vault, account: &str, call: &ConnectorCall) -> Result<Value, CoreError> {
+/// Keeps one SSH key in the folder `Reins/ssh` (made when missing); its fingerprint.
+async fn carry_out_ssh(
+    vault: &Vault,
+    snap: &mut Snapshot,
+    folder: &mut Option<String>,
+    key: &SshKeyToStore,
+) -> Result<String, CoreError> {
+    if folder.is_none() {
+        let made = vault
+            .api(
+                &snap.session,
+                Method::POST,
+                "/api/folders",
+                Some(&json!({"name": snap.user.encrypt(SSH_FOLDER.as_bytes())?})),
+            )
+            .await?;
+        let id = made["id"].as_str().ok_or_else(|| bad("The vault did not say what folder it made."))?.to_owned();
+        // The vault's own checks look the folder up.
+        snap.folders.push(Folder {
+            id: id.clone(),
+            name: SSH_FOLDER.to_owned(),
+        });
+        *folder = Some(id);
+    }
+    let input = VaultItemInput {
+        kind: VaultItemKind::Login,
+        name: text::one_line(key.name.trim()),
+        fields: vec![VaultFieldInput {
+            key: "private_key".to_owned(),
+            value: key.private_key.clone(),
+        }],
+    };
+    let mut args = args_for(Kind::SshKey, &input, None)?;
+    args.insert("folder".to_owned(), json!(folder.clone().unwrap_or_default()));
+    let call = ConnectorCall {
+        service: reins_proto::connector::VAULT.to_owned(),
+        op: "item_create".to_owned(),
+        args,
+    };
+    let fingerprint = ssh_fingerprint(&public_of_private(&key.private_key)?).unwrap_or_default();
+    carry_out(vault, &snap.session, plan_with(snap, &call)?).await?;
+    Ok(fingerprint)
+}
+
+/// Carries out an approved store's environments and SSH keys (the flow adds the tokens and answers): what was opened,
+/// and a result per environment and key. A part that fails says why; the others are still saved.
+pub(crate) async fn perform_store_parts(
+    vault: &Vault,
+    account: &str,
+    call: &ConnectorCall,
+) -> Result<(SecretsToStore, Vec<EnvStored>, Vec<SshStored>), CoreError> {
     let now = unix_now();
     let opened = open_store(vault, call, now)?;
     let mut seen = seen_all(&vault.store, now)?;
     let Some(asked) = seen.get(&opened.nonce).filter(|s| !s.done).cloned() else {
         return Err(bad(ALREADY));
     };
-    let snap = Snapshot::load(vault, account).await?;
+    let mut snap = Snapshot::load(vault, account).await?;
     let plans = plan_all(&snap, &opened.envs)?;
-    let target = plans.iter().map(|p| p.target.as_str()).collect::<Vec<_>>().join(";");
+    let ssh = plan_ssh(&snap, &opened.ssh)?;
     // What happens must be what the user approved: the same folders and items, unchanged since.
-    if target != asked.target {
+    if store_target(&plans, &ssh) != asked.target {
         return Err(bad("The vault changed since you were asked; nothing was saved. Run it again."));
     }
     seen.insert(
@@ -860,23 +983,35 @@ pub(super) async fn perform_store(vault: &Vault, account: &str, call: &Connector
     let mut folders = BTreeMap::new();
     let mut stored = Vec::new();
     for plan in plans {
-        let item = format!("{}/{}", plan.project, plan.env);
-        match carry_out_env(vault, &snap, plan, &mut folders).await {
-            Ok((env, _)) => stored.push(env),
-            Err(e) if stored.is_empty() => return Err(e),
-            Err(e) => {
-                let done: Vec<String> = stored.iter().map(|s| format!("{}/{}", s.project, s.env)).collect();
-                return Err(bad(format!("Saved {}, then {item} failed: {e}", done.join(", "))));
-            }
-        }
+        let (project, env) = (plan.project.clone(), plan.env.clone());
+        stored.push(match carry_out_env(vault, &snap, plan, &mut folders).await {
+            Ok((env, _)) => env,
+            Err(e) => EnvStored {
+                project,
+                env,
+                error: Some(e.to_string()),
+                ..EnvStored::default()
+            },
+        });
     }
-    let ack = SecretsStoreAck {
-        v: 1,
-        dir: TO_DESKTOP.to_owned(),
-        nonce: opened.nonce.clone(),
-        envs: stored,
-    };
-    Ok(json!({ SEALED_FIELD: box_from_phone(client_key(call)?, &*vault.store.inbox_key()?, &ack)? }))
+    let mut keys = Vec::new();
+    let mut folder = ssh.folder.clone();
+    for key in &opened.ssh {
+        let name = text::one_line(key.name.trim());
+        keys.push(match carry_out_ssh(vault, &mut snap, &mut folder, key).await {
+            Ok(fingerprint) => SshStored {
+                name,
+                fingerprint,
+                error: None,
+            },
+            Err(e) => SshStored {
+                name,
+                fingerprint: String::new(),
+                error: Some(e.to_string()),
+            },
+        });
+    }
+    Ok((opened, stored, keys))
 }
 
 // ---- names ----------------------------------------------------------------------------------------------------------

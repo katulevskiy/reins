@@ -5,7 +5,8 @@ use crate::connector::{
     ConnectorCall, Effect, Param, ToolSpec, VAULT, bool_p, choice_p, int_p, json_p, list_p, str_p, text_p, tool,
 };
 use crate::desktop::{
-    ENV_RELEASE_TOOL, MAX_ARG, MAX_ARGS, MAX_ENV_VARS, MAX_STORE_ENVS, SECRETS_LIST_TOOL, SECRETS_STORE_TOOL,
+    ENV_RELEASE_TOOL, MAX_ARG, MAX_ARGS, MAX_ENV_VARS, MAX_STORE_ENVS, MAX_STORE_SSH, MAX_STORE_TOKENS,
+    SECRETS_LIST_TOOL, SECRETS_STORE_TOOL,
 };
 
 const CLIENT_KEY: Param =
@@ -84,11 +85,13 @@ pub(super) fn tools() -> Vec<ToolSpec> {
             "secrets_store",
             Effect::Write,
             "Save a project's secrets from the computer",
-            "Sets, removes, renames and copies variables of environments of projects (Reins Secrets), sent by the \
-             desktop app in a box only the phone opens. One approval for the batch; the user compares four check \
-             digits with the terminal.",
+            "Sets, removes, renames and copies variables of environments of projects (Reins Secrets), keeps SSH keys \
+             and hands git hosts' tokens to the phone's integrations, sent by the desktop app in a box only the phone \
+             opens. One approval for the batch; the user compares four check digits with the computer.",
             vec![
                 list_p("envs", MAX_STORE_ENVS, 130, "The environments changed: `project/env`, as in the box."),
+                list_p("ssh", MAX_STORE_SSH, 200, "The SSH keys saved in Reins/ssh, by name, as in the box."),
+                list_p("hosts", MAX_STORE_TOKENS, 100, "The git hosts whose tokens go to the phone, as in the box."),
                 text_p("sealed", 480_000, true, "The changes, boxed to the phone's key (base64url of nonce and ciphertext)."),
                 CLIENT_KEY,
                 NONCE,

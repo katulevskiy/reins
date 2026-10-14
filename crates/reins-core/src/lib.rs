@@ -67,5 +67,5 @@ pub use types::{
 };
 pub use types::{
     AskView, CommandOption, EnvReleaseView, EnvStoreView, SecretReleaseView, SecretsScopeChoice, SecretsStoreView,
-    SshSignView, TokenStoreView,
+    SshSignView, SshStoreView, TokenStoreView,
 };

@@ -247,6 +247,14 @@ impl Engine {
             } else {
                 connector.preview(&account, call).await
             };
+            // A store's tokens go to integrations this phone must have.
+            let previewed = previewed.and_then(|p| {
+                if is_secrets_store(call) {
+                    self.check_store_tokens(&p).map(|()| p)
+                } else {
+                    Ok(p)
+                }
+            });
             let preview = match previewed {
                 Ok(p) => file.show(p),
                 Err(e) => return self.fail_connector(session, &request, call, &e).await,
@@ -656,18 +664,10 @@ impl Engine {
         if is_token_store(call) {
             return self.token_store_perform(call).await;
         }
-        let done = connector.perform(account, call).await?;
-        // Saved values change the environments: computers holding the earlier ones drop them and ask again.
-        if call.service == reins_proto::connector::VAULT && call.op == "secrets_store" {
-            for item in call.list_arg("envs") {
-                if let Some((project, env)) = item.split_once('/')
-                    && let Err(e) = self.tell_computers(Some(project), Some(env)).await
-                {
-                    log::warn!("could not tell the computers that {item} changed: {e}");
-                }
-            }
+        if is_secrets_store(call) {
+            return self.secrets_store_perform(account, call).await;
         }
-        Ok(done)
+        connector.perform(account, call).await
     }
 
     /// Records the decision, drops the parked request and answers the server.
@@ -712,6 +712,10 @@ use reins_proto::gmail::ToolCall;
 
 fn is_env_release(call: &ConnectorCall) -> bool {
     call.service == reins_proto::connector::VAULT && call.op == "env_release"
+}
+
+fn is_secrets_store(call: &ConnectorCall) -> bool {
+    call.service == reins_proto::connector::VAULT && call.op == "secrets_store"
 }
 
 fn is_token_store(call: &ConnectorCall) -> bool {
