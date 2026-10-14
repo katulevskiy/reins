@@ -133,6 +133,8 @@ pub fn help_with(
         )
         .child("?")
         .on_click(cx.listener(move |this, _, _, cx| {
+            // A (?) often sits in a row that is itself a toggle: the click is the (?)'s alone.
+            cx.stop_propagation();
             this.help = if this.help == Some(id) {
                 None
             } else {
