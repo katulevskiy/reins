@@ -1837,6 +1837,8 @@ jobs:
           allowed=" ExportOptions.plist identity ios.keychain-db profiles.txt release.xcconfig signing.xcconfig team "
           for file in "$dir"/* "$dir"/.[!.]*; do
             [[ -e "$file" ]] || continue
+            # securityd keeps a lock or a scratch copy of the keychain beside it (`.fl` and 8 hex digits).
+            [[ "${file##*/}" =~ ^\.fl[0-9A-F]{8}$ ]] && continue
             [[ "$allowed" == *" ${file##*/} "* ]] || { echo "::error::${file##*/} must not exist while the app is built"; exit 1; }
           done
           leftovers="$(find "$RUNNER_TEMP" "$GITHUB_WORKSPACE" -maxdepth 3 \( -name '*.p8' -o -name '*.p12' -o -name '*.pass' \) -print)"
