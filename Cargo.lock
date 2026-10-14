@@ -8342,6 +8342,7 @@ dependencies = [
  "hyper-util",
  "log",
  "qrcode",
+ "regex",
  "reins-proto",
  "reqwest",
  "ring",

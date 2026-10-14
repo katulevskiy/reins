@@ -49,6 +49,8 @@ url = "2.5.8"
 webpki-roots = "1.0.9"
 zeroize = "1.9.0"
 qrcode = { version = "0.14.1", default-features = false }
+# The secrets scanner's rules (`secrets_scan::detect`).
+regex = { version = "1.13.1", default-features = false, features = ["std", "perf", "unicode-perl"] }
 # `reins vault add` reads the secret without echo.
 rpassword = "7.5.4"
 
