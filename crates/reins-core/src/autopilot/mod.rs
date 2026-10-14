@@ -18,6 +18,7 @@ pub mod gates;
 pub mod memory;
 pub mod model;
 pub mod modes;
+pub(crate) mod overnight;
 pub mod risk;
 pub mod runtime;
 pub mod sequence;

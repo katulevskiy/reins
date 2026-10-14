@@ -147,6 +147,10 @@ pub struct FakeRuntime {
     pub fail: AtomicBool,
     /// Each run first takes this long (milliseconds): a phone too slow or a runtime that hangs.
     pub stall_ms: AtomicU64,
+    /// The risk output gets one value too many per request (a model whose output is not what it declares).
+    pub risk_extra: AtomicBool,
+    /// Each run panics (a runtime that crashes).
+    pub panic: AtomicBool,
     pub loads: AtomicU32,
     pub runs: AtomicU32,
     pub loaded: Mutex<Option<String>>,
@@ -163,6 +167,8 @@ impl Default for FakeRuntime {
             risk_default: Mutex::new(None),
             fail: AtomicBool::new(false),
             stall_ms: AtomicU64::new(0),
+            risk_extra: AtomicBool::new(false),
+            panic: AtomicBool::new(false),
             loads: AtomicU32::new(0),
             runs: AtomicU32::new(0),
             loaded: Mutex::new(None),
@@ -269,6 +275,7 @@ impl ModelRuntime for FakeRuntime {
                 reason: "fake inference failure".to_owned(),
             });
         }
+        assert!(!self.panic.load(Ordering::SeqCst), "fake runtime crash");
         let stall = self.stall_ms.load(Ordering::SeqCst);
         if stall > 0 {
             std::thread::sleep(std::time::Duration::from_millis(stall));
@@ -299,6 +306,9 @@ impl ModelRuntime for FakeRuntime {
             out.pooled.extend(Self::embed(&state));
             if let Some(d) = risk_default {
                 out.risk.extend(risk_rules.iter().find(|(k, _)| lower.contains(k)).map_or(d, |(_, l)| *l));
+                if self.risk_extra.load(Ordering::SeqCst) {
+                    out.risk.push(0.0);
+                }
             }
             self.seen.lock().expect("seen").push(state);
         }

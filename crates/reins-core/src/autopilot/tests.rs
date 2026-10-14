@@ -1011,21 +1011,25 @@ async fn overnight_decides_like_auto_but_weighs_part_of_the_floor() {
         let id = id.to_owned();
         async move { env.suggestion(&id).await }
     };
-    for (id, reason) in [
-        ("delete-home", "Waited: risk catastrophic · deletes the home directory"),
-        ("unreadable", "Always asks: "),
-        ("unresolved-target", "Waited: risk catastrophic · target not resolved"),
-        ("unresolved-relative", "Waited: "),
-        ("after-cd", "Waited: "),
-        ("standing-permission", "Always asks: a standing permission"),
-        ("class-learning", "has not earned this kind of request"),
+    // What the guard's tokenizer reads as uncertain (a variable, a folder changed to) is held before any model sees it
+    // ("Always asks"); what it reads with certainty is held by the core's own reading ("Waited").
+    let held = ["Always asks: ", "Waited: "];
+    for (id, reasons) in [
+        ("delete-home", &["Waited: risk catastrophic · deletes the home directory"][..]),
+        ("unreadable", &held[..]),
+        ("unresolved-target", &held[..]),
+        ("unresolved-relative", &held[..]),
+        ("after-cd", &held[..]),
+        ("standing-permission", &["Always asks: a standing permission"][..]),
+        ("class-learning", &["has not earned this kind of request"][..]),
     ] {
         let s = why(id).await;
-        assert!(s.reason.starts_with(reason) || s.reason.contains(reason), "{id}: {}", s.reason);
+        assert!(reasons.iter().any(|r| s.reason.starts_with(r) || s.reason.contains(r)), "{id}: {}", s.reason);
     }
-    // the unresolved target an empty value turns into the root is catastrophic, not a line the model may ignore
-    let unresolved = why("unresolved-target").await.risk.unwrap();
-    assert!(unresolved.held && unresolved.level == RiskLevel::Catastrophic, "{unresolved:?}");
+    // the unresolved target an empty value turns into the root is never approved (and the core's reading of it is a
+    // tripwire: risk::tests)
+    let unresolved = why("unresolved-target").await;
+    assert!(unresolved.floor || unresolved.risk.is_some_and(|r| r.held && r.level == RiskLevel::Catastrophic));
     let allowed = why("delete-in-project").await;
     assert!(allowed.reason.starts_with("Allowed overnight · risk low"), "{}", allowed.reason);
     assert!(
@@ -1118,7 +1122,7 @@ async fn a_package_without_an_overnight_threshold_holds_everything() {
     cfg["risk"]["thresholds"] = json!({});
     let env = env_with(true, testing::package_with_config(&cfg.to_string())).await;
     env.model.set_risk_default(testing::risk(0.97, 0.01, 0.01, 0.01));
-    overnight_holds_everything(&env, &["the risk could not be read"]).await;
+    overnight_holds_everything(&env, &["the model has no threshold"]).await;
     // Never a default: the risk shown is the model's, the hold is for want of a threshold.
     assert!(env.suggestion("r1").await.risk.unwrap().held);
 }
@@ -1140,6 +1144,53 @@ async fn a_damaged_package_holds_everything_in_overnight() {
     std::fs::write(&tokenizer, bytes).unwrap();
     // The first request finds it damaged (it is deleted); the next one finds no model: the floor asks.
     overnight_holds_everything(&env, &["could not judge", "Always asks"]).await;
+}
+
+#[tokio::test]
+async fn a_risk_output_of_the_wrong_length_holds_everything() {
+    let env = env_risk().await;
+    env.model.risk_extra.store(true, Ordering::SeqCst);
+    overnight_holds_everything(&env, &["the risk could not be read"]).await;
+}
+
+#[tokio::test]
+async fn an_infinite_risk_holds_everything() {
+    let env = env_risk().await;
+    env.model.set_risk_default([f32::INFINITY, 0.0, 0.0, 0.0]);
+    overnight_holds_everything(&env, &["could not judge"]).await;
+}
+
+#[tokio::test]
+async fn a_model_that_fails_panics_or_hangs_holds_everything() {
+    let env = env_risk().await;
+    env.model.fail.store(true, Ordering::SeqCst);
+    overnight_holds_everything(&env, &["could not judge", "Always asks"]).await;
+    let env = env_risk().await;
+    env.model.panic.store(true, Ordering::SeqCst);
+    overnight_holds_everything(&env, &["could not judge"]).await;
+    let env = env_risk().await;
+    env.model.stall_ms.store(7_000, Ordering::SeqCst);
+    overnight_holds_everything(&env, &["could not judge"]).await;
+}
+
+/// A rating above the threshold is catastrophic: held (equality is held too: overnight::tests).
+#[tokio::test]
+async fn a_risk_above_the_threshold_is_held() {
+    let env = env_risk().await;
+    env.model.set_risk_default(testing::risk(0.25, 0.1, 0.1, 0.55));
+    overnight_holds_everything(&env, &["risk catastrophic"]).await;
+}
+
+/// Without a model at all, Overnight is Auto with the floor kept: nothing is approved.
+#[tokio::test]
+async fn without_a_model_overnight_never_approves() {
+    let env = env(false).await;
+    let key = desktop_key(&env);
+    env.mode(None, AutopilotMode::Overnight).await;
+    env.relay("r1", OLD, email("friend@x.com", "hi")).await;
+    env.relay("r2", OLD, hook_ask(&key, "", "command:rm -r", "rm -rf build")).await;
+    assert!(env.decided().is_empty(), "{:?}", env.decided());
+    assert_eq!(env.waiting().await.len(), 2);
 }
 
 #[tokio::test]
