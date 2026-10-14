@@ -85,6 +85,23 @@ final class ApprovalWordsTests: XCTestCase {
         XCTAssertEqual(ApprovalWords.dangerTag(push([ref(commits: [hidden])]))?.id, "hiddenChars")
     }
 
+    func testADesktopQuestionShowsTheGuardRuleItMatchedRedOnlyWhenItCannotBeUndone() {
+        var ask = T.view("req40", kind: .write, service: "desktop", op: "ask", opTitle: "Ask you on your phone", action: "write")
+        let secret = AskRuleView(label: ".env files", pattern: ".env", matched: "app/.env", group: "env-files", destructive: false, reported: false)
+        ask.ask = AskView(question: "Claude Code wants to run: cat app/.env", detail: "Command:\ncat app/.env", topic: "file:.env", rule: secret)
+        let tag = ApprovalWords.dangerTag(ask)
+        XCTAssertEqual(tag?.label, ".env files · app/.env")
+        XCTAssertEqual(tag?.id, "guardRule")
+        XCTAssertEqual(tag?.destructive, false)
+        let force = AskRuleView(
+            label: "Rewriting git history", pattern: "git push --force*", matched: "git push --force origin main", group: "git-history",
+            destructive: true, reported: false
+        )
+        XCTAssertTrue(ApprovalWords.ruleTag(force).destructive)
+        let own = AskRuleView(label: "Your rule", pattern: "make deploy", matched: "make deploy", group: nil, destructive: false, reported: true)
+        XCTAssertTrue(ApprovalWords.ruleTag(own).help.contains("Your computer says so"))
+    }
+
     func testTheDocksSegmentsAndTheCustomChoiceReadAsShortPeriods() {
         var d = ApprovalDraft()
         XCTAssertEqual(ApprovalWords.segment(d), .once)
