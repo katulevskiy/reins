@@ -35,6 +35,7 @@ pub mod sso;
 pub mod starter;
 pub mod store;
 pub mod text;
+pub mod titles;
 pub mod traits;
 pub mod types;
 pub mod vault;

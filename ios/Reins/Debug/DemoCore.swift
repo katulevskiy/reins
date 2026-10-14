@@ -56,6 +56,9 @@ final class DemoReinsCore: ReinsCoreProtocol, @unchecked Sendable {
         /// Bumped by every change to `pending`, so a waiting `sync` can return early.
         var pendingVersion = 0
         var views: [String: ApprovalView] = [:]
+        /// The approval each request decided here showed, by its Activity entry (the seeded history has none, like
+        /// entries logged before the core kept them).
+        var recorded: [Int64: ApprovalView] = [:]
         var pairings: [String: PairingView] = [:]
         var blobs: [String: BlobView] = [:]
         var connections: [ConnectionView] = []
@@ -548,6 +551,7 @@ final class DemoReinsCore: ReinsCoreProtocol, @unchecked Sendable {
             op: v.op, opTitle: v.opTitle, decidedBy: decidedBy, autopilot: nil
         )
         s.activity.insert(entry, at: 0)
+        s.recorded[entry.id] = v
     }
 
     func approve(requestId: String, choice: ApprovalChoice) async throws {
@@ -634,6 +638,11 @@ final class DemoReinsCore: ReinsCoreProtocol, @unchecked Sendable {
 
     func activity(limit: UInt32) async throws -> [ActivityEntry] {
         locked { Array($0.activity.prefix(Int(limit))) }
+    }
+
+    /// As the core: the approval a request decided here showed; nil for the seeded history.
+    func activityApproval(entryId: Int64) async throws -> ApprovalView? {
+        locked { $0.recorded[entryId] }
     }
 
     func fetchEmail(account: String?, messageId: String) async throws -> EmailContent {

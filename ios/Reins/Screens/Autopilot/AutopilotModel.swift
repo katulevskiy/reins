@@ -133,11 +133,26 @@ final class AutopilotModel {
             app.feedback.play(event)
         }
         app.patchAutopilot { $0.applyMode(mode, minutes: 0, connectionId: connectionId) }
-        await run {
-            try await app.core.setAutopilotMode(connectionId: connectionId, mode: mode, minutes: nil)
-            await app.refreshAutopilot()
+        // Shown at once; the core gets the changes one after another, in the order they were made, so Manual, Auto,
+        // Manual, Auto tapped quickly can never land out of order. Only the last one reads the settings back: an
+        // earlier read would put a card the user already left back in force for a moment.
+        modeGeneration += 1
+        let generation = modeGeneration
+        let previous = modeChanges
+        let change = Task {
+            await previous?.value
+            await self.run {
+                try await app.core.setAutopilotMode(connectionId: connectionId, mode: mode, minutes: nil)
+                if generation == self.modeGeneration { await app.refreshAutopilot() }
+            }
         }
+        modeChanges = change
+        await change.value
     }
+
+    /// The mode change on its way to the core (see `setMode`), and how many were made.
+    @ObservationIgnored private var modeChanges: Task<Void, Never>?
+    @ObservationIgnored private var modeGeneration = 0
 
     /// Starts a bypass of every AI (`connectionId` nil) or of one, for `minutes` or, nil, until the user turns it off.
     /// The sheet has already been held to confirm; the phone's owner confirms it too (Face ID or the passcode).

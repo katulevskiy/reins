@@ -155,19 +155,28 @@ struct ActionTile: View {
     }
 }
 
-/// A small number on a tab or a row.
+/// A small number on a tab or a row: round for one digit, a capsule for two or three ("99+"), never cut.
 struct CountBadge: View {
     var count: Int
     var tint: Color = Palette.accent
 
+    /// "1" to "99", then "99+"; nil when there is nothing to count (no badge).
+    static func text(_ count: Int) -> String? {
+        count <= 0 ? nil : count > 99 ? "99+" : "\(count)"
+    }
+
     var body: some View {
-        if count > 0 {
-            Text(count > 99 ? "99+" : "\(count)")
+        if let text = Self.text(count) {
+            Text(text)
                 .font(RFont.fixedSans(11, .semibold))
+                .monospacedDigit()
                 .foregroundStyle(.white)
-                .padding(.horizontal, 6)
-                .padding(.vertical, 1.5)
+                .lineLimit(1)
+                .padding(.horizontal, 5)
+                // As wide as it is tall at least, so a single digit sits in a circle.
+                .frame(minWidth: 18, minHeight: 18)
                 .background(tint, in: Capsule())
+                .fixedSize()
         }
     }
 }

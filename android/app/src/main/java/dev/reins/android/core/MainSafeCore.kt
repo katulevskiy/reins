@@ -75,6 +75,8 @@ class MainSafeCore(
 
     override suspend fun approvalView(requestId: String): ApprovalView = io { approvalView(requestId) }
 
+    override suspend fun activityApproval(entryId: Long): ApprovalView? = io { activityApproval(entryId) }
+
     override suspend fun approve(requestId: String, choice: ApprovalChoice) = io { approve(requestId, choice) }
 
     override suspend fun approveQuick(requestId: String) = io { approveQuick(requestId) }

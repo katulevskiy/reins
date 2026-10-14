@@ -174,6 +174,40 @@ enum EntryOutcome {
     }
 }
 
+/// How an entry ended, as a pill: its symbol and words in the outcome's colour ("Denied by you", "Allowed by
+/// Autopilot · 96%"). The entry's hero shows it, and so does the approval's hero when an entry is shown with it.
+struct EntryOutcomePill: View {
+    var text: String
+    var symbol: String
+    var tint: Color
+
+    var body: some View {
+        HStack(spacing: 6) {
+            Image(systemName: symbol).font(.system(size: 12, weight: .semibold))
+            Text(text).font(RFont.sans(13, .semibold)).lineLimit(1)
+        }
+        .foregroundStyle(tint)
+        .padding(.horizontal, 12)
+        .padding(.vertical, 6)
+        .background(tint.opacity(0.16), in: Capsule())
+        .accessibilityElement(children: .combine)
+        .accessibilityIdentifier("entryOutcome")
+    }
+}
+
+extension EntryOutcomePill {
+    init(entry: ActivityEntry) {
+        self.init(text: EntryOutcome.text(entry), symbol: EntryOutcome.symbol(entry), tint: EntryOutcome.tint(entry))
+    }
+}
+
+extension ApprovalRecord {
+    /// How `entry` ended, for the approval's hero.
+    static func of(_ entry: ActivityEntry) -> ApprovalRecord {
+        ApprovalRecord(outcome: EntryOutcome.text(entry), symbol: EntryOutcome.symbol(entry), tint: EntryOutcome.tint(entry))
+    }
+}
+
 /// "Why Autopilot allowed it ›": opens in place to how sure it was, its reason, the decisions of yours it was like and
 /// the profile. Only for entries Autopilot looked at.
 struct AutopilotWhyRow: View {
@@ -263,16 +297,22 @@ struct ThisWasWrongDock: View {
                 Banner("Learned. It asks about these again.")
                     .accessibilityIdentifier("corrected")
             } else {
+                // A normal neutral button like Deny: only its undo mark is in Autopilot's violet, since it teaches Autopilot.
                 Button {
                     asking = true
                     feedback.play(.tap)
                 } label: {
                     ZStack {
-                        Label("This was wrong", systemImage: "arrow.uturn.backward").opacity(busy ? 0 : 1)
+                        Label {
+                            Text("This was wrong")
+                        } icon: {
+                            Image(systemName: "arrow.uturn.backward").foregroundStyle(ModeLook.tint(.auto))
+                        }
+                        .opacity(busy ? 0 : 1)
                         if busy { ProgressView() }
                     }
                 }
-                .buttonStyle(DockButtonStyle(kind: .warning))
+                .buttonStyle(DockButtonStyle(kind: .neutral))
                 .disabled(busy)
                 .accessibilityIdentifier("thisWasWrong")
             }

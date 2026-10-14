@@ -109,6 +109,17 @@ impl Engine {
             .collect::<BTreeSet<_>>()
             .into_iter()
             .collect();
+        // Decided without waiting (a grant covered it): what was found is what its approval would have shown.
+        if let Some(parked) = audit.info.snapshot.as_deref_mut()
+            && parked.connector.is_none()
+            && !items.is_empty()
+        {
+            parked.connector = Some(ParkedConnector {
+                items: items.iter().map(|i| (*i).clone()).collect(),
+                ..ParkedConnector::default()
+            });
+            audit.info.label = Some(Box::new(crate::titles::of_parked(parked)));
+        }
         audit
     }
 

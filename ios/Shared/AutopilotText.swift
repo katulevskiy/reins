@@ -172,6 +172,9 @@ enum AutopilotText {
     /// Behind the (?) of the bypass sheet.
     static let bypassHelp = bypassStillAsks
 
+    /// What the Autopilot page's "Mode" explains behind its (?).
+    static let modeHelp = "Manual: you answer every request; Autopilot only suggests. Auto: Autopilot answers the ones it is sure of and asks you about the rest. Bypass approves for a while without asking; Lock down denies everything that would ask."
+
     /// What "How sure" explains behind its (?).
     static let howSureHelp = "How sure Autopilot must be to approve or deny on its own in Auto. Requests that always ask still ask."
 

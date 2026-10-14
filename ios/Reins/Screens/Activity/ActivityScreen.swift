@@ -38,6 +38,8 @@ struct ActivityScreen: View {
     @State private var seen = SeenRows()
     @State private var atTop = true
     @State private var away = false
+    /// The mode pill's quick menu is open.
+    @State private var quickOpen = false
 
     private var filter: ActivityFilter { ActivityFilter(rawValue: filterRaw) ?? .all }
 
@@ -97,6 +99,7 @@ struct ActivityScreen: View {
         .task(id: model.pending.filter { $0.kind == .request }.map(\.id)) { await loadSuggestions() }
         .onChange(of: atTop) { markSeenSoon() }
         .pageBackground()
+        .autopilotQuickMenu(isPresented: $quickOpen)
         .rootNavigationBar()
         .navigationTitle("Activity")
     }
@@ -125,7 +128,7 @@ struct ActivityScreen: View {
             RoundPlusButton(label: "Integrations") { model.show(.integrations) }
                 .accessibilityIdentifier("integrations")
             if let autopilot = model.autopilot {
-                AutopilotQuickPill(settings: autopilot)
+                AutopilotQuickPill(settings: autopilot, menuOpen: $quickOpen)
             }
         }
         .fixedSize()
@@ -173,16 +176,33 @@ struct ActivityScreen: View {
         }
     }
 
+    /// The shared choice chips, one chosen; Autopilot's carries its bolt. They scroll sideways when the chosen one's
+    /// check leaves no room.
     private var filters: some View {
-        HStack(spacing: 6) {
-            ForEach(ActivityFilter.allCases, id: \.self) { f in
-                SelectChip(title: f.title, selected: filter == f) {
-                    withAnimation(.smooth(duration: 0.2)) { filterRaw = f.rawValue }
+        ScrollView(.horizontal, showsIndicators: false) {
+            HStack(spacing: 8) {
+                ForEach(ActivityFilter.allCases, id: \.self) { f in
+                    let on = filter == f
+                    let pick = {
+                        guard !on else { return }
+                        withAnimation(.smooth(duration: 0.2)) { filterRaw = f.rawValue }
+                    }
+                    Group {
+                        if f == .autopilot {
+                            SelectChip(title: f.title, selected: on, leading: {
+                                Image(systemName: "bolt.fill")
+                                    .font(.system(size: 12, weight: .semibold))
+                                    .foregroundStyle(on ? Palette.accent : Palette.secondary)
+                            }, action: pick)
+                        } else {
+                            SelectChip(title: f.title, selected: on, action: pick)
+                        }
+                    }
+                    .accessibilityIdentifier("filter:\(f.rawValue)")
                 }
-                .accessibilityIdentifier("filter:\(f.rawValue)")
             }
+            .padding(.horizontal, 16)
         }
-        .padding(.horizontal, 16)
         .padding(.top, 14)
         .transition(.opacity.combined(with: .move(edge: .top)))
     }
@@ -262,7 +282,7 @@ struct ActivityScreen: View {
                 if entry.id == oldestUnseen && !last {
                     NewMarker().background(Palette.elevated).padding(.horizontal, 16)
                 } else if !last {
-                    Hairline(inset: 62).background(Palette.elevated).padding(.horizontal, 16)
+                    Hairline(inset: HistoryRow.hairlineInset(entry)).background(Palette.elevated).padding(.horizontal, 16)
                 }
             }
         }
@@ -289,7 +309,9 @@ struct ActivityScreen: View {
                 feedback.defaultTap()
             }
             Button("Copy", systemImage: "doc.on.doc") {
-                UIPasteboard.general.string = [entry.headline, untrusted(entry.detail)].filter { !$0.isEmpty }.joined(separator: "\n")
+                UIPasteboard.general.string = [entry.label.map(RequestLabelLook.plain) ?? entry.headline, untrusted(entry.detail)]
+                    .filter { !$0.isEmpty }
+                    .joined(separator: "\n")
                 feedback.play(.copied)
             }
         }

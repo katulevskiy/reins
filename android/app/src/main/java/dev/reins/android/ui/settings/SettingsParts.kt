@@ -152,8 +152,10 @@ fun SettingsGroup(
                 Modifier.fillMaxWidth().padding(start = 6.dp, top = gap, bottom = if (help != null) 0.dp else 8.dp).defaultMinSize(minHeight = 20.dp),
                 verticalAlignment = Alignment.CenterVertically,
             ) {
-                RText(header, RType.sans(14f, FontWeight.Medium), c.accent, Modifier.weight(1f).semantics { heading() }, maxLines = 1)
+                // The (?) right beside the words it explains.
+                RText(header, RType.sans(14f, FontWeight.Medium), c.accent, Modifier.weight(1f, fill = false).semantics { heading() }, maxLines = 1)
                 if (help != null) HelpIcon(helpOpen, header, onHelp)
+                Spacer(Modifier.weight(1f))
             }
             if (help != null) HelpText(help, helpOpen, Modifier.padding(start = 6.dp, end = 6.dp, bottom = 8.dp))
         } else {
@@ -286,6 +288,8 @@ fun PillButton(
     busy: Boolean = false,
     textSize: Float = 14.5f,
     textTag: String? = null,
+    /** The icon's own colour, when it is not the text's. */
+    iconTint: Color? = null,
     onClick: () -> Unit,
 ) {
     Row(
@@ -303,7 +307,7 @@ fun PillButton(
             Spinner(foreground, size = 16.dp)
             Spacer(Modifier.width(8.dp))
         } else if (icon != null) {
-            Icon(icon, null, Modifier.size(18.dp), tint = foreground)
+            Icon(icon, null, Modifier.size(18.dp), tint = iconTint ?: foreground)
             Spacer(Modifier.width(7.dp))
         }
         RText(title, RType.sans(textSize, FontWeight.SemiBold), foreground, if (textTag != null) Modifier.testTag(textTag) else Modifier, maxLines = 1)

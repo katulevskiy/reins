@@ -57,9 +57,10 @@ struct StartingRuleChooser: View {
                     .tracking(0.9)
                     .foregroundStyle(Palette.tertiary)
                     .accessibilityAddTraits(.isHeader)
-                Spacer(minLength: 8)
+                // The (?) right beside the words it explains.
                 HelpButton(text: StartingRuleText.help)
                     .accessibilityIdentifier("startingRuleHelp")
+                Spacer(minLength: 0)
             }
             .padding(.leading, 6)
             .padding(.trailing, 2)

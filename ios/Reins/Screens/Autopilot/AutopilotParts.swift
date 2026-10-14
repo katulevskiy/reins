@@ -188,32 +188,27 @@ struct AutopilotNeighbourRow: View {
     }
 }
 
-/// A choice in a row of choices: tinted when chosen. Plays the selection.
+/// The press of a Manual or Auto card (the Autopilot page's and the quick menu's): a slight shrink while the finger is
+/// down and nothing else. No fade, so no card can be left looking dimmed or pressed after Manual, Auto, Manual, Auto
+/// in quick succession; whether a card is chosen is only ever its border and wash.
+struct ModeCardPress: ButtonStyle {
+    func makeBody(configuration: Configuration) -> some View {
+        configuration.label
+            .scaleEffect(configuration.isPressed ? 0.98 : 1)
+            .animation(.spring(duration: 0.2), value: configuration.isPressed)
+    }
+}
+
+/// A choice in a row of choices: the shared `SelectChip` with its identifier. Plays the selection.
 struct AutopilotChip: View {
     var title: String
     var selected: Bool
     var identifier: String? = nil
     var action: () -> Void
-    @Environment(\.feedback) private var feedback
 
     var body: some View {
-        Button {
-            feedback.play(.selection)
-            action()
-        } label: {
-            Text(title)
-                .font(RFont.sans(14.5, selected ? .semibold : .medium))
-                .foregroundStyle(selected ? Palette.accent : Palette.text)
-                .lineLimit(1)
-                .padding(.horizontal, 14)
-                .padding(.vertical, 8)
-                .background(selected ? Palette.accentSoft : Palette.controlFill, in: Capsule())
-                .overlay(Capsule().strokeBorder(selected ? Palette.accent.opacity(0.6) : .clear, lineWidth: 1.25))
-                .contentShape(Capsule())
-        }
-        .buttonStyle(PressDim())
-        .accessibilityAddTraits(selected ? .isSelected : [])
-        .accessibilityIdentifier(identifier ?? title)
+        SelectChip(title: title, selected: selected, action: action)
+            .accessibilityIdentifier(identifier ?? title)
     }
 }
 

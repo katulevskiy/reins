@@ -2,36 +2,31 @@ import SwiftUI
 
 // The pieces the grant screens, the resume sheet, "New grant" and a connection's page share.
 
-/// A choice among a few ("24 hours", "Read emails"): soft accent when chosen. Plays the selection feedback.
+/// A choice among a few ("24 hours", "Read emails"): the shared `SelectChip`, with an optional small icon before its
+/// words ("Specific senders", "All mail"). Plays the selection feedback.
 struct OptionChip: View {
     var title: String
     var selected: Bool
+    var symbol: String?
     var action: () -> Void
-    @Environment(\.feedback) private var feedback
 
-    init(_ title: String, selected: Bool, action: @escaping () -> Void) {
+    init(_ title: String, selected: Bool, symbol: String? = nil, action: @escaping () -> Void) {
         self.title = title
         self.selected = selected
+        self.symbol = symbol
         self.action = action
     }
 
     var body: some View {
-        Button {
-            action()
-            feedback.play(.selection)
-        } label: {
-            Text(title)
-                .font(RFont.sans(14.5, .medium))
-                .foregroundStyle(selected ? Palette.accent : Palette.text)
-                .lineLimit(1)
-                .padding(.horizontal, 15)
-                .frame(minHeight: 38)
-                .background(selected ? Palette.accentSoft : Palette.controlFill, in: Capsule())
-                .overlay(Capsule().strokeBorder(selected ? Palette.accent.opacity(0.6) : .clear, lineWidth: 0.75))
-                .contentShape(Capsule())
+        if let symbol {
+            SelectChip(title: title, selected: selected, leading: {
+                Image(systemName: symbol)
+                    .font(.system(size: 13, weight: .semibold))
+                    .foregroundStyle(selected ? SelectChipLook.check : Palette.secondary)
+            }, action: action)
+        } else {
+            SelectChip(title: title, selected: selected, action: action)
         }
-        .buttonStyle(.plain)
-        .accessibilityAddTraits(selected ? [.isSelected] : [])
     }
 }
 

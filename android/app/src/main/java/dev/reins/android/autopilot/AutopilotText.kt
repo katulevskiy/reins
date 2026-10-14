@@ -265,6 +265,8 @@ object AutopilotText {
         "Approves when ${percent(p.approveAt)} sure, denies when ${percent(p.denyAt)} sure"
 
     /** What "How sure" explains behind its (?). */
+    const val MODE_HELP = "Manual: you answer every request; Autopilot only suggests. Auto: Autopilot answers the ones it is sure of and asks you about the rest. Bypass approves for a while without asking; Lock down denies everything that would ask."
+
     const val HOW_SURE_HELP = "How sure Autopilot must be to approve or deny on its own in Auto. Requests that always ask still ask."
 
     /** What a bypass still asks: nothing an AI does, only a new connection or a new phone joining the account. */

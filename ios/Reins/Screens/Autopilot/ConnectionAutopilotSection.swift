@@ -20,21 +20,20 @@ struct ConnectionAutopilotSection: View {
             ConnectionAutopilotContent(connectionId: connectionId, label: label)
                 .listRowInsets(EdgeInsets())
         } header: {
-            SectionHeader("Autopilot").textCase(nil).padding(.horizontal, -4)
-        } footer: {
-            GroupFooter(ConnectionAutopilotContent.footer)
+            // Its explanation behind a (?) beside the heading, not under the options.
+            HelpHeader(title: "Autopilot", help: ConnectionAutopilotContent.footer)
         }
         .listRowBackground(Palette.elevated)
     }
 }
 
-/// The same as `ConnectionAutopilotSection`, as a heading, a card and its footnote for a `ScrollView` page.
+/// The same as `ConnectionAutopilotSection`, as a heading with its (?) and a card for a `ScrollView` page.
 struct ConnectionAutopilotCard: View {
     var connectionId: String
     var label: String? = nil
 
     var body: some View {
-        AutopilotGroup(header: "Autopilot", footer: ConnectionAutopilotContent.footer) {
+        AutopilotGroup(header: "Autopilot", help: ConnectionAutopilotContent.footer) {
             ConnectionAutopilotContent(connectionId: connectionId, label: label)
         }
     }
@@ -98,7 +97,8 @@ struct ConnectionAutopilotContent: View {
                 }
                 Spacer(minLength: 8)
                 if bypassUntil != nil {
-                    ActionButton(title: "Stop", symbol: "stop.fill", kind: .destructive, compact: true) {
+                    // Stopping a bypass is words only, everywhere.
+                    ActionButton(title: "Stop", kind: .destructive, compact: true) {
                         Task { await ap.stopBypass(connectionId) }
                     }
                     .accessibilityIdentifier("stopConnectionBypass")

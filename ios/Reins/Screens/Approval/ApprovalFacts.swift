@@ -196,22 +196,28 @@ private struct MessagesFacts: View {
             FactGroup { FactRow(key: "Found", value: "Nothing") }
         } else {
             let allTicked = view.messages.allSatisfy { $0.coveredByGrant || draft.selected.contains($0.id) }
-            FactHeader(text: "\(view.messages.count) found") {
-                Button(allTicked ? "Clear" : "Select all") {
-                    vm.draft.selected = allTicked ? [] : Set(view.messages.map(\.id))
-                    vm.draft.allMail = nil
-                    feedback.play(.tap)
+            if vm.readOnly {
+                // An Activity entry: what was shared is ticked, and nothing can be ticked again.
+                let shared = view.messages.filter { $0.coveredByGrant || draft.selected.contains($0.id) }.count
+                FactHeader("\(view.messages.count) found · \(shared) shared")
+            } else {
+                FactHeader(text: "\(view.messages.count) found") {
+                    Button(allTicked ? "Clear" : "Select all") {
+                        vm.draft.selected = allTicked ? [] : Set(view.messages.map(\.id))
+                        vm.draft.allMail = nil
+                        feedback.play(.tap)
+                    }
+                    .font(RFont.sans(14.5, .semibold))
+                    .foregroundStyle(Palette.accent)
+                    .accessibilityIdentifier(allTicked ? "clearAll" : "selectAll")
                 }
-                .font(RFont.sans(14.5, .semibold))
-                .foregroundStyle(Palette.accent)
-                .accessibilityIdentifier(allTicked ? "clearAll" : "selectAll")
             }
             FactGroup {
                 ForEach(view.messages, id: \.id) { m in
                     MailRow(
                         message: m,
                         checked: m.coveredByGrant || draft.selected.contains(m.id) || (draft.allMail != nil && !m.sensitive),
-                        enabled: !m.coveredByGrant && (draft.allMail == nil || m.sensitive),
+                        enabled: !vm.readOnly && !m.coveredByGrant && (draft.allMail == nil || m.sensitive),
                         service: view.service
                     ) { on in
                         if on { vm.draft.selected.insert(m.id) } else { vm.draft.selected.remove(m.id) }
@@ -420,7 +426,7 @@ private struct AccountsFacts: View {
                     feedback.play(.toggle(!ticked))
                 } label: {
                     HStack(spacing: 14) {
-                        TickBox(checked: ticked, enabled: !locked)
+                        TickBox(checked: ticked, enabled: !locked && !vm.readOnly)
                         HStack(spacing: 12) {
                             BlobAvatar(seed: address, size: 32)
                             Text(address)
@@ -440,7 +446,7 @@ private struct AccountsFacts: View {
                     .animation(.easeInOut(duration: 0.28), value: ticked)
                 }
                 .buttonStyle(.plain)
-                .disabled(locked)
+                .disabled(locked || vm.readOnly)
                 .accessibilityAddTraits(ticked ? .isSelected : [])
                 .accessibilityIdentifier("shared:\(i)")
             }
@@ -614,7 +620,8 @@ private struct PublicDomainNote: View {
     var view: ApprovalView
 
     var body: some View {
-        if let choice = vm.preview?.choice {
+        // An Activity entry remembers nothing new, so there is nothing to warn about.
+        if !vm.readOnly, let choice = vm.preview?.choice {
             let domains = publicDomainWarnings(choice)
             if !domains.isEmpty {
                 HStack(spacing: 8) {

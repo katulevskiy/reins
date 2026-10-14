@@ -1,8 +1,8 @@
 import SwiftUI
 
 // The header's Autopilot pill opens a compact switcher rather than the whole Autopilot page (the Android app's
-// AutopilotQuick.kt). Release builds use the menu; debug builds can compare it with a risk slider and with the page
-// (Settings, Developer).
+// AutopilotQuick.kt). Release builds use the menu, a card dropped from under the pill; debug builds can compare it
+// with a risk slider and with the page (Settings, Developer).
 
 /// What the mode pill opens.
 enum QuickStyle: String, CaseIterable, Identifiable {
@@ -30,11 +30,12 @@ enum QuickStyle: String, CaseIterable, Identifiable {
     }
 }
 
-/// The mode pill with its switcher. The menu lists the modes riskiest first, each with its symbol and a few words; a
-/// tap switches. Bypass opens the bypass sheet (a length, held to confirm), as everywhere; "More" opens the Autopilot
-/// page.
+/// The mode pill with its switcher. The menu (`autopilotQuickMenu`, on the page under the pill) drops from the pill;
+/// the slider is a popover; the page style opens the Autopilot page.
 struct AutopilotQuickPill: View {
     var settings: AutopilotSettings
+    /// The menu is open (the page that holds the pill draws it, see `autopilotQuickMenu`).
+    @Binding var menuOpen: Bool
 
     @Environment(AppModel.self) private var model
     @Environment(\.feedback) private var feedback
@@ -46,7 +47,14 @@ struct AutopilotQuickPill: View {
     var body: some View {
         Group {
             switch QuickStyle.resolve(styleRaw) {
-            case .menu: menu
+            case .menu:
+                ActivityModePill(settings: settings) {
+                    let next = !menuOpen
+                    withAnimation(.spring(duration: 0.3, bounce: 0.2)) { menuOpen = next }
+                    feedback.play(.expand(next))
+                }
+                // Where the menu drops from.
+                .anchorPreference(key: QuickPillAnchor.self, value: .bounds) { $0 }
             case .slider:
                 ActivityModePill(settings: settings) {
                     sliderOpen = true
@@ -86,54 +94,323 @@ struct AutopilotQuickPill: View {
         }
         .presentationFeedback(bypassAsk)
     }
+}
 
-    private var menu: some View {
-        Menu {
-            if settings.mode == .bypass {
-                Button(role: .destructive) {
-                    Task { await ap.stopBypass() }
-                } label: {
-                    Label("Stop bypass", systemImage: "stop.fill")
-                }
-            }
-            ForEach(AutopilotText.byRisk.reversed(), id: \.self) { mode in
-                if mode == .bypass && settings.mode != .bypass {
-                    Button {
-                        bypassAsk = true
-                    } label: {
-                        modeLabel(mode)
+/// Where the header's mode pill is: the quick menu drops from under it.
+struct QuickPillAnchor: PreferenceKey {
+    static var defaultValue: Anchor<CGRect>? { nil }
+
+    static func reduce(value: inout Anchor<CGRect>?, nextValue: () -> Anchor<CGRect>?) {
+        value = value ?? nextValue()
+    }
+}
+
+extension View {
+    /// The quick menu, drawn over this page under its mode pill while `isPresented`: the page steps back behind a
+    /// dark scrim (a tap on it closes the menu).
+    func autopilotQuickMenu(isPresented: Binding<Bool>) -> some View {
+        modifier(AutopilotQuickMenu(isPresented: isPresented))
+    }
+}
+
+/// The quick menu's place on the page: the scrim, the card under the pill with its right edge on the pill's, and the
+/// bypass sheet its Bypass opens (the same sheet as the Autopilot page's: 15 min, 1 hour, 1 day or Custom, held to
+/// confirm, then the owner's check).
+struct AutopilotQuickMenu: ViewModifier {
+    @Binding var isPresented: Bool
+
+    @Environment(AppModel.self) private var model
+    @Environment(\.feedback) private var feedback
+    @Environment(\.colorScheme) private var scheme
+    @State private var ap = AutopilotModel()
+    @State private var bypassAsk = false
+
+    func body(content: Content) -> some View {
+        content
+            .overlayPreferenceValue(QuickPillAnchor.self) { anchor in
+                GeometryReader { geo in
+                    ZStack(alignment: .topLeading) {
+                        if isPresented {
+                            // The page steps back, as in the design: darker on dark.
+                            Color.black.opacity(scheme == .dark ? 0.6 : 0.3)
+                                .ignoresSafeArea()
+                                .contentShape(Rectangle())
+                                .onTapGesture {
+                                    feedback.play(.expand(false))
+                                    close()
+                                }
+                                .transition(.opacity)
+                                .accessibilityAddTraits(.isButton)
+                                .accessibilityLabel("Close")
+                                .accessibilityIdentifier("quickScrim")
+                        }
+                        if isPresented, let settings = model.autopilot {
+                            let pill = anchor.map { geo[$0] }
+                            let width = min(300, geo.size.width - 24)
+                            let x = pill.map { min(max($0.maxX - width, 12), geo.size.width - width - 12) } ?? geo.size.width - width - 14
+                            let y = pill.map { $0.maxY + 8 } ?? 62
+                            QuickMenuCard(
+                                settings: settings,
+                                modelReady: ap.modelReady,
+                                onMode: pick,
+                                onBypass: {
+                                    close()
+                                    bypassAsk = true
+                                },
+                                onStopBypass: {
+                                    close()
+                                    Task { await ap.stopBypass() }
+                                },
+                                onLockdown: {
+                                    close()
+                                    Task { await ap.setMode(.lockdown) }
+                                },
+                                onEndLockdown: {
+                                    close()
+                                    Task { await ap.endLockdown() }
+                                },
+                                onMore: {
+                                    close()
+                                    model.show(.autopilot)
+                                }
+                            )
+                            .frame(width: width)
+                            .offset(x: x, y: y)
+                            .transition(.scale(scale: 0.92, anchor: .topTrailing).combined(with: .opacity))
+                            .accessibilityAction(.escape) { close() }
+                        }
                     }
-                } else {
-                    Button {
-                        if mode != settings.mode { Task { await ap.setMode(mode) } }
-                    } label: {
-                        modeLabel(mode)
-                    }
+                    .frame(width: geo.size.width, height: geo.size.height, alignment: .topLeading)
                 }
+                // Closed, the page under it takes every touch.
+                .allowsHitTesting(isPresented)
             }
-            Divider()
-            Button {
-                model.show(.autopilot)
-            } label: {
-                Label("More", systemImage: "ellipsis.circle")
+            .onAppear { ap.bind(model) }
+            .sheet(isPresented: $bypassAsk) {
+                BypassSheet(who: nil) { length in
+                    feedback.quietClose()
+                    Task { await ap.startBypass(minutes: length.minutes) }
+                }
+                .environment(\.feedback, feedback)
             }
-        } label: {
-            ModePillLabel(settings: settings)
-        }
-        .menuOrder(.fixed)
-        .buttonStyle(.plain)
-        .modePillGlass(settings)
+            .presentationFeedback(bypassAsk)
     }
 
-    /// A mode's row: its name and a few words (or that it needs the model), its symbol, a tick on the one in force.
-    private func modeLabel(_ mode: AutopilotMode) -> some View {
-        let needs = !ap.modelReady && AutopilotText.needsModel(mode)
-        return Label {
-            Text(AutopilotText.name(mode))
-            Text(needs ? "Needs the model" : AutopilotText.line(mode))
-        } icon: {
-            Image(systemName: mode == settings.mode ? "checkmark" : AutopilotText.symbol(mode))
+    private func pick(_ mode: AutopilotMode) {
+        close()
+        if mode != model.autopilot?.mode { Task { await ap.setMode(mode) } }
+    }
+
+    private func close() {
+        withAnimation(.spring(duration: 0.25, bounce: 0.1)) { isPresented = false }
+    }
+}
+
+/// The quick menu, dropped from the header's mode pill (the Android app's `MenuCard`): Manual and Auto side by side
+/// (the one in force outlined in its colour), Bypass and Lock down under them, then the Autopilot page. A running
+/// bypass is the Bypass button itself ("Bypass on · 8:12", tap to stop), a lockdown the Lock down button: there is no
+/// other Stop.
+private struct QuickMenuCard: View {
+    var settings: AutopilotSettings
+    var modelReady: Bool
+    var onMode: (AutopilotMode) -> Void
+    var onBypass: () -> Void
+    var onStopBypass: () -> Void
+    var onLockdown: () -> Void
+    var onEndLockdown: () -> Void
+    var onMore: () -> Void
+
+    static let fill = Palette.dynamic(0xFFFFFF, 0x18181B)
+    static let edge = Palette.dynamic(0xE2E2E6, 0x2A2A30)
+    static let divider = Palette.dynamic(0xE2E2E6, 0x26262B)
+
+    var body: some View {
+        let bypass = settings.mode == .bypass
+        let lockdown = settings.mode == .lockdown
+        let shape = RoundedRectangle(cornerRadius: 22, style: .continuous)
+        VStack(alignment: .leading, spacing: 0) {
+            HStack(spacing: 8) {
+                ForEach([AutopilotMode.manual, .auto], id: \.self) { mode in
+                    let needs = !modelReady && AutopilotText.needsModel(mode)
+                    QuickModeCard(
+                        mode: mode,
+                        selected: settings.mode == mode,
+                        quiet: bypass || lockdown,
+                        line: needs ? "Needs the model" : AutopilotText.line(mode)
+                    ) {
+                        onMode(mode)
+                    }
+                }
+            }
+            .fixedSize(horizontal: false, vertical: true)
+            HStack(spacing: 8) {
+                if bypass {
+                    QuickStateButton(
+                        title: "Bypass on",
+                        until: settings.bypassUntil.flatMap { AutopilotText.isUntilOff($0) ? nil : $0 },
+                        hint: "Tap to stop",
+                        fill: Palette.danger,
+                        text: Palette.dynamic(0xFFFFFF, 0x2A0606),
+                        action: onStopBypass
+                    )
+                    .accessibilityIdentifier("quick:BYPASS")
+                } else {
+                    QuickMenuButton(title: "Bypass", symbol: "bolt.fill", fill: Palette.danger.opacity(0.12), text: Palette.danger, action: onBypass)
+                        .accessibilityIdentifier("quick:BYPASS")
+                }
+                if lockdown {
+                    QuickStateButton(
+                        title: "Locked down",
+                        until: nil,
+                        hint: "Tap to end",
+                        fill: Palette.warning,
+                        text: Palette.dynamic(0xFFFFFF, 0x231A00),
+                        action: onEndLockdown
+                    )
+                    .accessibilityIdentifier("quick:LOCKDOWN")
+                } else {
+                    QuickMenuButton(title: "Lock down", symbol: "lock.fill", fill: Palette.dual(UIColor(white: 0, alpha: 0.05), UIColor(white: 1, alpha: 0.06)), text: Palette.text, action: onLockdown)
+                        .accessibilityIdentifier("quick:LOCKDOWN")
+                }
+            }
+            .padding(.top, 8)
+            Rectangle().fill(Self.divider).frame(height: 1).padding(.top, 10)
+            Button(action: onMore) {
+                HStack(spacing: 6) {
+                    Text("Autopilot settings").font(RFont.sans(13.5, .medium))
+                    Spacer(minLength: 8)
+                    Image(systemName: "chevron.right").font(.system(size: 12, weight: .semibold))
+                }
+                .foregroundStyle(Palette.accent)
+                .padding(.horizontal, 4)
+                .padding(.top, 10)
+                .padding(.bottom, 4)
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(PressDim())
+            .accessibilityIdentifier("quickMore")
         }
+        .padding(12)
+        .background(Self.fill, in: shape)
+        .overlay(shape.strokeBorder(Self.edge, lineWidth: 1))
+        .shadow(color: .black.opacity(0.5), radius: 24, y: 14)
+        .accessibilityElement(children: .contain)
+        .accessibilityIdentifier("autopilotQuick")
+    }
+}
+
+/// Manual or Auto in the menu: its tile, name and what it does; the one in force outlined and washed in its colour.
+/// While a bypass or a lockdown is in force neither is: both stay tappable, quieter.
+private struct QuickModeCard: View {
+    var mode: AutopilotMode
+    var selected: Bool
+    var quiet: Bool
+    var line: String
+    var action: () -> Void
+
+    var body: some View {
+        let tint = AutopilotStyle.tint(mode)
+        let shape = RoundedRectangle(cornerRadius: 16, style: .continuous)
+        let on = selected && !quiet
+        Button(action: action) {
+            VStack(alignment: .leading, spacing: 0) {
+                RoundedRectangle(cornerRadius: 10, style: .continuous)
+                    .fill(tint.opacity(0.17))
+                    .frame(width: 32, height: 32)
+                    .overlay {
+                        Image(systemName: AutopilotText.symbol(mode))
+                            .font(.system(size: 15, weight: .semibold))
+                            .foregroundStyle(tint)
+                    }
+                Text(AutopilotText.name(mode))
+                    .font(RFont.sans(15, .semibold))
+                    .foregroundStyle(Palette.text)
+                    .lineLimit(1)
+                    .padding(.top, 8)
+                Text(line)
+                    .font(RFont.sans(11.5))
+                    .foregroundStyle(Palette.tertiary)
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.85)
+                    .padding(.top, 2)
+                Spacer(minLength: 0)
+            }
+            .padding(11)
+            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+            .background(on ? tint.opacity(0.10) : Palette.dynamic(0xF3F3F5, 0x0D0D0F), in: shape)
+            .overlay(shape.strokeBorder(on ? tint : Palette.dynamic(0xE2E2E6, 0x26262B), lineWidth: on ? 1.5 : 1))
+            .opacity(quiet ? 0.45 : 1)
+            .contentShape(shape)
+        }
+        .buttonStyle(ModeCardPress())
+        .accessibilityElement(children: .combine)
+        .accessibilityAddTraits(selected ? [.isButton, .isSelected] : .isButton)
+        .accessibilityIdentifier("quick:\(AutopilotText.key(mode).uppercased())")
+    }
+}
+
+/// A button of the menu: its icon and words on its own fill, 44 pt tall.
+private struct QuickMenuButton: View {
+    var title: String
+    var symbol: String
+    var fill: Color
+    var text: Color
+    var action: () -> Void
+
+    var body: some View {
+        Button(action: action) {
+            Label(title, systemImage: symbol)
+                .labelStyle(.titleAndIcon)
+                .font(RFont.sans(14, .semibold))
+                .foregroundStyle(text)
+                .lineLimit(1)
+                .minimumScaleFactor(0.85)
+                .frame(maxWidth: .infinity, minHeight: 44)
+                .background(fill, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
+                .contentShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
+        }
+        .buttonStyle(PressDim())
+    }
+}
+
+/// A button of the menu that is also a state, solid in its colour: "Bypass on · 8:12" (or "Bypass on" without an end)
+/// over "Tap to stop"; "Locked down" over "Tap to end". Words only.
+private struct QuickStateButton: View {
+    var title: String
+    /// A bypass's end, counted down beside the title.
+    var until: Int64?
+    var hint: String
+    var fill: Color
+    var text: Color
+    var action: () -> Void
+
+    var body: some View {
+        Button(action: action) {
+            VStack(spacing: 1) {
+                Group {
+                    if let until {
+                        LiveClock(interval: 1) { now in
+                            Text("\(title) · \(AutopilotText.clock(until: until, now: Int64(now)))").monospacedDigit()
+                        }
+                    } else {
+                        Text(title)
+                    }
+                }
+                .font(RFont.sans(14, .semibold))
+                .lineLimit(1)
+                .minimumScaleFactor(0.8)
+                Text(hint)
+                    .font(RFont.sans(11, .medium))
+                    .opacity(0.75)
+                    .lineLimit(1)
+            }
+            .foregroundStyle(text)
+            .frame(maxWidth: .infinity, minHeight: 44)
+            .background(fill, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
+            .contentShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
+        }
+        .buttonStyle(PressDim())
+        .accessibilityElement(children: .combine)
     }
 }
 
@@ -228,7 +505,8 @@ struct RiskSliderCard: View {
                     onStop()
                     dismiss()
                 } label: {
-                    Label("Stop bypass", systemImage: "stop.fill")
+                    // Words only, as everywhere a bypass is stopped.
+                    Text("Stop bypass")
                         .font(RFont.sans(14, .semibold))
                         .foregroundStyle(Palette.danger)
                         .frame(maxWidth: .infinity, minHeight: 36)

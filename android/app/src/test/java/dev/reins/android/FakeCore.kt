@@ -105,6 +105,11 @@ class FakeCore : ReinsCoreInterface {
 
     override suspend fun approvalView(requestId: String) = views[requestId] ?: approval ?: throw CoreException.NotFound()
 
+    /** What each Activity entry kept of its approval, by entry id (none: an older entry). */
+    val entryApprovals = java.util.concurrent.ConcurrentHashMap<Long, ApprovalView>()
+
+    override suspend fun activityApproval(entryId: Long): ApprovalView? = entryApprovals[entryId]
+
     /** Makes approving fail (after the sheet has already closed: the app answers in the background). */
     @Volatile var approveFailure: CoreException? = null
 

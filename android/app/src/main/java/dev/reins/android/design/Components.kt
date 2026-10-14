@@ -64,6 +64,7 @@ import androidx.compose.ui.node.currentValueOf
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.selected
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.VisualTransformation
@@ -79,6 +80,7 @@ import dev.reins.android.feedback.Feedback
 import dev.reins.android.feedback.LocalFeedback
 import dev.reins.android.feedback.defaultTap
 import dev.reins.android.feedback.play
+import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.launch
 
 /**
@@ -94,13 +96,15 @@ fun Modifier.pressable(
     shape: Shape = RoundedCornerShape(16.dp),
     dim: Float = 0.55f,
     label: String? = null,
+    /** Where its presses go; the control makes its own when null (tests pass one to press it exactly). */
+    interactionSource: androidx.compose.foundation.interaction.MutableInteractionSource? = null,
     onClick: () -> Unit,
 ): Modifier {
     val click = PressClick(onClick)
     return this
         .then(PressClickElement(click))
         .clickable(
-            interactionSource = null,
+            interactionSource = interactionSource,
             indication = PressIndication(highlight, shape, dim),
             enabled = enabled,
             onClickLabel = label,
@@ -157,15 +161,10 @@ private class PressIndicationNode(
 
     override fun onAttach() {
         coroutineScope.launch {
-            val presses = mutableListOf<PressInteraction.Press>()
+            val tracker = PressTracker()
             source.interactions.collect { interaction ->
-                when (interaction) {
-                    is PressInteraction.Press -> presses += interaction
-                    is PressInteraction.Release -> presses -= interaction.press
-                    is PressInteraction.Cancel -> presses -= interaction.press
-                }
-                val target = if (presses.isEmpty()) 0f else 1f
-                if (pressed.targetValue != target) launch { pressed.animateTo(target, spring()) }
+                // Started at once, so a later change always comes after it and wins.
+                tracker.update(interaction)?.let { target -> launch(start = CoroutineStart.UNDISPATCHED) { pressed.animateTo(target, spring()) } }
             }
         }
     }
@@ -185,6 +184,31 @@ private class PressIndicationNode(
                 drawContext.canvas.restore()
             }
         }
+    }
+}
+
+/**
+ * Where a press's look is headed: 1 while any press is down, 0 once none is. Kept here rather than read back from the
+ * animation: a quick tap in a scrolling page delivers its press and its release together, before an animation started
+ * for the press has set its own target, and comparing with that target missed the release, so the control stayed
+ * dimmed ("greyed out") until the next tap.
+ */
+internal class PressTracker {
+    private val presses = mutableListOf<PressInteraction.Press>()
+    private var heading = 0f
+
+    /** The new target after [interaction], or null when it stays. */
+    fun update(interaction: androidx.compose.foundation.interaction.Interaction): Float? {
+        when (interaction) {
+            is PressInteraction.Press -> presses += interaction
+            is PressInteraction.Release -> presses -= interaction.press
+            is PressInteraction.Cancel -> presses -= interaction.press
+            else -> return null
+        }
+        val target = if (presses.isEmpty()) 0f else 1f
+        if (target == heading) return null
+        heading = target
+        return target
     }
 }
 
@@ -270,27 +294,50 @@ fun CircleIconButton(
     }
 }
 
-/** A capsule choice (lifetime, filters): the selected one is lifted out with a hairline and a brighter fill. */
+/**
+ * A choice among a few (who a grant is for, which emails, how long): the chosen one is tinted in the accent with a
+ * 1.5 dp accent edge and a check; the others are clear with a hairline edge. The same in every screen, so which one is
+ * on is never a guess between two greys.
+ */
 @Composable
-fun SelectChip(title: String, selected: Boolean, modifier: Modifier = Modifier, onClick: () -> Unit) {
+fun SelectChip(
+    title: String,
+    selected: Boolean,
+    modifier: Modifier = Modifier,
+    leading: (@Composable () -> Unit)? = null,
+    onClick: () -> Unit,
+) {
     val c = LocalColors.current
     val feedback = LocalFeedback.current
+    val shape = RoundedCornerShape(12.dp)
     Row(
         modifier
             .height(38.dp)
-            .clip(CircleShape)
-            .background(if (selected) c.accentSoft else c.controlFill)
-            .border(0.75.dp, if (selected) c.accent.copy(alpha = 0.6f) else Color.Transparent, CircleShape)
-            .pressable(shape = CircleShape) {
+            .clip(shape)
+            .background(if (selected) c.accent.copy(alpha = if (c.dark) 0.18f else 0.12f) else Color.Transparent)
+            .border(if (selected) 1.5.dp else 1.dp, if (selected) c.accent else chipEdge(c), shape)
+            .pressable(shape = shape) {
                 onClick()
                 feedback.play(Event.Selection)
             }
-            .padding(horizontal = 15.dp),
+            .semantics { this.selected = selected }
+            .padding(start = if (leading != null) 8.dp else 13.dp, end = 13.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        RText(title, RType.sans(14.5f, FontWeight.Medium), if (selected) c.accent else c.text, maxLines = 1)
+        if (leading != null) {
+            leading()
+            Spacer(Modifier.width(8.dp))
+        }
+        RText(title, RType.sans(14f, FontWeight.SemiBold), if (selected) c.text else c.secondary, maxLines = 1)
+        if (selected) {
+            Spacer(Modifier.width(6.dp))
+            GlyphIcon(Glyph.Check, if (c.dark) Color(0xFFA99BFA) else c.accent, size = 14.dp, weight = 2.4f)
+        }
     }
 }
+
+/** The hairline around a choice that is not chosen. */
+fun chipEdge(c: RColors): Color = if (c.dark) Color(0xFF34343A) else c.hairline
 
 /** Small tinted label. */
 @Composable

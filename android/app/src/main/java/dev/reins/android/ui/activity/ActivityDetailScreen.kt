@@ -67,9 +67,40 @@ import dev.reins.android.ui.settings.SettingsGroup
 import dev.reins.android.ui.settings.SettingsPage
 import dev.reins.core.ActivityEntry
 import dev.reins.core.Verdict
+import androidx.compose.foundation.border
+import androidx.compose.foundation.layout.defaultMinSize
+import androidx.compose.material.icons.rounded.ContentCopy
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.ui.platform.LocalClipboardManager
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.text.AnnotatedString
+import androidx.compose.ui.unit.sp
+import androidx.lifecycle.viewmodel.compose.viewModel
+import dev.reins.android.AppContainer
+import dev.reins.android.feedback.Event
+import dev.reins.android.feedback.LocalFeedback
+import dev.reins.android.feedback.play
+import dev.reins.android.platform.Authenticator
+import dev.reins.android.ui.approval.ApprovalRecord
+import dev.reins.android.ui.approval.ApprovalScreen
+import dev.reins.android.ui.approval.ApprovalViewModel
+import dev.reins.android.ui.autopilot.modeTint
+import dev.reins.android.ui.common.LabelText
+import dev.reins.android.ui.common.LocalConnections
+import dev.reins.android.ui.common.ProviderTile
+import dev.reins.android.ui.common.findConnection
+import dev.reins.android.ui.common.untrustedLine
+import dev.reins.core.ApprovalView
+import dev.reins.core.AutopilotMode
+import kotlin.coroutines.cancellation.CancellationException
 import kotlinx.coroutines.launch
 
-/** One operation, opened: who asked what of which service, how it ended, and what exactly went out. */
+/**
+ * One operation, opened. An entry that kept its approval is shown with the approval's own screen, read-only (the same
+ * hero, facts and pages: commits, a commit's lines, the emails), with how it ended on the hero, what was asked in full
+ * below, and "This was wrong" where the decision dock was. An older entry shows what it kept.
+ */
 @Composable
 fun ActivityDetailScreen(
     entryId: Long,
@@ -79,6 +110,9 @@ fun ActivityDetailScreen(
     onOpenEmail: (entryId: Long, index: Int) -> Unit = { _, _ -> },
     /** "This was wrong": records what should have happened; returns an error to show, or null. */
     onCorrect: suspend (Long, Verdict) -> String? = { _, _ -> null },
+    /** Reads the approval the entry kept; without it the entry shows only what it kept itself. */
+    container: AppContainer? = null,
+    authenticator: Authenticator? = null,
 ) {
     val c = LocalColors.current
     val entries by state.activity.collectAsStateWithLifecycle()
@@ -90,37 +124,60 @@ fun ActivityDetailScreen(
     var thanked by remember { mutableStateOf(false) }
     var error by remember { mutableStateOf<String?>(null) }
     val correctable = entry?.autopilot?.correctable == true
+    // The approval as it was shown: read once; until it is known nothing is drawn (no flash of the older page).
+    var recorded by remember(entryId) { mutableStateOf<ApprovalView?>(null) }
+    var looked by remember(entryId) { mutableStateOf(container == null) }
+    LaunchedEffect(entryId, container) {
+        val core = container?.core ?: return@LaunchedEffect
+        recorded = try {
+            core.activityApproval(entryId)
+        } catch (e: CancellationException) {
+            throw e
+        } catch (_: Exception) {
+            null
+        }
+        looked = true
+    }
+    val dock: (@Composable () -> Unit)? = if (entry != null && (correctable || thanked || error != null)) {
+        { EntryDock(correctable, thanked, busy, error) { asking = true } }
+    } else {
+        null
+    }
 
-    Box(Modifier.fillMaxSize().background(c.background)) {
-        SettingsPage(title = null, onBack = onBack) {
-            if (entry == null) {
-                EmptyState(Glyph.List, "Not found", null, tag = "entryGone")
-                return@SettingsPage
-            }
-            Hero(entry)
-            Details(entry, grants.any { it.id == entry.grantId }, onOpenGrant, onOpenEmail)
-            Spacer(Modifier.height(if (correctable || thanked || error != null) 120.dp else 32.dp))
+    val shown = recorded
+    if (entry != null && shown != null && container != null && authenticator != null) {
+        val viewModel = viewModel(key = "entry:$entryId") {
+            ApprovalViewModel(container, "entry:$entryId", shown, entry.info.messages.map { it.id }.toSet() + entry.info.accounts)
         }
-        if (entry != null && (correctable || thanked || error != null)) {
-            PageDock(Modifier.align(Alignment.BottomCenter).testTag("entryDock")) {
-                error?.let { Banner(it, Modifier.padding(bottom = 10.dp), BannerKind.Error) }
-                if (thanked) {
-                    Banner("Learned. It asks about these again.", tag = "corrected")
-                } else if (correctable) {
-                    PillButton(
-                        "This was wrong",
-                        Modifier.fillMaxWidth().testTag("thisWasWrong"),
-                        icon = Icons.AutoMirrored.Rounded.Undo,
-                        // The bright yellow in both themes: the dark text needs it.
-                        background = Color(0xFFFACC15),
-                        foreground = OnWarning,
-                        height = 56.dp,
-                        textSize = 16f,
-                        busy = busy,
-                    ) { asking = true }
+        val (icon, tint) = outcomeLook(entry)
+        ApprovalScreen(
+            viewModel = viewModel,
+            authenticator = authenticator,
+            onDone = onBack,
+            record = ApprovalRecord(
+                outcome = outcomeLine(entry),
+                icon = icon,
+                tint = tint,
+                below = { AskedSections(entry) },
+                footer = dock,
+            ),
+        )
+    } else if (looked) {
+        Box(Modifier.fillMaxSize().background(c.background)) {
+            SettingsPage(title = null, onBack = onBack) {
+                if (entry == null) {
+                    EmptyState(Glyph.List, "Not found", null, tag = "entryGone")
+                    return@SettingsPage
                 }
+                Hero(entry)
+                AskedSections(entry)
+                Details(entry, grants.any { it.id == entry.grantId }, onOpenGrant, onOpenEmail)
+                Spacer(Modifier.height(if (dock != null) 120.dp else 32.dp))
             }
+            if (dock != null) Box(Modifier.align(Alignment.BottomCenter)) { dock() }
         }
+    } else {
+        Box(Modifier.fillMaxSize().background(c.background))
     }
 
     if (asking && entry != null) {
@@ -144,12 +201,72 @@ fun ActivityDetailScreen(
     }
 }
 
-/** The entry's hero: the AI, three dots, the service; what it did, large; and who decided. */
+/**
+ * Where an entry's decision dock was: "This was wrong", a normal neutral button like Deny with Autopilot's violet undo
+ * mark, or the thanks once it is said.
+ */
+@Composable
+private fun EntryDock(correctable: Boolean, thanked: Boolean, busy: Boolean, error: String?, onWrong: () -> Unit) {
+    val c = LocalColors.current
+    PageDock(Modifier.testTag("entryDock")) {
+        error?.let { Banner(it, Modifier.padding(bottom = 10.dp), BannerKind.Error) }
+        if (thanked) {
+            Banner("Learned. It asks about these again.", tag = "corrected")
+        } else if (correctable) {
+            PillButton(
+                "This was wrong",
+                Modifier.fillMaxWidth().testTag("thisWasWrong"),
+                icon = Icons.AutoMirrored.Rounded.Undo,
+                iconTint = modeTint(AutopilotMode.AUTO, c),
+                background = if (c.dark) Color(0xFF232327) else Color(0xFFE7E7EB),
+                foreground = c.text,
+                height = 56.dp,
+                textSize = 16f,
+                busy = busy,
+                onClick = onWrong,
+            )
+        }
+    }
+}
+
+/** How an entry ended, as its pill's icon and colour. */
+private fun outcomeLook(entry: ActivityEntry): Pair<ImageVector, (dev.reins.android.design.RColors) -> Color> = when (outcomeOf(entry)) {
+    Outcome.Auto -> Icons.Rounded.Bolt to { c -> c.accent }
+    Outcome.AutoDenied -> Icons.Rounded.Bolt to { c -> c.danger }
+    Outcome.Bypass -> Icons.Rounded.Bolt to { c -> c.danger }
+    Outcome.Lockdown -> Icons.Rounded.Lock to { c -> c.secondary }
+    Outcome.Grant -> Icons.Rounded.Key to { c -> c.accent }
+    Outcome.Denied -> Icons.Rounded.Cancel to { c -> c.danger }
+    Outcome.Failed -> Icons.Rounded.Warning to { c -> c.warning }
+    Outcome.Approved -> Icons.Rounded.CheckCircle to { c -> c.success }
+}
+
+/** The entry's hero: what it touched with what it did, the request, large; and who decided. */
 @Composable
 private fun Hero(entry: ActivityEntry) {
     val c = LocalColors.current
     val tone = if (entry.outcome == "denied") c.danger else toneColor(toneOf(entry.action), c)
     val decided = entry.decidedBy.isNotEmpty() || entry.autopilot != null
+    val label = entry.label
+    if (label != null) {
+        Row(
+            Modifier
+                .padding(horizontal = 12.dp)
+                .fillMaxWidth()
+                .toneCard(tone, radius = 24.dp, top = if (c.dark) 0.16f else 0.10f, bottom = if (c.dark) 0.04f else 0.03f)
+                .testTag(if (decided) "entryAutopilot" else "entryHero")
+                .padding(16.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            ProviderTile(label, ring = androidx.compose.ui.graphics.lerp(c.background, tone, 0.12f))
+            Spacer(Modifier.width(14.dp))
+            Column(Modifier.weight(1f)) {
+                LabelText(label, Modifier.testTag("detailTitle"), size = 17f, lineHeight = 22f, maxLines = 4)
+                OutcomePill(entry, Modifier.padding(top = 8.dp))
+            }
+        }
+        return
+    }
     Column(
         Modifier
             .padding(horizontal = 12.dp)
@@ -175,6 +292,97 @@ private fun Hero(entry: ActivityEntry) {
             RText(it, RType.sans(13.5f, lineHeight = 18f), c.tertiary, Modifier.padding(top = 6.dp).testTag("detailSummary"), maxLines = 2, align = TextAlign.Center)
         }
         OutcomePill(entry, Modifier.padding(top = 14.dp))
+    }
+}
+
+/**
+ * What the entry asked: who (the agent and its computer), where it ran, why it was asked and when (with how long the
+ * answer took); then the full request, the whole command or tool call wrapped in a mono well with what the agent said,
+ * and a copy button.
+ */
+@Composable
+internal fun AskedSections(entry: ActivityEntry) {
+    val r = entry.request ?: return
+    val c = LocalColors.current
+    val host = findConnection(LocalConnections.current, entry.connectionId, entry.connectionLabel)?.clientHost?.let(::untrusted)?.takeIf { it.isNotBlank() }
+    val agent = untrusted(r.agent)
+    val label = untrusted(entry.connectionLabel)
+    val who = listOfNotNull(agent.takeIf { it.isNotBlank() } ?: label, host ?: label.takeIf { agent.isNotBlank() && it != agent }).distinct().joinToString(" · ")
+    SettingsGroup(header = "What it asked", gap = 18.dp) {
+        AskedRow("Who", who, Modifier.testTag("askedWho")) { ConnectionIcon(entry.connectionId, entry.connectionLabel, size = 18.dp) }
+        if (r.cwd.isNotBlank()) AskedRow("In", untrusted(r.cwd), Modifier.testTag("askedIn"), mono = true)
+        if (r.why.isNotBlank()) AskedRow("Why asked", untrusted(r.why), Modifier.testTag("askedWhy"))
+        AskedRow("When", whenLine(entry.at) + answeredIn(r.askedAt, entry.at), Modifier.testTag("askedWhen"))
+    }
+    val full = untrustedLine(r.full).trimEnd()
+    val purpose = untrustedLine(r.purpose).trim()
+    if (full.isBlank() && purpose.isBlank()) return
+    val clipboard = LocalClipboardManager.current
+    val feedback = LocalFeedback.current
+    Row(Modifier.fillMaxWidth().padding(start = 22.dp, end = 16.dp, top = 18.dp, bottom = 4.dp), verticalAlignment = Alignment.CenterVertically) {
+        RText("Full request", RType.sans(14f, FontWeight.Medium), c.accent, Modifier.weight(1f), maxLines = 1)
+        Box(
+            Modifier
+                .size(36.dp)
+                .clip(CircleShape)
+                .pressable(shape = CircleShape, label = "Copy") {
+                    clipboard.setText(AnnotatedString(listOf(full, purpose).filter { it.isNotBlank() }.joinToString("\n\n")))
+                    feedback.play(Event.Selection)
+                }
+                .semantics { contentDescription = "Copy the full request" }
+                .testTag("copyFullRequest"),
+            contentAlignment = Alignment.Center,
+        ) { Icon(Icons.Rounded.ContentCopy, null, Modifier.size(17.dp), tint = c.accent) }
+    }
+    Column(
+        Modifier
+            .padding(horizontal = 16.dp)
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(16.dp))
+            .background(if (c.dark) Color(0xFF0A0A0C) else c.elevated)
+            .border(1.dp, if (c.dark) Color(0xFF1C1C20) else c.hairline, RoundedCornerShape(16.dp))
+            .padding(horizontal = 14.dp, vertical = 12.dp)
+            .testTag("fullRequest"),
+    ) {
+        if (full.isNotBlank()) RText(full, RType.mono(12.5f).copy(lineHeight = 20.sp), c.text, Modifier.testTag("fullRequestText"), ltr = true)
+        if (purpose.isNotBlank()) {
+            val who = agent.ifBlank { label }
+            RText(
+                "# $who: “$purpose”",
+                RType.mono(12.5f).copy(lineHeight = 20.sp),
+                c.tertiary,
+                Modifier.padding(top = if (full.isNotBlank()) 12.dp else 0.dp).testTag("fullRequestPurpose"),
+                ltr = true,
+            )
+        }
+    }
+}
+
+/** A row of "What it asked": the label in a fixed column, the value beside it, wrapping. */
+@Composable
+private fun AskedRow(label: String, value: String, modifier: Modifier = Modifier, mono: Boolean = false, leading: (@Composable () -> Unit)? = null) {
+    val c = LocalColors.current
+    Row(
+        modifier.fillMaxWidth().defaultMinSize(minHeight = 48.dp).padding(horizontal = 16.dp, vertical = 12.dp).semantics(mergeDescendants = true) {},
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        RText(label, RType.sans(15f), c.tertiary, Modifier.width(96.dp), maxLines = 1)
+        if (leading != null) {
+            leading()
+            Spacer(Modifier.width(7.dp))
+        }
+        RText(value, if (mono) RType.mono(13.5f) else RType.sans(15f), c.text, Modifier.weight(1f), maxLines = 4, ltr = mono)
+    }
+}
+
+/** " · answered in 9 s", from when it was asked to when it was decided; empty when not known. */
+fun answeredIn(askedAt: Long, decidedAt: Long): String {
+    if (askedAt <= 0 || decidedAt < askedAt) return ""
+    val d = decidedAt - askedAt
+    return " · answered in " + when {
+        d < 60 -> "$d s"
+        d < 3_600 -> "${d / 60} min"
+        else -> "${d / 3_600} h"
     }
 }
 

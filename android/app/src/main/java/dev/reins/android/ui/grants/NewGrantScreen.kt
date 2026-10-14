@@ -25,6 +25,8 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.rounded.Inbox
+import androidx.compose.material.icons.rounded.AlternateEmail
 import androidx.compose.material.icons.automirrored.rounded.Send
 import androidx.compose.material.icons.rounded.Close
 import androidx.compose.material.icons.rounded.Fingerprint
@@ -50,6 +52,7 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import dev.reins.android.design.Banner
 import dev.reins.android.design.BannerKind
 import dev.reins.android.design.LocalColors
+import dev.reins.android.design.SelectChip
 import dev.reins.android.design.PageDock
 import dev.reins.android.design.RText
 import dev.reins.android.design.RTextField
@@ -130,8 +133,8 @@ fun NewGrantScreen(viewModel: NewGrantViewModel, state: AppState, authenticator:
                 Header(if (draft.send) "Send to" else "From")
                 if (!draft.send) {
                     Row(Modifier.padding(start = 16.dp, end = 16.dp, bottom = 10.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                        Chip("These senders", !draft.anyMail, Modifier.testTag("scope:specific")) { viewModel.edit { it.copy(anyMail = false) } }
-                        Chip("All mail", draft.anyMail, Modifier.testTag("scope:all")) {
+                        Chip("These senders", !draft.anyMail, Modifier.testTag("scope:specific"), leading = { ChipIcon(Icons.Rounded.AlternateEmail, !draft.anyMail) }) { viewModel.edit { it.copy(anyMail = false) } }
+                        Chip("All mail", draft.anyMail, Modifier.testTag("scope:all"), leading = { ChipIcon(Icons.Rounded.Inbox, draft.anyMail) }) {
                             viewModel.edit {
                                 val lifetime = if (it.lifetime == NewGrantLifetime.ONE_TIME || it.lifetime == NewGrantLifetime.MONTH) NewGrantLifetime.DAY else it.lifetime
                                 it.copy(anyMail = true, lifetime = lifetime)
@@ -216,31 +219,17 @@ private fun Field(content: @Composable () -> Unit) {
     ) { content() }
 }
 
-/** A choice chip: an optional face, a label; the chosen one lifted out. */
+/** A choice chip (the shared [SelectChip]): an optional face or icon, a label; the chosen one tinted with a check. */
 @Composable
 private fun Chip(label: String, on: Boolean, modifier: Modifier = Modifier, leading: (@Composable () -> Unit)? = null, onClick: () -> Unit) {
+    SelectChip(label, on, modifier, leading = leading, onClick = onClick)
+}
+
+/** A chip's small icon: violet when chosen. */
+@Composable
+private fun ChipIcon(icon: ImageVector, on: Boolean) {
     val c = LocalColors.current
-    val feedback = LocalFeedback.current
-    Row(
-        modifier
-            .height(38.dp)
-            .clip(RoundedCornerShape(10.dp))
-            .background(if (on) c.text.copy(alpha = 0.14f) else c.controlFill)
-            .border(1.dp, if (on) c.text.copy(alpha = 0.18f) else Color.Transparent, RoundedCornerShape(10.dp))
-            .pressable(shape = RoundedCornerShape(10.dp)) {
-                onClick()
-                feedback.play(Event.Selection)
-            }
-            .semantics { selected = on }
-            .padding(start = if (leading != null) 8.dp else 13.dp, end = 13.dp),
-        verticalAlignment = Alignment.CenterVertically,
-    ) {
-        if (leading != null) {
-            leading()
-            Spacer(Modifier.width(8.dp))
-        }
-        RText(label, RType.sans(14f, FontWeight.SemiBold), if (on) c.text else c.secondary, maxLines = 1)
-    }
+    Icon(icon, null, Modifier.size(15.dp), tint = if (on) (if (c.dark) Color(0xFFA99BFA) else c.accent) else c.secondary)
 }
 
 /** Read mail | Send mail. */

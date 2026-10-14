@@ -203,9 +203,11 @@ private fun MessagesFacts(view: ApprovalView, ui: ApprovalUi, viewModel: Approva
     } else {
         val allIds = view.messages.map { it.id }
         val allTicked = view.messages.all { it.coveredByGrant || it.id in draft.selected }
-        GroupHeader("${view.messages.size} found") {
-            TextAction(if (allTicked) "Clear" else "Select all", if (allTicked) "clearAll" else "selectAll") {
-                viewModel.edit { it.copy(selected = if (allTicked) emptySet() else allIds.toSet(), allMail = null) }
+        GroupHeader(if (ui.readOnly) "${view.messages.size} found · ${view.messages.count { it.coveredByGrant || it.id in draft.selected }} shared" else "${view.messages.size} found") {
+            if (!ui.readOnly) {
+                TextAction(if (allTicked) "Clear" else "Select all", if (allTicked) "clearAll" else "selectAll") {
+                    viewModel.edit { it.copy(selected = if (allTicked) emptySet() else allIds.toSet(), allMail = null) }
+                }
             }
         }
         FactGroup(
@@ -214,7 +216,7 @@ private fun MessagesFacts(view: ApprovalView, ui: ApprovalUi, viewModel: Approva
                     MailRow(
                         m,
                         checked = m.coveredByGrant || m.id in draft.selected || (draft.allMail != null && !m.sensitive),
-                        enabled = !m.coveredByGrant && (draft.allMail == null || m.sensitive),
+                        enabled = !ui.readOnly && !m.coveredByGrant && (draft.allMail == null || m.sensitive),
                         service = view.service,
                     ) { on -> viewModel.edit { d -> d.copy(selected = if (on) d.selected + m.id else d.selected - m.id) } }
                 }
@@ -406,7 +408,7 @@ private fun AccountsFacts(view: ApprovalView, ui: ApprovalUi, viewModel: Approva
                     Row(
                         Modifier
                             .fillMaxWidth()
-                            .toggleable(ticked, enabled = !locked, role = Role.Checkbox) { on ->
+                            .toggleable(ticked, enabled = !locked && !ui.readOnly, role = Role.Checkbox) { on ->
                                 viewModel.edit { d -> d.copy(selected = if (on) d.selected + address else d.selected - address) }
                                 feedback.play(Event.toggle(on))
                             }
@@ -414,7 +416,7 @@ private fun AccountsFacts(view: ApprovalView, ui: ApprovalUi, viewModel: Approva
                             .testTag("acct:$address"),
                         verticalAlignment = Alignment.CenterVertically,
                     ) {
-                        TickBox(ticked, !locked)
+                        TickBox(ticked, !locked && !ui.readOnly)
                         Spacer(Modifier.width(14.dp))
                         Row(Modifier.weight(1f).graphicsLayer { alpha = dim }, verticalAlignment = Alignment.CenterVertically) {
                             BlobAvatar(address, size = 32.dp)
