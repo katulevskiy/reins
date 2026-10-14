@@ -274,6 +274,14 @@ pub struct AskView {
     /// leaves it to the user in Manual and Auto.
     #[uniffi(default)]
     pub uncertain: bool,
+    /// It cannot be undone: held to approve and shown in red. (A question asked every time for another reason, a
+    /// private key or an unreadable command, is an ordinary yes or no that is never remembered.)
+    #[uniffi(default)]
+    pub destructive: bool,
+    /// The guard group everything the command (or the file list) does falls in, which Autopilot learns on its own;
+    /// `None`: the generic kind.
+    #[uniffi(default)]
+    pub kind: Option<String>,
 }
 
 /// The guard rule a desktop question matches.

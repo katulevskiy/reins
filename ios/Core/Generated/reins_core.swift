@@ -6265,6 +6265,16 @@ public struct AskView: Equatable, Hashable {
      * leaves it to the user in Manual and Auto.
      */
     public var uncertain: Bool
+    /**
+     * It cannot be undone: held to approve and shown in red. (A question asked every time for another reason, a
+     * private key or an unreadable command, is an ordinary yes or no that is never remembered.)
+     */
+    public var destructive: Bool
+    /**
+     * The guard group everything the command (or the file list) does falls in, which Autopilot learns on its own;
+     * `None`: the generic kind.
+     */
+    public var kind: String?
 
     // Default memberwise initializers are never public by default, so we
     // declare one manually.
@@ -6285,12 +6295,22 @@ public struct AskView: Equatable, Hashable {
         /**
          * The phone could not read the question with certainty (an unbalanced quote, a detail cut short): Autopilot
          * leaves it to the user in Manual and Auto.
-         */uncertain: Bool = false) {
+         */uncertain: Bool = false, 
+        /**
+         * It cannot be undone: held to approve and shown in red. (A question asked every time for another reason, a
+         * private key or an unreadable command, is an ordinary yes or no that is never remembered.)
+         */destructive: Bool = false, 
+        /**
+         * The guard group everything the command (or the file list) does falls in, which Autopilot learns on its own;
+         * `None`: the generic kind.
+         */kind: String? = nil) {
         self.question = question
         self.detail = detail
         self.topic = topic
         self.rule = rule
         self.uncertain = uncertain
+        self.destructive = destructive
+        self.kind = kind
     }
 
     
@@ -6313,7 +6333,9 @@ public struct FfiConverterTypeAskView: FfiConverterRustBuffer {
                 detail: FfiConverterOptionString.read(from: &buf), 
                 topic: FfiConverterOptionString.read(from: &buf), 
                 rule: FfiConverterOptionTypeAskRuleView.read(from: &buf), 
-                uncertain: FfiConverterBool.read(from: &buf)
+                uncertain: FfiConverterBool.read(from: &buf), 
+                destructive: FfiConverterBool.read(from: &buf), 
+                kind: FfiConverterOptionString.read(from: &buf)
         )
     }
 
@@ -6323,6 +6345,8 @@ public struct FfiConverterTypeAskView: FfiConverterRustBuffer {
         FfiConverterOptionString.write(value.topic, into: &buf)
         FfiConverterOptionTypeAskRuleView.write(value.rule, into: &buf)
         FfiConverterBool.write(value.uncertain, into: &buf)
+        FfiConverterBool.write(value.destructive, into: &buf)
+        FfiConverterOptionString.write(value.kind, into: &buf)
     }
 }
 

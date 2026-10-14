@@ -45,8 +45,8 @@ fn topic(call: &ConnectorCall) -> Result<Option<String>, CoreError> {
     }
 }
 
-/// The question as the approval shows it (`None` for anything but `desktop_ask`), with the rule it matches as the
-/// phone reads it ([`read_ask`]). A hook's rule lines are not shown as part of the detail.
+/// The question as the approval shows it (`None` for anything but `desktop_ask`), with what the phone reads in it
+/// ([`read_ask`]). A hook's rule lines are not shown as part of the detail.
 pub fn ask_view(call: &ConnectorCall) -> Option<AskView> {
     (call.service == DESKTOP && call.op == "ask").then(|| {
         let raw = call.str_arg("detail").unwrap_or_default();
@@ -61,6 +61,8 @@ pub fn ask_view(call: &ConnectorCall) -> Option<AskView> {
             topic,
             rule: reading.rule,
             uncertain: !reading.certain,
+            destructive: reading.destructive,
+            kind: reading.kind.map(str::to_owned),
         }
     })
 }
@@ -70,72 +72,154 @@ pub fn guard_group_label(id: &str) -> Option<&'static str> {
     reins_policy::guard::group(id).map(|g| g.label)
 }
 
-/// What the phone makes of a desktop question.
+/// What the phone makes of a desktop question. Every path that decides how a question is answered (asked every
+/// time, one tap, Approve all, a standing answer, Autopilot) uses this one reading.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct AskReading {
     /// The rule it matches, as the phone reads it (else as the computer reports it).
     pub rule: Option<AskRuleView>,
-    /// Asked every time: held to approve, never remembered, left to the user by Autopilot in Manual and Auto.
+    /// It cannot be undone: asked every time, held, shown in red.
     pub destructive: bool,
-    /// Read with certainty. When not (an unbalanced quote, a `Files:` list naming nothing, a detail cut short), the
-    /// question is not harmless: Autopilot leaves it to the user in Manual and Auto.
+    /// Asked every time in Manual and Auto: never remembered, never one tap, never Autopilot's. What cannot be undone,
+    /// private keys, cloud credentials and saved tokens, and whatever the phone cannot read with certainty.
+    pub every_time: bool,
+    /// Read with certainty (see [`reins_policy::guard::Reading::certain`]); a detail cut short is not.
     pub certain: bool,
+    /// The one group everything the command (or the file list) does falls in: Autopilot learns the question in that
+    /// group's own kind. `None`: the generic kind.
+    pub kind: Option<&'static str>,
+    /// What a remembered answer covers: exactly this file, or exactly this command in this folder (`None`: the
+    /// question's topic, for a question that is not about a file).
+    pub exact: Option<(String, String)>,
+}
+
+/// What the question carries, by the layout the hook writes (`Command:` or `Files:`, then `In:`). Used only to
+/// narrow (a kind for Autopilot, what a remembered answer covers), never to decide what is asked.
+enum Carried<'a> {
+    Command(&'a str, &'a str),
+    Files(Vec<&'a str>),
+    Other,
+}
+
+fn carried(rest: &str) -> Carried<'_> {
+    let (body, cwd) = rest.rsplit_once("\n\nIn: ").unwrap_or((rest, ""));
+    if let Some(command) = body.strip_prefix("Command:\n") {
+        Carried::Command(command, cwd)
+    } else if let Some(files) = body.strip_prefix("Files:\n") {
+        Carried::Files(files.lines().map(str::trim).filter(|l| !l.is_empty()).collect())
+    } else {
+        Carried::Other
+    }
+}
+
+/// A hook's question line repeats the command it carries (`… wants to run: <the command on one line>`, `… wants to
+/// read <the file>`): then it says nothing more, and is not read again.
+fn repeats(question: &str, rest: &str) -> bool {
+    let said = question
+        .split_once(" wants to run: ")
+        .or_else(|| question.split_once(" wants to read "))
+        .or_else(|| question.split_once(" wants to change "))
+        .map(|(_, said)| said.trim_end_matches('…').split(" and ").next().unwrap_or_default().trim());
+    said.is_some_and(|said| !said.is_empty() && text::one_line(rest).contains(said))
 }
 
 /// Reads a desktop question.
 ///
-/// The phone reads everything the question carries (its detail whatever its layout, its question line, its topic's
-/// rule) with its own copy of the guard's built-in rules (`reins_policy::guard`), and the most severe match wins. What
-/// the computer reports (a hook's rule lines) comes from where the AI runs, so it can only make a question stricter:
-/// reported as something that cannot be undone, it is asked every time; reported as a secret file when the phone reads
-/// `rm -rf ~`, the phone's reading wins. A rule only the computer knows (the user's own, a newer group) is shown as
-/// reported. Where the phone finds no built-in rule, or cannot read the question with certainty, the question is also
-/// read for a destructive command ([`destructive_ask`]).
+/// The phone reads everything the question carries with its own copy of the guard's built-in rules
+/// (`reins_policy::guard`), and the most severe match wins. What the computer reports (a hook's rule lines, its
+/// topic) comes from where the AI runs, so it can only make a question stricter. The words of a destructive command
+/// ([`destructive_ask`]) count too, whatever else matched, so nothing reads milder than before.
 pub fn read_ask(topic: Option<&str>, question: &str, detail: &str) -> AskReading {
     let (reported, rest) = match reported_rule(detail) {
         Some((rule, rest)) => (Some(rule), rest),
         None => (None, detail),
     };
-    // What it carries first (so a match is shown from it), then the rule lines, which can only add.
-    let mut texts = vec![rest, question];
+    let header = &detail[..detail.len() - rest.len()];
+    let mut texts = vec![rest];
     texts.extend(topic.and_then(|t| t.split_once(':')).map(|(_, rule)| rule));
-    texts.push(&detail[..detail.len() - rest.len()]);
-    let reading = reins_policy::guard::read(&texts);
+    let mut fragments = vec![header];
+    if !repeats(question, rest) {
+        // A question that says something else: searched (a hook's command line counts toward certainty).
+        match question.split_once(" wants to run: ") {
+            Some((_, command)) if !command.ends_with('…') => texts.push(command),
+            _ => fragments.push(question),
+        }
+    }
+    let reading = reins_policy::guard::read(&texts, &fragments);
     // The hook cuts a detail at 8,000 characters, with an ellipsis: what follows is unknown.
     let certain = reading.certain && !detail.trim_end().ends_with('…') && detail.chars().count() < MAX_DETAIL;
-    let own = reading.found.map(|c| AskRuleView {
+    let reported_group = reported.as_ref().and_then(|r| r.group.as_deref()).and_then(reins_policy::guard::group);
+    let destructive = reading.found.as_ref().is_some_and(|c| c.group.destructive)
+        || reported.as_ref().is_some_and(|r| r.destructive)
+        || destructive_ask(topic, question, detail);
+    let every_time = destructive
+        || !certain
+        || reading.found.as_ref().is_some_and(|c| c.group.every_time)
+        || reported_group.is_some_and(|g| g.every_time);
+    let shown = reading.found.as_ref().map(|c| AskRuleView {
         label: c.group.label.to_owned(),
         pattern: c.pattern.to_owned(),
         matched: text::truncate_chars(&text::one_line(&c.matched), MAX_TOPIC),
         group: Some(c.group.id.to_owned()),
-        destructive: c.group.destructive,
+        destructive,
         reported: false,
     });
-    let said = || destructive_ask(topic, question, detail);
-    let (rule, destructive) = match (own, reported) {
-        (Some(own), _) if own.destructive => (Some(own), true),
-        (_, Some(reported)) if reported.destructive => (Some(reported), true),
-        (Some(mut own), _) => {
-            own.destructive = !certain && said();
-            let destructive = own.destructive;
-            (Some(own), destructive)
-        }
-        (None, Some(mut reported)) => {
-            reported.destructive = said();
-            let destructive = reported.destructive;
-            (Some(reported), destructive)
-        }
-        (None, None) => (None, said()),
+    let rule = match (shown, reported) {
+        (Some(own), Some(reported)) if reported.destructive && !own.destructive => Some(AskRuleView {
+            destructive,
+            ..reported
+        }),
+        (Some(own), _) => Some(own),
+        (None, Some(reported)) => Some(AskRuleView {
+            destructive,
+            ..reported
+        }),
+        (None, None) => None,
     };
+    let kind = match carried(rest) {
+        Carried::Command(command, _) => reins_policy::guard::sole_group(command),
+        Carried::Files(files) => reins_policy::guard::sole_file_group(&files),
+        Carried::Other => None,
+    }
+    .filter(|_| certain)
+    .map(|g| g.id);
+    let about_files = topic.is_some_and(|t| t.trim_start().starts_with("file:"))
+        || reading.found.as_ref().is_some_and(|c| !c.group.files.is_empty());
+    let exact = about_files.then(|| exact_resource(rest));
     AskReading {
         rule,
         destructive,
+        every_time,
         certain,
+        kind,
+        exact,
     }
 }
 
-/// [`read_ask`]'s rule and whether the question is asked every time.
-pub fn classify(topic: Option<&str>, question: &str, detail: &str) -> (Option<AskRuleView>, bool) {
+/// What a remembered answer to a file question covers: exactly that file (`file:/home/me/app/.env`), else exactly
+/// that command in that folder (`run:<digest>`), on this computer for this AI (a permission is per connection).
+fn exact_resource(rest: &str) -> (String, String) {
+    match carried(rest) {
+        Carried::Files(files) if files.len() == 1 => {
+            let file = text::truncate_chars(&text::one_line(files[0]), MAX_TOPIC);
+            (format!("file:{file}"), format!("Reading or changing {file}"))
+        }
+        carried => {
+            let (what, cwd) = match carried {
+                Carried::Command(command, cwd) => (command, cwd),
+                _ => (rest, ""),
+            };
+            let digest = ring::digest::digest(&ring::digest::SHA256, format!("{cwd}\n{what}").as_bytes());
+            let short = data_encoding::HEXLOWER.encode(&digest.as_ref()[..8]);
+            let shown = text::truncate_chars(&text::one_line(what), 60);
+            (format!("run:{short}"), format!("Exactly this: {shown}"))
+        }
+    }
+}
+
+/// [`read_ask`]'s rule and whether the question cannot be undone (for tests).
+#[cfg(test)]
+fn classify(topic: Option<&str>, question: &str, detail: &str) -> (Option<AskRuleView>, bool) {
     let reading = read_ask(topic, question, detail);
     (reading.rule, reading.destructive)
 }
@@ -305,16 +389,19 @@ impl Connector for Desktop {
         nonce_arg(call)?;
         let question = question(call)?;
         let topic = topic(call)?;
-        // A question about something that cannot be undone is asked every time: never answered from a notification,
-        // with "Approve all" or by a standing answer, and never by Autopilot in Manual or Auto.
-        let (_, once_only) = classify(topic.as_deref(), &question, call.str_arg("detail").unwrap_or_default());
+        // The one reading every path uses: what is asked every time is never answered from a notification, with
+        // "Approve all" or by a standing answer, and never by Autopilot in Manual or Auto; a remembered answer to a
+        // file question covers exactly that file or that command.
+        let reading = read_ask(topic.as_deref(), &question, call.str_arg("detail").unwrap_or_default());
+        let once_only = reading.every_time;
         let mut lines = vec![question];
         if let Some(t) = &topic {
             lines.push(format!("About: {t}"));
         }
-        let (resource, resource_label) = match topic {
-            Some(t) => (t.clone(), format!("Questions about {t}")),
-            None => (ASK.to_owned(), "Questions without a topic".to_owned()),
+        let (resource, resource_label) = match (reading.exact, topic) {
+            (Some(exact), _) => exact,
+            (None, Some(t)) => (t.clone(), format!("Questions about {t}")),
+            (None, None) => (ASK.to_owned(), "Questions without a topic".to_owned()),
         };
         Ok(Preview {
             resource,
@@ -434,15 +521,36 @@ mod tests {
         let read_then_rm = ENV_READ.replace("Files:\napp/.env", "Command:\ncat .env; rm -rf old");
         let (rule, destructive) = classify(Some("file:.env"), "Run it?", &read_then_rm);
         assert_eq!((rule.unwrap().group.as_deref(), destructive), (Some("deletes"), true));
-        // The class Autopilot learns comes from the phone's reading too.
-        let view = AskView {
-            question: "Run it?".to_owned(),
-            detail: None,
-            topic: Some("file:.env".to_owned()),
-            rule: classify(Some("file:.env"), "Run it?", understated).0,
-            uncertain: false,
-        };
-        assert_eq!(view.rule.and_then(|r| r.group).as_deref(), Some("deletes"));
+        // The kind Autopilot learns comes from the phone's reading of the command too.
+        assert_eq!(read_ask(Some("file:.env"), "Run it?", understated).kind, Some("deletes"));
+    }
+
+    /// One reading decides everything, and it never reads milder than the words of a destructive command did.
+    #[test]
+    fn one_reading_that_is_never_milder_than_before() {
+        let env = "Rule: .env files · .env\nMatched: .env\nGroup: env-files\n\nCommand:\n";
+        // A mild match does not hide what the destructive words say (`rm -f` is no built-in rule).
+        let r = read_ask(Some("file:.env"), "Run it?", &format!("{env}cat .env; rm -f prod.db"));
+        assert!(r.destructive && r.every_time);
+        // A question line that says something else than the command is read as a command line too, certainty
+        // included; one that repeats the command adds nothing.
+        let r = read_ask(Some("file:.env"), "Claude Code wants to run: echo 'x", &format!("{env}cat .env"));
+        assert!(!r.certain, "the question line's unbalanced quote counts");
+        let r = read_ask(Some("file:.env"), "Claude Code wants to run: cat .env", &format!("{env}cat .env"));
+        assert!(r.certain && !r.every_time && r.kind == Some("env-files"));
+        // Keys, cloud credentials and tokens: asked every time, not held.
+        let keys = "Rule: Keys and certificates · id_rsa\nMatched: id_rsa\nGroup: keys\n\nCommand:\ncat ~/.ssh/id_rsa";
+        let r = read_ask(Some("file:id_rsa"), "Run it?", keys);
+        assert!(r.every_time && !r.destructive);
+        // A remembered answer covers exactly that file or that command in that folder.
+        let one = read_ask(Some("file:.env"), "Read it?", "Files:\n/home/me/app/.env\n\nIn: /home/me/app").exact;
+        assert_eq!(one.map(|(r, _)| r).as_deref(), Some("file:/home/me/app/.env"));
+        let here = read_ask(Some("file:.env"), "Run it?", &format!("{env}cat .env\n\nIn: /home/me/a")).exact.unwrap();
+        let there = read_ask(Some("file:.env"), "Run it?", &format!("{env}cat .env\n\nIn: /home/me/b")).exact.unwrap();
+        assert!(here.0.starts_with("run:") && here.0 != there.0, "another folder, another answer");
+        assert_eq!(here.1, "Exactly this: cat .env");
+        // A question about no file keeps its topic.
+        assert_eq!(read_ask(Some("command:make deploy"), "Run it?", "Command:\nmake deploy").exact, None);
     }
 
     /// Questions crafted on the computer to look milder than what they carry.
