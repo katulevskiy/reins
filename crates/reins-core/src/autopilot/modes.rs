@@ -2,14 +2,17 @@
 //!
 //! Rules, most important first:
 //! - a global Lockdown applies to every connection, whatever it is set to;
-//! - a connection's own setting (its bypass, its mode) wins over the global one;
-//! - otherwise the global setting applies (its bypass, its mode);
+//! - a connection's own Lockdown, then its own bypass;
+//! - a global bypass in force applies to every connection not locked down, whatever mode it has of its own (a global
+//!   Bypass that some AIs silently ignored would surprise);
+//! - otherwise the connection's own mode, else the global one;
 //! - a global mode never picked is Manual.
 //!
 //! A bypass is stored as an end time next to the mode it returns to; an expired bypass is simply not in force (the
 //! core enforces the end itself, whatever the app's alarm does). A bypass that runs until it is turned off ends at
 //! [`BYPASS_UNTIL_OFF`], a time that never comes: it is in force, survives restarts and is stopped like any other.
-//! The hard floor (spec §2) asks during every bypass, however long.
+//! A bypass approves everything, the hard floor (spec §2) included; only new connections and other phones joining the
+//! account still reach the user.
 
 use super::types::AutopilotMode;
 
@@ -77,7 +80,7 @@ pub fn effective(global: &ModeRow, conn: Option<&ModeRow>, now: i64) -> Autopilo
         if c.mode == Some(AutopilotMode::Lockdown) {
             return AutopilotMode::Lockdown;
         }
-        if c.bypassing(now) {
+        if c.bypassing(now) || global.bypassing(now) {
             return AutopilotMode::Bypass;
         }
         if let Some(mode) = c.mode {
@@ -156,7 +159,13 @@ mod tests {
         let bypassing = row(Some(AutopilotMode::Auto), Some(1_000));
         assert_eq!(effective(&lock, Some(&bypassing), 0), AutopilotMode::Lockdown);
         let manual = row(Some(AutopilotMode::Manual), None);
-        assert_eq!(effective(&row(None, Some(1_000)), Some(&manual), 0), AutopilotMode::Manual);
+        assert_eq!(effective(&row(Some(AutopilotMode::Auto), None), Some(&manual), 0), AutopilotMode::Manual);
+        assert_eq!(
+            effective(&row(None, Some(1_000)), Some(&manual), 0),
+            AutopilotMode::Bypass,
+            "a global bypass beats a connection's own Manual or Auto"
+        );
+        assert_eq!(effective(&row(None, Some(1_000)), Some(&manual), 1_000), AutopilotMode::Manual, "until it ends");
         assert_eq!(
             effective(&ModeRow::default(), Some(&row(Some(AutopilotMode::Lockdown), Some(9))), 0),
             AutopilotMode::Lockdown

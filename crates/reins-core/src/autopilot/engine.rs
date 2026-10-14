@@ -32,7 +32,9 @@ use crate::CoreError;
 use crate::engine::Engine;
 use crate::phone_api::check_id;
 use crate::store::{AuditAutopilot, AuditRecord, PendingRow, unix_now};
-use crate::types::{ApprovalChoice, ApprovalView, PendingItem, PendingKind};
+use crate::types::{
+    ApprovalChoice, ApprovalKind, ApprovalView, GrantScopeChoice, PendingItem, PendingKind, StandingGrant,
+};
 use crate::views::{self, ParkedRequest};
 
 /// Neighbours kept with an evaluation and shown.
@@ -77,11 +79,20 @@ struct Subject {
     item: PendingItem,
     /// What approving it once selects (as the approval screen preselects).
     choice: ApprovalChoice,
+    /// What a bypass approves: every message or item shown, every account offered.
+    everything: ApprovalChoice,
+    /// An AI asking for a standing permission (a bypass caps it at its own end).
+    grant: bool,
+    /// A purchase, approved through its own path (with the defaults its screen would show).
+    purchase: bool,
 }
 
 /// What one pass keeps between items.
 struct PassCtx {
     now: i64,
+    /// The model can run in this process (the app). Without it (the iOS notification extension) only Bypass and
+    /// Lockdown are decided; the rest is left unevaluated for the app's next pass.
+    model: bool,
     /// Connection → when the server says it was created (fetched once, when needed).
     created: Option<HashMap<String, i64>>,
     /// Profile id → the profile and its memory.
@@ -112,6 +123,19 @@ pub(crate) fn suggestion_line(s: &Suggestion) -> Option<String> {
         Verdict::Deny => format!("Autopilot would deny · {}%", pct(j.probs[1])),
         Verdict::Ask => format!("Autopilot would ask you · approve {}%", pct(j.probs[0])),
     })
+}
+
+/// Everything a request offers: each message or item shown (sensitive ones too), each account not shared yet.
+fn everything(view: &ApprovalView) -> ApprovalChoice {
+    let selected_message_ids = if view.kind == ApprovalKind::Accounts {
+        view.accounts.iter().filter(|a| !view.shared_accounts.contains(a)).cloned().collect()
+    } else {
+        view.messages.iter().map(|m| m.id.clone()).collect()
+    };
+    ApprovalChoice {
+        selected_message_ids,
+        standing: None,
+    }
 }
 
 fn default_choice(view: &ApprovalView) -> ApprovalChoice {
@@ -393,12 +417,21 @@ impl Engine {
     /// and tells the app it waits. Runs after every push and sync; never fails (items just wait).
     pub(crate) async fn autopilot_pass(&self) {
         let _one = self.autopilot.pass.lock().await;
-        if let Err(e) = self.ap_pass().await {
+        if let Err(e) = self.ap_pass(true).await {
             log::warn!("Autopilot could not look at the waiting items: {e}");
         }
     }
 
-    async fn ap_pass(&self) -> Result<(), CoreError> {
+    /// The pass for a process that cannot run the model (the iOS notification extension): Bypass and Lockdown decide
+    /// at once, as they need no model; everything else is left unevaluated for the app's next pass.
+    pub(crate) async fn autopilot_pass_without_model(&self) {
+        let _one = self.autopilot.pass.lock().await;
+        if let Err(e) = self.ap_pass(false).await {
+            log::warn!("Autopilot could not look at the waiting items: {e}");
+        }
+    }
+
+    async fn ap_pass(&self, model: bool) -> Result<(), CoreError> {
         let now = unix_now();
         self.ap_expire_bypasses(now)?;
         self.store.ap_prune(now)?;
@@ -416,6 +449,7 @@ impl Engine {
         rows.reverse();
         let mut ctx = PassCtx {
             now,
+            model,
             created: None,
             profiles: HashMap::new(),
         };
@@ -467,6 +501,9 @@ impl Engine {
                     floor: gates::request_floor(&view).map(str::to_owned),
                     item: views::request_item(&parked),
                     choice: default_choice(&view),
+                    everything: everything(&view),
+                    grant: view.kind == ApprovalKind::Grant,
+                    purchase: view.purchase.is_some(),
                 })
             }
             PendingKind::Blob => {
@@ -485,23 +522,39 @@ impl Engine {
                         selected_message_ids: Vec::new(),
                         standing: None,
                     },
+                    everything: ApprovalChoice {
+                        selected_message_ids: Vec::new(),
+                        standing: None,
+                    },
+                    grant: false,
+                    purchase: false,
                 })
             }
         })
     }
 
-    /// Seconds since the connection was paired: the later of the server's date and this phone's approval.
+    /// Seconds since the connection was paired: the later of the server's date and this phone's approval. The server's
+    /// dates are kept once read (they never change), so a listing that fails (offline, a server hiccup) does not make
+    /// a known connection look new; only one never seen counts as unknown.
     async fn ap_age(&self, ctx: &mut PassCtx, connection_id: &str) -> Option<i64> {
-        if ctx.created.is_none() {
+        let cached = self.store.ap_created_at(connection_id).ok().flatten();
+        if cached.is_none() && ctx.created.is_none() {
             ctx.created = Some(match self.connections().await {
-                Ok(list) => list.into_iter().map(|c| (c.id, c.created_at)).collect(),
+                Ok(list) => {
+                    for c in &list {
+                        if let Err(e) = self.store.ap_set_created_at(&c.id, c.created_at) {
+                            log::warn!("Autopilot could not keep when a connection was made: {e}");
+                        }
+                    }
+                    list.into_iter().map(|c| (c.id, c.created_at)).collect()
+                }
                 Err(e) => {
                     log::warn!("Autopilot could not list the connections: {e}");
                     HashMap::new()
                 }
             });
         }
-        let server = ctx.created.as_ref().and_then(|m| m.get(connection_id).copied());
+        let server = cached.or_else(|| ctx.created.as_ref().and_then(|m| m.get(connection_id).copied()));
         let local = self.store.ap_paired_at(connection_id).ok().flatten();
         let since = match (server, local) {
             (Some(a), Some(b)) => Some(a.max(b)),
@@ -526,7 +579,11 @@ impl Engine {
 
     async fn ap_item(&self, row: &PendingRow, ctx: &mut PassCtx) -> Result<(), CoreError> {
         let now = ctx.now;
-        let Some(subject) = Self::ap_subject(row)? else {
+        if !ctx.model && row.kind == PendingKind::Pairing {
+            // Left to the app, which tells the user.
+            return Ok(());
+        }
+        let Some(mut subject) = Self::ap_subject(row)? else {
             // A new connection is only ever approved by the user, in every mode.
             let pairing: PairingRequest =
                 serde_json::from_slice(&row.payload).map_err(|_| CoreError::storage("corrupt parked pairing"))?;
@@ -559,6 +616,10 @@ impl Engine {
             return Ok(());
         };
         let mode = self.ap_mode_for(&subject.connection_id, now)?;
+        if !ctx.model && matches!(mode, AutopilotMode::Manual | AutopilotMode::Auto) {
+            // Judged by the app's next pass, which has the model.
+            return Ok(());
+        }
         let stored = self.ap_profile_of(&subject.connection_id)?;
         let thresholds = stored.profile.thresholds();
         let (profile_id, profile_name) = (stored.id, stored.profile.name);
@@ -608,17 +669,24 @@ impl Engine {
         facts.target_is_new = (!facts.target.is_empty()).then_some(novel);
         (s.s_facts, s.s_full) = situation::render(&facts, &subject.described.ai);
 
+        // Bypass approves everything, every kind and every item of it, at once: that is what it is for. Only a new
+        // connection (a pairing) and another phone joining the account still reach the user, and neither comes here.
+        // A standing permission an AI asks for ends when the bypass does.
+        if mode == AutopilotMode::Bypass {
+            s.verdict = Verdict::Approve;
+            "Bypass: approved without asking".clone_into(&mut s.reason);
+            subject.choice = subject.everything.clone();
+            if subject.grant {
+                subject.choice.standing = self.ap_bypass_cap(&subject.connection_id, now)?;
+            }
+            return self.ap_conclude(&subject, s, Verdict::Approve, "bypass").await;
+        }
         let young = gates::young(age, self.cfg.new_connection_secs)
             .then(|| "a connection paired less than 10 minutes ago".to_owned());
         if let Some(floor) = subject.floor.clone().or(young) {
             s.reason = format!("Always asks: {floor}");
             s.floor = Some(floor);
             return self.ap_wait(&subject, &s);
-        }
-        if mode == AutopilotMode::Bypass {
-            s.verdict = Verdict::Approve;
-            "Bypass: everything outside the hard floor is approved".clone_into(&mut s.reason);
-            return self.ap_conclude(&subject, s, Verdict::Approve, "bypass").await;
         }
 
         let judged = {
@@ -835,7 +903,39 @@ impl Engine {
         }
     }
 
+    /// A permission granted during a bypass lasts at most until the bypass ends (one without an end: as asked).
+    fn ap_bypass_cap(&self, connection_id: &str, now: i64) -> Result<Option<StandingGrant>, CoreError> {
+        let rows = [self.store.ap_mode_row("")?, self.store.ap_mode_row(connection_id)?];
+        let end = rows.iter().filter(|r| r.bypassing(now)).filter_map(|r| r.bypass_until).max();
+        Ok(end.filter(|e| *e != modes::BYPASS_UNTIL_OFF).map(|end| StandingGrant {
+            duration_secs: Some(u64::try_from((end - now).max(1)).unwrap_or(1)),
+            max_uses: None,
+            scope: GrantScopeChoice {
+                all_mail: false,
+                selected_messages_only: false,
+                sender_addresses: Vec::new(),
+                sender_domains: Vec::new(),
+                subject_pattern: None,
+                recipient_addresses: Vec::new(),
+                recipient_domains: Vec::new(),
+                resources: Vec::new(),
+                classes: Vec::new(),
+            },
+        }))
+    }
+
     async fn ap_execute(&self, subject: &Subject, verdict: Verdict) -> Result<(), CoreError> {
+        if subject.purchase && verdict == Verdict::Approve {
+            // With what its screen would pick; the budgets still apply.
+            let session = self.session()?;
+            let (_, parked) = self.parked(&subject.id)?;
+            let defaults = crate::connector::payments::PurchaseChoice {
+                method_id: None,
+                address_id: None,
+                limit: None,
+            };
+            return self.approve_parked_purchase(&session, &subject.id, &parked, Some(&defaults)).await;
+        }
         match (subject.kind, verdict) {
             (PendingKind::Request, Verdict::Approve) => self.approve_claimed(&subject.id, subject.choice.clone()).await,
             (PendingKind::Request, _) => self.deny_claimed(&subject.id).await,
@@ -1085,7 +1185,7 @@ impl Engine {
     }
 
     /// Starts a bypass of every AI (`connection_id` = `None`) or of one: for `minutes` (1 minute to a year), or until
-    /// the user turns it off (`None`). It ends a lockdown of the same scope; requests that always ask still ask; a
+    /// the user turns it off (`None`). It ends a lockdown of the same scope and approves what already waits; a
     /// connection paired less than 10 minutes ago cannot be bypassed.
     pub async fn start_bypass(&self, connection_id: Option<String>, minutes: Option<u32>) -> Result<(), CoreError> {
         if let Some(id) = &connection_id {
@@ -1112,7 +1212,32 @@ impl Engine {
         self.notifier.autopilot_changed(AutopilotEvent::ModeChanged {
             connection_id,
         });
+        self.ap_bypass_sweep(now).await;
         Ok(())
+    }
+
+    /// A bypass also approves what already waits in its scope (as Lockdown denies it): those requests are looked at
+    /// again by a pass. Pairings and other phones stay with the user.
+    async fn ap_bypass_sweep(&self, now: i64) {
+        let Ok(rows) = self.store.pending_rows(now) else {
+            return;
+        };
+        let mut again = false;
+        for row in rows {
+            let Ok(Some(subject)) = Self::ap_subject(&row) else {
+                continue;
+            };
+            if self.ap_mode_for(&subject.connection_id, now).ok() != Some(AutopilotMode::Bypass) {
+                continue;
+            }
+            let undecided = self.store.ap_suggestion(&row.id).ok().flatten().is_some_and(|s| s.decided.is_none());
+            if undecided && self.store.ap_forget_suggestion(&row.id).is_ok() {
+                again = true;
+            }
+        }
+        if again {
+            self.autopilot_pass().await;
+        }
     }
 
     /// Denies what waits (except pairings) for the connection, or for all.

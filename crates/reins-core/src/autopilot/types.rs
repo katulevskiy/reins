@@ -13,7 +13,8 @@ pub enum AutopilotMode {
     Manual,
     /// Autopilot approves or denies what it is confident about, in classes that earned it; the rest waits.
     Auto,
-    /// Everything except the hard floor is approved, until `bypass_until` (or until the user turns it off).
+    /// Everything is approved at once (only pairings and other phones still ask), until `bypass_until` (or until the
+    /// user turns it off).
     Bypass,
     /// Everything is denied at once (pairings still reach the user).
     Lockdown,

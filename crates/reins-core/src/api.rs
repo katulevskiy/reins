@@ -426,8 +426,8 @@ impl ReinsCore {
         .await
     }
 
-    /// Like `handle_push` without Autopilot's pass, for a process that cannot run the model (the iOS notification
-    /// extension): the item waits unjudged, and the app's next pass judges it.
+    /// Like `handle_push`, for a process that cannot run the model (the iOS notification extension): Bypass and
+    /// Lockdown decide at once; what Manual or Auto would judge waits unjudged, and the app's next pass judges it.
     pub async fn handle_push_deferring_autopilot(&self, kind: String, id: String) -> Result<(), CoreError> {
         let runtime = Arc::clone(&self.runtime);
         let generation = runtime.generation();
@@ -1095,9 +1095,9 @@ impl ReinsCore {
     }
 
     /// Starts a bypass of every AI (`connection_id` = `None`) or of one, for `minutes` (1 minute to a year) or, with
-    /// `minutes` = `None`, until the user turns it off (`bypass_until` then reads `i64::MAX`). Requests that always
-    /// ask still ask; a connection paired less than 10 minutes ago cannot be bypassed. Stop it with
-    /// `set_autopilot_mode` (the mode it interrupted).
+    /// `minutes` = `None`, until the user turns it off (`bypass_until` then reads `i64::MAX`). Everything is approved
+    /// at once, what already waits too; only new connections and other phones still ask. A single connection paired
+    /// less than 10 minutes ago cannot be bypassed. Stop it with `set_autopilot_mode` (the mode it interrupted).
     pub async fn start_bypass(&self, connection_id: Option<String>, minutes: Option<u32>) -> Result<(), CoreError> {
         let runtime = Arc::clone(&self.runtime);
         let generation = runtime.generation();

@@ -373,6 +373,17 @@ async fn a_destructive_tool_is_asked_every_time() {
 }
 
 #[tokio::test]
+async fn bypass_runs_a_destructive_tool_at_once() {
+    let w = World::new(|_| {}).await;
+    w.add_open().await;
+    w.core.start_bypass(None, Some(60)).await.unwrap();
+    w.relay("r1", "delete_issue", &json!({"id": "ISS-1"})).await;
+    assert!(!w.is_pending("r1").await, "approved by the bypass");
+    assert_eq!(w.answer("r1").await["result"]["result"]["content"][0]["text"], "deleted");
+    assert_eq!(w.core.activity(1).await.unwrap()[0].decided_by, "bypass");
+}
+
+#[tokio::test]
 async fn unknown_servers_and_tools_and_server_errors_are_answered_with_an_error() {
     let w = World::new(|_| {}).await;
     w.add_open().await;

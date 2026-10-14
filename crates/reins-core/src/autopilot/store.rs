@@ -21,6 +21,8 @@ const DAY_SECS: i64 = 86_400;
 const SALT_AAD: &str = "autopilot.salt";
 /// `meta` key prefix (then the scope) of when a running bypass started.
 const BYPASS_SINCE_KEY: &str = "autopilot_bypass_since:";
+/// `meta` key prefix (then the connection) of when the server says a connection was made.
+const CREATED_KEY: &str = "autopilot_created:";
 
 /// A profile as stored (sealed).
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
@@ -365,6 +367,12 @@ impl Store {
             .collect())
     }
 
+    /// Forgets the evaluation of a request, so that the next pass looks at it again.
+    pub fn ap_forget_suggestion(&self, request_id: &str) -> Result<(), CoreError> {
+        self.lock()?.execute("DELETE FROM autopilot_suggestions WHERE request_id = ?1", params![request_id])?;
+        Ok(())
+    }
+
     /// The requests the pass already went through.
     pub fn ap_evaluated(&self) -> Result<HashSet<String>, CoreError> {
         let conn = self.lock()?;
@@ -468,6 +476,25 @@ impl Store {
             params![connection_id],
             |r| Ok((r.get(0)?, r.get(1)?)),
         )?)
+    }
+
+    /// When the server says the connection was made, as last read (kept: it never changes).
+    pub fn ap_created_at(&self, connection_id: &str) -> Result<Option<i64>, CoreError> {
+        let value: Option<String> = self
+            .lock()?
+            .query_row("SELECT value FROM meta WHERE key = ?1", params![format!("{CREATED_KEY}{connection_id}")], |r| {
+                r.get(0)
+            })
+            .optional()?;
+        Ok(value.and_then(|v| v.parse().ok()))
+    }
+
+    pub fn ap_set_created_at(&self, connection_id: &str, at: i64) -> Result<(), CoreError> {
+        self.lock()?.execute(
+            "INSERT INTO meta (key, value) VALUES (?1, ?2) ON CONFLICT (key) DO UPDATE SET value = ?2",
+            params![format!("{CREATED_KEY}{connection_id}"), at.to_string()],
+        )?;
+        Ok(())
     }
 
     /// When this phone approved the connection's pairing (its own clock), if it did.

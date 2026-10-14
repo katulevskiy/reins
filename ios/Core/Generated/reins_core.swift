@@ -2653,8 +2653,8 @@ public protocol ReinsCoreProtocol: AnyObject, Sendable {
     func handlePush(kind: String, id: String) async throws 
     
     /**
-     * Like `handle_push` without Autopilot's pass, for a process that cannot run the model (the iOS notification
-     * extension): the item waits unjudged, and the app's next pass judges it.
+     * Like `handle_push`, for a process that cannot run the model (the iOS notification extension): Bypass and
+     * Lockdown decide at once; what Manual or Auto would judge waits unjudged, and the app's next pass judges it.
      */
     func handlePushDeferringAutopilot(kind: String, id: String) async throws 
     
@@ -2856,9 +2856,9 @@ public protocol ReinsCoreProtocol: AnyObject, Sendable {
     
     /**
      * Starts a bypass of every AI (`connection_id` = `None`) or of one, for `minutes` (1 minute to a year) or, with
-     * `minutes` = `None`, until the user turns it off (`bypass_until` then reads `i64::MAX`). Requests that always
-     * ask still ask; a connection paired less than 10 minutes ago cannot be bypassed. Stop it with
-     * `set_autopilot_mode` (the mode it interrupted).
+     * `minutes` = `None`, until the user turns it off (`bypass_until` then reads `i64::MAX`). Everything is approved
+     * at once, what already waits too; only new connections and other phones still ask. A single connection paired
+     * less than 10 minutes ago cannot be bypassed. Stop it with `set_autopilot_mode` (the mode it interrupted).
      */
     func startBypass(connectionId: String?, minutes: UInt32?) async throws 
     
@@ -3801,8 +3801,8 @@ open func handlePush(kind: String, id: String)async throws   {
 }
     
     /**
-     * Like `handle_push` without Autopilot's pass, for a process that cannot run the model (the iOS notification
-     * extension): the item waits unjudged, and the app's next pass judges it.
+     * Like `handle_push`, for a process that cannot run the model (the iOS notification extension): Bypass and
+     * Lockdown decide at once; what Manual or Auto would judge waits unjudged, and the app's next pass judges it.
      */
 open func handlePushDeferringAutopilot(kind: String, id: String)async throws   {
     return
@@ -4602,9 +4602,9 @@ open func ssoFinish(serverUrl: String, callbackUrl: String, state: String, verif
     
     /**
      * Starts a bypass of every AI (`connection_id` = `None`) or of one, for `minutes` (1 minute to a year) or, with
-     * `minutes` = `None`, until the user turns it off (`bypass_until` then reads `i64::MAX`). Requests that always
-     * ask still ask; a connection paired less than 10 minutes ago cannot be bypassed. Stop it with
-     * `set_autopilot_mode` (the mode it interrupted).
+     * `minutes` = `None`, until the user turns it off (`bypass_until` then reads `i64::MAX`). Everything is approved
+     * at once, what already waits too; only new connections and other phones still ask. A single connection paired
+     * less than 10 minutes ago cannot be bypassed. Stop it with `set_autopilot_mode` (the mode it interrupted).
      */
 open func startBypass(connectionId: String?, minutes: UInt32?)async throws   {
     return
@@ -13313,7 +13313,8 @@ public enum AutopilotMode: Equatable, Hashable {
      */
     case auto
     /**
-     * Everything except the hard floor is approved, until `bypass_until` (or until the user turns it off).
+     * Everything is approved at once (only pairings and other phones still ask), until `bypass_until` (or until the
+     * user turns it off).
      */
     case bypass
     /**
@@ -16783,7 +16784,7 @@ private let initializationResult: InitializationResult = {
     if (uniffi_reins_core_checksum_method_reinscore_handle_push() != 31505) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_reins_core_checksum_method_reinscore_handle_push_deferring_autopilot() != 38744) {
+    if (uniffi_reins_core_checksum_method_reinscore_handle_push_deferring_autopilot() != 59934) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_reins_core_checksum_method_reinscore_join_begin() != 61201) {
@@ -16912,7 +16913,7 @@ private let initializationResult: InitializationResult = {
     if (uniffi_reins_core_checksum_method_reinscore_sso_finish() != 10284) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_reins_core_checksum_method_reinscore_start_bypass() != 45501) {
+    if (uniffi_reins_core_checksum_method_reinscore_start_bypass() != 23286) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_reins_core_checksum_method_reinscore_starting_policy() != 60526) {

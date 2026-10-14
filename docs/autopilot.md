@@ -13,7 +13,7 @@ There is a global mode, and each connection can have its own (in that connection
 |---|---|
 | **Manual** | Every request waits for you, and once the model is installed the approval screen shows what Autopilot would do and why ("Autopilot would approve · 97%", "Like 4 times you approved: ..."). Each of your answers teaches it. The default. |
 | **Auto** | Autopilot approves what it is confident is safe, denies what it is confident is harmful, and asks you about the rest. Only for kinds of request that have earned it ([below](#how-auto-earns-trust)). |
-| **Bypass** | Approves everything except the hard floor, for any length from a minute to a year (15 minutes by default), or **until you turn it off**. A persistent notification with a countdown (or, without an end, how long it has run) and **Stop** stays up while it is on. Turning it on is a hold. Needs no model. Not available for a connection paired less than 10 minutes ago. |
+| **Bypass** | Approves everything at once, every kind of request (the hard floor below included), for any length from a minute to a year (15 minutes by default), or **until you turn it off**. Only new connections and new phones still ask. A standing permission an AI asks for ends when the bypass does. Turning it on approves what already waits, too. It applies to every AI, whatever mode an AI has of its own, except one locked down. A persistent notification with a countdown (or, without an end, how long it has run) and **Stop** stays up while it is on. Turning it on is a hold, then your fingerprint, face or screen lock. Needs no model, so it answers even when the app is not open. A bypass of a single AI is not available in its first 10 minutes. |
 | **Lockdown** | Denies everything at once, including what is already waiting. New connection requests still reach you. A global Lockdown overrides every connection's own mode. Needs no model. |
 
 All modes work with the app closed. The push notification wakes the app, and Autopilot decides right there.
@@ -22,7 +22,8 @@ importance.
 
 ## The hard floor
 
-These always wait for you, in every mode (Lockdown denies them):
+These always wait for you in Manual and Auto (Lockdown denies them; Bypass approves them, except new connections, which
+always reach you, as does another phone joining your account):
 
 - new connections, requests for standing permissions, and requests to see which accounts you have;
 - secrets for the desktop app and SSH signatures;

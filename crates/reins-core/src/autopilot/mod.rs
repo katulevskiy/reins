@@ -2,7 +2,8 @@
 //! `docs/superpowers/specs/2026-10-01-autopilot-laya.md`).
 //!
 //! After every push and sync the engine runs [`Engine::autopilot_pass`](crate::engine::Engine) over newly parked
-//! items. Per item: Lockdown denies; the hard floor ([`gates`]) waits; Bypass approves once; Manual and Auto render the
+//! items. Per item: Lockdown denies; Bypass approves everything (new connections and other phones never come here);
+//! the hard floor ([`gates`]) waits; Manual and Auto render the
 //! situation ([`situation`]), run the model twice ([`model`], [`sequence`]: facts only, and facts plus what the AI
 //! wrote), score both against the profile's memory ([`memory`]) and adapter ([`adapter`]), keep the more cautious of
 //! the two ([`decide`]) and, in Auto, act only in classes that earned it, within the rate limit (Manual only suggests).

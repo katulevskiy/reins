@@ -662,6 +662,21 @@ async fn a_permission_for_the_branch_covers_the_next_fast_forward_but_never_a_fo
 }
 
 #[tokio::test]
+async fn bypass_lets_a_force_push_and_a_deletion_through_at_once() {
+    let env = env().await;
+    let key = env.public();
+    pair(&env, "p1", Some(&key), Some(DESK), true).await;
+    env.core.start_bypass(None, Some(60)).await.unwrap();
+    let force = summary(vec![update("refs/heads/main", &oid('a'), &oid('b'), Some(false))]);
+    let delete = summary(vec![update("refs/heads/old", &oid('a'), ZERO_OID, None)]);
+    serve(&env, &[push("r1", &key, "git_push", &force), push("r2", &key, "git_push", &delete)], &[]).await;
+    env.core.sync(0).await.unwrap();
+    assert!(waiting(&env).await.is_empty(), "approved by the bypass");
+    let decided: Vec<String> = env.core.activity(5).await.unwrap().into_iter().map(|e| e.decided_by).collect();
+    assert_eq!(decided.iter().filter(|d| *d == "bypass").count(), 2, "{decided:?}");
+}
+
+#[tokio::test]
 async fn force_pushes_deletions_moved_tags_and_unchecked_history_are_asked_every_time() {
     let env = env().await;
     let key = env.public();
