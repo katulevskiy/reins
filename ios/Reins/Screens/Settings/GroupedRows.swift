@@ -301,18 +301,19 @@ struct Chevron: View {
     }
 }
 
-/// A section header with a (?) at its end that shows the longer text under it.
+/// A section header with a (?) right beside its words (not at the far end, where it reads as belonging to something
+/// else) that shows the longer text under it. `id` names the help text for UI tests (`<id>Help`).
 struct HelpHeader: View {
     var title: String
     var help: String
+    var id: String? = nil
     @State private var open = false
     @Environment(\.feedback) private var feedback
 
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
-            HStack {
+            HStack(spacing: 0) {
                 GroupHeader(title)
-                Spacer()
                 Button {
                     let next = !open
                     withAnimation(.smooth(duration: 0.25)) { open = next }
@@ -327,6 +328,7 @@ struct HelpHeader: View {
                 .buttonStyle(.plain)
                 .accessibilityLabel(open ? "Hide help" : "Help")
                 .accessibilityIdentifier("help")
+                Spacer(minLength: 0)
             }
             if open {
                 Text(help)
@@ -335,6 +337,7 @@ struct HelpHeader: View {
                     .fixedSize(horizontal: false, vertical: true)
                     .textCase(nil)
                     .transition(.opacity)
+                    .accessibilityIdentifier(id.map { "\($0)Help" } ?? "helpText")
             }
         }
     }

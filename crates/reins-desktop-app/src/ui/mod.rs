@@ -15,6 +15,7 @@ mod onboarding;
 mod overview;
 mod parts;
 mod rules;
+mod secrets;
 mod settings;
 mod setup;
 mod sidebar;
@@ -121,6 +122,13 @@ struct Data {
     now: i64,
     /// The (?) open now.
     help: Option<&'static str>,
+    /// Keys & secrets' scan and move.
+    secrets: crate::secrets::Flow,
+    /// This computer's name, and its machine project.
+    computer: String,
+    machine: String,
+    /// Finding and moving secrets is on (a preview; always in `--demo`).
+    secrets_preview: bool,
 }
 
 impl Data {
@@ -149,6 +157,14 @@ impl Data {
             work: m.work.clone(),
             now: reins_desktop::now_unix(),
             help: None,
+            secrets: m.secrets.clone(),
+            computer: m.computer.clone(),
+            machine: m.machine.clone(),
+            secrets_preview: m.args.demo
+                || m.snapshot
+                    .as_ref()
+                    .and_then(|s| s.config.as_ref().ok())
+                    .is_some_and(|c| reins_desktop::secrets_scan::preview(c)),
         }
     }
 
@@ -357,9 +373,24 @@ impl Root {
         } else {
             30.0
         };
+        let secrets_page = if d.section == Section::Keys && d.secrets_preview {
+            self.secrets_page(d, pal, cx)
+        } else {
+            None
+        };
         let content: AnyElement = if d.section == Section::Activity {
             // List and detail side by side, each scrolling on its own.
             self.activity(d, pal, top, cx)
+        } else if let Some((page, true)) = secrets_page {
+            // The review: its list and its panel side by side.
+            page
+        } else if let Some((page, false)) = secrets_page {
+            div()
+                .id("secrets-content")
+                .size_full()
+                .overflow_y_scroll()
+                .child(div().w_full().max_w(px(900.0)).mx_auto().px(px(34.0)).pt(px(top)).pb(px(34.0)).child(page))
+                .into_any_element()
         } else {
             let page = match d.section {
                 Section::Overview | Section::Activity => self.overview(d, pal, window, cx),

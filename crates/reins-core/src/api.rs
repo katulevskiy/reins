@@ -478,6 +478,19 @@ impl ReinsCore {
         .await
     }
 
+    /// An Activity entry's request as its approval showed it (read-only; `None` for older entries).
+    pub async fn activity_approval(&self, entry_id: i64) -> Result<Option<ApprovalView>, CoreError> {
+        let runtime = Arc::clone(&self.runtime);
+        let generation = runtime.generation();
+        rt::run(async move {
+            let engine = runtime.prepare(generation).await?;
+            engine.ensure_active()?;
+            let result = engine.run_account(async { engine.activity_approval(entry_id) }).await;
+            runtime.finish(&engine, result)
+        })
+        .await
+    }
+
     pub async fn approve(&self, request_id: String, choice: ApprovalChoice) -> Result<(), CoreError> {
         let runtime = Arc::clone(&self.runtime);
         let generation = runtime.generation();

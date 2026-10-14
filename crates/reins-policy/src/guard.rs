@@ -128,6 +128,15 @@ pub const PAYMENTS: BuiltinGroup = BuiltinGroup {
     files: &[],
 };
 
+pub const SECRETS: BuiltinGroup = BuiltinGroup {
+    id: "secrets",
+    label: "Finding and reading secrets",
+    destructive: false,
+    every_time: true,
+    commands: &["reins secrets scan", "reins secrets import", "reins secrets get"],
+    files: &[],
+};
+
 pub const DISKS: BuiltinGroup = BuiltinGroup {
     id: "disks",
     label: "Wiping disks",
@@ -192,12 +201,12 @@ pub const TOKENS: BuiltinGroup = BuiltinGroup {
     destructive: false,
     every_time: true,
     commands: &[],
-    files: &[".netrc", "_netrc", ".git-credentials", ".npmrc", ".pypirc", ".vault-token"],
+    files: &[".netrc", "_netrc", ".git-credentials", ".npmrc", ".pypirc", ".vault-token", "reins/imports/*"],
 };
 
 /// Every built-in group, what cannot be undone first.
 pub const BUILTIN: &[BuiltinGroup] =
-    &[GIT_HISTORY, DELETES, INFRASTRUCTURE, DATABASES, PUBLISHING, PAYMENTS, DISKS, ENV_FILES, KEYS, CLOUD, TOKENS];
+    &[GIT_HISTORY, DELETES, INFRASTRUCTURE, DATABASES, PUBLISHING, PAYMENTS, SECRETS, DISKS, ENV_FILES, KEYS, CLOUD, TOKENS];
 
 /// Exceptions to the built-in file rules.
 pub const ALLOW_FILES: &[&str] = &["*.pub", "known_hosts", ".env.example", ".env.sample", ".env.template", ".env.dist"];
@@ -404,7 +413,8 @@ mod tests {
         assert_eq!(id(&["Files:\n/a/README.md\n/a/.env\n\nIn: /a"]), Some("env-files"));
         assert_eq!(id(&["Command:\ngit push --force origin main\n\nIn: /a"]), Some("git-history"));
         assert!(read(&["Command:\ncargo test\n\nIn: /a"], &[]).certain);
-        assert!(BUILTIN.iter().all(|g| g.destructive == g.files.is_empty()));
+        assert!(BUILTIN.iter().filter(|g| g.id != "secrets").all(|g| g.destructive == g.files.is_empty()));
+        assert!(BUILTIN.iter().all(|g| !g.destructive || g.every_time));
         assert_eq!(group("keys").map(|g| g.label), Some("Keys and certificates"));
     }
 

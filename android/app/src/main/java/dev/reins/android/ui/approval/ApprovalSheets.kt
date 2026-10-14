@@ -489,29 +489,10 @@ private fun EverythingChips(view: ApprovalView, draft: ApprovalDraft, viewModel:
     }
 }
 
+/** A choice of the sheet: the shared [dev.reins.android.design.SelectChip]. */
 @Composable
 private fun Chip(title: String, selected: Boolean, tag: String, onClick: () -> Unit) {
-    val c = LocalColors.current
-    val feedback = LocalFeedback.current
-    Row(
-        Modifier
-            .height(36.dp)
-            .clip(CircleShape)
-            .background(if (selected) c.accent.copy(alpha = 0.24f) else Surfaces.segment(c))
-            .pressable(shape = CircleShape) {
-                onClick()
-                feedback.play(Event.Selection)
-            }
-            .padding(horizontal = 14.dp)
-            .testTag(tag),
-        verticalAlignment = Alignment.CenterVertically,
-    ) {
-        if (selected) {
-            Icon(Icons.Rounded.Check, null, Modifier.size(15.dp), tint = if (c.dark) Color(0xFFDCD6FF) else c.accent)
-            Spacer(Modifier.width(5.dp))
-        }
-        RText(title, RType.sans(14f, FontWeight.SemiBold), if (selected) (if (c.dark) Color(0xFFDCD6FF) else c.accent) else c.secondary, maxLines = 1)
-    }
+    dev.reins.android.design.SelectChip(title, selected, Modifier.testTag(tag), onClick = onClick)
 }
 
 @Composable

@@ -223,6 +223,18 @@ private fun HeroPills(view: ApprovalView, ui: ApprovalUi, viewModel: ApprovalVie
     val danger = dangerTag(view)
     val s = ui.suggestion
     val model = ui.model
+    val record = LocalApprovalRecord.current
+    if (record != null) {
+        // An Activity entry: how it ended, beside what made it risky.
+        Row(Modifier.padding(top = 16.dp), verticalAlignment = Alignment.CenterVertically) {
+            if (danger != null) {
+                WarnTag(danger.label, if (danger.destructive) c.danger else c.warning, Modifier.testTag(danger.tag), icon = danger.icon)
+                Spacer(Modifier.width(8.dp))
+            }
+            OutcomePill(record.outcome, record.icon, record.tint(c))
+        }
+        return
+    }
     if (danger != null) {
         Row(Modifier.padding(top = 16.dp), verticalAlignment = Alignment.CenterVertically) {
             WarnTag(danger.label, if (danger.destructive) c.danger else c.warning, Modifier.testTag(danger.tag), icon = danger.icon)
@@ -248,6 +260,19 @@ private fun HeroPills(view: ApprovalView, ui: ApprovalUi, viewModel: ApprovalVie
     }
     if (content != null) {
         Row(Modifier.padding(top = if (danger != null) 10.dp else 16.dp), verticalAlignment = Alignment.CenterVertically) { content() }
+    }
+}
+
+/** How an Activity entry ended ("Denied by you", "Allowed by Autopilot · 96%"), on its hero. */
+@Composable
+private fun OutcomePill(text: String, icon: ImageVector, tint: Color) {
+    Row(
+        Modifier.clip(RoundedCornerShape(10.dp)).background(tint.copy(alpha = 0.16f)).padding(start = 9.dp, end = 12.dp, top = 7.dp, bottom = 7.dp).testTag("entryOutcome"),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Icon(icon, null, Modifier.size(15.dp), tint = tint)
+        Spacer(Modifier.width(6.dp))
+        RText(text, RType.sans(13f, FontWeight.SemiBold), tint, Modifier.testTag("entryAutopilotTitle"), maxLines = 1)
     }
 }
 

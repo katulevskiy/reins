@@ -593,6 +593,20 @@ async fn a_push_is_parked_with_what_it_does_and_answered_with_a_write_credential
     assert_eq!((grant.username.as_str(), grant.token.as_str()), ("x-access-token", TOKEN));
     assert!((before + PUSH_LEASE_SECS..=unix_now() + PUSH_LEASE_SECS).contains(&grant.expires_at));
     assert!(!answered.to_string().contains(TOKEN));
+
+    // Its Activity entry reads as the push it was and shows the same refs, commits and lines again.
+    let entry = env.core.activity(10).await.unwrap().into_iter().find(|e| e.op == "git_push").unwrap();
+    let label = entry.label.clone().unwrap();
+    assert_eq!(
+        (label.provider.as_str(), label.action.as_str(), label.title().as_str()),
+        ("github", "push", "Push 3 commits to me/app")
+    );
+    assert!(entry.request.as_ref().unwrap().full.starts_with("git push me/app\nupdate branch main: 3 commits"));
+    let kept = env.core.activity_approval(entry.id).await.unwrap().expect("the approval as shown");
+    let kept_ref = &kept.git.as_ref().expect("the push").refs[0];
+    assert_eq!((kept_ref.commit_count, kept_ref.additions, kept_ref.deletions), (3, Some(10), Some(2)));
+    assert_eq!(kept_ref.commits[0].files[0].diff.len(), 7, "a commit's lines, as the approval showed them");
+    assert!(!format!("{kept:?}").contains(TOKEN));
 }
 
 #[tokio::test]

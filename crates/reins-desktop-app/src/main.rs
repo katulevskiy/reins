@@ -17,6 +17,7 @@ mod model;
 mod pairing;
 mod pause;
 mod qr;
+mod secrets;
 mod shortcuts;
 mod single;
 mod state;

@@ -380,3 +380,54 @@ async fn a_push_in_the_background_is_answered_by_a_bypass() {
     }
     all_yes(&desk, &["q1", "q2", "q3", "q4"]).await;
 }
+
+/// A hook's question as Activity keeps it: the command as the title, everything it asked, and the approval as shown.
+#[tokio::test]
+async fn an_entry_keeps_the_request_and_its_approval() {
+    let desk = desk().await;
+    desk.pair().await;
+    let command = "git push --force origin main \\\n  --no-verify";
+    let detail = format!("Command:\n{command}\n\nIn: /home/me/dev/acme-web\nRule: git push --force*");
+    let question = "Claude Code wants to run: git push --force origin main --no-verify";
+    desk.send(&[ask_about(&desk, "r1", question, Some("command:git push --force*"), &detail)]).await;
+    let item = desk.core.pending().await.unwrap().remove(0);
+    let label = item.label.expect("a waiting request is labelled");
+    assert_eq!((label.provider.as_str(), label.action.as_str(), label.lead.as_str()), ("terminal", "run", "Run"));
+    assert_eq!(label.subject, "git push --force origin main \\ --no-verify");
+
+    desk.core.deny("r1".to_owned()).await.unwrap();
+    let entry = desk.core.activity(10).await.unwrap().into_iter().find(|a| a.op == "ask").unwrap();
+    assert_eq!(
+        entry.label.as_ref().map(reins_core::types::RequestLabel::title),
+        Some(label.title()),
+        "the row reads as the card did"
+    );
+    let asked = entry.request.expect("what it asked");
+    assert_eq!(asked.full, command, "the whole command, lines and all");
+    assert_eq!((asked.agent.as_str(), asked.cwd.as_str()), ("Claude Code", "/home/me/dev/acme-web"));
+    assert_eq!(asked.why, "Rewriting git history");
+    assert!(asked.asked_at > 0);
+
+    let shown = desk.core.activity_approval(entry.id).await.unwrap().expect("the approval as it was shown");
+    let ask = shown.ask.expect("the question");
+    assert_eq!(ask.detail.as_deref(), Some(detail.as_str()));
+    assert!(shown.quick.is_none() && shown.wait_until.is_none(), "read-only: nothing to answer");
+}
+
+/// What a standing answer let through is kept too: as its approval would have shown it.
+#[tokio::test]
+async fn an_entry_a_standing_answer_covered_keeps_its_approval() {
+    let desk = desk().await;
+    desk.pair().await;
+    desk.send(&[ask(&desk, "r1", "Run the tests?", Some("command:cargo test"))]).await;
+    desk.core.approve("r1".to_owned(), choice(&[], standing(&["command:cargo test"], &[]))).await.unwrap();
+    desk.send(&[ask(&desk, "r2", "Run the tests again?", Some("command:cargo test"))]).await;
+    assert!(desk.waiting().await.is_empty());
+    let entries: Vec<_> = desk.core.activity(10).await.unwrap().into_iter().filter(|e| e.op == "ask").collect();
+    assert_eq!(entries.len(), 2);
+    for entry in entries {
+        let shown = desk.core.activity_approval(entry.id).await.unwrap().expect("kept at each decision");
+        assert!(shown.ask.is_some(), "{entry:?}");
+    }
+    assert!(desk.core.activity_approval(9_999).await.unwrap().is_none(), "an entry that is not there has none");
+}

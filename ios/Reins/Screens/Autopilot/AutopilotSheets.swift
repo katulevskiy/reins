@@ -1,15 +1,21 @@
 import SwiftUI
 
 /// A heading, a card of rows and the explanation under it: Autopilot's pages are cards on the background (as in
-/// the Android app and Zeron's settings), not a system list, so the hero and the mode picker sit among them.
+/// the Android app and Zeron's settings), not a system list, so the hero and the mode picker sit among them. `help`
+/// puts the explanation behind a (?) beside the heading instead.
 struct AutopilotGroup<Content: View>: View {
     var header: String?
+    var help: String?
     var footer: String?
     @ViewBuilder var content: Content
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
-            if let header { SectionHeader(header).padding(.horizontal, 12) }
+            if let header, let help {
+                HelpHeader(title: header, help: help).padding(.horizontal, 12)
+            } else if let header {
+                SectionHeader(header).padding(.horizontal, 12)
+            }
             VStack(alignment: .leading, spacing: 0) { content }
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .background(Palette.elevated, in: RoundedRectangle(cornerRadius: 22, style: .continuous))

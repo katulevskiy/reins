@@ -131,6 +131,21 @@ class ApprovalNav {
 
 val LocalApprovalNav = staticCompositionLocalOf { ApprovalNav() }
 
+/**
+ * An Activity entry shown with the approval's own screen, read-only: how it ended (the hero's pill, in [tint]), what
+ * goes [below] the facts, and the [footer] in place of the decision dock.
+ */
+class ApprovalRecord(
+    val outcome: String,
+    val icon: androidx.compose.ui.graphics.vector.ImageVector,
+    val tint: (RColors) -> Color,
+    val below: @Composable () -> Unit = {},
+    val footer: (@Composable () -> Unit)? = null,
+)
+
+/** The entry the approval screen shows again, or null for a request that waits. */
+val LocalApprovalRecord = staticCompositionLocalOf<ApprovalRecord?> { null }
+
 /** The surfaces of the approval screen, from the palette (the design is dark first; light mode follows it). */
 internal object Surfaces {
     fun dock(c: RColors) = if (c.dark) Color(0xFF101012) else Color(0xFFFFFFFF)
@@ -155,6 +170,8 @@ fun ApprovalScreen(
     authenticator: Authenticator,
     onDone: () -> Unit,
     onOpenAutopilot: () -> Unit = {},
+    /** An Activity entry: read-only, with its outcome, more below the facts and its own footer. */
+    record: ApprovalRecord? = null,
 ) {
     val c = LocalColors.current
     val feedback = LocalFeedback.current
@@ -169,8 +186,8 @@ fun ApprovalScreen(
         feedback.play(Event.Close)
         onDone()
     }
-    CompositionLocalProvider(LocalApprovalNav provides nav) {
-        Box(Modifier.fillMaxSize().background(c.background).testTag("approvalScreen")) {
+    CompositionLocalProvider(LocalApprovalNav provides nav, LocalApprovalRecord provides record) {
+        Box(Modifier.fillMaxSize().background(c.background).testTag(if (record == null) "approvalScreen" else "entryApproval")) {
             val view = ui.view
             if (view == null) {
                 Column(Modifier.fillMaxSize()) {
@@ -190,7 +207,7 @@ fun ApprovalScreen(
             Column(Modifier.fillMaxSize()) {
                 val page = nav.pages.lastOrNull()
                 if (page == null) {
-                    AgentBar(view, close)
+                    AgentBar(view, close, back = record != null)
                 } else {
                     PageBar(pageTitle(view, page), view) {
                         feedback.play(Event.Close)
@@ -209,7 +226,10 @@ fun ApprovalScreen(
                 ) { (_, shown) ->
                     Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState())) {
                         when (shown) {
-                            null -> MainPage(view, ui, viewModel)
+                            null -> {
+                                MainPage(view, ui, viewModel)
+                                record?.below?.invoke()
+                            }
                             is ApprovalPage.Commits -> CommitsPage(view, shown.ref)
                             is ApprovalPage.Commit -> CommitPage(view, shown.ref, shown.index)
                             is ApprovalPage.Files -> FilesPage(view, shown.ref)
@@ -218,10 +238,10 @@ fun ApprovalScreen(
                         Spacer(Modifier.height(20.dp))
                     }
                 }
-                Dock(view, ui, viewModel, authenticator)
+                if (record == null) Dock(view, ui, viewModel, authenticator) else record.footer?.invoke()
             }
             HelpBubble(nav)
-            ApprovalOverlays(view, ui, viewModel, onOpenAutopilot)
+            if (record == null) ApprovalOverlays(view, ui, viewModel, onOpenAutopilot)
         }
     }
 }
@@ -239,28 +259,29 @@ internal fun commitsWord(n: Int) = if (n == 1) "1 commit" else "$n commits"
 internal fun filesWord(n: Int) = if (n == 1) "1 file" else "$n files"
 
 @Composable
-private fun CloseButton(onClick: () -> Unit) {
+private fun CloseButton(onClick: () -> Unit, back: Boolean = false) {
     val c = LocalColors.current
+    val label = if (back) "Back" else "Close"
     Box(
         Modifier
             .size(44.dp)
-            .pressable(shape = CircleShape, label = "Close", onClick = onClick)
-            .semantics { contentDescription = "Close" }
-            .testTag("closeSheet"),
+            .pressable(shape = CircleShape, label = label, onClick = onClick)
+            .semantics { contentDescription = label }
+            .testTag(if (back) "back" else "closeSheet"),
         contentAlignment = Alignment.Center,
-    ) { Icon(Icons.Rounded.Close, null, Modifier.size(24.dp), tint = c.text) }
+    ) { Icon(if (back) Icons.AutoMirrored.Rounded.ArrowBack else Icons.Rounded.Close, null, Modifier.size(24.dp), tint = c.text) }
 }
 
 /** Close, the agent ("Claude Code · laptop") and the time it still waits. */
 @Composable
-private fun AgentBar(view: ApprovalView, onClose: () -> Unit) {
+private fun AgentBar(view: ApprovalView, onClose: () -> Unit, back: Boolean = false) {
     val c = LocalColors.current
     val host = findConnection(LocalConnections.current, view.connectionId, view.connectionLabel)?.clientHost?.let(::untrusted)
     Row(
         Modifier.fillMaxWidth().windowInsetsPadding(WindowInsets.statusBars).padding(start = 8.dp, end = 12.dp, top = 8.dp, bottom = 10.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        CloseButton(onClose)
+        CloseButton(onClose, back)
         Spacer(Modifier.width(4.dp))
         ConnectionIcon(view.connectionId, view.connectionLabel, size = 28.dp)
         Spacer(Modifier.width(9.dp))

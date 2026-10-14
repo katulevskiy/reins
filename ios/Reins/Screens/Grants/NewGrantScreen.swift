@@ -101,7 +101,13 @@ struct NewGrantScreen: View {
                     }
                 }
 
-                section(draft.send ? "Send to" : "From", trailing: draft.send ? nil : AnyView(allMailToggle(draft))) {
+                if !draft.send {
+                    section("Which emails") {
+                        scopeChips(draft)
+                    }
+                }
+
+                section(draft.send ? "Send to" : "From") {
                     if draft.anyMail {
                         Text("All mail, up to 7 days. Never sending.")
                             .font(RFont.sans(14))
@@ -199,36 +205,27 @@ struct NewGrantScreen: View {
         }
     }
 
-    /// "All mail" beside the From heading: every email, time-boxed to a week.
-    private func allMailToggle(_ draft: NewGrantDraft) -> some View {
-        Button {
-            form.edit {
-                $0.anyMail.toggle()
-                if $0.anyMail && !$0.lifetime.allowedForAllMail { $0.lifetime = .day }
+    /// Specific senders | All mail. All mail is time-boxed to a week, so picking it drops Once and 30 days.
+    private func scopeChips(_ draft: NewGrantDraft) -> some View {
+        HStack(spacing: 8) {
+            OptionChip("Specific senders", selected: !draft.anyMail, symbol: "at") {
+                form.edit { $0.anyMail = false }
             }
-            feedback.play(.toggle(form.draft.anyMail))
-        } label: {
-            HStack(spacing: 5) {
-                Image(systemName: draft.anyMail ? "checkmark.circle.fill" : "circle")
-                    .font(.system(size: 13, weight: .semibold))
-                Text("All mail").font(RFont.sans(13.5, .medium))
+            .accessibilityIdentifier("scope:specific")
+            OptionChip("All mail", selected: draft.anyMail, symbol: "tray") {
+                form.edit {
+                    $0.anyMail = true
+                    if !$0.lifetime.allowedForAllMail { $0.lifetime = .day }
+                }
             }
-            .foregroundStyle(draft.anyMail ? Palette.accent : Palette.secondary)
-            .contentShape(Rectangle())
+            .accessibilityIdentifier("scope:all")
         }
-        .buttonStyle(.plain)
-        .accessibilityAddTraits(draft.anyMail ? .isSelected : [])
-        .accessibilityIdentifier(draft.anyMail ? "scope:all" : "scope:specific")
     }
 
-    private func section<Content: View>(_ title: String, trailing: AnyView? = nil, @ViewBuilder content: () -> Content) -> some View {
+    private func section<Content: View>(_ title: String, @ViewBuilder content: () -> Content) -> some View {
         VStack(alignment: .leading, spacing: 10) {
-            HStack {
-                FormLabel(title)
-                Spacer(minLength: 8)
-                if let trailing { trailing }
-            }
-            .padding(.horizontal, 6)
+            FormLabel(title)
+                .padding(.horizontal, 6)
             content()
         }
         .padding(.top, 22)
@@ -239,34 +236,16 @@ struct NewGrantScreen: View {
     }
 }
 
-/// An AI to pick, with its avatar ("[🙂 Claude Code]").
+/// An AI to pick, with its avatar ("[🙂 Claude Code ✓]"): the shared `SelectChip`.
 private struct AgentChip: View {
     var connection: ConnectionView
     var selected: Bool
     var action: () -> Void
-    @Environment(\.feedback) private var feedback
 
     var body: some View {
-        Button {
-            action()
-            feedback.play(.selection)
-        } label: {
-            HStack(spacing: 7) {
-                ConnectionAvatar(label: untrusted(connection.label), pick: connection.icon, size: 22)
-                Text(untrusted(connection.label))
-                    .font(RFont.sans(14, .semibold))
-                    .foregroundStyle(selected ? Palette.text : Palette.secondary)
-                    .lineLimit(1)
-            }
-            .padding(.leading, 6)
-            .padding(.trailing, 13)
-            .frame(minHeight: 36)
-            .background(selected ? Palette.dynamic(0xDCDCE2, 0x2E2E33) : Palette.controlFill, in: Capsule())
-            .overlay(Capsule().strokeBorder(selected ? Palette.accent.opacity(0.6) : .clear, lineWidth: 1))
-            .contentShape(Capsule())
-        }
-        .buttonStyle(.plain)
-        .accessibilityAddTraits(selected ? .isSelected : [])
+        SelectChip(title: untrusted(connection.label), selected: selected, leading: {
+            ConnectionAvatar(label: untrusted(connection.label), pick: connection.icon, size: 22)
+        }, action: action)
     }
 }
 

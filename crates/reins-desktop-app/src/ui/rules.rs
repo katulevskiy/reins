@@ -50,6 +50,7 @@ fn examples(id: &str) -> Option<&'static str> {
         "databases" => "DROP TABLE, TRUNCATE",
         "publishing" => "npm, cargo, docker push",
         "disks" => "dd, mkfs, Format-Volume",
+        "secrets" => "reins secrets scan, get",
         "cloud" => "~/.aws, kubeconfig",
         "tokens" => ".netrc, .npmrc",
         _ => return None,

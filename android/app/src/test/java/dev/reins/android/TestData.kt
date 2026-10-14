@@ -431,7 +431,19 @@ object TestData {
         opTitle: String = "",
         decidedBy: String = "",
         autopilot: AutopilotNote? = null,
-    ) = ActivityEntry(id, at, "c1", "Claude", action, outcome, "detail of $id", grantId, "gmail", "me@gmail.com", count, info, "", opTitle, decidedBy, autopilot)
+        label: dev.reins.core.RequestLabel? = null,
+        request: dev.reins.core.ActivityRequest? = null,
+        service: String = "gmail",
+        op: String = "",
+    ) = ActivityEntry(id, at, "c1", "Claude", action, outcome, "detail of $id", grantId, service, "me@gmail.com", count, info, op, opTitle, decidedBy, autopilot, label, request)
+
+    /** What a request is, as the core labels it. */
+    fun label(provider: String, action: String, lead: String, subject: String = "", code: Boolean = false, tail: String = "") =
+        dev.reins.core.RequestLabel(provider, action, lead, subject, code, tail)
+
+    /** What an entry asked, in full. */
+    fun asked(full: String, purpose: String = "", agent: String = "", cwd: String = "", why: String = "", askedAt: Long = 0) =
+        dev.reins.core.ActivityRequest(agent, cwd, why, full, purpose, askedAt)
 
     fun info(
         query: String?,

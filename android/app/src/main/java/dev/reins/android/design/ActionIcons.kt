@@ -2,6 +2,7 @@ package dev.reins.android.design
 
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.defaultMinSize
 import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
@@ -128,14 +129,24 @@ fun ActionTile(action: ActionKind, count: Int, modifier: Modifier = Modifier, si
     }
 }
 
-/** A small purple/blue number pill, used on nav items. */
+/** The count over a tab's icon: round for one digit, a capsule for two or three ("99+"), ringed in [ring] so it reads over
+ * the icon and the tab's pill. Never clipped: it is drawn outside them. */
 @Composable
-fun CountPill(count: Int, tint: Color, modifier: Modifier = Modifier) {
+fun CountPill(count: Int, tint: Color, modifier: Modifier = Modifier, ring: Color = Color.Transparent) {
     if (count <= 0) return
     Box(
-        modifier.background(tint, CircleShape).padding(horizontal = 6.dp, vertical = 1.dp),
+        modifier
+            .defaultMinSize(minWidth = 20.dp, minHeight = 20.dp)
+            .background(ring, CircleShape)
+            .padding(2.dp)
+            .defaultMinSize(minWidth = 16.dp, minHeight = 16.dp)
+            .background(tint, CircleShape)
+            .padding(horizontal = 4.5.dp),
         contentAlignment = Alignment.Center,
     ) {
-        RText(if (count > 99) "99+" else count.toString(), RType.sans(11f, FontWeight.SemiBold), Color.White, maxLines = 1)
+        RText(countText(count), RType.sans(10.5f, FontWeight.Bold), Color.White, maxLines = 1)
     }
 }
+
+/** 1 to 99, else "99+". */
+fun countText(count: Int): String = if (count > 99) "99+" else count.toString()

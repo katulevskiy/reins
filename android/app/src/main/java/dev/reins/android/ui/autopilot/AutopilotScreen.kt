@@ -45,6 +45,7 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -129,6 +130,7 @@ fun AutopilotScreen(
     var modelOpen by remember { mutableStateOf(false) }
     var deleteAsk by remember { mutableStateOf(false) }
     var newProfile by remember { mutableStateOf(false) }
+    var modeHelp by rememberSaveable { mutableStateOf(false) }
     val model = ui.model ?: settings?.model
     val modelReady = model?.state == ModelState.INSTALLED
     val covered = bypassOpen || modelOpen
@@ -142,6 +144,7 @@ fun AutopilotScreen(
                 Spacer(Modifier.height(40.dp))
                 return@SettingsPage
             }
+            ModeHeader(modeHelp, onHelp = { modeHelp = it })
             ModeHero(
                 s,
                 modelReady,
@@ -248,6 +251,20 @@ fun AutopilotScreen(
     }
 }
 
+/** "Mode" with its (?) right beside the word, and what the modes do under them when it is open. */
+@Composable
+private fun ModeHeader(open: Boolean, onHelp: (Boolean) -> Unit) {
+    val c = LocalColors.current
+    Column(Modifier.fillMaxWidth().padding(start = 22.dp, end = 22.dp, bottom = 4.dp).testTag("modeHeader")) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            RText("Mode", RType.sans(14f, FontWeight.Medium), c.accent, Modifier.semantics { heading() }, maxLines = 1)
+            Spacer(Modifier.width(2.dp))
+            dev.reins.android.ui.settings.HelpIcon(open, "Mode", onHelp)
+        }
+        dev.reins.android.design.HelpText(AutopilotText.MODE_HELP, open, Modifier.padding(bottom = 8.dp).testTag("modeHelp"))
+    }
+}
+
 /** A section's name in the accent colour, with something at its end ("+ New"). */
 @Composable
 internal fun SectionHeader(text: String, modifier: Modifier = Modifier, trailing: (@Composable () -> Unit)? = null) {
@@ -312,7 +329,7 @@ private fun ModeHero(
                         }
                     }
                     PillButton(
-                        "Stop now",
+                        "Stop bypass",
                         Modifier.padding(top = 14.dp).fillMaxWidth().testTag("stopBypass"),
                         background = c.danger,
                         foreground = if (c.dark) Color(0xFF2A0606) else Color.White,

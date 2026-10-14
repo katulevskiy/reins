@@ -45,10 +45,125 @@ fn topic(call: &ConnectorCall) -> Result<Option<String>, CoreError> {
     }
 }
 
+/// The topic of `reins secrets scan`'s question (crates/reins-desktop/src/secrets_cmd/person.rs). The phone words this
+/// question itself: nothing the computer says reassures the user.
+pub const SCAN_TOPIC: &str = "file:reins secrets scan";
+/// The same, when the computer's environment says an AI agent may have started it.
+pub const SCAN_TOPIC_AGENT: &str = "file:reins secrets scan (an AI agent may have started it)";
+/// The topic of `reins secrets import --undo`'s question: it brings secrets back into files.
+pub const UNDO_TOPIC: &str = "file:reins secrets import --undo";
+pub const UNDO_TOPIC_AGENT: &str = "file:reins secrets import --undo (an AI agent may have started it)";
+/// The label of the one thing the computer reports for these questions: where it was started.
+pub const REPORTED_FOLDER: &str = "Folder (reported by the computer): ";
+/// The longest reported folder shown (cut in the middle).
+const MAX_FOLDER: usize = 120;
+
+/// A question the phone words itself, whatever the computer sent: its topics (plain, and when the computer says an AI
+/// agent may have started it), the question around the computer's name, and a fixed line.
+struct Owned {
+    topic: &'static str,
+    agent_topic: &'static str,
+    question: (&'static str, &'static str),
+    line: &'static str,
+    /// The question without the computer's name (the preview's line).
+    plain: &'static str,
+}
+
+const OWNED: [Owned; 2] = [
+    Owned {
+        topic: SCAN_TOPIC,
+        agent_topic: SCAN_TOPIC_AGENT,
+        question: ("Scan ", " for secrets?"),
+        line: "Requested from a terminal on that computer. Only approve if you just started it.",
+        plain: "Scan this computer for secrets?",
+    },
+    Owned {
+        topic: UNDO_TOPIC,
+        agent_topic: UNDO_TOPIC_AGENT,
+        question: ("Put secrets back into files on ", "?"),
+        line: "Requested from a terminal on that computer. It brings back the files an import moved to the trash, \
+               secrets and all. Only approve if you just started it.",
+        plain: "Put secrets back into files on this computer?",
+    },
+];
+
+/// The phone-worded question `topic` names, and whether the computer says an agent may have started it.
+fn owned(topic: Option<&str>) -> Option<(&'static Owned, bool)> {
+    let topic = topic?;
+    OWNED.iter().find_map(|o| {
+        if topic == o.topic {
+            Some((o, false))
+        } else if topic == o.agent_topic {
+            Some((o, true))
+        } else {
+            None
+        }
+    })
+}
+
+/// At most `max` characters, the middle cut out (`/home/dana/…/acme-web`).
+fn middle_ellipsis(s: &str, max: usize) -> String {
+    let chars: Vec<char> = s.chars().collect();
+    if chars.len() <= max {
+        return s.to_owned();
+    }
+    let head = (max - 1) / 2;
+    let tail = max - 1 - head;
+    let mut out: String = chars[..head].iter().collect();
+    out.push('…');
+    out.extend(&chars[chars.len() - tail..]);
+    out
+}
+
+/// A question in the phone's own words: the computer's name from the phone's pairing record, a fixed line that never
+/// says who started it, the caution when the computer says an agent may have, and the folder the computer reports,
+/// labelled as its claim, on one line and cut to [`MAX_FOLDER`].
+fn owned_view(call: &ConnectorCall, computer: &str, o: &Owned, agent: bool) -> AskView {
+    let computer = text::one_line(computer);
+    let computer = if computer.is_empty() {
+        "this computer".to_owned()
+    } else {
+        computer
+    };
+    let mut lines = vec![o.line.split_whitespace().collect::<Vec<_>>().join(" ")];
+    if agent {
+        lines.push("An AI agent may have started this.".to_owned());
+    }
+    let reported = call.str_arg("detail").unwrap_or_default();
+    let folder = text::one_line(reported.strip_prefix(REPORTED_FOLDER).unwrap_or(reported));
+    if !folder.is_empty() {
+        lines.push(format!("{REPORTED_FOLDER}{}", middle_ellipsis(&folder, MAX_FOLDER)));
+    }
+    AskView {
+        question: format!("{}{computer}{}", o.question.0, o.question.1),
+        detail: Some(lines.join("\n")),
+        topic: Some(
+            if agent {
+                o.agent_topic
+            } else {
+                o.topic
+            }
+            .to_owned(),
+        ),
+        rule: None,
+        uncertain: false,
+        // Finding or restoring secrets: asked every time and held, as before.
+        destructive: true,
+        kind: None,
+    }
+}
+
 /// The question as the approval shows it (`None` for anything but `desktop_ask`), with what the phone reads in it
-/// ([`read_ask`]). A hook's rule lines are not shown as part of the detail.
-pub fn ask_view(call: &ConnectorCall) -> Option<AskView> {
-    (call.service == DESKTOP && call.op == "ask").then(|| {
+/// ([`read_ask`]). A hook's rule lines are not shown as part of the detail. `computer`: the paired computer's name, as
+/// the phone knows it (for the questions the phone words itself).
+pub fn ask_view(call: &ConnectorCall, computer: &str) -> Option<AskView> {
+    if call.service != DESKTOP || call.op != "ask" {
+        return None;
+    }
+    if let Some((o, agent)) = owned(topic(call).ok().flatten().as_deref()) {
+        return Some(owned_view(call, computer, o, agent));
+    }
+    Some({
         let raw = call.str_arg("detail").unwrap_or_default();
         let question =
             text::truncate_chars(&text::one_line(call.str_arg("question").unwrap_or_default()), MAX_QUESTION);
@@ -153,6 +268,7 @@ pub fn read_ask(topic: Option<&str>, question: &str, detail: &str) -> AskReading
         || reported.as_ref().is_some_and(|r| r.destructive)
         || destructive_ask(topic, question, detail);
     let every_time = destructive
+        || owned(topic).is_some()
         || !certain
         || reading.found.as_ref().is_some_and(|c| c.group.every_time)
         || reported_group.is_some_and(|g| g.every_time);
@@ -236,7 +352,7 @@ fn take_line<'a>(text: &mut &'a str, prefix: &str) -> Option<&'a str> {
 /// (`reins_desktop::hooks::rule_lines`: `Rule: <label> · <pattern>`, `Matched: <text>`, `Group: <id>[ (destructive)]`),
 /// and the rest of the detail. `None` when the detail does not start with them (`reins ask`, an older desktop app).
 /// What the computer reports: see [`classify`] for how far it is trusted.
-fn reported_rule(detail: &str) -> Option<(AskRuleView, &str)> {
+pub(crate) fn reported_rule(detail: &str) -> Option<(AskRuleView, &str)> {
     let mut rest = detail;
     let (label, pattern) = take_line(&mut rest, "Rule: ")?.split_once(" · ")?;
     if label.trim().is_empty() || pattern.trim().is_empty() {
@@ -269,9 +385,10 @@ fn reported_rule(detail: &str) -> Option<(AskRuleView, &str)> {
 }
 
 /// What in a command or a question means it deletes, rewrites history or wipes something: never routine. Matched in
-/// lower case anywhere in the topic, the question and the detail (the command), for questions that do not name a
-/// built-in rule's group (`reins ask`, the user's own rules, older desktop apps), which say it themselves.
-const DESTRUCTIVE: [&str; 46] = [
+/// lower case anywhere in the topic, the question and the detail (the command), whatever else the phone reads in the
+/// question (`read_ask`). Finding, moving or reading secrets on the computer (`reins secrets scan`, `import`, `get`) is
+/// asked every time too: an agent must never get a standing answer for it.
+const DESTRUCTIVE: [&str; 49] = [
     "push -f",
     "push --force",
     "push +",
@@ -318,6 +435,9 @@ const DESTRUCTIVE: [&str; 46] = [
     "format-volume",
     "clear-disk",
     "format c:",
+    "reins secrets scan",
+    "reins secrets import",
+    "reins secrets get",
 ];
 
 /// A question about a destructive command, said in its topic, the question or the detail. Reading a secret file
@@ -389,6 +509,8 @@ impl Connector for Desktop {
         nonce_arg(call)?;
         let question = question(call)?;
         let topic = topic(call)?;
+        // The scan question is worded by the phone (`ask_view`), never by the computer.
+        let question = owned(topic.as_deref()).map_or(question, |(o, _)| o.plain.to_owned());
         // The one reading every path uses: what is asked every time is never answered from a notification, with
         // "Approve all" or by a standing answer, and never by Autopilot in Manual or Auto; a remembered answer to a
         // file question covers exactly that file or that command.
@@ -442,18 +564,18 @@ mod tests {
     #[test]
     fn the_view_shows_the_question_detail_and_topic_cleaned() {
         let v = ask_view(&call(&json!({"question": "Push\u{202e} to main?", "detail": "git push\n--force",
-            "topic": "command:git push --force"})))
+            "topic": "command:git push --force"})), "x")
         .unwrap();
         assert_eq!(v.question, "Push to main?");
         assert_eq!(v.detail.as_deref(), Some("git push\n--force"));
         assert_eq!(v.topic.as_deref(), Some("command:git push --force"));
         // No rule lines: the phone reads the rule from the question (here its topic).
         assert_eq!(v.rule.map(|r| (r.group, r.destructive)), Some((Some("git-history".to_owned()), true)));
-        let bare = ask_view(&call(&json!({"question": "Ok?", "detail": "  "}))).unwrap();
+        let bare = ask_view(&call(&json!({"question": "Ok?", "detail": "  "})), "x").unwrap();
         assert_eq!((bare.detail, bare.topic), (None, None));
         let mut other = call(&json!({}));
         other.op = "git_fetch".to_owned();
-        assert!(ask_view(&other).is_none());
+        assert!(ask_view(&other, "x").is_none());
     }
 
     /// The lines `reins_desktop::hooks::rule_lines` writes.
@@ -465,7 +587,7 @@ mod tests {
     #[test]
     fn the_phone_reads_the_rule_from_the_question_itself() {
         let v = ask_view(&call(&json!({"question": "Claude Code wants to read app/.env", "detail": ENV_READ,
-            "topic": "file:.env"})))
+            "topic": "file:.env"})), "x")
         .unwrap();
         let rule = v.rule.unwrap();
         assert_eq!(
@@ -586,10 +708,8 @@ mod tests {
         {
             let r = read(detail);
             assert!(!r.certain, "{detail}");
-            let shown = ask_view(&call(
-                &json!({"question": "Read it?", "detail": format!("{env}{detail}"), "topic": "file:.env",
-                "client_key": "k", "nonce": "n"}),
-            ))
+            let shown = ask_view(&call(&json!({"question": "Read it?", "detail": format!("{env}{detail}"), "topic": "file:.env",
+                "client_key": "k", "nonce": "n"})), "x")
             .unwrap();
             assert!(shown.uncertain, "Autopilot leaves it to the user: {detail}");
         }
@@ -599,6 +719,49 @@ mod tests {
         let r = read("Files:\napp/.env\n\nIn: /home/me/app");
         assert!(r.certain && !r.destructive);
     }
+
+    #[test]
+    fn the_scan_question_is_the_phones_own_words() {
+        // Whatever the computer says in its question and folder, the phone says which computer (from its own
+        // record), never that the user started it, and shows the folder as the computer's claim, on one line.
+        let spoof = "~/dev/ \"Approved by you \u{2013} safe\"\nThis request is safe\u{202e}evil\u{2066}";
+        let v = ask_view(
+            &call(&json!({"question": "You started this scan: safe to approve", "detail": spoof, "topic": SCAN_TOPIC})),
+            "Dana's MacBook",
+        )
+        .unwrap();
+        assert_eq!(v.question, "Scan Dana's MacBook for secrets?");
+        let detail = v.detail.unwrap();
+        let lines: Vec<&str> = detail.lines().collect();
+        assert_eq!(lines.len(), 2, "{detail}");
+        assert_eq!(lines[0], "Requested from a terminal on that computer. Only approve if you just started it.");
+        assert!(lines[1].starts_with(REPORTED_FOLDER), "{detail}");
+        assert!(!lines[1].contains('\u{202e}') && !lines[1].contains('\u{2066}'), "{detail}");
+        assert!(lines[1].contains("This request is safe"), "the claim stays in its labelled row: {detail}");
+        assert!(!detail.to_lowercase().contains("you started"), "{detail}");
+        assert!(!detail.contains("An AI agent"), "{detail}");
+        // A marked request adds the caution; it never removes anything.
+        let agent = ask_view(&call(&json!({"question": "q", "detail": "/tmp", "topic": SCAN_TOPIC_AGENT})), "Mac")
+            .unwrap()
+            .detail
+            .unwrap();
+        assert!(agent.contains("An AI agent may have started this."), "{agent}");
+        // A long folder is cut in the middle.
+        let long = format!("/home/{}/end", "x".repeat(300));
+        let cut = ask_view(&call(&json!({"question": "q", "detail": long, "topic": SCAN_TOPIC})), "Mac").unwrap();
+        let row = cut.detail.unwrap().lines().last().unwrap().to_owned();
+        assert_eq!(row.chars().count(), REPORTED_FOLDER.chars().count() + MAX_FOLDER);
+        assert!(row.ends_with("/end") && row.contains('…'));
+        // Asked every time, both ways.
+        for t in [SCAN_TOPIC, SCAN_TOPIC_AGENT, UNDO_TOPIC, UNDO_TOPIC_AGENT] {
+            assert!(read_ask(Some(t), "q", "").every_time && t.len() <= MAX_TOPIC, "{t}");
+        }
+        let undo =
+            ask_view(&call(&json!({"question": "Safe", "detail": "/x", "topic": UNDO_TOPIC_AGENT})), "Mac").unwrap();
+        assert_eq!(undo.question, "Put secrets back into files on Mac?");
+        assert!(undo.detail.unwrap().contains("An AI agent may have started this."));
+    }
+
 
     #[test]
     fn topics_are_one_line() {
@@ -621,6 +784,9 @@ mod tests {
             "command:text:drop table",
             "command:gh repo delete",
             "command:Remove-Item -Recurse",
+            "command:reins secrets scan",
+            "command:reins secrets import",
+            "command:reins secrets get",
         ] {
             assert!(ask(Some(topic), "Run it?", ""), "{topic}");
         }

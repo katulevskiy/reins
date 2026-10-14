@@ -14,6 +14,26 @@ extension HeroTone {
     }
 }
 
+/// An Activity entry shown again with the approval's own screen, read-only (the Android app's `ApprovalRecord`): how
+/// it ended, which the hero shows in place of Autopilot's score.
+struct ApprovalRecord: Equatable {
+    var outcome: String
+    var symbol: String
+    var tint: Color
+}
+
+private struct ApprovalRecordKey: EnvironmentKey {
+    static let defaultValue: ApprovalRecord? = nil
+}
+
+extension EnvironmentValues {
+    /// Set for an Activity entry's request as its approval showed it; nil for a request that waits.
+    var approvalRecord: ApprovalRecord? {
+        get { self[ApprovalRecordKey.self] }
+        set { self[ApprovalRecordKey.self] = newValue }
+    }
+}
+
 /// The main page: the hero, then the facts of the request, by kind.
 struct MainPage: View {
     @Bindable var vm: ApprovalModel
@@ -141,27 +161,43 @@ private struct Sentence: View {
     }
 }
 
-/// Under the sentence: a danger tag with its (?), Autopilot's score, or the offer to download its model.
+/// Under the sentence: a danger tag with its (?), Autopilot's score, or the offer to download its model. An Activity
+/// entry shows how it ended instead, beside what made it risky.
 private struct HeroPills: View {
     @Bindable var vm: ApprovalModel
     var view: ApprovalView
     var autopilot: AutopilotModel
     @Environment(ApprovalNav.self) private var nav
     @Environment(\.feedback) private var feedback
+    @Environment(\.approvalRecord) private var record
 
     var body: some View {
         let danger = ApprovalWords.dangerTag(view)
-        VStack(spacing: 10) {
+        if let record {
+            let outcome = EntryOutcomePill(text: record.outcome, symbol: record.symbol, tint: record.tint)
             if let danger {
-                HStack(spacing: 8) {
-                    WarnTag(text: danger.label, tint: danger.destructive ? Palette.danger : Palette.warning, symbol: danger.symbol)
-                        .accessibilityIdentifier(danger.id)
-                    HelpDot(id: danger.id, text: danger.help)
+                let tag = WarnTag(text: danger.label, tint: danger.destructive ? Palette.danger : Palette.warning, symbol: danger.symbol)
+                    .accessibilityIdentifier(danger.id)
+                ViewThatFits(in: .horizontal) {
+                    HStack(spacing: 8) { tag; outcome }
+                    VStack(spacing: 8) { tag; outcome }
                 }
+            } else {
+                outcome
             }
-            // A guard rule that can be undone is an ordinary question: Autopilot's score shows under it.
-            if danger?.destructive != true {
-                pills
+        } else {
+            VStack(spacing: 10) {
+                if let danger {
+                    HStack(spacing: 8) {
+                        WarnTag(text: danger.label, tint: danger.destructive ? Palette.danger : Palette.warning, symbol: danger.symbol)
+                            .accessibilityIdentifier(danger.id)
+                        HelpDot(id: danger.id, text: danger.help)
+                    }
+                }
+                // A guard rule that can be undone is an ordinary question: Autopilot's score shows under it.
+                if danger?.destructive != true {
+                    pills
+                }
             }
         }
     }

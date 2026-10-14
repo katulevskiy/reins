@@ -1,6 +1,8 @@
 package dev.reins.android
 
 import androidx.compose.ui.test.assertIsSelected
+import androidx.compose.ui.test.assertIsNotSelected
+import androidx.compose.ui.test.assertIsEnabled
 import androidx.compose.ui.test.onNodeWithContentDescription
 import androidx.compose.ui.test.assertTextContains
 import androidx.compose.ui.test.onNodeWithTag
@@ -105,6 +107,7 @@ class AutopilotFlowTest : FlowHarness() {
         tap("quick:BYPASS")
         awaitTag("bypassSheet")
         awaitGone("autopilotQuick")
+        assertTrue("the shared sheet, with its own lengths", has("bypassLength:custom"))
         assertTrue("nothing changes before the hold", core.modeCalls.isEmpty())
         tap("bypassLength:15")
         hold("confirmBypass")
@@ -113,7 +116,10 @@ class AutopilotFlowTest : FlowHarness() {
         assertEquals("checked from the quick menu too", 1, prompts.get())
         awaitGone("bypassSheet")
         tap("modePill")
-        tap("quickStopBypass")
+        // The running bypass is the Bypass button itself: no separate Stop.
+        awaitText("Tap to stop")
+        assertFalse(has("quickStopBypass"))
+        tap("quick:BYPASS")
         awaitCore { core.modeCalls.size == 2 }
         assertEquals("back to the mode it interrupted", AutopilotMode.MANUAL, core.modeCalls.last().second)
     }
@@ -184,6 +190,33 @@ class AutopilotFlowTest : FlowHarness() {
         awaitCore { core.modeCalls.isNotEmpty() }
         assertEquals(Triple(null, AutopilotMode.MANUAL, null), core.modeCalls.single())
         assertEquals("stopping needs no check", 0, prompts.get())
+    }
+
+    /** Switching back and forth leaves one card chosen and neither stuck pressed (dimmed) nor disabled. */
+    @Test
+    fun manualAndAutoSwitchBackAndForthAndStayClean() {
+        installModel()
+        openAutopilot()
+        for ((i, mode) in listOf(AutopilotMode.AUTO, AutopilotMode.MANUAL, AutopilotMode.AUTO, AutopilotMode.MANUAL).withIndex()) {
+            tap("mode:${mode.name}")
+            awaitCore { core.modeCalls.size == i + 1 && container.state.autopilot.value?.mode == mode }
+            settle()
+            val other = if (mode == AutopilotMode.AUTO) AutopilotMode.MANUAL else AutopilotMode.AUTO
+            rule.onNodeWithTag("mode:${mode.name}").assertIsSelected().assertIsEnabled()
+            rule.onNodeWithTag("mode:${other.name}").assertIsNotSelected().assertIsEnabled()
+        }
+        assertEquals(listOf(AutopilotMode.AUTO, AutopilotMode.MANUAL, AutopilotMode.AUTO, AutopilotMode.MANUAL), core.modeCalls.map { it.second })
+    }
+
+    @Test
+    fun theModeHelpSitsBesideTheWordMode() {
+        openAutopilot()
+        val header = rule.onNodeWithTag("modeHeader").fetchSemanticsNode().boundsInRoot
+        val help = rule.onNodeWithTag("help:Mode").fetchSemanticsNode().boundsInRoot
+        val hero = rule.onNodeWithTag("modeHero").fetchSemanticsNode().boundsInRoot
+        assertTrue("on the header's line, above the options", help.bottom <= hero.top && help.top >= header.top)
+        tap("help:Mode")
+        awaitTag("modeHelp")
     }
 
     @Test

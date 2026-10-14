@@ -391,7 +391,6 @@ impl Engine {
 
     /// An audit entry for `request`, tagged with the connector/account and carrying what the details screen shows.
     #[allow(clippy::too_many_arguments, reason = "an audit entry is described by this many independent facts")]
-    #[allow(clippy::unused_self, reason = "kept a method beside finish and fail, which it is always used with")]
     pub(crate) fn audit(
         &self,
         request: &RelayRequest,
@@ -403,6 +402,23 @@ impl Engine {
         released: &[&MessageSummary],
     ) -> AuditRecord {
         let (service, account) = (views::SERVICE_GMAIL.to_owned(), request.account.clone());
+        // The request as its approval showed it: the parked one when it waited, else what it was decided on.
+        let parked = self.parked(&request.id.0).map_or_else(
+            |_| ParkedRequest {
+                request: request.clone(),
+                messages: released.iter().map(|m| (*m).clone()).collect(),
+                covered: BTreeMap::default(),
+                account: request.account.clone(),
+                accounts: Vec::new(),
+                shared_accounts: Vec::new(),
+                connector: None,
+            },
+            |(_, p)| p,
+        );
+        let mut info = views::audit_info(&request.call, released);
+        info.label = Some(Box::new(crate::titles::of_parked(&parked)));
+        info.request = Some(Box::new(crate::titles::request(&request.call, request.created_at)));
+        info.snapshot = Some(Box::new(parked));
         AuditRecord {
             seq: 0,
             at: unix_now(),
@@ -415,7 +431,7 @@ impl Engine {
             service,
             account,
             count: u32::try_from(count).unwrap_or(u32::MAX),
-            info: views::audit_info(&request.call, released),
+            info,
             op: String::new(),
         }
     }

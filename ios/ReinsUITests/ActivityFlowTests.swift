@@ -42,19 +42,48 @@ final class ActivityFlowTests: XCTestCase {
         shot(app, "activity-sheet-search")
     }
 
-    /// The mode pill opens the compact Autopilot menu, not the page; "More" opens the page.
+    /// The mode pill drops the compact Autopilot menu, not the page; "Autopilot settings" opens the page.
     func testTheModePillOpensTheQuickMenuAndMoreOpensAutopilot() {
         let app = launch()
         let pill = element(app, "modePill")
         XCTAssertTrue(pill.waitForExistence(timeout: 10))
         pill.tap()
-        let lockdown = app.buttons["Lockdown"]
-        XCTAssertTrue(lockdown.waitForExistence(timeout: 3), "the menu lists the modes")
-        XCTAssertTrue(app.buttons["More"].exists)
-        XCTAssertFalse(element(app, "modeHero").exists, "the page waits for More")
+        XCTAssertTrue(element(app, "autopilotQuick").waitForExistence(timeout: 3), "the menu drops from the pill")
+        for id in ["quick:MANUAL", "quick:AUTO", "quick:BYPASS", "quick:LOCKDOWN", "quickMore"] {
+            XCTAssertTrue(element(app, id).exists, "the menu has \(id)")
+        }
+        XCTAssertFalse(element(app, "modeHero").exists, "the page waits for Autopilot settings")
         shot(app, "activity-quick-menu")
-        app.buttons["More"].tap()
+        element(app, "quickMore").tap()
         XCTAssertTrue(element(app, "modeHero").waitForExistence(timeout: 5))
+    }
+
+    /// Manual → Auto → Manual → Auto from the menu: each time the pick is the card in force and the other is not, both
+    /// enabled; Bypass opens the same sheet as the Autopilot page.
+    func testTheQuickMenuSwitchesModesAndBypassAsksForALength() {
+        let app = launch()
+        let pill = element(app, "modePill")
+        XCTAssertTrue(pill.waitForExistence(timeout: 10))
+        for (picked, other) in [("AUTO", "MANUAL"), ("MANUAL", "AUTO"), ("AUTO", "MANUAL")] {
+            pill.tap()
+            XCTAssertTrue(element(app, "quick:\(picked)").waitForExistence(timeout: 3))
+            element(app, "quick:\(picked)").tap()
+            XCTAssertTrue(element(app, "autopilotQuick").waitForNonExistence(timeout: 3), "a pick closes the menu")
+            pill.tap()
+            let on = element(app, "quick:\(picked)")
+            let off = element(app, "quick:\(other)")
+            XCTAssertTrue(on.waitForExistence(timeout: 3))
+            XCTAssertTrue(on.isSelected, "\(picked) is in force")
+            XCTAssertFalse(off.isSelected, "\(other) is not")
+            XCTAssertTrue(on.isEnabled && off.isEnabled, "both stay enabled")
+            element(app, "quickScrim").tap()
+            XCTAssertTrue(element(app, "autopilotQuick").waitForNonExistence(timeout: 3), "the scrim closes the menu")
+        }
+        pill.tap()
+        element(app, "quick:BYPASS").tap()
+        XCTAssertTrue(element(app, "confirmBypass").waitForExistence(timeout: 5), "the shared bypass sheet")
+        XCTAssertTrue(element(app, "bypass:custom").exists, "with its custom lengths")
+        shot(app, "activity-quick-bypass-sheet")
     }
 
     func testTheDockOffersHowLongAndApprovingClosesTheScreen() {
@@ -115,6 +144,27 @@ final class ActivityFlowTests: XCTestCase {
         message.tap()
         XCTAssertTrue(element(app, "emailBody").waitForExistence(timeout: 5))
         shot(app, "activity-email")
+    }
+
+    /// A request decided here opens from Activity as its approval showed it: the same hero and facts, read-only, with
+    /// how it ended on the hero and no way to answer it again.
+    func testADecidedRequestOpensAsItsApprovalReadOnly() {
+        let app = launch("reins://item?kind=request&id=req1")
+        XCTAssertTrue(element(app, "approvalSheet").waitForExistence(timeout: 10))
+        element(app, "approve").tap()
+        XCTAssertTrue(element(app, "approvalSheet").waitForNonExistence(timeout: 5))
+        // The seeded history ends at 14: the decision is the next entry.
+        let row = element(app, "entry:15")
+        XCTAssertTrue(row.waitForExistence(timeout: 8))
+        row.tap()
+        XCTAssertTrue(element(app, "entryApproval").waitForExistence(timeout: 5))
+        XCTAssertTrue(element(app, "hero").exists)
+        XCTAssertTrue(element(app, "entryOutcome").exists, "how it ended, where Autopilot's score was")
+        XCTAssertFalse(element(app, "selectAll").exists, "nothing to tick again")
+        XCTAssertFalse(element(app, "clearAll").exists)
+        XCTAssertFalse(element(app, "approve").exists, "no decision dock")
+        XCTAssertFalse(element(app, "waitLine").exists, "no timer")
+        shot(app, "activity-entry-approval")
     }
 
     func testThisWasWrongAsksAndThanks() {

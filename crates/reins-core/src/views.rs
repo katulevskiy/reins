@@ -301,6 +301,7 @@ pub fn request_item(parked: &ParkedRequest) -> PendingItem {
         suggestion: None,
         headline: view.headline,
         quick: view.quick.is_some_and(|q| q.from_notification),
+        label: Some(crate::titles::of_parked(parked)),
     }
 }
 
@@ -385,6 +386,7 @@ pub fn pairing_item(p: &PairingRequest) -> PendingItem {
         suggestion: None,
         headline: String::new(),
         quick: false,
+        label: None,
     }
 }
 
@@ -719,7 +721,7 @@ pub fn approval_view(parked: &ParkedRequest) -> ApprovalView {
             _ => None,
         },
         ask: match &parked.request.call {
-            ToolCall::Connector(call) => crate::connector::desktop::ask_view(call),
+            ToolCall::Connector(call) => crate::connector::desktop::ask_view(call, &parked.label()),
             _ => None,
         },
         secrets: match (&parked.request.call, held.and_then(|h| h.preview.as_ref())) {
@@ -1151,6 +1153,15 @@ fn editable_scope(scope: &Scope) -> Option<GrantScopeChoice> {
     }
 }
 
+/// An Activity entry's request as its approval showed it, read-only: nothing to answer from a notification, no
+/// timer.
+pub fn entry_approval_view(parked: &ParkedRequest) -> ApprovalView {
+    let mut view = approval_view(parked);
+    view.quick = None;
+    view.wait_until = None;
+    view
+}
+
 pub fn activity_entry(r: &AuditRecord) -> ActivityEntry {
     ActivityEntry {
         id: r.seq,
@@ -1192,6 +1203,8 @@ pub fn activity_entry(r: &AuditRecord) -> ActivityEntry {
         op_title: op_title(&r.service, &r.op),
         decided_by: r.info.decided_by.clone(),
         autopilot: crate::autopilot::activity_note(r),
+        label: Some(crate::titles::of_entry(r)),
+        request: r.info.request.as_ref().map(|r| crate::titles::activity_request(r)),
     }
 }
 

@@ -63,6 +63,11 @@ pub const DEFAULT_COMMANDS: &[&str] = &[
     "poetry publish",
     // Trusting a key to open card details is the user's own step (`docs/payments.md`).
     "reins payments-trust",
+    // Finding, moving and reading secrets are the user's own steps (`docs/secrets.md`): the phone is asked when an
+    // agent runs them, whatever its environment says.
+    "reins secrets scan",
+    "reins secrets import",
+    "reins secrets get",
     "uv publish",
     "twine upload",
     "gem push",
@@ -118,6 +123,9 @@ pub const DEFAULT_FILES: &[&str] = &[
     ".pypirc",
     ".vault-token",
     "credentials.json",
+    // What `reins secrets import` keeps: its receipts (what moved where; undo trusts only authenticated ones) and their
+    // key (`import-receipts.key` is `*.key`).
+    "reins/imports/*",
 ];
 
 /// Built-in exceptions to the file patterns.
@@ -179,6 +187,13 @@ pub const GROUPS: &[Group] = &[
         files: builtin::PAYMENTS.files,
     },
     Group {
+        id: "secrets",
+        label: "Finding and reading secrets",
+        detail: "reins secrets scan, import and get, which see where your secrets are or read one",
+        commands: builtin::SECRETS.commands,
+        files: builtin::SECRETS.files,
+    },
+    Group {
         id: "disks",
         label: "Wiping disks",
         detail: "mkfs, dd of=, format, Format-Volume, Clear-Disk",
@@ -209,7 +224,7 @@ pub const GROUPS: &[Group] = &[
     Group {
         id: "tokens",
         label: "Saved tokens",
-        detail: ".netrc, .git-credentials, .npmrc, .pypirc, .vault-token",
+        detail: ".netrc, .git-credentials, .npmrc, .pypirc, .vault-token, Reins' import receipts",
         commands: builtin::TOKENS.commands,
         files: builtin::TOKENS.files,
     },
@@ -495,7 +510,12 @@ mod tests {
         };
         assert_eq!(own.check_command("make -j4 deploy").unwrap().group(), None, "the user's own rule");
         for g in GROUPS {
-            assert_eq!(g.destructive(), g.files.is_empty(), "{}: commands cannot be undone, files are secrets", g.id);
+            assert_eq!(
+                g.destructive(),
+                g.files.is_empty() && g.id != "secrets",
+                "{}: commands cannot be undone (but finding secrets), files are secrets",
+                g.id
+            );
         }
     }
 
@@ -506,6 +526,13 @@ mod tests {
             assert!(g.check_file(f).is_some(), "{f}");
         }
         assert!(g.check_command("echo abc > ~/.local/state/reins/phone-payments.key").is_some());
+        for f in [
+            "/home/me/.local/state/reins/imports/1700000000.json",
+            "/home/me/.local/state/reins/import-receipts.key",
+            "C:\\Users\\me\\AppData\\Local\\reins\\imports\\1700000000.json",
+        ] {
+            assert!(g.check_file(f).is_some(), "{f}");
+        }
     }
 
     #[test]
@@ -514,6 +541,10 @@ mod tests {
             ("reins payments-trust", "reins payments-trust"),
             ("/usr/local/bin/reins payments-trust", "reins payments-trust"),
             ("sh -c 'reins payments-trust'", "reins payments-trust"),
+            ("reins secrets scan --json", "reins secrets scan"),
+            ("env -u CLAUDECODE -u REINS_RUNNER reins secrets scan ~/dev", "reins secrets scan"),
+            ("REINS_RUNNER=person /opt/reins/bin/reins secrets import --all-suggested", "reins secrets import"),
+            ("bash -lc 'reins secrets get vault:acme-web/development/OPENAI_API_KEY'", "reins secrets get"),
             ("git push --force origin main", "git push --force*"),
             ("git -C repo push -fu origin x", "git push -f"),
             ("git push --force-with-lease", "git push --force*"),

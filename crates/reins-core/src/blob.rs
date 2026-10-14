@@ -434,6 +434,7 @@ pub(crate) fn blob_item(info: &BlobInfo) -> PendingItem {
         suggestion: None,
         headline: String::new(),
         quick: false,
+        label: None,
     }
 }
 

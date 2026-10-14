@@ -173,8 +173,9 @@ struct KindTile: View {
     }
 }
 
-/// One operation in the history: its kind, the sentence, who and when, and how it ended. `first` and `last` round the
-/// group's corners (each row is its own lazy cell).
+/// One operation in the history: what it touched with what it did (the label's tile), the request in up to two lines,
+/// who and when, and how it ended. Entries the core gave no label (older ones) keep the kind's tile and sentence.
+/// `first` and `last` round the group's corners (each row is its own lazy cell).
 struct HistoryRow: View {
     var entry: ActivityEntry
     var selected = false
@@ -182,12 +183,24 @@ struct HistoryRow: View {
     var last = false
     var now: Int64 = Timers.nowSeconds()
 
+    /// Where the hairline under a row starts: under the title, past the tile.
+    static func hairlineInset(_ entry: ActivityEntry) -> CGFloat { entry.label == nil ? 62 : 66 }
+
     var body: some View {
-        HStack(spacing: 12) {
-            KindTile(kind: ActionKind.of(entry.action))
-            VStack(alignment: .leading, spacing: 3) {
-                sentence
-                    .lineLimit(1)
+        let label = entry.label
+        HStack(alignment: label == nil ? .center : .top, spacing: 12) {
+            if let label {
+                ProviderTile(label: label, ring: Palette.elevated)
+            } else {
+                KindTile(kind: ActionKind.of(entry.action))
+            }
+            VStack(alignment: .leading, spacing: label == nil ? 3 : 4) {
+                if let label {
+                    LabelText(label: label, size: 15, lines: 2)
+                } else {
+                    sentence
+                        .lineLimit(1)
+                }
                 HStack(spacing: 5) {
                     ConnectionIcon(connectionId: entry.connectionId, label: entry.connectionLabel, size: 14)
                     Text("\(untrusted(entry.connectionLabel)) · \(EntryText.time(entry.at, now: now))")
@@ -196,8 +209,10 @@ struct HistoryRow: View {
                         .lineLimit(1)
                 }
             }
+            .padding(.top, label == nil ? 0 : 1)
             .frame(maxWidth: .infinity, alignment: .leading)
             EntryMark(mark: EntryText.mark(entry))
+                .padding(.top, label == nil ? 0 : 3)
         }
         .padding(.horizontal, 14)
         .padding(.vertical, 11)

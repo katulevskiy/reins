@@ -75,6 +75,7 @@ abstract class ScreenshotsBase(private val suffix: String) {
         core.connections = listOf(TestData.connection("c1", "Claude"), TestData.connection("c2", "My ChatGPT"), TestData.connection("c3", "Hermes agent"), TestData.connection("c4", "notes-bot"))
         core.gmail = GmailStatus.Ready
         core.activity = emptyList()
+        core.entryApprovals.clear()
         core.catalogue = FakeCore.defaultServices()
         core.mcp = emptyList()
         core.blobs.clear()
@@ -991,6 +992,164 @@ abstract class ScreenshotsBase(private val suffix: String) {
         } finally {
             styles.set(context, dev.reins.android.ui.autopilot.QuickStyle.DEFAULT)
         }
+    }
+
+    // ---- polish round 1 ----------------------------------------------------------------------------------------------
+
+    private fun polishHistory() {
+        val l = TestData::label
+        core.activity = listOf(
+            TestData.entry(7, "write", "denied", 1u, at = now - 120, service = "desktop", op = "ask", label = l("terminal", "run", "Run", "git push --force origin main", true, ""),
+                request = TestData.asked("git push --force origin main \\\n  --no-verify", "Force-push the rebased branch so the PR updates", "Claude Code", "~/dev/acme-web", "Rewriting git history", now - 129)),
+            TestData.entry(6, "read", "released", 1u, at = now - 300, service = "desktop", op = "ask", label = l("file", "read", "Read", "~/dev/api/.env", true, "")),
+            TestData.entry(5, "write", "sent", 1u, at = now - 720, service = "vault", op = "secret_release", label = l("secrets", "secrets", "Use 3 secrets for", "npm run dev", true, ""))
+                .copy(connectionLabel = "My ChatGPT", connectionId = "c2"),
+            TestData.entry(4, "write", "sent", 1u, at = now - 1_200, service = "github", op = "git_push", decidedBy = "autopilot", autopilot = TestData.note(),
+                label = l("github", "push", "Push 3 commits to", "acme/web", false, "")),
+            TestData.entry(3, "send", "sent", 1u, at = now - 3_600, label = l("gmail", "send", "Send an email to", "ada@acme.com", false, ""))
+                .copy(connectionLabel = "My ChatGPT", connectionId = "c2"),
+            TestData.entry(2, "write", "sent", 1u, at = now - 7_200, service = "desktop", op = "ask", label = l("terminal", "delete", "Run", "rm -rf build/", true, "")),
+        )
+    }
+
+    /** Activity rows: what was touched with what it did on its corner, and the request itself. */
+    @Test
+    fun polishActivity() {
+        polishHistory()
+        core.pending = listOf(
+            TestData.pending("req9", action = "write", service = "desktop", op = "ask", opTitle = "Ask you on your phone", waitUntil = now + 40)
+                .copy(label = TestData.label("terminal", "run", "Run", "npm publish --tag next", true, "")),
+        )
+        launch()
+        top()
+        repeat(10) { rule.mainClock.advanceTimeBy(50) }
+        shoot("polish-activity")
+    }
+
+    /** An entry: the approval as it was shown, read-only, with what was asked in full and a quieter "This was wrong". */
+    @Test
+    fun polishEntry() {
+        polishHistory()
+        val push = core.activity.first()
+        core.activity = listOf(push.copy(decidedBy = "autopilot", autopilot = TestData.note(suggested = dev.reins.core.Verdict.DENY, pApprove = 0.09f))) + core.activity.drop(1)
+        core.entryApprovals[7L] = TestData.designPushView().copy(waitUntil = null, quick = null)
+        launch()
+        top()
+        tap("entry:7")
+        await("entryApproval")
+        repeat(20) { rule.mainClock.advanceTimeBy(50) }
+        shoot("polish-entry")
+        val node = rule.onNodeWithTag("fullRequest")
+        node.performScrollTo()
+        repeat(10) { rule.mainClock.advanceTimeBy(50) }
+        shoot("polish-entry-full-request")
+        rule.onNodeWithTag("gitCommits:0").performScrollTo()
+        tap("gitCommits:0")
+        await("gitCommit:0:0")
+        repeat(20) { rule.mainClock.advanceTimeBy(50) }
+        shoot("polish-entry-commits")
+        tap("gitCommit:0:0")
+        await("commitSubject")
+        tap("commitFile:0")
+        repeat(20) { rule.mainClock.advanceTimeBy(50) }
+        shoot("polish-entry-commit-diff")
+    }
+
+    /** A Gmail entry: the emails as the approval listed them, what was shared ticked. */
+    @Test
+    fun polishGmailEntry() {
+        core.activity = listOf(
+            TestData.entry(
+                5, "search", "released", 2u, at = now - 600,
+                info = TestData.info("from:stripe.com invoice", listOf(
+                    dev.reins.core.ActivityMessage("m1", "", "Stripe", "Your invoice from Acme Inc.", 1_697_000_000),
+                    dev.reins.core.ActivityMessage("m2", "", "Stripe", "Payment received", 1_696_800_000),
+                ), null, null, null),
+                label = TestData.label("gmail", "search", "Search Gmail for", "from:stripe.com invoice", false, ""),
+                request = TestData.asked("Search Gmail\nfrom:stripe.com invoice OR receipt newer_than:30d", agent = "", askedAt = now - 612),
+            ).copy(connectionLabel = "Claude Code"),
+        )
+        core.entryApprovals[5L] = TestData.designMailView(null).copy(quick = null)
+        launch()
+        top()
+        tap("entry:5")
+        await("entryApproval")
+        repeat(20) { rule.mainClock.advanceTimeBy(50) }
+        shoot("polish-entry-gmail")
+    }
+
+    /** The quick mode menu under the header's pill: as it is, then while a bypass runs. */
+    @Test
+    fun polishQuickMenu() {
+        polishHistory()
+        core.model = installed
+        launch()
+        top()
+        tap("modePill")
+        await("autopilotQuick")
+        repeat(10) { rule.mainClock.advanceTimeBy(50) }
+        shoot("polish-quick-menu")
+        tap("quick:BYPASS")
+        await("bypassSheet")
+        repeat(20) { rule.mainClock.advanceTimeBy(50) }
+        shoot("polish-quick-bypass-sheet")
+        tap("bypassLength:custom")
+        repeat(20) { rule.mainClock.advanceTimeBy(50) }
+        shoot("polish-quick-bypass-custom")
+    }
+
+    @Test
+    fun polishQuickMenuDuringBypass() {
+        polishHistory()
+        core.model = installed
+        core.apGlobal = FakeCore.ApRow(bypassUntil = now + 8 * 60 + 12, bypassSince = now - 60 * 7)
+        launch()
+        top()
+        tap("modePill")
+        await("autopilotQuick")
+        repeat(10) { rule.mainClock.advanceTimeBy(50) }
+        shoot("polish-quick-menu-bypass")
+    }
+
+    /** New grant: the chosen chip tinted with a check, the others outlined. */
+    @Test
+    fun polishNewGrant() {
+        core.connections = listOf(TestData.connection("c1", "Claude Code"), TestData.connection("c2", "ChatGPT"))
+        launch()
+        tap("tabGrants")
+        tap("newGrant")
+        await("conn:c1")
+        tap("conn:c1")
+        repeat(10) { rule.mainClock.advanceTimeBy(50) }
+        shoot("polish-new-grant")
+    }
+
+    /** Autopilot during a bypass: Mode (?) on one line, Stop bypass without an icon; then the help open. */
+    @Test
+    fun polishAutopilotBypass() {
+        core.model = installed
+        core.apGlobal = FakeCore.ApRow(bypassUntil = now + 8 * 60 + 12, bypassSince = now - 60 * 7)
+        launch()
+        tap("tabAutopilot")
+        await("modeHero")
+        repeat(20) { rule.mainClock.advanceTimeBy(50) }
+        shoot("polish-autopilot-bypass")
+        tap("help:Mode")
+        repeat(20) { rule.mainClock.advanceTimeBy(50) }
+        shoot("polish-autopilot-mode-help")
+    }
+
+    /** The count on the Activity tab with many new entries, seen from another tab. */
+    @Test
+    fun polishBadge() {
+        core.activity = (1L..120L).map { TestData.entry(it, at = now - 120 + it) }
+        launch()
+        tap("tabGrants")
+        repeat(10) { rule.mainClock.advanceTimeBy(50) }
+        // Opening the app on Activity counted the newest as seen; from Grants, 120 are new.
+        (context.applicationContext as ReinsApp).container.state.setSeenActivityId(0)
+        repeat(10) { rule.mainClock.advanceTimeBy(50) }
+        shoot("polish-badge")
     }
 
     /** The activity list opens at the oldest unseen entry; these shots want its top. */

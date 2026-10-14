@@ -162,6 +162,12 @@ impl Desk {
             self.core.activity(200).await.unwrap(),
             self.core.grants().await.unwrap()
         );
+        // What each Activity entry shows again of its approval.
+        for entry in self.core.activity(200).await.unwrap() {
+            if let Ok(Some(view)) = self.core.activity_approval(entry.id).await {
+                write!(shown, " {view:?}").unwrap();
+            }
+        }
         for id in ids {
             if let Ok(view) = self.core.approval_view((*id).to_owned()).await {
                 write!(shown, " {view:?}").unwrap();

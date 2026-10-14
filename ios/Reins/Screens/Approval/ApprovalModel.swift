@@ -17,9 +17,24 @@ final class ApprovalModel {
     private(set) var finished = false
     /// What Autopilot made of the request (Manual and Auto), if it looked at it.
     private(set) var suggestion: SuggestionView?
+    /// An Activity entry's request shown again as it was decided: nothing can be changed or answered.
+    private(set) var readOnly = false
 
     init(requestId: String) {
         self.requestId = requestId
+    }
+
+    /// An Activity entry's request as its approval showed it (`ReinsCoreProtocol.activityApproval`), read-only, with
+    /// `released` (the emails and addresses that were shared) ticked.
+    init(recorded view: ApprovalView, released: Set<String>) {
+        requestId = view.requestId
+        self.view = view
+        var shown = ApprovalDraft.initial(for: view)
+        shown.selected = released
+        shown.allMail = nil
+        draft = shown
+        loading = false
+        readOnly = true
     }
 
     /// A model already holding `view` (previews and tests).
@@ -32,7 +47,7 @@ final class ApprovalModel {
     }
 
     func load(_ app: AppModel) async {
-        guard view == nil else { return }
+        guard view == nil, !readOnly else { return }
         do {
             let v = try await app.core.approvalView(requestId: requestId)
             view = v
@@ -56,7 +71,7 @@ final class ApprovalModel {
     /// Approving needs the owner's Face ID, Touch ID or passcode first; anything but a confirmation does nothing. What
     /// is remembered alongside is what the dock and its "Remember for" sheet say (`buildDecision`).
     func approve(_ app: AppModel) async {
-        guard let view, !busy else { return }
+        guard let view, !busy, !readOnly else { return }
         let choice: ApprovalChoice
         switch buildDecision(view, draft) {
         case let .invalid(message):
@@ -92,7 +107,7 @@ final class ApprovalModel {
     /// Denying needs no confirmation: it can only take something away.
     /// Closes at once; the answer goes out in the background (and the request comes back if it could not).
     func deny(_ app: AppModel) async {
-        guard !busy else { return }
+        guard !busy, !readOnly else { return }
         app.feedback.play(.denied)
         let (core, id) = (app.core, requestId)
         app.answerInBackground(id, failed: "Not denied") { try await core.deny(requestId: id) }

@@ -423,6 +423,8 @@ pub struct Config {
     pub ssh: crate::ssh_agent::SshConfig,
     /// "Check your phone" on the desktop (`[notify]`).
     pub notify: crate::notify::NotifyConfig,
+    /// Reins Secrets (`[secrets]`).
+    pub secrets: crate::secrets_scan::SecretsConfig,
 }
 
 impl Default for Config {
@@ -440,6 +442,7 @@ impl Default for Config {
             api: Vec::new(),
             ssh: crate::ssh_agent::SshConfig::default(),
             notify: crate::notify::NotifyConfig::default(),
+            secrets: crate::secrets_scan::SecretsConfig::default(),
         }
     }
 }

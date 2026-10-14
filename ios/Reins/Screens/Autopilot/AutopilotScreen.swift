@@ -77,15 +77,22 @@ struct AutopilotScreen: View {
             PageHeader(title: "Autopilot") { EmptyView() }
                 .padding(.horizontal, 4)
                 .padding(.top, root ? 8 : 0)
-            ModeHero(
-                settings: s,
-                modelReady: ap.modelReady,
-                onPick: { pick($0, s) },
-                onBypass: { bypassAsk = true },
-                onLockdown: { Task { await ap.setMode(.lockdown) } },
-                onEndLockdown: { Task { await ap.endLockdown() } },
-                onStopBypass: { Task { await ap.stopBypass() } }
-            )
+            VStack(alignment: .leading, spacing: 8) {
+                // "Mode" with its (?) right beside the word; what the modes do opens under it.
+                HelpHeader(title: "Mode", help: AutopilotText.modeHelp, id: "mode")
+                    .padding(.horizontal, 12)
+                    .accessibilityElement(children: .contain)
+                    .accessibilityIdentifier("modeHeader")
+                ModeHero(
+                    settings: s,
+                    modelReady: ap.modelReady,
+                    onPick: { pick($0, s) },
+                    onBypass: { bypassAsk = true },
+                    onLockdown: { Task { await ap.setMode(.lockdown) } },
+                    onEndLockdown: { Task { await ap.endLockdown() } },
+                    onStopBypass: { Task { await ap.stopBypass() } }
+                )
+            }
             .padding(.top, -8)
             if ap.error != nil || ap.notice != nil {
                 VStack(spacing: 8) {
@@ -168,7 +175,7 @@ struct AutopilotScreen: View {
 
 /// The mode, large. Manual and Auto side by side (the chosen one tinted), Bypass and Lock down under them; amber in
 /// Lockdown, where neither is chosen and the second button ends it. During a bypass: red, its ring, what it does and
-/// Stop now.
+/// Stop bypass.
 private struct ModeHero: View {
     var settings: AutopilotSettings
     var modelReady: Bool
@@ -262,8 +269,9 @@ private struct ModeHero: View {
                 }
                 Spacer(minLength: 0)
             }
+            // Words only, as everywhere a bypass is stopped.
             Button(action: onStopBypass) {
-                Text("Stop now")
+                Text("Stop bypass")
                     .font(RFont.sans(16, .semibold))
                     .foregroundStyle(Palette.dynamic(0xFFFFFF, 0x2A0606))
                     .frame(maxWidth: .infinity, minHeight: 46)
@@ -324,7 +332,7 @@ private struct ModeCard: View {
             .opacity(dimmed ? 0.5 : 1)
             .contentShape(RoundedRectangle(cornerRadius: 20, style: .continuous))
         }
-        .buttonStyle(PressDim())
+        .buttonStyle(ModeCardPress())
         .accessibilityElement(children: .combine)
         .accessibilityAddTraits(selected ? [.isButton, .isSelected] : .isButton)
         .accessibilityHint(dimmed ? "Needs the on-device model" : "")
