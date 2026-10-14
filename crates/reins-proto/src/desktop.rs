@@ -37,6 +37,12 @@ pub const MAX_COMMITS: usize = 50;
 pub const MAX_FILES: usize = 300;
 pub const MAX_PUSH_OPTIONS: usize = 10;
 pub const MAX_NOTES: usize = 10;
+/// Files listed for one commit (its own change against its first parent).
+pub const MAX_COMMIT_FILES: usize = 100;
+/// Lines of one file's patch, hunk headers included; a longer change is cut (`patch_cut`).
+pub const MAX_PATCH_LINES: usize = 400;
+/// Characters of one patch line; a longer line is cut with "…".
+pub const MAX_PATCH_LINE: usize = 240;
 /// Largest push summary the desktop app sends (the tool's `summary` argument allows a little more).
 pub const MAX_SUMMARY_BYTES: usize = 190_000;
 const MAX_REF: usize = 250;
@@ -73,6 +79,17 @@ pub struct CommitInfo {
     pub author: String,
     /// Author time, unix seconds.
     pub date: i64,
+    /// What this commit itself changes, against its first parent (all added for a root commit): the files, at most
+    /// [`MAX_COMMIT_FILES`], and how many there are; `None` when they were not compared.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub files_changed: Option<u32>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub files: Vec<FileChange>,
+    /// Lines the commit adds and removes; `None` when not every file could be counted.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub additions: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub deletions: Option<u64>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -86,6 +103,49 @@ pub struct FileChange {
     pub deletions: Option<u32>,
     #[serde(default)]
     pub binary: bool,
+    /// The change as a unified diff without its file headers: `@@ -a,b +c,d @@` lines, then one line per line of
+    /// the files, starting with ' ', '+' or '-' (three lines of context). At most [`MAX_PATCH_LINES`] lines of at
+    /// most [`MAX_PATCH_LINE`] characters, no control characters but tabs. `None` when not shown (binary, too large,
+    /// over the push's budget, or the file of a whole ref rather than of one commit).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub patch: Option<String>,
+    /// `patch` stops before the end of the change.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub patch_cut: bool,
+}
+
+impl FileChange {
+    /// A file without a patch.
+    #[must_use]
+    pub fn new(path: String, status: FileStatus, additions: Option<u32>, deletions: Option<u32>, binary: bool) -> Self {
+        Self {
+            path,
+            status,
+            additions,
+            deletions,
+            binary,
+            patch: None,
+            patch_cut: false,
+        }
+    }
+}
+
+/// One line of a patch is valid: a hunk header or a line of context, added or removed, without control characters.
+fn patch_ok(patch: &str) -> Result<(), String> {
+    let lines: Vec<&str> = patch.split('\n').collect();
+    if lines.len() > MAX_PATCH_LINES {
+        return Err(format!("a patch has at most {MAX_PATCH_LINES} lines"));
+    }
+    for line in lines {
+        let ok_start = line.starts_with("@@ ") || line.starts_with([' ', '+', '-']) || line.starts_with('\\');
+        if !ok_start {
+            return Err("a patch line starts with @@, ' ', '+', '-' or '\\'".to_owned());
+        }
+        if line.chars().count() > MAX_PATCH_LINE + 1 || line.chars().any(|c| c.is_control() && c != '\t') {
+            return Err(format!("a patch line is at most {MAX_PATCH_LINE} characters, without control characters"));
+        }
+    }
+    Ok(())
 }
 
 /// One ref the push changes, as git sent it, with what the app found out about it.
@@ -158,6 +218,14 @@ pub struct PushSummary {
     pub notes: Vec<String>,
 }
 
+/// A list [`PushSummary::fit`] can shorten.
+#[derive(Clone, Copy)]
+enum List {
+    Files,
+    Commits,
+    CommitFiles(usize),
+}
+
 fn is_oid(s: &str) -> bool {
     s.len() == 40 && s.bytes().all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
 }
@@ -170,6 +238,15 @@ fn clean(s: &str, max: usize, what: &str) -> Result<(), String> {
         return Err(format!("{what} must not contain control characters"));
     }
     Ok(())
+}
+
+fn file_ok(f: &FileChange) -> Result<(), String> {
+    clean(&f.path, MAX_PATH, "a file path")?;
+    match &f.patch {
+        Some(p) => patch_ok(p),
+        None if f.patch_cut => Err("a patch is cut but missing".to_owned()),
+        None => Ok(()),
+    }
 }
 
 impl PushSummary {
@@ -224,43 +301,95 @@ impl PushSummary {
                     return Err("a commit subject is one line of at most 200 characters".to_owned());
                 }
                 clean(&c.author, MAX_LINE, "a commit author")?;
+                if c.files.len() > MAX_COMMIT_FILES || (c.files.len() as u64) > u64::from(c.files_changed.unwrap_or(0))
+                {
+                    return Err("too many files listed for a commit".to_owned());
+                }
+                for f in &c.files {
+                    file_ok(f)?;
+                }
             }
             for f in &u.files {
-                clean(&f.path, MAX_PATH, "a file path")?;
+                file_ok(f)?;
             }
         }
         Ok(())
     }
 
-    /// Shortens the commit and file lists (longest first, the counts stay) until the JSON is at most `max` bytes, and
-    /// says so in a note. `false` when even empty lists do not fit.
+    /// Shortens the summary until its JSON is at most `max` bytes, and says so in a note: first the patches (largest
+    /// first), then the commit and file lists (longest first; the counts stay). `false` when even empty lists do not
+    /// fit.
     pub fn fit(&mut self, max: usize) -> bool {
+        const PATCHES_NOTE: &str = "Some changes are not shown line by line: the push is too large.";
+        const LISTS_NOTE: &str = "Some commits and files are not listed: the push is too large to show in full.";
         let size = |s: &Self| serde_json::to_vec(s).map_or(usize::MAX, |v| v.len());
-        let mut trimmed = false;
+        let mut estimate = size(self);
+        if estimate <= max {
+            return true;
+        }
+        // The note is part of the JSON it has to fit in, so it goes in first.
+        let has_patches =
+            self.updates.iter().flat_map(|u| &u.commits).flat_map(|c| &c.files).any(|f| f.patch.is_some());
+        let noted = |s: &Self, note: &str| s.notes.iter().any(|n| n == note);
+        if has_patches && !noted(self, PATCHES_NOTE) && !noted(self, LISTS_NOTE) && self.notes.len() < MAX_NOTES {
+            self.notes.push(PATCHES_NOTE.to_owned());
+            estimate += PATCHES_NOTE.len() + 3;
+        }
+        // Each patch dropped takes its JSON string and key off the estimate; the size is measured again after.
+        while estimate > max {
+            let largest = self
+                .updates
+                .iter_mut()
+                .flat_map(|u| u.commits.iter_mut())
+                .flat_map(|c| c.files.iter_mut())
+                .filter(|f| f.patch.is_some())
+                .max_by_key(|f| f.patch.as_ref().map_or(0, String::len));
+            let Some(file) = largest else {
+                break;
+            };
+            let json = serde_json::to_string(&file.patch).map_or(0, |s| s.len());
+            estimate = estimate.saturating_sub(json + r#","patch":"#.len());
+            if file.patch_cut {
+                estimate = estimate.saturating_sub(r#","patch_cut":true"#.len());
+            }
+            file.patch = None;
+            file.patch_cut = false;
+        }
+        if size(self) > max && !noted(self, LISTS_NOTE) {
+            // Lists go too: one note says both.
+            self.notes.retain(|n| n != PATCHES_NOTE);
+            if self.notes.len() < MAX_NOTES {
+                self.notes.push(LISTS_NOTE.to_owned());
+            }
+        }
         while size(self) > max {
-            let Some((u, files)) = self
+            // The longest list (a ref's files, its commits, a commit's files) loses half.
+            let Some((u, list)) = self
                 .updates
                 .iter()
                 .enumerate()
-                .flat_map(|(i, u)| [(u.files.len(), i, true), (u.commits.len(), i, false)])
+                .flat_map(|(i, u)| {
+                    [(u.files.len(), i, List::Files), (u.commits.len(), i, List::Commits)]
+                        .into_iter()
+                        .chain(u.commits.iter().enumerate().map(move |(j, c)| (c.files.len(), i, List::CommitFiles(j))))
+                })
                 .max_by_key(|(len, _, _)| *len)
                 .filter(|(len, _, _)| *len > 0)
-                .map(|(_, i, files)| (i, files))
+                .map(|(_, i, list)| (i, list))
             else {
                 return false;
             };
             let update = &mut self.updates[u];
-            if files {
-                update.files.truncate(update.files.len() / 2);
-            } else {
-                update.commits.truncate(update.commits.len() / 2);
+            match list {
+                List::Files => update.files.truncate(update.files.len() / 2),
+                List::Commits => update.commits.truncate(update.commits.len() / 2),
+                List::CommitFiles(j) => {
+                    let files = &mut update.commits[j].files;
+                    files.truncate(files.len() / 2);
+                }
             }
-            trimmed = true;
         }
-        if trimmed && self.notes.len() < MAX_NOTES {
-            self.notes.push("Some commits and files are not listed: the push is too large to show in full.".to_owned());
-        }
-        size(self) <= max
+        true
     }
 
     /// The tool a push to `service` asks for (`github`, `gitlab`, `codeberg`, `bitbucket`).
@@ -597,6 +726,19 @@ mod tests {
         }
     }
 
+    fn commit(sha: &str) -> CommitInfo {
+        CommitInfo {
+            sha: sha.to_owned(),
+            subject: "x".into(),
+            author: "a <a@b>".into(),
+            date: 0,
+            files_changed: None,
+            files: vec![],
+            additions: None,
+            deletions: None,
+        }
+    }
+
     fn summary(updates: Vec<RefUpdate>) -> PushSummary {
         PushSummary {
             updates,
@@ -642,12 +784,7 @@ mod tests {
         let mut wrong_kind = update("refs/heads/main", A, B, Some(true));
         wrong_kind.change = RefChange::Create;
         let mut overcount = update("refs/heads/main", A, B, Some(true));
-        overcount.commits.push(CommitInfo {
-            sha: A.into(),
-            subject: "x".into(),
-            author: "a <a@b>".into(),
-            date: 0,
-        });
+        overcount.commits.push(commit(A));
         for bad in [
             summary(vec![]),
             summary(vec![wrong_kind]),
@@ -666,12 +803,14 @@ mod tests {
     fn oversized_summaries_are_shortened_but_keep_their_counts() {
         let mut big = update("refs/heads/main", A, B, Some(true));
         big.files = (0..MAX_FILES)
-            .map(|i| FileChange {
-                path: format!("{}/{i}.rs", "deep/".repeat(150)),
-                status: FileStatus::Modified,
-                additions: Some(1),
-                deletions: Some(1),
-                binary: false,
+            .map(|i| {
+                FileChange::new(
+                    format!("{}/{i}.rs", "deep/".repeat(150)),
+                    FileStatus::Modified,
+                    Some(1),
+                    Some(1),
+                    false,
+                )
             })
             .collect();
         big.files_changed = 4_000;
@@ -687,6 +826,83 @@ mod tests {
         assert!(small.fit(MAX_SUMMARY_BYTES));
         assert!(small.notes.is_empty(), "nothing trimmed, nothing said");
         assert!(!small.fit(10));
+    }
+
+    fn with_patch(file: &str, diff: &str) -> FileChange {
+        FileChange {
+            patch: Some(diff.to_owned()),
+            ..FileChange::new(file.to_owned(), FileStatus::Modified, Some(1), Some(1), false)
+        }
+    }
+
+    #[test]
+    fn commits_carry_their_own_files_and_patches_within_bounds() {
+        let mut u = update("refs/heads/main", A, B, Some(true));
+        u.commit_count = 1;
+        let mut c = commit(B);
+        c.files_changed = Some(2);
+        c.files = vec![
+            with_patch("a.rs", "@@ -1,2 +1,2 @@\n context\n-old\n+new\n\\ No newline at end of file"),
+            FileChange::new("logo.png".into(), FileStatus::Added, None, None, true),
+        ];
+        u.commits.push(c);
+        summary(vec![u.clone()]).validate().unwrap();
+
+        // Old summaries (no commit files, no patches) still read, and new fields stay out of the JSON when empty.
+        let old = r#"{"sha":"1111111111111111111111111111111111111111","subject":"x","author":"a <a@b>","date":0}"#;
+        let parsed: CommitInfo = serde_json::from_str(old).unwrap();
+        assert_eq!((parsed.files_changed, parsed.files.len()), (None, 0));
+        assert_eq!(serde_json::to_string(&parsed).unwrap(), old);
+
+        let bad = |edit: &dyn Fn(&mut CommitInfo)| {
+            let mut v = u.clone();
+            edit(&mut v.commits[0]);
+            summary(vec![v]).validate().is_err()
+        };
+        assert!(bad(&|c| c.files_changed = Some(1)), "more files listed than counted");
+        assert!(bad(&|c| c.files[0].patch = Some("no prefix".into())));
+        assert!(bad(&|c| c.files[0].patch = Some("+a\u{1b}[31m".into())), "control characters");
+        assert!(bad(&|c| c.files[0].patch = Some(format!("+{}", "x".repeat(MAX_PATCH_LINE + 1)))));
+        assert!(bad(&|c| c.files[0].patch = Some(vec!["+a"; MAX_PATCH_LINES + 1].join("\n"))));
+        assert!(
+            bad(&|c| {
+                c.files[1].patch_cut = true;
+            }),
+            "cut without a patch"
+        );
+        assert!(bad(&|c| {
+            c.files_changed = Some(500);
+            c.files = vec![FileChange::new("f".into(), FileStatus::Added, None, None, false); MAX_COMMIT_FILES + 1];
+        }));
+        assert!(!bad(&|c| c.files[0].patch = Some("+\ttabs are fine".into())));
+    }
+
+    #[test]
+    fn fitting_drops_patches_before_any_list() {
+        let mut u = update("refs/heads/main", A, B, Some(true));
+        u.commit_count = 3;
+        let patch = vec!["+".to_owned() + &"y".repeat(200); MAX_PATCH_LINES].join("\n");
+        for _ in 0..3 {
+            let mut c = commit(B);
+            c.files_changed = Some(2);
+            c.files = vec![with_patch("big.rs", &patch), with_patch("small.rs", "@@ -1 +1 @@\n-a\n+b")];
+            u.commits.push(c);
+        }
+        let mut s = summary(vec![u]);
+        let full = serde_json::to_vec(&s).unwrap().len();
+        assert!(full > 200_000);
+        assert!(s.fit(full - 50_000));
+        let u = &s.updates[0];
+        assert_eq!(u.commits.len(), 3, "every commit stays");
+        assert!(u.commits.iter().all(|c| c.files.len() == 2), "and every file");
+        assert!(u.commits.iter().all(|c| c.files[1].patch.is_some()), "small patches stay");
+        assert!(u.commits.iter().any(|c| c.files[0].patch.is_none()), "large ones go first");
+        assert_eq!(s.notes, ["Some changes are not shown line by line: the push is too large."]);
+        s.validate().unwrap();
+        // Still too large without any patch: the lists shrink too.
+        assert!(s.fit(600));
+        assert!(serde_json::to_vec(&s).unwrap().len() <= 600);
+        assert_eq!(s.notes, ["Some commits and files are not listed: the push is too large to show in full."]);
     }
 
     #[test]

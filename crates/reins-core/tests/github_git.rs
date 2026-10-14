@@ -13,8 +13,8 @@ use crypto_box::aead::OsRng;
 use data_encoding::BASE64URL_NOPAD;
 use reins_core::store::unix_now;
 use reins_core::{
-    ApprovalChoice, ApprovalKind, CoreConfig, CoreError, GoogleTokenProvider, GrantScopeChoice, Notifier, ReinsCore,
-    StandingGrant,
+    ApprovalChoice, ApprovalKind, CoreConfig, CoreError, DiffLineKind, GoogleTokenProvider, GrantScopeChoice, Notifier,
+    ReinsCore, StandingGrant,
 };
 use reins_proto::desktop::{
     CommitInfo, CredentialGrant, FETCH_LEASE_SECS, FileChange, FileStatus, PUSH_LEASE_SECS, PushSummary, RefChange,
@@ -219,24 +219,27 @@ fn fast_forward() -> Value {
             subject: (*s).to_owned(),
             author: "Ann <ann@example.com>".to_owned(),
             date: 1_700_000_000,
-        })
-        .collect();
-    u.files_changed = 2;
-    u.files = vec![
-        FileChange {
-            path: "src/parse.rs".to_owned(),
-            status: FileStatus::Modified,
-            additions: Some(10),
-            deletions: Some(2),
-            binary: false,
-        },
-        FileChange {
-            path: "logo.png".to_owned(),
-            status: FileStatus::Added,
+            files_changed: None,
+            files: vec![],
             additions: None,
             deletions: None,
-            binary: true,
+        })
+        .collect();
+    // The newest commit says what it changes itself, line by line.
+    u.commits[0].files_changed = Some(2);
+    u.commits[0].additions = Some(2);
+    u.commits[0].deletions = Some(1);
+    u.commits[0].files = vec![
+        FileChange {
+            patch: Some("@@ -3,3 +3,4 @@ fn parse()\n let a = 1;\n-let b = 2;\n+let b = 3;\n+\tlet c = 4;\n }\n\\ No newline at end of file".to_owned()),
+            ..FileChange::new("src/parse.rs".to_owned(), FileStatus::Modified, Some(2), Some(1), false)
         },
+        FileChange::new("logo.png".to_owned(), FileStatus::Added, None, None, true),
+    ];
+    u.files_changed = 2;
+    u.files = vec![
+        FileChange::new("src/parse.rs".to_owned(), FileStatus::Modified, Some(10), Some(2), false),
+        FileChange::new("logo.png".to_owned(), FileStatus::Added, None, None, true),
     ];
     u.additions = Some(10);
     u.deletions = Some(2);
@@ -551,6 +554,30 @@ async fn a_push_is_parked_with_what_it_does_and_answered_with_a_write_credential
         files,
         [("src/parse.rs", "modified", Some(10), Some(2), false), ("logo.png", "added", None, None, true)]
     );
+    // Each commit's own change, and the newest one's lines with their numbers.
+    let newest = &r.commits[0];
+    assert_eq!(
+        (newest.date, newest.files_changed, newest.additions, newest.deletions),
+        (1_700_000_000, Some(2), Some(2), Some(1))
+    );
+    assert_eq!((r.commits[1].files_changed, r.commits[1].files.len()), (None, 0));
+    assert!(r.files.iter().all(|f| f.diff.is_empty()), "a ref's files carry no lines");
+    let parse = &newest.files[0];
+    let lines: Vec<_> = parse.diff.iter().map(|l| (l.kind, l.old_line, l.new_line, l.text.as_str())).collect();
+    assert_eq!(
+        lines,
+        [
+            (DiffLineKind::Hunk, None, None, "@@ -3,3 +3,4 @@ fn parse()"),
+            (DiffLineKind::Context, Some(3), Some(3), "let a = 1;"),
+            (DiffLineKind::Delete, Some(4), None, "let b = 2;"),
+            (DiffLineKind::Add, None, Some(4), "let b = 3;"),
+            (DiffLineKind::Add, None, Some(5), "    let c = 4;"),
+            (DiffLineKind::Context, Some(5), Some(6), "}"),
+            (DiffLineKind::Note, None, None, "No newline at end of file"),
+        ]
+    );
+    assert!(!parse.diff_cut);
+    assert!(newest.files[1].binary && newest.files[1].diff.is_empty());
 
     let before = unix_now();
     env.core.approve("r1".to_owned(), choice(&[], None)).await.unwrap();

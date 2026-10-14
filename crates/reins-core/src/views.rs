@@ -16,9 +16,9 @@ use crate::connector::{Item, Preview};
 use crate::store::{AuditEmail, AuditInfo, AuditMessage, AuditRecord, StoredGrant, unix_now};
 use crate::text;
 use crate::types::{
-    ActivityEntry, ActivityInfo, ActivityMessage, ApprovalKind, ApprovalView, ClassOption, EmailView, GitCommitView,
-    GitFileView, GitPushView, GitRefView, GrantRequestView, GrantScopeChoice, GrantView, MessageView, PairingView,
-    PendingItem, PendingKind, ResourceView,
+    ActivityEntry, ActivityInfo, ActivityMessage, ApprovalKind, ApprovalView, ClassOption, DiffLineKind, DiffLineView,
+    EmailView, GitCommitView, GitFileView, GitPushView, GitRefView, GrantRequestView, GrantScopeChoice, GrantView,
+    MessageView, PairingView, PendingItem, PendingKind, ResourceView,
 };
 
 /// The only connector so far.
@@ -436,26 +436,15 @@ pub fn git_push_view(call: &ConnectorCall) -> Option<GitPushView> {
                         short_sha: c.sha.chars().take(7).collect(),
                         subject: line(&c.subject),
                         author: line(&c.author),
+                        date: c.date,
+                        files_changed: c.files_changed,
+                        files: c.files.iter().map(git_file_view).collect(),
+                        additions: c.additions,
+                        deletions: c.deletions,
                     })
                     .collect(),
                 files_changed: u.files_changed,
-                files: u
-                    .files
-                    .iter()
-                    .map(|f| GitFileView {
-                        path: line(&f.path),
-                        status: match f.status {
-                            FileStatus::Added => "added",
-                            FileStatus::Modified => "modified",
-                            FileStatus::Deleted => "deleted",
-                            FileStatus::TypeChanged => "type_changed",
-                        }
-                        .to_owned(),
-                        additions: f.additions,
-                        deletions: f.deletions,
-                        binary: f.binary,
-                    })
-                    .collect(),
+                files: u.files.iter().map(git_file_view).collect(),
                 additions: u.additions,
                 deletions: u.deletions,
             }
@@ -467,6 +456,106 @@ pub fn git_push_view(call: &ConnectorCall) -> Option<GitPushView> {
         notes: summary.notes.iter().map(|n| line(n)).collect(),
         refs,
     })
+}
+
+fn git_file_view(f: &desktop::FileChange) -> GitFileView {
+    GitFileView {
+        path: text::one_line(&f.path),
+        status: match f.status {
+            FileStatus::Added => "added",
+            FileStatus::Modified => "modified",
+            FileStatus::Deleted => "deleted",
+            FileStatus::TypeChanged => "type_changed",
+        }
+        .to_owned(),
+        additions: f.additions,
+        deletions: f.deletions,
+        binary: f.binary,
+        diff: f.patch.as_deref().map(diff_lines).unwrap_or_default(),
+        diff_cut: f.patch.is_some() && f.patch_cut,
+    }
+}
+
+/// A unified diff without file headers (`desktop::FileChange::patch`) as lines with their numbers. Lines that are none
+/// of a hunk header, context, an addition, a deletion or a note are left out, as is anything before the first hunk.
+pub fn diff_lines(patch: &str) -> Vec<DiffLineView> {
+    let clean = |s: &str| -> String {
+        s.chars()
+            .take(desktop::MAX_PATCH_LINE)
+            .flat_map(|c| match c {
+                '\t' => vec![' '; 4],
+                c if c.is_control() => vec!['\u{fffd}'],
+                c => vec![c],
+            })
+            .collect()
+    };
+    let mut out = Vec::new();
+    let (mut old, mut new): (Option<u32>, Option<u32>) = (None, None);
+    for raw in patch.lines().take(desktop::MAX_PATCH_LINES) {
+        if let Some((a, b)) = hunk_starts(raw) {
+            (old, new) = (Some(a), Some(b));
+            out.push(DiffLineView {
+                kind: DiffLineKind::Hunk,
+                old_line: None,
+                new_line: None,
+                text: clean(raw),
+            });
+            continue;
+        }
+        let (Some(o), Some(n)) = (old, new) else {
+            continue;
+        };
+        let mut chars = raw.chars();
+        let sign = chars.next();
+        let rest = clean(chars.as_str());
+        let line = |kind, old_line, new_line| DiffLineView {
+            kind,
+            old_line,
+            new_line,
+            text: rest.clone(),
+        };
+        match sign {
+            Some(' ') => {
+                out.push(line(DiffLineKind::Context, Some(o), Some(n)));
+                (old, new) = (Some(o.saturating_add(1)), Some(n.saturating_add(1)));
+            }
+            Some('-') => {
+                out.push(line(DiffLineKind::Delete, Some(o), None));
+                old = Some(o.saturating_add(1));
+            }
+            Some('+') => {
+                out.push(line(DiffLineKind::Add, None, Some(n)));
+                new = Some(n.saturating_add(1));
+            }
+            Some('\\') => out.push(DiffLineView {
+                kind: DiffLineKind::Note,
+                old_line: None,
+                new_line: None,
+                text: rest.trim_start().to_owned(),
+            }),
+            _ => {}
+        }
+    }
+    out
+}
+
+/// The first old and new line numbers of `@@ -a[,b] +c[,d] @@`.
+fn hunk_starts(header: &str) -> Option<(u32, u32)> {
+    let rest = header.strip_prefix("@@ -")?;
+    let (old, rest) = rest.split_once(" +")?;
+    let (new, _) = rest.split_once(" @@")?;
+    let start = |r: &str| r.split(',').next()?.parse::<u32>().ok();
+    // An empty side ("-0,0") starts at the line before its first: the next line on it is line 1.
+    let first = |r: &str| {
+        start(r).map(|s| {
+            if r.ends_with(",0") {
+                s + 1
+            } else {
+                s
+            }
+        })
+    };
+    Some((first(old)?, first(new)?))
 }
 
 fn sender_line(m: &MessageSummary) -> String {
@@ -1085,6 +1174,31 @@ mod tests {
     use reins_proto::gmail::OutgoingEmail;
 
     use super::*;
+
+    #[test]
+    fn patches_become_numbered_lines_and_garbage_is_left_out() {
+        let lines = diff_lines(
+            "junk before any hunk\n@@ -0,0 +1,2 @@\n+first\n+sec\u{1b}[0mond\n@@ -10 +11 @@\n-old\n+new\nnot a diff line",
+        );
+        let got: Vec<_> = lines.iter().map(|l| (l.kind, l.old_line, l.new_line, l.text.as_str())).collect();
+        assert_eq!(
+            got,
+            [
+                (DiffLineKind::Hunk, None, None, "@@ -0,0 +1,2 @@"),
+                (DiffLineKind::Add, None, Some(1), "first"),
+                (DiffLineKind::Add, None, Some(2), "sec\u{fffd}[0mond"),
+                (DiffLineKind::Hunk, None, None, "@@ -10 +11 @@"),
+                (DiffLineKind::Delete, Some(10), None, "old"),
+                (DiffLineKind::Add, None, Some(11), "new"),
+            ]
+        );
+        assert!(diff_lines("").is_empty());
+        assert!(diff_lines("@@ -x +y @@\n+a").is_empty(), "a header that does not parse starts nothing");
+        let long = format!("@@ -1 +1 @@\n+{}", "y".repeat(5_000));
+        assert_eq!(diff_lines(&long)[1].text.chars().count(), desktop::MAX_PATCH_LINE);
+        let many = format!("@@ -1 +1,9999 @@\n{}", vec!["+z"; 9_999].join("\n"));
+        assert_eq!(diff_lines(&many).len(), desktop::MAX_PATCH_LINES);
+    }
 
     fn summary(id: &str, from: &str, name: Option<&str>) -> MessageSummary {
         MessageSummary {
