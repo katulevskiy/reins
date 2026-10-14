@@ -97,8 +97,10 @@ final class GrantsSettingsUITests: XCTestCase {
         wait("customAmount")
         shot("resume-more")
         app.buttons["Cancel"].tap()
-        tap("expiredHeader")
-        XCTAssertTrue(element("expiredList").waitForNonExistence(timeout: 3))
+        if !pad {
+            app.navigationBars.buttons.firstMatch.tap()
+            XCTAssertTrue(element("expiredList").waitForNonExistence(timeout: 3))
+        }
         tap("grant:g1")
         wait("grantTitle")
         shot("grant-detail")
@@ -134,12 +136,12 @@ final class GrantsSettingsUITests: XCTestCase {
 
     // MARK: Grants
 
-    func testEndedGrantsWaitBehindTheExpiredPillWhichStaysOpenWhileBrowsing() {
+    func testEndedGrantsFoldIntoOneRowThatOpensTheirList() {
         launch()
         section("Grants")
         wait("grant:g1")
         XCTAssertFalse(element("ended:g3").exists)
-        XCTAssertTrue(app.staticTexts["Expired · 3"].exists)
+        XCTAssertTrue(element("expiredHeader").exists)
         tap("expiredHeader")
         wait("expiredList")
         wait("ended:g3")
@@ -150,9 +152,9 @@ final class GrantsSettingsUITests: XCTestCase {
         if !pad {
             app.navigationBars.buttons.firstMatch.tap()
             wait("expiredList")
+            app.navigationBars.buttons.firstMatch.tap()
+            XCTAssertTrue(element("expiredList").waitForNonExistence(timeout: 3))
         }
-        tap("expiredHeader")
-        XCTAssertTrue(element("expiredList").waitForNonExistence(timeout: 3))
     }
 
     func testARunningGrantOpensToItsDetailsAndCanBeDeleted() {
@@ -161,9 +163,8 @@ final class GrantsSettingsUITests: XCTestCase {
         tap("grant:g1")
         wait("grantTitle")
         XCTAssertTrue(app.staticTexts["Used 12 times"].exists)
-        scrollTo("revoke", detail: true)
         tap("revoke")
-        confirm("Delete")
+        confirm("End now")
         if pad {
             XCTAssertTrue(element("grantTitle").waitForNonExistence(timeout: 5))
         } else {
@@ -180,8 +181,11 @@ final class GrantsSettingsUITests: XCTestCase {
         tap("resume:g3")
         wait("confirmResume")
         XCTAssertFalse(element("customAmount").exists, "the extras stay tucked away")
+        tap("period:custom")
         tap("period:week")
         tap("confirmResume")
+        XCTAssertTrue(element("ended:g3").waitForNonExistence(timeout: 5))
+        if !pad { app.navigationBars.buttons.firstMatch.tap() }
         wait("grant:g3")
     }
 
@@ -211,7 +215,6 @@ final class GrantsSettingsUITests: XCTestCase {
         launch()
         section("Grants")
         tap("newGrant")
-        scrollTo("createGrant", detail: true)
         tap("createGrant")
         XCTAssertTrue(app.staticTexts["Choose which AI this is for."].waitForExistence(timeout: 3))
         let x = pad ? 0.78 : 0.5
@@ -224,7 +227,6 @@ final class GrantsSettingsUITests: XCTestCase {
         typeInto("parties", "alerts@bank.com, @statements.bank.com\n\n")
         scrollTo("newLifetime:oneTime", detail: true)
         tap("newLifetime:oneTime")
-        scrollTo("createGrant", detail: true)
         tap("createGrant")
         wait("newGrant")
     }

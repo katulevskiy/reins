@@ -259,4 +259,57 @@ final class GrantLogicTests: XCTestCase {
         draft.uses = "2"
         XCTAssertNil(ok(buildResume(g, draft)).standing)
     }
+
+    // MARK: Cards, the grant's page and extending
+
+    func testAGrantCardSaysHowMuchItWasUsedAndTheRingSaysWhatIsLeft() {
+        XCTAssertEqual(GrantText.usesLine(grant(uses: 3, maxUses: 10)), "3 of 10 uses")
+        XCTAssertEqual(GrantText.usesLine(grant(uses: 12)), "used 12 times")
+        XCTAssertEqual(GrantText.usesLine(grant(uses: 0)), "not used yet")
+        XCTAssertEqual(GrantText.usesValue(grant(uses: 3, maxUses: 10)), "3 of 10")
+        XCTAssertEqual(GrantText.usesValue(grant(uses: 12)), "Used 12 times")
+        XCTAssertEqual(GrantText.ringLabel(GrantClock(remaining: 5 * 3_600 + 10, fraction: 0.5, soon: false)), "5 h")
+        XCTAssertEqual(GrantText.ringLabel(GrantClock(remaining: nil, fraction: 1, soon: false)), "\u{221E}")
+    }
+
+    func testAGrantsPageSaysWhatItNeverIncludes() {
+        XCTAssertEqual(GrantText.never(grant(action: "send")), ["Read your mail"])
+        XCTAssertEqual(GrantText.never(grant(action: "read")), ["Send or change anything", "Codes and passwords"])
+        XCTAssertEqual(GrantText.never(grant(action: "write")), [])
+    }
+
+    func testANewGrantStartsAtAnHour() {
+        XCTAssertEqual(NewGrantDraft().lifetime, .hour)
+        XCTAssertEqual(NewGrantLifetime.oneTime.shortLabel, "Once")
+        XCTAssertEqual(NewGrantLifetime.day.shortLabel, "1 day")
+    }
+
+    func testOnceResumesForOneUse() {
+        let g = ended(maxUses: nil)
+        var draft = initialResumeDraft(g)
+        draft.once = true
+        let once = ok(buildResume(g, draft))
+        XCTAssertEqual(once.seconds, 86_400)
+        XCTAssertEqual(once.standing?.maxUses, 1)
+        let fixed = ended(editable: .some(nil))
+        var plain = initialResumeDraft(fixed)
+        plain.once = true
+        XCTAssertNil(ok(buildResume(fixed, plain)).standing, "a grant the editor cannot describe comes back as it was")
+    }
+
+    func testExtendingTakesATimeFromAMinuteToThirtyDays() {
+        let g = grant()
+        var draft = ResumeDraft()
+        draft.period = .hour
+        XCTAssertEqual(ok(buildExtend(g, draft)).seconds, 3_600)
+        XCTAssertNil(ok(buildExtend(g, draft)).standing)
+        draft.customAmount = "31"
+        draft.customUnit = .days
+        XCTAssertTrue(isInvalid(buildExtend(g, draft)))
+        draft.customAmount = "0"
+        XCTAssertTrue(isInvalid(buildExtend(g, draft)))
+        var all = ResumeDraft()
+        all.period = .month
+        XCTAssertTrue(isInvalid(buildExtend(grant(allMail: true), all)), "all mail: a week at most")
+    }
 }

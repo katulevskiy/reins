@@ -1,9 +1,12 @@
 import SwiftUI
 
-/// Asks how long to resume an ended grant for. The quick choices are up front; "More options" (like on an approval)
-/// holds a custom time, the number of uses, and who or what the grant covers.
+/// Asks how long to resume an ended grant for, or to extend a running one by. The quick choices are up front
+/// (Once | 1 hour | 1 day | Custom); "More options" (like on an approval) holds a custom time, the number of uses, and
+/// who or what the grant covers. Extending only asks for the time: the grant keeps its uses and scope.
 struct ResumeSheet: View {
     var grant: GrantView
+    /// A running grant: Extend, from now.
+    var extending = false
     var onResume: (_ seconds: Int64, _ standing: StandingGrant?) -> Void
     @Environment(\.dismiss) private var dismiss
     @Environment(\.feedback) private var feedback
@@ -11,8 +14,9 @@ struct ResumeSheet: View {
     @State private var error: String?
     @State private var detent: PresentationDetent = .medium
 
-    init(grant: GrantView, onResume: @escaping (_ seconds: Int64, _ standing: StandingGrant?) -> Void) {
+    init(grant: GrantView, extending: Bool = false, onResume: @escaping (_ seconds: Int64, _ standing: StandingGrant?) -> Void) {
         self.grant = grant
+        self.extending = extending
         self.onResume = onResume
         _draft = State(initialValue: initialResumeDraft(grant))
     }
@@ -27,22 +31,15 @@ struct ResumeSheet: View {
                     Text(untrusted(grant.summary))
                         .font(RFont.sans(16, .medium))
                         .foregroundStyle(Palette.text)
-                    Text("\(untrusted(grant.connectionLabel)) may use it again for:")
-                        .font(RFont.sans(14.5))
-                        .foregroundStyle(Palette.secondary)
-                        .padding(.top, 8)
-                    ChipFlow {
-                        ForEach(resumePeriods(allMail: editable && draft.allMail), id: \.self) { p in
-                            OptionChip(p.label, selected: !custom && draft.period == p) {
-                                edit { $0.period = p; $0.customAmount = "" }
-                            }
-                            .accessibilityIdentifier("period:\(p)")
-                        }
-                    }
-                    .padding(.top, 14)
+                    durations
+                        .padding(.top, 16)
 
-                    moreToggle
-                    if draft.moreOpen { more.transition(.opacity.combined(with: .move(edge: .top))) }
+                    if extending {
+                        if draft.moreOpen { customTime.transition(.opacity.combined(with: .move(edge: .top))) }
+                    } else {
+                        moreToggle
+                        if draft.moreOpen { more.transition(.opacity.combined(with: .move(edge: .top))) }
+                    }
 
                     if let error {
                         FormBanner(text: error).padding(.top, 14).accessibilityIdentifier("resumeInvalid")
@@ -57,27 +54,92 @@ struct ResumeSheet: View {
             .safeAreaInset(edge: .bottom) {
                 HStack(spacing: 12) {
                     Button("Cancel") { dismiss() }
-                        .buttonStyle(CapsuleButtonStyle(kind: .secondary, height: 50))
-                    Button("Resume", action: confirm)
-                        .buttonStyle(CapsuleButtonStyle(kind: .primary, height: 50))
-                        .accessibilityIdentifier("confirmResume")
+                        .buttonStyle(DockButtonStyle(kind: .neutral, height: 50))
+                    Button(action: confirm) {
+                        Label(extending ? "Extend" : "Resume", systemImage: BiometricSymbol.name)
+                    }
+                    .buttonStyle(DockButtonStyle(kind: .light, height: 50))
+                    .accessibilityIdentifier("confirmResume")
                 }
                 .padding(.horizontal, 22)
                 .padding(.top, 10)
                 .padding(.bottom, 12)
                 .background(Palette.background.opacity(0.001))
             }
-            .navigationTitle("Resume this grant?")
+            .navigationTitle(extending ? "Extend for" : "Resume for")
             .navigationBarTitleDisplayMode(.inline)
             .background(Palette.background.ignoresSafeArea())
         }
         .presentationDetents([.medium, .large], selection: $detent)
         .presentationDragIndicator(.visible)
         .presentationBackground(Palette.background)
-        .accessibilityIdentifier("resumeDialog")
+        .accessibilityIdentifier(extending ? "extendDialog" : "resumeDialog")
     }
 
     private var custom: Bool { !draft.customAmount.trimmingCharacters(in: .whitespaces).isEmpty }
+
+    /// Once | 1 hour | 1 day | Custom ▾ (7 days, 30 days, another time). Once only where the grant can be limited to a
+    /// use; never when extending (the grant keeps its uses).
+    private var durations: some View {
+        let allMail = editable && draft.allMail
+        let periods = resumePeriods(allMail: grant.allMail || allMail)
+        typealias Option = DurationControl<ResumePick>.Option
+        var inline: [Option] = []
+        if !extending {
+            inline.append(Option(value: .once, label: "Once", id: "once", enabled: editable))
+        }
+        for p in [ResumePeriod.hour, .day] {
+            inline.append(Option(value: .period(p), label: p == .day ? "1 day" : p.label, id: "\(p)"))
+        }
+        let more: [Option] = [ResumePeriod.week, .month].map { p in
+            Option(value: .period(p), label: p.label, id: "\(p)", enabled: periods.contains(p))
+        }
+        return DurationControl(
+            inline: inline,
+            more: more,
+            selection: draft.once ? .once : .period(draft.period),
+            customChosen: custom,
+            idPrefix: "period",
+            onOther: {
+                edit { $0.moreOpen = true }
+                detent = .large
+            },
+            onSelect: { pick in
+                edit {
+                    $0.customAmount = ""
+                    switch pick {
+                    case .once:
+                        $0.once = true
+                        $0.period = .day
+                    case let .period(p):
+                        $0.once = false
+                        $0.period = p
+                    }
+                }
+            }
+        )
+    }
+
+    /// Extending: only a typed time.
+    private var customTime: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            label("Custom time")
+            HStack(spacing: 10) {
+                TextField("e.g. 90", text: digits(\.customAmount))
+                    .keyboardType(.numberPad)
+                    .fieldWell()
+                    .frame(width: 110)
+                    .accessibilityLabel("Custom time")
+                    .accessibilityIdentifier("customAmount")
+                ChipFlow {
+                    ForEach(CustomUnit.allCases, id: \.self) { unit in
+                        OptionChip(unit.label, selected: draft.customUnit == unit) { edit { $0.customUnit = unit } }
+                            .accessibilityIdentifier("unit:\(unit)")
+                    }
+                }
+            }
+        }
+    }
 
     private var moreToggle: some View {
         Button {
@@ -199,7 +261,7 @@ struct ResumeSheet: View {
     }
 
     private func confirm() {
-        switch buildResume(grant, draft) {
+        switch extending ? buildExtend(grant, draft) : buildResume(grant, draft) {
         case let .invalid(message):
             error = message
         case let .ok(seconds, standing):

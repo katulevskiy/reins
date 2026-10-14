@@ -160,50 +160,105 @@ struct FormBanner: View {
 
 // MARK: Grant rows
 
-/// A running permission: the time left as a pie and along the border, how much it was used, who and what.
-struct GrantTile: View {
+/// A running permission as a card: the service with the AI's avatar, the summary in one sentence, who and how much it
+/// was used, a bar per use when capped, and the time left as a ring. Red when it ends soon.
+struct GrantCard: View {
     var grant: GrantView
     var now: Int64
 
     var body: some View {
         let clock = grantClock(grant, now: now)
-        let kind = ActionKind.of(grant.action)
-        HStack(alignment: .center, spacing: 14) {
-            ExpiryPie(clock: clock, size: 54)
-            VStack(alignment: .leading, spacing: 6) {
+        let shape = RoundedRectangle(cornerRadius: 22, style: .continuous)
+        HStack(alignment: .center, spacing: 13) {
+            ServiceMini(
+                service: grant.service, symbol: ActionKind.of(grant.action).symbol,
+                connectionId: grant.connectionId, label: grant.connectionLabel
+            )
+            VStack(alignment: .leading, spacing: 4) {
                 Text(untrusted(grant.summary))
-                    .font(RFont.sans(16, .semibold))
+                    .font(RFont.sans(15.5, .semibold))
                     .foregroundStyle(Palette.text)
                     .lineLimit(2)
                     .multilineTextAlignment(.leading)
-                HStack(spacing: 7) {
-                    ConnectionIcon(connectionId: grant.connectionId, label: grant.connectionLabel, size: 18)
-                    Text(untrusted(grant.connectionLabel))
-                        .font(RFont.sans(14, .medium))
-                        .foregroundStyle(Palette.secondary)
-                        .lineLimit(1)
-                    TintedTag(GrantText.verb(grant.action), tint: ActionTile.color(kind))
-                        .padding(.leading, 1)
-                }
-                // "Ends soon" shares the meter's line, so a narrow column (iPad, a folded Duo) keeps the title whole.
-                HStack(spacing: 8) {
-                    UsesMeter(uses: Int(grant.uses), maxUses: grant.maxUses.map(Int.init))
-                    Spacer(minLength: 0)
+                HStack(spacing: 0) {
+                    Text(untrusted(grant.connectionLabel) + " · ")
+                        .foregroundStyle(Palette.tertiary)
                     if clock.soon {
-                        TintedTag("Ends soon", tint: Palette.danger)
+                        Text("ends soon").fontWeight(.semibold).foregroundStyle(Palette.danger)
+                    } else {
+                        Text(GrantText.usesLine(grant)).foregroundStyle(Palette.tertiary)
                     }
                 }
-                ConnectorTags(service: grant.service, account: grant.account)
-                    .padding(.top, 1)
+                .font(RFont.sans(12.5))
+                .lineLimit(1)
+                if let cap = grant.maxUses, cap > 1 {
+                    UseDots(uses: Int(grant.uses), maxUses: Int(cap)).padding(.top, 4)
+                }
             }
             .frame(maxWidth: .infinity, alignment: .leading)
+            TimePie(clock: clock, size: 48)
         }
         .padding(14)
-        .background(Palette.elevated, in: RoundedRectangle(cornerRadius: 20, style: .continuous))
-        .overlay(TimeOutline(fraction: clock.fraction, color: clockColor(clock), radius: 20))
-        .contentShape(RoundedRectangle(cornerRadius: 20, style: .continuous))
+        .background {
+            if clock.soon {
+                shape.fill(LinearGradient(colors: [Palette.danger.opacity(0.07), Palette.danger.opacity(0.02)], startPoint: .top, endPoint: .bottom))
+                    .background(Palette.elevated, in: shape)
+            } else {
+                shape.fill(Palette.elevated)
+            }
+        }
+        .overlay(shape.strokeBorder(clock.soon ? Palette.danger.opacity(0.35) : Palette.hairline, lineWidth: 1))
+        .contentShape(shape)
         .accessibilityElement(children: .combine)
         .accessibilityHint("Opens the grant")
+    }
+}
+
+/// One small bar per use, the used ones in the accent; a thin meter when there are too many to count.
+struct UseDots: View {
+    var uses: Int
+    var maxUses: Int
+
+    var body: some View {
+        Group {
+            if maxUses <= 12 {
+                HStack(spacing: 3) {
+                    ForEach(0..<maxUses, id: \.self) { i in
+                        Capsule().fill(i < uses ? Palette.accent : Palette.dynamic(0xDDDDE2, 0x2A2A2F)).frame(width: 14, height: 4)
+                    }
+                }
+            } else {
+                let fraction = min(max(Double(uses) / Double(maxUses), 0), 1)
+                Capsule()
+                    .fill(Palette.dynamic(0xDDDDE2, 0x2A2A2F))
+                    .frame(width: 120, height: 4)
+                    .overlay(alignment: .leading) { Capsule().fill(Palette.accent).frame(width: 120 * fraction, height: 4) }
+            }
+        }
+        .accessibilityElement()
+        .accessibilityLabel("\(uses) of \(maxUses) uses")
+    }
+}
+
+/// The time left as a ring with the amount inside ("4m", "5h", "6d", "∞"): the accent, red when it ends soon.
+struct TimePie: View {
+    var clock: GrantClock
+    var size: CGFloat = 48
+
+    var body: some View {
+        let color = clockColor(clock)
+        ZStack {
+            ArcRing(fraction: clock.fraction, color: color, track: Palette.dynamic(0xE2E2E6, 0x26262B), lineWidth: size * 0.1)
+            Text(clock.label)
+                .font(RFont.fixedMono(size * 0.26, .semibold))
+                .foregroundStyle(color)
+                .lineLimit(1)
+                .minimumScaleFactor(0.7)
+                .environment(\.layoutDirection, .leftToRight)
+        }
+        .frame(width: size, height: size)
+        .accessibilityElement()
+        .accessibilityLabel(clock.remaining.map { "\(compactDuration($0)) left" } ?? "No time limit")
     }
 }
 
@@ -216,12 +271,11 @@ struct EndedGrantRow: View {
 
     var body: some View {
         HStack(alignment: .top, spacing: 14) {
-            Image(systemName: grant.state == "revoked" ? "trash" : "clock")
-                .font(.system(size: 18, weight: .medium))
-                .foregroundStyle(Palette.tertiary)
-                .frame(width: 44, height: 44)
-                .background(Palette.controlFill, in: Circle())
-                .accessibilityHidden(true)
+            ServiceMini(
+                service: grant.service, symbol: ActionKind.of(grant.action).symbol,
+                connectionId: grant.connectionId, label: grant.connectionLabel
+            )
+            .opacity(0.7)
             VStack(alignment: .leading, spacing: 5) {
                 Button(action: onOpen) {
                     VStack(alignment: .leading, spacing: 5) {
@@ -230,15 +284,10 @@ struct EndedGrantRow: View {
                             .foregroundStyle(Palette.text)
                             .lineLimit(2)
                             .multilineTextAlignment(.leading)
-                        HStack(spacing: 6) {
-                            ConnectionIcon(connectionId: grant.connectionId, label: grant.connectionLabel, size: 18)
-                            Text(untrusted(grant.connectionLabel) + " · " + GrantText.endedLine(grant))
-                                .font(RFont.sans(13))
-                                .foregroundStyle(Palette.secondary)
-                                .lineLimit(1)
-                        }
-                        ConnectorTags(service: grant.service, account: grant.account)
-                            .padding(.top, 2)
+                        Text(untrusted(grant.connectionLabel) + " · " + GrantText.endedLine(grant))
+                            .font(RFont.sans(12.5))
+                            .foregroundStyle(Palette.tertiary)
+                            .lineLimit(1)
                     }
                     .frame(maxWidth: .infinity, alignment: .leading)
                     .contentShape(Rectangle())

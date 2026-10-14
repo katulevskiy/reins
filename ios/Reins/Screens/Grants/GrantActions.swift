@@ -23,6 +23,21 @@ extension AppModel {
         }
     }
 
+    /// A running grant runs for `seconds` from now, keeping its uses. Longer access needs the same authentication as
+    /// approving.
+    func extendGrant(_ grantId: String, seconds: Int64) async -> String? {
+        if let refusal = await confirmOwner("Extend grant") { return refusal.message }
+        do {
+            feedback.play(.grantCreated)
+            try await core.extendGrant(grantId: grantId, durationSecs: UInt64(max(seconds, 0)))
+            await refreshPending()
+            return nil
+        } catch {
+            feedback.play(.error)
+            return error.userMessage
+        }
+    }
+
     /// Removes an ended grant for good. The list shows it as soon as the core has it; the full re-read follows.
     func deleteGrant(_ grantId: String) async -> String? {
         do {
