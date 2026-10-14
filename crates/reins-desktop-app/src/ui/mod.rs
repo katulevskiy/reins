@@ -124,8 +124,9 @@ struct Data {
     help: Option<&'static str>,
     /// Keys & secrets' scan and move.
     secrets: crate::secrets::Flow,
-    /// This computer's name.
+    /// This computer's name, and its machine project.
     computer: String,
+    machine: String,
     /// Finding and moving secrets is on (a preview; always in `--demo`).
     secrets_preview: bool,
 }
@@ -158,6 +159,7 @@ impl Data {
             help: None,
             secrets: m.secrets.clone(),
             computer: m.computer.clone(),
+            machine: m.machine.clone(),
             secrets_preview: m.args.demo
                 || m.snapshot
                     .as_ref()

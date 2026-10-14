@@ -267,30 +267,57 @@ pub async fn run(args: &ImportArgs, paths: &Paths, config: &Config) -> Result<Ve
     if report.findings.is_empty() {
         return Ok(vec!["No secrets found.".to_owned()]);
     }
-    let selected = if args.all_suggested || !args.select.is_empty() {
-        secrets_import::select(&report, &args.select, args.all_suggested)?
-    } else {
+    // Picking on the terminal (else what --select or --all-suggested says, and new names for every clash).
+    let interactive = !args.all_suggested && args.select.is_empty();
+    let selected = if interactive {
         match pick(&report)? {
             Some(s) => s,
             None => return Ok(vec!["Nothing done.".to_owned()]),
         }
+    } else {
+        secrets_import::select(&report, &args.select, args.all_suggested)?
     };
-    let ctx = Context {
+    let computer = crate::secrets_scan::computer_name();
+    let mut ctx = Context {
         home,
         state_dir: paths.state_dir.clone(),
-        computer: crate::secrets_scan::computer_name(),
+        machine: secrets_import::this_machine(paths, &computer)?,
+        computer,
         caller: Caller::Person,
+        merge: BTreeSet::new(),
     };
     let writer = real::PhoneWriter {
         paths: paths.clone(),
         config: config.clone(),
     };
+    // A project the vault already has from another folder: a new name, unless the person merges on purpose (asked
+    // here only; without a terminal choice, always the new name).
+    if interactive {
+        for clash in ctx.plan(&report, &selected, &writer).await.clashes.into_iter().filter(|c| c.known) {
+            let from = clash.existing_origin.as_deref().unwrap_or("a folder without a git origin");
+            let q = format!(
+                "{} already exists in your vault, from {from}. Merge this folder into it instead of naming it {}? [y/N] ",
+                clash.name, clash.chosen
+            );
+            if matches!(person::ask_tty(&q).as_deref().map(str::trim), Some("y" | "Y" | "yes")) {
+                ctx.merge.insert(clash.name);
+            }
+        }
+    }
     let keep_local = args.keep_local;
     let (receipt, path) =
         secrets_import::import(&ctx, &report, &selected, keep_local, &writer, &system, &mut |plan, check| {
             eprintln!("\nMove {} secrets from {} into your vault:", plan.count(), plan.computer);
             for line in plan.lines() {
                 eprintln!("  {line}");
+            }
+            for line in plan
+                .clashes
+                .iter()
+                .map(secrets_import::Clash::line)
+                .chain(plan.conflicts.iter().map(secrets_import::Conflict::line))
+            {
+                eprintln!("  ! {line}");
             }
             eprintln!(
                 "Then: {}",

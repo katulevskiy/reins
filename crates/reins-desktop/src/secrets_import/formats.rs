@@ -54,12 +54,15 @@ fn key(s: &str) -> String {
     }
 }
 
-/// `reins.toml` for a new project.
+/// `reins.toml` for a new project; `origin`: its git origin (`github.com/acme/api`), so its name stays tied to it.
 #[must_use]
-pub fn reins_toml(project: &str, default_env: &str, envs: &[EnvSettings]) -> String {
+pub fn reins_toml(project: &str, default_env: &str, envs: &[EnvSettings], origin: Option<&str>) -> String {
     let mut out = String::new();
     let _ = writeln!(out, "[project]");
     let _ = writeln!(out, "name = {}", quoted(project));
+    if let Some(o) = origin {
+        let _ = writeln!(out, "origin = {}", quoted(o));
+    }
     let _ = writeln!(out, "default_env = {}", quoted(default_env));
     for e in envs {
         let _ = writeln!(out, "\n[env.{}]", key(&e.name));
@@ -206,17 +209,20 @@ mod tests {
             "acme-web",
             "development",
             &[EnvSettings::for_env("development"), EnvSettings::for_env("production")],
+            Some("github.com/acme/web"),
         );
         assert_eq!(
             text,
-            "[project]\nname = \"acme-web\"\ndefault_env = \"development\"\n\n[env.development]\nlease = \"8h\"\n\n\
-             [env.production]\nlease = \"15m\"\nconfirm = \"always\"\n"
+            "[project]\nname = \"acme-web\"\norigin = \"github.com/acme/web\"\ndefault_env = \"development\"\n\n\
+             [env.development]\nlease = \"8h\"\n\n[env.production]\nlease = \"15m\"\nconfirm = \"always\"\n"
         );
         let parsed: toml::Value = toml::from_str(&text).unwrap();
         assert_eq!(parsed["project"]["name"].as_str(), Some("acme-web"));
+        assert_eq!(parsed["project"]["origin"].as_str(), Some("github.com/acme/web"));
         assert_eq!(parsed["env"]["production"]["confirm"].as_str(), Some("always"));
-        // Names that are not bare keys are quoted.
-        let odd = reins_toml("my \"app\"", "dev", &[EnvSettings::for_env("qa env")]);
+        // Names that are not bare keys are quoted; no origin, no line.
+        let odd = reins_toml("my \"app\"", "dev", &[EnvSettings::for_env("qa env")], None);
+        assert!(!odd.contains("origin"));
         let parsed: toml::Value = toml::from_str(&odd).unwrap();
         assert_eq!(parsed["project"]["name"].as_str(), Some("my \"app\""));
         assert!(parsed["env"].get("qa env").is_some());

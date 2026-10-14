@@ -441,7 +441,8 @@ impl Root {
     /// The review's right panel: how many move, into which folder, what happens after, and Move.
     fn review_panel(r: &Review, d: &Data, pal: Palette, top: f32, cx: &mut Context<'_, Self>) -> AnyElement {
         let n = r.count();
-        let machine = reins_desktop::secrets_import::machine_project(&d.computer);
+        let plan = r.plan(&d.computer, &d.machine);
+        let computer = d.computer.clone();
         let choice = |id: &'static str,
                       on: bool,
                       title: &'static str,
@@ -511,7 +512,7 @@ impl Root {
                     ),
             )
             .child(
-                caption(format!("into your vault · this computer's own in {machine}"), pal)
+                caption(format!("into your vault; this computer's own under \"{computer}\""), pal)
                     .text_color(pal.tertiary)
                     .mt(px(2.0)),
             )
@@ -538,10 +539,57 @@ impl Root {
                         cx,
                     )),
             )
+            .when(!plan.clashes.is_empty() || !plan.conflicts.is_empty(), |p| {
+                p.child(small_caps("Names").mt(px(18.0))).child(Self::names_card(&plan, pal, cx))
+            })
             .when_some(r.error.clone(), |p, e| p.child(caption(e, pal).mt(px(12.0)).text_color(pal.danger)))
             .child(div().flex_1())
             .child(mv)
             .into_any_element()
+    }
+
+    /// What the review says about names: a project the vault already has from another folder (a new name, or merge
+    /// into it on purpose), and a variable two files give the same environment (the more specific file wins).
+    fn names_card(plan: &reins_desktop::secrets_import::Plan, pal: Palette, cx: &mut Context<'_, Self>) -> Div {
+        let mut c = card(pal).mt(px(8.0));
+        let mut first = true;
+        for clash in &plan.clashes {
+            let name = clash.name.clone();
+            let label = if clash.merged() {
+                "Keep apart"
+            } else {
+                "Merge into it"
+            };
+            c = c.child(
+                row(pal, first).items_start().child(icon(Icon::TriangleAlert, 14.0, pal.warning).mt(px(2.0))).child(
+                    div()
+                        .flex()
+                        .flex_col()
+                        .flex_1()
+                        .min_w(px(0.0))
+                        .gap(px(6.0))
+                        .child(div().text_size(px(12.0)).line_height(px(16.0)).child(clash.line()))
+                        .child(div().flex().child(
+                            small(btn(SharedString::from(format!("merge-{name}")), label, Btn::Plain, pal)).on_click(
+                                Self::on_model(cx, move |m, cx| {
+                                    let name = name.clone();
+                                    m.review(cx, |r| r.toggle_merge(&name));
+                                }),
+                            ),
+                        )),
+                ),
+            );
+            first = false;
+        }
+        for conflict in &plan.conflicts {
+            c = c.child(
+                row(pal, first).items_start().child(icon(Icon::CircleAlert, 14.0, pal.secondary).mt(px(2.0))).child(
+                    div().flex_1().min_w(px(0.0)).text_size(px(12.0)).line_height(px(16.0)).child(conflict.line()),
+                ),
+            );
+            first = false;
+        }
+        c
     }
 
     fn finding_detail(r: &Review, f: &Finding, d: &Data, pal: Palette, cx: &mut Context<'_, Self>) -> AnyElement {
@@ -630,7 +678,8 @@ impl Root {
         );
         if f.source == Source::Dotenv {
             let mut w = well(pal).w(px(300.0)).flex_none().text_size(px(11.5)).line_height(px(18.0));
-            for (line, reference) in secrets::env_reins_preview(f, &r.ticked).into_iter().take(6) {
+            let project = secrets::project_in(&r.plan(&d.computer, &d.machine), f);
+            for (line, reference) in secrets::env_reins_preview(f, &r.ticked, &project).into_iter().take(6) {
                 w = w.child(div().truncate().when(!reference, |l| l.text_color(pal.tertiary)).child(line));
             }
             after = after.child(w);
@@ -747,8 +796,7 @@ impl Root {
             1 => "1 secret is in your vault".to_owned(),
             n => format!("{n} secrets are in your vault"),
         };
-        let mut under =
-            format!("In your vault · {}", reins_desktop::secrets_import::machine_project(&receipt.computer));
+        let mut under = format!("In your vault · from \"{}\"", receipt.computer);
         if receipt.keep_local {
             under.push_str(" · local copies kept");
         } else if !receipt.trashed().is_empty() {

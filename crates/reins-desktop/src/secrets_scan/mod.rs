@@ -324,6 +324,9 @@ pub struct Finding {
     pub project: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub project_root: Option<PathBuf>,
+    /// The project's git origin, normalized (`github.com/acme/api`), when its repository has one.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub origin: Option<String>,
     /// The latest commit that has the file, when it is in git history.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub git_commit: Option<String>,
@@ -633,6 +636,63 @@ pub(crate) fn run_for(mut cmd: std::process::Command, timeout: Duration) -> Opti
             }
         }
     }
+}
+
+/// A git remote's URL as `host/owner/repo` (`git@github.com:acme/api.git`, `https://github.com/acme/api`,
+/// `ssh://git@host:22/acme/api` → `github.com/acme/api`); `None` for a local path.
+#[must_use]
+pub fn normalize_remote(url: &str) -> Option<String> {
+    let url = url.trim();
+    let (host, path) = if let Some((_, rest)) = url.split_once("://") {
+        let rest = rest.rsplit_once('@').map_or(rest, |(_, r)| r);
+        let (host, path) = rest.split_once('/')?;
+        (host.split(':').next().unwrap_or(host), path)
+    } else {
+        // scp-like: user@host:path (not a Windows drive, not a path).
+        let (left, path) = url.split_once(':')?;
+        if left.contains(['/', '\\']) || left.len() == 1 {
+            return None;
+        }
+        (left.rsplit_once('@').map_or(left, |(_, h)| h), path)
+    };
+    let path = path.trim_matches('/');
+    let path = path.strip_suffix(".git").unwrap_or(path).trim_matches('/');
+    if host.is_empty() || path.is_empty() || path.contains('\\') || path.split('/').any(|p| p.is_empty() || p == "..") {
+        return None;
+    }
+    Some(format!("{}/{path}", host.to_ascii_lowercase()))
+}
+
+/// The `origin` remote of the repository at `root` (read from its config; git is not run).
+fn git_origin(root: &Path) -> Option<String> {
+    let dot_git = root.join(".git");
+    let config = if dot_git.is_dir() {
+        dot_git.join("config")
+    } else {
+        // A worktree: `.git` names its folder, whose `commondir` leads to the shared config.
+        let text = std::fs::read_to_string(&dot_git).ok()?;
+        let dir = root.join(text.trim().strip_prefix("gitdir:")?.trim());
+        match std::fs::read_to_string(dir.join("commondir")) {
+            Ok(common) => dir.join(common.trim()).join("config"),
+            Err(_) => dir.join("config"),
+        }
+    };
+    let text = std::fs::read_to_string(config).ok()?;
+    let mut in_origin = false;
+    for line in text.lines() {
+        let line = line.trim();
+        if line.starts_with('[') {
+            in_origin = line.replace(' ', "") == "[remote\"origin\"]";
+            continue;
+        }
+        if in_origin
+            && let Some((k, v)) = line.split_once('=')
+            && k.trim() == "url"
+        {
+            return normalize_remote(v.trim().trim_matches('"'));
+        }
+    }
+    None
 }
 
 /// The repository `path` is in (the nearest folder above it with `.git`), up to `stop`.
@@ -950,6 +1010,7 @@ impl Scan<'_> {
             abs_path: path.to_path_buf(),
             project: None,
             project_root: None,
+            origin: None,
             git_commit: None,
             key_type: None,
             summary: String::new(),
@@ -1001,6 +1062,7 @@ impl Scan<'_> {
                 path.strip_prefix(&root).map_or_else(|_| name.clone(), |r| r.to_string_lossy().replace('\\', "/"));
             f.title = format!("{project}/{rel}");
             f.project = Some(project);
+            f.origin = git_origin(&root);
             f.project_root = Some(root);
         }
         if let Some(c) = commit {

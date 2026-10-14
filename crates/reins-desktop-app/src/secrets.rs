@@ -9,7 +9,7 @@ use std::path::PathBuf;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 
-use reins_desktop::secrets_import::{self, Receipt};
+use reins_desktop::secrets_import::{self, Existing, Names, Plan, Receipt};
 use reins_desktop::secrets_scan::{Finding, Group, Progress, Risk, ScanReport, Source};
 
 /// Where the flow is.
@@ -47,11 +47,15 @@ pub struct Review {
     pub keep_local: bool,
     /// Why the last move did not start.
     pub error: Option<String>,
+    /// What the vault has (its projects and their origins), to never merge into one from elsewhere unasked.
+    pub existing: Existing,
+    /// Projects the person chose to merge into although the vault's came from elsewhere.
+    pub merge: BTreeSet<String>,
 }
 
 impl Review {
     #[must_use]
-    pub fn new(report: Arc<ScanReport>) -> Self {
+    pub fn new(report: Arc<ScanReport>, existing: Existing) -> Self {
         let ticked = secrets_import::select(&report, &[], true).unwrap_or_default();
         Self {
             report,
@@ -59,6 +63,30 @@ impl Review {
             open: None,
             keep_local: false,
             error: None,
+            existing,
+            merge: BTreeSet::new(),
+        }
+    }
+
+    /// Where the ticked secrets would go now (with the clashes and conflicts the review shows).
+    #[must_use]
+    pub fn plan(&self, computer: &str, machine: &str) -> Plan {
+        secrets_import::plan(
+            &self.report,
+            &self.ticked,
+            &Names {
+                computer,
+                machine,
+                existing: &self.existing,
+                merge: &self.merge,
+            },
+        )
+    }
+
+    /// Merge into the vault's project `name` after all, or not.
+    pub fn toggle_merge(&mut self, name: &str) {
+        if !self.merge.remove(name) {
+            self.merge.insert(name.to_owned());
         }
     }
 
@@ -156,10 +184,19 @@ pub fn after_move(source: Source) -> &'static str {
     }
 }
 
-/// The lines `.env.reins` will have for `f` (references for the ticked, the rest as they are): the detail's preview.
+/// The project `f`'s variables go to in `plan` (as named after any clash), else its own name.
 #[must_use]
-pub fn env_reins_preview(f: &Finding, ticked: &BTreeSet<String>) -> Vec<(String, bool)> {
-    let project = f.project.clone().unwrap_or_else(|| "project".to_owned());
+pub fn project_in(plan: &Plan, f: &Finding) -> String {
+    plan.envs
+        .iter()
+        .find(|e| e.project_root.is_some() && e.project_root == f.project_root)
+        .map_or_else(|| secrets_import::base_project(f), |e| e.project.clone())
+}
+
+/// The lines `.env.reins` will have for `f` in `project` (references for the ticked, the rest as they are): the
+/// detail's preview.
+#[must_use]
+pub fn env_reins_preview(f: &Finding, ticked: &BTreeSet<String>, project: &str) -> Vec<(String, bool)> {
     let file = f.abs_path.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
     let env = secrets_import::env_for(&file);
     f.items
@@ -182,7 +219,7 @@ mod tests {
     #[test]
     fn the_review_starts_with_the_suggested_ticks_and_toggles() {
         let report = Arc::new(Demo::secrets_report(std::path::Path::new("/home/dana")));
-        let mut r = Review::new(Arc::clone(&report));
+        let mut r = Review::new(Arc::clone(&report), Demo::secrets_vault());
         let acme = report.findings[0].clone();
         assert_eq!(r.ticked_in(&acme), 4);
         r.toggle_finding(&acme.id);
@@ -193,8 +230,15 @@ mod tests {
         assert_eq!(r.ticked_in(&acme), 3);
         assert!(r.count() < r.total());
         assert_eq!(risk_counts(&report)[0].0, Risk::ReadableByAgents);
-        let preview = env_reins_preview(&acme, &r.ticked);
+        let plan = r.plan("Dana's MacBook", "machine-danas-macbook-0000");
+        let preview = env_reins_preview(&acme, &r.ticked, &project_in(&plan, &acme));
         assert_eq!(preview[1].0, "STRIPE_SECRET_KEY=vault:acme-web/development/STRIPE_SECRET_KEY");
         assert!(!preview[0].1 && preview[5].0.starts_with("LOG_LEVEL=…"));
+        // The demo vault has an `api` from another folder: this one gets a new name, unless merged on purpose.
+        let api = report.findings.iter().find(|f| f.title == "api/.env.local").unwrap();
+        assert_eq!(project_in(&plan, api), "dev-api");
+        assert_eq!(plan.clashes.len(), 1);
+        r.toggle_merge("api");
+        assert_eq!(project_in(&r.plan("x", "machine-x-0000"), api), "api");
     }
 }

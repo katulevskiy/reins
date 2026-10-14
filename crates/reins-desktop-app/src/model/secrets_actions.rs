@@ -31,7 +31,7 @@ const PROGRESS_EVERY: Duration = Duration::from_millis(80);
 pub(super) fn initial(demo: bool, home: &std::path::Path) -> Flow {
     let step = std::env::var("REINS_DEMO_SECRETS").ok().filter(|_| demo).unwrap_or_default();
     let review = || {
-        let mut r = Review::new(Arc::new(Demo::secrets_report(home)));
+        let mut r = Review::new(Arc::new(Demo::secrets_report(home)), Demo::secrets_vault());
         // As the mockup: the shell exports are left for later.
         if let Some(f) = r.report.findings.iter().find(|f| f.source == Source::Shell).map(|f| f.id.clone()) {
             r.toggle_finding(&f);
@@ -51,10 +51,7 @@ pub(super) fn initial(demo: bool, home: &std::path::Path) -> Flow {
         }
         "moving" => {
             let r = review();
-            Flow::Moving(moving_of(
-                &secrets_import::plan(&r.report, &r.ticked, "Dana's MacBook"),
-                Some("4819".to_owned()),
-            ))
+            Flow::Moving(moving_of(&r.plan("Dana's MacBook", &Demo::machine()), Some("4819".to_owned())))
         }
         "done" => {
             let r = review();
@@ -140,7 +137,10 @@ impl Model {
                             if step < 6 {
                                 s.progress = Demo::secrets_progress(step);
                             } else {
-                                m.secrets = Flow::Review(Review::new(Arc::new(Demo::secrets_report(&home))));
+                                m.secrets = Flow::Review(Review::new(
+                                    Arc::new(Demo::secrets_report(&home)),
+                                    Demo::secrets_vault(),
+                                ));
                             }
                             cx.notify();
                             true
@@ -189,12 +189,20 @@ impl Model {
             }
         })
         .detach();
+        let writer = real::PhoneWriter {
+            paths: self.backend.paths().clone(),
+            config: self.config_now().unwrap_or_default(),
+        };
         cx.spawn(async move |this, cx| {
             let result = scan.await;
+            // What the vault has, so the review never merges into a project from elsewhere unasked.
+            let existing = Tokio::spawn(cx, async move { secrets_import::existing(&writer).await })
+                .await
+                .unwrap_or_else(|e| secrets_import::Existing::Unknown(e.to_string()));
             let _gone = this.update(cx, |m, cx| {
                 m.secrets = match result {
                     Ok(report) if report.stopped => Flow::Idle,
-                    Ok(report) => Flow::Review(Review::new(Arc::new(report))),
+                    Ok(report) => Flow::Review(Review::new(Arc::new(report), existing)),
                     Err(e) => {
                         m.notice = Some(e);
                         Flow::Idle
@@ -244,12 +252,8 @@ impl Model {
         }
         let review = review.clone();
         let home = self.backend.home().to_path_buf();
-        let computer = if self.args.demo {
-            "Dana's MacBook".to_owned()
-        } else {
-            secrets_scan::computer_name()
-        };
-        let plan = secrets_import::plan(&review.report, &review.ticked, &computer);
+        let (computer, machine) = (self.computer.clone(), self.machine.clone());
+        let plan = review.plan(&computer, &machine);
         self.secrets = Flow::Moving(moving_of(
             &plan,
             if self.args.demo {
@@ -291,13 +295,16 @@ impl Model {
         let report = Arc::clone(&review.report);
         let ticked: BTreeSet<String> = review.ticked.clone();
         let keep_local = review.keep_local;
+        let merge = review.merge.clone();
         cx.spawn(async move |this, cx| {
             let moved = Tokio::spawn(cx, async move {
                 let ctx = ImportContext {
                     home: home.clone(),
                     state_dir: paths.state_dir.clone(),
                     computer,
+                    machine,
                     caller: Caller::Person,
+                    merge,
                 };
                 let writer = real::PhoneWriter {
                     paths: paths.clone(),
