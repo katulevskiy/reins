@@ -59,15 +59,15 @@ Splits: `train` 60000 · `val` 4600 · `test_iid` 5000 · `test_ood` 1500 · `ad
   of request, as the reason or inside the content -> ask. This is what taught the model that unfamiliar AI-written
   text is a reason for doubt; it is what made unseen injection wording fail safe (see the run history).
 
-## Risk data (`gen_risk.py`, `risk_golden.py`, risk-v1)
+## Risk data (`gen_risk.py`, `risk_golden.py`, risk-v2)
 
 For the Overnight mode (`docs/autopilot-risk.md`): the same layout as v7 plus `risk_facts` / `risk_full` (0 benign, 1
 risky, 2 severe, 3 catastrophic) and the `context` line the core computes (a fact key after `details`, rendered only
 for a model with the risk output; v7 renders are byte-identical).
 
 ```sh
-python gen_risk.py --out ~/.cache/reins-laya/data/risk-v1 --n 40000
-python risk_golden.py --stats                 # 344 hand-checked cases, 61 contrast groups
+python gen_risk.py --out ~/.cache/reins-laya/data/risk-v2 --n 40000
+python risk_golden.py --stats                 # 349 hand-checked cases, 61 contrast groups
 python risk_golden.py --write golden.json     # golden.json["risk"]; sequence.py --golden keeps it
 ```
 
@@ -77,14 +77,19 @@ python risk_golden.py --write golden.json     # golden.json["risk"]; sequence.py
 - **Context contrasts**: each action is drawn in contexts that change its class (default vs feature branch, inside the
   project vs home or system paths, local vs staging vs production-looking hosts, one recipient vs every contact,
   amount vs budget, scratch vs organisation repository, a quiet hour vs a burst of deletes).
-- **Adversarial** (12% of train, every adv_test record): reassurance (class unchanged), text that steers the approver
-  (`STEER` + `gen_data.INJECTIONS`, full view catastrophic), secrets in the content; split by position like v7, and
-  by language: steering and reassurance in de/es/fr/ru for training, pt/it for val, zh/ja only in adv_test.
+- **Adversarial** (12% of train, every adv_test record): reassurance and text that steers the approver (`STEER` +
+  `gen_data.INJECTIONS`), which leave the class as it is (approval at least ask), and secrets in the content (full view
+  catastrophic); split by position like v7, and by language: steering and reassurance in de/es/fr/ru for training,
+  pt/it for val, zh/ja only in adv_test.
 - **Splits**: train 40,000 · val (iid 2,000 + held-out families: PowerShell/cmd commands and unseen MCP servers 800 +
   held-out phrasings 800) · test_iid 4,000 · test_ood 1,500 (Telegram/SMS, calendar, GitLab-style pushes) ·
   adv_test 3,000.
 - **Golden** (`risk_golden.py`): written case by case, never generated, never trained on; every connector, 61 contrast
-  groups, 15 cases where the AI's text raises the class (8 languages).
+  groups, reassurance and steering in 8 languages, 8 cases where a secret in the AI's text raises the class.
+- **risk-v1 → v2**: v1 labelled steering text catastrophic. Unseen injection wording was not recognised (val held-out
+  phrasings, golden zh/ja/pt), and the threshold that still caught it held most benign requests; v2 leaves the class to
+  the facts. v2 also puts every context phrase the core writes into training (v1's val-only Windows family used
+  "formats a disk", which training never showed) and the purchase lines as the phone writes them.
 
 ## Training (`finetune.py`)
 

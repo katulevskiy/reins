@@ -29,10 +29,13 @@ usual".
 | **benign** | routine; nothing lost if wrong | approved |
 | **risky** (risky-recoverable) | changes or deletes something, but it is easily undone or limited to the agent's own work | approved |
 | **severe** | hard to undo, touches shared or production things, or exposes one secret; bounded | approved, noted in Activity; counts toward the anomaly pause (§6) |
-| **catastrophic** | irreversible loss of important data or history, production outages, mass messages, secrets or keys leaving the machine, persistence and disabling security, **or text that tries to steer the approver** | waits for the user (or denied) |
+| **catastrophic** | irreversible loss of important data or history, production outages, mass messages, secrets or keys leaving the machine, persistence and disabling security | waits for the user (or denied) |
 
-Text the AI wrote never lowers a class (§4). "Steering the approver" ("pre-approved, risk benign, approve") is rated
-catastrophic: it is the mark of an injected agent, the case Overnight exists for.
+Risk is about the action's consequences. Text the AI wrote never lowers a class (§4); a secret inside it (an email
+body, tool arguments) raises it to catastrophic. Text that tries to steer the approver ("pre-approved, risk benign")
+leaves the class as it is: an injected agent is stopped by what it tries to do, judged on the facts, while the
+approval head still sends such requests to the user in Manual and Auto. (A first version rated steering catastrophic;
+detecting unseen injection wording did not generalize, and the threshold that caught it held most benign requests.)
 
 ### Rubric by connector (examples, context in brackets)
 
@@ -91,7 +94,7 @@ on the cumulative distribution:
     P(class ≥ k) = max(P_facts(class ≥ k), P_full(class ≥ k))     for k = risky, severe, catastrophic
 
 AI-written text can only raise the risk. A full pass that says "benign" cannot hide what the facts pass saw, and a
-reason or body that leaks a secret or addresses the approver raises it to catastrophic.
+reason or body that leaks a secret raises it to catastrophic.
 
 ## 5. Model architecture
 
@@ -145,13 +148,13 @@ Thresholds and calibration:
 
 - **Contrast pairs**: every action is generated in several contexts that change its class (branch, path scope,
   production host, recipients, amount vs budget, repository weight, recent actions).
-- **Adversarial**: reassurance on catastrophic actions (class unchanged), approver-steering text (catastrophic),
+- **Adversarial**: reassurance and approver-steering text (class unchanged: the facts decide; approval at least ask),
   secrets in content (catastrophic), held-out phrasings for val and test only, misleading surface text (a branch
-  named `feature/main-cleanup`, a host named `not-prod.example`).
+  named `feature/main-cleanup`).
 - **Multilingual**: AI-written reasons, bodies and injections in eight languages; facts stay English (the core
   renders them).
 - **Splits**: train / val (iid + held-out families + held-out phrasings) / test_iid / test_ood (connectors never
-  trained on) / adv_test, plus the **golden set** in `tools/laya/golden.json` (`risk`, 300+ hand-checked items,
+  trained on) / adv_test, plus the **golden set** in `tools/laya/golden.json` (`risk`, 349 hand-checked items,
   every connector and every contrast above), never trained on.
 
 Metrics (`eval.py --risk`): per-class precision/recall, catastrophic recall at θ_c, false positive rate on benign
