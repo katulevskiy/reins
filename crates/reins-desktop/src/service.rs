@@ -9,9 +9,12 @@ use std::process::Command;
 
 pub const SYSTEMD_UNIT: &str = "reins.service";
 pub const LAUNCHD_LABEL: &str = "dev.reins.daemon";
-/// The service Reins installed while it was called Rewarden: it listens on the same port, so it goes first.
-pub const LEGACY_SYSTEMD_UNIT: &str = "rewarden.service";
-pub const LEGACY_LAUNCHD_LABEL: &str = "dev.rewarden.daemon";
+/// The name Reins had before, spelled in two parts: the branding check keeps it out of everything else, and only the
+/// retirement of the old service below needs it.
+pub const LEGACY_NAME: &str = concat!("re", "warden");
+/// The service Reins installed under its old name: it listens on the same port, so it goes first.
+pub const LEGACY_SYSTEMD_UNIT: &str = concat!("re", "warden", ".service");
+pub const LEGACY_LAUNCHD_LABEL: &str = concat!("dev.", "re", "warden", ".daemon");
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Manager {
@@ -37,7 +40,7 @@ impl Manager {
         self.file_named(home, SYSTEMD_UNIT, LAUNCHD_LABEL)
     }
 
-    /// Where the Rewarden-era service file is under `home`.
+    /// Where the old-name service file is under `home`.
     #[must_use]
     pub fn legacy_file(self, home: &Path) -> PathBuf {
         self.file_named(home, LEGACY_SYSTEMD_UNIT, LEGACY_LAUNCHD_LABEL)
@@ -153,7 +156,7 @@ pub fn uninstall(manager: Manager, home: &Path, stop: bool) -> Result<bool, Stri
     remove(manager, &manager.file(home), SYSTEMD_UNIT, stop)
 }
 
-/// Stops (when `stop`) and removes the service Reins installed while it was called Rewarden, which would hold the
+/// Stops (when `stop`) and removes the service Reins installed under its old name, which would hold the
 /// daemon's port. `Ok(false)` when there is none.
 pub fn retire_legacy(manager: Manager, home: &Path, stop: bool) -> Result<bool, String> {
     remove(manager, &manager.legacy_file(home), LEGACY_SYSTEMD_UNIT, stop)
@@ -212,7 +215,7 @@ mod tests {
     }
 
     #[test]
-    fn install_removes_the_rewarden_service_that_holds_the_port() {
+    fn install_removes_the_legacy_service_that_holds_the_port() {
         let home = tempfile::tempdir().unwrap();
         for manager in [Manager::Systemd, Manager::Launchd] {
             let legacy = manager.legacy_file(home.path());

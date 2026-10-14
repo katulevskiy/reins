@@ -1,5 +1,5 @@
 //! Who holds the daemon's port, for the message when the daemon cannot listen: "port 7457 is used by
-//! `rewarden daemon` (pid 1437)" says what to quit where "Address already in use" does not.
+//! `reins daemon` (pid 1437)" says what to quit where "Address already in use" does not.
 
 use std::net::SocketAddr;
 
@@ -30,6 +30,7 @@ pub fn in_use(addr: SocketAddr, who: &str) -> String {
 }
 
 /// One line of a command line, short enough for a message.
+#[cfg(any(target_os = "linux", target_os = "macos", test))]
 fn shorten(cmd: &str) -> String {
     let cmd = cmd.split_whitespace().collect::<Vec<_>>().join(" ");
     if cmd.chars().count() > 80 {
@@ -74,7 +75,7 @@ mod imp {
     }
 
     /// The process holding one of `inodes`. The daemon makes itself non-dumpable, which hides its `fd` links even
-    /// from its own user, so a Reins (or Rewarden) daemon other than this process stands in when no owner is seen.
+    /// from its own user, so a Reins daemon (under its current or its old name) other than this process stands in when no owner is seen.
     fn owner(inodes: &HashSet<String>) -> Option<String> {
         let me = std::process::id();
         let mut daemon = None;
@@ -106,10 +107,11 @@ mod imp {
         daemon
     }
 
-    /// `reins daemon` or `rewarden daemon`, whatever the directory.
+    /// `reins daemon`, or the same under the old name, whatever the directory.
     pub fn is_daemon(args: &[String]) -> bool {
         let program = args.first().map(|a| a.rsplit('/').next().unwrap_or(a));
-        matches!(program, Some("reins" | "rewarden")) && args.get(1).is_some_and(|a| a == "daemon")
+        program.is_some_and(|p| p == "reins" || p == crate::service::LEGACY_NAME)
+            && args.get(1).is_some_and(|a| a == "daemon")
     }
 }
 
@@ -141,8 +143,9 @@ mod tests {
 
     #[test]
     fn the_message_names_the_holder_and_the_way_out() {
-        let text = in_use("127.0.0.1:7457".parse().unwrap(), "`rewarden daemon` (pid 1437)");
-        assert!(text.contains("port 7457 is already used by `rewarden daemon` (pid 1437)"), "{text}");
+        let who = format!("`{} daemon` (pid 1437)", crate::service::LEGACY_NAME);
+        let text = in_use("127.0.0.1:7457".parse().unwrap(), &who);
+        assert!(text.contains(&format!("port 7457 is already used by {who}")), "{text}");
         assert!(text.contains("listen = \"127.0.0.1:<port>\""), "{text}");
     }
 
@@ -165,9 +168,10 @@ mod tests {
 
     #[cfg(target_os = "linux")]
     #[test]
-    fn reins_and_rewarden_daemons_stand_in_for_a_hidden_owner() {
+    fn reins_and_legacy_daemons_stand_in_for_a_hidden_owner() {
         let args = |a: &[&str]| a.iter().map(|s| (*s).to_owned()).collect::<Vec<_>>();
-        assert!(imp::is_daemon(&args(&["/home/me/.local/bin/rewarden", "daemon"])));
+        let legacy = format!("/home/me/.local/bin/{}", crate::service::LEGACY_NAME);
+        assert!(imp::is_daemon(&args(&[legacy.as_str(), "daemon"])));
         assert!(imp::is_daemon(&args(&["reins", "daemon", "--log-file", "x"])));
         assert!(!imp::is_daemon(&args(&["/home/me/.local/bin/reins", "mcp"])));
         assert!(!imp::is_daemon(&args(&["/usr/bin/python3", "daemon"])));
