@@ -10,7 +10,10 @@ final class Arrival<Value: AnyObject> {
     /// The value once it came; nil when it never will.
     func wait() async -> Value? {
         if settled { return value }
-        return await withCheckedContinuation { waiting.append($0) }
+        let value = await withCheckedContinuation { waiting.append($0) }
+        // The main actor runs resumed tasks in no set order, so each waiter wakes the next only once it runs.
+        resumeNext()
+        return value
     }
 
     /// Runs `body` with the value when it comes (now, if it came), before any waiter resumes.
@@ -28,10 +31,13 @@ final class Arrival<Value: AnyObject> {
         settled = true
         self.value = value
         let hooks = hooks
-        let waiting = waiting
         self.hooks = []
-        self.waiting = []
         if let value { for hook in hooks { hook(value) } }
-        for waiter in waiting { waiter.resume(returning: value) }
+        resumeNext()
+    }
+
+    private func resumeNext() {
+        guard !waiting.isEmpty else { return }
+        waiting.removeFirst().resume(returning: value)
     }
 }
