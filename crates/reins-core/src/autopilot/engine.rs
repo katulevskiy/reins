@@ -1305,9 +1305,12 @@ impl Engine {
             if self.ap_mode_for(&subject.connection_id, now).ok() != Some(AutopilotMode::Bypass) {
                 continue;
             }
-            let undecided = self.store.ap_suggestion(&row.id).ok().flatten().is_some_and(|s| s.decided.is_none());
-            if undecided && self.store.ap_forget_suggestion(&row.id).is_ok() {
-                again = true;
+            // Judged before (it waits with a suggestion): judged again. Never judged (parked where the model could
+            // not run): the pass below takes it too.
+            match self.store.ap_suggestion(&row.id) {
+                Ok(Some(s)) if s.decided.is_none() => again |= self.store.ap_forget_suggestion(&row.id).is_ok(),
+                Ok(None) => again = true,
+                _ => {}
             }
         }
         if again {
