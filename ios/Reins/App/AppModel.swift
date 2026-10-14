@@ -166,6 +166,8 @@ final class AppModel {
     /// Per section: the screens above its root. On a regular width the first is the detail column's root.
     var paths: [AppSection: [Route]] = [:]
     var sheet: SheetTarget?
+    /// The next "connect a computer" sheet opens on the code field rather than the camera (Settings' "Type code").
+    var connectStartsTyped = false
     /// A one-line message over the content (a toast).
     var notice: String?
     /// Whether the "Expired" list on the Grants tab is open; kept while the user browses.

@@ -20,7 +20,7 @@ enum SettingsText {
 
     static func modeSymbol(_ mode: AutopilotMode) -> String {
         switch mode {
-        case .manual: "hand.raised.fill"
+        case .manual: "person.fill.checkmark"
         case .auto: "location.north.fill"
         case .bypass: "bolt.fill"
         case .lockdown: "lock.fill"
@@ -36,34 +36,34 @@ enum SettingsText {
         }
     }
 
-    /// What the Autopilot row says: the mode, and whether the model is here.
-    static func autopilotSummary(_ s: AutopilotSettings?) -> String {
-        guard let s else { return "Manual" }
-        let model = switch s.model.state {
-        case .installed: "model on this phone"
-        case .downloading: "downloading the model"
-        default: "no model yet"
+    /// The symbol beside the mode on the Autopilot row and an AI's page: Manual a person with a check, Auto a bolt, Bypass a filled bolt, Lockdown
+    /// a lock.
+    static func modeValueSymbol(_ mode: AutopilotMode) -> String {
+        switch mode {
+        case .manual: "person.fill.checkmark"
+        case .auto: "bolt"
+        case .bypass: "bolt.fill"
+        case .lockdown: "lock.fill"
         }
-        return "\(modeName(s.mode)) · \(model)"
     }
 
-    /// What the Sounds & haptics row says about the switches behind it.
-    static func soundsSummary(_ s: FeedbackSettings) -> String {
+    /// The Sounds & haptics row's value.
+    static func soundsValue(_ s: FeedbackSettings) -> String {
         if !s.master { return "Off" }
         switch (s.soundsOn, s.hapticsOn) {
-        case (true, true): return "Sounds and haptics on"
-        case (true, false): return "Sounds on, haptics off"
-        case (false, true): return "Haptics on, sounds off"
+        case (true, true): return "On"
+        case (true, false): return "Sounds only"
+        case (false, true): return "Haptics only"
         case (false, false): return "Off"
         }
     }
 
-    /// "1 account connected".
-    static func accountsLine(_ n: Int) -> String {
+    /// The Integrations row's value: how many accounts are connected.
+    static func accountsValue(_ n: Int) -> String {
         switch n {
-        case 0: "Connect Gmail and more"
-        case 1: "1 account connected"
-        default: "\(n) accounts connected"
+        case 0: "None"
+        case 1: "1 account"
+        default: "\(n) accounts"
         }
     }
 
@@ -77,26 +77,51 @@ enum SettingsText {
         }
     }
 
+    /// The Vault passkeys row's value: the count, or a word while there is none (`count` nil while unknown).
+    static func passkeysValue(_ count: Int?) -> String {
+        switch count {
+        case nil: "Not set up"
+        case 0: "None"
+        case let n?: "\(n)"
+        }
+    }
+
     /// "Added 9 Oct 2026", in the phone's own date format.
     static func passkeyAdded(_ epochSeconds: Int64) -> String {
         "Added " + Date(timeIntervalSince1970: TimeInterval(epochSeconds)).formatted(date: .abbreviated, time: .omitted)
     }
 
-    /// "claude.ai · used 5 min ago".
+    /// A connection's line in Settings: "claude.ai · 5 min ago" for an AI app, "computer · just now" for a computer,
+    /// "never used" for either.
     static func connectionLine(_ c: ConnectionView, now: Int64 = nowSeconds()) -> String {
+        guard let used = c.lastUsedAt else { return "never used" }
+        let place = c.keyFingerprint != nil ? "computer" : untrusted(c.clientHost)
+        return place + " · " + GrantText.relative(used, now: now)
+    }
+
+    /// The line under a connection's name on its page: "claude.ai · used 5 min ago"; a computer shows the key it
+    /// paired with, which says more than the address the server saw ("Key 4821 9930 · used just now").
+    static func connectionHeadline(_ c: ConnectionView, now: Int64 = nowSeconds()) -> String {
         let used = c.lastUsedAt.map { "used \(GrantText.relative($0, now: now))" } ?? "never used"
-        // A computer: the key compared when it paired says more than the address the server saw.
         if let key = c.keyFingerprint { return "Key \(key) · " + used }
         return untrusted(c.clientHost) + " · " + used
     }
 
-    /// How requests reach this phone: by push when both this app and the server can send it (`serverPush` nil: the
-    /// server does not say), otherwise only while the app is open.
-    static func approvalFooter(approvalDevice: Bool, appPush: Bool, serverPush: Bool?) -> String {
-        if !approvalDevice { return "Only one phone at a time approves requests. Use this one to take over." }
-        if !appPush { return "Push notifications are not set up yet. Requests arrive while the app is open." }
-        if serverPush == false { return "This server sends no push notifications: requests arrive only while Reins is open." }
-        return "Requests reach this phone by push notification and while the app is open."
+    /// How the account card shows notifications.
+    enum PushChip: Equatable { case on, onlyWhileOpen, hidden }
+
+    /// The account card's notification chip. Only the approval phone gets requests; with notifications off the card
+    /// says so instead (and offers to turn them on). Without push in this app (`appPush`) or on the server
+    /// (`serverPush` false; nil: it does not say), requests arrive only while Reins is open.
+    static func pushChip(approvalDevice: Bool, notificationsOn: Bool, appPush: Bool, serverPush: Bool?) -> PushChip {
+        if !approvalDevice || !notificationsOn { return .hidden }
+        if !appPush || serverPush == false { return .onlyWhileOpen }
+        return .on
+    }
+
+    /// What the account card's yellow row says when notifications need a look.
+    static func notificationsAttention(_ state: NotificationAccessState) -> String {
+        state == .quiet ? "Notifications are quiet" : "Notifications are off"
     }
 
     /// "42 min left", "1 min left" (the last minute counts as one).
@@ -140,6 +165,48 @@ enum SettingsText {
     static func deletionConfirmed(_ typed: String, email: String) -> Bool {
         let typed = typed.trimmingCharacters(in: .whitespacesAndNewlines)
         return !typed.isEmpty && typed.lowercased() == email.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+    }
+
+    /// The legal pages sign-in links to.
+    static let termsURL = URL(string: "https://reins2fa.com/terms")!
+    static let privacyURL = URL(string: "https://reins2fa.com/privacy")!
+
+    /// "Reins 1.4 · Terms · Privacy", the last two links.
+    static func footer(_ info: [String: Any]? = Bundle.main.infoDictionary) -> AttributedString {
+        var text = AttributedString("Reins \(shortVersion(info))  ·  ")
+        var terms = AttributedString("Terms")
+        terms.link = termsURL
+        var privacy = AttributedString("Privacy")
+        privacy.link = privacyURL
+        text.append(terms)
+        text.append(AttributedString("  ·  "))
+        text.append(privacy)
+        return text
+    }
+
+    /// A server or MCP address without its scheme or trailing slash, as Settings shows it ("app.reins2fa.com").
+    static func host(_ url: String) -> String {
+        var s = url
+        if let r = s.range(of: "://") { s = String(s[r.upperBound...]) }
+        while s.hasSuffix("/") { s.removeLast() }
+        return s
+    }
+
+    /// "Sep 28": the day a connection was made, as its page shows it.
+    static func shortDate(_ epochSeconds: Int64) -> String {
+        Date(timeIntervalSince1970: TimeInterval(epochSeconds)).formatted(.dateTime.month(.abbreviated).day())
+    }
+
+    /// The name of an icon choice: Auto (from the name), Blobatar, or the provider's.
+    static func iconName(_ pick: String?) -> String {
+        guard let pick else { return "Auto" }
+        if pick == Providers.blob { return "Blobatar" }
+        return Providers.byKey(pick)?.name ?? "Auto"
+    }
+
+    /// "1.4": the version of this app, for the footer.
+    static func shortVersion(_ info: [String: Any]? = Bundle.main.infoDictionary) -> String {
+        info?["CFBundleShortVersionString"] as? String ?? "?"
     }
 
     /// "1.4 (27)": the version and build of this app.

@@ -194,7 +194,7 @@ final class LiveServerUITests: XCTestCase {
         Thread.sleep(forTimeInterval: 1)
         XCTAssertTrue(app.staticTexts[email].waitForExistence(timeout: 5) || app.descendants(matching: .any)
             .matching(NSPredicate(format: "label CONTAINS %@", email)).firstMatch.exists, "Settings does not show the account")
-        XCTAssertTrue(wait("registerPhone").label.contains("This phone is used for approvals"), "not the approval device")
+        XCTAssertTrue(wait("approvalChip").label.contains("Approval phone"), "not the approval device")
         shot("12-settings")
         app.swipeUp()
         shot("13-settings-connections")
