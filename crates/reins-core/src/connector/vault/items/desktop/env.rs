@@ -42,6 +42,11 @@ const NAMES: &str = "secrets_names";
 const DEFAULT_LEASE: i64 = 3_600;
 const MIN_LEASE: i64 = 60;
 const MAX_LEASE: i64 = 86_400;
+/// The longest the phone lets the desktop app keep a release, whatever it asks for (`lease` in reins.toml is a request
+/// the phone can only shorten).
+const PHONE_MAX_LEASE: i64 = 8 * 3_600;
+/// How long a one-shot release lives: the values reach the command started now, and nothing after.
+const ONE_SHOT_LEASE: i64 = 60;
 /// How many earlier values an environment keeps (the Bitwarden apps keep five passwords; an environment holds more).
 const MAX_HISTORY: usize = 100;
 /// Where the user's own choice of "always ask" per environment is kept (a `meta` key): `project/env` → bool.
@@ -216,9 +221,10 @@ impl ReleaseAsk {
         reins_proto::desktop::program_warning(&self.program, &self.root, self.path_check.as_deref())
     }
 
-    /// Whether this release is asked every time: `always`, a value to print, or a command that cannot be remembered.
+    /// Whether this release is for one run only: asked every time (`always`), a value to print, or a command that
+    /// cannot be remembered.
     pub fn one_shot(&self, always: bool) -> bool {
-        always || self.print || self.command_options().is_empty()
+        always || self.print || self.confirm_always || self.command_options().is_empty()
     }
 
     /// What a standing permission compares (see `reins_policy::SecretsScope`).
@@ -383,8 +389,10 @@ pub(super) async fn preview_release(vault: &Vault, account: &str, call: &Connect
     }
     lines.push(if ask.print {
         "Printed in the terminal".to_owned()
+    } else if one_shot {
+        "For this run only".to_owned()
     } else {
-        format!("Kept for {}", crate::views::duration_text(u64::try_from(ask.lease).unwrap_or(0)))
+        format!("Kept for {}", crate::views::duration_text(u64::try_from(lease_for(&ask, false, None, 0)).unwrap_or(0)))
     });
     let view = EnvReleaseView {
         project: ask.project.clone(),
@@ -398,7 +406,7 @@ pub(super) async fn preview_release(vault: &Vault, account: &str, call: &Connect
         program_warning: warning.map(str::to_owned),
         variables: names,
         all_variables: ask.fields.is_none(),
-        lease_secs: u64::try_from(ask.lease).unwrap_or(0),
+        lease_secs: u64::try_from(lease_for(&ask, one_shot, None, 0)).unwrap_or(0),
         purpose: ask.purpose.clone(),
         commands: ask
             .command_options()
@@ -424,23 +432,38 @@ pub(super) async fn preview_release(vault: &Vault, account: &str, call: &Connect
     })
 }
 
+/// How long the desktop app may keep a release, from `now`: what it asked for, never more than the phone's own
+/// maximum or what is left of the permission that covers it (`permission_ends`), and a minute for a one-shot release.
+fn lease_for(ask: &ReleaseAsk, one_shot: bool, permission_ends: Option<i64>, now: i64) -> i64 {
+    if one_shot {
+        return ONE_SHOT_LEASE;
+    }
+    let left = permission_ends.map_or(i64::MAX, |end| end.saturating_sub(now));
+    ask.lease.min(PHONE_MAX_LEASE).min(left).max(0)
+}
+
 /// Releases the environment, bound to `command`: the exact command, or the prefix the user chose on the phone (the
-/// flow decides; never anything the computer proposed).
+/// flow decides; never anything the computer proposed). `permission_ends`: when the standing permission that covers
+/// it ends, if one does.
 pub(crate) async fn perform_release(
     vault: &Vault,
     account: &str,
     call: &ConnectorCall,
     command: CommandScope,
+    permission_ends: Option<i64>,
 ) -> Result<Value, CoreError> {
     let ask = release_ask(call)?;
     if !ask.exact().within(&command) {
         return Err(bad("The release does not match what was approved."));
     }
+    let always = always_ask(always_ask_choice(&vault.store, &ask.project, &ask.env)?, ask.confirm_always, &ask.env);
+    let one_shot = ask.one_shot(always);
     // A fresh read: the values are what the vault holds now.
     let snap = Snapshot::load(vault, account).await?;
     let entry = env_entry(&snap, &ask)?;
     let values = chosen(entry, &ask)?;
-    let expires_at = unix_now().saturating_add(ask.lease);
+    let now = unix_now();
+    let expires_at = now.saturating_add(lease_for(&ask, one_shot, permission_ends, now));
     let grant = SecretGrant {
         v: 1,
         nonce: nonce_arg(call)?,
@@ -452,6 +475,7 @@ pub(crate) async fn perform_release(
         runner: Some(ask.runner.clone()),
         root: Some(ask.root.clone()),
         command: Some(command),
+        one_shot,
     };
     let sealed = seal(client_key(call)?, &grant);
     for (_, value) in grant.secrets {

@@ -503,6 +503,10 @@ pub struct SecretGrant {
     /// hand them for are the names in `secrets`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub command: Option<CommandScope>,
+    /// `vault_env_release`: for this one run only (an environment asked every time, a production one, a value to
+    /// print): the desktop app hands the values to the command it starts now and never keeps them for another.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub one_shot: bool,
 }
 
 impl std::fmt::Debug for SecretGrant {

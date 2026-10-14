@@ -374,6 +374,10 @@ async fn production_is_asked_every_time_until_the_user_says_otherwise_on_the_pho
     assert!(desk.core.approval_view("r3".to_owned()).await.unwrap().no_standing);
 }
 
+fn now() -> i64 {
+    i64::try_from(std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_secs()).unwrap()
+}
+
 /// `release` with some arguments changed.
 fn release_with(desk: &Desk, id: &str, ask: &Ask<'_>, changed: &Value) -> Value {
     let mut r = release(desk, id, ask);
@@ -381,6 +385,38 @@ fn release_with(desk: &Desk, id: &str, ask: &Ask<'_>, changed: &Value) -> Value 
         r["call"]["args"][k] = v.clone();
     }
     r
+}
+
+#[tokio::test]
+async fn an_environment_asked_every_time_is_released_for_one_run_and_leases_are_the_phones_to_cap() {
+    let desk = desk().await;
+    desk.pair().await;
+    let prod = Ask {
+        env: "production",
+        ..DEV
+    };
+    for id in ["q1", "q2"] {
+        desk.send(&[release(&desk, id, &prod)]).await;
+        assert_eq!(desk.waiting().await, [id], "asked every time");
+        let r = desk.core.approval_view(id.to_owned()).await.unwrap().env_release.unwrap();
+        assert!(r.always_ask && r.lease_secs == 60, "{r:?}");
+        desk.core.approve(id.to_owned(), choice(&[], None)).await.unwrap();
+        let grant: SecretGrant = desk.open(&desk.data(id).await["sealed"]);
+        assert!(grant.one_shot, "never kept for another run");
+        assert!(grant.expires_at <= now() + 60);
+    }
+    // reins.toml asks for a day: the phone keeps it to its own maximum.
+    desk.send(&[release_with(&desk, "d1", &DEV, &json!({"lease_secs": 86_400}))]).await;
+    let r = desk.core.approval_view("d1".to_owned()).await.unwrap().env_release.unwrap();
+    assert_eq!(r.lease_secs, 8 * 3_600);
+    desk.core.approve("d1".to_owned(), choice(&[], remember("exact", false))).await.unwrap();
+    let grant: SecretGrant = desk.open(&desk.data("d1").await["sealed"]);
+    assert!(!grant.one_shot && grant.expires_at <= now() + 8 * 3_600);
+    // Covered by that permission (an hour long): never longer than what is left of it.
+    desk.send(&[release_with(&desk, "d2", &DEV, &json!({"lease_secs": 86_400}))]).await;
+    assert!(desk.waiting().await.is_empty());
+    let covered: SecretGrant = desk.open(&desk.data("d2").await["sealed"]);
+    assert!(covered.expires_at <= now() + 3_600, "the permission ends within the hour");
 }
 
 #[tokio::test]

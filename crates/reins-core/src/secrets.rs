@@ -90,13 +90,13 @@ impl Engine {
         &self,
         account: &str,
         call: &ConnectorCall,
-        command: Option<CommandScope>,
+        command: Option<(CommandScope, Option<i64>)>,
     ) -> Result<Value, CoreError> {
-        let command = match command {
+        let (command, ends) = match command {
             Some(c) => c,
-            None => crate::connector::vault::release_ask(call)?.exact(),
+            None => (crate::connector::vault::release_ask(call)?.exact(), None),
         };
-        crate::connector::vault::perform_release(&self.vault(), account, call, command).await
+        crate::connector::vault::perform_release(&self.vault(), account, call, command, ends).await
     }
 
     /// Opens a token boxed to this phone and checks it answers this very call.

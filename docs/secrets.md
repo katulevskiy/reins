@@ -190,7 +190,13 @@ and its grants end with it (existing).
 ### 3.4 Leases and revocation
 
 - The daemon holds released values in memory only (`Zeroizing`), per lease key `(principal, project, env, fields,
-  command pattern)`, until `min(phone expiry, reins.toml lease, phone policy)`.
+  command pattern)`, until the expiry the phone sealed. The phone decides it: `min(lease asked for, 8 hours, what is
+  left of the permission that covers it)`, so `lease` in `reins.toml` (which a repository or an agent can edit) is a
+  request the phone can only shorten.
+- An environment asked every time (`confirm = "always"`, `production`/`prod` unless the user said otherwise on the
+  phone, the user's own choice), a value to print and a command that cannot be remembered are released **one-shot**:
+  the `SecretGrant` says `one_shot`, lives a minute, and the daemon hands it to the command it starts now and never
+  keeps it; a second run asks again.
 - `reins secrets leases` lists them; `reins secrets revoke [--all]` drops them; the desktop app's Keys & secrets page shows
   and drops them; the phone's grant/activity pages get **Revoke on all computers**: the environment's standing
   permissions end on the phone, and a `LeaseRevocation` sealed to each paired computer's key goes to the server

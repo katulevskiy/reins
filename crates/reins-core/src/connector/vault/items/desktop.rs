@@ -324,6 +324,7 @@ async fn perform_release(vault: &Vault, account: &str, call: &ConnectorCall) -> 
         runner: None,
         root: None,
         command: None,
+        one_shot: false,
     };
     let sealed = seal(client_key(call)?, &grant);
     // The grant holds the values in the clear: wipe them.
