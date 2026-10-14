@@ -1547,7 +1547,8 @@ impl std::fmt::Debug for SecretsToStore {
 ///
 /// - `("env", "<project>/<env>", NAME, value)` for every variable set;
 /// - `("unset", "<project>/<env>", NAME, "")`, `("rename", "<project>/<env>", FROM, TO)`, `("copy", "<project>/<env>",
-///   FROM_ENV, "")` and `("replace", "<project>/<env>", "", "")` (existing values may be replaced);
+///   FROM_ENV, "")`, `("origin", "<project>/<env>", ORIGIN, "")` and `("replace", "<project>/<env>", "", "")` (existing
+///   values may be replaced);
 /// - `("ssh", name, "", private_key)` for every SSH key, `("token", host, user or "", token)` for every token;
 ///
 /// the entries sorted; SHA-256 over `reins-secrets-batch/2` then each part of each entry as its length (8 bytes,
@@ -1568,6 +1569,9 @@ pub fn batch_check(envs: &[EnvChanges], ssh: &[SshKeyToStore], tokens: &[HostTok
         }
         if let Some(from) = &e.copy_from {
             all.push(["copy".to_owned(), item.clone(), from.clone(), String::new()]);
+        }
+        if let Some(origin) = &e.origin {
+            all.push(["origin".to_owned(), item.clone(), origin.clone(), String::new()]);
         }
         if e.replace {
             all.push(["replace".to_owned(), item, String::new(), String::new()]);
@@ -2203,7 +2207,10 @@ mod tests {
         let mut set = changes("acme", "dev", &[("A", "1")]);
         let plain = secrets_check(std::slice::from_ref(&set));
         set.replace = true;
-        assert_ne!(plain, secrets_check(&[set]), "replacing values is part of what is approved");
+        assert_ne!(plain, secrets_check(std::slice::from_ref(&set)), "replacing values is part of what is approved");
+        let replacing = secrets_check(std::slice::from_ref(&set));
+        set.origin = Some("github.com/acme/api".into());
+        assert_ne!(replacing, secrets_check(&[set]), "where the project came from too");
     }
 
     #[test]
