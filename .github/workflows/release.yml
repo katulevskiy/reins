@@ -189,11 +189,9 @@ jobs:
           rustup toolchain install
           rustup target add "$TARGET"
           rustc -vV
+      # No Rust cache: these builds take about three minutes cold, off the release's longest path, and their five caches
+      # (1.6 GB) pushed the caches that do shorten it out of the repository's 10 GB.
       # The static Linux builds link with zig, as scripts/release-desktop.sh does.
-      - uses: Swatinem/rust-cache@v2
-        with:
-          shared-key: release-desktop-${{ matrix.target }}
-
       - name: Install cargo-zigbuild
         if: matrix.zig
         run: |
@@ -281,6 +279,7 @@ jobs:
       - uses: Swatinem/rust-cache@v2
         with:
           shared-key: release-desktop-app-${{ runner.os }}
+          save-if: ${{ github.ref == 'refs/heads/main' }}
 
       - name: GPUI build dependencies
         if: runner.os == 'Linux'
@@ -368,6 +367,7 @@ jobs:
           # Start a native-only Arm cache: the old immutable universal cache also stores Intel/fat artifacts.
           # The Intel worker's existing cache already contains only its native target.
           shared-key: ${{ matrix.cache }}
+          save-if: ${{ github.ref == 'refs/heads/main' }}
       - name: Remove obsolete macOS cache outputs
         run: |
           # This worker builds one native target with release-app. The old universal job cached both
@@ -522,11 +522,9 @@ jobs:
           persist-credentials: false
       - name: Install Rust toolchain
         run: rustup toolchain install && rustc -vV
+      # No Rust cache: cold, this build (7 minutes) still ends before the Android and macOS builds the release waits
+      # for, and its 600 MB went to caches that shorten the release.
       # SQLite is bundled; OpenSSL is vendored so the binary does not depend on the system's libssl.
-      - uses: Swatinem/rust-cache@v2
-        with:
-          shared-key: release-server-${{ runner.os }}
-
       - name: Build
         env:
           VW_VERSION: ${{ needs.plan.outputs.version }}
@@ -593,9 +591,10 @@ jobs:
           # Push immutable digests first; the publisher updates public version/latest tags together.
           outputs: ${{ inputs.verify_only && 'type=docker' || format('type=image,name={0},push-by-digest=true,name-canonical=true,push=true', steps.image.outputs.name) }}
           tags: ${{ inputs.verify_only && format('reins-server-verify:{0}', matrix.arch) || '' }}
-          # Docker layers were evicting Rust/Gradle caches from the repository's shared cache quota.
+          # Docker layers were evicting Rust/Gradle caches from the repository's shared cache quota. Read everywhere,
+          # written from main only.
           cache-from: type=registry,ref=${{ steps.image.outputs.name }}:buildcache-${{ matrix.arch }}
-          cache-to: type=registry,ref=${{ steps.image.outputs.name }}:buildcache-${{ matrix.arch }},mode=max
+          cache-to: ${{ github.ref == 'refs/heads/main' && format('type=registry,ref={0}:buildcache-{1},mode=max', steps.image.outputs.name, matrix.arch) || '' }}
           build-args: |
             VW_VERSION=${{ needs.plan.outputs.version }}
           labels: |
@@ -641,7 +640,10 @@ jobs:
       fail-fast: false
       matrix:
         kind: [arm64-v8a, x86_64, bindings]
+    # The same Cargo variables as ci.yml's: the bindings are the same host build as CI's, and these make its cache key
+    # the same, so this job restores what CI's server and core tests saved instead of keeping a copy.
     env:
+      RUST_BACKTRACE: "1"
       CARGO_PROFILE_DEV_DEBUG: "0"
     steps:
       - uses: actions/checkout@v7
@@ -650,7 +652,7 @@ jobs:
           persist-credentials: false
       # No prefix fallback: these libraries must match the exact native sources/configuration.
       # Version, build ID and signing only enter the later APK packaging job.
-      - uses: actions/cache@v5
+      - uses: actions/cache/restore@v5
         id: native
         with:
           path: native
@@ -663,8 +665,10 @@ jobs:
       - uses: Swatinem/rust-cache@v2
         if: steps.native.outputs.cache-hit != 'true'
         with:
-          shared-key: release-android-native-${{ matrix.kind }}
-      - uses: actions/cache@v5
+          shared-key: ${{ matrix.kind == 'bindings' && 'linux-server-core' || format('release-android-native-{0}', matrix.kind) }}
+          save-if: ${{ matrix.kind != 'bindings' && github.ref == 'refs/heads/main' }}
+      - uses: actions/cache/restore@v5
+        id: cargo-ndk
         if: steps.native.outputs.cache-hit != 'true' && matrix.kind != 'bindings'
         with:
           path: ~/.cargo/bin/cargo-ndk
@@ -675,11 +679,23 @@ jobs:
           cargo ndk --version || cargo install --locked cargo-ndk@4.1.2
           ndk="$(grep -oP 'reinsNdkVersion = "\K[^"]+' android/app/build.gradle.kts)"
           "${ANDROID_HOME}/cmdline-tools/latest/bin/sdkmanager" --install "ndk;${ndk}" > /dev/null
+      - uses: actions/cache/save@v5
+        if: >-
+          steps.cargo-ndk.outcome == 'success' && steps.cargo-ndk.outputs.cache-hit != 'true' &&
+          github.ref == 'refs/heads/main'
+        with:
+          path: ~/.cargo/bin/cargo-ndk
+          key: cargo-ndk-${{ runner.os }}-4.1.2
       - name: Build native output
         if: steps.native.outputs.cache-hit != 'true'
         env:
           KIND: ${{ matrix.kind }}
         run: scripts/build-android-native.sh "$KIND" "$GITHUB_WORKSPACE/native"
+      - uses: actions/cache/save@v5
+        if: steps.native.outputs.cache-hit != 'true' && github.ref == 'refs/heads/main'
+        with:
+          path: native
+          key: ${{ steps.native.outputs.cache-primary-key }}
       - uses: ./.github/actions/upload-artifact # zizmor: ignore[self-repository] use the exact release checkout
         with:
           name: android-native-${{ matrix.kind }}
@@ -722,7 +738,7 @@ jobs:
       - uses: gradle/actions/setup-gradle@v6
         with:
           cache-provider: basic
-          cache-read-only: false # maintainer dispatches also warm the Gradle build cache
+          cache-read-only: ${{ github.ref != 'refs/heads/main' }}
       - name: Fetch signing identity from Infisical
         if: vars.INFISICAL_RELEASE_IDENTITY_ID != ''
         uses: ./.github/actions/release-secrets # zizmor: ignore[self-repository] use the exact release checkout
