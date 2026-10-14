@@ -56,15 +56,9 @@ struct DeleteAccountSheet: View {
                 if let error {
                     FormBanner(text: error)
                 }
-                Button(role: .destructive, action: delete) {
-                    HStack(spacing: 10) {
-                        if busy { ProgressView().tint(Palette.background) }
-                        Text("Delete account")
-                    }
-                }
-                .buttonStyle(CapsuleButtonStyle(kind: .danger))
-                .disabled(busy || !confirmed)
-                .accessibilityIdentifier("confirmDeleteAccount")
+                // Held for two seconds, once the email is typed.
+                HoldButton(title: "Hold to delete", symbol: "trash", enabled: confirmed, busy: busy, onConfirm: delete)
+                    .accessibilityIdentifier("confirmDeleteAccount")
                 // The sheet's Close is the sound (the style plays the default tap).
                 Button("Cancel", action: onClose)
                 .buttonStyle(CapsuleButtonStyle(kind: .secondary))
