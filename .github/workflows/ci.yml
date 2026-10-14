@@ -91,6 +91,7 @@ jobs:
       - run: python3 scripts/test-android-release.py
       - run: python3 scripts/test-play-upload.py
       - run: python3 scripts/test-ci-release-gate.py
+      - run: python3 scripts/test-supersede-releases.py
       - run: python3 scripts/check-doc-links.py
       - run: python3 scripts/test-ci-routing.py
       - name: Conflict markers and shell syntax
