@@ -985,7 +985,7 @@ pub fn grant_summary(scope: &Scope) -> String {
         Scope::Accounts(s) if s.accounts.is_empty() => format!("See your {} accounts", service_name(&s.service)),
         Scope::Accounts(s) => format!("See {} of your {} accounts", s.accounts.len(), service_name(&s.service)),
         Scope::Headlines(s) => headlines_summary(&s.service),
-        Scope::Secrets(s) => format!("Use {} \u{b7} {} for {}", s.project, s.env, s.command.shown()),
+        Scope::Secrets(s) => format!("Use {} \u{b7} {} for {}", s.project, s.env, s.command.shown_where()),
     })
 }
 
@@ -1060,7 +1060,7 @@ pub fn scope_lines(scope: &Scope) -> Vec<String> {
         }
         Scope::Secrets(s) => {
             lines.push(format!("Run by {}", crate::connector::vault::runner_label(&s.runner)));
-            lines.push(format!("Command {}", s.command.shown()));
+            lines.push(format!("Command {}", s.command.shown_where()));
             lines.push(format!("In {}", s.root));
             lines.push(if s.fields.is_empty() {
                 "Every variable".to_owned()
@@ -1115,6 +1115,14 @@ pub fn grant_view(g: &StoredGrant) -> GrantView {
         .to_owned(),
         all_mail: matches!(&g.grant.scope, Scope::Read(s) if s.any),
         editable_scope: editable_scope(&g.grant.scope),
+        secrets_project: match &g.grant.scope {
+            Scope::Secrets(s) => Some(s.project.clone()),
+            _ => None,
+        },
+        secrets_env: match &g.grant.scope {
+            Scope::Secrets(s) => Some(s.env.clone()),
+            _ => None,
+        },
     }
 }
 

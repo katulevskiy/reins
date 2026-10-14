@@ -735,6 +735,12 @@ pub struct GrantView {
     /// The scope in the form the grant editor uses, when the grant is simple enough to be edited (senders, domains,
     /// a subject text, or recipients); `None` for grants tied to specific emails or to other kinds of limits.
     pub editable_scope: Option<GrantScopeChoice>,
+    /// A permission for a project's secrets (`action` "secrets"): its project and environment, for "Revoke on all
+    /// computers".
+    #[uniffi(default)]
+    pub secrets_project: Option<String>,
+    #[uniffi(default)]
+    pub secrets_env: Option<String>,
 }
 
 /// An account the user connected to a service.
