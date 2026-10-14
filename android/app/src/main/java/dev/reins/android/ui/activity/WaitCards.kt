@@ -9,6 +9,8 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -51,6 +53,8 @@ import dev.reins.android.design.rememberNowState
 import dev.reins.android.design.toneCard
 import dev.reins.android.design.urgency
 import dev.reins.android.ui.common.ConnectionIcon
+import dev.reins.android.ui.common.LabelText
+import dev.reins.android.ui.common.ProviderTile
 import dev.reins.android.ui.settings.PillButton
 import dev.reins.android.ui.settings.primaryFill
 import dev.reins.core.ApprovalView
@@ -141,6 +145,22 @@ fun PendingMini(item: PendingItem, ring: Color) {
     )
 }
 
+/** What a waiting request touches with what it does on its corner (see [ProviderTile]), and who asks on the other. */
+@Composable
+fun PendingTile(item: PendingItem, label: dev.reins.core.RequestLabel, ring: Color) {
+    Box(Modifier.size(44.dp)) {
+        ProviderTile(label, size = 44.dp, ring = ring)
+        Box(
+            Modifier
+                .align(Alignment.BottomStart)
+                .offset(x = (-6).dp, y = 6.dp)
+                .size(22.dp)
+                .background(ring, CircleShape),
+            contentAlignment = Alignment.Center,
+        ) { ConnectionIcon(item.connectionId, item.connectionLabel, size = 18.dp) }
+    }
+}
+
 /** Seconds left as a ring and a number ("40s", "1:20"), red for the last 15 s. Its clock recomposes only this. */
 @Composable
 fun TimerPill(createdAt: Long, waitUntil: Long?, now: State<Long>, modifier: Modifier = Modifier) {
@@ -209,9 +229,16 @@ fun WaitingCard(
             .padding(14.dp),
     ) {
         Row(verticalAlignment = Alignment.CenterVertically) {
-            PendingMini(item, ring = mixOver(tone, c))
-            Spacer(Modifier.width(14.dp))
-            SentenceText(sentence, Modifier.weight(1f).testTag("sentence:${item.id}"))
+            val label = item.label
+            if (label != null) {
+                PendingTile(item, label, ring = mixOver(tone, c))
+                Spacer(Modifier.width(14.dp))
+                LabelText(label, Modifier.weight(1f).testTag("sentence:${item.id}"), size = 16f, lineHeight = 21f, maxLines = 3)
+            } else {
+                PendingMini(item, ring = mixOver(tone, c))
+                Spacer(Modifier.width(14.dp))
+                SentenceText(sentence, Modifier.weight(1f).testTag("sentence:${item.id}"))
+            }
             Spacer(Modifier.width(8.dp))
             TimerPill(item.createdAt, waitUntil, now)
         }
@@ -247,7 +274,8 @@ fun GroupCard(
             .padding(14.dp),
     ) {
         Row(verticalAlignment = Alignment.CenterVertically) {
-            PendingMini(first, ring = mixOver(tone, c))
+            val label = first.label
+            if (label != null) PendingTile(first, label, ring = mixOver(tone, c)) else PendingMini(first, ring = mixOver(tone, c))
             Spacer(Modifier.width(14.dp))
             SentenceText(sentence, Modifier.weight(1f).testTag("burstTitle"))
             Spacer(Modifier.width(8.dp))

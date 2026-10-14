@@ -400,6 +400,8 @@ private fun SignedInContent(
                 is Route.ActivityDetail -> ActivityDetailScreen(
                     entryId = route.id,
                     state = state,
+                    container = container,
+                    authenticator = authenticator,
                     onBack = { app.back() },
                     onOpenGrant = { app.open(Route.GrantDetail(it)) },
                     onOpenEmail = { entry, index -> app.open(Route.Email(entry, index)) },

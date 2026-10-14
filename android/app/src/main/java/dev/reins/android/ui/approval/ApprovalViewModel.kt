@@ -45,6 +45,8 @@ data class ApprovalUi(
     val downloadJob: DownloadJob = DownloadJob.Idle,
     /** A purchase: what pays and where it goes, as picked on the purchase screen. */
     val purchase: PurchaseDraft = PurchaseDraft(),
+    /** An Activity entry's request shown again as it was decided: nothing can be changed or answered. */
+    val readOnly: Boolean = false,
 )
 
 /** The purchase screen's picks, and a spend limit for more like it. */
@@ -73,7 +75,16 @@ data class PurchaseDraft(
     }
 }
 
-class ApprovalViewModel(private val container: AppContainer, private val requestId: String) : ViewModel() {
+/**
+ * A request waiting for the user; or, with [recorded], an Activity entry's request as its approval showed it, read-only
+ * with [released] (what was shared) ticked.
+ */
+class ApprovalViewModel(
+    private val container: AppContainer,
+    private val requestId: String,
+    recorded: ApprovalView? = null,
+    released: Set<String> = emptySet(),
+) : ViewModel() {
     private val _ui = MutableStateFlow(ApprovalUi())
     val ui: StateFlow<ApprovalUi> = _ui.asStateFlow()
 
@@ -83,6 +94,15 @@ class ApprovalViewModel(private val container: AppContainer, private val request
     private var polling: Job? = null
 
     init {
+        if (recorded != null) {
+            val shown = opened(recorded)
+            _ui.value = shown.copy(readOnly = true, draft = shown.draft.copy(selected = released))
+        } else {
+            load()
+        }
+    }
+
+    private fun load() {
         // Read ahead when the request arrived: the sheet opens with it, no spinner.
         container.approvalViews[requestId]?.let { _ui.value = opened(it) }
         // The model as the shared Autopilot settings know it; a download started here or elsewhere shows.
@@ -183,11 +203,13 @@ class ApprovalViewModel(private val container: AppContainer, private val request
     }
 
     fun edit(change: (ApprovalDraft) -> ApprovalDraft) {
+        if (_ui.value.readOnly) return
         touched = true
         _ui.update { it.copy(draft = change(it.draft), error = null) }
     }
 
     fun editPurchase(change: (PurchaseDraft) -> PurchaseDraft) {
+        if (_ui.value.readOnly) return
         touched = true
         _ui.update { it.copy(purchase = change(it.purchase), error = null) }
     }
@@ -197,6 +219,7 @@ class ApprovalViewModel(private val container: AppContainer, private val request
      * the phone then opens the store's checkout ([openCheckout]).
      */
     fun approvePurchase(authenticator: Authenticator, openCheckout: (String) -> Unit) {
+        if (_ui.value.readOnly) return
         val current = _ui.value
         val view = current.view ?: return
         val purchase = view.purchase ?: return
@@ -261,6 +284,7 @@ class ApprovalViewModel(private val container: AppContainer, private val request
      * remembered alongside is what the dock and its "Remember for" sheet say ([buildDecision]).
      */
     fun approve(authenticator: Authenticator) {
+        if (_ui.value.readOnly) return
         val current = _ui.value
         val view = current.view ?: return
         if (current.busy) return
@@ -302,6 +326,7 @@ class ApprovalViewModel(private val container: AppContainer, private val request
 
     /** Closes at once; the answer goes out in the background (and the card comes back if it could not). */
     fun deny() {
+        if (_ui.value.readOnly) return
         if (_ui.value.busy) return
         container.feedback.play(Event.Denied)
         container.answerInBackground(requestId, "Not denied") { container.core.deny(requestId) }
