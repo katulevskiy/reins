@@ -153,9 +153,12 @@ def risk_views(recs, items, rlog):
 
 
 def risk_report(recs, items, rlog, T, theta):
-    """Risk metrics for the whole split and its val parts."""
+    """Risk metrics for the whole split and its val parts (steer_test: the twins' metrics too)."""
     rf, ru = risk_views(recs, items, rlog)
     out = {"all": lc.risk_metrics(recs, rf, ru, T, theta)}
+    if recs and "pair" in recs[0]:
+        out["steer"] = lc.steer_metrics(recs, rf, ru, T, theta)
+        return out
     parts = np.array([r.get("part", "") for r in recs])
     for p in sorted(set(parts) - {""}):
         sel = np.where(parts == p)[0]
@@ -247,6 +250,11 @@ def main():
     ap.add_argument("--risk-recall", type=float, default=0.995,
                     help="catastrophic recall on risk val the Overnight threshold is set for")
     ap.add_argument("--risk-limit", type=int, default=0, help="debug: use only N risk training records")
+    ap.add_argument("--risk-theta-on", default="val",
+                    help="split the Overnight threshold is set on: val, or val parts joined by + (heldout_family+...)")
+    ap.add_argument("--distill-from", help="a checkpoint whose approval answers on the v7 records the new one keeps "
+                                           "close to (KL), so that the risk head does not cost approvals")
+    ap.add_argument("--distill-weight", type=float, default=1.0)
     args = ap.parse_args()
 
     random.seed(args.seed)
@@ -270,7 +278,7 @@ def main():
         train_recs = train_recs[:args.limit]
     risk_splits = {}
     if args.risk_data:
-        for s in ("train", "val", "test_iid", "test_ood", "adv_test"):
+        for s in ("train", "val", "test_iid", "test_ood", "adv_test", "steer_test"):
             p = os.path.join(args.risk_data, s + ".jsonl")
             if os.path.exists(p):
                 risk_splits[s] = lc.read_jsonl(p)
@@ -291,6 +299,14 @@ def main():
         risk_evals["golden"] = (golden, lc.items_from_records(tok, golden, args.max_len, hml))
         if getattr(model, "risk_head", None) is None:
             model.risk_head = lc.make_risk_head(model.encoder.config.hidden_size)
+    teacher = None
+    if args.distill_from:
+        tmodel, _ = lc.load_model(args.distill_from, device="cpu")
+        tmodel.to(device)
+        teacher = torch.tensor(predict(tmodel, train, pad_id, device), dtype=torch.float32)
+        del tmodel
+        torch.cuda.empty_cache()
+        print("teacher logits from %s on %d items" % (args.distill_from, len(train)), flush=True)
     lens = [len(it["ids"]) for it in train]
     print("encoded %d train items in %.0fs; len mean %.0f p95 %.0f max %d; truncated %d" % (
         len(train), time.time() - t0, np.mean(lens), np.percentile(lens, 95), max(lens),
@@ -350,9 +366,7 @@ def main():
             rrecs, ritems = risk_evals["val"]
             _, rlog = predict(model, ritems, pad_id, device, risk=True)
             Tr = lc.fit_temperature(rlog, np.array([it["risk"] for it in ritems]))
-            rf, ru = risk_views(rrecs, ritems, rlog)
-            p_cat = lc.risk_combine(lc.softmax(rf, Tr), lc.softmax(ru, Tr))[:, lc.CATASTROPHIC]
-            theta = lc.risk_threshold(p_cat, np.array([r["risk_full"] for r in rrecs]) == lc.CATASTROPHIC, args.risk_recall)
+            theta = theta_on(rrecs, ritems, rlog, Tr)
             rrep = risk_report(rrecs, ritems, rlog, Tr, theta)
             rnll = float(np.mean([v["nll"] for k, v in rrep.items() if k != "all"]))
             print("  risk@%d T=%.3f theta=%.4f " % (step, Tr, theta) + " | ".join(
@@ -362,6 +376,18 @@ def main():
             nll += args.risk_weight * rnll
         if nll < best["nll"]:
             best.update(nll=nll, step=step, state={n: p.detach().to("cpu", copy=True) for n, p in trainable.items()})
+
+    def theta_on(rrecs, ritems, rlog, Tr):
+        """The Overnight threshold on the split `--risk-theta-on` names (val, or some of its parts), the records the
+        core's rules hold counted as held."""
+        rf, ru = risk_views(rrecs, ritems, rlog)
+        p_cat = lc.risk_combine(lc.softmax(rf, Tr), lc.softmax(ru, Tr))[:, lc.CATASTROPHIC]
+        sel = np.ones(len(rrecs), bool)
+        if args.risk_theta_on != "val":
+            parts = set(args.risk_theta_on.split("+"))
+            sel = np.array([r.get("part", "iid") in parts for r in rrecs])
+        is_cat = np.array([r["risk_full"] for r in rrecs]) == lc.CATASTROPHIC
+        return lc.risk_threshold(p_cat[sel], is_cat[sel], args.risk_recall, lc.rules_of(rrecs)[sel])
 
     step, t0, run_loss = 0, time.time(), []
     wrapped.train()
@@ -376,6 +402,11 @@ def main():
                 loss = proper_loss(logits, tgt, weight=torch.where(has_risk, args.risk_approval_weight, 1.0).float())
                 if risk is not None and has_risk.any():
                     loss = loss + args.risk_weight * F.cross_entropy(risk.float()[has_risk], b["risk"][has_risk])
+                if teacher is not None and (~has_risk).any():
+                    # the v7 records: keep the approval answers of the checkpoint distilled from
+                    t = teacher[idx].to(device)[~has_risk]
+                    s = logits.float()[~has_risk]
+                    loss = loss + args.distill_weight * F.kl_div(F.log_softmax(s, -1), F.softmax(t, -1), reduction="batchmean")
                 # act head: act (0) when the answer is right, escalate (1) otherwise
                 right = (logits.detach().argmax(-1) == b["label"]).long()
                 loss = loss + 0.1 * F.cross_entropy(act.float(), 1 - right)
@@ -440,11 +471,9 @@ def main():
         rrecs, ritems = risk_evals["val"]
         _, rlog = predict(model, ritems, pad_id, device, risk=True)
         T_r = lc.fit_temperature(rlog, np.array([it["risk"] for it in ritems]))
-        rf, ru = risk_views(rrecs, ritems, rlog)
-        p_cat = lc.risk_combine(lc.softmax(rf, T_r), lc.softmax(ru, T_r))[:, lc.CATASTROPHIC]
-        theta = lc.risk_threshold(p_cat, np.array([r["risk_full"] for r in rrecs]) == lc.CATASTROPHIC, args.risk_recall)
-        print("risk temperature %.4f, Overnight threshold P(catastrophic) >= %.4f (val recall target %.3f)" % (
-            T_r, theta, args.risk_recall), flush=True)
+        theta = theta_on(rrecs, ritems, rlog, T_r)
+        print("risk temperature %.4f, Overnight threshold P(catastrophic) >= %.4f (recall target %.3f on %s, the core's "
+              "rules counted as held)" % (T_r, theta, args.risk_recall, args.risk_theta_on), flush=True)
         risk_results = {}
         for s, (recs, items) in risk_evals.items():
             # approval on the risk records too (their own labels), then the risk metrics
@@ -457,7 +486,8 @@ def main():
             for k, v in risk_results[s].items():
                 print("  risk.%s.%s %s" % (s, k, json.dumps({a: (round(b, 4) if isinstance(b, float) else b) for a, b in v.items()})), flush=True)
         risk_cfg = {"labels": lc.RISK_LABELS, "temperature": T_r, "thresholds": {"overnight": theta},
-                    "recall_target": args.risk_recall, "situation": "context", "data": args.risk_data,
+                    "recall_target": args.risk_recall, "theta_on": args.risk_theta_on, "rules_counted": True,
+                    "distill_from": args.distill_from, "situation": "context", "data": args.risk_data,
                     "approval_weight": args.risk_approval_weight, "results": risk_results}
 
     os.makedirs(args.out, exist_ok=True)
