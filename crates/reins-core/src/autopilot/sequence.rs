@@ -245,6 +245,12 @@ mod tests {
             details: f["details"]
                 .as_array()
                 .map_or_else(Vec::new, |d| d.iter().map(|x| x.as_str().unwrap().to_owned()).collect()),
+            // A list, or one string (the reference accepts both).
+            context: match &f["context"] {
+                Value::Array(d) => d.iter().map(|x| x.as_str().unwrap().to_owned()).collect(),
+                Value::String(one) => vec![one.clone()],
+                _ => Vec::new(),
+            },
         };
         let ai = AiPart {
             reason: case["ai"]["reason"].as_str().unwrap_or_default().to_owned(),
@@ -288,6 +294,8 @@ mod tests {
         let literals: Vec<&str> =
             g["special_literals"].as_array().unwrap().iter().map(|o| o.as_str().unwrap()).collect();
         assert_eq!(literals, super::super::situation::SPECIAL_LITERALS);
+        let names: Vec<&str> = g["render"].as_array().unwrap().iter().filter_map(|c| c["name"].as_str()).collect();
+        assert!(names.contains(&"risk_context") && names.contains(&"risk_context_only"), "the context line is covered");
         check_renders(&g);
     }
 

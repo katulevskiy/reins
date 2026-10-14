@@ -18,6 +18,7 @@ pub mod gates;
 pub mod memory;
 pub mod model;
 pub mod modes;
+pub mod risk;
 pub mod runtime;
 pub mod sequence;
 pub mod situation;
@@ -34,6 +35,6 @@ pub(crate) use engine::{activity_note, suggestion_line};
 pub use runtime::{DownloadProgress, ModelRuntime};
 pub use types::{
     AutoDecisionView, AutopilotEvent, AutopilotMode, AutopilotNote, AutopilotSettings, AutopilotStats, ClassView,
-    ConnectionAutopilot, ModelInput, ModelOutput, ModelState, ModelStatus, NeighbourView, Preset, ProfileView,
-    SuggestionView, ThresholdReplay, Verdict,
+    ConnectionAutopilot, ModelInput, ModelOutput, ModelState, ModelStatus, NeighbourView, OVERNIGHT_NAME,
+    OvernightRisky, Preset, ProfileView, RiskLevel, RiskView, SuggestionView, ThresholdReplay, Verdict,
 };

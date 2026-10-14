@@ -2,7 +2,8 @@
 //!
 //! **Prompt-injection rule.** Everything is computed twice, once from `S_facts` (its pass, its embedding, the memory's
 //! facts embeddings, the facts adapter) and once from `S_full`; the approve probability used is the smaller of the two,
-//! the deny probability the larger. Text the AI wrote can only move a request toward deny or ask.
+//! the deny probability the larger. Text the AI wrote can only move a request toward deny or ask. The risk of the two
+//! passes is combined the same way ([`risk_combine`]): it can only rise.
 
 use super::adapter::{AdapterVariant, features};
 use super::memory::{Knn, MemoryRow, Variant, knn};
@@ -24,6 +25,8 @@ pub struct Pass {
     pub escalate: f32,
     /// The embedding, unit length.
     pub pooled: Vec<f32>,
+    /// Calibrated severity probabilities (benign, risky, severe, catastrophic) when the model rates risk.
+    pub risk: Option<[f32; 4]>,
 }
 
 pub fn softmax(logits: [f32; 3]) -> [f32; 3] {
@@ -31,6 +34,22 @@ pub fn softmax(logits: [f32; 3]) -> [f32; 3] {
     let e = logits.map(|l| (l - max).exp());
     let sum: f32 = e.iter().sum();
     e.map(|x| x / sum)
+}
+
+pub fn softmax4(logits: [f32; 4]) -> [f32; 4] {
+    let max = logits.iter().copied().fold(f32::NEG_INFINITY, f32::max);
+    let e = logits.map(|l| (l - max).exp());
+    let sum: f32 = e.iter().sum();
+    e.map(|x| x / sum)
+}
+
+/// The prompt-injection rule for risk: per class k, P(class ≥ k) is the larger of the two passes. The result is a
+/// distribution again (it sums to 1); text the AI wrote can only move it toward the severe end.
+pub fn risk_combine(facts: [f32; 4], full: [f32; 4]) -> [f32; 4] {
+    let at_least = |p: [f32; 4]| [1.0, p[1] + p[2] + p[3], p[2] + p[3], p[3]];
+    let (a, b) = (at_least(facts), at_least(full));
+    let c: [f32; 4] = std::array::from_fn(|k| a[k].max(b[k]).clamp(0.0, 1.0));
+    [(c[0] - c[1]).max(0.0), (c[1] - c[2]).max(0.0), (c[2] - c[3]).max(0.0), c[3]]
 }
 
 /// (approve, deny, ask), summing to 1.
@@ -164,6 +183,22 @@ mod tests {
         let harmful = combine(p(0.97, 0.01), p(0.05, 0.90));
         assert!((harmful.approve - 0.05).abs() < 1e-6 && (harmful.deny - 0.90).abs() < 1e-6);
         assert!(harmful.ask >= 0.0);
+    }
+
+    #[test]
+    fn ai_text_can_only_raise_risk() {
+        let calm = [0.9, 0.08, 0.015, 0.005];
+        let alarming = [0.05, 0.05, 0.1, 0.8];
+        for (f, u) in [(calm, alarming), (alarming, calm)] {
+            let c = risk_combine(f, u);
+            assert!((c[3] - 0.8).abs() < 1e-6, "the larger P(catastrophic) either way: {c:?}");
+            assert!((c.iter().sum::<f32>() - 1.0).abs() < 1e-5);
+        }
+        // Per class: P(at least severe) is the larger too, even when neither pass alone has the most of it.
+        let c = risk_combine([0.1, 0.1, 0.7, 0.1], [0.1, 0.0, 0.0, 0.9]);
+        assert!((c[2] + c[3] - 0.9).abs() < 1e-6 && (c[3] - 0.9).abs() < 1e-6, "{c:?}");
+        let same = risk_combine(calm, calm);
+        assert!(same.iter().zip(calm).all(|(a, b)| (a - b).abs() < 1e-6), "{same:?}");
     }
 
     #[test]

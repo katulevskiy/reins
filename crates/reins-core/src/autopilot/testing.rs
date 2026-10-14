@@ -64,12 +64,31 @@ pub fn laya_config_json() -> String {
     .to_string()
 }
 
+/// `laya_config.json` of a fake model with the risk output (`docs/autopilot-risk.md`): Overnight holds at
+/// P(catastrophic) ≥ `threshold`.
+pub fn laya_config_with_risk_json(threshold: f32) -> String {
+    let mut cfg: Value = serde_json::from_str(&laya_config_json()).expect("config");
+    cfg["id"] = json!("fake-laya-risk");
+    cfg["risk"] = json!({"output": "risk", "labels": ["benign", "risky", "severe", "catastrophic"], "temperature": 1.0,
+                         "thresholds": {"overnight": threshold}, "situation": "context"});
+    cfg.to_string()
+}
+
 /// The files of a fake package.
 pub fn package() -> Vec<(String, Vec<u8>)> {
     vec![
         (MODEL_FILE.to_owned(), b"not really an onnx model".to_vec()),
         (TOKENIZER_FILE.to_owned(), char_tokenizer_json().into_bytes()),
         (CONFIG_FILE.to_owned(), laya_config_json().into_bytes()),
+    ]
+}
+
+/// The files of a fake package that rates risk (Overnight holds at P(catastrophic) ≥ 0.5).
+pub fn package_with_risk() -> Vec<(String, Vec<u8>)> {
+    vec![
+        (MODEL_FILE.to_owned(), b"not really an onnx model, with risk".to_vec()),
+        (TOKENIZER_FILE.to_owned(), char_tokenizer_json().into_bytes()),
+        (CONFIG_FILE.to_owned(), laya_config_with_risk_json(0.5).into_bytes()),
     ]
 }
 
@@ -116,6 +135,10 @@ impl DownloadProgress for Progress {
 pub struct FakeRuntime {
     rules: Mutex<Vec<(String, [f32; 3])>>,
     default: Mutex<[f32; 3]>,
+    /// Severity logits by keyword, and the default; returned only when `risk_default` is set (a runtime that reads
+    /// the risk output).
+    risk_rules: Mutex<Vec<(String, [f32; 4])>>,
+    risk_default: Mutex<Option<[f32; 4]>>,
     pub fail: AtomicBool,
     /// Each run first takes this long (milliseconds): a phone too slow or a runtime that hangs.
     pub stall_ms: AtomicU64,
@@ -131,6 +154,8 @@ impl Default for FakeRuntime {
         Self {
             rules: Mutex::new(Vec::new()),
             default: Mutex::new([0.0, 0.0, 1.0]),
+            risk_rules: Mutex::new(Vec::new()),
+            risk_default: Mutex::new(None),
             fail: AtomicBool::new(false),
             stall_ms: AtomicU64::new(0),
             loads: AtomicU32::new(0),
@@ -166,6 +191,11 @@ pub fn logits(approve: f32, deny: f32, ask: f32) -> [f32; 3] {
     [approve.ln(), deny.ln(), ask.ln()]
 }
 
+/// Severity logits (benign, risky, severe, catastrophic) as probabilities would come out of them.
+pub fn risk(benign: f32, risky: f32, severe: f32, catastrophic: f32) -> [f32; 4] {
+    [benign.ln(), risky.ln(), severe.ln(), catastrophic.ln()]
+}
+
 impl FakeRuntime {
     /// When the state text contains `keyword` (lower case), these logits.
     pub fn rule(&self, keyword: &str, logits: [f32; 3]) {
@@ -174,6 +204,16 @@ impl FakeRuntime {
 
     pub fn set_default(&self, logits: [f32; 3]) {
         *self.default.lock().expect("default") = logits;
+    }
+
+    /// When the state text contains `keyword` (lower case), these severity logits.
+    pub fn risk_rule(&self, keyword: &str, logits: [f32; 4]) {
+        self.risk_rules.lock().expect("risk rules").push((keyword.to_lowercase(), logits));
+    }
+
+    /// Reads the risk output (as an app whose runtime knows it), with these logits when no rule matches.
+    pub fn set_risk_default(&self, logits: [f32; 4]) {
+        *self.risk_default.lock().expect("risk default") = Some(logits);
     }
 
     /// The state part of one sequence: after the separator closing the options, up to the next one.
@@ -235,9 +275,12 @@ impl ModelRuntime for FakeRuntime {
             act: Vec::with_capacity(batch * 2),
             pooled: Vec::with_capacity(batch * HIDDEN),
             hidden: u32::try_from(HIDDEN).unwrap_or(0),
+            risk: Vec::new(),
         };
         let rules = self.rules.lock().expect("rules").clone();
         let default = *self.default.lock().expect("default");
+        let risk_rules = self.risk_rules.lock().expect("risk rules").clone();
+        let risk_default = *self.risk_default.lock().expect("risk default");
         for b in 0..batch {
             let state = Self::state(&input.input_ids[b * len..(b + 1) * len]);
             let lower = state.to_lowercase();
@@ -249,6 +292,9 @@ impl ModelRuntime for FakeRuntime {
                 [0.0, -4.0]
             });
             out.pooled.extend(Self::embed(&state));
+            if let Some(d) = risk_default {
+                out.risk.extend(risk_rules.iter().find(|(k, _)| lower.contains(k)).map_or(d, |(_, l)| *l));
+            }
             self.seen.lock().expect("seen").push(state);
         }
         Ok(out)

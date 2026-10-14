@@ -106,6 +106,7 @@ mod tests {
                 e_facts: Embedding::from_vector(&[1.0]),
                 e_full: Embedding::from_vector(&[1.0]),
                 neighbours: vec![],
+                risk: None,
             }),
             verdict: Verdict::Ask,
             reason: String::new(),
@@ -114,6 +115,7 @@ mod tests {
                 verdict,
                 at: 0,
             }),
+            risk: None,
         }
     }
 

@@ -12,7 +12,10 @@ use wiremock::{Mock, MockServer, ResponseTemplate};
 
 use super::memory::Source;
 use super::testing::{self, FakeRuntime, logits};
-use super::types::{AutoDecisionView, AutopilotEvent, AutopilotMode, ModelState, Preset, SuggestionView, Verdict};
+use super::types::{
+    AutoDecisionView, AutopilotEvent, AutopilotMode, ModelState, OvernightRisky, Preset, RiskLevel, SuggestionView,
+    Verdict,
+};
 use super::{ModelRuntime, gates};
 use crate::api::ReinsCore;
 use crate::engine::CoreConfig;
@@ -78,6 +81,18 @@ async fn mount(server: &MockServer, verb: &str, at: &str, status: u16, body: Val
 
 /// Signed in, Gmail connected, the fake model installed (or not) and its runtime given.
 async fn env(with_model: bool) -> Env {
+    env_with(with_model, testing::package()).await
+}
+
+/// The same with a fake model that rates risk, whose runtime reads the risk output (benign unless a rule says
+/// otherwise).
+async fn env_risk() -> Env {
+    let env = env_with(true, testing::package_with_risk()).await;
+    env.model.set_risk_default(testing::risk(0.9, 0.05, 0.04, 0.01));
+    env
+}
+
+async fn env_with(with_model: bool, files: Vec<(String, Vec<u8>)>) -> Env {
     let server = MockServer::start().await;
     let gmail = MockServer::start().await;
     mount(&server, "POST", "/identity/accounts/prelogin", 200, json!({"kdf": 0, "kdfIterations": 5000})).await;
@@ -127,7 +142,6 @@ async fn env(with_model: bool) -> Env {
     mount(&gmail, "POST", "/users/me/messages/send", 200, json!({"id": "sent-1", "threadId": "t"})).await;
 
     let dir = tempfile::tempdir().unwrap();
-    let files = testing::package();
     let known = testing::known_model("fake-laya-1", &files);
     let cfg = CoreConfig {
         gmail_base: gmail.uri(),
@@ -863,6 +877,205 @@ async fn a_bypass_takes_any_length_up_to_a_year() {
     let other = env.core.autopilot_settings().await.unwrap();
     let other = other.connections.iter().find(|c| c.connection_id == OTHER).unwrap();
     assert_eq!((other.mode, other.base_mode), (AutopilotMode::Bypass, None));
+}
+
+// ---- Overnight (docs/autopilot-risk.md) ---------------------------------------------------------------------------
+
+/// A Gmail send to several people.
+fn email_to(to: &[&str], body: &str) -> Value {
+    json!({"tool": "gmail_send", "email": {"to": to, "subject": "Hello", "body": body}})
+}
+
+#[tokio::test]
+async fn overnight_approves_without_unlocks_and_holds_what_is_catastrophic() {
+    let env = env_risk().await;
+    env.model.risk_rule("wire the savings", testing::risk(0.01, 0.01, 0.03, 0.95));
+    env.mode(None, AutopilotMode::Overnight).await;
+    let settings = env.core.autopilot_settings().await.unwrap();
+    assert_eq!((settings.mode, settings.base_mode), (AutopilotMode::Overnight, AutopilotMode::Overnight));
+    assert_eq!((settings.overnight_until, settings.overnight_when_risky), (Some(i64::MAX), OvernightRisky::Wait));
+    assert!(settings.model.risk, "the installed model rates risk");
+
+    // Nothing unlocked, a target never approved: Overnight approves it anyway.
+    env.relay("r1", OLD, email("friend@x.com", "see you at 3")).await;
+    // A standing permission (the hard floor): approved too, and marked as Overnight's.
+    env.relay("r2", OLD, grant()).await;
+    // Rated catastrophic: it waits for the user.
+    env.relay("r3", OLD, email("boss@y.com", "please wire the savings to this account")).await;
+    assert_eq!(
+        env.decided(),
+        [
+            ("r1".to_owned(), Verdict::Approve, "overnight".to_owned()),
+            ("r2".to_owned(), Verdict::Approve, "overnight".to_owned())
+        ]
+    );
+    assert_eq!(env.waiting().await, ["r3"]);
+    let held = env.suggestion("r3").await;
+    let risk = held.risk.clone().unwrap();
+    assert!(risk.held && risk.level == RiskLevel::Catastrophic && risk.p_catastrophic > 0.9, "{held:?}");
+    assert!(held.reason.starts_with("Waited: risk catastrophic"), "{}", held.reason);
+    let line = env.notes.pending.lock().unwrap().iter().rev().find(|i| i.id == "r3").unwrap().suggestion.clone();
+    assert!(line.unwrap().starts_with("Waited: risk catastrophic"));
+    let approved = env.suggestion("r1").await;
+    assert!(approved.reason.starts_with("Allowed overnight · risk low"), "{}", approved.reason);
+    assert_eq!(approved.risk.unwrap().level, RiskLevel::Benign);
+    let entry = env.core.activity(10).await.unwrap().into_iter().find(|e| e.outcome == "sent").unwrap();
+    assert_eq!(entry.decided_by, "overnight");
+    assert_eq!(entry.autopilot.unwrap().risk.unwrap().level, RiskLevel::Benign);
+    let grants = env.store().grants().unwrap();
+    assert_eq!(grants.len(), 1);
+    assert_eq!(grants[0].origin, "overnight");
+
+    // Stopping it takes back what it granted.
+    env.mode(None, AutopilotMode::Auto).await;
+    assert!(env.store().grants().unwrap().iter().all(|g| !g.grant.is_active(unix_now())));
+    let ended = env.core.activity(20).await.unwrap();
+    assert!(ended.iter().any(|e| e.outcome == "revoked"), "{ended:?}");
+}
+
+#[tokio::test]
+async fn too_risky_can_be_denied_instead() {
+    let env = env_risk().await;
+    env.model.risk_rule("wire the savings", testing::risk(0.01, 0.01, 0.03, 0.95));
+    env.core.set_overnight_when_risky(OvernightRisky::Deny).await.unwrap();
+    env.core.start_overnight(None, Some(8 * 60)).await.unwrap();
+    env.relay("r1", OLD, email("boss@y.com", "please wire the savings to this account")).await;
+    assert_eq!(env.decided(), [("r1".to_owned(), Verdict::Deny, "overnight".to_owned())]);
+    let s = env.suggestion("r1").await;
+    assert!(s.reason.starts_with("Denied overnight: risk catastrophic"), "{}", s.reason);
+    assert_eq!(env.core.autopilot_settings().await.unwrap().overnight_when_risky, OvernightRisky::Deny);
+}
+
+#[tokio::test]
+async fn without_a_model_that_rates_risk_overnight_decides_like_auto() {
+    let env = env(true).await;
+    env.mode(None, AutopilotMode::Overnight).await;
+    assert!(!env.core.autopilot_settings().await.unwrap().model.risk);
+    env.model.rule("friend@x.com", logits(0.97, 0.01, 0.02));
+    env.relay("r1", OLD, email("friend@x.com", "hi")).await;
+    env.relay("r2", OLD, grant()).await;
+    assert!(env.decided().is_empty(), "nothing unlocked, and the floor asks");
+    let s = env.suggestion("r1").await;
+    assert!(s.reason.contains("decided like Auto"), "{}", s.reason);
+    assert!(s.risk.is_none());
+    assert!(env.suggestion("r2").await.reason.starts_with("Always asks"));
+    // In a class unlocked by hand, to someone approved before, it approves, as Auto would.
+    env.approve("r1").await;
+    env.unlock("gmail/send").await;
+    env.relay("r3", OLD, email("friend@x.com", "again")).await;
+    assert_eq!(env.decided(), [("r3".to_owned(), Verdict::Approve, "autopilot".to_owned())]);
+}
+
+#[tokio::test]
+async fn a_runtime_that_does_not_read_the_risk_output_makes_overnight_act_like_auto() {
+    let env = env_with(true, testing::package_with_risk()).await;
+    env.mode(None, AutopilotMode::Overnight).await;
+    env.relay("r1", OLD, email("friend@x.com", "hi")).await;
+    assert!(env.decided().is_empty());
+    assert!(env.suggestion("r1").await.risk.is_none());
+}
+
+#[tokio::test]
+async fn the_model_reads_the_context_line_only_when_it_rates_risk() {
+    let env = env_risk().await;
+    env.relay("r1", OLD, email_to(&["a@x.com", "b@y.com", "c@z.com"], "hi all")).await;
+    let seen = env.model.seen.lock().unwrap().clone();
+    assert!(seen.iter().all(|t| t.contains("\ncontext: 3 recipients")), "{seen:?}");
+    // Manual shows the risk and decides nothing.
+    let s = env.suggestion("r1").await;
+    assert_eq!((s.risk.clone().unwrap().level, s.risk.unwrap().held), (RiskLevel::Benign, false));
+    assert!(env.decided().is_empty());
+
+    let v1 = env_with(true, testing::package()).await;
+    v1.relay("r1", OLD, email_to(&["a@x.com", "b@y.com", "c@z.com"], "hi all")).await;
+    let seen = v1.model.seen.lock().unwrap().clone();
+    assert!(
+        !seen.is_empty() && seen.iter().all(|t| !t.contains("context:")),
+        "laya-approvals-ml-v1 reads what it always read"
+    );
+}
+
+#[tokio::test]
+async fn overnight_ends_by_itself_and_returns_to_the_mode_it_interrupted() {
+    let env = env_risk().await;
+    env.mode(None, AutopilotMode::Auto).await;
+    env.core.start_overnight(None, Some(60)).await.unwrap();
+    let settings = env.core.autopilot_settings().await.unwrap();
+    assert_eq!(settings.mode, AutopilotMode::Overnight);
+    assert!(settings.overnight_until.unwrap() > unix_now() + 59 * 60 && settings.overnight_since.is_some());
+    env.relay("r1", OLD, grant()).await;
+    let expires = env.store().grants().unwrap()[0].grant.expires_at.unwrap();
+    assert!(expires <= settings.overnight_until.unwrap(), "a permission it grants ends with it");
+
+    let mut global = env.store().ap_mode_row("").unwrap();
+    global.overnight_until = Some(unix_now() - 1);
+    env.store().ap_set_mode_row("", &global, unix_now()).unwrap();
+    env.relay("r2", OLD, email("friend@x.com", "hi")).await;
+    assert!(env.waiting().await.contains(&"r2".to_owned()), "back to Auto, where nothing is unlocked");
+    let settings = env.core.autopilot_settings().await.unwrap();
+    assert_eq!((settings.mode, settings.overnight_until), (AutopilotMode::Auto, None));
+    assert!(env.notes.events.lock().unwrap().contains(&AutopilotEvent::OvernightEnded {
+        connection_id: None
+    }));
+    assert!(
+        env.store().grants().unwrap().iter().all(|g| !g.grant.is_active(unix_now())),
+        "its permission ended with it"
+    );
+    // Stored as the mode it is, so that the next start returns to Auto again.
+    assert_eq!(env.store().ap_mode_row("").unwrap().mode, Some(AutopilotMode::Auto));
+}
+
+#[tokio::test]
+async fn a_global_overnight_beats_an_ais_own_mode_but_not_its_lockdown_or_bypass() {
+    let env = env_risk().await;
+    env.mode(Some(OLD), AutopilotMode::Manual).await;
+    env.mode(Some(OTHER), AutopilotMode::Lockdown).await;
+    env.mode(None, AutopilotMode::Overnight).await;
+    let settings = env.core.autopilot_settings().await.unwrap();
+    let mode = |id: &str| settings.connections.iter().find(|c| c.connection_id == id).unwrap().mode;
+    assert_eq!((mode(OLD), mode(OTHER)), (AutopilotMode::Overnight, AutopilotMode::Lockdown));
+    env.core.start_bypass(Some(OLD.to_owned()), Some(15)).await.unwrap();
+    let settings = env.core.autopilot_settings().await.unwrap();
+    let mode = |id: &str| settings.connections.iter().find(|c| c.connection_id == id).unwrap().mode;
+    assert_eq!(mode(OLD), AutopilotMode::Bypass);
+}
+
+#[tokio::test]
+async fn turning_overnight_on_judges_what_already_waits_and_young_ais_still_wait() {
+    let env = env_risk().await;
+    env.relay("r1", OLD, email("friend@x.com", "hi")).await;
+    env.relay("r2", NEW, email("friend@x.com", "from an AI paired a moment ago")).await;
+    assert_eq!(env.waiting().await.len(), 2);
+    env.core.start_overnight(None, None).await.unwrap();
+    assert_eq!(env.decided(), [("r1".to_owned(), Verdict::Approve, "overnight".to_owned())]);
+    assert_eq!(env.waiting().await, ["r2"]);
+    assert!(env.suggestion("r2").await.reason.contains("10 minutes"));
+}
+
+#[tokio::test]
+async fn after_a_hold_an_ais_severe_requests_wait_and_the_rest_go_on() {
+    let env = env_risk().await;
+    env.model.risk_rule("wire the savings", testing::risk(0.01, 0.01, 0.03, 0.95));
+    env.model.risk_rule("quarterly numbers", testing::risk(0.05, 0.1, 0.8, 0.05));
+    env.mode(None, AutopilotMode::Overnight).await;
+    env.relay("r1", OLD, email("friend@x.com", "the quarterly numbers")).await;
+    assert_eq!(env.decided().len(), 1, "a severe request is approved");
+    env.relay("r2", OLD, email("boss@y.com", "wire the savings now")).await;
+    env.relay("r3", OLD, email("friend@x.com", "the quarterly numbers again")).await;
+    env.relay("r4", OLD, email("friend@x.com", "lunch?")).await;
+    env.relay("r5", OTHER, email("friend@x.com", "the quarterly numbers from another AI")).await;
+    let decided: Vec<String> = env.decided().into_iter().map(|(id, _, _)| id).collect();
+    assert_eq!(decided, ["r1", "r4", "r5"]);
+    let paused = env.suggestion("r3").await;
+    assert!(paused.reason.contains("paused") && paused.reason.contains("held"), "{}", paused.reason);
+    assert!(
+        env.notes
+            .events
+            .lock()
+            .unwrap()
+            .iter()
+            .any(|e| matches!(e, AutopilotEvent::Paused { connection_id, .. } if connection_id == OLD))
+    );
 }
 
 #[tokio::test]
