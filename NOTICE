@@ -149,6 +149,22 @@ a connection belongs to and do not imply endorsement. See also android/app/src/m
 
 
 ================================================================================================================
+Desktop app icons and logos (crates/reins-desktop-app/assets/icons/lucide/ and brands/)
+================================================================================================================
+
+The interface icons in assets/icons/lucide/ are copied unmodified from Lucide (lucide-static 1.56.0),
+https://lucide.dev, Copyright (c) 2026 Lucide Icons and Contributors, licensed under the ISC License; some of them
+derive from Feather, Copyright (c) 2013-present Cole Bemis, MIT License. Both licenses are in
+assets/icons/lucide/LICENSE.
+
+The brand marks in assets/icons/brands/ (Claude, Google Gemini, Cursor, GitHub, GitLab, Codeberg, Bitbucket,
+Anthropic, Gmail) are copied unmodified from Simple Icons 16.35.0, https://github.com/simple-icons/simple-icons,
+dedicated to the public domain under CC0 1.0 (assets/icons/brands/LICENSE.md). All of these marks are trademarks of
+their respective owners. They are shown only to identify the AI tool, git host or service a connection belongs to and
+do not imply endorsement.
+
+
+================================================================================================================
 EFF large wordlist (crates/reins-core/src/connector/vault/eff_large_wordlist.txt)
 ================================================================================================================
 
