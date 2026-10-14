@@ -200,6 +200,12 @@ impl Engine {
                 self.store.revoke_grant(&g.grant.id)?;
             }
         }
+        self.tell_computers(project, env).await
+    }
+
+    /// Leaves for every paired computer a note, sealed to its key, to drop the values it holds of `project` (and `env`;
+    /// neither: all). Returns how many computers were told.
+    pub(crate) async fn tell_computers(&self, project: Option<&str>, env: Option<&str>) -> Result<u32, CoreError> {
         let revocation = LeaseRevocation {
             v: 1,
             dir: TO_DESKTOP.to_owned(),
