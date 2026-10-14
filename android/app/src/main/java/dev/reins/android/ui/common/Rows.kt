@@ -1,151 +1,37 @@
 package dev.reins.android.ui.common
 
 import androidx.compose.foundation.background
-import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
-import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.rounded.Delete
+import androidx.compose.material.icons.rounded.Refresh
+import androidx.compose.material3.Icon
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.State
-import androidx.compose.runtime.derivedStateOf
-import androidx.compose.runtime.getValue
-import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
-import dev.reins.android.design.ActionKind
-import dev.reins.android.design.ActionTile
-import dev.reins.android.design.ButtonStyle
-import dev.reins.android.design.CapsuleButton
-import dev.reins.android.design.ExpiryPie
-import dev.reins.android.design.GrantClock
-import dev.reins.android.design.Glyph
-import dev.reins.android.design.GlyphIcon
-import dev.reins.android.design.TimeBarFrame
-import dev.reins.android.design.UsesMeter
-import dev.reins.android.design.clockColor
-import dev.reins.android.design.grantClock
-import dev.reins.android.design.rememberNowState
-import dev.reins.android.design.ConnectorTags
 import dev.reins.android.design.LocalColors
+import dev.reins.android.design.MiniLogo
 import dev.reins.android.design.RText
 import dev.reins.android.design.RType
-import dev.reins.android.design.Tag
 import dev.reins.android.design.pressable
-import dev.reins.core.ActivityEntry
 import dev.reins.core.GrantView
-
-/** One operation in a list: what it was, who asked, which account, when, and how it ended. */
-@Composable
-fun ActivityRow(entry: ActivityEntry, modifier: Modifier = Modifier, onClick: () -> Unit) {
-    val c = LocalColors.current
-    val action = ActionKind.of(entry.action)
-    Row(
-        modifier
-            .fillMaxWidth()
-            .pressable(highlight = c.controlFill, shape = RoundedCornerShape(0.dp), onClick = onClick)
-            .padding(horizontal = 16.dp, vertical = 12.dp),
-        verticalAlignment = Alignment.Top,
-    ) {
-        ActionTile(action, entry.count.toInt(), size = 44.dp)
-        Spacer(Modifier.width(14.dp))
-        Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(3.dp)) {
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                ConnectionIcon(entry.connectionId, entry.connectionLabel, size = 20.dp)
-                Spacer(Modifier.width(8.dp))
-                RText(
-                    entryTitle(entry.connectionLabel, entry.action, entry.count.toInt(), entry.service, entry.outcome, entry.opTitle, entry.op),
-                    RType.sans(16f, FontWeight.SemiBold),
-                    c.text,
-                    Modifier.weight(1f),
-                    maxLines = 2,
-                )
-            }
-            RText(untrusted(entry.detail), RType.sans(14f), c.secondary, maxLines = 2)
-            ConnectorTags(entry.service, entry.account, Modifier.padding(top = 3.dp))
-        }
-        Spacer(Modifier.width(10.dp))
-        Column(horizontalAlignment = Alignment.End, verticalArrangement = Arrangement.spacedBy(6.dp)) {
-            RText(relativeTime(entry.at), RType.sans(12.5f), c.tertiary, maxLines = 1)
-            OutcomeTag(entry.outcome)
-            if (entry.decidedBy.isNotEmpty()) dev.reins.android.ui.autopilot.AutopilotBadge(entry.decidedBy)
-        }
-    }
-}
-
-@Composable
-fun OutcomeTag(outcome: String) {
-    val c = LocalColors.current
-    when (outcome) {
-        "denied" -> Tag("Denied", tint = c.danger)
-        "error" -> Tag("Failed", tint = c.warning)
-        "granted" -> Tag("Granted", tint = c.accent)
-        "sent" -> Tag("Sent")
-        "released" -> Tag("Allowed")
-        else -> Tag(outcome.replaceFirstChar { it.uppercase() })
-    }
-}
-
-/**
- * A running permission: the time left as a pie and as a bar along the border, how much it was used, who and what.
- * The clock's ticks reach only the pie and the border's drawing; the rest of the tile recomposes when the grant does.
- */
-@Composable
-fun GrantTile(grant: GrantView, modifier: Modifier = Modifier, onClick: () -> Unit) {
-    val c = LocalColors.current
-    val action = ActionKind.of(grant.action)
-    // A grant without an end has nothing to count down; one that ended stops its clock.
-    val now = rememberNowState(1_000, untilMillis = grant.expiresAt?.let { it * 1000 })
-    val clock = remember(grant, now) { derivedStateOf { grantClock(grant, now.value / 1000) } }
-    val soon by remember(grant, now) { derivedStateOf { clock.value.soon } }
-    Box(modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 6.dp)) {
-        TimeBarFrame(
-            fraction = { clock.value.fraction },
-            color = { clockColor(clock.value, c) },
-            modifier = Modifier
-                .fillMaxWidth()
-                .clip(RoundedCornerShape(18.dp))
-                .background(c.elevated)
-                .pressable(highlight = c.controlFill, shape = RoundedCornerShape(18.dp), onClick = onClick),
-        ) {
-            Row(Modifier.fillMaxWidth().padding(start = 14.dp, end = 14.dp, top = 14.dp, bottom = 14.dp), verticalAlignment = Alignment.CenterVertically) {
-                GrantPie(clock)
-                Spacer(Modifier.width(14.dp))
-                Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(5.dp)) {
-                    RText(untrusted(grant.summary), RType.sans(16f, FontWeight.SemiBold), c.text, maxLines = 2)
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        ConnectionIcon(grant.connectionId, grant.connectionLabel, size = 18.dp)
-                        Spacer(Modifier.width(7.dp))
-                        RText(untrusted(grant.connectionLabel), RType.sans(14f, FontWeight.Medium), c.secondary, maxLines = 1)
-                        Spacer(Modifier.width(8.dp))
-                        Tag(when (grant.action) { "send" -> "Sends"; "write" -> "Writes"; "list" -> "Lists"; "accounts" -> "Shows accounts"; else -> "Reads" }, tint = action.tint(c))
-                    }
-                    UsesMeter(grant.uses.toInt(), grant.maxUses?.toInt())
-                    ConnectorTags(grant.service, grant.account, Modifier.padding(top = 1.dp))
-                }
-                if (soon) {
-                    Spacer(Modifier.width(8.dp))
-                    Tag("Ends soon", Modifier.testTag("endsSoon"), tint = c.danger)
-                }
-            }
-        }
-    }
-}
-
-/** The pie of a [GrantTile], in a scope of its own so the tile's clock recomposes only this. */
-@Composable
-private fun GrantPie(clock: State<GrantClock>) {
-    ExpiryPie(clock.value, size = 54.dp)
-}
 
 /** A permission that ended, with the ways to start it again or to get rid of it. */
 @Composable
@@ -155,28 +41,40 @@ fun EndedGrantRow(grant: GrantView, modifier: Modifier = Modifier, onOpen: () ->
         modifier
             .fillMaxWidth()
             .pressable(highlight = c.controlFill, shape = RoundedCornerShape(0.dp), onClick = onOpen)
-            .padding(horizontal = 16.dp, vertical = 14.dp),
-        verticalAlignment = Alignment.Top,
+            .padding(start = 20.dp, end = 12.dp, top = 10.dp, bottom = 10.dp),
+        verticalAlignment = Alignment.CenterVertically,
     ) {
-        Box(
-            Modifier.size(44.dp).background(c.controlFill, androidx.compose.foundation.shape.CircleShape),
-            contentAlignment = Alignment.Center,
-        ) { GlyphIcon(if (grant.state == "revoked") Glyph.Trash else Glyph.Clock, c.tertiary, size = 20.dp) }
+        MiniLogo(
+            grant.service.ifBlank { "gmail" },
+            face = { size -> ConnectionIcon(grant.connectionId, grant.connectionLabel, size = size) },
+            size = 40.dp,
+            faceSize = 20.dp,
+            ring = if (c.dark) androidx.compose.ui.graphics.Color(0xFF19191C) else c.elevated,
+            modifier = Modifier.graphicsLayer { alpha = 0.6f },
+        )
         Spacer(Modifier.width(14.dp))
-        Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
-            RText(untrusted(grant.summary), RType.sans(15.5f, FontWeight.Medium), c.text, maxLines = 2)
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                ConnectionIcon(grant.connectionId, grant.connectionLabel, size = 18.dp)
-                Spacer(Modifier.width(6.dp))
-                RText(untrusted(grant.connectionLabel) + " · " + endedLine(grant), RType.sans(13f), c.secondary, maxLines = 1)
-            }
-            ConnectorTags(grant.service, grant.account, Modifier.padding(top = 2.dp))
-            Row(Modifier.padding(top = 8.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                CapsuleButton("Resume", Modifier.testTag("resume:${grant.id}"), style = ButtonStyle.Secondary, compact = true, glyph = Glyph.Refresh, onClick = onResume)
-                CapsuleButton("Delete", Modifier.testTag("delete:${grant.id}"), style = ButtonStyle.Destructive, compact = true, glyph = Glyph.Trash, onClick = onDelete)
-            }
+        Column(Modifier.weight(1f)) {
+            RText(untrusted(grant.summary), RType.sans(15f, FontWeight.Medium), c.text, maxLines = 2)
+            RText(untrusted(grant.connectionLabel) + " · " + endedLine(grant), RType.sans(12.5f), c.tertiary, Modifier.padding(top = 2.dp), maxLines = 1)
         }
+        Spacer(Modifier.width(8.dp))
+        RoundAction(Icons.Rounded.Refresh, "Resume", c.text, c.controlFill, Modifier.testTag("resume:${grant.id}"), onResume)
+        Spacer(Modifier.width(8.dp))
+        RoundAction(Icons.Rounded.Delete, "Delete", c.danger, c.danger.copy(alpha = 0.13f), Modifier.testTag("delete:${grant.id}"), onDelete)
     }
+}
+
+@Composable
+private fun RoundAction(icon: ImageVector, label: String, tint: androidx.compose.ui.graphics.Color, fill: androidx.compose.ui.graphics.Color, modifier: Modifier, onClick: () -> Unit) {
+    Box(
+        modifier
+            .size(40.dp)
+            .clip(CircleShape)
+            .background(fill)
+            .pressable(shape = CircleShape, label = label, onClick = onClick)
+            .semantics { contentDescription = label },
+        contentAlignment = Alignment.Center,
+    ) { Icon(icon, null, Modifier.size(20.dp), tint = tint) }
 }
 
 /** How a finished grant ended: "Expired 2 d ago", "All 5 uses spent", "Deleted". */
