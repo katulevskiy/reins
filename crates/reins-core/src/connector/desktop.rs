@@ -60,8 +60,9 @@ pub fn ask_view(call: &ConnectorCall) -> Option<AskView> {
 /// What in a command or a question means it deletes, rewrites history or wipes something: never routine. Matched in
 /// lower case anywhere in the topic, the question and the detail (the command), so a harness hook's built-in rules and
 /// the same command typed into `reins ask` are treated alike. Publishing is irreversible too, but routine: it stays
-/// allowed for a while.
-const DESTRUCTIVE: [&str; 46] = [
+/// allowed for a while. Finding, moving or reading secrets on the computer (`reins secrets scan`, `import`, `get`) is
+/// asked every time too: an agent must never get a standing answer for it.
+const DESTRUCTIVE: [&str; 49] = [
     "push -f",
     "push --force",
     "push +",
@@ -108,6 +109,9 @@ const DESTRUCTIVE: [&str; 46] = [
     "format-volume",
     "clear-disk",
     "format c:",
+    "reins secrets scan",
+    "reins secrets import",
+    "reins secrets get",
 ];
 
 /// A question that is asked every time: about a destructive command, or about reading a secret file (`file:` topics,
@@ -267,6 +271,11 @@ mod tests {
             "command:Remove-Item -Recurse",
             "file:.env",
             "file:**/id_ed25519",
+            "command:reins secrets scan",
+            "command:reins secrets import",
+            "command:reins secrets get",
+            // What `reins secrets scan` itself asks (crates/reins-desktop/src/secrets_cmd/scan.rs).
+            "file:reins secrets scan",
         ] {
             assert!(ask(Some(topic), "Run it?", ""), "{topic}");
         }

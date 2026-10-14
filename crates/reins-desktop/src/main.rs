@@ -580,7 +580,7 @@ async fn run(cmd: Cmd) -> Result<(), String> {
         Cmd::Secrets {
             action,
         } => {
-            for line in reins_desktop::secrets_cmd::run(&action, &paths, &config)? {
+            for line in reins_desktop::secrets_cmd::run(&action, &paths, &config).await? {
                 out!("{line}");
             }
             Ok(())

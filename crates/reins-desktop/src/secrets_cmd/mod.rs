@@ -14,8 +14,8 @@ pub enum SecretsCmd {
 }
 
 /// Runs `reins secrets …`; the lines to print.
-pub fn run(cmd: &SecretsCmd, paths: &Paths, config: &Config) -> Result<Vec<String>, String> {
+pub async fn run(cmd: &SecretsCmd, paths: &Paths, config: &Config) -> Result<Vec<String>, String> {
     match cmd {
-        SecretsCmd::Scan(args) => scan::run(args, paths, config),
+        SecretsCmd::Scan(args) => scan::run(args, paths, config).await,
     }
 }

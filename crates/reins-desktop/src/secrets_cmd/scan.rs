@@ -24,25 +24,48 @@ pub struct ScanArgs {
 pub const QUESTION: &str =
     "Scan this computer for secrets? Only names, places and masked previews are shown, and nothing leaves it.";
 
-/// Runs the scan after the person confirmed it.
-pub fn run(args: &ScanArgs, paths: &Paths, config: &Config) -> Result<Vec<String>, String> {
+/// Asks for the scan ([`person::authorize`]: the phone must approve it) and runs it.
+pub async fn run(args: &ScanArgs, paths: &Paths, config: &Config) -> Result<Vec<String>, String> {
     let home = crate::config::home_dir()?;
-    person::check(
+    let report = authorized_scan(&args.paths, !args.json, paths, config, &home).await?;
+    if args.json {
+        return serde_json::to_string_pretty(&report).map(|j| vec![j]).map_err(|e| e.to_string());
+    }
+    Ok(table(&report))
+}
+
+/// A scan of `only` (or the whole computer) once the person confirmed it here and the phone approved it.
+pub async fn authorized_scan(
+    only: &[PathBuf],
+    human_output: bool,
+    paths: &Paths,
+    config: &Config,
+    home: &std::path::Path,
+) -> Result<ScanReport, String> {
+    let caller = Caller::from_env();
+    let cwd = std::env::current_dir().map_err(|e| e.to_string())?;
+    let q = person::scan_question(&secrets_scan::computer_name(), &cwd, &caller);
+    person::authorize(
         "reins secrets scan",
         QUESTION,
-        &Caller::from_env(),
+        &caller,
         Terminal::now(),
         Needs {
-            stdout: !args.json,
+            stdout: human_output,
         },
         &mut person::ask_tty,
-    )?;
+        &person::Phone {
+            paths,
+            config,
+        },
+        &q,
+    )
+    .await?;
+    let home = home.to_path_buf();
     let mut opts = ScanOptions::new(home.clone());
     opts.caller = Caller::Person;
     opts.exposure = secrets_scan::Exposure::detect(paths, config, &home);
-    let cwd = std::env::current_dir().map_err(|e| e.to_string())?;
-    opts.paths = args
-        .paths
+    opts.paths = only
         .iter()
         .map(|p| {
             if p.is_absolute() {
@@ -54,7 +77,7 @@ pub fn run(args: &ScanArgs, paths: &Paths, config: &Config) -> Result<Vec<String
         .collect();
     let shown = std::io::stderr().is_terminal();
     let mut last: Option<Stage> = None;
-    let report = secrets_scan::scan(&opts, &mut |p| {
+    secrets_scan::scan(&opts, &mut |p| {
         let running = p.stages.iter().find(|(_, s)| **s == StageState::Running).map(|(st, _)| *st);
         if shown && running.is_some() && running != last {
             last = running;
@@ -62,11 +85,7 @@ pub fn run(args: &ScanArgs, paths: &Paths, config: &Config) -> Result<Vec<String
                 eprintln!("Looking at {} ({})…", stage.label(), stage.places());
             }
         }
-    })?;
-    if args.json {
-        return serde_json::to_string_pretty(&report).map(|j| vec![j]).map_err(|e| e.to_string());
-    }
-    Ok(table(&report))
+    })
 }
 
 fn plural(n: usize, one: &str, many: &str) -> String {

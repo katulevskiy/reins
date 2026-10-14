@@ -31,7 +31,7 @@ use sha2::{Digest as _, Sha256};
 use zeroize::Zeroizing;
 
 pub use self::detect::{Confidence, Detector};
-use self::sources::RawEntry;
+pub use self::sources::RawEntry;
 pub use self::sources::Source;
 use crate::guard::GuardConfig;
 
@@ -509,6 +509,35 @@ impl ScanOptions {
     }
 }
 
+/// This computer's name, as the phone and the vault folder `Reins/machine/<name>` call it.
+#[must_use]
+pub fn computer_name() -> String {
+    #[cfg(target_os = "macos")]
+    if let Ok(out) = std::process::Command::new("scutil").args(["--get", "ComputerName"]).output()
+        && out.status.success()
+        && let Ok(name) = String::from_utf8(out.stdout)
+        && !name.trim().is_empty()
+    {
+        return clean_name(name.trim());
+    }
+    clean_name(&hostname::get().map_or_else(|_| "this computer".to_owned(), |h| h.to_string_lossy().into_owned()))
+}
+
+fn clean_name(name: &str) -> String {
+    let n: String = name
+        .chars()
+        .filter(|c| !c.is_control())
+        .map(|c| {
+            if c == '/' {
+                '-'
+            } else {
+                c
+            }
+        })
+        .collect();
+    n.trim().chars().take(60).collect()
+}
+
 /// `~/…` for a path under `home`.
 #[must_use]
 pub fn shown(path: &Path, home: &Path) -> String {
@@ -528,6 +557,25 @@ pub fn finding_id(source: Source, path: &Path) -> String {
     h.update(path.to_string_lossy().as_bytes());
     let d = h.finalize();
     format!("{}-{}", source.id(), data_encoding::HEXLOWER.encode(&d[..6]))
+}
+
+/// The ids of a file's entries, in order: `<finding>/<group>/<name>`, and `@<line>` after one already used.
+#[must_use]
+pub fn item_ids(finding: &str, entries: &[RawEntry]) -> Vec<String> {
+    let mut ids: Vec<String> = Vec::with_capacity(entries.len());
+    for e in entries {
+        let id = match &e.group {
+            Some(g) => format!("{finding}/{g}/{}", e.name),
+            None => format!("{finding}/{}", e.name),
+        };
+        let id = if ids.contains(&id) {
+            format!("{id}@{}", e.line)
+        } else {
+            id
+        };
+        ids.push(id);
+    }
+    ids
 }
 
 /// Whether `name` is a dotenv file the scanner reads.
@@ -825,19 +873,13 @@ impl Scan<'_> {
     /// Turns a file's entries into a finding (none when nothing in it is worth a look).
     fn finding(&mut self, source: Source, path: &Path, entries: Vec<RawEntry>, meta: Option<&std::fs::Metadata>) {
         let id = finding_id(source, path);
+        let ids = item_ids(&id, &entries);
         let mut items: Vec<Item> = Vec::new();
-        for e in entries {
+        for (e, item_id) in entries.into_iter().zip(ids) {
             let verdict = detect::classify(&e.name, &e.value, e.credential);
             // A dotenv file keeps its settings (shown unticked); elsewhere only what may be a secret.
             if verdict.confidence == Confidence::None && source != Source::Dotenv {
                 continue;
-            }
-            let mut item_id = match &e.group {
-                Some(g) => format!("{id}/{g}/{}", e.name),
-                None => format!("{id}/{}", e.name),
-            };
-            if items.iter().any(|i| i.id == item_id) {
-                item_id = format!("{item_id}@{}", e.line);
             }
             items.push(Item {
                 id: item_id,
