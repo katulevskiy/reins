@@ -461,6 +461,11 @@ async fn launchers_by_either_name_and_long_code_are_never_remembered_wider() {
     desk.send(&[release_with(&desk, "l2", &exec, &json!({"program": "/opt/tools/run", "typed": "npx"}))]).await;
     let r = desk.core.approval_view("l2".to_owned()).await.unwrap().env_release.unwrap();
     assert_eq!(r.commands.len(), 1);
+    // A link on the way that is a launcher: the same.
+    let linked = json!({"program": "/opt/tools/run", "typed": "deploy", "aliases": ["deploy", "env", "run"]});
+    desk.send(&[release_with(&desk, "l4", &exec, &linked)]).await;
+    let r = desk.core.approval_view("l4".to_owned()).await.unwrap().env_release.unwrap();
+    assert_eq!(r.commands.len(), 1);
     // Code longer than the phone shows: approved once at a time.
     let code = "print(1); ".repeat(40);
     let long = Ask {

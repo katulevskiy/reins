@@ -404,6 +404,7 @@ mod tests {
             confirm_always: false,
             print: false,
             typed: None,
+            aliases: Vec::new(),
             path_check: None,
         }
     }

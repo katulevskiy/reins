@@ -199,8 +199,10 @@ pub(crate) struct ReleaseAsk {
     pub purpose: Option<String>,
     pub confirm_always: bool,
     pub print: bool,
-    /// The program as typed (`npm`), when it was not a path.
+    /// The program as typed (`npm`, `./npm`).
     pub typed: Option<String>,
+    /// Each link on the way from the name typed to the program.
+    pub aliases: Vec<String>,
     /// [`reins_proto::desktop::PATH_SAME`] or [`reins_proto::desktop::PATH_OTHER`], when the computer said.
     pub path_check: Option<String>,
 }
@@ -209,6 +211,11 @@ impl ReleaseAsk {
     /// The exact command asked for.
     pub fn exact(&self) -> CommandScope {
         CommandScope::exact(&self.program, &self.args)
+    }
+
+    /// Every other name the program goes by: as typed, and each link on the way ([`CommandScope::offers_as`]).
+    pub fn names(&self) -> Vec<&str> {
+        self.typed.iter().chain(&self.aliases).map(String::as_str).collect()
     }
 
     /// The command as shown: with the program's whole path when it is not in a usual place.
@@ -243,7 +250,7 @@ impl ReleaseAsk {
     /// The commands a remembered approval may cover, by id: `exact`, then `prefix:<n>` for each allowed prefix.
     pub fn command_options(&self) -> Vec<(String, CommandScope)> {
         self.exact()
-            .offers_as(&self.typed.iter().map(String::as_str).collect::<Vec<_>>())
+            .offers_as(&self.names())
             .into_iter()
             .map(|c| {
                 (
@@ -308,6 +315,7 @@ pub(crate) fn release_ask(call: &ConnectorCall) -> Result<ReleaseAsk, CoreError>
         confirm_always: call.str_arg("confirm") == Some("always"),
         print: call.bool_arg("print").unwrap_or(false),
         typed: call.str_arg("typed").map(text::one_line).filter(|t| !t.is_empty()),
+        aliases: call.list_arg("aliases").iter().map(|a| text::one_line(a)).filter(|a| !a.is_empty()).collect(),
         path_check: call.str_arg("path_check").map(str::to_owned),
     })
 }

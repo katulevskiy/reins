@@ -64,7 +64,8 @@ pub(super) fn tools() -> Vec<ToolSpec> {
                 str_p("env", 64, true, "The environment (the item <project>/<env> in that folder)."),
                 list_p("fields", MAX_ENV_VARS, 100, "The variables; left out: every variable of the environment."),
                 str_p("program", 1_000, true, "The program reins run starts, by its absolute path when known."),
-                str_p("typed", 1_000, false, "The program as typed (`npm`), when it was not a path."),
+                str_p("typed", 1_000, false, "The program as typed (`npm`, `./npm`)."),
+                list_p("aliases", 16, 255, "The other names on the way to the program: each link it went through."),
                 choice_p(
                     "path_check",
                     &[crate::desktop::PATH_SAME, crate::desktop::PATH_OTHER],

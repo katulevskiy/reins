@@ -125,8 +125,8 @@ single references):
 
 `fields` left out means every variable of the environment. The command is the argument list `reins run` spawns (it
 never uses a shell), with the program resolved to its absolute path; `root` is the project's folder (canonical path).
-`typed` is the program as typed when it was a name (`npm`): the phone refuses a prefix when either name is a launcher
-(3.3).
+`typed` is the program as typed (`npm`, `./npm`) and `aliases` each link on the way to it: the phone refuses a prefix
+when any of these names, or the resolved one, is a launcher (3.3).
 `path_check` (`same` or `other`) says whether the daemon's own login `PATH` finds the same program for that name.
 The phone shows a program outside the usual system folders (`/usr/bin`, `/usr/local/bin`, `/opt/homebrew/bin`, …) by
 its whole path, in the headline too, and flags it in a warning row when it is in a temporary folder, inside the
