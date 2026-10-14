@@ -1418,6 +1418,7 @@ pub fn command_context(command: &str) -> Context {
         .filter(|s| !matches!(s[0].as_str(), "rm" | "shred" | "unlink" | "mv"))
         .flat_map(|s| args(s).operands.into_iter().map(str::to_owned).collect::<Vec<_>>())
         .collect();
+    let finds = segs.iter().any(|s| s[0] == "find");
     for seg in segs {
         let program = seg[0].to_lowercase();
         let a = args(seg);
@@ -1434,7 +1435,9 @@ pub fn command_context(command: &str) -> Context {
                 };
                 let mut targets: Vec<&str> =
                     a.operands.iter().copied().filter(|t| !(cmd && switch(t)) && *t != "{}").collect();
-                if targets.is_empty() || a.operands.contains(&"{}") {
+                // What `find` selects (`-exec rm -r {} +`, `find … | xargs rm`) is placed under its root, by the `find`
+                // arm; with no `find`, every other operand of the line is taken as a target.
+                if (targets.is_empty() || a.operands.contains(&"{}")) && !finds {
                     if others.is_empty() {
                         c.add("deletes paths read from its input");
                         c.deletes = true;
@@ -1488,7 +1491,10 @@ pub fn command_context(command: &str) -> Context {
                     overwrite_context(dst, moved, &mut c);
                 }
             }
-            "find" if seg.iter().any(|w| matches!(w.as_str(), "-delete" | "-exec" | "-execdir" | "-ok" | "-okdir")) => {
+            "find"
+                if seg.iter().any(|w| matches!(w.as_str(), "-delete" | "-exec" | "-execdir" | "-ok" | "-okdir"))
+                    || segs.iter().any(|s| matches!(s[0].as_str(), "xargs" | "rm" | "shred" | "unlink")) =>
+            {
                 let root = a.operands.first().copied().unwrap_or(".");
                 let n = normalize(root).into_value(&mut c);
                 if moved && n.base == Base::Here {
@@ -1502,6 +1508,22 @@ pub fn command_context(command: &str) -> Context {
                     _ => {
                         let v = c.value(&n.display(), true);
                         c.add(format!("deletes or changes what find selects under {v}"));
+                    }
+                }
+                // what it selects by name: a repository's history, or a protected file, wherever it is found
+                let tests = ["-name", "-iname", "-path", "-ipath", "-wholename", "-iwholename", "-regex", "-iregex"];
+                for (i, w) in seg.iter().enumerate() {
+                    let Some(pattern) = seg.get(i + 1).filter(|_| tests.contains(&w.as_str())) else {
+                        continue;
+                    };
+                    let name = pattern.trim_end_matches(['/', '*']).rsplit('/').next().unwrap_or_default();
+                    if name.eq_ignore_ascii_case(".git") {
+                        c.trip("deletes the .git directory (the repository's history)");
+                    } else if let Some(phrase) = protected(&format!("~/{pattern}"), &mut c).or_else(|| {
+                        (name == "authorized_keys" || name.starts_with("sudoers"))
+                            .then(|| "touches a file that grants access".to_owned())
+                    }) {
+                        c.trip(phrase);
                     }
                 }
                 c.deletes = true;
@@ -2071,6 +2093,24 @@ mod tests {
             destructive: false,
             kind: None,
         }
+    }
+
+    #[test]
+    fn what_find_selects_is_placed_under_its_root() {
+        for cmd in [
+            "find . -name __pycache__ -type d -prune -exec rm -rf {} +",
+            "find . -name '*.o' | xargs rm -f",
+            "find build -type f -delete",
+        ] {
+            let c = ctx(cmd);
+            assert_eq!(c.outcome(), Outcome::Read, "`{cmd}`: {c:?}");
+            assert!(c.lines.iter().any(|l| l.starts_with("deletes or changes what find selects under")), "{c:?}");
+        }
+        for cmd in ["find ~ -name '*.log' | xargs rm -rf", "find / -exec rm -rf {} +", "find .. -delete"] {
+            assert!(trips(cmd), "{cmd}");
+        }
+        // with no `find`, what it deletes comes from the rest of the line
+        assert!(trips("echo ~ | xargs rm -rf"));
     }
 
     #[test]
