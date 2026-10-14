@@ -821,6 +821,9 @@ const NO_PREFIX_SUBCOMMANDS: &[(&str, &str)] = &[
     ("pnpm", "x"),
     ("yarn", "dlx"),
     ("yarn", "exec"),
+    ("yarn", "node"),
+    ("pnpm", "node"),
+    ("bundle", "exec"),
     ("cargo", "run"),
     ("cargo", "x"),
     ("uv", "run"),
@@ -844,13 +847,38 @@ const NO_PREFIX_SUBCOMMANDS: &[(&str, &str)] = &[
     ("gradle", "run"),
 ];
 
-/// The program's name as compared with the lists above: its file name, lower case, without a Windows extension, and
-/// without a version (`python3.12` is `python`).
+/// The program's name as compared with the lists above: its file name, lower case, without a Windows extension, a
+/// script's extension or a `-cli` ending, and without a version (`python3.12` is `python`). A package manager installed
+/// as a script resolves to that script: `npm` is `…/npm/bin/npm-cli.js`, `pnpm` is `…/pnpm/bin/pnpm.cjs`, and both are
+/// still `npm` and `pnpm` here.
 #[must_use]
 pub fn program_name(program: &str) -> String {
     let file = program.rsplit(['/', '\\']).next().unwrap_or(program).to_ascii_lowercase();
-    let file = [".exe", ".cmd", ".bat", ".com", ".ps1"].iter().find_map(|x| file.strip_suffix(x)).unwrap_or(&file);
-    file.trim_end_matches(|c: char| c.is_ascii_digit() || c == '.').to_owned()
+    let mut name = file.as_str();
+    for _ in 0..2 {
+        let before = name;
+        name = [".exe", ".cmd", ".bat", ".com", ".ps1", ".js", ".cjs", ".mjs", ".py", ".rb", ".pl", ".sh"]
+            .iter()
+            .find_map(|x| name.strip_suffix(x))
+            .unwrap_or(name);
+        name = name.trim_end_matches(|c: char| c.is_ascii_digit() || c == '.');
+        name = name.strip_suffix("-cli").unwrap_or(name);
+        if name == before {
+            break;
+        }
+    }
+    if name.is_empty() {
+        file
+    } else {
+        name.to_owned()
+    }
+}
+
+/// [`prefix_refusal`] for a program known by two names: as the user typed it (`npm`, which may be a link) and as the
+/// computer resolved it (`…/npm-cli.js`). Refused when either is.
+#[must_use]
+pub fn prefix_refusal_as(typed: Option<&str>, program: &str, args: &[String]) -> Option<String> {
+    typed.and_then(|t| prefix_refusal(t, args)).or_else(|| prefix_refusal(program, args))
 }
 
 /// Why `program` with the first arguments `args` may not be a prefix pattern; `None` when it may.
@@ -934,10 +962,17 @@ impl CommandScope {
     /// shorter allowed prefix (never the program alone).
     #[must_use]
     pub fn offers(&self) -> Vec<Self> {
+        self.offers_as(None)
+    }
+
+    /// [`CommandScope::offers`], refusing what either name of the program refuses ([`prefix_refusal_as`]): `typed` is
+    /// the program as the user typed it.
+    #[must_use]
+    pub fn offers_as(&self, typed: Option<&str>) -> Vec<Self> {
         let mut out = vec![Self::exact(&self.program, &self.args)];
         for k in (1..self.args.len()).rev() {
             let fixed = &self.args[..k];
-            if prefix_refusal(&self.program, fixed).is_none() {
+            if prefix_refusal_as(typed, &self.program, fixed).is_none() {
                 out.push(Self {
                     program: self.program.clone(),
                     args: fixed.to_vec(),
@@ -1704,6 +1739,43 @@ mod tests {
         assert_eq!(shell.offers(), vec![shell], "a shell is only ever exact");
         let cargo = CommandScope::exact("/usr/bin/cargo", &argv(&["run", "--", "x"]));
         assert_eq!(cargo.offers().len(), 1);
+    }
+
+    #[test]
+    fn package_managers_installed_as_scripts_keep_their_names() {
+        for (path, name) in [
+            ("/usr/lib/node_modules/npm/bin/npm-cli.js", "npm"),
+            ("/home/me/.nvm/versions/node/v22.1.0/lib/node_modules/npm/bin/npx-cli.js", "npx"),
+            ("/usr/lib/node_modules/yarn/bin/yarn.js", "yarn"),
+            ("/usr/lib/node_modules/pnpm/bin/pnpm.cjs", "pnpm"),
+            ("/usr/lib/node_modules/nodemon/bin/nodemon.js", "nodemon"),
+            ("/usr/lib/node_modules/x/cli.mjs", "cli"),
+            ("C:\\nodejs\\npm.cmd", "npm"),
+            ("/usr/bin/python3.12", "python"),
+            ("-cli", "-cli"),
+        ] {
+            assert_eq!(program_name(path), name, "{path}");
+        }
+        let npm = "/usr/lib/node_modules/npm/bin/npm-cli.js";
+        for (program, args) in [
+            (npm, vec!["exec"]),
+            ("/usr/lib/node_modules/npm/bin/npx-cli.js", vec!["vite"]),
+            ("/usr/lib/node_modules/pnpm/bin/pnpm.cjs", vec!["dlx"]),
+            ("/usr/lib/node_modules/yarn/bin/yarn.js", vec!["dlx"]),
+            ("/usr/lib/node_modules/yarn/bin/yarn.js", vec!["exec"]),
+            ("/usr/lib/node_modules/nodemon/bin/nodemon.js", vec!["server.js"]),
+        ] {
+            assert!(prefix(program, &args).validate().is_err(), "{program} {args:?}");
+        }
+        let exec = CommandScope::exact(npm, &argv(&["exec", "vite", "build"]));
+        assert_eq!(exec.offers(), vec![exec], "npm exec is only ever exact");
+        assert_eq!(CommandScope::exact(npm, &argv(&["run", "dev"])).offers().len(), 2, "npm run * still is offered");
+        // A program known by another name where it lives: either name refuses.
+        let linked = CommandScope::exact("/opt/tools/runner", &argv(&["exec", "x"]));
+        assert_eq!(linked.offers().len(), 2);
+        assert_eq!(linked.offers_as(Some("npm")).len(), 1, "typed as npm: npm exec");
+        assert!(prefix_refusal_as(Some("bash"), "/opt/tools/runner", &argv(&["x"])).is_some());
+        assert!(prefix_refusal_as(Some("deploy"), "/usr/bin/bash", &argv(&["x"])).is_some());
     }
 
     #[test]

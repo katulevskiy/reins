@@ -153,7 +153,10 @@ that run whatever they are given: shells and interpreters (`sh`, `bash`, `zsh`, 
 `env`, `xargs`, `sudo`, `nohup`, `time`, `timeout`, `exec`, `eval`, `watch`, `nix-shell`, `make`, `ssh`, …), and
 subcommands that do the same (`npm exec`, `pnpm dlx`, `yarn dlx`, `cargo run`, `uv run`, `docker run`, `docker exec`,
 `go run`, `git -c`, …), and for a prefix that includes `--`. The list is in `reins_proto::desktop` (`prefix_refusal`).
-Another program of the same name elsewhere on PATH is another program.
+A program is compared by both its names, as typed (`npm`, often a link) and as resolved (`…/npm/bin/npm-cli.js`), and
+refused when either is listed; a resolved name loses a script's extension and a `-cli` ending (`npm-cli.js`,
+`npx-cli.js`, `yarn.js`, `pnpm.cjs` and `nodemon.js` are `npm`, `npx`, `yarn`, `pnpm` and `nodemon`). Another program of
+the same name elsewhere on PATH is another program.
 
 `confirm = "always"` in `reins.toml` and any env named `production`/`prod` make the env `no_standing` by default (the
 user can change it on the phone, never from the repo alone). Bypass still approves everything (by the user's decision),
