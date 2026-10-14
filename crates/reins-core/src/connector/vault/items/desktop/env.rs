@@ -14,10 +14,10 @@ use std::collections::BTreeMap;
 
 use reins_proto::connector::ConnectorCall;
 use reins_proto::desktop::{
-    CommandScope, ENV_KIND, ENV_KIND_FIELD, EnvChanges, EnvListing, EnvStored, MAX_ENV_BYTES, MAX_ENV_VARS,
-    PHONE_KEY_CHANGED, ProjectListing, RESERVED_PREFIX, SEALED_FIELD, SECRETS_FOLDER, SECRETS_STORE_TTL_SECS,
-    SecretGrant, SecretsListing, SecretsToStore, SshKeyToStore, SshStored, TO_DESKTOP, TO_PHONE, batch_check, name_ok,
-    validate_batch, var_ok,
+    CommandScope, ENV_KIND, ENV_KIND_FIELD, ENV_NAME_FIELD, EnvChanges, EnvListing, EnvStored, MAX_ENV_BYTES,
+    MAX_ENV_VARS, PHONE_KEY_CHANGED, ProjectListing, RESERVED_PREFIX, SEALED_FIELD, SECRETS_FOLDER,
+    SECRETS_STORE_TTL_SECS, SecretGrant, SecretsListing, SecretsToStore, SshKeyToStore, SshStored, TO_DESKTOP,
+    TO_PHONE, batch_check, name_ok, validate_batch, var_ok,
 };
 use reqwest::Method;
 use serde_json::{Value, json};
@@ -67,28 +67,49 @@ fn project_folder<'a>(snap: &'a Snapshot, project: &str) -> Result<Option<&'a st
     }
 }
 
-fn is_env(entry: &Entry) -> bool {
-    entry.custom_fields().iter().any(|c| c.name == ENV_KIND_FIELD && *c.value == *ENV_KIND)
+/// The environment an item is marked as: a Secure Note with the hidden fields `reins.kind = env/1` and
+/// `reins.env = <name>`. Its name in the vault is only shown: an item is never an environment for its name alone.
+pub(super) fn env_mark(entry: &Entry) -> Option<String> {
+    if entry.kind != Kind::Note {
+        return None;
+    }
+    let fields = entry.custom_fields();
+    let kind_ok = fields.iter().any(|c| c.name == ENV_KIND_FIELD && *c.value == *ENV_KIND);
+    let env = fields.iter().find(|c| c.name == ENV_NAME_FIELD).map(|c| c.value.to_string())?;
+    (kind_ok && name_ok(&env)).then_some(env)
 }
 
-/// The environment `project/env`, if it exists. An item of that name in the project's folder that is not marked as an
-/// environment is refused rather than used (or changed): it is something of the user's own.
+/// The project and environment an item is, when it is an environment: marked, in the folder `Reins/<project>`.
+pub(super) fn env_identity(snap: &Snapshot, entry: &Entry) -> Option<(String, String)> {
+    let env = env_mark(entry)?;
+    let folder = snap.folders.iter().find(|f| f.id == entry.folder())?;
+    let project = folder.name.strip_prefix(&format!("{SECRETS_FOLDER}/")).filter(|p| name_ok(p))?;
+    Some((project.to_owned(), env))
+}
+
+/// The environment `project/env`, if it exists: the item marked as `env` in the folder `Reins/<project>` (exactly that
+/// folder, by its exact name). An unmarked item named `project/env` there is never used or changed: it is something of
+/// the user's own, and saving an environment of that name is refused until it is renamed.
 fn find_env<'a>(snap: &'a Snapshot, project: &str, env: &str) -> Result<Option<&'a Entry>, CoreError> {
     let Some(folder) = project_folder(snap, project)? else {
         return Ok(None);
     };
-    let item = format!("{project}/{env}");
-    let mut same =
-        snap.entries.iter().filter(|e| e.state() != State::Trash && e.folder() == folder && e.name() == item);
-    match (same.next(), same.next()) {
-        (None, _) => Ok(None),
-        (Some(e), None) if e.kind == Kind::Note && is_env(e) => Ok(Some(e)),
-        (Some(_), None) => Err(bad(format!(
-            "{item} in the vault is not a Reins environment (it has no {ENV_KIND_FIELD} field). Rename it in the Reins \
-             app."
-        ))),
-        _ => Err(bad(format!("Several vault items are named {item}. Rename one in the Reins app."))),
+    let here = |e: &&Entry| e.state() != State::Trash && e.folder() == folder;
+    let mut marked = snap.entries.iter().filter(here).filter(|e| env_mark(e).as_deref() == Some(env));
+    match (marked.next(), marked.next()) {
+        (Some(e), None) => return Ok(Some(e)),
+        (Some(_), Some(_)) => {
+            return Err(bad(format!("Two items are the environment {project}/{env}. Delete one in the Reins app.")));
+        }
+        (None, _) => {}
     }
+    let item = format!("{project}/{env}");
+    if snap.entries.iter().filter(here).any(|e| e.name() == item) {
+        return Err(bad(format!(
+            "{item} in the vault is an item of your own, not a Reins environment. Rename it in the Reins app."
+        )));
+    }
+    Ok(None)
 }
 
 /// The variables of an environment: its custom fields but Reins's own and those whose names are not variable names,
@@ -116,24 +137,12 @@ fn revision(entry: &Entry) -> String {
 
 /// Every environment in the vault: `(project, env, item)`, by project and environment.
 fn all_envs(snap: &Snapshot) -> Vec<(String, String, &Entry)> {
-    let mut out = Vec::new();
-    for folder in &snap.folders {
-        let Some(project) = folder.name.strip_prefix(&format!("{SECRETS_FOLDER}/")) else {
-            continue;
-        };
-        if !name_ok(project) {
-            continue;
-        }
-        for e in snap.entries.iter().filter(|e| e.state() == State::Active && e.folder() == folder.id) {
-            let name = e.name();
-            let Some(env) = name.strip_prefix(&format!("{project}/")) else {
-                continue;
-            };
-            if name_ok(env) && e.kind == Kind::Note && is_env(e) {
-                out.push((project.to_owned(), env.to_owned(), e));
-            }
-        }
-    }
+    let mut out: Vec<(String, String, &Entry)> = snap
+        .entries
+        .iter()
+        .filter(|e| e.state() == State::Active)
+        .filter_map(|e| env_identity(snap, e).map(|(p, env)| (p, env, e)))
+        .collect();
     out.sort_by(|a, b| (&a.0, &a.1).cmp(&(&b.0, &b.1)));
     out
 }
@@ -516,6 +525,10 @@ fn plan_env(snap: &Snapshot, change: &EnvChanges) -> Result<EnvPlan, CoreError> 
         slots.push(Slot::New {
             name: ENV_KIND_FIELD.to_owned(),
             value: Zeroizing::new(ENV_KIND.to_owned()),
+        });
+        slots.push(Slot::New {
+            name: ENV_NAME_FIELD.to_owned(),
+            value: Zeroizing::new(change.env.clone()),
         });
     }
     let position = |slots: &[Slot], name: &str| slots.iter().position(|s| s.name() == name);

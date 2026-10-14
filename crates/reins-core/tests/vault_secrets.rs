@@ -22,7 +22,7 @@ const EMAIL: &str = "me@example.com";
 const PASSWORD: &str = "correct horse battery";
 const ROOT: &str = "/home/me/dev/acme";
 const NPM: &str = "/usr/bin/npm";
-const VALUES: &[&str] = &["alpha-secret", "beta-secret", "prod-secret"];
+const VALUES: &[&str] = &["alpha-secret", "beta-secret", "prod-secret", "store-secret", "a note of my own"];
 
 fn user_key() -> VaultKey {
     VaultKey::from_bytes(&[7u8; 64]).unwrap()
@@ -50,10 +50,31 @@ fn ciphers(user: &VaultKey) -> Vec<Value> {
             "dev",
             "f-acme",
             "acme/dev",
-            &[("reins.kind", "env/1"), ("B", "beta-secret"), ("A", "alpha-secret"), ("not a name", "x")],
+            &[
+                ("reins.kind", "env/1"),
+                ("reins.env", "dev"),
+                ("B", "beta-secret"),
+                ("A", "alpha-secret"),
+                ("not a name", "x"),
+            ],
         ),
-        note(user, "prod", "f-acme", "acme/production", &[("reins.kind", "env/1"), ("A", "prod-secret")]),
+        note(
+            user,
+            "prod",
+            "f-acme",
+            "acme/production",
+            &[("reins.kind", "env/1"), ("reins.env", "production"), ("A", "prod-secret")],
+        ),
+        // Named like an environment, without the marker: something of the user's own.
         note(user, "mine", "f-acme", "acme/mine", &[("A", "a note of my own")]),
+        // Marked, but in another project's folder: that project's environment, whatever its name says.
+        note(
+            user,
+            "store-dev",
+            "f-store",
+            "acme/dev",
+            &[("reins.kind", "env/1"), ("reins.env", "dev"), ("A", "store-secret")],
+        ),
     ]
 }
 
@@ -70,8 +91,11 @@ async fn desk() -> Desk {
     .unwrap();
     let user = user_key();
     let wrapped = master.stretch().encrypt(&user.to_bytes()).unwrap();
-    let folders =
-        json!([{"id": "f-acme", "name": t(&user, "Reins/acme")}, {"id": "f-other", "name": t(&user, "Work")}]);
+    let folders = json!([
+        {"id": "f-acme", "name": t(&user, "Reins/acme")},
+        {"id": "f-store", "name": t(&user, "Reins/store")},
+        {"id": "f-other", "name": t(&user, "Work")}
+    ]);
     Mock::given(method("GET"))
         .and(path("/api/sync"))
         .and(header_exists("Bitwarden-Client-Version"))
@@ -370,7 +394,7 @@ async fn mistakes_are_told_before_the_user_is_asked() {
                 env: "mine",
                 ..DEV
             },
-            "not a Reins environment",
+            "an item of your own",
         ),
         (
             "r3",
@@ -504,6 +528,7 @@ async fn a_new_project_is_made_with_one_approval_and_the_server_never_sees_a_val
         fields_of(&made[0]),
         [
             ("reins.kind".to_owned(), "env/1".to_owned()),
+            ("reins.env".to_owned(), "dev".to_owned()),
             ("KEY".to_owned(), "new-secret-1".to_owned()),
             ("TOKEN".to_owned(), "new-secret-2".to_owned())
         ]
@@ -572,7 +597,8 @@ async fn names_are_listed_never_values() {
     desk.send(&[call("l1", DESK, "vault", "secrets_list", &json!({"client_key": desk.public(), "nonce": "nl"}))]).await;
     desk.core.approve("l1".to_owned(), choice(&[], None)).await.unwrap();
     let listing: SecretsListing = open_from_phone(&desk, &phone, &desk.data("l1").await["sealed"]);
-    assert_eq!(listing.projects.len(), 1);
+    let names: Vec<&str> = listing.projects.iter().map(|p| p.name.as_str()).collect();
+    assert_eq!(names, ["acme", "store"], "by folder and marker, whatever the items are called");
     let envs: Vec<(&str, Vec<String>)> =
         listing.projects[0].envs.iter().map(|e| (e.name.as_str(), e.variables.clone())).collect();
     assert_eq!(envs, [("dev", words(&["A", "B"])), ("production", words(&["A"]))]);
@@ -702,4 +728,54 @@ async fn one_approval_saves_environments_ssh_keys_and_tokens_together() {
     lying["call"]["args"]["hosts"] = json!(["github.com"]);
     desk.send(&[lying]).await;
     assert!(desk.error("b2").await.contains("other environments, keys or hosts"));
+}
+
+#[tokio::test]
+async fn only_marked_items_in_their_project_folder_are_environments() {
+    let desk = desk().await;
+    desk.pair().await;
+    let phone = phone_key(&desk).await;
+    // The item named acme/dev in Reins/store is store's dev; acme's dev is the one in Reins/acme.
+    desk.send(&[release(&desk, "r1", &DEV)]).await;
+    desk.core.approve("r1".to_owned(), choice(&[], None)).await.unwrap();
+    let grant: SecretGrant = desk.open(&desk.data("r1").await["sealed"]);
+    assert_eq!(grant.secrets[0], ("A".to_owned(), "alpha-secret".to_owned()));
+    // An unmarked item named like an environment is neither released nor overwritten, nor adopted.
+    let mine = Ask {
+        env: "mine",
+        ..DEV
+    };
+    desk.send(&[release(&desk, "r2", &mine), store(&desk, "s1", &phone, vec![changes("acme", "mine", &[("A", "x")])])])
+        .await;
+    assert!(desk.error("r2").await.contains("an item of your own"));
+    assert!(desk.error("s1").await.contains("an item of your own"));
+    assert!(sent(&desk, "PUT", "/api/ciphers/mine").await.is_empty());
+    // Names with a slash are refused: they would split two ways.
+    let slashed = Ask {
+        env: "laptop/aws",
+        ..DEV
+    };
+    desk.send(&[release(&desk, "r3", &slashed)]).await;
+    assert!(!desk.error("r3").await.is_empty());
+    // A new environment carries its name in a hidden field, not only in the item's name.
+    desk.send(&[store(&desk, "s2", &phone, vec![changes("acme", "staging", &[("K", "v-staging")])])]).await;
+    desk.core.approve("s2".to_owned(), choice(&[], None)).await.unwrap();
+    let made = sent(&desk, "POST", "/api/ciphers").await;
+    assert!(fields_of(&made[0]).contains(&("reins.env".to_owned(), "staging".to_owned())));
+    // Legacy item/field references keep working, and reach an environment only by its own split.
+    let legacy = |id: &str, secret: &str| {
+        call(
+            id,
+            DESK,
+            "vault",
+            "secret_release",
+            &json!({"secrets": [secret], "command": "x", "lease_secs": 600,
+            "client_key": desk.public(), "nonce": format!("n-{id}")}),
+        )
+    };
+    desk.send(&[legacy("l1", "acme/dev/A"), legacy("l2", "dev/reins.kind")]).await;
+    desk.core.approve("l1".to_owned(), choice(&[], None)).await.unwrap();
+    let old: SecretGrant = desk.open(&desk.data("l1").await["sealed"]);
+    assert_eq!(old.secrets[0].1, "alpha-secret");
+    assert!(!desk.error("l2").await.is_empty(), "never by another split or Reins's own field");
 }

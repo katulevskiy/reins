@@ -36,10 +36,10 @@ A **project** is a named set of **environments** (`development`, `staging`, `pro
 |---|---|
 | All Reins Secrets | folder `Reins` |
 | Project `acme-web` | folder `Reins/acme-web` |
-| Environment `development` | one **Secure Note item** named `acme-web/development` in that folder, type marker in a hidden custom field `reins.kind = env/1` |
+| Environment `development` | one **Secure Note item** in that folder with the hidden custom fields `reins.kind = env/1` and `reins.env = development`; it is named `acme-web/development` for people, but the folder and the two fields are what make it the environment |
 | Variable | one **hidden custom field** on that item: name = variable name, value = value |
 | Non-secret variable (optional) | a **text** custom field (kept so an env can be complete; never needs approval to read its name) |
-| Machine credential (gh token, npm token, AWS profile) | an env item in project `Reins/machine/<computer>` or `Reins/shared` (section 5) |
+| Machine credential (gh token, npm token, AWS profile) | an env item in project `machine-<computer>` (folder `Reins/machine-<computer>`) or `shared` (section 5) |
 | SSH key | existing **SshKey item** in folder `Reins/ssh` |
 
 Why one item per environment: one approval releases a whole environment (a dev server needs all of them), the item's
@@ -54,8 +54,14 @@ The reference syntax stays `vault:<item>/<field>` (`crates/reins-desktop/src/sec
 - `vault:acme-web/development` (no field, item is an env) = every variable of the environment.
 - Inside a project (a `reins.toml` above the working directory), `env:development/OPENAI_API_KEY` and `env:development`.
 
-Items are resolved on the phone by id, then exact name (existing resolver). Renaming an environment updates nothing in
-repos because repos reference the project and env names, which the phone keeps unique per folder.
+Project and environment names are 1 to 64 of `A-Z a-z 0-9 . _ -` and never contain a `/`, so an environment
+reference splits one way only: `vault:<project>/<env>/<VAR>` (three parts) or `vault:<project>/<env>` (two). The phone
+finds an environment only among items that carry both marker fields, inside the folder named exactly `Reins/<project>`;
+it never uses, changes or adopts an ordinary item that happens to be named `project/env` (a store that meets one is
+refused until it is renamed), and a folder or item elsewhere is never confused with it, whatever it is called. The
+older `vault:Item/field` references keep working through the existing resolver (id, then exact name, every `/` split),
+except that it reaches an environment only by its own `project/env/NAME` split. Renaming an environment's item updates
+nothing in repos: they name the project and the environment, which the folder and `reins.env` hold.
 
 ### 2.3 Files in a repo
 
