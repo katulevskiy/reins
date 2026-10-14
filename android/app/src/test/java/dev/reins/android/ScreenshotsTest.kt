@@ -90,6 +90,7 @@ abstract class ScreenshotsBase(private val suffix: String) {
     @After
     fun tearDown() {
         scenario?.close()
+        dev.reins.android.ui.settings.appPushOverride = null
         Timers.live = true
         Timers.frozenNowMillis = null
         Foreground.autoPopup = true
@@ -317,13 +318,47 @@ abstract class ScreenshotsBase(private val suffix: String) {
     @Test
     fun settings() {
         history()
+        core.connections = listOf(
+            TestData.connection("c1", "Claude Code").copy(lastUsedAt = now - 300),
+            TestData.connection("c2", "ChatGPT").copy(clientHost = "chatgpt.com", lastUsedAt = null),
+            TestData.computer("d1", "MacBook Pro").copy(lastUsedAt = now - 10),
+        )
         launch()
         tap("openSettings")
+        await("accountCard")
+        await("devicesRow")
+        val state = (context.applicationContext as ReinsApp).container.state
+        rule.waitUntil(5_000) { settle(); !state.approvalDevice.value }
         await("registerPhone")
+        shoot("12e-settings-other-phone")
+        dev.reins.android.ui.settings.appPushOverride = true
+        state.setApprovalDevice(true)
+        await("notificationsChip")
         shoot("12-settings")
+        rule.onNodeWithTag("privacy").performScrollTo()
+        shoot("12b-settings-scrolled")
+        rule.onNodeWithTag("accountCard").performScrollTo()
+        tap("connect")
+        await("sheetScanQr")
+        repeat(20) { rule.mainClock.advanceTimeBy(50) }
+        shoot("12c-settings-connect")
+        pressBack()
+        repeat(20) { rule.mainClock.advanceTimeBy(50) }
         tap("connection:c1")
         await("disconnect")
+        await("connMode:follow")
         shoot("13-connection")
+    }
+
+    /** The account card when notifications are off, and when another phone approves. */
+    @Test
+    fun settingsAttention() {
+        shadowOf(context as android.app.Application).denyPermissions(android.Manifest.permission.POST_NOTIFICATIONS)
+        launch()
+        tap("openSettings")
+        (context.applicationContext as ReinsApp).container.state.setApprovalDevice(true)
+        await("turnOnNotifications")
+        shoot("12d-settings-notifications-off")
     }
 
     @Test
