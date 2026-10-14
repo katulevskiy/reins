@@ -308,6 +308,8 @@ async fn perform_release(vault: &Vault, account: &str, call: &ConnectorCall) -> 
         project: None,
         env: None,
         revision: None,
+        runner: None,
+        root: None,
         command: None,
     };
     let sealed = seal(client_key(call)?, &grant);

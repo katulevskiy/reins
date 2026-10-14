@@ -112,15 +112,25 @@ New desktop-only tool **`vault_env_release`** (replaces repeated `vault_secret_r
 single references):
 
 ```json
-{ "project": "acme-web", "env": "development", "fields": ["OPENAI_API_KEY", "..."] | "all",
-  "command": "npm run dev", "cwd": "~/dev/acme-web", "runner": {"kind": "person" | "agent", "harness": "claude-code"},
-  "lease_secs": 28800, "purpose": "…", "nonce": "…", "client_key": "…" }
+{ "project": "acme-web", "env": "development", "fields": ["OPENAI_API_KEY", "..."],
+  "program": "/usr/bin/npm", "args": ["run", "dev"], "root": "/home/dana/dev/acme-web",
+  "runner": "person" | "agent:claude-code", "lease_secs": 28800, "purpose": "…", "nonce": "…", "client_key": "…" }
 ```
 
+`fields` left out means every variable of the environment. The command is the argument list `reins run` spawns (it
+never uses a shell), with the program resolved to its absolute path; `root` is the project's folder (canonical path).
+
 The phone answers with the existing `SecretGrant` (sealed to the pinned computer key, bound to the nonce), extended with
-`project`, `env` and the item revision. Limits: up to 200 fields per release, 64 KB of values. The approval view
-(`SecretReleaseView`) shows: who (person or agent and which), which computer, the command, the project and env, the
-variable names (never values), the lease, and the Remember choices of the approval dock.
+`project`, `env`, the item revision, and the binding the phone decided: the `runner` and `root` it approved and the
+`command` (a `CommandScope`: exactly the approved argument list, or the prefix the user chose on the phone; a pattern
+the computer merely proposed is never used). The variables granted are the names in `secrets`. Limits: up to 200 fields
+per release, 64 KB of values. The approval view (`SecretReleaseView`) shows: who (person or agent and which), which
+computer, the command, the project and env, the variable names (never values), the lease, and the Remember choices of
+the approval dock.
+
+The daemon reuses a cached lease only when all of these match: runner, computer (its own connection), project root,
+environment and its revision, the variables asked for are among those granted, and the program with its arguments is
+covered by the granted command. Anything else asks again.
 
 ### 3.3 Grants bound to what runs
 
@@ -132,8 +142,18 @@ gains a `secrets` part):
 | project, env | exact |
 | computer | the connection (as today) |
 | runner | `person`, or `agent:<harness>` (6.1) |
-| command | a pattern: exact, or a prefix with `*` (`npm run *`), chosen in the dock's Custom sheet; default = the exact command |
+| project root | the folder on the computer (canonical path) |
+| command | the program (absolute path) and its arguments, compared as whole arguments: exactly, or a prefix followed by any number of whole arguments (`npm run *` covers `npm run test --watch`, never `npm runx`), chosen in the dock's Custom sheet; default = the exact command |
 | fields | all of the env, or the listed ones |
+
+A prefix never ends inside an argument and never has a wildcard in the middle. It must name at least one subcommand
+after the program (`npm run *`, not `npm *`), and is refused (only the exact command can be remembered) for programs
+that run whatever they are given: shells and interpreters (`sh`, `bash`, `zsh`, `fish`, `cmd`, `pwsh`, `powershell`,
+`python`, `node`, `deno`, `bun`, `ruby`, `perl`, `php`, `osascript`, …), launchers and wrappers (`npx`, `bunx`, `uvx`,
+`env`, `xargs`, `sudo`, `nohup`, `time`, `timeout`, `exec`, `eval`, `watch`, `nix-shell`, `make`, `ssh`, …), and
+subcommands that do the same (`npm exec`, `pnpm dlx`, `yarn dlx`, `cargo run`, `uv run`, `docker run`, `docker exec`,
+`go run`, `git -c`, …), and for a prefix that includes `--`. The list is in `reins_proto::desktop` (`prefix_refusal`).
+Another program of the same name elsewhere on PATH is another program.
 
 `confirm = "always"` in `reins.toml` and any env named `production`/`prod` make the env `no_standing` by default (the
 user can change it on the phone, never from the repo alone). Bypass still approves everything (by the user's decision),

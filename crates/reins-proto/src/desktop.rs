@@ -492,6 +492,12 @@ pub struct SecretGrant {
     /// `vault_env_release`: the environment's version (the vault item's revision date).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub revision: Option<String>,
+    /// `vault_env_release`: who it was released to (`person`, `agent:<harness>`), as the phone approved it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub runner: Option<String>,
+    /// `vault_env_release`: the project's folder on the computer (its canonical path) it was released for.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub root: Option<String>,
     /// `vault_env_release`: the commands the desktop app may hand these values to until they expire, without asking
     /// again: exactly the command approved, or the argument prefix the user chose on the phone. The variables it may
     /// hand them for are the names in `secrets`.
@@ -1715,6 +1721,7 @@ mod tests {
         let old = r#"{"v":1,"nonce":"n","secrets":[["A/password","x"]],"expires_at":5}"#;
         let g: SecretGrant = serde_json::from_str(old).unwrap();
         assert_eq!((&g.project, &g.env, &g.revision, &g.command), (&None, &None, &None, &None));
+        assert_eq!((&g.runner, &g.root), (&None, &None));
         assert_eq!(serde_json::to_string(&g).unwrap(), old);
     }
 

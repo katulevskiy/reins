@@ -400,6 +400,8 @@ mod tests {
             project: None,
             env: None,
             revision: None,
+            runner: None,
+            root: None,
             command: None,
         }
     }
