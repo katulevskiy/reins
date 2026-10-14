@@ -205,8 +205,20 @@ pub const TOKENS: BuiltinGroup = BuiltinGroup {
 };
 
 /// Every built-in group, what cannot be undone first.
-pub const BUILTIN: &[BuiltinGroup] =
-    &[GIT_HISTORY, DELETES, INFRASTRUCTURE, DATABASES, PUBLISHING, PAYMENTS, SECRETS, DISKS, ENV_FILES, KEYS, CLOUD, TOKENS];
+pub const BUILTIN: &[BuiltinGroup] = &[
+    GIT_HISTORY,
+    DELETES,
+    INFRASTRUCTURE,
+    DATABASES,
+    PUBLISHING,
+    PAYMENTS,
+    SECRETS,
+    DISKS,
+    ENV_FILES,
+    KEYS,
+    CLOUD,
+    TOKENS,
+];
 
 /// Exceptions to the built-in file rules.
 pub const ALLOW_FILES: &[&str] = &["*.pub", "known_hosts", ".env.example", ".env.sample", ".env.template", ".env.dist"];
@@ -248,18 +260,25 @@ pub fn classify_file(path: &str) -> Option<Classified> {
 /// unknown wrapper, a label: the phone does not need to know what the first word is), the line's text for `text:`
 /// rules, and the files any of its words name (its first too, a value attached to an option: `-f.env`,
 /// `--file=.env`; after `--`, any word).
-fn matches_of(seg: &[String], flat: &[String]) -> Vec<Classified> {
+fn matches_of(seg: &[String], written: &str, flat: &[String]) -> Vec<Classified> {
     let mut found = Vec::new();
-    let tails: Vec<Vec<String>> = (0..seg.len())
-        .map(|i| std::iter::once(program_name(&seg[i])).chain(seg[i + 1..].iter().cloned()).collect())
-        .collect();
+    let names: Vec<String> = seg.iter().map(|w| program_name(w).to_lowercase()).collect();
+    // The words from `i` on, the first as a program's name (built only where a rule's program could start).
+    let tail = |i: usize| -> Vec<String> {
+        std::iter::once(program_name(&seg[i])).chain(seg[i + 1..].iter().cloned()).collect()
+    };
     for g in BUILTIN {
         for pattern in g.commands {
             let matched = if let Some(text) = pattern.strip_prefix("text:") {
                 let want = text_words(text);
                 (!want.is_empty() && flat.windows(want.len()).any(|w| w == want.as_slice())).then(|| want.join(" "))
             } else {
-                tails.iter().find(|tail| command_matches(pattern, tail)).map(|tail| tail.join(" "))
+                let program = pattern.split_whitespace().next().unwrap_or_default().to_lowercase();
+                (0..seg.len())
+                    .filter(|&i| crate::shell::glob(&program, &names[i]))
+                    .map(tail)
+                    .find(|t| command_matches(pattern, t))
+                    .map(|t| t.join(" "))
             };
             found.extend(matched.map(|matched| Classified {
                 group: g,
@@ -268,6 +287,7 @@ fn matches_of(seg: &[String], flat: &[String]) -> Vec<Classified> {
             }));
         }
     }
+    found.extend(classify_file(written));
     let mut options = true;
     for word in seg {
         if options && word == "--" {
@@ -291,7 +311,14 @@ fn matches_of(seg: &[String], flat: &[String]) -> Vec<Classified> {
 #[must_use]
 pub fn classify_command(command: &str) -> Option<Classified> {
     let flat = text_words(command);
-    parse(command).segments.iter().flat_map(|seg| matches_of(seg, &flat)).rev().max_by_key(severity)
+    let parsed = parse(command);
+    parsed
+        .segments
+        .iter()
+        .zip(&parsed.programs)
+        .flat_map(|(seg, written)| matches_of(seg, written, &flat))
+        .rev()
+        .max_by_key(severity)
 }
 
 /// What the phone reads in a question: the most severe built-in rule anything in it matches, and whether it could
@@ -324,7 +351,7 @@ pub fn read(texts: &[&str], fragments: &[&str]) -> Reading {
     let command = |text: &str, found: &mut Vec<Classified>| {
         let parsed = parse(text);
         let flat = text_words(text);
-        found.extend(parsed.segments.iter().flat_map(|seg| matches_of(seg, &flat)));
+        found.extend(parsed.segments.iter().zip(&parsed.programs).flat_map(|(seg, w)| matches_of(seg, w, &flat)));
         parsed.certain
     };
     for text in texts {
@@ -366,8 +393,8 @@ pub fn sole_group(command: &str) -> Option<&'static BuiltinGroup> {
     }
     let flat = text_words(command);
     let mut group: Option<&'static BuiltinGroup> = None;
-    for seg in &parsed.segments {
-        let found = matches_of(seg, &flat);
+    for (seg, written) in parsed.segments.iter().zip(&parsed.programs) {
+        let found = matches_of(seg, written, &flat);
         if found.is_empty() {
             return None;
         }
@@ -446,8 +473,10 @@ mod tests {
     fn what_runs_unseen_is_not_read_with_certainty() {
         let id = |text: &str| read(&[text], &[]).found.map(|c| c.group.id);
         let certain = |text: &str| read(&[text], &[]).certain;
-        // A quote opened in a heredoc's body swallows what follows: not certain.
-        assert!(!certain("cat <<EOF\n'\nEOF\nrm -rf ~"));
+        // A heredoc's body is text, as the shell reads it: a quote in it opens nothing, and what follows is read.
+        assert_eq!(id("cat <<EOF\n'\nEOF\nrm -rf ~"), Some("deletes"));
+        assert!(certain("cat <<EOF\n'\nEOF\nrm -rf ~"));
+        assert!(!certain("cat <<EOF"), "a heredoc whose body never comes");
         // A heredoc or here-string fed to a shell is read as commands.
         for text in ["bash <<EOF\nrm -rf ~\nEOF", "sh -s <<EOF\nrm -rf ~\nEOF", "bash <<<\"rm -rf ~\""] {
             assert_eq!(id(text), Some("deletes"), "{text}");
@@ -500,6 +529,64 @@ mod tests {
             assert!(certain(text), "{text}");
         }
         assert!(!certain("sudo -Z rm -rf x"), "an option the guard does not know");
+    }
+
+    /// A hostile pass: what the tokenizer does not model comes out uncertain, never certain and clean.
+    #[test]
+    fn what_the_tokenizer_does_not_model_is_uncertain() {
+        let id = |text: &str| read(&[text], &[]).found.map(|c| c.group.id);
+        let certain = |text: &str| read(&[text], &[]).certain;
+        for text in [
+            // Look-alike and full-width program names.
+            "\u{ff52}\u{ff4d} -rf ~",
+            "r\u{043c} -rf ~",
+            // Control characters and spaces a shell reads otherwise.
+            "rm\0 -rf ~",
+            "echo x\rrm -rf ~",
+            "echo x\u{2028}rm -rf ~",
+            "rm\u{a0}-rf ~",
+            // Quoting and expansions the shell decodes.
+            "$\"rm\" -rf ~",
+            "${x:-rm} -rf ~",
+            "echo $((1+2))",
+            // Windows: a variable as the program.
+            "%COMSPEC% /c del /s x",
+        ] {
+            assert!(!certain(text), "{text:?}");
+        }
+        // Nested past the depth the tokenizer reads: uncertain, not cut short to certain.
+        let mut nested = "rm -rf ~".to_owned();
+        for _ in 0..6 {
+            nested = format!("sh -c {}", shell_quote(&nested));
+        }
+        assert!(!certain(&nested), "{nested}");
+        // Read through: process substitution, a backslash-newline in a word, a function or an alias defined inline,
+        // eval and exec of quoted pieces, cmd's ^, PowerShell's & and ;.
+        for text in [
+            "diff <(rm -rf ~) x",
+            "cat x > >(rm -rf ~)",
+            "r\\\nm -rf ~",
+            "f(){ rm -rf ~; }; f",
+            "alias x='rm -rf ~'; x",
+            "eval \"r\"\"m -rf ~\"",
+            "exec 'rm' -rf ~",
+            "r^m -rf x",
+            "& 'rm' -rf ~; ls",
+        ] {
+            assert_eq!(id(text), Some("deletes"), "{text:?}");
+        }
+        // A long input is read in full, and in time.
+        let long = format!("{} rm -rf ~", "echo x;".repeat(4_000));
+        let started = std::time::Instant::now();
+        assert_eq!(id(&long), Some("deletes"));
+        let wide = format!("echo {} && rm -rf ~", "x ".repeat(8_000));
+        assert_eq!(id(&wide), Some("deletes"));
+        assert!(started.elapsed() < std::time::Duration::from_secs(5), "{:?}", started.elapsed());
+    }
+
+    /// The word, quoted for a POSIX shell.
+    fn shell_quote(s: &str) -> String {
+        format!("'{}'", s.replace('\'', "'\\''"))
     }
 
     /// Words the shell makes up when it runs, and words the phone's reading must not skip.

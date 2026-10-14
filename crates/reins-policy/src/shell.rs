@@ -114,6 +114,9 @@ pub fn words(text: &str) -> Vec<String> {
 pub struct Parsed {
     /// The simple commands, each as its words with the program's name first (see [`segments`]).
     pub segments: Vec<Vec<String>>,
+    /// Each segment's first word as written (`/home/me/.ssh/config`, `C:\\Git\\git.exe`), before it was read as a
+    /// program's name: a file it names counts too.
+    pub programs: Vec<String>,
     /// Read with certainty: every quote, backtick and `$(` closes (read the POSIX way and the Windows way), and no
     /// command runs code the guard cannot see (a shell or an interpreter reading its standard input from a pipe,
     /// an interpreter fed a heredoc, `git -c core.sshCommand=…`, an option of a wrapper it does not know).
@@ -124,24 +127,33 @@ pub struct Parsed {
 /// POSIX reading, then those the Windows reading adds; both readings must be certain.
 #[must_use]
 pub fn parse(command: &str) -> Parsed {
+    parse_as(command, false)
+}
+
+/// [`parse`]; `every`: also read as commands the heredoc bodies a shell would not run (Python's source, a file's
+/// text), as the desktop app's guard does, word by word.
+fn parse_as(command: &str, every: bool) -> Parsed {
     let mut out = Vec::new();
     let (raws, mut certain) = split_commands(command, false);
     for raw in &raws {
-        certain &= resolve(raw, &mut out, 0, false);
+        certain &= resolve(raw, &mut out, 0, false, every);
     }
     let mut windows = Vec::new();
     let (raws, windows_certain) = split_commands(command, true);
     certain &= windows_certain;
     for raw in &raws {
-        certain &= resolve(raw, &mut windows, 0, true);
+        certain &= resolve(raw, &mut windows, 0, true, every);
     }
+    let mut seen: std::collections::HashSet<(Vec<String>, String)> = out.iter().cloned().collect();
     for seg in windows {
-        if !out.contains(&seg) {
+        if seen.insert(seg.clone()) {
             out.push(seg);
         }
     }
+    let (segments, programs) = out.into_iter().unzip();
     Parsed {
-        segments: out,
+        segments,
+        programs,
         certain,
     }
 }
@@ -155,7 +167,14 @@ pub fn parse(command: &str) -> Parsed {
 /// -Command` looked into), as far as they differ.
 #[must_use]
 pub fn segments(command: &str) -> Vec<Vec<String>> {
-    parse(command).segments
+    parse_as(command, true).segments
+}
+
+/// What a shell runs of a command line, one simple command per line: its commands' words, those of a heredoc a shell
+/// runs included, without the text of a heredoc fed to anything else (Python's source, a file's contents).
+#[must_use]
+pub fn shell_text(command: &str) -> String {
+    parse(command).segments.iter().map(|seg| seg.join(" ")).collect::<Vec<_>>().join("\n")
 }
 
 /// The command PowerShell runs for `-EncodedCommand`: base64 of UTF-16LE text.
@@ -350,14 +369,17 @@ fn reads_stdin(seg: &[String]) -> bool {
 /// Resolves one simple command: skips assignments and wrappers, looks into what it runs, and adds its commands to
 /// `out`. Returns whether it was read with certainty.
 #[allow(clippy::too_many_lines, reason = "one case per program that runs another")]
-fn resolve(raw: &Raw, out: &mut Vec<Vec<String>>, depth: usize, windows: bool) -> bool {
-    let inner = |text: &str, out: &mut Vec<Vec<String>>| -> bool {
+/// Simple commands, each with its first word as written.
+type Out = Vec<(Vec<String>, String)>;
+
+fn resolve(raw: &Raw, out: &mut Out, depth: usize, windows: bool, every: bool) -> bool {
+    let inner = |text: &str, out: &mut Out| -> bool {
         if depth >= 4 {
             return false;
         }
         let (raws, mut certain) = split_commands(text, windows);
         for raw in &raws {
-            certain &= resolve(raw, out, depth + 1, windows);
+            certain &= resolve(raw, out, depth + 1, windows, every);
         }
         certain
     };
@@ -390,19 +412,24 @@ fn resolve(raw: &Raw, out: &mut Vec<Vec<String>>, depth: usize, windows: bool) -
             return inner(&all.collect::<Vec<_>>().join(" "), out);
         }
         let Some(start) = after_wrapper(w, seg) else {
-            out.push(seg.to_vec());
+            out.push((seg.to_vec(), seg[0].clone()));
             return false;
         };
         if start >= seg.len() {
             // A wrapper with nothing to run (or `xargs` running `echo`): itself.
-            out.push(seg.iter().map(|w| program_name(w)).take(1).chain(seg[1..].iter().cloned()).collect());
+            out.push((
+                seg.iter().map(|w| program_name(w)).take(1).chain(seg[1..].iter().cloned()).collect(),
+                seg[0].clone(),
+            ));
             return true;
         }
         i += start;
     }
     let mut seg: Vec<String> = words[i..].to_vec();
-    // A program named at run time (`$cmd`, `r*`, `/bin/r?`) is not known.
-    let named = !seg[0].contains(['$', '*', '?', '[']);
+    // A program named at run time (`$cmd`, `r*`, `/bin/r?`, `%COMSPEC%`), or in letters that only look like one
+    // (`ｒｍ`), is not known.
+    let named = !seg[0].contains(['$', '*', '?', '[', '%']) && seg[0].is_ascii();
+    let written = seg[0].clone();
     seg[0] = program_name(&seg[0]);
     let program = seg[0].to_ascii_lowercase();
     let mut certain = true;
@@ -419,6 +446,11 @@ fn resolve(raw: &Raw, out: &mut Vec<Vec<String>>, depth: usize, windows: bool) -
             None => None,
         },
         "eval" => Some(seg[1..].join(" ")),
+        // `alias x='rm -rf ~'`: what the alias runs, as it will run.
+        "alias" => {
+            let bodies: Vec<&str> = seg[1..].iter().filter_map(|w| w.split_once('=').map(|(_, body)| body)).collect();
+            (!bodies.is_empty()).then(|| bodies.join("\n"))
+        }
         "su" | "script" | "flock" => {
             let at = seg.iter().position(|w| w == "-c" || w == "--command");
             match at.and_then(|a| seg.get(a + 1)) {
@@ -521,7 +553,25 @@ fn resolve(raw: &Raw, out: &mut Vec<Vec<String>>, depth: usize, windows: bool) -
     if let Some(script) = given {
         certain &= inner(&script, out);
     }
-    out.push(seg);
+    // A heredoc's body: commands when a shell runs it (`bash <<EOF`, `ssh host <<EOF`, `docker exec -i c sh <<EOF`),
+    // code nobody reads here when an interpreter does (`python3 - <<EOF`), else text (`cat > notes.md <<EOF`).
+    if !raw.bodies.is_empty() {
+        let programs: Vec<String> = seg.iter().map(|w| program_name(w).to_ascii_lowercase()).collect();
+        if programs[0] == "ssh" || programs.iter().any(|n| SHELLS.contains(&n.as_str())) {
+            for body in &raw.bodies {
+                certain &= inner(body, out);
+            }
+        } else {
+            certain &= !programs.iter().any(|n| interpreter(n));
+            if every {
+                // The desktop app's guard reads every word, a heredoc's text too.
+                for body in &raw.bodies {
+                    let _ = inner(body, out);
+                }
+            }
+        }
+    }
+    out.push((seg, written));
     certain && named
 }
 
@@ -550,6 +600,56 @@ struct Raw {
     words: Vec<String>,
     heredoc: bool,
     here_string: bool,
+    /// The bodies of its heredocs, as the shell reads them: up to the delimiter line, not shell text.
+    bodies: Vec<String>,
+}
+
+/// Reads a heredoc's delimiter word after `<<` (`EOF`, `'EOF'`, `"EOF"`, `\EOF`), its quotes removed.
+fn heredoc_delimiter(chars: &mut std::iter::Peekable<std::str::Chars<'_>>) -> String {
+    while chars.next_if(|c| *c == ' ' || *c == '\t').is_some() {}
+    let mut d = String::new();
+    while let Some(&c) = chars.peek() {
+        match c {
+            '\'' | '"' => {
+                chars.next();
+                for q in chars.by_ref() {
+                    if q == c {
+                        break;
+                    }
+                    d.push(q);
+                }
+            }
+            '\\' => {
+                chars.next();
+                d.extend(chars.next());
+            }
+            c if c.is_whitespace() || matches!(c, ';' | '|' | '&' | '<' | '>' | '(' | ')') => break,
+            c => {
+                chars.next();
+                d.push(c);
+            }
+        }
+    }
+    d
+}
+
+/// Reads a heredoc's body: the lines up to its delimiter line (leading tabs stripped for `<<-`), or the end.
+fn heredoc_body(chars: &mut std::iter::Peekable<std::str::Chars<'_>>, delimiter: &str, tabs: bool) -> String {
+    let mut body = String::new();
+    while chars.peek().is_some() {
+        let line: String = chars.by_ref().take_while(|c| *c != '\n').collect();
+        let bare = if tabs {
+            line.trim_start_matches('\t')
+        } else {
+            line.as_str()
+        };
+        if bare.trim_end_matches('\r') == delimiter {
+            break;
+        }
+        body.push_str(bare);
+        body.push('\n');
+    }
+    body
 }
 
 /// Whether a `{` starts a brace expansion (`{a,b}`, `{1..3}`): a `}` before any space, with a comma or `..` between.
@@ -571,6 +671,8 @@ fn split_commands(command: &str, windows: bool) -> (Vec<Raw>, bool) {
     let mut substitutions = 0_usize;
     let mut backticks = 0_usize;
     let mut chars = command.chars().peekable();
+    // Heredocs whose bodies start after this line: the delimiter, `<<-`, and the command they feed.
+    let mut pending: Vec<(String, bool, usize)> = Vec::new();
     let end_word = |word: &mut String, in_word: &mut bool, current: &mut Raw| {
         if *in_word {
             current.words.push(std::mem::take(word));
@@ -585,6 +687,11 @@ fn split_commands(command: &str, windows: bool) -> (Vec<Raw>, bool) {
         }
     };
     while let Some(c) = chars.next() {
+        // Characters a shell reads otherwise than here: control characters (NUL, a lone CR, ...) and spaces that are
+        // not ASCII (a line separator, a no-break space), which are part of a word there.
+        if (c.is_control() && !matches!(c, '\n' | '\t')) || (c.is_whitespace() && !c.is_ascii()) {
+            certain = false;
+        }
         match c {
             '\'' => {
                 in_word = true;
@@ -622,6 +729,13 @@ fn split_commands(command: &str, windows: bool) -> (Vec<Raw>, bool) {
                 match chars.next() {
                     Some('\n') | None => {}
                     Some(n) => word.push(n),
+                }
+            }
+            '^' if windows => {
+                // cmd's escape: the next character as it is (`r^m` is `rm`).
+                in_word = true;
+                if let Some(n) = chars.next() {
+                    word.push(n);
                 }
             }
             '\\' if windows => {
@@ -677,12 +791,8 @@ fn split_commands(command: &str, windows: bool) -> (Vec<Raw>, bool) {
                 }
             }
             '#' if !in_word => {
-                for n in chars.by_ref() {
-                    if n == '\n' {
-                        break;
-                    }
-                }
-                end_command(&mut current, &mut commands);
+                // A comment, up to the line's end (which still ends the line: heredoc bodies start after it).
+                while chars.next_if(|n| *n != '\n').is_some() {}
             }
             '{' if !windows && brace_expansion(&chars) => {
                 // `{r,}m`, `{a..z}`: words the shell makes up.
@@ -690,7 +800,7 @@ fn split_commands(command: &str, windows: bool) -> (Vec<Raw>, bool) {
                 in_word = true;
                 word.push(c);
             }
-            '$' if !windows && chars.peek() == Some(&'\'') => {
+            '$' if !windows && matches!(chars.peek(), Some('\'' | '"')) => {
                 // `$'\x72m'`: a word the shell decodes.
                 certain = false;
                 in_word = true;
@@ -707,6 +817,14 @@ fn split_commands(command: &str, windows: bool) -> (Vec<Raw>, bool) {
                 }
                 end_word(&mut word, &mut in_word, &mut current);
                 end_command(&mut current, &mut commands);
+                if c == '\n' {
+                    for (delimiter, tabs, at) in std::mem::take(&mut pending) {
+                        let body = heredoc_body(&mut chars, &delimiter, tabs);
+                        if let Some(cmd) = commands.get_mut(at) {
+                            cmd.bodies.push(body);
+                        }
+                    }
+                }
             }
             '$' if chars.peek() == Some(&'(') => {
                 chars.next();
@@ -725,7 +843,13 @@ fn split_commands(command: &str, windows: bool) -> (Vec<Raw>, bool) {
                         current.here_string = true;
                     } else {
                         current.heredoc = true;
-                        chars.next_if_eq(&'-');
+                        let tabs = chars.next_if_eq(&'-').is_some();
+                        let delimiter = heredoc_delimiter(&mut chars);
+                        if delimiter.is_empty() {
+                            certain = false;
+                        } else {
+                            pending.push((delimiter, tabs, commands.len()));
+                        }
                     }
                 }
                 while chars.peek().is_some_and(|n| matches!(n, '>' | '&' | '|')) {
@@ -741,6 +865,8 @@ fn split_commands(command: &str, windows: bool) -> (Vec<Raw>, bool) {
     }
     end_word(&mut word, &mut in_word, &mut current);
     end_command(&mut current, &mut commands);
+    // A heredoc whose body never came (no line after it).
+    certain &= pending.is_empty();
     let closed = substitutions == 0 && (windows || backticks.is_multiple_of(2));
     (commands, certain && closed)
 }
