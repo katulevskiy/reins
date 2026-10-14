@@ -85,6 +85,26 @@ const TOOL_TIMEOUT: Duration = Duration::from_secs(5);
 /// At most this many skipped places are listed (all are counted).
 const MAX_SKIPPED_LISTED: usize = 200;
 
+/// `[secrets]` in `config.toml`.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct SecretsConfig {
+    /// Finding and moving secrets (`reins secrets scan` / `import`, the app's Scan) while Reins Secrets is a
+    /// preview.
+    pub preview: bool,
+}
+
+/// Whether finding and moving secrets is on: `[secrets] preview = true`, or `REINS_SECRETS_PREVIEW=1`. The one place
+/// the preview is decided (the CLI and the app ask here); remove it when Reins Secrets ships.
+#[must_use]
+pub fn preview(config: &crate::config::Config) -> bool {
+    config.secrets.preview || std::env::var("REINS_SECRETS_PREVIEW").is_ok_and(|v| !v.is_empty() && v != "0")
+}
+
+/// What the CLI says while the preview is off.
+pub const PREVIEW_OFF: &str = "finding and moving secrets is a preview: turn it on with `[secrets] preview = true` in \
+                               config.toml (or REINS_SECRETS_PREVIEW=1)";
+
 /// Who started the scan, from the environment.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Caller {

@@ -654,3 +654,12 @@ fn the_json_schema_is_stable() {
         r#""dotenv","ssh_key","gh_cli","git_credentials","npm","pypi","cargo","docker","aws","gcp","kube","shell","netrc""#
     );
 }
+
+#[test]
+fn the_preview_is_off_unless_config_toml_turns_it_on() {
+    let off = crate::config::Config::default();
+    let on: crate::config::Config = toml::from_str("[secrets]\npreview = true\n").unwrap();
+    assert!(!off.secrets.preview && on.secrets.preview);
+    assert!(preview(&on));
+    assert!(toml::from_str::<crate::config::Config>("[secrets]\nwhat = 1\n").is_err(), "unknown keys are refused");
+}

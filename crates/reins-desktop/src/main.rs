@@ -167,8 +167,9 @@ enum Cmd {
         #[command(subcommand)]
         action: reins_desktop::vault_cli::VaultCmd,
     },
-    #[command(display_order = 15)]
-    /// Find the secrets lying around this computer and move them into the vault on your phone.
+    #[command(display_order = 15, hide = true)]
+    /// Find the secrets lying around this computer and move them into the vault on your phone (a preview:
+    /// `[secrets] preview = true`).
     Secrets {
         #[command(subcommand)]
         action: reins_desktop::secrets_cmd::SecretsCmd,
