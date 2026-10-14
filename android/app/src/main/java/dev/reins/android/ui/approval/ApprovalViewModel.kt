@@ -32,7 +32,7 @@ data class ApprovalUi(
     val finished: Boolean = false,
     /** The "More options" section is open. */
     val moreOpen: Boolean = false,
-    /** What Autopilot made of the request (Assisted and Auto), if it looked at it. */
+    /** What Autopilot made of the request (Manual and Auto), if it looked at it. */
     val suggestion: SuggestionView? = null,
     /** A purchase: what pays and where it goes, as picked on the purchase screen. */
     val purchase: PurchaseDraft = PurchaseDraft(),
@@ -107,7 +107,7 @@ class ApprovalViewModel(private val container: AppContainer, private val request
         )
     }
 
-    /** Autopilot's suggestion is a hint: without one (Manual, no model, a failure) the screen is simply as before. */
+    /** Autopilot's suggestion is a hint: without one (Lockdown, Bypass, a failure) the screen is simply as before. */
     private suspend fun loadSuggestion() {
         val suggestion = try {
             container.core.autopilotSuggestion(requestId)

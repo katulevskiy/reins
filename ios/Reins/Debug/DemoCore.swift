@@ -1072,7 +1072,7 @@ final class DemoReinsCore: ReinsCoreProtocol, @unchecked Sendable {
     private static func defaultProfile(_ s: State) -> ProfileView? { s.profiles.first { $0.isDefault } ?? s.profiles.first }
 
     private static func globalBase(_ s: State) -> AutopilotMode {
-        s.apGlobal.mode ?? (s.model.state == .installed ? .assisted : .manual)
+        s.apGlobal.mode ?? .manual
     }
 
     private static func globalMode(_ s: State) -> AutopilotMode {

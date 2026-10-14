@@ -54,7 +54,7 @@ enum IntentBridge {
         return on
     }
 
-    /// Autopilot's mode for every AI ("Set Reins to Assisted").
+    /// Autopilot's mode for every AI ("Set Reins to Manual").
     static func setMode(_ option: AutopilotModeOption) async throws {
         let model = try await signedIn()
         do {
@@ -71,8 +71,8 @@ enum IntentBridge {
 
     /// A Focus filter: `option` while the Focus is on; nil (the Focus ended) puts back the mode from before it.
     ///
-    /// Nobody confirms a Focus as it starts (a schedule, a place), so a Focus may only make Autopilot stricter: Manual,
-    /// Assisted or Lockdown, never Auto. The mode from before is put back only if the mode is still the one the Focus
+    /// Nobody confirms a Focus as it starts (a schedule, a place), so a Focus may only make Autopilot stricter: Manual
+    /// or Lockdown, never Auto. The mode from before is put back only if the mode is still the one the Focus
     /// set: one the user chose meanwhile (Lockdown, say) stays. A bypass that ran when the Focus began comes back as the
     /// mode under it, not as a bypass.
     static func applyFocus(_ option: AutopilotModeOption?, defaults: UserDefaults = AppGroup.defaults) async throws {
@@ -91,8 +91,8 @@ enum IntentBridge {
             if let before { defaults.set(before, forKey: focusBeforeKey) }
             defaults.set(option.rawValue, forKey: focusSetKey)
         } else {
-            let before = defaults.string(forKey: focusBeforeKey).flatMap(AutopilotModeOption.init(rawValue:))
-            let set = defaults.string(forKey: focusSetKey).flatMap(AutopilotModeOption.init(rawValue:))
+            let before = defaults.string(forKey: focusBeforeKey).flatMap(AutopilotModeOption.init(stored:))
+            let set = defaults.string(forKey: focusSetKey).flatMap(AutopilotModeOption.init(stored:))
             defaults.removeObject(forKey: focusBeforeKey)
             defaults.removeObject(forKey: focusSetKey)
             guard let before, let set else { return }
@@ -101,12 +101,12 @@ enum IntentBridge {
         }
     }
 
-    /// How much a mode holds back: Lockdown denies everything, Manual and Assisted ask about everything, Auto decides
-    /// some, a bypass approves nearly everything.
+    /// How much a mode holds back: Lockdown denies everything, Manual asks about everything, Auto decides some, a
+    /// bypass approves nearly everything.
     nonisolated static func strictness(_ mode: AutopilotMode) -> Int {
         switch mode {
         case .lockdown: 3
-        case .manual, .assisted: 2
+        case .manual: 2
         case .auto: 1
         case .bypass: 0
         }
@@ -161,17 +161,20 @@ extension AutopilotModeOption {
     init?(_ mode: AutopilotMode) {
         switch mode {
         case .manual: self = .manual
-        case .assisted: self = .assisted
         case .auto: self = .auto
         case .lockdown: self = .lockdown
         case .bypass: return nil
         }
     }
 
+    /// A mode saved by an earlier version: its "assisted" is Manual now.
+    init?(stored raw: String) {
+        self.init(rawValue: raw == "assisted" ? "manual" : raw)
+    }
+
     var mode: AutopilotMode {
         switch self {
         case .manual: .manual
-        case .assisted: .assisted
         case .auto: .auto
         case .lockdown: .lockdown
         }

@@ -5,11 +5,10 @@ import SwiftUI
 // activity badge live with those screens.)
 
 enum AutopilotStyle {
-    /// Neutral for Manual, blue for Assisted, the accent for Auto, red for Bypass, amber for Lockdown.
+    /// Blue for Manual, the accent for Auto, red for Bypass, amber for Lockdown.
     static func tint(_ mode: AutopilotMode) -> Color {
         switch mode {
-        case .manual: Palette.secondary
-        case .assisted: Palette.search
+        case .manual: Palette.search
         case .auto: Palette.accent
         case .bypass: Palette.danger
         case .lockdown: Palette.warning
@@ -237,8 +236,8 @@ struct RadioDot: View {
     }
 }
 
-/// The big mode selector: five rows and one highlight that springs from the old row to the new one, taking on the
-/// new mode's colour on the way. Each row says what the mode does; Assisted and Auto say when they need the model.
+/// The big mode selector: four rows and one highlight that springs from the old row to the new one, taking on the
+/// new mode's colour on the way. Each row says what the mode does; Auto says when it needs the model.
 struct ModePicker: View {
     var selected: AutopilotMode
     var modelReady: Bool

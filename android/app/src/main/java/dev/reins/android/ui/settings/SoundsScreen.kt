@@ -184,7 +184,7 @@ private val samples = listOf(
     Sample("Alert", "A grant ends soon", listOf(Event.Alert)),
     Sample("Autopilot approved", "Approved for you, quietly", listOf(Event.AutoApproved)),
     Sample("Autopilot denied", "Denied for you", listOf(Event.AutoDenied)),
-    Sample("More autonomy", "From Assisted to Auto", listOf(Event.AutopilotOn)),
+    Sample("More autonomy", "From Manual to Auto", listOf(Event.AutopilotOn)),
     Sample("Less autonomy", "Back to Manual", listOf(Event.AutopilotOff)),
     Sample("Bypass", "On, then off", listOf(Event.BypassOn, Event.BypassOff), gapMs = 900),
     Sample("Lockdown", "Everything denied", listOf(Event.LockdownOn)),

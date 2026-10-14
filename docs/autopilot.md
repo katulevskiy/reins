@@ -11,8 +11,7 @@ There is a global mode, and each connection can have its own (in that connection
 
 | Mode | What happens |
 |---|---|
-| **Manual** | Every request waits for you. The default until a model is installed. |
-| **Assisted** | Every request still waits for you, and the approval screen shows what Autopilot would do and why ("Autopilot would approve · 97%", "Like 4 times you approved: ..."). Each of your answers teaches it. The default once a model is installed. |
+| **Manual** | Every request waits for you, and once the model is installed the approval screen shows what Autopilot would do and why ("Autopilot would approve · 97%", "Like 4 times you approved: ..."). Each of your answers teaches it. The default. |
 | **Auto** | Autopilot approves what it is confident is safe, denies what it is confident is harmful, and asks you about the rest. Only for kinds of request that have earned it ([below](#how-auto-earns-trust)). |
 | **Bypass** | Approves everything except the hard floor, for 15 minutes by default and at most 60. A persistent notification with a countdown and **Stop** stays up while it is on. Needs no model. Not available for a connection paired less than 10 minutes ago. |
 | **Lockdown** | Denies everything at once, including what is already waiting. New connection requests still reach you. A global Lockdown overrides every connection's own mode. Needs no model. |
@@ -150,5 +149,5 @@ Results on held-out synthetic test sets, at the Balanced thresholds (details in 
   email bodies in four languages.
 - **Not a security boundary.** The hard floor, the per-kind unlocking, the novelty rule and the rate limit are what
   keep Autopilot safe. A model score alone never approves anything on the floor.
-- **Fails safe.** Without a model, or if inference fails or times out, Assisted and Auto behave like Manual for that
-  request. Bypass and Lockdown keep working.
+- **Fails safe.** Without a model, or if inference fails or times out, Manual shows no suggestion and Auto asks you,
+  for that request. Bypass and Lockdown keep working.

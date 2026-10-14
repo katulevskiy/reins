@@ -7,10 +7,10 @@ use crate::types::PendingKind;
 /// How requests of a connection (or of all connections) are decided (spec §1).
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize, uniffi::Enum)]
 pub enum AutopilotMode {
-    /// Every request waits for the user.
+    /// Every request waits, with Autopilot's suggestion shown when a model is installed; the user's answers train it.
+    // Older versions stored the mode this one replaced as "Assisted".
+    #[serde(alias = "Assisted")]
     Manual,
-    /// Every request waits, with Autopilot's suggestion shown; the user's answers train it.
-    Assisted,
     /// Autopilot approves or denies what it is confident about, in classes that earned it; the rest waits.
     Auto,
     /// Everything except the hard floor is approved, until `bypass_until`.
@@ -23,7 +23,6 @@ impl AutopilotMode {
     pub fn as_str(self) -> &'static str {
         match self {
             Self::Manual => "manual",
-            Self::Assisted => "assisted",
             Self::Auto => "auto",
             Self::Bypass => "bypass",
             Self::Lockdown => "lockdown",
@@ -32,8 +31,8 @@ impl AutopilotMode {
 
     pub fn parse(s: &str) -> Option<Self> {
         Some(match s {
-            "manual" => Self::Manual,
-            "assisted" => Self::Assisted,
+            // Older versions had an "assisted" mode: what Manual does now.
+            "manual" | "assisted" => Self::Manual,
             "auto" => Self::Auto,
             "bypass" => Self::Bypass,
             "lockdown" => Self::Lockdown,
@@ -78,8 +77,7 @@ impl Preset {
 pub struct AutopilotSettings {
     /// The global mode in force now (`Bypass` while a global bypass runs).
     pub mode: AutopilotMode,
-    /// The global mode when no bypass runs (what the user picked; Assisted once a model is installed, else Manual,
-    /// until they pick one).
+    /// The global mode when no bypass runs (what the user picked; Manual until they pick one).
     pub base_mode: AutopilotMode,
     /// A global bypass runs until then (unix seconds).
     pub bypass_until: Option<i64>,
@@ -208,7 +206,7 @@ pub struct SuggestionView {
     pub novel: bool,
     /// Always waits for the user (hard floor, spec §2).
     pub floor: bool,
-    /// The model ran (false: no model, Manual mode, floor, or a failure — see `reason`).
+    /// The model ran (false: no model, floor, or a failure — see `reason`).
     pub judged: bool,
 }
 

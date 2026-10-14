@@ -17,7 +17,7 @@ final class ApprovalModel {
     private(set) var finished = false
     /// The "More options" section is open.
     var moreOpen = false
-    /// What Autopilot made of the request (Assisted and Auto), if it looked at it.
+    /// What Autopilot made of the request (Manual and Auto), if it looked at it.
     private(set) var suggestion: SuggestionView?
 
     init(requestId: String) {
@@ -40,7 +40,7 @@ final class ApprovalModel {
             view = v
             draft = .initial(for: v)
             loading = false
-            // A hint only: without one (Manual, no model, a failure) the sheet is simply as before.
+            // A hint only: without one (Lockdown, Bypass, a failure) the sheet is simply as before.
             suggestion = try? await app.core.autopilotSuggestion(requestId: requestId)
         } catch {
             loading = false

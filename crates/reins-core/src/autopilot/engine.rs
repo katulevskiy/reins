@@ -381,7 +381,7 @@ impl Engine {
     pub(crate) fn ap_mode_for(&self, connection_id: &str, now: i64) -> Result<AutopilotMode, CoreError> {
         let global = self.store.ap_mode_row("")?;
         let own = self.store.ap_mode_row(connection_id)?;
-        Ok(modes::effective(&global, Some(&own), self.ap_installed(), now))
+        Ok(modes::effective(&global, Some(&own), now))
     }
 
     // ---- the pass --------------------------------------------------------------------------------------------------
@@ -534,7 +534,7 @@ impl Engine {
                 kind: "pairing".to_owned(),
                 connection_id: String::new(),
                 connection_label: pairing.client_name.clone(),
-                mode: modes::global_mode(&global, self.ap_installed(), now),
+                mode: modes::global_mode(&global, now),
                 profile_id: String::new(),
                 profile_name: String::new(),
                 class_key: String::new(),
@@ -592,11 +592,7 @@ impl Engine {
                 "Lockdown: every request is denied".clone_into(&mut s.reason);
                 return self.ap_conclude(&subject, s, Verdict::Deny, "lockdown").await;
             }
-            AutopilotMode::Manual => {
-                "Autopilot is off (Manual)".clone_into(&mut s.reason);
-                return self.ap_wait(&subject, &s);
-            }
-            AutopilotMode::Bypass | AutopilotMode::Assisted | AutopilotMode::Auto => {}
+            AutopilotMode::Bypass | AutopilotMode::Manual | AutopilotMode::Auto => {}
         }
 
         // What the model reads, also kept for corrections.
@@ -861,13 +857,12 @@ impl Engine {
 
     // ---- learning from the user ------------------------------------------------------------------------------------
 
-    /// The note the user's own decision on a request carries: what Autopilot suggested, or why it could not (no
-    /// note when Autopilot was off).
+    /// The note the user's own decision on a request carries: what Autopilot suggested, or why it could not.
     pub(crate) fn ap_human_note(&self, request_id: &str) -> Option<AuditAutopilot> {
         let s = self.store.ap_suggestion(request_id).ok().flatten()?;
         let looked = s.judged.is_some()
             || s.floor.is_some()
-            || matches!(s.mode, AutopilotMode::Assisted | AutopilotMode::Auto | AutopilotMode::Bypass);
+            || matches!(s.mode, AutopilotMode::Manual | AutopilotMode::Auto | AutopilotMode::Bypass);
         looked.then(|| note_of(&s, s.verdict))
     }
 
@@ -1020,7 +1015,6 @@ impl Engine {
     pub fn autopilot_settings(&self) -> Result<AutopilotSettings, CoreError> {
         let now = unix_now();
         self.ap_expire_bypasses(now)?;
-        let installed = self.ap_installed();
         let profiles = self.ap_profiles()?;
         let default_profile_id = self.ap_default_profile_id(&profiles)?;
         let global = self.store.ap_mode_row("")?;
@@ -1030,7 +1024,7 @@ impl Engine {
             .into_iter()
             .filter(|(scope, _)| !scope.is_empty())
             .map(|(scope, row)| ConnectionAutopilot {
-                mode: modes::effective(&global, Some(&row), installed, now),
+                mode: modes::effective(&global, Some(&row), now),
                 base_mode: row.mode,
                 bypass_until: row.bypass_until.filter(|t| *t > now),
                 profile_id: row
@@ -1042,8 +1036,8 @@ impl Engine {
             })
             .collect();
         Ok(AutopilotSettings {
-            mode: modes::global_mode(&global, installed, now),
-            base_mode: modes::global_base(&global, installed),
+            mode: modes::global_mode(&global, now),
+            base_mode: modes::global_base(&global),
             bypass_until: global.bypass_until.filter(|t| *t > now),
             default_profile_id,
             wifi_only: self.store.meta_get(WIFI_ONLY_KEY)?.is_none_or(|v| v != "0"),
@@ -1176,7 +1170,7 @@ impl Engine {
             kind: "playground".to_owned(),
             connection_id: String::new(),
             connection_label: String::new(),
-            mode: AutopilotMode::Assisted,
+            mode: AutopilotMode::Manual,
             profile_id: stored.id.clone(),
             profile_name: stored.profile.name.clone(),
             class_key,

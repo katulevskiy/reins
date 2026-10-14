@@ -114,7 +114,7 @@ pub struct PendingItem {
     /// The operation in a few words ("Read Telegram messages"), else empty (Gmail, pairings).
     pub op_title: String,
     /// What Autopilot would do, in one line for the notification ("Autopilot would approve · 97%"); `None` when it
-    /// did not judge (Manual mode, no model).
+    /// did not judge (no model).
     pub suggestion: Option<String>,
     /// What approving does, in one sentence (see [`ApprovalView::headline`]); empty for pairings and other phones.
     #[uniffi(default)]

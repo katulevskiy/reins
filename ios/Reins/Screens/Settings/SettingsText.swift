@@ -4,7 +4,7 @@ import SwiftUI
 /// Autopilot screens have their own, fuller set; these are the few words these pages need.
 enum SettingsText {
     /// The modes in the order the picker shows them, from the user deciding everything to Autopilot refusing everything.
-    static let modes: [AutopilotMode] = [.manual, .assisted, .auto, .bypass, .lockdown]
+    static let modes: [AutopilotMode] = [.manual, .auto, .bypass, .lockdown]
 
     /// How long a bypass can run, in minutes (the core allows 1 to 60).
     static let bypassMinutes: [UInt32] = [15, 30, 60]
@@ -12,7 +12,6 @@ enum SettingsText {
     static func modeName(_ mode: AutopilotMode) -> String {
         switch mode {
         case .manual: "Manual"
-        case .assisted: "Assisted"
         case .auto: "Auto"
         case .bypass: "Bypass"
         case .lockdown: "Lockdown"
@@ -21,8 +20,7 @@ enum SettingsText {
 
     static func modeSymbol(_ mode: AutopilotMode) -> String {
         switch mode {
-        case .manual: "hand.raised"
-        case .assisted: "sparkles"
+        case .manual: "hand.raised.fill"
         case .auto: "location.north.fill"
         case .bypass: "bolt.fill"
         case .lockdown: "lock.fill"
@@ -31,8 +29,7 @@ enum SettingsText {
 
     static func modeTint(_ mode: AutopilotMode) -> Color {
         switch mode {
-        case .manual: Palette.secondary
-        case .assisted: Palette.search
+        case .manual: Palette.search
         case .auto: Palette.accent
         case .bypass: Palette.danger
         case .lockdown: Palette.warning

@@ -707,7 +707,7 @@ enum DemoData {
         neighbours: [NeighbourView], classKey: String = "github/write/push"
     ) -> SuggestionView {
         SuggestionView(
-            requestId: id, verdict: verdict, mode: .assisted, pApprove: pApprove, pDeny: pDeny, confidence: confidence, reason: reason,
+            requestId: id, verdict: verdict, mode: .manual, pApprove: pApprove, pDeny: pDeny, confidence: confidence, reason: reason,
             neighbours: neighbours, profileId: "personal", profileName: "Personal", classKey: classKey, novel: novel, floor: floor,
             judged: judged
         )

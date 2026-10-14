@@ -732,7 +732,7 @@ abstract class ScreenshotsBase(private val suffix: String) {
     fun autopilotModes() {
         core.model = installed
         openAutopilot()
-        shoot("60-autopilot-assisted")
+        shoot("60-autopilot-manual")
         rule.onNodeWithTag("newProfile").performScrollTo()
         shoot("60b-autopilot-model-profiles")
         tap("mode:AUTO")

@@ -9,7 +9,7 @@ final class AutopilotTextTests: XCTestCase {
     }
 
     private func settings(bypass: Int64? = nil, connections: [ConnectionAutopilot] = []) -> AutopilotSettings {
-        AutopilotSettings(mode: bypass != nil ? .bypass : .assisted, baseMode: .assisted, bypassUntil: bypass, defaultProfileId: "personal",
+        AutopilotSettings(mode: bypass != nil ? .bypass : .manual, baseMode: .manual, bypassUntil: bypass, defaultProfileId: "personal",
                           wifiOnly: true, model: model(.installed), connections: connections)
     }
 
@@ -21,7 +21,7 @@ final class AutopilotTextTests: XCTestCase {
 
     private func suggestion(verdict: Verdict = .approve, pDeny: Float = 0.02, floor: Bool = false, novel: Bool = false, judged: Bool = true,
                             reason: String = "Like 4 times you approved: Push to a branch · dkat/reins") -> SuggestionView {
-        SuggestionView(requestId: "req1", verdict: verdict, mode: .assisted, pApprove: 0.97, pDeny: pDeny, confidence: 0.91, reason: reason,
+        SuggestionView(requestId: "req1", verdict: verdict, mode: .manual, pApprove: 0.97, pDeny: pDeny, confidence: 0.91, reason: reason,
                        neighbours: [], profileId: "personal", profileName: "Personal", classKey: "github/write/push", novel: novel,
                        floor: floor, judged: judged)
     }
@@ -33,7 +33,7 @@ final class AutopilotTextTests: XCTestCase {
 
     func testSwitchingModesSoundsLikeWhatItLetsHappen() {
         XCTAssertEqual(AutopilotFeedback.modeChange(from: .manual, to: .auto), .autopilotOn)
-        XCTAssertEqual(AutopilotFeedback.modeChange(from: .auto, to: .assisted), .autopilotOff)
+        XCTAssertEqual(AutopilotFeedback.modeChange(from: .auto, to: .manual), .autopilotOff)
         XCTAssertEqual(AutopilotFeedback.modeChange(from: .auto, to: .bypass), .bypassOn)
         XCTAssertEqual(AutopilotFeedback.modeChange(from: .bypass, to: .manual), .bypassOff)
         XCTAssertEqual(AutopilotFeedback.modeChange(from: .bypass, to: .lockdown), .lockdownOn)
@@ -130,11 +130,16 @@ final class AutopilotTextTests: XCTestCase {
 
     func testModesHaveNamesLinesAndSymbolsByKey() {
         XCTAssertEqual(AutopilotText.modes.map(AutopilotText.key), AutopilotText.modeKeys)
-        XCTAssertEqual(AutopilotText.modes.map(AutopilotText.name), ["Manual", "Assisted", "Auto", "Bypass", "Lockdown"])
+        XCTAssertEqual(AutopilotText.modes.map(AutopilotText.name), ["Manual", "Auto", "Bypass", "Lockdown"])
         XCTAssertEqual(AutopilotText.line(.lockdown), "Deny everything")
-        XCTAssertEqual(AutopilotText.byRisk, [.lockdown, .manual, .assisted, .auto, .bypass])
+        XCTAssertEqual(AutopilotText.line(.manual), "Ask, with a hint")
+        XCTAssertEqual(AutopilotText.byRisk, [.lockdown, .manual, .auto, .bypass])
         XCTAssertEqual(AutopilotText.name(key: "nonsense"), "Manual")
-        XCTAssertTrue(AutopilotText.needsModel(.assisted))
+        // "assisted", from an older version, is Manual now.
+        XCTAssertEqual(AutopilotText.name(key: "assisted"), "Manual")
+        XCTAssertEqual(AutopilotText.symbol(key: "assisted"), "hand.raised.fill")
+        XCTAssertTrue(AutopilotText.needsModel(.auto))
+        XCTAssertFalse(AutopilotText.needsModel(.manual), "Manual only goes without its hints")
         XCTAssertFalse(AutopilotText.needsModel(.bypass))
     }
 

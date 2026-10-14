@@ -61,7 +61,7 @@ final class NotificationService: UNNotificationServiceExtension {
         // `mayReset: false`: whatever goes wrong with the keychain here, the core never starts over from this process.
         guard let core = try? CoreFactory.make(notifier: capture, keys: KeychainKeyWrapper(mayReset: false)) else { return nil }
         guard await core.session() != nil else { return nil }
-        // Assisted and Auto judge with the model, which only the app runs: park the item unjudged (handling it fully here
+        // Manual and Auto judge with the model, which only the app runs: park the item unjudged (handling it fully here
         // would settle it as "could not judge" for good) and leave the judging to the app's next pass.
         let deferred = (try? await core.autopilotSettings()).map(ExtensionPolicy.needsModel) ?? true
         do {

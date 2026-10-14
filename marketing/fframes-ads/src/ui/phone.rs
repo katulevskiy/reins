@@ -383,9 +383,9 @@ fn activity(t: f32, reqs: &[Req]) -> Svgr<'static> {
     fframes::svgr!(<g>
         <rect x="10" y="10" width="370" height="824" fill="#000" />
         <text x="32" y="112" font-family={SANS} font-size="34" font-weight="700" letter-spacing="-1" fill={c::TEXT}>"Activity"</text>
-        <rect x="248" y="86" width="112" height="34" rx="17" fill={c::SUCCESS} fill-opacity="0.13" />
-        {icon(Icon::Sparkles, 270.0, 103.0, 15.0, c::SUCCESS, 2.0)}
-        <text x="284" y="108" font-family={SANS} font-size="14" font-weight="600" fill={c::SUCCESS}>"Assisted"</text>
+        <rect x="248" y="86" width="112" height="34" rx="17" fill={c::SEARCH} fill-opacity="0.13" />
+        {icon(Icon::Hand, 270.0, 103.0, 15.0, c::SEARCH, 2.0)}
+        <text x="284" y="108" font-family={SANS} font-size="14" font-weight="600" fill={c::SEARCH}>"Manual"</text>
         <text x="32" y="148" font-family={SANS} font-size="12.5" font-weight="500" letter-spacing="1.2" fill={c::TERTIARY}>"RECENT"</text>
         {items}
         {nav_bar()}

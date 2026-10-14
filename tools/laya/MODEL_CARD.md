@@ -40,7 +40,7 @@ probabilities. It runs on the phone with ONNX Runtime. The package is int8, 337 
 Suggesting, and within strict limits making, approve/deny decisions for requests from AI agents, on the user's own
 device, as one input among several:
 
-- In Reins's **Assisted** mode the model only suggests. The user decides every request.
+- In Reins's **Manual** mode the model only suggests. The user decides every request.
 - In **Auto** mode it may decide alone, but only for kinds of request where the user's own history unlocked it, never
   for a target the user has not approved before, under a rate limit, and never for anything on Reins's hard floor
   (secrets, destructive changes, history rewrites, new connections, permission requests).

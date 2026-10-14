@@ -24,7 +24,7 @@ SCREENS=(
     gitPush:28-git-push
     suggestionStrip:74-suggestion
     grants:9-grants
-    autopilotModes:60-autopilot-assisted
+    autopilotModes:60-autopilot-manual
     desktopPairing:27-desktop-pairing
 )
 

@@ -2807,7 +2807,7 @@ public protocol ReinsCoreProtocol: AnyObject, Sendable {
     func setDefaultProfile(profileId: String) async throws 
     
     /**
-     * Gives the core the app's ONNX runtime. Without one, Assisted and Auto judge nothing (requests wait); Bypass
+     * Gives the core the app's ONNX runtime. Without one, Manual and Auto judge nothing (requests wait); Bypass
      * and Lockdown work regardless. Replaces (and unloads) an earlier runtime.
      */
     func setModelRuntime(runtime: ModelRuntime) 
@@ -4404,7 +4404,7 @@ open func setDefaultProfile(profileId: String)async throws   {
 }
     
     /**
-     * Gives the core the app's ONNX runtime. Without one, Assisted and Auto judge nothing (requests wait); Bypass
+     * Gives the core the app's ONNX runtime. Without one, Manual and Auto judge nothing (requests wait); Bypass
      * and Lockdown work regardless. Replaces (and unloads) an earlier runtime.
      */
 open func setModelRuntime(runtime: ModelRuntime)  {try! rustCall() {
@@ -6310,8 +6310,7 @@ public struct AutopilotSettings: Equatable, Hashable {
      */
     public var mode: AutopilotMode
     /**
-     * The global mode when no bypass runs (what the user picked; Assisted once a model is installed, else Manual,
-     * until they pick one).
+     * The global mode when no bypass runs (what the user picked; Manual until they pick one).
      */
     public var baseMode: AutopilotMode
     /**
@@ -6339,8 +6338,7 @@ public struct AutopilotSettings: Equatable, Hashable {
          * The global mode in force now (`Bypass` while a global bypass runs).
          */mode: AutopilotMode, 
         /**
-         * The global mode when no bypass runs (what the user picked; Assisted once a model is installed, else Manual,
-         * until they pick one).
+         * The global mode when no bypass runs (what the user picked; Manual until they pick one).
          */baseMode: AutopilotMode, 
         /**
          * A global bypass runs until then (unix seconds).
@@ -9575,7 +9573,7 @@ public struct PendingItem: Equatable, Hashable {
     public var opTitle: String
     /**
      * What Autopilot would do, in one line for the notification ("Autopilot would approve · 97%"); `None` when it
-     * did not judge (Manual mode, no model).
+     * did not judge (no model).
      */
     public var suggestion: String?
     /**
@@ -9614,7 +9612,7 @@ public struct PendingItem: Equatable, Hashable {
          */opTitle: String, 
         /**
          * What Autopilot would do, in one line for the notification ("Autopilot would approve · 97%"); `None` when it
-         * did not judge (Manual mode, no model).
+         * did not judge (no model).
          */suggestion: String?, 
         /**
          * What approving does, in one sentence (see [`ApprovalView::headline`]); empty for pairings and other phones.
@@ -11674,7 +11672,7 @@ public struct SuggestionView: Equatable, Hashable {
      */
     public var floor: Bool
     /**
-     * The model ran (false: no model, Manual mode, floor, or a failure — see `reason`).
+     * The model ran (false: no model, floor, or a failure — see `reason`).
      */
     public var judged: Bool
 
@@ -11700,7 +11698,7 @@ public struct SuggestionView: Equatable, Hashable {
          * Always waits for the user (hard floor, spec §2).
          */floor: Bool, 
         /**
-         * The model ran (false: no model, Manual mode, floor, or a failure — see `reason`).
+         * The model ran (false: no model, floor, or a failure — see `reason`).
          */judged: Bool) {
         self.requestId = requestId
         self.verdict = verdict
@@ -12769,13 +12767,9 @@ public func FfiConverterTypeAutopilotEvent_lower(_ value: AutopilotEvent) -> Rus
 public enum AutopilotMode: Equatable, Hashable {
     
     /**
-     * Every request waits for the user.
+     * Every request waits, with Autopilot's suggestion shown when a model is installed; the user's answers train it.
      */
     case manual
-    /**
-     * Every request waits, with Autopilot's suggestion shown; the user's answers train it.
-     */
-    case assisted
     /**
      * Autopilot approves or denies what it is confident about, in classes that earned it; the rest waits.
      */
@@ -12811,13 +12805,11 @@ public struct FfiConverterTypeAutopilotMode: FfiConverterRustBuffer {
         
         case 1: return .manual
         
-        case 2: return .assisted
+        case 2: return .auto
         
-        case 3: return .auto
+        case 3: return .bypass
         
-        case 4: return .bypass
-        
-        case 5: return .lockdown
+        case 4: return .lockdown
         
         default: throw UniffiInternalError.unexpectedEnumCase
         }
@@ -12831,20 +12823,16 @@ public struct FfiConverterTypeAutopilotMode: FfiConverterRustBuffer {
             writeInt(&buf, Int32(1))
         
         
-        case .assisted:
+        case .auto:
             writeInt(&buf, Int32(2))
         
         
-        case .auto:
+        case .bypass:
             writeInt(&buf, Int32(3))
         
         
-        case .bypass:
-            writeInt(&buf, Int32(4))
-        
-        
         case .lockdown:
-            writeInt(&buf, Int32(5))
+            writeInt(&buf, Int32(4))
         
         }
     }
@@ -16227,7 +16215,7 @@ private let initializationResult: InitializationResult = {
     if (uniffi_reins_core_checksum_method_reinscore_set_default_profile() != 2528) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_reins_core_checksum_method_reinscore_set_model_runtime() != 29047) {
+    if (uniffi_reins_core_checksum_method_reinscore_set_model_runtime() != 3100) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_reins_core_checksum_method_reinscore_set_preset() != 57690) {

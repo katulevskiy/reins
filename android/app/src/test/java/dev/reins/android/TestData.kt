@@ -524,7 +524,7 @@ object TestData {
         floor: Boolean = false,
         novel: Boolean = false,
         judged: Boolean = true,
-        mode: AutopilotMode = AutopilotMode.ASSISTED,
+        mode: AutopilotMode = AutopilotMode.MANUAL,
         reason: String = "Like 4 times you approved: Push to a branch · dkat/reins",
         neighbours: List<NeighbourView> = neighbours(),
     ) = SuggestionView(id, verdict, mode, pApprove, pDeny, confidence, reason, neighbours, "personal", "Personal", "github/write/push", novel, floor, judged)

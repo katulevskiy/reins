@@ -44,7 +44,7 @@ agent never sees.
 <p align="center">
   <img src="docs/assets/git-push.png" width="200" alt="A git push waiting for approval: branch, commits, authors">
   <img src="docs/assets/suggestion.png" width="200" alt="The same approval with Autopilot's suggestion: would approve, 97%">
-  <img src="docs/assets/autopilot.png" width="200" alt="The Autopilot screen: Manual, Assisted, Auto, Bypass, Lockdown">
+  <img src="docs/assets/autopilot.png" width="200" alt="The Autopilot screen: Manual, Auto, Bypass, Lockdown">
   <img src="docs/assets/pairing.png" width="200" alt="Pairing the desktop app: the phone shows the app's key to compare">
 </p>
 <p align="center">
@@ -152,7 +152,7 @@ or ChatGPT. The full walkthrough is in [docs/quick-start.md](docs/quick-start.md
 - Without a phone, a local policy with desktop prompts decides about git instead.
 
 **Autopilot** (optional, on the phone)
-- Modes: Manual, Assisted (suggestions only), Auto, Bypass (time-boxed), Lockdown.
+- Modes: Manual (you decide, with suggestions), Auto, Bypass (time-boxed), Lockdown.
 - A small model (Laya, about 370 MB) runs on the phone. It learns from your own decisions in per-profile memory.
 - A hard floor that is never automatic. Text written by the AI can only make it more cautious.
 - See [docs/autopilot.md](docs/autopilot.md).
@@ -199,8 +199,8 @@ deployment, because relay state is in memory. See [docs/self-hosting.md](docs/se
 
 Autopilot reads a short text description of each request and answers approve, deny or ask. On held-out synthetic tests
 it made no unsafe automatic approvals. It decided about a quarter to a half of requests on its own and asked about the
-rest. Those numbers come from **synthetic data**. Wording that no one has tested yet may behave differently. Assisted
-mode, which only suggests, is the default once you install the model. Auto mode unlocks one kind of request at a time,
+rest. Those numbers come from **synthetic data**. Wording that no one has tested yet may behave differently. Manual
+mode, the default, only suggests. Auto mode unlocks one kind of request at a time,
 and only after it has agreed with you often enough. Model card: [tools/laya/MODEL_CARD.md](tools/laya/MODEL_CARD.md).
 
 ## Project status

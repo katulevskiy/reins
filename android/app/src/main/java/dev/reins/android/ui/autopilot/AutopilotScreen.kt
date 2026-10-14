@@ -188,7 +188,7 @@ fun AutopilotScreen(
     if (deleteAsk) {
         ConfirmDialog(
             title = "Delete the model?",
-            text = "Assisted and Auto pause until you download it again.",
+            text = "Manual asks without hints and Auto pauses until you download it again.",
             confirmLabel = "Delete",
             onConfirm = {
                 deleteAsk = false
@@ -296,7 +296,7 @@ internal fun ModelCard(
     val c = LocalColors.current
     Group(
         header = "On-device model",
-        footer = "Runs on this phone, nothing leaves it. Without it, Assisted and Auto simply leave every request to you.",
+        footer = "Runs on this phone, nothing leaves it. Without it, every request is left to you, without hints.",
     ) {
         if (model == null) return@Group
         val downloading = model.state == ModelState.DOWNLOADING || job == DownloadJob.Running

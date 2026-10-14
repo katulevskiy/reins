@@ -37,7 +37,7 @@ final class AutopilotFlowTests: XCTestCase {
 
     func testPickingAutoSetsTheGlobalModeAndFeelsLikeMoreAutonomy() async {
         await start()
-        XCTAssertEqual(model.autopilot?.mode, .assisted)
+        XCTAssertEqual(model.autopilot?.mode, .manual)
         await ap.setMode(.auto)
         XCTAssertEqual(model.autopilot?.mode, .auto)
         XCTAssertTrue(feedback.lastWas(.autopilotOn))
@@ -56,7 +56,7 @@ final class AutopilotFlowTests: XCTestCase {
         XCTAssertEqual(Double(until) - Date().timeIntervalSince1970, 30 * 60, accuracy: 5)
         XCTAssertTrue(feedback.played(.bypassOn))
         await ap.stopBypass()
-        XCTAssertEqual(model.autopilot?.mode, .assisted)
+        XCTAssertEqual(model.autopilot?.mode, .manual)
         XCTAssertNil(model.autopilot?.bypassUntil)
         XCTAssertTrue(feedback.lastWas(.bypassOff))
     }
@@ -67,7 +67,7 @@ final class AutopilotFlowTests: XCTestCase {
         await ap.setMode(.bypass, minutes: 15)
         await ap.setMode(.lockdown)
         XCTAssertEqual(owner.asked.count, 2)
-        XCTAssertEqual(model.autopilot?.mode, .assisted)
+        XCTAssertEqual(model.autopilot?.mode, .manual)
         XCTAssertFalse(feedback.played(.bypassOn))
         XCTAssertFalse(feedback.played(.lockdownOn))
     }
@@ -108,7 +108,7 @@ final class AutopilotFlowTests: XCTestCase {
         await until { ap.downloadJob == .idle }
         await until { ap.modelReady }
         XCTAssertEqual(ap.model?.state, .installed)
-        XCTAssertEqual(model.autopilot?.mode, .assisted, "Assisted once a model is installed")
+        XCTAssertEqual(model.autopilot?.mode, .manual, "still Manual, now with hints")
         XCTAssertTrue(feedback.lastWas(.grantCreated))
         XCTAssertEqual(Array(surroundings.log.suffix(2)), ["ended:ok", "foreground"])
     }
@@ -243,7 +243,7 @@ final class AutopilotFlowTests: XCTestCase {
         await ap.setMode(.bypass, minutes: 15, connectionId: "c1")
         XCTAssertEqual(owner.asked, ["Turn on Bypass for Claude"])
         XCTAssertEqual(ap.modeOf("c1"), .bypass)
-        XCTAssertEqual(ap.modeOf(nil), .assisted, "other AIs are not affected")
+        XCTAssertEqual(ap.modeOf(nil), .manual, "other AIs are not affected")
         await ap.stopBypass("c1")
         XCTAssertEqual(ap.modeOf("c1"), .auto)
     }

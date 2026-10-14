@@ -67,12 +67,11 @@ struct EndLockdownIntent: LiveActivityIntent {
 /// The Autopilot modes Siri, Shortcuts and Focus can set. Bypass is left out: it approves nearly everything, so it is
 /// switched on in the app, for a set time, after Face ID.
 enum AutopilotModeOption: String, AppEnum {
-    case manual, assisted, auto, lockdown
+    case manual, auto, lockdown
 
     static var typeDisplayRepresentation: TypeDisplayRepresentation = "Autopilot mode"
     static var caseDisplayRepresentations: [AutopilotModeOption: DisplayRepresentation] = [
         .manual: "Manual",
-        .assisted: "Assisted",
         .auto: "Auto",
         .lockdown: "Lockdown",
     ]
@@ -80,18 +79,17 @@ enum AutopilotModeOption: String, AppEnum {
     var title: String {
         switch self {
         case .manual: "Manual"
-        case .assisted: "Assisted"
         case .auto: "Auto"
         case .lockdown: "Lockdown"
         }
     }
 }
 
-/// "Set Reins to Assisted": Autopilot's mode for every AI, from Siri or Shortcuts. A looser mode lets requests
+/// "Set Reins to Manual": Autopilot's mode for every AI, from Siri or Shortcuts. A looser mode lets requests
 /// through, so it needs an unlocked phone.
 struct SetAutopilotModeIntent: LiveActivityIntent {
     static var title: LocalizedStringResource = "Set Autopilot mode"
-    static var description = IntentDescription("Sets Autopilot's mode for every AI: Manual, Assisted, Auto or Lockdown.")
+    static var description = IntentDescription("Sets Autopilot's mode for every AI: Manual, Auto or Lockdown.")
     static var authenticationPolicy: IntentAuthenticationPolicy = .requiresAuthentication
 
     @Parameter(title: "Mode")
@@ -114,30 +112,28 @@ struct SetAutopilotModeIntent: LiveActivityIntent {
 #if REINS_APP
 /// The modes a Focus may pick: the stricter ones only, so its picker never offers Auto (which `applyFocus` refuses).
 enum FocusModeOption: String, AppEnum {
-    case manual, assisted, lockdown
+    case manual, lockdown
 
     static var typeDisplayRepresentation: TypeDisplayRepresentation = "Autopilot mode"
     static var caseDisplayRepresentations: [FocusModeOption: DisplayRepresentation] = [
         .manual: "Manual",
-        .assisted: "Assisted",
         .lockdown: "Lockdown",
     ]
 
     var option: AutopilotModeOption {
         switch self {
         case .manual: .manual
-        case .assisted: .assisted
         case .lockdown: .lockdown
         }
     }
 }
 
-/// A Focus filter: while the Focus is on (Sleep, Driving, Work, ...), Autopilot is in the mode picked here (Manual,
-/// Assisted or Lockdown: a Focus only makes it stricter); when it ends, the mode from before comes back unless the
+/// A Focus filter: while the Focus is on (Sleep, Driving, Work, ...), Autopilot is in the mode picked here (Manual or
+/// Lockdown: a Focus only makes it stricter); when it ends, the mode from before comes back unless the
 /// user changed it meanwhile. The system runs it again with no mode when the Focus ends.
 struct ReinsFocusFilter: SetFocusFilterIntent {
     static var title: LocalizedStringResource = "Set Autopilot mode"
-    static var description: IntentDescription? = IntentDescription("While this Focus is on, Reins uses the Autopilot mode you pick: Manual, Assisted or Lockdown. When it ends, the mode from before comes back.")
+    static var description: IntentDescription? = IntentDescription("While this Focus is on, Reins uses the Autopilot mode you pick: Manual or Lockdown. When it ends, the mode from before comes back.")
 
     @Parameter(title: "Mode")
     var mode: FocusModeOption?
