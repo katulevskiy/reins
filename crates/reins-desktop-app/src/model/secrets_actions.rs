@@ -362,8 +362,7 @@ impl Model {
         .detach();
     }
 
-    /// "Remove the originals from the Trash" (held to confirm): deletes for good exactly the files the import sent
-    /// there.
+    /// "Shred" (held to confirm): overwrites and deletes exactly the files the import sent to the Trash.
     pub fn purge_originals(&mut self, cx: &mut Context<'_, Self>) {
         self.after_done(cx, true);
     }
@@ -381,7 +380,11 @@ impl Model {
             let n = done.receipt.trashed().len();
             done.after = Some(if purge {
                 done.receipt.purged_at = Some(reins_desktop::now_unix());
-                format!("Deleted the {n} originals from the Trash.")
+                for m in done.receipt.moved.iter_mut().filter(|m| m.in_trash) {
+                    m.in_trash = false;
+                    m.on_disk = false;
+                }
+                format!("Shredded the {n} originals.")
             } else {
                 done.receipt.undone_at = Some(reins_desktop::now_unix());
                 "Undone: the files are back. The secrets stay in your vault.".to_owned()

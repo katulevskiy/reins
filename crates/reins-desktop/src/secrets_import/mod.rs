@@ -234,6 +234,10 @@ pub struct PlannedVar {
     pub name: String,
     pub item: String,
     pub finding: String,
+    /// Earlier settings of the same name in the same file: this one's value is what goes, and they leave the file
+    /// with it.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub covers: Vec<String>,
 }
 
 /// An environment the batch stores (`vault_secrets_store`).
@@ -365,15 +369,25 @@ pub struct Conflict {
     /// The finding whose value goes, and the one whose value does not.
     pub kept: String,
     pub dropped: String,
+    /// Both are in one file (`kept` and `dropped` say which lines).
+    #[serde(default)]
+    pub same_file: bool,
 }
 
 impl Conflict {
     #[must_use]
     pub fn line(&self) -> String {
-        format!(
-            "{} is in both {} and {}: {}'s goes to {} (the more specific file wins)",
-            self.name, self.dropped, self.kept, self.kept, self.item
-        )
+        if self.same_file {
+            format!(
+                "{} is set twice ({}, {}): the last one goes to {}, and both leave the file",
+                self.name, self.dropped, self.kept, self.item
+            )
+        } else {
+            format!(
+                "{} is in both {} and {}: {}'s goes to {} (the more specific file wins)",
+                self.name, self.dropped, self.kept, self.kept, self.item
+            )
+        }
     }
 }
 
@@ -594,16 +608,32 @@ pub fn plan(report: &ScanReport, selected: &BTreeSet<String>, names: &Names<'_>)
                         name: var,
                         item: i.id.clone(),
                         finding: f.id.clone(),
+                        covers: Vec::new(),
                     };
                     match target.vars.iter_mut().find(|v| v.name == var.name) {
                         Some(v) => {
-                            // Never silently: the review says which file's value goes.
-                            if v.finding != var.finding {
+                            // Never silently: the review says which value goes.
+                            let mut var = var;
+                            if v.finding == var.finding {
+                                // Set twice in one file: the last one is what dotenv readers use, and the first
+                                // leaves the file with it.
+                                let line_of = |id: &str| f.items.iter().find(|i| i.id == id).map_or(0, |i| i.line);
+                                plan.conflicts.push(Conflict {
+                                    item: target_item,
+                                    name: var.name.clone(),
+                                    kept: format!("{} line {}", f.title, i.line),
+                                    dropped: format!("{} line {}", f.title, line_of(&v.item)),
+                                    same_file: true,
+                                });
+                                var.covers = std::mem::take(&mut v.covers);
+                                var.covers.push(v.item.clone());
+                            } else {
                                 plan.conflicts.push(Conflict {
                                     item: target_item,
                                     name: var.name.clone(),
                                     kept: title_of(&var.finding),
                                     dropped: title_of(&v.finding),
+                                    same_file: false,
                                 });
                             }
                             *v = var;
@@ -780,16 +810,23 @@ impl Context {
     }
 }
 
-/// Reads the selected values again from their files (the scan kept none). A file that changed since the scan is an
-/// error: scan again.
+/// The text of each selected finding's file (by finding id), read once: the values sent come from it, and the rewrite
+/// edits exactly it (and only while the file still holds it).
+pub(crate) type Texts = BTreeMap<String, Zeroizing<String>>;
+
+/// Reads the selected values again from their files (the scan kept none), and keeps each file's text. A file that
+/// changed since the scan is an error: scan again.
 fn read_values(
     report: &ScanReport,
     selected: &BTreeSet<String>,
     machine: &dyn Machine,
-) -> Result<BTreeMap<String, Zeroizing<String>>, String> {
+) -> Result<(BTreeMap<String, Zeroizing<String>>, Texts), String> {
     let mut out = BTreeMap::new();
+    let mut texts = Texts::new();
     for f in report.findings.iter().filter(|f| f.items.iter().any(|i| selected.contains(&i.id))) {
-        let entries = secrets_scan::read_entries(f.source, &f.abs_path)?;
+        let text = secrets_scan::read_text(&f.abs_path)?;
+        let entries = secrets_scan::parse_entries(f.source, &text);
+        texts.insert(f.id.clone(), text);
         let ids = secrets_scan::item_ids(&f.id, &entries);
         let mut found: BTreeMap<String, Zeroizing<String>> =
             ids.into_iter().zip(entries).map(|(id, e)| (id, e.value)).collect();
@@ -801,7 +838,8 @@ fn read_values(
             };
             match value.filter(|v| !v.trim().is_empty()) {
                 Some(v) => {
-                    let v = if f.source == Source::SshKey {
+                    // A key file and a `.env` value go as written (quotes may hold spaces on purpose).
+                    let v = if matches!(f.source, Source::SshKey | Source::Dotenv) {
                         v
                     } else {
                         Zeroizing::new(v.trim().to_owned())
@@ -817,7 +855,7 @@ fn read_values(
             }
         }
     }
-    Ok(out)
+    Ok((out, texts))
 }
 
 /// Builds the batch for `plan` from the values read.
@@ -872,7 +910,7 @@ pub async fn import(
     if plan.count() == 0 {
         return Err("nothing selected to move".to_owned());
     }
-    let mut values = read_values(report, selected, machine)?;
+    let (mut values, texts) = read_values(report, selected, machine)?;
     let batch = batch(&plan, &mut values);
     drop(values);
     confirmed(&plan, &batch.check())?;
@@ -893,13 +931,16 @@ pub async fn import(
         match result {
             Ok(()) => {
                 for v in &target.vars {
-                    arrived.insert(v.item.clone());
-                    receipt.moved.push(Moved {
-                        item: v.item.clone(),
-                        finding: v.finding.clone(),
-                        to: target.reference(&v.name),
-                        on_disk: true,
-                    });
+                    for item in std::iter::once(&v.item).chain(&v.covers) {
+                        arrived.insert(item.clone());
+                        receipt.moved.push(Moved {
+                            item: item.clone(),
+                            finding: v.finding.clone(),
+                            to: target.reference(&v.name),
+                            on_disk: true,
+                            in_trash: false,
+                        });
+                    }
                 }
             }
             Err(e) => receipt.notes.push(format!("{} was not stored: {e}", target.item())),
@@ -914,6 +955,7 @@ pub async fn import(
                     finding: target.finding.clone(),
                     to: format!("Reins/ssh/{}", target.name),
                     on_disk: true,
+                    in_trash: false,
                 });
             }
             Err(e) => receipt.notes.push(format!("{} was not stored: {e}", target.name)),
@@ -929,6 +971,7 @@ pub async fn import(
                     finding: target.finding.clone(),
                     to: format!("git: {}", target.host),
                     on_disk: true,
+                    in_trash: false,
                 });
             }
             Err(e) => receipt.notes.push(format!("the token for {} was not stored: {e}", target.host)),
@@ -940,13 +983,21 @@ pub async fn import(
                 .notes
                 .push("Local copies were kept: the vault has a backup of each, and they are still on disk.".to_owned());
         }
-        BTreeSet::new()
+        rewrite::Gone::default()
     } else {
-        rewrite::all(report, selected, &arrived, &plan, machine, &mut receipt).await
+        rewrite::all(report, selected, &arrived, &plan, &texts, machine, &mut receipt).await
     };
-    // What the vault has but this computer still holds too.
+    drop(texts);
+    // What the vault has but this computer still holds too: where it was, or in the Trash until shredded.
     for m in &mut receipt.moved {
-        m.on_disk = !off_disk.contains(&m.item);
+        m.in_trash = off_disk.trashed.contains(&m.item);
+        m.on_disk = !off_disk.off.contains(&m.item) || m.in_trash;
+    }
+    if receipt.moved.iter().any(|m| m.in_trash) {
+        receipt.notes.push(
+            "The original files are in the Trash, still in plain text: empty the Trash, or Shred them once all works."
+                .to_owned(),
+        );
     }
     let path = if receipt.moved.is_empty() && receipt.changes.is_empty() {
         None

@@ -413,7 +413,8 @@ async fn an_import_moves_a_projects_secrets_into_the_vault_with_one_approval() {
     assert_eq!(stores, 1, "one approval for the whole batch");
     assert_eq!(receipt.moved.len(), 1);
     assert_eq!(receipt.moved[0].to, "vault:acme-web/development/OPENAI_API_KEY");
-    assert!(!receipt.moved[0].on_disk);
+    // Out of the repository; the original is in the trash, plain text there until shredded.
+    assert!(receipt.moved[0].in_trash && receipt.moved[0].on_disk);
     assert!(!server.log().contains(&secret), "the server never sees a value");
 
     // The repository uses it through Reins; the original is in the trash.

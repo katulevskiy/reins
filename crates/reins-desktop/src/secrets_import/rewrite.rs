@@ -1,14 +1,23 @@
 //! Step 3 of import: each source whose selected secrets all reached the vault stops holding them (design
 //! `docs/secrets.md`, 5.3). A file is never changed in place: the original goes to the trash first, then the new
 //! one is written, and the receipt says so ([`Change::Replaced`]), so undo puts the original back.
+//!
+//! Each file is edited as it was read for the move (the same text the values were sent from), only while it still
+//! holds exactly that text, and only when what would stay holds none of the moved values. The originals in the trash
+//! are still plain text: they count as on disk until shredded ([`super::receipt::purge`]).
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
 
-use super::{Change, DEFAULT_ENV, Done, Machine, PendingKey, Plan, Receipt, env_for, var_name};
-use crate::project::{Confirm, ENV_FILE, EnvFile, EnvSettings, EnvValue, PROJECT_FILE, ProjectFile};
+use zeroize::Zeroizing;
+
+use super::{Change, DEFAULT_ENV, Done, Machine, PendingKey, Plan, Receipt, Texts, env_for, var_name};
+use crate::project::{
+    Confirm, ENV_FILE, EnvFile, EnvSettings, EnvValue, PROJECT_FILE, ProjectFile, parse_dotenv_spans,
+};
 use crate::secrets::{EnvRef, Reference};
-use crate::secrets_scan::{self, Confidence, Finding, ScanReport, Source, sources};
+use crate::secrets_scan::sources::{self, RawEntry};
+use crate::secrets_scan::{self, Confidence, Finding, ScanReport, Source};
 
 /// How long a release of an environment may be held, as import writes it: a day's work, or a quarter of an hour for
 /// production (which is asked every time too).
@@ -71,42 +80,69 @@ fn mode_for(original: Option<&Path>) -> u32 {
     }
 }
 
-/// Writes `text` to a new temporary file next to `path` (0600 from its creation, then `mode`); its path.
-fn temp_file(path: &Path, text: &str, mode: u32) -> Result<PathBuf, String> {
-    use std::io::Write as _;
-    let name = path.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
-    let tmp = path.with_file_name(format!(".{name}.reins-{}", crate::server::random_token(6)));
-    let mut options = std::fs::OpenOptions::new();
-    options.write(true).create_new(true);
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::OpenOptionsExt as _;
-        options.mode(0o600);
+/// A temporary file next to the one it will become: removed when dropped, unless it took that file's place.
+struct Temp {
+    path: Option<PathBuf>,
+}
+
+impl Temp {
+    /// Writes `text` to a new file next to `path`, 0600 from its creation (then `mode`).
+    fn write(path: &Path, text: &str, mode: u32) -> Result<Self, String> {
+        use std::io::Write as _;
+        let name = path.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
+        let at = path.with_file_name(format!(".{name}.reins-{}", crate::server::random_token(6)));
+        let mut options = std::fs::OpenOptions::new();
+        options.write(true).create_new(true);
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::OpenOptionsExt as _;
+            options.mode(0o600);
+        }
+        let mut file = options.open(&at).map_err(|e| format!("{}: {e}", path.display()))?;
+        // From here on, every way out removes it.
+        let temp = Self {
+            path: Some(at),
+        };
+        let written = file.write_all(text.as_bytes()).and_then(|()| file.sync_all());
+        drop(file);
+        #[cfg(unix)]
+        let written = written.and_then(|()| {
+            use std::os::unix::fs::PermissionsExt as _;
+            std::fs::set_permissions(temp.path(), std::fs::Permissions::from_mode(mode))
+        });
+        #[cfg(not(unix))]
+        let _ = mode;
+        written.map_err(|e| format!("{}: {e}", path.display()))?;
+        Ok(temp)
     }
-    let mut file = options.open(&tmp).map_err(|e| format!("{}: {e}", path.display()))?;
-    let written = file.write_all(text.as_bytes()).and_then(|()| file.sync_all());
-    #[cfg(unix)]
-    let written = written.and_then(|()| {
-        use std::os::unix::fs::PermissionsExt as _;
-        std::fs::set_permissions(&tmp, std::fs::Permissions::from_mode(mode))
-    });
-    #[cfg(not(unix))]
-    let _ = mode;
-    if let Err(e) = written {
-        std::fs::remove_file(&tmp).ok();
-        return Err(format!("{}: {e}", path.display()));
+
+    fn path(&self) -> &Path {
+        self.path.as_deref().unwrap_or_else(|| Path::new(""))
     }
-    Ok(tmp)
+
+    /// Takes `to`'s place.
+    fn persist(mut self, to: &Path) -> Result<(), String> {
+        std::fs::rename(self.path(), to).map_err(|e| format!("{}: {e}", to.display()))?;
+        self.path = None;
+        Ok(())
+    }
+}
+
+impl Drop for Temp {
+    fn drop(&mut self) {
+        if let Some(p) = self.path.take() {
+            std::fs::remove_file(p).ok();
+        }
+    }
 }
 
 /// Writes a new file (nothing may be there), through a temporary file.
 fn create(path: &Path, text: &str, receipt: &mut Receipt) -> Result<(), String> {
-    let tmp = temp_file(path, text, mode_for(None))?;
+    let tmp = Temp::write(path, text, mode_for(None))?;
     if std::fs::symlink_metadata(path).is_ok() {
-        std::fs::remove_file(&tmp).ok();
         return Err(format!("{}: a file is there; left alone", path.display()));
     }
-    std::fs::rename(&tmp, path).map_err(|e| format!("{}: {e}", path.display()))?;
+    tmp.persist(path)?;
     receipt.changes.push(Change::Created {
         path: path.to_path_buf(),
     });
@@ -114,21 +150,65 @@ fn create(path: &Path, text: &str, receipt: &mut Receipt) -> Result<(), String> 
 }
 
 /// Writes `text` in the place of `path`: the new file is made first (with the original's permissions), then the
-/// original goes to the trash and the new one takes its place.
+/// original goes to the trash and the new one takes its place. When that last step fails, the original comes back.
 fn replace(path: &Path, text: &str, machine: &dyn Machine, receipt: &mut Receipt) -> Result<(), String> {
-    let tmp = temp_file(path, text, mode_for(Some(path)))?;
-    let trash_id = match machine.trash(path) {
-        Ok(id) => id,
-        Err(e) => {
-            std::fs::remove_file(&tmp).ok();
-            return Err(e);
-        }
-    };
+    let tmp = Temp::write(path, text, mode_for(Some(path)))?;
+    let trash_id = machine.trash(path)?;
+    if let Err(e) = tmp.persist(path) {
+        return match machine.restore(path, trash_id.as_deref()) {
+            Ok(()) => Err(e),
+            Err(back) => {
+                // The original is in the trash, and the receipt says so: undo brings it back.
+                receipt.changes.push(Change::Trashed {
+                    path: path.to_path_buf(),
+                    trash_id,
+                });
+                Err(format!("{e}; the original is in the trash ({back})"))
+            }
+        };
+    }
     receipt.changes.push(Change::Replaced {
         path: path.to_path_buf(),
         trash_id,
     });
-    std::fs::rename(&tmp, path).map_err(|e| format!("{}: {e}", path.display()))
+    Ok(())
+}
+
+/// Whether `text` still holds one of `values` (non-empty ones): as written, escaped as in double quotes, or (for a
+/// value of several lines) one of its longer lines.
+fn holds_any<'a>(text: &str, values: impl IntoIterator<Item = &'a str>) -> bool {
+    values.into_iter().filter(|v| !v.is_empty()).any(|v| {
+        let escaped =
+            v.replace('\\', "\\\\").replace('"', "\\\"").replace('\n', "\\n").replace('\r', "\\r").replace('\t', "\\t");
+        text.contains(v)
+            || text.contains(&escaped)
+            || (v.contains('\n') && v.lines().map(str::trim).filter(|l| l.len() >= 8).any(|l| text.contains(l)))
+    })
+}
+
+/// `text` without the bytes of `spans` (sorted, apart); a byte order mark at the start stays.
+fn without_spans(text: &str, spans: &[std::ops::Range<usize>]) -> String {
+    let mut out = String::with_capacity(text.len());
+    let mut at = 0;
+    for s in spans {
+        let start = if s.start == 0 && text.starts_with('\u{feff}') {
+            '\u{feff}'.len_utf8()
+        } else {
+            s.start
+        };
+        if start < at || s.end > text.len() {
+            continue;
+        }
+        out.push_str(&text[at..start]);
+        at = s.end;
+    }
+    out.push_str(&text[at..]);
+    out
+}
+
+/// Whether the file at `path` still holds exactly `text` (what was read for the move).
+fn unchanged(path: &Path, text: &str) -> bool {
+    std::fs::read(path).is_ok_and(|now| now == text.as_bytes())
 }
 
 fn trash(path: &Path, machine: &dyn Machine, receipt: &mut Receipt) -> Result<(), String> {
@@ -140,24 +220,19 @@ fn trash(path: &Path, machine: &dyn Machine, receipt: &mut Receipt) -> Result<()
     Ok(())
 }
 
-/// `text` with lines changed: by 1-based number, `None` drops the line, `Some` replaces it.
+/// `text` with lines changed: by 1-based number, `None` drops the line, `Some` replaces it (keeping its line ending).
 fn edit_lines(text: &str, edits: &BTreeMap<u32, Option<String>>) -> String {
     let mut out = String::with_capacity(text.len());
-    for (n, line) in text.lines().enumerate() {
+    for (n, line) in text.split_inclusive('\n').enumerate() {
         match edits.get(&u32::try_from(n + 1).unwrap_or(u32::MAX)) {
             Some(None) => {}
             Some(Some(new)) => {
+                let body = line.trim_end_matches(['\n', '\r']);
                 out.push_str(new);
-                out.push('\n');
+                out.push_str(&line[body.len()..]);
             }
-            None => {
-                out.push_str(line);
-                out.push('\n');
-            }
+            None => out.push_str(line),
         }
-    }
-    if !text.ends_with('\n') && out.ends_with('\n') && !text.is_empty() {
-        out.pop();
     }
     out
 }
@@ -176,16 +251,51 @@ fn plural(n: usize, one: &str, many: &str) -> String {
     }
 }
 
-/// Runs the step for every finding whose selected items all arrived.
-/// Returns the items now off this computer's disk.
+/// What the step took off the disk.
+#[derive(Debug, Default)]
+pub(super) struct Gone {
+    /// The items no longer in their files.
+    pub off: BTreeSet<String>,
+    /// Of those, the ones whose original file is in the trash: still plain text there until it is shredded or the
+    /// trash is emptied.
+    pub trashed: BTreeSet<String>,
+}
+
+impl Gone {
+    /// `items` left their file, whose original went to the trash.
+    fn trashed<'a>(&mut self, items: impl IntoIterator<Item = &'a String>) {
+        for i in items {
+            self.off.insert(i.clone());
+            self.trashed.insert(i.clone());
+        }
+    }
+}
+
+/// The finding's text as read for the move, if the file still holds exactly it; else a note says it was left alone.
+fn same_text<'t>(f: &Finding, texts: &'t Texts, receipt: &mut Receipt) -> Option<&'t str> {
+    match texts.get(&f.id) {
+        Some(text) if unchanged(&f.abs_path, text) => Some(text.as_str()),
+        _ => {
+            receipt.notes.push(format!(
+                "{} was left as it is: it changed while its secrets were moving. Your vault has them; scan again.",
+                f.path
+            ));
+            None
+        }
+    }
+}
+
+/// Runs the step for every finding whose selected items all arrived, on the text each file was read as for the move
+/// (`texts`), and only while the file still holds it.
 pub(super) async fn all(
     report: &ScanReport,
     selected: &BTreeSet<String>,
     arrived: &BTreeSet<String>,
     plan: &Plan,
+    texts: &Texts,
     machine: &dyn Machine,
     receipt: &mut Receipt,
-) -> BTreeSet<String> {
+) -> Gone {
     let mut ready: Vec<&Finding> = Vec::new();
     for f in &report.findings {
         let chosen: Vec<&str> = f.items.iter().filter(|i| selected.contains(&i.id)).map(|i| i.id.as_str()).collect();
@@ -198,23 +308,39 @@ pub(super) async fn all(
             receipt.notes.push(format!("{} was left as it is: not all of its secrets reached your vault.", f.path));
         }
     }
-    let mut off = BTreeSet::new();
-    dotenv(&ready, selected, plan, machine, receipt, &mut off);
-    ssh(&ready, machine, receipt, &mut off).await;
-    git(&ready, selected, plan, machine, receipt, &mut off);
-    machine_files(&ready, selected, plan, machine, receipt, &mut off);
-    off
+    let mut gone = Gone::default();
+    dotenv(&ready, selected, plan, texts, machine, receipt, &mut gone);
+    ssh(&ready, texts, machine, receipt, &mut gone).await;
+    git(&ready, selected, plan, texts, machine, receipt, &mut gone);
+    machine_files(&ready, selected, plan, texts, machine, receipt, &mut gone);
+    gone
+}
+
+/// One `.env` file's rewrite: what leaves it, and what stays.
+struct DotenvEdit {
+    /// The new text (`None`: nothing may stay; the file goes to the trash).
+    text: Option<String>,
+    /// The values moved to the vault from it (to check that neither file holds them).
+    moved: Vec<Zeroizing<String>>,
+    /// Variables not moved that stay, and lines Reins cannot read (they stay as written).
+    kept: usize,
+    unreadable: usize,
 }
 
 /// `.env` files: per project, `reins.toml` (when missing) and `.env.reins` (the development variables' references
 /// and its plain settings); each file goes to the trash, or keeps only what was not moved and may be a secret.
+///
+/// What leaves a file is exactly the bytes [`crate::project::parse_dotenv_spans`] read the moved values from, in the
+/// same text the values were read from; the new text and `.env.reins` are checked not to hold any moved value before
+/// either is written.
 fn dotenv(
     ready: &[&Finding],
     selected: &BTreeSet<String>,
     plan: &Plan,
+    texts: &Texts,
     machine: &dyn Machine,
     receipt: &mut Receipt,
-    off: &mut BTreeSet<String>,
+    gone: &mut Gone,
 ) {
     let mut by_root: BTreeMap<PathBuf, Vec<&Finding>> = BTreeMap::new();
     for f in ready.iter().filter(|f| f.source == Source::Dotenv) {
@@ -253,25 +379,33 @@ fn dotenv(
             Some(EnvFile::new())
         };
         let mut env_changed = false;
+        // Each file's edit, worked out before anything is written.
+        let mut edits: Vec<(&Finding, DotenvEdit)> = Vec::new();
         for f in found {
+            if f.git_commit.is_some() {
+                in_history.push(f.title.clone());
+            }
             let file_name = f.abs_path.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
             let env = env_for(&file_name);
             let Ok(env_ref) = EnvRef::new(&project, &env) else {
                 receipt.notes.push(format!("{} was left as it is: {project}/{env} is not a name", f.path));
                 continue;
             };
-            let entries = match secrets_scan::read_entries(Source::Dotenv, &f.abs_path) {
-                Ok(e) => e,
-                Err(e) => {
-                    receipt.notes.push(e);
-                    continue;
-                }
+            let Some(text) = same_text(f, texts, receipt) else {
+                continue;
             };
+            let parse = parse_dotenv_spans(text);
+            let entries = secrets_scan::parse_entries(Source::Dotenv, text);
             let ids = secrets_scan::item_ids(&f.id, &entries);
-            // The lines that leave the file (moved, or now in `.env.reins`); the rest stays as it is written.
-            let mut gone: BTreeMap<u32, Option<String>> = BTreeMap::new();
-            let mut kept = 0;
-            for (e, id) in entries.iter().zip(&ids) {
+            // The bytes that leave the file (moved, or now in `.env.reins`); the rest stays as it is written.
+            let mut spans = Vec::new();
+            let mut edit = DotenvEdit {
+                text: None,
+                moved: Vec::new(),
+                kept: 0,
+                unreadable: parse.errors.len(),
+            };
+            for (var, id) in parse.vars.iter().zip(&ids) {
                 let item = f.items.iter().find(|i| &i.id == id);
                 let moved = selected.contains(id);
                 let secretish = item.is_some_and(|i| i.confidence > Confidence::None);
@@ -280,61 +414,89 @@ fn dotenv(
                     if env == DEFAULT_ENV
                         && let Some(file) = env_file.as_mut()
                     {
-                        let reference = Reference::Field(env_ref.var(&var_name(&e.name)).secret_ref());
-                        note(receipt, file.set(&e.name, EnvValue::Reference(reference)));
+                        let reference = Reference::Field(env_ref.var(&var_name(&var.name)).secret_ref());
+                        note(receipt, file.set(&var.name, EnvValue::Reference(reference)));
                         env_changed = true;
                     }
+                    edit.moved.push(var.value.clone());
                     true
                 } else if !secretish && env == DEFAULT_ENV && env_file.is_some() {
                     // A setting goes to `.env.reins` as it is, when that file can hold it.
-                    let set = env_file.as_mut().map(|file| file.set(&e.name, EnvValue::Literal(e.value.to_string())));
+                    let set =
+                        env_file.as_mut().map(|file| file.set(&var.name, EnvValue::Literal(var.value.to_string())));
                     if set == Some(Ok(())) {
                         env_changed = true;
                         true
                     } else {
-                        receipt
-                            .notes
-                            .push(format!("{} stays in {}: {ENV_FILE} cannot hold its value as it is", e.name, f.path));
+                        receipt.notes.push(format!(
+                            "{} stays in {}: {ENV_FILE} cannot hold its value as it is",
+                            var.name, f.path
+                        ));
                         false
                     }
                 } else {
                     false
                 };
                 if leaves {
-                    for n in e.line..e.line + e.lines.max(1) {
-                        gone.insert(n, None);
-                    }
+                    spans.push(var.span.clone());
                 } else {
-                    kept += 1;
+                    edit.kept += 1;
                 }
             }
-            let r = if kept == 0 {
-                trash(&f.abs_path, machine, receipt)
-            } else {
+            if edit.kept > 0 {
                 receipt.notes.push(format!(
                     "{}: {} not moved stay in it.",
                     f.path,
-                    plural(kept, "variable", "variables")
+                    plural(edit.kept, "variable", "variables")
                 ));
-                std::fs::read_to_string(&f.abs_path)
-                    .map_err(|e| format!("{}: {e}", f.path))
-                    .and_then(|text| replace(&f.abs_path, &edit_lines(&text, &gone), machine, receipt))
+            }
+            if edit.unreadable > 0 {
+                let at: Vec<String> = parse.errors.iter().take(5).map(|(n, _)| n.to_string()).collect();
+                receipt.notes.push(format!(
+                    "{}: {} Reins cannot read stay in it as written (line {}); check them by hand.",
+                    f.path,
+                    plural(edit.unreadable, "line", "lines"),
+                    at.join(", ")
+                ));
+            }
+            if edit.kept + edit.unreadable > 0 {
+                edit.text = Some(without_spans(text, &spans));
+            }
+            edits.push((f, edit));
+        }
+        let moved: Vec<Zeroizing<String>> = edits.iter().flat_map(|(_, e)| e.moved.iter().cloned()).collect();
+        let moved = || moved.iter().map(|v| v.as_str());
+        // `.env.reins` first: when it cannot be written (or would hold a moved value), the `.env` files stay.
+        if env_changed && let Some(file) = env_file {
+            let text = file.render();
+            let r = if holds_any(&text, moved()) {
+                Err(format!("{ENV_FILE} was not written: it would hold a value that moved to your vault"))
+            } else if reins_path.exists() {
+                replace(&reins_path, &text, machine, receipt)
+            } else {
+                create(&reins_path, &text, receipt)
+            };
+            if let Err(e) = r {
+                receipt.notes.push(e);
+                for (f, _) in &edits {
+                    receipt.notes.push(format!("{} was left as it is: {ENV_FILE} was not written.", f.path));
+                }
+                continue;
+            }
+        }
+        for (f, edit) in edits {
+            let r = match &edit.text {
+                None => trash(&f.abs_path, machine, receipt),
+                Some(text) if holds_any(text, moved()) => Err(format!(
+                    "{} was left as it is: what would stay in it still holds a value that moved to your vault.",
+                    f.path
+                )),
+                Some(text) => replace(&f.abs_path, text, machine, receipt),
             };
             if r.is_ok() {
                 files += 1;
-                off.extend(f.items.iter().filter(|i| selected.contains(&i.id)).map(|i| i.id.clone()));
+                gone.trashed(f.items.iter().filter(|i| selected.contains(&i.id)).map(|i| &i.id));
             }
-            note(receipt, r);
-            if f.git_commit.is_some() {
-                in_history.push(f.title.clone());
-            }
-        }
-        if env_changed && let Some(file) = env_file {
-            let r = if reins_path.exists() {
-                replace(&reins_path, &file.render(), machine, receipt)
-            } else {
-                create(&reins_path, &file.render(), receipt)
-            };
             note(receipt, r);
         }
     }
@@ -355,7 +517,7 @@ fn dotenv(
 
 /// SSH keys: ssh asks the Reins agent; once the agent signed with the moved key, the private key file goes to the
 /// trash (the `.pub` stays).
-async fn ssh(ready: &[&Finding], machine: &dyn Machine, receipt: &mut Receipt, off: &mut BTreeSet<String>) {
+async fn ssh(ready: &[&Finding], texts: &Texts, machine: &dyn Machine, receipt: &mut Receipt, gone: &mut Gone) {
     let keys: Vec<&&Finding> = ready.iter().filter(|f| f.source == Source::SshKey).collect();
     if keys.is_empty() {
         return;
@@ -366,8 +528,10 @@ async fn ssh(ready: &[&Finding], machine: &dyn Machine, receipt: &mut Receipt, o
         Err(e) => receipt.notes.push(format!("ssh was not pointed at the Reins agent: {e}")),
     }
     for f in keys {
-        let public =
-            std::fs::read_to_string(&f.abs_path).ok().and_then(|t| sources::ssh_key(&t)).and_then(|k| k.public);
+        let Some(text) = same_text(f, texts, receipt) else {
+            continue;
+        };
+        let public = sources::ssh_key(text).and_then(|k| k.public);
         let Some(public) = public else {
             receipt.notes.push(format!(
                 "{} stays: its public key is not in the file, so the agent's signature cannot be checked.",
@@ -378,7 +542,7 @@ async fn ssh(ready: &[&Finding], machine: &dyn Machine, receipt: &mut Receipt, o
         let (ok, how) = match machine.agent_signs_with(&public).await {
             Ok(()) => match trash(&f.abs_path, machine, receipt) {
                 Ok(()) => {
-                    off.extend(f.items.iter().map(|i| i.id.clone()));
+                    gone.trashed(f.items.iter().map(|i| &i.id));
                     (true, "signs on your phone; the file is in the trash".to_owned())
                 }
                 Err(e) => (false, e),
@@ -406,9 +570,10 @@ fn git(
     ready: &[&Finding],
     selected: &BTreeSet<String>,
     plan: &Plan,
+    texts: &Texts,
     machine: &dyn Machine,
     receipt: &mut Receipt,
-    off: &mut BTreeSet<String>,
+    gone: &mut Gone,
 ) {
     let found: Vec<&&Finding> =
         ready.iter().filter(|f| matches!(f.source, Source::GhCli | Source::GitCredentials)).collect();
@@ -431,13 +596,13 @@ fn git(
     }
     let mut ok = true;
     for f in &found {
-        let mut edits: BTreeMap<u32, Option<String>> = BTreeMap::new();
+        let mut in_file: Vec<&String> = Vec::new();
         for item in f.items.iter().filter(|i| selected.contains(&i.id)) {
             if item.id.ends_with("/keychain") {
                 let host = item.group.clone().unwrap_or_default();
                 match machine.gh_logout(&host) {
                     Ok(()) => {
-                        off.insert(item.id.clone());
+                        gone.off.insert(item.id.clone());
                         receipt.changes.push(Change::GhLogout {
                             host,
                         });
@@ -448,20 +613,17 @@ fn git(
                     }
                 }
             } else {
-                edits.insert(item.line, None);
+                in_file.push(&item.id);
             }
         }
-        if !edits.is_empty() {
-            let r = std::fs::read_to_string(&f.abs_path)
-                .map_err(|e| format!("{}: {e}", f.path))
-                .and_then(|text| replace(&f.abs_path, &edit_lines(&text, &edits), machine, receipt));
+        if !in_file.is_empty() {
+            let Some(text) = same_text(f, texts, receipt) else {
+                ok = false;
+                continue;
+            };
+            let r = rewrite_lines(f, text, &in_file, |_| None, machine, receipt);
             if r.is_ok() {
-                off.extend(
-                    f.items
-                        .iter()
-                        .filter(|i| edits.contains_key(&i.line) && selected.contains(&i.id))
-                        .map(|i| i.id.clone()),
-                );
+                gone.trashed(in_file);
             }
             ok &= r.is_ok();
             note(receipt, r);
@@ -481,9 +643,10 @@ fn machine_files(
     ready: &[&Finding],
     selected: &BTreeSet<String>,
     plan: &Plan,
+    texts: &Texts,
     machine: &dyn Machine,
     receipt: &mut Receipt,
-    off: &mut BTreeSet<String>,
+    gone: &mut Gone,
 ) {
     for f in ready {
         let profiles = match f.source {
@@ -504,37 +667,36 @@ fn machine_files(
         let Some(profiles) = profiles else {
             continue;
         };
-        let text = match std::fs::read_to_string(&f.abs_path) {
-            Ok(t) => t,
-            Err(e) => {
-                receipt.notes.push(format!("{}: {e}", f.path));
-                continue;
-            }
+        let Some(text) = same_text(f, texts, receipt) else {
+            continue;
         };
-        let mut edits: BTreeMap<u32, Option<String>> = BTreeMap::new();
         let lines: Vec<&str> = text.lines().collect();
-        for item in f.items.iter().filter(|i| selected.contains(&i.id)) {
-            let edit = match f.source {
+        let moving: Vec<&String> = f.items.iter().filter(|i| selected.contains(&i.id)).map(|i| &i.id).collect();
+        let r = rewrite_lines(
+            f,
+            text,
+            &moving,
+            |e| match f.source {
                 Source::Npm => {
-                    let (_, var) = super::machine_var(f.source, item.group.as_deref(), &item.name);
+                    let (_, var) = super::machine_var(f.source, e.group.as_deref(), &e.name);
                     lines
-                        .get(item.line as usize - 1)
+                        .get((e.line as usize).saturating_sub(1))
                         .and_then(|l| l.split_once('='))
                         .map(|(key, _)| format!("{}=${{{var}}}", key.trim_end()))
                 }
                 Source::Shell => Some(format!(
                     "# {} is in your vault now (Reins): reins run --profile {} -- <command>",
-                    item.name,
+                    e.name,
                     profiles.first().map_or("shell", String::as_str)
                 )),
                 _ => None,
-            };
-            edits.insert(item.line, edit);
-        }
-        let r = replace(&f.abs_path, &edit_lines(&text, &edits), machine, receipt);
+            },
+            machine,
+            receipt,
+        );
         let ok = r.is_ok();
         if ok {
-            off.extend(f.items.iter().filter(|i| selected.contains(&i.id)).map(|i| i.id.clone()));
+            gone.trashed(moving);
         }
         note(receipt, r);
         let how = match f.source {
@@ -560,6 +722,46 @@ fn machine_files(
             ok,
         });
     }
+}
+
+/// Rewrites `f`'s file, read as `text`: the lines of the entries `ids` are dropped, or replaced by `line(entry)`.
+/// Refused (nothing written) when an entry is not where the text has it, or when what stays still holds one of
+/// their values.
+fn rewrite_lines(
+    f: &Finding,
+    text: &str,
+    ids: &[&String],
+    line: impl Fn(&RawEntry) -> Option<String>,
+    machine: &dyn Machine,
+    receipt: &mut Receipt,
+) -> Result<(), String> {
+    let entries = secrets_scan::parse_entries(f.source, text);
+    let all = secrets_scan::item_ids(&f.id, &entries);
+    let mut edits: BTreeMap<u32, Option<String>> = BTreeMap::new();
+    let mut values: Vec<&str> = Vec::new();
+    for (e, id) in entries.iter().zip(&all) {
+        if !ids.contains(&id) {
+            continue;
+        }
+        values.push(&e.value);
+        for n in e.line..e.line.saturating_add(e.lines.max(1)) {
+            edits.insert(n, None);
+        }
+        if let Some(new) = line(e) {
+            edits.insert(e.line, Some(new));
+        }
+    }
+    if values.len() != ids.len() {
+        return Err(format!("{} was left as it is: it does not read as it did at the scan.", f.path));
+    }
+    let new = edit_lines(text, &edits);
+    if holds_any(&new, values) {
+        return Err(format!(
+            "{} was left as it is: what would stay in it still holds a value that moved to your vault.",
+            f.path
+        ));
+    }
+    replace(&f.abs_path, &new, machine, receipt)
 }
 
 /// `[run.profiles.<env>]` for the machine environments of `f`'s moved variables; their names.
@@ -603,5 +805,50 @@ mod tests {
         let edits: BTreeMap<u32, Option<String>> = [(2, None), (3, Some("x=${T}".to_owned()))].into_iter().collect();
         assert_eq!(edit_lines("a\nb\nc\nd\n", &edits), "a\nx=${T}\nd\n");
         assert_eq!(edit_lines("a\nb", &BTreeMap::from([(1, None)])), "b");
+        // Line endings stay as they were, a replaced line's too.
+        let crlf: BTreeMap<u32, Option<String>> = [(1, None), (2, Some("x".to_owned()))].into_iter().collect();
+        assert_eq!(edit_lines("a\r\nb\r\nc", &crlf), "x\r\nc");
+    }
+
+    #[test]
+    fn spans_leave_exactly_and_a_byte_order_mark_stays() {
+        let text = "\u{feff}A=1\nB=2\r\nC=3";
+        let parse = parse_dotenv_spans(text);
+        let span = |n: &str| parse.vars.iter().find(|v| v.name == n).unwrap().span.clone();
+        assert_eq!(without_spans(text, &[span("A")]), "\u{feff}B=2\r\nC=3");
+        assert_eq!(without_spans(text, &[span("B"), span("C")]), "\u{feff}A=1\n");
+        assert_eq!(without_spans(text, &[span("A"), span("B"), span("C")]), "\u{feff}");
+    }
+
+    #[test]
+    fn a_moved_value_is_found_as_written_escaped_or_by_its_lines() {
+        let v = "pa\"ss\\word\nsecond-line-of-it";
+        assert!(holds_any(&format!("X={v}"), [v]));
+        assert!(holds_any("X=\"pa\\\"ss\\\\word\\nsecond-line-of-it\"", [v]), "escaped as in double quotes");
+        assert!(holds_any("X='second-line-of-it'", [v]), "one of its lines");
+        assert!(!holds_any("X=other", [v]));
+        assert!(!holds_any("anything", [""]), "an empty value is nothing to find");
+    }
+
+    #[test]
+    fn a_temporary_file_is_private_and_never_left_behind() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join(".env");
+        let tmp = Temp::write(&path, "A=1\n", 0o600).unwrap();
+        let at = tmp.path().to_path_buf();
+        assert_eq!(at.parent(), Some(dir.path()), "next to the file it becomes");
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt as _;
+            assert_eq!(std::fs::metadata(&at).unwrap().permissions().mode() & 0o777, 0o600);
+        }
+        drop(tmp);
+        assert!(!at.exists(), "removed when not used");
+        // A file in the way: refused, and the temporary file is gone too.
+        std::fs::write(&path, "B=2\n").unwrap();
+        let mut receipt = Receipt::default();
+        assert!(create(&path, "A=1\n", &mut receipt).is_err());
+        assert_eq!(std::fs::read_dir(dir.path()).unwrap().count(), 1);
+        assert!(receipt.changes.is_empty());
     }
 }

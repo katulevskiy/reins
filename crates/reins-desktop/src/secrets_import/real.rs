@@ -82,9 +82,57 @@ mod bin {
         trash::os_limited::restore_all([item(path, id)?]).map_err(|e| format!("{}: {e}", path.display()))
     }
 
-    pub fn purge(path: &Path, id: Option<&str>) -> Result<(), String> {
-        trash::os_limited::purge_all([item(path, id)?]).map_err(|e| format!("{}: {e}", path.display()))
+    /// Where the trash keeps the item's bytes: freedesktop names it after the item's info file
+    /// (`<trash>/info/<name>.trashinfo` → `<trash>/files/<name>`); on Windows the id is that path.
+    fn bytes_of(item: &trash::TrashItem) -> Option<std::path::PathBuf> {
+        let id = Path::new(&item.id);
+        if cfg!(windows) {
+            return Some(id.to_path_buf());
+        }
+        let trash = id.parent()?.parent()?;
+        Some(trash.join("files").join(id.file_stem()?))
     }
+
+    /// Shreds the item: its bytes overwritten with zeros, then it is deleted from the trash.
+    pub fn purge(path: &Path, id: Option<&str>) -> Result<(), String> {
+        let item = item(path, id)?;
+        if let Some(bytes) = bytes_of(&item) {
+            super::overwrite(&bytes).map_err(|e| format!("{}: {e}", path.display()))?;
+        }
+        trash::os_limited::purge_all([item]).map_err(|e| format!("{}: {e}", path.display()))
+    }
+}
+
+/// Writes zeros over a plain file's bytes and flushes them to the disk (never through a link: anything else is left
+/// to the delete as it is). On SSDs and copy-on-write file systems old blocks may survive: this is best effort.
+#[cfg_attr(
+    not(any(windows, all(unix, not(target_os = "macos"), not(target_os = "ios"), not(target_os = "android")))),
+    allow(dead_code)
+)]
+fn overwrite(file: &Path) -> std::io::Result<()> {
+    use std::io::Write as _;
+    let meta = std::fs::symlink_metadata(file)?;
+    if !meta.is_file() {
+        return Ok(());
+    }
+    let mut f = std::fs::OpenOptions::new().write(true).open(file)?;
+    #[cfg(unix)]
+    {
+        // The file opened is the one looked at (not a link put in its place since).
+        use std::os::unix::fs::MetadataExt as _;
+        let opened = f.metadata()?;
+        if opened.dev() != meta.dev() || opened.ino() != meta.ino() {
+            return Err(std::io::Error::other("the file changed while it was being shredded"));
+        }
+    }
+    let zeros = [0u8; 8192];
+    let mut left = meta.len();
+    while left > 0 {
+        let n = usize::try_from(left).map_or(zeros.len(), |l| l.min(zeros.len()));
+        f.write_all(&zeros[..n])?;
+        left -= n as u64;
+    }
+    f.sync_all()
 }
 
 /// macOS's Trash keeps no record a program can read back: Finder's Put Back does it, and emptying the Trash.
@@ -101,7 +149,7 @@ mod bin {
     }
 
     pub fn purge(path: &Path, _id: Option<&str>) -> Result<(), String> {
-        Err(format!("delete {} from the Trash in Finder", path.display()))
+        Err(format!("{} is in the Trash: empty the Trash in Finder", path.display()))
     }
 }
 
@@ -260,4 +308,30 @@ async fn agent_check(socket: &Path, public_key: &[u8]) -> Result<(), String> {
 #[allow(clippy::unused_async, reason = "the same call as on unix, where it waits for the agent")]
 async fn agent_check(_socket: &Path, _public_key: &[u8]) -> Result<(), String> {
     Err("checking the agent's signature works on macOS and Linux for now".to_owned())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn shredding_writes_zeros_over_the_whole_file_and_never_through_a_link() {
+        let dir = tempfile::tempdir().unwrap();
+        let file = dir.path().join("item");
+        let text = "API_SECRET=".to_owned() + &"x".repeat(20_000);
+        std::fs::write(&file, &text).unwrap();
+        overwrite(&file).unwrap();
+        let after = std::fs::read(&file).unwrap();
+        assert_eq!(after.len(), text.len());
+        assert!(after.iter().all(|b| *b == 0));
+        #[cfg(unix)]
+        {
+            let target = dir.path().join("elsewhere");
+            std::fs::write(&target, "keep").unwrap();
+            let link = dir.path().join("link");
+            std::os::unix::fs::symlink(&target, &link).unwrap();
+            overwrite(&link).unwrap();
+            assert_eq!(std::fs::read_to_string(&target).unwrap(), "keep");
+        }
+    }
 }

@@ -524,7 +524,7 @@ impl Root {
                         "secrets-then-reins",
                         !r.keep_local,
                         "Use them through Reins",
-                        "Local copies go to the Trash. Apps get them from your vault when you approve.",
+                        "Local copies go to the Trash, readable until you shred them. Apps get them from your vault when you approve.",
                         false,
                         true,
                         cx,
@@ -797,6 +797,7 @@ impl Root {
     fn secrets_done(&self, done: &Finished, d: &Data, pal: Palette, cx: &mut Context<'_, Self>) -> AnyElement {
         let receipt = &done.receipt;
         let off = receipt.off_disk();
+        let in_trash = receipt.moved.iter().filter(|m| m.in_trash).count();
         let n = receipt.moved.len();
         let title = match n {
             0 => "Nothing reached your vault".to_owned(),
@@ -806,11 +807,13 @@ impl Root {
         let mut under = format!("In your vault · from \"{}\"", receipt.computer);
         if receipt.keep_local {
             under.push_str(" · local copies kept");
-        } else if !receipt.trashed().is_empty() {
-            under.push_str(" · local copies in the Trash");
+        } else if in_trash > 0 {
+            under.push_str(" · local copies in the Trash until shredded");
+        } else if receipt.purged_at.is_some() {
+            under.push_str(" · local copies shredded");
         }
-        if n > off && !receipt.keep_local {
-            let _ = write!(under, " · {} still on disk", n - off);
+        if n > off + in_trash && !receipt.keep_local {
+            let _ = write!(under, " · {} still on disk", n - off - in_trash);
         }
         let head = div()
             .flex()
@@ -857,7 +860,7 @@ impl Root {
         for note in &receipt.notes {
             page = page.child(caption(note.clone(), pal).px(px(4.0)).text_color(pal.warning));
         }
-        // The originals in the Trash still hold the secrets: once all works, delete them for good (held to confirm).
+        // The originals in the Trash still hold the secrets in plain text: once all works, shred them (held to confirm).
         let trashed = receipt.trashed().len();
         if trashed > 0 && receipt.purged_at.is_none() && receipt.undone_at.is_none() {
             page = page.child(
@@ -865,11 +868,24 @@ impl Root {
                     row(pal, true)
                         .child(tile(Icon::Trash, pal.danger, 30.0))
                         .child(row_text(
-                            "The originals are in the Trash",
-                            Some(format!("{} still hold the secrets. Once everything works, remove them for good (undo then can't bring them back).", plural(trashed, "file", "files")).into_any_element()),
+                            "Still readable in the Trash",
+                            Some(
+                                format!(
+                                    "{}. Shred once all works; undo can't bring them back.",
+                                    plural(trashed, "file", "files")
+                                )
+                                .into_any_element(),
+                            ),
                             pal,
                         ))
-                        .child(div().w(px(220.0)).flex_none().child(self.hold_button("secrets-purge", Held::PurgeOriginals, Icon::Trash, "Remove from the Trash", pal, cx))),
+                        .child(div().w(px(220.0)).flex_none().child(self.hold_button(
+                            "secrets-purge",
+                            Held::PurgeOriginals,
+                            Icon::Trash,
+                            "Shred",
+                            pal,
+                            cx,
+                        ))),
                 ),
             );
         }

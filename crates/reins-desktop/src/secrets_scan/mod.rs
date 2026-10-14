@@ -1338,13 +1338,24 @@ fn summary(f: &Finding) -> String {
 
 /// Reads a finding's file again and parses it as the scan did: the entries with their values, for import.
 pub fn read_entries(source: Source, path: &Path) -> Result<Vec<RawEntry>, String> {
+    Ok(parse_entries(source, &read_text(path)?))
+}
+
+/// A finding's file as text (at most [`MAX_FILE`]), in a buffer that is wiped.
+pub fn read_text(path: &Path) -> Result<Zeroizing<String>, String> {
     let meta = std::fs::metadata(path).map_err(|e| format!("{}: {e}", path.display()))?;
     if meta.len() > MAX_FILE {
         return Err(format!("{}: larger than 1 MB", path.display()));
     }
     let bytes = Zeroizing::new(std::fs::read(path).map_err(|e| format!("{}: {e}", path.display()))?);
     let text = std::str::from_utf8(&bytes).map_err(|_| format!("{}: not text", path.display()))?;
-    Ok(match source {
+    Ok(Zeroizing::new(text.to_owned()))
+}
+
+/// The entries of `text`, a file of `source`, as the scan read them.
+#[must_use]
+pub fn parse_entries(source: Source, text: &str) -> Vec<RawEntry> {
+    match source {
         Source::Dotenv => sources::dotenv(text),
         Source::Shell => sources::shell(text),
         Source::GhCli => sources::gh_hosts(text).0,
@@ -1366,7 +1377,7 @@ pub fn read_entries(source: Source, path: &Path) -> Result<Vec<RawEntry>, String
             value: Zeroizing::new(text.to_owned()),
             credential: true,
         }],
-    })
+    }
 }
 
 /// Scans as `opts` says, telling `progress` as it goes. Refused when an AI agent started it ([`Caller`]).

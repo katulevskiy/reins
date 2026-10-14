@@ -741,7 +741,9 @@ impl Demo {
                 item: i.id.clone(),
                 finding: f.id.clone(),
                 to: format!("vault:{}", i.name),
-                on_disk: keep_local || matches!(f.source, Source::Kube | Source::Docker | Source::Gcp | Source::Netrc),
+                on_disk: true,
+                in_trash: !keep_local
+                    && !matches!(f.source, Source::Kube | Source::Docker | Source::Gcp | Source::Netrc),
             })
             .collect();
         let chosen = |source: Source| {
