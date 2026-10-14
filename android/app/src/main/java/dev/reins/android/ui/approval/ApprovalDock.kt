@@ -236,13 +236,12 @@ private fun Buttons(view: ApprovalView, ui: ApprovalUi, viewModel: ApprovalViewM
             }
             destructive(view) -> HoldButton(
                 "Hold to ${approveLabel(view, ui.draft).lowercase()}",
-                onConfirmed = { viewModel.approve(authenticator) },
-                modifier = approveModifier,
+                c.danger,
+                approveModifier.testTag("approve"),
                 icon = Icons.Rounded.Fingerprint,
                 enabled = !ui.busy,
                 busy = ui.busy,
-                tag = "approve",
-            )
+            ) { viewModel.approve(authenticator) }
             else -> DockButton(
                 approveLabel(view, ui.draft),
                 approveModifier.testTag("approve"),
