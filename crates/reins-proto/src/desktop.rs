@@ -1419,6 +1419,30 @@ pub struct LeaseRevocation {
     pub env: Option<String>,
 }
 
+/// The most revocations the server keeps for one computer until its daemon picks them up, and for how long.
+pub const MAX_REVOCATIONS: usize = 20;
+pub const REVOCATION_TTL_SECS: i64 = 24 * 3_600;
+
+/// One [`LeaseRevocation`] sealed to one paired computer (`POST /reins/api/desktop/revocations`, from the phone).
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SealedRevocation {
+    pub connection_id: String,
+    /// The [`LeaseRevocation`] JSON in a sealed box to the computer's pinned key (base64url).
+    pub sealed: String,
+}
+
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RevocationPost {
+    pub items: Vec<SealedRevocation>,
+}
+
+/// What a computer's daemon picks up (`GET /reins/desktop/revocations`): the sealed revocations for it, oldest first.
+/// Picking them up removes them from the server.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RevocationMail {
+    pub items: Vec<String>,
+}
+
 /// SHA-256 (lowercase hex) binding an approval to exactly what git sends: the repository, every `old new ref`
 /// command in order, the pack bytes and the push options.
 #[must_use]

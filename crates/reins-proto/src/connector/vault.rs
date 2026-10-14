@@ -2,6 +2,7 @@
 //! (or item) it applies to.
 
 mod desktop;
+pub use desktop::env_release_args;
 mod items;
 mod sends;
 

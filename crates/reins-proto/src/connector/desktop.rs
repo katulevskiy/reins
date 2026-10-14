@@ -2,9 +2,15 @@
 //! (`reins ask`, harness hooks), and git through the desktop app for hosts besides GitHub.
 
 use crate::connector::{
-    BITBUCKET, CODEBERG, ClassInfo, DESKTOP, Effect, GITLAB, Param, ToolSpec, int_p, json_p, list_p, str_p, text_p,
-    tool,
+    BITBUCKET, CODEBERG, ClassInfo, DESKTOP, Effect, GITLAB, Param, ToolSpec, choice_p, int_p, json_p, list_p, str_p,
+    text_p, tool,
 };
+
+/// `integration_token_store`: a git host's token for the phone's integration.
+pub const TOKEN_STORE_OP: &str = "token_store";
+/// The integrations a token can be handed to, and the host each serves.
+pub const TOKEN_HOSTS: &[(&str, &str)] =
+    &[("github", "github.com"), ("gitlab", "gitlab.com"), ("codeberg", "codeberg.org"), ("bitbucket", "bitbucket.org")];
 
 /// `desktop_session`: a work session, many permissions approved at once.
 pub const SESSION_OP: &str = "session";
@@ -149,6 +155,33 @@ pub(super) fn tools() -> Vec<ToolSpec> {
             vec![list_p("grants", 50, 64, "The session's permission ids."), CLIENT_KEY, NONCE],
             None,
         )
+        .desktop(),
+    );
+    all.push(
+        tool(
+            crate::desktop::TOKEN_STORE_TOOL,
+            DESKTOP,
+            TOKEN_STORE_OP,
+            Effect::Write,
+            "Add a git host account from the computer",
+            "Hands a git host's token found on the computer (gh, .git-credentials) to the phone's integration of that \
+             host, in a box only the phone opens.",
+            vec![
+                choice_p("service", &["github", "gitlab", "codeberg", "bitbucket"], true, "The integration."),
+                str_p("host", 255, true, "The host the token was found for."),
+                list_p("scopes", 30, 100, "What the computer knows of the token's scopes (shown, not trusted)."),
+                text_p(
+                    "sealed",
+                    20_000,
+                    true,
+                    "The token, boxed to the phone's key (base64url of nonce and ciphertext).",
+                ),
+                CLIENT_KEY,
+                NONCE,
+            ],
+            None,
+        )
+        .once()
         .desktop(),
     );
     all.extend(host_tools(GITLAB, "gitlab_git_fetch", "gitlab_git_push", "gitlab_git_tag_push"));
