@@ -651,6 +651,19 @@ class FakeCore : ReinsCoreInterface {
         grants = grants.filterNot { it.id == grantId }
     }
 
+    val secretsRevoked = mutableListOf<Pair<String?, String?>>()
+
+    override suspend fun revokeSecretsEverywhere(project: String?, env: String?): UInt {
+        secretsRevoked += project to env
+        return 0u
+    }
+
+    val alwaysAsk = mutableMapOf<Pair<String, String>, Boolean?>()
+
+    override suspend fun setSecretsAlwaysAsk(project: String, env: String, always: Boolean?) {
+        alwaysAsk[project to env] = always
+    }
+
     override suspend fun session() = session
 
     /** The foreground poll: returns quickly with what is pending. */

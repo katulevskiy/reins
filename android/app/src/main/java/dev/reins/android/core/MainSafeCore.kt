@@ -215,6 +215,12 @@ class MainSafeCore(
 
     override suspend fun revokeGrant(grantId: String) = io { revokeGrant(grantId) }
 
+    override suspend fun revokeSecretsEverywhere(project: String?, env: String?): UInt =
+        io { revokeSecretsEverywhere(project, env) }
+
+    override suspend fun setSecretsAlwaysAsk(project: String, env: String, always: Boolean?) =
+        io { setSecretsAlwaysAsk(project, env, always) }
+
     override suspend fun session(): SessionInfo? = io { session() }
 
     override suspend fun sync(waitSecs: UInt): List<PendingItem> = io { sync(waitSecs) }
