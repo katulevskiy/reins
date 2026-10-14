@@ -14,13 +14,11 @@
 //! Values are read again from the files (the scan kept none), held in [`Zeroizing`] buffers, and never printed:
 //! the types that hold them have a [`Debug`] that leaves them out and are never serialized.
 
-pub mod formats;
 pub mod real;
 pub mod receipt;
 mod rewrite;
 
 use std::collections::{BTreeMap, BTreeSet};
-use std::fmt::Write as _;
 use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
@@ -97,6 +95,17 @@ fn slug(s: &str) -> String {
     out.split('-').filter(|p| !p.is_empty()).collect::<Vec<_>>().join("-")
 }
 
+/// The longest project or environment name ([`reins_proto::desktop::name_ok`]).
+const MAX_NAME: usize = 64;
+
+/// `base` then `suffix`, `base` cut so that the whole is a name ([`reins_proto::desktop::name_ok`]: at most
+/// [`MAX_NAME`] lowercase letters, digits and `-`, not ending in `-`).
+fn named(base: &str, suffix: &str) -> String {
+    let room = MAX_NAME.saturating_sub(suffix.len());
+    let cut: String = base.chars().take(room).collect();
+    format!("{}{suffix}", cut.trim_end_matches('-'))
+}
+
 /// Four hex characters of `what`'s SHA-256: tells apart names that would otherwise be the same.
 fn short_hash(what: &str) -> String {
     use sha2::Digest as _;
@@ -115,7 +124,7 @@ pub fn machine_project(computer: &str, key_fingerprint: &str) -> String {
     } else {
         name
     };
-    format!("machine-{name}-{}", short_hash(key_fingerprint))
+    named(&format!("machine-{name}"), &format!("-{}", short_hash(key_fingerprint)))
 }
 
 /// This computer's machine project, from its name and its key (made the first time, as pairing does).
@@ -133,10 +142,16 @@ pub fn base_project(f: &Finding) -> String {
         slug(&parts[parts.len().saturating_sub(2)..].join("-"))
     });
     let name = from_origin.filter(|n| !n.is_empty()).unwrap_or_else(|| slug(f.project.as_deref().unwrap_or_default()));
-    if name.is_empty() {
-        "project".to_owned()
+    name_of(&name, "project")
+}
+
+/// `s` as a project or environment name ([`named`]), `fallback` when nothing of it is left.
+fn name_of(s: &str, fallback: &str) -> String {
+    let n = named(&slug(s), "");
+    if n.is_empty() {
+        fallback.to_owned()
     } else {
-        name
+        n
     }
 }
 
@@ -163,7 +178,7 @@ pub fn env_for(file_name: &str) -> String {
         "" | "local" | "development" | "dev" => DEFAULT_ENV.to_owned(),
         "production" | "prod" => "production".to_owned(),
         "test" | "testing" => "test".to_owned(),
-        other => slug(other),
+        other => name_of(other, DEFAULT_ENV),
     }
 }
 
@@ -173,12 +188,12 @@ pub fn env_for(file_name: &str) -> String {
 pub fn machine_var(source: Source, group: Option<&str>, name: &str) -> (String, String) {
     let g = group.unwrap_or_default();
     match source {
-        Source::Aws => (format!("aws-{}", slug(g)), var_name(name)),
+        Source::Aws => (name_of(&format!("aws-{g}"), "aws"), var_name(name)),
         Source::Npm => {
             let env = if g == "registry.npmjs.org" {
                 "npm".to_owned()
             } else {
-                format!("npm-{}", slug(g))
+                name_of(&format!("npm-{g}"), "npm")
             };
             let var = match name {
                 "_auth" => "NPM_AUTH",
@@ -191,7 +206,7 @@ pub fn machine_var(source: Source, group: Option<&str>, name: &str) -> (String, 
             if g == "pypi" {
                 "pypi".to_owned()
             } else {
-                format!("pypi-{}", slug(g))
+                name_of(&format!("pypi-{g}"), "pypi")
             },
             "TWINE_PASSWORD".to_owned(),
         ),
@@ -237,10 +252,15 @@ pub struct EnvTarget {
 }
 
 impl EnvTarget {
+    /// The environment as Reins Secrets names it (project and env names are always valid here: [`named`]).
+    fn env_ref(&self) -> Option<crate::secrets::EnvRef> {
+        crate::secrets::EnvRef::new(&self.project, &self.env).ok()
+    }
+
     /// The vault folder: `Reins/<project>`.
     #[must_use]
     pub fn folder(&self) -> String {
-        format!("Reins/{}", self.project)
+        self.env_ref().map_or_else(|| format!("Reins/{}", self.project), |e| e.folder())
     }
 
     /// The vault item: `<project>/<env>`.
@@ -249,9 +269,10 @@ impl EnvTarget {
         format!("{}/{}", self.project, self.env)
     }
 
+    /// `vault:<project>/<env>/<var>`.
     #[must_use]
     pub fn reference(&self, var: &str) -> String {
-        formats::reference(&self.project, &self.env, var)
+        self.env_ref().map_or_else(|| format!("vault:{}/{}/{var}", self.project, self.env), |e| e.var(var).to_string())
     }
 }
 
@@ -420,11 +441,11 @@ impl Plan {
 /// a number (`api-2`).
 fn another_name(name: &str, root: &Path, taken: &dyn Fn(&str) -> bool) -> String {
     let parent = root.parent().and_then(Path::file_name).map(|p| slug(&p.to_string_lossy())).unwrap_or_default();
-    let with_parent = format!("{parent}-{name}");
+    let with_parent = named(&format!("{parent}-{name}"), "");
     if !parent.is_empty() && !taken(&with_parent) {
         return with_parent;
     }
-    (2..10_000).map(|n| format!("{name}-{n}")).find(|n| !taken(n)).unwrap_or_else(|| format!("{name}-x"))
+    (2..10_000).map(|n| named(name, &format!("-{n}"))).find(|n| !taken(n)).unwrap_or_else(|| named(name, "-x"))
 }
 
 /// Each repository's project (by its folder), and where it came from.
@@ -471,7 +492,7 @@ fn project_names(findings: &[&Finding], names: &Names<'_>) -> (Projects, Vec<Cla
                 another_name(&name, &root, &|n| in_vault(n) || same_here(n, &out))
             } else {
                 let what = origin.clone().unwrap_or_else(|| root.to_string_lossy().into_owned());
-                format!("{name}-{}", short_hash(&what))
+                named(&name, &format!("-{}", short_hash(&what)))
             };
             clashes.push(Clash {
                 name: name.clone(),
@@ -606,10 +627,9 @@ pub struct EnvWrite {
     pub origin: Option<String>,
 }
 
-/// An SSH private key, to store as an SSH key item.
+/// An SSH private key, to store as an SSH key item (always in the vault folder `Reins/ssh`).
 pub struct SshWrite {
     pub name: String,
-    pub folder: String,
     pub private_key: Zeroizing<String>,
 }
 
@@ -642,7 +662,7 @@ impl std::fmt::Debug for EnvWrite {
 
 impl std::fmt::Debug for SshWrite {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("SshWrite").field("name", &self.name).field("folder", &self.folder).finish_non_exhaustive()
+        f.debug_struct("SshWrite").field("name", &self.name).finish_non_exhaustive()
     }
 }
 
@@ -669,29 +689,11 @@ impl Batch {
         self.envs.iter().map(|e| e.vars.len()).sum::<usize>() + self.ssh.len() + self.tokens.len()
     }
 
-    /// The four check digits of the whole batch, shown here and on the phone: over every target and value in order.
-    /// (The batch store tool of Reins Secrets core defines the exact form the phone computes; this follows it.)
+    /// The four check digits of the whole batch, as the phone computes them for the store
+    /// ([`reins_proto::desktop::batch_check`]): the same on both screens, or something changed the batch on the way.
     #[must_use]
     pub fn check(&self) -> String {
-        let mut all = Zeroizing::new(String::new());
-        for e in &self.envs {
-            for (name, value) in &e.vars {
-                let _ = writeln!(all, "env {}/{}/{name}", e.project, e.env);
-                all.push_str(value);
-                all.push('\n');
-            }
-        }
-        for s in &self.ssh {
-            let _ = writeln!(all, "ssh {}", s.name);
-            all.push_str(&s.private_key);
-            all.push('\n');
-        }
-        for t in &self.tokens {
-            let _ = writeln!(all, "token {}", t.host);
-            all.push_str(&t.token);
-            all.push('\n');
-        }
-        reins_proto::desktop::value_check(&all)
+        crate::secrets_client::import_check(self)
     }
 }
 
@@ -838,7 +840,6 @@ fn batch(plan: &Plan, values: &mut BTreeMap<String, Zeroizing<String>>) -> Batch
             .iter()
             .map(|s| SshWrite {
                 name: s.name.clone(),
-                folder: "Reins/ssh".to_owned(),
                 private_key: take(&s.item),
             })
             .collect(),

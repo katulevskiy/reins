@@ -1,9 +1,6 @@
-//! The real [`VaultWriter`] and [`Machine`]: the phone through the existing sealed store, the OS trash, the Reins SSH
-//! agent's socket, git's config, `gh` and `config.toml`.
-//!
-//! Until Reins Secrets core is on this computer and the phone, only SSH keys can be stored (through
-//! `vault_secret_store`, kind ssh, one approval each); environments (`vault_secrets_store`) and git tokens
-//! (`integration_token_store`) come back as not stored, saying so, and their sources are left as they are.
+//! The real [`VaultWriter`] and [`Machine`]: the phone through Reins Secrets' store (`vault_secrets_store`: every
+//! environment, SSH key and git token of an import in one sealed box, one approval, one set of check digits), the OS
+//! trash, the Reins SSH agent's socket, git's config, `gh` and `config.toml`.
 
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
@@ -14,44 +11,30 @@ use zeroize::Zeroizing;
 
 use super::{Batch, Machine, Stored, VaultWriter};
 use crate::config::{Config, Paths};
-use crate::vault_cli::ItemKind;
+use crate::secrets_client::PhoneVaultWriter;
 
-/// What a batch part gets when this version cannot store it yet.
-pub const NEEDS_CORE: &str = "needs Reins Secrets on this computer and your phone (update both, then import again)";
-
-/// Stores through the phone's existing sealed tools.
+/// Stores through the paired phone.
 pub struct PhoneWriter {
     pub paths: Paths,
     pub config: Config,
+    /// The twelve digits of the phone's key, typed by the person where no terminal can ask (the first time only).
+    pub phone_key_digits: Option<String>,
+}
+
+impl PhoneWriter {
+    fn phone(&self) -> PhoneVaultWriter {
+        PhoneVaultWriter::new(&self.paths, &self.config, self.phone_key_digits.clone())
+    }
 }
 
 #[async_trait::async_trait]
 impl VaultWriter for PhoneWriter {
     async fn store(&self, batch: &Batch) -> Stored {
-        let mut stored = Stored {
-            envs: batch.envs.iter().map(|_| Err(NEEDS_CORE.to_owned())).collect(),
-            tokens: batch.tokens.iter().map(|_| Err(NEEDS_CORE.to_owned())).collect(),
-            ssh: Vec::new(),
-        };
-        for key in &batch.ssh {
-            let r = crate::vault_cli::save(
-                &self.paths,
-                &self.config,
-                (&key.name, ItemKind::Ssh, None, false),
-                key.private_key.clone(),
-                "reins secrets import",
-            )
-            .await
-            .map(|_| ());
-            stored.ssh.push(r);
-        }
-        stored
+        self.phone().store_import(batch).await
     }
 
     async fn projects(&self) -> Result<Vec<super::VaultProject>, String> {
-        // Reins Secrets core's listing (names and `reins.origin`) is not there yet: import then merges nothing it was
-        // not told to, and names new projects apart.
-        Err(NEEDS_CORE.to_owned())
+        self.phone().import_projects().await
     }
 }
 

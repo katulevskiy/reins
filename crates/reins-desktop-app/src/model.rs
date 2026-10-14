@@ -362,6 +362,9 @@ impl Model {
             if demo_test {
                 model.send_test(cx);
             }
+            if secrets_actions::autoplay(model.args.demo) {
+                model.start_scan(cx);
+            }
             model
         });
         cx.set_global(GlobalModel(model.clone()));

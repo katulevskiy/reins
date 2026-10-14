@@ -627,7 +627,14 @@ impl Root {
             let on = r.ticked.contains(&item.id);
             let id = item.id.clone();
             let kind: AnyElement = if item.confidence == Confidence::None {
-                div().text_color(pal.tertiary).child("not a secret").into_any_element()
+                // A setting .env.reins cannot hold as it is stays where it is.
+                let file = f.abs_path.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
+                let words = if item.stays_in_file && !on {
+                    format!("stays in {file}")
+                } else {
+                    "not a secret".to_owned()
+                };
+                div().text_color(pal.tertiary).child(words).into_any_element()
             } else {
                 div()
                     .flex()
@@ -679,7 +686,7 @@ impl Root {
         if f.source == Source::Dotenv {
             let mut w = well(pal).w(px(300.0)).flex_none().text_size(px(11.5)).line_height(px(18.0));
             let project = secrets::project_in(&r.plan(&d.computer, &d.machine), f);
-            for (line, reference) in secrets::env_reins_preview(f, &r.ticked, &project).into_iter().take(6) {
+            for (line, reference) in secrets::env_reins_preview(f, &r.ticked, &project).into_iter().take(8) {
                 w = w.child(div().truncate().when(!reference, |l| l.text_color(pal.tertiary)).child(line));
             }
             after = after.child(w);

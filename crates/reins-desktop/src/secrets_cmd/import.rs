@@ -289,6 +289,8 @@ pub async fn run(args: &ImportArgs, paths: &Paths, config: &Config) -> Result<Ve
     let writer = real::PhoneWriter {
         paths: paths.clone(),
         config: config.clone(),
+        // The phone's key is asked at this terminal the first time.
+        phone_key_digits: None,
     };
     // A project the vault already has from another folder: a new name, unless the person merges on purpose (asked
     // here only; without a terminal choice, always the new name).

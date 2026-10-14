@@ -5,9 +5,40 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
 
-use super::formats::{self, EnvLine, EnvSettings};
 use super::{Change, DEFAULT_ENV, Done, Machine, PendingKey, Plan, Receipt, env_for, var_name};
+use crate::project::{Confirm, ENV_FILE, EnvFile, EnvSettings, EnvValue, PROJECT_FILE, ProjectFile};
+use crate::secrets::{EnvRef, Reference};
 use crate::secrets_scan::{self, Confidence, Finding, ScanReport, Source, sources};
+
+/// How long a release of an environment may be held, as import writes it: a day's work, or a quarter of an hour for
+/// production (which is asked every time too).
+const LEASE_SECS: u32 = 8 * 3_600;
+const PRODUCTION_LEASE_SECS: u32 = 15 * 60;
+
+/// `reins.toml` for a project import made: its name and origin, and its environments' settings.
+fn project_file(project: &str, origin: Option<&str>, envs: &[&super::EnvTarget]) -> Result<ProjectFile, String> {
+    let mut file = ProjectFile::new(project, DEFAULT_ENV)?;
+    file.origin = origin.map(str::to_owned);
+    for e in envs {
+        let production = matches!(e.env.as_str(), "production" | "prod");
+        file.envs.insert(
+            e.env.clone(),
+            EnvSettings {
+                lease_secs: Some(if production {
+                    PRODUCTION_LEASE_SECS
+                } else {
+                    LEASE_SECS
+                }),
+                confirm: if production {
+                    Confirm::Always
+                } else {
+                    Confirm::Default
+                },
+            },
+        );
+    }
+    Ok(file)
+}
 
 /// Most variables in one run profile (`reins run`'s limit for one release).
 const PROFILE_MAX: usize = crate::secrets::MAX_SECRETS;
@@ -202,20 +233,33 @@ fn dotenv(
         let Some((project, origin)) = envs.first().map(|e| (e.project.clone(), e.origin.clone())) else {
             continue;
         };
-        let toml = root.join("reins.toml");
+        let toml = root.join(PROJECT_FILE);
         if !toml.exists() {
-            let mut names: Vec<&str> = envs.iter().map(|e| e.env.as_str()).collect();
-            names.sort_by_key(|n| (*n != DEFAULT_ENV, *n));
-            names.dedup();
-            let settings: Vec<EnvSettings> = names.iter().map(|n| EnvSettings::for_env(n)).collect();
-            let text = formats::reins_toml(&project, DEFAULT_ENV, &settings, origin.as_deref());
-            let r = create(&toml, &text, receipt);
+            let r = project_file(&project, origin.as_deref(), &envs)
+                .and_then(|file| create(&toml, &file.render(), receipt));
             note(receipt, r);
         }
-        let mut lines: Vec<EnvLine> = Vec::new();
+        // `.env.reins`: the one there (its other lines kept), else a new one.
+        let reins_path = root.join(ENV_FILE);
+        let mut env_file = if reins_path.exists() {
+            match EnvFile::load(&reins_path) {
+                Ok(file) => Some(file),
+                Err(e) => {
+                    receipt.notes.push(format!("{ENV_FILE} was left as it is: {e}"));
+                    None
+                }
+            }
+        } else {
+            Some(EnvFile::new())
+        };
+        let mut env_changed = false;
         for f in found {
             let file_name = f.abs_path.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
             let env = env_for(&file_name);
+            let Ok(env_ref) = EnvRef::new(&project, &env) else {
+                receipt.notes.push(format!("{} was left as it is: {project}/{env} is not a name", f.path));
+                continue;
+            };
             let entries = match secrets_scan::read_entries(Source::Dotenv, &f.abs_path) {
                 Ok(e) => e,
                 Err(e) => {
@@ -224,42 +268,57 @@ fn dotenv(
                 }
             };
             let ids = secrets_scan::item_ids(&f.id, &entries);
-            let mut kept: Vec<EnvLine> = Vec::new();
+            // The lines that leave the file (moved, or now in `.env.reins`); the rest stays as it is written.
+            let mut gone: BTreeMap<u32, Option<String>> = BTreeMap::new();
+            let mut kept = 0;
             for (e, id) in entries.iter().zip(&ids) {
                 let item = f.items.iter().find(|i| &i.id == id);
                 let moved = selected.contains(id);
                 let secretish = item.is_some_and(|i| i.confidence > Confidence::None);
-                let literal = EnvLine::Literal {
-                    name: e.name.clone(),
-                    value: e.value.clone(),
-                };
-                let line = if moved {
-                    Some(EnvLine::Reference {
-                        name: e.name.clone(),
-                        reference: formats::reference(&project, &env, &var_name(&e.name)),
-                    })
-                } else if secretish || env != DEFAULT_ENV {
-                    kept.push(literal);
-                    None
+                let leaves = if moved {
+                    // Only the default environment's file gets references: `reins run -e <env>` reads the rest.
+                    if env == DEFAULT_ENV
+                        && let Some(file) = env_file.as_mut()
+                    {
+                        let reference = Reference::Field(env_ref.var(&var_name(&e.name)).secret_ref());
+                        note(receipt, file.set(&e.name, EnvValue::Reference(reference)));
+                        env_changed = true;
+                    }
+                    true
+                } else if !secretish && env == DEFAULT_ENV && env_file.is_some() {
+                    // A setting goes to `.env.reins` as it is, when that file can hold it.
+                    let set = env_file.as_mut().map(|file| file.set(&e.name, EnvValue::Literal(e.value.to_string())));
+                    if set == Some(Ok(())) {
+                        env_changed = true;
+                        true
+                    } else {
+                        receipt
+                            .notes
+                            .push(format!("{} stays in {}: {ENV_FILE} cannot hold its value as it is", e.name, f.path));
+                        false
+                    }
                 } else {
-                    Some(literal)
+                    false
                 };
-                if env == DEFAULT_ENV
-                    && let Some(line) = line
-                {
-                    lines.retain(|l| l.name() != line.name());
-                    lines.push(line);
+                if leaves {
+                    for n in e.line..e.line + e.lines.max(1) {
+                        gone.insert(n, None);
+                    }
+                } else {
+                    kept += 1;
                 }
             }
-            let r = if kept.is_empty() {
+            let r = if kept == 0 {
                 trash(&f.abs_path, machine, receipt)
             } else {
                 receipt.notes.push(format!(
                     "{}: {} not moved stay in it.",
                     f.path,
-                    plural(kept.len(), "variable", "variables")
+                    plural(kept, "variable", "variables")
                 ));
-                replace(&f.abs_path, &formats::env_reins(&kept), machine, receipt)
+                std::fs::read_to_string(&f.abs_path)
+                    .map_err(|e| format!("{}: {e}", f.path))
+                    .and_then(|text| replace(&f.abs_path, &edit_lines(&text, &gone), machine, receipt))
             };
             if r.is_ok() {
                 files += 1;
@@ -270,11 +329,11 @@ fn dotenv(
                 in_history.push(f.title.clone());
             }
         }
-        if !lines.is_empty() {
-            let path = root.join(".env.reins");
-            let r = match std::fs::read_to_string(&path) {
-                Ok(existing) => replace(&path, &formats::merge_env_reins(&existing, &lines), machine, receipt),
-                Err(_) => create(&path, &formats::env_reins(&lines), receipt),
+        if env_changed && let Some(file) = env_file {
+            let r = if reins_path.exists() {
+                replace(&reins_path, &file.render(), machine, receipt)
+            } else {
+                create(&reins_path, &file.render(), receipt)
             };
             note(receipt, r);
         }

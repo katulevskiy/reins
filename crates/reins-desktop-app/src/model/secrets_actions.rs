@@ -4,7 +4,8 @@
 //! undoing it. The window is a person's (an agent does not click it), so its scan asks nothing first.
 //!
 //! `--demo` never scans this computer: made-up findings stand in, the pretend phone approves after a few seconds, and
-//! nothing is written. `REINS_DEMO_SECRETS=scanning|review|detail|moving|done` opens that step, for screenshots.
+//! nothing is written. `REINS_DEMO_SECRETS=scanning|review|detail|moving|done` opens that step, for screenshots; `run`
+//! plays the whole flow by itself.
 
 use std::collections::BTreeSet;
 use std::sync::Arc;
@@ -26,6 +27,14 @@ const DEMO_STAGE: Duration = Duration::from_millis(450);
 const DEMO_APPROVE: Duration = Duration::from_secs(3);
 /// How often the scan's progress reaches the window.
 const PROGRESS_EVERY: Duration = Duration::from_millis(80);
+
+/// `--demo` with `REINS_DEMO_SECRETS=run`: how long the review shows before the pretend move.
+const DEMO_REVIEW: Duration = Duration::from_millis(2_500);
+
+/// `--demo` with `REINS_DEMO_SECRETS=run`: the whole flow plays by itself (scan, review, move, done), as if clicked.
+pub(super) fn autoplay(demo: bool) -> bool {
+    demo && std::env::var("REINS_DEMO_SECRETS").is_ok_and(|v| v == "run")
+}
 
 /// The flow at start: in the demo, as `REINS_DEMO_SECRETS` says.
 pub(super) fn initial(demo: bool, home: &std::path::Path) -> Flow {
@@ -141,6 +150,14 @@ impl Model {
                                     Arc::new(Demo::secrets_report(&home)),
                                     Demo::secrets_vault(),
                                 ));
+                                // `REINS_DEMO_SECRETS=run`: the move follows by itself, as if clicked.
+                                if autoplay(true) {
+                                    cx.spawn(async move |this, cx| {
+                                        cx.background_executor().timer(DEMO_REVIEW).await;
+                                        let _gone = this.update(cx, Model::move_secrets);
+                                    })
+                                    .detach();
+                                }
                             }
                             cx.notify();
                             true
@@ -192,6 +209,7 @@ impl Model {
         let writer = real::PhoneWriter {
             paths: self.backend.paths().clone(),
             config: self.config_now().unwrap_or_default(),
+            phone_key_digits: None,
         };
         cx.spawn(async move |this, cx| {
             let result = scan.await;
@@ -309,6 +327,7 @@ impl Model {
                 let writer = real::PhoneWriter {
                     paths: paths.clone(),
                     config: config.clone(),
+                    phone_key_digits: None,
                 };
                 let system = real::System {
                     paths,

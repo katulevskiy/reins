@@ -14,6 +14,8 @@ pub struct RawEntry {
     pub group: Option<String>,
     /// 1-based.
     pub line: u32,
+    /// How many lines of the file it takes (a quoted value over several lines: more than 1).
+    pub lines: u32,
     pub value: Zeroizing<String>,
     /// The file's format says this field holds a credential.
     pub credential: bool,
@@ -35,6 +37,7 @@ fn entry(name: &str, group: Option<&str>, line: usize, value: &str, credential: 
         name: name.to_owned(),
         group: group.map(str::to_owned),
         line: u32::try_from(line + 1).unwrap_or(u32::MAX),
+        lines: 1,
         value: Zeroizing::new(value.to_owned()),
         credential,
     }
@@ -196,17 +199,18 @@ pub fn dotenv(text: &str) -> Vec<RawEntry> {
             continue;
         }
         let rest = rest.trim_start();
-        let value = match rest.chars().next() {
+        let (value, extra) = match rest.chars().next() {
             Some(q @ ('"' | '\'' | '`')) => {
                 let mut more = lines.by_ref().map(|(_, l)| l);
-                quoted(q, &rest[1..], &mut more).0
+                quoted(q, &rest[1..], &mut more)
             }
-            _ => Zeroizing::new(strip_comment(rest).trim_end().to_owned()),
+            _ => (Zeroizing::new(strip_comment(rest).trim_end().to_owned()), 0),
         };
         out.push(RawEntry {
             name: name.to_owned(),
             group: None,
             line: u32::try_from(n + 1).unwrap_or(u32::MAX),
+            lines: u32::try_from(extra + 1).unwrap_or(u32::MAX),
             value,
             credential: false,
         });
@@ -391,6 +395,7 @@ pub fn git_credentials(text: &str) -> Vec<RawEntry> {
             name: user.to_string(),
             group: Some(host.to_owned()),
             line: u32::try_from(n + 1).unwrap_or(u32::MAX),
+            lines: 1,
             value: percent_decode(password),
             credential: true,
         });

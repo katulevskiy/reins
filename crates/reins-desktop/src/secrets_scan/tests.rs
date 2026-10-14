@@ -612,6 +612,7 @@ fn the_json_schema_is_stable() {
                     confidence: Confidence::High,
                     preview: "sk-p••••••••a9F2".to_owned(),
                     suggested: true,
+                    stays_in_file: false,
                 },
                 Item {
                     id: "dotenv-0123456789ab/LOG_LEVEL".to_owned(),
@@ -623,6 +624,7 @@ fn the_json_schema_is_stable() {
                     confidence: Confidence::None,
                     preview: "d••••••••".to_owned(),
                     suggested: false,
+                    stays_in_file: true,
                 },
             ],
             risks: vec![Risk::ReadableByAgents, Risk::InGitHistory, Risk::PlainText],
@@ -661,7 +663,7 @@ fn the_json_schema_is_stable() {
                 {"id": "dotenv-0123456789ab/OPENAI_API_KEY", "name": "OPENAI_API_KEY", "line": 1, "detector": "openai",
                  "label": "OpenAI key", "confidence": "high", "preview": "sk-p••••••••a9F2", "suggested": true},
                 {"id": "dotenv-0123456789ab/LOG_LEVEL", "name": "LOG_LEVEL", "line": 2, "label": "not a secret",
-                 "confidence": "none", "preview": "d••••••••", "suggested": false}
+                 "confidence": "none", "preview": "d••••••••", "suggested": false, "stays_in_file": true}
             ],
             "risks": ["readable_by_agents", "in_git_history", "plain_text"],
             "suggested": true
@@ -683,10 +685,28 @@ fn the_json_schema_is_stable() {
 }
 
 #[test]
-fn the_preview_is_off_unless_config_toml_turns_it_on() {
-    let off = crate::config::Config::default();
+fn a_config_that_turned_the_preview_on_still_loads() {
     let on: crate::config::Config = toml::from_str("[secrets]\npreview = true\n").unwrap();
-    assert!(!off.secrets.preview && on.secrets.preview);
-    assert!(preview(&on));
+    assert!(on.secrets.preview);
     assert!(toml::from_str::<crate::config::Config>("[secrets]\nwhat = 1\n").is_err(), "unknown keys are refused");
+}
+
+#[test]
+fn settings_env_reins_cannot_hold_are_marked() {
+    let fx = fixture();
+    write(
+        &fx.home().join("dev/acme-web/.env"),
+        &format!(
+            "OPENAI_API_KEY={}\nLOG_LEVEL=debug\nBANNER=\"line one\nline two\"\nSHADOW=vault:x/y/Z\n",
+            fake("sk-proj-", 48)
+        ),
+    );
+    let report = run(&fx.options());
+    let f = by_title(&report, "acme-web/.env");
+    let stays: Vec<(&str, bool)> = f.items.iter().map(|i| (i.name.as_str(), i.stays_in_file)).collect();
+    assert_eq!(
+        stays,
+        [("OPENAI_API_KEY", false), ("LOG_LEVEL", false), ("BANNER", true), ("SHADOW", true)],
+        "{stays:?}"
+    );
 }

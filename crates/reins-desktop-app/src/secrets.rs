@@ -204,8 +204,11 @@ pub fn env_reins_preview(f: &Finding, ticked: &BTreeSet<String>, project: &str) 
         .map(|i| {
             if ticked.contains(&i.id) {
                 (format!("{}=vault:{project}/{env}/{}", i.name, secrets_import::var_name(&i.name)), true)
+            } else if i.stays_in_file || i.confidence > reins_desktop::secrets_scan::Confidence::None {
+                // .env.reins cannot hold it as it is, or it may be a secret: it stays in its .env file.
+                (format!("{} stays in {file}", i.name), false)
             } else {
-                (format!("{}=… (stays as it is)", i.name), false)
+                (format!("{}=… (as it is)", i.name), false)
             }
         })
         .collect()
@@ -234,6 +237,7 @@ mod tests {
         let preview = env_reins_preview(&acme, &r.ticked, &project_in(&plan, &acme));
         assert_eq!(preview[1].0, "STRIPE_SECRET_KEY=vault:acme-web/development/STRIPE_SECRET_KEY");
         assert!(!preview[0].1 && preview[5].0.starts_with("LOG_LEVEL=…"));
+        assert_eq!(preview[0].0, "OPENAI_API_KEY stays in .env", "unticked, it may be a secret");
         // The demo vault has an `api` from another folder: this one gets a new name, unless merged on purpose.
         let api = report.findings.iter().find(|f| f.title == "api/.env.local").unwrap();
         assert_eq!(project_in(&plan, api), "dev-api");

@@ -604,7 +604,6 @@ mod tests {
             }],
             ssh: vec![SshWrite {
                 name: "key".into(),
-                folder: "Reins/ssh".into(),
                 private_key: Zeroizing::new("PEM".into()),
             }],
             tokens: vec![TokenWrite {

@@ -466,17 +466,28 @@ async fn an_import_moves_everything_and_rewrites_each_source() {
     // .env → reins.toml + .env.reins, the original in the trash.
     let acme = home.join("dev/acme-web");
     assert!(!acme.join(".env").exists() && machine.in_trash(&acme.join(".env")));
+    // Written and read back by Reins Secrets' own formats (`crate::project`).
+    let project = crate::project::ProjectFile::load(&acme.join("reins.toml")).unwrap();
+    assert_eq!((project.name.as_str(), project.default_env.as_str()), ("acme-web", "development"));
+    assert_eq!(project.env("development").lease_secs, Some(8 * 3_600));
+    let env_file = crate::project::EnvFile::load(&acme.join(".env.reins")).unwrap();
+    let lines: Vec<String> = env_file
+        .vars()
+        .map(|v| match &v.value {
+            crate::project::EnvValue::Reference(r) => format!("{}={r}", v.name),
+            crate::project::EnvValue::Literal(s) => format!("{}={s}", v.name),
+        })
+        .collect();
     assert_eq!(
-        std::fs::read_to_string(acme.join("reins.toml")).unwrap(),
-        "[project]\nname = \"acme-web\"\ndefault_env = \"development\"\n\n[env.development]\nlease = \"8h\"\n"
-    );
-    assert_eq!(
-        std::fs::read_to_string(acme.join(".env.reins")).unwrap(),
-        "OPENAI_API_KEY=vault:acme-web/development/OPENAI_API_KEY\n\
-         STRIPE_SECRET_KEY=vault:acme-web/development/STRIPE_SECRET_KEY\n\
-         DATABASE_URL=vault:acme-web/development/DATABASE_URL\n\
-         SUPABASE_SERVICE_KEY=vault:acme-web/development/SUPABASE_SERVICE_KEY\n\
-         NEXT_PUBLIC_SITE_URL=https://acme.dev\nLOG_LEVEL=debug\n"
+        lines,
+        [
+            "OPENAI_API_KEY=vault:acme-web/development/OPENAI_API_KEY",
+            "STRIPE_SECRET_KEY=vault:acme-web/development/STRIPE_SECRET_KEY",
+            "DATABASE_URL=vault:acme-web/development/DATABASE_URL",
+            "SUPABASE_SERVICE_KEY=vault:acme-web/development/SUPABASE_SERVICE_KEY",
+            "NEXT_PUBLIC_SITE_URL=https://acme.dev",
+            "LOG_LEVEL=debug",
+        ]
     );
     // The unticked suspected secret stays in its file; the setting goes to .env.reins.
     let api_dir = home.join("dev/api");
@@ -642,7 +653,6 @@ fn values_never_print() {
         }],
         ssh: vec![SshWrite {
             name: "k".to_owned(),
-            folder: "Reins/ssh".to_owned(),
             private_key: Zeroizing::new(secret.clone()),
         }],
         tokens: vec![TokenWrite {
@@ -651,15 +661,13 @@ fn values_never_print() {
             token: Zeroizing::new(secret.clone()),
         }],
     };
-    let line = formats::EnvLine::Literal {
-        name: "X".to_owned(),
-        value: Zeroizing::new(secret.clone()),
-    };
-    let shown = format!("{batch:?} {:?} {:?} {:?} {line:?}", batch.envs[0], batch.ssh[0], batch.tokens[0]);
+    let shown = format!("{batch:?} {:?} {:?} {:?}", batch.envs[0], batch.ssh[0], batch.tokens[0]);
     assert!(!leaks(&shown, &secret), "{shown}");
     assert!(shown.contains("OPENAI_API_KEY"));
-    // The check digits change with any value.
+    // The check digits are the phone's own (Reins Secrets' batch check), and change with any value.
     let check = batch.check();
+    assert_eq!(check, crate::secrets_client::import_check(&batch));
+    assert!(check.len() == 4 && check.chars().all(|c| c.is_ascii_digit()));
     let mut other = batch;
     other.envs[0].vars[0].1 = Zeroizing::new(fake("sk-proj-", 61));
     assert_ne!(check, other.check());
@@ -879,9 +887,14 @@ fn project_and_environment_names_never_hold_a_slash() {
     let home = fx.home();
     std::fs::create_dir_all(home.join("dev/My App (v2)/.git")).unwrap();
     std::fs::write(home.join("dev/My App (v2)/.env.Staging_EU"), format!("API_SECRET={}\n", fake("", 33))).unwrap();
+    // Names longer than Reins Secrets allows are cut to fit.
+    let long = "a-very-long-repository-name-that-goes-on-and-on-well-past-sixty-four-characters";
+    std::fs::create_dir_all(home.join(format!("dev/{long}/.git"))).unwrap();
+    std::fs::write(home.join(format!("dev/{long}/.env.{long}")), format!("API_SECRET={}\n", fake("", 34))).unwrap();
     let report = report(&fx);
     let selected = select(&report, &[], true).unwrap();
-    for computer in ["Dana's MacBook", "ws-01.corp/LAB", "laptop"] {
+    let long_computer = "The Long-Named Workstation of the Platform Team, Third Floor, Building B";
+    for computer in ["Dana's MacBook", "ws-01.corp/LAB", "laptop", long_computer] {
         let machine = machine_project(computer, "key");
         for existing in [Existing::Known(Vec::new()), Existing::Unknown("offline".to_owned())] {
             let plan = plan(
@@ -897,12 +910,10 @@ fn project_and_environment_names_never_hold_a_slash() {
             assert!(!plan.envs.is_empty());
             for e in &plan.envs {
                 for name in [&e.project, &e.env] {
-                    assert!(
-                        !name.is_empty()
-                            && name.bytes().all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'-'),
-                        "{name} (computer {computer})"
-                    );
+                    // Reins Secrets' own rule for project and environment names.
+                    assert!(reins_proto::desktop::name_ok(name), "{name} (computer {computer})");
                 }
+                assert!(crate::secrets::EnvRef::new(&e.project, &e.env).is_ok());
                 assert_eq!(e.reference("X").matches('/').count(), 2, "{}", e.reference("X"));
             }
         }
@@ -910,4 +921,34 @@ fn project_and_environment_names_never_hold_a_slash() {
     let plan = plan_of(&report, &selected);
     assert!(plan.envs.iter().any(|e| e.project == "my-app-v2" && e.env == "staging-eu"));
     assert!(plan.envs.iter().any(|e| e.item() == format!("{}/aws-default", machine_name())));
+}
+
+#[tokio::test]
+async fn what_env_reins_cannot_hold_stays_in_env_as_written() {
+    let fx = fixture();
+    let dir = fx.home().join("dev/acme-web");
+    let key = fake("sk-proj-", 48);
+    std::fs::write(
+        dir.join(".env"),
+        format!(
+            "# kept as it is\nOPENAI_API_KEY=\"{key}\"\nLOG_LEVEL=debug\nBANNER=\"Hello\nthere\"\nPRIVATE_PEM=\"-----BEGIN \
+             PRIVATE KEY-----\n{}\n-----END PRIVATE KEY-----\"\n",
+            fake("", 40)
+        ),
+    )
+    .unwrap();
+    let report = report(&fx);
+    let f = report.findings.iter().find(|f| f.title == "acme-web/.env").unwrap();
+    assert!(f.items.iter().any(|i| i.name == "BANNER" && i.stays_in_file));
+    let selected = select(&report, std::slice::from_ref(&f.id), false).unwrap();
+    let machine = FakeMachine::new(fx.dir.path(), true);
+    let (receipt, _) = run(&fx, &report, &selected, false, &FakeWriter::default(), &machine).await.unwrap();
+    // What moved left (its multi-line value too), the setting went to .env.reins, what cannot be written there stayed.
+    let rest = std::fs::read_to_string(dir.join(".env")).unwrap();
+    assert_eq!(rest, "# kept as it is\nBANNER=\"Hello\nthere\"\n", "{rest}");
+    assert!(!leaks(&rest, &key));
+    let reins = std::fs::read_to_string(dir.join(".env.reins")).unwrap();
+    assert!(reins.contains("LOG_LEVEL=debug") && !reins.contains("BANNER"), "{reins}");
+    assert!(reins.contains("PRIVATE_PEM=vault:acme-web/development/PRIVATE_PEM"), "{reins}");
+    assert!(receipt.notes.iter().any(|n| n.contains("BANNER stays in")), "{:?}", receipt.notes);
 }
