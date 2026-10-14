@@ -101,6 +101,8 @@ pub async fn analyze_push(
         pack_bytes,
         push_options: options,
         notes: notes.finish(),
+        // Not learnt yet: the receive-pack advertisement does not name the remote's HEAD.
+        default_branch: None,
     }
 }
 

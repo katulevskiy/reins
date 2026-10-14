@@ -631,6 +631,7 @@ impl Engine {
                 serde_json::from_slice(&row.payload).map_err(|_| CoreError::storage("corrupt parked pairing"))?;
             let global = self.store.ap_mode_row("")?;
             let s = Suggestion {
+                deletes: false,
                 request_id: row.id.clone(),
                 at: now,
                 kind: "pairing".to_owned(),
@@ -674,6 +675,7 @@ impl Engine {
         let target_key = self.store.ap_target_key(&subject.connection_id, &subject.described.facts.target)?;
         let novel = target_key.is_empty() || !self.store.ap_target_seen(&target_key)?;
         let mut s = Suggestion {
+            deletes: false,
             request_id: subject.id.clone(),
             at: now,
             kind: match subject.kind {
@@ -722,7 +724,8 @@ impl Engine {
                     situation::label_of(&subject.described.facts.operation, &subject.described.facts.target);
                 s.label.clone_from(&subject.described.label);
             }
-            if let Some(line) = self.ap_recent_line(&subject, now)? {
+            s.deletes = context.deletes;
+            if let Some(line) = self.ap_recent_line(&subject, context.deletes, now)? {
                 subject.described.facts.context.push(line);
             }
         }
@@ -1089,8 +1092,8 @@ impl Engine {
 
     /// The connection's last hour, for a deleting or sending request ("this AI in the last hour: 38 requests, 21
     /// deletes, 2 held"); `None` when it is neither or the hour was empty.
-    fn ap_recent_line(&self, subject: &Subject, now: i64) -> Result<Option<String>, CoreError> {
-        let (deleting, sending) = (risk::deletes(&subject.described), risk::sends(&subject.described));
+    fn ap_recent_line(&self, subject: &Subject, deleting: bool, now: i64) -> Result<Option<String>, CoreError> {
+        let sending = risk::sends(&subject.described);
         if !deleting && !sending {
             return Ok(None);
         }
@@ -1112,7 +1115,8 @@ impl Engine {
         };
         let mut parts = vec![plural(recent.len(), "request", "requests")];
         if deleting {
-            let n = recent.iter().filter(|x| risk::deletes_text(&format!("{} {}", x.label, x.class_key))).count();
+            // counted from what each request was read to do, never from its label
+            let n = recent.iter().filter(|x| x.deletes).count();
             if n > 0 {
                 parts.push(plural(n, "delete", "deletes"));
             }
@@ -1755,6 +1759,7 @@ impl Engine {
                 reason: String::new(),
                 decided: None,
                 risk: None,
+                deletes: false,
             });
             s.mode = AutopilotMode::Lockdown;
             "Lockdown: every request is denied".clone_into(&mut s.reason);
@@ -1787,6 +1792,7 @@ impl Engine {
         let (class_key, novel) = class_of_text(&s_facts);
         let thresholds = stored.profile.thresholds();
         let s = Suggestion {
+            deletes: false,
             request_id: String::new(),
             at: unix_now(),
             kind: "playground".to_owned(),

@@ -526,6 +526,9 @@ pub struct GitPushView {
     /// What the desktop app could not work out ("File list unavailable: ...").
     pub notes: Vec<String>,
     pub refs: Vec<GitRefView>,
+    /// The repository's default branch, when the desktop app learnt it from the remote; `None`: not known.
+    #[uniffi(default)]
+    pub default_branch: Option<String>,
 }
 
 /// One branch or tag a push changes.

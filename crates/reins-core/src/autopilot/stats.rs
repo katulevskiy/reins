@@ -81,6 +81,7 @@ mod tests {
 
     fn suggestion(id: &str, approve: f32, deny: f32, decided: Option<(&str, Verdict)>) -> Suggestion {
         Suggestion {
+            deletes: false,
             request_id: id.to_owned(),
             at: 0,
             kind: "request".to_owned(),

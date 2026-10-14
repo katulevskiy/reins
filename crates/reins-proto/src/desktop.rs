@@ -216,6 +216,10 @@ pub struct PushSummary {
     /// What the app could not work out ("File list unavailable: …"), shown to the user.
     #[serde(default)]
     pub notes: Vec<String>,
+    /// The repository's default branch (`main`), when the app learnt it from the remote (its `HEAD`); `None`: not
+    /// known, and the phone then treats every long-lived branch name as the default (`docs/autopilot-risk.md`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub default_branch: Option<String>,
 }
 
 /// A list [`PushSummary::fit`] can shorten.

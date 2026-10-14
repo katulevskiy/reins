@@ -460,6 +460,7 @@ pub fn git_push_view(call: &ConnectorCall) -> Option<GitPushView> {
         pack_bytes: summary.pack_bytes,
         notes: summary.notes.iter().map(|n| line(n)).collect(),
         refs,
+        default_branch: summary.default_branch.as_deref().map(line).filter(|b| !b.is_empty()),
     })
 }
 

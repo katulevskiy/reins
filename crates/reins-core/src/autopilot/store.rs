@@ -161,6 +161,9 @@ pub struct Suggestion {
     /// The risk, when the model rated it.
     #[serde(default)]
     pub risk: Option<super::risk::RiskNote>,
+    /// It was read to delete, move away or overwrite something (the connection's last hour counts these).
+    #[serde(default)]
+    pub deletes: bool,
 }
 
 /// A stored profile with its id.
