@@ -1506,6 +1506,13 @@ jobs:
   # (supersede cancels runs before publication), publication never waits for it, and a failure here leaves the GitHub
   # release as it is (rerun the job; a build already uploaded is not uploaded again). Uploads go one at a time.
   #
+  # Trust: only commits on main that carry a published release tag are built (a testflight_tag run checks both before
+  # anything is checked out). Everything that runs the repository's code at build time (the Rust core and its build
+  # scripts, the Swift packages) runs before any secret is fetched. The secrets then live in files under
+  # $RUNNER_TEMP/ios-signing (mode 0700), each step reads only the ones it needs, nothing goes to GITHUB_ENV or a
+  # command line, and the last step removes them. The `testflight` environment scopes the job (and can restrict it to
+  # main).
+  #
   # The runner is `xcode-27`, the GitHub image with Xcode 27 (macos-26 stops at Xcode 26.6), with its Xcode 27.0
   # selected: App Store uploads need a released Xcode, and with the 27.0 SDK the app builds without the iPhone Duo's
   # hinge (REINS_HINGE_CONDITION, ios/Config/Reins.xcconfig). Move XCODE_VERSION on once 27.1 is released.
@@ -1525,10 +1532,13 @@ jobs:
   ios-testflight:
     name: TestFlight upload
     needs: [plan, publish]
+    # Main only: after this run's own publication, or a maintainer's testflight_tag run from main. The workflow has
+    # no pull_request trigger, so neither a pull request nor a fork can start it.
     if: >-
-      !cancelled() &&
+      !cancelled() && github.ref == 'refs/heads/main' &&
       ((needs.publish.result == 'success' && inputs.verify_only != true) ||
       (github.event_name == 'workflow_dispatch' && inputs.testflight_tag != ''))
+    environment: testflight
     # One upload at a time, in release order; a newer release waiting replaces an older one still waiting.
     concurrency:
       group: release-testflight
@@ -1543,11 +1553,11 @@ jobs:
       DEVELOPER_DIR: /Applications/Xcode_27.0.app/Contents/Developer
       BUNDLE_ID: com.reins2fa.app
     steps:
+      # Before anything is checked out: the commit must be on main and carry a published release tag.
       - name: The release to upload
         id: release
         env:
           EVENT: ${{ github.event_name }}
-          REF: ${{ github.ref }}
           INPUT_TAG: ${{ inputs.testflight_tag }}
           PLAN_TAG: ${{ needs.plan.outputs.tag }}
           PLAN_VERSION: ${{ needs.plan.outputs.version }}
@@ -1556,28 +1566,57 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
         run: |
-          if [[ "$EVENT" == workflow_dispatch && -n "$INPUT_TAG" ]]; then
-            [[ "$REF" == refs/heads/main ]] || { echo "::error::TestFlight uploads run from main (its signing credentials), not $REF"; exit 1; }
-            [[ "$INPUT_TAG" =~ ^v([0-9]+\.[0-9]+\.[0-9]+)$ ]] || { echo "::error::testflight_tag is a release tag like v1.2.3, not '$INPUT_TAG'"; exit 1; }
-            tag="$INPUT_TAG" version="${BASH_REMATCH[1]}" sha=""
+          api() { # gh api with a few tries
+            local attempt
             for attempt in 1 2 3; do
-              sha="$(gh api "repos/$GH_REPO/commits/$tag" --jq .sha)" && break
-              (( attempt < 3 )) || { echo "::error::Could not find the tag $tag"; exit 1; }
+              gh api "$@" && return 0
+              (( attempt < 3 )) || return 1
               sleep $(( attempt * 10 ))
             done
+          }
+          manual=false
+          if [[ "$EVENT" == workflow_dispatch && -n "$INPUT_TAG" ]]; then
+            manual=true
+            tag="$INPUT_TAG"
             # This run's start in minutes, as plan's versionCode is: above every release's so far.
             minimum=$(( $(date -u +%s) / 60 ))
           else
-            tag="$PLAN_TAG" version="$PLAN_VERSION" sha="$PLAN_SHA" minimum="$PLAN_CODE"
+            tag="$PLAN_TAG" minimum="$PLAN_CODE"
           fi
-          [[ "$sha" =~ ^[0-9a-f]{40}$ && "$minimum" =~ ^[0-9]+$ && "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] ||
-            { echo "::error::No release to upload (tag '$tag', version '$version', commit '$sha', build '$minimum')"; exit 1; }
+          [[ "$tag" =~ ^v([0-9]+\.[0-9]+\.[0-9]+)$ ]] || { echo "::error::'$tag' is not a release tag like v1.2.3"; exit 1; }
+          version="${BASH_REMATCH[1]}"
+          # The tag itself (not a branch of that name), peeled to its commit.
+          read -r type object < <(api "repos/$GH_REPO/git/ref/tags/$tag" --jq '.object.type + " " + .object.sha') ||
+            { echo "::error::There is no tag $tag"; exit 1; }
+          if [[ "$type" == tag ]]; then
+            object="$(api "repos/$GH_REPO/git/tags/$object" --jq .object.sha)"
+          fi
+          sha="$object"
+          [[ "$sha" =~ ^[0-9a-f]{40}$ ]] || { echo "::error::$tag does not name a commit"; exit 1; }
+          [[ "$manual" == true || "$sha" == "$PLAN_SHA" ]] ||
+            { echo "::error::$tag is $sha, not the commit this run released ($PLAN_SHA)"; exit 1; }
+          draft="$(api "repos/$GH_REPO/releases/tags/$tag" --jq .draft)" ||
+            { echo "::error::$tag has no GitHub release"; exit 1; }
+          [[ "$draft" == false ]] || { echo "::error::The release $tag is not published"; exit 1; }
+          # On main: main is the commit itself or ahead of it (git merge-base --is-ancestor, checked again below).
+          status="$(api "repos/$GH_REPO/compare/$sha...main" --jq .status)"
+          [[ "$status" == identical || "$status" == ahead ]] ||
+            { echo "::error::$tag ($sha) is not on main ($status)"; exit 1; }
+          [[ "$minimum" =~ ^[0-9]+$ ]] || { echo "::error::No build number"; exit 1; }
+          [[ "$manual" == true || "$version" == "$PLAN_VERSION" ]] || { echo "::error::$tag is not v$PLAN_VERSION"; exit 1; }
           { echo "tag=$tag"; echo "version=$version"; echo "sha=$sha"; echo "minimum=$minimum"; } >> "$GITHUB_OUTPUT"
           echo "::notice::TestFlight: Reins $version ($tag, $sha)"
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           ref: ${{ steps.release.outputs.sha }}
+          fetch-depth: 0
           persist-credentials: false
+      - name: Require the commit to be on main
+        env:
+          SHA: ${{ steps.release.outputs.sha }}
+        run: |
+          [[ "$(git rev-parse HEAD)" == "$SHA" ]] || { echo "::error::Checked out $(git rev-parse HEAD), not $SHA"; exit 1; }
+          git merge-base --is-ancestor "$SHA" origin/main || { echo "::error::$SHA is not on origin/main"; exit 1; }
       - name: Require the released Xcode
         run: |
           xcodebuild -version
@@ -1585,7 +1624,23 @@ jobs:
           sdk="$(xcrun --sdk iphoneos --show-sdk-version)"
           [[ "$xcode" == "$XCODE_VERSION" && "$sdk" == "$XCODE_VERSION" ]] ||
             { echo "::error::Uploads need the released Xcode $XCODE_VERSION (iOS SDK $XCODE_VERSION) at $DEVELOPER_DIR; found Xcode $xcode, SDK $sdk"; exit 1; }
-      # Written to a file (not exported to later steps), read by the next step only, and removed afterwards.
+
+      # The build that runs the repository's code, with no secret fetched yet.
+      - name: Install Rust toolchain
+        run: rustup toolchain install && rustup target add aarch64-apple-ios
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
+        with:
+          shared-key: release-ios-core
+          save-if: ${{ github.ref == 'refs/heads/main' }}
+      # The core for the device (fat LTO), once; the archive's "Rust core" phases then reuse it (REINS_SKIP_CORE).
+      - name: Build the Rust core
+        run: CONFIGURATION=Release ios/scripts/build-core.sh iphoneos
+      - name: Resolve the Swift packages
+        run: |
+          xcodebuild -resolvePackageDependencies -project ios/Reins.xcodeproj -scheme Reins \
+            -onlyUsePackageVersionsFromResolvedFile
+
+      # Written to a file (never exported to the job), split into files by the next step, and removed by it.
       - name: Fetch the Apple signing identity from Infisical
         if: vars.INFISICAL_RELEASE_IDENTITY_ID != ''
         uses: ./.github/actions/release-secrets # zizmor: ignore[self-repository] use the exact release checkout
@@ -1595,9 +1650,9 @@ jobs:
           secret-path: /signing/apple
           export-type: file
           file-output-path: /.apple-signing.env
-      # The identity goes into a keychain of this job's own, the profiles where Xcode looks, the API key into a file;
-      # all of it under $RUNNER_TEMP/ios-signing (mode 0700) and removed by the last step. No secret reaches GITHUB_ENV.
-      - name: Signing identity, profiles and API key
+      # Each secret becomes a file (mode 0600 in a 0700 folder) that only the steps needing it read: the .p12 and its
+      # password the keychain step, the profiles the profile step, the API key the App Store Connect steps.
+      - name: Signing material to files
         env:
           IOS_DIST_CERT_P12: ${{ secrets.IOS_DIST_CERT_P12 }}
           IOS_DIST_CERT_PASSWORD: ${{ secrets.IOS_DIST_CERT_PASSWORD }}
@@ -1611,42 +1666,108 @@ jobs:
         run: |
           umask 077
           dir="$RUNNER_TEMP/ios-signing"
-          mkdir -p "$dir"
-          # Infisical (/signing/apple) first; the repository secrets of the same names are the fallback.
           apple_env="$GITHUB_WORKSPACE/.apple-signing.env"
-          if [[ -s "$apple_env" ]]; then
-            eval "$(python3 - "$apple_env" <<'PY'
-          import re, shlex, sys
-          text = open(sys.argv[1]).read()
-          names = {"IOS_DIST_CERT_P12", "IOS_DIST_CERT_PASSWORD", "IOS_PROFILE_APP", "IOS_PROFILE_WIDGETS",
-                   "IOS_PROFILE_NOTIFICATIONS", "AC_API_KEY_P8", "AC_API_KEY_ID", "AC_API_ISSUER_ID", "APPLE_TEAM_ID"}
+          trap 'rm -f "$apple_env"' EXIT
+          mkdir -p "$dir"
+          chmod 700 "$dir"
+          # Infisical (/signing/apple) first; the repository secrets of the same names are the fallback. Every value
+          # is masked, line by line, before anything else can print it.
+          python3 - "$apple_env" "$dir" <<'PY'
+          import base64, os, re, sys
+          names = ["IOS_DIST_CERT_P12", "IOS_DIST_CERT_PASSWORD", "IOS_PROFILE_APP", "IOS_PROFILE_WIDGETS",
+                   "IOS_PROFILE_NOTIFICATIONS", "AC_API_KEY_P8", "AC_API_KEY_ID", "AC_API_ISSUER_ID", "APPLE_TEAM_ID"]
+          values = {name: os.environ.get(name, "") for name in names}
+          try:
+              text = open(sys.argv[1]).read()
+          except FileNotFoundError:
+              text = ""
           for key, value in re.findall(r"^([A-Z0-9_]+)='(.*?)'$", text, re.M | re.S):
-              if key in names and value:
-                  for line in value.splitlines():
-                      if line.strip():
-                          print(f"echo {shlex.quote('::add-mask::' + line)}")
-                  print(f"{key}={shlex.quote(value)}")
-          PY
-          )"
-            rm -f "$apple_env"
-          fi
-          missing=()
-          for name in IOS_DIST_CERT_P12 IOS_DIST_CERT_PASSWORD IOS_PROFILE_APP IOS_PROFILE_WIDGETS \
-            IOS_PROFILE_NOTIFICATIONS AC_API_KEY_P8 AC_API_KEY_ID AC_API_ISSUER_ID; do
-            [[ -n "${!name:-}" ]] || missing+=("$name")
-          done
-          if (( ${#missing[@]} )); then
-            echo "::error::TestFlight signing is incomplete, missing: ${missing[*]} (Infisical reins-release prod /signing/apple, or repository secrets of the same names; see CONTRIBUTING.md)"
-            exit 1
-          fi
-          team="${APPLE_TEAM_ID:-5DRCQV8HY2}"
-          [[ "$team" =~ ^[A-Z0-9]{10}$ && "$AC_API_KEY_ID" =~ ^[A-Z0-9]+$ && "$AC_API_ISSUER_ID" =~ ^[0-9a-f-]+$ ]] ||
-            { echo "::error::APPLE_TEAM_ID, AC_API_KEY_ID or AC_API_ISSUER_ID is malformed"; exit 1; }
-          printf '%s\n' "$AC_API_KEY_P8" > "$dir/AuthKey.p8"
-          printf 'AC_API_KEY_ID=%s\nAC_API_ISSUER_ID=%s\n' "$AC_API_KEY_ID" "$AC_API_ISSUER_ID" > "$dir/asc.env"
+              if key in values and value:
+                  values[key] = value
+          for value in values.values():
+              for line in value.splitlines():
+                  if line.strip():
+                      print(f"::add-mask::{line.strip()}", flush=True)
+          missing = [name for name in names if name != "APPLE_TEAM_ID" and not values[name]]
+          if missing:
+              print(f"::error::TestFlight signing is incomplete, missing: {' '.join(missing)} (Infisical reins-release "
+                    "prod /signing/apple, or repository secrets of the same names; see CONTRIBUTING.md)")
+              sys.exit(1)
+          team = values["APPLE_TEAM_ID"] or "5DRCQV8HY2"
+          ids_ok = (re.fullmatch(r"[A-Z0-9]{10}", team) and re.fullmatch(r"[A-Z0-9]+", values["AC_API_KEY_ID"])
+                    and re.fullmatch(r"[0-9a-f-]+", values["AC_API_ISSUER_ID"]))
+          if not ids_ok:
+              print("::error::APPLE_TEAM_ID, AC_API_KEY_ID or AC_API_ISSUER_ID is malformed")
+              sys.exit(1)
+          directory = sys.argv[2]
 
+          def write(name, data):
+              path = os.path.join(directory, name)
+              with open(os.open(path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600), "wb") as handle:
+                  handle.write(data)
+
+          try:
+              write("dist.p12", base64.b64decode(values["IOS_DIST_CERT_P12"]))
+              for target, name in (("Reins", "IOS_PROFILE_APP"), ("ReinsWidgets", "IOS_PROFILE_WIDGETS"),
+                                   ("ReinsNotifications", "IOS_PROFILE_NOTIFICATIONS")):
+                  write(f"{target}.mobileprovision", base64.b64decode(values[name]))
+          except ValueError:
+              print("::error::IOS_DIST_CERT_P12 and IOS_PROFILE_* must be base64")
+              sys.exit(1)
+          write("dist.pass", values["IOS_DIST_CERT_PASSWORD"].encode())
+          write("AuthKey.p8", values["AC_API_KEY_P8"].strip().encode() + b"\n")
+          write("asc.env", f"AC_API_KEY_ID={values['AC_API_KEY_ID']}\nAC_API_ISSUER_ID={values['AC_API_ISSUER_ID']}\n"
+                           f"TEAM={team}\n".encode())
+          PY
+      - name: Build number
+        id: number
+        env:
+          VERSION: ${{ steps.release.outputs.version }}
+          MINIMUM: ${{ steps.release.outputs.minimum }}
+        run: |
+          dir="$RUNNER_TEMP/ios-signing"
+          set -a
+          source "$dir/asc.env"
+          set +a
+          python3 scripts/testflight.py prepare --bundle-id "$BUNDLE_ID" --version "$VERSION" --minimum "$MINIMUM" \
+            --key-file "$dir/AuthKey.p8" | tee -a "$GITHUB_OUTPUT"
+      # The .p12 is decrypted with its password read from a file (never an argument), imported into a keychain of
+      # this job's own and removed. The transient password the import needs protects a file that lives for seconds.
+      - name: Signing identity
+        if: steps.number.outputs.uploaded != 'true'
+        run: |
+          umask 077
+          dir="$RUNNER_TEMP/ios-signing"
+          source "$dir/asc.env"
+          trap 'rm -f "$dir/dist.p12" "$dir/dist.pass" "$dir/dist.pem" "$dir/import.p12" "$dir/import.pass"' EXIT
+          # Keychain Access exports with modern (PBES2) or legacy (RC2, 3DES) algorithms: OpenSSL needs -legacy for
+          # the latter; macOS's LibreSSL reads both.
+          opened=false
+          for tool in "openssl pkcs12" "openssl pkcs12 -legacy" "/usr/bin/openssl pkcs12"; do
+            # shellcheck disable=SC2086 # the tool and its options, split on purpose
+            if $tool -in "$dir/dist.p12" -passin "file:$dir/dist.pass" -nodes -out "$dir/dist.pem" 2> /dev/null; then
+              opened=true
+              break
+            fi
+          done
+          [[ "$opened" == true ]] || { echo "::error::IOS_DIST_CERT_P12 does not open with IOS_DIST_CERT_PASSWORD"; exit 1; }
+          transient="$(openssl rand -hex 16)"
+          echo "::add-mask::$transient"
+          printf '%s' "$transient" > "$dir/import.pass"
+          # Again as PKCS#12, with the algorithms every macOS keychain reads.
+          exported=false
+          for tool in /usr/bin/openssl openssl; do
+            if "$tool" pkcs12 -export -in "$dir/dist.pem" -out "$dir/import.p12" -passout "file:$dir/import.pass" \
+              -keypbe PBE-SHA1-3DES -certpbe PBE-SHA1-3DES -macalg sha1; then
+              exported=true
+              break
+            fi
+          done
+          rm -f "$dir/dist.pem"
+          [[ "$exported" == true ]] || { echo "::error::Could not repackage the distribution identity for the keychain"; exit 1; }
           keychain="$dir/ios.keychain-db"
           pass="$(openssl rand -hex 16)"
+          echo "::add-mask::$pass"
           security create-keychain -p "$pass" "$keychain"
           if ! security unlock-keychain -p "$pass" "$keychain" 2> /dev/null; then
             # The xcode-27 image does not unlock a keychain made with a password (actions/runner-images#14837). This
@@ -1658,15 +1779,20 @@ jobs:
             security unlock-keychain -p "$pass" "$keychain"
           fi
           security set-keychain-settings -lut 21600 "$keychain"
-          base64 -d <<<"$IOS_DIST_CERT_P12" > "$dir/dist.p12"
-          security import "$dir/dist.p12" -k "$keychain" -P "$IOS_DIST_CERT_PASSWORD" -T /usr/bin/codesign -T /usr/bin/security
-          rm -f "$dir/dist.p12"
+          security import "$dir/import.p12" -k "$keychain" -f pkcs12 -P "$transient" -T /usr/bin/codesign -T /usr/bin/security
           security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k "$pass" "$keychain" > /dev/null
           security list-keychains -d user -s "$keychain" login.keychain-db
           identity="$(security find-identity -v -p codesigning "$keychain" |
-            awk -v team="($team)" '/"Apple Distribution: / && index($0, team) { print $2; exit }')"
-          [[ -n "$identity" ]] || { echo "::error::IOS_DIST_CERT_P12 holds no Apple Distribution identity of team $team"; exit 1; }
-
+            awk -v team="($TEAM)" '/"Apple Distribution: / && index($0, team) { print $2; exit }')"
+          [[ -n "$identity" ]] || { echo "::error::IOS_DIST_CERT_P12 holds no Apple Distribution identity of team $TEAM"; exit 1; }
+          printf '%s\n' "$identity" > "$dir/identity"
+      - name: Provisioning profiles
+        if: steps.number.outputs.uploaded != 'true'
+        run: |
+          umask 077
+          dir="$RUNNER_TEMP/ios-signing"
+          source "$dir/asc.env"
+          identity="$(cat "$dir/identity")"
           # Xcode 16 and later read profiles from UserData; older tools from MobileDevice.
           installed=("$HOME/Library/Developer/Xcode/UserData/Provisioning Profiles" "$HOME/Library/MobileDevice/Provisioning Profiles")
           mkdir -p "${installed[@]}"
@@ -1674,26 +1800,25 @@ jobs:
           # none). Applied with -xcconfig, above the project's automatic signing.
           {
             echo "CODE_SIGN_STYLE = Manual"
-            echo "DEVELOPMENT_TEAM = $team"
-            echo "REINS_TEAM = $team"
+            echo "DEVELOPMENT_TEAM = $TEAM"
+            echo "REINS_TEAM = $TEAM"
             echo "CODE_SIGN_IDENTITY = $identity"
-            echo "OTHER_CODE_SIGN_FLAGS = --keychain $keychain"
+            echo "OTHER_CODE_SIGN_FLAGS = --keychain $dir/ios.keychain-db"
             # shellcheck disable=SC2016 # an Xcode build setting reference, not a shell one
             echo 'PROVISIONING_PROFILE_SPECIFIER = $(REINS_PROFILE_$(TARGET_NAME))'
           } > "$dir/signing.xcconfig"
           : > "$dir/profiles.txt"
-          for entry in "Reins $BUNDLE_ID IOS_PROFILE_APP" "ReinsWidgets $BUNDLE_ID.widgets IOS_PROFILE_WIDGETS" \
-            "ReinsNotifications $BUNDLE_ID.notifications IOS_PROFILE_NOTIFICATIONS"; do
-            read -r target bundle name <<<"$entry"
-            base64 -d <<<"${!name}" > "$dir/$target.mobileprovision"
+          for entry in "Reins $BUNDLE_ID" "ReinsWidgets $BUNDLE_ID.widgets" "ReinsNotifications $BUNDLE_ID.notifications"; do
+            read -r target bundle <<<"$entry"
             security cms -D -i "$dir/$target.mobileprovision" > "$dir/$target.plist" ||
-              { echo "::error::$name is not a provisioning profile (base64 of the .mobileprovision)"; exit 1; }
-            uuid="$(python3 scripts/testflight.py profile --plist "$dir/$target.plist" --bundle-id "$bundle" --team "$team")"
+              { echo "::error::The profile for $target is not a provisioning profile (base64 of the .mobileprovision)"; exit 1; }
+            uuid="$(python3 scripts/testflight.py profile --plist "$dir/$target.plist" --bundle-id "$bundle" --team "$TEAM")"
             for folder in "${installed[@]}"; do cp "$dir/$target.mobileprovision" "$folder/$uuid.mobileprovision"; done
+            rm -f "$dir/$target.mobileprovision" "$dir/$target.plist"
             echo "REINS_PROFILE_$target = $uuid" >> "$dir/signing.xcconfig"
             echo "$bundle $uuid" >> "$dir/profiles.txt"
           done
-          python3 - "$dir" "$team" "$identity" <<'PY'
+          python3 - "$dir" "$TEAM" "$identity" <<'PY'
           import plistlib, sys
           directory, team, identity = sys.argv[1:]
           profiles = dict(line.split() for line in open(f"{directory}/profiles.txt") if line.strip())
@@ -1711,35 +1836,13 @@ jobs:
           with open(f"{directory}/ExportOptions.plist", "wb") as handle:
               plistlib.dump(options, handle)
           PY
-      - name: Build number
-        id: number
-        env:
-          VERSION: ${{ steps.release.outputs.version }}
-          MINIMUM: ${{ steps.release.outputs.minimum }}
-        run: |
-          dir="$RUNNER_TEMP/ios-signing"
-          source "$dir/asc.env"
-          python3 scripts/testflight.py prepare --bundle-id "$BUNDLE_ID" --version "$VERSION" --minimum "$MINIMUM" \
-            --key-file "$dir/AuthKey.p8" --key-id "$AC_API_KEY_ID" --issuer-id "$AC_API_ISSUER_ID" | tee -a "$GITHUB_OUTPUT"
-      - name: Install Rust toolchain
-        if: steps.number.outputs.uploaded != 'true'
-        run: rustup toolchain install && rustup target add aarch64-apple-ios
-      - uses: Swatinem/rust-cache@v2
-        if: steps.number.outputs.uploaded != 'true'
-        with:
-          shared-key: release-ios-core
-          save-if: ${{ github.ref == 'refs/heads/main' }}
-      # The core for the device (fat LTO), once; the archive's "Rust core" phases then reuse it (REINS_SKIP_CORE).
-      - name: Build the Rust core
-        if: steps.number.outputs.uploaded != 'true'
-        run: CONFIGURATION=Release ios/scripts/build-core.sh iphoneos
-      - name: Archive
+      # The app's own settings (Telegram's application credentials, as the APK has them; the Google iOS client,
+      # optional) go into the archive's xcconfig here, so the archive step has no secret in its environment.
+      - name: App settings
         if: steps.number.outputs.uploaded != 'true'
         env:
           VERSION: ${{ steps.release.outputs.version }}
           BUILD_NUMBER: ${{ steps.number.outputs.build-number }}
-          REINS_SKIP_CORE: "1"
-          # Telegram's application credentials, as the APK has them; the Google iOS client is optional.
           TELEGRAM_API_ID: ${{ secrets.TELEGRAM_API_ID }}
           TELEGRAM_API_HASH: ${{ secrets.TELEGRAM_API_HASH }}
           GOOGLE_CLIENT_ID: ${{ vars.IOS_GOOGLE_CLIENT_ID }}
@@ -1762,15 +1865,24 @@ jobs:
               echo "REINS_GOOGLE_REDIRECT_SCHEME = com.googleusercontent.apps.${GOOGLE_CLIENT_ID%.apps.googleusercontent.com}"
             fi
           } > "$dir/release.xcconfig"
+      - name: Archive
+        if: steps.number.outputs.uploaded != 'true'
+        env:
+          VERSION: ${{ steps.release.outputs.version }}
+          BUILD_NUMBER: ${{ steps.number.outputs.build-number }}
+          REINS_SKIP_CORE: "1"
+        run: |
+          dir="$RUNNER_TEMP/ios-signing"
           xcodebuild archive -project ios/Reins.xcodeproj -scheme Reins -configuration Release \
             -destination generic/platform=iOS -archivePath "$RUNNER_TEMP/Reins.xcarchive" \
-            -onlyUsePackageVersionsFromResolvedFile -xcconfig "$dir/release.xcconfig"
+            -onlyUsePackageVersionsFromResolvedFile -disableAutomaticPackageResolution -xcconfig "$dir/release.xcconfig"
           plist="$RUNNER_TEMP/Reins.xcarchive/Products/Applications/Reins.app/Info.plist"
           shown="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' "$plist")"
           build="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleVersion' "$plist")"
           [[ "$shown" == "$VERSION" && "$build" == "$BUILD_NUMBER" ]] ||
             { echo "::error::The archive is $shown ($build), not $VERSION ($BUILD_NUMBER)"; exit 1; }
-      # The export signs for the App Store and, with destination upload, sends the build to App Store Connect.
+      # The export signs for the App Store and, with destination upload, sends the build to App Store Connect. The key
+      # is a file; its id and issuer id (identifiers, masked) are the only parts on the command line.
       - name: Upload to App Store Connect
         if: steps.number.outputs.uploaded != 'true'
         run: |
@@ -1797,11 +1909,12 @@ jobs:
             (( attempt < 3 )) || { echo "::warning::No release notes for $TAG: What to Test names the version only"; break; }
             sleep $(( attempt * 10 ))
           done
+          set -a
           source "$dir/asc.env"
+          set +a
           python3 scripts/testflight.py finish --bundle-id "$BUNDLE_ID" --version "$VERSION" \
             --build-number "$BUILD_NUMBER" --notes-file "$notes" --group "$TESTFLIGHT_GROUPS" \
-            --release-url "$GITHUB_SERVER_URL/$GH_REPO/releases/tag/$TAG" \
-            --key-file "$dir/AuthKey.p8" --key-id "$AC_API_KEY_ID" --issuer-id "$AC_API_ISSUER_ID"
+            --release-url "$GITHUB_SERVER_URL/$GH_REPO/releases/tag/$TAG" --key-file "$dir/AuthKey.p8"
           echo "::notice::Reins $VERSION ($BUILD_NUMBER) is on TestFlight"
       - name: Remove signing material
         if: always()
@@ -1815,7 +1928,7 @@ jobs:
             done < "$dir/profiles.txt"
           fi
           rm -f "$GITHUB_WORKSPACE/.apple-signing.env" "$RUNNER_TEMP/release-notes.md"
-          rm -rf "$dir" "$RUNNER_TEMP/export"
+          rm -rf "$dir" "$RUNNER_TEMP/export" "$RUNNER_TEMP/Reins.xcarchive"
 
   # reins-bin on the AUR (https://aur.archlinux.org/packages/reins-bin): its PKGBUILD and .SRCINFO, written from the
   # published release's SHA256SUMS (scripts/package/aur.sh) and checked with makepkg in an Arch Linux container

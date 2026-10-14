@@ -268,6 +268,16 @@ that is missing:
 | `IOS_PROFILE_APP`, `IOS_PROFILE_WIDGETS`, `IOS_PROFILE_NOTIFICATIONS` | the App Store profiles (`.mobileprovision`, base64) of `com.reins2fa.app`, `.widgets`, `.notifications` |
 | `AC_API_KEY_P8`, `AC_API_KEY_ID`, `AC_API_ISSUER_ID`, `APPLE_TEAM_ID` | the "Reins CI" API key (App Manager), as for notarization |
 
+Only a commit on main that carries a published release tag is built, and only from main (a release push, or the
+dispatch, which checks the tag before anything is checked out). The Rust core and the Swift packages build before any
+secret is fetched. The secrets then become files in a `0700` folder; each step reads only the ones it needs (the
+`.p12` password is read from a file, never passed as an argument), nothing reaches `GITHUB_ENV`, and the last step
+removes them with the keychain and profiles. The third-party actions it uses are pinned to commits. The job runs in
+the GitHub environment `testflight`: restrict it to `main` there (Settings > Environments > testflight > Deployment
+branches and tags), and keep any repository-secret fallbacks as that environment's secrets. In an environment, GitHub's
+OIDC subject is `repo:katulevskiy@84909978/reins@1400899427:environment:testflight`, so the Infisical identity
+`github-release-android` has to accept that subject as well as the `ref:refs/heads/main` one.
+
 Repository variables: `TESTFLIGHT_EXTERNAL_GROUP_ID` (the external group's id; two groups are named "Testers", so a
 name alone fails), `TESTFLIGHT_INTERNAL_GROUPS` (default `Internal`, which gets every build by itself) and, optionally,
 `IOS_GOOGLE_CLIENT_ID` (Google sign-in in the app).
@@ -279,6 +289,9 @@ Notifications on the app), stored base64 in `/signing/apple` with master copies 
 
 1. `gh variable set TESTFLIGHT_EXTERNAL_GROUP_ID -R katulevskiy/reins --body <id of the "Testers" group with the public link>`.
 2. App Store Connect > Pricing and Availability: exclude France.
+3. Infisical, identity `github-release-android`, OIDC auth: add the subject
+   `repo:katulevskiy@84909978/reins@1400899427:environment:testflight`.
+4. Optional: Settings > Environments > `testflight`: allow deployments from `main` only.
 
 ## Maintainers: the update feed
 

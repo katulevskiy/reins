@@ -9,6 +9,7 @@ import importlib.util
 import io
 import json
 import plistlib
+import re
 import subprocess
 import sys
 import tempfile
@@ -311,4 +312,22 @@ check("runs-on: xcode-27" in job and "Xcode_27.0.app" in job, "a released Xcode"
 check("scripts/testflight.py prepare" in job and "scripts/testflight.py finish" in job, "the script")
 check("secret-path: /signing/apple" in job, "the Apple signing folder")
 check(job.count("if: always()") >= 1 and "delete-keychain" in job, "the keychain is removed")
+# Trust: main only, in its environment; the build runs before any secret exists; secrets stay in files.
+check("github.ref == 'refs/heads/main'" in job and "environment: testflight" in job, "main, in its environment")
+check("pull_request" not in workflow.split("\njobs:\n", 1)[0], "no pull request trigger")
+check('git merge-base --is-ancestor "$SHA" origin/main' in job and "compare/$sha...main" in job, "on main")
+check("releases/tags/$tag" in job, "a published release")
+fetch = job.index("Fetch the Apple signing identity from Infisical")
+for build_step in ("Build the Rust core", "Resolve the Swift packages", "rust-cache@"):
+    check(job.index(build_step) < fetch, f"{build_step} before the secrets")
+check(job.index("Signing material to files") > fetch and "secrets." not in job[:fetch], "no secret before the build")
+check("GITHUB_ENV" not in job and "export-type: file" in job, "nothing exported to the job")
+check('-P "$IOS_DIST_CERT_PASSWORD"' not in job and '-passin "file:' in job, "the password never on a command line")
+check("--key-id" not in job and "--issuer-id" not in job, "the key ids reach the script by environment")
+check("::add-mask::" in job, "masked")
+for line in job.splitlines():
+    if "uses: " in line and "uses: ./" not in line:
+        check(re.search(r"@[0-9a-f]{40} # v", line), f"pinned to a commit: {line.strip()}")
+secrets_action = (ROOT / ".github/actions/release-secrets/action.yml").read_text()
+check(re.search(r"Infisical/secrets-action@[0-9a-f]{40} # v", secrets_action), "Infisical pinned")
 print(f"{checks} TestFlight checks passed")
