@@ -318,9 +318,14 @@ agent.
 ## Hooks
 
 Harness hooks compare commands and file paths with patterns ([harnesses.md](harnesses.md#the-guard-rules-guard)).
-They catch the obvious: force pushes, `rm -r`, `terraform apply`, reading `.env` or private keys. They cannot catch
-a command hidden in a script, an alias, or a tool the hook does not see. Treat them as guard rails against mistakes,
-not as a sandbox. When the phone does not answer, the hook denies by default (`on_no_answer = "deny"`).
+They are a heuristic first line: they catch the obvious (force pushes, `rm -r`, `terraform apply`, reading `.env` or
+private keys) and fail closed where they can, asking whenever a word may name a guarded file, unless the form is one
+read with certainty (a commit message, a `grep` pattern). Determined code can still evade them: a name built at run
+time (`chr()`, slicing, a variable read from a file), a command hidden in a script or an alias, a tool the hook does
+not see. The other layers are what hold then: credentials stay on the phone and are released per action, grants are
+narrow and time-boxed, Autopilot and its risk model judge each request, and an OS sandbox (a separate user, a
+container) keeps the agent from the files at all. When the phone does not answer, the hook denies by default
+(`on_no_answer = "deny"`).
 
 ## Autopilot
 
