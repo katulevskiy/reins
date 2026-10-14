@@ -4,8 +4,9 @@
 
 use std::collections::{BTreeMap, HashSet};
 
+use reins_policy::Grant;
 use ring::rand::SecureRandom;
-use rusqlite::{OptionalExtension, params};
+use rusqlite::{Connection, OptionalExtension, TransactionBehavior, params};
 use serde::{Deserialize, Serialize};
 
 use super::adapter::Adapter;
@@ -13,7 +14,7 @@ use super::memory::{Embedding, MEMORY_CAP, MemoryRow};
 use super::modes::ModeRow;
 use super::types::{AutopilotMode, MAX_THRESHOLD, MIN_THRESHOLD, Preset, Verdict};
 use crate::CoreError;
-use crate::store::Store;
+use crate::store::{Store, StoredGrant};
 
 /// What was evaluated for a request is kept this long after it (corrections from Activity need it).
 pub const SUGGESTION_RETENTION_SECS: i64 = 30 * 86_400;
@@ -168,7 +169,86 @@ fn to_json<T: Serialize>(v: &T) -> Result<Vec<u8>, CoreError> {
     serde_json::to_vec(v).map_err(|e| CoreError::storage(e.to_string()))
 }
 
+/// A row of `autopilot_settings`: its mode and bypass end.
+type SettingRow = (Option<String>, Option<i64>);
+
+/// Whether a permission with this origin may be used now: always, unless a bypass granted it; then only while that
+/// bypass (the global one, or the connection's own) is in force and no lockdown holds. Read with `conn`, inside the
+/// caller's transaction, so that a bypass stopped a moment ago is seen stopped.
+pub(crate) fn origin_in_force(conn: &Connection, origin: &str, now: i64) -> Result<bool, CoreError> {
+    let Some(scope) = super::modes::bypass_scope(origin) else {
+        return Ok(true);
+    };
+    let row = |scope: &str| -> Result<Option<SettingRow>, CoreError> {
+        Ok(conn
+            .query_row("SELECT mode, bypass_until FROM autopilot_settings WHERE scope = ?1", params![scope], |r| {
+                Ok((r.get(0)?, r.get(1)?))
+            })
+            .optional()?)
+    };
+    let lockdown = |r: &Option<SettingRow>| {
+        r.as_ref().is_some_and(|(mode, _)| mode.as_deref() == Some(AutopilotMode::Lockdown.as_str()))
+    };
+    let global = row("")?;
+    if lockdown(&global) {
+        return Ok(false);
+    }
+    let own = if scope.is_empty() {
+        global
+    } else {
+        row(scope)?
+    };
+    Ok(!lockdown(&own) && own.and_then(|(_, until)| until).is_some_and(|until| until > now))
+}
+
+/// Revokes, in `conn`'s transaction, every active permission a bypass granted whose bypass is no longer in force;
+/// returns them (each only once: a revoked one is not active any more).
+fn revoke_ended_bypass_grants(conn: &Connection, now: i64) -> Result<Vec<StoredGrant>, CoreError> {
+    let rows: Vec<(String, String, String, String, Option<i64>, String)> = {
+        let mut stmt = conn.prepare(
+            "SELECT id, connection_id, connection_label, grant_json, last_used_at, origin FROM grants \
+             WHERE origin = ?1 OR origin LIKE ?2",
+        )?;
+        stmt.query_map(params![super::modes::BYPASS_ORIGIN, "bypass:%"], |r| {
+            Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?, r.get(5)?))
+        })?
+        .collect::<Result<Vec<_>, _>>()?
+    };
+    let mut revoked = Vec::new();
+    for (id, connection_id, connection_label, json, last_used_at, origin) in rows {
+        let Ok(mut grant) = serde_json::from_str::<Grant>(&json) else {
+            continue;
+        };
+        if grant.id.0 != id || grant.connection_id.0 != connection_id || !grant.is_active(now) {
+            continue;
+        }
+        if origin_in_force(conn, &origin, now)? {
+            continue;
+        }
+        grant.revoked = true;
+        let json = serde_json::to_string(&grant).map_err(|e| CoreError::storage(e.to_string()))?;
+        conn.execute("UPDATE grants SET grant_json = ?2 WHERE id = ?1", params![id, json])?;
+        revoked.push(StoredGrant {
+            grant,
+            connection_label,
+            last_used_at,
+            origin,
+        });
+    }
+    Ok(revoked)
+}
+
 impl Store {
+    /// Takes back every permission whose bypass has ended (stopped, run out, locked down, replaced), in one
+    /// transaction; idempotent. Returns what it revoked, for the Activity entries.
+    pub fn ap_sweep_bypass_grants(&self, now: i64) -> Result<Vec<StoredGrant>, CoreError> {
+        let mut conn = self.lock()?;
+        let tx = conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
+        let revoked = revoke_ended_bypass_grants(&tx, now)?;
+        tx.commit()?;
+        Ok(revoked)
+    }
+
     // ---- modes ---------------------------------------------------------------------------------------------------
 
     /// The global setting (`scope` = "") or a connection's; the default when there is none.
@@ -202,9 +282,11 @@ impl Store {
     }
 
     /// Writes a mode row. When a bypass started is kept beside it in `meta`, so that the table (and the account
-    /// snapshots made of it by other versions) keeps its columns.
-    pub fn ap_set_mode_row(&self, scope: &str, row: &ModeRow, now: i64) -> Result<(), CoreError> {
-        let conn = self.lock()?;
+    /// snapshots made of it by other versions) keeps its columns. In the same transaction, every permission a bypass
+    /// granted whose bypass is no longer in force is taken back; those are returned.
+    pub fn ap_set_mode_row(&self, scope: &str, row: &ModeRow, now: i64) -> Result<Vec<StoredGrant>, CoreError> {
+        let mut guard = self.lock()?;
+        let conn = guard.transaction_with_behavior(TransactionBehavior::Immediate)?;
         let since_key = format!("{BYPASS_SINCE_KEY}{scope}");
         match row.bypass_since.filter(|_| row.bypass_until.is_some()) {
             Some(since) => conn.execute(
@@ -215,14 +297,16 @@ impl Store {
         };
         if row.mode.is_none() && row.bypass_until.is_none() && row.profile_id.is_none() {
             conn.execute("DELETE FROM autopilot_settings WHERE scope = ?1", params![scope])?;
-            return Ok(());
+        } else {
+            conn.execute(
+                "INSERT INTO autopilot_settings (scope, mode, bypass_until, profile_id, updated_at) VALUES (?1, ?2, ?3, ?4, ?5)
+                     ON CONFLICT (scope) DO UPDATE SET mode = ?2, bypass_until = ?3, profile_id = ?4, updated_at = ?5",
+                params![scope, row.mode.map(AutopilotMode::as_str), row.bypass_until, row.profile_id, now],
+            )?;
         }
-        conn.execute(
-            "INSERT INTO autopilot_settings (scope, mode, bypass_until, profile_id, updated_at) VALUES (?1, ?2, ?3, ?4, ?5)
-                 ON CONFLICT (scope) DO UPDATE SET mode = ?2, bypass_until = ?3, profile_id = ?4, updated_at = ?5",
-            params![scope, row.mode.map(AutopilotMode::as_str), row.bypass_until, row.profile_id, now],
-        )?;
-        Ok(())
+        let revoked = revoke_ended_bypass_grants(&conn, now)?;
+        conn.commit()?;
+        Ok(revoked)
     }
 
     // ---- profiles ------------------------------------------------------------------------------------------------

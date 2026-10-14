@@ -790,6 +790,10 @@ impl Engine {
     }
 
     pub fn grants(&self) -> Result<Vec<GrantView>, CoreError> {
+        // What an ended bypass granted shows as ended (it already stopped counting).
+        if let Err(e) = self.ap_expire_bypasses(unix_now()) {
+            log::warn!("Autopilot could not end the bypasses that ran out: {e}");
+        }
         Ok(self.store.grants()?.iter().map(views::grant_view).collect())
     }
 

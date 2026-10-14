@@ -42,14 +42,24 @@ fn parse_row(id: &str, connection_id: &str, json: &str) -> Option<Grant> {
     }
 }
 
-fn all_connection_grants(conn: &Connection, connection: &ConnectionId) -> Result<Vec<Grant>, CoreError> {
-    let mut stmt = conn.prepare("SELECT id, connection_id, grant_json FROM grants WHERE connection_id = ?1")?;
+/// The grants of `connection` that may be used now. Every evaluation reads them here, so this is where a grant a
+/// bypass gave stops counting the moment its bypass is no longer in force (read in the caller's transaction), whether
+/// or not taking it back has happened yet: it fails closed.
+fn all_connection_grants(conn: &Connection, connection: &ConnectionId, now: i64) -> Result<Vec<Grant>, CoreError> {
+    let mut stmt = conn.prepare("SELECT id, connection_id, grant_json, origin FROM grants WHERE connection_id = ?1")?;
     let rows = stmt
         .query_map(params![connection.0], |r| {
-            Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?, r.get::<_, String>(2)?))
+            Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?, r.get::<_, String>(2)?, r.get::<_, String>(3)?))
         })?
         .collect::<Result<Vec<_>, _>>()?;
-    Ok(rows.iter().filter_map(|(id, c, json)| parse_row(id, c, json)).collect())
+    let mut grants = Vec::with_capacity(rows.len());
+    for (id, c, json, origin) in &rows {
+        if !crate::autopilot::store::origin_in_force(conn, origin, now)? {
+            continue;
+        }
+        grants.extend(parse_row(id, c, json));
+    }
+    Ok(grants)
 }
 
 /// The grants of `connection` that can cover a request about `account`.
@@ -57,8 +67,9 @@ fn connection_grants(
     conn: &Connection,
     connection: &ConnectionId,
     account: Option<&str>,
+    now: i64,
 ) -> Result<Vec<Grant>, CoreError> {
-    let mut grants = all_connection_grants(conn, connection)?;
+    let mut grants = all_connection_grants(conn, connection, now)?;
     grants.retain(|g| g.covers_account(account));
     Ok(grants)
 }
@@ -88,13 +99,22 @@ impl Store {
         self.insert_grant_from(grant, connection_label, "approval")
     }
 
+    /// Stores a grant. One a bypass gives is stored only while that bypass is still in force, checked in the same
+    /// transaction: a request decided during a bypass that finishes after it was stopped gives nothing standing.
     pub fn insert_grant_from(&self, grant: &Grant, connection_label: &str, origin: &str) -> Result<(), CoreError> {
         let json = serde_json::to_string(grant).map_err(|e| CoreError::storage(e.to_string()))?;
-        self.lock()?.execute(
+        let mut conn = self.lock()?;
+        let tx = conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
+        if !crate::autopilot::store::origin_in_force(&tx, origin, crate::store::unix_now())? {
+            log::warn!("a permission from a bypass that has ended was not kept");
+            return Err(CoreError::invalid("the bypass ended before this permission was given; it waits for you"));
+        }
+        tx.execute(
             "INSERT INTO grants (id, connection_id, connection_label, created_at, grant_json, origin) \
              VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
             params![grant.id.0, grant.connection_id.0, connection_label, grant.created_at, json, origin],
         )?;
+        tx.commit()?;
         Ok(())
     }
 
@@ -240,7 +260,7 @@ impl Store {
     /// Whether an active grant of `connection` for `account` needs message bodies to decide.
     pub fn needs_body(&self, connection: &ConnectionId, account: Option<&str>, now: i64) -> Result<bool, CoreError> {
         let conn = self.lock()?;
-        Ok(needs_body(&connection_grants(&conn, connection, account)?, connection, now))
+        Ok(needs_body(&connection_grants(&conn, connection, account, now)?, connection, now))
     }
 
     /// Evaluates a search/read. When every message is covered, one use of each
@@ -293,7 +313,7 @@ impl Store {
     ) -> Result<(ReadDecision, BTreeSet<usize>), CoreError> {
         let mut conn = self.lock()?;
         let tx = conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
-        let mut grants = connection_grants(&tx, connection, account)?;
+        let mut grants = connection_grants(&tx, connection, account, now)?;
         let mut decision = evaluate_read(&grants, connection, facts, now);
         let is_held = |i: usize| held.get(i).copied().unwrap_or(false);
         let (kept, withheld): (Vec<_>, Vec<_>) = decision.allowed.into_iter().partition(|(i, _)| !is_held(*i));
@@ -345,7 +365,7 @@ impl Store {
     ) -> Result<Option<GrantId>, CoreError> {
         let mut conn = self.lock()?;
         let tx = conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
-        let mut grants = all_connection_grants(&tx, connection)?;
+        let mut grants = all_connection_grants(&tx, connection, now)?;
         let found = reins_policy::headlines_allows(&grants, connection, account, service, now);
         if let Some(id) = &found {
             record_uses(&mut grants, &BTreeSet::from([id.clone()]));
@@ -376,7 +396,7 @@ impl Store {
     ) -> Result<std::collections::BTreeMap<String, GrantId>, CoreError> {
         let mut conn = self.lock()?;
         let tx = conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
-        let mut grants = all_connection_grants(&tx, connection)?;
+        let mut grants = all_connection_grants(&tx, connection, now)?;
         let mut covered = std::collections::BTreeMap::new();
         for resource in resources {
             if let Some(id) =
@@ -405,7 +425,7 @@ impl Store {
         now: i64,
     ) -> Result<reins_policy::AccountCoverage, CoreError> {
         let conn = self.lock()?;
-        let grants = all_connection_grants(&conn, connection)?;
+        let grants = all_connection_grants(&conn, connection, now)?;
         Ok(reins_policy::account_coverage(&grants, connection, service, now))
     }
 
@@ -419,7 +439,7 @@ impl Store {
     ) -> Result<SendDecision, CoreError> {
         let mut conn = self.lock()?;
         let tx = conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
-        let mut grants = connection_grants(&tx, connection, account)?;
+        let mut grants = connection_grants(&tx, connection, account, now)?;
         let decision = evaluate_send(&grants, connection, email, now);
         if let SendDecision::Allowed(id) = &decision {
             record_uses(&mut grants, &BTreeSet::from([id.clone()]));
@@ -532,6 +552,43 @@ pub(crate) mod tests {
         assert_eq!(all.iter().find(|g| g.grant.id.0 == "g2").unwrap().connection_label, "ChatGPT");
         let d = store.evaluate_read_and_reserve(&"c1".into(), None, &[fact("m1", "a@bank.com")], 100).unwrap();
         assert!(!d.fully_allowed(), "revoked grant no longer applies");
+    }
+
+    /// Every evaluation reads grants through one place: a grant a bypass gave counts there only while that bypass
+    /// runs (the global one, or the connection's own), however it ended, even if it was never taken back.
+    #[test]
+    fn a_bypass_grant_counts_only_while_its_bypass_runs() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = open(dir.path());
+        let set = |scope: &str, mode: Option<&str>, until: Option<i64>| {
+            store
+                .lock()
+                .unwrap()
+                .execute(
+                    "INSERT INTO autopilot_settings (scope, mode, bypass_until, profile_id, updated_at) \
+                     VALUES (?1, ?2, ?3, NULL, 0) ON CONFLICT (scope) DO UPDATE SET mode = ?2, bypass_until = ?3",
+                    params![scope, mode, until],
+                )
+                .unwrap();
+        };
+        let read = |c: &str| store.evaluate_read_and_reserve(&c.into(), None, &[fact("m", "a@bank.com")], 100).unwrap();
+        // Refused while no bypass of its scope runs.
+        assert!(store.insert_grant_from(&read_grant("g1", "c1", None), "Claude", "bypass").is_err());
+        set("", None, Some(i64::MAX));
+        set("c2", None, Some(i64::MAX));
+        store.insert_grant_from(&read_grant("g1", "c1", None), "Claude", "bypass").unwrap();
+        store.insert_grant_from(&read_grant("g2", "c2", None), "Cursor", "bypass:c2").unwrap();
+        store.insert_grant_from(&read_grant("g3", "c3", None), "Mine", "user").unwrap();
+        assert!(read("c1").fully_allowed() && read("c2").fully_allowed() && read("c3").fully_allowed());
+        // c2's own bypass ends: only its grant stops counting.
+        set("c2", None, Some(50));
+        assert!(read("c1").fully_allowed() && !read("c2").fully_allowed());
+        assert!(store.account_coverage(&"c2".into(), "gmail", 100).is_ok());
+        // A global lockdown stops every bypass's grant; the user's own still counts. None was revoked.
+        set("", Some("lockdown"), None);
+        assert!(!read("c1").fully_allowed() && read("c3").fully_allowed());
+        assert!(store.grants().unwrap().iter().all(|g| !g.grant.revoked));
+        assert_eq!(store.headlines_reserve(&"c1".into(), None, "gmail", 100).unwrap(), None);
     }
 
     #[test]

@@ -354,10 +354,13 @@ Its guards:
   Focus filters and notification actions cannot start one. Stopping it and Lockdown need neither.
 - **Account takeover stays with you.** A new connection (pairing an AI or a computer) and another phone joining the
   account never reach Bypass; they always wait for you.
-- **Nothing outlives it.** A standing permission an AI asks for during a bypass is marked as that bypass's and taken
-  back the moment the bypass ends, however it ends: stopped, run out (the core checks the end itself, whatever the
-  app's alarm does), locked down, or replaced by another mode; each says "Ended with the bypass" in Activity. A timed
-  bypass also caps it at its planned end. An AI's own bypass takes back only that AI's.
+- **Nothing outlives it.** A standing permission an AI asks for during a bypass is marked as that bypass's (the
+  global one, or that AI's own). It counts only while that bypass is in force: every evaluation checks this in the
+  same database transaction, so it stops counting the moment the bypass ends (stopped, run out, locked down, or
+  replaced by another mode), whether or not it has been taken back yet. It is not stored at all if the bypass ended
+  before the approval finished; the request then waits for you. Taking it back is cleanup: done in the transaction
+  that ends the bypass, and again by a sweep whenever Autopilot is read; each says "Ended with the bypass" in Activity,
+  once. A timed bypass also caps it at its planned end. An AI's own bypass takes back only that AI's.
 - **It is visible.** An ongoing notification (Android) or Live Activity (iOS), the red mode pill and the Autopilot page
   show it while it runs, with Stop; one without an end shows how long it has run.
 

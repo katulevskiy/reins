@@ -374,7 +374,7 @@ impl Engine {
         }
         let mut global = self.store.ap_mode_row("")?;
         global.profile_id = first;
-        self.store.ap_set_mode_row("", &global, now)?;
+        self.ap_write_mode("", &global, now)?;
         self.store.ap_profiles()
     }
 
@@ -943,21 +943,30 @@ impl Engine {
         ))
     }
 
-    /// Takes back what a bypass granted, once it ended (stopped, run out, replaced by another mode, locked down): every
-    /// permission still active with its origin, of `scope` (`None`: of every bypass). Each says so in Activity.
-    fn ap_end_bypass_grants(&self, scope: Option<&str>) -> Result<(), CoreError> {
+    /// Writes a mode row; in the same transaction, what a bypass granted is taken back once that bypass is no longer
+    /// in force (see [`crate::autopilot::store`]), and each such permission gets its Activity entry.
+    fn ap_write_mode(&self, scope: &str, row: &modes::ModeRow, now: i64) -> Result<(), CoreError> {
+        let revoked = self.store.ap_set_mode_row(scope, row, now)?;
+        self.ap_note_ended(&revoked);
+        Ok(())
+    }
+
+    /// Takes back any permission whose bypass is no longer in force (idempotent; next to the bypasses' own expiry).
+    /// Taking back is only cleanup: such a permission already stopped counting when its bypass ended.
+    fn ap_sweep_bypass_grants(&self, now: i64) {
+        match self.store.ap_sweep_bypass_grants(now) {
+            Ok(revoked) => self.ap_note_ended(&revoked),
+            Err(e) => log::warn!("Autopilot could not take back what an ended bypass granted: {e}"),
+        }
+    }
+
+    /// "Ended with the bypass" in Activity, once for each permission just taken back. A failure is logged and the
+    /// rest are still written.
+    fn ap_note_ended(&self, revoked: &[crate::store::StoredGrant]) {
         let now = unix_now();
-        for stored in self.store.grants()? {
-            let matches = match scope {
-                Some(scope) => stored.origin == modes::bypass_origin(scope),
-                None => modes::is_bypass_origin(&stored.origin),
-            };
-            if !matches || !stored.grant.is_active(now) || !self.store.revoke_grant(&stored.grant.id)? {
-                continue;
-            }
-            let view = views::grant_view(&stored);
-            let summary = view.summary.clone();
-            self.store.append_audit(&AuditRecord {
+        for stored in revoked {
+            let view = views::grant_view(stored);
+            let record = AuditRecord {
                 seq: 0,
                 at: now,
                 connection_id: view.connection_id,
@@ -970,14 +979,16 @@ impl Engine {
                 account: view.account,
                 count: 1,
                 info: crate::store::AuditInfo {
-                    grant_summary: Some(summary),
+                    grant_summary: Some(view.summary),
                     note: Some("Ended with the bypass".to_owned()),
                     ..crate::store::AuditInfo::default()
                 },
                 op: String::new(),
-            })?;
+            };
+            if let Err(e) = self.store.append_audit(&record) {
+                log::warn!("Autopilot could not note a permission that ended with its bypass: {e}");
+            }
         }
-        Ok(())
     }
 
     async fn ap_execute(&self, subject: &Subject, verdict: Verdict) -> Result<(), CoreError> {
@@ -1002,18 +1013,23 @@ impl Engine {
         }
     }
 
-    fn ap_expire_bypasses(&self, now: i64) -> Result<(), CoreError> {
+    /// Ends the bypasses that ran out, then takes back what any ended bypass granted. One that cannot be written is
+    /// logged and the others still end (what it granted stopped counting at its end either way).
+    pub(crate) fn ap_expire_bypasses(&self, now: i64) -> Result<(), CoreError> {
         for (scope, mut row) in self.store.ap_mode_rows()? {
             if row.bypass_until.is_some_and(|t| t <= now) {
                 row.bypass_until = None;
                 row.bypass_since = None;
-                self.store.ap_set_mode_row(&scope, &row, now)?;
-                self.ap_end_bypass_grants(Some(&scope))?;
+                if let Err(e) = self.ap_write_mode(&scope, &row, now) {
+                    log::warn!("Autopilot could not end a bypass that ran out: {e}");
+                    continue;
+                }
                 self.notifier.autopilot_changed(AutopilotEvent::BypassEnded {
                     connection_id: (!scope.is_empty()).then_some(scope),
                 });
             }
         }
+        self.ap_sweep_bypass_grants(now);
         Ok(())
     }
 
@@ -1228,17 +1244,12 @@ impl Engine {
         let now = unix_now();
         let scope = connection_id.clone().unwrap_or_default();
         let mut row = self.store.ap_mode_row(&scope)?;
-        let was_bypassing = row.bypass_until.is_some();
         row.mode = mode;
         row.bypass_until = None;
         row.bypass_since = None;
-        self.store.ap_set_mode_row(&scope, &row, now)?;
-        // Whatever ended the bypass, what it granted ends with it. A global lockdown ends every AI's.
-        if connection_id.is_none() && mode == Some(AutopilotMode::Lockdown) {
-            self.ap_end_bypass_grants(None)?;
-        } else if was_bypassing {
-            self.ap_end_bypass_grants(Some(&scope))?;
-        }
+        // Whatever ended a bypass (stopped, another mode, a lockdown), what it granted is taken back in the same
+        // transaction.
+        self.ap_write_mode(&scope, &row, now)?;
         self.notifier.autopilot_changed(AutopilotEvent::ModeChanged {
             connection_id: connection_id.clone(),
         });
@@ -1272,7 +1283,7 @@ impl Engine {
         }
         row.bypass_until = Some(until);
         row.bypass_since = Some(now);
-        self.store.ap_set_mode_row(&scope, &row, now)?;
+        self.ap_write_mode(&scope, &row, now)?;
         self.notifier.autopilot_changed(AutopilotEvent::ModeChanged {
             connection_id,
         });
@@ -1538,7 +1549,7 @@ impl Engine {
         self.ap_stored_profile(id)?;
         let mut global = self.store.ap_mode_row("")?;
         global.profile_id = Some(id.to_owned());
-        self.store.ap_set_mode_row("", &global, unix_now())
+        self.ap_write_mode("", &global, unix_now())
     }
 
     /// The profile a connection's decisions train (`None` = the default profile).
@@ -1549,7 +1560,7 @@ impl Engine {
         }
         let mut row = self.store.ap_mode_row(connection_id)?;
         row.profile_id = profile_id;
-        self.store.ap_set_mode_row(connection_id, &row, unix_now())
+        self.ap_write_mode(connection_id, &row, unix_now())
     }
 
     /// Locks (`Some(true)`) or unlocks (`Some(false)`) a class by hand, or returns it to the numbers (`None`).

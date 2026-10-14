@@ -621,6 +621,13 @@ impl Env {
         all
     }
 
+    /// Time passes beyond the global bypass's end (nothing else is touched: the core notices by itself).
+    fn run_out_global_bypass(&self) {
+        let store = self.store();
+        let conn = store.lock().unwrap();
+        conn.execute("UPDATE autopilot_settings SET bypass_until = ?1 WHERE scope = ''", [unix_now() - 1]).unwrap();
+    }
+
     async fn ended_with_the_bypass(&self) -> usize {
         self.core.activity(50).await.unwrap().into_iter().filter(|e| e.detail == "Ended with the bypass").count()
     }
@@ -665,9 +672,7 @@ async fn a_timed_bypass_takes_back_its_grants_when_stopped_early_or_when_it_runs
     // Run out: ended by the core's own check (here when Autopilot is next read).
     env.core.start_bypass(None, Some(60)).await.unwrap();
     env.relay("r2", OTHER, grant()).await;
-    let mut global = env.store().ap_mode_row("").unwrap();
-    global.bypass_until = Some(unix_now() - 1);
-    env.store().ap_set_mode_row("", &global, unix_now()).unwrap();
+    env.run_out_global_bypass();
     env.core.autopilot_settings().await.unwrap();
     assert!(env.grant_states().iter().all(|(_, _, active)| !active), "{:?}", env.grant_states());
     assert_eq!(env.ended_with_the_bypass().await, 2);
@@ -697,6 +702,89 @@ async fn an_ais_own_bypass_takes_back_only_its_own_grants() {
     assert_eq!(env.grant_states(), [(OLD.to_owned(), origin, false), (OTHER.to_owned(), "bypass".to_owned(), true)]);
     env.mode(None, AutopilotMode::Manual).await;
     assert!(env.grant_states().iter().all(|(_, _, active)| !active));
+}
+
+/// Decided during a bypass, carried out after it was stopped: nothing standing is left, and the request goes back to
+/// the user.
+#[tokio::test]
+async fn a_grant_decided_in_a_bypass_but_stored_after_it_stopped_is_not_kept() {
+    let env = env(false).await;
+    env.relay("r1", OLD, grant()).await;
+    assert_eq!(env.waiting().await, ["r1"]);
+    env.core.start_bypass(Some(OTHER.to_owned()), None).await.unwrap();
+    // The decision was taken while the global bypass ran; it has been stopped since. Executing it now:
+    let decision = super::context::Decision::new("bypass", None).granting_as(Some(super::modes::bypass_origin("")));
+    let once = ApprovalChoice {
+        selected_message_ids: vec![],
+        standing: None,
+    };
+    let engine = env.core.engine();
+    let (result, _) = super::context::deciding(decision, engine.approve_claimed("r1", once)).await;
+    assert!(matches!(result, Err(CoreError::Invalid { .. })), "{result:?}");
+    assert!(env.store().grants().unwrap().is_empty(), "nothing stored");
+    assert_eq!(env.waiting().await, ["r1"], "it waits for the user");
+    // The store refuses it directly too; an AI's own bypass that runs keeps what it grants.
+    let g = crate::approval::grant_from_request(
+        &serde_json::from_value(grant()["grant"].clone()).unwrap(),
+        &reins_proto::ids::ConnectionId(OLD.to_owned()),
+        unix_now(),
+        None,
+    )
+    .unwrap();
+    assert!(env.store().insert_grant_from(&g, "Claude", "bypass").is_err());
+    assert!(env.store().insert_grant_from(&g, "Claude", &format!("bypass:{OTHER}")).is_ok());
+}
+
+/// Taking back is only cleanup: a permission a bypass gave stops counting when the bypass ends, even when taking it
+/// back failed; the next sweep takes it back, once.
+#[tokio::test]
+async fn a_bypass_grant_left_active_is_not_honoured_once_the_bypass_ended_and_the_sweep_takes_it_back() {
+    let env = env(false).await;
+    // The user's own permission, to someone else.
+    env.relay(
+        "u0",
+        OTHER,
+        json!({"tool": "request_grant", "grant": {"action": "send", "duration_secs": 3600,
+        "reason": "weekly report", "recipients": ["boss@y.com"]}}),
+    )
+    .await;
+    env.approve("u0").await;
+    env.core.start_bypass(None, None).await.unwrap();
+    env.relay("r1", OTHER, grant()).await;
+    env.relay("r2", OTHER, email("friend@x.com", "covered while the bypass runs")).await;
+    assert_eq!(env.sent().await, 1);
+    // The bypass ends, but taking back its permission never happened (as if it had failed).
+    env.run_out_global_bypass();
+    assert!(env.grant_states().iter().all(|(_, _, active)| *active), "still marked active");
+    let decision = env
+        .store()
+        .evaluate_send_and_reserve(
+            &reins_proto::ids::ConnectionId(OTHER.to_owned()),
+            Some(GMAIL),
+            &serde_json::from_value(json!({"to": ["friend@x.com"], "subject": "Hello", "body": "hi"})).unwrap(),
+            unix_now(),
+        )
+        .unwrap();
+    assert!(!matches!(decision, reins_policy::SendDecision::Allowed(_)), "not honoured: {decision:?}");
+    let users = env
+        .store()
+        .evaluate_send_and_reserve(
+            &reins_proto::ids::ConnectionId(OTHER.to_owned()),
+            Some(GMAIL),
+            &serde_json::from_value(json!({"to": ["boss@y.com"], "subject": "Hello", "body": "hi"})).unwrap(),
+            unix_now(),
+        )
+        .unwrap();
+    assert!(matches!(users, reins_policy::SendDecision::Allowed(_)), "the user's own still is: {users:?}");
+    // The sweep (any read of Autopilot) takes it back, with one Activity entry, however often it runs.
+    env.core.autopilot_settings().await.unwrap();
+    env.core.autopilot_settings().await.unwrap();
+    env.core.grants().await.unwrap();
+    assert_eq!(
+        env.grant_states(),
+        [(OTHER.to_owned(), "ai_request".to_owned(), true), (OTHER.to_owned(), "bypass".to_owned(), false)]
+    );
+    assert_eq!(env.ended_with_the_bypass().await, 1);
 }
 
 #[tokio::test]

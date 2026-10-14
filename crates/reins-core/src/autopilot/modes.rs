@@ -36,7 +36,17 @@ pub fn bypass_origin(scope: &str) -> String {
 
 /// A permission granted by any bypass.
 pub fn is_bypass_origin(origin: &str) -> bool {
-    origin == BYPASS_ORIGIN || origin.starts_with("bypass:")
+    bypass_scope(origin).is_some()
+}
+
+/// The bypass a permission's origin belongs to: "" for the global one, a connection id for an AI's own; `None` when a
+/// bypass did not grant it.
+pub fn bypass_scope(origin: &str) -> Option<&str> {
+    if origin == BYPASS_ORIGIN {
+        Some("")
+    } else {
+        origin.strip_prefix("bypass:").filter(|s| !s.is_empty())
+    }
 }
 
 /// When a bypass started `now` ends: after `minutes` (1 minute to a year), or never (`None`, until turned off).
