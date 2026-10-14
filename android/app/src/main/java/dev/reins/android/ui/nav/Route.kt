@@ -1,12 +1,10 @@
 package dev.reins.android.ui.nav
 
-/** The two root tabs. */
-enum class Tab { Activity, Grants }
+/** The root tabs, as on iOS. */
+enum class Tab { Activity, Grants, Autopilot, Settings }
 
 /** Screens pushed on top of the tabs. */
 sealed interface Route {
-    data object Settings : Route
-
     /** Settings > Sounds & haptics. */
     data object Sounds : Route
 
@@ -16,7 +14,7 @@ sealed interface Route {
     /** Settings > Account > Devices: the account's phones (sign out a lost one) and computers. */
     data object Devices : Route
 
-    /** Settings > Autopilot (also the header's mode pill). */
+    /** Autopilot pushed from Settings (the tab shows it at its root). */
     data object Autopilot : Route
 
     /** One Autopilot profile. */

@@ -29,7 +29,7 @@ import org.robolectric.annotation.GraphicsMode
 class SettingsDeleteAccountFlowTest : FlowHarness() {
     private fun openSheet() {
         launch()
-        tap("openSettings")
+        tap("tabSettings")
         tap("deleteAccount")
         awaitTag("deleteAccountSheet")
     }
@@ -59,7 +59,7 @@ class SettingsDeleteAccountFlowTest : FlowHarness() {
         rule.onNodeWithTag("confirmDeleteAccount").assertIsNotEnabled()
         type(" Me@Example.com ")
         rule.onNodeWithTag("confirmDeleteAccount").assertIsEnabled()
-        tap("confirmDeleteAccount")
+        hold("confirmDeleteAccount")
         awaitTag("welcome")
         assertEquals(listOf(" Me@Example.com "), core.deletedAccounts.toList())
         assertNull(core.session)
@@ -75,14 +75,14 @@ class SettingsDeleteAccountFlowTest : FlowHarness() {
         )
         openSheet()
         type("me@example.com")
-        tap("confirmDeleteAccount")
+        hold("confirmDeleteAccount")
         awaitTag("deleteAccountError")
         assertTrue(showsText("Delete the account from that phone", substring = true))
         assertNotNull(core.session)
         assertTrue(core.deletedAccounts.isEmpty())
         assertTrue(container.state.session.value is SessionState.SignedIn)
         core.deleteAccountError = null
-        tap("confirmDeleteAccount")
+        hold("confirmDeleteAccount")
         awaitTag("welcome")
         assertEquals(1, core.deletedAccounts.size)
     }

@@ -1,6 +1,8 @@
 package dev.reins.android
 
+import androidx.compose.ui.test.assertTextContains
 import androidx.compose.ui.test.hasText
+import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.performClick
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import dev.reins.android.feedback.Cue
@@ -151,7 +153,7 @@ class FeedbackFlowTest : FlowHarness() {
     @Test
     fun aRequestArrivingWhileTheAppIsInFrontChimesInsteadOfNotifying() {
         launch()
-        awaitTag("openSettings")
+        awaitTag("tabSettings")
         Foreground.focused = true
         heard.clear()
         container.notifier.itemPending(TestData.pending("req7"))
@@ -163,8 +165,8 @@ class FeedbackFlowTest : FlowHarness() {
     @Test
     fun theSoundsPageIsInSettingsAndItsMasterSilencesTheNotificationsToo() {
         launch()
-        tap("openSettings")
-        awaitText("Sounds and haptics on")
+        tap("tabSettings")
+        rule.onNodeWithTag("openSounds").assertTextContains("On", substring = true)
         tap("openSounds")
         awaitTag("soundsMaster")
         heard.clear()
@@ -181,7 +183,7 @@ class FeedbackFlowTest : FlowHarness() {
     @Test
     fun eachKindOfSoundHasItsSwitchAndTheVolumeIsRemembered() {
         launch()
-        tap("openSettings")
+        tap("tabSettings")
         tap("openSounds")
         tap("requestSounds")
         awaitCore { !container.feedbackStore.current.requestSounds }
@@ -196,7 +198,7 @@ class FeedbackFlowTest : FlowHarness() {
     @Test
     fun theServerAddressIsCopied() {
         launch()
-        tap("openSettings")
+        tap("tabSettings")
         heard.clear()
         tap("copyServer")
         assertTrue(heard.played(Event.Copied))
@@ -208,7 +210,8 @@ class FeedbackFlowTest : FlowHarness() {
     fun withNoAiConnectedSettingsOffersTheMcpAddressToCopy() {
         core.connections = emptyList()
         launch()
-        tap("openSettings")
+        tap("tabSettings")
+        tap("connect")
         heard.clear()
         awaitText("http://127.0.0.1:8000/mcp")
         tap("copyMcpUrl")

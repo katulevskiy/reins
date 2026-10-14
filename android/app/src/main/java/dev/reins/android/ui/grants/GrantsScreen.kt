@@ -57,7 +57,6 @@ import dev.reins.android.state.AppState
 import dev.reins.android.ui.common.EndedGrantRow
 import dev.reins.android.ui.common.GrantTile
 import dev.reins.android.ui.common.untrusted
-import dev.reins.android.ui.main.SettingsButton
 import dev.reins.core.GrantView
 import dev.reins.core.StandingGrant
 import kotlinx.coroutines.launch
@@ -79,7 +78,6 @@ fun GrantsScreen(
     onNew: () -> Unit,
     onResume: suspend (grantId: String, seconds: Long, standing: StandingGrant?) -> String?,
     onDelete: suspend (grantId: String) -> String? = { null },
-    onSettings: () -> Unit = {},
     /** The starting rule for new AIs, changed at the end of the list. */
     onStartingPolicy: (dev.reins.core.StartingPolicy) -> Unit = {},
 ) {
@@ -101,7 +99,6 @@ fun GrantsScreen(
             item(key = "title") {
                 LargeTitle("Grants") {
                     dev.reins.android.ui.main.HeaderPill("New grant", Glyph.Plus, "newGrant", onNew)
-                    SettingsButton(onSettings)
                 }
             }
             error?.let {

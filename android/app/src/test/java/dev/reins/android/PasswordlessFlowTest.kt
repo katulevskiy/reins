@@ -516,9 +516,8 @@ class PasswordlessFlowTest : FlowHarness() {
     fun anAccountWithAMasterPasswordHasNoRecoveryCodeRow() {
         core.session = dev.reins.core.SessionInfo("http://127.0.0.1:8000", "me@example.com")
         launch()
-        tap("openSettings")
-        tap("help:Account")
-        awaitText("To add another phone, sign in on it; this phone asks you to approve it.")
+        tap("tabSettings")
+        awaitTag("devicesRow")
         awaitCore { core.recoveryCodeReads.get() > 0 }
         assertFalse(has("recoveryCodeRow"))
     }
@@ -529,7 +528,7 @@ class PasswordlessFlowTest : FlowHarness() {
         core.recoveryCode = FakeCore.RECOVERY_CODE
         launch()
         recordRecovery()
-        tap("openSettings")
+        tap("tabSettings")
         authResult = AuthResult.Cancelled
         tap("recoveryCodeRow")
         awaitCore { prompts.get() == 1 }

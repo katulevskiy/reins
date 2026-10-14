@@ -4,6 +4,7 @@ import android.content.Intent
 import android.net.Uri
 import android.os.Build
 import androidx.compose.ui.test.assertIsEnabled
+import androidx.compose.ui.test.assertTextContains
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
@@ -241,7 +242,7 @@ class VaultPasskeyFlowTest : FlowHarness() {
         launch()
         if (core.vaultPasskeys.isEmpty()) tap("skipPasskey")
         recordRecovery()
-        tap("openSettings")
+        tap("tabSettings")
         awaitTag("vaultPasskeysRow")
     }
 
@@ -250,7 +251,7 @@ class VaultPasskeyFlowTest : FlowHarness() {
     @Test
     fun settingsListsRemovesAndAddsPasskeys() {
         openVaultPasskeys()
-        awaitText("1 passkey")
+        awaitRowValue("vaultPasskeysRow", "1")
         tap("vaultPasskeysRow")
         awaitTag("passkey:${tag(FakeCore.EXISTING_PASSKEY_ID)}")
         assertTrue(showsText("Pixel 8"))
@@ -268,7 +269,7 @@ class VaultPasskeyFlowTest : FlowHarness() {
 
         pressBack()
         awaitTag("vaultPasskeysRow")
-        awaitText("1 passkey")
+        awaitRowValue("vaultPasskeysRow", "1")
     }
 
     @Test
@@ -289,7 +290,7 @@ class VaultPasskeyFlowTest : FlowHarness() {
     fun anAccountWithAMasterPasswordHasNoPasskeyRow() {
         core.session = dev.reins.core.SessionInfo("http://127.0.0.1:8000", "me@example.com")
         launch()
-        tap("openSettings")
+        tap("tabSettings")
         awaitCore { core.recoveryCodeReads.get() > 0 }
         assertFalse(has("vaultPasskeysRow"))
     }
@@ -348,5 +349,12 @@ class VaultPasskeyFlowTest : FlowHarness() {
         tap("vaultPasskeysRow")
         awaitText("Galaxy S25")
         assertTrue(showsText("Added ", substring = true))
+    }
+
+    /** Waits until the row tagged [tag] shows [value] (its count, on the right). */
+    private fun awaitRowValue(tag: String, value: String) {
+        rule.waitUntil(5_000) {
+            runCatching { rule.onNodeWithTag(tag).assertTextContains(value, substring = true) }.isSuccess
+        }
     }
 }

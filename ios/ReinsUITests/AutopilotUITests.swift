@@ -72,7 +72,8 @@ final class AutopilotUITests: XCTestCase {
         waitFor("confirmBypass")
         shot("autopilot-bypass-sheet")
         tap("bypass:30")
-        tap("confirmBypass")
+        // Hold to confirm: held for two seconds.
+        waitFor("confirmBypass").press(forDuration: 2.6)
         waitFor("bypassClock")
         text("Stop bypass")
         shot("autopilot-bypass")

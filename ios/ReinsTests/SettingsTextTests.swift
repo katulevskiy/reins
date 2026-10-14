@@ -5,36 +5,38 @@ import XCTest
 final class SettingsTextTests: XCTestCase {
     func testTheSoundsRowSaysWhatIsOn() {
         var s = FeedbackSettings()
-        XCTAssertEqual(SettingsText.soundsSummary(s), "Sounds and haptics on")
+        XCTAssertEqual(SettingsText.soundsValue(s), "On")
         s.haptics = false
-        XCTAssertEqual(SettingsText.soundsSummary(s), "Sounds on, haptics off")
+        XCTAssertEqual(SettingsText.soundsValue(s), "Sounds only")
         s.haptics = true
         s.sounds = false
-        XCTAssertEqual(SettingsText.soundsSummary(s), "Haptics on, sounds off")
+        XCTAssertEqual(SettingsText.soundsValue(s), "Haptics only")
         s.haptics = false
-        XCTAssertEqual(SettingsText.soundsSummary(s), "Off")
+        XCTAssertEqual(SettingsText.soundsValue(s), "Off")
         var off = FeedbackSettings()
         off.master = false
-        XCTAssertEqual(SettingsText.soundsSummary(off), "Off")
+        XCTAssertEqual(SettingsText.soundsValue(off), "Off")
     }
 
     func testIntegrationsCountTheirAccounts() {
-        XCTAssertEqual(SettingsText.accountsLine(0), "Connect Gmail and more")
-        XCTAssertEqual(SettingsText.accountsLine(1), "1 account connected")
-        XCTAssertEqual(SettingsText.accountsLine(3), "3 accounts connected")
+        XCTAssertEqual(SettingsText.accountsValue(0), "None")
+        XCTAssertEqual(SettingsText.accountsValue(1), "1 account")
+        XCTAssertEqual(SettingsText.accountsValue(3), "3 accounts")
     }
 
-    func testTheAutopilotRowNamesTheModeAndTheModel() async throws {
-        XCTAssertEqual(SettingsText.autopilotSummary(nil), "Manual")
-        let core = DemoReinsCore(signedIn: true, modelInstalled: false, syncCap: 0.3)
-        var s = try await core.autopilotSettings()
-        s.mode = .manual
-        XCTAssertEqual(SettingsText.autopilotSummary(s), "Manual · no model yet")
-        s.model.state = .installed
-        s.mode = .auto
-        XCTAssertEqual(SettingsText.autopilotSummary(s), "Auto · model on this phone")
-        s.model.state = .downloading
-        XCTAssertEqual(SettingsText.autopilotSummary(s), "Auto · downloading the model")
+    func testTheModeShowsItsOwnSymbol() {
+        // Manual is a person with a check ("you approve"), in blue.
+        XCTAssertEqual(SettingsText.modeSymbol(.manual), "person.fill.checkmark")
+        XCTAssertEqual(SettingsText.modeValueSymbol(.manual), "person.fill.checkmark")
+        XCTAssertEqual(SettingsText.modeValueSymbol(.auto), "bolt")
+        XCTAssertEqual(SettingsText.modeValueSymbol(.bypass), "bolt.fill")
+        XCTAssertEqual(SettingsText.modeValueSymbol(.lockdown), "lock.fill")
+    }
+
+    func testThePasskeysRowShowsTheCount() {
+        XCTAssertEqual(SettingsText.passkeysValue(nil), "Not set up")
+        XCTAssertEqual(SettingsText.passkeysValue(0), "None")
+        XCTAssertEqual(SettingsText.passkeysValue(2), "2")
     }
 
     func testAModeChangeSoundsLikeWhereItGoes() {
@@ -56,24 +58,57 @@ final class SettingsTextTests: XCTestCase {
 
     func testAConnectionSaysWhereItRunsAndWhenItWasUsed() {
         let c = ConnectionView(id: "c1", label: "Claude", clientHost: "claude.ai", createdAt: 0, lastUsedAt: 9_700, icon: nil, keyFingerprint: nil)
-        XCTAssertEqual(SettingsText.connectionLine(c, now: 10_000), "claude.ai · used 5 min ago")
+        XCTAssertEqual(SettingsText.connectionLine(c, now: 10_000), "claude.ai · 5 min ago")
+        XCTAssertEqual(SettingsText.connectionHeadline(c, now: 10_000), "claude.ai · used 5 min ago")
         var never = c
         never.lastUsedAt = nil
-        XCTAssertEqual(SettingsText.connectionLine(never, now: 10_000), "claude.ai · never used")
-        // A computer shows the key it paired with instead of an address.
+        XCTAssertEqual(SettingsText.connectionLine(never, now: 10_000), "never used")
+        XCTAssertEqual(SettingsText.connectionHeadline(never, now: 10_000), "claude.ai · never used")
+        // A computer: its list line says what it is; its page shows the key it paired with.
         var computer = c
         computer.keyFingerprint = "4821 9930"
-        XCTAssertEqual(SettingsText.connectionLine(computer, now: 10_000), "Key 4821 9930 · used 5 min ago")
+        computer.lastUsedAt = 10_000
+        XCTAssertEqual(SettingsText.connectionLine(computer, now: 10_000), "computer · just now")
+        XCTAssertEqual(SettingsText.connectionHeadline(computer, now: 10_000), "Key 4821 9930 · used just now")
     }
 
-    func testTheApprovalFooterSaysHowRequestsArrive() {
-        XCTAssertTrue(SettingsText.approvalFooter(approvalDevice: false, appPush: true, serverPush: true).hasPrefix("Only one phone"))
-        XCTAssertTrue(SettingsText.approvalFooter(approvalDevice: true, appPush: false, serverPush: true).hasPrefix("Push notifications are not set up"))
-        XCTAssertEqual(
-            SettingsText.approvalFooter(approvalDevice: true, appPush: true, serverPush: false),
-            "This server sends no push notifications: requests arrive only while Reins is open."
-        )
-        XCTAssertTrue(SettingsText.approvalFooter(approvalDevice: true, appPush: true, serverPush: nil).hasPrefix("Requests reach this phone by push"))
+    func testTheNotificationChipFollowsTheApprovalPhoneAndPush() {
+        // Another phone approves, or notifications are off: no chip (the card says what to do instead).
+        XCTAssertEqual(SettingsText.pushChip(approvalDevice: false, notificationsOn: true, appPush: true, serverPush: true), .hidden)
+        XCTAssertEqual(SettingsText.pushChip(approvalDevice: true, notificationsOn: false, appPush: true, serverPush: true), .hidden)
+        // No push token yet, or a server that sends none: requests arrive only while Reins is open.
+        XCTAssertEqual(SettingsText.pushChip(approvalDevice: true, notificationsOn: true, appPush: false, serverPush: true), .onlyWhileOpen)
+        XCTAssertEqual(SettingsText.pushChip(approvalDevice: true, notificationsOn: true, appPush: true, serverPush: false), .onlyWhileOpen)
+        // A server that does not say is taken to send push.
+        XCTAssertEqual(SettingsText.pushChip(approvalDevice: true, notificationsOn: true, appPush: true, serverPush: nil), .on)
+        XCTAssertEqual(SettingsText.notificationsAttention(.off), "Notifications are off")
+        XCTAssertEqual(SettingsText.notificationsAttention(.notAsked), "Notifications are off")
+        XCTAssertEqual(SettingsText.notificationsAttention(.quiet), "Notifications are quiet")
+    }
+
+    func testTheCardAndTheConnectSheetShowAddressesWithoutTheScheme() {
+        XCTAssertEqual(SettingsText.host("https://app.reins2fa.com/"), "app.reins2fa.com")
+        XCTAssertEqual(SettingsText.host("https://app.reins2fa.com/mcp"), "app.reins2fa.com/mcp")
+        XCTAssertEqual(SettingsText.host("http://127.0.0.1:8000"), "127.0.0.1:8000")
+    }
+
+    func testTheFooterLinksTheLegalPages() {
+        let footer = SettingsText.footer(["CFBundleShortVersionString": "1.4"])
+        XCTAssertEqual(String(footer.characters), "Reins 1.4  ·  Terms  ·  Privacy")
+        let links = footer.runs.compactMap { $0.link }
+        XCTAssertEqual(links, [SettingsText.termsURL, SettingsText.privacyURL])
+    }
+
+    func testAnIconChoiceHasAName() {
+        XCTAssertEqual(SettingsText.iconName(nil), "Auto")
+        XCTAssertEqual(SettingsText.iconName(Providers.blob), "Blobatar")
+        XCTAssertEqual(SettingsText.iconName("grok"), "Grok")
+    }
+
+    func testAHoldTicksFasterAsItFills() {
+        XCTAssertEqual(HoldButton.tickGap(0), 0.26, accuracy: 0.0001)
+        XCTAssertEqual(HoldButton.tickGap(1), 0.07, accuracy: 0.0001)
+        XCTAssertLessThan(HoldButton.tickGap(0.5), HoldButton.tickGap(0.1))
     }
 
     func testTheVersionShowsItsBuild() {

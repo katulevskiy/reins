@@ -137,7 +137,7 @@ final class AutopilotTextTests: XCTestCase {
         XCTAssertEqual(AutopilotText.name(key: "nonsense"), "Manual")
         // "assisted", from an older version, is Manual now.
         XCTAssertEqual(AutopilotText.name(key: "assisted"), "Manual")
-        XCTAssertEqual(AutopilotText.symbol(key: "assisted"), "hand.raised.fill")
+        XCTAssertEqual(AutopilotText.symbol(key: "assisted"), "person.fill.checkmark")
         XCTAssertTrue(AutopilotText.needsModel(.auto))
         XCTAssertFalse(AutopilotText.needsModel(.manual), "Manual only goes without its hints")
         XCTAssertFalse(AutopilotText.needsModel(.bypass))

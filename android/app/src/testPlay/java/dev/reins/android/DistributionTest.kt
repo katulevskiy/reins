@@ -69,14 +69,11 @@ class DistributionTest : FlowHarness() {
     fun settingsShowTheVersionButNoUpdater() {
         assertNull(container.updates)
         launch()
-        tap("openSettings")
+        tap("tabSettings")
         awaitTag("appVersion")
-        tap("help:Version")
-        awaitText("Google Play keeps Reins up to date.")
         assertFalse(has("checkUpdates"))
         assertFalse(has("autoDownload"))
-        assertFalse(showsText("UPDATES"))
-        awaitText("VERSION")
+        assertFalse(showsText("Updates"))
     }
 
     @Test

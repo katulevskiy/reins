@@ -30,7 +30,7 @@ class DevicesFlowTest : FlowHarness() {
 
     private fun openDevices() {
         launch()
-        tap("openSettings")
+        tap("tabSettings")
         tap("devicesRow")
         awaitTag("thisDevice")
     }

@@ -95,10 +95,12 @@ class OnboardingFlowTest : FlowHarness() {
         tap("signIn")
     }
 
-    private fun openConnectComputer() {
+    /** Settings > Connect > Computer > "Scan QR code": the connect page opens and starts the scanner. */
+    private fun scanFromSettings() {
         launch()
-        tap("openSettings")
-        tap("connectComputer")
+        tap("tabSettings")
+        tap("connect")
+        tap("sheetScanQr")
         awaitTag("scanQr")
     }
 
@@ -299,7 +301,7 @@ class OnboardingFlowTest : FlowHarness() {
     fun theTourCanBeTakenAgainFromSettings() {
         launch()
         awaitTag("noActivity")
-        tap("openSettings")
+        tap("tabSettings")
         tap("takeTour")
         awaitTag("setupWelcome")
         tap("setupSkip")
@@ -314,7 +316,7 @@ class OnboardingFlowTest : FlowHarness() {
         awaitTag("setup")
         tap("setupSkip")
         awaitTag("noActivity")
-        tap("openSettings")
+        tap("tabSettings")
         tap("signOut")
         rule.onAllNodes(hasText("Sign out")).let { it[it.fetchSemanticsNodes().lastIndex] }.performClick()
         awaitTag("welcome")
@@ -351,8 +353,7 @@ class OnboardingFlowTest : FlowHarness() {
     @Test
     fun scanningAComputersCodeOpensThePairingSheet() {
         scan = ScanResult.Scanned("https://app.reins2fa.com/pair?code=bcdf-ghjk")
-        openConnectComputer()
-        tap("scanQr")
+        scanFromSettings()
         awaitTag("keyFingerprint")
         assertEquals(listOf("BCDF-GHJK"), core.pairingCodes.toList())
         rule.onNodeWithTag("keyFingerprint").assertTextContains("4821 9930", substring = true)
@@ -371,8 +372,7 @@ class OnboardingFlowTest : FlowHarness() {
     fun anExpiredCodeSaysToShowANewOne() {
         core.pairingByCodeError = CoreException.NotFound()
         scan = ScanResult.Scanned("BCDF-GHJK")
-        openConnectComputer()
-        tap("scanQr")
+        scanFromSettings()
         awaitText(expired)
         assertFalse(has("sheet"))
     }
@@ -380,8 +380,7 @@ class OnboardingFlowTest : FlowHarness() {
     @Test
     fun aQrCodeThatIsNotAPairingCodeIsRefused() {
         scan = ScanResult.Scanned("https://evil.example.com/login?code=BCDF-GHJK")
-        openConnectComputer()
-        tap("scanQr")
+        scanFromSettings()
         awaitText("Not a Reins code. Scan the one your computer shows.")
         assertTrue(core.pairingCodes.isEmpty())
         assertFalse(has("sheet"))
@@ -390,8 +389,7 @@ class OnboardingFlowTest : FlowHarness() {
     @Test
     fun withoutTheScannerTheCodeCanBeTyped() {
         scan = ScanResult.Unavailable("module not installed")
-        openConnectComputer()
-        tap("scanQr")
+        scanFromSettings()
         awaitTag("pairCode")
         awaitText("No scanner here. Type the code instead.")
         rule.onNodeWithTag("submitCode").assertIsNotEnabled()
@@ -403,10 +401,19 @@ class OnboardingFlowTest : FlowHarness() {
     }
 
     @Test
+    fun typeCodeInTheConnectSheetOpensTheCodeField() {
+        launch()
+        tap("tabSettings")
+        tap("connect")
+        tap("sheetTypeCode")
+        awaitTag("pairCode")
+        assertEquals(0, scans.get())
+    }
+
+    @Test
     fun aComputerThatPairedIsConfirmedOnThePage() {
         scan = ScanResult.Unavailable("module not installed")
-        openConnectComputer()
-        tap("scanQr")
+        scanFromSettings()
         rule.onNodeWithTag("pairCode").performTextReplacement("bcdf ghjk")
         tap("submitCode")
         awaitTag("keyFingerprint")
@@ -425,8 +432,7 @@ class OnboardingFlowTest : FlowHarness() {
 
     @Test
     fun aCancelledScanDoesNothing() {
-        openConnectComputer()
-        tap("scanQr")
+        scanFromSettings()
         awaitCore { scans.get() == 1 }
         assertFalse(has("connectError"))
         assertFalse(has("pairCode"))

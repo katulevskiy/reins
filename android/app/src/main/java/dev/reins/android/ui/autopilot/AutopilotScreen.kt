@@ -82,7 +82,8 @@ import kotlin.math.roundToInt
 @Composable
 fun AutopilotScreen(
     viewModel: AutopilotViewModel,
-    onBack: () -> Unit,
+    /** Null at the root of the Autopilot tab. */
+    onBack: (() -> Unit)?,
     onProfile: (String) -> Unit,
     onTryIt: () -> Unit,
 ) {
@@ -160,7 +161,8 @@ fun AutopilotScreen(
                 onClick = onTryIt,
             )
         }
-        Spacer(Modifier.height(32.dp))
+        // At the root of its tab, the content clears the floating tab bar.
+        Spacer(Modifier.height(if (onBack == null) 120.dp else 32.dp))
     }
 
     if (bypassAsk) {
@@ -237,7 +239,7 @@ private fun ModeHero(s: AutopilotSettings, modelReady: Boolean, onStopBypass: ()
                 if (shown == AutopilotMode.BYPASS && s.bypassUntil != null) {
                     BypassClock(s.bypassUntil!!)
                 } else {
-                    IconTile(modeGlyph(shown), modeTint(shown, c), size = 64.dp, filled = true)
+                    IconTile(modeIcon(shown), modeTint(shown, c), size = 64.dp, filled = true)
                 }
                 RText(AutopilotText.name(shown), RType.sans(28f, FontWeight.SemiBold), c.text, Modifier.padding(top = 14.dp).testTag("heroMode"))
                 RText(heroLine(shown, modelReady), RType.sans(14.5f, lineHeight = 20f), c.secondary, Modifier.padding(top = 4.dp), align = TextAlign.Center)
@@ -463,15 +465,16 @@ fun BypassDialog(who: String?, onConfirm: (UInt) -> Unit, onDismiss: () -> Unit)
                 }
             }
             Spacer(Modifier.height(22.dp))
-            Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+            Row(horizontalArrangement = Arrangement.spacedBy(10.dp), verticalAlignment = Alignment.CenterVertically) {
                 CapsuleButton("Cancel", Modifier.weight(1f), style = ButtonStyle.Secondary, onClick = onDismiss)
-                CapsuleButton(
-                    "Turn on",
-                    Modifier.weight(1f).testTag("confirmBypass"),
-                    style = ButtonStyle.Destructive,
-                    glyph = Glyph.Bolt,
+                dev.reins.android.design.HoldButton(
+                    "Hold to bypass",
+                    c.danger,
+                    Modifier.weight(1.35f).testTag("confirmBypass"),
+                    height = 50.dp,
                 ) { onConfirm(minutes) }
             }
+            RText("Hold for 2 seconds", RType.sans(12f), c.tertiary, Modifier.fillMaxWidth().padding(top = 8.dp), align = androidx.compose.ui.text.style.TextAlign.Center)
         }
     }
 }
