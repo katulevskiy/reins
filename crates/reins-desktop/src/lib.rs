@@ -40,6 +40,7 @@ pub mod ssh_agent;
 pub mod stats;
 pub mod update;
 pub mod vault_cli;
+pub mod vault_writer;
 pub mod win;
 pub mod work_session;
 
