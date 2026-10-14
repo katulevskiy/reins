@@ -66,7 +66,8 @@ async fn a_question_is_shown_and_yes_is_sealed_to_the_app_with_its_nonce() {
     assert_eq!(asked.topic.as_deref(), Some("command:git push --force"));
     assert_eq!(view.preview, ["Force push to main?", "About: command:git push --force"]);
     let resources: Vec<_> = view.resources.iter().map(|r| (r.id.as_str(), r.label.as_str())).collect();
-    assert_eq!(resources, [("command:git push --force", "Questions about command:git push --force")]);
+    assert_eq!(resources.len(), 1);
+    assert!(resources[0].0.starts_with("ask:") && resources[0].1 == "Exactly this question", "{resources:?}");
     assert!(view.git.is_none() && view.secrets.is_none() && view.ssh.is_none());
 
     desk.core.approve("r1".to_owned(), choice(&[], None)).await.unwrap();
@@ -98,27 +99,30 @@ async fn no_is_the_ordinary_denial() {
 }
 
 #[tokio::test]
-async fn a_standing_answer_covers_its_topic_only() {
+async fn a_standing_answer_covers_exactly_that_question_never_its_topic() {
     let desk = desk().await;
     desk.pair().await;
     desk.send(&[ask(&desk, "r1", "Run the tests?", Some("command:cargo test"))]).await;
-    desk.core.approve("r1".to_owned(), choice(&[], standing(&["command:cargo test"], &[]))).await.unwrap();
+    let exact = desk.core.approval_view("r1".to_owned()).await.unwrap().resources[0].id.clone();
+    assert!(exact.starts_with("ask:"), "{exact}");
+    assert!(
+        matches!(
+            desk.core.approve("r1".to_owned(), choice(&[], standing(&["command:cargo test"], &[]))).await,
+            Err(CoreError::Invalid { .. })
+        ),
+        "the topic, the computer's word, is never what is remembered"
+    );
+    desk.core.approve("r1".to_owned(), choice(&[], standing(&[&exact], &[]))).await.unwrap();
 
     desk.send(&[
-        ask(&desk, "r2", "Run the tests again?", Some("command:cargo test")),
-        ask(&desk, "r3", "Publish?", Some("command:cargo publish")),
+        ask(&desk, "r2", "Run the tests?", Some("command:cargo test")),
+        ask(&desk, "r3", "Run the tests again?", Some("command:cargo test")),
         ask(&desk, "r4", "Anything?", None),
     ])
     .await;
-    assert_eq!(desk.waiting().await, ["r3", "r4"]);
+    assert_eq!(desk.waiting().await, ["r3", "r4"], "the same question only, whatever the topic says");
     let answer: AskAnswer = desk.open(&desk.data("r2").await["sealed"]);
     assert_eq!((answer.nonce.as_str(), answer.approved), ("nonce-r2", true));
-    let plain = desk.core.approval_view("r4".to_owned()).await.unwrap();
-    assert_eq!(plain.resources[0].id, "ask", "a question without a topic is its own thing");
-    assert!(matches!(
-        desk.core.approve("r3".to_owned(), choice(&[], standing(&["command:cargo test"], &[]))).await,
-        Err(CoreError::Invalid { .. })
-    ));
 }
 
 #[tokio::test]
@@ -134,26 +138,28 @@ async fn questions_and_topics_are_checked() {
 }
 
 #[tokio::test]
-async fn a_hook_question_says_what_yes_means_and_repeats_count_per_topic() {
+async fn a_hook_question_says_what_yes_means_and_repeats_count_per_question() {
     let desk = desk().await;
     desk.pair().await;
     desk.send(&[ask(&desk, "r1", "Run the tests?", Some("command:cargo test"))]).await;
     let view = desk.core.approval_view("r1".to_owned()).await.unwrap();
     assert_eq!(view.headline, "The desktop app gets a yes to: Run the tests?");
     let quick = view.quick.unwrap();
-    assert_eq!(quick.allow_what, "questions about command:cargo test");
-    desk.core.approve_quick("r1".to_owned()).await.unwrap();
+    assert_eq!(quick.allow_what, "exactly this question");
+    desk.core.approve("r1".to_owned(), choice(&[], None)).await.unwrap();
     let answer: AskAnswer = desk.open(&desk.data("r1").await["sealed"]);
     assert!(answer.approved);
 
     desk.send(&[
-        ask(&desk, "r2", "Run the tests again?", Some("command:cargo test")),
-        ask(&desk, "r3", "Publish?", Some("command:cargo publish")),
+        ask(&desk, "r2", "Run the tests?", Some("command:cargo test")),
+        ask(&desk, "r3", "Run the tests again?", Some("command:cargo test")),
+        ask(&desk, "r4", "Publish?", Some("command:cargo publish")),
     ])
     .await;
     assert_eq!(desk.core.approval_view("r2".to_owned()).await.unwrap().quick.unwrap().repeats, 1);
+    assert_eq!(desk.core.approval_view("r3".to_owned()).await.unwrap().quick.unwrap().repeats, 0);
     // Publishing cannot be undone: asked every time, never in one tap.
-    assert!(desk.core.approval_view("r3".to_owned()).await.unwrap().quick.is_none());
+    assert!(desk.core.approval_view("r4".to_owned()).await.unwrap().quick.is_none());
 }
 
 #[tokio::test]
@@ -420,8 +426,9 @@ async fn an_entry_a_standing_answer_covered_keeps_its_approval() {
     let desk = desk().await;
     desk.pair().await;
     desk.send(&[ask(&desk, "r1", "Run the tests?", Some("command:cargo test"))]).await;
-    desk.core.approve("r1".to_owned(), choice(&[], standing(&["command:cargo test"], &[]))).await.unwrap();
-    desk.send(&[ask(&desk, "r2", "Run the tests again?", Some("command:cargo test"))]).await;
+    let exact = desk.core.approval_view("r1".to_owned()).await.unwrap().resources[0].id.clone();
+    desk.core.approve("r1".to_owned(), choice(&[], standing(&[&exact], &[]))).await.unwrap();
+    desk.send(&[ask(&desk, "r2", "Run the tests?", Some("command:cargo test"))]).await;
     assert!(desk.waiting().await.is_empty());
     let entries: Vec<_> = desk.core.activity(10).await.unwrap().into_iter().filter(|e| e.op == "ask").collect();
     assert_eq!(entries.len(), 2);

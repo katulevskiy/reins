@@ -16,8 +16,6 @@ use crate::{CoreError, text};
 
 /// The account every desktop call is made as.
 pub const DESKTOP_ACCOUNT: &str = "desktop app";
-/// The resource of a question without a topic.
-const ASK: &str = "ask";
 const MAX_QUESTION: usize = 300;
 const MAX_DETAIL: usize = 8_000;
 const MAX_TOPIC: usize = 100;
@@ -203,23 +201,20 @@ pub struct AskReading {
     /// The one group everything the command (or the file list) does falls in: Autopilot learns the question in that
     /// group's own kind. `None`: the generic kind.
     pub kind: Option<&'static str>,
-    /// What a remembered answer covers: exactly this file, or exactly this command in this folder (`None`: the
-    /// question's topic, for a question that is not about a file).
-    pub exact: Option<(String, String)>,
 }
 
 /// What the question carries, by the layout the hook writes (`Command:` or `Files:`, then `In:`). Used only to
 /// narrow (a kind for Autopilot, what a remembered answer covers), never to decide what is asked.
 enum Carried<'a> {
-    Command(&'a str, &'a str),
+    Command(&'a str),
     Files(Vec<&'a str>),
     Other,
 }
 
 fn carried(rest: &str) -> Carried<'_> {
-    let (body, cwd) = rest.rsplit_once("\n\nIn: ").unwrap_or((rest, ""));
+    let body = rest.rsplit_once("\n\nIn: ").map_or(rest, |(body, _)| body);
     if let Some(command) = body.strip_prefix("Command:\n") {
-        Carried::Command(command, cwd)
+        Carried::Command(command)
     } else if let Some(files) = body.strip_prefix("Files:\n") {
         Carried::Files(files.lines().map(str::trim).filter(|l| !l.is_empty()).collect())
     } else {
@@ -301,43 +296,97 @@ pub fn read_ask(topic: Option<&str>, question: &str, detail: &str) -> AskReading
         (None, None) => None,
     };
     let kind = match carried(rest) {
-        Carried::Command(command, _) => reins_policy::guard::sole_group(command),
+        Carried::Command(command) => reins_policy::guard::sole_group(command),
         Carried::Files(files) => reins_policy::guard::sole_file_group(&files),
         Carried::Other => None,
     }
     .filter(|_| certain)
     .map(|g| g.id);
-    let about_files = topic.is_some_and(|t| t.trim_start().starts_with("file:"))
-        || reading.found.as_ref().is_some_and(|c| !c.group.files.is_empty());
-    let exact = about_files.then(|| exact_resource(rest));
     AskReading {
         rule,
         destructive,
         every_time,
         certain,
         kind,
-        exact,
     }
 }
 
-/// What a remembered answer to a file question covers: exactly that file (`file:/home/me/app/.env`), else exactly
-/// that command in that folder (`run:<digest>`), on this computer for this AI (a permission is per connection).
-fn exact_resource(rest: &str) -> (String, String) {
+/// A folder or a path read lexically: `\` as `/`, `.` and empty parts dropped, `..` resolved; a root (`/`, `~`,
+/// `C:`) kept.
+fn normalize_path(path: &str) -> String {
+    let path = path.trim().replace('\\', "/");
+    let rooted = path.starts_with('/');
+    let mut parts: Vec<&str> = Vec::new();
+    for part in path.split('/') {
+        match part {
+            "" | "." => {}
+            ".." => {
+                if parts.last().is_some_and(|p| *p != "~" && !p.ends_with(':')) {
+                    parts.pop();
+                }
+            }
+            p => parts.push(p),
+        }
+    }
+    format!(
+        "{}{}",
+        if rooted {
+            "/"
+        } else {
+            ""
+        },
+        parts.join("/")
+    )
+}
+
+/// Whether a path names its file wherever it is asked from (`/x`, `~/x`, `C:\x`, `\\server\x`).
+fn absolute(path: &str) -> bool {
+    let p = path.trim();
+    p.starts_with('/') || p.starts_with('~') || p.starts_with("\\\\") || p.as_bytes().get(1) == Some(&b':')
+}
+
+/// What a remembered answer to a desktop question covers, exactly, and how the phone shows it: that file
+/// (`file:<digest>` of its full normalized path), that command in that folder (`run:<digest>`), else that question
+/// (`ask:<digest>`). Every key is bound to the desktop app's key (the computer), besides the AI connection a permission
+/// is made for, so an answer from one computer never covers another. The topic, the computer's word, is never a key.
+pub fn exact_resource(client_key: &str, question: &str, detail: &str) -> (String, String) {
+    let rest = reported_rule(detail).map_or(detail, |(_, rest)| rest);
+    let digest = |kind: &str, what: &str| {
+        let d = ring::digest::digest(&ring::digest::SHA256, format!("{client_key}\n{kind}\n{what}").as_bytes());
+        format!("{kind}:{}", data_encoding::HEXLOWER.encode(&d.as_ref()[..16]))
+    };
+    let (body, cwd) = rest.rsplit_once("\n\nIn: ").map_or((rest, ""), |(b, c)| (b, c.trim()));
+    let resolved = |path: &str| -> Option<String> {
+        if absolute(path) {
+            Some(normalize_path(path))
+        } else if !cwd.is_empty() {
+            Some(normalize_path(&format!("{cwd}/{path}")))
+        } else {
+            None
+        }
+    };
     match carried(rest) {
-        Carried::Files(files) if files.len() == 1 => {
-            let file = text::truncate_chars(&text::one_line(files[0]), MAX_TOPIC);
-            (format!("file:{file}"), format!("Reading or changing {file}"))
+        Carried::Files(files) if !files.is_empty() => {
+            let full: Option<Vec<String>> = files.iter().map(|f| resolved(f)).collect();
+            match full {
+                Some(mut full) => {
+                    full.sort();
+                    full.dedup();
+                    let shown = match full.as_slice() {
+                        [one] => format!("Reading or changing {}", text::truncate_chars(&text::one_line(one), 80)),
+                        many => format!("Reading or changing these {} files", many.len()),
+                    };
+                    (digest("file", &full.join("\n")), shown)
+                }
+                None => (digest("file", body), "Reading or changing exactly these files".to_owned()),
+            }
         }
-        carried => {
-            let (what, cwd) = match carried {
-                Carried::Command(command, cwd) => (command, cwd),
-                _ => (rest, ""),
-            };
-            let digest = ring::digest::digest(&ring::digest::SHA256, format!("{cwd}\n{what}").as_bytes());
-            let short = data_encoding::HEXLOWER.encode(&digest.as_ref()[..8]);
-            let shown = text::truncate_chars(&text::one_line(what), 60);
-            (format!("run:{short}"), format!("Exactly this: {shown}"))
+        Carried::Command(command) => {
+            let shown = text::truncate_chars(&text::one_line(command), 60);
+            let folder = normalize_path(cwd);
+            (digest("run", &format!("{folder}\n{command}")), format!("Exactly this: {shown}"))
         }
+        _ => (digest("ask", &format!("{question}\n{rest}")), "Exactly this question".to_owned()),
     }
 }
 
@@ -520,19 +569,16 @@ impl Connector for Desktop {
         // The scan question is worded by the phone (`ask_view`), never by the computer.
         let question = owned(topic.as_deref()).map_or(question, |(o, _)| o.plain.to_owned());
         // The one reading every path uses: what is asked every time is never answered from a notification, with
-        // "Approve all" or by a standing answer, and never by Autopilot in Manual or Auto; a remembered answer to a
-        // file question covers exactly that file or that command.
+        // "Approve all" or by a standing answer, and never by Autopilot in Manual or Auto; a remembered answer covers
+        // exactly that file, that command in that folder or that question, on this computer.
         let reading = read_ask(topic.as_deref(), &question, call.str_arg("detail").unwrap_or_default());
         let once_only = reading.every_time;
+        let key = call.str_arg("client_key").unwrap_or_default();
+        let (resource, resource_label) = exact_resource(key, &question, call.str_arg("detail").unwrap_or_default());
         let mut lines = vec![question];
         if let Some(t) = &topic {
             lines.push(format!("About: {t}"));
         }
-        let (resource, resource_label) = match (reading.exact, topic) {
-            (Some(exact), _) => exact,
-            (None, Some(t)) => (t.clone(), format!("Questions about {t}")),
-            (None, None) => (ASK.to_owned(), "Questions without a topic".to_owned()),
-        };
         Ok(Preview {
             resource,
             resource_label,
@@ -571,8 +617,11 @@ mod tests {
 
     #[test]
     fn the_view_shows_the_question_detail_and_topic_cleaned() {
-        let v = ask_view(&call(&json!({"question": "Push\u{202e} to main?", "detail": "git push\n--force",
-            "topic": "command:git push --force"})), "x")
+        let v = ask_view(
+            &call(&json!({"question": "Push\u{202e} to main?", "detail": "git push\n--force",
+            "topic": "command:git push --force"})),
+            "Dana's MacBook",
+        )
         .unwrap();
         assert_eq!(v.question, "Push to main?");
         assert_eq!(v.detail.as_deref(), Some("git push\n--force"));
@@ -594,8 +643,11 @@ mod tests {
 
     #[test]
     fn the_phone_reads_the_rule_from_the_question_itself() {
-        let v = ask_view(&call(&json!({"question": "Claude Code wants to read app/.env", "detail": ENV_READ,
-            "topic": "file:.env"})), "x")
+        let v = ask_view(
+            &call(&json!({"question": "Claude Code wants to read app/.env", "detail": ENV_READ,
+            "topic": "file:.env"})),
+            "Laptop",
+        )
         .unwrap();
         let rule = v.rule.unwrap();
         assert_eq!(
@@ -672,15 +724,50 @@ mod tests {
         let keys = "Rule: Keys and certificates · id_rsa\nMatched: id_rsa\nGroup: keys\n\nCommand:\ncat ~/.ssh/id_rsa";
         let r = read_ask(Some("file:id_rsa"), "Run it?", keys);
         assert!(r.every_time && !r.destructive);
-        // A remembered answer covers exactly that file or that command in that folder.
-        let one = read_ask(Some("file:.env"), "Read it?", "Files:\n/home/me/app/.env\n\nIn: /home/me/app").exact;
-        assert_eq!(one.map(|(r, _)| r).as_deref(), Some("file:/home/me/app/.env"));
-        let here = read_ask(Some("file:.env"), "Run it?", &format!("{env}cat .env\n\nIn: /home/me/a")).exact.unwrap();
-        let there = read_ask(Some("file:.env"), "Run it?", &format!("{env}cat .env\n\nIn: /home/me/b")).exact.unwrap();
-        assert!(here.0.starts_with("run:") && here.0 != there.0, "another folder, another answer");
-        assert_eq!(here.1, "Exactly this: cat .env");
-        // A question about no file keeps its topic.
-        assert_eq!(read_ask(Some("command:make deploy"), "Run it?", "Command:\nmake deploy").exact, None);
+    }
+
+    /// What a remembered answer covers is exactly what was asked, on that computer; the computer's topic is no key.
+    #[test]
+    fn a_remembered_answer_covers_exactly_what_was_asked_on_that_computer() {
+        let key = |k: &str, detail: &str| exact_resource(k, "Run it?", detail).0;
+        let env = "Rule: .env files · .env\nMatched: .env\nGroup: env-files\n\n";
+        // A command: that command, in that folder.
+        let here = key("A", &format!("{env}Command:\ncat .env\n\nIn: /home/me/a"));
+        assert!(here.starts_with("run:"), "{here}");
+        assert_ne!(here, key("A", &format!("{env}Command:\ncat .env\n\nIn: /home/me/b")), "another folder");
+        assert_ne!(here, key("A", &format!("{env}Command:\ncat .env | sh\n\nIn: /home/me/a")), "another command");
+        assert_eq!(here, key("A", &format!("{env}Command:\ncat .env\n\nIn: /home/me/./x/../a/")), "the same folder");
+        assert_ne!(here, key("B", &format!("{env}Command:\ncat .env\n\nIn: /home/me/a")), "another computer");
+        // A command whatever its topic: the topic is the computer's word.
+        let deploy = |topic: &str| {
+            let call = ConnectorCall {
+                service: DESKTOP.to_owned(),
+                op: "ask".to_owned(),
+                args: json!({"question": "Run it?", "detail": "Command:\nmake deploy\n\nIn: /w", "topic": topic,
+                    "client_key": "A", "nonce": "n"})
+                .as_object()
+                .unwrap()
+                .clone(),
+            };
+            exact_resource("A", "Run it?", call.str_arg("detail").unwrap()).0
+        };
+        assert_eq!(deploy("command:make deploy"), deploy("command:anything"));
+        assert!(deploy("command:make deploy").starts_with("run:"));
+        // A file: its full, normalized path; a relative one resolved in its folder; long paths never folded together.
+        let file = |detail: &str| exact_resource("A", "Read it?", detail);
+        let (abs, shown) = file("Files:\n/home/me/app/.env\n\nIn: /home/me/app");
+        assert!(abs.starts_with("file:") && shown == "Reading or changing /home/me/app/.env", "{abs} {shown}");
+        assert_eq!(abs, file("Files:\napp/.env\n\nIn: /home/me").0, "relative, resolved");
+        assert_eq!(abs, file("Files:\n.//sub/../.env\n\nIn: /home/me/app/").0, "normalized");
+        assert_ne!(file("Files:\napp/.env\n\nIn: /home/me").0, file("Files:\napp/.env\n\nIn: /srv").0);
+        let long = |end: &str| file(&format!("Files:\n/{}/{end}/.env\n\nIn: /", "x".repeat(200))).0;
+        assert_ne!(long("a"), long("b"), "same long prefix, other files");
+        // A relative path without a folder: what was carried, never the bare path.
+        assert_ne!(file("Files:\napp/.env").0, file("Files:\napp/.env\n\nIn: /home/me").0);
+        // A question in words: that question.
+        let ask = |q: &str| exact_resource("A", q, "").0;
+        assert!(ask("Deploy now?").starts_with("ask:"));
+        assert_ne!(ask("Deploy now?"), ask("Deploy later?"));
     }
 
     /// Questions crafted on the computer to look milder than what they carry.
@@ -716,8 +803,11 @@ mod tests {
         {
             let r = read(detail);
             assert!(!r.certain, "{detail}");
-            let shown = ask_view(&call(&json!({"question": "Read it?", "detail": format!("{env}{detail}"), "topic": "file:.env",
-                "client_key": "k", "nonce": "n"})), "x")
+            let shown = ask_view(
+                &call(&json!({"question": "Read it?", "detail": format!("{env}{detail}"), "topic": "file:.env",
+                "client_key": "k", "nonce": "n"})),
+                "Laptop",
+            )
             .unwrap();
             assert!(shown.uncertain, "Autopilot leaves it to the user: {detail}");
         }
@@ -769,7 +859,6 @@ mod tests {
         assert_eq!(undo.question, "Put secrets back into files on Mac?");
         assert!(undo.detail.unwrap().contains("An AI agent may have started this."));
     }
-
 
     #[test]
     fn topics_are_one_line() {

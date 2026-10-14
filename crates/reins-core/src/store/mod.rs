@@ -82,7 +82,7 @@ CREATE TABLE IF NOT EXISTS audit_snapshots (seq INTEGER PRIMARY KEY, data BLOB N
 ";
 
 /// Columns added after the first release, applied once each (`PRAGMA user_version`).
-const MIGRATIONS: [&str; 8] = [
+const MIGRATIONS: [&str; 9] = [
     "
 ALTER TABLE audit ADD COLUMN connection_id TEXT NOT NULL DEFAULT '';
 ALTER TABLE audit ADD COLUMN service TEXT NOT NULL DEFAULT 'gmail';
@@ -209,6 +209,13 @@ INSERT INTO pending_kinds (id, kind, created_at, parked_at, payload)
     SELECT id, kind, created_at, parked_at, payload FROM pending;
 DROP TABLE pending;
 ALTER TABLE pending_kinds RENAME TO pending;
+",
+    // Standing answers to the desktop app's questions were keyed by the topic the computer chose (`file:.env`,
+    // `command:make deploy`), which covered every later question with that topic. They are now keyed by exactly the
+    // file, command or question, on that computer; the old, broader ones are dropped rather than honoured.
+    "
+DELETE FROM grants WHERE json_extract(grant_json, '$.scope.action') = 'service'
+    AND json_extract(grant_json, '$.scope.service') = 'desktop';
 ",
 ];
 
@@ -698,7 +705,7 @@ pub(crate) mod tests {
         assert_eq!((old[0].at, old[0].connection_label.as_str(), old[0].service.as_str()), (7, "Old", "gmail"));
         assert_eq!(old[0].detail, DETAIL_UNAVAILABLE, "rows from before the details existed have none");
         let version: i64 = store.lock().unwrap().query_row("PRAGMA user_version", [], |r| r.get(0)).unwrap();
-        assert_eq!(version, 9);
+        assert_eq!(version, 10);
         assert_eq!(store.desktop_key("c1").unwrap(), None, "the desktop keys table exists");
         assert!(store.ap_profiles().unwrap().is_empty(), "the Autopilot tables exist");
         assert_eq!(store.ap_mode_row("").unwrap(), crate::autopilot::modes::ModeRow::default());
@@ -719,6 +726,38 @@ pub(crate) mod tests {
         assert_eq!(again.activity(5).unwrap().len(), 1);
         again.meta_set("k", "v").unwrap();
         assert_eq!(again.meta_get("k").unwrap().as_deref(), Some("v"));
+    }
+
+    /// A standing answer to the desktop app's questions keyed by the computer's topic (`file:.env`) covered every later
+    /// question with that topic: it is dropped, not honoured. Other permissions stay.
+    #[test]
+    fn topic_keyed_desktop_answers_are_dropped() {
+        let dir = tempfile::tempdir().unwrap();
+        let desktop = |id: &str, resource: &str| {
+            serde_json::json!({"id": id, "connection_id": "c1", "created_at": 10, "expires_at": null,
+                "max_uses": null, "uses": 0, "revoked": false, "account": "desktop app",
+                "scope": {"action": "service", "service": "desktop", "access": "write", "resources": [resource]}})
+            .to_string()
+        };
+        {
+            let store = open(dir.path());
+            let conn = store.lock().unwrap();
+            for (id, json) in [
+                ("d1", desktop("d1", "file:.env")),
+                ("d2", desktop("d2", "command:make deploy")),
+                ("g1", serde_json::to_string(&grants::tests::read_grant("g1", "c1", None)).unwrap()),
+            ] {
+                conn.execute(
+                    "INSERT INTO grants (id, connection_id, connection_label, created_at, grant_json) VALUES (?1, 'c1', 'Laptop', 10, ?2)",
+                    params![id, json],
+                )
+                .unwrap();
+            }
+            conn.execute_batch("PRAGMA user_version = 9;").unwrap();
+        }
+        let store = open(dir.path());
+        let left: Vec<String> = store.grants().unwrap().into_iter().map(|g| g.grant.id.0).collect();
+        assert_eq!(left, ["g1"]);
     }
 
     #[test]
