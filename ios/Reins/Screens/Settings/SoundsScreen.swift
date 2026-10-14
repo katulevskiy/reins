@@ -243,7 +243,7 @@ private struct Sample: Identifiable {
         Sample(title: "Alert", supporting: "A grant ends soon", events: [.alert]),
         Sample(title: "Autopilot approved", supporting: "Approved for you, quietly", events: [.autoApproved]),
         Sample(title: "Autopilot denied", supporting: "Denied for you", events: [.autoDenied]),
-        Sample(title: "More autonomy", supporting: "From Assisted to Auto", events: [.autopilotOn]),
+        Sample(title: "More autonomy", supporting: "From Manual to Auto", events: [.autopilotOn]),
         Sample(title: "Less autonomy", supporting: "Back to Manual", events: [.autopilotOff]),
         Sample(title: "Bypass", supporting: "On, then off", events: [.bypassOn, .bypassOff], gapMs: 900),
         Sample(title: "Lockdown", supporting: "Everything denied", events: [.lockdownOn]),

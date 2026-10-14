@@ -989,21 +989,19 @@ extension AutopilotMode {
     var key: String {
         switch self {
         case .manual: "manual"
-        case .assisted: "assisted"
         case .auto: "auto"
         case .bypass: "bypass"
         case .lockdown: "lockdown"
         }
     }
 
-    /// Manual < Assisted < Auto < Bypass; Lockdown is the least autonomous.
+    /// Manual < Auto < Bypass; Lockdown is the least autonomous.
     var autonomy: Int {
         switch self {
         case .lockdown: 0
         case .manual: 1
-        case .assisted: 2
-        case .auto: 3
-        case .bypass: 4
+        case .auto: 2
+        case .bypass: 3
         }
     }
 }

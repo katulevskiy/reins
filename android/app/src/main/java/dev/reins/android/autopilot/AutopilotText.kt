@@ -17,14 +17,13 @@ import kotlin.math.roundToInt
 /** Autopilot's words, kept apart from the screens so they can be tested on the JVM. */
 object AutopilotText {
     /** The modes in the order the picker shows them, from the user deciding everything to Autopilot refusing everything. */
-    val modes = listOf(AutopilotMode.MANUAL, AutopilotMode.ASSISTED, AutopilotMode.AUTO, AutopilotMode.BYPASS, AutopilotMode.LOCKDOWN)
+    val modes = listOf(AutopilotMode.MANUAL, AutopilotMode.AUTO, AutopilotMode.BYPASS, AutopilotMode.LOCKDOWN)
 
     /** How long a bypass can run, in minutes (the core allows 1 to 60). */
     val bypassMinutes = listOf(15u, 30u, 60u)
 
     fun name(mode: AutopilotMode): String = when (mode) {
         AutopilotMode.MANUAL -> "Manual"
-        AutopilotMode.ASSISTED -> "Assisted"
         AutopilotMode.AUTO -> "Auto"
         AutopilotMode.BYPASS -> "Bypass"
         AutopilotMode.LOCKDOWN -> "Lockdown"
@@ -32,8 +31,7 @@ object AutopilotText {
 
     /** What the mode does, in a few words. */
     fun line(mode: AutopilotMode): String = when (mode) {
-        AutopilotMode.MANUAL -> "Ask me every time"
-        AutopilotMode.ASSISTED -> "Ask, with a hint"
+        AutopilotMode.MANUAL -> "Ask, with a hint"
         AutopilotMode.AUTO -> "Decides the easy ones"
         AutopilotMode.BYPASS -> "Approve all but the riskiest"
         AutopilotMode.LOCKDOWN -> "Deny everything"
@@ -42,16 +40,15 @@ object AutopilotText {
     /** The modes from least to most left to Autopilot: the quick switcher's order, left to right and top to bottom. */
     val byRisk = modes.sortedBy(::autonomy)
 
-    /** Assisted and Auto do nothing without the model (requests simply wait); the others never need it. */
-    fun needsModel(mode: AutopilotMode): Boolean = mode == AutopilotMode.ASSISTED || mode == AutopilotMode.AUTO
+    /** Auto decides nothing without the model (requests simply wait); Manual only goes without its hints, and the others never need it. */
+    fun needsModel(mode: AutopilotMode): Boolean = mode == AutopilotMode.AUTO
 
     /** How much a mode lets happen without the user: Lockdown least, Bypass most. */
     fun autonomy(mode: AutopilotMode): Int = when (mode) {
         AutopilotMode.LOCKDOWN -> 0
         AutopilotMode.MANUAL -> 1
-        AutopilotMode.ASSISTED -> 2
-        AutopilotMode.AUTO -> 3
-        AutopilotMode.BYPASS -> 4
+        AutopilotMode.AUTO -> 2
+        AutopilotMode.BYPASS -> 3
     }
 
     /** What switching from [old] to [new] sounds and feels like; null when nothing changes. */

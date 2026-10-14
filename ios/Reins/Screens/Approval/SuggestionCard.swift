@@ -1,6 +1,6 @@
 import SwiftUI
 
-/// What Autopilot made of the request (Assisted and Auto), as a card that opens to its reasons: how likely an approval
+/// What Autopilot made of the request (Manual and Auto), as a card that opens to its reasons: how likely an approval
 /// and a denial are, how sure it is, the decisions of the user's it is like, and why it may not judge.
 struct SuggestionCard: View {
     var suggestion: SuggestionView

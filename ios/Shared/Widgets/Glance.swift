@@ -57,12 +57,11 @@ enum Glance {
     // MARK: Autopilot
 
     enum Mode: String, CaseIterable {
-        case manual, assisted, auto, bypass, lockdown
+        case manual, auto, bypass, lockdown
 
         var name: String {
             switch self {
             case .manual: "Manual"
-            case .assisted: "Assisted"
             case .auto: "Auto"
             case .bypass: "Bypass"
             case .lockdown: "Lockdown"
@@ -72,8 +71,7 @@ enum Glance {
         /// What the mode does, in one line (the Android app's `AutopilotText.line`).
         var line: String {
             switch self {
-            case .manual: "Every request waits for you"
-            case .assisted: "Waits for you, with a suggestion"
+            case .manual: "Waits for you, with a suggestion"
             case .auto: "Decides what it is sure of, asks the rest"
             case .bypass: "Approves all but the riskiest, for a while"
             case .lockdown: "Denies everything at once"
@@ -83,7 +81,6 @@ enum Glance {
         var symbol: String {
             switch self {
             case .manual: "hand.raised.fill"
-            case .assisted: "sparkles"
             case .auto: "location.north.fill"
             case .bypass: "bolt.fill"
             case .lockdown: "lock.fill"
@@ -192,7 +189,7 @@ enum Glance {
     /// "123 MB of 370 MB".
     static func downloadLine(_ s: ModelDownloadActivityAttributes.ContentState) -> String {
         if s.failed { return "The download stopped" }
-        if s.finished { return "Assisted and Auto can decide now" }
+        if s.finished { return "Autopilot can judge now" }
         let f = ByteCountFormatter()
         f.countStyle = .file
         f.allowedUnits = [.useMB]
@@ -217,8 +214,8 @@ enum Glance {
             Snapshot.Entry(id: 2, title: "Cursor: Commit to octo-cat/app", outcome: "Sent", approved: true, at: now - 1_500),
             Snapshot.Entry(id: 1, title: "notes-bot: Search email", outcome: "Denied", approved: false, at: now - 7_200),
         ]
-        s.autopilotMode = "assisted"
-        s.baseMode = "assisted"
+        s.autopilotMode = "manual"
+        s.baseMode = "manual"
         s.activeGrants = 2
         s.updatedAt = now
         return s

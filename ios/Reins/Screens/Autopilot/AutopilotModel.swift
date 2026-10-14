@@ -384,13 +384,12 @@ extension AutopilotSettings {
                 connections[i].bypassUntil = nil
             }
         } else {
-            // A mode never picked: Assisted once the model is installed, Manual before.
-            let fallback: AutopilotMode = model.state == .installed ? .assisted : .manual
+            // A mode never picked is Manual.
             if mode == .bypass {
-                if baseMode == .lockdown { baseMode = fallback }
+                if baseMode == .lockdown { baseMode = .manual }
                 bypassUntil = until
             } else {
-                baseMode = mode ?? fallback
+                baseMode = mode ?? .manual
                 bypassUntil = nil
             }
             self.mode = baseMode == .lockdown ? .lockdown : (bypassUntil ?? 0) > now ? .bypass : baseMode

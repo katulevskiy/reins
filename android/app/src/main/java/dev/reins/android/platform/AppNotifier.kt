@@ -141,7 +141,7 @@ class AppNotifier(
             )
             .setSubText(untrusted(item.subtitle).ifBlank { null })
             .apply {
-                // Expanded: what approving does, then what Autopilot would do (Assisted).
+                // Expanded: what approving does, then what Autopilot would do (Manual).
                 val text = fullTitle(item.connectionLabel, item.action, item.count.toInt(), item.service, item.opTitle, item.op)
                 val more = listOfNotNull(untrusted(item.headline).ifBlank { null }, item.suggestion)
                 if (more.isNotEmpty()) setStyle(Notification.BigTextStyle().bigText((listOf(text) + more).joinToString("\n")))

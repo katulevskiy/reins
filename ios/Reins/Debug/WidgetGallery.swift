@@ -70,7 +70,7 @@ struct WidgetGallery: View {
 
     @ViewBuilder private var autopilot: some View {
         let bypass = with { $0.autopilotMode = "bypass"; $0.bypassUntil = now + 14 * 60 + 5; $0.anyBypassUntil = $0.bypassUntil }
-        let lockdown = with { $0.autopilotMode = "lockdown"; $0.baseMode = "assisted"; $0.bypassUntil = nil; $0.anyBypassUntil = nil }
+        let lockdown = with { $0.autopilotMode = "lockdown"; $0.baseMode = "manual"; $0.bypassUntil = nil; $0.anyBypassUntil = nil }
         caption("Autopilot · now, in a bypass, in Lockdown")
         plate(.systemMedium) { AutopilotWidgetView(snapshot: snapshot, now: now, medium: true) }
         HStack(spacing: 20) {

@@ -3,7 +3,6 @@ package dev.reins.android.autopilot
 import dev.reins.core.AutopilotMode
 import dev.reins.core.AutopilotSettings
 import dev.reins.core.ConnectionAutopilot
-import dev.reins.core.ModelState
 
 /**
  * What Autopilot's settings become once a change the user just made is in, shown before the core confirms it. The
@@ -15,13 +14,12 @@ object AutopilotDraft {
     fun withMode(s: AutopilotSettings, connectionId: String?, mode: AutopilotMode?, minutes: UInt?, nowSecs: Long): AutopilotSettings {
         val until = minutes?.let { nowSecs + it.toLong() * 60 }
         if (connectionId == null) {
-            // The mode before the user picks one (`modes::global_base`); a bypass also ends a lockdown.
-            val fallback = if (s.model.state == ModelState.INSTALLED) AutopilotMode.ASSISTED else AutopilotMode.MANUAL
+            // Manual is the mode before the user picks one (`modes::global_base`); a bypass also ends a lockdown.
             val global = if (mode == AutopilotMode.BYPASS) {
-                val base = if (s.baseMode == AutopilotMode.LOCKDOWN) fallback else s.baseMode
+                val base = if (s.baseMode == AutopilotMode.LOCKDOWN) AutopilotMode.MANUAL else s.baseMode
                 s.copy(mode = AutopilotMode.BYPASS, baseMode = base, bypassUntil = until)
             } else {
-                val base = mode ?: fallback
+                val base = mode ?: AutopilotMode.MANUAL
                 s.copy(mode = base, baseMode = base, bypassUntil = null)
             }
             // Connections without a mode or a bypass of their own follow the global one (and a lockdown).

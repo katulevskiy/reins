@@ -12,7 +12,7 @@ IT DOESN'T NAG YOU
 Allow routine things for a while ("read my email for the next hour", "up to 5 uses"), limited by target, time and number of uses. Vault secrets, deletions and history rewrites are asked every time.
 
 AUTOPILOT, ON YOUR PHONE (OPTIONAL)
-A small AI model that runs entirely on your phone learns from your own decisions. It can suggest what you would do, approve what you would clearly approve and deny what you would clearly deny, and it asks you about everything else. Modes: Manual, Assisted, Auto, Bypass (time-limited) and Lockdown. The model is downloaded once (a few hundred MB) and what it learns never leaves the phone.
+A small AI model that runs entirely on your phone learns from your own decisions. It can suggest what you would do, approve what you would clearly approve and deny what you would clearly deny, and it asks you about everything else. Modes: Manual (with suggestions), Auto, Bypass (time-limited) and Lockdown. The model is downloaded once (a few hundred MB) and what it learns never leaves the phone.
 
 YOU CAN ALWAYS SEE WHAT HAPPENED
 Every request, approval and denial is in the activity log on your phone.

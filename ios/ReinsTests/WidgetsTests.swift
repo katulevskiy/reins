@@ -65,16 +65,25 @@ final class WidgetsTests: XCTestCase {
     func testABypassThatRanOutShowsTheModeItWentBackTo() {
         var s = Snapshot()
         s.autopilotMode = "bypass"
-        s.baseMode = "assisted"
+        s.baseMode = "auto"
         s.bypassUntil = now + 60
         XCTAssertEqual(Glance.mode(s, now: now), .bypass)
         XCTAssertEqual(Glance.bypassEnd(s, now: now), now + 60)
-        XCTAssertEqual(Glance.mode(s, now: now + 61), .assisted)
+        XCTAssertEqual(Glance.mode(s, now: now + 61), .auto)
         XCTAssertNil(Glance.bypassEnd(s, now: now + 61))
         s.baseMode = nil
         XCTAssertEqual(Glance.mode(s, now: now + 61), .manual)
         s.autopilotMode = "nonsense"
         XCTAssertEqual(Glance.mode(s, now: now), .manual)
+    }
+
+    func testAssistedFromAnOlderSnapshotShowsAsManual() {
+        var s = Snapshot()
+        s.autopilotMode = "assisted"
+        XCTAssertEqual(Glance.mode(s, now: now), .manual)
+        s.autopilotMode = "bypass"
+        s.baseMode = "assisted"
+        XCTAssertEqual(Glance.mode(s, now: now + 1), .manual)
     }
 
     func testAConnectionsBypassShowsUnderTheGlobalMode() {
@@ -89,7 +98,7 @@ final class WidgetsTests: XCTestCase {
     }
 
     func testLockdownSwitch() {
-        XCTAssertEqual(IntentBridge.lockdownTarget(on: true, mode: .assisted, base: .assisted), .lockdown)
+        XCTAssertEqual(IntentBridge.lockdownTarget(on: true, mode: .manual, base: .manual), .lockdown)
         XCTAssertNil(IntentBridge.lockdownTarget(on: true, mode: .lockdown, base: .lockdown), "already locked down")
         XCTAssertEqual(IntentBridge.lockdownTarget(on: false, mode: .lockdown, base: .auto), .auto)
         XCTAssertEqual(IntentBridge.lockdownTarget(on: false, mode: .lockdown, base: .lockdown), .manual, "as Android's End lockdown")
@@ -112,14 +121,17 @@ final class WidgetsTests: XCTestCase {
     }
 
     func testIntentsSetEveryModeButBypass() {
-        for option in [AutopilotModeOption.manual, .assisted, .auto, .lockdown] {
+        for option in [AutopilotModeOption.manual, .auto, .lockdown] {
             XCTAssertEqual(AutopilotModeOption(option.mode), option)
         }
         XCTAssertNil(AutopilotModeOption(AutopilotMode.bypass))
+        XCTAssertEqual(AutopilotModeOption(stored: "assisted"), .manual, "saved by an older version")
+        XCTAssertEqual(AutopilotModeOption(stored: "auto"), .auto)
+        XCTAssertNil(AutopilotModeOption(stored: "bypass"))
     }
 
     func testAFocusOffersOnlyTheStricterModes() {
-        XCTAssertEqual(FocusModeOption.allCases.map(\.option), [.manual, .assisted, .lockdown], "never Auto, never Bypass")
+        XCTAssertEqual(FocusModeOption.allCases.map(\.option), [.manual, .lockdown], "never Auto, never Bypass")
     }
 
     @MainActor
@@ -131,13 +143,18 @@ final class WidgetsTests: XCTestCase {
         await model.refreshSession()
         IntentBridge.model = model
         defer { IntentBridge.model = nil }
-        try await IntentBridge.setMode(.assisted)
+        try await IntentBridge.setMode(.auto)
         try await IntentBridge.applyFocus(.lockdown, defaults: defaults)
         XCTAssertEqual(model.autopilot?.mode, .lockdown)
         // A second Focus while the first is on keeps the mode from before both.
         try await IntentBridge.applyFocus(.manual, defaults: defaults)
         try await IntentBridge.applyFocus(nil, defaults: defaults)
-        XCTAssertEqual(model.autopilot?.mode, .assisted)
+        XCTAssertEqual(model.autopilot?.mode, .auto)
+        // "assisted", remembered by an older version, comes back as Manual.
+        try await IntentBridge.applyFocus(.lockdown, defaults: defaults)
+        defaults.set("assisted", forKey: "focus.previousMode")
+        try await IntentBridge.applyFocus(nil, defaults: defaults)
+        XCTAssertEqual(model.autopilot?.mode, .manual)
     }
 
     @MainActor
@@ -158,7 +175,7 @@ final class WidgetsTests: XCTestCase {
         XCTAssertEqual(model.autopilot?.mode, .manual)
         XCTAssertNil(defaults.string(forKey: "focus.previousMode"))
         // The user locks down during the Focus: when it ends, Lockdown stays.
-        try await IntentBridge.applyFocus(.assisted, defaults: defaults)
+        try await IntentBridge.applyFocus(.manual, defaults: defaults)
         try await IntentBridge.setMode(.lockdown)
         try await IntentBridge.applyFocus(nil, defaults: defaults)
         XCTAssertEqual(model.autopilot?.mode, .lockdown)

@@ -77,7 +77,7 @@ final class ActivityFormatTests: XCTestCase {
 
     func testSuggestionHeadlinesSayWhatAutopilotWouldDo() {
         func s(_ verdict: Verdict, floor: Bool = false, judged: Bool = true) -> SuggestionView {
-            SuggestionView(requestId: "r", verdict: verdict, mode: .assisted, pApprove: 0.97, pDeny: 0.02, confidence: 0.9, reason: "", neighbours: [],
+            SuggestionView(requestId: "r", verdict: verdict, mode: .manual, pApprove: 0.97, pDeny: 0.02, confidence: 0.9, reason: "", neighbours: [],
                            profileId: "p", profileName: "Personal", classKey: "k", novel: false, floor: floor, judged: judged)
         }
         XCTAssertEqual(SuggestionText.headline(s(.approve)), "Autopilot would approve · 97%")

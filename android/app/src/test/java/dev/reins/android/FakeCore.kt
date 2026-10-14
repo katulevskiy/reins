@@ -733,7 +733,7 @@ class FakeCore : ReinsCoreInterface {
     /** A connection's own Autopilot row, as the core stores it. */
     data class ApRow(val mode: AutopilotMode? = null, val bypassUntil: Long? = null, val profileId: String? = null)
 
-    /** The global row: `mode` null = the default (Assisted with a model, else Manual). */
+    /** The global row: `mode` null = the default (Manual). */
     @Volatile var apGlobal = ApRow()
     val apConnections = java.util.concurrent.ConcurrentHashMap<String, ApRow>()
     @Volatile var model: ModelStatus = TestData.modelStatus()
@@ -780,7 +780,7 @@ class FakeCore : ReinsCoreInterface {
 
     private fun installed() = model.state == ModelState.INSTALLED
 
-    private fun globalBase() = apGlobal.mode ?: if (installed()) AutopilotMode.ASSISTED else AutopilotMode.MANUAL
+    private fun globalBase() = apGlobal.mode ?: AutopilotMode.MANUAL
 
     private fun globalMode(): AutopilotMode = when {
         apGlobal.mode == AutopilotMode.LOCKDOWN -> AutopilotMode.LOCKDOWN

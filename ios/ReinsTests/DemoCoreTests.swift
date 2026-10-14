@@ -92,7 +92,7 @@ final class DemoCoreTests: XCTestCase {
         try await c.setAutopilotMode(connectionId: nil, mode: .bypass, minutes: 30)
         let settings = try await c.autopilotSettings()
         XCTAssertEqual(settings.mode, .bypass)
-        XCTAssertEqual(settings.baseMode, .assisted)
+        XCTAssertEqual(settings.baseMode, .manual)
         let until = try XCTUnwrap(settings.bypassUntil)
         XCTAssertEqual(Double(until), Date().timeIntervalSince1970 + 1_800, accuracy: 3)
     }

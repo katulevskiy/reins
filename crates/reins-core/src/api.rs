@@ -1040,7 +1040,7 @@ impl ReinsCore {
 
     // ---- Autopilot (spec 2026-10-01 §9) ------------------------------------------------------------------------------
 
-    /// Gives the core the app's ONNX runtime. Without one, Assisted and Auto judge nothing (requests wait); Bypass
+    /// Gives the core the app's ONNX runtime. Without one, Manual and Auto judge nothing (requests wait); Bypass
     /// and Lockdown work regardless. Replaces (and unloads) an earlier runtime.
     pub fn set_model_runtime(&self, runtime: Arc<dyn ModelRuntime>) {
         self.runtime.set_model(runtime);

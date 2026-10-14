@@ -64,8 +64,8 @@ final class AutopilotUITests: XCTestCase {
 
     func testModesWarnBeforeBypassAndLockdown() {
         launch()
-        text("Assisted")
-        shot("autopilot-assisted")
+        text("Manual")
+        shot("autopilot-manual")
         tap("mode:auto")
         text("Decides the easy ones")
         tap("mode:bypass")

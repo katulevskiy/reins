@@ -64,7 +64,7 @@ enum class Glyph(val d: String, val fill: Boolean = false) {
     /** Manual: your own hand decides. */
     Hand("M8 13V6.5a1.5 1.5 0 0 1 3 0V11M11 11V5a1.5 1.5 0 0 1 3 0v6M14 11V6.5a1.5 1.5 0 0 1 3 0V14.5a6 6 0 0 1-6 6h-.6a5.4 5.4 0 0 1-4.5-2.4L4.6 16a1.5 1.5 0 0 1 2.5-1.7L8 15.5"),
 
-    /** Assisted, and Autopilot's suggestions: a spark beside you. */
+    /** Autopilot's suggestions: a spark beside you. */
     Sparkle("M10.5 4l1.8 4.7 4.7 1.8-4.7 1.8-1.8 4.7-1.8-4.7L4 10.5l4.7-1.8zM17.5 14.5l.9 2.1 2.1.9-2.1.9-.9 2.1-.9-2.1-2.1-.9 2.1-.9z"),
 
     /** Auto: a heading Autopilot holds by itself. */

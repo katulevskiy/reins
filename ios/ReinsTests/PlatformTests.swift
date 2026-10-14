@@ -285,11 +285,10 @@ final class PlatformTests: XCTestCase {
                 connections: [ConnectionAutopilot(connectionId: "c1", baseMode: connection, bypassUntil: nil, mode: connection, profileId: "p")]
             )
         }
-        XCTAssertFalse(ExtensionPolicy.needsModel(settings(.manual)))
-        XCTAssertFalse(ExtensionPolicy.needsModel(settings(.lockdown)))
-        XCTAssertFalse(ExtensionPolicy.needsModel(settings(.bypass)))
-        XCTAssertTrue(ExtensionPolicy.needsModel(settings(.assisted)))
-        XCTAssertTrue(ExtensionPolicy.needsModel(settings(.manual, connection: .auto)))
+        XCTAssertTrue(ExtensionPolicy.needsModel(settings(.manual)), "Manual judges for its hint")
+        XCTAssertFalse(ExtensionPolicy.needsModel(settings(.lockdown, connection: .lockdown)))
+        XCTAssertFalse(ExtensionPolicy.needsModel(settings(.bypass, connection: .bypass)))
+        XCTAssertTrue(ExtensionPolicy.needsModel(settings(.lockdown, connection: .auto)))
         XCTAssertFalse(ExtensionPolicy.needsModel(settings(.auto, model: .notInstalled)), "without a model the app could not judge either")
     }
 

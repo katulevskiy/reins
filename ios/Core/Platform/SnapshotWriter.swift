@@ -43,7 +43,6 @@ enum SnapshotWriter {
     static func modeKey(_ m: AutopilotMode) -> String {
         switch m {
         case .manual: "manual"
-        case .assisted: "assisted"
         case .auto: "auto"
         case .bypass: "bypass"
         case .lockdown: "lockdown"

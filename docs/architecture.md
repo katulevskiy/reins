@@ -228,7 +228,7 @@ are asked every time. When a tool's results are very large, later calls to it go
 
 ### Autopilot
 
-After the core parks a new request, it runs Autopilot's pass: mode, hard floor, then (Assisted or Auto) the model on
+After the core parks a new request, it runs Autopilot's pass: mode, hard floor, then (Manual or Auto) the model on
 two views of the situation, memory, adapter, gates, decision. It approves or denies through the same code the user's
 taps use, or attaches a suggestion and notifies the user. See [autopilot.md](autopilot.md).
 

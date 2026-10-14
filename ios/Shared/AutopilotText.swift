@@ -6,7 +6,7 @@ import Foundation
 enum AutopilotText {
     /// The mode keys (`AutopilotMode`, as widgets and links store them) in the order the picker shows them, from the
     /// user deciding everything to Autopilot refusing everything.
-    static let modeKeys = ["manual", "assisted", "auto", "bypass", "lockdown"]
+    static let modeKeys = ["manual", "auto", "bypass", "lockdown"]
 
     /// How long a bypass can run, in minutes (the core allows 1 to 60).
     static let bypassMinutes: [UInt32] = [15, 30, 60]
@@ -16,7 +16,6 @@ enum AutopilotText {
 
     static func name(key: String) -> String {
         switch key {
-        case "assisted": "Assisted"
         case "auto": "Auto"
         case "bypass": "Bypass"
         case "lockdown": "Lockdown"
@@ -27,18 +26,16 @@ enum AutopilotText {
     /// What the mode does, in one line.
     static func line(key: String) -> String {
         switch key {
-        case "assisted": "Ask, with a hint"
         case "auto": "Decides the easy ones"
         case "bypass": "Approve all but the riskiest"
         case "lockdown": "Deny everything"
-        default: "Ask me every time"
+        default: "Ask, with a hint"
         }
     }
 
-    /// The mode's SF Symbol (Android's glyphs: a hand, a sparkle, a navigation arrow, a bolt, a lock).
+    /// The mode's SF Symbol (Android's glyphs: a hand, a navigation arrow, a bolt, a lock).
     static func symbol(key: String) -> String {
         switch key {
-        case "assisted": "sparkles"
         case "auto": "location.north.fill"
         case "bypass": "bolt.fill"
         case "lockdown": "lock.fill"
@@ -187,7 +184,7 @@ enum AutopilotText {
 // The core's records: the app and the notification extension link the core, the widgets do not.
 extension AutopilotText {
     /// The modes in the order the picker shows them.
-    static let modes: [AutopilotMode] = [.manual, .assisted, .auto, .bypass, .lockdown]
+    static let modes: [AutopilotMode] = [.manual, .auto, .bypass, .lockdown]
 
     /// The modes from least to most left to Autopilot: the quick switcher's order.
     static var byRisk: [AutopilotMode] { modes.sorted { autonomy($0) < autonomy($1) } }
@@ -195,7 +192,6 @@ extension AutopilotText {
     static func key(_ mode: AutopilotMode) -> String {
         switch mode {
         case .manual: "manual"
-        case .assisted: "assisted"
         case .auto: "auto"
         case .bypass: "bypass"
         case .lockdown: "lockdown"
@@ -206,17 +202,17 @@ extension AutopilotText {
     static func line(_ mode: AutopilotMode) -> String { line(key: key(mode)) }
     static func symbol(_ mode: AutopilotMode) -> String { symbol(key: key(mode)) }
 
-    /// Assisted and Auto do nothing without the model (requests simply wait); the others never need it.
-    static func needsModel(_ mode: AutopilotMode) -> Bool { mode == .assisted || mode == .auto }
+    /// Auto decides nothing without the model (requests simply wait); Manual only goes without its hints, and the
+    /// others never need it.
+    static func needsModel(_ mode: AutopilotMode) -> Bool { mode == .auto }
 
     /// How much a mode lets happen without the user: Lockdown least, Bypass most.
     static func autonomy(_ mode: AutopilotMode) -> Int {
         switch mode {
         case .lockdown: 0
         case .manual: 1
-        case .assisted: 2
-        case .auto: 3
-        case .bypass: 4
+        case .auto: 2
+        case .bypass: 3
         }
     }
 

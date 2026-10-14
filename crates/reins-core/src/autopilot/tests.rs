@@ -380,6 +380,35 @@ async fn switching_to_lockdown_denies_what_waits() {
 }
 
 #[tokio::test]
+async fn assisted_stored_by_older_versions_loads_as_manual() {
+    let env = env(true).await;
+    {
+        let store = env.store();
+        let conn = store.lock().unwrap();
+        for scope in ["", OLD] {
+            conn.execute(
+                "INSERT INTO autopilot_settings (scope, mode, updated_at) VALUES (?1, 'assisted', 1)",
+                rusqlite::params![scope],
+            )
+            .unwrap();
+        }
+    }
+    let settings = env.core.autopilot_settings().await.unwrap();
+    assert_eq!((settings.mode, settings.base_mode), (AutopilotMode::Manual, AutopilotMode::Manual));
+    let own = settings.connections.iter().find(|c| c.connection_id == OLD).unwrap();
+    assert_eq!((own.base_mode, own.mode), (Some(AutopilotMode::Manual), AutopilotMode::Manual));
+
+    // It judges and suggests, and never decides, even in a class Auto could act in.
+    env.model.set_default(logits(0.999, 0.0005, 0.0005));
+    env.unlock("gmail/send").await;
+    env.relay("r1", OLD, email("friend@x.com", "hi")).await;
+    assert_eq!(env.waiting().await, ["r1"]);
+    let s = env.suggestion("r1").await;
+    assert_eq!((s.mode, s.judged), (AutopilotMode::Manual, true), "{s:?}");
+    assert!(env.decided().is_empty());
+}
+
+#[tokio::test]
 async fn bypass_approves_all_but_the_floor_and_ends_by_itself() {
     let env = env(false).await;
     // Bounds of a bypass, and the 10-minute rule.
@@ -422,7 +451,7 @@ async fn bypass_approves_all_but_the_floor_and_ends_by_itself() {
 
 #[tokio::test]
 async fn the_floor_is_never_automatic_in_any_mode() {
-    for mode in [AutopilotMode::Assisted, AutopilotMode::Auto, AutopilotMode::Bypass] {
+    for mode in [AutopilotMode::Manual, AutopilotMode::Auto, AutopilotMode::Bypass] {
         let env = env(true).await;
         env.model.set_default(logits(0.9999, 0.00005, 0.00005));
         let profile = env.profile_id().await;
@@ -621,13 +650,13 @@ async fn rate_limits_pause_auto_approvals() {
     assert_eq!(env.decided(), [("o3".to_owned(), Verdict::Approve, "autopilot".to_owned())]);
 }
 
-// ---- Assisted: suggestions, learning --------------------------------------------------------------------------------
+// ---- Manual: suggestions, learning ----------------------------------------------------------------------------------
 
 #[tokio::test]
-async fn assisted_suggests_with_neighbours_and_learns_from_every_answer() {
+async fn manual_suggests_with_neighbours_and_learns_from_every_answer() {
     let env = env(true).await;
     let settings = env.core.autopilot_settings().await.unwrap();
-    assert_eq!(settings.mode, AutopilotMode::Assisted, "the default once a model is installed");
+    assert_eq!(settings.mode, AutopilotMode::Manual, "the default, model or not");
     env.model.rule("friend@x.com", logits(0.97, 0.01, 0.02));
     env.model.rule("stranger@y.com", logits(0.05, 0.40, 0.55));
     for i in 0..4 {
@@ -639,9 +668,9 @@ async fn assisted_suggests_with_neighbours_and_learns_from_every_answer() {
         env.core.deny(format!("d{i}")).await.unwrap();
     }
     env.relay("q", OLD, email("friend@x.com", "hi")).await;
-    assert!(env.decided().is_empty(), "Assisted never decides");
+    assert!(env.decided().is_empty(), "Manual never decides");
     let s = env.suggestion("q").await;
-    assert_eq!((s.verdict, s.mode, s.judged), (Verdict::Approve, AutopilotMode::Assisted, true), "{s:?}");
+    assert_eq!((s.verdict, s.mode, s.judged), (Verdict::Approve, AutopilotMode::Manual, true), "{s:?}");
     assert!(s.reason.starts_with("Like 4 times you approved: Send an email · friend@x.com"), "{s:?}");
     assert_eq!(s.neighbours[0].verdict, Verdict::Approve);
     assert_eq!(s.neighbours[0].label, "Send an email · friend@x.com");
@@ -780,7 +809,7 @@ async fn the_model_is_downloaded_verified_and_deleted() {
     assert_eq!((status.state, status.runtime_ready), (ModelState::Installed, true));
     let total: u64 = env.files.iter().map(|(_, b)| b.len() as u64).sum();
     assert_eq!(progress.0.lock().unwrap().last().copied(), Some((total, total)));
-    assert_eq!(env.core.autopilot_settings().await.unwrap().mode, AutopilotMode::Assisted);
+    assert_eq!(env.core.autopilot_settings().await.unwrap().mode, AutopilotMode::Manual);
 
     // It loads lazily on first need and judges.
     env.model.rule("friend@x.com", logits(0.97, 0.01, 0.02));

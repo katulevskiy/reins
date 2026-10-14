@@ -14,7 +14,7 @@ import org.junit.Test
 
 class AutopilotTextTest {
     private fun settings(bypass: Long? = null, connections: List<ConnectionAutopilot> = emptyList()) = AutopilotSettings(
-        if (bypass != null) AutopilotMode.BYPASS else AutopilotMode.ASSISTED, AutopilotMode.ASSISTED, bypass, "personal", true,
+        if (bypass != null) AutopilotMode.BYPASS else AutopilotMode.MANUAL, AutopilotMode.MANUAL, bypass, "personal", true,
         TestData.modelStatus(ModelState.INSTALLED), connections,
     )
 
@@ -30,12 +30,24 @@ class AutopilotTextTest {
     @Test
     fun `switching modes sounds like what it lets happen`() {
         assertEquals(Event.AutopilotOn, AutopilotText.modeChangeEvent(AutopilotMode.MANUAL, AutopilotMode.AUTO))
-        assertEquals(Event.AutopilotOff, AutopilotText.modeChangeEvent(AutopilotMode.AUTO, AutopilotMode.ASSISTED))
+        assertEquals(Event.AutopilotOff, AutopilotText.modeChangeEvent(AutopilotMode.AUTO, AutopilotMode.MANUAL))
         assertEquals(Event.BypassOn, AutopilotText.modeChangeEvent(AutopilotMode.AUTO, AutopilotMode.BYPASS))
         assertEquals(Event.BypassOff, AutopilotText.modeChangeEvent(AutopilotMode.BYPASS, AutopilotMode.MANUAL))
         assertEquals(Event.LockdownOn, AutopilotText.modeChangeEvent(AutopilotMode.BYPASS, AutopilotMode.LOCKDOWN))
         assertEquals(Event.LockdownOff, AutopilotText.modeChangeEvent(AutopilotMode.LOCKDOWN, AutopilotMode.AUTO))
         assertNull(AutopilotText.modeChangeEvent(AutopilotMode.AUTO, AutopilotMode.AUTO))
+    }
+
+    @Test
+    fun `the modes run from Manual to Lockdown and step by autonomy`() {
+        assertEquals(listOf("Manual", "Auto", "Bypass", "Lockdown"), AutopilotText.modes.map(AutopilotText::name))
+        assertEquals(
+            listOf(AutopilotMode.LOCKDOWN, AutopilotMode.MANUAL, AutopilotMode.AUTO, AutopilotMode.BYPASS),
+            AutopilotText.byRisk,
+        )
+        assertEquals("Ask, with a hint", AutopilotText.line(AutopilotMode.MANUAL))
+        assertTrue(AutopilotText.needsModel(AutopilotMode.AUTO))
+        assertTrue("Manual only goes without its hints", !AutopilotText.needsModel(AutopilotMode.MANUAL))
     }
 
     @Test

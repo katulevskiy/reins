@@ -15,8 +15,7 @@ enum GlanceStyle {
 
     static func tint(_ mode: Glance.Mode) -> Color {
         switch mode {
-        case .manual: Palette.secondary
-        case .assisted: Palette.search
+        case .manual: Palette.search
         case .auto: Palette.accent
         case .bypass: Palette.danger
         case .lockdown: Palette.warning
@@ -416,7 +415,7 @@ struct AutopilotWidgetView: View {
             .padding(.bottom, 6)
             Text(mode.name)
                 .font(RFont.fixedSans(medium ? 20 : 18, .semibold))
-                .foregroundStyle(mode == .manual ? Palette.text : GlanceStyle.tint(mode))
+                .foregroundStyle(GlanceStyle.tint(mode))
                 .widgetAccentable()
             if let end = bypassEnd {
                 HStack(spacing: 4) {

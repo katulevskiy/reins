@@ -13,19 +13,19 @@ import org.junit.Test
 class AutopilotDraftTest {
     private val now = 1_000_000L
 
-    private fun settings(mode: AutopilotMode = AutopilotMode.ASSISTED, connections: List<ConnectionAutopilot> = emptyList()) = AutopilotSettings(
+    private fun settings(mode: AutopilotMode = AutopilotMode.AUTO, connections: List<ConnectionAutopilot> = emptyList()) = AutopilotSettings(
         mode, mode, null, "personal", true, TestData.modelStatus(ModelState.INSTALLED), connections,
     )
 
-    private fun own(id: String, base: AutopilotMode?, mode: AutopilotMode = base ?: AutopilotMode.ASSISTED) =
+    private fun own(id: String, base: AutopilotMode?, mode: AutopilotMode = base ?: AutopilotMode.AUTO) =
         ConnectionAutopilot(id, base, null, mode, "personal")
 
     @Test
     fun `a global mode reaches the connections that follow it, not those with their own`() {
-        val s = AutopilotDraft.withMode(settings(connections = listOf(own("a", null), own("b", AutopilotMode.MANUAL))), null, AutopilotMode.AUTO, null, now)
-        assertEquals(AutopilotMode.AUTO, s.mode)
-        assertEquals(AutopilotMode.AUTO, s.baseMode)
-        assertEquals(listOf(AutopilotMode.AUTO, AutopilotMode.MANUAL), s.connections.map { it.mode })
+        val s = AutopilotDraft.withMode(settings(connections = listOf(own("a", null), own("b", AutopilotMode.LOCKDOWN))), null, AutopilotMode.MANUAL, null, now)
+        assertEquals(AutopilotMode.MANUAL, s.mode)
+        assertEquals(AutopilotMode.MANUAL, s.baseMode)
+        assertEquals(listOf(AutopilotMode.MANUAL, AutopilotMode.LOCKDOWN), s.connections.map { it.mode })
     }
 
     @Test
@@ -38,11 +38,11 @@ class AutopilotDraftTest {
     fun `a bypass keeps the base mode and ends a lockdown`() {
         val bypass = AutopilotDraft.withMode(settings(), null, AutopilotMode.BYPASS, 15u, now)
         assertEquals(AutopilotMode.BYPASS, bypass.mode)
-        assertEquals(AutopilotMode.ASSISTED, bypass.baseMode)
+        assertEquals(AutopilotMode.AUTO, bypass.baseMode)
         assertEquals(now + 15 * 60, bypass.bypassUntil)
-        assertEquals(AutopilotMode.ASSISTED, AutopilotDraft.withMode(settings(AutopilotMode.LOCKDOWN), null, AutopilotMode.BYPASS, 15u, now).baseMode)
+        assertEquals(AutopilotMode.MANUAL, AutopilotDraft.withMode(settings(AutopilotMode.LOCKDOWN), null, AutopilotMode.BYPASS, 15u, now).baseMode)
         val stopped = AutopilotDraft.withoutBypass(bypass, null)
-        assertEquals(AutopilotMode.ASSISTED, stopped.mode)
+        assertEquals(AutopilotMode.AUTO, stopped.mode)
         assertNull(stopped.bypassUntil)
     }
 
@@ -51,7 +51,7 @@ class AutopilotDraftTest {
         val s = AutopilotDraft.withMode(settings(), "new", AutopilotMode.MANUAL, null, now)
         assertEquals(own("new", AutopilotMode.MANUAL), s.connections.single())
         val back = AutopilotDraft.withMode(s, "new", null, null, now)
-        assertEquals(AutopilotMode.ASSISTED, back.connections.single().mode)
+        assertEquals(AutopilotMode.AUTO, back.connections.single().mode)
         assertNull(back.connections.single().baseMode)
     }
 

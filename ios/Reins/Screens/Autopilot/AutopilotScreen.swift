@@ -68,7 +68,7 @@ struct AutopilotScreen: View {
                 Task { await ap.deleteModel() }
             }
         } message: {
-            Text("Assisted and Auto pause until you download it again.")
+            Text("Manual asks without hints and Auto pauses until you download it again.")
         }
         .presentationFeedback(deleteAsk)
         .confirmationDialog("You are on mobile data", isPresented: $mobileDataAsk, titleVisibility: .visible) {
@@ -221,7 +221,7 @@ private struct ModelCard: View {
     var onDelete: () -> Void
 
     var body: some View {
-        AutopilotGroup(header: "On-device model", footer: "Runs on this phone, nothing leaves it. Without it, Assisted and Auto simply leave every request to you.") {
+        AutopilotGroup(header: "On-device model", footer: "Runs on this phone, nothing leaves it. Without it, every request is left to you, without hints.") {
             if let m = ap.model {
                 details(m)
                 RowDivider(inset: 64)

@@ -94,7 +94,7 @@ private fun ModeButton(settings: AutopilotSettings?, onClick: () -> Unit) {
     val mode = settings?.mode ?: AutopilotMode.MANUAL
     val tint = modeTint(mode, c)
     val bypass = mode == AutopilotMode.BYPASS
-    // Every mode in its own colour, as the Autopilot screen shows it (Manual's is the quiet grey).
+    // Every mode in its own colour, as the Autopilot screen shows it.
     val wash by animateColorAsState(if (bypass) c.danger else tint.copy(alpha = 0.16f), label = "modeWash")
     val fg by animateColorAsState(if (bypass) Color.White else tint, label = "modeFg")
     Box(

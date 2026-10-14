@@ -68,13 +68,13 @@ class AutopilotFlowTest : FlowHarness() {
         installModel()
         launch()
         awaitTag("modePill")
-        rule.onNodeWithContentDescription("Autopilot: Assisted").assertExists()
+        rule.onNodeWithContentDescription("Autopilot: Manual").assertExists()
         tap("modePill")
         awaitTag("autopilotQuick")
         assertFalse("the full page waits for More", has("modeHero"))
         tap("quickMore")
         awaitTag("modeHero")
-        rule.onNodeWithTag("heroMode").assertTextContains("Assisted")
+        rule.onNodeWithTag("heroMode").assertTextContains("Manual")
         assertFalse(has("autopilotQuick"))
     }
 
@@ -110,7 +110,7 @@ class AutopilotFlowTest : FlowHarness() {
         tap("modePill")
         tap("quickStopBypass")
         awaitCore { core.modeCalls.size == 2 }
-        assertEquals("back to the mode it interrupted", AutopilotMode.ASSISTED, core.modeCalls.last().second)
+        assertEquals("back to the mode it interrupted", AutopilotMode.MANUAL, core.modeCalls.last().second)
     }
 
     @Test
@@ -120,7 +120,7 @@ class AutopilotFlowTest : FlowHarness() {
         launch()
         tap("modePill")
         awaitTag("riskSlider")
-        rule.onNodeWithTag("quickMode").assertTextContains("Assisted")
+        rule.onNodeWithTag("quickMode").assertTextContains("Manual")
         heard.clear()
         tap("detent:AUTO")
         assertTrue(heard.played(Event.Detent))
@@ -140,7 +140,7 @@ class AutopilotFlowTest : FlowHarness() {
         assertTrue(core.modeCalls.isEmpty())
         tap("quickBypassCancel")
         awaitGone("quickBypassTimes")
-        rule.onNodeWithTag("quickMode").assertTextContains("Assisted")
+        rule.onNodeWithTag("quickMode").assertTextContains("Manual")
         assertTrue(core.modeCalls.isEmpty())
         tap("detent:BYPASS")
         tap("quickBypass:60")
@@ -198,7 +198,7 @@ class AutopilotFlowTest : FlowHarness() {
         heard.clear()
         tap("stopBypass")
         awaitCore { core.modeCalls.size == 2 }
-        assertEquals("back to the mode it interrupted", Triple(null, AutopilotMode.ASSISTED, null), core.modeCalls.last())
+        assertEquals("back to the mode it interrupted", Triple(null, AutopilotMode.MANUAL, null), core.modeCalls.last())
         assertTrue(heard.played(Event.BypassOff))
         awaitGone("bypassClock")
     }
@@ -221,7 +221,7 @@ class AutopilotFlowTest : FlowHarness() {
     }
 
     @Test
-    fun withoutTheModelAssistedAndAutoSaySoAndTheModeIsManual() {
+    fun withoutTheModelAutoSaysSoAndTheModeIsManual() {
         openAutopilot()
         awaitText("NEEDS MODEL")
         rule.onNodeWithTag("heroMode").assertTextContains("Manual")

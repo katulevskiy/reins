@@ -8,7 +8,6 @@ enum ModeLook {
     static func name(_ mode: AutopilotMode) -> String {
         switch mode {
         case .manual: "Manual"
-        case .assisted: "Assisted"
         case .auto: "Auto"
         case .bypass: "Bypass"
         case .lockdown: "Lockdown"
@@ -17,8 +16,7 @@ enum ModeLook {
 
     static func tint(_ mode: AutopilotMode) -> Color {
         switch mode {
-        case .manual: Palette.secondary
-        case .assisted: Palette.search
+        case .manual: Palette.search
         case .auto: Palette.accent
         case .bypass: Palette.danger
         case .lockdown: Palette.warning
@@ -28,7 +26,6 @@ enum ModeLook {
     static func symbol(_ mode: AutopilotMode) -> String {
         switch mode {
         case .manual: "hand.raised.fill"
-        case .assisted: "sparkles"
         case .auto: "location.north.fill"
         case .bypass: "bolt.fill"
         case .lockdown: "lock.fill"
@@ -86,7 +83,7 @@ struct ModePillLabel: View {
             }
         }
         .lineLimit(1)
-        .foregroundStyle(strong ? Color.white : (mode == .manual ? Palette.secondary : tint))
+        .foregroundStyle(strong ? Color.white : tint)
         .padding(.horizontal, 13)
         .frame(height: HeaderControl.height)
     }
@@ -98,7 +95,7 @@ extension View {
         let mode = settings.mode
         let tint = ModeLook.tint(mode)
         let strong = mode == .bypass
-        return glassEffect(.regular.tint(strong ? Palette.danger : tint.opacity(mode == .manual ? 0.06 : 0.16)).interactive(), in: Capsule())
+        return glassEffect(.regular.tint(strong ? Palette.danger : tint.opacity(0.16)).interactive(), in: Capsule())
             .accessibilityLabel("Autopilot: \(ModeLook.name(mode))")
             .accessibilityIdentifier("modePill")
     }

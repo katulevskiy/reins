@@ -100,7 +100,7 @@ unfolding keeps what is open. On the iPhone Duo, `UIHingeInteraction` (iOS 27.1)
   the server's content-free push into "Approval needed · Claude: Send email to 2". Deny works from the notification
   (unlocked phone); approving always opens the app and asks for Face ID. Autopilot's decisions are quiet notifications
   with "Report". Grants ending soon remind you. Sounds follow Settings > Sounds & haptics.
-- When Autopilot needs its model (Assisted, Auto), the extension parks the request without judging it
+- When Autopilot needs its model (Manual, Auto), the extension parks the request without judging it
   (`handle_push_deferring_autopilot`) and the app judges it when it next runs; the push also wakes the app.
 - Widgets: what waits (with countdowns), Autopilot (Lock down, Stop bypass), latest activity; Lock Screen gauges.
 - Live Activities: requests waiting (Deny / Review in the Dynamic Island), a running bypass (Stop), the model download.

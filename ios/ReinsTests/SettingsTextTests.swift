@@ -44,8 +44,8 @@ final class SettingsTextTests: XCTestCase {
         XCTAssertEqual(SettingsText.modeChangeEvent(.bypass, .manual), .bypassOff)
         XCTAssertEqual(SettingsText.modeChangeEvent(.lockdown, .manual), .lockdownOff)
         XCTAssertEqual(SettingsText.modeChangeEvent(.manual, .auto), .autopilotOn)
-        XCTAssertEqual(SettingsText.modeChangeEvent(.auto, .assisted), .autopilotOff)
-        XCTAssertEqual(SettingsText.modeChangeEvent(nil, .assisted), .autopilotOn)
+        XCTAssertEqual(SettingsText.modeChangeEvent(.auto, .manual), .autopilotOff)
+        XCTAssertEqual(SettingsText.modeChangeEvent(nil, .auto), .autopilotOn)
     }
 
     func testABypassCountsItsLastMinuteAsOne() {

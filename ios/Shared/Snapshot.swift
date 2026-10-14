@@ -47,11 +47,11 @@ struct Snapshot: Codable, Equatable {
     var approvalDevice: Bool = false
     var pending: [Item] = []
     var latest: [Entry] = []
-    /// "manual", "assisted", "auto", "bypass", "lockdown".
+    /// "manual", "auto", "bypass", "lockdown" (an older "assisted" reads as Manual).
     var autopilotMode: String = "manual"
     /// Unix seconds when a running bypass ends.
     var bypassUntil: Int64?
-    /// The global mode a bypass went back to when it ended ("manual", "assisted", ...), so a bypass that ran out
+    /// The global mode a bypass went back to when it ended ("manual", "auto", ...), so a bypass that ran out
     /// before the next refresh shows the right mode.
     var baseMode: String?
     /// When the last running bypass ends, the global one or any connection's (the Stop button shows while one runs).

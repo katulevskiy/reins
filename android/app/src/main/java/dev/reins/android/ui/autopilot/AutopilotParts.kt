@@ -74,10 +74,9 @@ import dev.reins.core.NeighbourView
 import dev.reins.core.SuggestionView
 import dev.reins.core.Verdict
 
-/** Each mode's colour: neutral for Manual, blue for Assisted, the accent for Auto, red for Bypass, amber for Lockdown. */
+/** Each mode's colour: blue for Manual, the accent for Auto, red for Bypass, amber for Lockdown. */
 fun modeTint(mode: AutopilotMode, c: RColors): Color = when (mode) {
-    AutopilotMode.MANUAL -> c.secondary
-    AutopilotMode.ASSISTED -> c.search
+    AutopilotMode.MANUAL -> c.search
     AutopilotMode.AUTO -> c.accent
     AutopilotMode.BYPASS -> c.danger
     AutopilotMode.LOCKDOWN -> c.warning
@@ -85,7 +84,6 @@ fun modeTint(mode: AutopilotMode, c: RColors): Color = when (mode) {
 
 fun modeGlyph(mode: AutopilotMode): Glyph = when (mode) {
     AutopilotMode.MANUAL -> Glyph.Hand
-    AutopilotMode.ASSISTED -> Glyph.Sparkle
     AutopilotMode.AUTO -> Glyph.Navigate
     AutopilotMode.BYPASS -> Glyph.Bolt
     AutopilotMode.LOCKDOWN -> Glyph.Lock
@@ -202,9 +200,8 @@ fun PulseDot(color: Color, size: Dp = 8.dp) {
 }
 
 /**
- * The big mode selector: five rows of equal height and one highlight that springs from the old row to the new one,
- * taking on the new mode's colour on the way. Each row says what the mode does; Assisted and Auto say when they need
- * the model.
+ * The big mode selector: four rows of equal height and one highlight that springs from the old row to the new one,
+ * taking on the new mode's colour on the way. Each row says what the mode does; Auto says when it needs the model.
  */
 @Composable
 fun ModePicker(
