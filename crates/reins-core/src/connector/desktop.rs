@@ -50,10 +50,56 @@ fn topic(call: &ConnectorCall) -> Result<Option<String>, CoreError> {
 pub const SCAN_TOPIC: &str = "file:reins secrets scan";
 /// The same, when the computer's environment says an AI agent may have started it.
 pub const SCAN_TOPIC_AGENT: &str = "file:reins secrets scan (an AI agent may have started it)";
-/// The label of the one thing the computer reports for a scan: where it was started.
+/// The topic of `reins secrets import --undo`'s question: it brings secrets back into files.
+pub const UNDO_TOPIC: &str = "file:reins secrets import --undo";
+pub const UNDO_TOPIC_AGENT: &str = "file:reins secrets import --undo (an AI agent may have started it)";
+/// The label of the one thing the computer reports for these questions: where it was started.
 pub const REPORTED_FOLDER: &str = "Folder (reported by the computer): ";
 /// The longest reported folder shown (cut in the middle).
 const MAX_FOLDER: usize = 120;
+
+/// A question the phone words itself, whatever the computer sent: its topics (plain, and when the computer says an AI
+/// agent may have started it), the question around the computer's name, and a fixed line.
+struct Owned {
+    topic: &'static str,
+    agent_topic: &'static str,
+    question: (&'static str, &'static str),
+    line: &'static str,
+    /// The question without the computer's name (the preview's line).
+    plain: &'static str,
+}
+
+const OWNED: [Owned; 2] = [
+    Owned {
+        topic: SCAN_TOPIC,
+        agent_topic: SCAN_TOPIC_AGENT,
+        question: ("Scan ", " for secrets?"),
+        line: "Requested from a terminal on that computer. Only approve if you just started it.",
+        plain: "Scan this computer for secrets?",
+    },
+    Owned {
+        topic: UNDO_TOPIC,
+        agent_topic: UNDO_TOPIC_AGENT,
+        question: ("Put secrets back into files on ", "?"),
+        line: "Requested from a terminal on that computer. It brings back the files an import moved to the trash, \
+               secrets and all. Only approve if you just started it.",
+        plain: "Put secrets back into files on this computer?",
+    },
+];
+
+/// The phone-worded question `topic` names, and whether the computer says an agent may have started it.
+fn owned(topic: Option<&str>) -> Option<(&'static Owned, bool)> {
+    let topic = topic?;
+    OWNED.iter().find_map(|o| {
+        if topic == o.topic {
+            Some((o, false))
+        } else if topic == o.agent_topic {
+            Some((o, true))
+        } else {
+            None
+        }
+    })
+}
 
 /// At most `max` characters, the middle cut out (`/home/dana/…/acme-web`).
 fn middle_ellipsis(s: &str, max: usize) -> String {
@@ -69,18 +115,18 @@ fn middle_ellipsis(s: &str, max: usize) -> String {
     out
 }
 
-/// The scan question in the phone's own words: the computer's name from the phone's pairing record, a fixed line
-/// that never says who started it, the caution when the computer says an agent may have, and the folder the
-/// computer reports, labelled as its claim, on one line and cut to [`MAX_FOLDER`].
-fn scan_view(call: &ConnectorCall, computer: &str, topic: &str) -> AskView {
+/// A question in the phone's own words: the computer's name from the phone's pairing record, a fixed line that never
+/// says who started it, the caution when the computer says an agent may have, and the folder the computer reports,
+/// labelled as its claim, on one line and cut to [`MAX_FOLDER`].
+fn owned_view(call: &ConnectorCall, computer: &str, o: &Owned, agent: bool) -> AskView {
     let computer = text::one_line(computer);
     let computer = if computer.is_empty() {
         "this computer".to_owned()
     } else {
         computer
     };
-    let mut lines = vec!["Requested from a terminal on that computer. Only approve if you just started it.".to_owned()];
-    if topic == SCAN_TOPIC_AGENT {
+    let mut lines = vec![o.line.split_whitespace().collect::<Vec<_>>().join(" ")];
+    if agent {
         lines.push("An AI agent may have started this.".to_owned());
     }
     let reported = call.str_arg("detail").unwrap_or_default();
@@ -89,9 +135,16 @@ fn scan_view(call: &ConnectorCall, computer: &str, topic: &str) -> AskView {
         lines.push(format!("{REPORTED_FOLDER}{}", middle_ellipsis(&folder, MAX_FOLDER)));
     }
     AskView {
-        question: format!("Scan {computer} for secrets?"),
+        question: format!("{}{computer}{}", o.question.0, o.question.1),
         detail: Some(lines.join("\n")),
-        topic: Some(topic.to_owned()),
+        topic: Some(
+            if agent {
+                o.agent_topic
+            } else {
+                o.topic
+            }
+            .to_owned(),
+        ),
     }
 }
 
@@ -101,10 +154,8 @@ pub fn ask_view(call: &ConnectorCall, computer: &str) -> Option<AskView> {
     if call.service != DESKTOP || call.op != "ask" {
         return None;
     }
-    if let Ok(Some(t)) = topic(call)
-        && (t == SCAN_TOPIC || t == SCAN_TOPIC_AGENT)
-    {
-        return Some(scan_view(call, computer, &t));
+    if let Some((o, agent)) = owned(topic(call).ok().flatten().as_deref()) {
+        return Some(owned_view(call, computer, o, agent));
     }
     Some(AskView {
         question: text::truncate_chars(&text::one_line(call.str_arg("question").unwrap_or_default()), MAX_QUESTION),
@@ -249,11 +300,7 @@ impl Connector for Desktop {
         // answered from a notification, with "Approve all" or by a standing answer, and never by Autopilot.
         let once_only = destructive_ask(topic.as_deref(), &question, call.str_arg("detail").unwrap_or_default());
         // The scan question is worded by the phone (`ask_view`), never by the computer.
-        let question = if topic.as_deref().is_some_and(|t| t == SCAN_TOPIC || t == SCAN_TOPIC_AGENT) {
-            "Scan this computer for secrets?".to_owned()
-        } else {
-            question
-        };
+        let question = owned(topic.as_deref()).map_or(question, |(o, _)| o.plain.to_owned());
         let mut lines = vec![question];
         if let Some(t) = &topic {
             lines.push(format!("About: {t}"));
@@ -349,7 +396,13 @@ mod tests {
         assert_eq!(row.chars().count(), REPORTED_FOLDER.chars().count() + MAX_FOLDER);
         assert!(row.ends_with("/end") && row.contains('…'));
         // Asked every time, both ways.
-        assert!(destructive_ask(Some(SCAN_TOPIC), "q", "") && destructive_ask(Some(SCAN_TOPIC_AGENT), "q", ""));
+        for t in [SCAN_TOPIC, SCAN_TOPIC_AGENT, UNDO_TOPIC, UNDO_TOPIC_AGENT] {
+            assert!(destructive_ask(Some(t), "q", "") && t.len() <= MAX_TOPIC, "{t}");
+        }
+        let undo =
+            ask_view(&call(&json!({"question": "Safe", "detail": "/x", "topic": UNDO_TOPIC_AGENT})), "Mac").unwrap();
+        assert_eq!(undo.question, "Put secrets back into files on Mac?");
+        assert!(undo.detail.unwrap().contains("An AI agent may have started this."));
     }
 
     #[test]

@@ -32,6 +32,9 @@ use crate::secrets_scan::Caller;
 pub const SCAN_TOPIC: &str = "file:reins secrets scan";
 /// The same, when the environment names an AI agent: the phone adds "An AI agent may have started this."
 pub const SCAN_TOPIC_AGENT: &str = "file:reins secrets scan (an AI agent may have started it)";
+/// `reins secrets import --undo`'s question (it brings secrets back into files), worded by the phone likewise.
+pub const UNDO_TOPIC: &str = "file:reins secrets import --undo";
+pub const UNDO_TOPIC_AGENT: &str = "file:reins secrets import --undo (an AI agent may have started it)";
 /// The label of the folder the phone shows as this computer's claim.
 pub const REPORTED_FOLDER: &str = "Folder (reported by the computer): ";
 /// The longest folder sent.
@@ -124,14 +127,27 @@ pub fn check(
 /// it never reassures.
 #[must_use]
 pub fn scan_question(cwd: &Path, caller: &Caller) -> Question {
-    let topic = match caller {
-        Caller::Person => SCAN_TOPIC,
-        Caller::Agent(_) => SCAN_TOPIC_AGENT,
-    };
+    phone_worded("Scan this computer for secrets?", (SCAN_TOPIC, SCAN_TOPIC_AGENT), cwd, caller)
+}
+
+/// The question the phone is asked before `reins secrets import --undo` brings secrets back into files (worded by
+/// the phone, as [`scan_question`]).
+#[must_use]
+pub fn undo_question(cwd: &Path, caller: &Caller) -> Question {
+    phone_worded("Put secrets back into files on this computer?", (UNDO_TOPIC, UNDO_TOPIC_AGENT), cwd, caller)
+}
+
+fn phone_worded(question: &str, (topic, agent_topic): (&str, &str), cwd: &Path, caller: &Caller) -> Question {
     Question {
-        question: "Scan this computer for secrets?".to_owned(),
+        question: question.to_owned(),
         detail: Some(format!("{REPORTED_FOLDER}{}", reported(&cwd.to_string_lossy()))),
-        topic: Some(topic.to_owned()),
+        topic: Some(
+            match caller {
+                Caller::Person => topic,
+                Caller::Agent(_) => agent_topic,
+            }
+            .to_owned(),
+        ),
     }
 }
 
@@ -182,12 +198,12 @@ impl Approver for Phone<'_> {
     async fn approve(&self, q: &Question) -> Answer {
         if !matches!(ask::decider(self.paths, self.config), Ok(ask::Decider::Phone)) {
             return Answer::Unanswered(
-                "this computer is not paired with a phone, which has to approve a scan: pair it (reins setup), or \
-                 scan from the Reins app (Keys & secrets)"
+                "this computer is not paired with a phone, which has to approve this: pair it (reins setup), or use \
+                 the Reins app (Keys & secrets)"
                     .to_owned(),
             );
         }
-        let entry = Entry::new(Kind::Ask, &q.question).source(Some("reins secrets scan")).detail(q.detail.as_deref());
+        let entry = Entry::new(Kind::Ask, &q.question).source(Some("reins secrets")).detail(q.detail.as_deref());
         let tell = |line: &str| eprintln!("{line}");
         let timeout = Duration::from_secs(self.config.approval_timeout_secs);
         ask::ask_logged(self.paths, self.config, q, timeout, false, &ask::DesktopAsk, entry, Some(&tell)).await.0
@@ -210,8 +226,8 @@ pub async fn authorize(
     eprintln!("Approve it on your phone…");
     match approver.approve(q).await {
         Answer::Yes => Ok(()),
-        Answer::No(why) => Err(format!("Not scanned: your phone said no ({why}).")),
-        Answer::Unanswered(why) => Err(format!("Not scanned: {why}")),
+        Answer::No(why) => Err(format!("Nothing done: your phone said no ({why}).")),
+        Answer::Unanswered(why) => Err(format!("Nothing done: {why}")),
     }
 }
 
