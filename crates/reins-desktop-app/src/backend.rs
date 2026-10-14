@@ -495,6 +495,7 @@ impl Backend {
             config,
             Options {
                 harden: false,
+                process_info: reins_desktop::runner::process_info,
                 ..Options::default()
             },
         )

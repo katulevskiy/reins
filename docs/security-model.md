@@ -333,6 +333,14 @@ open them. It still cannot get anything you do not approve on the phone. It does
 you gave the desktop connection, and it could approve local-mode prompts through the control API. For full
 separation, run the daemon as its own OS user and keep the agent from reading that user's files.
 
+**Who runs a command** (Reins Secrets). The daemon tells a person from an AI agent by the process that asks it
+(`reins run` connects to a socket only this user can open; the daemon reads the caller's process id from it) and that
+process's ancestors: a known agent harness among them makes it that agent, and what the caller says can only make it an
+agent. A program of the same user that cuts itself off from its ancestry (a double fork, a service of the user) and
+says nothing passes for a person; that is the same-user limit above, and running the daemon as its own user closes it.
+The approval names the exact command either way. On Windows the daemon does not take over `reins run` yet, and the
+runner is what the caller's environment says.
+
 **Local mode** (not logged in): the GitHub token comes from `gh auth token`, an environment variable or a file the
 agent's user can usually read. Local mode protects against an agent's mistakes. Phone mode protects against a hostile
 agent.

@@ -182,16 +182,16 @@ async fn an_environment_saved_from_the_computer_is_released_bound_to_one_command
     assert!(!server.log().contains("5ecret"), "the server never sees a value");
 
     // ---- reins run: the daemon asks once; the user remembers `npm run *` ----
-    let link = Arc::new(PhoneLink::new(
+    let phone_link = Arc::new(PhoneLink::new(
         Mode::Reins,
         paths.clone(),
         Arc::new(Identity::load_or_create(&paths.identity_file()).unwrap()),
         Duration::from_secs(60),
     ));
     let cache = Arc::new(LeaseCache::default());
-    let daemon = SecretsService::new(Arc::clone(&cache), Arc::clone(&link));
+    let daemon = SecretsService::new(Arc::clone(&cache), Arc::clone(&phone_link));
     let dev_run = req(&["run", "dev"]);
-    let lease = daemon.lease(&dev_run);
+    let lease = daemon.lease(&dev_run, None);
     let user = async {
         let item = phone.wait_for_item(Duration::from_secs(60)).await;
         let view = phone.core.approval_view(item.id.clone()).await.unwrap();
@@ -215,12 +215,12 @@ async fn an_environment_saved_from_the_computer_is_released_bound_to_one_command
     let (first, ()) = tokio::join!(lease, user);
     let first = first.unwrap();
     assert_eq!(first.values[0], ("API_KEY".to_owned(), "sk-e2e-5ecret".to_owned()));
-    assert!(daemon.lease(&req(&["run", "test"])).await.unwrap().cached, "the lease covers npm run *");
+    assert!(daemon.lease(&req(&["run", "test"]), None).await.unwrap().cached, "the lease covers npm run *");
 
     // A daemon that starts over asks again, and the phone's permission answers without the user.
-    let fresh = SecretsService::new(Arc::new(LeaseCache::default()), Arc::clone(&link));
+    let fresh = SecretsService::new(Arc::new(LeaseCache::default()), Arc::clone(&phone_link));
     let lint = req(&["run", "lint"]);
-    let lease = fresh.lease(&lint);
+    let lease = fresh.lease(&lint, None);
     let mut lease = std::pin::pin!(lease);
     // The phone app is open: it syncs, and its permission answers.
     let again = loop {
@@ -249,7 +249,7 @@ async fn an_environment_saved_from_the_computer_is_released_bound_to_one_command
         all: true,
         ..Default::default()
     });
-    let lease = fresh.lease(&lint);
+    let lease = fresh.lease(&lint, None);
     let user = async {
         let item = phone.wait_for_item(Duration::from_secs(60)).await;
         assert!(phone.core.approval_view(item.id.clone()).await.unwrap().env_release.is_some(), "asked again");
