@@ -101,9 +101,10 @@ newest 500).
   phone listed), and how to use them with the daemon's address (in the title's (?)).
 - **Rules** ("What asks your phone"): the built-in groups of hook rules as a grid of cards coloured by how risky they
   are (red rewrites or wipes, orange infrastructure or data, yellow publishing or payments, blue secrets), each asking
-  the phone or going through; your own commands and files to ask about, and to never ask about, as removable tags with
-  one field each (a path or a glob goes in the files list, anything else in the commands list); what happens when
-  nobody answers; how long hooks and approvals wait. They are checked on this computer; approving always happens on
+  the phone or going through; your own commands and files to ask about, and to never ask about, as removable tags (a
+  terminal or a file before each) with one field per side and **Command** | **File** beside it: the entry goes in the
+  list picked, never guessed, and only as the guard reads it (one command per command entry, no `./` in a file
+  pattern; refused with why otherwise); what happens when nobody answers; how long hooks and approvals wait. They are checked on this computer; approving always happens on
   the phone.
 - **Settings**: the account card (who, the server and this computer's key, which phone approves, the background
   service, with **Start** when it is not running), This computer (open at login, the command line tool, notifications
