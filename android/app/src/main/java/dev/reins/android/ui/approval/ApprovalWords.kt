@@ -19,7 +19,11 @@ enum class HeroTone { Write, Search, Send, Grant, Danger }
 enum class Badge { Pen, Search, Read, List, Send, Trash, Shield, People, Key, Terminal, Question, Cart }
 
 /** A change that cannot be undone or reaches far: asked every time, shown in red. */
-fun destructive(view: ApprovalView): Boolean = view.noStanding && view.kind == ApprovalKind.WRITE && view.purchase == null
+fun destructive(view: ApprovalView): Boolean {
+    // A desktop question says itself: one asked every time for a key or a command it cannot read is not red.
+    view.ask?.let { return it.destructive }
+    return view.noStanding && view.kind == ApprovalKind.WRITE && view.purchase == null
+}
 
 /** The request removes something (a repository, an issue, a branch). */
 fun deletes(view: ApprovalView): Boolean =

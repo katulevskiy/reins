@@ -36,7 +36,11 @@ enum HeroBadge {
 
 enum ApprovalWords {
     /// A change that cannot be undone or reaches far: asked every time, shown in red.
-    static func destructive(_ view: ApprovalView) -> Bool { view.noStanding && view.kind == .write }
+    static func destructive(_ view: ApprovalView) -> Bool {
+        // A desktop question says itself: one asked every time for a key or a command it cannot read is not red.
+        if let ask = view.ask { return ask.destructive }
+        return view.noStanding && view.kind == .write
+    }
 
     /// The request removes something (a repository, an issue, a branch).
     static func deletes(_ view: ApprovalView) -> Bool {
@@ -269,17 +273,19 @@ enum ApprovalWords {
     }
 
     /// The guard rule a desktop question matched, and what matched it: ".env files · .env".
-    static func ruleTag(_ rule: AskRuleView) -> DangerTag {
+    static func ruleTag(_ rule: AskRuleView, everyTime: Bool = false) -> DangerTag {
         let matched = untrusted(rule.matched)
         let label = matched.isEmpty ? rule.label : "\(rule.label) · \(matched)"
         var help = "Matched the rule \(untrusted(rule.pattern)) on your computer."
         if rule.reported { help += " Your computer says so; this phone doesn't know the rule." }
-        help += rule.destructive ? " It can't be undone, so it's asked every time." : " Autopilot can learn it."
+        help += rule.destructive
+            ? " It can't be undone, so it's asked every time."
+            : everyTime ? " It's asked every time." : " Autopilot can learn it."
         return DangerTag(label: label, id: "guardRule", help: help, destructive: rule.destructive, symbol: "shield.lefthalf.filled")
     }
 
     static func dangerTag(_ view: ApprovalView) -> DangerTag? {
-        if let rule = view.ask?.rule { return ruleTag(rule) }
+        if let rule = view.ask?.rule { return ruleTag(rule, everyTime: view.noStanding) }
         if let git = view.git {
             if let i = git.refs.firstIndex(where: { $0.force && !$0.forceUnknown }) {
                 return DangerTag(label: "Rewrites history", id: "forceWarning:\(i)", help: "This push replaces commits that are already there. What they held is lost on the server.")

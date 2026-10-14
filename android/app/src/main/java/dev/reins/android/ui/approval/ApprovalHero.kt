@@ -261,19 +261,25 @@ data class DangerTag(
 )
 
 /** The guard rule a desktop question matched, and what matched it: ".env files · .env". */
-fun ruleTag(rule: AskRuleView): DangerTag {
+fun ruleTag(rule: AskRuleView, everyTime: Boolean = false): DangerTag {
     val matched = untrusted(rule.matched)
     val label = if (matched.isEmpty()) rule.label else "${rule.label} · $matched"
     val help = buildString {
         append("Matched the rule ${untrusted(rule.pattern)} on your computer.")
         if (rule.reported) append(" Your computer says so; this phone doesn't know the rule.")
-        append(if (rule.destructive) " It can't be undone, so it's asked every time." else " Autopilot can learn it.")
+        append(
+            when {
+                rule.destructive -> " It can't be undone, so it's asked every time."
+                everyTime -> " It's asked every time."
+                else -> " Autopilot can learn it."
+            },
+        )
     }
     return DangerTag(label, "guardRule", help, rule.destructive, Icons.Rounded.Shield)
 }
 
 fun dangerTag(view: ApprovalView): DangerTag? {
-    view.ask?.rule?.let { return ruleTag(it) }
+    view.ask?.rule?.let { return ruleTag(it, everyTime = view.noStanding) }
     val git = view.git
     if (git != null) {
         val forced = git.refs.indexOfFirst { it.force && !it.forceUnknown }
