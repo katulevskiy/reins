@@ -28,7 +28,10 @@ cases = [
     ("crates/reins-desktop/src/lib.rs", (True, False, False)),
     ("Cargo.lock", (True, True, False)),
     ("android/app/build.gradle.kts", (False, True, False)),
-    (".github/actions/signing/action.yml", (True, True, True)),
+    (".github/workflows/ci.yml", (True, True, True)),
+    # The release's workflow and actions do not run in CI's lanes; the checks job lints them.
+    (".github/workflows/release.yml", (False, False, False)),
+    (".github/actions/signing/action.yml", (False, False, False)),
     ("docker/Dockerfile.debian", (False, False, True)),
     ("scripts/release-android.sh", (True, True, False)),
 ]
@@ -71,7 +74,9 @@ with tempfile.TemporaryDirectory(prefix="reins-ci-routing-") as directory:
         assert actual == expected, (name, actual, expected)
 
     # Unreachable before-SHAs can follow history rewrites. Missing history must never skip validation.
-    for event, base in [("push", "f" * 40), ("push", "0" * 40), ("push", ""), ("workflow_dispatch", baseline)]:
+    # The weekly run on main selects every lane, so it refreshes every cache.
+    for event, base in [("push", "f" * 40), ("push", "0" * 40), ("push", ""), ("workflow_dispatch", baseline),
+                        ("schedule", baseline), ("schedule", "")]:
         assert select(event, base) == (True, True, True), (event, base)
 
-print(f"{len(cases) + 4} CI component-routing checks passed")
+print(f"{len(cases) + 6} CI component-routing checks passed")

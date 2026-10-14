@@ -52,13 +52,16 @@ jobs:
           BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.before }}
         run: |
           rust=false android=false docker=false
-          if [[ "$EVENT" == workflow_dispatch || -z "$BASE_SHA" || "$BASE_SHA" == 0000000000000000000000000000000000000000 ]] ||
+          if [[ "$EVENT" == workflow_dispatch || "$EVENT" == schedule || -z "$BASE_SHA" ||
+                "$BASE_SHA" == 0000000000000000000000000000000000000000 ]] ||
              ! git cat-file -e "${BASE_SHA}^{commit}" 2>/dev/null; then
             rust=true android=true docker=true
           else
             while IFS= read -r -d '' path; do
               case "$path" in
-                .github/*) rust=true android=true docker=true ;;
+                .github/workflows/ci.yml) rust=true android=true docker=true ;;
+                # The release's workflow and actions, CODEOWNERS, templates: the checks job (always run) lints them.
+                .github/*) ;;
                 Cargo.*|rust-toolchain.toml|crates/reins-core/*|crates/reins-proto/*|crates/reins-policy/*)
                   rust=true android=true ;;
                 rustfmt.toml|build.rs|src/*|macros/*|crates/*|migrations/*|tests/*) rust=true ;;
