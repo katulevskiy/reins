@@ -9,10 +9,12 @@ import dev.reins.android.feedback.Feedback
 import dev.reins.android.feedback.FeedbackProvider
 import dev.reins.android.feedback.FeedbackSettings
 import dev.reins.android.feedback.Haptic
+import dev.reins.android.feedback.TapFeedback
 import dev.reins.android.platform.AppNotifier
 import dev.reins.android.platform.AuthResult
 import dev.reins.android.platform.Foreground
 import java.util.concurrent.CopyOnWriteArrayList
+import java.util.concurrent.atomic.AtomicInteger
 import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -24,9 +26,10 @@ import org.robolectric.annotation.Config
 import org.robolectric.annotation.GraphicsMode
 
 /** Everything the app asks the feedback engine for, before any switch or rate limit. */
-class RecordingFeedback : Feedback {
+class RecordingFeedback : Feedback, TapFeedback {
     val haptics = CopyOnWriteArrayList<Haptic>()
     val cues = CopyOnWriteArrayList<Cue>()
+    val defaultTaps = AtomicInteger()
 
     override fun haptic(haptic: Haptic) {
         haptics += haptic
@@ -36,11 +39,21 @@ class RecordingFeedback : Feedback {
         cues += cue
     }
 
+    override fun defaultTap() {
+        defaultTaps.incrementAndGet()
+    }
+
+    // Both end in a cue (or in silence), which the engine reports on its own.
+    override fun cueUnlessRecent(cue: Cue, windowMs: Long) = Unit
+
+    override fun quietClose() = Unit
+
     fun played(event: Event): Boolean = (event.cue == null || event.cue in cues) && (event.haptic == null || event.haptic in haptics)
 
     fun clear() {
         haptics.clear()
         cues.clear()
+        defaultTaps.set(0)
     }
 }
 
@@ -119,6 +132,20 @@ class FeedbackFlowTest : FlowHarness() {
         rule.onAllNodes(hasText("Delete")).let { it[it.fetchSemanticsNodes().lastIndex] }.performClick()
         awaitCore { core.revokedGrants.contains("g1") }
         assertTrue(heard.played(Event.Revoked))
+    }
+
+    @Test
+    fun everyTabSwitchTaps() {
+        launch()
+        awaitTag("tabGrants")
+        heard.clear()
+        repeat(3) {
+            tap("tabGrants")
+            awaitTag("newGrant")
+            tap("tabActivity")
+            awaitGone("newGrant")
+        }
+        assertEquals(6, heard.defaultTaps.get())
     }
 
     @Test

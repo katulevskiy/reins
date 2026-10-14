@@ -18,7 +18,10 @@ import android.view.View
 import androidx.core.content.ContextCompat
 import java.lang.ref.WeakReference
 
-/** Lets tests watch what the app asks for, before any switch or rate limit. Production leaves it null. */
+/**
+ * Lets tests watch what the app asks for, before any switch or rate limit (default taps too, when it is also a
+ * [TapFeedback]). Production leaves it null.
+ */
 object FeedbackProvider {
     @Volatile
     var observer: Feedback? = null
@@ -168,6 +171,7 @@ class AndroidFeedback(
     }
 
     override fun defaultTap() {
+        (FeedbackProvider.observer as? TapFeedback)?.defaultTap()
         val released = clock()
         main.postDelayed({
             claims.quiet() // a press just answered: a dialog closing around it stays silent

@@ -111,7 +111,8 @@ fun Modifier.pressable(
 
 /**
  * A [pressable]'s click: the caller's action, then the default tap from the [LocalFeedback] of the node it is wired to
- * ([PressClickElement]). Equal when the action is, so an unchanged row updates nothing.
+ * ([PressClickElement]). Compared by identity, as `clickable` compares its `onClick`: each composition makes a new one
+ * that `clickable` will call, so [PressClickElement] must wire that one too (an equal action is not enough).
  */
 private class PressClick(val onClick: () -> Unit) : () -> Unit {
     var node: PressClickNode? = null
@@ -120,10 +121,6 @@ private class PressClick(val onClick: () -> Unit) : () -> Unit {
         onClick()
         node?.feedback()?.defaultTap()
     }
-
-    override fun equals(other: Any?) = other is PressClick && other.onClick == onClick
-
-    override fun hashCode() = onClick.hashCode()
 }
 
 private data class PressClickElement(val click: PressClick) : ModifierNodeElement<PressClickNode>() {
