@@ -656,7 +656,18 @@ impl Engine {
         if is_token_store(call) {
             return self.token_store_perform(call).await;
         }
-        connector.perform(account, call).await
+        let done = connector.perform(account, call).await?;
+        // Saved values change the environments: computers holding the earlier ones drop them and ask again.
+        if call.service == reins_proto::connector::VAULT && call.op == "secrets_store" {
+            for item in call.list_arg("envs") {
+                if let Some((project, env)) = item.split_once('/')
+                    && let Err(e) = self.tell_computers(Some(project), Some(env)).await
+                {
+                    log::warn!("could not tell the computers that {item} changed: {e}");
+                }
+            }
+        }
+        Ok(done)
     }
 
     /// Records the decision, drops the parked request and answers the server.

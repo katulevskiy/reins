@@ -530,6 +530,10 @@ async fn an_environment_is_changed_only_as_asked_and_keeps_its_earlier_values() 
     history.sort();
     assert_eq!(history, ["A: alpha-secret", "B: beta-secret"]);
     assert_eq!(put[0]["lastKnownRevisionDate"], "rev-dev");
+    // Computers holding the earlier values drop them.
+    let told = sent(&desk, "POST", "/reins/api/desktop/revocations").await;
+    let note: reins_proto::desktop::LeaseRevocation = desk.open(&told[0]["items"][0]["sealed"]);
+    assert_eq!((note.project.as_deref(), note.env.as_deref()), (Some("acme"), Some("dev")));
 
     // Copying an environment happens on the phone: the values never travel.
     let mut copy = EnvChanges::new("acme", "staging");
