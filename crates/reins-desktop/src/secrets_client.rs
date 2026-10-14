@@ -14,9 +14,9 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use reins_proto::desktop::{
-    CommandScope, ENV_RELEASE_TOOL, EnvChanges, MAX_ENV_VARS, PHONE_KEY_CHANGED, SECRETS_LIST_TOOL, SECRETS_STORE_TOOL,
-    SecretGrant, SecretsListing, SecretsStoreAck, SecretsToStore, TO_DESKTOP, TO_PHONE, TOKEN_STORE_TOOL,
-    TokenStoreAck, TokenToStore, var_ok,
+    CommandScope, ENV_RELEASE_TOOL, EnvChanges, HostToken, MAX_ENV_VARS, PHONE_KEY_CHANGED, SECRETS_LIST_TOOL,
+    SECRETS_STORE_TOOL, SecretGrant, SecretsListing, SecretsStoreAck, SecretsToStore, SshKeyToStore, TO_DESKTOP,
+    TO_PHONE, TOKEN_STORE_TOOL, TokenStoreAck, TokenToStore, var_ok,
 };
 use serde::{Deserialize, Serialize};
 use serde_json::json;
@@ -238,22 +238,24 @@ impl PhoneVaultWriter {
     fn timeout(&self) -> Duration {
         Duration::from_secs(self.config.approval_timeout_secs)
     }
-}
 
-/// `value` as JSON in a box from this app's key to the phone's, in a buffer that is wiped.
-fn boxed<T: Serialize>(phone: &Phone, phone_key: &str, value: &T) -> Option<String> {
-    let mut plain = Zeroizing::new(Vec::with_capacity(64 * 1024));
-    serde_json::to_writer(&mut *plain, value).ok()?;
-    phone.identity().box_to(phone_key, &plain)
-}
-
-#[async_trait::async_trait]
-impl VaultWriter for PhoneVaultWriter {
-    async fn store_envs(&self, envs: &[EnvChanges]) -> Result<StoreReceipt, StoreError> {
-        reins_proto::desktop::validate_store(envs).map_err(StoreError::Failed)?;
+    /// Saves environments, SSH keys and git hosts' tokens with one approval on the phone (`vault_secrets_store`): the
+    /// phone's answer, one result per part, in the order sent. Show [`reins_proto::desktop::batch_check`] first.
+    pub async fn store_batch(
+        &self,
+        envs: &[EnvChanges],
+        ssh: &[SshKeyToStore],
+        tokens: &[HostToken],
+    ) -> Result<SecretsStoreAck, StoreError> {
+        reins_proto::desktop::validate_batch(envs, ssh, tokens).map_err(StoreError::Failed)?;
         let (phone, phone_key) = self.phone().await?;
         let names: Vec<String> = envs.iter().map(EnvChanges::item).collect();
-        let what = format!("save secrets in {}", names.join(", "));
+        let keys: Vec<String> = ssh.iter().map(|k| k.name.trim().to_owned()).collect();
+        let hosts: Vec<String> = tokens.iter().map(|t| t.host.clone()).collect();
+        let what = format!(
+            "save {} in the vault",
+            names.iter().chain(&keys).chain(&hosts).cloned().collect::<Vec<_>>().join(", ")
+        );
         let entry = Entry::new(Kind::Secrets, &what).source(Some("reins secrets"));
         let tell = teller(|line: &str| eprintln!("{line}"));
         let asked = phone.ask(
@@ -269,11 +271,11 @@ impl VaultWriter for PhoneVaultWriter {
                         nonce: nonce.to_owned(),
                         created_at: crate::now_unix(),
                         envs: envs.to_vec(),
-                        ssh: Vec::new(),
-                        tokens: Vec::new(),
+                        ssh: ssh.to_vec(),
+                        tokens: tokens.to_vec(),
                     },
                 );
-                json!({"envs": names, "sealed": sealed.unwrap_or_default()})
+                json!({"envs": names, "ssh": keys, "hosts": hosts, "sealed": sealed.unwrap_or_default()})
             },
             NO_ANSWER,
         );
@@ -282,7 +284,12 @@ impl VaultWriter for PhoneVaultWriter {
             .map_err(|r| store_error(&r))?;
         let ack: SecretsStoreAck =
             crate::vault_cli::open_from_phone(&phone, &phone_key, &answer.data).map_err(StoreError::Failed)?;
-        if ack.dir != TO_DESKTOP || ack.nonce != answer.nonce {
+        if ack.dir != TO_DESKTOP
+            || ack.nonce != answer.nonce
+            || ack.envs.len() != envs.len()
+            || ack.ssh.len() != ssh.len()
+            || ack.tokens.len() != tokens.len()
+        {
             return Err(StoreError::Failed("The phone's answer is for another request; refused.".to_owned()));
         }
         // The daemon drops the values it holds of these environments now (the phone tells it too, in a while).
@@ -295,6 +302,30 @@ impl VaultWriter for PhoneVaultWriter {
                 };
                 control.revoke(&drop).await.ok();
             }
+        }
+        Ok(ack)
+    }
+}
+
+/// `value` as JSON in a box from this app's key to the phone's, in a buffer that is wiped.
+fn boxed<T: Serialize>(phone: &Phone, phone_key: &str, value: &T) -> Option<String> {
+    let mut plain = Zeroizing::new(Vec::with_capacity(64 * 1024));
+    serde_json::to_writer(&mut *plain, value).ok()?;
+    phone.identity().box_to(phone_key, &plain)
+}
+
+#[async_trait::async_trait]
+impl VaultWriter for PhoneVaultWriter {
+    async fn store_envs(&self, envs: &[EnvChanges]) -> Result<StoreReceipt, StoreError> {
+        reins_proto::desktop::validate_store(envs).map_err(StoreError::Failed)?;
+        let ack = self.store_batch(envs, &[], &[]).await?;
+        if let Some((e, why)) = ack.envs.iter().find_map(|e| e.error.as_ref().map(|w| (e, w))) {
+            return Err(StoreError::Failed(format!(
+                "{}/{}: {}",
+                e.project,
+                e.env,
+                reins_proto::desktop::printable(why)
+            )));
         }
         Ok(StoreReceipt {
             envs: ack.envs,
