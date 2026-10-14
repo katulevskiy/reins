@@ -8,9 +8,20 @@ final class AutopilotTextTests: XCTestCase {
                     downloadedBytes: downloaded, error: error, runtimeReady: true)
     }
 
-    private func settings(bypass: Int64? = nil, connections: [ConnectionAutopilot] = []) -> AutopilotSettings {
-        AutopilotSettings(mode: bypass != nil ? .bypass : .manual, baseMode: .manual, bypassUntil: bypass, defaultProfileId: "personal",
-                          wifiOnly: true, model: model(.installed), connections: connections)
+    private func settings(bypass: Int64? = nil, since: Int64? = nil, connections: [ConnectionAutopilot] = []) -> AutopilotSettings {
+        AutopilotSettings(mode: bypass != nil ? .bypass : .manual, baseMode: .manual, bypassUntil: bypass, bypassSince: since,
+                          defaultProfileId: "personal", wifiOnly: true, model: model(.installed), connections: connections)
+    }
+
+    private func connection(_ id: String, until: Int64?, since: Int64? = nil, profile: String = "personal") -> ConnectionAutopilot {
+        ConnectionAutopilot(connectionId: id, baseMode: nil, bypassUntil: until, bypassSince: since, mode: until != nil ? .bypass : .manual,
+                            profileId: profile)
+    }
+
+    private func profile(_ id: String = "personal", isDefault: Bool = true, memory: UInt32 = 140, connections: [String] = [],
+                         classes: [ClassView] = []) -> ProfileView {
+        ProfileView(id: id, name: id, icon: nil, preset: .custom, approveAt: 0.93, denyAt: 0.88, agreement: 0.94, isDefault: isDefault,
+                    memoryCount: memory, connections: connections, classes: classes, trainedAt: nil)
     }
 
     private func classView(decisions: UInt32 = 12, approved: UInt32 = 11, denied: UInt32 = 1, accuracy: Float? = nil, autoApprove: Bool = false,
@@ -41,36 +52,143 @@ final class AutopilotTextTests: XCTestCase {
         XCTAssertNil(AutopilotFeedback.modeChange(from: .auto, to: .auto))
     }
 
-    func testTimeLeftReadsInWholeMinutesAndAsAClock() {
-        XCTAssertEqual(AutopilotText.minutesLeft(until: 1_000 + 41 * 60 + 5, now: 1_000), "42 min left")
-        XCTAssertEqual(AutopilotText.minutesLeft(until: 1_010, now: 1_000), "1 min left")
-        XCTAssertEqual(AutopilotText.clock(until: 1_000 + 14 * 60 + 5, now: 1_000), "14:05")
-        XCTAssertEqual(AutopilotText.clock(until: 900, now: 1_000), "0:00")
+    func testTimeLeftReadsInMinutesHoursAndDaysAndUntilOff() {
+        XCTAssertEqual(AutopilotText.timeLeft(until: 1_000 + 41 * 60 + 5, now: 1_000), "42 min left")
+        XCTAssertEqual(AutopilotText.timeLeft(until: 1_010, now: 1_000), "1 min left")
+        XCTAssertEqual(AutopilotText.timeLeft(until: 900, now: 1_000), "1 min left", "never negative")
+        XCTAssertEqual(AutopilotText.timeLeft(until: 1_000 + 3_600, now: 1_000), "1 h left")
+        XCTAssertEqual(AutopilotText.timeLeft(until: 1_000 + 4 * 3_600 + 1, now: 1_000), "5 h left")
+        XCTAssertEqual(AutopilotText.timeLeft(until: 1_000 + 47 * 3_600, now: 1_000), "47 h left")
+        XCTAssertEqual(AutopilotText.timeLeft(until: 1_000 + 48 * 3_600, now: 1_000), "2 days left")
+        XCTAssertEqual(AutopilotText.timeLeft(until: 1_000 + 2 * 86_400 + 1, now: 1_000), "3 days left")
+        XCTAssertEqual(AutopilotText.timeLeft(until: AutopilotText.untilOff, now: 1_000), "until you stop it")
     }
 
-    func testTheBypassRingMeasuresAgainstTheLengthMostLikelyChosen() {
+    func testTheClockReadsMinutesHoursAndDaysAndInfinityWithoutAnEnd() {
+        XCTAssertEqual(AutopilotText.clock(until: 1_000 + 14 * 60 + 5, now: 1_000), "14:05")
+        XCTAssertEqual(AutopilotText.clock(until: 900, now: 1_000), "0:00")
+        XCTAssertEqual(AutopilotText.clock(until: 1_000 + 5 * 3_600 + 4 * 60 + 9, now: 1_000), "5:04:09")
+        XCTAssertEqual(AutopilotText.clock(until: 1_000 + 2 * 86_400 + 4 * 3_600 + 59, now: 1_000), "2d 4h")
+        XCTAssertEqual(AutopilotText.clock(until: AutopilotText.untilOff, now: 1_000), "∞")
+        XCTAssertEqual(AutopilotText.clock(until: AutopilotText.untilOff, now: 0), "∞")
+    }
+
+    func testLengthsReadAsTheLargestWholeUnit() {
+        XCTAssertEqual(AutopilotText.lengthLabel(minutes: nil), "Until off")
+        XCTAssertEqual(AutopilotText.lengthLabel(minutes: 15), "15 min")
+        XCTAssertEqual(AutopilotText.lengthLabel(minutes: 90), "90 min")
+        XCTAssertEqual(AutopilotText.lengthLabel(minutes: 60), "1 hour")
+        XCTAssertEqual(AutopilotText.lengthLabel(minutes: 240), "4 hours")
+        XCTAssertEqual(AutopilotText.lengthLabel(minutes: 1_440), "1 day")
+        XCTAssertEqual(AutopilotText.lengthLabel(minutes: 3 * 1_440), "3 days")
+        XCTAssertEqual(AutopilotText.lengthLabel(minutes: 10_080), "1 week")
+        XCTAssertEqual(AutopilotText.lengthLabel(minutes: 3 * 10_080), "3 weeks")
+        XCTAssertEqual(AutopilotText.bypassMinutes.map { AutopilotText.lengthLabel(minutes: $0) }, ["15 min", "1 hour", "1 day"])
+        XCTAssertEqual(AutopilotText.bypassMoreMinutes.map { AutopilotText.lengthLabel(minutes: $0) }, ["4 hours", "1 week"])
+    }
+
+    func testACustomLengthStaysWithinWhatTheCoreTakes() {
+        XCTAssertEqual(AutopilotText.customMinutes(count: 3, unit: .days), 3 * 1_440)
+        XCTAssertEqual(AutopilotText.customMinutes(count: 0, unit: .hours), 60, "at least one")
+        XCTAssertEqual(AutopilotText.customMinutes(count: 200, unit: .minutes), 99, "the stepper's largest")
+        XCTAssertEqual(AutopilotText.customMinutes(count: 60, unit: .weeks), 52 * 10_080, "52 weeks at most")
+        XCTAssertLessThanOrEqual(52 * 10_080, AutopilotText.maxBypassMinutes, "within a year")
+        XCTAssertEqual(AutopilotText.customMinutes(count: 99, unit: .days), 99 * 1_440)
+        XCTAssertTrue(AutopilotText.countAndUnit(minutes: 3 * 1_440) == (3, .days))
+        XCTAssertTrue(AutopilotText.countAndUnit(minutes: 10_080) == (1, .weeks))
+        XCTAssertTrue(AutopilotText.countAndUnit(minutes: 90) == (90, .minutes))
+        XCTAssertTrue(AutopilotText.countAndUnit(minutes: 6_000) == (4, .days), "100 hours is past the stepper: the nearest days")
+    }
+
+    func testHowLongAnEndlessBypassHasRun() {
+        XCTAssertEqual(AutopilotText.ranFor(since: 1_000, now: 1_030), "just started")
+        XCTAssertEqual(AutopilotText.ranFor(since: 1_000, now: 1_000 + 12 * 60 + 30), "12 min so far")
+        XCTAssertEqual(AutopilotText.ranFor(since: 1_000, now: 1_000 + 5 * 3_600 + 59 * 60), "5 h so far")
+        XCTAssertEqual(AutopilotText.ranFor(since: 1_000, now: 1_000 + 2 * 86_400 + 23 * 3_600), "2 days so far")
+        XCTAssertEqual(AutopilotText.ranFor(since: 2_000, now: 1_000), "just started", "never negative")
+        XCTAssertEqual(AutopilotText.bypassLine(until: 2_000, since: 1_000, now: 1_500), "Approving without asking")
+        XCTAssertEqual(AutopilotText.bypassLine(until: AutopilotText.untilOff, since: 1_000, now: 1_000 + 2 * 86_400), "On until you stop it · 2 days so far")
+        XCTAssertEqual(AutopilotText.bypassLine(until: AutopilotText.untilOff, since: nil, now: 1_000), "On until you stop it")
+    }
+
+    func testTheBypassRingMeasuresFromItsStartOrTheLengthMostLikelyChosen() {
+        XCTAssertEqual(AutopilotText.bypassFraction(until: AutopilotText.untilOff, since: 1_000, now: 99_999), 1)
+        XCTAssertEqual(AutopilotText.bypassFraction(until: 2_000, since: 1_000, now: 1_250), 0.75, accuracy: 0.001)
+        XCTAssertEqual(AutopilotText.bypassFraction(until: 2_000, since: 1_000, now: 3_000), 0)
+        XCTAssertEqual(AutopilotText.bypassFraction(until: 2_000, since: 1_000, now: 500), 1, "clamped")
+        // Without its start: the shortest offered length that fits.
         XCTAssertEqual(AutopilotText.bypassLength(leftSeconds: 14 * 60), 15 * 60)
-        XCTAssertEqual(AutopilotText.bypassLength(leftSeconds: 16 * 60), 30 * 60)
-        XCTAssertEqual(AutopilotText.bypassLength(leftSeconds: 45 * 60), 60 * 60)
-        XCTAssertEqual(AutopilotText.bypassChoice(60), "1 hour")
-        XCTAssertEqual(AutopilotText.bypassChoice(15), "15 min")
+        XCTAssertEqual(AutopilotText.bypassLength(leftSeconds: 16 * 60), 60 * 60)
+        XCTAssertEqual(AutopilotText.bypassLength(leftSeconds: 5 * 3_600), 86_400)
+        XCTAssertEqual(AutopilotText.bypassLength(leftSeconds: 3 * 86_400), 3 * 86_400, "longer than any: full")
+        XCTAssertEqual(AutopilotText.bypassFraction(until: 1_000 + 30 * 60, since: nil, now: 1_000), 0.5, accuracy: 0.001)
     }
 
     func testTheBypassNoticeCoversTheGlobalBypassAndEachConnections() throws {
         XCTAssertNil(AutopilotText.bypassNotice(settings(), label: { $0 }, now: 1_000))
         XCTAssertNil(AutopilotText.bypassNotice(settings(bypass: 900), label: { $0 }, now: 1_000), "an ended bypass shows nothing")
-        let global = try XCTUnwrap(AutopilotText.bypassNotice(settings(bypass: 1_600), label: { $0 }, now: 1_000))
+        let global = try XCTUnwrap(AutopilotText.bypassNotice(settings(bypass: 1_600, since: 400), label: { $0 }, now: 1_000))
         XCTAssertTrue(global.global)
         XCTAssertEqual(global.title, "Bypass on · 10 min left")
         XCTAssertTrue(global.text.contains("every AI"))
+        XCTAssertEqual(global.since, 400)
+        XCTAssertFalse(global.untilOff)
         let one = try XCTUnwrap(AutopilotText.bypassNotice(
-            settings(connections: [ConnectionAutopilot(connectionId: "c1", baseMode: nil, bypassUntil: 1_120, mode: .bypass, profileId: "personal")]),
+            settings(connections: [connection("c1", until: 1_120)]),
             label: { $0 == "c1" ? "Claude Code" : "?" },
             now: 1_000
         ))
         XCTAssertTrue(one.text.contains("Claude Code"))
         XCTAssertEqual(one.connectionIds, ["c1"])
         XCTAssertEqual(one.until, 1_120)
+    }
+
+    func testABypassUntilOffIsTitledWithoutACountdown() throws {
+        let off = try XCTUnwrap(AutopilotText.bypassNotice(settings(bypass: AutopilotText.untilOff, since: 900), label: { $0 }, now: 1_000))
+        XCTAssertTrue(off.untilOff)
+        XCTAssertEqual(off.title, "Bypass on · until you stop it")
+        XCTAssertEqual(off.since, 900)
+        XCTAssertEqual(AutopilotText.bypassTitle(until: AutopilotText.untilOff, now: 1_000), "Bypass on · until you stop it")
+        // A connection's endless bypass wins over a timed global one.
+        let mixed = try XCTUnwrap(AutopilotText.bypassNotice(
+            settings(bypass: 1_600, since: 400, connections: [connection("c1", until: AutopilotText.untilOff, since: 800)]),
+            label: { $0 }, now: 1_000
+        ))
+        XCTAssertTrue(mixed.untilOff)
+        XCTAssertEqual(mixed.since, 400, "the earliest start")
+    }
+
+    func testProfilesKindsAndThresholdsInWords() {
+        XCTAssertEqual(AutopilotText.presets.map(AutopilotText.presetName), ["Cautious", "Balanced", "Relaxed", "Custom"])
+        XCTAssertNil(AutopilotText.presetThresholds(.custom))
+        XCTAssertEqual(AutopilotText.presetThresholds(.cautious)?.approveAt, 0.98)
+        XCTAssertEqual(AutopilotText.presetLine(profile()), "Approves when 93% sure, denies when 88% sure")
+        XCTAssertEqual(AutopilotText.thresholdPercent(0.5), 80)
+        XCTAssertEqual(AutopilotText.thresholdPercent(1), 99)
+        XCTAssertEqual(AutopilotText.thresholdPercent(0.934), 93)
+        XCTAssertEqual(AutopilotModel.clampThreshold(0.7), 0.8, accuracy: 0.0001)
+        XCTAssertEqual(AutopilotText.replayLine(ThresholdReplay(days: 30, decided: 41, asked: 12, undone: 0)),
+                       "Last 30 days at these: 41 decided for you, 12 asked, 0 you'd have undone.")
+        XCTAssertEqual(AutopilotText.replayParts(ThresholdReplay(days: 30, decided: 41, asked: 12, undone: 0)).filter(\.strong).map(\.text),
+                       ["41 decided", "12 asked"])
+        XCTAssertEqual(AutopilotText.share(nil), "—")
+        XCTAssertEqual(AutopilotText.share(0.94), "94%")
+        XCTAssertEqual(AutopilotText.kindLine(classView(decisions: 31, autoApprove: true, toUnlock: 0)), "On Auto · 31 decisions")
+        XCTAssertEqual(AutopilotText.kindLine(classView(decisions: 1, autoApprove: true, toUnlock: 0)), "On Auto · 1 decision")
+        XCTAssertEqual(AutopilotText.kindLine(classView(toUnlock: 8)), "8 more to unlock")
+        XCTAssertEqual(AutopilotText.kindLine(classView(autoApprove: true, manual: false)), "Always asks")
+        XCTAssertEqual(AutopilotText.kindLine(classView(toUnlock: 0)), "Learning")
+    }
+
+    func testAProfileNamesTheAIsThatLearnIntoIt() {
+        let ais: [(id: String, label: String)] = [("c1", "Claude Code"), ("c2", "ChatGPT"), ("c3", "Cursor")]
+        let s = settings(connections: [connection("c3", until: nil, profile: "work")])
+        let personal = profile()
+        let work = profile("work", isDefault: false, memory: 1, connections: ["c3"])
+        XCTAssertEqual(AutopilotText.profileAis(personal, settings: s, connections: ais), ["Claude Code", "ChatGPT"])
+        XCTAssertEqual(AutopilotText.profileAis(work, settings: s, connections: ais), ["Cursor"])
+        XCTAssertEqual(AutopilotText.profileLine(personal, ais: ["Claude Code", "ChatGPT"]), "Claude Code, ChatGPT · 140 decisions")
+        XCTAssertEqual(AutopilotText.profileLine(work, ais: []), "1 decision")
     }
 
     func testAutomaticDecisionsAreTitledByWhoDecided() {
@@ -138,6 +256,10 @@ final class AutopilotTextTests: XCTestCase {
         // "assisted", from an older version, is Manual now.
         XCTAssertEqual(AutopilotText.name(key: "assisted"), "Manual")
         XCTAssertEqual(AutopilotText.symbol(key: "assisted"), "person.fill.checkmark")
+        XCTAssertEqual(AutopilotText.symbol(.auto), "bolt.fill")
+        XCTAssertEqual(AutopilotText.symbol(.bypass), "bolt.fill")
+        XCTAssertEqual(AutopilotText.cardLine(.manual), "You decide. Autopilot shows its score.")
+        XCTAssertEqual(AutopilotText.cardLine(.auto), "Decides the easy ones. Asks the rest.")
         XCTAssertTrue(AutopilotText.needsModel(.auto))
         XCTAssertFalse(AutopilotText.needsModel(.manual), "Manual only goes without its hints")
         XCTAssertFalse(AutopilotText.needsModel(.bypass))

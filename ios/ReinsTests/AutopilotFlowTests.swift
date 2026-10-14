@@ -65,19 +65,63 @@ final class AutopilotFlowTests: XCTestCase {
         await start()
         owner.answer = false
         await ap.setMode(.bypass, minutes: 15)
-        await ap.setMode(.lockdown)
+        await ap.startBypass(minutes: nil)
         XCTAssertEqual(owner.asked.count, 2)
         XCTAssertEqual(model.autopilot?.mode, .manual)
+        XCTAssertNil(model.autopilot?.bypassUntil)
         XCTAssertFalse(feedback.played(.bypassOn))
-        XCTAssertFalse(feedback.played(.lockdownOn))
     }
 
-    func testLockdownIsConfirmedDeniesWhatWaitsAndEndsBackToThePickedMode() async {
+    func testABypassCanRunUntilTurnedOffAndShowsSoAtOnce() async throws {
+        await start()
+        let before = Int64(Date().timeIntervalSince1970)
+        await ap.startBypass(minutes: nil)
+        XCTAssertEqual(owner.asked, ["Turn on Bypass for every AI"])
+        XCTAssertEqual(model.autopilot?.mode, .bypass)
+        XCTAssertEqual(model.autopilot?.bypassUntil, AutopilotText.untilOff)
+        let since = try XCTUnwrap(model.autopilot?.bypassSince)
+        XCTAssertGreaterThanOrEqual(since, before)
+        XCTAssertTrue(feedback.played(.bypassOn))
+        let notice = try XCTUnwrap(AutopilotText.bypassNotice(model.autopilot, label: { $0 }, now: before + 86_400 * 3))
+        XCTAssertEqual(notice.title, "Bypass on · until you stop it", "an endless bypass never runs out")
+        await ap.stopBypass()
+        XCTAssertEqual(model.autopilot?.mode, .manual)
+        XCTAssertNil(model.autopilot?.bypassUntil)
+        XCTAssertNil(model.autopilot?.bypassSince)
+    }
+
+    func testATimedBypassOfDaysStartsWithItsLength() async throws {
+        await start()
+        await ap.startBypass(minutes: 3 * 1_440)
+        let until = try XCTUnwrap(model.autopilot?.bypassUntil)
+        XCTAssertEqual(Double(until) - Date().timeIntervalSince1970, 3 * 86_400, accuracy: 5)
+    }
+
+    func testTheOptimisticBypassMatchesTheCoresRules() {
+        var s = AutopilotSettings(
+            mode: .lockdown, baseMode: .lockdown, bypassUntil: nil, bypassSince: nil, defaultProfileId: "p", wifiOnly: true,
+            model: ModelStatus(state: .installed, id: "m", label: "m", version: "1", sizeBytes: 1, downloadedBytes: 1, error: nil, runtimeReady: true),
+            connections: []
+        )
+        s.applyBypass(minutes: nil, connectionId: nil, now: 1_000)
+        XCTAssertEqual(s.mode, .bypass, "a bypass ends a lockdown")
+        XCTAssertEqual(s.baseMode, .manual)
+        XCTAssertEqual(s.bypassUntil, AutopilotText.untilOff)
+        XCTAssertEqual(s.bypassSince, 1_000)
+        s.applyBypass(minutes: 30, connectionId: "c1", now: 1_000)
+        XCTAssertEqual(s.connections.first?.bypassUntil, 1_000 + 1_800)
+        XCTAssertEqual(s.connections.first?.mode, .bypass)
+        s.applyMode(.auto, minutes: 0, connectionId: nil, now: 1_100)
+        XCTAssertEqual(s.mode, .auto)
+        XCTAssertNil(s.bypassSince)
+    }
+
+    func testLockdownDeniesWhatWaitsAndEndsBackToThePickedMode() async {
         await start()
         let waiting = model.pending.filter { $0.kind == .request }.count
         XCTAssertGreaterThan(waiting, 0)
         await ap.setMode(.lockdown)
-        XCTAssertEqual(owner.asked, ["Lock down every AI"])
+        XCTAssertTrue(owner.asked.isEmpty, "Lock down is a plain tap: it only holds requests back")
         XCTAssertEqual(model.autopilot?.mode, .lockdown)
         XCTAssertTrue(feedback.lastWas(.lockdownOn))
         await model.refreshPending()
@@ -170,11 +214,38 @@ final class AutopilotFlowTests: XCTestCase {
         XCTAssertEqual(AutopilotText.classStatus(try XCTUnwrap(personal.classes.first { $0.classKey == "github/write/push" })), "Approves on its own")
         await ap.setPreset("personal", .cautious)
         XCTAssertEqual(ap.profile("personal")?.preset, .cautious)
+        XCTAssertEqual(ap.profile("personal")?.approveAt, 0.98)
         await ap.setClassLock("personal", "gmail/read", locked: false)
         XCTAssertTrue(feedback.lastWas(.autopilotOn), "unlocking is felt as more autonomy")
         XCTAssertEqual(ap.profile("personal")?.classes.first { $0.classKey == "gmail/read" }?.manual, true)
         await ap.setClassLock("personal", "gmail/read", locked: true)
         XCTAssertEqual(ap.profile("personal")?.classes.first { $0.classKey == "gmail/read" }?.manual, false)
+    }
+
+    func testCustomThresholdsAreClampedSavedAndReplayed() async throws {
+        await start()
+        await ap.setThresholds("personal", approveAt: 0.93, denyAt: 0.5)
+        let personal = try XCTUnwrap(ap.profile("personal"))
+        XCTAssertEqual(personal.preset, .custom)
+        XCTAssertEqual(personal.approveAt, 0.93, accuracy: 0.0001)
+        XCTAssertEqual(personal.denyAt, 0.8, accuracy: 0.0001, "80% at least")
+        await ap.loadReplay("personal", approveAt: 0.93, denyAt: 0.88)
+        let strict = try XCTUnwrap(ap.replay)
+        XCTAssertEqual(strict.days, 30)
+        await ap.loadReplay("personal", approveAt: 0.82, denyAt: 0.82)
+        let loose = try XCTUnwrap(ap.replay)
+        XCTAssertGreaterThan(loose.decided, strict.decided, "lower thresholds decide more")
+        XCTAssertEqual(loose.decided + loose.asked, strict.decided + strict.asked)
+    }
+
+    func testThisWeeksNumbersAreRead() async throws {
+        await start()
+        await ap.loadStats()
+        let stats = try XCTUnwrap(ap.stats)
+        XCTAssertEqual(stats.days, 7)
+        XCTAssertGreaterThan(stats.scored, 0)
+        XCTAssertNotNil(stats.matched)
+        XCTAssertEqual(stats.kindsOnAuto, 1, "Personal's push")
     }
 
     func testAProfileCanBeCreatedMadeDefaultResetAndDeleted() async throws {
@@ -240,7 +311,7 @@ final class AutopilotFlowTests: XCTestCase {
     func testAConnectionBypassIsConfirmedNamingTheAIAndStopsBackToItsOwnMode() async {
         await start()
         // Claude (c1) has its own Auto mode in the demo.
-        await ap.setMode(.bypass, minutes: 15, connectionId: "c1")
+        await ap.startBypass(connectionId: "c1", minutes: 15)
         XCTAssertEqual(owner.asked, ["Turn on Bypass for Claude"])
         XCTAssertEqual(ap.modeOf("c1"), .bypass)
         XCTAssertEqual(ap.modeOf(nil), .manual, "other AIs are not affected")

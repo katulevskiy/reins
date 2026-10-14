@@ -280,9 +280,9 @@ final class PlatformTests: XCTestCase {
     func testTheExtensionLeavesModelWorkToTheApp() {
         func settings(_ mode: AutopilotMode, connection: AutopilotMode = .manual, model: ModelState = .installed) -> AutopilotSettings {
             AutopilotSettings(
-                mode: mode, baseMode: mode, bypassUntil: nil, defaultProfileId: "p", wifiOnly: true,
+                mode: mode, baseMode: mode, bypassUntil: nil, bypassSince: nil, defaultProfileId: "p", wifiOnly: true,
                 model: ModelStatus(state: model, id: "m", label: "m", version: "1", sizeBytes: 1, downloadedBytes: 1, error: nil, runtimeReady: true),
-                connections: [ConnectionAutopilot(connectionId: "c1", baseMode: connection, bypassUntil: nil, mode: connection, profileId: "p")]
+                connections: [ConnectionAutopilot(connectionId: "c1", baseMode: connection, bypassUntil: nil, bypassSince: nil, mode: connection, profileId: "p")]
             )
         }
         XCTAssertTrue(ExtensionPolicy.needsModel(settings(.manual)), "Manual judges for its hint")
@@ -290,6 +290,19 @@ final class PlatformTests: XCTestCase {
         XCTAssertFalse(ExtensionPolicy.needsModel(settings(.bypass, connection: .bypass)))
         XCTAssertTrue(ExtensionPolicy.needsModel(settings(.lockdown, connection: .auto)))
         XCTAssertFalse(ExtensionPolicy.needsModel(settings(.auto, model: .notInstalled)), "without a model the app could not judge either")
+    }
+
+    func testTheLiveActivityKnowsWhenTheLastBypassStarted() {
+        let model = ModelStatus(state: .installed, id: "m", label: "m", version: "1", sizeBytes: 1, downloadedBytes: 1, error: nil, runtimeReady: true)
+        let s = AutopilotSettings(
+            mode: .bypass, baseMode: .manual, bypassUntil: 2_000, bypassSince: 1_000, defaultProfileId: "p", wifiOnly: true, model: model,
+            connections: [
+                ConnectionAutopilot(connectionId: "c1", baseMode: nil, bypassUntil: .max, bypassSince: 900, mode: .bypass, profileId: "p"),
+                ConnectionAutopilot(connectionId: "c2", baseMode: nil, bypassUntil: 1_200, bypassSince: 100, mode: .manual, profileId: "p"),
+            ]
+        )
+        XCTAssertEqual(LiveActivityController.lastBypassStart(s, now: 1_500), 900, "the endless one ends last")
+        XCTAssertEqual(s.lastBypassEnd(now: 1_500), .max)
     }
 
     // MARK: Sign-in helpers

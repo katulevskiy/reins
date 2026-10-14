@@ -60,6 +60,21 @@ final class WidgetsTests: XCTestCase {
         XCTAssertEqual(Glance.timelineDates(s, now: now, limit: 2), [now, now + 20, now + 50])
     }
 
+    func testABypassUntilOffNeverAddsATimelineEntry() {
+        var s = Snapshot()
+        s.autopilotMode = "bypass"
+        s.bypassUntil = AutopilotText.untilOff
+        s.anyBypassUntil = AutopilotText.untilOff
+        s.pending = [item("a", created: now - 10, expires: now + 50)]
+        XCTAssertEqual(Glance.timelineDates(s, now: now), [now, now + 50])
+        XCTAssertEqual(Glance.mode(s, now: now + 86_400 * 400), .bypass, "it does not run out")
+        XCTAssertTrue(Glance.bypassUntilOff(s, now: now))
+        XCTAssertEqual(Glance.bypassEnd(s, now: now), AutopilotText.untilOff)
+        s.bypassUntil = now + 60
+        s.anyBypassUntil = now + 60
+        XCTAssertFalse(Glance.bypassUntilOff(s, now: now))
+    }
+
     // MARK: Autopilot
 
     func testABypassThatRanOutShowsTheModeItWentBackTo() {
@@ -227,8 +242,8 @@ final class WidgetsTests: XCTestCase {
     func testBypassLengthIsTheShortestChoiceThatFits() {
         XCTAssertEqual(Glance.bypassLength(left: 10 * 60), 15 * 60)
         XCTAssertEqual(Glance.bypassLength(left: 15 * 60), 15 * 60)
-        XCTAssertEqual(Glance.bypassLength(left: 16 * 60), 30 * 60)
-        XCTAssertEqual(Glance.bypassLength(left: 90 * 60), 60 * 60)
+        XCTAssertEqual(Glance.bypassLength(left: 16 * 60), 60 * 60)
+        XCTAssertEqual(Glance.bypassLength(left: 90 * 60), 24 * 60 * 60)
     }
 
     func testBypassStateCoversGlobalAndConnectionBypasses() {
@@ -251,8 +266,33 @@ final class WidgetsTests: XCTestCase {
         let first = Glance.bypassState(global: now + 900, connections: [], previous: nil, approvedSince: { _ in 0 }, now: now)
         let later = Glance.bypassState(global: now + 900, connections: [], previous: first, approvedSince: { _ in 1 }, now: now + 400)
         XCTAssertEqual(later?.startedAt, first?.startedAt, "a later refresh does not move the ring")
-        let restarted = Glance.bypassState(global: now + 400 + 1_800, connections: [], previous: later, approvedSince: { _ in 0 }, now: now + 400)
+        let restarted = Glance.bypassState(global: now + 400 + 3_600, connections: [], previous: later, approvedSince: { _ in 0 }, now: now + 400)
         XCTAssertEqual(restarted?.startedAt, Date(timeIntervalSince1970: TimeInterval(now + 400)))
+        let known = Glance.bypassState(global: now + 400 + 3 * 86_400, connections: [], previous: later, approvedSince: { _ in 0 }, now: now + 400, since: now + 390)
+        XCTAssertEqual(known?.startedAt, Date(timeIntervalSince1970: TimeInterval(now + 390)), "the core's start, when it says")
+    }
+
+    func testABypassUntilOffIsALiveActivityWithoutACountdown() throws {
+        let state = try XCTUnwrap(Glance.bypassState(
+            global: AutopilotText.untilOff, connections: [("Claude", now + 60)], previous: nil, approvedSince: { _ in 7 }, now: now, since: now - 3_600
+        ))
+        XCTAssertEqual(state.untilOff, true)
+        XCTAssertEqual(state.until, .distantFuture, "never a date from Int64.max")
+        XCTAssertEqual(state.startedAt, Date(timeIntervalSince1970: TimeInterval(now - 3_600)))
+        XCTAssertEqual(state.scope, "every AI")
+        XCTAssertEqual(state.approvedCount, 7)
+        let views = BypassLiveViews(state: state, stale: false)
+        XCTAssertFalse(views.ended)
+        XCTAssertEqual(views.title, "Bypass on · until you stop it")
+        // Unknown start: from now, and later refreshes keep it.
+        let first = try XCTUnwrap(Glance.bypassState(global: AutopilotText.untilOff, connections: [], previous: nil, approvedSince: { _ in 0 }, now: now))
+        XCTAssertEqual(first.startedAt, Date(timeIntervalSince1970: TimeInterval(now)))
+        let later = Glance.bypassState(global: AutopilotText.untilOff, connections: [], previous: first, approvedSince: { _ in 0 }, now: now + 600)
+        XCTAssertEqual(later?.startedAt, first.startedAt)
+        // A timed one is not.
+        let timed = try XCTUnwrap(Glance.bypassState(global: now + 900, connections: [], previous: nil, approvedSince: { _ in 0 }, now: now))
+        XCTAssertNil(timed.untilOff)
+        XCTAssertEqual(BypassLiveViews(state: timed, stale: false).title, "Bypass on")
     }
 
     func testDownloadProgress() {

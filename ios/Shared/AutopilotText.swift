@@ -8,11 +8,68 @@ enum AutopilotText {
     /// user deciding everything to Autopilot refusing everything.
     static let modeKeys = ["manual", "auto", "bypass", "lockdown"]
 
-    /// How long a bypass can run, in minutes (the core allows 1 to 60).
-    static let bypassMinutes: [UInt32] = [15, 30, 60]
+    /// The bypass lengths offered first, in minutes: 15 min, 1 hour, 1 day (the core allows a minute to a year).
+    static let bypassMinutes: [UInt32] = [15, 60, 1_440]
 
-    /// "15 min", "1 hour".
-    static func bypassChoice(_ minutes: UInt32) -> String { minutes == 60 ? "1 hour" : "\(minutes) min" }
+    /// The longer ones "Custom" offers before a number of the user's own: 4 hours, 1 week.
+    static let bypassMoreMinutes: [UInt32] = [240, 10_080]
+
+    /// The longest timed bypass the core takes: a year, in minutes.
+    static let maxBypassMinutes: UInt32 = 525_600
+
+    /// The end of a bypass that runs until the user turns it off (the core's `i64::MAX`).
+    static let untilOff: Int64 = .max
+
+    static func isUntilOff(_ until: Int64) -> Bool { until == untilOff }
+
+    /// The units of a custom bypass, with their minutes and the largest number the stepper goes to.
+    enum BypassUnit: String, CaseIterable, Identifiable {
+        case minutes, hours, days, weeks
+
+        var id: String { rawValue }
+
+        var label: String { rawValue }
+
+        var minutes: UInt32 {
+            switch self {
+            case .minutes: 1
+            case .hours: 60
+            case .days: 1_440
+            case .weeks: 10_080
+            }
+        }
+
+        var max: Int { self == .weeks ? 52 : 99 }
+    }
+
+    /// A custom length in minutes, within what the core takes.
+    static func customMinutes(count: Int, unit: BypassUnit) -> UInt32 {
+        let n = UInt32(min(Swift.max(count, 1), unit.max))
+        return min(n * unit.minutes, maxBypassMinutes)
+    }
+
+    /// A length as a number and the largest unit it is a whole number of (3 days, 90 minutes), for the stepper; else
+    /// the nearest whole number of the largest unit it reaches.
+    static func countAndUnit(minutes: UInt32) -> (count: Int, unit: BypassUnit) {
+        for unit in BypassUnit.allCases.reversed() where minutes >= unit.minutes && minutes % unit.minutes == 0 {
+            let count = Int(minutes / unit.minutes)
+            if count <= unit.max { return (count, unit) }
+        }
+        // Not a whole number of any unit the stepper reaches: the nearest in the largest unit it fits.
+        let unit = BypassUnit.allCases.last { minutes >= $0.minutes } ?? .minutes
+        let count = Int((Double(minutes) / Double(unit.minutes)).rounded())
+        return (min(Swift.max(count, 1), unit.max), unit)
+    }
+
+    /// "15 min", "1 hour", "3 days", "1 week"; nil (until turned off) is "Until off".
+    static func lengthLabel(minutes: UInt32?) -> String {
+        guard let m = minutes else { return "Until off" }
+        func plural(_ n: UInt32, _ one: String) -> String { n == 1 ? "1 \(one)" : "\(n) \(one)s" }
+        if m > 0 && m % 10_080 == 0 { return plural(m / 10_080, "week") }
+        if m > 0 && m % 1_440 == 0 { return plural(m / 1_440, "day") }
+        if m > 0 && m % 60 == 0 { return plural(m / 60, "hour") }
+        return "\(m) min"
+    }
 
     static func name(key: String) -> String {
         switch key {
@@ -33,10 +90,15 @@ enum AutopilotText {
         }
     }
 
-    /// The mode's SF Symbol (Android's icons: a person with a check, a navigation arrow, a bolt, a lock).
+    /// What Manual and Auto do, on their cards on the Autopilot page.
+    static func cardLine(key: String) -> String {
+        key == "auto" ? "Decides the easy ones. Asks the rest." : "You decide. Autopilot shows its score."
+    }
+
+    /// The mode's SF Symbol: a person with a check, a bolt (violet for Auto, red for Bypass), a lock.
     static func symbol(key: String) -> String {
         switch key {
-        case "auto": "location.north.fill"
+        case "auto": "bolt.fill"
         case "bypass": "bolt.fill"
         case "lockdown": "lock.fill"
         default: "person.fill.checkmark"
@@ -45,21 +107,51 @@ enum AutopilotText {
 
     static func percent(_ p: Float) -> String { "\(Int((min(max(p, 0), 1) * 100).rounded()))%" }
 
-    /// "42 min left", "1 min left" (the last minute counts as one).
-    static func minutesLeft(until: Int64, now: Int64) -> String {
-        let left = max(until - now, 0)
-        return "\(max((left + 59) / 60, 1)) min left"
+    /// "42 min left" (the last minute counts as one), "5 h left", "3 days left"; "until you stop it" without an end.
+    static func timeLeft(until: Int64, now: Int64) -> String {
+        if isUntilOff(until) { return "until you stop it" }
+        let left = Swift.max(until - now, 0)
+        if left < 3_600 { return "\(Swift.max((left + 59) / 60, 1)) min left" }
+        if left < 48 * 3_600 { return "\((left + 3_599) / 3_600) h left" }
+        return "\((left + 86_399) / 86_400) days left"
+    }
+
+    /// How long a bypass without an end has run: "just started", "12 min so far", "5 h so far", "2 days so far".
+    static func ranFor(since: Int64, now: Int64) -> String {
+        let ran = Swift.max(now - since, 0)
+        if ran < 60 { return "just started" }
+        if ran < 3_600 { return "\(ran / 60) min so far" }
+        if ran < 48 * 3_600 { return "\(ran / 3_600) h so far" }
+        return "\(ran / 86_400) days so far"
+    }
+
+    /// The line under "Bypass" while one runs.
+    static func bypassLine(until: Int64, since: Int64?, now: Int64) -> String {
+        guard isUntilOff(until) else { return "Approving without asking" }
+        guard let since else { return "On until you stop it" }
+        return "On until you stop it · " + ranFor(since: since, now: now)
     }
 
     /// The length (seconds) a bypass with `leftSeconds` to go was most likely given: the shortest choice that fits.
     static func bypassLength(leftSeconds: Int64) -> Int64 {
-        bypassMinutes.map { Int64($0) * 60 }.first { leftSeconds <= $0 } ?? Int64(bypassMinutes.last ?? 60) * 60
+        bypassMinutes.map { Int64($0) * 60 }.first { leftSeconds <= $0 } ?? Swift.max(leftSeconds, 1)
     }
 
-    /// "14:05" for minutes and seconds left.
+    /// The share of a bypass still to run, for its ring: full without an end; measured from its start when known.
+    static func bypassFraction(until: Int64, since: Int64?, now: Int64) -> Double {
+        if isUntilOff(until) { return 1 }
+        let left = Swift.max(until - now, 0)
+        let total: Int64 = if let since, until > since { until - since } else { bypassLength(leftSeconds: left) }
+        return min(Swift.max(Double(left) / Double(Swift.max(total, 1)), 0), 1)
+    }
+
+    /// "14:05" for minutes and seconds left, "5:04:09" within a day, "2d 4h" beyond; "∞" without an end.
     static func clock(until: Int64, now: Int64) -> String {
-        let left = max(until - now, 0)
-        return String(format: "%d:%02d", left / 60, left % 60)
+        if isUntilOff(until) { return "∞" }
+        let left = Swift.max(until - now, 0)
+        if left < 3_600 { return String(format: "%d:%02d", left / 60, left % 60) }
+        if left < 86_400 { return String(format: "%d:%02d:%02d", left / 3_600, left % 3_600 / 60, left % 60) }
+        return "\(left / 86_400)d \(left % 86_400 / 3_600)h"
     }
 
     /// Who a bypass covers, for its notification and Live Activity: every AI, one by name, or how many.
@@ -69,11 +161,23 @@ enum AutopilotText {
         return "\(labels.count) AIs"
     }
 
-    static func bypassTitle(until: Int64, now: Int64) -> String { "Bypass on · \(minutesLeft(until: until, now: now))" }
+    /// "Bypass on · 42 min left", "Bypass on · until you stop it".
+    static func bypassTitle(until: Int64, now: Int64) -> String { "Bypass on · " + timeLeft(until: until, now: now) }
 
-    static func bypassText(scope: String) -> String {
-        "Requests from \(scope) are approved without asking, except the riskiest."
-    }
+    static func bypassText(scope: String) -> String { "For \(scope). The riskiest still ask." }
+
+    /// What a bypass still asks, behind the (?) of the bypass sheet.
+    static let bypassHelp = "Still asked every time: new connections, permissions, passwords and secrets, deletions and other one-off changes, SSH and flagged files."
+
+    /// What "How sure" explains behind its (?).
+    static let howSureHelp = "How sure Autopilot must be to approve or deny on its own in Auto. Requests that always ask still ask."
+
+    /// The custom thresholds' range, in whole percent.
+    static let minThresholdPercent = 80
+    static let maxThresholdPercent = 99
+
+    /// A stat tile's percentage, "—" before there is one.
+    static func share(_ p: Float?) -> String { p.map(percent) ?? "—" }
 
     /// The headline of an automatic decision ("bypass", "lockdown" or "autopilot" decided).
     static func decisionTitle(decidedBy: String, approved: Bool) -> String {
@@ -221,13 +325,19 @@ extension AutopilotText {
         !modelReady && needsModel(mode) ? "Needs the model" : line(mode)
     }
 
-    /// A bypass that runs anywhere: the global one, or any connection's.
+    static func cardLine(_ mode: AutopilotMode) -> String { cardLine(key: key(mode)) }
+
+    /// A bypass that runs anywhere: the global one, or any connection's. `until` is the latest end (`untilOff` when one
+    /// runs until turned off); `since` when the earliest of them started.
     struct BypassNotice: Equatable {
         var title: String
         var text: String
         var until: Int64
         var global: Bool
         var connectionIds: [String]
+        var since: Int64? = nil
+
+        var untilOff: Bool { AutopilotText.isUntilOff(until) }
     }
 
     /// What the ongoing notification or Live Activity says while a bypass runs; nil when none does.
@@ -238,12 +348,14 @@ extension AutopilotText {
         if global == nil && connections.isEmpty { return nil }
         let until = ([global].compactMap { $0 } + connections.compactMap(\.bypassUntil)).max() ?? now
         let scope = bypassScope(global: global != nil, labels: connections.map { label($0.connectionId) })
+        let starts = [global != nil ? settings.bypassSince : nil] + connections.map(\.bypassSince)
         return BypassNotice(
             title: bypassTitle(until: until, now: now),
             text: bypassText(scope: scope),
             until: until,
             global: global != nil,
-            connectionIds: connections.map(\.connectionId)
+            connectionIds: connections.map(\.connectionId),
+            since: starts.compactMap { $0 }.min()
         )
     }
 
@@ -293,23 +405,78 @@ extension AutopilotText {
         }
     }
 
-    static let presets: [Preset] = [.cautious, .balanced, .relaxed]
+    static let presets: [Preset] = [.cautious, .balanced, .relaxed, .custom]
 
     static func presetName(_ p: Preset) -> String {
         switch p {
         case .cautious: "Cautious"
         case .balanced: "Balanced"
         case .relaxed: "Relaxed"
+        case .custom: "Custom"
         }
     }
 
-    /// The thresholds behind a preset (spec §5.4), in words.
-    static func presetLine(_ p: Preset) -> String {
+    /// The thresholds behind a preset (spec §5.4): approve at, deny at. Custom has the profile's own.
+    static func presetThresholds(_ p: Preset) -> (approveAt: Float, denyAt: Float)? {
         switch p {
-        case .cautious: "Approves when 98% sure, denies when 95% sure"
-        case .balanced: "Approves when 95% sure, denies when 90% sure"
-        case .relaxed: "Approves when 90% sure, denies when 85% sure"
+        case .cautious: (0.98, 0.95)
+        case .balanced: (0.95, 0.90)
+        case .relaxed: (0.90, 0.85)
+        case .custom: nil
         }
+    }
+
+    /// The thresholds a profile uses, in words.
+    static func presetLine(_ p: ProfileView) -> String {
+        "Approves when \(percent(p.approveAt)) sure, denies when \(percent(p.denyAt)) sure"
+    }
+
+    /// A threshold in whole percent within the custom range (80 to 99).
+    static func thresholdPercent(_ p: Float) -> Int {
+        min(max(Int((p * 100).rounded()), minThresholdPercent), maxThresholdPercent)
+    }
+
+    /// "Last 30 days at these: 41 decided for you, 12 asked, 0 you'd have undone." as its parts, the highlighted ones
+    /// marked.
+    static func replayParts(_ r: ThresholdReplay) -> [(text: String, strong: Bool)] {
+        [
+            ("Last \(r.days) days at these: ", false),
+            ("\(r.decided) decided", true),
+            (" for you, ", false),
+            ("\(r.asked) asked", true),
+            (", \(r.undone) you'd have undone.", false),
+        ]
+    }
+
+    static func replayLine(_ r: ThresholdReplay) -> String { replayParts(r).map(\.text).joined() }
+
+    /// A kind of request in one line, for its row: on Auto, always asks, or how far from unlocking.
+    static func kindLine(_ c: ClassView) -> String {
+        if c.manual == false { return "Always asks" }
+        if c.autoApprove { return "On Auto · \(c.decisions) \(c.decisions == 1 ? "decision" : "decisions")" }
+        if c.decisionsToUnlock > 0 { return "\(c.decisionsToUnlock) more to unlock" }
+        return "Learning"
+    }
+
+    /// "Claude Code, ChatGPT · 140 decisions": the AIs a profile learns from, then how much it remembers.
+    static func profileLine(_ p: ProfileView, ais: [String]) -> String {
+        var parts: [String] = []
+        if !ais.isEmpty { parts.append(ais.joined(separator: ", ")) }
+        parts.append(p.memoryCount == 1 ? "1 decision" : "\(p.memoryCount) decisions")
+        return parts.joined(separator: " · ")
+    }
+
+    /// The AIs a profile learns from: those assigned to it, and for the default one every AI without one of its own.
+    static func profileAis(_ p: ProfileView, settings: AutopilotSettings?, connections: [(id: String, label: String)]) -> [String] {
+        var own: [String: String] = [:]
+        for c in settings?.connections ?? [] { own[c.connectionId] = c.profileId }
+        // A connection's own row names the default profile when it has none of its own.
+        return connections.filter { c in
+            if p.connections.contains(c.id) { return true }
+            guard let assigned = own[c.id] else { return p.isDefault }
+            return assigned == p.id
+        }
+        .map { untrusted($0.label) }
     }
 
     /// How far a class is on its way to approving by itself, 0...1 (full once it may).

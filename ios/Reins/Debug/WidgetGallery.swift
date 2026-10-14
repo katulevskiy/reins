@@ -3,13 +3,16 @@ import SwiftUI
 import WidgetKit
 
 extension LiveActivityController {
-    /// `-demoBypass`: a 15-minute bypass right after launch, so the Bypass Live Activity can be looked at.
+    /// `-demoBypass`: a 15-minute bypass right after launch, so the Bypass Live Activity can be looked at;
+    /// `-demoBypassUntilOff`: one that runs until turned off.
     func debugLaunch(model: AppModel) {
-        guard ProcessInfo.processInfo.arguments.contains("-demoBypass") else { return }
+        let args = ProcessInfo.processInfo.arguments
+        let untilOff = args.contains("-demoBypassUntilOff")
+        guard untilOff || args.contains("-demoBypass") else { return }
         Task { @MainActor in
             for _ in 0..<50 where model.session == .loading { try? await Task.sleep(for: .milliseconds(100)) }
             try? await Task.sleep(for: .seconds(1))
-            try? await model.core.setAutopilotMode(connectionId: nil, mode: .bypass, minutes: 15)
+            try? await model.core.startBypass(connectionId: nil, minutes: untilOff ? nil : 15)
             await model.refreshAutopilot()
         }
     }
@@ -71,13 +74,15 @@ struct WidgetGallery: View {
     @ViewBuilder private var autopilot: some View {
         let bypass = with { $0.autopilotMode = "bypass"; $0.bypassUntil = now + 14 * 60 + 5; $0.anyBypassUntil = $0.bypassUntil }
         let lockdown = with { $0.autopilotMode = "lockdown"; $0.baseMode = "manual"; $0.bypassUntil = nil; $0.anyBypassUntil = nil }
-        caption("Autopilot · now, in a bypass, in Lockdown")
+        let untilOff = with { $0.autopilotMode = "bypass"; $0.bypassUntil = AutopilotText.untilOff; $0.anyBypassUntil = AutopilotText.untilOff }
+        caption("Autopilot · now, in a bypass, in Lockdown, until off")
         plate(.systemMedium) { AutopilotWidgetView(snapshot: snapshot, now: now, medium: true) }
         HStack(spacing: 20) {
             plate(.systemSmall) { AutopilotWidgetView(snapshot: bypass, now: now, medium: false) }
             plate(.systemSmall) { AutopilotWidgetView(snapshot: lockdown, now: now, medium: false) }
         }
         plate(.systemMedium) { AutopilotWidgetView(snapshot: bypass, now: now, medium: true) }
+        plate(.systemSmall) { AutopilotWidgetView(snapshot: untilOff, now: now, medium: false) }
         caption("Latest activity")
         plate(.systemMedium) { LatestActivityView(snapshot: snapshot, now: now, rows: 3) }
     }
@@ -111,6 +116,7 @@ struct WidgetGallery: View {
             liveCard { ApprovalLiveViews(state: state, stale: false).lockScreen }
         }
         liveCard { BypassLiveViews(state: bypassState, stale: false).lockScreen }
+        liveCard { BypassLiveViews(state: untilOffState, stale: false).lockScreen }
         liveCard { ModelDownloadLiveViews(state: .init(downloaded: 141_000_000, total: 370_000_000, finished: false, failed: false)).lockScreen }
     }
 
@@ -121,9 +127,12 @@ struct WidgetGallery: View {
             compact { v.compactLeading } trailing: { v.compactTrailing }
             let b = BypassLiveViews(state: bypassState, stale: false)
             compact { b.compactLeading } trailing: { b.compactTrailing }
+            let off = BypassLiveViews(state: untilOffState, stale: false)
+            compact { off.compactLeading } trailing: { off.compactTrailing }
             HStack(spacing: 14) {
                 minimal { v.minimal }
                 minimal { b.minimal }
+                minimal { off.minimal }
                 minimal { ModelDownloadLiveViews(state: downloadState).minimal }
             }
             caption("Expanded")
@@ -149,6 +158,13 @@ struct WidgetGallery: View {
     private var bypassState: BypassActivityAttributes.ContentState {
         let until = Date(timeIntervalSince1970: TimeInterval(now + 14 * 60 + 5))
         return .init(until: until, startedAt: until.addingTimeInterval(-15 * 60), scope: "every AI", approvedCount: 3)
+    }
+
+    /// A bypass that runs until turned off, on for two days.
+    private var untilOffState: BypassActivityAttributes.ContentState {
+        Glance.bypassState(
+            global: AutopilotText.untilOff, connections: [], previous: nil, approvedSince: { _ in 41 }, now: now, since: now - 2 * 86_400
+        ) ?? bypassState
     }
 
     private var downloadState: ModelDownloadActivityAttributes.ContentState {

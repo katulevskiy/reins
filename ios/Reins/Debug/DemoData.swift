@@ -707,7 +707,8 @@ enum DemoData {
     static func profiles(_ now: Int64) -> [ProfileView] {
         [
             ProfileView(
-                id: "personal", name: "Personal", icon: "🙂", preset: .balanced, isDefault: true, memoryCount: 64, connections: [],
+                id: "personal", name: "Personal", icon: "🙂", preset: .balanced, approveAt: 0.95, denyAt: 0.90, agreement: 0.94,
+                isDefault: true, memoryCount: 64, connections: [],
                 classes: [
                     classView("github/write/push", "GitHub · write · push", decisions: 26, approved: 25, denied: 1, accuracy: 0.98, autoApprove: true, toUnlock: 0),
                     classView("gmail/read", "Gmail · read", decisions: 14, approved: 12, denied: 2, accuracy: 0.93, autoDeny: true, toUnlock: 6),
@@ -718,7 +719,8 @@ enum DemoData {
                 trainedAt: now - 86_400
             ),
             ProfileView(
-                id: "work", name: "Work", icon: "💼", preset: .cautious, isDefault: false, memoryCount: 9, connections: [],
+                id: "work", name: "Work", icon: "💼", preset: .cautious, approveAt: 0.98, denyAt: 0.95, agreement: nil,
+                isDefault: false, memoryCount: 9, connections: [],
                 classes: [classView("github/write/push", "GitHub · write · push", decisions: 9, approved: 9, denied: 0, accuracy: nil, toUnlock: 11)],
                 trainedAt: nil
             ),

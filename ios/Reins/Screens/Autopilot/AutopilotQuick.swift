@@ -31,8 +31,8 @@ enum QuickStyle: String, CaseIterable, Identifiable {
 }
 
 /// The mode pill with its switcher. The menu lists the modes riskiest first, each with its symbol and a few words; a
-/// tap switches (Bypass and Lockdown ask for Face ID first, as everywhere). Bypass opens a submenu of lengths;
-/// "More" opens the Autopilot page.
+/// tap switches. Bypass opens the bypass sheet (a length, held to confirm), as everywhere; "More" opens the Autopilot
+/// page.
 struct AutopilotQuickPill: View {
     var settings: AutopilotSettings
 
@@ -41,6 +41,7 @@ struct AutopilotQuickPill: View {
     @AppStorage(QuickStyle.key) private var styleRaw = QuickStyle.menu.rawValue
     @State private var ap = AutopilotModel()
     @State private var sliderOpen = false
+    @State private var bypassAsk = false
 
     var body: some View {
         Group {
@@ -55,7 +56,11 @@ struct AutopilotQuickPill: View {
                     RiskSliderCard(
                         settings: settings,
                         modelReady: ap.modelReady,
-                        onSet: { mode, minutes in Task { await ap.setMode(mode, minutes: minutes) } },
+                        onSet: { mode in Task { await ap.setMode(mode) } },
+                        onBypass: {
+                            sliderOpen = false
+                            bypassAsk = true
+                        },
                         onStop: { Task { await ap.stopBypass() } },
                         onMore: {
                             sliderOpen = false
@@ -72,6 +77,14 @@ struct AutopilotQuickPill: View {
             }
         }
         .onAppear { ap.bind(model) }
+        .sheet(isPresented: $bypassAsk) {
+            BypassSheet(who: nil) { length in
+                feedback.quietClose()
+                Task { await ap.startBypass(minutes: length.minutes) }
+            }
+            .environment(\.feedback, feedback)
+        }
+        .presentationFeedback(bypassAsk)
     }
 
     private var menu: some View {
@@ -85,12 +98,8 @@ struct AutopilotQuickPill: View {
             }
             ForEach(AutopilotText.byRisk.reversed(), id: \.self) { mode in
                 if mode == .bypass && settings.mode != .bypass {
-                    Menu {
-                        ForEach(AutopilotText.bypassMinutes, id: \.self) { minutes in
-                            Button(AutopilotText.bypassChoice(minutes)) {
-                                Task { await ap.setMode(.bypass, minutes: minutes) }
-                            }
-                        }
+                    Button {
+                        bypassAsk = true
                     } label: {
                         modeLabel(mode)
                     }
@@ -129,11 +138,12 @@ struct AutopilotQuickPill: View {
 }
 
 /// Lockdown to Bypass on one track. The thumb's colour and glow follow the risk as it moves; each detent ticks,
-/// climbing the scale. Letting go sets the mode, except Bypass, which waits for a length (or ✕, which slides back).
+/// climbing the scale. Letting go sets the mode, except Bypass, which slides back and opens the bypass sheet.
 struct RiskSliderCard: View {
     var settings: AutopilotSettings
     var modelReady: Bool
-    var onSet: (AutopilotMode, UInt32?) -> Void
+    var onSet: (AutopilotMode) -> Void
+    var onBypass: () -> Void
     var onStop: () -> Void
     var onMore: () -> Void
 
@@ -141,18 +151,18 @@ struct RiskSliderCard: View {
     @Environment(\.dismiss) private var dismiss
     @State private var pos: CGFloat
     @State private var detent: Int
-    @State private var askBypass = false
 
     private let modes = AutopilotText.byRisk
     private let thumb: CGFloat = 30
 
     init(
-        settings: AutopilotSettings, modelReady: Bool, onSet: @escaping (AutopilotMode, UInt32?) -> Void,
-        onStop: @escaping () -> Void, onMore: @escaping () -> Void
+        settings: AutopilotSettings, modelReady: Bool, onSet: @escaping (AutopilotMode) -> Void,
+        onBypass: @escaping () -> Void, onStop: @escaping () -> Void, onMore: @escaping () -> Void
     ) {
         self.settings = settings
         self.modelReady = modelReady
         self.onSet = onSet
+        self.onBypass = onBypass
         self.onStop = onStop
         self.onMore = onMore
         let at = AutopilotText.byRisk.firstIndex(of: settings.mode) ?? 1
@@ -185,7 +195,7 @@ struct RiskSliderCard: View {
                 Spacer(minLength: 0)
                 if settings.mode == .bypass, let until = settings.bypassUntil {
                     LiveClock(interval: 1) { now in
-                        Text(ModeLook.clock(until: until, now: Int64(now))).font(RFont.mono(14, .semibold)).monospacedDigit()
+                        Text(AutopilotText.clock(until: until, now: Int64(now))).font(RFont.mono(14, .semibold)).monospacedDigit()
                             .foregroundStyle(Palette.danger)
                     }
                 }
@@ -213,32 +223,7 @@ struct RiskSliderCard: View {
                 }
             }
 
-            if askBypass {
-                HStack(spacing: 6) {
-                    ForEach(AutopilotText.bypassMinutes, id: \.self) { minutes in
-                        Button(minutes == 60 ? "1 h" : "\(minutes) min") {
-                            askBypass = false
-                            onSet(.bypass, minutes)
-                            closeSoon()
-                        }
-                        .font(RFont.sans(14, .semibold))
-                        .foregroundStyle(Palette.danger)
-                        .frame(maxWidth: .infinity, minHeight: 36)
-                        .background(Palette.danger.opacity(0.14), in: Capsule())
-                        .buttonStyle(.plain)
-                    }
-                    Button {
-                        cancelBypass()
-                    } label: {
-                        Image(systemName: "xmark").font(.system(size: 13, weight: .bold)).foregroundStyle(Palette.secondary)
-                            .frame(width: 36, height: 36)
-                            .background(Palette.controlFill, in: Circle())
-                    }
-                    .buttonStyle(.plain)
-                    .accessibilityLabel("Cancel")
-                }
-                .accessibilityIdentifier("quickBypassTimes")
-            } else if settings.mode == .bypass {
+            if settings.mode == .bypass {
                 Button {
                     onStop()
                     dismiss()
@@ -263,9 +248,7 @@ struct RiskSliderCard: View {
         .padding(18)
         .frame(width: 320)
         .background(LinearGradient(colors: [tint.opacity(0.16 + 0.10 * risk), .clear], startPoint: .top, endPoint: .bottom))
-        .animation(.smooth(duration: 0.2), value: askBypass)
         .onChange(of: settings.mode) {
-            guard !askBypass else { return }
             detent = current
             withAnimation(.spring(duration: 0.3, bounce: 0.25)) { pos = CGFloat(current) }
         }
@@ -328,23 +311,19 @@ struct RiskSliderCard: View {
     }
 
     private func land(_ i: Int) {
-        withAnimation(.spring(duration: 0.3, bounce: 0.3)) { pos = CGFloat(i) }
         let mode = modes[i]
         if mode == .bypass && settings.mode != .bypass {
-            askBypass = true
-        } else if mode != settings.mode {
-            askBypass = false
-            onSet(mode, nil)
-            closeSoon()
+            // No bypass from a slide: back to where it was, and the sheet asks for a length and a hold.
+            move(to: current)
+            withAnimation(.spring(duration: 0.3, bounce: 0.25)) { pos = CGFloat(current) }
+            onBypass()
         } else {
-            askBypass = false
+            withAnimation(.spring(duration: 0.3, bounce: 0.3)) { pos = CGFloat(i) }
+            if mode != settings.mode {
+                onSet(mode)
+                closeSoon()
+            }
         }
-    }
-
-    private func cancelBypass() {
-        askBypass = false
-        move(to: current)
-        withAnimation(.spring(duration: 0.3, bounce: 0.25)) { pos = CGFloat(current) }
     }
 
     /// Long enough to see the new mode land.

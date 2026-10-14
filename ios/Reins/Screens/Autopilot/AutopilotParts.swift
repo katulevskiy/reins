@@ -1,11 +1,11 @@
 import SwiftUI
 
 // The pieces Autopilot's screens share (the Android app's `AutopilotParts`): each mode's colour and symbol, tiles,
-// rings and meters, the mode picker and chips. (Activity's mode pill, the approval sheet's suggestion and the
+// rings and meters, stat tiles, segments and chips. (Activity's mode pill, the approval sheet's suggestion and the
 // activity badge live with those screens.)
 
 enum AutopilotStyle {
-    /// Blue for Manual, the accent for Auto, red for Bypass, amber for Lockdown.
+    /// Blue for Manual, the violet accent for Auto, red for Bypass, amber for Lockdown.
     static func tint(_ mode: AutopilotMode) -> Color {
         switch mode {
         case .manual: Palette.search
@@ -236,110 +236,208 @@ struct RadioDot: View {
     }
 }
 
-/// The big mode selector: four rows and one highlight that springs from the old row to the new one, taking on the
-/// new mode's colour on the way. Each row says what the mode does; Auto says when it needs the model.
-struct ModePicker: View {
-    var selected: AutopilotMode
-    var modelReady: Bool
-    var identifierPrefix = "mode"
-    var onPick: (AutopilotMode) -> Void
-    @Namespace private var highlight
-
-    var body: some View {
-        VStack(spacing: 0) {
-            ForEach(AutopilotText.modes, id: \.self) { mode in
-                row(mode)
-            }
-        }
-        .padding(6)
-        .background(Palette.elevated, in: RoundedRectangle(cornerRadius: 22, style: .continuous))
-        .overlay(RoundedRectangle(cornerRadius: 22, style: .continuous).strokeBorder(Palette.hairline, lineWidth: 0.5))
-        .animation(.spring(response: 0.38, dampingFraction: 0.78), value: selected)
-    }
-
-    private func row(_ mode: AutopilotMode) -> some View {
-        let on = mode == selected
-        let tint = AutopilotStyle.tint(mode)
-        let needsModel = !modelReady && AutopilotText.needsModel(mode)
-        return Button {
-            onPick(mode)
-        } label: {
-            HStack(spacing: 14) {
-                IconTile(symbol: AutopilotText.symbol(mode), tint: tint, size: 42, filled: on)
-                VStack(alignment: .leading, spacing: 2) {
-                    HStack(spacing: 8) {
-                        Text(AutopilotText.name(mode))
-                            .font(RFont.sans(16.5, .semibold))
-                            .foregroundStyle(Palette.text)
-                        if needsModel {
-                            Text("NEEDS MODEL")
-                                .font(RFont.sans(10, .semibold))
-                                .tracking(0.6)
-                                .foregroundStyle(Palette.tertiary)
-                                .padding(.horizontal, 7)
-                                .padding(.vertical, 3)
-                                .background(Palette.controlFill, in: Capsule())
-                        }
-                    }
-                    // Only the mode in force says what it does; the hero above says it too.
-                    if on {
-                        Text(AutopilotText.line(mode))
-                            .font(RFont.sans(13))
-                            .foregroundStyle(Palette.secondary)
-                            .fixedSize(horizontal: false, vertical: true)
-                    }
-                }
-                Spacer(minLength: 10)
-                RadioDot(selected: on, tint: tint)
-            }
-            .padding(.horizontal, 12)
-            .padding(.vertical, 12)
-            .frame(minHeight: 70)
-            .background {
-                if on {
-                    RoundedRectangle(cornerRadius: 17, style: .continuous)
-                        .fill(tint.opacity(0.11))
-                        .overlay(RoundedRectangle(cornerRadius: 17, style: .continuous).strokeBorder(tint.opacity(0.35), lineWidth: 1))
-                        .matchedGeometryEffect(id: "highlight", in: highlight)
-                }
-            }
-            .contentShape(RoundedRectangle(cornerRadius: 17, style: .continuous))
-        }
-        .buttonStyle(PressDim())
-        .accessibilityElement(children: .combine)
-        .accessibilityAddTraits(on ? [.isButton, .isSelected] : .isButton)
-        .accessibilityHint(needsModel ? "Needs the on-device model" : "")
-        .accessibilityIdentifier("\(identifierPrefix):\(AutopilotText.key(mode))")
-    }
-}
-
-/// The bypass countdown: a ring that empties as the time runs out, and the minutes and seconds left.
-struct BypassClock: View {
+/// A running bypass's ring: it empties as the time runs out, with the clock in the middle; a bypass without an end is
+/// a full ring around an infinity sign.
+struct BypassRing: View {
     var until: Int64
-    var size: CGFloat = 112
-    /// The core keeps only the end; the ring measures against the length the bypass was most likely given.
-    @State private var length: Int64?
+    var since: Int64?
+    var size: CGFloat = 76
+    var stroke: CGFloat = 5
 
     var body: some View {
-        TimelineView(.periodic(from: .now, by: 1)) { context in
-            let now = Int64(context.date.timeIntervalSince1970)
-            let total = length ?? AutopilotText.bypassLength(leftSeconds: until - now)
-            let left = max(until - now, 0)
-            ProgressRing(fraction: Double(left) / Double(max(total, 1)), tint: Palette.danger, size: size, stroke: 7) {
-                VStack(spacing: 0) {
-                    Text(AutopilotText.clock(until: until, now: now))
-                        .font(RFont.mono(24, .semibold))
-                        .foregroundStyle(Palette.text)
-                        .monospacedDigit()
-                        .accessibilityIdentifier("bypassClock")
-                    Text("left").font(RFont.sans(12)).foregroundStyle(Palette.secondary)
+        LiveClock(interval: 1) { time in
+            let now = Int64(time)
+            Group {
+                if AutopilotText.isUntilOff(until) {
+                    Circle()
+                        .strokeBorder(Palette.danger, lineWidth: stroke)
+                        .frame(width: size, height: size)
+                        .overlay {
+                            Image(systemName: "infinity")
+                                .font(.system(size: size * 0.38, weight: .semibold))
+                                .foregroundStyle(Palette.danger)
+                        }
+                } else {
+                    ProgressRing(fraction: AutopilotText.bypassFraction(until: until, since: since, now: now), tint: Palette.danger, size: size, stroke: stroke) {
+                        Text(AutopilotText.clock(until: until, now: now))
+                            .font(RFont.mono(size * 0.21, .semibold))
+                            .foregroundStyle(Palette.danger)
+                            .monospacedDigit()
+                            .lineLimit(1)
+                            .minimumScaleFactor(0.6)
+                            .padding(.horizontal, stroke + 2)
+                    }
                 }
             }
             .accessibilityElement(children: .ignore)
-            .accessibilityLabel("Bypass, \(AutopilotText.minutesLeft(until: until, now: now))")
+            .accessibilityLabel("Bypass, \(AutopilotText.timeLeft(until: until, now: now))")
+            .accessibilityIdentifier("bypassClock")
         }
-        .onAppear { length = AutopilotText.bypassLength(leftSeconds: until - Int64(Date().timeIntervalSince1970)) }
-        .onChange(of: until) { length = AutopilotText.bypassLength(leftSeconds: until - Int64(Date().timeIntervalSince1970)) }
+    }
+}
+
+/// A number and what it counts, on its own small card ("142 requests scored"); `suffix` follows the number smaller
+/// ("2 /9").
+struct StatTile: View {
+    var value: String
+    var label: String
+    var tint: Color = Palette.text
+    var suffix: String? = nil
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 2) {
+            HStack(alignment: .firstTextBaseline, spacing: 3) {
+                Text(value)
+                    .font(RFont.sans(22, .semibold))
+                    .foregroundStyle(tint)
+                if let suffix {
+                    Text(suffix)
+                        .font(RFont.sans(15))
+                        .foregroundStyle(Palette.tertiary)
+                }
+            }
+            .lineLimit(1)
+            .minimumScaleFactor(0.6)
+            Text(label)
+                .font(RFont.sans(11.5))
+                .foregroundStyle(Palette.tertiary)
+                .lineLimit(1)
+                .minimumScaleFactor(0.8)
+        }
+        .padding(12)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(Palette.elevated, in: RoundedRectangle(cornerRadius: 18, style: .continuous))
+        .overlay(RoundedRectangle(cornerRadius: 18, style: .continuous).strokeBorder(Palette.hairline, lineWidth: 1))
+        .accessibilityElement(children: .combine)
+    }
+}
+
+/// One choice of a row of segments: its title, an optional leading symbol and trailing chevron, its colour.
+struct SegmentItem<ID: Hashable>: Identifiable {
+    var id: ID
+    var title: String
+    var symbol: String? = nil
+    var chevron = false
+    var tint: Color? = nil
+    var identifier: String
+}
+
+/// A segmented control in Reins's look: a dark well and the chosen segment raised on it. Unlike the system's, a
+/// segment can carry a symbol, a chevron (it opens more choices) and a colour of its own. Plays the selection.
+struct Segments<ID: Hashable>: View {
+    var items: [SegmentItem<ID>]
+    var selected: ID?
+    var onPick: (ID) -> Void
+    @Environment(\.feedback) private var feedback
+
+    var body: some View {
+        HStack(spacing: 2) {
+            ForEach(items) { item in
+                let on = item.id == selected
+                Button {
+                    feedback.play(.selection)
+                    onPick(item.id)
+                } label: {
+                    HStack(spacing: 3) {
+                        if let symbol = item.symbol {
+                            Image(systemName: symbol).font(.system(size: 12, weight: .semibold))
+                        }
+                        Text(item.title)
+                            .font(RFont.sans(14, on ? .semibold : .medium))
+                            .lineLimit(1)
+                            .minimumScaleFactor(0.75)
+                        if item.chevron {
+                            Image(systemName: "chevron.down").font(.system(size: 10, weight: .semibold))
+                        }
+                    }
+                    .foregroundStyle(item.tint ?? (on ? Palette.text : Palette.secondary))
+                    .frame(maxWidth: .infinity, minHeight: 36)
+                    .padding(.horizontal, 2)
+                    .background {
+                        if on {
+                            RoundedRectangle(cornerRadius: 10, style: .continuous)
+                                .fill(Palette.dynamic(0xFFFFFF, 0x2C2C31))
+                                .shadow(color: .black.opacity(0.08), radius: 2, y: 1)
+                        }
+                    }
+                    .contentShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
+                }
+                .buttonStyle(.plain)
+                .accessibilityAddTraits(on ? [.isButton, .isSelected] : .isButton)
+                .accessibilityIdentifier(item.identifier)
+            }
+        }
+        .padding(3)
+        .background(Palette.controlFill, in: RoundedRectangle(cornerRadius: 13, style: .continuous))
+        .animation(.smooth(duration: 0.2), value: selected)
+    }
+}
+
+/// A line of text with a (?) after it that shows the longer explanation under it.
+struct HelpLine: View {
+    var text: String
+    var help: String
+    var alignment: HorizontalAlignment = .leading
+    @State private var open = false
+    @Environment(\.feedback) private var feedback
+
+    var body: some View {
+        VStack(alignment: alignment, spacing: 8) {
+            HStack(spacing: 6) {
+                Text(text)
+                    .font(RFont.sans(14))
+                    .foregroundStyle(Palette.secondary)
+                    .multilineTextAlignment(alignment == .center ? .center : .leading)
+                    .fixedSize(horizontal: false, vertical: true)
+                HelpMark(open: open) {
+                    let next = !open
+                    withAnimation(.smooth(duration: 0.25)) { open = next }
+                    feedback.play(.expand(next))
+                }
+            }
+            if open {
+                Text(help)
+                    .font(RFont.sans(13))
+                    .foregroundStyle(Palette.secondary)
+                    .multilineTextAlignment(alignment == .center ? .center : .leading)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .transition(.opacity)
+                    .accessibilityIdentifier("helpText")
+            }
+        }
+    }
+}
+
+/// The (?) that shows or hides an explanation.
+struct HelpMark: View {
+    var open: Bool
+    var action: () -> Void
+
+    var body: some View {
+        Button(action: action) {
+            Image(systemName: "questionmark.circle")
+                .font(.system(size: 16))
+                .foregroundStyle(open ? Palette.accent : Palette.tertiary)
+                .frame(width: 30, height: 28)
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel(open ? "Hide help" : "Help")
+        .accessibilityIdentifier("help")
+    }
+}
+
+/// A profile's emoji on a rounded tile (its row and its page).
+struct ProfileTile: View {
+    var profile: ProfileView
+    var size: CGFloat
+
+    var body: some View {
+        RoundedRectangle(cornerRadius: size * 0.31, style: .continuous)
+            .fill(Palette.chip)
+            .frame(width: size, height: size)
+            .overlay { Text(AutopilotText.profileIcon(profile)).font(.system(size: size * 0.52)) }
+            .accessibilityHidden(true)
     }
 }
 

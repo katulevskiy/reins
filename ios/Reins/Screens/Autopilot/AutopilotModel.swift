@@ -16,6 +16,10 @@ final class AutopilotModel {
     /// "Try it": the last answer, and whether one is on its way.
     private(set) var evaluation: SuggestionView?
     private(set) var evaluating = false
+    /// "This week": requests scored, how often Autopilot matched the user, kinds on Auto; nil until read.
+    private(set) var stats: AutopilotStats?
+    /// What a profile's last 30 days would have been at the thresholds being set; nil until read.
+    private(set) var replay: ThresholdReplay?
 
     @ObservationIgnored private weak var app: AppModel?
 
@@ -83,6 +87,12 @@ final class AutopilotModel {
 
     func profile(_ id: String) -> ProfileView? { profiles.first { $0.id == id } }
 
+    /// The last `days` of Autopilot, for the stat tiles (kept as they were when it cannot be read).
+    func loadStats(days: UInt32 = 7) async {
+        guard let app else { return }
+        if let read = try? await app.core.autopilotStats(days: days) { stats = read }
+    }
+
     func dismissMessages() {
         error = nil
         notice = nil
@@ -109,28 +119,40 @@ final class AutopilotModel {
     static let newConnectionSecs: Int64 = 600
 
     /// Sets the global mode or a connection's (`mode` nil: back to following the global mode). Bypass takes
-    /// `minutes`. Bypass and Lockdown are confirmed by the phone's owner first (Face ID or the passcode). The change
-    /// is felt at once; a refusal from the core says why.
+    /// `minutes` and goes through `startBypass`. Lockdown is a plain tap: it only holds requests back. The change is
+    /// felt at once; a refusal from the core says why.
     func setMode(_ mode: AutopilotMode?, minutes: UInt32? = nil, connectionId: String? = nil, label: String? = nil) async {
+        if mode == .bypass {
+            await startBypass(connectionId: connectionId, minutes: minutes ?? AutopilotText.bypassMinutes[0], label: label)
+            return
+        }
         guard let app else { return }
         let old = modeOf(connectionId)
         let new = mode ?? settings?.mode ?? .manual
-        if mode == .bypass || mode == .lockdown {
-            let who = connectionId == nil ? "every AI" : untrusted(label ?? app.connection(connectionId ?? "")?.label ?? "this AI")
-            let reason = mode == .bypass ? "Turn on Bypass for \(who)" : "Lock down \(who)"
-            guard await app.authenticator.confirm(reason) else { return }
-        }
-        let restart = mode == .bypass && old == .bypass
-        if let event = restart ? .bypassOn : AutopilotFeedback.modeChange(from: old, to: new) {
+        if let event = AutopilotFeedback.modeChange(from: old, to: new) {
             app.feedback.play(event)
         }
-        let length = minutes ?? AutopilotText.bypassMinutes[0]
-        app.patchAutopilot { $0.applyMode(mode, minutes: length, connectionId: connectionId) }
+        app.patchAutopilot { $0.applyMode(mode, minutes: 0, connectionId: connectionId) }
         await run {
-            try await app.core.setAutopilotMode(
-                connectionId: connectionId, mode: mode,
-                minutes: mode == .bypass ? length : nil
-            )
+            try await app.core.setAutopilotMode(connectionId: connectionId, mode: mode, minutes: nil)
+            await app.refreshAutopilot()
+        }
+    }
+
+    /// Starts a bypass of every AI (`connectionId` nil) or of one, for `minutes` or, nil, until the user turns it off.
+    /// The sheet has already been held to confirm; the phone's owner confirms it too (Face ID or the passcode).
+    func startBypass(connectionId: String? = nil, minutes: UInt32?, label: String? = nil) async {
+        guard let app else { return }
+        let who = connectionId == nil ? "every AI" : untrusted(label ?? app.connection(connectionId ?? "")?.label ?? "this AI")
+        guard await app.authenticator.confirm("Turn on Bypass for \(who)") else { return }
+        let old = modeOf(connectionId)
+        if let event = old == .bypass ? .bypassOn : AutopilotFeedback.modeChange(from: old, to: .bypass) {
+            app.feedback.play(event)
+        }
+        let length = minutes.map { min(max($0, 1), AutopilotText.maxBypassMinutes) }
+        app.patchAutopilot { $0.applyBypass(minutes: length, connectionId: connectionId) }
+        await run {
+            try await app.core.startBypass(connectionId: connectionId, minutes: length)
             await app.refreshAutopilot()
         }
     }
@@ -257,12 +279,51 @@ final class AutopilotModel {
     /// Shown at once; a refusal reads the profiles back.
     func setPreset(_ id: String, _ preset: Preset) async {
         guard let app else { return }
-        patchProfile(id) { $0.preset = preset }
+        patchProfile(id) { profile in
+            profile.preset = preset
+            if let t = AutopilotText.presetThresholds(preset) {
+                profile.approveAt = t.approveAt
+                profile.denyAt = t.denyAt
+            }
+        }
         let done = await run {
             try await app.core.setPreset(profileId: id, preset: preset)
             await self.loadProfiles()
         }
         if !done { await loadProfiles() }
+    }
+
+    /// The profile's own thresholds (the Custom preset), each 80% to 99%. Shown at once; a refusal reads the profiles
+    /// back.
+    func setThresholds(_ id: String, approveAt: Float, denyAt: Float) async {
+        guard let app else { return }
+        let approve = Self.clampThreshold(approveAt)
+        let deny = Self.clampThreshold(denyAt)
+        patchProfile(id) { profile in
+            profile.preset = .custom
+            profile.approveAt = approve
+            profile.denyAt = deny
+        }
+        let done = await run {
+            try await app.core.setThresholds(profileId: id, approveAt: approve, denyAt: deny)
+            await self.loadProfiles()
+        }
+        if !done { await loadProfiles() }
+    }
+
+    /// What the last 30 days would have been at these thresholds (kept as it was when it cannot be read).
+    func loadReplay(_ id: String, approveAt: Float, denyAt: Float) async {
+        guard let app else { return }
+        if let read = try? await app.core.thresholdReplay(
+            profileId: id, approveAt: Self.clampThreshold(approveAt), denyAt: Self.clampThreshold(denyAt)
+        ) {
+            replay = read
+        }
+    }
+
+    /// 0.80 to 0.99, as the core keeps them.
+    nonisolated static func clampThreshold(_ p: Float) -> Float {
+        Float(AutopilotText.thresholdPercent(p)) / 100
     }
 
     /// `locked`: true always asks, false lets Auto approve now, nil lets the numbers decide. Shown at once; a refusal
@@ -370,38 +431,54 @@ final class AutopilotModel {
 /// answers (the core's `set_autopilot_mode` and `modes::effective`). The next read replaces it with the real thing.
 extension AutopilotSettings {
     /// `mode` for `connectionId` (nil = the global mode); `mode` nil goes back to the default (global) or to following
-    /// the global mode (a connection). A bypass lasts `minutes`.
+    /// the global mode (a connection). A bypass lasts `minutes` (see `applyBypass`).
     mutating func applyMode(_ mode: AutopilotMode?, minutes: UInt32, connectionId: String?,
                             now: Int64 = Int64(Date().timeIntervalSince1970)) {
-        let until = now + Int64(minutes) * 60
+        if mode == .bypass {
+            applyBypass(minutes: minutes, connectionId: connectionId, now: now)
+            return
+        }
         if let connectionId {
             let i = ownIndex(connectionId)
-            if mode == .bypass {
-                if connections[i].baseMode == .lockdown { connections[i].baseMode = nil }
-                connections[i].bypassUntil = until
-            } else {
-                connections[i].baseMode = mode
-                connections[i].bypassUntil = nil
-            }
+            connections[i].baseMode = mode
+            connections[i].bypassUntil = nil
+            connections[i].bypassSince = nil
         } else {
             // A mode never picked is Manual.
-            if mode == .bypass {
-                if baseMode == .lockdown { baseMode = .manual }
-                bypassUntil = until
-            } else {
-                baseMode = mode ?? .manual
-                bypassUntil = nil
-            }
-            self.mode = baseMode == .lockdown ? .lockdown : (bypassUntil ?? 0) > now ? .bypass : baseMode
+            baseMode = mode ?? .manual
+            bypassUntil = nil
+            bypassSince = nil
         }
+        settle(now: now)
+    }
+
+    /// A bypass of every AI (`connectionId` nil) or of one, from `now` for `minutes`, or until turned off (nil).
+    mutating func applyBypass(minutes: UInt32?, connectionId: String?, now: Int64 = Int64(Date().timeIntervalSince1970)) {
+        let until = minutes.map { now + Int64($0) * 60 } ?? AutopilotText.untilOff
+        if let connectionId {
+            let i = ownIndex(connectionId)
+            if connections[i].baseMode == .lockdown { connections[i].baseMode = nil }
+            connections[i].bypassUntil = until
+            connections[i].bypassSince = now
+        } else {
+            if baseMode == .lockdown { baseMode = .manual }
+            bypassUntil = until
+            bypassSince = now
+        }
+        settle(now: now)
+    }
+
+    /// The modes in force after a change (the core's `modes::effective`).
+    private mutating func settle(now: Int64) {
+        mode = baseMode == .lockdown ? .lockdown : (bypassUntil ?? 0) > now ? .bypass : baseMode
         for i in connections.indices {
             let c = connections[i]
-            if self.mode == .lockdown || c.baseMode == .lockdown {
+            if mode == .lockdown || c.baseMode == .lockdown {
                 connections[i].mode = .lockdown
             } else if (c.bypassUntil ?? 0) > now {
                 connections[i].mode = .bypass
             } else {
-                connections[i].mode = c.baseMode ?? self.mode
+                connections[i].mode = c.baseMode ?? mode
             }
         }
     }
@@ -416,7 +493,7 @@ extension AutopilotSettings {
     private mutating func ownIndex(_ connectionId: String) -> Int {
         if let i = connections.firstIndex(where: { $0.connectionId == connectionId }) { return i }
         connections.append(ConnectionAutopilot(
-            connectionId: connectionId, baseMode: nil, bypassUntil: nil, mode: mode, profileId: defaultProfileId
+            connectionId: connectionId, baseMode: nil, bypassUntil: nil, bypassSince: nil, mode: mode, profileId: defaultProfileId
         ))
         return connections.count - 1
     }

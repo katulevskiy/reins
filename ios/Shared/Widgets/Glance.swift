@@ -46,11 +46,12 @@ enum Glance {
 
     // MARK: Timelines
 
-    /// The moments a widget has to redraw by itself: now, and whenever an answer window closes or a bypass ends.
-    /// Everything else (a new request, an answer) comes with a fresh snapshot, and the app reloads the timelines.
+    /// The moments a widget has to redraw by itself: now, and whenever an answer window closes or a bypass ends (one
+    /// that runs until turned off never does). Everything else (a new request, an answer) comes with a fresh
+    /// snapshot, and the app reloads the timelines.
     static func timelineDates(_ s: Snapshot, now: Int64, limit: Int = 40) -> [Int64] {
         var later = Set(s.pending.map(\.expiresAt).filter { $0 > now })
-        for b in [s.bypassUntil, s.anyBypassUntil].compactMap({ $0 }) where b > now { later.insert(b) }
+        for b in [s.bypassUntil, s.anyBypassUntil].compactMap({ $0 }) where b > now && !AutopilotText.isUntilOff(b) { later.insert(b) }
         return [now] + later.sorted().prefix(limit)
     }
 
@@ -81,7 +82,7 @@ enum Glance {
         var symbol: String {
             switch self {
             case .manual: "person.fill.checkmark"
-            case .auto: "location.north.fill"
+            case .auto: "bolt.fill"
             case .bypass: "bolt.fill"
             case .lockdown: "lock.fill"
             }
@@ -101,6 +102,11 @@ enum Glance {
     static func bypassEnd(_ s: Snapshot, now: Int64) -> Int64? {
         let end = max(s.anyBypassUntil ?? 0, s.bypassUntil ?? 0)
         return end > now ? end : nil
+    }
+
+    /// A bypass that runs until the user turns it off: no countdown, "until you stop it".
+    static func bypassUntilOff(_ s: Snapshot, now: Int64) -> Bool {
+        bypassEnd(s, now: now).map(AutopilotText.isUntilOff) ?? false
     }
 
     /// The bypass that runs is a connection's, not the global one: the widget says so under the global mode.
@@ -143,14 +149,9 @@ enum Glance {
         )
     }
 
-    /// The bypass lengths the app offers, in minutes (the core allows 1 to 60).
-    static let bypassMinutes: [Int64] = [15, 30, 60]
-
-    /// The length (seconds) a bypass with `left` seconds to go was most likely given: the shortest choice that fits
-    /// (Android's `AutopilotText.bypassLength`). The countdown ring starts from there.
-    static func bypassLength(left: Int64) -> Int64 {
-        bypassMinutes.map { $0 * 60 }.first { left <= $0 } ?? (bypassMinutes.last ?? 60) * 60
-    }
+    /// The length (seconds) a bypass with `left` seconds to go was most likely given (`AutopilotText.bypassLength`),
+    /// when its start is not known. The countdown ring starts from there.
+    static func bypassLength(left: Int64) -> Int64 { AutopilotText.bypassLength(leftSeconds: left) }
 
     /// "every AI", "Claude", "3 AIs": whose requests a bypass approves.
     static func bypassScope(global: Bool, connections: [String]) -> String {
@@ -160,21 +161,29 @@ enum Glance {
     }
 
     /// The Live Activity's state for a running bypass, nil when none runs. `previous` is what the activity shows now:
-    /// the same end keeps its start (so the ring does not jump), a new or restarted bypass starts a new ring.
+    /// the same end keeps its start (so the ring does not jump), a new or restarted bypass starts a new ring. `since`
+    /// is when the bypass that ends last started, when known. One that runs until turned off has no end to count down
+    /// to: its state says so (`untilOff`), and `until` is a date far off rather than the core's `i64::MAX`.
     static func bypassState(
         global: Int64?,
         connections: [(label: String, until: Int64?)],
         previous: BypassActivityAttributes.ContentState?,
         approvedSince: (Date) -> Int,
-        now: Int64
+        now: Int64,
+        since: Int64? = nil
     ) -> BypassActivityAttributes.ContentState? {
         let globalUntil = global.flatMap { $0 > now ? $0 : nil }
         let running = connections.filter { ($0.until ?? 0) > now }
         guard let end = ([globalUntil] + running.map(\.until)).compactMap({ $0 }).max() else { return nil }
-        let until = Date(timeIntervalSince1970: TimeInterval(end))
+        let untilOff = AutopilotText.isUntilOff(end)
+        let until = untilOff ? Date.distantFuture : Date(timeIntervalSince1970: TimeInterval(end))
         let startedAt: Date
-        if let previous, previous.until == until {
+        if let previous, previous.until == until, (previous.untilOff ?? false) == untilOff {
             startedAt = previous.startedAt
+        } else if let since, since <= now {
+            startedAt = Date(timeIntervalSince1970: TimeInterval(since))
+        } else if untilOff {
+            startedAt = Date(timeIntervalSince1970: TimeInterval(now))
         } else {
             startedAt = Date(timeIntervalSince1970: TimeInterval(end - bypassLength(left: end - now)))
         }
@@ -182,7 +191,8 @@ enum Glance {
             until: until,
             startedAt: startedAt,
             scope: bypassScope(global: globalUntil != nil, connections: running.map(\.label)),
-            approvedCount: approvedSince(startedAt)
+            approvedCount: approvedSince(startedAt),
+            untilOff: untilOff ? true : nil
         )
     }
 

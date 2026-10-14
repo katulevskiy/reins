@@ -184,7 +184,7 @@ struct SectionRoot: View {
         switch section {
         case .activity: ActivityScreen()
         case .grants: GrantsScreen()
-        case .autopilot: AutopilotScreen()
+        case .autopilot: AutopilotScreen(root: true)
         case .settings: SettingsScreen()
         }
     }

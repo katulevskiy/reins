@@ -2,7 +2,7 @@ import SwiftUI
 
 /// The Autopilot part of an AI's page (the Android app's `ConnectionAutopilotSection`): its own mode (or the global
 /// one), a bypass for just this AI, and the profile its answers teach. Self-contained: it reads and changes
-/// everything through `AppModel`, confirms Bypass and Lockdown with the owner, plays the same feedback as the
+/// everything through `AppModel`, holds Bypass to confirm (and the owner confirms it), plays the same feedback as the
 /// Autopilot screen, and shows its own errors.
 ///
 /// For a `List` (an inset grouped settings list), as a `Section`:
@@ -51,7 +51,6 @@ struct ConnectionAutopilotContent: View {
     @Environment(\.feedback) private var feedback
     @State private var ap = AutopilotModel()
     @State private var bypassAsk = false
-    @State private var lockdownAsk = false
 
     private var name: String { label ?? model.connection(connectionId)?.label ?? "this AI" }
 
@@ -68,22 +67,13 @@ struct ConnectionAutopilotContent: View {
             await ap.refresh()
         }
         .sheet(isPresented: $bypassAsk) {
-            BypassSheet(who: name) { minutes in
+            BypassSheet(who: name) { length in
                 feedback.quietClose()
-                Task { await ap.setMode(.bypass, minutes: minutes, connectionId: connectionId, label: name) }
+                Task { await ap.startBypass(connectionId: connectionId, minutes: length.minutes, label: name) }
             }
+            .environment(\.feedback, feedback)
         }
         .presentationFeedback(bypassAsk)
-        .alert("Lock down \(untrusted(name))?", isPresented: $lockdownAsk) {
-            Button("Cancel", role: .cancel) {}
-            Button("Lock down", role: .destructive) {
-                feedback.quietClose()
-                Task { await ap.setMode(.lockdown, connectionId: connectionId, label: name) }
-            }
-        } message: {
-            Text("Only this AI. Waiting requests too.")
-        }
-        .presentationFeedback(lockdownAsk)
     }
 
     private func rows(_ s: AutopilotSettings) -> some View {
@@ -98,7 +88,7 @@ struct ConnectionAutopilotContent: View {
                 VStack(alignment: .leading, spacing: 2) {
                     Text(AutopilotText.name(mode)).font(RFont.sans(17, .semibold)).foregroundStyle(Palette.text)
                     // Only a bypass counts down; otherwise the line does not change with time.
-                    if bypassUntil != nil {
+                    if let until = bypassUntil, !AutopilotText.isUntilOff(until) {
                         TimelineView(.periodic(from: .now, by: 1)) { context in
                             modeText(modeLine(s, own: own, mode: mode, chosen: chosen, now: Int64(context.date.timeIntervalSince1970)), bypass: true)
                         }
@@ -168,7 +158,7 @@ struct ConnectionAutopilotContent: View {
 
     private func modeLine(_ s: AutopilotSettings, own: ConnectionAutopilot?, mode: AutopilotMode, chosen: AutopilotMode?, now: Int64) -> String {
         if mode == .lockdown && s.mode == .lockdown && own?.baseMode != .lockdown { return "Every AI is locked down" }
-        if let until = own?.bypassUntil { return "Bypass for this AI · " + AutopilotText.minutesLeft(until: until, now: now) }
+        if let until = own?.bypassUntil { return "Bypass for this AI · " + AutopilotText.timeLeft(until: until, now: now) }
         if chosen == nil { return "Like every AI" }
         return "Its own mode"
     }
@@ -184,8 +174,6 @@ struct ConnectionAutopilotContent: View {
                 ap.error = nil
                 bypassAsk = true
             }
-        case .lockdown where chosen != .lockdown:
-            lockdownAsk = true
         default:
             if m != chosen { Task { await ap.setMode(m, connectionId: connectionId) } }
         }

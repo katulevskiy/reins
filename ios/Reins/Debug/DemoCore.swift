@@ -46,6 +46,8 @@ final class DemoReinsCore: ReinsCoreProtocol, @unchecked Sendable {
         var mode: AutopilotMode?
         var bypassUntil: Int64?
         var profileId: String?
+        /// When the running bypass started.
+        var bypassSince: Int64?
     }
 
     struct State {
@@ -1105,11 +1107,14 @@ final class DemoReinsCore: ReinsCoreProtocol, @unchecked Sendable {
                 } else {
                     row.mode ?? global
                 }
-                return ConnectionAutopilot(connectionId: id, baseMode: row.mode, bypassUntil: row.bypassUntil.flatMap { $0 > now ? $0 : nil },
-                                           mode: mode, profileId: row.profileId ?? defaultId)
+                let running = (row.bypassUntil ?? 0) > now
+                return ConnectionAutopilot(connectionId: id, baseMode: row.mode, bypassUntil: running ? row.bypassUntil : nil,
+                                           bypassSince: running ? row.bypassSince : nil, mode: mode, profileId: row.profileId ?? defaultId)
             }
+            let running = (s.apGlobal.bypassUntil ?? 0) > now
             return AutopilotSettings(
-                mode: global, baseMode: Self.globalBase(s), bypassUntil: s.apGlobal.bypassUntil.flatMap { $0 > now ? $0 : nil },
+                mode: global, baseMode: Self.globalBase(s), bypassUntil: running ? s.apGlobal.bypassUntil : nil,
+                bypassSince: running ? s.apGlobal.bypassSince : nil,
                 defaultProfileId: defaultId, wifiOnly: s.wifiOnly, model: s.model, connections: rows
             )
         }
@@ -1122,9 +1127,11 @@ final class DemoReinsCore: ReinsCoreProtocol, @unchecked Sendable {
             if mode == .bypass {
                 row.mode = row.mode == .lockdown ? nil : row.mode
                 row.bypassUntil = Self.now() + Int64(minutes ?? 15) * 60
+                row.bypassSince = Self.now()
             } else {
                 row.mode = mode
                 row.bypassUntil = nil
+                row.bypassSince = nil
             }
             if let connectionId { s.apConnections[connectionId] = row } else { s.apGlobal = row }
             if mode == .lockdown {
@@ -1135,6 +1142,67 @@ final class DemoReinsCore: ReinsCoreProtocol, @unchecked Sendable {
                     Self.logDecision(&s, v, outcome: "denied", selected: [], grantId: nil, decidedBy: "lockdown")
                 }
             }
+        }
+    }
+
+    /// As the core: a minute to a year, or until turned off (`minutes` nil: `bypassUntil` reads `Int64.max`); not for
+    /// an AI paired less than 10 minutes ago.
+    func startBypass(connectionId: String?, minutes: UInt32?) async throws {
+        try locked { s in
+            let now = Self.now()
+            if let minutes, minutes < 1 || minutes > 525_600 {
+                throw CoreError.Invalid(reason: "a bypass lasts from a minute to a year")
+            }
+            if let connectionId, let c = s.connections.first(where: { $0.id == connectionId }), now - c.createdAt < 600 {
+                throw CoreError.Invalid(reason: "a connection paired less than 10 minutes ago cannot be bypassed")
+            }
+            var row = connectionId.map { s.apConnections[$0] ?? ApRow() } ?? s.apGlobal
+            row.mode = row.mode == .lockdown ? nil : row.mode
+            row.bypassUntil = minutes.map { now + Int64($0) * 60 } ?? .max
+            row.bypassSince = now
+            if let connectionId { s.apConnections[connectionId] = row } else { s.apGlobal = row }
+        }
+    }
+
+    /// From the profiles' fake numbers: what they remember stands for what was scored this week.
+    func autopilotStats(days: UInt32) async throws -> AutopilotStats {
+        locked { s in
+            let classes = s.profiles.flatMap(\.classes)
+            let judged = classes.filter { $0.shadowAccuracy != nil }
+            let compared = judged.reduce(UInt32(0)) { $0 + $1.decisions }
+            let agreed = judged.reduce(Float(0)) { $0 + ($1.shadowAccuracy ?? 0) * Float($1.decisions) }
+            let scored = s.profiles.reduce(UInt32(0)) { $0 + $1.memoryCount } + UInt32(s.activity.count)
+            return AutopilotStats(
+                days: min(max(days, 1), 30),
+                scored: s.model.state == .installed ? scored : 0,
+                matched: compared > 0 ? agreed / Float(compared) : nil,
+                compared: compared,
+                kindsOnAuto: UInt32(classes.filter(\.autoApprove).count),
+                kinds: UInt32(Set(classes.map(\.classKey)).count)
+            )
+        }
+    }
+
+    func setThresholds(profileId: String, approveAt: Float, denyAt: Float) async throws {
+        try locked { s in
+            guard let i = s.profiles.firstIndex(where: { $0.id == profileId }) else { throw CoreError.NotFound }
+            s.profiles[i].preset = .custom
+            s.profiles[i].approveAt = min(max(approveAt, 0.8), 0.99)
+            s.profiles[i].denyAt = min(max(denyAt, 0.8), 0.99)
+        }
+    }
+
+    /// Plausible numbers: lower thresholds decide more and, low enough, decide some the user would have undone.
+    func thresholdReplay(profileId: String, approveAt: Float, denyAt: Float) async throws -> ThresholdReplay {
+        try locked { s in
+            guard let p = s.profiles.first(where: { $0.id == profileId }) else { throw CoreError.NotFound }
+            let total = max(p.memoryCount, 53)
+            let approve = Double(min(max(approveAt, 0.8), 0.99))
+            let deny = Double(min(max(denyAt, 0.8), 0.99))
+            let share = min(max(0.25 + (0.99 - approve) * 2.6 + (0.99 - deny) * 1.2, 0), 0.9)
+            let decided = UInt32((Double(total) * share).rounded())
+            let undone: UInt32 = approve < 0.85 ? 2 : approve < 0.9 ? 1 : 0
+            return ThresholdReplay(days: 30, decided: decided, asked: total - decided, undone: min(undone, decided))
         }
     }
 
@@ -1154,7 +1222,10 @@ final class DemoReinsCore: ReinsCoreProtocol, @unchecked Sendable {
         locked { s in
             var n = s.profiles.count + 1
             while s.profiles.contains(where: { $0.id == "p\(n)" }) { n += 1 }
-            let p = ProfileView(id: "p\(n)", name: name, icon: icon, preset: .balanced, isDefault: false, memoryCount: 0, connections: [], classes: [], trainedAt: nil)
+            let p = ProfileView(
+                id: "p\(n)", name: name, icon: icon, preset: .balanced, approveAt: 0.95, denyAt: 0.90, agreement: nil, isDefault: false,
+                memoryCount: 0, connections: [], classes: [], trainedAt: nil
+            )
             s.profiles.append(p)
             return p
         }
@@ -1219,7 +1290,12 @@ final class DemoReinsCore: ReinsCoreProtocol, @unchecked Sendable {
 
     func setPreset(profileId: String, preset: Preset) async throws {
         locked { s in
-            if let i = s.profiles.firstIndex(where: { $0.id == profileId }) { s.profiles[i].preset = preset }
+            guard let i = s.profiles.firstIndex(where: { $0.id == profileId }) else { return }
+            s.profiles[i].preset = preset
+            if let t = AutopilotText.presetThresholds(preset) {
+                s.profiles[i].approveAt = t.approveAt
+                s.profiles[i].denyAt = t.denyAt
+            }
         }
     }
 

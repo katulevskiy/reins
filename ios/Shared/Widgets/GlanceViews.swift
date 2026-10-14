@@ -418,13 +418,26 @@ struct AutopilotWidgetView: View {
                 .foregroundStyle(GlanceStyle.tint(mode))
                 .widgetAccentable()
             if let end = bypassEnd {
+                let someAIs = Glance.connectionBypassOnly(snapshot, now: now)
                 HStack(spacing: 4) {
-                    Text(Glance.connectionBypassOnly(snapshot, now: now) ? "Bypass for some AIs" : "Ends in")
-                        .font(RFont.fixedSans(11))
-                        .foregroundStyle(Palette.secondary)
-                        .lineLimit(1)
-                    Countdown(from: Date(timeIntervalSince1970: TimeInterval(now)), to: Date(timeIntervalSince1970: TimeInterval(end)), size: 11, color: Palette.danger)
-                        .frame(maxWidth: 44, alignment: .leading)
+                    if AutopilotText.isUntilOff(end) {
+                        // No end to count down to.
+                        Text(someAIs ? "Bypass for some AIs" : "Until you stop it")
+                            .font(RFont.fixedSans(11))
+                            .foregroundStyle(Palette.secondary)
+                            .lineLimit(1)
+                        Image(systemName: "infinity")
+                            .font(.system(size: 11, weight: .semibold))
+                            .foregroundStyle(Palette.danger)
+                            .accessibilityLabel("until you stop it")
+                    } else {
+                        Text(someAIs ? "Bypass for some AIs" : "Ends in")
+                            .font(RFont.fixedSans(11))
+                            .foregroundStyle(Palette.secondary)
+                            .lineLimit(1)
+                        Countdown(from: Date(timeIntervalSince1970: TimeInterval(now)), to: Date(timeIntervalSince1970: TimeInterval(end)), size: 11, color: Palette.danger)
+                            .frame(maxWidth: 44, alignment: .leading)
+                    }
                 }
             } else {
                 Text(mode.line).font(RFont.fixedSans(11)).foregroundStyle(Palette.secondary).lineLimit(2)
@@ -694,16 +707,22 @@ struct ApprovalLiveViews {
 
 // MARK: Live Activity: bypass
 
-/// A running bypass, drawn as the "surge" state: red, the bolt, a countdown and Stop.
+/// A running bypass, drawn as the "surge" state: red, the bolt, a countdown and Stop. One that runs until turned off
+/// shows an infinity sign and a full bar instead of counting down.
 struct BypassLiveViews {
     var state: BypassActivityAttributes.ContentState
     var stale: Bool
 
-    var ended: Bool { stale || state.until <= Date() }
+    var untilOff: Bool { state.untilOff ?? false }
 
-    var title: String { ended ? "Bypass ended" : "Bypass on" }
+    var ended: Bool { stale || (!untilOff && state.until <= Date()) }
 
-    var line: String { "Requests from \(state.scope) are approved without asking, except the riskiest." }
+    var title: String {
+        if ended { return "Bypass ended" }
+        return untilOff ? "Bypass on · until you stop it" : "Bypass on"
+    }
+
+    var line: String { AutopilotText.bypassText(scope: state.scope) }
 
     var approved: String { state.approvedCount == 0 ? "Nothing approved yet" : "\(state.approvedCount) approved so far" }
 
@@ -715,23 +734,37 @@ struct BypassLiveViews {
             .accessibilityHidden(true)
     }
 
-    var timer: some View {
-        Text(timerInterval: min(state.startedAt, state.until)...state.until, countsDown: true)
-            .font(RFont.fixedMono(22, .semibold))
-            .monospacedDigit()
-            .foregroundStyle(Palette.danger)
-            .multilineTextAlignment(.trailing)
-            .frame(maxWidth: 90, alignment: .trailing)
+    @ViewBuilder var timer: some View {
+        if untilOff {
+            Image(systemName: "infinity")
+                .font(.system(size: 22, weight: .semibold))
+                .foregroundStyle(Palette.danger)
+                .frame(maxWidth: 90, alignment: .trailing)
+                .accessibilityLabel("until you stop it")
+        } else {
+            Text(timerInterval: min(state.startedAt, state.until)...state.until, countsDown: true)
+                .font(RFont.fixedMono(22, .semibold))
+                .monospacedDigit()
+                .foregroundStyle(Palette.danger)
+                .multilineTextAlignment(.trailing)
+                .frame(maxWidth: 90, alignment: .trailing)
+        }
     }
 
-    var bar: some View {
-        ProgressView(timerInterval: min(state.startedAt, state.until)...state.until, countsDown: true) {
-            EmptyView()
-        } currentValueLabel: {
-            EmptyView()
+    @ViewBuilder var bar: some View {
+        if untilOff {
+            ProgressView(value: 1)
+                .progressViewStyle(.linear)
+                .tint(Palette.danger)
+        } else {
+            ProgressView(timerInterval: min(state.startedAt, state.until)...state.until, countsDown: true) {
+                EmptyView()
+            } currentValueLabel: {
+                EmptyView()
+            }
+            .progressViewStyle(.linear)
+            .tint(Palette.danger)
         }
-        .progressViewStyle(.linear)
-        .tint(Palette.danger)
     }
 
     var stop: some View {
@@ -769,17 +802,28 @@ struct BypassLiveViews {
         Image(systemName: "bolt.fill").font(.system(size: 14, weight: .bold)).foregroundStyle(Palette.danger)
     }
 
-    var compactTrailing: some View {
-        Text(timerInterval: min(state.startedAt, state.until)...state.until, countsDown: true)
-            .font(RFont.fixedMono(13, .semibold))
-            .monospacedDigit()
-            .foregroundStyle(Palette.danger)
-            .frame(maxWidth: 46)
+    @ViewBuilder var compactTrailing: some View {
+        if untilOff {
+            Image(systemName: "infinity")
+                .font(.system(size: 13, weight: .semibold))
+                .foregroundStyle(Palette.danger)
+                .frame(maxWidth: 46)
+        } else {
+            Text(timerInterval: min(state.startedAt, state.until)...state.until, countsDown: true)
+                .font(RFont.fixedMono(13, .semibold))
+                .monospacedDigit()
+                .foregroundStyle(Palette.danger)
+                .frame(maxWidth: 46)
+        }
     }
 
     var minimal: some View {
         ZStack {
-            TimerRing(from: state.startedAt, to: state.until, tint: Palette.danger, lineWidth: 3)
+            if untilOff {
+                Circle().stroke(Palette.danger, lineWidth: 3).padding(1.5)
+            } else {
+                TimerRing(from: state.startedAt, to: state.until, tint: Palette.danger, lineWidth: 3)
+            }
             Image(systemName: "bolt.fill").font(.system(size: 10, weight: .bold)).foregroundStyle(Palette.danger)
         }
         .accessibilityLabel(title)

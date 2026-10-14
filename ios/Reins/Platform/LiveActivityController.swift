@@ -54,7 +54,8 @@ final class LiveActivityController {
                 connections: s.connections.map { c in (untrusted(model.connection(c.connectionId)?.label ?? "An AI"), c.bypassUntil) },
                 previous: previous,
                 approvedSince: { start in Self.approvedDuringBypass(model.activity, since: start) },
-                now: now
+                now: now,
+                since: Self.lastBypassStart(s, now: now)
             )
         } else {
             nil
@@ -65,6 +66,17 @@ final class LiveActivityController {
             await Self.apply(bypass)
         }
         schedule(now: now, approval: approval, bypass: bypass)
+    }
+
+    /// When the bypass that ends last started (the global one or a connection's), when the core says.
+    nonisolated static func lastBypassStart(_ s: AutopilotSettings, now: Int64) -> Int64? {
+        var last: (until: Int64, since: Int64?)?
+        let all: [(until: Int64?, since: Int64?)] = [(s.bypassUntil, s.bypassSince)] + s.connections.map { ($0.bypassUntil, $0.bypassSince) }
+        for b in all {
+            guard let until = b.until, until > now else { continue }
+            if last == nil || until > (last?.until ?? 0) { last = (until, b.since) }
+        }
+        return last?.since
     }
 
     /// Requests a bypass approved since it started (the count on the activity).
@@ -84,13 +96,15 @@ final class LiveActivityController {
     /// Wakes up when the shown request's window closes or the bypass ends, while the app still runs.
     private func schedule(now: Int64, approval: ApprovalActivityAttributes.ContentState?, bypass: BypassActivityAttributes.ContentState?) {
         timer?.cancel()
-        let next = [approval?.expiresAt, bypass?.until].compactMap { $0 }.min()
+        // A bypass without an end never runs out by itself: nothing to wake up for.
+        let bypassEnd = bypass?.untilOff == true ? nil : bypass?.until
+        let next = [approval?.expiresAt, bypassEnd].compactMap { $0 }.min()
         guard let next else { return }
         let delay = max(0.5, next.timeIntervalSince1970 - TimeInterval(now) + 0.5)
         timer = Task { [weak self] in
             try? await Task.sleep(for: .seconds(delay))
             guard !Task.isCancelled, let self else { return }
-            if let b = bypass, b.until.timeIntervalSince1970 <= Date().timeIntervalSince1970 + 1 {
+            if let end = bypassEnd, end.timeIntervalSince1970 <= Date().timeIntervalSince1970 + 1 {
                 // The bypass is over: read Autopilot again, which syncs.
                 await self.model?.refreshAutopilot()
             } else {
@@ -106,7 +120,8 @@ final class LiveActivityController {
     }
 
     private static func apply(_ state: BypassActivityAttributes.ContentState?) async {
-        await apply(state, attributes: BypassActivityAttributes(), stale: state?.until, relevance: 90)
+        // One that runs until turned off is never stale by the clock.
+        await apply(state, attributes: BypassActivityAttributes(), stale: state?.untilOff == true ? nil : state?.until, relevance: 90)
     }
 
     /// Ends the activities of a kind when `state` is nil, else updates the one that runs (ending any extra) or starts one.
