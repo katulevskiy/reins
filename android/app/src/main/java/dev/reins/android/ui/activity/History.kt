@@ -60,6 +60,8 @@ import dev.reins.android.feedback.Event
 import dev.reins.android.feedback.LocalFeedback
 import dev.reins.android.feedback.play
 import dev.reins.android.ui.common.ConnectionIcon
+import dev.reins.android.ui.common.LabelText
+import dev.reins.android.ui.common.ProviderTile
 import dev.reins.android.ui.common.untrusted
 import dev.reins.core.ActivityEntry
 
@@ -113,36 +115,23 @@ fun DayHeader(label: String, modifier: Modifier = Modifier, filterOpen: Boolean?
     }
 }
 
-/** The filter chips over the history. */
+/** The filter chips over the history: the shared [dev.reins.android.design.SelectChip], one chosen. */
 @Composable
 fun FilterChips(selected: HistoryFilter, modifier: Modifier = Modifier, onSelect: (HistoryFilter) -> Unit) {
     val c = LocalColors.current
-    val feedback = LocalFeedback.current
     Row(modifier.fillMaxWidth().horizontalScroll(rememberScrollState()).padding(horizontal = 16.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
         HistoryFilter.entries.forEach { f ->
             val on = f == selected
-            Row(
-                Modifier
-                    .height(36.dp)
-                    .clip(RoundedCornerShape(10.dp))
-                    .background(if (on) c.text.copy(alpha = 0.16f) else c.controlFill)
-                    .pressable(shape = RoundedCornerShape(10.dp)) {
-                        if (!on) {
-                            onSelect(f)
-                            feedback.play(Event.Selection)
-                        }
-                    }
-                    .semantics { this.selected = on }
-                    .testTag("filter:${f.name.lowercase()}")
-                    .padding(start = if (f == HistoryFilter.Autopilot) 9.dp else 13.dp, end = 13.dp),
-                verticalAlignment = Alignment.CenterVertically,
-            ) {
-                if (f == HistoryFilter.Autopilot) {
-                    Icon(Icons.Rounded.Bolt, null, Modifier.size(15.dp), tint = if (on) c.text else c.secondary)
-                    Spacer(Modifier.width(5.dp))
-                }
-                RText(f.label, RType.sans(13.5f, FontWeight.SemiBold), if (on) c.text else c.secondary, maxLines = 1)
-            }
+            dev.reins.android.design.SelectChip(
+                f.label,
+                on,
+                Modifier.testTag("filter:${f.name.lowercase()}"),
+                leading = if (f == HistoryFilter.Autopilot) {
+                    { Icon(Icons.Rounded.Bolt, null, Modifier.size(15.dp), tint = if (on) c.accent else c.secondary) }
+                } else {
+                    null
+                },
+            ) { if (!on) onSelect(f) }
         }
     }
 }
@@ -170,20 +159,26 @@ fun HistoryRow(entry: ActivityEntry, nowSeconds: Long, first: Boolean, last: Boo
             .background(groupFill(c))
             .pressable(highlight = c.controlFill, shape = shape, onClick = onClick)
             .padding(start = 16.dp, end = 16.dp, top = if (first) 14.dp else 10.dp, bottom = if (last) 14.dp else 10.dp),
-        verticalAlignment = Alignment.CenterVertically,
+        verticalAlignment = if (entry.label != null) Alignment.Top else Alignment.CenterVertically,
     ) {
-        KindTile(entry.action)
+        val label = entry.label
+        // What it touched, with what it did on the tile's corner; older test data without a label keeps the kind tile.
+        if (label != null) ProviderTile(label, ring = groupFill(c)) else KindTile(entry.action)
         Spacer(Modifier.width(14.dp))
-        Column(Modifier.weight(1f)) {
-            RText(historySentence(entry), RType.sans(15f, FontWeight.Medium), c.text, Modifier.testTag("entryTitle:${entry.id}"), maxLines = 1)
-            Row(Modifier.padding(top = 3.dp), verticalAlignment = Alignment.CenterVertically) {
+        Column(Modifier.weight(1f).padding(top = if (label != null) 1.dp else 0.dp)) {
+            if (label != null) {
+                LabelText(label, Modifier.testTag("entryTitle:${entry.id}"), size = 15f, lineHeight = 19.5f, maxLines = 2)
+            } else {
+                RText(historySentence(entry), RType.sans(15f, FontWeight.Medium), c.text, Modifier.testTag("entryTitle:${entry.id}"), maxLines = 1)
+            }
+            Row(Modifier.padding(top = if (label != null) 4.dp else 3.dp), verticalAlignment = Alignment.CenterVertically) {
                 ConnectionIcon(entry.connectionId, entry.connectionLabel, size = 15.dp)
                 Spacer(Modifier.width(5.dp))
                 RText("${untrusted(entry.connectionLabel)} · ${rowTime(entry.at, nowSeconds)}", RType.sans(12.5f), c.tertiary, maxLines = 1)
             }
         }
         Spacer(Modifier.width(10.dp))
-        OutcomeMark(outcomeOf(entry), Modifier.testTag("outcome:${entry.id}"))
+        OutcomeMark(outcomeOf(entry), Modifier.padding(top = if (label != null) 2.dp else 0.dp).testTag("outcome:${entry.id}"))
     }
 }
 
