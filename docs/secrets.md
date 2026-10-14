@@ -222,6 +222,11 @@ and its grants end with it (existing).
 - **SSH agent** (exists): keys imported to `Reins/ssh`; nothing else changes.
 - **git** (exists): host tokens stay in the phone's integration store (they are integrations, not vault items); import
   moves a found `gh`/`.git-credentials` token there (5.3).
+- **One gate.** Every release of a project's values goes through `reins_proto::desktop::release_gate` (the approved
+  command scope is valid and covers the program and arguments): on the phone before it seals a release, whether a
+  permission or the user approved it; on the computer before the daemon hands values to a command, reuses a lease, or
+  prints one (`reins secrets get`). The old `vault_secret_release` (single `vault:Item/field` references) never
+  reaches a project's environment. Tests list the places that seal or hand out values, so a new one cannot skip it.
 - **`reins secrets get REF`** for scripts that need one value on stdout: person-only (refused when the caller is an agent),
   always asked, never granted (`vault_env_release` with `print: true`, which the phone asks every time).
 

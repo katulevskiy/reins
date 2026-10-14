@@ -444,13 +444,13 @@ mod tests {
         assert_eq!((s.runner.as_str(), s.root.as_str()), ("agent:claude-code", "/home/me/acme"));
         assert_eq!(exact.account.as_deref(), Some("me"));
         let picked = SecretsScopeChoice {
-            command: "prefix:1".into(),
+            command: "prefix:2".into(),
             all_variables: true,
         };
         let wide = build_secrets_grant(&standing(Some(picked)), &ask(Some(&["A"])), &conn, "me", 100).unwrap();
-        assert_eq!(scope_of(&wide).command.shown(), "npm run *");
+        assert_eq!(scope_of(&wide).command.shown(), "npm run dev *");
         assert!(scope_of(&wide).fields.is_empty(), "every variable, as the user chose");
-        for bad in ["prefix:0", "prefix:7", "anything", ""] {
+        for bad in ["prefix:0", "prefix:1", "prefix:7", "anything", ""] {
             let c = SecretsScopeChoice {
                 command: bad.into(),
                 all_variables: false,

@@ -1160,6 +1160,14 @@ impl CommandScope {
     }
 }
 
+/// The one check every release of a project's values goes through, on the phone and on the computer: whether the
+/// command scope approved (`scope`) is valid and covers `program` with `args`. The phone seals nothing, the computer
+/// hands nothing to a command and keeps nothing for one, that it does not pass.
+#[must_use]
+pub fn release_gate(scope: &CommandScope, program: &str, args: &[String]) -> bool {
+    scope.validate().is_ok() && scope.matches(program, args)
+}
+
 /// Folders a program is usually installed in, where the phone shows it by its name alone.
 pub const USUAL_PROGRAM_DIRS: &[&str] = &[
     "/usr/bin",

@@ -461,7 +461,7 @@ pub(crate) async fn perform_release(
     permission_ends: Option<i64>,
 ) -> Result<Value, CoreError> {
     let ask = release_ask(call)?;
-    if !ask.exact().within(&command) {
+    if !reins_proto::desktop::release_gate(&command, &ask.program, &ask.args) {
         return Err(bad("The release does not match what was approved."));
     }
     let always = always_ask(always_ask_choice(&vault.store, &ask.project, &ask.env)?, ask.confirm_always, &ask.env);
@@ -1195,5 +1195,40 @@ mod tests {
         assert_eq!(runner_label("person"), "You");
         assert_eq!(runner_label("agent:claude-code"), "Claude Code");
         assert_eq!(runner_label("agent:aider"), "Aider");
+    }
+}
+
+#[cfg(test)]
+mod gate_tests {
+    /// Every place on the phone that seals a project's values for the computer: each must go through
+    /// `reins_proto::desktop::release_gate`. A new one fails this test until it is added here, after it does.
+    #[test]
+    fn every_release_of_values_goes_through_the_one_gate() {
+        let src = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src");
+        let mut sealing = Vec::new();
+        let mut stack = vec![src.clone()];
+        while let Some(dir) = stack.pop() {
+            for entry in std::fs::read_dir(&dir).unwrap().flatten() {
+                let path = entry.path();
+                if path.is_dir() {
+                    stack.push(path);
+                } else if path.extension().is_some_and(|e| e == "rs") {
+                    let text = std::fs::read_to_string(&path).unwrap();
+                    if text.contains("SecretGrant {") {
+                        sealing.push(path.strip_prefix(&src).unwrap().to_string_lossy().replace('\\', "/"));
+                    }
+                }
+            }
+        }
+        sealing.sort();
+        // `items/desktop.rs` seals single item/field references (`vault_secret_release`), which never reach a
+        // project's environment (its resolver refuses them); `env.rs` seals environments, after the gate.
+        assert_eq!(sealing, ["connector/vault/items/desktop.rs", "connector/vault/items/desktop/env.rs"]);
+        let env = std::fs::read_to_string(src.join("connector/vault/items/desktop/env.rs")).unwrap();
+        let release = &env[env.find("pub(crate) async fn perform_release(").unwrap()..];
+        let release = &release[..release.find("SecretGrant {").unwrap()];
+        assert!(release.contains("release_gate(&command, &ask.program, &ask.args)"), "the gate comes first");
+        let legacy = std::fs::read_to_string(src.join("connector/vault/items/desktop.rs")).unwrap();
+        assert!(legacy.contains("env::env_identity(snap, &snap.entries[i]).is_some()"), "environments refused");
     }
 }

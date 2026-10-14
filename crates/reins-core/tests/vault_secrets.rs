@@ -224,7 +224,7 @@ async fn an_environment_is_shown_by_names_and_released_bound_to_who_where_and_wh
     assert!(r.all_variables && !r.agent && !r.always_ask && !r.print);
     assert_eq!((r.runner_label.as_str(), r.root.as_str(), r.program.as_str()), ("You", ROOT, NPM));
     let offered: Vec<(&str, &str)> = r.commands.iter().map(|c| (c.id.as_str(), c.label.as_str())).collect();
-    assert_eq!(offered, [("exact", "npm run dev"), ("prefix:1", "npm run *")]);
+    assert_eq!(offered, [("exact", "npm run dev"), ("prefix:2", "npm run dev *")]);
     assert!(view.quick.is_none(), "never from a notification");
     assert!(view.headline.contains("all of acme"), "{}", view.headline);
     no_values("the approval", &format!("{view:?}"));
@@ -252,28 +252,28 @@ async fn a_remembered_release_binds_every_dimension() {
         ..DEV
     };
     desk.send(&[release(&desk, "r1", &first)]).await;
-    desk.core.approve("r1".to_owned(), choice(&[], remember("prefix:1", false))).await.unwrap();
+    desk.core.approve("r1".to_owned(), choice(&[], remember("prefix:2", false))).await.unwrap();
     let grant: SecretGrant = desk.open(&desk.data("r1").await["sealed"]);
     assert_eq!(
         grant.command,
         Some(CommandScope {
             program: NPM.to_owned(),
-            args: words(&["run"]),
+            args: words(&["run", "dev"]),
             prefix: true
         }),
         "the prefix the user picked"
     );
 
-    // The same runner, folder and variables, another `npm run …`: covered.
+    // The same runner, folder and variables, `npm run dev` with more that the grammar allows: covered.
     let test = Ask {
-        args: &["run", "test", "--watch"],
+        args: &["run", "dev", "--silent", "app"],
         ..first
     };
     desk.send(&[release(&desk, "r2", &test)]).await;
     assert!(desk.waiting().await.is_empty(), "covered by the permission");
     let covered: SecretGrant = desk.open(&desk.data("r2").await["sealed"]);
     assert_eq!(covered.secrets, [("A".to_owned(), "alpha-secret".to_owned())]);
-    assert_eq!(covered.command.unwrap().shown(), "npm run *");
+    assert_eq!(covered.command.unwrap().shown(), "npm run dev *");
 
     // Anything else is asked again.
     let both: &[&str] = &["A", "B"];
@@ -309,14 +309,14 @@ async fn a_remembered_release_binds_every_dimension() {
         (
             "r7",
             Ask {
-                args: &["runx"],
+                args: &["run", "devx"],
                 ..first
             },
         ),
         (
             "r8",
             Ask {
-                args: &["exec", "run"],
+                args: &["run", "dev", "--script-shell=/tmp/sh"],
                 ..first
             },
         ),
@@ -902,7 +902,7 @@ async fn only_marked_items_in_their_project_folder_are_environments() {
     desk.core.approve("s2".to_owned(), choice(&[], None)).await.unwrap();
     let made = sent(&desk, "POST", "/api/ciphers").await;
     assert!(fields_of(&made[0]).contains(&("reins.env".to_owned(), "staging".to_owned())));
-    // Legacy item/field references keep working, and reach an environment only by its own split.
+    // Legacy item/field references never reach an environment: it is released only bound to a command.
     let legacy = |id: &str, secret: &str| {
         call(
             id,
@@ -913,9 +913,11 @@ async fn only_marked_items_in_their_project_folder_are_environments() {
             "client_key": desk.public(), "nonce": format!("n-{id}")}),
         )
     };
-    desk.send(&[legacy("l1", "acme/dev/A"), legacy("l2", "dev/reins.kind")]).await;
-    desk.core.approve("l1".to_owned(), choice(&[], None)).await.unwrap();
-    let old: SecretGrant = desk.open(&desk.data("l1").await["sealed"]);
-    assert_eq!(old.secrets[0].1, "alpha-secret");
+    desk.send(&[legacy("l1", "acme/dev/A"), legacy("l2", "dev/reins.kind"), legacy("l3", "acme/mine/A")]).await;
+    assert!(desk.error("l1").await.contains("reins run"), "an environment: never by the old tool");
     assert!(!desk.error("l2").await.is_empty(), "never by another split or Reins's own field");
+    // An item of the user's own that only looks like one still works as before.
+    desk.core.approve("l3".to_owned(), choice(&[], None)).await.unwrap();
+    let old: SecretGrant = desk.open(&desk.data("l3").await["sealed"]);
+    assert_eq!(old.secrets[0].1, "a note of my own");
 }
