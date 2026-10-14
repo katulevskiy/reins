@@ -1163,10 +1163,11 @@ impl ReinsCore {
 
     /// Starts Overnight (`docs/autopilot-risk.md`) for every AI (`connection_id` = `None`) or one, for `minutes` (1
     /// minute to a year) or, with `minutes` = `None`, until the user turns it off (`overnight_until` then reads
-    /// `i64::MAX`). Everything is approved, the hard floor included, except what the risk model rates catastrophic,
-    /// which waits for the user or is denied (`set_overnight_when_risky`); what already waits is judged too. At its end
-    /// it returns to the mode it interrupted; stop it earlier with `set_autopilot_mode`. Without a model that rates
-    /// risk it decides like Auto. The app asks the owner (biometrics) before calling this, as for a bypass.
+    /// `i64::MAX`). It decides like Auto, and weighs the destructive part of the hard floor with the risk model instead
+    /// of always asking; what the model rates catastrophic, a tripwire, or what the phone cannot read with certainty is
+    /// held: it waits for the user, or is denied (`set_overnight_when_risky`); what already waits is judged too. At
+    /// its end it returns to the mode it interrupted; stop it earlier with `set_autopilot_mode`. Without a model that
+    /// rates risk it decides like Auto. The app asks the owner (biometrics) before calling this, as for a bypass.
     pub async fn start_overnight(&self, connection_id: Option<String>, minutes: Option<u32>) -> Result<(), CoreError> {
         let runtime = Arc::clone(&self.runtime);
         let generation = runtime.generation();

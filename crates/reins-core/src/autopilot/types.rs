@@ -17,8 +17,9 @@ pub enum AutopilotMode {
     Manual,
     /// Autopilot approves or denies what it is confident about, in classes that earned it; the rest waits.
     Auto,
-    /// For agents left working: everything is approved, the hard floor included, except what the risk model rates
-    /// catastrophic in context, which waits for the user (or is denied, `OvernightRisky`). Needs a model with the risk
+    /// For agents left working: Auto, plus the destructive part of the hard floor weighed by the risk model instead of
+    /// always asked. What it rates catastrophic in context, a tripwire, or what the phone cannot read with certainty
+    /// waits for the user (catastrophic ones are denied instead with `OvernightRisky::Deny`). Needs a model with the risk
     /// output; without one it decides like Auto. Runs until turned off or until `overnight_until`, then returns to the
     /// mode it interrupted.
     Overnight,
@@ -89,7 +90,7 @@ pub enum RiskLevel {
     Risky,
     /// Hard to undo, shared or production things, or one secret exposed; bounded.
     Severe,
-    /// Irreversible loss, outages, mass messages, secrets leaving, or text steering the approver.
+    /// Irreversible loss, outages, mass messages, secrets leaving, persistence, protections turned off.
     Catastrophic,
 }
 
