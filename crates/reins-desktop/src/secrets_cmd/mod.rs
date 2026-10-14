@@ -1,6 +1,8 @@
-//! `reins secrets …`: finding and moving secrets (`scan`, `import`), and managing them.
+//! `reins secrets …`: finding and moving secrets (`scan`, `import`), and managing them (design: docs/secrets.md,
+//! section 4). Each command lives in its own module; this file only names them.
 
 pub mod import;
+mod init;
 pub mod person;
 pub mod scan;
 
@@ -14,6 +16,14 @@ pub enum SecretsCmd {
     Scan(scan::ScanArgs),
     /// Move what a scan found into the vault on your phone (one approval there), then use it through Reins.
     Import(import::ImportArgs),
+    /// Make this folder a project: writes reins.toml (the vault folder is made on the first save).
+    Init {
+        /// The project's name (default: this folder's name).
+        name: Option<String>,
+        /// The environment `reins run` uses when none is given.
+        #[arg(long = "default-env", value_name = "ENV", default_value = crate::project::DEFAULT_ENV)]
+        default_env: String,
+    },
 }
 
 /// Runs `reins secrets …`; the lines to print.
@@ -24,5 +34,9 @@ pub async fn run(cmd: &SecretsCmd, paths: &Paths, config: &Config) -> Result<Vec
     match cmd {
         SecretsCmd::Scan(args) => scan::run(args, paths, config).await,
         SecretsCmd::Import(args) => import::run(args, paths, config).await,
+        SecretsCmd::Init {
+            name,
+            default_env,
+        } => init::run(&std::env::current_dir().map_err(|e| e.to_string())?, name.as_deref(), default_env),
     }
 }
