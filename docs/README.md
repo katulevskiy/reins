@@ -17,6 +17,7 @@
 **Understanding it**
 
 - [Security model](security-model.md): what an agent can and cannot do, where secrets live, what the server sees.
+- [Reins Secrets: design](secrets.md): projects, environments, scan and import, agents, CI.
 - [Architecture](architecture.md): components, endpoints and the main flows.
 - [Autopilot model card](../tools/laya/MODEL_CARD.md): `laya-approvals-ml-v1`, its data, evaluation and limits.
 
