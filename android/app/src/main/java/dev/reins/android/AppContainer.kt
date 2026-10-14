@@ -364,7 +364,7 @@ class AppContainer(private val context: Context) {
         withContext(Dispatchers.IO) {
             if (!state.isCurrent(epoch)) return@withContext
             notifier.showBypass(notice)
-            BypassEndWorker.schedule(context, notice?.until)
+            BypassEndWorker.schedule(context, notice?.nextEnd)
         }
         return settings
     }

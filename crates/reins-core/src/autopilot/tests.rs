@@ -409,10 +409,10 @@ async fn assisted_stored_by_older_versions_loads_as_manual() {
 }
 
 #[tokio::test]
-async fn bypass_approves_all_but_the_floor_and_ends_by_itself() {
+async fn bypass_approves_everything_and_ends_by_itself() {
     let env = env(false).await;
-    // Bounds of a bypass, and the 10-minute rule.
-    for minutes in [Some(0), Some(61)] {
+    // Bounds of a bypass, and the 10-minute rule for turning one on for a single AI.
+    for minutes in [Some(0), Some(super::modes::MAX_BYPASS_MINUTES + 1)] {
         let r = env.core.set_autopilot_mode(Some(OLD.to_owned()), Some(AutopilotMode::Bypass), minutes).await;
         assert!(matches!(r, Err(CoreError::Invalid { .. })), "{minutes:?}");
     }
@@ -426,13 +426,15 @@ async fn bypass_approves_all_but_the_floor_and_ends_by_itself() {
     env.relay("r1", OLD, email("friend@x.com", "hi")).await;
     env.relay("r2", OLD, grant()).await;
     env.relay("r3", NEW, email("friend@x.com", "hi")).await;
-    assert_eq!(env.sent().await, 1, "approved once, without a model");
-    assert_eq!(env.decided(), [("r1".to_owned(), Verdict::Approve, "bypass".to_owned())]);
-    let mut waiting = env.waiting().await;
-    waiting.sort();
-    assert_eq!(waiting, ["r2", "r3"], "a permission and a just-paired connection always wait");
-    assert!(env.suggestion("r3").await.reason.contains("10 minutes"));
-    assert!(env.store().grants().unwrap().is_empty(), "approving once never creates a standing grant");
+    assert_eq!(env.sent().await, 2, "approved without a model, a just-paired AI's too");
+    let decided: Vec<String> = env.decided().into_iter().map(|(id, v, by)| format!("{id} {v:?} {by}")).collect();
+    assert_eq!(decided, ["r1 Approve bypass", "r2 Approve bypass", "r3 Approve bypass"]);
+    assert!(env.waiting().await.is_empty());
+    // The permission asked for (an hour) ends with the bypass (30 minutes).
+    let grants = env.store().grants().unwrap();
+    assert_eq!(grants.len(), 1);
+    let expires = grants[0].grant.expires_at.unwrap();
+    assert!(expires <= settings.bypass_until.unwrap() && expires > unix_now() + 29 * 60, "{expires}");
     let entry = env.core.activity(5).await.unwrap().into_iter().find(|e| e.outcome == "sent").unwrap();
     assert_eq!(entry.decided_by, "bypass");
 
@@ -440,9 +442,10 @@ async fn bypass_approves_all_but_the_floor_and_ends_by_itself() {
     let mut global = env.store().ap_mode_row("").unwrap();
     global.bypass_until = Some(unix_now() - 1);
     env.store().ap_set_mode_row("", &global, unix_now()).unwrap();
-    env.relay("r4", OLD, email("friend@x.com", "hi")).await;
+    // (To someone else: the permission granted during the bypass still covers the friend.)
+    env.relay("r4", OLD, email("boss@y.com", "hi")).await;
     assert!(env.waiting().await.contains(&"r4".to_owned()));
-    assert_eq!(env.sent().await, 1);
+    assert_eq!(env.sent().await, 2);
     assert!(env.notes.events.lock().unwrap().contains(&AutopilotEvent::BypassEnded {
         connection_id: None
     }));
@@ -450,8 +453,369 @@ async fn bypass_approves_all_but_the_floor_and_ends_by_itself() {
 }
 
 #[tokio::test]
-async fn the_floor_is_never_automatic_in_any_mode() {
-    for mode in [AutopilotMode::Manual, AutopilotMode::Auto, AutopilotMode::Bypass] {
+async fn a_bypass_until_turned_off_runs_until_stopped() {
+    let env = env(false).await;
+    env.mode(None, AutopilotMode::Auto).await;
+    let young = env.core.start_bypass(Some(NEW.to_owned()), None).await;
+    assert!(matches!(young, Err(CoreError::Invalid { reason }) if reason.contains("10 minutes")));
+
+    let before = unix_now();
+    env.core.start_bypass(None, None).await.unwrap();
+    let settings = env.core.autopilot_settings().await.unwrap();
+    assert_eq!((settings.mode, settings.base_mode), (AutopilotMode::Bypass, AutopilotMode::Auto));
+    assert_eq!(settings.bypass_until, Some(i64::MAX), "no end time");
+    assert!(settings.bypass_since.is_some_and(|t| t >= before && t <= unix_now()), "{settings:?}");
+    // Kept in the database like any bypass: whatever reads it later (a restart) finds it running.
+    let stored = env.store().ap_mode_row("").unwrap();
+    assert!(stored.bypassing_until_off() && stored.bypass_since == settings.bypass_since, "{stored:?}");
+
+    env.relay("r1", OLD, email("friend@x.com", "hi")).await;
+    env.relay("r2", OLD, grant()).await;
+    assert_eq!(env.decided().len(), 2);
+    assert!(env.waiting().await.is_empty());
+    // Without an end to cap it, the permission lasts as long as asked (an hour).
+    let expires = env.store().grants().unwrap()[0].grant.expires_at.unwrap();
+    assert!((unix_now() + 3_590..=unix_now() + 3_600).contains(&expires), "{expires}");
+    // The pass never ends it by itself.
+    env.relay("r3", OLD, email("friend@x.com", "again")).await;
+    assert_eq!(env.sent().await, 2);
+    assert!(!env.notes.events.lock().unwrap().iter().any(|e| matches!(e, AutopilotEvent::BypassEnded { .. })));
+
+    // Stopping it returns to the mode it interrupted and forgets when it started.
+    env.mode(None, AutopilotMode::Auto).await;
+    let settings = env.core.autopilot_settings().await.unwrap();
+    assert_eq!((settings.mode, settings.bypass_until, settings.bypass_since), (AutopilotMode::Auto, None, None));
+    assert_eq!(env.store().ap_mode_row("").unwrap().bypass_since, None);
+    env.relay("r4", OLD, email("boss@y.com", "after")).await;
+    assert!(env.waiting().await.contains(&"r4".to_owned()));
+    assert_eq!(env.sent().await, 2);
+}
+
+/// What a bypass approves that Manual and Auto always leave to the user, and what it never decides.
+#[tokio::test]
+async fn bypass_approves_what_always_asks_but_new_connections_and_phones_still_wait() {
+    let env = env(false).await;
+    env.core.start_bypass(None, Some(60)).await.unwrap();
+    env.relay("r1", NEW, email("friend@x.com", "from an AI paired a moment ago")).await;
+    env.relay("r2", OLD, json!({"tool": "list_accounts", "service": "gmail", "ask_for_more": false})).await;
+    let join_key = data_encoding::BASE64URL_NOPAD.encode(&[7_u8; 32]);
+    env.deliver(json!({"requests": [], "pairings": [
+        {"v": 1, "id": "p1", "client_name": "Claude", "client_host": "claude.ai", "choices": [1, 2, 3], "created_at": 1}],
+        "blobs": [blob("blob-tool-00000000001", "tool.exe", "application/x-executable", "MZ")],
+        "joins": [{"v": 1, "id": "j1", "device_name": "Pixel", "public_key": join_key, "created_at": unix_now()}]}))
+        .await;
+    let mut decided: Vec<String> = env.decided().into_iter().map(|(id, _, by)| format!("{id} {by}")).collect();
+    decided.sort();
+    assert_eq!(decided, ["blob-tool-00000000001 bypass", "r1 bypass", "r2 bypass"]);
+    let mut waiting = env.waiting().await;
+    waiting.sort();
+    assert_eq!(waiting, ["j1", "p1"], "a new connection and a new phone are only ever approved by the user");
+    // The accounts request shared every account it offered.
+    let accounts = env.core.activity(10).await.unwrap().into_iter().find(|e| e.action == "accounts").unwrap();
+    assert_eq!(accounts.info.accounts, [GMAIL]);
+    assert_eq!(env.sent().await, 1);
+}
+
+#[tokio::test]
+async fn a_global_bypass_beats_an_ais_own_mode_but_not_its_lockdown() {
+    let env = env(true).await;
+    env.mode(Some(OLD), AutopilotMode::Manual).await;
+    env.mode(Some(OTHER), AutopilotMode::Lockdown).await;
+    env.core.start_bypass(None, Some(15)).await.unwrap();
+    let settings = env.core.autopilot_settings().await.unwrap();
+    let mode = |id: &str| settings.connections.iter().find(|c| c.connection_id == id).unwrap().mode;
+    assert_eq!((mode(OLD), mode(OTHER)), (AutopilotMode::Bypass, AutopilotMode::Lockdown));
+    env.relay("r1", OLD, email("friend@x.com", "hi")).await;
+    env.relay("r2", OTHER, email("friend@x.com", "hi")).await;
+    assert_eq!(
+        env.decided(),
+        [
+            ("r1".to_owned(), Verdict::Approve, "bypass".to_owned()),
+            ("r2".to_owned(), Verdict::Deny, "lockdown".to_owned())
+        ]
+    );
+}
+
+#[tokio::test]
+async fn turning_a_bypass_on_approves_what_already_waits() {
+    let env = env(true).await;
+    env.relay("r1", OLD, email("friend@x.com", "hi")).await;
+    env.relay("r2", OTHER, grant()).await;
+    env.deliver(json!({"requests": [], "pairings": [
+        {"v": 1, "id": "p1", "client_name": "Claude", "client_host": "claude.ai", "choices": [1, 2, 3], "created_at": 1}]}))
+        .await;
+    assert_eq!(env.waiting().await.len(), 3);
+    env.core.start_bypass(Some(OLD.to_owned()), Some(15)).await.unwrap();
+    assert_eq!(env.decided(), [("r1".to_owned(), Verdict::Approve, "bypass".to_owned())], "only that AI's");
+    env.core.start_bypass(None, None).await.unwrap();
+    assert_eq!(env.decided().last().unwrap().0, "r2");
+    assert_eq!(env.waiting().await, ["p1"]);
+}
+
+#[tokio::test]
+async fn a_failing_connection_listing_neither_blocks_a_bypass_nor_makes_a_known_ai_new() {
+    let env = env(true).await;
+    env.mode(None, AutopilotMode::Auto).await;
+    env.unlock("gmail/send").await;
+    env.model.rule("friend@x.com", logits(0.97, 0.01, 0.02));
+    // The dates are read once and kept.
+    env.relay("r1", OLD, email("friend@x.com", "hi")).await;
+    env.approve("r1").await;
+    Mock::given(method("GET"))
+        .and(path("/reins/api/connections"))
+        .respond_with(ResponseTemplate::new(503))
+        .with_priority(1)
+        .mount(&env.server)
+        .await;
+    env.relay("r2", OLD, email("friend@x.com", "again")).await;
+    assert_eq!(env.decided(), [("r2".to_owned(), Verdict::Approve, "autopilot".to_owned())], "not taken for new");
+    // One never seen counts as new in Auto, but a bypass approves it all the same.
+    env.relay("r3", "cunseen", email("friend@x.com", "hi")).await;
+    assert!(env.suggestion("r3").await.reason.contains("10 minutes"));
+    env.core.start_bypass(None, Some(15)).await.unwrap();
+    env.relay("r4", "cunseen2", email("friend@x.com", "hi")).await;
+    assert!(env.decided().iter().any(|(id, v, by)| id == "r4" && *v == Verdict::Approve && by == "bypass"));
+}
+
+/// Android's push entry point (FCM in the background, or its retry job): the pass runs there, so a bypass answers
+/// without the app on screen.
+#[tokio::test]
+async fn a_push_alone_is_answered_by_a_bypass() {
+    let env = env(false).await;
+    env.core.start_bypass(None, None).await.unwrap();
+    let body = serde_json::to_value(request("r1", OLD, grant())).unwrap();
+    mount(&env.server, "GET", "/reins/api/requests/r1", 200, body).await;
+    env.core.handle_push("req".to_owned(), "r1".to_owned()).await.unwrap();
+    assert_eq!(env.decided(), [("r1".to_owned(), Verdict::Approve, "bypass".to_owned())]);
+    assert!(env.answer("r1").await.is_some(), "the AI was answered");
+}
+
+/// The iOS notification extension cannot run the model: Bypass decides there, Manual and Auto wait for the app.
+#[tokio::test]
+async fn without_the_model_a_bypass_still_answers_and_the_rest_waits_unjudged() {
+    let env = env(true).await;
+    env.core.start_bypass(Some(OLD.to_owned()), Some(15)).await.unwrap();
+    for (id, conn) in [("r1", OTHER), ("r2", OLD)] {
+        let body = serde_json::to_value(request(id, conn, email("friend@x.com", "hi"))).unwrap();
+        mount(&env.server, "GET", &format!("/reins/api/requests/{id}"), 200, body).await;
+        env.core.handle_push_deferring_autopilot("req".to_owned(), id.to_owned()).await.unwrap();
+    }
+    assert_eq!(env.decided(), [("r2".to_owned(), Verdict::Approve, "bypass".to_owned())]);
+    assert_eq!(env.waiting().await, ["r1"]);
+    assert!(env.core.autopilot_suggestion("r1".to_owned()).await.unwrap().is_none(), "left for the app to judge");
+    assert_eq!(env.model.seen.lock().unwrap().len(), 0, "the model was not run");
+}
+
+impl Env {
+    /// Each permission's (connection, origin, still active).
+    fn grant_states(&self) -> Vec<(String, String, bool)> {
+        let now = unix_now();
+        let mut all: Vec<(String, String, bool)> = self
+            .store()
+            .grants()
+            .unwrap()
+            .into_iter()
+            .map(|g| (g.grant.connection_id.0.clone(), g.origin.clone(), g.grant.is_active(now)))
+            .collect();
+        all.sort();
+        all
+    }
+
+    /// Time passes beyond the global bypass's end (nothing else is touched: the core notices by itself).
+    fn run_out_global_bypass(&self) {
+        let store = self.store();
+        let conn = store.lock().unwrap();
+        conn.execute("UPDATE autopilot_settings SET bypass_until = ?1 WHERE scope = ''", [unix_now() - 1]).unwrap();
+    }
+
+    async fn ended_with_the_bypass(&self) -> usize {
+        self.core.activity(50).await.unwrap().into_iter().filter(|e| e.detail == "Ended with the bypass").count()
+    }
+}
+
+#[tokio::test]
+async fn stopping_a_bypass_until_off_takes_back_what_it_granted_and_leaves_the_users_own() {
+    let env = env(false).await;
+    // A permission the user gave themselves, before any bypass.
+    env.relay("r0", OTHER, grant()).await;
+    env.approve("r0").await;
+    env.core.start_bypass(None, None).await.unwrap();
+    env.relay("r1", OLD, grant()).await;
+    assert_eq!(
+        env.grant_states(),
+        [(OLD.to_owned(), "bypass".to_owned(), true), (OTHER.to_owned(), "ai_request".to_owned(), true)]
+    );
+    env.mode(None, AutopilotMode::Manual).await;
+    assert_eq!(
+        env.grant_states(),
+        [(OLD.to_owned(), "bypass".to_owned(), false), (OTHER.to_owned(), "ai_request".to_owned(), true)],
+        "only the bypass's is taken back"
+    );
+    assert_eq!(env.ended_with_the_bypass().await, 1);
+    let entry = env.core.activity(1).await.unwrap().remove(0);
+    assert_eq!(
+        (entry.action.as_str(), entry.outcome.as_str(), entry.connection_id.as_str()),
+        ("grant", "revoked", OLD)
+    );
+}
+
+#[tokio::test]
+async fn a_timed_bypass_takes_back_its_grants_when_stopped_early_or_when_it_runs_out() {
+    let env = env(false).await;
+    env.core.start_bypass(None, Some(60)).await.unwrap();
+    env.relay("r1", OLD, grant()).await;
+    assert_eq!(env.grant_states(), [(OLD.to_owned(), "bypass".to_owned(), true)]);
+    // Stopped after a moment, not at its planned end: the grant ends now, not then.
+    env.mode(None, AutopilotMode::Manual).await;
+    assert_eq!(env.grant_states(), [(OLD.to_owned(), "bypass".to_owned(), false)]);
+
+    // Run out: ended by the core's own check (here when Autopilot is next read).
+    env.core.start_bypass(None, Some(60)).await.unwrap();
+    env.relay("r2", OTHER, grant()).await;
+    env.run_out_global_bypass();
+    env.core.autopilot_settings().await.unwrap();
+    assert!(env.grant_states().iter().all(|(_, _, active)| !active), "{:?}", env.grant_states());
+    assert_eq!(env.ended_with_the_bypass().await, 2);
+
+    // Locked down while one runs: taken back too.
+    env.core.start_bypass(None, None).await.unwrap();
+    env.relay("r3", OLD, grant()).await;
+    env.mode(None, AutopilotMode::Lockdown).await;
+    assert!(env.grant_states().iter().all(|(_, _, active)| !active));
+}
+
+#[tokio::test]
+async fn an_ais_own_bypass_takes_back_only_its_own_grants() {
+    let env = env(false).await;
+    env.core.start_bypass(None, None).await.unwrap();
+    env.core.start_bypass(Some(OLD.to_owned()), Some(30)).await.unwrap();
+    env.relay("r1", OLD, grant()).await;
+    env.relay("r2", OTHER, grant()).await;
+    let origin = format!("bypass:{OLD}");
+    assert_eq!(
+        env.grant_states(),
+        [(OLD.to_owned(), origin.clone(), true), (OTHER.to_owned(), "bypass".to_owned(), true)]
+    );
+    // That AI's bypass ends (back to following the global mode): its grant ends, the global bypass's stays.
+    env.mode(Some(OLD), AutopilotMode::Manual).await;
+    env.core.set_autopilot_mode(Some(OLD.to_owned()), None, None).await.unwrap();
+    assert_eq!(env.grant_states(), [(OLD.to_owned(), origin, false), (OTHER.to_owned(), "bypass".to_owned(), true)]);
+    env.mode(None, AutopilotMode::Manual).await;
+    assert!(env.grant_states().iter().all(|(_, _, active)| !active));
+}
+
+/// Decided during a bypass, carried out after it was stopped: nothing standing is left, and the request goes back to
+/// the user.
+#[tokio::test]
+async fn a_grant_decided_in_a_bypass_but_stored_after_it_stopped_is_not_kept() {
+    let env = env(false).await;
+    env.relay("r1", OLD, grant()).await;
+    assert_eq!(env.waiting().await, ["r1"]);
+    env.core.start_bypass(Some(OTHER.to_owned()), None).await.unwrap();
+    // The decision was taken while the global bypass ran; it has been stopped since. Executing it now:
+    let decision = super::context::Decision::new("bypass", None).granting_as(Some(super::modes::bypass_origin("")));
+    let once = ApprovalChoice {
+        selected_message_ids: vec![],
+        standing: None,
+    };
+    let engine = env.core.engine();
+    let (result, _) = super::context::deciding(decision, engine.approve_claimed("r1", once)).await;
+    assert!(matches!(result, Err(CoreError::Invalid { .. })), "{result:?}");
+    assert!(env.store().grants().unwrap().is_empty(), "nothing stored");
+    assert_eq!(env.waiting().await, ["r1"], "it waits for the user");
+    // The store refuses it directly too; an AI's own bypass that runs keeps what it grants.
+    let g = crate::approval::grant_from_request(
+        &serde_json::from_value(grant()["grant"].clone()).unwrap(),
+        &reins_proto::ids::ConnectionId(OLD.to_owned()),
+        unix_now(),
+        None,
+    )
+    .unwrap();
+    assert!(env.store().insert_grant_from(&g, "Claude", "bypass").is_err());
+    assert!(env.store().insert_grant_from(&g, "Claude", &format!("bypass:{OTHER}")).is_ok());
+}
+
+/// Taking back is only cleanup: a permission a bypass gave stops counting when the bypass ends, even when taking it
+/// back failed; the next sweep takes it back, once.
+#[tokio::test]
+async fn a_bypass_grant_left_active_is_not_honoured_once_the_bypass_ended_and_the_sweep_takes_it_back() {
+    let env = env(false).await;
+    // The user's own permission, to someone else.
+    env.relay(
+        "u0",
+        OTHER,
+        json!({"tool": "request_grant", "grant": {"action": "send", "duration_secs": 3600,
+        "reason": "weekly report", "recipients": ["boss@y.com"]}}),
+    )
+    .await;
+    env.approve("u0").await;
+    env.core.start_bypass(None, None).await.unwrap();
+    env.relay("r1", OTHER, grant()).await;
+    env.relay("r2", OTHER, email("friend@x.com", "covered while the bypass runs")).await;
+    assert_eq!(env.sent().await, 1);
+    // The bypass ends, but taking back its permission never happened (as if it had failed).
+    env.run_out_global_bypass();
+    assert!(env.grant_states().iter().all(|(_, _, active)| *active), "still marked active");
+    let decision = env
+        .store()
+        .evaluate_send_and_reserve(
+            &reins_proto::ids::ConnectionId(OTHER.to_owned()),
+            Some(GMAIL),
+            &serde_json::from_value(json!({"to": ["friend@x.com"], "subject": "Hello", "body": "hi"})).unwrap(),
+            unix_now(),
+        )
+        .unwrap();
+    assert!(!matches!(decision, reins_policy::SendDecision::Allowed(_)), "not honoured: {decision:?}");
+    let users = env
+        .store()
+        .evaluate_send_and_reserve(
+            &reins_proto::ids::ConnectionId(OTHER.to_owned()),
+            Some(GMAIL),
+            &serde_json::from_value(json!({"to": ["boss@y.com"], "subject": "Hello", "body": "hi"})).unwrap(),
+            unix_now(),
+        )
+        .unwrap();
+    assert!(matches!(users, reins_policy::SendDecision::Allowed(_)), "the user's own still is: {users:?}");
+    // The sweep (any read of Autopilot) takes it back, with one Activity entry, however often it runs.
+    env.core.autopilot_settings().await.unwrap();
+    env.core.autopilot_settings().await.unwrap();
+    env.core.grants().await.unwrap();
+    assert_eq!(
+        env.grant_states(),
+        [(OTHER.to_owned(), "ai_request".to_owned(), true), (OTHER.to_owned(), "bypass".to_owned(), false)]
+    );
+    assert_eq!(env.ended_with_the_bypass().await, 1);
+}
+
+#[tokio::test]
+async fn a_bypass_takes_any_length_up_to_a_year() {
+    let env = env(false).await;
+    let now = unix_now();
+    env.core.start_bypass(Some(OLD.to_owned()), Some(3 * 24 * 60)).await.unwrap();
+    let settings = env.core.autopilot_settings().await.unwrap();
+    let own = settings.connections.iter().find(|c| c.connection_id == OLD).unwrap();
+    assert_eq!(own.mode, AutopilotMode::Bypass);
+    let until = own.bypass_until.unwrap();
+    assert!((now + 3 * 86_400..=unix_now() + 3 * 86_400).contains(&until), "{until}");
+    assert!(own.bypass_since.is_some_and(|t| t >= now));
+    assert_eq!(settings.bypass_until, None, "only that AI");
+
+    for minutes in [Some(0), Some(super::modes::MAX_BYPASS_MINUTES + 1)] {
+        let r = env.core.start_bypass(None, minutes).await;
+        assert!(matches!(r, Err(CoreError::Invalid { .. })), "{minutes:?}");
+    }
+    env.core.start_bypass(None, Some(super::modes::MAX_BYPASS_MINUTES)).await.unwrap();
+    // A bypass ends a lockdown of its own scope; the old way (a mode with minutes) still works.
+    env.mode(Some(OTHER), AutopilotMode::Lockdown).await;
+    env.core.set_autopilot_mode(Some(OTHER.to_owned()), Some(AutopilotMode::Bypass), Some(120)).await.unwrap();
+    let other = env.core.autopilot_settings().await.unwrap();
+    let other = other.connections.iter().find(|c| c.connection_id == OTHER).unwrap();
+    assert_eq!((other.mode, other.base_mode), (AutopilotMode::Bypass, None));
+}
+
+#[tokio::test]
+async fn the_floor_is_never_automatic_in_manual_or_auto() {
+    for mode in [AutopilotMode::Manual, AutopilotMode::Auto] {
         let env = env(true).await;
         env.model.set_default(logits(0.9999, 0.00005, 0.00005));
         let profile = env.profile_id().await;
@@ -518,6 +882,100 @@ async fn auto_approves_and_denies_at_the_thresholds_in_unlocked_classes() {
     env.core.set_preset(env.profile_id().await, Preset::Relaxed).await.unwrap();
     env.relay("r5", OLD, email("boss@x.com", "hi")).await;
     assert_eq!(env.decided().last().unwrap().0, "r5");
+}
+
+#[tokio::test]
+async fn custom_thresholds_are_clamped_kept_and_used_by_auto() {
+    let env = env(true).await;
+    env.mode(None, AutopilotMode::Auto).await;
+    env.unlock("gmail/send").await;
+    env.model.rule("boss@x.com", logits(0.90, 0.02, 0.08));
+    let profile = env.profile_id().await;
+    let view = |env: &Env| {
+        let p = profile.clone();
+        let core = Arc::clone(&env.core);
+        async move { core.autopilot_profiles().await.unwrap().into_iter().find(|v| v.id == p).unwrap() }
+    };
+    let p = view(&env).await;
+    assert_eq!((p.preset, p.approve_at, p.deny_at), (Preset::Balanced, 0.95, 0.90));
+
+    // Outside 80–99% is clamped; not a number is refused.
+    env.core.set_thresholds(profile.clone(), 0.5, 1.2).await.unwrap();
+    let p = view(&env).await;
+    assert_eq!((p.preset, p.approve_at, p.deny_at), (Preset::Custom, 0.80, 0.99));
+    let nan = env.core.set_thresholds(profile.clone(), f32::NAN, 0.9).await;
+    assert!(matches!(nan, Err(CoreError::Invalid { .. })));
+
+    // Balanced (0.95) asks for a 0.90 approval; the user's own 0.88 lets it through.
+    env.relay("r1", OLD, email("boss@x.com", "hi")).await;
+    env.approve("r1").await;
+    env.core.set_thresholds(profile.clone(), 0.98, 0.95).await.unwrap();
+    env.relay("r2", OLD, email("boss@x.com", "hi")).await;
+    assert!(env.waiting().await.contains(&"r2".to_owned()));
+    env.core.set_thresholds(profile.clone(), 0.876, 0.95).await.unwrap();
+    assert!((view(&env).await.approve_at - 0.88).abs() < 1e-6, "whole percent");
+    env.relay("r3", OLD, email("boss@x.com", "hi")).await;
+    assert_eq!(env.decided().last().unwrap(), &("r3".to_owned(), Verdict::Approve, "autopilot".to_owned()));
+
+    // A named preset replaces them; Custom starts again from what is in use.
+    env.core.set_preset(profile.clone(), Preset::Cautious).await.unwrap();
+    let p = view(&env).await;
+    assert_eq!((p.preset, p.approve_at, p.deny_at), (Preset::Cautious, 0.98, 0.95));
+    env.core.set_preset(profile.clone(), Preset::Custom).await.unwrap();
+    let p = view(&env).await;
+    assert_eq!((p.preset, p.approve_at, p.deny_at), (Preset::Custom, 0.98, 0.95));
+    env.relay("r4", OLD, email("boss@x.com", "hi")).await;
+    assert!(env.waiting().await.contains(&"r4".to_owned()));
+}
+
+#[test]
+fn profiles_stored_before_custom_thresholds_keep_their_preset() {
+    let old: super::store::Profile = serde_json::from_str(r#"{"name":"Work","preset":"Relaxed"}"#).unwrap();
+    assert_eq!((old.shown_preset(), old.thresholds()), (Preset::Relaxed, (0.90, 0.85)));
+    let custom = super::store::Profile {
+        custom: super::store::Thresholds::clamped(0.93, 0.88),
+        ..old
+    };
+    assert_eq!((custom.shown_preset(), custom.thresholds()), (Preset::Custom, (0.93, 0.88)));
+    // What older versions read: the named preset is still there.
+    let json: Value = serde_json::to_value(&custom).unwrap();
+    assert_eq!(json["preset"], "Relaxed");
+}
+
+#[tokio::test]
+async fn the_last_days_are_replayed_at_other_thresholds_and_counted() {
+    let env = env(true).await;
+    env.model.rule("friend@x.com", logits(0.97, 0.01, 0.02));
+    env.model.rule("boss@x.com", logits(0.91, 0.02, 0.07));
+    env.model.rule("evil@x.com", logits(0.02, 0.88, 0.10));
+    for (id, to) in [("a0", "friend@x.com"), ("a1", "friend@x.com"), ("b0", "boss@x.com"), ("b1", "boss@x.com")] {
+        env.relay(id, OLD, email(to, "hi")).await;
+        env.approve(id).await;
+    }
+    env.relay("e0", OLD, email("evil@x.com", "hi")).await;
+    env.core.deny("e0".to_owned()).await.unwrap();
+    env.relay("g0", OLD, grant()).await;
+    let profile = env.profile_id().await;
+
+    // Balanced: the second push to a friend is approved; the first of each is new; boss is below 0.95; evil below 0.90.
+    let balanced = env.core.threshold_replay(profile.clone(), 0.95, 0.90).await.unwrap();
+    assert_eq!((balanced.days, balanced.decided, balanced.asked, balanced.undone), (30, 1, 5, 0), "{balanced:?}");
+    // Lower thresholds decide more of the same six (what the memory makes of each moves the numbers a little).
+    let relaxed = env.core.threshold_replay(profile.clone(), 0.80, 0.80).await.unwrap();
+    assert!(relaxed.decided > balanced.decided && relaxed.decided + relaxed.asked == 6, "{relaxed:?}");
+    assert_eq!(relaxed.undone, 0, "{relaxed:?}");
+    let other = env.core.create_profile("Side".to_owned(), None).await.unwrap();
+    let empty = env.core.threshold_replay(other.id, 0.9, 0.9).await.unwrap();
+    assert_eq!((empty.decided, empty.asked), (0, 0), "another profile's evaluations are not its own");
+
+    let stats = env.core.autopilot_stats(7).await.unwrap();
+    assert_eq!((stats.days, stats.scored), (7, 5), "{stats:?}");
+    assert!(stats.compared >= 1 && stats.matched.is_some_and(|m| m > 0.99), "{stats:?}");
+    assert_eq!(stats.kinds_on_auto, 0);
+    assert!(stats.kinds >= 1);
+    assert_eq!(env.core.autopilot_stats(400).await.unwrap().days, 30);
+    let p = env.core.autopilot_profiles().await.unwrap().into_iter().find(|p| p.id == profile).unwrap();
+    assert_eq!(p.agreement, stats.matched);
 }
 
 #[tokio::test]

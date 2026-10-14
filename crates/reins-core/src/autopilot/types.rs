@@ -13,7 +13,8 @@ pub enum AutopilotMode {
     Manual,
     /// Autopilot approves or denies what it is confident about, in classes that earned it; the rest waits.
     Auto,
-    /// Everything except the hard floor is approved, until `bypass_until`.
+    /// Everything is approved at once (only pairings and other phones still ask), until `bypass_until` (or until the
+    /// user turns it off).
     Bypass,
     /// Everything is denied at once (pairings still reach the user).
     Lockdown,
@@ -49,6 +50,11 @@ pub enum Verdict {
     Ask,
 }
 
+/// The lowest confidence threshold a profile may have…
+pub const MIN_THRESHOLD: f32 = 0.80;
+/// …and the highest.
+pub const MAX_THRESHOLD: f32 = 0.99;
+
 /// Confidence thresholds of a profile (spec §5.4): approve / deny.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize, uniffi::Enum)]
 pub enum Preset {
@@ -59,14 +65,16 @@ pub enum Preset {
     Balanced,
     /// 0.90 / 0.85
     Relaxed,
+    /// The user's own (`ProfileView.approve_at` / `deny_at`, set with `set_thresholds`), each 0.80 to 0.99.
+    Custom,
 }
 
 impl Preset {
-    /// (θ_a, θ_d).
+    /// (θ_a, θ_d). `Custom` has no values of its own here (a profile keeps them); it reads as Balanced.
     pub fn thresholds(self) -> (f32, f32) {
         match self {
             Self::Cautious => (0.98, 0.95),
-            Self::Balanced => (0.95, 0.90),
+            Self::Balanced | Self::Custom => (0.95, 0.90),
             Self::Relaxed => (0.90, 0.85),
         }
     }
@@ -79,8 +87,10 @@ pub struct AutopilotSettings {
     pub mode: AutopilotMode,
     /// The global mode when no bypass runs (what the user picked; Manual until they pick one).
     pub base_mode: AutopilotMode,
-    /// A global bypass runs until then (unix seconds).
+    /// A global bypass runs until then (unix seconds); `i64::MAX` while it runs until the user turns it off.
     pub bypass_until: Option<i64>,
+    /// When the global bypass started.
+    pub bypass_since: Option<i64>,
     /// The profile of every connection that has none of its own.
     pub default_profile_id: String,
     /// Download the model on Wi-Fi only (the app's download job honours it).
@@ -96,8 +106,10 @@ pub struct ConnectionAutopilot {
     pub connection_id: String,
     /// The connection's own mode when no bypass runs; `None` = it follows the global mode.
     pub base_mode: Option<AutopilotMode>,
-    /// A bypass of this connection runs until then.
+    /// A bypass of this connection runs until then (`i64::MAX`: until the user turns it off).
     pub bypass_until: Option<i64>,
+    /// When that bypass started.
+    pub bypass_since: Option<i64>,
     /// What applies to its requests now (global lockdown and bypass included).
     pub mode: AutopilotMode,
     /// The profile its decisions train (the default profile when it has none of its own).
@@ -136,7 +148,14 @@ pub struct ProfileView {
     pub id: String,
     pub name: String,
     pub icon: Option<String>,
+    /// `Custom` when the user set thresholds of their own.
     pub preset: Preset,
+    /// The thresholds in use: Auto approves at or above `approve_at` and denies at or above `deny_at`.
+    pub approve_at: f32,
+    pub deny_at: f32,
+    /// Share of the remembered decisions where Autopilot would have done what the user did (among those it would
+    /// have decided on its own); `None` before there is one.
+    pub agreement: Option<f32>,
     pub is_default: bool,
     /// Decisions remembered.
     pub memory_count: u32,
@@ -265,6 +284,36 @@ pub enum AutopilotEvent {
         connection_label: String,
         reason: String,
     },
+}
+
+/// Autopilot over the last days, for the strip at the top of its page.
+#[derive(Clone, Debug, PartialEq, uniffi::Record)]
+pub struct AutopilotStats {
+    /// The window, in days.
+    pub days: u32,
+    /// Requests the model scored.
+    pub scored: u32,
+    /// Share of the user's decisions Autopilot would have made the same way (among those it would have decided on its
+    /// own); `None` before there is one.
+    pub matched: Option<f32>,
+    /// How many decisions `matched` is out of.
+    pub compared: u32,
+    /// Kinds of request Auto may approve on its own, over every profile…
+    pub kinds_on_auto: u32,
+    /// …out of the kinds seen.
+    pub kinds: u32,
+}
+
+/// What a profile's last days would have been at other thresholds (the stored evaluations replayed).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, uniffi::Record)]
+pub struct ThresholdReplay {
+    pub days: u32,
+    /// Requests it would have approved or denied on its own.
+    pub decided: u32,
+    /// Requests it would have left to the user (always-ask ones included).
+    pub asked: u32,
+    /// Of `decided`, those where the user did, or later said, otherwise.
+    pub undone: u32,
 }
 
 /// One batch for the model (spec §6.2), row-major.

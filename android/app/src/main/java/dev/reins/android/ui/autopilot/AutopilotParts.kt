@@ -1,7 +1,6 @@
 package dev.reins.android.ui.autopilot
 
 import androidx.compose.ui.graphics.vector.ImageVector
-import androidx.compose.material.icons.rounded.Navigation
 import androidx.compose.material.icons.rounded.Lock
 import androidx.compose.material.icons.rounded.HowToReg
 import androidx.compose.material.icons.rounded.Bolt
@@ -88,10 +87,10 @@ fun modeTint(mode: AutopilotMode, c: RColors): Color = when (mode) {
     AutopilotMode.LOCKDOWN -> c.warning
 }
 
-/** Each mode's icon: a person with a check for Manual (you approve), a heading for Auto, a bolt for Bypass, a lock. */
+/** Each mode's icon: a person with a check for Manual (you approve), a bolt for Auto and Bypass (by colour), a lock. */
 fun modeIcon(mode: AutopilotMode): ImageVector = when (mode) {
     AutopilotMode.MANUAL -> Icons.Rounded.HowToReg
-    AutopilotMode.AUTO -> Icons.Rounded.Navigation
+    AutopilotMode.AUTO -> Icons.Rounded.Bolt
     AutopilotMode.BYPASS -> Icons.Rounded.Bolt
     AutopilotMode.LOCKDOWN -> Icons.Rounded.Lock
 }

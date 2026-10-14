@@ -99,7 +99,7 @@ enum SuggestionText {
     /// Why a suggestion is limited, if it is: the hard floor, a target never seen, no model.
     static func notes(_ s: SuggestionView) -> [String] {
         var out: [String] = []
-        if s.floor { out.append("Passwords, deletions, new connections, SSH and other risky requests always wait for you, in every mode.") }
+        if s.floor { out.append("Passwords, deletions, new connections, SSH and other risky requests always wait for you in Manual and Auto.") }
         if s.novel { out.append("This target was never approved for this AI before, so Autopilot asks you even in Auto.") }
         if !s.judged && !s.floor && !s.reason.trimmingCharacters(in: .whitespaces).isEmpty { out.append(untrusted(s.reason)) }
         return out

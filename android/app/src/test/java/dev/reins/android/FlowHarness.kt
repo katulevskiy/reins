@@ -7,6 +7,7 @@ import androidx.compose.ui.test.hasTestTag
 import androidx.compose.ui.test.hasText
 import androidx.compose.ui.test.junit4.v2.createEmptyComposeRule
 import androidx.compose.ui.test.onNodeWithTag
+import androidx.compose.ui.test.onRoot
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performTouchInput
 import androidx.compose.ui.test.performScrollTo
@@ -45,6 +46,8 @@ abstract class FlowHarness {
 
     @Volatile protected var authResult: AuthResult = AuthResult.Success
     protected val prompts = java.util.concurrent.atomic.AtomicInteger()
+    /** What each owner's check asked: (title, subtitle). */
+    protected val promptTexts = java.util.concurrent.CopyOnWriteArrayList<Pair<String, String>>()
 
     /** The passkey prompt the app gets; tests set its answers. */
     protected val passkeys = FakePasskeys()
@@ -101,11 +104,13 @@ abstract class FlowHarness {
         container.ssoSignIn.clear()
         authResult = AuthResult.Success
         prompts.set(0)
+        promptTexts.clear()
         UpdateProvider.fetcher = FakeUpdateServer()
         UpdateProvider.installer = FakeInstaller()
         androidx.work.testing.WorkManagerTestInitHelper.initializeTestWorkManager(context)
         AuthenticatorProvider.factory = {
-            Authenticator { _, _ ->
+            Authenticator { title, subtitle ->
+                promptTexts += title to subtitle
                 prompts.incrementAndGet()
                 authResult
             }
@@ -181,8 +186,9 @@ abstract class FlowHarness {
         }
         node.performTouchInput { down(center) }
         rule.mainClock.advanceTimeBy(dev.reins.android.design.HOLD_MILLIS + 300L)
-        // What it confirmed may have closed it before the finger lifts.
+        // What it confirmed may have closed it before the finger lifts: then the finger lifts off the screen.
         runCatching { rule.onNodeWithTag(tag).performTouchInput { up() } }
+            .onFailure { runCatching { rule.onRoot().performTouchInput { up() } } }
         rule.waitForIdle()
     }
 

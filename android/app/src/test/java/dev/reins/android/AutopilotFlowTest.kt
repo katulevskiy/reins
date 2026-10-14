@@ -6,6 +6,7 @@ import androidx.compose.ui.test.assertTextContains
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
+import androidx.compose.ui.test.performSemanticsAction
 import androidx.compose.ui.test.performTextReplacement
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.work.NetworkType
@@ -75,7 +76,7 @@ class AutopilotFlowTest : FlowHarness() {
         assertFalse("the full page waits for More", has("modeHero"))
         tap("quickMore")
         awaitTag("modeHero")
-        rule.onNodeWithTag("heroMode").assertTextContains("Manual")
+        rule.onNodeWithTag("mode:MANUAL").assertIsSelected()
         assertFalse(has("autopilotQuick"))
     }
 
@@ -97,17 +98,20 @@ class AutopilotFlowTest : FlowHarness() {
     }
 
     @Test
-    fun bypassFromTheQuickMenuAsksHowLongFirst() {
+    fun bypassFromTheQuickMenuOpensTheSheetAndIsHeld() {
         installModel()
         launch()
         tap("modePill")
         tap("quick:BYPASS")
-        awaitTag("quickBypassTimes")
-        assertTrue("nothing changes before a length is picked", core.modeCalls.isEmpty())
-        tap("quickBypass:15")
-        awaitCore { core.modeCalls.isNotEmpty() }
-        assertEquals(Triple(null, AutopilotMode.BYPASS, 15u), core.modeCalls.single())
+        awaitTag("bypassSheet")
         awaitGone("autopilotQuick")
+        assertTrue("nothing changes before the hold", core.modeCalls.isEmpty())
+        tap("bypassLength:15")
+        hold("confirmBypass")
+        awaitCore { core.bypassCalls.isNotEmpty() }
+        assertEquals(null to 15u, core.bypassCalls.single())
+        assertEquals("checked from the quick menu too", 1, prompts.get())
+        awaitGone("bypassSheet")
         tap("modePill")
         tap("quickStopBypass")
         awaitCore { core.modeCalls.size == 2 }
@@ -130,23 +134,23 @@ class AutopilotFlowTest : FlowHarness() {
     }
 
     @Test
-    fun theSlidersBypassWaitsForALengthAndCancelSlidesBack() {
+    fun theSlidersBypassOpensTheSheetAndCancelChangesNothing() {
         installModel()
         QuickStyles.set(context, QuickStyle.Slider)
         launch()
         tap("modePill")
         tap("detent:BYPASS")
-        awaitTag("quickBypassTimes")
-        rule.onNodeWithTag("quickMode").assertTextContains("Bypass")
+        awaitTag("bypassSheet")
         assertTrue(core.modeCalls.isEmpty())
-        tap("quickBypassCancel")
-        awaitGone("quickBypassTimes")
-        rule.onNodeWithTag("quickMode").assertTextContains("Manual")
+        tap("cancelBypass")
+        awaitGone("bypassSheet")
         assertTrue(core.modeCalls.isEmpty())
+        tap("modePill")
         tap("detent:BYPASS")
-        tap("quickBypass:60")
-        awaitCore { core.modeCalls.isNotEmpty() }
-        assertEquals(Triple(null, AutopilotMode.BYPASS, 60u), core.modeCalls.single())
+        hold("confirmBypass")
+        awaitCore { core.bypassCalls.isNotEmpty() }
+        assertEquals("1 hour unless another is picked", null to 60u, core.bypassCalls.single())
+        assertEquals(1, prompts.get())
     }
 
     @Test
@@ -164,6 +168,22 @@ class AutopilotFlowTest : FlowHarness() {
         launch()
         awaitTag("modePill")
         awaitText("14:32")
+    }
+
+    @Test
+    fun aBypassWithoutAnEndShowsNoCountdown() {
+        core.apGlobal = FakeCore.ApRow(bypassUntil = Long.MAX_VALUE, bypassSince = now - 2 * 86_400 - 60)
+        launch()
+        awaitTag("modePill")
+        rule.onNodeWithContentDescription("Autopilot: Bypass").assertExists()
+        assertFalse("no countdown to a time that never comes", has("quickBypassLeft"))
+        tap("tabAutopilot")
+        awaitTag("bypassUntilOff")
+        rule.onNodeWithTag("bypassLine", useUnmergedTree = true).assertTextContains("On until you stop it · 2 days so far")
+        tap("stopBypass")
+        awaitCore { core.modeCalls.isNotEmpty() }
+        assertEquals(Triple(null, AutopilotMode.MANUAL, null), core.modeCalls.single())
+        assertEquals("stopping needs no check", 0, prompts.get())
     }
 
     @Test
@@ -186,16 +206,18 @@ class AutopilotFlowTest : FlowHarness() {
         installModel()
         openAutopilot()
         tap("mode:BYPASS")
-        awaitTag("bypassDialog")
-        assertTrue("nothing changes before the warning is accepted", core.modeCalls.isEmpty())
-        tap("bypass:30")
+        awaitTag("bypassSheet")
+        assertTrue("nothing changes before the hold", core.modeCalls.isEmpty())
+        rule.onNodeWithTag("bypassLength:60").assertIsSelected()
+        tap("bypassLength:15")
         heard.clear()
         hold("confirmBypass")
-        awaitCore { core.modeCalls.isNotEmpty() }
-        assertEquals(Triple(null, AutopilotMode.BYPASS, 30u), core.modeCalls.single())
+        awaitCore { core.bypassCalls.isNotEmpty() }
+        assertEquals(null to 15u, core.bypassCalls.single())
+        assertEquals("the owner is checked first", listOf("Turn on Bypass for every AI" to "For 15 min"), promptTexts.toList())
         assertTrue(heard.played(Event.BypassOn))
         awaitTag("bypassClock")
-        rule.onNodeWithTag("bypassClock").assertTextContains("30:00")
+        rule.onNodeWithTag("bypassClock").assertTextContains("15:00")
         heard.clear()
         tap("stopBypass")
         awaitCore { core.modeCalls.size == 2 }
@@ -205,14 +227,87 @@ class AutopilotFlowTest : FlowHarness() {
     }
 
     @Test
-    fun lockdownIsConfirmedFirst() {
+    fun aBypassWithoutTheOwnersCheckChangesNothing() {
+        installModel()
+        authResult = dev.reins.android.platform.AuthResult.Cancelled
         openAutopilot()
-        tap("mode:LOCKDOWN")
-        awaitText("Lock down?")
-        assertTrue(core.modeCalls.isEmpty())
+        tap("mode:BYPASS")
         heard.clear()
-        rule.onNodeWithText("Lock down").performClick()
+        hold("confirmBypass")
+        awaitCore { prompts.get() == 1 }
+        settle()
+        assertTrue("nothing reaches the core", core.bypassCalls.isEmpty() && core.modeCalls.isEmpty())
+        assertEquals("nothing shows, not even for a moment", AutopilotMode.MANUAL, container.state.autopilot.value?.mode)
+        assertFalse("and nothing sounds", heard.played(Event.BypassOn))
+        assertFalse(has("bypassClock"))
+
+        // No screen lock at all: it says so, and still nothing changes.
+        authResult = dev.reins.android.platform.AuthResult.Unavailable
+        tap("mode:BYPASS")
+        tap("bypassLength:custom")
+        rule.onNodeWithTag("bypassFor:untilOff").performSemanticsAction(androidx.compose.ui.semantics.SemanticsActions.OnClick)
+        hold("confirmBypassFor")
+        awaitTag("autopilotError")
+        awaitText("screen lock", substring = true)
+        assertEquals(2, prompts.get())
+        assertEquals("Until you turn it off", promptTexts.last().second)
+        assertTrue(core.bypassCalls.isEmpty())
+        assertEquals(AutopilotMode.MANUAL, container.state.autopilot.value?.mode)
+    }
+
+    @Test
+    fun aBypassOfYourOwnLengthIsPickedUnderCustom() {
+        installModel()
+        openAutopilot()
+        tap("mode:BYPASS")
+        tap("bypassLength:custom")
+        awaitTag("bypassForSheet")
+        // The sheet slides up first.
+        rule.mainClock.advanceTimeBy(600)
+        // Its middle is the stepper: the row is picked by what a screen reader does.
+        rule.onNodeWithTag("bypassFor:own").performSemanticsAction(androidx.compose.ui.semantics.SemanticsActions.OnClick)
+        tap("bypassStepper+")
+        rule.waitUntil(10_000) {
+            settle()
+            rule.onAllNodes(androidx.compose.ui.test.hasTestTag("bypassCount") and androidx.compose.ui.test.hasText("4"), useUnmergedTree = true).fetchSemanticsNodes().isNotEmpty()
+        }
+        tap("closeSheet")
+        awaitGone("bypassForSheet")
+        rule.onNodeWithTag("bypassLength:custom").assertIsSelected()
+        awaitText("4 days")
+        hold("confirmBypass")
+        awaitCore { core.bypassCalls.isNotEmpty() }
+        assertEquals(null to 4u * 1_440u, core.bypassCalls.single())
+    }
+
+    @Test
+    fun aBypassUntilTurnedOffIsWarnedHeldAndShowsHowLongItRan() {
+        installModel()
+        openAutopilot()
+        tap("mode:BYPASS")
+        tap("bypassLength:custom")
+        tap("bypassFor:untilOff")
+        awaitTag("untilOffWarning")
+        awaitText("Everything is approved without asking until you stop it.")
+        awaitText("Hold to bypass until off")
+        assertTrue(core.bypassCalls.isEmpty())
+        hold("confirmBypassFor")
+        awaitCore { core.bypassCalls.isNotEmpty() }
+        assertEquals("no end", null to null, core.bypassCalls.single())
+        awaitTag("bypassUntilOff")
+        rule.onNodeWithTag("bypassLine", useUnmergedTree = true).assertTextContains("On until you stop it", substring = true)
+        assertTrue((container.state.autopilot.value?.bypassUntil ?: 0) == Long.MAX_VALUE)
+        tap("stopBypass")
+        awaitGone("bypassUntilOff")
+    }
+
+    @Test
+    fun lockdownIsOneTapAndEndsTheSameWay() {
+        openAutopilot()
+        heard.clear()
+        tap("mode:LOCKDOWN")
         awaitCore { core.modeCalls.isNotEmpty() }
+        assertEquals("taking power away needs no check", 0, prompts.get())
         assertEquals(AutopilotMode.LOCKDOWN, core.modeCalls.single().second)
         assertTrue(heard.played(Event.LockdownOn))
         awaitTag("endLockdown")
@@ -224,9 +319,22 @@ class AutopilotFlowTest : FlowHarness() {
     @Test
     fun withoutTheModelAutoSaysSoAndTheModeIsManual() {
         openAutopilot()
-        awaitText("NEEDS MODEL")
-        rule.onNodeWithTag("heroMode").assertTextContains("Manual")
-        awaitText("Download the model first")
+        awaitText("Needs the model")
+        rule.onNodeWithTag("mode:MANUAL").assertIsSelected()
+        awaitTag("getScore")
+        awaitText("after download")
+        assertFalse("the score card takes the strip's place", has("statScored"))
+    }
+
+    @Test
+    fun theWeekIsCountedOnThePage() {
+        installModel()
+        openAutopilot()
+        awaitTag("statScored")
+        rule.onNodeWithTag("statScored").assertTextContains("142", substring = true)
+        rule.onNodeWithTag("statMatched").assertTextContains("94%", substring = true)
+        rule.onNodeWithTag("statKinds").assertTextContains("2", substring = true)
+        rule.onNodeWithTag("profileLine:personal", useUnmergedTree = true).assertTextContains("64 decisions", substring = true)
     }
 
     // ---- the model --------------------------------------------------------------------------------------------------
@@ -239,23 +347,27 @@ class AutopilotFlowTest : FlowHarness() {
     @Test
     fun theModelDownloadsOnWifiAndShowsWhenItIsReady() {
         openAutopilot()
-        tap("downloadModel")
+        tap("getModel")
         awaitText("Waiting for Wi-Fi")
         val request = WorkManager.getInstance(context).getWorkInfosForUniqueWork(WorkModelDownloads.NAME).get().single()
         assertEquals(NetworkType.UNMETERED, request.constraints.requiredNetworkType)
         assertEquals("the core downloads nothing before the network is there", 0, core.downloads.get())
         runDownloadJob()
         awaitCore { core.downloads.get() == 1 }
-        awaitTag("modelInstalled")
+        awaitText("Ready")
+        tap("openModel")
         awaitTag("deleteModel")
     }
 
     @Test
     fun mobileDataCanBeAllowed() {
         openAutopilot()
+        tap("openModel")
         tap("wifiOnly")
         awaitCore { !core.wifiOnly }
-        tap("downloadModel")
+        tap("closeSheet")
+        awaitGone("modelSheet")
+        tap("getModel")
         awaitText("Waiting for a connection")
         val request = WorkManager.getInstance(context).getWorkInfosForUniqueWork(WorkModelDownloads.NAME).get().single()
         assertEquals(NetworkType.CONNECTED, request.constraints.requiredNetworkType)
@@ -266,10 +378,10 @@ class AutopilotFlowTest : FlowHarness() {
         core.downloadFailure = CoreException.Invalid("checksum mismatch")
         core.downloadError = "sha-256 of model.onnx does not match the pinned hash"
         openAutopilot()
-        tap("downloadModel")
+        tap("getModel")
         awaitText("Waiting for Wi-Fi")
         runDownloadJob()
-        awaitTag("modelError")
+        awaitTag("getModelError")
         awaitText("did not match", substring = true)
         awaitText("Try again")
     }
@@ -277,10 +389,10 @@ class AutopilotFlowTest : FlowHarness() {
     @Test
     fun aWaitingDownloadCanBeCancelled() {
         openAutopilot()
-        tap("downloadModel")
-        awaitTag("cancelDownload")
-        tap("cancelDownload")
-        awaitTag("downloadModel")
+        tap("getModel")
+        awaitTag("pauseDownload")
+        tap("pauseDownload")
+        awaitTag("getModel")
         assertEquals(0, core.downloads.get())
     }
 
@@ -288,11 +400,12 @@ class AutopilotFlowTest : FlowHarness() {
     fun theModelCanBeDeleted() {
         installModel()
         openAutopilot()
+        tap("openModel")
         tap("deleteModel")
         awaitText("Delete the model?")
         rule.onNodeWithText("Delete").performClick()
         awaitCore { core.model.state == ModelState.NOT_INSTALLED }
-        awaitTag("downloadModel")
+        awaitTag("getModel")
         assertTrue(heard.played(Event.Revoked))
     }
 
@@ -304,12 +417,38 @@ class AutopilotFlowTest : FlowHarness() {
         openAutopilot()
         tap("profile:personal")
         awaitTag("class:github/write/push")
-        rule.onNodeWithTag("classStatus:github/write/push", useUnmergedTree = true).assertTextContains("Approves on its own")
-        rule.onNodeWithTag("classStatus:desktop/ask/command", useUnmergedTree = true).assertTextContains("15 more decisions to unlock")
+        rule.onNodeWithTag("classStatus:github/write/push", useUnmergedTree = true).assertTextContains("On Auto · 26 decisions")
+        rule.onNodeWithTag("classStatus:desktop/ask/command", useUnmergedTree = true).assertTextContains("15 more to unlock")
+        rule.onNodeWithTag("classStatus:telegram/send", useUnmergedTree = true).assertTextContains("Always asks")
+        rule.onNodeWithTag("statMemory").assertTextContains("64", substring = true)
+        rule.onNodeWithTag("statKinds").assertTextContains("/4", substring = true)
         tap("preset:CAUTIOUS")
         awaitCore { core.presets.isNotEmpty() }
         assertEquals("personal" to Preset.CAUTIOUS, core.presets.single())
         awaitText("Approves when 98% sure, denies when 95% sure")
+    }
+
+    @Test
+    fun customThresholdsAreSetWithSlidersAndReplayTheLastDays() {
+        installModel()
+        openAutopilot()
+        tap("profile:personal")
+        tap("preset:CUSTOM")
+        awaitCore { core.presets.isNotEmpty() }
+        assertEquals("personal" to Preset.CUSTOM, core.presets.single())
+        awaitTag("thresholds")
+        rule.onNodeWithTag("approveAt:value", useUnmergedTree = true).assertTextContains("95%")
+        awaitTag("replayLine")
+        rule.onNodeWithTag("replayLine").assertTextContains("Last 30 days at these:", substring = true)
+        core.replay = dev.reins.core.ThresholdReplay(30u, 51u, 2u, 0u)
+        rule.onNodeWithTag("approveAt").performSemanticsAction(androidx.compose.ui.semantics.SemanticsActions.SetProgress) { it(0.876f) }
+        awaitCore { core.thresholdCalls.isNotEmpty() }
+        assertEquals(Triple("personal", 0.88f, 0.90f), core.thresholdCalls.last())
+        rule.onNodeWithTag("approveAt:value", useUnmergedTree = true).assertTextContains("88%")
+        awaitText("51 decided", substring = true)
+        rule.onNodeWithTag("denyAt").performSemanticsAction(androidx.compose.ui.semantics.SemanticsActions.SetProgress) { it(0.5f) }
+        awaitCore { core.thresholdCalls.size == 2 }
+        assertEquals("never below the 80% floor", 0.80f, core.thresholdCalls.last().third)
     }
 
     @Test
@@ -413,11 +552,34 @@ class AutopilotFlowTest : FlowHarness() {
         tap("tabSettings")
         tap("connection:c1")
         tap("connMode:BYPASS")
-        awaitTag("bypassDialog")
+        awaitTag("bypassSheet")
+        awaitText("Bypass Claude?")
         hold("confirmBypass")
+        awaitCore { prompts.get() == 1 }
+        assertEquals("Turn on Bypass for Claude", promptTexts.single().first)
         awaitTag("connAutopilotError")
         awaitText("10 minutes", substring = true)
         assertTrue(heard.played(Event.Error))
+    }
+
+    @Test
+    fun aConnectionBypassNeedsTheOwnersCheck() {
+        installModel()
+        authResult = dev.reins.android.platform.AuthResult.Cancelled
+        launch()
+        tap("tabSettings")
+        tap("connection:c1")
+        tap("connMode:BYPASS")
+        hold("confirmBypass")
+        awaitCore { prompts.get() == 1 }
+        settle()
+        assertTrue(core.bypassCalls.isEmpty())
+        assertEquals(null, container.state.autopilot.value?.connections?.firstOrNull { it.connectionId == "c1" }?.bypassUntil)
+        authResult = dev.reins.android.platform.AuthResult.Success
+        tap("connMode:BYPASS")
+        hold("confirmBypass")
+        awaitCore { core.bypassCalls.isNotEmpty() }
+        assertEquals("c1" to 60u, core.bypassCalls.single())
     }
 
     @Test

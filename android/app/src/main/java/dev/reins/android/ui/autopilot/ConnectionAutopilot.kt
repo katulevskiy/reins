@@ -50,7 +50,7 @@ const val CONNECTION_AUTOPILOT_HELP =
  * a bypass for just this AI and a lockdown for just this AI, each after its own confirmation.
  */
 @Composable
-fun ConnectionAutopilotSection(connectionId: String, label: String, viewModel: AutopilotViewModel) {
+fun ConnectionAutopilotSection(connectionId: String, viewModel: AutopilotViewModel, onBypass: () -> Unit) {
     val c = LocalColors.current
     val settings by viewModel.settings.collectAsStateWithLifecycle()
     val ui by viewModel.ui.collectAsStateWithLifecycle()
@@ -62,7 +62,6 @@ fun ConnectionAutopilotSection(connectionId: String, label: String, viewModel: A
     val chosen: AutopilotMode? = if (bypassUntil != null) AutopilotMode.BYPASS else own?.baseMode
     val lockedDown = chosen == AutopilotMode.LOCKDOWN
     val globalLockdown = mode == AutopilotMode.LOCKDOWN && s.mode == AutopilotMode.LOCKDOWN && own?.baseMode != AutopilotMode.LOCKDOWN
-    var bypassAsk by remember { mutableStateOf(false) }
     var help by rememberSaveable { mutableStateOf(false) }
 
     // The choices of the group: like every AI (null), then the modes that are not one of the two buttons below.
@@ -89,7 +88,7 @@ fun ConnectionAutopilotSection(connectionId: String, label: String, viewModel: A
                         icon = Icons.Rounded.Bolt,
                         background = c.danger.copy(alpha = 0.12f),
                         foreground = c.danger,
-                    ) { bypassAsk = true }
+                    ) { onBypass() }
                 }
                 if (lockedDown) {
                     PillButton(
@@ -121,29 +120,18 @@ fun ConnectionAutopilotSection(connectionId: String, label: String, viewModel: A
             ui.error?.let { Banner(it, Modifier.padding(top = 12.dp), BannerKind.Error, tag = "connAutopilotError") }
         }
     }
-
-    if (bypassAsk) {
-        BypassDialog(
-            who = label,
-            onConfirm = { minutes ->
-                bypassAsk = false
-                viewModel.setMode(AutopilotMode.BYPASS, minutes, connectionId)
-            },
-            onDismiss = { bypassAsk = false },
-        )
-    }
 }
 
 /**
- * A running bypass in place of its button: "Stop · 12 min left". It has a clock of its own, so the countdown
- * recomposes this button and not the section.
+ * A running bypass in place of its button: "Stop · 12 min left" (or "Stop · until you stop it" without an end). It
+ * has a clock of its own, so the countdown recomposes this button and not the section.
  */
 @Composable
 private fun BypassCountdown(until: Long, modifier: Modifier, onStop: () -> Unit) {
     val c = LocalColors.current
-    val now = rememberNowState(1_000, untilMillis = until * 1000).value / 1000
+    val now = if (AutopilotText.isUntilOff(until)) 0L else rememberNowState(1_000, untilMillis = until * 1000).value / 1000
     PillButton(
-        "Stop · " + AutopilotText.minutesLeft(until, now),
+        if (AutopilotText.isUntilOff(until)) "Stop · no end" else "Stop · " + AutopilotText.timeLeft(until, now),
         modifier.testTag("stopConnectionBypass"),
         icon = Icons.Rounded.Stop,
         background = c.danger.copy(alpha = 0.16f),

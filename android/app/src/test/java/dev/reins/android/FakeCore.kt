@@ -741,7 +741,7 @@ class FakeCore : ReinsCoreInterface {
     // ---- Autopilot ----------------------------------------------------------------------------------------------
 
     /** A connection's own Autopilot row, as the core stores it. */
-    data class ApRow(val mode: AutopilotMode? = null, val bypassUntil: Long? = null, val profileId: String? = null)
+    data class ApRow(val mode: AutopilotMode? = null, val bypassUntil: Long? = null, val profileId: String? = null, val bypassSince: Long? = null)
 
     /** The global row: `mode` null = the default (Manual). */
     @Volatile var apGlobal = ApRow()
@@ -762,6 +762,12 @@ class FakeCore : ReinsCoreInterface {
     val modeCalls = CopyOnWriteArrayList<Triple<String?, AutopilotMode?, UInt?>>()
     val classLocks = CopyOnWriteArrayList<Triple<String, String, Boolean?>>()
     val presets = CopyOnWriteArrayList<Pair<String, Preset>>()
+    val thresholdCalls = CopyOnWriteArrayList<Triple<String, Float, Float>>()
+    /** `startBypass` calls: the connection (null: every AI) and the minutes (null: until turned off). */
+    val bypassCalls = CopyOnWriteArrayList<Pair<String?, UInt?>>()
+    @Volatile var stats = dev.reins.core.AutopilotStats(7u, 142u, 0.94f, 120u, 2u, 9u)
+    /** What `thresholdReplay` answers; null: numbers that move with the thresholds. */
+    @Volatile var replay: dev.reins.core.ThresholdReplay? = null
     val corrections = CopyOnWriteArrayList<Pair<Long, Verdict>>()
     val evaluations = CopyOnWriteArrayList<Pair<String?, String>>()
     val assigned = CopyOnWriteArrayList<Pair<String, String?>>()
@@ -784,7 +790,9 @@ class FakeCore : ReinsCoreInterface {
         modeFailure = null
         downloadFailure = null
         downloadError = null
-        listOf(modeCalls, classLocks, presets, corrections, evaluations, assigned, profileCalls).forEach { it.clear() }
+        listOf(modeCalls, classLocks, presets, corrections, evaluations, assigned, profileCalls, thresholdCalls, bypassCalls).forEach { it.clear() }
+        stats = dev.reins.core.AutopilotStats(7u, 142u, 0.94f, 120u, 2u, 9u)
+        replay = null
         downloads.set(0)
     }
 
@@ -810,16 +818,17 @@ class FakeCore : ReinsCoreInterface {
             mode = globalMode(),
             baseMode = globalBase(),
             bypassUntil = apGlobal.bypassUntil?.takeIf { it > now },
+            bypassSince = apGlobal.bypassSince.takeIf { (apGlobal.bypassUntil ?: 0) > now },
             defaultProfileId = defaultProfile().id,
             wifiOnly = wifiOnly,
             model = model,
             connections = apConnections.map { (id, row) ->
                 val mode = when {
                     globalMode() == AutopilotMode.LOCKDOWN || row.mode == AutopilotMode.LOCKDOWN -> AutopilotMode.LOCKDOWN
-                    (row.bypassUntil ?: 0) > now -> AutopilotMode.BYPASS
+                    (row.bypassUntil ?: 0) > now || (apGlobal.bypassUntil ?: 0) > now -> AutopilotMode.BYPASS
                     else -> row.mode ?: globalMode()
                 }
-                ConnectionAutopilot(id, row.mode, row.bypassUntil?.takeIf { it > now }, mode, row.profileId ?: defaultProfile().id)
+                ConnectionAutopilot(id, row.mode, row.bypassUntil?.takeIf { it > now }, row.bypassSince.takeIf { (row.bypassUntil ?: 0) > now }, mode, row.profileId ?: defaultProfile().id)
             },
         )
     }
@@ -829,11 +838,37 @@ class FakeCore : ReinsCoreInterface {
         modeCalls += Triple(connectionId, mode, minutes)
         val row = if (connectionId == null) apGlobal else apConnections[connectionId] ?: ApRow()
         val next = if (mode == AutopilotMode.BYPASS) {
-            row.copy(mode = row.mode.takeIf { it != AutopilotMode.LOCKDOWN }, bypassUntil = now() + (minutes ?: 15u).toLong() * 60)
+            row.copy(mode = row.mode.takeIf { it != AutopilotMode.LOCKDOWN }, bypassUntil = now() + (minutes ?: 15u).toLong() * 60, bypassSince = now())
         } else {
-            row.copy(mode = mode, bypassUntil = null)
+            row.copy(mode = mode, bypassUntil = null, bypassSince = null)
         }
         if (connectionId == null) apGlobal = next else apConnections[connectionId] = next
+    }
+
+    override suspend fun startBypass(connectionId: String?, minutes: UInt?) {
+        modeFailure?.let { throw it }
+        if (minutes != null && (minutes == 0u || minutes > 525_600u)) throw CoreException.Invalid("a bypass lasts between 1 minute and 365 days")
+        bypassCalls += connectionId to minutes
+        modeCalls += Triple(connectionId, AutopilotMode.BYPASS, minutes)
+        val row = if (connectionId == null) apGlobal else apConnections[connectionId] ?: ApRow()
+        val until = if (minutes == null) Long.MAX_VALUE else now() + minutes.toLong() * 60
+        val next = row.copy(mode = row.mode.takeIf { it != AutopilotMode.LOCKDOWN }, bypassUntil = until, bypassSince = now())
+        if (connectionId == null) apGlobal = next else apConnections[connectionId] = next
+    }
+
+    override suspend fun autopilotStats(days: UInt) = stats.copy(days = days)
+
+    override suspend fun setThresholds(profileId: String, approveAt: Float, denyAt: Float) {
+        val clamp = { x: Float -> Math.round(x.coerceIn(0.80f, 0.99f) * 100) / 100f }
+        thresholdCalls += Triple(profileId, clamp(approveAt), clamp(denyAt))
+        profiles = profiles.map { if (it.id == profileId) it.copy(preset = Preset.CUSTOM, approveAt = clamp(approveAt), denyAt = clamp(denyAt)) else it }
+    }
+
+    override suspend fun thresholdReplay(profileId: String, approveAt: Float, denyAt: Float): dev.reins.core.ThresholdReplay {
+        replay?.let { return it }
+        // Lower thresholds decide more of the same 53 requests.
+        val decided = (41 + ((0.93f - approveAt) * 100).toInt() * 2 + ((0.88f - denyAt) * 100).toInt()).coerceIn(0, 53)
+        return dev.reins.core.ThresholdReplay(30u, decided.toUInt(), (53 - decided).toUInt(), if (approveAt < 0.86f) 1u else 0u)
     }
 
     override suspend fun setAutopilotWifiOnly(wifiOnly: Boolean) {
@@ -890,7 +925,13 @@ class FakeCore : ReinsCoreInterface {
 
     override suspend fun setPreset(profileId: String, preset: Preset) {
         presets += profileId to preset
-        profiles = profiles.map { if (it.id == profileId) it.copy(preset = preset) else it }
+        profiles = profiles.map {
+            when {
+                it.id != profileId -> it
+                preset == Preset.CUSTOM -> it.copy(preset = preset)
+                else -> TestData.thresholds(preset).let { (a, d) -> it.copy(preset = preset, approveAt = a, denyAt = d) }
+            }
+        }
     }
 
     override suspend fun autopilotSuggestion(requestId: String): SuggestionView? = suggestions[requestId]

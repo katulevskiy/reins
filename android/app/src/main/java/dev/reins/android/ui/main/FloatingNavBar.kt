@@ -123,7 +123,8 @@ fun ModePill(settings: AutopilotSettings?, onClick: () -> Unit) {
         if (bypass && until != null) {
             PulseDot(Color.White, size = 6.dp)
             Spacer(Modifier.width(7.dp))
-            BypassTime(until, fg)
+            // Without an end there is nothing to count down: it reads as the mode.
+            if (AutopilotText.isUntilOff(until)) RText("Bypass", RType.sans(14.5f, FontWeight.SemiBold), fg, maxLines = 1) else BypassTime(until, fg)
         } else {
             Icon(modeIcon(mode), null, Modifier.size(18.dp), tint = fg)
             Spacer(Modifier.width(6.dp))

@@ -227,6 +227,21 @@ async fn secrets_are_shown_by_name_and_released_sealed_with_their_lease() {
 }
 
 #[tokio::test]
+async fn bypass_releases_secrets_and_signs_ssh_sign_ins_at_once() {
+    let desk = desk().await;
+    desk.pair().await;
+    desk.core.start_bypass(None, Some(60)).await.unwrap();
+    desk.send(&[release(&desk, "r1", &["GitHub/password"], 600)]).await;
+    let grant: SecretGrant = desk.open(&desk.data("r1").await["sealed"]);
+    assert_eq!(grant.secrets[0].1, "hunter2!");
+    let data = userauth(&ED.blob(), "ssh-ed25519", None);
+    desk.send(&[sign_call(&desk, "r2", &ED, 0, Some("github.com"), &data)]).await;
+    let signed: SshSignature = desk.open(&desk.data("r2").await["sealed"]);
+    verify(&ED, &data, &BASE64.decode(signed.signature_base64.as_bytes()).unwrap(), "ssh-ed25519");
+    assert!(desk.waiting().await.is_empty());
+}
+
+#[tokio::test]
 async fn one_item_is_its_own_resource_and_a_permission_for_it_covers_the_next_release() {
     let desk = desk().await;
     desk.pair().await;

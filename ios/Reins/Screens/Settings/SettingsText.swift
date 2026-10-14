@@ -6,9 +6,6 @@ enum SettingsText {
     /// The modes in the order the picker shows them, from the user deciding everything to Autopilot refusing everything.
     static let modes: [AutopilotMode] = [.manual, .auto, .bypass, .lockdown]
 
-    /// How long a bypass can run, in minutes (the core allows 1 to 60).
-    static let bypassMinutes: [UInt32] = [15, 30, 60]
-
     static func modeName(_ mode: AutopilotMode) -> String {
         switch mode {
         case .manual: "Manual"
@@ -21,7 +18,7 @@ enum SettingsText {
     static func modeSymbol(_ mode: AutopilotMode) -> String {
         switch mode {
         case .manual: "person.fill.checkmark"
-        case .auto: "location.north.fill"
+        case .auto: "bolt.fill"
         case .bypass: "bolt.fill"
         case .lockdown: "lock.fill"
         }
@@ -124,11 +121,8 @@ enum SettingsText {
         state == .quiet ? "Notifications are quiet" : "Notifications are off"
     }
 
-    /// "42 min left", "1 min left" (the last minute counts as one).
-    static func minutesLeft(_ until: Int64, now: Int64) -> String {
-        let left = max(until - now, 0)
-        return "\(max((left + 59) / 60, 1)) min left"
-    }
+    /// "42 min left" (the last minute counts as one), "5 h left", "3 days left", "until you stop it".
+    static func minutesLeft(_ until: Int64, now: Int64) -> String { AutopilotText.timeLeft(until: until, now: now) }
 
     /// How much a mode lets happen without the user: Lockdown least, Bypass most.
     static func autonomy(_ mode: AutopilotMode) -> Int { mode.autonomy }

@@ -97,6 +97,57 @@ final class DemoCoreTests: XCTestCase {
         XCTAssertEqual(Double(until), Date().timeIntervalSince1970 + 1_800, accuracy: 3)
     }
 
+    func testABypassCanRunUntilTurnedOff() async throws {
+        let c = core()
+        let before = Int64(Date().timeIntervalSince1970)
+        try await c.startBypass(connectionId: nil, minutes: nil)
+        var settings = try await c.autopilotSettings()
+        XCTAssertEqual(settings.mode, .bypass)
+        XCTAssertEqual(settings.bypassUntil, Int64.max)
+        let since = try XCTUnwrap(settings.bypassSince)
+        XCTAssertGreaterThanOrEqual(since, before)
+        try await c.setAutopilotMode(connectionId: nil, mode: settings.baseMode, minutes: nil)
+        settings = try await c.autopilotSettings()
+        XCTAssertEqual(settings.mode, .manual)
+        XCTAssertNil(settings.bypassUntil)
+        XCTAssertNil(settings.bypassSince)
+    }
+
+    func testABypassOfOneAIRunsForItsMinutesAndARefusedLengthChangesNothing() async throws {
+        let c = core()
+        try await c.startBypass(connectionId: "c2", minutes: 3 * 1_440)
+        let settings = try await c.autopilotSettings()
+        let row = try XCTUnwrap(settings.connections.first { $0.connectionId == "c2" })
+        XCTAssertEqual(row.mode, .bypass)
+        let until = try XCTUnwrap(row.bypassUntil)
+        XCTAssertEqual(Double(until), Date().timeIntervalSince1970 + 3 * 86_400, accuracy: 3)
+        XCTAssertNotNil(row.bypassSince)
+        XCTAssertEqual(settings.mode, .manual, "only that AI")
+        do {
+            try await c.startBypass(connectionId: nil, minutes: 600_000)
+            XCTFail("longer than a year")
+        } catch {}
+        let after = try await c.autopilotSettings()
+        XCTAssertNil(after.bypassUntil)
+    }
+
+    func testThresholdsAreClampedAndMakeTheProfileCustom() async throws {
+        let c = core()
+        try await c.setThresholds(profileId: "personal", approveAt: 1, denyAt: 0.5)
+        let profiles = try await c.autopilotProfiles()
+        let personal = try XCTUnwrap(profiles.first { $0.id == "personal" })
+        XCTAssertEqual(personal.preset, .custom)
+        XCTAssertEqual(personal.approveAt, 0.99, accuracy: 0.0001)
+        XCTAssertEqual(personal.denyAt, 0.8, accuracy: 0.0001)
+        let replay = try await c.thresholdReplay(profileId: "personal", approveAt: 0.93, denyAt: 0.88)
+        XCTAssertEqual(replay.days, 30)
+        XCTAssertGreaterThan(replay.decided, 0)
+        try await c.setPreset(profileId: "personal", preset: .relaxed)
+        let after = try await c.autopilotProfiles()
+        let relaxed = try XCTUnwrap(after.first { $0.id == "personal" })
+        XCTAssertEqual(relaxed.approveAt, 0.9, accuracy: 0.0001)
+    }
+
     func testLockdownRefusesWhatIsWaiting() async throws {
         let c = core()
         try await c.setAutopilotMode(connectionId: nil, mode: .lockdown, minutes: nil)

@@ -56,11 +56,12 @@ Vault secrets an AI asks to see (passwords, one-time codes, notes, card numbers,
 every time. They can never be covered by a standing permission, and their values are not written to the activity log.
 Secrets released to the desktop app (`reins run`, the API proxy) and SSH signatures can be covered by a standing
 permission for one item, or for one key on one server, if you choose to give one. Autopilot never releases them on its
-own.
+own in Manual or Auto; a Bypass you turned on does ([below](#bypass)).
 
 Purchases ([Payments](payments.md)) are approved by you each time, on the purchase screen, or by a spend limit you
 set for one AI, paying with a virtual card capped by its provider (a few an hour at most, each one notified); never by
-a standing permission or Autopilot. What pays leaves the phone only with an approved purchase, for that cart: a
+a standing permission or Autopilot's own judgement. A Bypass you turned on approves them as their screen would
+([below](#bypass)), within your budgets. What pays leaves the phone only with an approved purchase, for that cart: a
 virtual card made for it, capped at its total plus a small tolerance (the safest), a card from the vault (always asked
 for, never by a spend limit), or nothing at all (the store's saved payment method, or you pay on the phone). What a
 purchase counts against budgets and limits never goes down because of what the agent reports. For an AI connected
@@ -169,7 +170,8 @@ device list (`GET /api/devices`) shows any signed-in device the same list.
 - Approving needs the phone's screen lock or biometrics. Denying is one tap. A routine request can also be approved
   from its notification, which works only once the phone is unlocked; that approves exactly what its screen would approve untouched (never an item that looks like a
   code or a password) and creates no permission. Requests that are asked every time, and everything on Autopilot's
-  [hard floor](#autopilot), have no such button, and the phone's core refuses to approve them that way.
+  [hard floor](#autopilot), have no such button, and the phone's core refuses to approve them that way (only a
+  [Bypass](#bypass) you turned on approves them).
 - "Approve and allow for 1 hour" (8 hours after repeated identical approvals) creates an ordinary standing permission
   for the same connection, kind of request and target, shown under Grants.
 - The starting rule (chosen during setup, "ask every time" until then and by default): "headlines for its first hour"
@@ -324,18 +326,43 @@ not as a sandbox. When the phone does not answer, the hook denies by default (`o
 
 Autopilot runs only on the phone. Nothing it uses or learns leaves the phone. It is limited three ways.
 
-- **Hard floor.** Some requests always wait for you, in every mode: new connections, standing permission requests,
-  account listings, secret releases, SSH signatures, everything that is asked every time (above), destructive MCP
-  tools, pushes that rewrite or delete history (or whose history could not be checked), hook questions about a
+- **Hard floor.** In Manual and Auto, some requests always wait for you: new connections, standing permission
+  requests, account listings, secret releases, SSH signatures, everything that is asked every time (above), destructive
+  MCP tools, pushes that rewrite or delete history (or whose history could not be checked), hook questions about a
   destructive command or a secret file, uploaded files that may hold something to run, and anything from a connection
-  paired less than 10 minutes ago. Lockdown denies, and never
-  approves.
+  paired less than 10 minutes ago. Lockdown denies, and never approves. Bypass is the exception, by design (below).
 - **Prompt-injection rule.** The model scores each request twice: once on the facts the phone verified (service,
   action, target, history), and once with the AI-written text added (reason, email body, commit messages, arguments).
   The approve score it uses is the lower of the two, and the deny score the higher. AI-written text can therefore make
   a request look riskier, never safer.
-- **Approve once.** Autopilot never creates standing permissions. Its automatic decisions never train it, so it
-  cannot reinforce its own mistakes.
+- **Approve once.** Autopilot never creates standing permissions of its own accord. Its automatic decisions never
+  train it, so it cannot reinforce its own mistakes.
+
+### Bypass
+
+Bypass is the switch for "approve everything, I'm not watching". While one runs, every request is approved at once,
+of every kind and every item in it: the hard floor above included (secrets, SSH signatures, purchases with what their
+screen would pick and within your budgets, destructive tools, force pushes and deletions, flagged uploads, account
+listings, standing permission requests), from a connection however new. A global bypass applies to every AI that is
+not locked down, whatever mode it has of its own, and turning one on also approves what already waits in its scope.
+It needs no model, so it answers while the app is closed (a push, the notification extension).
+
+Its guards:
+
+- **Turning it on is the owner's act.** It is held to confirm on the phone, then needs the phone's biometrics or
+  screen lock, on every path that starts one (the Autopilot page, an AI's page, the quick switcher). Siri, Shortcuts,
+  Focus filters and notification actions cannot start one. Stopping it and Lockdown need neither.
+- **Account takeover stays with you.** A new connection (pairing an AI or a computer) and another phone joining the
+  account never reach Bypass; they always wait for you.
+- **Nothing outlives it.** A standing permission an AI asks for during a bypass is marked as that bypass's (the
+  global one, or that AI's own). It counts only while that bypass is in force: every evaluation checks this in the
+  same database transaction, so it stops counting the moment the bypass ends (stopped, run out, locked down, or
+  replaced by another mode), whether or not it has been taken back yet. It is not stored at all if the bypass ended
+  before the approval finished; the request then waits for you. Taking it back is cleanup: done in the transaction
+  that ends the bypass, and again by a sweep whenever Autopilot is read; each says "Ended with the bypass" in Activity,
+  once. A timed bypass also caps it at its planned end. An AI's own bypass takes back only that AI's.
+- **It is visible.** An ongoing notification (Android) or Live Activity (iOS), the red mode pill and the Autopilot page
+  show it while it runs, with Stop; one without an end shows how long it has run.
 
 Details: [autopilot.md](autopilot.md).
 

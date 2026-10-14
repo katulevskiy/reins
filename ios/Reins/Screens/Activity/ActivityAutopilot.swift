@@ -32,11 +32,8 @@ enum ModeLook {
         }
     }
 
-    /// "14:05": minutes and seconds left.
-    static func clock(until: Int64, now: Int64) -> String {
-        let left = max(until - now, 0)
-        return String(format: "%d:%02d", left / 60, left % 60)
-    }
+    /// "14:05" left, "2d 4h" beyond a day, "∞" for a bypass without an end.
+    static func clock(until: Int64, now: Int64) -> String { AutopilotText.clock(until: until, now: now) }
 
     static func verdictWord(_ v: Verdict) -> String {
         switch v {
@@ -60,7 +57,8 @@ struct ActivityModePill: View {
     }
 }
 
-/// What the mode pill shows: the mode's symbol and name, or a pulse and the time left while a bypass runs.
+/// What the mode pill shows: the mode's symbol and name, or a pulse and the time left while a bypass runs (a pulse
+/// and "Bypass" for one without an end).
 struct ModePillLabel: View {
     var settings: AutopilotSettings
 
@@ -74,7 +72,8 @@ struct ModePillLabel: View {
             } else {
                 Image(systemName: ModeLook.symbol(mode)).font(.system(size: 13, weight: .semibold))
             }
-            if strong, let until = settings.bypassUntil {
+            // A bypass without an end has nothing to count down: it reads as the mode, as on Android.
+            if strong, let until = settings.bypassUntil, !AutopilotText.isUntilOff(until) {
                 LiveClock(interval: 1) { now in
                     Text(ModeLook.clock(until: until, now: Int64(now))).font(RFont.mono(14, .semibold)).monospacedDigit()
                 }

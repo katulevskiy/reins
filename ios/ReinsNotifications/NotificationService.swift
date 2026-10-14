@@ -62,7 +62,8 @@ final class NotificationService: UNNotificationServiceExtension {
         guard let core = try? CoreFactory.make(notifier: capture, keys: KeychainKeyWrapper(mayReset: false)) else { return nil }
         guard await core.session() != nil else { return nil }
         // Manual and Auto judge with the model, which only the app runs: park the item unjudged (handling it fully here
-        // would settle it as "could not judge" for good) and leave the judging to the app's next pass.
+        // would settle it as "could not judge" for good) and leave the judging to the app's next pass. Bypass and
+        // Lockdown decide either way: the deferring call still runs them.
         let deferred = (try? await core.autopilotSettings()).map(ExtensionPolicy.needsModel) ?? true
         do {
             if deferred {

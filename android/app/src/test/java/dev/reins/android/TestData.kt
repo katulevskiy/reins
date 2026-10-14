@@ -573,7 +573,17 @@ object TestData {
         connections: List<String> = emptyList(),
         classes: List<ClassView> = defaultClasses(),
         trainedAt: Long? = 1_700_000_000,
-    ) = ProfileView(id, name, icon, preset, isDefault, memory, connections, classes, trainedAt)
+        approveAt: Float = thresholds(preset).first,
+        denyAt: Float = thresholds(preset).second,
+        agreement: Float? = 0.94f,
+    ) = ProfileView(id, name, icon, preset, approveAt, denyAt, agreement, isDefault, memory, connections, classes, trainedAt)
+
+    /** What the core's presets mean (Custom starts from Balanced's). */
+    fun thresholds(preset: Preset): Pair<Float, Float> = when (preset) {
+        Preset.CAUTIOUS -> 0.98f to 0.95f
+        Preset.RELAXED -> 0.90f to 0.85f
+        Preset.BALANCED, Preset.CUSTOM -> 0.95f to 0.90f
+    }
 
     fun defaultClasses() = listOf(
         classView("github/write/push", "GitHub · write · push", 26u, 25u, 1u, 0.98f, autoApprove = true, toUnlock = 0u),

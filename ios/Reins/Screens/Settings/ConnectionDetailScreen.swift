@@ -98,7 +98,7 @@ private struct ConnectionAutopilotIfRead: View {
 }
 
 /// The Autopilot part of an AI's page: like every AI or its own mode (Manual, Auto) in a segmented control, then a
-/// bypass for just this AI (held to confirm in its sheet) and a lockdown for just this AI (a tap).
+/// bypass for just this AI (the bypass sheet, held to confirm) and a lockdown for just this AI (a tap).
 private struct ConnectionAutopilotGroup: View {
     var connection: ConnectionView
     var settings: AutopilotSettings
@@ -145,9 +145,8 @@ private struct ConnectionAutopilotGroup: View {
             HelpHeader(title: "Autopilot", help: Self.help)
         }
         .sheet(isPresented: $askBypass) {
-            ConnectionBypassSheet(who: label) { minutes in
-                askBypass = false
-                setMode(.bypass, minutes: minutes)
+            BypassSheet(who: label) { length in
+                startBypass(minutes: length.minutes)
             }
             .environment(\.feedback, feedback)
         }
@@ -192,9 +191,14 @@ private struct ConnectionAutopilotGroup: View {
             Button(role: .destructive, action: stopBypass) {
                 HStack(spacing: 6) {
                     Image(systemName: "stop.fill").font(.system(size: 12, weight: .semibold))
-                    TimelineView(.periodic(from: .now, by: 15)) { ctx in
-                        Text("Stop · " + SettingsText.minutesLeft(until, now: nowSeconds(ctx.date)))
+                    if AutopilotText.isUntilOff(until) {
+                        Text("Stop · until off")
                             .accessibilityIdentifier("connectionModeLine")
+                    } else {
+                        TimelineView(.periodic(from: .now, by: 15)) { ctx in
+                            Text("Stop · " + AutopilotText.timeLeft(until: until, now: nowSeconds(ctx.date)))
+                                .accessibilityIdentifier("connectionModeLine")
+                        }
                     }
                 }
                 .modePill(fill: Palette.danger.opacity(0.16), text: Palette.danger)
@@ -236,26 +240,30 @@ private struct ConnectionAutopilotGroup: View {
         }
     }
 
-    /// Sets this AI's mode (`nil`: back to following the global one). The change is felt at once; a refusal from the
-    /// core (a just-paired connection cannot be bypassed) says why. A bypass needs the owner (Face ID or the
-    /// passcode) as on the Autopilot screen: holding the button shows intent, not who holds the phone.
-    private func setMode(_ new: AutopilotMode?, minutes: UInt32? = nil) {
-        guard new == .bypass else { return apply(new, minutes: minutes) }
-        Task {
-            guard await model.authenticator.confirm("Turn on Bypass for \(label)") else { return }
-            apply(new, minutes: minutes)
+    /// Sets this AI's mode (`nil`: back to following the global one); not Bypass, which `startBypass` turns on. The
+    /// change is felt at once; a refusal from the core says why.
+    private func setMode(_ new: AutopilotMode?) {
+        if let event = SettingsText.modeChangeEvent(mode, new ?? settings.mode) { feedback.play(event) }
+        let id = connection.id
+        model.patchAutopilot { $0.applyMode(new, minutes: 0, connectionId: id) }
+        run {
+            try await model.core.setAutopilotMode(connectionId: id, mode: new, minutes: nil)
         }
     }
 
-    private func apply(_ new: AutopilotMode?, minutes: UInt32?) {
-        let old = mode
-        let restart = new == .bypass && old == .bypass
-        if let event = restart ? .bypassOn : SettingsText.modeChangeEvent(old, new ?? settings.mode) { feedback.play(event) }
+    /// A bypass of this AI for `minutes`, or until turned off (nil), after its sheet was held. Holding proves intent,
+    /// not identity: the phone's owner confirms it too (Face ID or the passcode), and without that nothing changes,
+    /// not even for a moment. A refusal from the core (a just-paired connection cannot be bypassed) says why.
+    private func startBypass(minutes: UInt32?) {
         let id = connection.id
-        let length = minutes ?? SettingsText.bypassMinutes[0]
-        model.patchAutopilot { $0.applyMode(new, minutes: length, connectionId: id) }
-        run {
-            try await model.core.setAutopilotMode(connectionId: id, mode: new, minutes: new == .bypass ? length : nil)
+        let who = untrusted(connection.label)
+        Task {
+            guard await model.authenticator.confirm("Turn on Bypass for \(who)") else { return }
+            feedback.play(.bypassOn)
+            model.patchAutopilot { $0.applyBypass(minutes: minutes, connectionId: id) }
+            run {
+                try await model.core.startBypass(connectionId: id, minutes: minutes)
+            }
         }
     }
 
@@ -499,59 +507,5 @@ private struct DisconnectGroup: View {
             }
             busy = false
         }
-    }
-}
-
-/// Turning on a bypass for one AI: how long, and what it means; held to confirm.
-private struct ConnectionBypassSheet: View {
-    var who: String
-    var onConfirm: (UInt32) -> Void
-    @Environment(\.dismiss) private var dismiss
-    @State private var minutes: UInt32 = SettingsText.bypassMinutes[0]
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 0) {
-            Image(systemName: "bolt.fill")
-                .font(.system(size: 21, weight: .semibold))
-                .foregroundStyle(.white)
-                .frame(width: 48, height: 48)
-                .background(Palette.danger, in: RoundedRectangle(cornerRadius: 15, style: .continuous))
-                .accessibilityHidden(true)
-            Text("Bypass \(who)?")
-                .font(RFont.sans(20, .semibold))
-                .foregroundStyle(Palette.text)
-                .padding(.top, 14)
-            Text("Approved without asking. Sent means sent.")
-                .font(RFont.sans(15))
-                .foregroundStyle(Palette.secondary)
-                .padding(.top, 8)
-            GroupFooter("Still asked every time: new connections, permissions, passwords and secrets, deletions and other one-off changes, SSH and flagged files.")
-                .padding(.top, 6)
-            Text("For").font(RFont.sans(13, .medium)).foregroundStyle(Palette.tertiary).padding(.top, 16).padding(.bottom, 8)
-            HStack(spacing: 8) {
-                ForEach(SettingsText.bypassMinutes, id: \.self) { m in
-                    OptionChip(m == 60 ? "1 hour" : "\(m) min", selected: minutes == m) { minutes = m }
-                        .accessibilityIdentifier("bypass:\(m)")
-                }
-            }
-            Spacer(minLength: 22)
-            HStack(spacing: 10) {
-                Button("Cancel") { dismiss() }
-                    .buttonStyle(CapsuleButtonStyle(kind: .secondary, height: 50))
-                HoldButton(title: "Hold to bypass", symbol: "bolt.fill", height: 50) { onConfirm(minutes) }
-                    .layoutPriority(1)
-                    .accessibilityIdentifier("confirmBypass")
-            }
-            Text("Hold for 2 seconds")
-                .font(RFont.sans(12))
-                .foregroundStyle(Palette.tertiary)
-                .frame(maxWidth: .infinity)
-                .padding(.top, 8)
-        }
-        .padding(22)
-        .presentationDetents([.height(520), .large])
-        .presentationDragIndicator(.visible)
-        .presentationBackground(Palette.background)
-        .accessibilityIdentifier("bypassDialog")
     }
 }

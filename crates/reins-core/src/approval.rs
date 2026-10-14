@@ -467,7 +467,11 @@ impl Engine {
         let shorten_to = choice.standing.as_ref().and_then(|s| s.duration_secs);
         let grant = grant_from_request(asked, &parked.request.connection_id, now, shorten_to)?
             .for_account(parked.request.account.clone());
-        self.store.insert_grant_from(&grant, &parked.label(), "ai_request")?;
+        self.store.insert_grant_from(
+            &grant,
+            &parked.label(),
+            &crate::autopilot::context::grant_origin("ai_request"),
+        )?;
         let summary = views::grant_summary(&grant.scope);
         let expires_at = grant.expires_at.unwrap_or(now);
         let mut audit = self.audit(

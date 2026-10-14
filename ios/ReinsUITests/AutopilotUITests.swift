@@ -1,7 +1,7 @@
 import XCTest
 
-/// Walks Autopilot in the `-demo` app the way a user would: the modes with their warnings, the model, a profile,
-/// "Try it". Screenshots go to the test's attachments and, when `REINS_SHOTS` names a folder, there too.
+/// Walks Autopilot in the `-demo` app the way a user would: the modes, a bypass held to confirm (timed and until
+/// turned off), Lock down as a plain tap, the model, a profile and its thresholds, "Try it". Screenshots go to the test's attachments and, when `REINS_SHOTS` names a folder, there too.
 final class AutopilotUITests: XCTestCase {
     private var app: XCUIApplication!
 
@@ -62,63 +62,116 @@ final class AutopilotUITests: XCTestCase {
         }
     }
 
-    func testModesWarnBeforeBypassAndLockdown() {
+    private func selected(_ id: String) {
+        expectation(for: NSPredicate(format: "isSelected == true"), evaluatedWith: element(id))
+        waitForExpectations(timeout: 5)
+    }
+
+    func testBypassIsHeldAndLockDownIsAPlainTap() {
         launch()
-        text("Manual")
+        waitFor("mode:manual")
+        selected("mode:manual")
         shot("autopilot-manual")
         tap("mode:auto")
-        text("Decides the easy ones")
+        selected("mode:auto")
         tap("mode:bypass")
         waitFor("confirmBypass")
         shot("autopilot-bypass-sheet")
-        tap("bypass:30")
-        // Hold to confirm: held for two seconds.
+        tap("bypass:60")
+        // A tap is not enough: held for two seconds.
+        waitFor("confirmBypass").tap()
+        XCTAssertTrue(element("confirmBypass").exists, "a tap does not start a bypass")
         waitFor("confirmBypass").press(forDuration: 2.6)
         waitFor("bypassClock")
-        text("Stop bypass")
+        text("Approving without asking")
         shot("autopilot-bypass")
         tap("stopBypass")
-        text("Decides the easy ones")
+        selected("mode:auto")
+        // Lock down: no dialog.
         tap("mode:lockdown")
-        XCTAssertTrue(app.alerts["Lock down?"].waitForExistence(timeout: 5))
-        app.alerts.buttons["Lock down"].tap()
         waitFor("endLockdown")
+        XCTAssertFalse(app.alerts.firstMatch.exists, "Lock down asks nothing")
         shot("autopilot-lockdown")
         tap("endLockdown")
         // Lockdown replaced the mode picked before it, so it ends in Manual (as on Android).
-        let manual = app.staticTexts.matching(identifier: "heroMode").matching(NSPredicate(format: "label == 'Manual'"))
-        XCTAssertTrue(manual.firstMatch.waitForExistence(timeout: 8), "Lockdown did not end in Manual")
+        waitFor("mode:lockdown")
+        selected("mode:manual")
+    }
+
+    func testABypassCanRunUntilTurnedOff() {
+        launch()
+        tap("mode:bypass")
+        tap("bypass:custom")
+        waitFor("bypassForDialog")
+        tap("bypassFor:untilOff")
+        XCTAssertTrue(waitFor("untilOffWarning").label.contains("Everything is approved without asking until you stop it."))
+        shot("autopilot-bypass-for")
+        tap("closeBypassFor")
+        // Back on the first sheet, Custom shows the choice.
+        XCTAssertTrue(waitFor("bypass:custom").label.contains("Until off"))
+        waitFor("confirmBypass").press(forDuration: 2.6)
+        waitFor("bypassClock")
+        text("On until you stop it")
+        shot("autopilot-bypass-until-off")
+        tap("stopBypass")
+        waitFor("mode:bypass")
+    }
+
+    func testACustomLengthStartsFromItsOwnSheet() {
+        launch()
+        tap("mode:bypass")
+        tap("bypass:custom")
+        waitFor("bypassForDialog")
+        let stepper = waitFor("bypassStepper")
+        stepper.increment()
+        XCTAssertEqual(stepper.value as? String, "4 days")
+        waitFor("confirmBypassFor").press(forDuration: 2.6)
+        waitFor("bypassClock")
+        text("Approving without asking")
+        tap("stopBypass")
     }
 
     func testTheModelDownloadsWithProgressAndCanBeDeleted() {
         launch(["-demoNoModel"])
-        text("NEEDS MODEL")
-        scrollTo("downloadModel")
+        text("Get Autopilot's score")
+        XCTAssertTrue(waitFor("mode:auto").label.contains("Needs the model"))
         shot("autopilot-no-model")
         tap("downloadModel")
-        text("Downloading")
+        waitFor("modelProgress")
         shot("autopilot-downloading")
         waitFor("modelInstalled", timeout: 15)
+        waitFor("stat:scored")
+        tap("modelRow")
+        waitFor("modelSheet")
         tap("deleteModel")
         XCTAssertTrue(app.alerts["Delete the model?"].waitForExistence(timeout: 5))
         app.alerts.buttons["Delete"].tap()
+        waitFor("downloadModelDetails")
+        tap("closeModel")
         waitFor("downloadModel")
     }
 
-    func testAProfileShowsItsKindsAndUnlockingWarns() {
+    func testAProfileShowsItsKindsAndThresholds() {
         launch()
         scrollTo("profile:personal")
         shot("autopilot-profiles")
         tap("profile:personal")
         waitFor("class:github/write/push")
+        waitFor("statMemory")
         shot("profile")
         tap("class:gmail/read")
         tap("lock:off:gmail/read")
         XCTAssertTrue(app.alerts.firstMatch.waitForExistence(timeout: 5))
         app.alerts.buttons["Unlock"].tap()
         text("Unlocked by you")
-        app.buttons["Cautious"].firstMatch.tap()
-        text("Approves when 98% sure")
+        tap("preset:cautious")
+        selected("preset:cautious")
+        tap("preset:custom")
+        waitFor("approveAt")
+        waitFor("replay")
+        text("decided")
+        element("approveAt").increment()
+        shot("profile-custom")
     }
 
     func testTryItJudgesAnExample() {

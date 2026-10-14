@@ -113,7 +113,7 @@ class AutopilotNotificationsTest {
     @Test
     fun `a bypass shows an ongoing countdown with Stop that ends with it`() {
         val nowMillis = 1_700_000_000_000L
-        val notice = AutopilotText.BypassNotice("Bypass on · 15 min left", "Requests from every AI are approved without asking, except the riskiest.", 1_700_000_900, true, emptyList())
+        val notice = AutopilotText.BypassNotice("Bypass on · 15 min left", "For every AI. New connections and new phones still ask.", 1_700_000_900, true, emptyList())
         notifier.showBypass(notice, nowMillis)
         val n = posted().single()
         assertTrue((n.flags and Notification.FLAG_ONGOING_EVENT) != 0)
@@ -126,6 +126,20 @@ class AutopilotNotificationsTest {
         assertEquals(BypassStopReceiver.ACTION_STOP, shadowOf(stop.actionIntent).savedIntent.action)
         notifier.showBypass(null)
         assertTrue(posted().isEmpty())
+    }
+
+    @Test
+    fun `a bypass without an end counts up from its start and never times out`() {
+        val nowMillis = 1_700_000_000_000L
+        val notice = AutopilotText.BypassNotice("Bypass on · until you stop it", "For every AI. New connections and new phones still ask.", AutopilotText.UNTIL_OFF, true, emptyList(), since = 1_699_800_000)
+        notifier.showBypass(notice, nowMillis)
+        val n = posted().single()
+        assertEquals("Bypass on · until you stop it", n.extras.getCharSequence(Notification.EXTRA_TITLE).toString())
+        assertTrue((n.flags and Notification.FLAG_ONGOING_EVENT) != 0)
+        assertEquals(1_699_800_000_000L, n.`when`)
+        assertTrue(!n.extras.getBoolean(Notification.EXTRA_CHRONOMETER_COUNT_DOWN))
+        assertEquals(0L, n.timeoutAfter)
+        assertEquals("Stop", n.actions.single().title.toString())
     }
 
     @Test

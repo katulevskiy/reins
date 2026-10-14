@@ -2562,6 +2562,11 @@ public protocol ReinsCoreProtocol: AnyObject, Sendable {
     func autopilotSettings() async throws  -> AutopilotSettings
     
     /**
+     * The last `days` (1 to 30) of Autopilot: requests scored, how often it agreed with the user, kinds on Auto.
+     */
+    func autopilotStats(days: UInt32) async throws  -> AutopilotStats
+    
+    /**
      * What Autopilot made of a waiting request, for the approval screen (`None` before it looked at it).
      */
     func autopilotSuggestion(requestId: String) async throws  -> SuggestionView?
@@ -2648,8 +2653,8 @@ public protocol ReinsCoreProtocol: AnyObject, Sendable {
     func handlePush(kind: String, id: String) async throws 
     
     /**
-     * Like `handle_push` without Autopilot's pass, for a process that cannot run the model (the iOS notification
-     * extension): the item waits unjudged, and the app's next pass judges it.
+     * Like `handle_push`, for a process that cannot run the model (the iOS notification extension): Bypass and
+     * Lockdown decide at once; what Manual or Auto would judge waits unjudged, and the app's next pass judges it.
      */
     func handlePushDeferringAutopilot(kind: String, id: String) async throws 
     
@@ -2785,8 +2790,9 @@ public protocol ReinsCoreProtocol: AnyObject, Sendable {
     
     /**
      * Sets the global mode (`connection_id` = `None`) or one connection's. `mode` = `None` returns the global mode to
-     * its default, or makes the connection follow the global mode. `Bypass` lasts `minutes` (default 15, at most 60)
-     * and is refused for a connection paired less than 10 minutes ago; `Lockdown` also denies what is waiting.
+     * its default, or makes the connection follow the global mode. `Bypass` lasts `minutes` (default 15, at most a
+     * year; `start_bypass` also starts one without an end) and is refused for a connection paired less than 10
+     * minutes ago; `Lockdown` also denies what is waiting.
      */
     func setAutopilotMode(connectionId: String?, mode: AutopilotMode?, minutes: UInt32?) async throws 
     
@@ -2825,6 +2831,11 @@ public protocol ReinsCoreProtocol: AnyObject, Sendable {
     func setStartingPolicy(policy: StartingPolicy) async throws 
     
     /**
+     * A profile's own thresholds (the `Custom` preset), each clamped to 0.80–0.99.
+     */
+    func setThresholds(profileId: String, approveAt: Float, denyAt: Float) async throws 
+    
+    /**
      * Signs another device of the account out (a lost phone), with the recovery code or master password the user
      * typed now: it can no longer sync or answer for the account.
      */
@@ -2844,6 +2855,14 @@ public protocol ReinsCoreProtocol: AnyObject, Sendable {
     func ssoFinish(serverUrl: String, callbackUrl: String, state: String, verifier: String) async throws  -> SsoOutcome
     
     /**
+     * Starts a bypass of every AI (`connection_id` = `None`) or of one, for `minutes` (1 minute to a year) or, with
+     * `minutes` = `None`, until the user turns it off (`bypass_until` then reads `i64::MAX`). Everything is approved
+     * at once, what already waits too; only new connections and other phones still ask. A single connection paired
+     * less than 10 minutes ago cannot be bypassed. Stop it with `set_autopilot_mode` (the mode it interrupted).
+     */
+    func startBypass(connectionId: String?, minutes: UInt32?) async throws 
+    
+    /**
      * What a newly connected AI may do before it asked for anything; `None` until the user chose (acts as asking).
      */
     func startingPolicy() async throws  -> StartingPolicy?
@@ -2852,6 +2871,12 @@ public protocol ReinsCoreProtocol: AnyObject, Sendable {
      * Foreground long-poll, then everything received is processed like a push.
      */
     func sync(waitSecs: UInt32) async throws  -> [PendingItem]
+    
+    /**
+     * What the profile's last 30 days would have been at these thresholds: decided, asked, and decided otherwise
+     * than the user wanted.
+     */
+    func thresholdReplay(profileId: String, approveAt: Float, denyAt: Float) async throws  -> ThresholdReplay
     
     /**
      * Opens a `Locked` account with its recovery code (case, spaces and dashes do not count), or with the master
@@ -3404,6 +3429,25 @@ open func autopilotSettings()async throws  -> AutopilotSettings  {
 }
     
     /**
+     * The last `days` (1 to 30) of Autopilot: requests scored, how often it agreed with the user, kinds on Auto.
+     */
+open func autopilotStats(days: UInt32)async throws  -> AutopilotStats  {
+    return
+        try  await uniffiRustCallAsync(
+            rustFutureFunc: {
+                uniffi_reins_core_fn_method_reinscore_autopilot_stats(
+                        self.uniffiCloneHandle(),FfiConverterUInt32.lower(days)
+                )
+            },
+            pollFunc: ffi_reins_core_rust_future_poll_rust_buffer,
+            completeFunc: ffi_reins_core_rust_future_complete_rust_buffer,
+            freeFunc: ffi_reins_core_rust_future_free_rust_buffer,
+            liftFunc: FfiConverterTypeAutopilotStats_lift,
+            errorHandler: FfiConverterTypeCoreError_lift
+        )
+}
+    
+    /**
      * What Autopilot made of a waiting request, for the approval screen (`None` before it looked at it).
      */
 open func autopilotSuggestion(requestId: String)async throws  -> SuggestionView?  {
@@ -3757,8 +3801,8 @@ open func handlePush(kind: String, id: String)async throws   {
 }
     
     /**
-     * Like `handle_push` without Autopilot's pass, for a process that cannot run the model (the iOS notification
-     * extension): the item waits unjudged, and the app's next pass judges it.
+     * Like `handle_push`, for a process that cannot run the model (the iOS notification extension): Bypass and
+     * Lockdown decide at once; what Manual or Auto would judge waits unjudged, and the app's next pass judges it.
      */
 open func handlePushDeferringAutopilot(kind: String, id: String)async throws   {
     return
@@ -4331,8 +4375,9 @@ open func session()async  -> SessionInfo?  {
     
     /**
      * Sets the global mode (`connection_id` = `None`) or one connection's. `mode` = `None` returns the global mode to
-     * its default, or makes the connection follow the global mode. `Bypass` lasts `minutes` (default 15, at most 60)
-     * and is refused for a connection paired less than 10 minutes ago; `Lockdown` also denies what is waiting.
+     * its default, or makes the connection follow the global mode. `Bypass` lasts `minutes` (default 15, at most a
+     * year; `start_bypass` also starts one without an end) and is refused for a connection paired less than 10
+     * minutes ago; `Lockdown` also denies what is waiting.
      */
 open func setAutopilotMode(connectionId: String?, mode: AutopilotMode?, minutes: UInt32?)async throws   {
     return
@@ -4476,6 +4521,25 @@ open func setStartingPolicy(policy: StartingPolicy)async throws   {
 }
     
     /**
+     * A profile's own thresholds (the `Custom` preset), each clamped to 0.80–0.99.
+     */
+open func setThresholds(profileId: String, approveAt: Float, denyAt: Float)async throws   {
+    return
+        try  await uniffiRustCallAsync(
+            rustFutureFunc: {
+                uniffi_reins_core_fn_method_reinscore_set_thresholds(
+                        self.uniffiCloneHandle(),FfiConverterString.lower(profileId),FfiConverterFloat.lower(approveAt),FfiConverterFloat.lower(denyAt)
+                )
+            },
+            pollFunc: ffi_reins_core_rust_future_poll_void,
+            completeFunc: ffi_reins_core_rust_future_complete_void,
+            freeFunc: ffi_reins_core_rust_future_free_void,
+            liftFunc: { $0 },
+            errorHandler: FfiConverterTypeCoreError_lift
+        )
+}
+    
+    /**
      * Signs another device of the account out (a lost phone), with the recovery code or master password the user
      * typed now: it can no longer sync or answer for the account.
      */
@@ -4537,6 +4601,28 @@ open func ssoFinish(serverUrl: String, callbackUrl: String, state: String, verif
 }
     
     /**
+     * Starts a bypass of every AI (`connection_id` = `None`) or of one, for `minutes` (1 minute to a year) or, with
+     * `minutes` = `None`, until the user turns it off (`bypass_until` then reads `i64::MAX`). Everything is approved
+     * at once, what already waits too; only new connections and other phones still ask. A single connection paired
+     * less than 10 minutes ago cannot be bypassed. Stop it with `set_autopilot_mode` (the mode it interrupted).
+     */
+open func startBypass(connectionId: String?, minutes: UInt32?)async throws   {
+    return
+        try  await uniffiRustCallAsync(
+            rustFutureFunc: {
+                uniffi_reins_core_fn_method_reinscore_start_bypass(
+                        self.uniffiCloneHandle(),FfiConverterOptionString.lower(connectionId),FfiConverterOptionUInt32.lower(minutes)
+                )
+            },
+            pollFunc: ffi_reins_core_rust_future_poll_void,
+            completeFunc: ffi_reins_core_rust_future_complete_void,
+            freeFunc: ffi_reins_core_rust_future_free_void,
+            liftFunc: { $0 },
+            errorHandler: FfiConverterTypeCoreError_lift
+        )
+}
+    
+    /**
      * What a newly connected AI may do before it asked for anything; `None` until the user chose (acts as asking).
      */
 open func startingPolicy()async throws  -> StartingPolicy?  {
@@ -4570,6 +4656,26 @@ open func sync(waitSecs: UInt32)async throws  -> [PendingItem]  {
             completeFunc: ffi_reins_core_rust_future_complete_rust_buffer,
             freeFunc: ffi_reins_core_rust_future_free_rust_buffer,
             liftFunc: FfiConverterSequenceTypePendingItem.lift,
+            errorHandler: FfiConverterTypeCoreError_lift
+        )
+}
+    
+    /**
+     * What the profile's last 30 days would have been at these thresholds: decided, asked, and decided otherwise
+     * than the user wanted.
+     */
+open func thresholdReplay(profileId: String, approveAt: Float, denyAt: Float)async throws  -> ThresholdReplay  {
+    return
+        try  await uniffiRustCallAsync(
+            rustFutureFunc: {
+                uniffi_reins_core_fn_method_reinscore_threshold_replay(
+                        self.uniffiCloneHandle(),FfiConverterString.lower(profileId),FfiConverterFloat.lower(approveAt),FfiConverterFloat.lower(denyAt)
+                )
+            },
+            pollFunc: ffi_reins_core_rust_future_poll_rust_buffer,
+            completeFunc: ffi_reins_core_rust_future_complete_rust_buffer,
+            freeFunc: ffi_reins_core_rust_future_free_rust_buffer,
+            liftFunc: FfiConverterTypeThresholdReplay_lift,
             errorHandler: FfiConverterTypeCoreError_lift
         )
 }
@@ -6338,9 +6444,13 @@ public struct AutopilotSettings: Equatable, Hashable {
      */
     public var baseMode: AutopilotMode
     /**
-     * A global bypass runs until then (unix seconds).
+     * A global bypass runs until then (unix seconds); `i64::MAX` while it runs until the user turns it off.
      */
     public var bypassUntil: Int64?
+    /**
+     * When the global bypass started.
+     */
+    public var bypassSince: Int64?
     /**
      * The profile of every connection that has none of its own.
      */
@@ -6365,8 +6475,11 @@ public struct AutopilotSettings: Equatable, Hashable {
          * The global mode when no bypass runs (what the user picked; Manual until they pick one).
          */baseMode: AutopilotMode, 
         /**
-         * A global bypass runs until then (unix seconds).
+         * A global bypass runs until then (unix seconds); `i64::MAX` while it runs until the user turns it off.
          */bypassUntil: Int64?, 
+        /**
+         * When the global bypass started.
+         */bypassSince: Int64?, 
         /**
          * The profile of every connection that has none of its own.
          */defaultProfileId: String, 
@@ -6379,6 +6492,7 @@ public struct AutopilotSettings: Equatable, Hashable {
         self.mode = mode
         self.baseMode = baseMode
         self.bypassUntil = bypassUntil
+        self.bypassSince = bypassSince
         self.defaultProfileId = defaultProfileId
         self.wifiOnly = wifiOnly
         self.model = model
@@ -6404,6 +6518,7 @@ public struct FfiConverterTypeAutopilotSettings: FfiConverterRustBuffer {
                 mode: FfiConverterTypeAutopilotMode.read(from: &buf), 
                 baseMode: FfiConverterTypeAutopilotMode.read(from: &buf), 
                 bypassUntil: FfiConverterOptionInt64.read(from: &buf), 
+                bypassSince: FfiConverterOptionInt64.read(from: &buf), 
                 defaultProfileId: FfiConverterString.read(from: &buf), 
                 wifiOnly: FfiConverterBool.read(from: &buf), 
                 model: FfiConverterTypeModelStatus.read(from: &buf), 
@@ -6415,6 +6530,7 @@ public struct FfiConverterTypeAutopilotSettings: FfiConverterRustBuffer {
         FfiConverterTypeAutopilotMode.write(value.mode, into: &buf)
         FfiConverterTypeAutopilotMode.write(value.baseMode, into: &buf)
         FfiConverterOptionInt64.write(value.bypassUntil, into: &buf)
+        FfiConverterOptionInt64.write(value.bypassSince, into: &buf)
         FfiConverterString.write(value.defaultProfileId, into: &buf)
         FfiConverterBool.write(value.wifiOnly, into: &buf)
         FfiConverterTypeModelStatus.write(value.model, into: &buf)
@@ -6435,6 +6551,117 @@ public func FfiConverterTypeAutopilotSettings_lift(_ buf: RustBuffer) throws -> 
 #endif
 public func FfiConverterTypeAutopilotSettings_lower(_ value: AutopilotSettings) -> RustBuffer {
     return FfiConverterTypeAutopilotSettings.lower(value)
+}
+
+
+/**
+ * Autopilot over the last days, for the strip at the top of its page.
+ */
+public struct AutopilotStats: Equatable, Hashable {
+    /**
+     * The window, in days.
+     */
+    public var days: UInt32
+    /**
+     * Requests the model scored.
+     */
+    public var scored: UInt32
+    /**
+     * Share of the user's decisions Autopilot would have made the same way (among those it would have decided on its
+     * own); `None` before there is one.
+     */
+    public var matched: Float?
+    /**
+     * How many decisions `matched` is out of.
+     */
+    public var compared: UInt32
+    /**
+     * Kinds of request Auto may approve on its own, over every profile…
+     */
+    public var kindsOnAuto: UInt32
+    /**
+     * …out of the kinds seen.
+     */
+    public var kinds: UInt32
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(
+        /**
+         * The window, in days.
+         */days: UInt32, 
+        /**
+         * Requests the model scored.
+         */scored: UInt32, 
+        /**
+         * Share of the user's decisions Autopilot would have made the same way (among those it would have decided on its
+         * own); `None` before there is one.
+         */matched: Float?, 
+        /**
+         * How many decisions `matched` is out of.
+         */compared: UInt32, 
+        /**
+         * Kinds of request Auto may approve on its own, over every profile…
+         */kindsOnAuto: UInt32, 
+        /**
+         * …out of the kinds seen.
+         */kinds: UInt32) {
+        self.days = days
+        self.scored = scored
+        self.matched = matched
+        self.compared = compared
+        self.kindsOnAuto = kindsOnAuto
+        self.kinds = kinds
+    }
+
+    
+
+    
+}
+
+#if compiler(>=6)
+extension AutopilotStats: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeAutopilotStats: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> AutopilotStats {
+        return
+            try AutopilotStats(
+                days: FfiConverterUInt32.read(from: &buf), 
+                scored: FfiConverterUInt32.read(from: &buf), 
+                matched: FfiConverterOptionFloat.read(from: &buf), 
+                compared: FfiConverterUInt32.read(from: &buf), 
+                kindsOnAuto: FfiConverterUInt32.read(from: &buf), 
+                kinds: FfiConverterUInt32.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: AutopilotStats, into buf: inout [UInt8]) {
+        FfiConverterUInt32.write(value.days, into: &buf)
+        FfiConverterUInt32.write(value.scored, into: &buf)
+        FfiConverterOptionFloat.write(value.matched, into: &buf)
+        FfiConverterUInt32.write(value.compared, into: &buf)
+        FfiConverterUInt32.write(value.kindsOnAuto, into: &buf)
+        FfiConverterUInt32.write(value.kinds, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeAutopilotStats_lift(_ buf: RustBuffer) throws -> AutopilotStats {
+    return try FfiConverterTypeAutopilotStats.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeAutopilotStats_lower(_ value: AutopilotStats) -> RustBuffer {
+    return FfiConverterTypeAutopilotStats.lower(value)
 }
 
 
@@ -6949,9 +7176,13 @@ public struct ConnectionAutopilot: Equatable, Hashable {
      */
     public var baseMode: AutopilotMode?
     /**
-     * A bypass of this connection runs until then.
+     * A bypass of this connection runs until then (`i64::MAX`: until the user turns it off).
      */
     public var bypassUntil: Int64?
+    /**
+     * When that bypass started.
+     */
+    public var bypassSince: Int64?
     /**
      * What applies to its requests now (global lockdown and bypass included).
      */
@@ -6968,8 +7199,11 @@ public struct ConnectionAutopilot: Equatable, Hashable {
          * The connection's own mode when no bypass runs; `None` = it follows the global mode.
          */baseMode: AutopilotMode?, 
         /**
-         * A bypass of this connection runs until then.
+         * A bypass of this connection runs until then (`i64::MAX`: until the user turns it off).
          */bypassUntil: Int64?, 
+        /**
+         * When that bypass started.
+         */bypassSince: Int64?, 
         /**
          * What applies to its requests now (global lockdown and bypass included).
          */mode: AutopilotMode, 
@@ -6979,6 +7213,7 @@ public struct ConnectionAutopilot: Equatable, Hashable {
         self.connectionId = connectionId
         self.baseMode = baseMode
         self.bypassUntil = bypassUntil
+        self.bypassSince = bypassSince
         self.mode = mode
         self.profileId = profileId
     }
@@ -7002,6 +7237,7 @@ public struct FfiConverterTypeConnectionAutopilot: FfiConverterRustBuffer {
                 connectionId: FfiConverterString.read(from: &buf), 
                 baseMode: FfiConverterOptionTypeAutopilotMode.read(from: &buf), 
                 bypassUntil: FfiConverterOptionInt64.read(from: &buf), 
+                bypassSince: FfiConverterOptionInt64.read(from: &buf), 
                 mode: FfiConverterTypeAutopilotMode.read(from: &buf), 
                 profileId: FfiConverterString.read(from: &buf)
         )
@@ -7011,6 +7247,7 @@ public struct FfiConverterTypeConnectionAutopilot: FfiConverterRustBuffer {
         FfiConverterString.write(value.connectionId, into: &buf)
         FfiConverterOptionTypeAutopilotMode.write(value.baseMode, into: &buf)
         FfiConverterOptionInt64.write(value.bypassUntil, into: &buf)
+        FfiConverterOptionInt64.write(value.bypassSince, into: &buf)
         FfiConverterTypeAutopilotMode.write(value.mode, into: &buf)
         FfiConverterString.write(value.profileId, into: &buf)
     }
@@ -9906,7 +10143,20 @@ public struct ProfileView: Equatable, Hashable {
     public var id: String
     public var name: String
     public var icon: String?
+    /**
+     * `Custom` when the user set thresholds of their own.
+     */
     public var preset: Preset
+    /**
+     * The thresholds in use: Auto approves at or above `approve_at` and denies at or above `deny_at`.
+     */
+    public var approveAt: Float
+    public var denyAt: Float
+    /**
+     * Share of the remembered decisions where Autopilot would have done what the user did (among those it would
+     * have decided on its own); `None` before there is one.
+     */
+    public var agreement: Float?
     public var isDefault: Bool
     /**
      * Decisions remembered.
@@ -9927,7 +10177,17 @@ public struct ProfileView: Equatable, Hashable {
 
     // Default memberwise initializers are never public by default, so we
     // declare one manually.
-    public init(id: String, name: String, icon: String?, preset: Preset, isDefault: Bool, 
+    public init(id: String, name: String, icon: String?, 
+        /**
+         * `Custom` when the user set thresholds of their own.
+         */preset: Preset, 
+        /**
+         * The thresholds in use: Auto approves at or above `approve_at` and denies at or above `deny_at`.
+         */approveAt: Float, denyAt: Float, 
+        /**
+         * Share of the remembered decisions where Autopilot would have done what the user did (among those it would
+         * have decided on its own); `None` before there is one.
+         */agreement: Float?, isDefault: Bool, 
         /**
          * Decisions remembered.
          */memoryCount: UInt32, 
@@ -9944,6 +10204,9 @@ public struct ProfileView: Equatable, Hashable {
         self.name = name
         self.icon = icon
         self.preset = preset
+        self.approveAt = approveAt
+        self.denyAt = denyAt
+        self.agreement = agreement
         self.isDefault = isDefault
         self.memoryCount = memoryCount
         self.connections = connections
@@ -9971,6 +10234,9 @@ public struct FfiConverterTypeProfileView: FfiConverterRustBuffer {
                 name: FfiConverterString.read(from: &buf), 
                 icon: FfiConverterOptionString.read(from: &buf), 
                 preset: FfiConverterTypePreset.read(from: &buf), 
+                approveAt: FfiConverterFloat.read(from: &buf), 
+                denyAt: FfiConverterFloat.read(from: &buf), 
+                agreement: FfiConverterOptionFloat.read(from: &buf), 
                 isDefault: FfiConverterBool.read(from: &buf), 
                 memoryCount: FfiConverterUInt32.read(from: &buf), 
                 connections: FfiConverterSequenceString.read(from: &buf), 
@@ -9984,6 +10250,9 @@ public struct FfiConverterTypeProfileView: FfiConverterRustBuffer {
         FfiConverterString.write(value.name, into: &buf)
         FfiConverterOptionString.write(value.icon, into: &buf)
         FfiConverterTypePreset.write(value.preset, into: &buf)
+        FfiConverterFloat.write(value.approveAt, into: &buf)
+        FfiConverterFloat.write(value.denyAt, into: &buf)
+        FfiConverterOptionFloat.write(value.agreement, into: &buf)
         FfiConverterBool.write(value.isDefault, into: &buf)
         FfiConverterUInt32.write(value.memoryCount, into: &buf)
         FfiConverterSequenceString.write(value.connections, into: &buf)
@@ -11970,6 +12239,89 @@ public func FfiConverterTypeSuggestionView_lower(_ value: SuggestionView) -> Rus
 
 
 /**
+ * What a profile's last days would have been at other thresholds (the stored evaluations replayed).
+ */
+public struct ThresholdReplay: Equatable, Hashable {
+    public var days: UInt32
+    /**
+     * Requests it would have approved or denied on its own.
+     */
+    public var decided: UInt32
+    /**
+     * Requests it would have left to the user (always-ask ones included).
+     */
+    public var asked: UInt32
+    /**
+     * Of `decided`, those where the user did, or later said, otherwise.
+     */
+    public var undone: UInt32
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(days: UInt32, 
+        /**
+         * Requests it would have approved or denied on its own.
+         */decided: UInt32, 
+        /**
+         * Requests it would have left to the user (always-ask ones included).
+         */asked: UInt32, 
+        /**
+         * Of `decided`, those where the user did, or later said, otherwise.
+         */undone: UInt32) {
+        self.days = days
+        self.decided = decided
+        self.asked = asked
+        self.undone = undone
+    }
+
+    
+
+    
+}
+
+#if compiler(>=6)
+extension ThresholdReplay: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeThresholdReplay: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> ThresholdReplay {
+        return
+            try ThresholdReplay(
+                days: FfiConverterUInt32.read(from: &buf), 
+                decided: FfiConverterUInt32.read(from: &buf), 
+                asked: FfiConverterUInt32.read(from: &buf), 
+                undone: FfiConverterUInt32.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: ThresholdReplay, into buf: inout [UInt8]) {
+        FfiConverterUInt32.write(value.days, into: &buf)
+        FfiConverterUInt32.write(value.decided, into: &buf)
+        FfiConverterUInt32.write(value.asked, into: &buf)
+        FfiConverterUInt32.write(value.undone, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeThresholdReplay_lift(_ buf: RustBuffer) throws -> ThresholdReplay {
+    return try FfiConverterTypeThresholdReplay.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeThresholdReplay_lower(_ value: ThresholdReplay) -> RustBuffer {
+    return FfiConverterTypeThresholdReplay.lower(value)
+}
+
+
+/**
  * One field of an item as the phone shows it.
  */
 public struct VaultField: Equatable, Hashable {
@@ -12961,7 +13313,8 @@ public enum AutopilotMode: Equatable, Hashable {
      */
     case auto
     /**
-     * Everything except the hard floor is approved, until `bypass_until`.
+     * Everything is approved at once (only pairings and other phones still ask), until `bypass_until` (or until the
+     * user turns it off).
      */
     case bypass
     /**
@@ -14090,6 +14443,10 @@ public enum Preset: Equatable, Hashable {
      * 0.90 / 0.85
      */
     case relaxed
+    /**
+     * The user's own (`ProfileView.approve_at` / `deny_at`, set with `set_thresholds`), each 0.80 to 0.99.
+     */
+    case custom
 
 
 
@@ -14117,6 +14474,8 @@ public struct FfiConverterTypePreset: FfiConverterRustBuffer {
         
         case 3: return .relaxed
         
+        case 4: return .custom
+        
         default: throw UniffiInternalError.unexpectedEnumCase
         }
     }
@@ -14135,6 +14494,10 @@ public struct FfiConverterTypePreset: FfiConverterRustBuffer {
         
         case .relaxed:
             writeInt(&buf, Int32(3))
+        
+        
+        case .custom:
+            writeInt(&buf, Int32(4))
         
         }
     }
@@ -16361,6 +16724,9 @@ private let initializationResult: InitializationResult = {
     if (uniffi_reins_core_checksum_method_reinscore_autopilot_settings() != 18344) {
         return InitializationResult.apiChecksumMismatch
     }
+    if (uniffi_reins_core_checksum_method_reinscore_autopilot_stats() != 32790) {
+        return InitializationResult.apiChecksumMismatch
+    }
     if (uniffi_reins_core_checksum_method_reinscore_autopilot_suggestion() != 53484) {
         return InitializationResult.apiChecksumMismatch
     }
@@ -16418,7 +16784,7 @@ private let initializationResult: InitializationResult = {
     if (uniffi_reins_core_checksum_method_reinscore_handle_push() != 31505) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_reins_core_checksum_method_reinscore_handle_push_deferring_autopilot() != 38744) {
+    if (uniffi_reins_core_checksum_method_reinscore_handle_push_deferring_autopilot() != 59934) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_reins_core_checksum_method_reinscore_join_begin() != 61201) {
@@ -16511,7 +16877,7 @@ private let initializationResult: InitializationResult = {
     if (uniffi_reins_core_checksum_method_reinscore_session() != 8809) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_reins_core_checksum_method_reinscore_set_autopilot_mode() != 26200) {
+    if (uniffi_reins_core_checksum_method_reinscore_set_autopilot_mode() != 21760) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_reins_core_checksum_method_reinscore_set_autopilot_wifi_only() != 5322) {
@@ -16535,6 +16901,9 @@ private let initializationResult: InitializationResult = {
     if (uniffi_reins_core_checksum_method_reinscore_set_starting_policy() != 46624) {
         return InitializationResult.apiChecksumMismatch
     }
+    if (uniffi_reins_core_checksum_method_reinscore_set_thresholds() != 38198) {
+        return InitializationResult.apiChecksumMismatch
+    }
     if (uniffi_reins_core_checksum_method_reinscore_sign_out_device() != 32606) {
         return InitializationResult.apiChecksumMismatch
     }
@@ -16544,10 +16913,16 @@ private let initializationResult: InitializationResult = {
     if (uniffi_reins_core_checksum_method_reinscore_sso_finish() != 10284) {
         return InitializationResult.apiChecksumMismatch
     }
+    if (uniffi_reins_core_checksum_method_reinscore_start_bypass() != 23286) {
+        return InitializationResult.apiChecksumMismatch
+    }
     if (uniffi_reins_core_checksum_method_reinscore_starting_policy() != 60526) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_reins_core_checksum_method_reinscore_sync() != 42469) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_reins_core_checksum_method_reinscore_threshold_replay() != 51589) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_reins_core_checksum_method_reinscore_unlock_account() != 55036) {

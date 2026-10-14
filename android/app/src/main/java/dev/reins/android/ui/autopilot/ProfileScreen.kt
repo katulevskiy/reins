@@ -6,8 +6,14 @@ import androidx.compose.animation.expandVertically
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.shrinkVertically
+import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
+import androidx.compose.foundation.gestures.detectHorizontalDragGestures
+import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ExperimentalLayoutApi
 import androidx.compose.foundation.layout.FlowRow
@@ -15,39 +21,63 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.rounded.ChevronRight
+import androidx.compose.material.icons.rounded.Delete
+import androidx.compose.material.icons.rounded.Edit
+import androidx.compose.material.icons.rounded.Lock
+import androidx.compose.material.icons.rounded.Refresh
+import androidx.compose.material.icons.rounded.Science
+import androidx.compose.material.icons.rounded.Star
+import androidx.compose.material3.Icon
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberUpdatedState
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.shadow
+import androidx.compose.ui.geometry.CornerRadius
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Size
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.semantics.ProgressBarRangeInfo
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.heading
+import androidx.compose.ui.semantics.progressBarRangeInfo
+import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.semantics.setProgress
+import androidx.compose.ui.semantics.stateDescription
+import androidx.compose.ui.text.SpanStyle
+import androidx.compose.ui.text.buildAnnotatedString
 import androidx.compose.ui.text.font.FontWeight
-import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import dev.reins.android.autopilot.AutopilotText
 import dev.reins.android.design.Banner
 import dev.reins.android.design.BannerKind
-import dev.reins.android.design.CircleIconButton
 import dev.reins.android.design.ConfirmDialog
 import dev.reins.android.design.EmptyState
 import dev.reins.android.design.Glyph
-import dev.reins.android.design.GlyphIcon
-import dev.reins.android.design.Group
-import dev.reins.android.design.Hairline
-import dev.reins.android.design.ListRow
+import dev.reins.android.design.HelpText
 import dev.reins.android.design.LocalColors
 import dev.reins.android.design.RText
 import dev.reins.android.design.RType
-import dev.reins.android.design.Screen
-import dev.reins.android.design.SectionLabel
 import dev.reins.android.design.SelectChip
 import dev.reins.android.design.Tag
 import dev.reins.android.design.pressable
@@ -55,15 +85,22 @@ import dev.reins.android.feedback.Event
 import dev.reins.android.feedback.LocalFeedback
 import dev.reins.android.feedback.play
 import dev.reins.android.state.AppState
-import dev.reins.android.ui.common.relativeTime
 import dev.reins.android.ui.common.untrusted
+import dev.reins.android.ui.settings.ConnectedButtons
+import dev.reins.android.ui.settings.HelpIcon
+import dev.reins.android.ui.settings.SettingsGroup
+import dev.reins.android.ui.settings.SettingsPage
+import dev.reins.android.ui.settings.SettingsRow
+import dev.reins.android.ui.settings.settingsCard
 import dev.reins.core.ClassView
 import dev.reins.core.Preset
 import dev.reins.core.ProfileView
+import dev.reins.core.ThresholdReplay
 
 /**
- * One profile: how sure it must be, each kind of request on its way to running by itself (a ring fills toward
- * unlocking), and the profile's own settings.
+ * One profile: who uses it and how it is doing, how sure it must be (a preset, or thresholds of the user's own with
+ * what the last 30 days would have been at them), each kind of request on its way to running by itself, and the
+ * profile's own settings.
  */
 @Composable
 fun ProfileScreen(
@@ -77,91 +114,84 @@ fun ProfileScreen(
     val ui by viewModel.ui.collectAsStateWithLifecycle()
     LaunchedEffect(viewModel) { viewModel.showingProfiles() }
     val connections by state.connections.collectAsStateWithLifecycle()
+    val settings by state.autopilot.collectAsStateWithLifecycle()
     val profile = ui.profiles.firstOrNull { it.id == profileId }
     var rename by remember { mutableStateOf(false) }
     var reset by remember { mutableStateOf(false) }
     var delete by remember { mutableStateOf(false) }
+    var help by rememberSaveable { mutableStateOf(false) }
     var unlocking by remember { mutableStateOf<ClassView?>(null) }
 
-    Screen(
-        title = profile?.let { untrusted(it.name) } ?: "Profile",
-        onBack = onBack,
-        actions = {
-            if (profile != null) CircleIconButton(Glyph.Pencil, Modifier.testTag("renameProfile"), label = "Rename") { rename = true }
-        },
-    ) {
+    SettingsPage(title = null, onBack = onBack) {
         if (profile == null) {
             if (ui.profilesLoaded) EmptyState(Glyph.People, "Not found", "This profile no longer exists.", tag = "profileGone")
-            return@Screen
+            return@SettingsPage
         }
-        ProfileHeader(profile, connections.filter { it.id in profile.connections }.map { untrusted(it.label) })
+        val ais = AutopilotText.profileAis(profile, settings, connections.map { it.id to it.label })
+        ProfileHeader(profile, ais) { rename = true }
         Column(Modifier.padding(horizontal = 16.dp)) {
             ui.error?.let { Banner(it, Modifier.padding(top = 10.dp), BannerKind.Error, tag = "profileError") }
             ui.notice?.let { Banner(it, Modifier.padding(top = 10.dp), tag = "profileNotice") }
         }
+        StatTiles(
+            listOf(
+                Stat("${profile.memoryCount}", "decisions", tag = "statMemory"),
+                Stat(AutopilotText.share(profile.agreement), "matched you", c.success, tag = "statMatched"),
+                Stat("${profile.classes.count { it.autoApprove }}", "kinds on Auto", suffix = "/${profile.classes.size}", tag = "statKinds"),
+            ),
+            Modifier.padding(top = 4.dp),
+        )
 
-        SectionLabel("How sure it must be")
-        Column(Modifier.padding(horizontal = 16.dp)) {
-            Segmented(
-                Preset.entries,
-                profile.preset,
-                AutopilotText::presetName,
-                tag = { "preset:${it.name}" },
-            ) { viewModel.setPreset(profile.id, it) }
-            RText(AutopilotText.presetLine(profile.preset), RType.sans(13f), c.secondary, Modifier.padding(start = 16.dp, top = 8.dp).testTag("presetLine"))
-        }
-
-        Group(
-            header = "Kinds of request",
-            footer = "A kind runs by itself in Auto after 20 of your answers with 95% agreement, and never after Autopilot approved something you would have denied. Tap one to lock or unlock it yourself.",
+        SectionHeader("How sure", trailing = { HelpIcon(help, "How sure") { help = it } })
+        HelpText(AutopilotText.HOW_SURE_HELP, help, Modifier.padding(start = 22.dp, end = 22.dp, bottom = 8.dp))
+        ConnectedButtons(
+            options = Preset.entries,
+            selected = { it == profile.preset },
+            label = AutopilotText::presetName,
+            tag = { "preset:${it.name}" },
+            modifier = Modifier.padding(horizontal = 16.dp),
+        ) { viewModel.setPreset(profile.id, it) }
+        AnimatedVisibility(
+            profile.preset == Preset.CUSTOM,
+            enter = expandVertically(spring(dampingRatio = 0.9f, stiffness = 500f)) + fadeIn(),
+            exit = shrinkVertically(spring(dampingRatio = 0.9f, stiffness = 500f)) + fadeOut(),
         ) {
+            CustomThresholds(profile, ui.replay?.takeIf { it.first == profile.id }?.second, viewModel)
+        }
+        if (profile.preset != Preset.CUSTOM) {
+            RText(AutopilotText.presetLine(profile), RType.sans(12.5f), c.tertiary, Modifier.padding(start = 22.dp, end = 22.dp, top = 8.dp).testTag("presetLine"))
+        }
+
+        SectionHeader("Kinds of request")
+        Column(Modifier.padding(horizontal = 16.dp).settingsCard(c)) {
             if (profile.classes.isEmpty()) {
-                EmptyState(
-                    Glyph.Sparkle,
-                    "Nothing learned yet",
-                    "Your answers teach it.",
-                    tag = "noClasses",
-                )
+                EmptyState(Glyph.Sparkle, "Nothing learned yet", "Your answers teach it.", tag = "noClasses")
             }
-            profile.classes.forEachIndexed { i, cls ->
-                if (i > 0) Hairline(inset = 84.dp)
-                ClassRow(
-                    cls,
-                    onLock = { locked ->
-                        if (locked == false) unlocking = cls else viewModel.setClassLock(profile.id, cls.classKey, locked)
-                    },
-                )
+            profile.classes.forEach { cls ->
+                KindRow(cls) { locked ->
+                    if (locked == false) unlocking = cls else viewModel.setClassLock(profile.id, cls.classKey, locked)
+                }
             }
         }
 
-        Group(header = "Try it") {
-            ListRow(
-                "Try this profile",
-                glyph = Glyph.Flask,
-                tint = c.accent,
-                chevron = true,
-                modifier = Modifier.testTag("tryProfile"),
-            ) { onTryIt(profile.id) }
+        SettingsGroup(gap = 12.dp) {
+            SettingsRow("Try this profile", Modifier.testTag("tryProfile"), icon = Icons.Rounded.Science, tint = c.send) { onTryIt(profile.id) }
         }
-
-        Group(header = "Profile") {
+        SettingsGroup(gap = 12.dp) {
             if (!profile.isDefault) {
-                ListRow(
-                    "Use for every AI by default",
-                    glyph = Glyph.Star,
-                    modifier = Modifier.testTag("makeDefault"),
-                ) { viewModel.makeDefault(profile.id) }
-                Hairline(inset = 51.dp)
+                SettingsRow("Use for every AI by default", Modifier.testTag("makeDefault"), icon = Icons.Rounded.Star, tint = c.accent, chevron = false) {
+                    viewModel.makeDefault(profile.id)
+                }
             }
-            ListRow(
+            SettingsRow(
                 "Forget what it learned",
+                Modifier.testTag("resetProfile"),
+                icon = Icons.Rounded.Refresh,
                 subtitle = "${profile.memoryCount} remembered",
-                glyph = Glyph.Refresh,
-                modifier = Modifier.testTag("resetProfile"),
+                chevron = false,
             ) { reset = true }
             if (ui.profiles.size > 1) {
-                Hairline(inset = 51.dp)
-                ListRow("Delete profile", glyph = Glyph.Trash, destructive = true, modifier = Modifier.testTag("deleteProfile")) { delete = true }
+                SettingsRow("Delete profile", Modifier.testTag("deleteProfile"), icon = Icons.Rounded.Delete, destructive = true, chevron = false) { delete = true }
             }
         }
         Spacer(Modifier.height(32.dp))
@@ -221,64 +251,163 @@ fun ProfileScreen(
 }
 
 @Composable
-private fun ProfileHeader(profile: ProfileView, connectionLabels: List<String>) {
+private fun ProfileHeader(profile: ProfileView, ais: List<String>, onRename: () -> Unit) {
     val c = LocalColors.current
-    Column(Modifier.fillMaxWidth().padding(top = 8.dp, bottom = 4.dp), horizontalAlignment = Alignment.CenterHorizontally) {
-        ProfileAvatar(profile, 80.dp)
-        Row(Modifier.padding(top = 12.dp), verticalAlignment = Alignment.CenterVertically) {
-            RText(untrusted(profile.name), RType.sans(24f, FontWeight.SemiBold), c.text, maxLines = 1)
-            if (profile.isDefault) {
-                Spacer(Modifier.width(8.dp))
-                Tag("Default", Modifier.testTag("defaultTag"), tint = c.accent)
+    Row(Modifier.fillMaxWidth().padding(start = 20.dp, end = 8.dp, top = 4.dp, bottom = 14.dp), verticalAlignment = Alignment.CenterVertically) {
+        ProfileTile(profile, 58.dp)
+        Spacer(Modifier.width(14.dp))
+        Column(Modifier.weight(1f)) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                RText(untrusted(profile.name), RType.sans(24f, FontWeight.SemiBold), c.text, Modifier.weight(1f, fill = false).semantics { heading() }.testTag("profileName"), maxLines = 1)
+                if (profile.isDefault) {
+                    Spacer(Modifier.width(8.dp))
+                    Tag("Default", Modifier.testTag("defaultTag"), tint = c.accent)
+                }
             }
+            RText(
+                if (ais.isEmpty()) "No AI yet" else ais.joinToString(", "),
+                RType.sans(13f),
+                c.tertiary,
+                Modifier.padding(top = 2.dp).testTag("profileAis"),
+                maxLines = 2,
+            )
         }
-        RText(
-            when {
-                connectionLabels.isNotEmpty() -> "Learns from " + connectionLabels.joinToString(", ")
-                profile.isDefault -> "Every other AI"
-                else -> "No AI yet"
-            },
-            RType.sans(13.5f),
-            c.secondary,
-            Modifier.padding(top = 4.dp, start = 32.dp, end = 32.dp),
-            align = TextAlign.Center,
-        )
-    }
-    Row(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 10.dp), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-        Stat("${profile.memoryCount}", "remembered", Modifier.weight(1f).testTag("statMemory"))
-        Stat("${profile.classes.count { it.autoApprove }} of ${profile.classes.size}", "on Auto", Modifier.weight(1f))
-        Stat(profile.trainedAt?.let { relativeTime(it) } ?: "not yet", "trained", Modifier.weight(1f))
-    }
-}
-
-@Composable
-private fun Stat(value: String, label: String, modifier: Modifier = Modifier) {
-    val c = LocalColors.current
-    Column(
-        modifier.clip(RoundedCornerShape(18.dp)).background(c.elevated).padding(vertical = 14.dp, horizontal = 10.dp),
-        horizontalAlignment = Alignment.CenterHorizontally,
-    ) {
-        RText(value, RType.sans(18f, FontWeight.SemiBold), c.text, maxLines = 1)
-        RText(label, RType.sans(12.5f), c.secondary, Modifier.padding(top = 2.dp), maxLines = 1)
+        Box(
+            Modifier.size(44.dp).pressable(shape = CircleShape, label = "Rename", onClick = onRename).semantics { contentDescription = "Rename" }.testTag("renameProfile"),
+            contentAlignment = Alignment.Center,
+        ) { Icon(Icons.Rounded.Edit, null, Modifier.size(20.dp), tint = c.accent) }
     }
 }
 
 /**
- * One kind of request: a ring that fills with the user's answers toward unlocking (a tick once it runs by itself),
+ * "Approve at" and "Deny at", each from 80% to 99%, and what the last 30 days would have been at them. Shown at once
+ * while dragging (with the replay asked again), saved when the finger lifts.
+ */
+@Composable
+private fun CustomThresholds(profile: ProfileView, replay: ThresholdReplay?, viewModel: AutopilotViewModel) {
+    val c = LocalColors.current
+    var approve by remember(profile.id, profile.approveAt) { mutableFloatStateOf(profile.approveAt) }
+    var deny by remember(profile.id, profile.denyAt) { mutableFloatStateOf(profile.denyAt) }
+    LaunchedEffect(profile.id) { viewModel.replay(profile.id, approve, deny) }
+    Column(
+        Modifier
+            .padding(start = 16.dp, end = 16.dp, top = 10.dp)
+            .settingsCard(c)
+            .padding(horizontal = 16.dp, vertical = 14.dp)
+            .testTag("thresholds"),
+    ) {
+        ThresholdSlider("Approve at", approve, c.success, "approveAt", onChange = {
+            approve = it
+            viewModel.replay(profile.id, approve, deny)
+        }) { viewModel.setThresholds(profile.id, approve, deny) }
+        Spacer(Modifier.height(16.dp))
+        ThresholdSlider("Deny at", deny, c.danger, "denyAt", onChange = {
+            deny = it
+            viewModel.replay(profile.id, approve, deny)
+        }) { viewModel.setThresholds(profile.id, approve, deny) }
+        if (replay != null) {
+            val text = buildAnnotatedString {
+                AutopilotText.replayParts(replay).forEach { (part, strong) ->
+                    if (strong) withStyle(SpanStyle(color = c.text)) { append(part) } else append(part)
+                }
+            }
+            androidx.compose.material3.Text(
+                text,
+                Modifier.padding(top = 14.dp).testTag("replayLine"),
+                style = RType.sans(12.5f, lineHeight = 18f).copy(color = c.tertiary),
+            )
+        }
+    }
+}
+
+/**
+ * A threshold: its name and value, and a track from 0 to 100% with a tick at the 80% floor, filled from there to the
+ * thumb. Dragging or tapping moves it in whole percent within 80–99%; a screen reader adjusts it the same way.
+ */
+@Composable
+private fun ThresholdSlider(label: String, value: Float, tint: Color, tag: String, onChange: (Float) -> Unit, onDone: () -> Unit) {
+    val c = LocalColors.current
+    val feedback = LocalFeedback.current
+    val min = AutopilotText.MIN_THRESHOLD_PERCENT / 100f
+    val max = AutopilotText.MAX_THRESHOLD_PERCENT / 100f
+    val change by rememberUpdatedState(onChange)
+    val done by rememberUpdatedState(onDone)
+    val current by rememberUpdatedState(value)
+    fun snap(x: Float): Float = (Math.round(x.coerceIn(min, max) * 100) / 100f)
+    fun move(x: Float) {
+        val v = snap(x)
+        if (v != current) {
+            change(v)
+            feedback.play(Event.Detent, Math.round(v * 100) - AutopilotText.MIN_THRESHOLD_PERCENT)
+        }
+    }
+    Column {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            RText(label, RType.sans(14.5f, FontWeight.Medium), c.secondary, Modifier.weight(1f), maxLines = 1)
+            RText(AutopilotText.percent(value), RType.mono(14.5f, FontWeight.SemiBold), tint, Modifier.testTag("$tag:value"), maxLines = 1)
+        }
+        BoxWithConstraints(
+            Modifier
+                .padding(top = 6.dp)
+                .fillMaxWidth()
+                .height(28.dp)
+                .pointerInput(Unit) {
+                    detectTapGestures { o ->
+                        move(o.x / size.width)
+                        done()
+                    }
+                }
+                .pointerInput(Unit) {
+                    detectHorizontalDragGestures(onDragEnd = { done() }, onDragCancel = { done() }) { change, _ ->
+                        change.consume()
+                        move(change.position.x / size.width)
+                    }
+                }
+                .semantics {
+                    contentDescription = label
+                    stateDescription = AutopilotText.percent(value)
+                    progressBarRangeInfo = ProgressBarRangeInfo(value, min..max, steps = AutopilotText.MAX_THRESHOLD_PERCENT - AutopilotText.MIN_THRESHOLD_PERCENT - 1)
+                    setProgress { target ->
+                        move(target)
+                        done()
+                        true
+                    }
+                }
+                .testTag(tag),
+            contentAlignment = Alignment.CenterStart,
+        ) {
+            val track = if (c.dark) Color(0xFF26262B) else c.hairline
+            Canvas(Modifier.fillMaxWidth().height(6.dp)) {
+                val r = CornerRadius(size.height / 2)
+                drawRoundRect(track, cornerRadius = r)
+                val from = size.width * min
+                drawRoundRect(tint, Offset(from, 0f), Size(size.width * (value - min), size.height), r)
+                drawRect(c.tertiary, Offset(from - 1.dp.toPx(), -5.dp.toPx()), Size(2.dp.toPx(), size.height + 10.dp.toPx()))
+            }
+            Box(
+                Modifier
+                    .offset(x = maxWidth * value - 11.dp)
+                    .size(22.dp)
+                    .shadow(4.dp, CircleShape)
+                    .clip(CircleShape)
+                    .background(if (c.dark) Color(0xFFF2F2F4) else Color.White)
+                    .border(if (c.dark) 0.dp else 1.dp, c.hairline, CircleShape),
+            )
+        }
+    }
+}
+
+/**
+ * One kind of request: a ring (full and green on Auto, filling in blue while it learns, a lock when it always asks),
  * where it stands, and, opened, the lock.
  */
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
-private fun ClassRow(cls: ClassView, onLock: (Boolean?) -> Unit) {
+private fun KindRow(cls: ClassView, onLock: (Boolean?) -> Unit) {
     val c = LocalColors.current
     val feedback = LocalFeedback.current
     var open by remember { mutableStateOf(false) }
     val locked = cls.manual == false
-    val ringColor = when {
-        locked -> c.tertiary
-        cls.autoApprove -> c.success
-        else -> c.accent
-    }
     Column(Modifier.fillMaxWidth().testTag("class:${cls.classKey}")) {
         Row(
             Modifier
@@ -287,35 +416,26 @@ private fun ClassRow(cls: ClassView, onLock: (Boolean?) -> Unit) {
                     open = !open
                     feedback.play(Event.expand(open))
                 }
-                .padding(horizontal = 16.dp, vertical = 14.dp),
+                .padding(horizontal = 14.dp, vertical = 12.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
-            ProgressRing(if (locked) 0f else AutopilotText.unlockProgress(cls), ringColor, size = 52.dp, stroke = 5.dp) {
-                when {
-                    locked -> GlyphIcon(Glyph.Lock, c.tertiary, size = 18.dp)
-                    cls.autoApprove -> GlyphIcon(Glyph.Check, c.success, size = 20.dp, weight = 2.4f)
-                    else -> RText("${cls.decisions}", RType.mono(14f, FontWeight.SemiBold), c.text, maxLines = 1)
+            when {
+                locked -> Box(Modifier.size(34.dp).clip(CircleShape).background(c.controlFill), contentAlignment = Alignment.Center) {
+                    Icon(Icons.Rounded.Lock, null, Modifier.size(15.dp), tint = c.secondary)
                 }
+                cls.autoApprove -> ProgressRing(1f, c.success, size = 34.dp, stroke = 3.5.dp)
+                else -> ProgressRing(AutopilotText.unlockProgress(cls), c.search, size = 34.dp, stroke = 3.5.dp)
             }
-            Spacer(Modifier.width(16.dp))
+            Spacer(Modifier.width(12.dp))
             Column(Modifier.weight(1f)) {
-                RText(cls.label, RType.sans(15.5f, FontWeight.SemiBold), c.text, maxLines = 1)
-                RText(
-                    AutopilotText.classStatus(cls),
-                    RType.sans(13f, FontWeight.Medium),
-                    when {
-                        locked -> c.secondary
-                        cls.autoApprove -> c.success
-                        else -> c.accent
-                    },
-                    Modifier.padding(top = 2.dp).testTag("classStatus:${cls.classKey}"),
-                    maxLines = 2,
-                )
-                RText(AutopilotText.classNumbers(cls), RType.sans(12.5f), c.tertiary, Modifier.padding(top = 2.dp), maxLines = 1)
+                RText(cls.label, RType.sans(15f, FontWeight.Medium), c.text, maxLines = 1)
+                RText(AutopilotText.kindLine(cls), RType.sans(12.5f), c.tertiary, Modifier.padding(top = 2.dp).testTag("classStatus:${cls.classKey}"), maxLines = 1)
             }
-            if (cls.autoDeny) {
-                Spacer(Modifier.width(8.dp))
-                Tag("Denies", tint = c.danger)
+            Spacer(Modifier.width(8.dp))
+            if (cls.autoApprove) {
+                Tag("Auto", tint = c.success)
+            } else {
+                Icon(Icons.Rounded.ChevronRight, null, Modifier.size(20.dp), tint = c.tertiary)
             }
         }
         AnimatedVisibility(
@@ -323,14 +443,13 @@ private fun ClassRow(cls: ClassView, onLock: (Boolean?) -> Unit) {
             enter = expandVertically(spring(dampingRatio = 0.9f, stiffness = 500f)) + fadeIn(),
             exit = shrinkVertically(spring(dampingRatio = 0.9f, stiffness = 500f)) + fadeOut(),
         ) {
-            FlowRow(
-                Modifier.padding(start = 84.dp, end = 16.dp, bottom = 14.dp),
-                horizontalArrangement = Arrangement.spacedBy(8.dp),
-                verticalArrangement = Arrangement.spacedBy(8.dp),
-            ) {
-                SelectChip("Learn by itself", cls.manual == null, Modifier.testTag("lock:auto:${cls.classKey}")) { onLock(null) }
-                SelectChip("Always ask", cls.manual == false, Modifier.testTag("lock:on:${cls.classKey}")) { onLock(true) }
-                SelectChip("Unlock now", cls.manual == true, Modifier.testTag("lock:off:${cls.classKey}")) { onLock(false) }
+            Column(Modifier.padding(start = 60.dp, end = 16.dp, bottom = 14.dp)) {
+                RText(AutopilotText.classNumbers(cls), RType.sans(12.5f), c.tertiary, Modifier.padding(bottom = 8.dp), maxLines = 1)
+                FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    SelectChip("Learn by itself", cls.manual == null, Modifier.testTag("lock:auto:${cls.classKey}")) { onLock(null) }
+                    SelectChip("Always ask", cls.manual == false, Modifier.testTag("lock:on:${cls.classKey}")) { onLock(true) }
+                    SelectChip("Unlock now", cls.manual == true, Modifier.testTag("lock:off:${cls.classKey}")) { onLock(false) }
+                }
             }
         }
     }

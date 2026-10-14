@@ -49,12 +49,13 @@ struct Snapshot: Codable, Equatable {
     var latest: [Entry] = []
     /// "manual", "auto", "bypass", "lockdown" (an older "assisted" reads as Manual).
     var autopilotMode: String = "manual"
-    /// Unix seconds when a running bypass ends.
+    /// Unix seconds when a running bypass ends; `Int64.max` (`AutopilotText.untilOff`) while it runs until turned off.
     var bypassUntil: Int64?
     /// The global mode a bypass went back to when it ended ("manual", "auto", ...), so a bypass that ran out
     /// before the next refresh shows the right mode.
     var baseMode: String?
-    /// When the last running bypass ends, the global one or any connection's (the Stop button shows while one runs).
+    /// When the last running bypass ends, the global one or any connection's (the Stop button shows while one runs);
+    /// `Int64.max` when one runs until turned off.
     var anyBypassUntil: Int64?
     var activeGrants: Int = 0
     var updatedAt: Int64 = 0

@@ -35,6 +35,8 @@ struct BypassActivityAttributes: ActivityAttributes {
         var scope: String
         /// Requests approved during this bypass so far.
         var approvedCount: Int
+        /// It runs until the user turns it off: `until` is then only a date far off, never counted down to.
+        var untilOff: Bool? = nil
     }
 }
 

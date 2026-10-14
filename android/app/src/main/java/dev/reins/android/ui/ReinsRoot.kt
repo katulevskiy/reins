@@ -273,6 +273,9 @@ private fun SignedInContent(
                         onBack = null,
                         onProfile = { app.open(Route.AutopilotProfile(it)) },
                         onTryIt = { app.open(Route.TryIt(null)) },
+                        state = state,
+                        onCovered = { covered = it },
+                        authenticator = authenticator,
                     )
                     Tab.Settings -> SettingsScreen(
                         state = state,
@@ -314,6 +317,8 @@ private fun SignedInContent(
                     onBack = { app.back() },
                     onProfile = { app.open(Route.AutopilotProfile(it)) },
                     onTryIt = { app.open(Route.TryIt(null)) },
+                    state = state,
+                    authenticator = authenticator,
                 )
                 is Route.AutopilotProfile -> ProfileScreen(
                     route.id,
@@ -323,7 +328,7 @@ private fun SignedInContent(
                     onTryIt = { app.open(Route.TryIt(it)) },
                 )
                 is Route.TryIt -> TryItScreen(autopilot, route.profileId, onBack = { app.back() })
-                is Route.Connection -> ConnectionDetailScreen(route.id, state, settings, autopilot, onBack = { app.back() })
+                is Route.Connection -> ConnectionDetailScreen(route.id, state, settings, autopilot, onBack = { app.back() }, authenticator = authenticator)
                 Route.Integrations -> IntegrationsScreen(
                     state,
                     onBack = { app.back() },
@@ -453,14 +458,15 @@ private fun SignedInContent(
                 Column(Modifier.align(Alignment.BottomCenter).windowInsetsPadding(WindowInsets.navigationBars)) {
                     // Above the tab bar, and never while an approval sheet is up.
                     container.updates?.let { UpdatePromptHost(it, allowed = sheet == null, modifier = Modifier.padding(top = 10.dp)) }
-                    if (!(covered && app.tab == Tab.Settings) && !(app.expiredOpen && app.tab == Tab.Grants)) NavBar(container, app)
+                    if (!(covered && (app.tab == Tab.Settings || app.tab == Tab.Autopilot)) && !(app.expiredOpen && app.tab == Tab.Grants)) NavBar(container, app)
                 }
                 val apSettings by state.autopilot.collectAsStateWithLifecycle()
                 dev.reins.android.ui.autopilot.AutopilotQuick(
                     open = quickOpen,
                     style = quickStyle,
                     settings = apSettings,
-                    onSet = { mode, minutes -> autopilot.setMode(mode, minutes) },
+                    onSet = { mode, _ -> autopilot.setMode(mode) },
+                    onBypass = { minutes -> autopilot.startBypass(minutes, authenticator = authenticator) },
                     onStopBypass = { autopilot.stopBypass() },
                     onMore = {
                         quickOpen = false

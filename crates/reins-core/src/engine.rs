@@ -673,11 +673,15 @@ impl Engine {
         result
     }
 
-    /// Like [`Engine::handle_push`], without Autopilot's pass: for a process that cannot run the model (the iOS
-    /// notification extension). The item is parked and listed by `pending`, but not judged; the next pass in a
-    /// process that has the model (the app's sync or push) judges it, instead of this one recording that it could not.
+    /// Like [`Engine::handle_push`], for a process that cannot run the model (the iOS notification extension): Bypass
+    /// and Lockdown decide at once, anything Manual or Auto would judge is parked and listed by `pending` but not
+    /// judged; the next pass in a process that has the model (the app's sync or push) judges it, instead of this one
+    /// recording that it could not.
     pub async fn handle_push_deferring_autopilot(&self, kind: &str, id: &str) -> Result<(), CoreError> {
-        self.handle_push_inner(kind, id).await
+        let result = self.handle_push_inner(kind, id).await;
+        // Bypass and Lockdown need no model: they decide here, so a bypass answers while the app is not running.
+        self.autopilot_pass_without_model().await;
+        result
     }
 
     async fn handle_push_inner(&self, kind: &str, id: &str) -> Result<(), CoreError> {
@@ -786,6 +790,10 @@ impl Engine {
     }
 
     pub fn grants(&self) -> Result<Vec<GrantView>, CoreError> {
+        // What an ended bypass granted shows as ended (it already stopped counting).
+        if let Err(e) = self.ap_expire_bypasses(unix_now()) {
+            log::warn!("Autopilot could not end the bypasses that ran out: {e}");
+        }
         Ok(self.store.grants()?.iter().map(views::grant_view).collect())
     }
 

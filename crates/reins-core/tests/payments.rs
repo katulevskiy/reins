@@ -630,6 +630,19 @@ async fn a_spend_limit_approves_what_it_covers_and_asks_about_the_rest() {
 }
 
 #[tokio::test]
+async fn bypass_pays_with_what_the_purchase_screen_would_pick() {
+    let env = env().await;
+    env.core.start_bypass(None, Some(60)).await.unwrap();
+    let (id, waits) = ask(&env, "purchase_request", &cart()).await;
+    assert!(!waits, "approved by the bypass");
+    let data = answer(&env, &id).await["result"]["data"].clone();
+    assert_eq!(data["approved_by"], "you", "the user, who turned the bypass on; not a spend limit");
+    let entry = env.core.activity(1).await.unwrap().remove(0);
+    assert_eq!((entry.outcome.as_str(), entry.decided_by.as_str()), ("sent", "bypass"));
+    nothing_kept_holds_a_card_number(&env).await;
+}
+
+#[tokio::test]
 async fn paying_on_the_phone_and_at_the_store_hand_over_nothing_to_pay_with() {
     let env = env().await;
     let (id, _) = ask(
