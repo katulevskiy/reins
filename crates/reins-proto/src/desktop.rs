@@ -1140,23 +1140,20 @@ impl CommandScope {
     }
 
     fn render(&self, whole_path: bool) -> String {
-        let quote = |a: &str| {
-            if a.is_empty() || a.chars().any(|c| c.is_whitespace() || matches!(c, '"' | '\'' | '*')) {
-                format!("'{}'", a.replace('\'', r"'\''"))
-            } else {
-                a.to_owned()
-            }
-        };
         let file = if whole_path {
             &self.program
         } else {
             self.program.rsplit(['/', '\\']).next().unwrap_or(&self.program)
         };
-        let mut words: Vec<String> = std::iter::once(quote(file)).chain(self.args.iter().map(|a| quote(a))).collect();
-        if self.prefix {
-            words.push("*".to_owned());
+        let mut shown = shell_word(file);
+        for a in &self.args {
+            shown.push(' ');
+            shown.push_str(&shell_word(a));
         }
-        words.join(" ")
+        if self.prefix {
+            shown.push_str(" *");
+        }
+        shown
     }
 }
 
@@ -1220,6 +1217,54 @@ pub fn program_warning(program: &str, root: &str, path_check: Option<&str>) -> O
         return Some("Not the one on your PATH");
     }
     None
+}
+
+/// Characters that change how text reads without being seen: bidirectional controls, zero-width characters, the
+/// soft hyphen, the byte order mark.
+fn invisible(c: char) -> bool {
+    matches!(c, '\u{00ad}' | '\u{061c}' | '\u{180e}' | '\u{200b}'..='\u{200f}' | '\u{202a}'..='\u{202e}'
+        | '\u{2060}'..='\u{2069}' | '\u{feff}')
+}
+
+/// One argument as a POSIX shell would read it back exactly, and as a person reads it unambiguously: bare when it is
+/// only letters, digits and `_ @ % + = : , . / -`; else in single quotes; else, when it holds a control or invisible
+/// character, in `$'…'` with each such character escaped (`\n`, `\t`, `\x1b`, `\u{202e}`), so nothing hides.
+#[must_use]
+pub fn shell_word(arg: &str) -> String {
+    use std::fmt::Write as _;
+    let plain =
+        |c: char| c.is_ascii_alphanumeric() || matches!(c, '_' | '@' | '%' | '+' | '=' | ':' | ',' | '.' | '/' | '-');
+    if !arg.is_empty() && arg.chars().all(plain) {
+        return arg.to_owned();
+    }
+    if !arg.chars().any(|c| c.is_control() || invisible(c)) {
+        return format!("'{}'", arg.replace('\'', r"'\''"));
+    }
+    let mut out = String::from("$'");
+    for c in arg.chars() {
+        match c {
+            '\\' => out.push_str("\\\\"),
+            '\'' => out.push_str("\\'"),
+            '\n' => out.push_str("\\n"),
+            '\t' => out.push_str("\\t"),
+            '\r' => out.push_str("\\r"),
+            c if c.is_control() && (c as u32) < 0x100 => {
+                let _ = write!(out, "\\x{:02x}", c as u32);
+            }
+            c if c.is_control() || invisible(c) => {
+                let _ = write!(out, "\\u{{{:04x}}}", c as u32);
+            }
+            c => out.push(c),
+        }
+    }
+    out.push('\'');
+    out
+}
+
+/// A whole argument list, as [`shell_word`] renders each.
+#[must_use]
+pub fn shell_words(argv: &[String]) -> String {
+    argv.iter().map(|a| shell_word(a)).collect::<Vec<_>>().join(" ")
 }
 
 /// Changes to one environment, as `vault_secrets_store` carries them (in [`SecretsToStore`]). Values are wiped when
@@ -2197,6 +2242,32 @@ mod tests {
         assert_eq!(spaced.shown(), "echo 'a b'");
         assert_eq!(run.shown(), "npm run test *");
         assert!(exact.within(&run) && !run.within(&exact));
+    }
+
+    #[test]
+    fn commands_are_shown_so_that_what_runs_cannot_hide() {
+        for (arg, shown) in [
+            ("dev", "dev"),
+            ("--port=3000", "--port=3000"),
+            ("", "''"),
+            ("a b", "'a b'"),
+            ("it's", r"'it'\''s'"),
+            ("$HOME;rm", "'$HOME;rm'"),
+            ("*", "'*'"),
+            ("a\nb", r"$'a\nb'"),
+            ("\u{1b}[2Jok", r"$'\x1b[2Jok'"),
+            ("evil\u{202e}txt.exe", r"$'evil\u{202e}txt.exe'"),
+            ("zero\u{200b}width", r"$'zero\u{200b}width'"),
+            ("back\\slash'q\t", r"$'back\\slash\'q\t'"),
+        ] {
+            assert_eq!(shell_word(arg), shown, "{arg:?}");
+        }
+        assert_eq!(shell_words(&argv(&["npm", "run", "a b"])), "npm run 'a b'");
+        // Two different argument lists never look the same.
+        assert_ne!(shell_words(&argv(&["a b"])), shell_words(&argv(&["a", "b"])));
+        assert_ne!(shell_words(&argv(&["a\u{202e}b"])), shell_words(&argv(&["ab"])));
+        let c = CommandScope::exact("/usr/bin/npm", &argv(&["run", "dev\u{202e}"]));
+        assert_eq!(c.shown(), r"npm run $'dev\u{202e}'");
     }
 
     #[test]
