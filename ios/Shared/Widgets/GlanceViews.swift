@@ -17,6 +17,7 @@ enum GlanceStyle {
         switch mode {
         case .manual: Palette.search
         case .auto: Palette.accent
+        case .overnight: Palette.overnight
         case .bypass: Palette.danger
         case .lockdown: Palette.warning
         }

@@ -5,11 +5,12 @@ import SwiftUI
 // activity badge live with those screens.)
 
 enum AutopilotStyle {
-    /// Blue for Manual, the violet accent for Auto, red for Bypass, amber for Lockdown.
+    /// Blue for Manual, the violet accent for Auto, night indigo for Overnight, red for Bypass, amber for Lockdown.
     static func tint(_ mode: AutopilotMode) -> Color {
         switch mode {
         case .manual: Palette.search
         case .auto: Palette.accent
+        case .overnight: Palette.overnight
         case .bypass: Palette.danger
         case .lockdown: Palette.warning
         }

@@ -134,6 +134,7 @@ enum NotificationText {
         let approved = d.verdict == .approve
         switch d.decidedBy {
         case "bypass": return approved ? "Approved by Bypass" : "Denied in Bypass"
+        case "overnight": return approved ? "Approved by \(AutopilotText.overnightName)" : "Denied by \(AutopilotText.overnightName)"
         case "lockdown": return "Denied by Lockdown"
         default: return approved ? "Autopilot approved" : "Autopilot denied"
         }
@@ -142,9 +143,9 @@ enum NotificationText {
     /// "Push to a branch · dkat/reins — Claude Code".
     static func decisionText(_ d: AutoDecisionView) -> String { "\(untrusted(d.title)) — \(untrusted(d.connectionLabel))" }
 
-    /// "97% sure" for Autopilot's own decisions; bypass and lockdown do not judge.
+    /// "97% sure" for Autopilot's own decisions (Overnight's too); bypass and lockdown do not judge.
     static func decisionDetail(_ d: AutoDecisionView) -> String? {
-        d.decidedBy == "autopilot" && d.confidence > 0 ? "\(percent(d.confidence)) sure" : nil
+        ["autopilot", "overnight"].contains(d.decidedBy) && d.confidence > 0 ? "\(percent(d.confidence)) sure" : nil
     }
 
     static func percent(_ p: Float) -> String { "\(Int((min(max(p, 0), 1) * 100).rounded()))%" }

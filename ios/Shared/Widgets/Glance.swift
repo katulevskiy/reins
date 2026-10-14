@@ -51,19 +51,22 @@ enum Glance {
     /// snapshot, and the app reloads the timelines.
     static func timelineDates(_ s: Snapshot, now: Int64, limit: Int = 40) -> [Int64] {
         var later = Set(s.pending.map(\.expiresAt).filter { $0 > now })
-        for b in [s.bypassUntil, s.anyBypassUntil].compactMap({ $0 }) where b > now && !AutopilotText.isUntilOff(b) { later.insert(b) }
+        for b in [s.bypassUntil, s.anyBypassUntil, s.overnightUntil].compactMap({ $0 }) where b > now && !AutopilotText.isUntilOff(b) {
+            later.insert(b)
+        }
         return [now] + later.sorted().prefix(limit)
     }
 
     // MARK: Autopilot
 
     enum Mode: String, CaseIterable {
-        case manual, auto, bypass, lockdown
+        case manual, auto, overnight, bypass, lockdown
 
         var name: String {
             switch self {
             case .manual: "Manual"
             case .auto: "Auto"
+            case .overnight: AutopilotText.overnightName
             case .bypass: "Bypass"
             case .lockdown: "Lockdown"
             }
@@ -74,6 +77,7 @@ enum Glance {
             switch self {
             case .manual: "Waits for you, with a suggestion"
             case .auto: "Decides what it is sure of, asks the rest"
+            case .overnight: "Decides like Auto, holds what is too risky"
             case .bypass: "Approves everything, for a while"
             case .lockdown: "Denies everything at once"
             }
@@ -83,17 +87,24 @@ enum Glance {
             switch self {
             case .manual: "person.fill.checkmark"
             case .auto: "bolt.fill"
+            case .overnight: AutopilotText.overnightSymbol
             case .bypass: "bolt.fill"
             case .lockdown: "lock.fill"
             }
         }
     }
 
-    /// The global mode in force at `now`: a bypass that ran out before the next snapshot shows the mode it went back to.
+    /// The global mode in force at `now`: a bypass that ran out before the next snapshot shows the mode it went back to;
+    /// an Overnight that ran out, the mode under it when the snapshot knew it, else Manual (the core's default).
     static func mode(_ s: Snapshot, now: Int64) -> Mode {
         let mode = Mode(rawValue: s.autopilotMode) ?? .manual
         if mode == .bypass, (s.bypassUntil ?? 0) <= now {
-            return Mode(rawValue: s.baseMode ?? "") ?? .manual
+            let base = Mode(rawValue: s.baseMode ?? "") ?? .manual
+            if base == .overnight, let end = s.overnightUntil, end <= now { return .manual }
+            return base
+        }
+        if mode == .overnight, let end = s.overnightUntil, end <= now {
+            return .manual
         }
         return mode
     }

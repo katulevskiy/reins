@@ -935,6 +935,7 @@ final class AppModel {
             s.bypassUntil = a.bypassUntil
             s.baseMode = a.baseMode.key
             s.anyBypassUntil = a.lastBypassEnd
+            s.overnightUntil = a.overnightUntil
         }
         s.activeGrants = activeGrants
         // What this process wrote last, while it is still what is stored (the notification extension writes it too):
@@ -992,20 +993,14 @@ extension AutopilotMode {
         switch self {
         case .manual: "manual"
         case .auto: "auto"
+        case .overnight: "overnight"
         case .bypass: "bypass"
         case .lockdown: "lockdown"
         }
     }
 
-    /// Manual < Auto < Bypass; Lockdown is the least autonomous.
-    var autonomy: Int {
-        switch self {
-        case .lockdown: 0
-        case .manual: 1
-        case .auto: 2
-        case .bypass: 3
-        }
-    }
+    /// Manual < Auto < Overnight < Bypass; Lockdown is the least autonomous.
+    var autonomy: Int { AutopilotText.autonomy(self) }
 }
 
 extension PendingItem {

@@ -4,15 +4,24 @@ import Foundation
 /// by the widgets, Live Activities and notifications too. The first part takes plain values (the widgets have no
 /// core); the second, compiled wherever the core is linked, takes the core's records.
 enum AutopilotText {
+    /// Overnight's name, everywhere it is shown (the core's `OVERNIGHT_NAME`): renaming the mode is this line.
+    static let overnightName = "Overnight"
+
     /// The mode keys (`AutopilotMode`, as widgets and links store them) in the order the picker shows them, from the
     /// user deciding everything to Autopilot refusing everything.
-    static let modeKeys = ["manual", "auto", "bypass", "lockdown"]
+    static let modeKeys = ["manual", "auto", "overnight", "bypass", "lockdown"]
 
     /// The bypass lengths offered first, in minutes: 15 min, 1 hour, 1 day (the core allows a minute to a year).
     static let bypassMinutes: [UInt32] = [15, 60, 1_440]
 
     /// The longer ones "Custom" offers before a number of the user's own: 4 hours, 1 week.
     static let bypassMoreMinutes: [UInt32] = [240, 10_080]
+
+    /// The Overnight lengths offered first: 4, 8 and 12 hours (the core takes a minute to a year, as for a bypass).
+    static let overnightMinutes: [UInt32] = [240, 480, 720]
+
+    /// The longer ones its "Custom" offers: 1 day, 3 days.
+    static let overnightMoreMinutes: [UInt32] = [1_440, 4_320]
 
     /// The longest timed bypass the core takes: a year, in minutes.
     static let maxBypassMinutes: UInt32 = 525_600
@@ -74,6 +83,7 @@ enum AutopilotText {
     static func name(key: String) -> String {
         switch key {
         case "auto": "Auto"
+        case "overnight": overnightName
         case "bypass": "Bypass"
         case "lockdown": "Lockdown"
         default: "Manual"
@@ -84,6 +94,7 @@ enum AutopilotText {
     static func line(key: String) -> String {
         switch key {
         case "auto": "Decides the easy ones"
+        case "overnight": "Holds what is too risky"
         case "bypass": "Approve everything"
         case "lockdown": "Deny everything"
         default: "Ask, with a hint"
@@ -95,15 +106,20 @@ enum AutopilotText {
         key == "auto" ? "Decides the easy ones. Asks the rest." : "You decide. Autopilot shows its score."
     }
 
-    /// The mode's SF Symbol: a person with a check, a bolt (violet for Auto, red for Bypass), a lock.
+    /// The mode's SF Symbol: a person with a check, a bolt (violet for Auto, red for Bypass), the moon and stars, a
+    /// lock.
     static func symbol(key: String) -> String {
         switch key {
         case "auto": "bolt.fill"
+        case "overnight": overnightSymbol
         case "bypass": "bolt.fill"
         case "lockdown": "lock.fill"
         default: "person.fill.checkmark"
         }
     }
+
+    /// Overnight's symbol: the moon and stars.
+    static let overnightSymbol = "moon.stars.fill"
 
     static func percent(_ p: Float) -> String { "\(Int((min(max(p, 0), 1) * 100).rounded()))%" }
 
@@ -131,6 +147,42 @@ enum AutopilotText {
         guard let since else { return "On until you stop it" }
         return "On until you stop it · " + ranFor(since: since, now: now)
     }
+
+    /// The line under "Overnight" while it runs.
+    static func overnightLine(until: Int64, since: Int64?, now: Int64) -> String {
+        guard isUntilOff(until) else { return "Holds what is too risky" }
+        guard let since else { return "On until you stop it" }
+        return "On until you stop it · " + ranFor(since: since, now: now)
+    }
+
+    /// "Overnight on · 5 h left", "Overnight on · until you stop it".
+    static func overnightTitle(until: Int64, now: Int64) -> String { "\(overnightName) on · " + timeLeft(until: until, now: now) }
+
+    static func overnightText(scope: String) -> String { "For \(scope). Holds what is too risky." }
+
+    /// What an Overnight that runs on still has, in whole minutes (the last one counts), to start it again for that
+    /// long; nil when it runs until turned off.
+    static func minutesLeft(until: Int64, now: Int64) -> UInt32? {
+        if isUntilOff(until) { return nil }
+        let left = Swift.max((until - now + 59) / 60, 1)
+        return UInt32(Swift.min(left, Int64(maxBypassMinutes)))
+    }
+
+    /// Under the Overnight sheet's title.
+    static let overnightSummary = "Decides like Auto. Holds what is too risky."
+
+    /// Behind the (?) of the Overnight sheet, when the model rates risk.
+    static let overnightHelp = "For agents left working. \(overnightName) decides like Auto and weighs the risky requests Auto always leaves to you. What it rates catastrophic, a tripwire, or anything this phone cannot read for sure is held: it waits for you, or is denied."
+
+    /// Behind the same (?) when the model does not rate risk.
+    static let overnightNoRiskHelp = "This model does not rate risk, so \(overnightName) decides like Auto."
+
+    static func overnightHelpText(riskRated: Bool) -> String { riskRated ? overnightHelp : overnightNoRiskHelp }
+
+    /// The setting's title, and its two choices.
+    static let whenRiskyTitle = "If something is too risky:"
+    static let whenRiskyWait = "Wait for me"
+    static let whenRiskyDeny = "Deny it"
 
     /// The length (seconds) a bypass with `leftSeconds` to go was most likely given: the shortest choice that fits.
     static func bypassLength(leftSeconds: Int64) -> Int64 {
@@ -173,7 +225,7 @@ enum AutopilotText {
     static let bypassHelp = bypassStillAsks
 
     /// What the Autopilot page's "Mode" explains behind its (?).
-    static let modeHelp = "Manual: you answer every request; Autopilot only suggests. Auto: Autopilot answers the ones it is sure of and asks you about the rest. Bypass approves for a while without asking; Lock down denies everything that would ask."
+    static let modeHelp = "Manual: you answer every request; Autopilot only suggests. Auto: Autopilot answers the ones it is sure of and asks you about the rest. \(overnightName) decides like Auto and holds what is too risky, for agents left working. Bypass approves for a while without asking; Lock down denies everything that would ask."
 
     /// What "How sure" explains behind its (?).
     static let howSureHelp = "How sure Autopilot must be to approve or deny on its own in Auto. Requests that always ask still ask."
@@ -189,6 +241,7 @@ enum AutopilotText {
     static func decisionTitle(decidedBy: String, approved: Bool) -> String {
         switch decidedBy {
         case "bypass": approved ? "Approved by Bypass" : "Denied in Bypass"
+        case "overnight": approved ? "Approved by \(overnightName)" : "Denied by \(overnightName)"
         case "lockdown": "Denied by Lockdown"
         default: approved ? "Autopilot approved" : "Autopilot denied"
         }
@@ -294,7 +347,7 @@ enum AutopilotText {
 // The core's records: the app and the notification extension link the core, the widgets do not.
 extension AutopilotText {
     /// The modes in the order the picker shows them.
-    static let modes: [AutopilotMode] = [.manual, .auto, .bypass, .lockdown]
+    static let modes: [AutopilotMode] = [.manual, .auto, .overnight, .bypass, .lockdown]
 
     /// The modes from least to most left to Autopilot: the quick switcher's order.
     static var byRisk: [AutopilotMode] { modes.sorted { autonomy($0) < autonomy($1) } }
@@ -303,6 +356,7 @@ extension AutopilotText {
         switch mode {
         case .manual: "manual"
         case .auto: "auto"
+        case .overnight: "overnight"
         case .bypass: "bypass"
         case .lockdown: "lockdown"
         }
@@ -312,17 +366,18 @@ extension AutopilotText {
     static func line(_ mode: AutopilotMode) -> String { line(key: key(mode)) }
     static func symbol(_ mode: AutopilotMode) -> String { symbol(key: key(mode)) }
 
-    /// Auto decides nothing without the model (requests simply wait); Manual only goes without its hints, and the
-    /// others never need it.
-    static func needsModel(_ mode: AutopilotMode) -> Bool { mode == .auto }
+    /// Auto decides nothing without the model (requests simply wait), and Overnight, which decides like Auto, neither;
+    /// Manual only goes without its hints, and the others never need it.
+    static func needsModel(_ mode: AutopilotMode) -> Bool { mode == .auto || mode == .overnight }
 
-    /// How much a mode lets happen without the user: Lockdown least, Bypass most.
+    /// How much a mode lets happen without the user: Lockdown least, then Manual, Auto, Overnight, Bypass most.
     static func autonomy(_ mode: AutopilotMode) -> Int {
         switch mode {
         case .lockdown: 0
         case .manual: 1
         case .auto: 2
-        case .bypass: 3
+        case .overnight: 3
+        case .bypass: 4
         }
     }
 
@@ -370,10 +425,29 @@ extension AutopilotText {
     /// "Push to a branch · dkat/reins — Claude Code" (both parts come from outside, so they are cleaned).
     static func decisionText(_ d: AutoDecisionView) -> String { "\(untrusted(d.title)) — \(untrusted(d.connectionLabel))" }
 
-    /// "97% sure" for Autopilot's own decisions; bypass and lockdown do not judge.
+    /// "97% sure" for Autopilot's own decisions (Overnight's too); bypass and lockdown do not judge.
     static func decisionDetail(_ d: AutoDecisionView) -> String? {
-        d.decidedBy == "autopilot" && d.confidence > 0 ? "\(percent(d.confidence)) sure" : nil
+        ["autopilot", "overnight"].contains(d.decidedBy) && d.confidence > 0 ? "\(percent(d.confidence)) sure" : nil
     }
+
+    /// A risk level in one word: low, moderate, severe, catastrophic.
+    static func riskWord(_ level: RiskLevel) -> String {
+        switch level {
+        case .benign: "low"
+        case .risky: "moderate"
+        case .severe: "severe"
+        case .catastrophic: "catastrophic"
+        }
+    }
+
+    /// "Risk: severe · force push" (the why only when there is one; it describes the request, so it is cleaned).
+    static func riskLine(_ r: RiskView) -> String {
+        let why = untrusted(r.why).trimmingCharacters(in: .whitespacesAndNewlines)
+        return "Risk: \(riskWord(r.level))" + (why.isEmpty ? "" : " · \(why)")
+    }
+
+    /// What a held request says about it: Overnight held it (it waited for the user, or was denied).
+    static let heldLine = "Held by \(overnightName)"
 
     /// The approval screen's line: "Autopilot would approve · 97%".
     static func suggestionHeadline(_ s: SuggestionView) -> String {

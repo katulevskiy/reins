@@ -101,13 +101,14 @@ enum IntentBridge {
         }
     }
 
-    /// How much a mode holds back: Lockdown denies everything, Manual asks about everything, Auto decides some, a
-    /// bypass approves nearly everything.
+    /// How much a mode holds back: Lockdown denies everything, Manual asks about everything, Auto decides some,
+    /// Overnight weighs even the risky ones, a bypass approves nearly everything.
     nonisolated static func strictness(_ mode: AutopilotMode) -> Int {
         switch mode {
-        case .lockdown: 3
-        case .manual: 2
-        case .auto: 1
+        case .lockdown: 4
+        case .manual: 3
+        case .auto: 2
+        case .overnight: 1
         case .bypass: 0
         }
     }
@@ -157,13 +158,13 @@ enum IntentBridge {
 }
 
 extension AutopilotModeOption {
-    /// The core's mode; nil for Bypass, which intents do not set.
+    /// The core's mode; nil for Bypass and Overnight, which intents do not set (each starts after the owner's check).
     init?(_ mode: AutopilotMode) {
         switch mode {
         case .manual: self = .manual
         case .auto: self = .auto
         case .lockdown: self = .lockdown
-        case .bypass: return nil
+        case .overnight, .bypass: return nil
         }
     }
 

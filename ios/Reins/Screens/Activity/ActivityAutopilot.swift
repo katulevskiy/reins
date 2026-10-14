@@ -9,6 +9,7 @@ enum ModeLook {
         switch mode {
         case .manual: "Manual"
         case .auto: "Auto"
+        case .overnight: AutopilotText.overnightName
         case .bypass: "Bypass"
         case .lockdown: "Lockdown"
         }
@@ -18,6 +19,7 @@ enum ModeLook {
         switch mode {
         case .manual: Palette.search
         case .auto: Palette.accent
+        case .overnight: Palette.overnight
         case .bypass: Palette.danger
         case .lockdown: Palette.warning
         }
@@ -27,6 +29,7 @@ enum ModeLook {
         switch mode {
         case .manual: "person.fill.checkmark"
         case .auto: "bolt"
+        case .overnight: AutopilotText.overnightSymbol
         case .bypass: "bolt.fill"
         case .lockdown: "lock.fill"
         }
@@ -130,6 +133,7 @@ enum EntryOutcome {
             let base = denied ? "Denied by Autopilot" : "Allowed by Autopilot"
             return p.map { $0 > 0 ? "\(base) · \(SuggestionText.percent($0))" : base } ?? base
         case "bypass": return "Allowed during a bypass"
+        case "overnight": return denied ? "Denied by \(AutopilotText.overnightName)" : "Allowed by \(AutopilotText.overnightName)"
         case "lockdown": return "Denied by Lockdown"
         default: break
         }
@@ -146,6 +150,7 @@ enum EntryOutcome {
     static func symbol(_ entry: ActivityEntry) -> String {
         switch EntryText.mark(entry) {
         case .auto: "bolt"
+        case .overnight: AutopilotText.overnightSymbol
         case .bypass: "bolt.fill"
         case .lockdown: "lock.fill"
         case .grant: "key.horizontal"
@@ -158,6 +163,7 @@ enum EntryOutcome {
     static func tint(_ entry: ActivityEntry) -> Color {
         switch EntryText.mark(entry) {
         case .auto, .grant: Palette.accent
+        case .overnight: Palette.overnight
         case .bypass, .denied: Palette.danger
         case .lockdown, .failed: Palette.warning
         case .approved: Palette.success
@@ -168,7 +174,7 @@ enum EntryOutcome {
     /// suggested".
     static func whyTitle(_ entry: ActivityEntry) -> String {
         switch entry.decidedBy {
-        case "autopilot": entry.outcome == "denied" ? "Why Autopilot denied it" : "Why Autopilot allowed it"
+        case "autopilot", "overnight": entry.outcome == "denied" ? "Why Autopilot denied it" : "Why Autopilot allowed it"
         default: "What Autopilot suggested"
         }
     }

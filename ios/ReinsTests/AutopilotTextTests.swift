@@ -10,7 +10,7 @@ final class AutopilotTextTests: XCTestCase {
 
     private func settings(bypass: Int64? = nil, since: Int64? = nil, connections: [ConnectionAutopilot] = []) -> AutopilotSettings {
         AutopilotSettings(mode: bypass != nil ? .bypass : .manual, baseMode: .manual, bypassUntil: bypass, bypassSince: since,
-                          defaultProfileId: "personal", wifiOnly: true, model: model(.installed), connections: connections)
+                          overnightWhenRisky: .wait, defaultProfileId: "personal", wifiOnly: true, model: model(.installed), connections: connections)
     }
 
     private func connection(_ id: String, until: Int64?, since: Int64? = nil, profile: String = "personal") -> ConnectionAutopilot {
@@ -248,10 +248,10 @@ final class AutopilotTextTests: XCTestCase {
 
     func testModesHaveNamesLinesAndSymbolsByKey() {
         XCTAssertEqual(AutopilotText.modes.map(AutopilotText.key), AutopilotText.modeKeys)
-        XCTAssertEqual(AutopilotText.modes.map(AutopilotText.name), ["Manual", "Auto", "Bypass", "Lockdown"])
+        XCTAssertEqual(AutopilotText.modes.map(AutopilotText.name), ["Manual", "Auto", "Overnight", "Bypass", "Lockdown"])
         XCTAssertEqual(AutopilotText.line(.lockdown), "Deny everything")
         XCTAssertEqual(AutopilotText.line(.manual), "Ask, with a hint")
-        XCTAssertEqual(AutopilotText.byRisk, [.lockdown, .manual, .auto, .bypass])
+        XCTAssertEqual(AutopilotText.byRisk, [.lockdown, .manual, .auto, .overnight, .bypass])
         XCTAssertEqual(AutopilotText.name(key: "nonsense"), "Manual")
         // "assisted", from an older version, is Manual now.
         XCTAssertEqual(AutopilotText.name(key: "assisted"), "Manual")

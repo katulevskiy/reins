@@ -114,8 +114,10 @@ private struct ConnectionAutopilotGroup: View {
     private var label: String { untrusted(connection.label) }
     /// Every AI is locked down, this one included.
     private var globalLockdown: Bool { mode == .lockdown && settings.mode == .lockdown && own?.baseMode != .lockdown }
-    /// The choices of the segmented control: like every AI (nil), then the modes that are not one of the two buttons.
-    private var choices: [AutopilotMode?] { [nil] + SettingsText.modes.filter { $0 != .bypass && $0 != .lockdown }.map { Optional($0) } }
+    /// The choices of the segmented control: like every AI (nil), then the modes that are not one of the buttons.
+    private var choices: [AutopilotMode?] {
+        [nil] + SettingsText.modes.filter { ![.overnight, .bypass, .lockdown].contains($0) }.map { Optional($0) }
+    }
 
     static let help = "Its own mode wins over the global one, except a global Lockdown. A bypass is not possible in an AI's first 10 minutes."
 

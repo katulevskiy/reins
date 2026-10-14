@@ -124,7 +124,7 @@ final class AutopilotFlowTests: XCTestCase {
 
     func testTheOptimisticBypassMatchesTheCoresRules() {
         var s = AutopilotSettings(
-            mode: .lockdown, baseMode: .lockdown, bypassUntil: nil, bypassSince: nil, defaultProfileId: "p", wifiOnly: true,
+            mode: .lockdown, baseMode: .lockdown, bypassUntil: nil, bypassSince: nil, overnightWhenRisky: .wait, defaultProfileId: "p", wifiOnly: true,
             model: ModelStatus(state: .installed, id: "m", label: "m", version: "1", sizeBytes: 1, downloadedBytes: 1, error: nil, runtimeReady: true),
             connections: []
         )

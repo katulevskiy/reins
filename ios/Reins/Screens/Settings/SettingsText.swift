@@ -4,12 +4,13 @@ import SwiftUI
 /// Autopilot screens have their own, fuller set; these are the few words these pages need.
 enum SettingsText {
     /// The modes in the order the picker shows them, from the user deciding everything to Autopilot refusing everything.
-    static let modes: [AutopilotMode] = [.manual, .auto, .bypass, .lockdown]
+    static let modes: [AutopilotMode] = [.manual, .auto, .overnight, .bypass, .lockdown]
 
     static func modeName(_ mode: AutopilotMode) -> String {
         switch mode {
         case .manual: "Manual"
         case .auto: "Auto"
+        case .overnight: AutopilotText.overnightName
         case .bypass: "Bypass"
         case .lockdown: "Lockdown"
         }
@@ -19,6 +20,7 @@ enum SettingsText {
         switch mode {
         case .manual: "person.fill.checkmark"
         case .auto: "bolt.fill"
+        case .overnight: AutopilotText.overnightSymbol
         case .bypass: "bolt.fill"
         case .lockdown: "lock.fill"
         }
@@ -28,17 +30,19 @@ enum SettingsText {
         switch mode {
         case .manual: Palette.search
         case .auto: Palette.accent
+        case .overnight: Palette.overnight
         case .bypass: Palette.danger
         case .lockdown: Palette.warning
         }
     }
 
-    /// The symbol beside the mode on the Autopilot row and an AI's page: Manual a person with a check, Auto a bolt, Bypass a filled bolt, Lockdown
-    /// a lock.
+    /// The symbol beside the mode on the Autopilot row and an AI's page: Manual a person with a check, Auto a bolt, Overnight the moon, Bypass a
+    /// filled bolt, Lockdown a lock.
     static func modeValueSymbol(_ mode: AutopilotMode) -> String {
         switch mode {
         case .manual: "person.fill.checkmark"
         case .auto: "bolt"
+        case .overnight: AutopilotText.overnightSymbol
         case .bypass: "bolt.fill"
         case .lockdown: "lock.fill"
         }

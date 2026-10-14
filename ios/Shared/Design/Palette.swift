@@ -27,6 +27,8 @@ enum Palette {
     static let danger = dynamic(0xDC2626, 0xF87171)
     static let success = dynamic(0x15803D, 0x34D399)
     static let warning = dynamic(0xA16207, 0xFACC15)
+    /// Overnight's night indigo: deeper and bluer than the violet accent, so the two never read as one.
+    static let overnight = dynamic(0x3730A3, 0xA5B4FC)
     static let chip = dynamic(0xE7E7EB, 0x1C1C20)
     /// The selected row in the iPad sidebar.
     static let rowActive = dual(UIColor(white: 1, alpha: 0.9), UIColor(white: 1, alpha: 0.06))

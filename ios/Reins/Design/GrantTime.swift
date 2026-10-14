@@ -143,6 +143,7 @@ enum GrantText {
         case "retry": "A one-time pass after you approved late"
         case "starter": "Your starting rule, when you connected \(untrusted(label))"
         case let o where o == "bypass" || o.hasPrefix("bypass:"): "Approved by Bypass; ends with it"
+        case let o where o == "overnight" || o.hasPrefix("overnight:"): "Approved by \(AutopilotText.overnightName); ends with it"
         default: "Chosen while approving a request"
         }
     }
