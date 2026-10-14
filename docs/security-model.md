@@ -339,13 +339,15 @@ Autopilot runs only on the phone. Nothing it uses or learns leaves the phone. It
   paired less than 10 minutes ago. Lockdown denies, and never approves. Bypass is the exception, by design (below).
   The phone puts a hook question in a group itself, reading everything it carries with its own copy of the guard's
   built-in rules (`reins_policy::guard`), whatever its layout; the most severe match wins, and the words of a
-  destructive command count as before. The hook runs where the AI does, so its label is only shown, and can make a
-  question stricter, never looser. Questions about private keys, cloud credentials and saved tokens, and any the
-  phone cannot read with certainty (an unbalanced quote, code fed to an interpreter, something piped into a shell, a
-  wrapper option it does not know, a detail cut short), are asked every time too: never remembered, never one tap,
-  never Autopilot's, but an ordinary yes or no on screen. A `.env` question is judged like any request; a remembered
-  answer to it covers exactly that file, or exactly that command in that folder, and Autopilot learns it in the
-  `.env` kind only when everything the command does is reading `.env` files.
+  destructive command count where a shell runs them (not in the source a heredoc feeds Python). The hook runs where
+  the AI does, so its label is only shown, and can make a question stricter, never looser. Questions about private
+  keys, cloud credentials and saved tokens, and any the phone cannot read with certainty (an unbalanced quote, code
+  fed to an interpreter, something piped into a shell, a word the shell makes up, a wrapper option it does not know,
+  a detail cut short), are asked every time too: never remembered, never one tap, never Autopilot's, but an ordinary
+  yes or no on screen. A `.env` question is judged like any request. A remembered answer to a desktop question covers
+  exactly what was asked, on that computer (bound to the desktop app's key): that file by its full path, that command
+  in that folder, or that question; never the topic the computer chose. Autopilot learns a question in the `.env`
+  kind only when everything its command does is reading `.env` files.
 - **Prompt-injection rule.** The model scores each request twice: once on the facts the phone verified (service,
   action, target, history), and once with the AI-written text added (reason, email body, commit messages, arguments).
   The approve score it uses is the lower of the two, and the deny score the higher. AI-written text can therefore make

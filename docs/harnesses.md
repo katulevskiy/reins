@@ -195,8 +195,10 @@ The phone shows the harness that asked, the command (or files), the working dire
 what matched it ("Matched: .env files · `.env`"), read by the phone itself. Questions about what cannot be undone
 (the command rules) are asked every time, with a hold to say yes. Questions about private keys, cloud credentials and
 saved tokens, and commands the phone cannot read with certainty, are asked every time as an ordinary yes or no. A
-`.env` question is an ordinary yes or no whose remembered answer covers exactly that file or that command in that
-folder; a standing answer for your own command rules can cover a topic such as `command:make deploy`. See
+`.env` question is an ordinary yes or no. A remembered answer to any question from the desktop app covers exactly
+what was asked, on that computer: that file (its full path, a relative one read in its folder), that command in that
+folder, or that question; never the topic the computer gives it (`file:.env`, `command:make deploy`). Answers
+remembered by earlier versions, which were keyed by topic, are dropped on update. See
 [security-model.md](security-model.md#hooks) for Autopilot and Bypass.
 
 ## What hooks do not do
