@@ -14,6 +14,7 @@ import androidx.compose.foundation.text.BasicText
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -54,7 +55,7 @@ import dev.reins.android.ui.autopilot.IconTile
 import dev.reins.android.ui.common.untrusted
 import kotlinx.coroutines.launch
 
-/** Settings > AI connections > Connect a computer. */
+/** Settings > Connect > Computer: the scanner, or the code typed in. */
 @Composable
 fun ConnectComputerScreen(app: AppViewModel, onBack: () -> Unit) {
     // An error from this visit does not greet the next one.
@@ -92,6 +93,13 @@ fun ConnectComputerPanel(app: AppViewModel, modifier: Modifier = Modifier) {
     val scan = rememberScan(app)
     var typed by rememberSaveable { mutableStateOf("") }
     DisposableEffect(Unit) { onDispose { app.clearJustPaired() } }
+    // Opened from Settings' "Scan QR code": the scanner starts at once.
+    LaunchedEffect(ui.scanRequested) {
+        if (ui.scanRequested) {
+            app.scanStarted()
+            scan()
+        }
+    }
     Column(modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(12.dp)) {
         justPaired?.let { ConnectedCard(it) }
         CapsuleButton(

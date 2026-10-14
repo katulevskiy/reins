@@ -270,7 +270,14 @@ private fun SignedInContent(
                     onSounds = { app.open(Route.Sounds) },
                     onTour = app::replaySetup,
                     onAutopilot = { app.open(Route.Autopilot) },
-                    onConnectComputer = { app.open(Route.ConnectComputer) },
+                    onScanComputer = {
+                        app.requestScan()
+                        app.open(Route.ConnectComputer)
+                    },
+                    onTypeComputerCode = {
+                        app.showCodeField()
+                        app.open(Route.ConnectComputer)
+                    },
                     onVaultPasskeys = { app.open(Route.VaultPasskeys) },
                     onDevices = { app.open(Route.Devices) },
                     authenticator = authenticator,

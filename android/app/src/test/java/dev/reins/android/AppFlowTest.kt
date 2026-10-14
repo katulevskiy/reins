@@ -1241,6 +1241,7 @@ class AppFlowTest {
         awaitTag("entry:3")
         tap("openSettings")
         tap("connection:c1")
+        tap("connectionIcon")
         tap("icon:grok")
         awaitCore { core.icons["c1"] == "grok" }
         rule.onNodeWithContentDescription("Back").performClick()
@@ -1299,15 +1300,21 @@ class AppFlowTest {
     }
 
     @Test
-    fun settingsListsComputersWithTheirKeyApartFromAiApps() {
+    fun settingsListsComputersAndAiAppsAndAComputersPageShowsItsKey() {
         core.connections = listOf(TestData.computer(), TestData.connection())
         launch()
         tap("openSettings")
         awaitTag("connection:d1")
-        rule.onNodeWithTag("connectionDetail:d1", useUnmergedTree = true).assertTextContains("Key 4821 9930", substring = true)
+        rule.onNodeWithTag("connectionDetail:d1", useUnmergedTree = true).assertTextContains("computer", substring = true)
         rule.onNodeWithTag("connectionDetail:c1", useUnmergedTree = true).assertTextContains("claude.ai", substring = true)
         // An AI app is connected: the address is still there to copy, for the next one.
+        tap("connect")
         awaitTag("copyMcpUrl")
+        tap("closeSheet")
+        // A computer's page shows the key it paired with.
+        tap("connection:d1")
+        awaitTag("connectionHeadline")
+        rule.onNodeWithTag("connectionHeadline", useUnmergedTree = true).assertTextContains("Key 4821 9930", substring = true)
     }
 
     @Test
@@ -1315,7 +1322,8 @@ class AppFlowTest {
         core.accounts = listOf(dev.reins.core.AccountView("vault", "me@example.com", 1_700_000_000))
         launch()
         tap("openSettings")
-        awaitText("None yet")
+        awaitTag("openIntegrations")
+        rule.onNodeWithTag("openIntegrations").assertTextContains("None", substring = true)
     }
 
     @Test
@@ -1817,14 +1825,14 @@ class AppFlowTest {
     }
 
     @Test
-    fun onceThisPhoneIsTheApprovalDeviceTheButtonIsGrayAndSaysSo() {
+    fun onceThisPhoneIsTheApprovalDeviceTheCardSaysSoAndOffersNoTakeover() {
         launch()
         awaitTag("noActivity")
         (context.applicationContext as ReinsApp).container.state.setApprovalDevice(true)
         tap("openSettings")
-        awaitTag("registerPhone")
-        rule.onNodeWithText("This phone is used for approvals").assertExists()
-        rule.onNodeWithTag("registerPhone").assertIsNotEnabled()
+        awaitTag("approvalChip")
+        rule.onNodeWithTag("approvalChip").assertTextContains("Approval phone", substring = true)
+        assertFalse(has("registerPhone"))
     }
 
     @Test
@@ -1832,8 +1840,10 @@ class AppFlowTest {
         launch()
         tap("openSettings")
         tap("connection:c1")
+        tap("connectionIcon")
         tap("icon:grok")
         awaitCore { core.icons["c1"] == "grok" }
+        tap("connectionIcon")
         tap("icon:auto")
         awaitCore { core.icons["c1"] == "auto" }
         tap("disconnect")
@@ -1854,6 +1864,7 @@ class AppFlowTest {
         assertEquals(0, shown())
         tap("openSettings")
         tap("connection:c1")
+        tap("connectionIcon")
         tap("icon:grok")
         awaitCore { core.icons["c1"] == "grok" }
         rule.onNodeWithContentDescription("Back").performClick()

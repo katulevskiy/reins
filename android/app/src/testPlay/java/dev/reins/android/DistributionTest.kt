@@ -71,12 +71,9 @@ class DistributionTest : FlowHarness() {
         launch()
         tap("openSettings")
         awaitTag("appVersion")
-        tap("help:Version")
-        awaitText("Google Play keeps Reins up to date.")
         assertFalse(has("checkUpdates"))
         assertFalse(has("autoDownload"))
-        assertFalse(showsText("UPDATES"))
-        awaitText("VERSION")
+        assertFalse(showsText("Updates"))
     }
 
     @Test

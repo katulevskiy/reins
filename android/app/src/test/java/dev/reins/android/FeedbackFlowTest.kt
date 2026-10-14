@@ -1,6 +1,8 @@
 package dev.reins.android
 
+import androidx.compose.ui.test.assertTextContains
 import androidx.compose.ui.test.hasText
+import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.performClick
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import dev.reins.android.feedback.Cue
@@ -164,7 +166,7 @@ class FeedbackFlowTest : FlowHarness() {
     fun theSoundsPageIsInSettingsAndItsMasterSilencesTheNotificationsToo() {
         launch()
         tap("openSettings")
-        awaitText("Sounds and haptics on")
+        rule.onNodeWithTag("openSounds").assertTextContains("On", substring = true)
         tap("openSounds")
         awaitTag("soundsMaster")
         heard.clear()
@@ -209,6 +211,7 @@ class FeedbackFlowTest : FlowHarness() {
         core.connections = emptyList()
         launch()
         tap("openSettings")
+        tap("connect")
         heard.clear()
         awaitText("http://127.0.0.1:8000/mcp")
         tap("copyMcpUrl")
