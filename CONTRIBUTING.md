@@ -125,8 +125,10 @@ cd android
 ## Commit messages and releases
 
 Release builds start alongside CI on every push to `main`; publication waits for successful CI on that exact commit
-and all required assets. Only a successful push CI run on `main` qualifies. One release runs at a time and is never
-cancelled; pushes during it wait, and the newest of them is released next, with the commits before it. Every push to `main` that passes CI is released: `.github/workflows/release.yml` tags the commit CI tested as
+and all required assets. Only a successful push CI run on `main` qualifies. A newer push's release starts at once and
+cancels older release runs that have not reached publication (it releases their commits too); a run that has begun
+publishing is never cancelled, the newer one waits for its tag before computing its version, and two runs never publish
+at once (`scripts/supersede-releases.py`). Runs started by hand are never cancelled. Every push to `main` that passes CI is released: `.github/workflows/release.yml` tags the commit CI tested as
 `vX.Y.Z` and publishes a [GitHub release](https://github.com/katulevskiy/reins/releases) with the desktop app (Linux
 x86_64/aarch64, static; macOS Apple silicon/Intel; Windows x86_64/Arm as zips), its Linux `.deb` and `.rpm` packages
 (see [below](#maintainers-linux-packages-their-repositories-and-the-aur)), the server binary, the server image

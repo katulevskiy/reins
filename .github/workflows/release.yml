@@ -29,11 +29,11 @@ on:
 
 permissions: {}
 
-# One release at a time, and a release in progress is never cancelled (cancelling one part-way could stop it between
-# the image tags and the GitHub release). Pushes during it wait; only the newest of them runs next, and it releases
-# the commits of those before it.
+# Nothing here cancels or queues a whole run: a newer push's release starts at once, and its first job (supersede)
+# cancels the older release runs that have not reached publication and waits for one that is publishing. Publication
+# itself is one at a time (the publish job's group), and a run is never cancelled once it has begun publishing.
 concurrency:
-  group: ${{ inputs.verify_only && format('release-verification-{0}', github.ref) || 'release' }}
+  group: ${{ inputs.verify_only && format('release-verification-{0}', github.ref) || format('release-{0}', github.run_id) }}
   cancel-in-progress: false
 
 defaults:
@@ -44,13 +44,44 @@ env:
   CARGO_TERM_COLOR: always
 
 jobs:
+  # Older release runs on main (scripts/supersede-releases.py): a push run that has not reached publication is
+  # cancelled, since this run releases its commits too; one publishing is waited for, so that plan sees its tag and
+  # the two cannot take the same version. Runs started by hand, verify_only runs and runs on other branches are never
+  # cancelled; a manual release only waits.
+  supersede:
+    name: Supersede older releases
+    runs-on: ubuntu-24.04
+    timeout-minutes: 50
+    if: >-
+      github.ref == 'refs/heads/main' &&
+      (github.event_name == 'push' || (github.event_name == 'workflow_dispatch' && inputs.verify_only != true))
+    permissions:
+      actions: write # cancel older release runs
+      contents: read
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - name: Cancel or wait for older release runs
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          REINS_RUN_ID: ${{ github.run_id }}
+          REINS_RUN_NUMBER: ${{ github.run_number }}
+          REINS_EVENT: ${{ github.event_name }}
+        run: python3 scripts/supersede-releases.py
+
   plan:
     name: Plan
+    needs: supersede
     runs-on: ubuntu-24.04
     timeout-minutes: 10
+    # After supersede, whatever its result (it is skipped for verify_only runs; if it failed, the publish job's tag
+    # check still keeps two runs from releasing one version), unless this run was cancelled.
     if: >-
-      github.event_name == 'workflow_dispatch' ||
-      (github.event_name == 'push' && github.ref == 'refs/heads/main')
+      !cancelled() &&
+      (github.event_name == 'workflow_dispatch' ||
+      (github.event_name == 'push' && github.ref == 'refs/heads/main'))
     permissions:
       actions: read # the CI result of a manually released commit
       contents: read
@@ -1188,6 +1219,7 @@ jobs:
 
   publish:
     name: Publish the release
+    # Its `if` uses !cancelled(), not always(): a run cancelled as superseded must not publish.
     needs:
       - plan
       - desktop-linux
@@ -1202,7 +1234,7 @@ jobs:
       - linux-packages-amd64
       - linux-packages-arm64
     if: >-
-      always() && needs.plan.outputs.release == 'true' &&
+      !cancelled() && needs.plan.outputs.release == 'true' &&
       needs.desktop-linux.result == 'success' && needs.desktop.result == 'success' &&
       needs.desktop-app-linux.result == 'success' && needs.desktop-app.result == 'success' &&
       needs.desktop-app-macos.result == 'success' &&
@@ -1210,8 +1242,12 @@ jobs:
       needs.android.result == 'success' &&
       needs.linux-packages.result == 'success' && needs.linux-packages-amd64.result == 'success' &&
       needs.linux-packages-arm64.result == 'success'
+    # One publication at a time, never cancelled while it runs.
+    concurrency:
+      group: ${{ inputs.verify_only && format('release-publish-verification-{0}', github.run_id) || 'release-publish' }}
+      cancel-in-progress: false
     runs-on: ubuntu-24.04
-    timeout-minutes: 20
+    timeout-minutes: 45 # scripts/wait-for-ci.sh waits up to 30 minutes
     permissions:
       contents: write
       actions: read # exact-commit CI publication gate
@@ -1229,6 +1265,21 @@ jobs:
           fetch-depth: 0
           fetch-tags: true
           persist-credentials: false
+      # Before anything is published: another run may have released this version since plan computed it (supersede
+      # makes that unlikely). Then this run stops cleanly; the next push to main releases these commits.
+      - name: Require the version to be untaken
+        if: inputs.verify_only != true
+        run: |
+          for attempt in 1 2 3; do
+            status=0
+            git ls-remote --exit-code --tags origin "refs/tags/$TAG" > /dev/null || status=$?
+            case "$status" in
+            0) echo "::error::$TAG exists already: another release run took this version; nothing was published"; exit 1 ;;
+            2) echo "$TAG is free"; exit 0 ;;
+            esac
+            (( attempt < 3 )) || { echo "::error::could not list the repository's tags"; exit 1; }
+            sleep $(( attempt * 10 ))
+          done
       - name: Require successful CI on the exact release commit
         env:
           GH_TOKEN: ${{ github.token }}
@@ -1359,7 +1410,7 @@ jobs:
     name: Google Play upload
     needs: [plan, android, publish]
     if: >-
-      always() && needs.plan.outputs.release == 'true' && needs.publish.result == 'success' &&
+      !cancelled() && needs.plan.outputs.release == 'true' && needs.publish.result == 'success' &&
       inputs.verify_only != true
     runs-on: ubuntu-24.04
     timeout-minutes: 45 # Google processes the bundle before it answers
