@@ -400,14 +400,14 @@ private struct RulesPage: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
-            StepHeader(eyebrow: "Step 3 · How much to ask", symbol: "checkmark.shield", tint: Palette.accent, title: "Fewer questions, same control",
-                       text: "Reading is where most requests come from. Pick how a new AI starts; you can change it any time under Grants.")
+            StepHeader(eyebrow: "Step 3 · How much to ask", symbol: "checkmark.shield", tint: Palette.accent, title: "How a new AI starts",
+                       text: "You can change it any time under Grants.")
             // The card brings its own side margin; the page's other content already has one.
             StartingRuleChooser().padding(.horizontal, -16).padding(.top, 8)
         }
         // Someone who just installed Reins starts with the recommended rule; a choice made before stays.
         .task {
-            if (try? await model.core.startingPolicy()) == nil { model.chooseStartingPolicy(.readsForADay) }
+            if (try? await model.core.startingPolicy()) == nil { model.chooseStartingPolicy(.askEveryTime) }
         }
         .accessibilityElement(children: .contain)
         .accessibilityIdentifier("setupRules")

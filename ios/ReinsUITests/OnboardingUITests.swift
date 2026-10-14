@@ -218,7 +218,7 @@ final class OnboardingUITests: XCTestCase {
         launch(["-demoJoin"])
         let tab = app.tabBars.buttons["Activity"]
         XCTAssertTrue(tab.waitForExistence(timeout: 10))
-        tap("pending:join-pixel")
+        tap("pendingTitle:join-pixel")
         XCTAssertEqual(wait("joinCode").label, "Code 482 193")
         shot("12-join-sheet")
         tap("approve")
