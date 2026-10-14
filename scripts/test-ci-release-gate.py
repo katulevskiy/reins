@@ -87,10 +87,18 @@ assert publisher.index("--draft\n") < publisher.index(
     'gh release edit "$TAG" --draft=false --latest'
 )
 assert "needs.android.result == 'success'" in publisher
-# The Linux packages are release assets (and the feed's repositories): publication waits for them on both
-# architectures. The AUR job runs after publication and can neither block nor fail the release.
-assert "needs.linux-packages.result == 'success'" in publisher
-assert "needs.linux-packages-arm64.result == 'success'" in publisher
+# Publication waits for every build it needs, each of which must have succeeded: the Linux packages are release
+# assets (and the feed's repositories), installed from on both architectures.
+needs = publisher.split("    needs:\n", 1)[1].split("    if:", 1)[0]
+needed = [line.strip().removeprefix("- ") for line in needs.splitlines() if line.strip()]
+assert {"desktop-linux", "desktop", "desktop-app-linux", "desktop-app", "desktop-app-macos", "server", "docker",
+        "android", "linux-packages", "linux-packages-amd64", "linux-packages-arm64"} <= set(needed), needed
+for job in needed[1:]:
+    assert f"needs.{job}.result == 'success'" in publisher, job
+# The Linux packages start once the Linux builds they package are done, not after every platform's.
+packages = workflow.split("\n  linux-packages:\n", 1)[1].split("\n    steps:\n", 1)[0]
+assert "needs: [plan, desktop-linux, desktop-app-linux]" in packages
+# The AUR job runs after publication and can neither block nor fail the release.
 aur = publisher.split("\n  aur:\n", 1)[1]
 assert "needs: [plan, publish]" in aur and "continue-on-error: true" in aur
 assert "needs.publish.result == 'success'" in aur
@@ -105,8 +113,9 @@ assert "overwrite: true" in retry
 assert action.count("if-no-files-found: error") == 2
 for field in ("name", "path", "compression-level", "retention-days"):
     assert action.count(f"{field}: ${{{{ inputs.{field} }}}}") == 2
-desktop = workflow.split("  desktop:\n", 1)[1].split("  desktop-app:\n", 1)[0]
-assert "fail-fast: false" in desktop
+for job in ("desktop-linux", "desktop"):
+    section = workflow.split(f"\n  {job}:\n", 1)[1].split("\n\n  ", 1)[0]
+    assert "fail-fast: false" in section, job
 assert "uses: actions/upload-artifact@" not in workflow
-assert workflow.count("uses: ./.github/actions/upload-artifact") == 11
-print("37 release CI gate and artifact retry checks passed")
+assert workflow.count("uses: ./.github/actions/upload-artifact") == 13
+print("38 release CI gate and artifact retry checks passed")
