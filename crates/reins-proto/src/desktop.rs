@@ -704,17 +704,19 @@ pub fn var_ok(name: &str) -> bool {
 /// The most arguments a command of a release may have, and the longest one.
 pub const MAX_ARGS: usize = 64;
 pub const MAX_ARG: usize = 1_000;
-/// The longest command of a shell, interpreter or launcher (`bash -c <code>`, `python -c <code>`) a standing
-/// permission may name, as shown: the phone shows all of it, never cut short. A longer one is asked every time.
+/// The longest exact command a standing permission may name, as shown (`bash -c <code>`, `python -c <code>` among
+/// them): the phone shows all of it, never cut short. A longer one is asked every time.
 pub const MAX_REMEMBERED_CODE: usize = 300;
 
 /// The commands a release (or a standing permission for secrets) covers. `reins run` never uses a shell: a command is
 /// the program and its argument list as spawned, compared as whole arguments, never as text.
 ///
 /// - exact (`prefix` false): this program with exactly these arguments;
-/// - prefix (`prefix` true): this program with these first arguments, then zero or more whole arguments of any kind
-///   (`npm run *` covers `npm run test --watch`, never `npm runx`). Allowed only where [`prefix_refusal`] says
-///   nothing: never for shells, interpreters and launchers, and never on the program alone.
+/// - prefix (`prefix` true): this program with these first arguments, then zero or more whole arguments (`npm run dev *`
+///   covers `npm run dev --watch`, never `npm run devx`). Closed by construction: a prefix is allowed only for a
+///   program and first arguments on an allow-list ([`GRAMMARS`]), and the arguments the `*` stands for only when each
+///   is a plain word or an option that program's grammar lists as safe ([`tail_refusal`]). Everything else is allowed
+///   exactly only.
 #[derive(Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct CommandScope {
     /// The program, by its absolute path when the computer could resolve it (so another `npm` elsewhere on PATH is
@@ -725,147 +727,178 @@ pub struct CommandScope {
     pub prefix: bool,
 }
 
-/// Programs that run whatever their arguments say (shells, interpreters, launchers, wrappers): a prefix of their
-/// arguments covers arbitrary code, so they are only ever allowed exactly.
-const NO_PREFIX_PROGRAMS: &[&str] = &[
-    "sh",
-    "bash",
-    "zsh",
-    "fish",
-    "dash",
-    "ksh",
-    "mksh",
-    "csh",
-    "tcsh",
-    "ash",
-    "busybox",
-    "nu",
-    "elvish",
-    "xonsh",
-    "python",
-    "pythonw",
-    "py",
-    "tsx",
-    "ts-node",
-    "corepack",
-    "pnpx",
-    "toybox",
-    "wscript",
-    "cscript",
-    "mshta",
-    "rundll32",
-    "powershell_ise",
-    "pypy",
-    "node",
-    "nodejs",
-    "deno",
-    "bun",
-    "bunx",
-    "npx",
-    "uvx",
-    "pipx",
-    "ruby",
-    "irb",
-    "perl",
-    "php",
-    "lua",
-    "luajit",
-    "java",
-    "jshell",
-    "rscript",
-    "julia",
-    "osascript",
-    "pwsh",
-    "powershell",
-    "cmd",
-    "command",
-    "wsl",
-    "env",
-    "xargs",
-    "parallel",
-    "sudo",
-    "doas",
-    "su",
-    "runas",
-    "pkexec",
-    "nohup",
-    "time",
-    "timeout",
-    "exec",
-    "eval",
-    "watch",
-    "nice",
-    "ionice",
-    "taskset",
-    "chrt",
-    "setsid",
-    "stdbuf",
-    "script",
-    "strace",
-    "ltrace",
-    "gdb",
-    "lldb",
-    "chroot",
-    "flock",
-    "entr",
-    "nodemon",
-    "nix-shell",
-    "nix",
-    "make",
-    "gmake",
-    "ssh",
-    "find",
-    "awk",
-    "gawk",
-    "mawk",
-    "sed",
-    "expect",
-    "tclsh",
-    "wish",
-    "start",
-    "open",
-    "xdg-open",
+/// One word of a grammar's fixed part: a literal (`run`), or a name the project defines (a script, a target).
+#[derive(Clone, Copy, Debug)]
+pub enum Word {
+    Lit(&'static str),
+    /// A plain name: letters, digits and `_ . : -`, not starting with `-` or `+`.
+    Name,
+}
+
+/// The prefixes one program may be remembered by, and the options the `*` may stand for.
+#[derive(Debug)]
+pub struct Grammar {
+    /// The program's names, as [`program_name`] gives them.
+    pub programs: &'static [&'static str],
+    /// The fixed parts a prefix may have (`[run, <script>]`: `npm run dev *`). An empty one: the program alone.
+    pub prefixes: &'static [&'static [Word]],
+    /// The options the `*` may stand for (`--release`; `--features=x` and `-j8` match `--features` and `-j`).
+    /// Anything else that starts with `-` or `+` is refused there.
+    pub options: &'static [&'static str],
+}
+
+const CARGO_OPTIONS: &[&str] = &[
+    "--release",
+    "-r",
+    "--workspace",
+    "--all",
+    "--all-targets",
+    "--all-features",
+    "--no-default-features",
+    "--features",
+    "-F",
+    "-p",
+    "--package",
+    "--bin",
+    "--bins",
+    "--lib",
+    "--tests",
+    "--test",
+    "--examples",
+    "--example",
+    "--benches",
+    "--bench",
+    "--locked",
+    "--frozen",
+    "--offline",
+    "-q",
+    "--quiet",
+    "-v",
+    "-vv",
+    "--verbose",
+    "-j",
+    "--jobs",
+    "--no-fail-fast",
+    "--doc",
+    "--exclude",
+    "--profile",
+    "--message-format",
+    "--color",
+    "--keep-going",
+    "--no-run",
+    "--timings",
+];
+const PYTEST_OPTIONS: &[&str] = &[
+    "-v",
+    "-vv",
+    "-q",
+    "-x",
+    "--exitfirst",
+    "-k",
+    "-m",
+    "-s",
+    "--lf",
+    "--last-failed",
+    "--ff",
+    "--failed-first",
+    "-n",
+    "--maxfail",
+    "--tb",
+    "--durations",
+    "--no-header",
+    "-ra",
+    "-rA",
+    "--co",
+    "--collect-only",
 ];
 
-/// A program's first argument that makes it run arbitrary code, packages or containers: a prefix through it is refused.
-const NO_PREFIX_SUBCOMMANDS: &[(&str, &str)] = &[
-    ("npm", "exec"),
-    ("npm", "x"),
-    ("npm", "explore"),
-    ("pnpm", "dlx"),
-    ("pnpm", "exec"),
-    ("pnpm", "x"),
-    ("yarn", "dlx"),
-    ("yarn", "exec"),
-    ("yarn", "node"),
-    ("pnpm", "node"),
-    ("pipx", "run"),
-    ("deno", "run"),
-    ("bun", "run"),
-    ("bun", "x"),
-    ("bundle", "exec"),
-    ("cargo", "run"),
-    ("cargo", "x"),
-    ("uv", "run"),
-    ("uv", "tool"),
-    ("poetry", "run"),
-    ("pipenv", "run"),
-    ("pdm", "run"),
-    ("hatch", "run"),
-    ("go", "run"),
-    ("docker", "run"),
-    ("docker", "exec"),
-    ("docker", "compose"),
-    ("podman", "run"),
-    ("podman", "exec"),
-    ("kubectl", "exec"),
-    ("kubectl", "run"),
-    ("git", "-c"),
-    ("dotnet", "run"),
-    ("dotnet", "exec"),
-    ("mvn", "exec:java"),
-    ("gradle", "run"),
+/// Every program a prefix may be remembered for, with its grammar. Not here: allowed exactly only.
+pub const GRAMMARS: &[Grammar] = &[
+    Grammar {
+        programs: &["cargo"],
+        prefixes: &[
+            &[Word::Lit("build")],
+            &[Word::Lit("test")],
+            &[Word::Lit("run")],
+            &[Word::Lit("check")],
+            &[Word::Lit("clippy")],
+        ],
+        options: CARGO_OPTIONS,
+    },
+    Grammar {
+        programs: &["npm", "pnpm", "yarn"],
+        prefixes: &[&[Word::Lit("run"), Word::Name], &[Word::Lit("test")], &[Word::Lit("start")]],
+        options: &["--silent", "-s", "--if-present"],
+    },
+    Grammar {
+        programs: &["make", "gmake"],
+        prefixes: &[&[Word::Name]],
+        options: &["-j", "--jobs", "-k", "--keep-going", "-s", "--silent", "--quiet", "-n", "--dry-run", "-B", "-O"],
+    },
+    Grammar {
+        programs: &["go"],
+        prefixes: &[&[Word::Lit("build")], &[Word::Lit("test")], &[Word::Lit("run")], &[Word::Lit("vet")]],
+        options: &[
+            "-v",
+            "-race",
+            "-count",
+            "-run",
+            "-timeout",
+            "-short",
+            "-cover",
+            "-tags",
+            "-p",
+            "-failfast",
+            "-bench",
+            "-benchmem",
+            "-trimpath",
+        ],
+    },
+    Grammar {
+        programs: &["pytest", "py.test"],
+        prefixes: &[&[]],
+        options: PYTEST_OPTIONS,
+    },
+    Grammar {
+        programs: &["uv"],
+        prefixes: &[&[Word::Lit("run"), Word::Lit("pytest")]],
+        options: PYTEST_OPTIONS,
+    },
+    Grammar {
+        programs: &["rails"],
+        prefixes: &[&[Word::Lit("server")], &[Word::Lit("s")], &[Word::Lit("test")], &[Word::Lit("t")]],
+        options: &["-p", "--port", "-b", "--binding", "-e", "--environment"],
+    },
+    Grammar {
+        programs: &["docker"],
+        prefixes: &[&[Word::Lit("compose"), Word::Lit("up")]],
+        options: &[
+            "-d",
+            "--detach",
+            "--build",
+            "--no-build",
+            "--no-deps",
+            "--force-recreate",
+            "--remove-orphans",
+            "--wait",
+        ],
+    },
 ];
+
+/// The grammar of `program`, if a prefix may be remembered for it.
+#[must_use]
+pub fn grammar(program: &str) -> Option<&'static Grammar> {
+    if doubtful_name(program) {
+        return None;
+    }
+    let name = program_name(program);
+    GRAMMARS.iter().find(|g| g.programs.contains(&name.as_str()))
+}
+
+fn plain_name(w: &str) -> bool {
+    w.chars().next().is_some_and(|c| c.is_ascii_alphanumeric() || c == '_')
+        && w.chars().all(|c| c.is_ascii_alphanumeric() || matches!(c, '_' | '.' | ':' | '-'))
+}
 
 /// The program's name as compared with the lists above: its file name, lower case on every platform (macOS and
 /// Windows find `NPM` and `Bash` as `npm` and `bash`), without the trailing dots and spaces Windows ignores, a Windows
@@ -907,33 +940,80 @@ pub fn doubtful_name(program: &str) -> bool {
 }
 
 /// [`prefix_refusal`] for a program known by several names: as the user typed it (`npm`), each link on the way to it,
-/// and as the computer resolved it (`…/npm-cli.js`). Refused when any of them is.
+/// and as the computer resolved it (`…/npm-cli.js`). Refused unless every one of them is the same program on the
+/// allow-list: any doubt about which program runs means exact only.
 #[must_use]
 pub fn prefix_refusal_as(names: &[&str], program: &str, args: &[String]) -> Option<String> {
-    names.iter().find_map(|n| prefix_refusal(n, args)).or_else(|| prefix_refusal(program, args))
-}
-
-/// Why `program` with the first arguments `args` may not be a prefix pattern; `None` when it may.
-#[must_use]
-pub fn prefix_refusal(program: &str, args: &[String]) -> Option<String> {
-    if doubtful_name(program) {
-        return Some("the program's name is unusual: only the exact command can be allowed".to_owned());
+    if let Some(why) = prefix_refusal(program, args) {
+        return Some(why);
     }
     let name = program_name(program);
-    if NO_PREFIX_PROGRAMS.contains(&name.as_str()) {
-        return Some(format!("{name} runs whatever it is given: only the exact command can be allowed"));
-    }
-    let Some(first) = args.first() else {
-        return Some(format!("a pattern names {name} and at least one subcommand (`{name} run *`)"));
+    names
+        .iter()
+        .find(|n| doubtful_name(n) || program_name(n) != name)
+        .map(|n| format!("{n} is not plainly {name}: only the exact command can be allowed"))
+}
+
+/// Why `program` with the fixed first arguments `fixed` may not be a prefix pattern; `None` when its grammar
+/// ([`GRAMMARS`]) allows exactly these.
+#[must_use]
+pub fn prefix_refusal(program: &str, fixed: &[String]) -> Option<String> {
+    let name = program_name(program);
+    let Some(g) = grammar(program) else {
+        return Some(format!("{name} can be allowed only exactly"));
     };
-    if first.starts_with('-') {
-        return Some(format!("a pattern names a subcommand of {name}, not an option"));
+    let fits = |words: &[Word]| {
+        words.len() == fixed.len()
+            && words.iter().zip(fixed).all(|(w, a)| match w {
+                Word::Lit(l) => a == l,
+                Word::Name => plain_name(a),
+            })
+    };
+    if g.prefixes.iter().any(|p| fits(p)) {
+        None
+    } else {
+        Some(format!("{name} {} * is not a pattern Reins allows: only the exact command", fixed.join(" ")))
     }
-    if args.iter().any(|a| NO_PREFIX_SUBCOMMANDS.iter().any(|(p, s)| *p == name && a.eq_ignore_ascii_case(s))) {
-        return Some(format!("{name} {first} runs whatever it is given: only the exact command can be allowed"));
-    }
-    if args.iter().any(|a| a == "--") {
-        return Some("arguments after `--` are allowed only exactly".to_owned());
+}
+
+/// Why the arguments `tail` may not stand for the `*` after `program` `fixed`; `None` when every one is a plain word
+/// (not a path out of the project: absolute, `~`, or with a `..` part; not a `NAME=value` assignment; not `--`) or an
+/// option the program's grammar lists as safe. Options that run other code or read other configuration (`cargo
+/// --config`, `npm --script-shell`, `make -f`, `pytest -p`, `go -toolexec`, …) are not listed, so they need the exact
+/// command.
+#[must_use]
+pub fn tail_refusal(program: &str, tail: &[String]) -> Option<String> {
+    let Some(g) = grammar(program) else {
+        return Some("no pattern for this program".to_owned());
+    };
+    for a in tail {
+        if a == "--" {
+            return Some("arguments after `--` are allowed only exactly".to_owned());
+        }
+        if a.starts_with('-') || a.starts_with('+') {
+            let key = a.split_once('=').map_or(a.as_str(), |(k, _)| k);
+            let short_count = g
+                .options
+                .iter()
+                .any(|o| o.len() == 2 && a.len() > 2 && a.starts_with(o) && a[2..].chars().all(|c| c.is_ascii_digit()));
+            if !g.options.contains(&key) && !short_count {
+                return Some(format!("{a} is allowed only in the exact command"));
+            }
+            continue;
+        }
+        let assignment = a.split_once('=').is_some_and(|(k, _)| {
+            !k.is_empty()
+                && k.chars().all(|c| c.is_ascii_alphanumeric() || c == '_')
+                && !k.starts_with(char::is_numeric)
+        });
+        let outside = a.starts_with('/')
+            || a.starts_with('\\')
+            || a.starts_with('~')
+            || a.get(1..2) == Some(":")
+            || a.split(['/', '\\']).any(|part| part == "..");
+        if assignment || outside {
+            return Some(format!("{a} is allowed only in the exact command"));
+        }
     }
     None
 }
@@ -974,7 +1054,9 @@ impl CommandScope {
             return false;
         }
         if self.prefix {
-            prefix_refusal(&self.program, &self.args).is_none() && args.starts_with(&self.args)
+            prefix_refusal(&self.program, &self.args).is_none()
+                && args.starts_with(&self.args)
+                && tail_refusal(&self.program, &args[self.args.len()..]).is_none()
         } else {
             args == self.args.as_slice()
         }
@@ -987,43 +1069,30 @@ impl CommandScope {
             return false;
         }
         if wider.prefix {
-            prefix_refusal(&wider.program, &wider.args).is_none() && self.args.starts_with(&wider.args)
+            prefix_refusal(&wider.program, &wider.args).is_none()
+                && self.args.starts_with(&wider.args)
+                && tail_refusal(&wider.program, &self.args[wider.args.len()..]).is_none()
         } else {
             !self.prefix && self.args == wider.args
         }
     }
 
     /// The patterns that can be offered for this exact command, narrowest first: the command itself, then each
-    /// shorter allowed prefix (never the program alone).
+    /// shorter prefix its grammar allows and that covers it.
     #[must_use]
     pub fn offers(&self) -> Vec<Self> {
         self.offers_as(&[])
     }
 
-    /// Whether this runs code its arguments carry: a shell, interpreter or launcher ([`prefix_refusal`]'s lists), by
-    /// either name of the program.
-    #[must_use]
-    pub fn runs_code(&self, names: &[&str]) -> bool {
-        let lists = |program: &str| {
-            let name = program_name(program);
-            NO_PREFIX_PROGRAMS.contains(&name.as_str())
-                || self
-                    .args
-                    .iter()
-                    .any(|a| NO_PREFIX_SUBCOMMANDS.iter().any(|(p, s)| *p == name && a.eq_ignore_ascii_case(s)))
-        };
-        names.iter().any(|n| lists(n)) || lists(&self.program)
-    }
-
-    /// Whether a standing permission may name this command. A command that runs code its arguments carry
-    /// ([`CommandScope::runs_code`]) is remembered only exactly, and only when the phone can show all of it
-    /// ([`MAX_REMEMBERED_CODE`] characters); a longer one is approved once at a time.
+    /// Whether a standing permission may name this command: a prefix its grammar allows by every name of the
+    /// program ([`prefix_refusal_as`]); an exact command when the phone can show all of it ([`MAX_REMEMBERED_CODE`]
+    /// characters), else it is approved once at a time.
     #[must_use]
     pub fn rememberable(&self, names: &[&str]) -> bool {
         if self.prefix {
             return prefix_refusal_as(names, &self.program, &self.args).is_none();
         }
-        !self.runs_code(names) || self.shown().chars().count() <= MAX_REMEMBERED_CODE
+        self.shown().chars().count() <= MAX_REMEMBERED_CODE
     }
 
     /// [`CommandScope::offers`], refusing what either name of the program refuses ([`prefix_refusal_as`]): `typed` is
@@ -1035,9 +1104,11 @@ impl CommandScope {
             return Vec::new();
         }
         let mut out = vec![exact];
-        for k in (1..self.args.len()).rev() {
+        for k in (0..=self.args.len()).rev() {
             let fixed = &self.args[..k];
-            if prefix_refusal_as(names, &self.program, fixed).is_none() {
+            if prefix_refusal_as(names, &self.program, fixed).is_none()
+                && tail_refusal(&self.program, &self.args[k..]).is_none()
+            {
                 out.push(Self {
                     program: self.program.clone(),
                     args: fixed.to_vec(),
@@ -1726,206 +1797,191 @@ mod tests {
     #[test]
     fn commands_match_as_whole_arguments() {
         let npm = "/usr/bin/npm";
-        let run = prefix(npm, &["run"]);
+        let run = prefix(npm, &["run", "test"]);
         run.validate().unwrap();
-        assert!(run.matches(npm, &argv(&["run", "test", "--watch"])));
-        assert!(run.matches(npm, &argv(&["run"])), "zero extra arguments");
-        assert!(!run.matches(npm, &argv(&["runx"])), "never a partial argument");
-        assert!(!run.matches(npm, &argv(&["exec", "run"])));
-        assert!(!run.matches("/home/me/evil/npm", &argv(&["run", "dev"])), "another npm on PATH");
-        let exact = CommandScope::exact(npm, &argv(&["run", "dev"]));
-        assert!(exact.matches(npm, &argv(&["run", "dev"])));
-        assert!(!exact.matches(npm, &argv(&["run", "test"])));
-        assert!(!exact.matches(npm, &argv(&["run", "dev", "--", "x"])));
+        assert!(run.matches(npm, &argv(&["run", "test", "--silent", "unit"])));
+        assert!(run.matches(npm, &argv(&["run", "test"])), "zero extra arguments");
+        assert!(!run.matches(npm, &argv(&["run", "testx"])), "never a partial argument");
+        assert!(!run.matches(npm, &argv(&["exec", "run", "test"])));
+        assert!(!run.matches("/home/me/evil/npm", &argv(&["run", "test"])), "another npm on PATH");
+        let exact = CommandScope::exact(npm, &argv(&["run", "test"]));
+        assert!(exact.matches(npm, &argv(&["run", "test"])));
+        assert!(!exact.matches(npm, &argv(&["run", "dev"])));
+        assert!(!exact.matches(npm, &argv(&["run", "test", "--", "x"])));
         // An argument with a space is one argument: it is never split into two.
         let spaced = CommandScope::exact("/bin/echo", &argv(&["a b"]));
         assert!(spaced.matches("/bin/echo", &argv(&["a b"])) && !spaced.matches("/bin/echo", &argv(&["a", "b"])));
         assert_eq!(spaced.shown(), "echo 'a b'");
-        assert_eq!(prefix(npm, &["run"]).shown(), "npm run *");
-        let git = prefix("/usr/bin/git", &["push"]);
-        assert!(!git.matches("/usr/bin/git", &argv(&["push-evil"])));
-        assert!(exact.within(&run) && !run.within(&exact) && prefix(npm, &["run", "dev"]).within(&run));
+        assert_eq!(run.shown(), "npm run test *");
+        assert!(exact.within(&run) && !run.within(&exact));
     }
 
     #[test]
-    fn launchers_and_bare_programs_are_never_a_prefix() {
+    fn a_prefix_is_allowed_only_for_programs_and_subcommands_on_the_allow_list() {
+        for (program, args) in [
+            ("/usr/bin/cargo", vec!["build"]),
+            ("/usr/bin/cargo", vec!["test"]),
+            ("/usr/bin/cargo", vec!["run"]),
+            ("/usr/bin/cargo", vec!["check"]),
+            ("/usr/bin/cargo", vec!["clippy"]),
+            ("/usr/bin/npm", vec!["run", "dev"]),
+            ("/usr/lib/node_modules/npm/bin/npm-cli.js", vec!["run", "dev"]),
+            ("/usr/bin/pnpm", vec!["run", "build:prod"]),
+            ("/usr/bin/yarn", vec!["test"]),
+            ("/usr/bin/make", vec!["deploy"]),
+            ("/usr/bin/go", vec!["test"]),
+            ("/usr/bin/pytest", vec![]),
+            ("/usr/bin/uv", vec!["run", "pytest"]),
+            ("/home/me/app/bin/rails", vec!["server"]),
+            ("/usr/bin/docker", vec!["compose", "up"]),
+            ("NPM", vec!["run", "dev"]),
+        ] {
+            prefix(program, &args).validate().unwrap_or_else(|e| panic!("{program} {args:?}: {e}"));
+        }
+        // Everything else is exact only: shells, interpreters, launchers, wrappers, and what the list does not name.
         for (program, args) in [
             ("/bin/bash", vec!["-c"]),
-            ("/bin/sh", vec!["-c"]),
             ("/usr/bin/python3.12", vec!["manage.py"]),
             ("/usr/bin/node", vec!["server.js"]),
             ("/usr/bin/npx", vec!["vite"]),
             ("/usr/bin/env", vec!["FOO=1"]),
-            ("/usr/bin/xargs", vec!["echo"]),
             ("/usr/bin/sudo", vec!["make"]),
-            ("/usr/bin/make", vec!["deploy"]),
             ("/usr/bin/ssh", vec!["host"]),
             ("/usr/bin/docker", vec!["run"]),
-            ("/usr/bin/docker", vec!["compose", "up"]),
             ("/usr/bin/uv", vec!["run"]),
-            ("/usr/bin/bunx", vec!["x"]),
             ("/usr/bin/deno", vec!["run"]),
-            ("/usr/bin/ruby", vec!["x.rb"]),
-            ("/usr/bin/perl", vec!["x"]),
-            ("/usr/bin/php", vec!["artisan"]),
             ("C:\\Windows\\System32\\cmd.exe", vec!["/c"]),
-            ("C:\\x\\pwsh.exe", vec!["-File"]),
-            ("/usr/bin/osascript", vec!["x"]),
-            ("/usr/bin/nohup", vec!["x"]),
-            ("/usr/bin/time", vec!["x"]),
-            ("/usr/bin/timeout", vec!["5"]),
-            ("/usr/bin/watch", vec!["x"]),
-            ("/usr/bin/nix-shell", vec!["--run"]),
             ("/usr/bin/npm", vec!["exec"]),
-            ("/usr/bin/pnpm", vec!["dlx"]),
-            ("/usr/bin/yarn", vec!["dlx"]),
-            ("/usr/bin/cargo", vec!["run"]),
+            ("/usr/bin/npm", vec!["run"]),
+            ("/usr/bin/npm", vec!["run", "--script-shell"]),
             ("/usr/bin/npm", vec![]),
-            ("/usr/bin/npm", vec!["--prefix"]),
-            ("/usr/bin/npm", vec!["run", "--"]),
-            ("/usr/bin/git", vec!["-c"]),
+            ("/usr/bin/pnpm", vec!["dlx"]),
+            ("/usr/bin/cargo", vec!["+nightly"]),
+            ("/usr/bin/cargo", vec!["install"]),
+            ("/usr/bin/make", vec!["-f"]),
+            ("/usr/bin/make", vec!["SHELL=/tmp/x"]),
+            ("/usr/bin/git", vec!["push"]),
+            ("/opt/tools/runner", vec!["x"]),
+            ("/usr/bin/n\u{440}m", vec!["run", "dev"]),
+            ("C:\\PROGRA~1\\nodejs\\NPM~1.CMD", vec!["run", "dev"]),
         ] {
             let p = prefix(program, &args);
             assert!(p.validate().is_err(), "{program} {args:?}");
-            let mut more = args.iter().map(|a| (*a).to_owned()).collect::<Vec<_>>();
+            let mut more = argv(&args);
             more.push("anything".to_owned());
             assert!(!p.matches(program, &more), "a refused prefix covers nothing: {program} {args:?}");
         }
-        // Their exact commands can still be allowed.
         CommandScope::exact("/bin/bash", &argv(&["-c", "make"])).validate().unwrap();
     }
 
     #[test]
-    fn the_offers_are_the_command_then_each_allowed_prefix() {
-        let c = CommandScope::exact("/usr/bin/npm", &argv(&["run", "dev", "--watch"]));
-        let shown: Vec<String> = c.offers().iter().map(CommandScope::shown).collect();
-        assert_eq!(shown, ["npm run dev --watch", "npm run dev *", "npm run *"]);
-        let shell = CommandScope::exact("/bin/sh", &argv(&["-c", "x"]));
-        assert_eq!(shell.offers(), vec![shell], "a shell is only ever exact");
-        let cargo = CommandScope::exact("/usr/bin/cargo", &argv(&["run", "--", "x"]));
-        assert_eq!(cargo.offers().len(), 1);
+    fn what_the_star_stands_for_runs_no_other_code() {
+        let ok = |program: &str, fixed: &[&str], tail: &[&str]| {
+            prefix(program, fixed).matches(program, &argv(&[fixed, tail].concat()))
+        };
+        // Plain words and the grammar's safe options.
+        assert!(ok("/usr/bin/cargo", &["test"], &["--release", "-p", "core", "some_test", "-j8", "--features=x"]));
+        assert!(ok("/usr/bin/npm", &["run", "dev"], &["--silent", "src/app.ts"]));
+        assert!(ok("/usr/bin/make", &["build"], &["-j4", "docs"]));
+        assert!(ok("/usr/bin/go", &["test"], &["-race", "-run=TestX", "./pkg/..."]));
+        assert!(ok("/usr/bin/pytest", &[], &["-k", "login and not slow", "tests/test_auth.py"]));
+        // Options that run other code or read other configuration, assignments, `--`, paths out of the project.
+        for (program, fixed, tail) in [
+            ("/usr/bin/cargo", vec!["test"], vec!["--config", "build.rustc-wrapper='/tmp/x'"]),
+            ("/usr/bin/cargo", vec!["test"], vec!["-Zunstable-options"]),
+            ("/usr/bin/cargo", vec!["build"], vec!["+nightly"]),
+            ("/usr/bin/cargo", vec!["build"], vec!["--manifest-path", "x"]),
+            ("/usr/bin/cargo", vec!["run"], vec!["--", "--anything"]),
+            ("/usr/bin/npm", vec!["run", "dev"], vec!["--script-shell=/tmp/sh"]),
+            ("/usr/bin/npm", vec!["run", "dev"], vec!["--node-options=--require=/tmp/x.js"]),
+            ("/usr/bin/npm", vec!["run", "dev"], vec!["--prefix", "/tmp"]),
+            ("/usr/bin/make", vec!["build"], vec!["-f", "evil.mk"]),
+            ("/usr/bin/make", vec!["build"], vec!["-C", "x"]),
+            ("/usr/bin/make", vec!["build"], vec!["--eval=x"]),
+            ("/usr/bin/make", vec!["build"], vec!["SHELL=/tmp/sh"]),
+            ("/usr/bin/pytest", vec![], vec!["-p", "evil"]),
+            ("/usr/bin/pytest", vec![], vec!["--rootdir=/tmp"]),
+            ("/usr/bin/pytest", vec![], vec!["-c", "x.ini"]),
+            ("/usr/bin/pytest", vec![], vec!["--pyargs", "x"]),
+            ("/usr/bin/pytest", vec![], vec!["/tmp/evil_test.py"]),
+            ("/usr/bin/pytest", vec![], vec!["../other/test.py"]),
+            ("/usr/bin/pytest", vec![], vec!["~/x.py"]),
+            ("/usr/bin/go", vec!["test"], vec!["-exec", "/tmp/x"]),
+            ("/usr/bin/go", vec!["build"], vec!["-toolexec=/tmp/x"]),
+            ("/usr/bin/go", vec!["build"], vec!["-ldflags=-X main.v=1"]),
+            ("/usr/bin/docker", vec!["compose", "up"], vec!["-f", "/tmp/c.yml"]),
+        ] {
+            assert!(!ok(program, &fixed, &tail), "{program} {fixed:?} {tail:?}");
+            assert!(tail_refusal(program, &argv(&tail)).is_some(), "{program} {tail:?}");
+        }
     }
 
     #[test]
-    fn package_managers_installed_as_scripts_keep_their_names() {
+    fn the_offers_are_the_command_then_each_allowed_prefix() {
+        let c = CommandScope::exact("/usr/bin/npm", &argv(&["run", "dev", "--silent"]));
+        let shown: Vec<String> = c.offers().iter().map(CommandScope::shown).collect();
+        assert_eq!(shown, ["npm run dev --silent", "npm run dev *"]);
+        let plain = CommandScope::exact("/usr/bin/npm", &argv(&["run", "dev"]));
+        assert_eq!(
+            plain.offers().iter().map(CommandScope::shown).collect::<Vec<_>>(),
+            ["npm run dev", "npm run dev *"]
+        );
+        let shell = CommandScope::exact("/bin/sh", &argv(&["-c", "x"]));
+        assert_eq!(shell.offers(), vec![shell], "a shell is only ever exact");
+        let cargo = CommandScope::exact("/usr/bin/cargo", &argv(&["run", "--", "x"]));
+        assert_eq!(cargo.offers().len(), 1, "a prefix that would not cover it is not offered");
+        let pytest = CommandScope::exact("/usr/bin/pytest", &argv(&["-x", "tests"]));
+        assert_eq!(
+            pytest.offers().iter().map(CommandScope::shown).collect::<Vec<_>>(),
+            ["pytest -x tests", "pytest *"]
+        );
+    }
+
+    #[test]
+    fn a_program_is_judged_by_every_name_and_any_doubt_means_exact() {
         for (path, name) in [
             ("/usr/lib/node_modules/npm/bin/npm-cli.js", "npm"),
             ("/home/me/.nvm/versions/node/v22.1.0/lib/node_modules/npm/bin/npx-cli.js", "npx"),
             ("/usr/lib/node_modules/yarn/bin/yarn.js", "yarn"),
             ("/usr/lib/node_modules/pnpm/bin/pnpm.cjs", "pnpm"),
-            ("/usr/lib/node_modules/nodemon/bin/nodemon.js", "nodemon"),
-            ("/usr/lib/node_modules/x/cli.mjs", "cli"),
             ("C:\\nodejs\\npm.cmd", "npm"),
             ("/usr/bin/python3.12", "python"),
+            ("node22", "node"),
+            ("bash5.2", "bash"),
+            ("pwsh-preview", "pwsh"),
+            ("php8.3", "php"),
+            ("CMD.EXE", "cmd"),
+            ("python.exe.", "python"),
+            ("bash. . ", "bash"),
+            ("NPM", "npm"),
             ("-cli", "-cli"),
         ] {
             assert_eq!(program_name(path), name, "{path}");
         }
         let npm = "/usr/lib/node_modules/npm/bin/npm-cli.js";
-        for (program, args) in [
-            (npm, vec!["exec"]),
-            ("/usr/lib/node_modules/npm/bin/npx-cli.js", vec!["vite"]),
-            ("/usr/lib/node_modules/pnpm/bin/pnpm.cjs", vec!["dlx"]),
-            ("/usr/lib/node_modules/yarn/bin/yarn.js", vec!["dlx"]),
-            ("/usr/lib/node_modules/yarn/bin/yarn.js", vec!["exec"]),
-            ("/usr/lib/node_modules/nodemon/bin/nodemon.js", vec!["server.js"]),
-        ] {
-            assert!(prefix(program, &args).validate().is_err(), "{program} {args:?}");
-        }
-        let exec = CommandScope::exact(npm, &argv(&["exec", "vite", "build"]));
-        assert_eq!(exec.offers(), vec![exec], "npm exec is only ever exact");
-        assert_eq!(CommandScope::exact(npm, &argv(&["run", "dev"])).offers().len(), 2, "npm run * still is offered");
-        // A program known by another name where it lives: either name refuses.
-        let linked = CommandScope::exact("/opt/tools/runner", &argv(&["exec", "x"]));
+        assert!(prefix_refusal_as(&["npm", "./npm"], npm, &argv(&["run", "dev"])).is_none(), "the same program");
+        // Typed or linked by another name: which program runs is in doubt.
+        assert!(prefix_refusal_as(&["deploy"], "/usr/bin/make", &argv(&["build"])).is_some());
+        assert!(prefix_refusal_as(&["npm", "env", "npm-cli.js"], npm, &argv(&["run", "dev"])).is_some());
+        assert!(prefix_refusal_as(&["n\u{440}m"], npm, &argv(&["run", "dev"])).is_some());
+        let linked = CommandScope::exact("/usr/bin/make", &argv(&["build", "-j4"]));
         assert_eq!(linked.offers().len(), 2);
-        assert_eq!(linked.offers_as(&["npm"]).len(), 1, "typed as npm: npm exec");
-        assert!(prefix_refusal_as(&["bash"], "/opt/tools/runner", &argv(&["x"])).is_some());
-        assert!(prefix_refusal_as(&["deploy"], "/usr/bin/bash", &argv(&["x"])).is_some());
-        // A link anywhere on the way that is a launcher: refused.
-        assert!(prefix_refusal_as(&["deploy", "env", "tool"], "/opt/tools/runner", &argv(&["x"])).is_some());
-        assert!(prefix_refusal_as(&["./npm", "npm-cli.js"], "/opt/x/npm-cli.js", &argv(&["exec"])).is_some());
-        assert!(prefix_refusal_as(&["deploy", "tool"], "/opt/tools/runner", &argv(&["x"])).is_none());
+        assert_eq!(linked.offers_as(&["deploy"]).len(), 1);
+        for name in ["/usr/bin/n\u{440}m", "C:\\PROGRA~1\\nodejs\\NPM~1.CMD", "PYTHON~1.EXE", "/usr/bin/", ""] {
+            assert!(doubtful_name(name), "{name:?}");
+        }
+        assert!(!doubtful_name("/usr/local/bin/my-tool_2.0+x"));
     }
 
     #[test]
-    fn code_on_the_command_line_is_remembered_only_when_all_of_it_shows() {
+    fn an_exact_command_is_remembered_only_when_all_of_it_shows() {
         let short = CommandScope::exact("/bin/bash", &argv(&["-c", "make deploy"]));
-        assert!(short.runs_code(&[]) && short.rememberable(&[]));
+        assert!(short.rememberable(&[]));
         assert_eq!(short.offers(), vec![short]);
         let long = CommandScope::exact("/usr/bin/python3", &argv(&["-c", &"x = 1; ".repeat(60)]));
         assert!(!long.rememberable(&[]));
         assert!(long.offers().is_empty(), "approved once at a time");
         long.validate().unwrap();
-        let node = CommandScope::exact("/opt/n/bin/run", &argv(&["-e", &"a".repeat(400)]));
-        assert!(node.rememberable(&[]) && !node.rememberable(&["node"]));
-        let npm = CommandScope::exact("/usr/bin/npm", &argv(&["run", &"a".repeat(400)]));
-        assert!(npm.rememberable(&[]), "not code: any length");
-    }
-
-    #[test]
-    fn a_launcher_is_known_however_its_name_is_written() {
-        // Case-insensitive file systems, versions, previews, Windows extensions, trailing dots and spaces.
-        for name in [
-            "NPM",
-            "Bash",
-            "PYTHON3",
-            "/usr/bin/python3.12",
-            "node22",
-            "bash5.2",
-            "ruby3.3",
-            "perl5.38",
-            "pwsh-preview",
-            "php8.3",
-            "C:\\Python\\python.exe",
-            "C:\\Windows\\System32\\CMD.EXE",
-            "npm.cmd",
-            "COMMAND.COM",
-            "python.exe.",
-            "bash. . ",
-            "./npm",
-            "/usr/lib/node_modules/corepack/dist/corepack.js",
-        ] {
-            let refused = prefix_refusal(name, &argv(&["exec", "x"])).is_some();
-            assert!(refused, "{name}");
-        }
-        for (program, args) in [
-            ("env", vec!["X=1", "npm"]),
-            ("sudo", vec!["npm"]),
-            ("doas", vec!["npm"]),
-            ("nice", vec!["npm"]),
-            ("nohup", vec!["npm"]),
-            ("timeout", vec!["5"]),
-            ("xargs", vec!["npm"]),
-            ("exec", vec!["npm"]),
-            ("busybox", vec!["sh"]),
-            ("toybox", vec!["sh"]),
-            ("uv", vec!["run"]),
-            ("poetry", vec!["run"]),
-            ("pipx", vec!["run"]),
-            ("bunx", vec!["x"]),
-            ("deno", vec!["run"]),
-            ("corepack", vec!["pnpm"]),
-            ("cmd", vec!["/c"]),
-            ("npm", vec!["EXEC"]),
-            ("tsx", vec!["x.ts"]),
-            ("ts-node", vec!["x.ts"]),
-        ] {
-            assert!(prefix(program, &args).validate().is_err(), "{program} {args:?}");
-        }
-        // Any doubt about the name: refused. A look-alike letter, an 8.3 short name, nothing at all.
-        for name in [
-            "/usr/bin/n\u{440}m",
-            "/usr/bin/np\u{43c}",
-            "C:\\PROGRA~1\\nodejs\\NPM~1.CMD",
-            "PYTHON~1.EXE",
-            "/usr/bin/",
-            "",
-        ] {
-            assert!(doubtful_name(name), "{name:?}");
-            assert!(prefix_refusal(name, &argv(&["run"])).is_some(), "{name:?}");
-        }
-        assert!(!doubtful_name("/usr/local/bin/my-tool_2.0+x"));
-        assert!(prefix_refusal("/usr/bin/npm", &argv(&["run"])).is_none(), "npm run * stays allowed");
     }
 
     #[test]

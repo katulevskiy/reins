@@ -143,27 +143,32 @@ gains a `secrets` part):
 | computer | the connection (as today) |
 | runner | `person`, or `agent:<harness>` (6.1) |
 | project root | the folder on the computer (canonical path) |
-| command | the program (absolute path) and its arguments, compared as whole arguments: exactly, or a prefix followed by any number of whole arguments (`npm run *` covers `npm run test --watch`, never `npm runx`), chosen in the dock's Custom sheet; default = the exact command |
+| command | the program (absolute path) and its arguments, compared as whole arguments: exactly, or an allowed prefix followed by whole arguments its grammar allows (`npm run dev *` covers `npm run dev --silent`, never `npm run devx`), chosen in the dock's Custom sheet; default = the exact command |
 | fields | all of the env, or the listed ones |
 
-A prefix never ends inside an argument and never has a wildcard in the middle. It must name at least one subcommand
-after the program (`npm run *`, not `npm *`), and is refused (only the exact command can be remembered) for programs
-that run whatever they are given: shells and interpreters (`sh`, `bash`, `zsh`, `fish`, `cmd`, `pwsh`, `powershell`,
-`python`, `node`, `deno`, `bun`, `ruby`, `perl`, `php`, `osascript`, …), launchers and wrappers (`npx`, `bunx`, `uvx`,
-`env`, `xargs`, `sudo`, `nohup`, `time`, `timeout`, `exec`, `eval`, `watch`, `nix-shell`, `make`, `ssh`, …), and
-subcommands that do the same (`npm exec`, `pnpm dlx`, `yarn dlx`, `cargo run`, `uv run`, `docker run`, `docker exec`,
-`go run`, `git -c`, …), and for a prefix that includes `--`. The list is in `reins_proto::desktop` (`prefix_refusal`).
-A program is compared by every name it goes by: as typed (`npm`, `./npm`), each link on the way to it, and as
-resolved (`…/npm/bin/npm-cli.js`); it is refused when any of them is listed. Each name is lower-cased on every platform
-(`NPM`, `Bash`), loses trailing dots and spaces, a Windows or script extension, a `-cli` or `-preview` ending and a
-version (`npm-cli.js`, `pnpm.cjs`, `python3.12`, `node22`, `pwsh-preview`, `CMD.EXE` are `npm`, `pnpm`, `python`,
-`node`, `pwsh`, `cmd`), and a name that leaves any doubt (anything but ASCII letters, digits and `-_.+`: a look-alike
-letter, a Windows 8.3 short name such as `PYTHON~1.EXE`) is refused outright. Another program of
-the same name elsewhere on PATH is another program.
+A prefix never ends inside an argument and never has a wildcard in the middle. Prefixes are **closed by
+construction**: one is allowed only for a program and first arguments on an allow-list with a grammar per program
+(`reins_proto::desktop::GRAMMARS`): `cargo build|test|run|check|clippy *`, `npm|pnpm|yarn run <script> *`,
+`npm|pnpm|yarn test|start *`, `make <target> *`, `go build|test|run|vet *`, `pytest *`, `uv run pytest *`,
+`rails server|test *`, `docker compose up *`. Everything else (shells, interpreters, launchers, wrappers, and any program
+the list does not name) can be remembered only exactly. What the `*` stands for is checked too: each argument must be a
+plain word (not a path out of the project: absolute, `~`, or with a `..` part; not a `NAME=value` assignment; not `--`)
+or an option the program's grammar lists as safe. Options that run other code or read other configuration (`cargo
+--config`/`-Z`/`+toolchain`/`--manifest-path`, `npm --script-shell`/`--node-options`/`--prefix`, `make -f`/`-C`/`--eval`,
+`pytest -p`/`--rootdir`/`-c`/`--pyargs`, `go -exec`/`-toolexec`/`-ldflags`, `docker compose -f`) are not listed, so a
+command with them needs its own exact approval.
 
-The exact command of a shell, interpreter or launcher (`bash -c <code>`, `python -c <code>`, `node -e <code>`, `npm exec
-…`) can be remembered, and the phone then shows all of it, never cut short. When it is longer than
-`MAX_REMEMBERED_CODE` (300 characters as shown) it cannot be remembered at all: it is approved one run at a time.
+A program is compared by every name it goes by: as typed (`npm`, `./npm`), each link on the way to it, and as
+resolved (`…/npm/bin/npm-cli.js`); a prefix is allowed only when all of them are the same program on the list. Each name
+is lower-cased on every platform (`NPM`), loses trailing dots and spaces, a Windows or script extension, a `-cli` or
+`-preview` ending and a version (`npm-cli.js`, `pnpm.cjs`, `python3.12`, `node22`, `CMD.EXE` are `npm`, `pnpm`,
+`python`, `node`, `cmd`), and a name that leaves any doubt (anything but ASCII letters, digits and `-_.+`: a look-alike
+letter, a Windows 8.3 short name such as `NPM~1.CMD`) is never on the list. Another program of the same name
+elsewhere on PATH is another program.
+
+An exact command (`bash -c <code>`, `python -c <code>` among them) can be remembered, and the phone then shows all of
+it, never cut short. When it is longer than `MAX_REMEMBERED_CODE` (300 characters as shown) it cannot be remembered at
+all: it is approved one run at a time.
 
 `confirm = "always"` in `reins.toml` and any env named `production`/`prod` make the env `no_standing` by default (the
 user can change it on the phone, never from the repo alone). Bypass still approves everything (by the user's decision),
