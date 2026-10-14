@@ -198,6 +198,88 @@ abstract class ScreenshotsBase(private val suffix: String) {
         shoot("1-activity")
     }
 
+    // ---- the approval screen, as designed (reins-designs/approval.html) ------------------------------------------
+
+    private fun designApproval(
+        view: dev.reins.core.ApprovalView,
+        suggestion: dev.reins.core.SuggestionView? = TestData.suggestion(view.requestId),
+        installed: Boolean = true,
+    ) {
+        core.connections = listOf(dev.reins.core.ConnectionView("c1", "Claude Code", "laptop", 1_700_000_000, 1_700_000_100, "claude", null))
+        core.model = TestData.modelStatus(if (installed) dev.reins.core.ModelState.INSTALLED else dev.reins.core.ModelState.NOT_INSTALLED)
+        suggestion?.let { core.suggestions[view.requestId] = it }
+        core.pending = listOf(TestData.pending(view.requestId, view.action, 1u, waitUntil = view.waitUntil, label = view.connectionLabel, service = view.service, op = view.op, opTitle = view.opTitle))
+        core.approval = view
+        launch(link("request", view.requestId))
+        await("approve")
+        repeat(3) { settle() }
+    }
+
+    private fun pushView() = TestData.designPushView().copy(createdAt = now - 20, waitUntil = now + 40)
+
+    @Test
+    fun aprGit() {
+        designApproval(pushView(), TestData.suggestion("req20", reason = "Like 4 pushes to this repo you approved"))
+        shoot("android-approval-git")
+    }
+
+    @Test
+    fun aprGmail() {
+        designApproval(TestData.designMailView(now + 12).copy(createdAt = now - 48), TestData.suggestion("req1", verdict = dev.reins.core.Verdict.ASK, pApprove = 0.62f, pDeny = 0.2f))
+        shoot("android-approval-gmail")
+    }
+
+    @Test
+    fun aprCustom() {
+        designApproval(pushView(), TestData.suggestion("req20"))
+        tap("lifetimeCustom")
+        tap("lifetime:UNTIL_REVOKED")
+        await("foreverWarning")
+        shoot("android-approval-custom")
+    }
+
+    @Test
+    fun aprAutopilot() {
+        designApproval(pushView(), TestData.suggestion("req20", reason = "Like 4 pushes to this repo you approved"))
+        tap("suggestion")
+        await("suggestionDetail")
+        shoot("android-approval-autopilot")
+    }
+
+    @Test
+    fun aprNoModel() {
+        designApproval(pushView(), null, installed = false)
+        await("getAutopilot")
+        shoot("android-approval-no-model")
+    }
+
+    @Test
+    fun aprCommits() {
+        designApproval(pushView())
+        tap("gitCommits:0")
+        await("gitCommit:0:0")
+        shoot("android-approval-commits")
+    }
+
+    @Test
+    fun aprCommit() {
+        designApproval(pushView())
+        tap("gitCommits:0")
+        tap("gitCommit:0:0")
+        tap("commitFile:0")
+        await("commitFile:0:diff")
+        shoot("android-approval-commit")
+    }
+
+    @Test
+    fun aprDanger() {
+        designApproval(TestData.designDeleteView().copy(createdAt = now - 5, waitUntil = now + 55), TestData.suggestion("req11", floor = true, judged = false))
+        shoot("android-approval-danger")
+        tap("help:onceWarning")
+        await("helpBubble")
+        shoot("android-approval-danger-help")
+    }
+
     @Test
     fun approvalSheet() {
         history()
@@ -206,6 +288,7 @@ abstract class ScreenshotsBase(private val suffix: String) {
         launch(link("request", "req1"))
         await("approve")
         shoot("2-approval")
+        tap("lifetimeCustom")
         tap("moreToggle")
         await("allMail:HOUR")
         shoot("3-approval-more")
@@ -407,9 +490,9 @@ abstract class ScreenshotsBase(private val suffix: String) {
         launch(link("request", "req7"))
         await("approve")
         shoot("18-chat-read")
-        tap("moreToggle")
-        await("lifetime:HOUR")
         tap("lifetime:HOUR")
+        tap("lifetimeCustom")
+        tap("moreToggle")
         await("resource:100")
         shoot("19-chat-read-more")
     }
@@ -443,8 +526,9 @@ abstract class ScreenshotsBase(private val suffix: String) {
         launch(link("request", "req10"))
         await("writePreview")
         shoot("22-repo-change")
-        tap("moreToggle")
         tap("lifetime:DAY")
+        tap("lifetimeCustom")
+        tap("moreToggle")
         tap("class:issues")
         await("widerCaption")
         rule.onNodeWithTag("resource:octo").performScrollTo()
@@ -460,9 +544,9 @@ abstract class ScreenshotsBase(private val suffix: String) {
         launch(link("request", "req11"))
         await("onceWarning")
         shoot("24-repo-delete")
-        tap("moreToggle")
-        await("noStanding")
-        shoot("25-repo-delete-more")
+        tap("help:onceWarning")
+        await("helpBubble")
+        shoot("25-repo-delete-help")
     }
 
     @Test
@@ -512,11 +596,9 @@ abstract class ScreenshotsBase(private val suffix: String) {
         val ref = TestData.gitRef("feature/passkeys", commitCount = 8u, commits = realisticCommits(), filesChanged = 11u, files = realisticFiles(), additions = 219u, deletions = 88u)
         openGit(TestData.gitPushView(TestData.gitPush(ref, notes = listOf("1 file was too large to count lines."), packBytes = 48_213u)))
         shoot("28-git-push")
-        tap("gitMoreCommits:0")
-        tap("gitMoreFiles:0")
-        await("gitFile:0:9")
-        rule.onNodeWithTag("gitNote:0").performScrollTo()
-        shoot("29-git-push-expanded")
+        tap("gitCommits:0")
+        await("gitCommit:0:0")
+        shoot("29-git-push-commits")
     }
 
     @Test
@@ -524,9 +606,6 @@ abstract class ScreenshotsBase(private val suffix: String) {
         val ref = TestData.gitRef("main", force = true, commitCount = 2u, commits = realisticCommits().take(2), filesChanged = 3u, files = realisticFiles().take(3), additions = 142u, deletions = 10u)
         openGit(TestData.gitPushView(TestData.gitPush(ref, packBytes = 3_145_728u), noStanding = true))
         shoot("30-git-force-push")
-        tap("moreToggle")
-        await("noStanding")
-        shoot("31-git-force-push-more")
     }
 
     @Test
@@ -957,7 +1036,7 @@ abstract class ScreenshotsBase(private val suffix: String) {
         await("suggestion")
         repeat(30) { rule.mainClock.advanceTimeBy(50) }
         shoot("74-suggestion")
-        tap("suggestionToggle")
+        tap("suggestion")
         await("suggestionDetail")
         repeat(30) { rule.mainClock.advanceTimeBy(50) }
         shoot("75-suggestion-open")
@@ -972,9 +1051,7 @@ abstract class ScreenshotsBase(private val suffix: String) {
         core.approval = view
         core.suggestions[view.requestId] = TestData.suggestion(view.requestId, floor = true, judged = false, reason = "", neighbours = emptyList())
         launch(link("request", view.requestId))
-        await("suggestion")
-        tap("suggestionToggle")
-        await("suggestionDetail")
+        await("noStanding")
         repeat(20) { rule.mainClock.advanceTimeBy(50) }
         shoot("75b-suggestion-floor")
     }
@@ -1171,14 +1248,14 @@ abstract class ScreenshotsBase(private val suffix: String) {
     @Test
     fun approvalOneTap() {
         openView(TestData.quick(TestData.searchView()))
-        await("approveAllow")
+        tap("lifetime:HOUR")
         shoot("90-approval-one-tap")
     }
 
     @Test
     fun approvalRepeated() {
         openView(TestData.quick(TestData.searchView(), repeats = 3u))
-        await("repeatHint")
+        await("lifetime:HOUR")
         shoot("91-approval-repeated")
     }
 

@@ -442,18 +442,32 @@ class AutopilotFlowTest : FlowHarness() {
         core.suggestions["req1"] = TestData.suggestion("req1", novel = true)
         openRequest(TestData.searchView())
         awaitTag("suggestion")
-        rule.onNodeWithTag("suggestionHeadline", useUnmergedTree = true).assertTextContains("Autopilot would approve · 97%")
+        rule.onNodeWithTag("suggestion").assertTextContains("Approve").assertTextContains("97%")
+        assertFalse(has("getAutopilot"))
         assertFalse(has("suggestionDetail"))
-        tap("suggestionToggle")
+        tap("suggestion")
         awaitTag("suggestionDetail")
         awaitTag("neighbour:2")
         awaitText("never approved", substring = true)
+        tap("closeOverlay")
+        awaitGone("suggestionDetail")
     }
 
     @Test
-    fun withoutASuggestionTheApprovalScreenIsAsBefore() {
+    fun withoutAModelTheApprovalScreenOffersTheDownload() {
         openRequest(TestData.searchView())
         assertFalse(has("suggestion"))
+        awaitTag("getAutopilot")
+        tap("downloadModel")
+        awaitTag("modelProgress")
+    }
+
+    @Test
+    fun withAModelButNoSuggestionTheApprovalScreenIsAsBefore() {
+        installModel()
+        openRequest(TestData.searchView())
+        assertFalse(has("suggestion"))
+        assertFalse(has("getAutopilot"))
     }
 
     @Test

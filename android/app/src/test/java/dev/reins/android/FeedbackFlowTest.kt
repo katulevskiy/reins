@@ -91,10 +91,12 @@ class FeedbackFlowTest : FlowHarness() {
     @Test
     fun allowingForAWhileSoundsLikeAPermissionThatStays() {
         openRequest(TestData.searchView())
+        tap("lifetimeCustom")
+        assertTrue("the sheet opens with its cue", Cue.Open in heard.cues)
         tap("moreToggle")
-        assertTrue("the section opens with its cue", Cue.Open in heard.cues)
         tap("allMail:HOUR")
         assertTrue(heard.played(Event.Selection))
+        tap("rememberConfirm")
         heard.clear()
         tap("approve")
         awaitCore { core.approvals.isNotEmpty() }

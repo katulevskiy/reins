@@ -1,15 +1,26 @@
 package dev.reins.android.ui.approval
 
-import androidx.compose.animation.animateContentSize
+import androidx.compose.foundation.background
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
-import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.IntrinsicSize
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.widthIn
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicText
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.rounded.ChevronRight
+import androidx.compose.material.icons.rounded.Description
+import androidx.compose.material.icons.rounded.KeyboardArrowDown
+import androidx.compose.material3.Icon
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -17,217 +28,345 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.SpanStyle
-import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.buildAnnotatedString
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.unit.dp
-import dev.reins.android.design.Banner
-import dev.reins.android.design.BannerKind
-import dev.reins.android.design.Card
-import dev.reins.android.design.Hairline
 import dev.reins.android.design.LocalColors
-import dev.reins.android.design.RColors
 import dev.reins.android.design.RText
 import dev.reins.android.design.RType
-import dev.reins.android.design.Tag
 import dev.reins.android.design.pressable
+import dev.reins.android.feedback.Event
+import dev.reins.android.feedback.LocalFeedback
+import dev.reins.android.feedback.play
+import dev.reins.android.ui.common.relativeTime
 import dev.reins.android.ui.common.untrusted
+import dev.reins.android.ui.common.untrustedLine
+import dev.reins.core.ApprovalView
+import dev.reins.core.DiffLineKind
+import dev.reins.core.DiffLineView
 import dev.reins.core.GitCommitView
 import dev.reins.core.GitFileView
 import dev.reins.core.GitPushView
 import dev.reins.core.GitRefView
 
+private const val HIDDEN_HELP = "Invisible characters can make code read unlike what it does. They show as � here."
+
+private fun GitRefView.hiddenChars() = commits.any { it.hiddenChars } || files.any { it.hiddenChars }
+
 /**
- * A push from git on the user's computer, ref by ref: what each branch or tag gains or loses, which commits and files,
- * and a warning when history is rewritten (or could not be checked). Everything shown came from the desktop app.
+ * A push from git on the user's computer, as facts: each branch or tag, its commits folded into a row that opens them
+ * (with their lines added and removed), and the account. Everything shown came from the desktop app.
  */
 @Composable
-internal fun GitPushSection(git: GitPushView, host: String = "GitHub") {
+internal fun GitFacts(view: ApprovalView, git: GitPushView) {
     val c = LocalColors.current
-    Column(Modifier.padding(horizontal = 16.dp, vertical = 8.dp).testTag("gitPush"), verticalArrangement = Arrangement.spacedBy(10.dp)) {
-        Row(Modifier.padding(horizontal = 4.dp), verticalAlignment = Alignment.CenterVertically) {
-            RText(
-                untrusted(git.repo),
-                RType.mono(15f, FontWeight.SemiBold),
-                c.text,
-                Modifier.weight(1f).testTag("gitRepo"),
-                maxLines = 1,
-                ltr = true,
-                overflow = TextOverflow.MiddleEllipsis,
-            )
-            Spacer(Modifier.width(12.dp))
-            RText("${packSizeLabel(git.packBytes)} sent", RType.sans(12.5f), c.tertiary, Modifier.testTag("gitPack"), maxLines = 1)
-        }
-        git.refs.forEachIndexed { i, ref -> GitRefCard(i, ref, host) }
+    val nav = LocalApprovalNav.current
+    Column(Modifier.testTag("gitPush"), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+        FactGroup(
+            rows = buildList<@Composable () -> Unit> {
+                git.refs.forEachIndexed { i, ref ->
+                    add {
+                        FactRow(
+                            if (ref.kind == "tag") "Tag" else "Branch",
+                            untrusted(ref.shortName),
+                            mono = true,
+                            valueTag = "gitRef:$i",
+                            trailing = if (ref.change == "update" && ref.kind != "tag") null else {
+                                { RefChip(gitChipLabel(ref), ref, Modifier.testTag("gitChip:$i")) }
+                            },
+                        )
+                    }
+                }
+                view.account?.takeIf { it.isNotBlank() }?.let { add { FactRow("Account", untrusted(it), mono = true) } }
+                git.refs.forEachIndexed { i, ref ->
+                    when {
+                        ref.commits.isNotEmpty() || ref.commitCount > 0u -> add {
+                            DrillRow(commitsWord(ref.commitCount.toInt()), "gitCommits:$i", { nav.push(ApprovalPage.Commits(i)) }) {
+                                Row(verticalAlignment = Alignment.CenterVertically) {
+                                    if (ref.hiddenChars()) {
+                                        WarnTag("Hidden", c.danger, small = true)
+                                        Spacer(Modifier.width(8.dp))
+                                    }
+                                    Counts(ref.additions, ref.deletions, modifier = Modifier.testTag("gitTotals:$i"))
+                                }
+                            }
+                        }
+                        ref.filesChanged > 0u -> add {
+                            DrillRow(filesWord(ref.filesChanged.toInt()), "gitFiles:$i", { nav.push(ApprovalPage.Files(i)) }) {
+                                Counts(ref.additions, ref.deletions, modifier = Modifier.testTag("gitTotals:$i"))
+                            }
+                        }
+                    }
+                }
+            },
+        )
         git.notes.forEachIndexed { k, note ->
-            RText(untrusted(note), RType.sans(13f, lineHeight = 18f), c.tertiary, Modifier.padding(horizontal = 4.dp).testTag("gitNote:$k"))
+            RText(untrusted(note), RType.sans(12.5f, lineHeight = 17f), c.tertiary, Modifier.padding(horizontal = 24.dp).testTag("gitNote:$k"))
         }
     }
 }
 
 @Composable
-private fun GitRefCard(i: Int, ref: GitRefView, host: String) {
+private fun RefChip(text: String, ref: GitRefView, modifier: Modifier) {
     val c = LocalColors.current
-    Card(Modifier.animateContentSize()) {
-        Column(Modifier.padding(16.dp)) {
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                RText(
-                    untrusted(ref.shortName),
-                    RType.mono(17f, FontWeight.SemiBold),
-                    c.text,
-                    Modifier.weight(1f, fill = false).testTag("gitRef:$i"),
-                    maxLines = 1,
-                    ltr = true,
-                    overflow = TextOverflow.MiddleEllipsis,
-                )
-                Spacer(Modifier.width(10.dp))
-                Tag(gitChipLabel(ref), Modifier.testTag("gitChip:$i").semantics(mergeDescendants = true) {}, tint = chipTint(ref, c))
-            }
-            when (gitHistory(ref)) {
-                GitHistory.Rewrites -> Warning("Rewrites history (force push)", BannerKind.Error, "forceWarning:$i")
-                GitHistory.Unknown -> Warning("Could not check history — treat as a force push", BannerKind.Warning, "forceUnknown:$i")
-                GitHistory.Adds -> Unit
-            }
-            if (ref.change == "delete") {
-                RText(
-                    if (ref.kind == "tag") "The tag is removed from $host." else "The branch is removed from $host.",
-                    RType.sans(14f),
-                    c.secondary,
-                    Modifier.padding(top = 8.dp),
-                )
-            }
-            if (ref.commits.isNotEmpty() || ref.commitCount > 0u) Commits(i, ref)
-            gitTotalsLabel(ref)?.let { totals ->
-                Hairline(Modifier.padding(top = 14.dp, bottom = 12.dp), inset = 0.dp)
-                Files(i, ref, totals)
-            }
-        }
-    }
-}
-
-@Composable
-private fun Warning(text: String, kind: BannerKind, tag: String) {
-    Box(Modifier.padding(top = 12.dp).testTag(tag).semantics(mergeDescendants = true) {}) { Banner(text, kind = kind) }
-}
-
-private fun chipTint(ref: GitRefView, c: RColors): Color? = when {
-    ref.change == "delete" -> c.danger
-    ref.change == "create" -> c.success
-    ref.kind == "tag" -> c.accent
-    else -> null
-}
-
-@Composable
-private fun Commits(i: Int, ref: GitRefView) {
-    val c = LocalColors.current
-    var expanded by rememberSaveable(i) { mutableStateOf(false) }
-    val count = ref.commitCount.toInt()
-    RText(
-        if (count == 1) "1 commit" else "$count commits",
-        RType.sans(12.5f, FontWeight.Medium),
-        c.tertiary,
-        Modifier.padding(top = 14.dp, bottom = 4.dp),
-    )
-    val shown = if (expanded) ref.commits else ref.commits.take(GIT_COMMITS_SHOWN)
-    shown.forEachIndexed { j, commit -> CommitRow(commit, Modifier.testTag("gitCommit:$i:$j")) }
-    val hidden = ref.commits.size - shown.size
-    if (hidden > 0) MoreLink("and $hidden more", "gitMoreCommits:$i") { expanded = true }
-    val unlisted = count - ref.commits.size
-    if (unlisted > 0) NotListed(unlisted, "gitCommitsNotListed:$i")
-}
-
-@Composable
-private fun CommitRow(commit: GitCommitView, modifier: Modifier) {
-    val c = LocalColors.current
-    Row(modifier.fillMaxWidth().semantics(mergeDescendants = true) {}.padding(vertical = 6.dp)) {
-        RText(commit.shortSha, RType.mono(13f), c.secondary, Modifier.width(66.dp).padding(top = 1.dp), maxLines = 1, ltr = true)
-        Column(Modifier.weight(1f)) {
-            RText(untrusted(commit.subject).ifEmpty { "(no message)" }, RType.sans(14.5f, lineHeight = 19f), c.text, maxLines = 2)
-            RText(untrusted(commit.author), RType.sans(12.5f), c.tertiary, Modifier.padding(top = 1.dp), maxLines = 1)
-        }
-    }
-}
-
-@Composable
-private fun Files(i: Int, ref: GitRefView, totals: String) {
-    val c = LocalColors.current
-    var expanded by rememberSaveable(i) { mutableStateOf(false) }
-    Counts(totals, RType.sans(14f, FontWeight.Medium), c.text, Modifier.testTag("gitTotals:$i").padding(bottom = 4.dp))
-    val shown = if (expanded) ref.files else ref.files.take(GIT_FILES_SHOWN)
-    shown.forEachIndexed { j, file -> FileRow(file, Modifier.testTag("gitFile:$i:$j")) }
-    val hidden = ref.files.size - shown.size
-    if (hidden > 0) MoreLink("and $hidden more", "gitMoreFiles:$i") { expanded = true }
-    val unlisted = ref.filesChanged.toInt() - ref.files.size
-    if (unlisted > 0) NotListed(unlisted, "gitFilesNotListed:$i")
-}
-
-@Composable
-private fun FileRow(file: GitFileView, modifier: Modifier) {
-    val c = LocalColors.current
-    val letter = gitFileLetter(file.status)
-    val tone = when (letter) {
-        "A" -> c.success
-        "D" -> c.danger
-        "M" -> c.search
-        "T" -> c.accent
+    val tint = when {
+        ref.change == "delete" -> c.danger
+        ref.change == "create" -> c.success
+        ref.kind == "tag" -> c.accent
         else -> c.secondary
     }
-    Row(modifier.fillMaxWidth().semantics(mergeDescendants = true) {}.padding(vertical = 5.dp), verticalAlignment = Alignment.CenterVertically) {
-        RText(letter, RType.mono(13f, FontWeight.Bold), tone, Modifier.width(22.dp), maxLines = 1)
-        RText(
-            untrusted(file.path),
-            RType.mono(13f),
-            c.text,
-            Modifier.weight(1f),
-            maxLines = 1,
-            ltr = true,
-            overflow = TextOverflow.MiddleEllipsis,
-        )
-        val counts = gitFileCounts(file)
-        if (counts.isNotEmpty()) {
+    RText(
+        text,
+        RType.sans(12f, FontWeight.SemiBold),
+        tint,
+        modifier.clip(CircleShape).background(tint.copy(alpha = 0.12f)).padding(horizontal = 9.dp, vertical = 4.dp).semantics(mergeDescendants = true) {},
+        maxLines = 1,
+    )
+}
+
+/** The commits a ref gains, newest first, each with its own lines added and removed. */
+@Composable
+internal fun CommitsPage(view: ApprovalView, refIndex: Int) {
+    val c = LocalColors.current
+    val nav = LocalApprovalNav.current
+    val ref = view.git?.refs?.getOrNull(refIndex) ?: return
+    Row(Modifier.fillMaxWidth().padding(start = 22.dp, end = 22.dp, top = 2.dp, bottom = 10.dp), verticalAlignment = Alignment.CenterVertically) {
+        RText(untrusted(ref.shortName), RType.mono(13f), c.secondary, Modifier.weight(1f, fill = false), maxLines = 1, ltr = true)
+        if (ref.filesChanged > 0u) {
+            RText(
+                " · ${filesWord(ref.filesChanged.toInt())}",
+                RType.sans(13f),
+                c.tertiary,
+                Modifier.pressable(shape = RoundedCornerShape(6.dp)) { nav.push(ApprovalPage.Files(refIndex)) }.testTag("gitFiles:$refIndex"),
+                maxLines = 1,
+            )
+        }
+        Spacer(Modifier.weight(1f))
+        Counts(ref.additions, ref.deletions, 13f)
+    }
+    FactGroup(
+        rows = buildList<@Composable () -> Unit> {
+            ref.commits.forEachIndexed { j, commit ->
+                add { CommitRow(commit, Modifier.testTag("gitCommit:$refIndex:$j")) { nav.push(ApprovalPage.Commit(refIndex, j)) } }
+            }
+            val unlisted = ref.commitCount.toInt() - ref.commits.size
+            if (unlisted > 0) add { NotListed("$unlisted more not listed", "gitCommitsNotListed:$refIndex") }
+        },
+    )
+}
+
+@Composable
+private fun CommitRow(commit: GitCommitView, modifier: Modifier, onOpen: () -> Unit) {
+    val c = LocalColors.current
+    val feedback = LocalFeedback.current
+    val opens = commit.filesChanged != null
+    Row(
+        modifier
+            .fillMaxWidth()
+            .then(
+                if (opens) {
+                    Modifier.pressable(highlight = c.controlFill, shape = RoundedCornerShape(0.dp)) {
+                        onOpen()
+                        feedback.play(Event.Open)
+                    }
+                } else {
+                    Modifier
+                },
+            )
+            .padding(start = 16.dp, end = 12.dp, top = 12.dp, bottom = 12.dp)
+            .semantics(mergeDescendants = true) {},
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        RText(commit.shortSha, RType.mono(12.5f), c.tertiary, Modifier.width(66.dp).align(Alignment.Top).padding(top = 2.dp), maxLines = 1, ltr = true)
+        Column(Modifier.weight(1f)) {
+            RText(untrusted(commit.subject).ifEmpty { "(no message)" }, RType.sans(15f, lineHeight = 19.5f), c.text, maxLines = 2)
+            Row(Modifier.padding(top = 3.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                RText(untrusted(authorName(commit.author)), RType.sans(12.5f), c.tertiary, Modifier.weight(1f, fill = false), maxLines = 1)
+                Counts(commit.additions, commit.deletions, 12f)
+                if (commit.hiddenChars) WarnTag("Hidden", c.danger, Modifier.testTag("commitHidden"), small = true)
+            }
+        }
+        if (opens) {
+            Spacer(Modifier.width(6.dp))
+            Icon(Icons.Rounded.ChevronRight, null, Modifier.size(20.dp), tint = c.tertiary)
+        }
+    }
+}
+
+/** One commit: its message, who and when, and each file it changes, which opens to its lines. */
+@Composable
+internal fun CommitPage(view: ApprovalView, refIndex: Int, index: Int) {
+    val c = LocalColors.current
+    val commit = view.git?.refs?.getOrNull(refIndex)?.commits?.getOrNull(index) ?: return
+    Column(Modifier.fillMaxWidth().padding(start = 22.dp, end = 22.dp, top = 6.dp, bottom = 14.dp)) {
+        RText(untrusted(commit.subject).ifEmpty { "(no message)" }, RType.sans(21f, FontWeight.SemiBold, lineHeight = 26f), c.text, Modifier.testTag("commitSubject"))
+        Row(Modifier.padding(top = 6.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+            val meta = listOfNotNull(untrusted(authorName(commit.author)), if (commit.date != 0L) relativeTime(commit.date) else null).joinToString(" · ")
+            RText(meta, RType.sans(13f), c.tertiary, Modifier.weight(1f, fill = false), maxLines = 1)
+            if (commit.additions != null || commit.deletions != null) {
+                RText("·", RType.sans(13f), c.tertiary)
+                Counts(commit.additions, commit.deletions, 12.5f)
+            }
+        }
+        if (commit.hiddenChars) {
+            Row(Modifier.padding(top = 12.dp), verticalAlignment = Alignment.CenterVertically) {
+                WarnTag("Hidden characters", c.danger, Modifier.testTag("hiddenChars"))
+                Spacer(Modifier.width(8.dp))
+                HelpDot("hiddenCommit", HIDDEN_HELP)
+            }
+        }
+    }
+    val files = commit.files
+    if (commit.filesChanged == null) {
+        FactGroup(rows = listOf { NotListed("Files not compared", "commitFilesUnknown") })
+        return
+    }
+    FactGroup(
+        rows = buildList<@Composable () -> Unit> {
+            files.forEachIndexed { j, file -> add { FileRow(file, "commitFile:$j", expandable = true) } }
+            val unlisted = commit.filesChanged!!.toInt() - files.size
+            if (unlisted > 0) add { NotListed("$unlisted more not listed", "commitFilesNotListed") }
+        },
+    )
+}
+
+/** Every file a ref changes, with its lines added and removed. */
+@Composable
+internal fun FilesPage(view: ApprovalView, refIndex: Int) {
+    val ref = view.git?.refs?.getOrNull(refIndex) ?: return
+    FactGroup(
+        modifier = Modifier.padding(top = 6.dp),
+        rows = buildList<@Composable () -> Unit> {
+            ref.files.forEachIndexed { j, file -> add { FileRow(file, "gitFile:$refIndex:$j", expandable = false) } }
+            val unlisted = ref.filesChanged.toInt() - ref.files.size
+            if (unlisted > 0) add { NotListed("$unlisted more not listed", "gitFilesNotListed:$refIndex") }
+        },
+    )
+}
+
+@Composable
+private fun NotListed(text: String, tag: String) {
+    RText(text, RType.sans(13.5f), LocalColors.current.tertiary, Modifier.fillMaxWidth().padding(horizontal = 18.dp, vertical = 13.dp).testTag(tag))
+}
+
+/** A file: its path (the folder dimmed), lines added and removed; a commit's file opens to its diff. */
+@Composable
+private fun FileRow(file: GitFileView, tag: String, expandable: Boolean) {
+    val c = LocalColors.current
+    val feedback = LocalFeedback.current
+    var open by rememberSaveable(tag) { mutableStateOf(false) }
+    val opens = expandable && file.diff.isNotEmpty()
+    val (dir, name) = splitPath(untrusted(file.path))
+    Column(Modifier.fillMaxWidth()) {
+        Row(
+            Modifier
+                .fillMaxWidth()
+                .then(
+                    if (opens) {
+                        Modifier.pressable(highlight = c.controlFill, shape = RoundedCornerShape(0.dp)) {
+                            open = !open
+                            feedback.play(Event.expand(open))
+                        }
+                    } else {
+                        Modifier
+                    },
+                )
+                .padding(start = 16.dp, end = 14.dp, top = 12.dp, bottom = 12.dp)
+                .testTag(tag)
+                .semantics(mergeDescendants = true) {},
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Icon(Icons.Rounded.Description, null, Modifier.size(16.dp), tint = c.secondary)
             Spacer(Modifier.width(10.dp))
+            BasicText(
+                buildAnnotatedString {
+                    withStyle(SpanStyle(color = c.tertiary)) { append(dir) }
+                    append(name)
+                },
+                Modifier.weight(1f),
+                style = RType.mono(13f).copy(color = c.text),
+                maxLines = 1,
+                overflow = TextOverflow.MiddleEllipsis,
+            )
+            Spacer(Modifier.width(8.dp))
+            if (file.hiddenChars) {
+                WarnTag("Hidden", c.danger, Modifier.testTag("$tag:hidden"), small = true)
+                Spacer(Modifier.width(6.dp))
+            }
             if (file.binary) {
-                RText(counts, RType.sans(12.5f), c.tertiary, maxLines = 1)
+                RText("binary", RType.sans(12.5f), c.tertiary, maxLines = 1)
             } else {
-                Counts(counts, RType.mono(12.5f), c.secondary)
+                Counts(file.additions?.toULong(), file.deletions?.toULong(), 12.5f)
+            }
+            if (opens) {
+                Spacer(Modifier.width(6.dp))
+                Icon(if (open) Icons.Rounded.KeyboardArrowDown else Icons.Rounded.ChevronRight, null, Modifier.size(18.dp), tint = c.tertiary)
             }
         }
+        if (open && opens) DiffBlock(file.diff, file.diffCut, Modifier.testTag("$tag:diff"))
     }
 }
 
-/** A line such as "+120 −14 in 12 files" with the additions in green and the deletions in red. */
+/** A file's change line by line: hunk headers, numbers, additions in green and deletions in red. */
 @Composable
-private fun Counts(text: String, style: TextStyle, color: Color, modifier: Modifier = Modifier) {
+private fun DiffBlock(lines: List<DiffLineView>, cut: Boolean, modifier: Modifier = Modifier) {
     val c = LocalColors.current
-    val annotated = buildAnnotatedString {
-        text.split(' ').forEachIndexed { k, word ->
-            if (k > 0) append(' ')
-            val tone = when {
-                word.startsWith("+") -> c.success
-                word.startsWith("−") -> c.danger
-                else -> null
+    val dark = c.dark
+    Column(
+        modifier
+            .fillMaxWidth()
+            .background(if (dark) Color(0xFF0B0B0D) else Color(0xFFF6F6F8))
+            .horizontalScroll(rememberScrollState())
+            .width(IntrinsicSize.Max)
+            .padding(vertical = 2.dp),
+    ) {
+        val style = RType.mono(11.5f).copy(lineHeight = androidx.compose.ui.unit.TextUnit(20f, androidx.compose.ui.unit.TextUnitType.Sp))
+        lines.forEach { line ->
+            when (line.kind) {
+                DiffLineKind.HUNK -> RText(
+                    untrustedLine(line.text),
+                    style,
+                    if (dark) Color(0xFF7C88B8) else Color(0xFF4A5A99),
+                    Modifier.fillMaxWidth().background(c.search.copy(alpha = 0.06f)).padding(start = 12.dp, end = 12.dp),
+                    maxLines = 1,
+                    ltr = true,
+                )
+                DiffLineKind.NOTE -> RText(untrustedLine(line.text), style, c.tertiary, Modifier.padding(start = 46.dp, end = 12.dp), maxLines = 1, ltr = true)
+                else -> {
+                    val (bg, fg, num) = when (line.kind) {
+                        DiffLineKind.ADD -> Triple(c.success.copy(alpha = 0.10f), if (dark) Color(0xFF9FF0CF) else Color(0xFF0F6A3F), if (dark) Color(0xFF2F7F5F) else c.success)
+                        DiffLineKind.DELETE -> Triple(c.danger.copy(alpha = 0.10f), if (dark) Color(0xFFFDB4B4) else Color(0xFF9B1C1C), if (dark) Color(0xFF8A3A3A) else c.danger)
+                        else -> Triple(Color.Transparent, c.secondary, if (dark) Color(0xFF4A4A52) else c.tertiary)
+                    }
+                    val sign = when (line.kind) {
+                        DiffLineKind.ADD -> "+"
+                        DiffLineKind.DELETE -> "−"
+                        else -> " "
+                    }
+                    Row(Modifier.fillMaxWidth().background(bg)) {
+                        RText(
+                            (line.newLine ?: line.oldLine)?.toString().orEmpty(),
+                            style,
+                            num,
+                            Modifier.widthIn(min = 34.dp).padding(end = 8.dp),
+                            maxLines = 1,
+                            align = TextAlign.End,
+                        )
+                        RText("$sign ${untrustedLine(line.text)}", style, fg, Modifier.padding(end = 14.dp), maxLines = 1, ltr = true)
+                    }
+                }
             }
-            if (tone != null) withStyle(SpanStyle(color = tone)) { append(word) } else append(word)
+        }
+        if (cut) {
+            RText("More changes not shown", RType.sans(12.5f), c.tertiary, Modifier.padding(horizontal = 14.dp, vertical = 8.dp).testTag("diffCut"))
         }
     }
-    BasicText(annotated, modifier, style.copy(color = color), maxLines = 1, softWrap = false, overflow = TextOverflow.Ellipsis)
-}
-
-@Composable
-private fun MoreLink(text: String, tag: String, onClick: () -> Unit) {
-    val c = LocalColors.current
-    Box(Modifier.testTag(tag).pressable(onClick = onClick).padding(vertical = 8.dp)) {
-        RText(text, RType.sans(14f, FontWeight.Medium), c.accent)
-    }
-}
-
-@Composable
-private fun NotListed(n: Int, tag: String) {
-    RText("$n more not listed", RType.sans(12.5f), LocalColors.current.tertiary, Modifier.padding(top = 4.dp).testTag(tag))
 }

@@ -44,7 +44,7 @@ import dev.reins.android.state.SessionState
 import dev.reins.android.ui.activity.ActivityDetailScreen
 import dev.reins.android.ui.activity.ActivityScreen
 import dev.reins.android.ui.activity.EmailScreen
-import dev.reins.android.ui.approval.ApprovalSheet
+import dev.reins.android.ui.approval.ApprovalScreen
 import dev.reins.android.ui.approval.ApprovalViewModel
 import dev.reins.android.ui.autopilot.AutopilotScreen
 import dev.reins.android.ui.autopilot.AutopilotViewModel
@@ -84,6 +84,7 @@ import dev.reins.android.ui.signin.AccountRules
 import dev.reins.android.ui.settings.SoundsScreen
 import dev.reins.android.ui.settings.VaultPasskeysScreen
 import dev.reins.android.ui.settings.VaultPasskeysViewModel
+import dev.reins.android.ui.sheet.FullScreenHost
 import dev.reins.android.ui.sheet.SheetHost
 import dev.reins.android.ui.payments.PaymentsScreen
 import dev.reins.android.ui.payments.PaymentsViewModel
@@ -466,13 +467,21 @@ private fun SignedInContent(
                     onDismiss = { quickOpen = false },
                 )
             }
-            SheetHost(sheet, onClose = app::closeSheet) { target ->
+            // A request is decided full screen; the rest are sheets over the app.
+            FullScreenHost(sheet as? SheetTarget.Approval, onClose = app::closeSheet) { target ->
+                ApprovalScreen(
+                    viewModel = viewModel(key = "approval:${target.id}") { ApprovalViewModel(container, target.id) },
+                    authenticator = authenticator,
+                    onDone = app::closeSheet,
+                    onOpenAutopilot = {
+                        app.closeSheet()
+                        app.open(Route.Autopilot)
+                    },
+                )
+            }
+            SheetHost(sheet?.takeIf { it !is SheetTarget.Approval }, onClose = app::closeSheet) { target ->
                 when (target) {
-                    is SheetTarget.Approval -> ApprovalSheet(
-                        viewModel = viewModel(key = "approval:${target.id}") { ApprovalViewModel(container, target.id) },
-                        authenticator = authenticator,
-                        onDone = app::closeSheet,
-                    )
+                    is SheetTarget.Approval -> Unit
                     is SheetTarget.Pairing -> PairingSheet(
                         viewModel = viewModel(key = "pairing:${target.id}") { PairingViewModel(container, target.id) },
                         authenticator = authenticator,

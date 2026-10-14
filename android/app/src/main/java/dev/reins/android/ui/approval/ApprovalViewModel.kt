@@ -8,7 +8,10 @@ import dev.reins.android.feedback.play
 import dev.reins.android.platform.AuthResult
 import dev.reins.android.platform.Authenticator
 import dev.reins.android.ui.common.userMessage
+import dev.reins.android.autopilot.DownloadJob
 import dev.reins.core.ApprovalKind
+import dev.reins.core.ModelState
+import dev.reins.core.ModelStatus
 import dev.reins.core.ApprovalView
 import dev.reins.core.LimitPeriod
 import dev.reins.core.PurchaseChoice
@@ -20,6 +23,8 @@ import kotlin.coroutines.cancellation.CancellationException
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 
@@ -32,8 +37,12 @@ data class ApprovalUi(
     val finished: Boolean = false,
     /** The "More options" section is open. */
     val moreOpen: Boolean = false,
-    /** What Autopilot made of the request (Manual and Auto), if it looked at it. */
+    /** What Autopilot made of the request, if it looked at it. */
     val suggestion: SuggestionView? = null,
+    /** Autopilot's on-device model: without one there is no score, and the screen offers the download. */
+    val model: ModelStatus? = null,
+    /** The download job (waiting for its network, running, or idle). */
+    val downloadJob: DownloadJob = DownloadJob.Idle,
     /** A purchase: what pays and where it goes, as picked on the purchase screen. */
     val purchase: PurchaseDraft = PurchaseDraft(),
 )
@@ -71,14 +80,37 @@ class ApprovalViewModel(private val container: AppContainer, private val request
     /** The user changed the draft (a tick, a period): a fresh read of the request keeps it. */
     @Volatile private var touched = false
 
+    private var polling: Job? = null
+
     init {
         // Read ahead when the request arrived: the sheet opens with it, no spinner.
         container.approvalViews[requestId]?.let { _ui.value = opened(it) }
+        // The model as the shared Autopilot settings know it; a download started here or elsewhere shows.
+        viewModelScope.launch {
+            container.state.autopilot.collect { s -> if (s != null && polling?.isActive != true) _ui.update { it.copy(model = s.model) } }
+        }
+        viewModelScope.launch {
+            container.modelDownloads.job.collect { job ->
+                _ui.update { it.copy(downloadJob = job) }
+                if (job != DownloadJob.Idle) pollModel()
+            }
+        }
+        // Until the shared settings are read, the model's own status says whether there is one.
+        viewModelScope.launch {
+            val model = try {
+                container.core.modelStatus()
+            } catch (e: CancellationException) {
+                throw e
+            } catch (_: Exception) {
+                null
+            }
+            if (model != null) _ui.update { if (it.model == null) it.copy(model = model) else it }
+        }
         viewModelScope.launch {
             try {
                 val view = container.core.approvalView(requestId)
                 // The fresh copy wins (repeats may have changed), without undoing what the user already changed.
-                _ui.update { if (touched || it.busy) it.copy(view = view) else opened(view).copy(moreOpen = it.moreOpen) }
+                _ui.update { if (touched || it.busy) it.copy(view = view) else opened(view).copy(moreOpen = it.moreOpen, model = it.model, downloadJob = it.downloadJob, suggestion = it.suggestion) }
                 loadSuggestion()
             } catch (e: CancellationException) {
                 throw e
@@ -117,6 +149,37 @@ class ApprovalViewModel(private val container: AppContainer, private val request
             null
         }
         _ui.update { it.copy(suggestion = suggestion) }
+    }
+
+    /**
+     * Starts the download of Autopilot's model from the approval screen (the same job as Settings > Autopilot starts);
+     * once it is installed, the request is scored.
+     */
+    fun downloadModel() {
+        val wifiOnly = container.state.autopilot.value?.wifiOnly ?: true
+        container.feedback.play(Event.Selection)
+        _ui.update { it.copy(model = it.model?.copy(state = if (it.model.state == ModelState.FAILED) ModelState.NOT_INSTALLED else it.model.state, error = null)) }
+        container.modelDownloads.start(wifiOnly)
+        pollModel()
+    }
+
+    /** While the job waits or runs, the bytes are read a couple of times a second; at the end the request is scored. */
+    private fun pollModel() {
+        if (polling?.isActive == true) return
+        polling = viewModelScope.launch {
+            do {
+                try {
+                    val model = container.core.modelStatus()
+                    _ui.update { it.copy(model = model) }
+                } catch (e: CancellationException) {
+                    throw e
+                } catch (_: Exception) {
+                }
+                delay(500)
+            } while (_ui.value.downloadJob != DownloadJob.Idle || _ui.value.model?.state == ModelState.DOWNLOADING)
+            container.refreshAutopilot()
+            if (_ui.value.model?.state == ModelState.INSTALLED) loadSuggestion()
+        }
     }
 
     fun edit(change: (ApprovalDraft) -> ApprovalDraft) {
@@ -194,23 +257,20 @@ class ApprovalViewModel(private val container: AppContainer, private val request
     }
 
     /**
-     * Approving needs the phone's own screen lock or biometrics first; anything but success does nothing. With [allow],
-     * the core's "allow for a while" permission (same AI, same kind of request, same target) is made alongside, in
-     * place of whatever "More options" says.
+     * Approving needs the phone's own screen lock or biometrics first; anything but success does nothing. What is
+     * remembered alongside is what the dock and its "Remember for" sheet say ([buildDecision]).
      */
-    fun approve(authenticator: Authenticator, allow: Boolean = false) {
+    fun approve(authenticator: Authenticator) {
         val current = _ui.value
         val view = current.view ?: return
         if (current.busy) return
-        val quickAllow = view.quick?.allow
-        if (allow && quickAllow == null) return
-        val choice = when (val built = buildChoice(view, current.draft)) {
+        val choice = when (val built = buildDecision(view, current.draft)) {
             is BuildResult.Invalid -> {
                 container.feedback.play(Event.Error)
                 _ui.update { it.copy(error = built.message) }
                 return
             }
-            is BuildResult.Ok -> if (allow) built.choice.copy(standing = quickAllow) else built.choice
+            is BuildResult.Ok -> built.choice
         }
         _ui.update { it.copy(busy = true, error = null) }
         viewModelScope.launch {

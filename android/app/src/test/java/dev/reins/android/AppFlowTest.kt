@@ -152,6 +152,20 @@ class AppFlowTest {
         scenario = ActivityScenario.launch(intent ?: Intent(context, MainActivity::class.java))
     }
 
+    /** Holds the dangerous Approve until it fills. */
+    private fun holdApprove() {
+        awaitTag("approve")
+        rule.onNodeWithTag("approve").performTouchInput { down(center) }
+        rule.mainClock.advanceTimeBy(2_300)
+        // Once it fills the screen closes, so the finger may have nothing left to lift from.
+        runCatching { rule.onNodeWithTag("approve").performTouchInput { up() } }
+    }
+
+    private fun pressBack() {
+        scenario!!.onActivity { it.onBackPressedDispatcher.onBackPressed() }
+        settle()
+    }
+
     private fun settle() {
         androidx.compose.runtime.snapshots.Snapshot.sendApplyNotifications()
         shadowOf(android.os.Looper.getMainLooper()).idle()
@@ -370,7 +384,8 @@ class AppFlowTest {
         awaitTag("shared:0")
         awaitTag("shared:1")
         rule.onNodeWithText("work@corp.example").assertExists()
-        rule.onNodeWithText("See Gmail accounts").assertExists()
+        rule.onNodeWithTag("what").assertTextContains("Gmail addresses", substring = true)
+        rule.onNodeWithTag("lifetimeCustom").assertTextContains("30 days", substring = true)
         tap("approve")
         awaitCore { core.approvals.isNotEmpty() }
         val choice = core.approvals.single().second
@@ -413,7 +428,6 @@ class AppFlowTest {
         launch()
         openItem("req5")
         awaitTag("acct:a@gmail.com")
-        rule.onNodeWithText("Already shared").assertExists()
         rule.onNodeWithTag("acct:a@gmail.com").assertIsNotEnabled()
         tap("approve")
         awaitCore { core.approvals.isNotEmpty() }
@@ -421,12 +435,12 @@ class AppFlowTest {
     }
 
     @Test
-    fun anAccountsRequestCanBeAllowedJustOnceFromMoreOptions() {
+    fun anAccountsRequestCanBeAllowedJustOnceFromTheDock() {
         core.pending = listOf(TestData.pending("req5", "accounts", 2u, waitUntil = 1_700_000_245))
         core.approval = TestData.accountsView()
         launch()
         openItem("req5")
-        tap("moreToggle")
+        rule.onNodeWithTag("lifetimeCustom").assertTextContains("30 days", substring = true)
         tap("lifetime:ONCE")
         tap("approve")
         awaitCore { core.approvals.isNotEmpty() }
@@ -510,15 +524,17 @@ class AppFlowTest {
     }
 
     @Test
-    fun theSheetShowsOnlyApproveAndDenyUntilMoreIsOpened() {
+    fun theDockOffersHowLongAndCustomHoldsTheRest() {
         searchRequest()
         launch()
         openItem("req1")
-        awaitTag("moreToggle")
-        assertFalse(has("lifetime:HOUR"))
-        assertFalse(has("allMail:HOUR"))
-        tap("moreToggle")
         awaitTag("lifetime:HOUR")
+        assertFalse(has("allMail:HOUR"))
+        assertFalse(has("lifetime:UNTIL_REVOKED"))
+        tap("lifetimeCustom")
+        awaitTag("lifetime:UNTIL_REVOKED")
+        assertFalse("what it covers stays folded", has("allMail:HOUR"))
+        tap("moreToggle")
         awaitTag("allMail:HOUR")
     }
 
@@ -550,11 +566,10 @@ class AppFlowTest {
     }
 
     @Test
-    fun aStandingHourlyGrantIsUnderMoreOptions() {
+    fun aStandingHourlyGrantIsOneSegment() {
         searchRequest()
         launch()
         openItem("req1")
-        tap("moreToggle")
         tap("lifetime:HOUR")
         tap("approve")
         awaitCore { core.approvals.isNotEmpty() }
@@ -564,12 +579,15 @@ class AppFlowTest {
     }
 
     @Test
-    fun allowingAllMailForADayIsOneChipInMore() {
+    fun allowingAllMailForADayIsOneChipInCustom() {
         searchRequest()
         launch()
         openItem("req1")
+        tap("lifetimeCustom")
         tap("moreToggle")
         tap("allMail:DAY")
+        tap("rememberConfirm")
+        rule.onNodeWithTag("lifetimeCustom").assertTextContains("All mail", substring = true)
         tap("approve")
         awaitCore { core.approvals.isNotEmpty() }
         val standing = core.approvals.single().second.standing!!
@@ -583,11 +601,15 @@ class AppFlowTest {
         launch()
         openItem("req1")
         tap("check:m1")
-        tap("moreToggle")
         tap("lifetime:DAY")
+        tap("lifetimeCustom")
+        tap("moreToggle")
         tap("similar")
-        rule.onNodeWithText("Anyone at @gmail.com").performScrollTo().performClick()
-        awaitTextContaining("covers millions")
+        tap("senderDomain:gmail.com")
+        tap("rememberConfirm")
+        awaitTag("publicDomainWarning")
+        tap("help:publicDomain")
+        awaitTextContaining("millions")
     }
 
     @Test
@@ -644,9 +666,11 @@ class AppFlowTest {
         core.approval = TestData.sendView()
         launch()
         openItem("req2")
-        tap("moreToggle")
         tap("lifetime:HOUR")
+        tap("lifetimeCustom")
+        tap("moreToggle")
         tap("domain:ann@corp.com")
+        tap("rememberConfirm")
         tap("approve")
         awaitCore { core.approvals.isNotEmpty() }
         val scope = core.approvals.single().second.standing!!.scope
@@ -663,12 +687,13 @@ class AppFlowTest {
         launch()
         openItem("req3")
         awaitTag("grantCard")
-        awaitText("PERMISSION REQUEST")
-        rule.onNodeWithText("Allow").assertExists()
-        tap("moreToggle")
+        rule.onNodeWithTag("approve").assertTextContains("Allow", substring = true)
+        tap("grantPeriod")
         awaitTag("grantSlider")
         rule.onNodeWithTag("grantSlider").performSemanticsAction(SemanticsActions.SetProgress) { it(0f) }
         settle()
+        tap("grantDone")
+        rule.onNodeWithTag("grantPeriod").assertTextContains("For 1 minute", substring = true)
         tap("approve")
         awaitCore { core.approvals.isNotEmpty() }
         val standing = core.approvals.single().second.standing!!
@@ -696,7 +721,7 @@ class AppFlowTest {
         openItem("req1")
         awaitTag("waitLine")
         rule.onNodeWithTag("waitLine").assertIsDisplayed()
-        awaitTextContaining("40 s left")
+        rule.onNodeWithTag("waitLine").assertTextContains("40s", substring = true)
     }
 
     @Test
@@ -706,7 +731,9 @@ class AppFlowTest {
         launch()
         openItem("req1")
         awaitTag("lateBanner")
+        tap("lateBanner")
         awaitTextContaining("stopped waiting")
+        tap("lateBanner")
         tap("approve")
         awaitCore { core.approvals.isNotEmpty() }
     }
@@ -841,40 +868,37 @@ class AppFlowTest {
     @Test
     fun aPushShowsTheBranchItsCommitsAndItsFiles() {
         openGitPush(TestData.gitPushView(TestData.gitPush(TestData.gitRef(), notes = listOf("Line counts are approximate"))))
-        rule.onNodeWithTag("what").assertTextContains("Push with git")
-        rule.onNodeWithTag("gitRepo").assertTextContains("octo/app")
-        rule.onNodeWithTag("gitPack").assertTextContains("12.4 KB", substring = true)
+        rule.onNodeWithTag("what").assertTextContains("push 9 commits", substring = true).assertTextContains("octo/app", substring = true)
         rule.onNodeWithTag("gitRef:0").assertTextContains("main")
-        rule.onNodeWithTag("gitChip:0").assertTextContains("Update")
+        assertFalse("an ordinary update needs no chip", has("gitChip:0"))
         // The git section replaces the core's plain lines.
         assertFalse(has("writePreview"))
         assertFalse(has("forceWarning:0"))
         assertFalse(has("forceUnknown:0"))
         assertFalse(has("onceWarning"))
-
-        // Commits: newest five, then the rest of those listed on request, and how many the app did not list.
-        rule.onNodeWithTag("gitCommit:0:0").assertTextContains("a1b2c01").assertTextContains("Commit number 1")
-            .assertTextContains("Ada Lovelace <ada@example.com>")
-        assertEquals(5, count("gitCommit:0:"))
-        rule.onNodeWithTag("gitMoreCommits:0").assertTextContains("and 2 more")
-        rule.onNodeWithTag("gitCommitsNotListed:0").assertTextContains("2 more not listed")
-        tap("gitMoreCommits:0")
-        awaitTag("gitCommit:0:6")
-        assertEquals(7, count("gitCommit:0:"))
-        assertFalse(has("gitMoreCommits:0"))
-
-        // Files: totals, the first eight, then the rest.
-        rule.onNodeWithTag("gitTotals:0").assertTextContains("+120 −14 in 12 files")
-        rule.onNodeWithTag("gitFile:0:0").assertTextContains("M").assertTextContains("src/module1/File1.kt")
-            .assertTextContains("+3 −1")
-        assertEquals(8, count("gitFile:0:"))
-        rule.onNodeWithTag("gitMoreFiles:0").assertTextContains("and 2 more")
-        rule.onNodeWithTag("gitFilesNotListed:0").assertTextContains("2 more not listed")
-        tap("gitMoreFiles:0")
-        awaitTag("gitFile:0:9")
-        assertEquals(10, count("gitFile:0:"))
-
         rule.onNodeWithTag("gitNote:0").assertTextContains("Line counts are approximate")
+
+        // The commits fold into one row with the lines added and removed; it opens them, and how many were not listed.
+        rule.onNodeWithTag("gitCommits:0").assertTextContains("9 commits", substring = true)
+        rule.onNodeWithTag("gitTotals:0", useUnmergedTree = true).assertExists()
+        tap("gitCommits:0")
+        awaitTag("gitCommit:0:0")
+        rule.onNodeWithTag("pageTitle").assertTextContains("9 commits")
+        rule.onNodeWithTag("gitCommit:0:0").assertTextContains("a1b2c01").assertTextContains("Commit number 1").assertTextContains("Ada Lovelace")
+        assertEquals(7, count("gitCommit:0:"))
+        rule.onNodeWithTag("gitCommitsNotListed:0").assertTextContains("2 more not listed")
+        // The dock stays on every page.
+        awaitTag("approve")
+
+        // The files of the whole push, with their counts, and how many were not listed.
+        tap("gitFiles:0")
+        awaitTag("gitFile:0:0")
+        rule.onNodeWithTag("gitFile:0:0").assertTextContains("src/module1/File1.kt", substring = true).assertTextContains("+3").assertTextContains("−1")
+        assertEquals(10, count("gitFile:0:"))
+        rule.onNodeWithTag("gitFilesNotListed:0").assertTextContains("2 more not listed")
+        pressBack()
+        pressBack()
+        awaitTag("hero")
         tap("approve")
         awaitCore { core.approvals.isNotEmpty() }
         assertEquals("req20", core.approvals.single().first)
@@ -882,15 +906,53 @@ class AppFlowTest {
     }
 
     @Test
+    fun aCommitOpensToItsFilesAndEachFileToItsLines() {
+        openGitPush(TestData.designPushView())
+        tap("gitCommits:0")
+        tap("gitCommit:0:0")
+        awaitTag("commitSubject")
+        rule.onNodeWithTag("commitSubject").assertTextContains("Log in with a passkey when the browser offers one")
+        rule.onNodeWithTag("commitFile:0").assertTextContains("src/auth/login.ts", substring = true).assertTextContains("+38")
+        assertFalse(has("commitFile:0:diff"))
+        tap("commitFile:0")
+        awaitTag("commitFile:0:diff")
+        awaitTextContaining("browserSupportsPasskeys")
+        tap("commitFile:0")
+        awaitGone("commitFile:0:diff")
+    }
+
+    @Test
+    fun aCommitTheDesktopAppDidNotCompareDoesNotOpen() {
+        openGitPush(TestData.gitPushView())
+        tap("gitCommits:0")
+        awaitTag("gitCommit:0:0")
+        rule.onNodeWithTag("gitCommit:0:0").performClick()
+        settle()
+        assertFalse(has("commitSubject"))
+    }
+
+    @Test
+    fun hiddenCharactersInACommitAreFlagged() {
+        val commit = TestData.designCommit().copy(hiddenChars = true)
+        openGitPush(TestData.gitPushView(TestData.gitPush(TestData.gitRef(commits = listOf(commit)))))
+        awaitTag("hiddenChars")
+        tap("gitCommits:0")
+        awaitTag("commitHidden")
+    }
+
+    @Test
     fun aForcePushWarnsThatItRewritesHistoryAndIsAskedEveryTime() {
         openGitPush(TestData.gitPushView(TestData.gitPush(TestData.gitRef(force = true)), noStanding = true))
-        rule.onNodeWithTag("forceWarning:0").assertTextContains("Rewrites history (force push)")
+        rule.onNodeWithTag("forceWarning:0").assertTextContains("Rewrites history")
+        tap("help:forceWarning:0")
+        awaitTextContaining("replaces commits")
+        tap("help:forceWarning:0")
+        awaitGone("helpBubble")
         assertFalse(has("forceUnknown:0"))
-        awaitTag("onceWarning")
-        tap("moreToggle")
         awaitTag("noStanding")
         rule.onAllNodes(hasTestTag("lifetime:HOUR")).assertCountEquals(0)
-        tap("approve")
+        rule.onNodeWithTag("approve").assertTextContains("Hold to approve")
+        holdApprove()
         awaitCore { core.approvals.isNotEmpty() }
         assertNull(core.approvals.single().second.standing)
     }
@@ -898,7 +960,7 @@ class AppFlowTest {
     @Test
     fun aPushWhoseHistoryCouldNotBeCheckedIsTreatedAsAForcePush() {
         openGitPush(TestData.gitPushView(TestData.gitPush(TestData.gitRef(force = true, forceUnknown = true)), noStanding = true))
-        rule.onNodeWithTag("forceUnknown:0").assertTextContains("Could not check history — treat as a force push")
+        rule.onNodeWithTag("forceUnknown:0").assertTextContains("History not checked")
         assertFalse(has("forceWarning:0"))
     }
 
@@ -907,13 +969,14 @@ class AppFlowTest {
         val tag = TestData.gitRef("v1.2", kind = "tag", change = "create", commitCount = 0u, commits = emptyList(), filesChanged = 0u, files = emptyList(), additions = null, deletions = null)
         val branch = TestData.gitRef("feature/login", change = "create", commitCount = 2u, commits = (1..2).map(TestData::gitCommit), filesChanged = 1u, files = listOf(TestData.gitFile("README.md", "added", 4u, 0u)), additions = 4u, deletions = 0u)
         openGitPush(TestData.gitPushView(TestData.gitPush(tag, branch), tags = true))
-        rule.onNodeWithTag("what").assertTextContains("Push tags with git")
+        rule.onNodeWithTag("what").assertTextContains("push 2 commits", substring = true)
         rule.onNodeWithTag("gitRef:0").assertTextContains("v1.2")
-        rule.onNodeWithTag("gitChip:0").assertTextContains("New tag")
-        assertFalse(has("gitTotals:0"))
-        rule.onNodeWithTag("gitChip:1").assertTextContains("New branch")
-        rule.onNodeWithTag("gitFile:1:0").assertTextContains("A")
-        assertFalse(has("gitMoreCommits:1"))
+        rule.onNodeWithTag("gitChip:0", useUnmergedTree = true).assertTextContains("New tag")
+        assertFalse(has("gitCommits:0"))
+        rule.onNodeWithTag("gitChip:1", useUnmergedTree = true).assertTextContains("New branch")
+        rule.onNodeWithTag("gitCommits:1").assertTextContains("2 commits", substring = true)
+        tap("gitCommits:1")
+        awaitTag("gitCommit:1:1")
         assertFalse(has("gitCommitsNotListed:1"))
     }
 
@@ -923,10 +986,10 @@ class AppFlowTest {
             TestData.gitFile("assets/logo.png", "added", null, null, binary = true),
             TestData.gitFile("data/huge.json", "modified", null, null),
         )
-        openGitPush(TestData.gitPushView(TestData.gitPush(TestData.gitRef(filesChanged = 2u, files = files, additions = null, deletions = null))))
-        rule.onNodeWithTag("gitTotals:0").assertTextContains("2 files changed")
-        rule.onNodeWithTag("gitFile:0:0").assertTextContains("binary")
-        assertFalse(has("gitMoreFiles:0"))
+        openGitPush(TestData.gitPushView(TestData.gitPush(TestData.gitRef(commitCount = 0u, commits = emptyList(), filesChanged = 2u, files = files, additions = null, deletions = null))))
+        rule.onNodeWithTag("gitFiles:0").assertTextContains("2 files", substring = true)
+        tap("gitFiles:0")
+        rule.onNodeWithTag("gitFile:0:0").assertTextContains("binary", substring = true)
         assertFalse(has("gitFilesNotListed:0"))
     }
 
@@ -937,7 +1000,7 @@ class AppFlowTest {
         core.approval = view
         launch()
         openItem(view.requestId)
-        rule.onNodeWithTag("what").assertTextContains("Clone and fetch with git")
+        rule.onNodeWithTag("what").assertTextContains("clone and fetch with git", substring = true)
         awaitTag("message:octo/app")
         assertFalse(has("gitPush"))
     }
@@ -1617,9 +1680,10 @@ class AppFlowTest {
         core.approval = TestData.fetchView()
         launch()
         openItem("req7")
-        rule.onNodeWithTag("what").assertTextContains("Read Telegram messages")
+        rule.onNodeWithTag("what").assertTextContains("read Telegram messages", substring = true)
         awaitTag("check:100:2")
-        awaitText("Looks like a code or a password")
+        awaitTag("sensitive:100:9")
+        rule.onNodeWithTag("approve").assertTextContains("Share 2")
         tap("approve")
         awaitCore { core.approvals.isNotEmpty() }
         val (id, choice) = core.approvals.single()
@@ -1647,9 +1711,12 @@ class AppFlowTest {
         core.approval = TestData.fetchView()
         launch()
         openItem("req7")
-        tap("moreToggle")
         tap("lifetime:HOUR")
-        awaitTag("resource:100")
+        tap("lifetimeCustom")
+        tap("moreToggle")
+        tap("resource:100")
+        tap("resource:100")
+        tap("rememberConfirm")
         tap("approve")
         awaitCore { core.approvals.isNotEmpty() }
         val standing = core.approvals.single().second.standing!!
@@ -1663,9 +1730,9 @@ class AppFlowTest {
         core.approval = TestData.vaultView()
         launch()
         openItem("req8")
-        rule.onNodeWithTag("what").assertTextContains("Get a login from the vault")
+        rule.onNodeWithTag("what").assertTextContains("get a login from the vault", substring = true)
         awaitText("Password for GitHub")
-        tap("moreToggle")
+        awaitTag("sensitive:git:password")
         awaitTag("noStanding")
         rule.onAllNodes(hasTestTag("lifetime:HOUR")).assertCountEquals(0)
         tap("check:git:password")
@@ -1682,7 +1749,8 @@ class AppFlowTest {
         core.approval = TestData.writeView()
         launch()
         openItem("req9")
-        rule.onNodeWithTag("what").assertTextContains("Send a Telegram message")
+        rule.onNodeWithTag("what").assertTextContains("send a Telegram message", substring = true).assertTextContains("Family", substring = true)
+        rule.onNodeWithTag("approve").assertTextContains("Approve")
         awaitTag("writePreview")
         rule.onNodeWithTag("previewLine:0").assertTextContains("Send to Family")
         rule.onNodeWithTag("previewLine:1").assertTextContains("Dinner at eight works")
@@ -1701,17 +1769,17 @@ class AppFlowTest {
     @Test
     fun aChangeToARepositoryIsNamedByTheCoreAndOffersTheKindsOfChangeToRemember() {
         openRepoWrite()
-        rule.onNodeWithTag("what").assertTextContains("Commit a file to GitHub")
+        rule.onNodeWithTag("what").assertTextContains("commit a file to GitHub", substring = true)
         awaitTag("writePreview")
         rule.onNodeWithTag("previewLine:0").assertTextContains("Commit README.md to main of octo/app")
         assertFalse(has("onceWarning"))
-        tap("moreToggle")
-        // Nothing to choose while it is only this once.
-        assertFalse(has("classes"))
+        assertFalse("the kinds of change are under Custom", has("classes"))
         tap("lifetime:HOUR")
+        tap("lifetimeCustom")
+        tap("moreToggle")
         awaitTag("classes")
-        awaitText("Allow these kinds of change")
         tap("class:issues")
+        tap("rememberConfirm")
         tap("approve")
         awaitCore { core.approvals.isNotEmpty() }
         val standing = core.approvals.single().second.standing!!
@@ -1722,10 +1790,12 @@ class AppFlowTest {
     @Test
     fun theLastKindOfChangeStaysTickedAndIsSentAlone() {
         openRepoWrite()
-        tap("moreToggle")
         tap("lifetime:DAY")
+        tap("lifetimeCustom")
+        tap("moreToggle")
         tap("class:code")
         tap("class:code")
+        tap("rememberConfirm")
         tap("approve")
         awaitCore { core.approvals.isNotEmpty() }
         assertEquals(listOf("code"), core.approvals.single().second.standing!!.scope.classes)
@@ -1734,10 +1804,10 @@ class AppFlowTest {
     @Test
     fun aWiderPermissionIsOfferedBelowAndReplacesTheNarrowerOne() {
         openRepoWrite()
-        tap("moreToggle")
         tap("lifetime:HOUR")
+        tap("lifetimeCustom")
+        tap("moreToggle")
         awaitTag("widerCaption")
-        awaitText("Or a wider permission")
         awaitTag("resource:octo/app@main")
         rule.onNodeWithTag("resource:octo/app@main").assertIsOn()
         rule.onNodeWithTag("resource:octo/app").assertIsOff()
@@ -1748,6 +1818,7 @@ class AppFlowTest {
         tap("resource:octo")
         rule.onNodeWithTag("resource:octo").assertIsOn()
         rule.onNodeWithTag("resource:octo/app").assertIsOff()
+        tap("rememberConfirm")
         tap("approve")
         awaitCore { core.approvals.isNotEmpty() }
         assertEquals(listOf("octo"), core.approvals.single().second.standing!!.scope.resources)
@@ -1756,14 +1827,22 @@ class AppFlowTest {
     @Test
     fun aChangeThatIsAskedForEveryTimeShowsAWarningAndOffersNothingToRemember() {
         openRepoWrite(TestData.onceOnlyWriteView())
-        rule.onNodeWithTag("what").assertTextContains("Delete a GitHub repository")
+        rule.onNodeWithTag("what").assertTextContains("delete", substring = true).assertTextContains("octo/app", substring = true)
         awaitTag("onceWarning")
-        awaitTextContaining("cannot be undone")
-        tap("moreToggle")
+        tap("help:onceWarning")
+        awaitTextContaining("Removes it for good")
         awaitTag("noStanding")
+        rule.onNodeWithTag("approve").assertTextContains("Hold to delete")
         rule.onAllNodes(hasTestTag("lifetime:HOUR")).assertCountEquals(0)
         rule.onAllNodes(hasTestTag("classes")).assertCountEquals(0)
-        tap("approve")
+        // Let go too soon: nothing happens.
+        rule.onNodeWithTag("approve").performTouchInput { down(center) }
+        rule.mainClock.advanceTimeBy(600)
+        rule.onNodeWithTag("approve").performTouchInput { up() }
+        settle()
+        assertTrue(core.approvals.isEmpty())
+        assertEquals(0, prompts.get())
+        holdApprove()
         awaitCore { core.approvals.isNotEmpty() }
         val choice = core.approvals.single().second
         assertNull(choice.standing)
@@ -1776,13 +1855,15 @@ class AppFlowTest {
         core.approval = TestData.repoReadView()
         launch()
         openItem("req12")
-        rule.onNodeWithTag("what").assertTextContains("Read a file from GitHub")
+        rule.onNodeWithTag("what").assertTextContains("read a file from GitHub", substring = true)
+        tap("lifetime:HOUR")
+        tap("lifetimeCustom")
         tap("moreToggle")
         awaitTag("allMail:HOUR")
-        tap("lifetime:HOUR")
         awaitTag("widerCaption")
         assertFalse(has("classes"))
         tap("resource:octo/app")
+        tap("rememberConfirm")
         tap("approve")
         awaitCore { core.approvals.isNotEmpty() }
         val standing = core.approvals.single().second.standing!!

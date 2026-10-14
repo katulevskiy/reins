@@ -101,3 +101,26 @@ fun <T : Any> SheetHost(target: T?, onClose: () -> Unit, content: @Composable (T
         }
     }
 }
+
+/**
+ * A screen that slides up over the whole app (an approval): it brings its own close button and bars. Back closes it
+ * unless the screen handles Back itself first (a page pushed inside it, a sheet over it).
+ */
+@Composable
+fun <T : Any> FullScreenHost(target: T?, onClose: () -> Unit, content: @Composable (T) -> Unit) {
+    val feedback = LocalFeedback.current
+    var shown by remember { mutableStateOf(target) }
+    if (target != null) shown = target
+    SheetOpenFeedback(target != null)
+    BackHandler(enabled = target != null) {
+        feedback.play(Event.Close)
+        onClose()
+    }
+    AnimatedVisibility(
+        target != null,
+        enter = slideInVertically(tween(280)) { it / 3 } + fadeIn(tween(200)),
+        exit = slideOutVertically(tween(220)) { it / 3 } + fadeOut(tween(180)),
+    ) {
+        Box(Modifier.fillMaxSize().testTag("sheet")) { shown?.let { content(it) } }
+    }
+}
