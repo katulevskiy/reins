@@ -606,6 +606,99 @@ async fn without_the_model_a_bypass_still_answers_and_the_rest_waits_unjudged() 
     assert_eq!(env.model.seen.lock().unwrap().len(), 0, "the model was not run");
 }
 
+impl Env {
+    /// Each permission's (connection, origin, still active).
+    fn grant_states(&self) -> Vec<(String, String, bool)> {
+        let now = unix_now();
+        let mut all: Vec<(String, String, bool)> = self
+            .store()
+            .grants()
+            .unwrap()
+            .into_iter()
+            .map(|g| (g.grant.connection_id.0.clone(), g.origin.clone(), g.grant.is_active(now)))
+            .collect();
+        all.sort();
+        all
+    }
+
+    async fn ended_with_the_bypass(&self) -> usize {
+        self.core.activity(50).await.unwrap().into_iter().filter(|e| e.detail == "Ended with the bypass").count()
+    }
+}
+
+#[tokio::test]
+async fn stopping_a_bypass_until_off_takes_back_what_it_granted_and_leaves_the_users_own() {
+    let env = env(false).await;
+    // A permission the user gave themselves, before any bypass.
+    env.relay("r0", OTHER, grant()).await;
+    env.approve("r0").await;
+    env.core.start_bypass(None, None).await.unwrap();
+    env.relay("r1", OLD, grant()).await;
+    assert_eq!(
+        env.grant_states(),
+        [(OLD.to_owned(), "bypass".to_owned(), true), (OTHER.to_owned(), "ai_request".to_owned(), true)]
+    );
+    env.mode(None, AutopilotMode::Manual).await;
+    assert_eq!(
+        env.grant_states(),
+        [(OLD.to_owned(), "bypass".to_owned(), false), (OTHER.to_owned(), "ai_request".to_owned(), true)],
+        "only the bypass's is taken back"
+    );
+    assert_eq!(env.ended_with_the_bypass().await, 1);
+    let entry = env.core.activity(1).await.unwrap().remove(0);
+    assert_eq!(
+        (entry.action.as_str(), entry.outcome.as_str(), entry.connection_id.as_str()),
+        ("grant", "revoked", OLD)
+    );
+}
+
+#[tokio::test]
+async fn a_timed_bypass_takes_back_its_grants_when_stopped_early_or_when_it_runs_out() {
+    let env = env(false).await;
+    env.core.start_bypass(None, Some(60)).await.unwrap();
+    env.relay("r1", OLD, grant()).await;
+    assert_eq!(env.grant_states(), [(OLD.to_owned(), "bypass".to_owned(), true)]);
+    // Stopped after a moment, not at its planned end: the grant ends now, not then.
+    env.mode(None, AutopilotMode::Manual).await;
+    assert_eq!(env.grant_states(), [(OLD.to_owned(), "bypass".to_owned(), false)]);
+
+    // Run out: ended by the core's own check (here when Autopilot is next read).
+    env.core.start_bypass(None, Some(60)).await.unwrap();
+    env.relay("r2", OTHER, grant()).await;
+    let mut global = env.store().ap_mode_row("").unwrap();
+    global.bypass_until = Some(unix_now() - 1);
+    env.store().ap_set_mode_row("", &global, unix_now()).unwrap();
+    env.core.autopilot_settings().await.unwrap();
+    assert!(env.grant_states().iter().all(|(_, _, active)| !active), "{:?}", env.grant_states());
+    assert_eq!(env.ended_with_the_bypass().await, 2);
+
+    // Locked down while one runs: taken back too.
+    env.core.start_bypass(None, None).await.unwrap();
+    env.relay("r3", OLD, grant()).await;
+    env.mode(None, AutopilotMode::Lockdown).await;
+    assert!(env.grant_states().iter().all(|(_, _, active)| !active));
+}
+
+#[tokio::test]
+async fn an_ais_own_bypass_takes_back_only_its_own_grants() {
+    let env = env(false).await;
+    env.core.start_bypass(None, None).await.unwrap();
+    env.core.start_bypass(Some(OLD.to_owned()), Some(30)).await.unwrap();
+    env.relay("r1", OLD, grant()).await;
+    env.relay("r2", OTHER, grant()).await;
+    let origin = format!("bypass:{OLD}");
+    assert_eq!(
+        env.grant_states(),
+        [(OLD.to_owned(), origin.clone(), true), (OTHER.to_owned(), "bypass".to_owned(), true)]
+    );
+    // That AI's bypass ends (back to following the global mode): its grant ends, the global bypass's stays.
+    env.mode(Some(OLD), AutopilotMode::Manual).await;
+    env.core.set_autopilot_mode(Some(OLD.to_owned()), None, None).await.unwrap();
+    assert_eq!(env.grant_states(), [(OLD.to_owned(), origin, false), (OTHER.to_owned(), "bypass".to_owned(), true)]);
+    env.mode(None, AutopilotMode::Manual).await;
+    assert!(env.grant_states().iter().all(|(_, _, active)| !active));
+}
+
 #[tokio::test]
 async fn a_bypass_takes_any_length_up_to_a_year() {
     let env = env(false).await;

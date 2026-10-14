@@ -21,6 +21,9 @@ pub struct Decision {
     pub note: Option<AuditAutopilot>,
     /// The activity entry written while deciding.
     pub seq: Mutex<Option<i64>>,
+    /// The origin a permission granted while deciding is stored with (a bypass marks its own, to take them back when
+    /// it ends); `None`: the usual one.
+    pub grant_origin: Option<String>,
 }
 
 impl Decision {
@@ -29,8 +32,21 @@ impl Decision {
             decided_by: decided_by.to_owned(),
             note,
             seq: Mutex::new(None),
+            grant_origin: None,
         }
     }
+
+    /// Permissions granted while deciding are stored with `origin`.
+    #[must_use]
+    pub fn granting_as(mut self, origin: Option<String>) -> Self {
+        self.grant_origin = origin;
+        self
+    }
+}
+
+/// The origin to store a permission granted now with: the decision's own, else `usual`.
+pub fn grant_origin(usual: &str) -> String {
+    DECISION.try_with(|d| d.grant_origin.clone()).ok().flatten().unwrap_or_else(|| usual.to_owned())
 }
 
 /// Runs `work` with `decision` as the decider; returns its output and the activity entry it wrote.

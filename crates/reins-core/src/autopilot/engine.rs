@@ -85,6 +85,8 @@ struct Subject {
     grant: bool,
     /// A purchase, approved through its own path (with the defaults its screen would show).
     purchase: bool,
+    /// The origin a permission granted while deciding it is stored with (a bypass marks its own).
+    grant_origin: Option<String>,
 }
 
 /// What one pass keeps between items.
@@ -504,6 +506,7 @@ impl Engine {
                     everything: everything(&view),
                     grant: view.kind == ApprovalKind::Grant,
                     purchase: view.purchase.is_some(),
+                    grant_origin: None,
                 })
             }
             PendingKind::Blob => {
@@ -528,6 +531,7 @@ impl Engine {
                     },
                     grant: false,
                     purchase: false,
+                    grant_origin: None,
                 })
             }
         })
@@ -677,7 +681,11 @@ impl Engine {
             "Bypass: approved without asking".clone_into(&mut s.reason);
             subject.choice = subject.everything.clone();
             if subject.grant {
-                subject.choice.standing = self.ap_bypass_cap(&subject.connection_id, now)?;
+                // Marked as this bypass's, so that it ends when the bypass does, however it ends; a timed one is also
+                // capped at its planned end.
+                let (scope, cap) = self.ap_bypass_cap(&subject.connection_id, now)?;
+                subject.choice.standing = cap;
+                subject.grant_origin = Some(modes::bypass_origin(&scope));
             }
             return self.ap_conclude(&subject, s, Verdict::Approve, "bypass").await;
         }
@@ -862,7 +870,8 @@ impl Engine {
         by: &str,
     ) -> Result<(), CoreError> {
         let note = note_of(&s, verdict);
-        let (result, seq) = deciding(Decision::new(by, Some(note)), self.ap_execute(subject, verdict)).await;
+        let decision = Decision::new(by, Some(note)).granting_as(subject.grant_origin.clone());
+        let (result, seq) = deciding(decision, self.ap_execute(subject, verdict)).await;
         let now = unix_now();
         match result {
             Ok(()) => {
@@ -903,25 +912,72 @@ impl Engine {
         }
     }
 
-    /// A permission granted during a bypass lasts at most until the bypass ends (one without an end: as asked).
-    fn ap_bypass_cap(&self, connection_id: &str, now: i64) -> Result<Option<StandingGrant>, CoreError> {
-        let rows = [self.store.ap_mode_row("")?, self.store.ap_mode_row(connection_id)?];
-        let end = rows.iter().filter(|r| r.bypassing(now)).filter_map(|r| r.bypass_until).max();
-        Ok(end.filter(|e| *e != modes::BYPASS_UNTIL_OFF).map(|end| StandingGrant {
-            duration_secs: Some(u64::try_from((end - now).max(1)).unwrap_or(1)),
-            max_uses: None,
-            scope: GrantScopeChoice {
-                all_mail: false,
-                selected_messages_only: false,
-                sender_addresses: Vec::new(),
-                sender_domains: Vec::new(),
-                subject_pattern: None,
-                recipient_addresses: Vec::new(),
-                recipient_domains: Vec::new(),
-                resources: Vec::new(),
-                classes: Vec::new(),
-            },
-        }))
+    /// The bypass in force for a connection (its own, else the global one, as `modes::effective` reads them) and the
+    /// cap of a permission granted during it: until its planned end (one without an end: as asked; it is taken back
+    /// when stopped).
+    fn ap_bypass_cap(&self, connection_id: &str, now: i64) -> Result<(String, Option<StandingGrant>), CoreError> {
+        let own = self.store.ap_mode_row(connection_id)?;
+        let (scope, row) = if own.bypassing(now) {
+            (connection_id.to_owned(), own)
+        } else {
+            (String::new(), self.store.ap_mode_row("")?)
+        };
+        let end = row.bypass_until.filter(|_| row.bypassing(now));
+        Ok((
+            scope,
+            end.filter(|e| *e != modes::BYPASS_UNTIL_OFF).map(|end| StandingGrant {
+                duration_secs: Some(u64::try_from((end - now).max(1)).unwrap_or(1)),
+                max_uses: None,
+                scope: GrantScopeChoice {
+                    all_mail: false,
+                    selected_messages_only: false,
+                    sender_addresses: Vec::new(),
+                    sender_domains: Vec::new(),
+                    subject_pattern: None,
+                    recipient_addresses: Vec::new(),
+                    recipient_domains: Vec::new(),
+                    resources: Vec::new(),
+                    classes: Vec::new(),
+                },
+            }),
+        ))
+    }
+
+    /// Takes back what a bypass granted, once it ended (stopped, run out, replaced by another mode, locked down): every
+    /// permission still active with its origin, of `scope` (`None`: of every bypass). Each says so in Activity.
+    fn ap_end_bypass_grants(&self, scope: Option<&str>) -> Result<(), CoreError> {
+        let now = unix_now();
+        for stored in self.store.grants()? {
+            let matches = match scope {
+                Some(scope) => stored.origin == modes::bypass_origin(scope),
+                None => modes::is_bypass_origin(&stored.origin),
+            };
+            if !matches || !stored.grant.is_active(now) || !self.store.revoke_grant(&stored.grant.id)? {
+                continue;
+            }
+            let view = views::grant_view(&stored);
+            let summary = view.summary.clone();
+            self.store.append_audit(&AuditRecord {
+                seq: 0,
+                at: now,
+                connection_id: view.connection_id,
+                connection_label: view.connection_label,
+                action: "grant".to_owned(),
+                outcome: "revoked".to_owned(),
+                detail: "Ended with the bypass".to_owned(),
+                grant_id: Some(view.id),
+                service: view.service,
+                account: view.account,
+                count: 1,
+                info: crate::store::AuditInfo {
+                    grant_summary: Some(summary),
+                    note: Some("Ended with the bypass".to_owned()),
+                    ..crate::store::AuditInfo::default()
+                },
+                op: String::new(),
+            })?;
+        }
+        Ok(())
     }
 
     async fn ap_execute(&self, subject: &Subject, verdict: Verdict) -> Result<(), CoreError> {
@@ -952,6 +1008,7 @@ impl Engine {
                 row.bypass_until = None;
                 row.bypass_since = None;
                 self.store.ap_set_mode_row(&scope, &row, now)?;
+                self.ap_end_bypass_grants(Some(&scope))?;
                 self.notifier.autopilot_changed(AutopilotEvent::BypassEnded {
                     connection_id: (!scope.is_empty()).then_some(scope),
                 });
@@ -1171,10 +1228,17 @@ impl Engine {
         let now = unix_now();
         let scope = connection_id.clone().unwrap_or_default();
         let mut row = self.store.ap_mode_row(&scope)?;
+        let was_bypassing = row.bypass_until.is_some();
         row.mode = mode;
         row.bypass_until = None;
         row.bypass_since = None;
         self.store.ap_set_mode_row(&scope, &row, now)?;
+        // Whatever ended the bypass, what it granted ends with it. A global lockdown ends every AI's.
+        if connection_id.is_none() && mode == Some(AutopilotMode::Lockdown) {
+            self.ap_end_bypass_grants(None)?;
+        } else if was_bypassing {
+            self.ap_end_bypass_grants(Some(&scope))?;
+        }
         self.notifier.autopilot_changed(AutopilotEvent::ModeChanged {
             connection_id: connection_id.clone(),
         });

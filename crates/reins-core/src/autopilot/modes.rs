@@ -22,6 +22,23 @@ pub const DEFAULT_BYPASS_MINUTES: u32 = 15;
 /// The end of a bypass that runs until the user turns it off.
 pub const BYPASS_UNTIL_OFF: i64 = i64::MAX;
 
+/// The origin of a permission a bypass granted: `bypass` for the global one, `bypass:<connection>` for one AI's. The
+/// bypass takes them all back when it ends.
+pub const BYPASS_ORIGIN: &str = "bypass";
+
+pub fn bypass_origin(scope: &str) -> String {
+    if scope.is_empty() {
+        BYPASS_ORIGIN.to_owned()
+    } else {
+        format!("{BYPASS_ORIGIN}:{scope}")
+    }
+}
+
+/// A permission granted by any bypass.
+pub fn is_bypass_origin(origin: &str) -> bool {
+    origin == BYPASS_ORIGIN || origin.starts_with("bypass:")
+}
+
 /// When a bypass started `now` ends: after `minutes` (1 minute to a year), or never (`None`, until turned off).
 pub fn bypass_end(minutes: Option<u32>, now: i64) -> Result<i64, &'static str> {
     match minutes {
