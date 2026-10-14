@@ -2,7 +2,7 @@
 //!
 //! 1. **Group** the selection ([`plan`]): a project's `.env` files into its environments (the project is the
 //!    repository's folder name; `.env` and `.env.local` → `development`, `.env.production` → `production`), the
-//!    computer's own credentials into `machine/<computer>` environments (`aws-default`, `npm`, `pypi`, …), SSH keys
+//!    computer's own credentials into `machine-<computer>` environments (`aws-default`, `npm`, `pypi`, …), SSH keys
 //!    into `Reins/ssh`, GitHub and git tokens into the phone's git integration.
 //! 2. **Store** them as one batch ([`VaultWriter`]): one approval on the phone, one set of check digits.
 //! 3. **Rewrite** each source whose secrets all arrived, unless the person keeps local copies ([`rewrite`]): a `.env`
@@ -97,6 +97,18 @@ fn slug(s: &str) -> String {
     out.split('-').filter(|p| !p.is_empty()).collect::<Vec<_>>().join("-")
 }
 
+/// The project of this computer's own credentials: `machine-<computer>`, the name lowercased to letters, digits and
+/// `-` (project and environment names never hold a `/`): "Dana's MacBook" → `machine-danas-macbook`.
+#[must_use]
+pub fn machine_project(computer: &str) -> String {
+    let name = slug(&computer.replace(['\'', '’'], ""));
+    if name.is_empty() {
+        "machine-computer".to_owned()
+    } else {
+        format!("machine-{name}")
+    }
+}
+
 /// The environment a dotenv file's variables go to, from its name.
 #[must_use]
 pub fn env_for(file_name: &str) -> String {
@@ -167,7 +179,7 @@ pub struct PlannedVar {
 /// An environment the batch stores (`vault_secrets_store`).
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct EnvTarget {
-    /// `acme-web`, or `machine/<computer>`.
+    /// `acme-web`, or `machine-<computer>`.
     pub project: String,
     pub env: String,
     pub vars: Vec<PlannedVar>,
@@ -295,7 +307,7 @@ pub fn plan(report: &ScanReport, selected: &BTreeSet<String>, computer: &str) ->
     let chosen: Vec<&Finding> =
         report.findings.iter().filter(|f| f.items.iter().any(|i| selected.contains(&i.id))).collect();
     let projects = project_names(&chosen);
-    let machine = format!("machine/{computer}");
+    let machine = machine_project(computer);
     // `.env` before `.env.local`: the later file's value wins, as dotenv tools read them.
     let mut ordered = chosen.clone();
     ordered.sort_by_key(|f| {

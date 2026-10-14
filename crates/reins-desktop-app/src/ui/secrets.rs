@@ -441,7 +441,7 @@ impl Root {
     /// The review's right panel: how many move, into which folder, what happens after, and Move.
     fn review_panel(r: &Review, d: &Data, pal: Palette, top: f32, cx: &mut Context<'_, Self>) -> AnyElement {
         let n = r.count();
-        let computer = d.computer.clone();
+        let machine = reins_desktop::secrets_import::machine_project(&d.computer);
         let choice = |id: &'static str,
                       on: bool,
                       title: &'static str,
@@ -510,7 +510,11 @@ impl Root {
                             .child(format!("of {}", r.total())),
                     ),
             )
-            .child(caption(format!("into a \"{computer}\" folder"), pal).text_color(pal.tertiary).mt(px(2.0)))
+            .child(
+                caption(format!("into your vault · this computer's own in {machine}"), pal)
+                    .text_color(pal.tertiary)
+                    .mt(px(2.0)),
+            )
             .child(small_caps("Then").mt(px(22.0)))
             .child(
                 card(pal)
@@ -743,7 +747,8 @@ impl Root {
             1 => "1 secret is in your vault".to_owned(),
             n => format!("{n} secrets are in your vault"),
         };
-        let mut under = format!("Folder \"{}\"", receipt.computer);
+        let mut under =
+            format!("In your vault · {}", reins_desktop::secrets_import::machine_project(&receipt.computer));
         if receipt.keep_local {
             under.push_str(" · local copies kept");
         } else if !receipt.trashed().is_empty() {

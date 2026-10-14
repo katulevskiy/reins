@@ -218,6 +218,10 @@ fn files_name_their_environments_and_credentials_their_variables() {
     assert_eq!(machine_var(Source::Cargo, Some("crates.io"), "token").1, "CARGO_REGISTRY_TOKEN");
     assert_eq!(machine_var(Source::Cargo, Some("acme"), "token").1, "CARGO_REGISTRIES_ACME_TOKEN");
     assert_eq!(var_name("apiKey.v2"), "APIKEY_V2");
+    assert_eq!(machine_project("Dana's MacBook"), "machine-danas-macbook");
+    assert_eq!(machine_project("laptop"), "machine-laptop");
+    assert_eq!(machine_project("ws-01.corp/LAB"), "machine-ws-01-corp-lab");
+    assert_eq!(machine_project("✓"), "machine-computer");
     assert_eq!(var_name("1x"), "V_1X");
 }
 
@@ -232,12 +236,12 @@ fn the_selection_is_grouped_by_where_it_goes() {
         ("acme-web/development", 4),
         ("api/development", 1),
         ("shop/production", 1),
-        ("machine/Dana's MacBook/aws-default", 2),
-        ("machine/Dana's MacBook/aws-prod", 2),
-        ("machine/Dana's MacBook/npm", 1),
-        ("machine/Dana's MacBook/pypi", 1),
-        ("machine/Dana's MacBook/cargo", 1),
-        ("machine/Dana's MacBook/shell", 1),
+        ("machine-danas-macbook/aws-default", 2),
+        ("machine-danas-macbook/aws-prod", 2),
+        ("machine-danas-macbook/npm", 1),
+        ("machine-danas-macbook/pypi", 1),
+        ("machine-danas-macbook/cargo", 1),
+        ("machine-danas-macbook/shell", 1),
     ] {
         assert!(envs.contains(&(want.0.to_owned(), want.1)), "{want:?} not in {envs:?}");
     }
@@ -330,7 +334,7 @@ async fn an_import_moves_everything_and_rewrites_each_source() {
     let profiles = machine.profiles.lock().unwrap().clone();
     assert_eq!(
         profiles["aws-prod"]["AWS_SECRET_ACCESS_KEY"],
-        "vault:machine/Dana's MacBook/aws-prod/AWS_SECRET_ACCESS_KEY"
+        "vault:machine-danas-macbook/aws-prod/AWS_SECRET_ACCESS_KEY"
     );
     for p in ["aws-default", "npm", "pypi", "cargo", "shell"] {
         assert!(profiles.contains_key(p), "{p} in {profiles:?}");
@@ -698,4 +702,30 @@ async fn the_originals_can_be_deleted_from_the_trash_for_good() {
     assert!(std::fs::read_dir(&machine.trash_dir).unwrap().next().is_none(), "the trash holds none of them");
     let (_, mut r) = receipt::load(&c.state_dir, "last").unwrap();
     assert!(r.purged_at.is_some() && receipt::purge(&c.state_dir, &path, &mut r, &machine).is_err());
+}
+
+#[test]
+fn project_and_environment_names_never_hold_a_slash() {
+    let fx = fixture();
+    let home = fx.home();
+    std::fs::create_dir_all(home.join("dev/My App (v2)/.git")).unwrap();
+    std::fs::write(home.join("dev/My App (v2)/.env.Staging_EU"), format!("API_SECRET={}\n", fake("", 33))).unwrap();
+    let report = report(&fx);
+    let selected = select(&report, &[], true).unwrap();
+    for computer in ["Dana's MacBook", "ws-01.corp/LAB", "laptop"] {
+        let plan = plan(&report, &selected, computer);
+        assert!(!plan.envs.is_empty());
+        for e in &plan.envs {
+            for name in [&e.project, &e.env] {
+                assert!(
+                    !name.is_empty() && name.bytes().all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'-'),
+                    "{name} (computer {computer})"
+                );
+            }
+            assert_eq!(e.reference("X").matches('/').count(), 2, "{}", e.reference("X"));
+        }
+    }
+    let plan = plan(&report, &selected, "Dana's MacBook");
+    assert!(plan.envs.iter().any(|e| e.project == "my-app-v2" && e.env == "staging-eu"));
+    assert!(plan.envs.iter().any(|e| e.item() == "machine-danas-macbook/aws-default"));
 }

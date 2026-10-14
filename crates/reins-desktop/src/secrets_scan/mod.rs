@@ -529,7 +529,8 @@ impl ScanOptions {
     }
 }
 
-/// This computer's name, as the phone and the vault folder `Reins/machine/<name>` call it.
+/// This computer's name, as the phone says it (its own credentials go to the project `machine-<name>`, see
+/// `secrets_import::machine_project`).
 #[must_use]
 pub fn computer_name() -> String {
     #[cfg(target_os = "macos")]
