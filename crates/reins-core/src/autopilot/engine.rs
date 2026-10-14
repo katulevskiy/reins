@@ -17,13 +17,16 @@ use super::decide::{self, Pass, Probs};
 use super::gates::{self, RATE_PER_10_MIN, RATE_PER_DAY};
 use super::memory::{CORRECTION_WEIGHT, Embedding, MemoryRow, Source, Variant};
 use super::model::{self, DownloadState, KnownModel, Laya};
-use super::modes::{self, DEFAULT_BYPASS_MINUTES, MAX_BYPASS_MINUTES};
+use super::modes::{self, DEFAULT_BYPASS_MINUTES};
 use super::runtime::{DownloadProgress, ModelRuntime};
 use super::situation::{self, Described};
-use super::store::{Decided, Judged, NeighbourNote, Profile, SUGGESTION_RETENTION_SECS, StoredProfile, Suggestion};
+use super::stats;
+use super::store::{
+    Decided, Judged, NeighbourNote, Profile, SUGGESTION_RETENTION_SECS, StoredProfile, Suggestion, Thresholds,
+};
 use super::types::{
-    AutoDecisionView, AutopilotEvent, AutopilotMode, AutopilotNote, AutopilotSettings, ClassView, ConnectionAutopilot,
-    ModelStatus, NeighbourView, Preset, ProfileView, SuggestionView, Verdict,
+    AutoDecisionView, AutopilotEvent, AutopilotMode, AutopilotNote, AutopilotSettings, AutopilotStats, ClassView,
+    ConnectionAutopilot, ModelStatus, NeighbourView, Preset, ProfileView, SuggestionView, ThresholdReplay, Verdict,
 };
 use crate::CoreError;
 use crate::engine::Engine;
@@ -557,7 +560,8 @@ impl Engine {
         };
         let mode = self.ap_mode_for(&subject.connection_id, now)?;
         let stored = self.ap_profile_of(&subject.connection_id)?;
-        let (profile_id, profile_name, preset) = (stored.id, stored.profile.name, stored.profile.preset);
+        let thresholds = stored.profile.thresholds();
+        let (profile_id, profile_name) = (stored.id, stored.profile.name);
         let target_key = self.store.ap_target_key(&subject.connection_id, &subject.described.facts.target)?;
         let novel = target_key.is_empty() || !self.store.ap_target_seen(&target_key)?;
         let mut s = Suggestion {
@@ -628,7 +632,7 @@ impl Engine {
                 return self.ap_wait(&subject, &s);
             }
         };
-        s.verdict = decide::would(probs, novel, judged.escalate, preset.thresholds());
+        s.verdict = decide::would(probs, novel, judged.escalate, thresholds);
         s.reason = reason_of(&judged, s.verdict, novel);
         s.judged = Some(judged);
 
@@ -846,6 +850,7 @@ impl Engine {
         for (scope, mut row) in self.store.ap_mode_rows()? {
             if row.bypass_until.is_some_and(|t| t <= now) {
                 row.bypass_until = None;
+                row.bypass_since = None;
                 self.store.ap_set_mode_row(&scope, &row, now)?;
                 self.notifier.autopilot_changed(AutopilotEvent::BypassEnded {
                     connection_id: (!scope.is_empty()).then_some(scope),
@@ -1027,6 +1032,7 @@ impl Engine {
                 mode: modes::effective(&global, Some(&row), now),
                 base_mode: row.mode,
                 bypass_until: row.bypass_until.filter(|t| *t > now),
+                bypass_since: row.bypass_since.filter(|_| row.bypassing(now)),
                 profile_id: row
                     .profile_id
                     .clone()
@@ -1039,6 +1045,7 @@ impl Engine {
             mode: modes::global_mode(&global, now),
             base_mode: modes::global_base(&global),
             bypass_until: global.bypass_until.filter(|t| *t > now),
+            bypass_since: global.bypass_since.filter(|_| global.bypassing(now)),
             default_profile_id,
             wifi_only: self.store.meta_get(WIFI_ONLY_KEY)?.is_none_or(|v| v != "0"),
             model: self.model_status(),
@@ -1047,46 +1054,26 @@ impl Engine {
     }
 
     /// Sets the global mode (`connection_id` = `None`) or a connection's; `mode` = `None` returns to the default
-    /// (global) or to following the global mode (connection). A bypass lasts `minutes` (15 by default, 60 at most);
-    /// Lockdown also denies what is waiting.
+    /// (global) or to following the global mode (connection). A bypass lasts `minutes` (15 by default, a year at
+    /// most; [`Self::start_bypass`] also starts one without an end); Lockdown also denies what is waiting.
     pub async fn set_autopilot_mode(
         &self,
         connection_id: Option<String>,
         mode: Option<AutopilotMode>,
         minutes: Option<u32>,
     ) -> Result<(), CoreError> {
+        if mode == Some(AutopilotMode::Bypass) {
+            return self.start_bypass(connection_id, Some(minutes.unwrap_or(DEFAULT_BYPASS_MINUTES))).await;
+        }
         if let Some(id) = &connection_id {
             check_id(id)?;
         }
         let now = unix_now();
         let scope = connection_id.clone().unwrap_or_default();
         let mut row = self.store.ap_mode_row(&scope)?;
-        match mode {
-            Some(AutopilotMode::Bypass) => {
-                let minutes = minutes.unwrap_or(DEFAULT_BYPASS_MINUTES);
-                if minutes == 0 || minutes > MAX_BYPASS_MINUTES {
-                    return Err(CoreError::invalid("a bypass lasts between 1 and 60 minutes"));
-                }
-                if let Some(id) = &connection_id {
-                    let created = self.connections().await?.into_iter().find(|c| &c.id == id).map(|c| c.created_at);
-                    let paired = self.store.ap_paired_at(id)?;
-                    let since = created.into_iter().chain(paired).max().ok_or(CoreError::NotFound)?;
-                    if now - since < self.cfg.new_connection_secs {
-                        return Err(CoreError::invalid(
-                            "a connection paired less than 10 minutes ago cannot be put in bypass",
-                        ));
-                    }
-                }
-                if row.mode == Some(AutopilotMode::Lockdown) {
-                    row.mode = None;
-                }
-                row.bypass_until = Some(now + i64::from(minutes) * 60);
-            }
-            other => {
-                row.mode = other;
-                row.bypass_until = None;
-            }
-        }
+        row.mode = mode;
+        row.bypass_until = None;
+        row.bypass_since = None;
         self.store.ap_set_mode_row(&scope, &row, now)?;
         self.notifier.autopilot_changed(AutopilotEvent::ModeChanged {
             connection_id: connection_id.clone(),
@@ -1094,6 +1081,37 @@ impl Engine {
         if mode == Some(AutopilotMode::Lockdown) {
             self.ap_lockdown_sweep(connection_id.as_deref()).await;
         }
+        Ok(())
+    }
+
+    /// Starts a bypass of every AI (`connection_id` = `None`) or of one: for `minutes` (1 minute to a year), or until
+    /// the user turns it off (`None`). It ends a lockdown of the same scope; requests that always ask still ask; a
+    /// connection paired less than 10 minutes ago cannot be bypassed.
+    pub async fn start_bypass(&self, connection_id: Option<String>, minutes: Option<u32>) -> Result<(), CoreError> {
+        if let Some(id) = &connection_id {
+            check_id(id)?;
+        }
+        let now = unix_now();
+        let until = modes::bypass_end(minutes, now).map_err(CoreError::invalid)?;
+        if let Some(id) = &connection_id {
+            let created = self.connections().await?.into_iter().find(|c| &c.id == id).map(|c| c.created_at);
+            let paired = self.store.ap_paired_at(id)?;
+            let since = created.into_iter().chain(paired).max().ok_or(CoreError::NotFound)?;
+            if now - since < self.cfg.new_connection_secs {
+                return Err(CoreError::invalid("a connection paired less than 10 minutes ago cannot be put in bypass"));
+            }
+        }
+        let scope = connection_id.clone().unwrap_or_default();
+        let mut row = self.store.ap_mode_row(&scope)?;
+        if row.mode == Some(AutopilotMode::Lockdown) {
+            row.mode = None;
+        }
+        row.bypass_until = Some(until);
+        row.bypass_since = Some(now);
+        self.store.ap_set_mode_row(&scope, &row, now)?;
+        self.notifier.autopilot_changed(AutopilotEvent::ModeChanged {
+            connection_id,
+        });
         Ok(())
     }
 
@@ -1163,7 +1181,7 @@ impl Engine {
         };
         let stored = profiles.into_iter().find(|p| p.id == id).ok_or(CoreError::NotFound)?;
         let (class_key, novel) = class_of_text(&s_facts);
-        let preset = stored.profile.preset;
+        let thresholds = stored.profile.thresholds();
         let s = Suggestion {
             request_id: String::new(),
             at: unix_now(),
@@ -1188,7 +1206,7 @@ impl Engine {
         let memory = self.store.ap_memory(&stored.id)?;
         let mut profile = (stored, memory);
         let (judged, probs) = self.ap_judge(&s, &mut profile, s.at).await.map_err(CoreError::service)?;
-        let verdict = decide::would(probs, s.novel, judged.escalate, preset.thresholds());
+        let verdict = decide::would(probs, s.novel, judged.escalate, thresholds);
         let done = Suggestion {
             verdict,
             reason: reason_of(&judged, verdict, s.novel),
@@ -1236,8 +1254,14 @@ impl Engine {
                 })
                 .collect();
             classes.sort_by(|a, b| b.decisions.cmp(&a.decisions).then(a.class_key.cmp(&b.class_key)));
+            let (approve_at, deny_at) = p.profile.thresholds();
+            let preset = p.profile.shown_preset();
             views.push(ProfileView {
+                preset,
                 is_default: p.id == default_id,
+                approve_at,
+                deny_at,
+                agreement: stats::agreement(&memory).0,
                 memory_count: u32::try_from(memory.len()).unwrap_or(u32::MAX),
                 connections: assigned
                     .iter()
@@ -1248,7 +1272,6 @@ impl Engine {
                 trained_at: p.profile.adapter.as_ref().map(|a| a.trained_at),
                 name: p.profile.name,
                 icon: p.profile.icon,
-                preset: p.profile.preset,
                 id: p.id,
             });
         }
@@ -1355,9 +1378,77 @@ impl Engine {
         })
     }
 
+    /// A named preset (its thresholds replace the user's own), or `Custom`: the user's own thresholds, starting
+    /// from those in use.
     pub fn set_preset(&self, profile_id: &str, preset: Preset) -> Result<(), CoreError> {
         self.ap_profiles()?;
-        self.ap_update_profile(profile_id, |p| p.preset = preset)
+        self.ap_update_profile(profile_id, |p| {
+            if preset == Preset::Custom {
+                if p.custom.is_none() {
+                    let (approve, deny) = p.thresholds();
+                    p.custom = Some(Thresholds {
+                        approve,
+                        deny,
+                    });
+                }
+            } else {
+                p.preset = preset;
+                p.custom = None;
+            }
+        })
+    }
+
+    /// The profile's own thresholds (each clamped to 0.80–0.99): Auto approves at or above `approve_at` and denies at
+    /// or above `deny_at`.
+    pub fn set_thresholds(&self, profile_id: &str, approve_at: f32, deny_at: f32) -> Result<(), CoreError> {
+        let t = Thresholds::clamped(approve_at, deny_at).ok_or_else(|| CoreError::invalid("not a threshold"))?;
+        self.ap_profiles()?;
+        self.ap_update_profile(profile_id, |p| p.custom = Some(t))
+    }
+
+    /// The profile's evaluations of the last 30 days replayed at these thresholds (clamped like `set_thresholds`).
+    pub fn threshold_replay(
+        &self,
+        profile_id: &str,
+        approve_at: f32,
+        deny_at: f32,
+    ) -> Result<ThresholdReplay, CoreError> {
+        let t = Thresholds::clamped(approve_at, deny_at).ok_or_else(|| CoreError::invalid("not a threshold"))?;
+        self.ap_stored_profile(profile_id)?;
+        let since = unix_now() - SUGGESTION_RETENTION_SECS;
+        let mine: Vec<Suggestion> =
+            self.store.ap_suggestions_since(since)?.into_iter().filter(|s| s.profile_id == profile_id).collect();
+        let corrections = self
+            .store
+            .ap_memory(profile_id)?
+            .into_iter()
+            .filter(|r| r.source == Source::Correction)
+            .map(|r| (r.request_id, r.label))
+            .collect();
+        let days = u32::try_from(SUGGESTION_RETENTION_SECS / 86_400).unwrap_or(30);
+        Ok(stats::replay(&mine, &corrections, (t.approve, t.deny), days))
+    }
+
+    /// The last `days` (1 to 30): requests scored, how often Autopilot agreed with the user, kinds on Auto.
+    pub fn autopilot_stats(&self, days: u32) -> Result<AutopilotStats, CoreError> {
+        let days = days.clamp(1, 30);
+        let since = unix_now() - i64::from(days) * 86_400;
+        let scored = self.store.ap_suggestions_since(since)?.iter().filter(|s| s.judged.is_some()).count();
+        let profiles = self.autopilot_profiles()?;
+        let mut recent = Vec::new();
+        for p in &profiles {
+            recent.extend(self.store.ap_memory(&p.id)?.into_iter().filter(|r| r.at > since));
+        }
+        let (matched, compared) = stats::agreement(&recent);
+        let count = |n: usize| u32::try_from(n).unwrap_or(u32::MAX);
+        Ok(AutopilotStats {
+            days,
+            scored: count(scored),
+            matched,
+            compared,
+            kinds_on_auto: count(profiles.iter().flat_map(|p| &p.classes).filter(|c| c.auto_approve).count()),
+            kinds: count(profiles.iter().map(|p| p.classes.len()).sum()),
+        })
     }
 }
 

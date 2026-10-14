@@ -13,7 +13,7 @@ There is a global mode, and each connection can have its own (in that connection
 |---|---|
 | **Manual** | Every request waits for you, and once the model is installed the approval screen shows what Autopilot would do and why ("Autopilot would approve · 97%", "Like 4 times you approved: ..."). Each of your answers teaches it. The default. |
 | **Auto** | Autopilot approves what it is confident is safe, denies what it is confident is harmful, and asks you about the rest. Only for kinds of request that have earned it ([below](#how-auto-earns-trust)). |
-| **Bypass** | Approves everything except the hard floor, for 15 minutes by default and at most 60. A persistent notification with a countdown and **Stop** stays up while it is on. Needs no model. Not available for a connection paired less than 10 minutes ago. |
+| **Bypass** | Approves everything except the hard floor, for any length from a minute to a year (15 minutes by default), or **until you turn it off**. A persistent notification with a countdown (or, without an end, how long it has run) and **Stop** stays up while it is on. Turning it on is a hold. Needs no model. Not available for a connection paired less than 10 minutes ago. |
 | **Lockdown** | Denies everything at once, including what is already waiting. New connection requests still reach you. A global Lockdown overrides every connection's own mode. Needs no model. |
 
 All modes work with the app closed. The push notification wakes the app, and Autopilot decides right there.
@@ -101,6 +101,11 @@ Thresholds come from a preset per profile:
 | Cautious | ≥ 0.98 | ≥ 0.95 |
 | Balanced (default) | ≥ 0.95 | ≥ 0.90 |
 | Relaxed | ≥ 0.90 | ≥ 0.85 |
+| Custom | your own, 0.80 to 0.99 | your own, 0.80 to 0.99 |
+
+With **Custom**, the profile page shows what the last 30 days would have been at the thresholds you set: how many
+requests Autopilot would have decided, how many it would have asked, and how many of its decisions you would have
+undone (the stored evaluations replayed).
 
 The model's safety calibration was measured at the Balanced thresholds. Relaxed has **not** been validated for
 safety.

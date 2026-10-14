@@ -45,9 +45,9 @@ pub mod work_session;
 
 pub use api::ReinsCore;
 pub use autopilot::{
-    AutoDecisionView, AutopilotEvent, AutopilotMode, AutopilotNote, AutopilotSettings, ClassView, ConnectionAutopilot,
-    DownloadProgress, ModelInput, ModelOutput, ModelRuntime, ModelState, ModelStatus, NeighbourView, Preset,
-    ProfileView, SuggestionView, Verdict,
+    AutoDecisionView, AutopilotEvent, AutopilotMode, AutopilotNote, AutopilotSettings, AutopilotStats, ClassView,
+    ConnectionAutopilot, DownloadProgress, ModelInput, ModelOutput, ModelRuntime, ModelState, ModelStatus,
+    NeighbourView, Preset, ProfileView, SuggestionView, ThresholdReplay, Verdict,
 };
 pub use connector::LoginProgress;
 pub use connector::device::{DeviceBridge, DeviceContact, DeviceEvent, NewDeviceEvent, SmsMessage, SmsThread};

@@ -11,7 +11,7 @@ use serde::{Deserialize, Serialize};
 use super::adapter::Adapter;
 use super::memory::{Embedding, MEMORY_CAP, MemoryRow};
 use super::modes::ModeRow;
-use super::types::{AutopilotMode, Preset, Verdict};
+use super::types::{AutopilotMode, MAX_THRESHOLD, MIN_THRESHOLD, Preset, Verdict};
 use crate::CoreError;
 use crate::store::Store;
 
@@ -19,6 +19,8 @@ use crate::store::Store;
 pub const SUGGESTION_RETENTION_SECS: i64 = 30 * 86_400;
 const DAY_SECS: i64 = 86_400;
 const SALT_AAD: &str = "autopilot.salt";
+/// `meta` key prefix (then the scope) of when a running bypass started.
+const BYPASS_SINCE_KEY: &str = "autopilot_bypass_since:";
 
 /// A profile as stored (sealed).
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
@@ -26,8 +28,12 @@ pub struct Profile {
     pub name: String,
     #[serde(default)]
     pub icon: Option<String>,
+    /// The last named preset picked (never `Custom`: older versions read this field and know only the named ones).
     #[serde(default)]
     pub preset: Preset,
+    /// The user's own thresholds; when set, they apply instead of the preset's.
+    #[serde(default)]
+    pub custom: Option<Thresholds>,
     /// Class key → unlocked (`true`) or locked (`false`) by hand.
     #[serde(default)]
     pub manual: BTreeMap<String, bool>,
@@ -36,6 +42,42 @@ pub struct Profile {
     /// Decisions remembered since the adapter was last trained.
     #[serde(default)]
     pub since_train: usize,
+}
+
+/// A profile's own confidence thresholds, each within [`MIN_THRESHOLD`, `MAX_THRESHOLD`].
+#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
+pub struct Thresholds {
+    pub approve: f32,
+    pub deny: f32,
+}
+
+impl Thresholds {
+    /// Both clamped to the allowed range and rounded to whole percent; `None` when either is not a number.
+    pub fn clamped(approve: f32, deny: f32) -> Option<Self> {
+        let clamp = |x: f32| x.is_finite().then(|| (x.clamp(MIN_THRESHOLD, MAX_THRESHOLD) * 100.0).round() / 100.0);
+        Some(Self {
+            approve: clamp(approve)?,
+            deny: clamp(deny)?,
+        })
+    }
+}
+
+impl Profile {
+    /// The preset shown: `Custom` when the user set thresholds of their own.
+    pub fn shown_preset(&self) -> Preset {
+        if self.custom.is_some() {
+            Preset::Custom
+        } else {
+            self.preset
+        }
+    }
+
+    /// (θ_a, θ_d) the Auto decision uses for this profile.
+    pub fn thresholds(&self) -> (f32, f32) {
+        self.custom
+            .and_then(|t| Thresholds::clamped(t.approve, t.deny))
+            .map_or_else(|| self.preset.thresholds(), |t| (t.approve, t.deny))
+    }
 }
 
 /// A remembered neighbour, as shown.
@@ -134,15 +176,21 @@ impl Store {
 
     pub fn ap_mode_rows(&self) -> Result<Vec<(String, ModeRow)>, CoreError> {
         let conn = self.lock()?;
-        let mut stmt =
-            conn.prepare("SELECT scope, mode, bypass_until, profile_id FROM autopilot_settings ORDER BY scope")?;
+        let mut stmt = conn.prepare(
+            "SELECT s.scope, s.mode, s.bypass_until, s.profile_id, m.value FROM autopilot_settings s
+                 LEFT JOIN meta m ON m.key = ?1 || s.scope ORDER BY s.scope",
+        )?;
         let rows = stmt
-            .query_map([], |r| {
+            .query_map(params![BYPASS_SINCE_KEY], |r| {
+                let bypass_until: Option<i64> = r.get(2)?;
                 Ok((
                     r.get::<_, String>(0)?,
                     ModeRow {
                         mode: r.get::<_, Option<String>>(1)?.as_deref().and_then(AutopilotMode::parse),
-                        bypass_until: r.get(2)?,
+                        bypass_since: bypass_until
+                            .and(r.get::<_, Option<String>>(4).ok().flatten())
+                            .and_then(|v| v.parse().ok()),
+                        bypass_until,
                         profile_id: r.get(3)?,
                     },
                 ))
@@ -151,9 +199,19 @@ impl Store {
         Ok(rows)
     }
 
+    /// Writes a mode row. When a bypass started is kept beside it in `meta`, so that the table (and the account
+    /// snapshots made of it by other versions) keeps its columns.
     pub fn ap_set_mode_row(&self, scope: &str, row: &ModeRow, now: i64) -> Result<(), CoreError> {
         let conn = self.lock()?;
-        if row == &ModeRow::default() {
+        let since_key = format!("{BYPASS_SINCE_KEY}{scope}");
+        match row.bypass_since.filter(|_| row.bypass_until.is_some()) {
+            Some(since) => conn.execute(
+                "INSERT INTO meta (key, value) VALUES (?1, ?2) ON CONFLICT (key) DO UPDATE SET value = ?2",
+                params![since_key, since.to_string()],
+            )?,
+            None => conn.execute("DELETE FROM meta WHERE key = ?1", params![since_key])?,
+        };
+        if row.mode.is_none() && row.bypass_until.is_none() && row.profile_id.is_none() {
             conn.execute("DELETE FROM autopilot_settings WHERE scope = ?1", params![scope])?;
             return Ok(());
         }
@@ -288,6 +346,23 @@ impl Store {
             params![s.request_id, s.at, sealed],
         )?;
         Ok(())
+    }
+
+    /// Every evaluation made after `since`, oldest first (those that cannot be decrypted are skipped).
+    pub fn ap_suggestions_since(&self, since: i64) -> Result<Vec<Suggestion>, CoreError> {
+        let rows: Vec<(String, Vec<u8>)> = {
+            let conn = self.lock()?;
+            let mut stmt = conn
+                .prepare("SELECT request_id, data FROM autopilot_suggestions WHERE at > ?1 ORDER BY at, request_id")?;
+            stmt.query_map(params![since], |r| Ok((r.get(0)?, r.get(1)?)))?.collect::<Result<Vec<_>, _>>()?
+        };
+        Ok(rows
+            .into_iter()
+            .filter_map(|(id, sealed)| {
+                let plain = self.unseal(&suggestion_aad(&id), &sealed).ok()?;
+                serde_json::from_slice(&plain).ok()
+            })
+            .collect())
     }
 
     /// The requests the pass already went through.

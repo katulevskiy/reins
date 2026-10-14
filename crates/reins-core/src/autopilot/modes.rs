@@ -7,20 +7,36 @@
 //! - a global mode never picked is Manual.
 //!
 //! A bypass is stored as an end time next to the mode it returns to; an expired bypass is simply not in force (the
-//! core enforces the end itself, whatever the app's alarm does).
+//! core enforces the end itself, whatever the app's alarm does). A bypass that runs until it is turned off ends at
+//! [`BYPASS_UNTIL_OFF`], a time that never comes: it is in force, survives restarts and is stopped like any other.
+//! The hard floor (spec §2) asks during every bypass, however long.
 
 use super::types::AutopilotMode;
 
-/// Longest bypass, and the default one.
-pub const MAX_BYPASS_MINUTES: u32 = 60;
+/// Longest timed bypass (a year), and the default one.
+pub const MAX_BYPASS_MINUTES: u32 = 365 * 24 * 60;
 pub const DEFAULT_BYPASS_MINUTES: u32 = 15;
+/// The end of a bypass that runs until the user turns it off.
+pub const BYPASS_UNTIL_OFF: i64 = i64::MAX;
+
+/// When a bypass started `now` ends: after `minutes` (1 minute to a year), or never (`None`, until turned off).
+pub fn bypass_end(minutes: Option<u32>, now: i64) -> Result<i64, &'static str> {
+    match minutes {
+        None => Ok(BYPASS_UNTIL_OFF),
+        Some(m) if m == 0 || m > MAX_BYPASS_MINUTES => Err("a bypass lasts between 1 minute and 365 days"),
+        Some(m) => Ok(now.saturating_add(i64::from(m) * 60)),
+    }
+}
 
 /// One stored setting: the global one (`scope` = "") or a connection's.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct ModeRow {
     /// Never `Bypass` (that is `bypass_until`). `None`: the default (global), or follow the global mode (connection).
     pub mode: Option<AutopilotMode>,
+    /// [`BYPASS_UNTIL_OFF`] for a bypass without an end.
     pub bypass_until: Option<i64>,
+    /// When the bypass started (to show how far along it is, or how long it has run).
+    pub bypass_since: Option<i64>,
     /// The connection's profile; for the global row, the default profile.
     pub profile_id: Option<String>,
 }
@@ -28,6 +44,11 @@ pub struct ModeRow {
 impl ModeRow {
     pub fn bypassing(&self, now: i64) -> bool {
         self.bypass_until.is_some_and(|t| t > now)
+    }
+
+    /// A bypass runs until the user turns it off.
+    pub fn bypassing_until_off(&self) -> bool {
+        self.bypass_until == Some(BYPASS_UNTIL_OFF)
     }
 }
 
@@ -74,8 +95,32 @@ mod tests {
         ModeRow {
             mode,
             bypass_until,
+            bypass_since: None,
             profile_id: None,
         }
+    }
+
+    #[test]
+    fn a_bypass_lasts_a_minute_to_a_year_or_until_turned_off() {
+        assert_eq!(bypass_end(Some(1), 100), Ok(160));
+        assert_eq!(bypass_end(Some(3 * 24 * 60), 0), Ok(3 * 86_400));
+        assert_eq!(bypass_end(Some(MAX_BYPASS_MINUTES), 0), Ok(365 * 86_400));
+        assert!(bypass_end(Some(0), 0).is_err());
+        assert!(bypass_end(Some(MAX_BYPASS_MINUTES + 1), 0).is_err());
+        assert_eq!(bypass_end(None, 100), Ok(BYPASS_UNTIL_OFF));
+    }
+
+    #[test]
+    fn a_bypass_until_off_never_ends_by_itself() {
+        let g = row(Some(AutopilotMode::Auto), Some(BYPASS_UNTIL_OFF));
+        assert!(g.bypassing_until_off());
+        for now in [0, 1_700_000_000, 4_000_000_000, i64::MAX - 1] {
+            assert_eq!(effective(&g, None, now), AutopilotMode::Bypass, "{now}");
+        }
+        assert!(!row(None, Some(100)).bypassing_until_off());
+        // Lockdown still wins over it, and stopping it returns the mode it interrupted.
+        assert_eq!(effective(&row(Some(AutopilotMode::Lockdown), None), Some(&g), 0), AutopilotMode::Lockdown);
+        assert_eq!(effective(&row(Some(AutopilotMode::Auto), None), None, 0), AutopilotMode::Auto);
     }
 
     #[test]

@@ -412,7 +412,7 @@ async fn assisted_stored_by_older_versions_loads_as_manual() {
 async fn bypass_approves_all_but_the_floor_and_ends_by_itself() {
     let env = env(false).await;
     // Bounds of a bypass, and the 10-minute rule.
-    for minutes in [Some(0), Some(61)] {
+    for minutes in [Some(0), Some(super::modes::MAX_BYPASS_MINUTES + 1)] {
         let r = env.core.set_autopilot_mode(Some(OLD.to_owned()), Some(AutopilotMode::Bypass), minutes).await;
         assert!(matches!(r, Err(CoreError::Invalid { .. })), "{minutes:?}");
     }
@@ -447,6 +447,69 @@ async fn bypass_approves_all_but_the_floor_and_ends_by_itself() {
         connection_id: None
     }));
     assert_eq!(env.core.autopilot_settings().await.unwrap().bypass_until, None);
+}
+
+#[tokio::test]
+async fn a_bypass_until_turned_off_runs_until_stopped_and_the_floor_still_asks() {
+    let env = env(false).await;
+    env.mode(None, AutopilotMode::Auto).await;
+    let young = env.core.start_bypass(Some(NEW.to_owned()), None).await;
+    assert!(matches!(young, Err(CoreError::Invalid { reason }) if reason.contains("10 minutes")));
+
+    let before = unix_now();
+    env.core.start_bypass(None, None).await.unwrap();
+    let settings = env.core.autopilot_settings().await.unwrap();
+    assert_eq!((settings.mode, settings.base_mode), (AutopilotMode::Bypass, AutopilotMode::Auto));
+    assert_eq!(settings.bypass_until, Some(i64::MAX), "no end time");
+    assert!(settings.bypass_since.is_some_and(|t| t >= before && t <= unix_now()), "{settings:?}");
+    // Kept in the database like any bypass: whatever reads it later (a restart) finds it running.
+    let stored = env.store().ap_mode_row("").unwrap();
+    assert!(stored.bypassing_until_off() && stored.bypass_since == settings.bypass_since, "{stored:?}");
+
+    env.relay("r1", OLD, email("friend@x.com", "hi")).await;
+    env.relay("r2", OLD, grant()).await;
+    assert_eq!(env.decided(), [("r1".to_owned(), Verdict::Approve, "bypass".to_owned())]);
+    assert_eq!(env.waiting().await, ["r2"], "a permission always asks, however long the bypass");
+    assert!(env.suggestion("r2").await.floor);
+    // The pass never ends it by itself.
+    env.relay("r3", OLD, email("friend@x.com", "again")).await;
+    assert_eq!(env.sent().await, 2);
+    assert!(!env.notes.events.lock().unwrap().iter().any(|e| matches!(e, AutopilotEvent::BypassEnded { .. })));
+
+    // Stopping it returns to the mode it interrupted and forgets when it started.
+    env.mode(None, AutopilotMode::Auto).await;
+    let settings = env.core.autopilot_settings().await.unwrap();
+    assert_eq!((settings.mode, settings.bypass_until, settings.bypass_since), (AutopilotMode::Auto, None, None));
+    assert_eq!(env.store().ap_mode_row("").unwrap().bypass_since, None);
+    env.relay("r4", OLD, email("friend@x.com", "after")).await;
+    assert!(env.waiting().await.contains(&"r4".to_owned()));
+    assert_eq!(env.sent().await, 2);
+}
+
+#[tokio::test]
+async fn a_bypass_takes_any_length_up_to_a_year() {
+    let env = env(false).await;
+    let now = unix_now();
+    env.core.start_bypass(Some(OLD.to_owned()), Some(3 * 24 * 60)).await.unwrap();
+    let settings = env.core.autopilot_settings().await.unwrap();
+    let own = settings.connections.iter().find(|c| c.connection_id == OLD).unwrap();
+    assert_eq!(own.mode, AutopilotMode::Bypass);
+    let until = own.bypass_until.unwrap();
+    assert!((now + 3 * 86_400..=unix_now() + 3 * 86_400).contains(&until), "{until}");
+    assert!(own.bypass_since.is_some_and(|t| t >= now));
+    assert_eq!(settings.bypass_until, None, "only that AI");
+
+    for minutes in [Some(0), Some(super::modes::MAX_BYPASS_MINUTES + 1)] {
+        let r = env.core.start_bypass(None, minutes).await;
+        assert!(matches!(r, Err(CoreError::Invalid { .. })), "{minutes:?}");
+    }
+    env.core.start_bypass(None, Some(super::modes::MAX_BYPASS_MINUTES)).await.unwrap();
+    // A bypass ends a lockdown of its own scope; the old way (a mode with minutes) still works.
+    env.mode(Some(OTHER), AutopilotMode::Lockdown).await;
+    env.core.set_autopilot_mode(Some(OTHER.to_owned()), Some(AutopilotMode::Bypass), Some(120)).await.unwrap();
+    let other = env.core.autopilot_settings().await.unwrap();
+    let other = other.connections.iter().find(|c| c.connection_id == OTHER).unwrap();
+    assert_eq!((other.mode, other.base_mode), (AutopilotMode::Bypass, None));
 }
 
 #[tokio::test]
@@ -518,6 +581,100 @@ async fn auto_approves_and_denies_at_the_thresholds_in_unlocked_classes() {
     env.core.set_preset(env.profile_id().await, Preset::Relaxed).await.unwrap();
     env.relay("r5", OLD, email("boss@x.com", "hi")).await;
     assert_eq!(env.decided().last().unwrap().0, "r5");
+}
+
+#[tokio::test]
+async fn custom_thresholds_are_clamped_kept_and_used_by_auto() {
+    let env = env(true).await;
+    env.mode(None, AutopilotMode::Auto).await;
+    env.unlock("gmail/send").await;
+    env.model.rule("boss@x.com", logits(0.90, 0.02, 0.08));
+    let profile = env.profile_id().await;
+    let view = |env: &Env| {
+        let p = profile.clone();
+        let core = Arc::clone(&env.core);
+        async move { core.autopilot_profiles().await.unwrap().into_iter().find(|v| v.id == p).unwrap() }
+    };
+    let p = view(&env).await;
+    assert_eq!((p.preset, p.approve_at, p.deny_at), (Preset::Balanced, 0.95, 0.90));
+
+    // Outside 80–99% is clamped; not a number is refused.
+    env.core.set_thresholds(profile.clone(), 0.5, 1.2).await.unwrap();
+    let p = view(&env).await;
+    assert_eq!((p.preset, p.approve_at, p.deny_at), (Preset::Custom, 0.80, 0.99));
+    let nan = env.core.set_thresholds(profile.clone(), f32::NAN, 0.9).await;
+    assert!(matches!(nan, Err(CoreError::Invalid { .. })));
+
+    // Balanced (0.95) asks for a 0.90 approval; the user's own 0.88 lets it through.
+    env.relay("r1", OLD, email("boss@x.com", "hi")).await;
+    env.approve("r1").await;
+    env.core.set_thresholds(profile.clone(), 0.98, 0.95).await.unwrap();
+    env.relay("r2", OLD, email("boss@x.com", "hi")).await;
+    assert!(env.waiting().await.contains(&"r2".to_owned()));
+    env.core.set_thresholds(profile.clone(), 0.876, 0.95).await.unwrap();
+    assert!((view(&env).await.approve_at - 0.88).abs() < 1e-6, "whole percent");
+    env.relay("r3", OLD, email("boss@x.com", "hi")).await;
+    assert_eq!(env.decided().last().unwrap(), &("r3".to_owned(), Verdict::Approve, "autopilot".to_owned()));
+
+    // A named preset replaces them; Custom starts again from what is in use.
+    env.core.set_preset(profile.clone(), Preset::Cautious).await.unwrap();
+    let p = view(&env).await;
+    assert_eq!((p.preset, p.approve_at, p.deny_at), (Preset::Cautious, 0.98, 0.95));
+    env.core.set_preset(profile.clone(), Preset::Custom).await.unwrap();
+    let p = view(&env).await;
+    assert_eq!((p.preset, p.approve_at, p.deny_at), (Preset::Custom, 0.98, 0.95));
+    env.relay("r4", OLD, email("boss@x.com", "hi")).await;
+    assert!(env.waiting().await.contains(&"r4".to_owned()));
+}
+
+#[test]
+fn profiles_stored_before_custom_thresholds_keep_their_preset() {
+    let old: super::store::Profile = serde_json::from_str(r#"{"name":"Work","preset":"Relaxed"}"#).unwrap();
+    assert_eq!((old.shown_preset(), old.thresholds()), (Preset::Relaxed, (0.90, 0.85)));
+    let custom = super::store::Profile {
+        custom: super::store::Thresholds::clamped(0.93, 0.88),
+        ..old
+    };
+    assert_eq!((custom.shown_preset(), custom.thresholds()), (Preset::Custom, (0.93, 0.88)));
+    // What older versions read: the named preset is still there.
+    let json: Value = serde_json::to_value(&custom).unwrap();
+    assert_eq!(json["preset"], "Relaxed");
+}
+
+#[tokio::test]
+async fn the_last_days_are_replayed_at_other_thresholds_and_counted() {
+    let env = env(true).await;
+    env.model.rule("friend@x.com", logits(0.97, 0.01, 0.02));
+    env.model.rule("boss@x.com", logits(0.91, 0.02, 0.07));
+    env.model.rule("evil@x.com", logits(0.02, 0.88, 0.10));
+    for (id, to) in [("a0", "friend@x.com"), ("a1", "friend@x.com"), ("b0", "boss@x.com"), ("b1", "boss@x.com")] {
+        env.relay(id, OLD, email(to, "hi")).await;
+        env.approve(id).await;
+    }
+    env.relay("e0", OLD, email("evil@x.com", "hi")).await;
+    env.core.deny("e0".to_owned()).await.unwrap();
+    env.relay("g0", OLD, grant()).await;
+    let profile = env.profile_id().await;
+
+    // Balanced: the second push to a friend is approved; the first of each is new; boss is below 0.95; evil below 0.90.
+    let balanced = env.core.threshold_replay(profile.clone(), 0.95, 0.90).await.unwrap();
+    assert_eq!((balanced.days, balanced.decided, balanced.asked, balanced.undone), (30, 1, 5, 0), "{balanced:?}");
+    // Lower thresholds decide more of the same six (what the memory makes of each moves the numbers a little).
+    let relaxed = env.core.threshold_replay(profile.clone(), 0.80, 0.80).await.unwrap();
+    assert!(relaxed.decided > balanced.decided && relaxed.decided + relaxed.asked == 6, "{relaxed:?}");
+    assert_eq!(relaxed.undone, 0, "{relaxed:?}");
+    let other = env.core.create_profile("Side".to_owned(), None).await.unwrap();
+    let empty = env.core.threshold_replay(other.id, 0.9, 0.9).await.unwrap();
+    assert_eq!((empty.decided, empty.asked), (0, 0), "another profile's evaluations are not its own");
+
+    let stats = env.core.autopilot_stats(7).await.unwrap();
+    assert_eq!((stats.days, stats.scored), (7, 5), "{stats:?}");
+    assert!(stats.compared >= 1 && stats.matched.is_some_and(|m| m > 0.99), "{stats:?}");
+    assert_eq!(stats.kinds_on_auto, 0);
+    assert!(stats.kinds >= 1);
+    assert_eq!(env.core.autopilot_stats(400).await.unwrap().days, 30);
+    let p = env.core.autopilot_profiles().await.unwrap().into_iter().find(|p| p.id == profile).unwrap();
+    assert_eq!(p.agreement, stats.matched);
 }
 
 #[tokio::test]

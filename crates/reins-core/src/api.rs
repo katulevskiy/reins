@@ -10,8 +10,8 @@ use std::sync::Arc;
 use zeroize::Zeroizing;
 
 use crate::autopilot::{
-    AutopilotMode, AutopilotSettings, DownloadProgress, ModelRuntime, ModelStatus, Preset, ProfileView, SuggestionView,
-    Verdict,
+    AutopilotMode, AutopilotSettings, AutopilotStats, DownloadProgress, ModelRuntime, ModelStatus, Preset, ProfileView,
+    SuggestionView, ThresholdReplay, Verdict,
 };
 use crate::connector::device::{DeviceBridge, DeviceCalendar, DeviceContacts, Sms};
 use crate::connector::{Connector, LoginProgress};
@@ -1073,8 +1073,9 @@ impl ReinsCore {
     }
 
     /// Sets the global mode (`connection_id` = `None`) or one connection's. `mode` = `None` returns the global mode to
-    /// its default, or makes the connection follow the global mode. `Bypass` lasts `minutes` (default 15, at most 60)
-    /// and is refused for a connection paired less than 10 minutes ago; `Lockdown` also denies what is waiting.
+    /// its default, or makes the connection follow the global mode. `Bypass` lasts `minutes` (default 15, at most a
+    /// year; `start_bypass` also starts one without an end) and is refused for a connection paired less than 10
+    /// minutes ago; `Lockdown` also denies what is waiting.
     pub async fn set_autopilot_mode(
         &self,
         connection_id: Option<String>,
@@ -1088,6 +1089,35 @@ impl ReinsCore {
             engine.ensure_active()?;
             let result =
                 engine.run_account(async { engine.set_autopilot_mode(connection_id, mode, minutes).await }).await;
+            runtime.finish(&engine, result)
+        })
+        .await
+    }
+
+    /// Starts a bypass of every AI (`connection_id` = `None`) or of one, for `minutes` (1 minute to a year) or, with
+    /// `minutes` = `None`, until the user turns it off (`bypass_until` then reads `i64::MAX`). Requests that always
+    /// ask still ask; a connection paired less than 10 minutes ago cannot be bypassed. Stop it with
+    /// `set_autopilot_mode` (the mode it interrupted).
+    pub async fn start_bypass(&self, connection_id: Option<String>, minutes: Option<u32>) -> Result<(), CoreError> {
+        let runtime = Arc::clone(&self.runtime);
+        let generation = runtime.generation();
+        rt::run(async move {
+            let engine = runtime.prepare(generation).await?;
+            engine.ensure_active()?;
+            let result = engine.run_account(async { engine.start_bypass(connection_id, minutes).await }).await;
+            runtime.finish(&engine, result)
+        })
+        .await
+    }
+
+    /// The last `days` (1 to 30) of Autopilot: requests scored, how often it agreed with the user, kinds on Auto.
+    pub async fn autopilot_stats(&self, days: u32) -> Result<AutopilotStats, CoreError> {
+        let runtime = Arc::clone(&self.runtime);
+        let generation = runtime.generation();
+        rt::run(async move {
+            let engine = runtime.prepare(generation).await?;
+            engine.ensure_active()?;
+            let result = engine.run_account(async { engine.autopilot_stats(days) }).await;
             runtime.finish(&engine, result)
         })
         .await
@@ -1226,6 +1256,38 @@ impl ReinsCore {
             let engine = runtime.prepare(generation).await?;
             engine.ensure_active()?;
             let result = engine.run_account(async { engine.set_preset(&profile_id, preset) }).await;
+            runtime.finish(&engine, result)
+        })
+        .await
+    }
+
+    /// A profile's own thresholds (the `Custom` preset), each clamped to 0.80–0.99.
+    pub async fn set_thresholds(&self, profile_id: String, approve_at: f32, deny_at: f32) -> Result<(), CoreError> {
+        let runtime = Arc::clone(&self.runtime);
+        let generation = runtime.generation();
+        rt::run(async move {
+            let engine = runtime.prepare(generation).await?;
+            engine.ensure_active()?;
+            let result = engine.run_account(async { engine.set_thresholds(&profile_id, approve_at, deny_at) }).await;
+            runtime.finish(&engine, result)
+        })
+        .await
+    }
+
+    /// What the profile's last 30 days would have been at these thresholds: decided, asked, and decided otherwise
+    /// than the user wanted.
+    pub async fn threshold_replay(
+        &self,
+        profile_id: String,
+        approve_at: f32,
+        deny_at: f32,
+    ) -> Result<ThresholdReplay, CoreError> {
+        let runtime = Arc::clone(&self.runtime);
+        let generation = runtime.generation();
+        rt::run(async move {
+            let engine = runtime.prepare(generation).await?;
+            engine.ensure_active()?;
+            let result = engine.run_account(async { engine.threshold_replay(&profile_id, approve_at, deny_at) }).await;
             runtime.finish(&engine, result)
         })
         .await

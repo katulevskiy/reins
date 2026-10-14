@@ -20,6 +20,7 @@ pub mod modes;
 pub mod runtime;
 pub mod sequence;
 pub mod situation;
+pub mod stats;
 pub mod store;
 #[cfg(any(test, feature = "testing"))]
 pub mod testing;
@@ -31,6 +32,7 @@ pub use engine::State;
 pub(crate) use engine::{activity_note, suggestion_line};
 pub use runtime::{DownloadProgress, ModelRuntime};
 pub use types::{
-    AutoDecisionView, AutopilotEvent, AutopilotMode, AutopilotNote, AutopilotSettings, ClassView, ConnectionAutopilot,
-    ModelInput, ModelOutput, ModelState, ModelStatus, NeighbourView, Preset, ProfileView, SuggestionView, Verdict,
+    AutoDecisionView, AutopilotEvent, AutopilotMode, AutopilotNote, AutopilotSettings, AutopilotStats, ClassView,
+    ConnectionAutopilot, ModelInput, ModelOutput, ModelState, ModelStatus, NeighbourView, Preset, ProfileView,
+    SuggestionView, ThresholdReplay, Verdict,
 };
