@@ -18,7 +18,7 @@ use crate::config::{Config, Mode, Paths};
 use crate::identity::Identity;
 use crate::journal::{Entry, Journal, Kind};
 use crate::phone::{Phone, awaiting, teller};
-use crate::secrets::{self, MAX_SECRETS, SecretRef};
+use crate::secrets::{self, MAX_SECRETS, SecretRef, check_var};
 
 /// `reins run` failed before the command ran.
 pub const EXIT_FAILED: u8 = 125;
@@ -54,18 +54,6 @@ impl RunConfig {
             }
         }
         Ok(())
-    }
-}
-
-fn check_var(name: &str) -> Result<(), String> {
-    let mut chars = name.chars();
-    let ok = chars.next().is_some_and(|c| c.is_ascii_alphabetic() || c == '_')
-        && chars.all(|c| c.is_ascii_alphanumeric() || c == '_')
-        && name.len() <= 100;
-    if ok {
-        Ok(())
-    } else {
-        Err(format!("`{name}` is not an environment variable name (letters, digits, `_`)"))
     }
 }
 

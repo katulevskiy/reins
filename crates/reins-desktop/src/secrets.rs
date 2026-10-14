@@ -64,6 +64,235 @@ impl std::fmt::Display for SecretRef {
     }
 }
 
+impl SecretRef {
+    /// The variable of an environment this names, when the item is `project/env` (both valid names) and the field a
+    /// variable name: `vault:acme-web/development/OPENAI_API_KEY`.
+    #[must_use]
+    pub fn as_var(&self) -> Option<VarRef> {
+        let (project, env) = self.item.split_once('/')?;
+        let env = EnvRef::new(project, env).ok()?;
+        check_var(&self.field).ok()?;
+        Some(VarRef {
+            env,
+            name: self.field.clone(),
+        })
+    }
+}
+
+/// The vault folder all of Reins Secrets lives in; a project is the folder `Reins/<project>`.
+pub const SECRETS_FOLDER: &str = "Reins";
+const MAX_NAME: usize = 64;
+const MAX_VAR: usize = 100;
+
+/// A project or environment name: 1 to 64 of `A-Z a-z 0-9 . _ -`, not starting with `.` or `-`. Names never contain a
+/// `/`, so `project/env` is one item name and `project/env/NAME` one variable.
+pub fn check_name(what: &str, name: &str) -> Result<(), String> {
+    let ok = !name.is_empty()
+        && name.chars().count() <= MAX_NAME
+        && !name.starts_with(['.', '-'])
+        && name.chars().all(|c| c.is_ascii_alphanumeric() || matches!(c, '.' | '_' | '-'));
+    if ok {
+        Ok(())
+    } else {
+        Err(format!(
+            "`{}` is not a {what} name: 1 to {MAX_NAME} letters, digits, `.`, `_` or `-`, not starting with `.` or `-`",
+            cut(name, 80)
+        ))
+    }
+}
+
+/// An environment variable name: a letter or `_`, then letters, digits and `_`, at most 100.
+pub fn check_var(name: &str) -> Result<(), String> {
+    let mut chars = name.chars();
+    let ok = chars.next().is_some_and(|c| c.is_ascii_alphabetic() || c == '_')
+        && chars.all(|c| c.is_ascii_alphanumeric() || c == '_')
+        && name.len() <= MAX_VAR;
+    if ok {
+        Ok(())
+    } else {
+        Err(format!("`{}` is not an environment variable name (letters, digits, `_`)", cut(name, 80)))
+    }
+}
+
+/// One environment of a project: the Secure Note `project/env` in the vault folder `Reins/project`.
+#[derive(Clone, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
+pub struct EnvRef {
+    pub project: String,
+    pub env: String,
+}
+
+impl EnvRef {
+    pub fn new(project: &str, env: &str) -> Result<Self, String> {
+        check_name("project", project)?;
+        check_name("environment", env)?;
+        Ok(Self {
+            project: project.to_owned(),
+            env: env.to_owned(),
+        })
+    }
+
+    /// `project/env`: the vault item's name.
+    #[must_use]
+    pub fn item(&self) -> String {
+        format!("{}/{}", self.project, self.env)
+    }
+
+    /// `Reins/project`: the vault folder the item is in.
+    #[must_use]
+    pub fn folder(&self) -> String {
+        format!("{SECRETS_FOLDER}/{}", self.project)
+    }
+
+    /// The variable `name` of this environment.
+    #[must_use]
+    pub fn var(&self, name: &str) -> VarRef {
+        VarRef {
+            env: self.clone(),
+            name: name.to_owned(),
+        }
+    }
+}
+
+impl std::fmt::Display for EnvRef {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "vault:{}/{}", self.project, self.env)
+    }
+}
+
+/// One variable of an environment: `vault:project/env/NAME`.
+#[derive(Clone, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
+pub struct VarRef {
+    pub env: EnvRef,
+    pub name: String,
+}
+
+impl VarRef {
+    /// The same variable as an `item/field` reference.
+    #[must_use]
+    pub fn secret_ref(&self) -> SecretRef {
+        SecretRef {
+            item: self.env.item(),
+            field: self.name.clone(),
+        }
+    }
+}
+
+impl std::fmt::Display for VarRef {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "vault:{}/{}/{}", self.env.project, self.env.env, self.name)
+    }
+}
+
+/// A reference as written in `.env.reins`, a `--env` pair, a run profile or on the command line.
+///
+/// - `vault:Item/field`: one field of any vault item (split at the last `/`). `vault:acme-web/development/KEY` is the
+///   variable `KEY` of that environment ([`SecretRef::as_var`]).
+/// - `vault:project/env`: every variable of an environment (only where a set of variables is expected:
+///   [`Reference::parse_env`]; as a single value it is `vault:Item/field`, as before).
+/// - `env:ENV/NAME` and `env:ENV`: the same inside a project (a `reins.toml` above the working directory), which
+///   supplies the project ([`Reference::resolve`]).
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+pub enum Reference {
+    Field(SecretRef),
+    /// `env:ENV/NAME`.
+    ProjectVar {
+        env: String,
+        name: String,
+    },
+    /// `vault:project/env`.
+    Env(EnvRef),
+    /// `env:ENV`.
+    ProjectEnv {
+        env: String,
+    },
+}
+
+/// A reference with its project filled in.
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+pub enum Resolved {
+    /// A field of an item that is not an environment variable of this project.
+    Field(SecretRef),
+    Var(VarRef),
+    Env(EnvRef),
+}
+
+impl Reference {
+    /// Whether `s` is written as a reference (`vault:…` or `env:…`) rather than a literal value.
+    #[must_use]
+    pub fn looks_like(s: &str) -> bool {
+        s.starts_with("vault:") || s.starts_with("env:")
+    }
+
+    /// A reference to one value: `vault:Item/field` or `env:ENV/NAME`.
+    pub fn parse_value(s: &str) -> Result<Self, String> {
+        if let Some(rest) = s.strip_prefix("env:") {
+            let (env, name) = rest.split_once('/').ok_or_else(|| {
+                format!("`{}` names a whole environment; write `env:ENV/NAME` for one value", cut(s, 80))
+            })?;
+            check_name("environment", env)?;
+            check_var(name)?;
+            return Ok(Self::ProjectVar {
+                env: env.to_owned(),
+                name: name.to_owned(),
+            });
+        }
+        SecretRef::parse(s).map(Self::Field)
+    }
+
+    /// A reference to a whole environment: `vault:project/env` or `env:ENV`.
+    pub fn parse_env(s: &str) -> Result<Self, String> {
+        if let Some(env) = s.strip_prefix("env:") {
+            check_name("environment", env)?;
+            return Ok(Self::ProjectEnv {
+                env: env.to_owned(),
+            });
+        }
+        let rest = s
+            .strip_prefix("vault:")
+            .ok_or_else(|| format!("`{}` is not a reference; write `vault:project/env` or `env:ENV`", cut(s, 80)))?;
+        let (project, env) = rest
+            .split_once('/')
+            .ok_or_else(|| format!("`{}` needs a project and an environment: `vault:project/env`", cut(s, 80)))?;
+        EnvRef::new(project, env).map(Self::Env)
+    }
+
+    /// Fills in the project for `env:` references (an error without one), and recognizes `vault:project/env/NAME`.
+    pub fn resolve(&self, project: Option<&str>) -> Result<Resolved, String> {
+        let need = |what: &str| {
+            project.ok_or_else(|| {
+                format!("`{what}` needs a project: run it in a folder with a reins.toml, or give --project")
+            })
+        };
+        Ok(match self {
+            Self::Field(r) => r.as_var().map_or_else(|| Resolved::Field(r.clone()), Resolved::Var),
+            Self::ProjectVar {
+                env,
+                name,
+            } => Resolved::Var(EnvRef::new(need(&self.to_string())?, env)?.var(name)),
+            Self::Env(e) => Resolved::Env(e.clone()),
+            Self::ProjectEnv {
+                env,
+            } => Resolved::Env(EnvRef::new(need(&self.to_string())?, env)?),
+        })
+    }
+}
+
+impl std::fmt::Display for Reference {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Field(r) => r.fmt(f),
+            Self::ProjectVar {
+                env,
+                name,
+            } => write!(f, "env:{env}/{name}"),
+            Self::Env(e) => e.fmt(f),
+            Self::ProjectEnv {
+                env,
+            } => write!(f, "env:{env}"),
+        }
+    }
+}
+
 /// Released secrets, in the order asked for.
 pub struct Released {
     pub values: Vec<Zeroizing<String>>,
@@ -197,6 +426,65 @@ mod tests {
             let r = check(g, "n1", &refs, 100);
             assert!(matches!(r, Err(Refusal::Unavailable(_))), "{why}");
         }
+    }
+
+    #[test]
+    fn env_references_name_a_project_an_environment_and_a_variable() {
+        let v = Reference::parse_value("vault:acme-web/development/OPENAI_API_KEY").unwrap();
+        let Resolved::Var(var) = v.resolve(None).unwrap() else {
+            panic!("a variable expected")
+        };
+        assert_eq!(
+            (var.env.project.as_str(), var.env.env.as_str(), var.name.as_str()),
+            ("acme-web", "development", "OPENAI_API_KEY")
+        );
+        assert_eq!(var.to_string(), "vault:acme-web/development/OPENAI_API_KEY");
+        assert_eq!(var.secret_ref().reference(), "acme-web/development/OPENAI_API_KEY");
+        assert_eq!(var.env.folder(), "Reins/acme-web");
+        // Not an environment: an item with a space, or a field that is no variable name, stays item/field.
+        for legacy in ["vault:OpenAI/password", "vault:Work/AWS prod/Access key", "vault:a/b/Access key"] {
+            assert!(matches!(Reference::parse_value(legacy).unwrap().resolve(None).unwrap(), Resolved::Field(_)));
+        }
+        let short = Reference::parse_value("env:production/STRIPE_KEY").unwrap();
+        assert_eq!(short.to_string(), "env:production/STRIPE_KEY");
+        assert!(short.resolve(None).unwrap_err().contains("reins.toml"));
+        assert_eq!(
+            short.resolve(Some("acme-web")).unwrap(),
+            Resolved::Var(EnvRef::new("acme-web", "production").unwrap().var("STRIPE_KEY"))
+        );
+        for bad in ["env:production", "env:/X", "env:prod/1X", "env:.x/X", "OpenAI"] {
+            assert!(Reference::parse_value(bad).is_err(), "{bad}");
+        }
+    }
+
+    #[test]
+    fn whole_environments_are_named_only_where_a_set_is_expected() {
+        assert_eq!(
+            Reference::parse_env("vault:acme-web/development").unwrap().resolve(None).unwrap(),
+            Resolved::Env(EnvRef::new("acme-web", "development").unwrap())
+        );
+        assert_eq!(
+            Reference::parse_env("env:staging").unwrap().resolve(Some("acme-web")).unwrap(),
+            Resolved::Env(EnvRef::new("acme-web", "staging").unwrap())
+        );
+        // As a single value the same text is item/field, as it always was.
+        assert!(matches!(Reference::parse_value("vault:acme-web/development").unwrap(), Reference::Field(_)));
+        for bad in ["vault:acme-web", "vault:a/b/c", "vault:a b/c", "env:", "env:a/b", "x"] {
+            assert!(Reference::parse_env(bad).is_err(), "{bad}");
+        }
+        assert!(Reference::looks_like("env:x") && Reference::looks_like("vault:x") && !Reference::looks_like("debug"));
+    }
+
+    #[test]
+    fn names_are_checked() {
+        for ok in ["acme-web", "a", "web_2.0", &"x".repeat(64)] {
+            check_name("project", ok).unwrap();
+        }
+        for bad in ["", ".hidden", "-x", "a/b", "a b", "é", &"x".repeat(65)] {
+            assert!(check_name("project", bad).is_err(), "{bad}");
+        }
+        check_var("_A1").unwrap();
+        assert!(check_var("1A").is_err() && check_var("A-B").is_err() && check_var("").is_err());
     }
 
     #[test]
