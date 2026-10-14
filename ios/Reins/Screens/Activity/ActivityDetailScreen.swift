@@ -6,22 +6,29 @@ struct ActivityDetailScreen: View {
     var entryId: Int64
     @Environment(AppModel.self) private var model
     @Environment(\.feedback) private var feedback
+    /// "This was wrong" stays once shown, so its thanks can replace it after the correction.
+    @State private var dockShown = false
 
     var body: some View {
+        let entry = model.activity.first(where: { $0.id == entryId })
         Group {
-            if let entry = model.activity.first(where: { $0.id == entryId }) {
-                ScrollView { content(entry).padding(.bottom, 32) }
+            if let entry {
+                ScrollView { content(entry).padding(.bottom, 24) }
+                    .pageDock(when: dockShown) { ThisWasWrongDock(entry: entry) }
             } else {
-                EmptyState(symbol: "list.bullet", title: "Not found", message: "That entry is no longer in the history.")
+                EmptyState(symbol: "list.bullet", title: "Not found")
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
                     .accessibilityIdentifier("entryGone")
             }
         }
+        .onChange(of: entry.map(ThisWasWrongDock.offered) ?? false, initial: true) { _, offered in
+            if offered { dockShown = true }
+        }
         .pageBackground()
-        .navigationTitle("Details")
+        .navigationTitle("")
         .navigationBarTitleDisplayMode(.inline)
         .toolbar {
-            if let entry = model.activity.first(where: { $0.id == entryId }) {
+            if let entry {
                 ToolbarItem(placement: .topBarTrailing) {
                     ShareLink(item: summary(entry)) { Image(systemName: "square.and.arrow.up") }
                         .accessibilityLabel("Share")
@@ -31,45 +38,32 @@ struct ActivityDetailScreen: View {
     }
 
     @ViewBuilder private func content(_ entry: ActivityEntry) -> some View {
-        let action = ActionKind.of(entry.action)
         let info = entry.info
         VStack(alignment: .leading, spacing: 0) {
-            VStack(alignment: .leading, spacing: 0) {
-                HStack(spacing: 12) {
-                    ConnectionIcon(connectionId: entry.connectionId, label: entry.connectionLabel, size: 40)
-                    VStack(alignment: .leading, spacing: 1) {
-                        Text(untrusted(entry.connectionLabel)).font(RFont.sans(17, .semibold)).foregroundStyle(Palette.text).lineLimit(1)
-                        Text(TimeText.full(entry.at)).font(RFont.sans(12.5)).foregroundStyle(Palette.tertiary).lineLimit(1)
-                    }
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    OutcomeTag(outcome: entry.outcome)
+            hero(entry)
+                .padding(.horizontal, 12)
+                .padding(.top, 4)
+
+            GroupCard {
+                ValueRow(label: "When", value: TimeText.dateTime(entry.at))
+                if let account = entry.account, !account.trimmingCharacters(in: .whitespaces).isEmpty {
+                    Hairline()
+                    ValueRow(label: "Account", value: account, mono: true)
                 }
-                HStack(spacing: 14) {
-                    ActionTile(kind: action, count: Int(entry.count), size: 48)
-                    Text(title(entry))
-                        .font(RFont.sans(26, .semibold))
-                        .foregroundStyle(Palette.text)
-                        .lineLimit(2)
-                        .minimumScaleFactor(0.8)
-                        .accessibilityAddTraits(.isHeader)
-                        .accessibilityIdentifier("detailTitle")
+                if !entry.service.isEmpty {
+                    Hairline()
+                    ValueRow(label: "Service", value: serviceName(entry.service))
                 }
-                .padding(.top, 16)
-                ConnectorTags(service: entry.service, account: entry.account).padding(.top, 12)
-                if !entry.detail.isEmpty {
-                    Text(untrusted(entry.detail))
-                        .font(RFont.sans(15.5))
-                        .foregroundStyle(Palette.secondary)
-                        .lineSpacing(2)
-                        .padding(.top, 12)
-                        .textSelection(.enabled)
-                        .accessibilityIdentifier("detailSummary")
+                if let id = entry.grantId {
+                    Hairline()
+                    coveredBy(id)
+                }
+                if let note = entry.autopilot {
+                    Hairline()
+                    AutopilotWhyRow(note: note, title: EntryOutcome.whyTitle(entry))
                 }
             }
-            .padding(.horizontal, 20)
-            .padding(.vertical, 8)
-
-            EntryAutopilotSection(entry: entry)
+            .padding(.top, 14)
 
             if let query = info.query {
                 GroupCard(header: "Search") { ListRow(title: untrusted(query)).accessibilityIdentifier("detailQuery") }
@@ -87,16 +81,68 @@ struct ActivityDetailScreen: View {
             if let note = info.note.map(untrusted) {
                 GroupCard(header: "Note") { ListRow(title: note) }
             }
-            if let id = entry.grantId { coveredBy(id) }
         }
     }
 
-    private func title(_ entry: ActivityEntry) -> String {
-        if ActionKind.of(entry.action) == .grant {
-            let full = entryTitle(label: "", action: entry.action, count: 1, service: entry.service, outcome: entry.outcome)
-            return full.hasPrefix(": ") ? String(full.dropFirst(2)) : full
+    /// The approval hero, after the fact: the AI, three dots, the service; the sentence; how it ended.
+    private func hero(_ entry: ActivityEntry) -> some View {
+        let kind = ActionKind.of(entry.action)
+        let tint = KindTint.of(kind)
+        let shape = RoundedRectangle(cornerRadius: 28, style: .continuous)
+        let outcome = EntryOutcome.tint(entry)
+        return VStack(spacing: 0) {
+            HStack(spacing: 14) {
+                ConnectionIcon(connectionId: entry.connectionId, label: entry.connectionLabel, size: 52)
+                HStack(spacing: 5) {
+                    Circle().fill(Palette.tertiary).frame(width: 5, height: 5)
+                    Circle().fill(Palette.tertiary).frame(width: 5, height: 5)
+                    Circle().fill(tint).frame(width: 5, height: 5)
+                }
+                ServiceTile(service: entry.service, symbol: kind.symbol, size: 52)
+            }
+            .accessibilityHidden(true)
+            Text(EntryText.title(entry))
+                .font(RFont.sans(23, .semibold))
+                .foregroundStyle(Palette.text)
+                .multilineTextAlignment(.center)
+                .lineLimit(3)
+                .minimumScaleFactor(0.8)
+                .padding(.top, 16)
+                .accessibilityAddTraits(.isHeader)
+                .accessibilityIdentifier("detailTitle")
+            if !entry.detail.isEmpty {
+                Text(untrusted(entry.detail))
+                    .font(RFont.sans(15))
+                    .foregroundStyle(Palette.secondary)
+                    .multilineTextAlignment(.center)
+                    .lineLimit(4)
+                    .padding(.top, 6)
+                    .textSelection(.enabled)
+                    .accessibilityIdentifier("detailSummary")
+            }
+            HStack(spacing: 6) {
+                Image(systemName: EntryOutcome.symbol(entry)).font(.system(size: 12, weight: .semibold))
+                Text(EntryOutcome.text(entry)).font(RFont.sans(13, .semibold))
+            }
+            .foregroundStyle(outcome)
+            .padding(.horizontal, 12)
+            .padding(.vertical, 6)
+            .background(outcome.opacity(0.16), in: Capsule())
+            .padding(.top, 14)
+            .accessibilityElement(children: .combine)
+            .accessibilityIdentifier("entryOutcome")
+            Text(untrusted(entry.connectionLabel))
+                .font(RFont.sans(13))
+                .foregroundStyle(Palette.tertiary)
+                .lineLimit(1)
+                .padding(.top, 10)
         }
-        return operationTitle(action: entry.action, count: Int(entry.count), service: entry.service, title: entry.opTitle, op: entry.op)
+        .padding(.horizontal, 20)
+        .padding(.top, 22)
+        .padding(.bottom, 18)
+        .frame(maxWidth: .infinity)
+        .background(KindTint.wash(tint), in: shape)
+        .overlay(shape.strokeBorder(tint.opacity(0.24), lineWidth: 1))
     }
 
     @ViewBuilder private func messages(_ entry: ActivityEntry) -> some View {
@@ -147,19 +193,11 @@ struct ActivityDetailScreen: View {
 
     @ViewBuilder private func coveredBy(_ id: String) -> some View {
         let grant = model.grants.first { $0.id == id }
-        GroupCard(header: "Covered by") {
-            ListRow(
-                title: grant != nil ? "A standing grant" : "A grant that no longer exists",
-                subtitle: grant.map { untrusted($0.summary) },
-                symbol: "key.horizontal",
-                chevron: grant != nil,
-                action: grant == nil ? nil : {
-                    feedback.play(.tap)
-                    model.push(.grantDetail(id))
-                }
-            )
-            .accessibilityIdentifier("openGrantFromEntry")
-        }
+        ValueRow(label: "Grant", value: grant.map { untrusted($0.summary) } ?? "Ended", action: grant == nil ? nil : {
+            feedback.play(.tap)
+            model.push(.grantDetail(id))
+        })
+        .accessibilityIdentifier("openGrantFromEntry")
     }
 
     /// The entry in words, for sharing.

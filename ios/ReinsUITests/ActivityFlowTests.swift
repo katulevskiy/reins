@@ -35,7 +35,8 @@ final class ActivityFlowTests: XCTestCase {
         XCTAssertTrue(card.waitForExistence(timeout: 10))
         XCTAssertTrue(element(app, "modePill").exists)
         shot(app, "activity-list")
-        card.tap()
+        // The card's sentence opens the full screen; its buttons answer.
+        element(app, "pendingTitle:req1").tap()
         XCTAssertTrue(element(app, "approvalSheet").waitForExistence(timeout: 5))
         XCTAssertTrue(element(app, "waitLine").exists)
         shot(app, "activity-sheet-search")

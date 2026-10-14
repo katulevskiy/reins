@@ -17,23 +17,43 @@ final class QuickApprovalTests: XCTestCase {
             item("r4", conn: "c2", label: "Codex", quick: true),
         ])
         XCTAssertEqual(bursts, [Burst(connectionId: "c1", label: "Claude", quick: ["r1", "r2"], all: ["r1", "r2", "r3"])])
-        XCTAssertEqual(bursts[0].title, "Claude · 3 waiting")
-        XCTAssertEqual(bursts[0].heldNote, "1 needs a closer look")
         XCTAssertEqual(Burst.of([item("r1", quick: true), item("r2", quick: false)]), [])
+        XCTAssertEqual(Burst.names(["A", "B", "C", "D"]), "A, B and 2 more")
     }
 
-    func testBurstsOfSeveralAisAreOneBarOfTheirRoutineRequests() {
+    func testABurstsRoutineRequestsAreOneCardWhereTheFirstOfThemWas() {
         let pending = [
-            item("r1", quick: true), item("r2", quick: true), item("r3", quick: false),
-            item("r4", conn: "c2", label: "Codex", quick: true), item("r5", conn: "c2", label: "Codex", quick: true),
+            item("r0", quick: false), item("r1", quick: true), item("r3", conn: "c2", label: "Codex", quick: true),
+            item("r2", quick: true), item("r4", conn: "c2", label: "Codex", quick: true),
         ]
-        let bar = Burst.bar(pending)
-        XCTAssertEqual(bar, Burst(connectionId: "", label: "Claude and Codex", quick: ["r1", "r2", "r4", "r5"], all: ["r1", "r2", "r4", "r5"], ais: 2))
-        XCTAssertEqual(bar?.title, "4 routine · Claude and Codex", "says who asks")
-        XCTAssertEqual(Burst.names(["A", "B", "C", "D"]), "A, B and 2 more")
-        XCTAssertNil(bar?.heldNote, "what needs a look is not in it")
-        XCTAssertEqual(Burst.bar(Array(pending.prefix(3)))?.connectionId, "c1", "one AI: its own bar")
-        XCTAssertNil(Burst.bar([item("r1", quick: true)]))
+        let cards = WaitGroup.of(pending).map { $0.items.map(\.id) }
+        XCTAssertEqual(cards, [["r0"], ["r1", "r2"], ["r3", "r4"]])
+        XCTAssertEqual(WaitGroup.of([item("r1", quick: true)]).map(\.isBurst), [false])
+    }
+
+    private func suggestion(_ verdict: Verdict, p: Float = 0.97, floor: Bool = false, judged: Bool = true) -> SuggestionView {
+        SuggestionView(
+            requestId: "r", verdict: verdict, mode: .manual, pApprove: p, pDeny: 1 - p, confidence: 0.9, reason: "",
+            neighbours: [], profileId: "p", profileName: "Default", classKey: "k", novel: false, floor: floor, judged: judged
+        )
+    }
+
+    func testAWaitingCardOffersWhatAutopilotWouldDo() {
+        let routine = item("r1", quick: true)
+        XCTAssertEqual(WaitAdvice.of(routine, suggestion(.approve)), .allow)
+        XCTAssertEqual(WaitAdvice.of(routine, suggestion(.deny, p: 0.05)), .deny)
+        XCTAssertEqual(WaitAdvice.of(routine, suggestion(.ask, p: 0.6)), .unsure(Double(Float(0.6))))
+        XCTAssertEqual(WaitAdvice.of(routine, suggestion(.approve, judged: false)), .unsure(Double(Float(0.97))))
+        XCTAssertEqual(WaitAdvice.of(routine, nil), .review, "no model: Review only")
+        XCTAssertEqual(WaitAdvice.of(routine, suggestion(.approve, floor: true)), .alwaysAsks)
+        XCTAssertEqual(WaitAdvice.of(item("r2", quick: false), suggestion(.approve)), .alwaysAsks, "never one tap for what needs a look")
+    }
+
+    func testAGroupGetsOneTapOnlyWhenAutopilotAgreesOnEveryRequest() {
+        let items = [item("r1", quick: true), item("r2", quick: true)]
+        XCTAssertEqual(WaitAdvice.of(items, ["r1": suggestion(.approve), "r2": suggestion(.approve)]), .allow)
+        XCTAssertEqual(WaitAdvice.of(items, ["r1": suggestion(.approve), "r2": suggestion(.ask, p: 0.5)]), .unsure(0.5))
+        XCTAssertEqual(WaitAdvice.of(items, [:]), .review)
     }
 
     func testTheShortcutSaysForHowLongAndWhat() {
@@ -47,8 +67,13 @@ final class QuickApprovalTests: XCTestCase {
     }
 
     func testTheStartingRuleSaysWhatItGivesOnlyWhenItGivesSomething() {
-        XCTAssertEqual(StartingRuleText.title(.readsForADay), "Let it read for a day")
-        XCTAssertNotNil(StartingRuleText.onPairing(.readsForADay))
+        XCTAssertEqual(StartingRuleText.order, [.askEveryTime, .headlinesFirstHour])
+        XCTAssertEqual(StartingRuleText.title(.askEveryTime), "Ask every time")
+        XCTAssertEqual(StartingRuleText.title(.headlinesFirstHour), "Headlines for its first hour")
+        XCTAssertEqual(
+            StartingRuleText.onPairing(.headlinesFirstHour),
+            "For its first hour it sees headlines only: sender, subject and date. Opening anything still asks."
+        )
         XCTAssertNil(StartingRuleText.onPairing(.askEveryTime))
         XCTAssertNil(StartingRuleText.onPairing(nil), "not chosen yet: it asks for everything")
     }
