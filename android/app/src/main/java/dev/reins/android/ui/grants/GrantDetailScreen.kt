@@ -99,6 +99,16 @@ fun ringLabel(seconds: Long?): String {
     }
 }
 
+/** Where a grant came from, in a few words (the same texts as iOS). */
+internal fun grantOrigin(origin: String, label: String): String = when {
+    origin == "ai_request" -> "$label asked and you allowed it"
+    origin == "user" -> "Created by you in advance"
+    origin == "retry" -> "A one-time pass after you approved late"
+    origin == "starter" -> "Your starting rule, when you connected $label"
+    origin == "bypass" || origin.startsWith("bypass:") -> "Approved by Bypass; ends with it"
+    else -> "Chosen while approving a request"
+}
+
 /** The extend sheet's choices: from now on, for this long. */
 private val ExtendQuick = listOf(DurationChoice(3_600L, "1 hour", "extend:HOUR"), DurationChoice(86_400L, "1 day", "extend:DAY"))
 private val ExtendMore = listOf(
@@ -163,6 +173,7 @@ fun GrantDetailScreen(
                     if (grant.active) "Ends" else inactiveWord(grant),
                     value = grant.expiresAt?.let { dayTime(it, now) } ?: "Never on its own",
                 )
+                ValueRow("Came from", Modifier.testTag("origin"), value = grantOrigin(grant.origin, untrusted(grant.connectionLabel)))
                 ValueRow("Used for", Modifier.testTag("usedFor"), value = used.size.toString(), open = usedOpen) { usedOpen = !usedOpen }
                 AnimatedVisibility(usedOpen) {
                     Column(Modifier.padding(bottom = 8.dp)) {

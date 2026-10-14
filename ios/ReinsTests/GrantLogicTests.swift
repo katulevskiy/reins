@@ -72,6 +72,13 @@ final class GrantLogicTests: XCTestCase {
         XCTAssertFalse(grantClock(ended, now: now + 800).soon, "an ended grant is never ending soon")
     }
 
+    func testABypassGrantSaysItEndsWithTheBypass() {
+        XCTAssertEqual(GrantText.origin("bypass", label: "Claude"), "Approved by Bypass; ends with it")
+        XCTAssertEqual(GrantText.origin("bypass:c1", label: "Claude"), "Approved by Bypass; ends with it")
+        XCTAssertEqual(GrantText.origin("approval", label: "Claude"), "Chosen while approving a request")
+        XCTAssertEqual(GrantText.origin("bypassing", label: "Claude"), "Chosen while approving a request")
+    }
+
     func testAnEndedGrantSaysHowItEndedAndCanBeResumedForASensiblePeriod() {
         XCTAssertEqual(GrantText.endedLine(grant(active: false, state: "revoked"), now: now), "Deleted")
         XCTAssertEqual(GrantText.endedLine(grant(active: false, uses: 3, maxUses: 3, state: "used_up"), now: now), "All 3 uses spent")
