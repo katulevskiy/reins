@@ -5,7 +5,7 @@
 //! asked. It reads everything the question carries with these rules itself ([`read`]); what cannot
 //! be undone is asked every time, held to approve and left to the user by Autopilot, whatever the label says.
 
-use crate::shell::{command_matches, file_matches, parse, text_words};
+use crate::shell::{command_matches, file_matches, parse, program_name, text_words};
 
 /// A built-in group of rules.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -217,14 +217,17 @@ pub struct Classified {
     pub matched: String,
 }
 
-/// The first built-in file rule `path` matches, unless an exception covers it.
+/// The first built-in file rule `path` matches, unless an exception covers it. Compared without case, as on a
+/// case-insensitive file system (`.ENV` is `.env`).
 #[must_use]
 pub fn classify_file(path: &str) -> Option<Classified> {
-    if path.is_empty() || ALLOW_FILES.iter().any(|p| file_matches(p, path)) {
+    let lower = path.to_lowercase();
+    let matches = |p: &str| file_matches(&p.to_lowercase(), &lower);
+    if path.is_empty() || ALLOW_FILES.iter().any(|p| matches(p)) {
         return None;
     }
     BUILTIN.iter().find_map(|g| {
-        g.files.iter().find(|p| file_matches(p, path)).map(|p| Classified {
+        g.files.iter().find(|p| matches(p)).map(|p| Classified {
             group: g,
             pattern: p,
             matched: path.to_owned(),
@@ -232,17 +235,22 @@ pub fn classify_file(path: &str) -> Option<Classified> {
     })
 }
 
-/// The built-in rules one simple command matches: its command rules (by the text of the whole line for `text:`
-/// rules), and the files its arguments name.
+/// The built-in rules one simple command matches: its command rules, also from any word on (`x rm -rf ~`, an
+/// unknown wrapper, a label: the phone does not need to know what the first word is), the line's text for `text:`
+/// rules, and the files any of its words name (its first too, a value attached to an option: `-f.env`,
+/// `--file=.env`; after `--`, any word).
 fn matches_of(seg: &[String], flat: &[String]) -> Vec<Classified> {
     let mut found = Vec::new();
+    let tails: Vec<Vec<String>> = (0..seg.len())
+        .map(|i| std::iter::once(program_name(&seg[i])).chain(seg[i + 1..].iter().cloned()).collect())
+        .collect();
     for g in BUILTIN {
         for pattern in g.commands {
             let matched = if let Some(text) = pattern.strip_prefix("text:") {
                 let want = text_words(text);
                 (!want.is_empty() && flat.windows(want.len()).any(|w| w == want.as_slice())).then(|| want.join(" "))
             } else {
-                command_matches(pattern, seg).then(|| seg.join(" "))
+                tails.iter().find(|tail| command_matches(pattern, tail)).map(|tail| tail.join(" "))
             };
             found.extend(matched.map(|matched| Classified {
                 group: g,
@@ -251,14 +259,22 @@ fn matches_of(seg: &[String], flat: &[String]) -> Vec<Classified> {
             }));
         }
     }
-    found.extend(seg.iter().skip(1).filter_map(|arg| {
-        let path = match arg.split_once('=') {
-            Some((opt, value)) if opt.starts_with('-') => value,
-            _ if arg.starts_with('-') => return None,
-            _ => arg.as_str(),
-        };
-        classify_file(path)
-    }));
+    let mut options = true;
+    for word in seg {
+        if options && word == "--" {
+            options = false;
+            continue;
+        }
+        let mut paths = vec![word.as_str()];
+        if options && word.starts_with('-') {
+            paths.clear();
+            paths.extend(word.split_once('=').map(|(_, value)| value));
+            if !word.starts_with("--") {
+                paths.extend(word.char_indices().nth(2).map(|(at, _)| &word[at..]));
+            }
+        }
+        found.extend(paths.into_iter().filter_map(classify_file));
+    }
     found
 }
 
@@ -474,6 +490,35 @@ mod tests {
             assert!(certain(text), "{text}");
         }
         assert!(!certain("sudo -Z rm -rf x"), "an option the guard does not know");
+    }
+
+    /// Words the shell makes up when it runs, and words the phone's reading must not skip.
+    #[test]
+    fn made_up_words_are_uncertain_and_no_word_is_skipped() {
+        let id = |text: &str| read(&[text], &[]).found.map(|c| c.group.id);
+        let certain = |text: &str| read(&[text], &[]).certain;
+        for text in [
+            "$'\\x72m' -rf ~",
+            "{r,}m -rf ~",
+            "x=rm; $x -rf ~",
+            "rm${IFS}-rf${IFS}~",
+            "r$(echo m) -rf ~",
+            "echo \"$(rm -rf ~)\"",
+            "echo \"`rm -rf ~`\"",
+            "`echo rm` -rf ~",
+            "/bin/r? -rf ~",
+        ] {
+            assert!(!certain(text), "{text}");
+        }
+        // A command rule from any word on: an unknown wrapper, a label.
+        assert_eq!(id("mywrap --fast rm -rf ~"), Some("deletes"));
+        assert_eq!(id("Command: git push --force"), Some("git-history"));
+        // A file in any word: the first, a value attached to an option, after `--`, in another case.
+        for text in
+            ["< .env cat", "tool -f.env", "tool --config=.env", "cat -- -x .env", "cat .ENV", "cat ~/.SSH/ID_RSA"]
+        {
+            assert!(id(text).is_some(), "{text}");
+        }
     }
 
     #[test]

@@ -401,6 +401,8 @@ fn resolve(raw: &Raw, out: &mut Vec<Vec<String>>, depth: usize, windows: bool) -
         i += start;
     }
     let mut seg: Vec<String> = words[i..].to_vec();
+    // A program named at run time (`$cmd`, `r*`, `/bin/r?`) is not known.
+    let named = !seg[0].contains(['$', '*', '?', '[']);
     seg[0] = program_name(&seg[0]);
     let program = seg[0].to_ascii_lowercase();
     let mut certain = true;
@@ -520,7 +522,7 @@ fn resolve(raw: &Raw, out: &mut Vec<Vec<String>>, depth: usize, windows: bool) -
         certain &= inner(&script, out);
     }
     out.push(seg);
-    certain
+    certain && named
 }
 
 /// The program's name: no directory, and without a Windows program ending (`git.exe`, `npm.cmd`).
@@ -548,6 +550,12 @@ struct Raw {
     words: Vec<String>,
     heredoc: bool,
     here_string: bool,
+}
+
+/// Whether a `{` starts a brace expansion (`{a,b}`, `{1..3}`): a `}` before any space, with a comma or `..` between.
+fn brace_expansion(after: &std::iter::Peekable<std::str::Chars<'_>>) -> bool {
+    let ahead: String = after.clone().take_while(|c| !c.is_whitespace()).collect();
+    ahead.find('}').is_some_and(|end| ahead[..end].contains(',') || ahead[..end].contains(".."))
 }
 
 /// Splits a command line into simple commands (lists of words), resolving quotes and escapes, and says whether every
@@ -643,7 +651,13 @@ fn split_commands(command: &str, windows: bool) -> (Vec<Raw>, bool) {
                             word.push('\\');
                         }
                         '$' if chars.peek() == Some(&'(') => {
+                            // A command run inside the quotes: its output is a word nobody reads here.
+                            certain = false;
                             inner += 1;
+                            word.push(q);
+                        }
+                        '`' => {
+                            certain = false;
                             word.push(q);
                         }
                         ')' if inner > 0 => {
@@ -670,9 +684,23 @@ fn split_commands(command: &str, windows: bool) -> (Vec<Raw>, bool) {
                 }
                 end_command(&mut current, &mut commands);
             }
+            '{' if !windows && brace_expansion(&chars) => {
+                // `{r,}m`, `{a..z}`: words the shell makes up.
+                certain = false;
+                in_word = true;
+                word.push(c);
+            }
+            '$' if !windows && chars.peek() == Some(&'\'') => {
+                // `$'\x72m'`: a word the shell decodes.
+                certain = false;
+                in_word = true;
+                word.push(c);
+            }
             ';' | '&' | '|' | '\n' | '(' | ')' | '`' | '{' | '}' if !(matches!(c, '{' | '}') && in_word) => {
                 if c == '`' {
+                    // A command substitution: what it prints becomes words nobody reads here.
                     backticks += 1;
+                    certain &= windows;
                 }
                 if c == ')' && substitutions > 0 {
                     substitutions -= 1;
@@ -683,6 +711,8 @@ fn split_commands(command: &str, windows: bool) -> (Vec<Raw>, bool) {
             '$' if chars.peek() == Some(&'(') => {
                 chars.next();
                 substitutions += 1;
+                // Its commands are read; what they print becomes words nobody reads here.
+                certain = false;
                 end_word(&mut word, &mut in_word, &mut current);
                 end_command(&mut current, &mut commands);
             }
