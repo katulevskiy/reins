@@ -78,13 +78,13 @@ private struct Stage: View {
                     Circle().fill(i == 2 ? tone : Palette.tertiary).frame(width: 5, height: 5)
                 }
             }
-            ServiceTile(service: ApprovalWords.service(view), badge: ApprovalWords.badge(view).symbol, tone: tone)
+            ApprovalServiceTile(service: ApprovalWords.service(view), badge: ApprovalWords.badge(view).symbol, tone: tone)
         }
         .accessibilityHidden(true)
     }
 }
 
-private struct ServiceTile: View {
+private struct ApprovalServiceTile: View {
     var service: String
     var badge: String
     var tone: Color
