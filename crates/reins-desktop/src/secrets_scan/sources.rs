@@ -522,7 +522,7 @@ pub fn cargo_credentials(text: &str) -> Vec<RawEntry> {
 /// names (their secrets are in the keychain, not here).
 #[must_use]
 pub fn docker_config(text: &str) -> (Vec<RawEntry>, Vec<String>) {
-    let Ok(v) = serde_json::from_str::<serde_json::Value>(text) else {
+    let Ok(mut v) = serde_json::from_str::<serde_json::Value>(text) else {
         return (Vec::new(), Vec::new());
     };
     let mut out = Vec::new();
@@ -544,6 +544,7 @@ pub fn docker_config(text: &str) -> (Vec<RawEntry>, Vec<String>) {
     }
     helpers.sort();
     helpers.dedup();
+    wipe(&mut v);
     (out, helpers)
 }
 
@@ -551,17 +552,30 @@ pub fn docker_config(text: &str) -> (Vec<RawEntry>, Vec<String>) {
 /// private key.
 #[must_use]
 pub fn gcp_adc(text: &str) -> Vec<RawEntry> {
-    let Ok(v) = serde_json::from_str::<serde_json::Value>(text) else {
+    let Ok(mut v) = serde_json::from_str::<serde_json::Value>(text) else {
         return Vec::new();
     };
-    let group = v.get("type").and_then(serde_json::Value::as_str).unwrap_or("credentials");
-    ["refresh_token", "client_secret", "private_key"]
+    let group = v.get("type").and_then(serde_json::Value::as_str).unwrap_or("credentials").to_owned();
+    let out = ["refresh_token", "client_secret", "private_key"]
         .iter()
         .filter_map(|field| {
             let value = v.get(*field)?.as_str()?;
-            (!value.is_empty()).then(|| entry(field, Some(group), line_of(text, &format!("\"{field}\"")), value, true))
+            (!value.is_empty()).then(|| entry(field, Some(&group), line_of(text, &format!("\"{field}\"")), value, true))
         })
-        .collect()
+        .collect();
+    wipe(&mut v);
+    out
+}
+
+/// Overwrites every string in a parsed JSON file (its values were copied into [`Zeroizing`] buffers).
+fn wipe(v: &mut serde_json::Value) {
+    use zeroize::Zeroize as _;
+    match v {
+        serde_json::Value::String(s) => s.zeroize(),
+        serde_json::Value::Array(items) => items.iter_mut().for_each(wipe),
+        serde_json::Value::Object(map) => map.values_mut().for_each(wipe),
+        _ => {}
+    }
 }
 
 /// `~/.kube/config`: each user's `token`, `password` and `client-key-data`; the users that run an exec plugin

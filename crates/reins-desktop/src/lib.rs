@@ -28,6 +28,7 @@ pub mod port;
 pub mod proxy;
 pub mod run;
 pub mod secrets;
+pub mod secrets_cmd;
 pub mod secrets_scan;
 pub mod server;
 pub mod service;

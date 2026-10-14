@@ -228,9 +228,66 @@ fn every_source_is_found_and_no_value_is_in_the_report() {
     assert!(!titles.iter().any(|t| t.contains("settings-only") || t.contains("old") || t.contains("example")));
     assert!(!report.findings.iter().any(|f| f.path.contains("node_modules")));
     let json = serde_json::to_string(&report).unwrap();
+    let debug = format!("{report:?}");
     for secret in &fx.secrets {
-        let probe: String = secret.chars().skip(4).take(12).collect();
-        assert!(!json.contains(&probe), "a value leaked into the report: {probe}");
+        assert!(!leaks(&json, secret) && !leaks(&debug, secret), "a value leaked into the report");
+    }
+}
+
+/// Whether `text` holds 6 characters in a row of `secret`.
+pub(crate) fn leaks(text: &str, secret: &str) -> bool {
+    let chars: Vec<char> = secret.chars().collect();
+    chars.windows(6).any(|w| text.contains(&w.iter().collect::<String>()))
+}
+
+#[test]
+fn nothing_that_holds_a_value_prints_it() {
+    let fx = fixture();
+    let home = fx.home();
+    let files = [
+        (Source::Dotenv, home.join("dev/acme-web/.env")),
+        (Source::SshKey, home.join(".ssh/id_ed25519")),
+        (Source::GhCli, home.join(".config/gh/hosts.yml")),
+        (Source::GitCredentials, home.join(".git-credentials")),
+        (Source::Npm, home.join(".npmrc")),
+        (Source::PyPi, home.join(".pypirc")),
+        (Source::Cargo, home.join(".cargo/credentials.toml")),
+        (Source::Docker, home.join(".docker/config.json")),
+        (Source::Aws, home.join(".aws/credentials")),
+        (Source::Gcp, home.join(".config/gcloud/application_default_credentials.json")),
+        (Source::Kube, home.join(".kube/config")),
+        (Source::Shell, home.join(".zshrc")),
+        (Source::Netrc, home.join(".netrc")),
+    ];
+    let mut read = 0;
+    for (source, path) in files {
+        let entries = read_entries(source, &path).unwrap();
+        read += entries.len();
+        let shown = format!("{entries:?} {:?}", entries.first());
+        for secret in &fx.secrets {
+            assert!(!leaks(&shown, secret), "{source:?} printed a value: {shown}");
+        }
+    }
+    assert!(read > 20);
+    let (key, _) = openssh_key(false);
+    let shown = format!("{:?}", sources::ssh_key(&key));
+    assert!(!leaks(&shown, &fake("", 64)), "{shown}");
+    // Errors name the file, never its lines.
+    let secret = fake("sk-proj-", 60);
+    let bad = fx.dir.path().join("bad.env");
+    let mut bytes = format!("OPENAI_API_KEY={secret}\n").into_bytes();
+    bytes.push(0xff);
+    std::fs::write(&bad, &bytes).unwrap();
+    let err = read_entries(Source::Dotenv, &bad).unwrap_err();
+    assert!(!leaks(&err, &secret), "{err}");
+    let err = read_entries(Source::Dotenv, &fx.dir.path().join("missing")).unwrap_err();
+    assert!(err.contains("missing"));
+    let err = Caller::Agent("CLAUDECODE".to_owned()).check("A secrets scan").unwrap_err();
+    assert!(!err.is_empty());
+    // A classification says what, never quotes the value.
+    for (name, value) in [("OPENAI_API_KEY", secret.as_str()), ("DB_PASSWORD", "hunter2!xyz")] {
+        let v = detect::classify(name, value, false);
+        assert!(!leaks(&format!("{v:?} {}", v.label()), value));
     }
 }
 

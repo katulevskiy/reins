@@ -60,6 +60,11 @@ pub const DEFAULT_COMMANDS: &[&str] = &[
     "poetry publish",
     // Trusting a key to open card details is the user's own step (`docs/payments.md`).
     "reins payments-trust",
+    // Finding, moving and reading secrets are the user's own steps (`docs/secrets.md`): the phone is asked when an
+    // agent runs them, whatever its environment says.
+    "reins secrets scan",
+    "reins secrets import",
+    "reins secrets get",
     "uv publish",
     "twine upload",
     "gem push",
@@ -225,6 +230,13 @@ pub const GROUPS: &[Group] = &[
         label: "Trusting a payment key",
         detail: "reins payments-trust, which lets this computer open the card details of purchases",
         commands: &["reins payments-trust"],
+        files: &[],
+    },
+    Group {
+        id: "secrets",
+        label: "Finding and reading secrets",
+        detail: "reins secrets scan, import and get, which see where your secrets are or read one",
+        commands: &["reins secrets scan", "reins secrets import", "reins secrets get"],
         files: &[],
     },
     Group {
@@ -852,6 +864,10 @@ mod tests {
             ("reins payments-trust", "reins payments-trust"),
             ("/usr/local/bin/reins payments-trust", "reins payments-trust"),
             ("sh -c 'reins payments-trust'", "reins payments-trust"),
+            ("reins secrets scan --json", "reins secrets scan"),
+            ("env -u CLAUDECODE -u REINS_RUNNER reins secrets scan ~/dev", "reins secrets scan"),
+            ("REINS_RUNNER=person /opt/reins/bin/reins secrets import --all-suggested", "reins secrets import"),
+            ("bash -lc 'reins secrets get vault:acme-web/development/OPENAI_API_KEY'", "reins secrets get"),
             ("git push --force origin main", "git push --force*"),
             ("git -C repo push -fu origin x", "git push -f"),
             ("git push --force-with-lease", "git push --force*"),

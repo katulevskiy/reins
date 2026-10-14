@@ -418,7 +418,7 @@ fn random_looking(value: &str, min_len: usize, min_entropy: f64) -> bool {
 /// Values that are plainly not secrets: numbers, booleans, versions, colours, paths, URLs without credentials, words.
 fn plain_value(value: &str) -> bool {
     let v = value.trim();
-    let lower = v.to_ascii_lowercase();
+    let lower = Zeroizing::new(v.to_ascii_lowercase());
     if matches!(lower.as_str(), "true" | "false" | "yes" | "no" | "on" | "off" | "1" | "0") {
         return true;
     }
@@ -517,8 +517,13 @@ pub const MASK: &str = "••••••••";
 /// the rest as [`MASK`]. Line breaks and control characters are never shown.
 #[must_use]
 pub fn mask(value: &str) -> String {
-    let chars: Vec<char> = value.trim().chars().collect();
-    let shown = (chars.len() / 4).min(8);
+    let chars: Zeroizing<Vec<char>> = Zeroizing::new(value.trim().chars().collect());
+    // Nothing of a short value: a few characters of it would be too much of it.
+    let shown = if chars.len() < 8 {
+        0
+    } else {
+        (chars.len() / 4).min(8)
+    };
     let head = shown.div_ceil(2).min(4);
     let tail = shown - head;
     let visible = |c: &char| {
@@ -671,7 +676,9 @@ mod tests {
         }
         assert_eq!(mask(&fake("sk-proj-", 48)).chars().take(4).collect::<String>(), "sk-p");
         assert_eq!(mask("abc"), MASK);
-        assert_eq!(mask("debug"), format!("d{MASK}"));
+        assert_eq!(mask("debug"), MASK);
+        assert_eq!(mask("hunter2"), MASK, "nothing of a value under 8 characters");
+        assert_eq!(mask("hunter22"), format!("h{MASK}2"));
         // Line breaks never show, nor does the length.
         assert!(!mask("ab\ncdefghijklmnopqrstuvw\nxyz").contains('\n'));
         assert_eq!(mask(&"a".repeat(40)).len(), mask(&"a".repeat(400)).len());
