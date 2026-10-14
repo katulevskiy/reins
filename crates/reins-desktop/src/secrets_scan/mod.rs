@@ -588,7 +588,7 @@ pub fn is_dotenv(name: &str) -> bool {
 }
 
 /// Runs `cmd` for at most `timeout`; its stdout when it succeeded.
-fn run_for(mut cmd: std::process::Command, timeout: Duration) -> Option<Zeroizing<String>> {
+pub(crate) fn run_for(mut cmd: std::process::Command, timeout: Duration) -> Option<Zeroizing<String>> {
     use std::io::Read as _;
     let mut child = cmd
         .stdin(std::process::Stdio::null())
@@ -1273,7 +1273,8 @@ pub fn read_entries(source: Source, path: &Path) -> Result<Vec<RawEntry>, String
         Source::Kube => sources::kubeconfig(text).0,
         Source::Netrc => sources::netrc(text),
         Source::SshKey => vec![RawEntry {
-            name: "private key".to_owned(),
+            // As the scan's item id says it (`<finding>/private_key`).
+            name: "private_key".to_owned(),
             group: None,
             line: 1,
             value: Zeroizing::new(text.to_owned()),
