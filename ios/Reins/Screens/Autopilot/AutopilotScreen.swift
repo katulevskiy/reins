@@ -106,7 +106,7 @@ struct AutopilotScreen: View {
             AutopilotGroup(header: nil) {
                 ModelRow(ap: ap) { modelOpen = true }
                 RowDivider(inset: 60)
-                LinkRow(title: "Try it", symbol: "flask.fill", tint: Palette.send, identifier: "openTryIt") {
+                AutopilotLinkRow(title: "Try it", symbol: "flask.fill", tint: Palette.send, identifier: "openTryIt") {
                     if !ap.modelReady {
                         Text("after download").font(RFont.sans(15)).foregroundStyle(Palette.tertiary).lineLimit(1)
                     }
@@ -453,7 +453,7 @@ private struct ModelRow: View {
     var action: () -> Void
 
     var body: some View {
-        LinkRow(title: "On-device model", symbol: "cpu", tint: Palette.read, identifier: "modelRow") {
+        AutopilotLinkRow(title: "On-device model", symbol: "cpu", tint: Palette.read, identifier: "modelRow") {
             if let m = ap.model {
                 if m.state == .installed {
                     HStack(spacing: 5) {
@@ -477,7 +477,7 @@ private struct ModelRow: View {
 }
 
 /// A row of the Autopilot list: a coloured tile, a title, what goes on the right, and the disclosure mark.
-private struct LinkRow<Trailing: View>: View {
+private struct AutopilotLinkRow<Trailing: View>: View {
     var title: String
     var symbol: String
     var tint: Color

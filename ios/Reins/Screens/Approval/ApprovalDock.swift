@@ -31,7 +31,7 @@ struct ApprovalDock: View {
                     .accessibilityIdentifier("noStanding")
             } else {
                 if ApprovalWords.likeThisOn(view, vm.draft) { LikeThisNote() }
-                Segments(vm: vm, view: view)
+                DockSegments(vm: vm, view: view)
             }
             buttons
         }
@@ -99,7 +99,7 @@ struct ApprovalDock: View {
 }
 
 /// Once · 1 hour · 1 day · Custom ▾, as a segmented control.
-private struct Segments: View {
+private struct DockSegments: View {
     @Bindable var vm: ApprovalModel
     var view: ApprovalView
     @Environment(ApprovalNav.self) private var nav
