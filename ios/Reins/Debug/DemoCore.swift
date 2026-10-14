@@ -1102,7 +1102,7 @@ final class DemoReinsCore: ReinsCoreProtocol, @unchecked Sendable {
             let rows = s.apConnections.sorted { $0.key < $1.key }.map { id, row in
                 let mode: AutopilotMode = if global == .lockdown || row.mode == .lockdown {
                     .lockdown
-                } else if (row.bypassUntil ?? 0) > now {
+                } else if (row.bypassUntil ?? 0) > now || global == .bypass {
                     .bypass
                 } else {
                     row.mode ?? global

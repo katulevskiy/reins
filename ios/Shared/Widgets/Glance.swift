@@ -74,7 +74,7 @@ enum Glance {
             switch self {
             case .manual: "Waits for you, with a suggestion"
             case .auto: "Decides what it is sure of, asks the rest"
-            case .bypass: "Approves all but the riskiest, for a while"
+            case .bypass: "Approves everything, for a while"
             case .lockdown: "Denies everything at once"
             }
         }

@@ -299,7 +299,7 @@ struct BypassForSheet: View {
                             Text("Everything is approved without asking until you stop it.")
                                 .font(RFont.sans(13.5, .semibold))
                                 .foregroundStyle(Palette.danger)
-                            Text("Passwords, deletions and new connections still ask.")
+                            Text(AutopilotText.bypassStillAsks)
                                 .font(RFont.sans(13.5))
                                 .foregroundStyle(Palette.text)
                         }

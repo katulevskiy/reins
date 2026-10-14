@@ -475,7 +475,8 @@ extension AutopilotSettings {
             let c = connections[i]
             if mode == .lockdown || c.baseMode == .lockdown {
                 connections[i].mode = .lockdown
-            } else if (c.bypassUntil ?? 0) > now {
+            } else if (c.bypassUntil ?? 0) > now || (bypassUntil ?? 0) > now {
+                // Its own bypass, or the global one: a global bypass applies whatever mode an AI has of its own.
                 connections[i].mode = .bypass
             } else {
                 connections[i].mode = c.baseMode ?? mode

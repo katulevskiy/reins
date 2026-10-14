@@ -84,7 +84,7 @@ enum AutopilotText {
     static func line(key: String) -> String {
         switch key {
         case "auto": "Decides the easy ones"
-        case "bypass": "Approve all but the riskiest"
+        case "bypass": "Approve everything"
         case "lockdown": "Deny everything"
         default: "Ask, with a hint"
         }
@@ -164,10 +164,13 @@ enum AutopilotText {
     /// "Bypass on · 42 min left", "Bypass on · until you stop it".
     static func bypassTitle(until: Int64, now: Int64) -> String { "Bypass on · " + timeLeft(until: until, now: now) }
 
-    static func bypassText(scope: String) -> String { "For \(scope). The riskiest still ask." }
+    static func bypassText(scope: String) -> String { "For \(scope). \(bypassStillAsks)" }
 
-    /// What a bypass still asks, behind the (?) of the bypass sheet.
-    static let bypassHelp = "Still asked every time: new connections, permissions, passwords and secrets, deletions and other one-off changes, SSH and flagged files."
+    /// What a bypass still asks: nothing an AI does, only a new connection or a new phone joining the account.
+    static let bypassStillAsks = "New connections and new phones still ask."
+
+    /// Behind the (?) of the bypass sheet.
+    static let bypassHelp = bypassStillAsks
 
     /// What "How sure" explains behind its (?).
     static let howSureHelp = "How sure Autopilot must be to approve or deny on its own in Auto. Requests that always ask still ask."
@@ -383,7 +386,7 @@ extension AutopilotText {
     /// Why a suggestion is limited, if it is: the hard floor, a target never seen, no model.
     static func suggestionNotes(_ s: SuggestionView) -> [String] {
         var notes: [String] = []
-        if s.floor { notes.append("Passwords, deletions, new connections, SSH and other risky requests always wait for you, in every mode.") }
+        if s.floor { notes.append("Passwords, deletions, new connections, SSH and other risky requests always wait for you in Manual and Auto.") }
         if s.novel { notes.append("This target was never approved for this AI before, so Autopilot asks you even in Auto.") }
         if !s.judged && !s.floor && !s.reason.trimmingCharacters(in: .whitespaces).isEmpty { notes.append(untrusted(s.reason)) }
         return notes

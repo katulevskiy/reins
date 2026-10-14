@@ -270,8 +270,9 @@ enum NotificationContent {
 /// What the notification extension leaves to the app.
 enum ExtensionPolicy {
     /// Any connection in a mode that judges with the model (Manual, Auto), with the model there to run. Only the app
-    /// runs it, so the extension parks such a push without Autopilot's pass (`handlePushDeferringAutopilot`) and the
-    /// app judges it; handling it fully here would settle the item as "could not judge" for good.
+    /// runs it, so the extension handles such a push with `handlePushDeferringAutopilot`: Bypass and Lockdown still
+    /// decide here (they need no model, so a bypass answers while the app is closed), and what Manual or Auto would
+    /// judge is left for the app; handling it fully here would settle it as "could not judge" for good.
     static func needsModel(_ s: AutopilotSettings) -> Bool {
         guard s.model.state == .installed else { return false }
         let modes = [s.mode] + s.connections.map(\.mode)

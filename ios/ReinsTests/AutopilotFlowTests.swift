@@ -113,6 +113,11 @@ final class AutopilotFlowTests: XCTestCase {
         s.applyBypass(minutes: 30, connectionId: "c1", now: 1_000)
         XCTAssertEqual(s.connections.first?.bypassUntil, 1_000 + 1_800)
         XCTAssertEqual(s.connections.first?.mode, .bypass)
+        // A global bypass applies to an AI with a mode of its own, but not to one locked down.
+        s.applyMode(.manual, minutes: 0, connectionId: "c2", now: 1_000)
+        s.applyMode(.lockdown, minutes: 0, connectionId: "c3", now: 1_000)
+        XCTAssertEqual(s.connections.first { $0.connectionId == "c2" }?.mode, .bypass)
+        XCTAssertEqual(s.connections.first { $0.connectionId == "c3" }?.mode, .lockdown)
         s.applyMode(.auto, minutes: 0, connectionId: nil, now: 1_100)
         XCTAssertEqual(s.mode, .auto)
         XCTAssertNil(s.bypassSince)

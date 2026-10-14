@@ -130,7 +130,7 @@ final class AutopilotTextTests: XCTestCase {
         let global = try XCTUnwrap(AutopilotText.bypassNotice(settings(bypass: 1_600, since: 400), label: { $0 }, now: 1_000))
         XCTAssertTrue(global.global)
         XCTAssertEqual(global.title, "Bypass on · 10 min left")
-        XCTAssertTrue(global.text.contains("every AI"))
+        XCTAssertEqual(global.text, "For every AI. New connections and new phones still ask.")
         XCTAssertEqual(global.since, 400)
         XCTAssertFalse(global.untilOff)
         let one = try XCTUnwrap(AutopilotText.bypassNotice(
