@@ -1247,7 +1247,7 @@ jobs:
       group: ${{ inputs.verify_only && format('release-publish-verification-{0}', github.run_id) || 'release-publish' }}
       cancel-in-progress: false
     runs-on: ubuntu-24.04
-    timeout-minutes: 20
+    timeout-minutes: 45 # scripts/wait-for-ci.sh waits up to 30 minutes
     permissions:
       contents: write
       actions: read # exact-commit CI publication gate
