@@ -127,8 +127,6 @@ struct Data {
     /// This computer's name, and its machine project.
     computer: String,
     machine: String,
-    /// Finding and moving secrets is on (a preview; always in `--demo`).
-    secrets_preview: bool,
 }
 
 impl Data {
@@ -160,11 +158,6 @@ impl Data {
             secrets: m.secrets.clone(),
             computer: m.computer.clone(),
             machine: m.machine.clone(),
-            secrets_preview: m.args.demo
-                || m.snapshot
-                    .as_ref()
-                    .and_then(|s| s.config.as_ref().ok())
-                    .is_some_and(|c| reins_desktop::secrets_scan::preview(c)),
         }
     }
 
@@ -373,7 +366,7 @@ impl Root {
         } else {
             30.0
         };
-        let secrets_page = if d.section == Section::Keys && d.secrets_preview {
+        let secrets_page = if d.section == Section::Keys {
             self.secrets_page(d, pal, cx)
         } else {
             None
