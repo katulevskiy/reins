@@ -20,6 +20,7 @@
 - [Reins Secrets: design](secrets.md): projects, environments, scan and import, agents, CI.
 - [Architecture](architecture.md): components, endpoints and the main flows.
 - [Autopilot model card](../tools/laya/MODEL_CARD.md): `laya-approvals-ml-v1`, its data, evaluation and limits.
+- [Autopilot risk: the Overnight mode](autopilot-risk.md): severity in context, the risk head, thresholds and rollout.
 
 **Running it**
 
