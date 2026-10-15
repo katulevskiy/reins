@@ -53,7 +53,7 @@ fn source_tile(source: Source, pal: Palette, side: f32) -> Div {
     let i = match source {
         Source::GhCli => return logo(Mark::Brand(Brand::GitHub), pal).size(px(side)),
         Source::Dotenv => Glyph::FileLock,
-        Source::SshKey => Glyph::Terminal,
+        Source::SshKey => Glyph::Key,
         Source::GitCredentials => Glyph::GitBranch,
         Source::Npm | Source::PyPi | Source::Cargo => Glyph::Package,
         Source::Docker | Source::Aws | Source::Gcp | Source::Kube => Glyph::Cloud,
@@ -261,7 +261,7 @@ impl Root {
             let mark: Div = match stage {
                 Stage::Github => logo(Mark::Brand(Brand::GitHub), pal),
                 Stage::Projects => tile(Glyph::FolderSearch, pal.ink_2(), 30.0).bg(pal.paper_sunken()),
-                Stage::Ssh => tile(Glyph::Terminal, pal.ink_2(), 30.0).bg(pal.paper_sunken()),
+                Stage::Ssh => tile(Glyph::Key, pal.ink_2(), 30.0).bg(pal.paper_sunken()),
                 Stage::Cloud => tile(Glyph::Cloud, pal.ink_2(), 30.0).bg(pal.paper_sunken()),
                 Stage::Registries => tile(Glyph::Package, pal.ink_2(), 30.0).bg(pal.paper_sunken()),
                 Stage::Shell => tile(Glyph::Terminal, pal.ink_2(), 30.0).bg(pal.paper_sunken()),
