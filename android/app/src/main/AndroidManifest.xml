@@ -8,6 +8,8 @@
     <!-- In-app haptics: VibrationEffect compositions and waveforms throw without it (performHapticFeedback does not). -->
     <uses-permission android:name="android.permission.VIBRATE" />
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+    <!-- Android 16 Live Updates: a running bypass or Overnight stays promoted at the top, with its chronometer. -->
+    <uses-permission android:name="android.permission.POST_PROMOTED_NOTIFICATIONS" />
     <!-- Haptic feedback on approvals (feedback/AndroidFeedback.kt). -->
     <uses-permission android:name="android.permission.VIBRATE" />
     <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
@@ -155,5 +157,72 @@
                 <action android:name="com.google.firebase.MESSAGING_EVENT" />
             </intent-filter>
         </service>
+        <!-- Quick Settings tiles (And-Outside 03): Lockdown, what waits, Autopilot's mode. -->
+        <service
+            android:name=".platform.tiles.LockdownTileService"
+            android:exported="true"
+            android:icon="@drawable/ic_tile_lock"
+            android:label="Lockdown"
+            android:permission="android.permission.BIND_QUICK_SETTINGS_TILE">
+            <intent-filter>
+                <action android:name="android.service.quicksettings.action.QS_TILE" />
+            </intent-filter>
+            <meta-data android:name="android.service.quicksettings.TOGGLEABLE_TILE" android:value="true" />
+        </service>
+        <service
+            android:name=".platform.tiles.WaitingTileService"
+            android:exported="true"
+            android:icon="@drawable/ic_tile_activity"
+            android:label="Reins"
+            android:permission="android.permission.BIND_QUICK_SETTINGS_TILE">
+            <intent-filter>
+                <action android:name="android.service.quicksettings.action.QS_TILE" />
+            </intent-filter>
+        </service>
+        <service
+            android:name=".platform.tiles.AutopilotTileService"
+            android:exported="true"
+            android:icon="@drawable/ic_tile_autopilot"
+            android:label="Autopilot"
+            android:permission="android.permission.BIND_QUICK_SETTINGS_TILE">
+            <intent-filter>
+                <action android:name="android.service.quicksettings.action.QS_TILE" />
+            </intent-filter>
+        </service>
+        <!-- Home screen widgets (And-Outside 04), with Glance. -->
+        <receiver
+            android:name=".platform.widgets.WaitingWidgetReceiver"
+            android:exported="true"
+            android:label="Waiting">
+            <intent-filter>
+                <action android:name="android.appwidget.action.APPWIDGET_UPDATE" />
+            </intent-filter>
+            <meta-data
+                android:name="android.appwidget.provider"
+                android:resource="@xml/widget_waiting" />
+        </receiver>
+        <receiver
+            android:name=".platform.widgets.AutopilotWidgetReceiver"
+            android:exported="true"
+            android:label="Autopilot">
+            <intent-filter>
+                <action android:name="android.appwidget.action.APPWIDGET_UPDATE" />
+            </intent-filter>
+            <meta-data
+                android:name="android.appwidget.provider"
+                android:resource="@xml/widget_autopilot" />
+        </receiver>
+
+        <!-- Long-press on a tile: Trust, or the stack. -->
+        <activity
+            android:name=".platform.tiles.TilePreferencesActivity"
+            android:exported="true"
+            android:excludeFromRecents="true"
+            android:noHistory="true"
+            android:theme="@android:style/Theme.Translucent.NoTitleBar">
+            <intent-filter>
+                <action android:name="android.service.quicksettings.action.QS_TILE_PREFERENCES" />
+            </intent-filter>
+        </activity>
     </application>
 </manifest>
