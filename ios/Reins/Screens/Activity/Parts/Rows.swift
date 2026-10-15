@@ -210,6 +210,9 @@ struct HistoryRow: View {
                         .foregroundStyle(Palette.tertiary)
                         .lineLimit(1)
                 }
+                if let risk = entry.autopilot?.risk, RiskLook.listed(risk) {
+                    RiskLine(risk: risk)
+                }
             }
             .padding(.top, label == nil ? 0 : 1)
             .frame(maxWidth: .infinity, alignment: .leading)

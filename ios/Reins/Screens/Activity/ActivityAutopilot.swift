@@ -229,9 +229,82 @@ extension EntryOutcomePill {
 }
 
 extension ApprovalRecord {
-    /// How `entry` ended, for the approval's hero.
+    /// How `entry` ended, for the approval's hero, with the risk the model saw in it.
     static func of(_ entry: ActivityEntry) -> ApprovalRecord {
-        ApprovalRecord(outcome: EntryOutcome.text(entry), symbol: EntryOutcome.symbol(entry), tint: EntryOutcome.tint(entry))
+        ApprovalRecord(outcome: EntryOutcome.text(entry), symbol: EntryOutcome.symbol(entry), tint: EntryOutcome.tint(entry),
+                       risk: entry.autopilot?.risk)
+    }
+}
+
+/// A risk level's colour and symbol: low reads as fine, then amber, orange and red.
+enum RiskLook {
+    static func tint(_ level: RiskLevel) -> Color {
+        switch level {
+        case .benign: Palette.success
+        case .risky: Palette.warning
+        case .severe: Palette.send
+        case .catastrophic: Palette.danger
+        }
+    }
+
+    static func symbol(_ level: RiskLevel) -> String {
+        switch level {
+        case .benign: "checkmark.shield"
+        case .risky: "exclamationmark.shield"
+        case .severe: "exclamationmark.triangle.fill"
+        case .catastrophic: "xmark.octagon.fill"
+        }
+    }
+
+    /// Worth a line in the history: anything above low, and whatever Overnight held.
+    static func listed(_ risk: RiskView?) -> Bool {
+        guard let risk else { return false }
+        return risk.held || risk.level != .benign
+    }
+}
+
+/// "Risk: severe · force push" in the level's colour, and, when Overnight held the request, "Held by Overnight" with
+/// the moon. Shown only where the model rated the risk.
+struct RiskChips: View {
+    var risk: RiskView
+
+    var body: some View {
+        let level = WarnTag(text: AutopilotText.riskLine(risk), tint: RiskLook.tint(risk.level), symbol: RiskLook.symbol(risk.level))
+            .truncationMode(.tail)
+            .accessibilityIdentifier("risk")
+        if risk.held {
+            let held = WarnTag(text: AutopilotText.heldLine, tint: Palette.overnight, symbol: AutopilotText.overnightSymbol)
+                .accessibilityIdentifier("riskHeld")
+            ViewThatFits(in: .horizontal) {
+                HStack(spacing: 8) { level; held }
+                VStack(spacing: 8) { level; held }
+            }
+        } else {
+            level
+        }
+    }
+}
+
+/// The history row's risk: the level in a few words in its colour, the moon when Overnight held it.
+struct RiskLine: View {
+    var risk: RiskView
+
+    var body: some View {
+        let tint = RiskLook.tint(risk.level)
+        HStack(spacing: 4) {
+            Image(systemName: RiskLook.symbol(risk.level)).font(.system(size: 11, weight: .semibold))
+            Text("Risk: \(AutopilotText.riskWord(risk.level))").font(RFont.sans(12.5, .medium))
+            if risk.held {
+                Image(systemName: AutopilotText.overnightSymbol)
+                    .font(.system(size: 11, weight: .semibold))
+                    .foregroundStyle(Palette.overnight)
+                    .accessibilityLabel(AutopilotText.heldLine)
+            }
+        }
+        .foregroundStyle(tint)
+        .lineLimit(1)
+        .accessibilityElement(children: .combine)
+        .accessibilityIdentifier("entryRisk")
     }
 }
 
