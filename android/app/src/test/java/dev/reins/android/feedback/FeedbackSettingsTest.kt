@@ -9,7 +9,7 @@ class FeedbackSettingsTest {
     @Test
     fun `everything defaults on at half volume`() {
         val d = FeedbackSettings()
-        assertTrue(d.master && d.sounds && d.interfaceSounds && d.requestSounds && d.autopilotSounds && d.alertSounds && d.haptics)
+        assertTrue(d.master && d.sounds && d.interfaceSounds && d.requestSounds && d.soundWhenOpen && d.autopilotSounds && d.alertSounds && d.haptics)
         assertEquals(HapticStrength.Standard, d.strength)
         assertEquals(0.5f, d.volume, 0f)
         assertEquals(1f, d.gain, 1e-6f)
@@ -18,8 +18,8 @@ class FeedbackSettingsTest {
     @Test
     fun `settings round-trip through their stored form`() {
         val s = FeedbackSettings(
-            master = false, sounds = false, interfaceSounds = false, requestSounds = false, autopilotSounds = false,
-            alertSounds = false, volume = 0.4f, haptics = false, strength = HapticStrength.Strong,
+            master = false, sounds = false, interfaceSounds = false, requestSounds = false, soundWhenOpen = false,
+            autopilotSounds = false, alertSounds = false, volume = 0.4f, haptics = false, strength = HapticStrength.Strong,
         )
         val stored = FeedbackSettingsCodec.write(s)
         assertEquals(s, FeedbackSettingsCodec.read { stored[it] })

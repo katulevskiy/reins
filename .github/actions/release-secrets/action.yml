@@ -19,7 +19,7 @@ inputs:
 runs:
   using: composite
   steps:
-    - uses: Infisical/secrets-action@v1.0.18
+    - uses: Infisical/secrets-action@d2e351f16c6ca20d17c85e6c992e04bdeb64e87d # v1.0.18
       with:
         method: oidc
         identity-id: ${{ inputs.identity-id }}

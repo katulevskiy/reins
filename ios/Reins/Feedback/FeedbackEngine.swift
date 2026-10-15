@@ -26,6 +26,7 @@ final class FeedbackEngine: Feedback, FeedbackPreviewing, @unchecked Sendable {
     private let env: AppEnvironment
     private let gate: FeedbackGate
     private let claims: ClaimTracker
+    private let arrivals: ArrivalPolicy
     private let clock: () -> Int64
     private let haptics: HapticPlayer
     private let sounds: SoundPlayer
@@ -38,6 +39,7 @@ final class FeedbackEngine: Feedback, FeedbackPreviewing, @unchecked Sendable {
         env = AppEnvironment()
         gate = FeedbackGate(settings: { store.current }, env: env, clock: clock)
         claims = ClaimTracker(clock: clock)
+        arrivals = ArrivalPolicy(clock: clock)
         self.clock = clock
         haptics = HapticPlayer(clock: clock)
         sounds = SoundPlayer(clock: clock)
@@ -56,6 +58,18 @@ final class FeedbackEngine: Feedback, FeedbackPreviewing, @unchecked Sendable {
         claims.claimCue()
         if cue == .request { claims.claimChime() }
         play(cue, step: step, preview: false)
+    }
+
+    func requestArrived(_ id: String, needsUser: Bool) {
+        guard env.active else {
+            debug("arrival skip: \(Skipped.inactive.rawValue)")
+            return
+        }
+        let outcome = arrivals.decide(id: id, needsUser: needsUser, settings: store.current)
+        // The sound first: it is the channel perceived late. `cue` also quiets the Open of the sheet that pops up.
+        if outcome.chime { cue(.request, step: 0) }
+        if outcome.haptic { haptic(.attention) }
+        if outcome == .nothing { debug("arrival skip (needsUser=\(needsUser))") }
     }
 
     func sheetOpened() {

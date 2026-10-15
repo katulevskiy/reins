@@ -25,6 +25,8 @@ pub const REFUSED: &str = "This must come from the Reins desktop app paired with
 pub struct Desk {
     pub server: MockServer,
     pub core: Arc<ReinsCore>,
+    /// What the core told the app (waiting items, items resolved, automatic decisions).
+    pub notes: Arc<RecordingNotifier>,
     pub key: SecretKey,
     pub dir: tempfile::TempDir,
 }
@@ -52,11 +54,12 @@ pub async fn mount_reins(server: &MockServer) {
 /// A signed-in phone (as `email` with `password`) whose server is `server`, configured by `cfg`.
 pub async fn desk_with(server: MockServer, email: &str, password: &str, cfg: CoreConfig) -> Desk {
     let dir = tempfile::tempdir().unwrap();
+    let notes = Arc::new(RecordingNotifier::default());
     let core = ReinsCore::with_connectors(
         dir.path().to_str().unwrap(),
         &FakeKeys,
         Arc::new(FakeGoogle::new()),
-        Arc::new(RecordingNotifier::default()),
+        Arc::<RecordingNotifier>::clone(&notes),
         CoreConfig {
             backoff_base: Duration::from_millis(1),
             ..cfg
@@ -69,6 +72,7 @@ pub async fn desk_with(server: MockServer, email: &str, password: &str, cfg: Cor
     Desk {
         server,
         core,
+        notes,
         key: SecretKey::generate(&mut OsRng),
         dir,
     }

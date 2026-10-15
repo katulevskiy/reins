@@ -33,6 +33,11 @@ for store publication. See [signing setup](../CONTRIBUTING.md#maintainers-signin
 into `app/google-services.json` (git-ignored) when present. Without it the app builds and runs, gets no push
 notifications, and relies on the foreground long-poll.
 
+With the app in front a request posts no notification (it pops up instead), but it still chimes once, with a haptic
+(Settings > Sounds & haptics > "Sound when open", on by default): only for a request that waits for the user, once per
+request, at most once every 3 s (`feedback/ArrivalChime.kt`). The chime is `fx_chime_request` on the notification
+stream, so silent mode and Do Not Disturb mute it and vibrate mode leaves only the haptic; it takes no audio focus.
+
 ### Gmail
 
 The app asks Google Play services for Gmail tokens (`gmail.modify`, `gmail.settings.basic`). That needs an **Android

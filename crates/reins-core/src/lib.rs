@@ -66,6 +66,6 @@ pub use types::{
     StartingPolicy,
 };
 pub use types::{
-    AskView, CommandOption, EnvReleaseView, EnvStoreView, SecretReleaseView, SecretsRevoked, SecretsScopeChoice,
-    SecretsStoreView, SshSignView, SshStoreView, TokenStoreView,
+    AskRuleView, AskView, CommandOption, EnvReleaseView, EnvStoreView, SecretReleaseView, SecretsRevoked,
+    SecretsScopeChoice, SecretsStoreView, SshSignView, SshStoreView, TokenStoreView,
 };

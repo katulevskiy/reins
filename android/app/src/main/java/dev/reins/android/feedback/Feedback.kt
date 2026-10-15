@@ -123,7 +123,10 @@ enum class Event(val haptic: Haptic?, val cue: Cue?) {
     /** A sheet, dialog or section is dismissed. */
     Close(null, Cue.Close),
 
-    /** A request, pairing or upload arrived while the app is open (in the background its notification chimes). */
+    /**
+     * A request, pairing or upload arrived while the app is open (in the background its notification chimes). The
+     * arrival itself goes through [Feedback.requestArrived]; this pair is what the Settings page auditions.
+     */
     RequestArrived(Haptic.Attention, Cue.Request),
 
     /** Approved once. */
@@ -199,6 +202,16 @@ interface Feedback {
 
     /** [step] only matters to cues that climb a scale ([Cue.Detent]). */
     fun cue(cue: Cue, step: Int = 0)
+
+    /**
+     * Request [id] arrived while the app is open, where its notification is skipped. [needsUser]: it waits for the
+     * user; false: Autopilot, a bypass or a grant answered it. The real engine asks [ArrivalPolicy] (once per request,
+     * once per burst, the phone's silent / vibrate modes) and chimes on the notification stream; elsewhere this is
+     * simply [Event.RequestArrived].
+     */
+    fun requestArrived(id: String, needsUser: Boolean = true) {
+        if (needsUser) play(Event.RequestArrived)
+    }
 }
 
 /** Play whichever of [haptic] / [cue] is non-null. */

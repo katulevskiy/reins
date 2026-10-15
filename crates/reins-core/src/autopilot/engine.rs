@@ -252,7 +252,12 @@ fn class_label(engine: &Engine, key: &str) -> String {
         Some(id) => engine.store.mcp_server(id).ok().flatten().map_or_else(|| "MCP".to_owned(), |s| s.name),
         None => views::service_name(service).to_owned(),
     };
-    std::iter::once(name).chain(parts.map(str::to_owned)).collect::<Vec<_>>().join(" · ")
+    // A hook's question by its rule's group: "Desktop app · ask · .env files".
+    let named = |part: &str| match crate::connector::desktop::guard_group_label(part) {
+        Some(label) if service == reins_proto::connector::DESKTOP => label.to_owned(),
+        _ => part.to_owned(),
+    };
+    std::iter::once(name).chain(parts.map(named)).collect::<Vec<_>>().join(" · ")
 }
 
 /// A class key from a typed situation (the playground).
@@ -463,9 +468,14 @@ impl Engine {
                 continue;
             }
             if let Err(e) = self.ap_item(&row, &mut ctx).await {
-                // Nothing was decided: the item waits, as it would without Autopilot.
+                // Nothing was decided: the item waits, as it would without Autopilot; under a bypass it is tried
+                // again by the next pass, and nobody is told it waits.
                 log::warn!("Autopilot could not evaluate a request: {e}");
-                if let Some(item) = Self::ap_pending_item(&row) {
+                let bypassed = Self::ap_subject(&row)
+                    .ok()
+                    .flatten()
+                    .is_some_and(|s| self.ap_mode_for(&s.connection_id, now).ok() == Some(AutopilotMode::Bypass));
+                if !bypassed && let Some(item) = Self::ap_pending_item(&row) {
                     self.notifier.item_pending(item);
                 }
             }
@@ -587,7 +597,7 @@ impl Engine {
             // Left to the app, which tells the user.
             return Ok(());
         }
-        let Some(mut subject) = Self::ap_subject(row)? else {
+        let Some(subject) = Self::ap_subject(row)? else {
             // A new connection is only ever approved by the user, in every mode.
             let pairing: PairingRequest =
                 serde_json::from_slice(&row.payload).map_err(|_| CoreError::storage("corrupt parked pairing"))?;
@@ -620,6 +630,11 @@ impl Engine {
             return Ok(());
         };
         let mode = self.ap_mode_for(&subject.connection_id, now)?;
+        if mode == AutopilotMode::Bypass {
+            // Before anything that could fail or wait (the profile, the connection list): nothing a bypass covers is
+            // left waiting.
+            return self.ap_bypass_item(subject, now).await;
+        }
         if !ctx.model && matches!(mode, AutopilotMode::Manual | AutopilotMode::Auto) {
             // Judged by the app's next pass, which has the model.
             return Ok(());
@@ -673,22 +688,6 @@ impl Engine {
         facts.target_is_new = (!facts.target.is_empty()).then_some(novel);
         (s.s_facts, s.s_full) = situation::render(&facts, &subject.described.ai);
 
-        // Bypass approves everything, every kind and every item of it, at once: that is what it is for. Only a new
-        // connection (a pairing) and another phone joining the account still reach the user, and neither comes here.
-        // A standing permission an AI asks for ends when the bypass does.
-        if mode == AutopilotMode::Bypass {
-            s.verdict = Verdict::Approve;
-            "Bypass: approved without asking".clone_into(&mut s.reason);
-            subject.choice = subject.everything.clone();
-            if subject.grant {
-                // Marked as this bypass's, so that it ends when the bypass does, however it ends; a timed one is also
-                // capped at its planned end.
-                let (scope, cap) = self.ap_bypass_cap(&subject.connection_id, now)?;
-                subject.choice.standing = cap;
-                subject.grant_origin = Some(modes::bypass_origin(&scope));
-            }
-            return self.ap_conclude(&subject, s, Verdict::Approve, "bypass").await;
-        }
         let young = gates::young(age, self.cfg.new_connection_secs)
             .then(|| "a connection paired less than 10 minutes ago".to_owned());
         if let Some(floor) = subject.floor.clone().or(young) {
@@ -743,6 +742,54 @@ impl Engine {
             }
         }
         self.ap_wait(&subject, &s)
+    }
+
+    /// Bypass approves everything, every kind and every item of it, at once: that is what it is for. Only a new
+    /// connection (a pairing) and another phone joining the account still reach the user, and neither comes here. A
+    /// standing permission an AI asks for ends when the bypass does. What only describes the request (its profile, its
+    /// target) is best effort here: none of it may keep the request waiting.
+    async fn ap_bypass_item(&self, mut subject: Subject, now: i64) -> Result<(), CoreError> {
+        let stored = self.ap_profile_of(&subject.connection_id).ok();
+        let target_key =
+            self.store.ap_target_key(&subject.connection_id, &subject.described.facts.target).unwrap_or_default();
+        let mut facts = subject.described.facts.clone();
+        facts.connection.clone_from(&subject.connection_label);
+        facts.connection_history = self.store.ap_history(&subject.connection_id).ok();
+        let (s_facts, s_full) = situation::render(&facts, &subject.described.ai);
+        let s = Suggestion {
+            request_id: subject.id.clone(),
+            at: now,
+            kind: match subject.kind {
+                PendingKind::Blob => "blob",
+                _ => "request",
+            }
+            .to_owned(),
+            connection_id: subject.connection_id.clone(),
+            connection_label: subject.connection_label.clone(),
+            mode: AutopilotMode::Bypass,
+            profile_id: stored.as_ref().map(|p| p.id.clone()).unwrap_or_default(),
+            profile_name: stored.map(|p| p.profile.name).unwrap_or_default(),
+            class_key: subject.described.class_key.clone(),
+            label: subject.described.label.clone(),
+            target_key,
+            s_facts,
+            s_full,
+            novel: false,
+            floor: None,
+            judged: None,
+            verdict: Verdict::Approve,
+            reason: "Bypass: approved without asking".to_owned(),
+            decided: None,
+        };
+        subject.choice = subject.everything.clone();
+        if subject.grant {
+            // Marked as this bypass's, so that it ends when the bypass does, however it ends; a timed one is also
+            // capped at its planned end.
+            let (scope, cap) = self.ap_bypass_cap(&subject.connection_id, now)?;
+            subject.choice.standing = cap;
+            subject.grant_origin = Some(modes::bypass_origin(&scope));
+        }
+        self.ap_conclude(&subject, s, Verdict::Approve, "bypass").await
     }
 
     /// Runs the model on the two texts and scores them against the profile.
@@ -897,6 +944,12 @@ impl Engine {
                     confidence: j.map_or(0.0, |j| j.confidence),
                     activity_id: seq,
                 });
+                Ok(())
+            }
+            Err(e) if by == "bypass" => {
+                // Not judged: the next pass (a sync, a push) tries again. A bypass never leaves it waiting for the
+                // user, nor says it waits.
+                log::warn!("Bypass could not approve a request yet ({e}); it is tried again");
                 Ok(())
             }
             Err(e) => {
@@ -1310,9 +1363,12 @@ impl Engine {
             if self.ap_mode_for(&subject.connection_id, now).ok() != Some(AutopilotMode::Bypass) {
                 continue;
             }
-            let undecided = self.store.ap_suggestion(&row.id).ok().flatten().is_some_and(|s| s.decided.is_none());
-            if undecided && self.store.ap_forget_suggestion(&row.id).is_ok() {
-                again = true;
+            // Judged before (it waits with a suggestion): judged again. Never judged (parked where the model could
+            // not run): the pass below takes it too.
+            match self.store.ap_suggestion(&row.id) {
+                Ok(Some(s)) if s.decided.is_none() => again |= self.store.ap_forget_suggestion(&row.id).is_ok(),
+                Ok(None) => again = true,
+                _ => {}
             }
         }
         if again {

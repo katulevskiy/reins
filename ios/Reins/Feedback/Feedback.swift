@@ -159,10 +159,18 @@ protocol Feedback: AnyObject {
     func sheetOpened()
     /// A choice was made whose own sound comes later (after the core answers): the close that follows stays silent.
     func quietClose()
+    /// Request `id` arrived while the app is in front, where its notification is skipped. `needsUser`: it waits for the
+    /// user; false: Autopilot, a bypass or a grant answered it. The real engine asks `ArrivalPolicy` (once per request,
+    /// once per burst, "Sound when open"); elsewhere this is simply `.requestArrived`.
+    func requestArrived(_ id: String, needsUser: Bool)
 }
 
 extension Feedback {
     func defaultTap() { play(.tap) }
+
+    func requestArrived(_ id: String, needsUser: Bool) {
+        if needsUser { play(.requestArrived) }
+    }
 
     func sheetOpened() { cue(.open) }
 

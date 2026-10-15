@@ -5,6 +5,8 @@ use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 use zeroize::Zeroizing;
 
+/// Not `audit_snapshots`: an entry's approval (up to 256 KiB each) stays on the phone that showed it. A sealed copy on
+/// disk is the whole database instead, so it keeps it.
 const TABLES: &[&str] = &[
     "meta",
     "session",

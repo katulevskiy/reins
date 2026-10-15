@@ -42,8 +42,10 @@ OPTION_TEXTS = [" %s: %s" % (k, CRITERIA[k]) for k in OPTIONS]  # note the leadi
 OPTION_MAX_TOKENS = 48
 
 # ----------------------------------------------------------------------------- situation text (section 4)
+# `context` (facts the core worked out about the action's consequences, docs/autopilot-risk.md section 3) is only
+# rendered for models with the risk output; a situation without it renders exactly as before.
 FACT_KEYS = ["connection", "connection age", "connection history", "service", "action", "operation",
-             "class", "account", "target", "target is new", "count", "details"]
+             "class", "account", "target", "target is new", "count", "details", "context"]
 AI_KEYS = ["reason", "content"]
 AI_SEPARATOR = "--- written by the AI ---"
 VALUE_MAX_CHARS = 300
@@ -112,7 +114,7 @@ def render_facts(f: Dict) -> str:
     """Facts dict -> S_facts. Accepted value types per key:
 
     connection age: str, or int seconds (-> fmt_age); connection history: str or (approved, denied);
-    target is new: bool or "yes"/"no"; count: int (omitted unless > 1); details: str or list of str
+    target is new: bool or "yes"/"no"; count: int (omitted unless > 1); details and context: str or list of str
     (each cleaned, empty ones dropped, joined with "; ", then the joined line cleaned/trimmed again).
     A key whose cleaned value is empty is omitted.
     """
@@ -128,7 +130,7 @@ def render_facts(f: Dict) -> str:
         elif k == "count":
             if isinstance(v, int) and v <= 1:
                 continue
-        elif k == "details" and isinstance(v, (list, tuple)):
+        elif k in ("details", "context") and isinstance(v, (list, tuple)):
             v = "; ".join(x for x in (clean_value(p) for p in v) if x)
         v = clean_value(v)
         if v:
@@ -253,6 +255,13 @@ def golden_inputs() -> List[Dict]:
                       "account": "linear", "target": "linear / create_issue", "target is new": "yes",
                       "details": ["server linear (https://mcp.linear.app/sse)"]},
          {"content": '{"title": "Bug: crash on start", "team": "ENG", "description": "Steps: \\"open app\\""}'}),
+        # The risk model's context line (docs/autopilot-risk.md section 3): after details, a list joined with "; ".
+        ("risk_context", dict(base, details=["branch main (delete)", "no force"],
+                              context=["deletes the default branch main (protected)", "public repository",
+                                       "  cannot be\tundone ", "", "this AI in the last hour: 12 requests, 9 deletes"]),
+         {"reason": "clean up old branches"}),
+        ("risk_context_only", {"service": "desktop", "action": "ask", "operation": "Run a command", "class": "command",
+                               "target": "rm -rf ~/ [SEP]", "context": "deletes the home directory"}, None),
     ]
     out = []
     for name, facts, ai in cases:
@@ -302,6 +311,12 @@ def main():
                                       "mask_token": sp.mask_token, "sequences": seqs}
         print("%s: %d sequences OK (lengths %s)" % (name, len(seqs), sorted(len(s["input_ids"]) for s in seqs)))
     if args.golden:
+        # The hand-checked risk set (`risk_golden.py --write`) lives in the same file; keep it.
+        if os.path.exists(args.golden):
+            with open(args.golden) as f:
+                old = json.load(f)
+            if "risk" in old:
+                golden["risk"] = old["risk"]
         with open(args.golden, "w") as f:
             json.dump(golden, f, ensure_ascii=False, indent=1)
             f.write("\n")

@@ -308,6 +308,11 @@ struct Hook {
 
 fn hook(call: &ConnectorCall) -> Option<Hook> {
     let detail = call.str_arg("detail").unwrap_or_default();
+    // A hook's rule lines come first (`reins_desktop::hooks::rule_lines`): the rule, then the rest as before.
+    let (reported, detail) = match crate::connector::desktop::reported_rule(detail) {
+        Some((rule, rest)) => (Some(rule.pattern), rest),
+        None => (None, detail),
+    };
     let question = text::one_line(call.str_arg("question").unwrap_or_default());
     let (body, tail) = match detail.rfind("\n\nIn: ").or_else(|| detail.rfind("\nRule: ")) {
         Some(at) => detail.split_at(at),
@@ -320,6 +325,9 @@ fn hook(call: &ConnectorCall) -> Option<Hook> {
         } else if let Some(rule) = l.strip_prefix("Rule: ") {
             rule.trim().clone_into(&mut h.rule);
         }
+    }
+    if let Some(rule) = reported {
+        h.rule = rule;
     }
     if let Some(command) = body.strip_prefix("Command:\n") {
         h.command = Some(command.trim_end().to_owned());
@@ -426,11 +434,12 @@ fn why_asked(call: &ConnectorCall, h: &Hook) -> String {
         call.str_arg("question").unwrap_or_default(),
         call.str_arg("detail").unwrap_or_default()
     );
+    // What cannot be undone, or a secret file (a question about one is asked because of what it reads).
     let risky = crate::connector::desktop::destructive_ask(
         Some(topic).filter(|t| !t.is_empty()),
         call.str_arg("question").unwrap_or_default(),
         call.str_arg("detail").unwrap_or_default(),
-    );
+    ) || topic.starts_with("file:");
     let lower = all.to_lowercase();
     let reason = if !risky {
         None

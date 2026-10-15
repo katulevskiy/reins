@@ -42,6 +42,15 @@ and re-run it; do not edit the project file by hand.
 Push notifications need APNs on the server: `REINS_APNS_KEY_FILE`, `_KEY_ID`, `_TEAM_ID`, `_TOPIC` (see
 [docs/self-hosting.md](../docs/self-hosting.md)). Without them requests still arrive while the app is open (long poll).
 
+### TestFlight
+
+Every release goes to TestFlight by itself: the release workflow's `ios-testflight` job archives with Xcode 27.0 on
+GitHub's `xcode-27` runner, signs manually with the Apple Distribution certificate and the App Store profiles of the
+three targets, uploads, and `scripts/testflight.py` sets export compliance, What to Test (the release notes), the
+groups ("Internal", and the external "Testers" by its id) and the beta review submission. Version: the release's; build
+number: the Android versionCode, kept above any build already in App Store Connect. No Mac is needed per release.
+Secrets, variables and the one-time setup: [CONTRIBUTING.md](../CONTRIBUTING.md#maintainers-testflight).
+
 ## Sign-in and recovery
 
 Hosted sign-in uses WorkOS AuthKit in an authentication browser session, with a passkey instead of a Reins master
@@ -100,6 +109,9 @@ unfolding keeps what is open. On the iPhone Duo, `UIHingeInteraction` (iOS 27.1)
   the server's content-free push into "Approval needed · Claude: Send email to 2". Deny works from the notification
   (unlocked phone); approving always opens the app and asks for Face ID. Autopilot's decisions are quiet notifications
   with "Report". Grants ending soon remind you. Sounds follow Settings > Sounds & haptics.
+- With the app in front a request posts no notification (it pops up instead), but it still chimes once, with a haptic
+  ("Sound when open", on by default): only for a request that waits for you, once per request, at most once every 3 s
+  (`ArrivalPolicy`), in the `.ambient` session, so the ring/silent switch mutes it and music keeps playing.
 - When Autopilot needs its model (Manual, Auto), the extension parks the request without judging it
   (`handle_push_deferring_autopilot`) and the app judges it when it next runs; the push also wakes the app.
 - Widgets: what waits (with countdowns), Autopilot (Lock down, Stop bypass), latest activity; Lock Screen gauges.

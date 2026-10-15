@@ -44,6 +44,7 @@ for jobs, older, event, expected in (
     (BUILDS + [job("Publish the release", "in_progress", None)], run(1, "workflow_dispatch"), "push", "wait"),
     (BUILDS + [job("Publish the release"), job("Google Play upload", "in_progress", None)], run(1), "push", "leave"),
     (BUILDS + [job("Publish the release"), job("AUR (reins-bin)", "queued", None)], run(1), "push", "leave"),
+    (BUILDS + [job("Publish the release"), job("TestFlight upload", "in_progress", None)], run(1), "push", "leave"),
     (BUILDS + [job("Publish the release", "completed", "skipped")], run(1), "push", "leave"),
     (BUILDS, run(1, "workflow_dispatch"), "push", "leave"),  # a manual release or verify_only run
     (BUILDS, run(1, branch="desktop/redesign"), "push", "leave"),
@@ -51,7 +52,8 @@ for jobs, older, event, expected in (
 ):
     action, why = decide(older, jobs, event)
     check(action == expected and why, (jobs, older, event, action, expected))
-check(supersede.PUBLISH_STAGE == {"Publish the release", "Google Play upload", "Homebrew cask", "AUR (reins-bin)"},
+check(supersede.PUBLISH_STAGE == {"Publish the release", "Google Play upload", "TestFlight upload", "Homebrew cask",
+                                   "AUR (reins-bin)"},
       "the publish stage")
 
 # The whole script against a disposable gh: what it cancels, what it waits for, what it leaves.

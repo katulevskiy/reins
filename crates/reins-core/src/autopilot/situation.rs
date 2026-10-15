@@ -296,12 +296,15 @@ pub fn describe_request(view: &ApprovalView) -> Described {
     } else if let Some(ask) = &view.ask {
         "ask".clone_into(&mut f.action);
         f.account.clear();
-        let (kind, subject) = match ask.topic.as_deref().and_then(|t| t.split_once(':')) {
-            Some((kind, subject)) => (kind.trim().to_owned(), subject.trim().to_owned()),
-            None => ("question".to_owned(), ask.topic.clone().unwrap_or_default()),
-        };
-        f.class = kind;
-        f.target = subject;
+        // Its own kind only when everything the command (or the file list) does falls in one guard group
+        // (`desktop/ask/env-files`), as the phone reads it; else the generic `desktop/ask`. The topic and the question
+        // line are the computer's words, and name no kind.
+        f.class = ask.kind.clone().unwrap_or_default();
+        // The target is what a remembered answer covers: exactly this file or this command, else the topic.
+        f.target = view.resources.first().map_or_else(|| ask.topic.clone().unwrap_or_default(), |r| r.id.clone());
+        if let Some(rule) = &ask.rule {
+            f.details.push(format!("matched the rule {} ({})", rule.label, rule.pattern));
+        }
         if f.operation.is_empty() {
             "Answer a question from the desktop app".clone_into(&mut f.operation);
         }

@@ -8,7 +8,8 @@ name: Release
 # the server mirrors it into reins2fa.com/releases, with the APT and RPM repositories), and SHA256SUMS. Android
 # signing is required for every release. Archives and installers use a
 # versioned name and under a fixed one (reins-desktop-<target>.tar.gz, Reins-macOS.dmg, ...) for "latest" links.
-# After the release, the aur job updates the AUR package reins-bin (optional).
+# After the release, the aur job updates the AUR package reins-bin (optional), and ios-testflight uploads the iOS app
+# to TestFlight.
 
 # Only main pushes and maintainer dispatches can build with release credentials.
 # Public release/image tags are updated only after CI and all required builds pass.
@@ -26,6 +27,10 @@ on:
         description: Build assets without creating a release or updating version/latest tags (CI-tested branches)
         type: boolean
         default: false
+      testflight_tag:
+        description: Only upload this published release (vX.Y.Z) to TestFlight again; nothing else runs
+        type: string
+        default: ""
 
 permissions: {}
 
@@ -53,7 +58,7 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 50
     if: >-
-      github.ref == 'refs/heads/main' &&
+      github.ref == 'refs/heads/main' && !inputs.testflight_tag &&
       (github.event_name == 'push' || (github.event_name == 'workflow_dispatch' && inputs.verify_only != true))
     permissions:
       actions: write # cancel older release runs
@@ -77,9 +82,10 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     # After supersede, whatever its result (it is skipped for verify_only runs; if it failed, the publish job's tag
-    # check still keeps two runs from releasing one version), unless this run was cancelled.
+    # check still keeps two runs from releasing one version), unless this run was cancelled. A testflight_tag run
+    # skips it, and with it every job but ios-testflight.
     if: >-
-      !cancelled() &&
+      !cancelled() && !inputs.testflight_tag &&
       (github.event_name == 'workflow_dispatch' ||
       (github.event_name == 'push' && github.ref == 'refs/heads/main'))
     permissions:
@@ -1493,6 +1499,433 @@ jobs:
       - name: Remove the Play credentials
         if: always()
         run: rm -f "$GITHUB_WORKSPACE/.play.env" "$RUNNER_TEMP/play-service-account.json"
+
+  # The iOS app on TestFlight: archived with a released Xcode, signed for the App Store, uploaded to App Store Connect,
+  # then given its export compliance, its What to Test (the release notes), its TestFlight groups and a beta app review
+  # submission (scripts/testflight.py). After publication, as the Play upload is: a superseded run never gets here
+  # (supersede cancels runs before publication), publication never waits for it, and a failure here leaves the GitHub
+  # release as it is (rerun the job; a build already uploaded is not uploaded again). Uploads go one at a time.
+  #
+  # Trust: only commits on main that carry a published release tag are built (checked before anything is checked out).
+  # The Rust core and the Swift packages (pinned, checked against Package.resolved) build before any secret is in the
+  # job. The secrets are the `testflight` environment's, each mapped only into the step that needs it, written to files
+  # under $RUNNER_TEMP/ios-signing (0700) and never to GITHUB_ENV or a command line. The certificate's files are gone
+  # once it is in the keychain (non-extractable, codesign only); the API key is written for the build number and
+  # removed, then written again after the archive, so the archive's build phases and packages see only the keychain,
+  # the profiles and the settings (a step checks). The keychain is locked after the upload and deleted at the end.
+  #
+  # The runner is `xcode-27`, the GitHub image with Xcode 27 (macos-26 stops at Xcode 26.6), with its Xcode 27.0
+  # selected: App Store uploads need a released Xcode, and with the 27.0 SDK the app builds without the iPhone Duo's
+  # hinge (REINS_HINGE_CONDITION, ios/Config/Reins.xcconfig). Move XCODE_VERSION on once 27.1 is released.
+  #
+  # The build number (CFBundleVersion) is plan's version-code, the Android versionCode (the release's start in minutes
+  # since 1970, so it grows with every release), raised above the highest build App Store Connect already has. A
+  # testflight_tag run uses its own start in minutes. The marketing version is the release's.
+  #
+  # Signing, from the secrets of the GitHub environment `testflight` (copies of Infisical reins-release prod
+  # /signing/apple, whose master copies are there and in 1Password):
+  #   IOS_DIST_CERT_P12, IOS_DIST_CERT_PASSWORD  the Apple Distribution certificate and key (.p12, base64)
+  #   IOS_PROFILE_APP, IOS_PROFILE_WIDGETS, IOS_PROFILE_NOTIFICATIONS  the App Store profiles (.mobileprovision, base64)
+  #     of com.reins2fa.app (Reins), com.reins2fa.app.widgets (ReinsWidgets), com.reins2fa.app.notifications
+  #     (ReinsNotifications)
+  #   AC_API_KEY_P8, AC_API_KEY_ID, AC_API_ISSUER_ID, APPLE_TEAM_ID  the App Store Connect API key "Reins CI"
+  # Repository variables: TESTFLIGHT_EXTERNAL_GROUP_ID (the external group's id: two groups are named "Testers"),
+  # TESTFLIGHT_INTERNAL_GROUPS (default Internal), IOS_GOOGLE_CLIENT_ID (optional: Gmail, Calendar, Contacts).
+  ios-testflight:
+    name: TestFlight upload
+    needs: [plan, publish]
+    # Main only: after this run's own publication, or a maintainer's testflight_tag run from main. The workflow has
+    # no pull_request trigger, so neither a pull request nor a fork can start it.
+    if: >-
+      !cancelled() && github.ref == 'refs/heads/main' &&
+      ((needs.publish.result == 'success' && inputs.verify_only != true) ||
+      (github.event_name == 'workflow_dispatch' && inputs.testflight_tag != ''))
+    environment: testflight
+    # One upload at a time, in release order; a newer release waiting replaces an older one still waiting.
+    concurrency:
+      group: release-testflight
+      cancel-in-progress: false
+    runs-on: xcode-27
+    timeout-minutes: 150 # a cold fat-LTO core, the archive, the upload, and Apple's processing
+    permissions:
+      contents: read # the tag, its release and its notes
+    env:
+      XCODE_VERSION: "27.0"
+      DEVELOPER_DIR: /Applications/Xcode_27.0.app/Contents/Developer
+      BUNDLE_ID: com.reins2fa.app
+    steps:
+      # Before anything is checked out: the commit must be on main and carry a published release tag.
+      - name: The release to upload
+        id: release
+        env:
+          EVENT: ${{ github.event_name }}
+          INPUT_TAG: ${{ inputs.testflight_tag }}
+          PLAN_TAG: ${{ needs.plan.outputs.tag }}
+          PLAN_VERSION: ${{ needs.plan.outputs.version }}
+          PLAN_SHA: ${{ needs.plan.outputs.sha }}
+          PLAN_CODE: ${{ needs.plan.outputs.version-code }}
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          api() { # gh api with a few tries
+            local attempt
+            for attempt in 1 2 3; do
+              gh api "$@" && return 0
+              (( attempt < 3 )) || return 1
+              sleep $(( attempt * 10 ))
+            done
+          }
+          manual=false
+          if [[ "$EVENT" == workflow_dispatch && -n "$INPUT_TAG" ]]; then
+            manual=true
+            tag="$INPUT_TAG"
+            # This run's start in minutes, as plan's versionCode is: above every release's so far.
+            minimum=$(( $(date -u +%s) / 60 ))
+          else
+            tag="$PLAN_TAG" minimum="$PLAN_CODE"
+          fi
+          [[ "$tag" =~ ^v([0-9]+\.[0-9]+\.[0-9]+)$ ]] || { echo "::error::'$tag' is not a release tag like v1.2.3"; exit 1; }
+          version="${BASH_REMATCH[1]}"
+          # The tag itself (not a branch of that name), peeled to its commit.
+          read -r type object < <(api "repos/$GH_REPO/git/ref/tags/$tag" --jq '.object.type + " " + .object.sha') ||
+            { echo "::error::There is no tag $tag"; exit 1; }
+          if [[ "$type" == tag ]]; then
+            object="$(api "repos/$GH_REPO/git/tags/$object" --jq .object.sha)"
+          fi
+          sha="$object"
+          [[ "$sha" =~ ^[0-9a-f]{40}$ ]] || { echo "::error::$tag does not name a commit"; exit 1; }
+          [[ "$manual" == true || "$sha" == "$PLAN_SHA" ]] ||
+            { echo "::error::$tag is $sha, not the commit this run released ($PLAN_SHA)"; exit 1; }
+          draft="$(api "repos/$GH_REPO/releases/tags/$tag" --jq .draft)" ||
+            { echo "::error::$tag has no GitHub release"; exit 1; }
+          [[ "$draft" == false ]] || { echo "::error::The release $tag is not published"; exit 1; }
+          # On main: main is the commit itself or ahead of it (git merge-base --is-ancestor, checked again below).
+          status="$(api "repos/$GH_REPO/compare/$sha...main" --jq .status)"
+          [[ "$status" == identical || "$status" == ahead ]] ||
+            { echo "::error::$tag ($sha) is not on main ($status)"; exit 1; }
+          [[ "$minimum" =~ ^[0-9]+$ ]] || { echo "::error::No build number"; exit 1; }
+          [[ "$manual" == true || "$version" == "$PLAN_VERSION" ]] || { echo "::error::$tag is not v$PLAN_VERSION"; exit 1; }
+          { echo "tag=$tag"; echo "version=$version"; echo "sha=$sha"; echo "minimum=$minimum"; } >> "$GITHUB_OUTPUT"
+          echo "::notice::TestFlight: Reins $version ($tag, $sha)"
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          ref: ${{ steps.release.outputs.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Require the commit to be on main
+        env:
+          SHA: ${{ steps.release.outputs.sha }}
+        run: |
+          [[ "$(git rev-parse HEAD)" == "$SHA" ]] || { echo "::error::Checked out $(git rev-parse HEAD), not $SHA"; exit 1; }
+          git merge-base --is-ancestor "$SHA" origin/main || { echo "::error::$SHA is not on origin/main"; exit 1; }
+      - name: Require the released Xcode
+        run: |
+          xcodebuild -version
+          xcode="$(xcodebuild -version | sed -n 's/^Xcode //p')"
+          sdk="$(xcrun --sdk iphoneos --show-sdk-version)"
+          [[ "$xcode" == "$XCODE_VERSION" && "$sdk" == "$XCODE_VERSION" ]] ||
+            { echo "::error::Uploads need the released Xcode $XCODE_VERSION (iOS SDK $XCODE_VERSION) at $DEVELOPER_DIR; found Xcode $xcode, SDK $sdk"; exit 1; }
+
+      # The build that runs code from the repository and its dependencies, with no secret fetched yet. rust-cache
+      # restores no binaries (cache-bin), and the archive below never runs cargo or rustup: its "Rust core" phases stop
+      # at REINS_SKIP_CORE, before either is called.
+      - name: Install Rust toolchain
+        run: rustup toolchain install && rustup target add aarch64-apple-ios
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
+        with:
+          shared-key: release-ios-core
+          save-if: ${{ github.ref == 'refs/heads/main' }}
+          cache-bin: "false"
+      - name: Build the Rust core
+        run: |
+          CONFIGURATION=Release ios/scripts/build-core.sh iphoneos
+          test -s target/ios-core/iphoneos/libreins_core.a
+      # Swift packages only at their Package.resolved revisions (never resolved anew), each checked against its pin;
+      # their plugins and binary targets are listed. No xcodebuild call here skips plugin or macro validation.
+      - name: Resolve and check the Swift packages
+        run: |
+          xcodebuild -resolvePackageDependencies -project ios/Reins.xcodeproj -scheme Reins \
+            -onlyUsePackageVersionsFromResolvedFile -disableAutomaticPackageResolution \
+            -clonedSourcePackagesDirPath "$RUNNER_TEMP/spm"
+          python3 scripts/testflight.py packages \
+            --resolved ios/Reins.xcodeproj/project.xcworkspace/xcshareddata/swiftpm/Package.resolved \
+            --checkouts "$RUNNER_TEMP/spm/checkouts"
+
+      # The API key, written for this step only and removed at its end: it does not exist while the archive runs.
+      - name: Build number
+        id: number
+        env:
+          VERSION: ${{ steps.release.outputs.version }}
+          MINIMUM: ${{ steps.release.outputs.minimum }}
+          AC_API_KEY_P8: ${{ secrets.AC_API_KEY_P8 }}
+          AC_API_KEY_ID: ${{ secrets.AC_API_KEY_ID }}
+          AC_API_ISSUER_ID: ${{ secrets.AC_API_ISSUER_ID }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+        run: |
+          umask 077
+          dir="$RUNNER_TEMP/ios-signing"
+          trap 'rm -f "$dir/AuthKey.p8" "$dir/asc.env"' EXIT
+          python3 scripts/testflight.py secrets --need asc --out "$dir"
+          unset AC_API_KEY_P8
+          set -a
+          source "$dir/asc.env"
+          set +a
+          python3 scripts/testflight.py prepare --bundle-id "$BUNDLE_ID" --version "$VERSION" --minimum "$MINIMUM" \
+            --key-file "$dir/AuthKey.p8" | tee "$RUNNER_TEMP/number.txt"
+          cat "$RUNNER_TEMP/number.txt" >> "$GITHUB_OUTPUT"
+      # The .p12 is opened with its password read from a file, repackaged for the keychain with a throwaway password,
+      # imported non-extractable (-x) for codesign only, and every file of it removed before this step ends. The
+      # keychain and import passwords on these command lines are random, made here, and nothing else runs meanwhile.
+      - name: Signing identity
+        if: steps.number.outputs.uploaded != 'true'
+        env:
+          IOS_DIST_CERT_P12: ${{ secrets.IOS_DIST_CERT_P12 }}
+          IOS_DIST_CERT_PASSWORD: ${{ secrets.IOS_DIST_CERT_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+        run: |
+          umask 077
+          dir="$RUNNER_TEMP/ios-signing"
+          trap 'rm -f "$dir/dist.p12" "$dir/dist.pass" "$dir/dist.pem" "$dir/import.p12" "$dir/import.pass" "$dir/export-check.p12"' EXIT
+          python3 scripts/testflight.py secrets --need cert --out "$dir"
+          unset IOS_DIST_CERT_P12 IOS_DIST_CERT_PASSWORD
+          team="$(cat "$dir/team")"
+          # Keychain Access exports with modern (PBES2) or legacy (RC2, 3DES) algorithms: OpenSSL needs -legacy for
+          # the latter; macOS's LibreSSL reads both.
+          opened=false
+          for tool in "openssl pkcs12" "openssl pkcs12 -legacy" "/usr/bin/openssl pkcs12"; do
+            # shellcheck disable=SC2086 # the tool and its options, split on purpose
+            if $tool -in "$dir/dist.p12" -passin "file:$dir/dist.pass" -nodes -out "$dir/dist.pem" 2> /dev/null; then
+              opened=true
+              break
+            fi
+          done
+          rm -f "$dir/dist.p12" "$dir/dist.pass"
+          [[ "$opened" == true ]] || { echo "::error::IOS_DIST_CERT_P12 does not open with IOS_DIST_CERT_PASSWORD"; exit 1; }
+          transient="$(openssl rand -hex 16)"
+          echo "::add-mask::$transient"
+          printf '%s' "$transient" > "$dir/import.pass"
+          # Again as PKCS#12, with the algorithms every macOS keychain reads.
+          exported=false
+          for tool in /usr/bin/openssl openssl; do
+            if "$tool" pkcs12 -export -in "$dir/dist.pem" -out "$dir/import.p12" -passout "file:$dir/import.pass" \
+              -keypbe PBE-SHA1-3DES -certpbe PBE-SHA1-3DES -macalg sha1; then
+              exported=true
+              break
+            fi
+          done
+          rm -f "$dir/dist.pem" "$dir/import.pass"
+          [[ "$exported" == true ]] || { echo "::error::Could not repackage the distribution identity for the keychain"; exit 1; }
+          keychain="$dir/ios.keychain-db"
+          pass="$(openssl rand -hex 16)"
+          echo "::add-mask::$pass"
+          security create-keychain -p "$pass" "$keychain"
+          if ! security unlock-keychain -p "$pass" "$keychain" 2> /dev/null; then
+            # The xcode-27 image does not unlock a keychain made with a password (actions/runner-images#14837). This
+            # one lives in the job's temporary folder and is deleted at the end.
+            echo "::warning::The keychain did not unlock with its password; using one without (runner-images#14837)"
+            security delete-keychain "$keychain"
+            pass=""
+            security create-keychain -p "$pass" "$keychain"
+            security unlock-keychain -p "$pass" "$keychain"
+          fi
+          security set-keychain-settings -lut 21600 "$keychain"
+          security import "$dir/import.p12" -k "$keychain" -f pkcs12 -x -P "$transient" -T /usr/bin/codesign
+          rm -f "$dir/import.p12"
+          security set-key-partition-list -S apple-tool:,apple: -s -k "$pass" "$keychain" > /dev/null
+          security list-keychains -d user -s "$keychain" login.keychain-db
+          identity="$(security find-identity -v -p codesigning "$keychain" |
+            awk -v team="($team)" '/"Apple Distribution: / && index($0, team) { print $2; exit }')"
+          [[ -n "$identity" ]] || { echo "::error::IOS_DIST_CERT_P12 holds no Apple Distribution identity of team $team"; exit 1; }
+          printf '%s\n' "$identity" > "$dir/identity"
+          # The private key must not leave the keychain (perl's alarm: an access prompt must not hang the job).
+          if perl -e 'alarm 30; exec @ARGV' security export -k "$keychain" -t identities -f pkcs12 -P unused \
+            -o "$dir/export-check.p12" > /dev/null 2>&1 && [[ -s "$dir/export-check.p12" ]]; then
+            echo "::error::The distribution key can be exported from the keychain"
+            exit 1
+          fi
+      - name: Provisioning profiles
+        if: steps.number.outputs.uploaded != 'true'
+        env:
+          IOS_PROFILE_APP: ${{ secrets.IOS_PROFILE_APP }}
+          IOS_PROFILE_WIDGETS: ${{ secrets.IOS_PROFILE_WIDGETS }}
+          IOS_PROFILE_NOTIFICATIONS: ${{ secrets.IOS_PROFILE_NOTIFICATIONS }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+        run: |
+          umask 077
+          dir="$RUNNER_TEMP/ios-signing"
+          python3 scripts/testflight.py secrets --need profiles --out "$dir"
+          team="$(cat "$dir/team")"
+          identity="$(cat "$dir/identity")"
+          # Xcode 16 and later read profiles from UserData; older tools from MobileDevice.
+          installed=("$HOME/Library/Developer/Xcode/UserData/Provisioning Profiles" "$HOME/Library/MobileDevice/Provisioning Profiles")
+          mkdir -p "${installed[@]}"
+          # Manual signing for the three targets: each gets its profile through its TARGET_NAME (package targets get
+          # none). Applied with -xcconfig, above the project's automatic signing.
+          {
+            echo "CODE_SIGN_STYLE = Manual"
+            echo "DEVELOPMENT_TEAM = $team"
+            echo "REINS_TEAM = $team"
+            echo "CODE_SIGN_IDENTITY = $identity"
+            echo "OTHER_CODE_SIGN_FLAGS = --keychain $dir/ios.keychain-db"
+            # shellcheck disable=SC2016 # an Xcode build setting reference, not a shell one
+            echo 'PROVISIONING_PROFILE_SPECIFIER = $(REINS_PROFILE_$(TARGET_NAME))'
+          } > "$dir/signing.xcconfig"
+          : > "$dir/profiles.txt"
+          for entry in "Reins $BUNDLE_ID" "ReinsWidgets $BUNDLE_ID.widgets" "ReinsNotifications $BUNDLE_ID.notifications"; do
+            read -r target bundle <<<"$entry"
+            security cms -D -i "$dir/$target.mobileprovision" > "$dir/$target.plist" ||
+              { echo "::error::The profile for $target is not a provisioning profile (base64 of the .mobileprovision)"; exit 1; }
+            uuid="$(python3 scripts/testflight.py profile --plist "$dir/$target.plist" --bundle-id "$bundle" --team "$team")"
+            for folder in "${installed[@]}"; do cp "$dir/$target.mobileprovision" "$folder/$uuid.mobileprovision"; done
+            rm -f "$dir/$target.mobileprovision" "$dir/$target.plist"
+            echo "REINS_PROFILE_$target = $uuid" >> "$dir/signing.xcconfig"
+            echo "$bundle $uuid" >> "$dir/profiles.txt"
+          done
+          python3 - "$dir" "$team" "$identity" <<'PY'
+          import plistlib, sys
+          directory, team, identity = sys.argv[1:]
+          profiles = dict(line.split() for line in open(f"{directory}/profiles.txt") if line.strip())
+          options = {
+              "method": "app-store-connect",
+              "destination": "upload",
+              "teamID": team,
+              "signingStyle": "manual",
+              "signingCertificate": identity,
+              "provisioningProfiles": profiles,
+              "manageAppVersionAndBuildNumber": False,
+              "uploadSymbols": True,
+              "testFlightInternalTestingOnly": False,
+          }
+          with open(f"{directory}/ExportOptions.plist", "wb") as handle:
+              plistlib.dump(options, handle)
+          PY
+      # The app's own settings (Telegram's application credentials, as the APK has them; the Google iOS client,
+      # optional) go into the archive's xcconfig here, so the archive step has no secret in its environment.
+      - name: App settings
+        if: steps.number.outputs.uploaded != 'true'
+        env:
+          VERSION: ${{ steps.release.outputs.version }}
+          BUILD_NUMBER: ${{ steps.number.outputs.build-number }}
+          TELEGRAM_API_ID: ${{ secrets.TELEGRAM_API_ID }}
+          TELEGRAM_API_HASH: ${{ secrets.TELEGRAM_API_HASH }}
+          GOOGLE_CLIENT_ID: ${{ vars.IOS_GOOGLE_CLIENT_ID }}
+        run: |
+          umask 077
+          dir="$RUNNER_TEMP/ios-signing"
+          [[ "$BUILD_NUMBER" =~ ^[0-9]+$ ]] || { echo "::error::No build number"; exit 1; }
+          {
+            echo "#include \"$dir/signing.xcconfig\""
+            echo "REINS_VERSION = $VERSION"
+            echo "REINS_BUILD_NUMBER = $BUILD_NUMBER"
+            if [[ -n "${TELEGRAM_API_ID:-}" && -n "${TELEGRAM_API_HASH:-}" ]]; then
+              echo "REINS_TELEGRAM_API_ID = $TELEGRAM_API_ID"
+              echo "REINS_TELEGRAM_API_HASH = $TELEGRAM_API_HASH"
+            else
+              echo "::warning::TELEGRAM_API_ID / TELEGRAM_API_HASH are not set: this build cannot connect Telegram." >&2
+            fi
+            if [[ -n "${GOOGLE_CLIENT_ID:-}" ]]; then
+              echo "REINS_GOOGLE_CLIENT_ID = $GOOGLE_CLIENT_ID"
+              echo "REINS_GOOGLE_REDIRECT_SCHEME = com.googleusercontent.apps.${GOOGLE_CLIENT_ID%.apps.googleusercontent.com}"
+            fi
+          } > "$dir/release.xcconfig"
+      # What the archive's build phases and packages could reach: the keychain (its key non-extractable), the profiles
+      # (public) and the settings. No certificate file, password file or API key.
+      - name: Only the keychain, profiles and settings remain
+        if: steps.number.outputs.uploaded != 'true'
+        run: |
+          dir="$RUNNER_TEMP/ios-signing"
+          allowed=" ExportOptions.plist identity ios.keychain-db profiles.txt release.xcconfig signing.xcconfig team "
+          for file in "$dir"/* "$dir"/.[!.]*; do
+            [[ -e "$file" ]] || continue
+            # securityd keeps a lock or a scratch copy of the keychain beside it (`.fl` and 8 hex digits).
+            [[ "${file##*/}" =~ ^\.fl[0-9A-F]{8}$ ]] && continue
+            [[ "$allowed" == *" ${file##*/} "* ]] || { echo "::error::${file##*/} must not exist while the app is built"; exit 1; }
+          done
+          leftovers="$(find "$RUNNER_TEMP" "$GITHUB_WORKSPACE" -maxdepth 3 \( -name '*.p8' -o -name '*.p12' -o -name '*.pass' \) -print)"
+          [[ -z "$leftovers" ]] || { echo "::error::Signing material left before the build: $leftovers"; exit 1; }
+      - name: Archive
+        if: steps.number.outputs.uploaded != 'true'
+        env:
+          VERSION: ${{ steps.release.outputs.version }}
+          BUILD_NUMBER: ${{ steps.number.outputs.build-number }}
+          REINS_SKIP_CORE: "1"
+        run: |
+          dir="$RUNNER_TEMP/ios-signing"
+          xcodebuild archive -project ios/Reins.xcodeproj -scheme Reins -configuration Release \
+            -destination generic/platform=iOS -archivePath "$RUNNER_TEMP/Reins.xcarchive" \
+            -onlyUsePackageVersionsFromResolvedFile -disableAutomaticPackageResolution \
+            -clonedSourcePackagesDirPath "$RUNNER_TEMP/spm" -xcconfig "$dir/release.xcconfig"
+          plist="$RUNNER_TEMP/Reins.xcarchive/Products/Applications/Reins.app/Info.plist"
+          shown="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' "$plist")"
+          build="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleVersion' "$plist")"
+          [[ "$shown" == "$VERSION" && "$build" == "$BUILD_NUMBER" ]] ||
+            { echo "::error::The archive is $shown ($build), not $VERSION ($BUILD_NUMBER)"; exit 1; }
+
+      # The API key again, only now that the archive is built: for the upload and TestFlight.
+      - name: App Store Connect key
+        env:
+          AC_API_KEY_P8: ${{ secrets.AC_API_KEY_P8 }}
+          AC_API_KEY_ID: ${{ secrets.AC_API_KEY_ID }}
+          AC_API_ISSUER_ID: ${{ secrets.AC_API_ISSUER_ID }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+        run: |
+          umask 077
+          python3 scripts/testflight.py secrets --need asc --out "$RUNNER_TEMP/ios-signing"
+      # The export signs for the App Store and, with destination upload, sends the build to App Store Connect. The key
+      # is a file; its id and issuer id (identifiers, masked) are the only parts on the command line. The export runs
+      # no build phases and resolves no packages.
+      - name: Upload to App Store Connect
+        if: steps.number.outputs.uploaded != 'true'
+        run: |
+          dir="$RUNNER_TEMP/ios-signing"
+          source "$dir/asc.env"
+          xcodebuild -exportArchive -archivePath "$RUNNER_TEMP/Reins.xcarchive" \
+            -exportOptionsPlist "$dir/ExportOptions.plist" -exportPath "$RUNNER_TEMP/export" \
+            -authenticationKeyPath "$dir/AuthKey.p8" -authenticationKeyID "$AC_API_KEY_ID" \
+            -authenticationKeyIssuerID "$AC_API_ISSUER_ID"
+      # Signing is over: the keychain is locked now and deleted by the last step.
+      - name: Lock the keychain
+        if: always()
+        run: |
+          keychain="$RUNNER_TEMP/ios-signing/ios.keychain-db"
+          if [[ -f "$keychain" ]]; then security lock-keychain "$keychain"; fi
+      - name: TestFlight
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          TAG: ${{ steps.release.outputs.tag }}
+          VERSION: ${{ steps.release.outputs.version }}
+          BUILD_NUMBER: ${{ steps.number.outputs.build-number }}
+          TESTFLIGHT_GROUPS: ${{ vars.TESTFLIGHT_INTERNAL_GROUPS || 'Internal' }},${{ vars.TESTFLIGHT_EXTERNAL_GROUP_ID || 'Testers' }}
+        run: |
+          dir="$RUNNER_TEMP/ios-signing"
+          notes="$RUNNER_TEMP/release-notes.md"
+          for attempt in 1 2 3; do
+            gh release view "$TAG" --json body --jq .body > "$notes" && break
+            : > "$notes"
+            (( attempt < 3 )) || { echo "::warning::No release notes for $TAG: What to Test names the version only"; break; }
+            sleep $(( attempt * 10 ))
+          done
+          set -a
+          source "$dir/asc.env"
+          set +a
+          python3 scripts/testflight.py finish --bundle-id "$BUNDLE_ID" --version "$VERSION" \
+            --build-number "$BUILD_NUMBER" --notes-file "$notes" --group "$TESTFLIGHT_GROUPS" \
+            --release-url "$GITHUB_SERVER_URL/$GH_REPO/releases/tag/$TAG" --key-file "$dir/AuthKey.p8"
+          echo "::notice::Reins $VERSION ($BUILD_NUMBER) is on TestFlight"
+      - name: Remove signing material
+        if: always()
+        run: |
+          dir="$RUNNER_TEMP/ios-signing"
+          if [[ -f "$dir/ios.keychain-db" ]]; then security delete-keychain "$dir/ios.keychain-db" || true; fi
+          if [[ -f "$dir/profiles.txt" ]]; then
+            while read -r _ uuid; do
+              rm -f "$HOME/Library/Developer/Xcode/UserData/Provisioning Profiles/$uuid.mobileprovision" \
+                "$HOME/Library/MobileDevice/Provisioning Profiles/$uuid.mobileprovision"
+            done < "$dir/profiles.txt"
+          fi
+          rm -f "$RUNNER_TEMP/release-notes.md" "$RUNNER_TEMP/number.txt"
+          rm -rf "$dir" "$RUNNER_TEMP/export" "$RUNNER_TEMP/Reins.xcarchive"
 
   # reins-bin on the AUR (https://aur.archlinux.org/packages/reins-bin): its PKGBUILD and .SRCINFO, written from the
   # published release's SHA256SUMS (scripts/package/aur.sh) and checked with makepkg in an Arch Linux container

@@ -241,9 +241,41 @@ pub fn question(call: &HookCall, guard: &GuardConfig) -> Option<(Match, Question
     if let Some(cwd) = &call.cwd {
         let _infallible = write!(detail, "\n\nIn: {cwd}");
     }
-    let _infallible = write!(detail, "\nRule: {}", m.pattern);
+    let detail = format!("{}\n{detail}", rule_lines(&m));
     let q = Question::new(&question, Some(&detail), Some(&m.topic)).ok()?;
     Some((m, q))
+}
+
+/// The first lines of a question's detail: the rule that matched and what matched it, which the phone shows (and
+/// reads: the group decides whether the question is asked every time, and is its own kind for Autopilot). First, so a
+/// long command never cuts them off, and so a command cannot write them:
+///
+/// ```text
+/// Rule: .env files · .env
+/// Matched: app/.env
+/// Group: env-files
+/// ```
+///
+/// `Group: git-history (destructive)` for what cannot be undone; no `Group` line for the user's own rules.
+#[must_use]
+pub fn rule_lines(m: &Match) -> String {
+    let one_line = |s: &str| s.split_whitespace().collect::<Vec<_>>().join(" ");
+    let group = m.group();
+    let mut lines = format!(
+        "Rule: {} · {}\nMatched: {}\n",
+        group.map_or("Your rule", |g| g.label),
+        one_line(&m.pattern),
+        one_line(&m.matched)
+    );
+    if let Some(g) = group {
+        let destructive = if g.destructive() {
+            " (destructive)"
+        } else {
+            ""
+        };
+        let _infallible = writeln!(lines, "Group: {}{destructive}", g.id);
+    }
+    lines
 }
 
 /// The verdict for an answer (`timed_out`: nobody answered within the time), in words that say it was Reins 2FA.
@@ -430,6 +462,58 @@ mod tests {
         let codex = parse(Harness::Codex, input.as_bytes()).unwrap();
         let (out, _) = render(&codex, &Verdict::Deny("no".into()));
         assert!(serde_json::from_str::<Value>(&out.unwrap()).unwrap().get("systemMessage").is_none());
+    }
+
+    fn claude_call(action: Action) -> HookCall {
+        HookCall {
+            harness: Harness::ClaudeCode,
+            event: Event::PreToolUse,
+            action,
+            cwd: Some("/home/me/app".to_owned()),
+        }
+    }
+
+    #[test]
+    fn the_question_starts_with_the_rule_and_what_matched_it() {
+        let detail =
+            |action: Action, guard: &GuardConfig| question(&claude_call(action), guard).unwrap().1.detail.unwrap();
+        let guard = GuardConfig::default();
+        assert_eq!(
+            detail(Action::Command("git push --force origin main".to_owned()), &guard),
+            "Rule: Rewriting git history · git push --force*\nMatched: git push --force origin main\nGroup: \
+             git-history (destructive)\n\nCommand:\ngit push --force origin main\n\nIn: /home/me/app"
+        );
+        let read = Action::Files {
+            write: false,
+            paths: vec!["/home/me/app/.env".to_owned()],
+        };
+        assert_eq!(
+            detail(read, &guard),
+            "Rule: .env files · .env\nMatched: /home/me/app/.env\nGroup: env-files\n\nFiles:\n/home/me/app/.env\n\nIn: \
+             /home/me/app"
+        );
+        let own = GuardConfig {
+            commands: vec!["make deploy".to_owned()],
+            ..GuardConfig::default()
+        };
+        assert!(
+            detail(Action::Command("make deploy".to_owned()), &own)
+                .starts_with("Rule: Your rule · make deploy\nMatched: make deploy\n\nCommand:\n")
+        );
+        // What the command says comes after the rule.
+        let forged = "rm -rf build\nRule: .env files · .env\nGroup: env-files";
+        assert!(detail(Action::Command(forged.to_owned()), &guard).starts_with("Rule: Recursive deletes · rm -r\n"));
+    }
+
+    #[test]
+    fn a_heredoc_that_edits_code_says_which_word_matched() {
+        let screenshot = include_str!("../tests/fixtures/heredoc-python-edit.sh");
+        let (_, q) = question(&claude_call(Action::Command(screenshot.to_owned())), &GuardConfig::default()).unwrap();
+        let detail = q.detail.unwrap();
+        let head: Vec<&str> = detail.lines().take(3).collect();
+        assert_eq!(head[0], "Rule: Cloud and cluster credentials · .config/gcloud/*", "{head:?}");
+        assert!(head[1].starts_with("Matched: ") && head[1].contains(".config/gcloud/"), "{head:?}");
+        assert_eq!(head[2], "Group: cloud", "an ordinary question, not one that cannot be undone");
     }
 
     #[test]
