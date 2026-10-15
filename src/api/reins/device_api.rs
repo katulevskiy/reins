@@ -2,11 +2,14 @@
 //!
 //! Auth is the normal Vaultwarden login (`Headers`); every endpoint but A1 also requires the
 //! caller to be the user's registered approval device ([`is_caller`]: its Vaultwarden device and its device key). A1
-//! itself lets another device take that role only with a proof ([`check_takeover`]).
+//! itself lets another device take that role only with a proof ([`check_takeover`]). On an account with phone roles
+//! ([`super::roles`]) the approval device is the roster's primary: A1 registers only that device, A4 answers carry its
+//! signature, and A7 is also open to viewers (read-only).
 
 use std::time::Duration;
 
 use reins_proto::{
+    answer::AnswerKind,
     check_version,
     device::{
         ApiError, Connections, DEVICE_KEY_HEADER, DeviceInfo, DeviceRegistered, DeviceRegistration, DeviceSignOut,
@@ -39,7 +42,10 @@ use crate::{
     auth::{ClientIp, Headers},
     db::{
         DbConn, DbPool,
-        models::{Device, DeviceId, ReinsConnection, ReinsDevice, ReinsDeviceSignout, ReinsSsoSession},
+        models::{
+            Device, DeviceId, ROLE_PRIMARY, ReinsConnection, ReinsDevice, ReinsDeviceSignout, ReinsMember, ReinsRoster,
+            ReinsSsoSession,
+        },
     },
 };
 
@@ -199,17 +205,31 @@ pub fn is_caller(row: &ReinsDevice, headers: &Headers, key: &DeviceKey) -> bool 
         }
 }
 
+/// The caller is the account's approval device. With a roster (phone roles), that is the roster's primary: the
+/// member whose role the latest entry made `primary` (stored with that entry, in one transaction), calling with the
+/// device key it enrolled with. Without one, the registered approval device ([`is_caller`]).
 pub async fn require_approval_device(headers: &Headers, key: &DeviceKey, conn: &DbConn) -> PhoneResult<()> {
-    match ReinsDevice::find_by_user(&headers.user.uuid, conn).await {
-        Some(device) if is_caller(&device, headers, key) => {
-            HUB.presence.seen(&user_key(headers), now_unix());
-            Ok(())
-        }
-        _ => Err(api_err(
+    let user = user_key(headers);
+    let roster = ReinsRoster::latest(&user, conn).await.map_err(|e| internal(&e))?;
+    let approves = if roster.is_some() {
+        ReinsMember::find(&user, &headers.device.uuid.to_string(), conn).await.map_err(|e| internal(&e))?.is_some_and(
+            |m| {
+                m.role == ROLE_PRIMARY
+                    && matches!((&m.key_hash, key.hash()), (Some(kept), Some(given)) if crate::crypto::ct_eq(kept, given))
+            },
+        )
+    } else {
+        ReinsDevice::find_by_user(&headers.user.uuid, conn).await.is_some_and(|device| is_caller(&device, headers, key))
+    };
+    if approves {
+        HUB.presence.seen(&user, now_unix());
+        Ok(())
+    } else {
+        Err(api_err(
             Status::Forbidden,
             codes::NOT_APPROVAL_DEVICE,
             "This device is not the Reins approval device; register it with PUT /reins/api/device",
-        )),
+        ))
     }
 }
 
@@ -259,8 +279,11 @@ async fn put_device(
         serde_json::from_slice(&body).map_err(|e| bad_request(format!("invalid body: {e}")))?
     };
     let fcm_token = normalize_fcm_token(registration.fcm_token).map_err(bad_request)?;
+    // With a roster, only its primary registers (the role moves by handover or recovery, never by a proof here).
+    let roster_primary = super::roles::roster_primary_registration(&headers, &key, &conn).await?.is_some();
     let current = ReinsDevice::find_by_user(&headers.user.uuid, &conn).await;
     if let Some(current) = &current
+        && !roster_primary
         && !is_caller(current, &headers, &key)
     {
         check_takeover(&headers, &key, registration.master_password_hash.as_deref())?;
@@ -310,23 +333,30 @@ async fn put_services(data: Data<'_>, headers: Headers, key: DeviceKey, conn: Db
     Ok(Status::NoContent)
 }
 
-/// A2: undelivered requests and pairings; long-polls up to `wait` seconds when empty.
-#[get("/reins/api/pending?<wait>")]
+/// A2: undelivered requests and pairings; long-polls up to `wait` seconds when empty. With a roster, the answer
+/// carries the op log's head, and `log=<seq>` also returns as soon as the head passes it (a proposal arrived).
+#[get("/reins/api/pending?<wait>&<log>")]
 async fn get_pending(
     wait: Option<String>,
+    log: Option<u64>,
     headers: Headers,
     key: DeviceKey,
     conn: DbConn,
     pool: &State<DbPool>,
 ) -> PhoneResult<Json<Pending>> {
     require_approval_device(&headers, &key, &conn).await?;
+    let user = user_key(&headers);
+    let roster = super::roles::has_roster(&user, &conn).await?;
+    if roster {
+        super::live::log_head(&user, &conn).await?;
+    }
     // Never hold a pooled DB connection during a long-poll.
     drop(conn);
     let _poll = super::limits::DEVICE_POLLS
         .try_enter(&headers.device.uuid.to_string())
         .ok_or_else(|| too_many_running("too many long-polls of this device are open"))?;
     let wait = Duration::from_secs(u64::from(clamp_wait(wait.as_deref())));
-    let mut pending = HUB.pending(&user_key(&headers), wait).await;
+    let mut pending = HUB.pending(&user, wait, roster.then(|| log.unwrap_or(u64::MAX))).await;
     if crate::sso_workos::enabled() {
         // Carry the authoritative email with the existing poll; no extra mobile profile requests are needed.
         // Reacquire only after the wait so a change during a long-poll appears in that response.
@@ -348,7 +378,8 @@ async fn get_request(id: &str, headers: Headers, key: DeviceKey, conn: DbConn) -
     HUB.relay.fetch(&user_key(&headers), &RequestId::from(id)).map(Json).ok_or_else(not_found)
 }
 
-/// A4
+/// A4. With a roster, the body is a `SignedAnswer`: the primary's signature over the exact answer bytes (account,
+/// request id, epoch and the answer's hash), checked against the roster before the answer counts.
 #[post("/reins/api/requests/<id>/response", data = "<data>")]
 async fn post_request_response(
     id: &str,
@@ -358,8 +389,18 @@ async fn post_request_response(
     conn: DbConn,
 ) -> PhoneResult<Status> {
     require_approval_device(&headers, &key, &conn).await?;
-    let response: RelayResponse = parse_versioned(&read_body(data).await?)?;
-    HUB.relay.answer(&user_key(&headers), &RequestId::from(id), response.outcome).map_err(|e| answer_error(&e))?;
+    let user = user_key(&headers);
+    let entries = super::roles::chain(&user, &conn).await?;
+    drop(conn);
+    let body = read_body(data).await?;
+    let response: RelayResponse = if entries.is_empty() {
+        parse_versioned(&body)?
+    } else {
+        let answer = super::roles::open_signed_answer(&user, AnswerKind::Request, id, &body, &entries)?;
+        parse_versioned(&answer)?
+    };
+    HUB.relay.answer(&user, &RequestId::from(id), response.outcome).map_err(|e| answer_error(&e))?;
+    HUB.live.bump(&user);
     Ok(Status::NoContent)
 }
 
@@ -380,9 +421,24 @@ async fn post_pairing_response(
     conn: DbConn,
 ) -> PhoneResult<Json<PairingResult>> {
     require_approval_device(&headers, &key, &conn).await?;
-    let response: PairingResponse = parse_versioned(&read_body(data).await?)?;
+    let entries = super::roles::chain(&user_key(&headers), &conn).await?;
+    let body = read_body(data).await?;
+    // With a roster the answer carries the primary's signature, like A4.
+    let response: PairingResponse = if entries.is_empty() {
+        parse_versioned(&body)?
+    } else {
+        parse_versioned(&super::roles::open_signed_answer(
+            &user_key(&headers),
+            AnswerKind::Pairing,
+            id,
+            &body,
+            &entries,
+        )?)?
+    };
     let pairing_id = PairingId::from(id);
-    match HUB.pairings.answer(&user_key(&headers), &pairing_id, &response) {
+    let answered = HUB.pairings.answer(&user_key(&headers), &pairing_id, &response);
+    HUB.live.bump(&user_key(&headers));
+    match answered {
         Ok(PairingAnswer::Denied) => Ok(Json(PairingResult {
             connection_id: None,
         })),
@@ -451,10 +507,10 @@ async fn post_pairing_claim(
     }
 }
 
-/// A7
+/// A7: the approval device, and with a roster also its viewers (read-only: A8 stays the approval device's).
 #[get("/reins/api/connections")]
 async fn get_connections(headers: Headers, key: DeviceKey, conn: DbConn) -> PhoneResult<Json<Connections>> {
-    require_approval_device(&headers, &key, &conn).await?;
+    super::roles::require_reader(&headers, &key, &conn).await?;
     let connections = ReinsConnection::find_by_user(&headers.user.uuid, &conn).await;
     Ok(Json(Connections {
         connections: connections.iter().map(ReinsConnection::to_info).collect(),
@@ -576,6 +632,10 @@ async fn delete_device(
     }
     signout.sign_out(&conn).await.map_err(|e| internal(&e))?;
     HUB.joins.forget_device(&user, &target.uuid.to_string());
+    // A roster member signed out gets no more sync pushes (the roster itself changes only by the primary's signature).
+    if let Err(e) = ReinsMember::set_token(&user, &target.uuid.to_string(), None, now_unix(), &conn).await {
+        warn!("Reins: clearing a signed-out member's push token failed: {e:?}");
+    }
     Ok(Status::NoContent)
 }
 

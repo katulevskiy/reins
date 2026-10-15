@@ -8,7 +8,7 @@ use reqwest::{Method, StatusCode};
 use serde_json::{Value, json};
 
 use crate::{
-    harness::{Options, Phone, Server, Tokens, between, client},
+    harness::{Options, Phone, Server, Tokens, between, client, new_device_key},
     mock::{MockServer, Reply},
 };
 
@@ -295,4 +295,34 @@ async fn bad_limit_settings_stop_the_server() {
     assert!(!output.status.success());
     let text = format!("{}{}", String::from_utf8_lossy(&output.stdout), String::from_utf8_lossy(&output.stderr));
     assert!(text.contains("REINS_BLOB_MAX_BYTES"), "{text}");
+}
+
+#[tokio::test]
+async fn join_requests_are_limited_per_account_and_per_address() {
+    let options = Options {
+        env: vec![("REINS_JOIN_RATELIMIT_MAX_BURST", "4".to_owned())],
+        ..Options::default()
+    };
+    let server = Server::start_with(options).await;
+    let approver = server.phone("jen@example.com").await;
+    approver.register_device().await;
+    let join = || json!({"v": 1, "device_name": "Pixel", "public_key": new_device_key()});
+    // A few open requests per account: the fourth device is refused, while a device asking again replaces its own.
+    let mut phones = Vec::new();
+    for _ in 0..3 {
+        let phone = server.second_device("jen@example.com").await;
+        assert_eq!(phone.post("/joins", &join()).await.0, StatusCode::OK);
+        phones.push(phone);
+    }
+    let fourth = server.second_device("jen@example.com").await;
+    let (status, body) = fourth.post("/joins", &join()).await;
+    assert_eq!((status, body["error"].as_str()), (StatusCode::TOO_MANY_REQUESTS, Some("rate_limited")), "{body}");
+    // Four requests from this address so far (the refused one counted too): the address is limited now, for every
+    // account.
+    let other = server.phone("kai@example.com").await;
+    other.register_device().await;
+    let asking = server.second_device("kai@example.com").await;
+    let (status, body) = asking.post("/joins", &join()).await;
+    assert_eq!(status, StatusCode::TOO_MANY_REQUESTS, "{body}");
+    assert!(body["message"].as_str().unwrap().contains("from this address"), "{body}");
 }

@@ -35,8 +35,8 @@ use crate::{
     db::{
         DbConn, DbPool,
         models::{
-            Cipher, DeviceId, EmergencyAccess, Favorite, Folder, Membership, ReinsDevice, ReinsVaultPasskey, Send,
-            TwoFactorIncomplete, UserId, reins_workos,
+            Cipher, DeviceId, EmergencyAccess, Favorite, Folder, Membership, ReinsDevice, ReinsRoster,
+            ReinsVaultPasskey, Send, TwoFactorIncomplete, UserId, reins_workos,
         },
     },
 };
@@ -122,6 +122,8 @@ async fn post_reset(
         reins_workos::reset_devices(&user.uuid, &device.uuid, &conn).await?;
         // They sealed the old account secret, which opens nothing now.
         ReinsVaultPasskey::delete_all(&user.uuid, &conn).await?;
+        // The roster's keys went with the vault: the phone that resets starts phone roles again.
+        ReinsRoster::delete_all(user.uuid.as_ref(), &conn).await?;
 
         // As a new SSO account: no master password and no keys, so `set-password` takes new ones.
         user.password_hash = Vec::new();
