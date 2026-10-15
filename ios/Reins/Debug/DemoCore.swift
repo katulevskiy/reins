@@ -67,6 +67,8 @@ final class DemoReinsCore: ReinsCoreProtocol, @unchecked Sendable {
 
     struct State {
         var session: SessionInfo?
+        /// `-demoSyncNotice`'s OK was tapped.
+        var syncNoticeDismissed = false
         var pending: [PendingItem] = []
         /// Bumped by every change to `pending`, so a waiting `sync` can return early.
         var pendingVersion = 0
@@ -182,10 +184,14 @@ final class DemoReinsCore: ReinsCoreProtocol, @unchecked Sendable {
 
     func session() async -> SessionInfo? { locked { $0.session } }
 
-    /// The demo has one phone: nothing to sync with, so never a notice.
-    func accountSyncNotice() async -> String? { nil }
+    /// The demo has one phone: nothing to sync with, so never a notice, except with `-demoSyncNotice` (tests,
+    /// screenshots), until it is dismissed.
+    func accountSyncNotice() async -> String? {
+        locked { $0.syncNoticeDismissed } || !ProcessInfo.processInfo.arguments.contains("-demoSyncNotice")
+            ? nil : "Synced with your other phone. A backup of this phone's changes is kept."
+    }
 
-    func dismissAccountSyncNotice() async throws {}
+    func dismissAccountSyncNotice() async throws { locked { $0.syncNoticeDismissed = true } }
 
     func restoreAccountSyncBackup() async throws -> Bool { false }
 

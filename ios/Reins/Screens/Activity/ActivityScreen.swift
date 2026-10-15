@@ -71,6 +71,7 @@ struct ActivityScreen: View {
                     LazyVStack(alignment: .leading, spacing: 0) {
                         header.id("top")
                         mood
+                        if let notice = model.syncNotice { SyncNoticeRow(text: notice) }
                         waiting
                         if filter != .all || !aiFilter.isEmpty { filters }
                         if entries.isEmpty {
@@ -170,13 +171,6 @@ struct ActivityScreen: View {
                 model.select(.settings)
             }
             .accessibilityIdentifier("replacedBanner")
-        }
-        if let notice = model.syncNotice {
-            CompactBanner(text: notice, symbol: "arrow.triangle.2.circlepath", button: "OK") {
-                Task { await model.dismissSyncNotice() }
-            }
-            .padding(EdgeInsets(top: 4, leading: 16, bottom: 4, trailing: 16))
-            .accessibilityIdentifier("syncNoticeBanner")
         }
         if model.registrationError != nil {
             CompactBanner(
@@ -406,3 +400,30 @@ private struct NewMarker: View {
     PreviewHost { NavigationStack { ActivityScreen() } }
 }
 #endif
+
+/// What the core says about syncing with the account's other phone (#101): a soft row on paper under a hairline, the
+/// sync glyph, the core's words and OK, which dismisses it in the core. Sync never keeps anyone out; this row is all it
+/// shows.
+struct SyncNoticeRow: View {
+    var text: String
+    @Environment(AppModel.self) private var model
+
+    var body: some View {
+        HStack(spacing: 12) {
+            GlyphIcon(.refresh, size: 18).foregroundStyle(Palette.violet)
+            Text(text)
+                .font(RFont.sans(14))
+                .foregroundStyle(Palette.ink)
+                .lineLimit(3)
+                .frame(maxWidth: .infinity, alignment: .leading)
+            Button("OK") { Task { await model.dismissSyncNotice() } }
+                .buttonStyle(SignalButtonStyle(.soft, size: .small))
+        }
+        .padding(.top, 14)
+        .padding(.bottom, 12)
+        .overlay(alignment: .bottom) { Rectangle().fill(Palette.rule).frame(height: 1) }
+        .padding(.horizontal, 24)
+        .accessibilityElement(children: .contain)
+        .accessibilityIdentifier("syncNoticeBanner")
+    }
+}
