@@ -151,6 +151,17 @@ class AppState {
         _registrationError.value = message
     }
 
+    /**
+     * A problem syncing with the account's other phone (from the core), shown as a banner on Activity until dismissed.
+     * Sync never keeps the app on the welcome screen: this banner is all it shows.
+     */
+    private val _syncNotice = MutableStateFlow<String?>(null)
+    val syncNotice: StateFlow<String?> = _syncNotice.asStateFlow()
+
+    fun setSyncNotice(message: String?) {
+        _syncNotice.value = message
+    }
+
     /** The setup after a fresh sign-in (connect a computer, connect an AI) is showing instead of the main screen. */
     private val _setupPending = MutableStateFlow(false)
     val setupPending: StateFlow<Boolean> = _setupPending.asStateFlow()
@@ -209,6 +220,7 @@ class AppState {
             _loaded.value = false
             _deviceReplaced.value = false
             _registrationError.value = null
+            _syncNotice.value = null
             _recoveryToRecord.value = null
             _recoveryLoadError.value = null
             _vaultPasskeyOffer.value = false

@@ -22,6 +22,7 @@ import androidx.compose.material.icons.rounded.KeyboardArrowUp
 import androidx.compose.material.icons.rounded.Lock
 import androidx.compose.material.icons.rounded.NotificationsOff
 import androidx.compose.material.icons.rounded.PhoneAndroid
+import androidx.compose.material.icons.rounded.Sync
 import androidx.compose.material.icons.rounded.Warning
 import androidx.compose.material3.Icon
 import androidx.compose.material3.pulltorefresh.PullToRefreshBox
@@ -108,6 +109,7 @@ fun ActivityScreen(
     val seen by state.seenActivityId.collectAsStateWithLifecycle()
     val replaced by state.deviceReplaced.collectAsStateWithLifecycle()
     val registrationError by state.registrationError.collectAsStateWithLifecycle()
+    val syncNotice by state.syncNotice.collectAsStateWithLifecycle()
     val connections by state.connections.collectAsStateWithLifecycle()
     val apSettings by state.autopilot.collectAsStateWithLifecycle()
     var filter by rememberSaveable { mutableStateOf(HistoryFilter.All) }
@@ -146,7 +148,8 @@ fun ActivityScreen(
 
     // The rows above the history: the title, the banners, the waiting section and the filters.
     val headerCount = 1 + (if (notifications.enabled) 0 else 1) + (if (screenLock.set) 0 else 1) + (if (notice != null) 1 else 0) +
-        (if (replaced) 1 else 0) + (if (registrationError != null) 1 else 0) + (if (pending.isEmpty()) 0 else 1 + cards.size) +
+        (if (replaced) 1 else 0) + (if (registrationError != null) 1 else 0) + (if (syncNotice != null) 1 else 0) +
+        (if (pending.isEmpty()) 0 else 1 + cards.size) +
         (if (filtersOpen) 1 else 0)
 
     // Opening the tab lands where you stopped reading: at the oldest entry you have not seen, unless something is waiting.
@@ -213,6 +216,11 @@ fun ActivityScreen(
             if (replaced) {
                 item(key = "replaced") {
                     CompactBanner(Icons.Rounded.PhoneAndroid, "Another phone approves", c.warning, "Switch", "replaced", "switchBack", onOpenSettings)
+                }
+            }
+            syncNotice?.let {
+                item(key = "syncNotice") {
+                    CompactBanner(Icons.Rounded.Sync, it, c.warning, "OK", "syncNotice", "dismissSyncNotice", { scope.launch { container.dismissSyncNotice() } }, maxLines = 3)
                 }
             }
             registrationError?.let {
