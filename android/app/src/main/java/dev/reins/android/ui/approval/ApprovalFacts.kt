@@ -1,5 +1,9 @@
 package dev.reins.android.ui.approval
 
+import dev.reins.android.autopilot.AutopilotText
+import androidx.compose.ui.draw.drawBehind
+import dev.reins.android.design.hairlineBelow
+
 import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.tween
@@ -60,8 +64,13 @@ import dev.reins.core.MessageView
 /** The main page: the hero, then the facts of the request, by kind. */
 @Composable
 internal fun MainPage(view: ApprovalView, ui: ApprovalUi, viewModel: ApprovalViewModel) {
-    Hero(view, ui, viewModel)
-    Column(Modifier.fillMaxWidth().padding(top = 14.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+    val nav = LocalApprovalNav.current
+    Column(Modifier.fillMaxWidth().padding(top = 6.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+        // The risk's reason, when the field had room only for its word.
+        val risk = (LocalApprovalRecord.current?.risk ?: ui.suggestion?.risk)?.takeIf { nav.riskInFacts }
+        if (risk != null) {
+            FactGroup(tag = "riskFact", rows = listOf({ FactRow("Risk", untrusted(risk.why).ifBlank { AutopilotText.riskWord(risk.level) }, valueTag = "riskWhy", maxLines = Int.MAX_VALUE) }))
+        }
         val purchase = view.purchase
         val git = view.git
         when {
@@ -91,24 +100,27 @@ internal fun MainPage(view: ApprovalView, ui: ApprovalUi, viewModel: ApprovalVie
 
 // ---- the grouped card ------------------------------------------------------------------------------------------
 
-/** A grouped card of rows with hairlines between them. */
+/**
+ * Facts under the field (Signal): plain hairline rows on paper, never cards. [borderTint] marks a group that needs a
+ * look (a warning) with a thin bar of that colour on its left.
+ */
 @Composable
 internal fun FactGroup(modifier: Modifier = Modifier, tag: String? = null, borderTint: Color? = null, rows: List<@Composable () -> Unit>) {
     val c = LocalColors.current
-    val shape = RoundedCornerShape(22.dp)
     Column(
         modifier
-            .padding(horizontal = 16.dp)
+            .padding(horizontal = 22.dp)
             .fillMaxWidth()
-            .clip(shape)
-            .background(Surfaces.group(c))
-            .border(1.dp, borderTint ?: Surfaces.groupEdge(c), shape)
+            .then(
+                if (borderTint != null) {
+                    Modifier.drawBehind { drawRect(borderTint, size = androidx.compose.ui.geometry.Size(2.dp.toPx(), size.height)) }.padding(start = 12.dp)
+                } else {
+                    Modifier
+                },
+            )
             .then(if (tag != null) Modifier.testTag(tag) else Modifier),
     ) {
-        rows.forEachIndexed { i, row ->
-            if (i > 0) Box(Modifier.fillMaxWidth().height(1.dp).background(c.hairline))
-            row()
-        }
+        rows.forEach { row -> Box(Modifier.fillMaxWidth().hairlineBelow(c.rule)) { row() } }
     }
 }
 
@@ -126,15 +138,15 @@ internal fun FactRow(
 ) {
     val c = LocalColors.current
     Row(
-        modifier.fillMaxWidth().defaultMinSize(minHeight = 50.dp).padding(horizontal = 18.dp, vertical = 13.dp),
+        modifier.fillMaxWidth().defaultMinSize(minHeight = 56.dp).padding(vertical = 9.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        RText(key, RType.sans(15.5f), c.tertiary, maxLines = 1)
+        RText(key, RType.sans(15f), c.ink2, maxLines = 1)
         Spacer(Modifier.width(14.dp))
         RText(
             value,
-            if (mono) RType.mono(14f, FontWeight.Medium) else RType.sans(15.5f, FontWeight.Medium),
-            valueColor ?: c.text,
+            if (mono) RType.value else RType.sans(15f, FontWeight.Medium),
+            valueColor ?: c.ink,
             Modifier.weight(1f).then(if (valueTag != null) Modifier.testTag(valueTag) else Modifier),
             maxLines = maxLines,
             align = TextAlign.End,
@@ -156,20 +168,20 @@ internal fun DrillRow(title: String, tag: String, onClick: () -> Unit, detail: @
     Row(
         Modifier
             .fillMaxWidth()
-            .defaultMinSize(minHeight = 50.dp)
-            .pressable(highlight = c.controlFill, shape = RoundedCornerShape(0.dp)) {
+            .defaultMinSize(minHeight = 56.dp)
+            .pressable(highlight = c.paperSunken, shape = RoundedCornerShape(0.dp)) {
                 onClick()
                 feedback.play(Event.Open)
             }
-            .padding(start = 18.dp, end = 12.dp, top = 13.dp, bottom = 13.dp)
+            .padding(vertical = 9.dp)
             .testTag(tag),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        RText(title, RType.sans(15.5f, FontWeight.Medium), c.text, maxLines = 1)
+        RText(title, RType.sans(15f, FontWeight.Medium), c.ink, maxLines = 1)
         Spacer(Modifier.width(12.dp))
         Box(Modifier.weight(1f), contentAlignment = Alignment.CenterEnd) { detail() }
         Spacer(Modifier.width(6.dp))
-        Icon(Icons.Rounded.ChevronRight, null, Modifier.size(20.dp), tint = c.tertiary)
+        dev.reins.android.design.GlyphIcon(dev.reins.android.design.Glyph.ChevronRight, c.inkFaint, size = 16.dp)
     }
 }
 
@@ -187,8 +199,8 @@ internal fun Counts(additions: ULong?, deletions: ULong?, size: Float = 14f, mod
 @Composable
 internal fun GroupHeader(text: String, modifier: Modifier = Modifier, trailing: @Composable () -> Unit = {}) {
     val c = LocalColors.current
-    Row(modifier.fillMaxWidth().padding(start = 22.dp, end = 16.dp, top = 4.dp), verticalAlignment = Alignment.CenterVertically) {
-        RText(text, RType.sans(13f, FontWeight.Medium), c.tertiary, Modifier.weight(1f), maxLines = 1)
+    Row(modifier.fillMaxWidth().padding(start = 22.dp, end = 22.dp, top = 12.dp), verticalAlignment = Alignment.CenterVertically) {
+        dev.reins.android.design.LabelText(text, c.inkMeta, Modifier.weight(1f))
         trailing()
     }
 }
@@ -277,7 +289,7 @@ private fun MailRow(m: MessageView, checked: Boolean, enabled: Boolean, service:
                     onChecked(it)
                     feedback.play(Event.toggle(it))
                 }
-                .padding(horizontal = 16.dp, vertical = 13.dp)
+                .padding(vertical = 13.dp)
                 .testTag("check:${m.id}"),
             verticalAlignment = Alignment.CenterVertically,
         ) {
@@ -286,11 +298,11 @@ private fun MailRow(m: MessageView, checked: Boolean, enabled: Boolean, service:
             Column(Modifier.weight(1f).graphicsLayer { alpha = dim }) {
                 RText(
                     title,
-                    RType.sans(15f, FontWeight.SemiBold).copy(textDecoration = if (checked) null else TextDecoration.LineThrough),
+                    RType.row.copy(textDecoration = if (checked) null else TextDecoration.LineThrough),
                     c.text,
                     maxLines = 1,
                 )
-                if (meta.isNotEmpty()) RText(meta, RType.sans(12.5f), c.tertiary, Modifier.padding(top = 2.dp), maxLines = 1)
+                if (meta.isNotEmpty()) RText(meta, RType.meta, c.inkMeta, maxLines = 1)
             }
             if (m.coveredByGrant) {
                 Spacer(Modifier.width(8.dp))
@@ -307,17 +319,8 @@ private fun MailRow(m: MessageView, checked: Boolean, enabled: Boolean, service:
 /** A square tick (Material) in the accent colour. */
 @Composable
 internal fun TickBox(checked: Boolean, enabled: Boolean = true) {
-    val c = LocalColors.current
-    val fill by animateColorAsState(if (checked) c.accent else Color.Transparent, label = "tick")
-    Box(
-        Modifier
-            .size(20.dp)
-            .graphicsLayer { alpha = if (enabled) 1f else 0.55f }
-            .clip(RoundedCornerShape(4.dp))
-            .background(fill)
-            .border(2.dp, if (checked) c.accent else (if (c.dark) Color(0xFF3A3A40) else c.tertiary), RoundedCornerShape(4.dp)),
-        contentAlignment = Alignment.Center,
-    ) { if (checked) Icon(Icons.Rounded.Check, null, Modifier.size(15.dp), tint = Color.White) }
+    // Signal's tick box: violet-fill with a white tick, or a faint ring.
+    dev.reins.android.design.SignalCheckbox(checked, Modifier.graphicsLayer { alpha = if (enabled) 1f else 0.55f })
 }
 
 // ---- an email to send --------------------------------------------------------------------------------------------
@@ -332,7 +335,7 @@ private fun SendFacts(view: ApprovalView) {
             add { FactRow("To", email.to.joinToString(", ") { untrusted(it) }, mono = true, maxLines = 3) }
             if (email.cc.isNotEmpty()) add { FactRow("Cc", email.cc.joinToString(", ") { untrusted(it) }, mono = true, maxLines = 3) }
             add { FactRow("Subject", untrusted(email.subject), maxLines = 2) }
-            add { RText(untrusted(email.body), RType.sans(15f, lineHeight = 21f), c.text, Modifier.padding(horizontal = 18.dp, vertical = 14.dp).testTag("emailBody")) }
+            add { RText(untrusted(email.body), RType.sans(15f, lineHeight = 21f), c.text, Modifier.padding(vertical = 14.dp).testTag("emailBody")) }
         },
     )
     view.account?.let { FactGroup(rows = listOf { FactRow("From", untrusted(it), mono = true) }) }
@@ -348,7 +351,7 @@ private fun WriteFacts(view: ApprovalView) {
         FactGroup(
             tag = "writePreview",
             rows = listOf {
-                Column(Modifier.padding(horizontal = 18.dp, vertical = 14.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                Column(Modifier.padding(vertical = 14.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
                     view.preview.forEachIndexed { i, line ->
                         RText(
                             untrusted(line),
@@ -375,16 +378,13 @@ private fun GrantFacts(view: ApprovalView) {
         "broad" -> c.warning to "Broad"
         else -> c.success to "Narrow"
     }
-    GroupHeader("Permission") {
-        HelpDot("grant", "Nothing is shared now. Requests that match are answered without asking until it ends. Revoke it any time in Grants.")
-    }
     FactGroup(
         tag = "grantCard",
-        borderTint = c.accent.copy(alpha = 0.35f),
         rows = buildList<@Composable () -> Unit> {
             grant.lines.forEach { line -> add { FactRow("Only", untrusted(line), maxLines = 2) } }
             add { FactRow("For", periodWords(grant.durationSecs.toLong()) + (grant.maxUses?.let { " · at most $it uses" } ?: "")) }
-            add { FactRow("Reach", reach, valueColor = tone) }
+            // Reach is a word, never only a colour.
+            add { FactRow("Reach", "", trailing = { dev.reins.android.design.Pill(reach, tone) }) }
             if (grant.reason.isNotBlank()) add { FactRow("Says", "“${untrusted(grant.reason)}”", maxLines = 3) }
         },
     )
@@ -415,7 +415,7 @@ private fun AccountsFacts(view: ApprovalView, ui: ApprovalUi, viewModel: Approva
                                 viewModel.edit { d -> d.copy(selected = if (on) d.selected + address else d.selected - address) }
                                 feedback.play(Event.toggle(on))
                             }
-                            .padding(horizontal = 16.dp, vertical = 12.dp)
+                            .padding(vertical = 12.dp)
                             .testTag("acct:$address"),
                         verticalAlignment = Alignment.CenterVertically,
                     ) {
@@ -447,7 +447,7 @@ private fun McpFacts(call: dev.reins.core.McpCallView) {
         FactGroup(
             rows = listOf(
                 {
-                    Row(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 12.dp), verticalAlignment = Alignment.CenterVertically) {
+                    Row(Modifier.fillMaxWidth().padding(vertical = 12.dp), verticalAlignment = Alignment.CenterVertically) {
                         ServiceAvatar("mcp", size = 34.dp)
                         Spacer(Modifier.width(12.dp))
                         Column(Modifier.weight(1f)) {
@@ -465,7 +465,7 @@ private fun McpFacts(call: dev.reins.core.McpCallView) {
                     }
                 },
                 {
-                    Column(Modifier.fillMaxWidth().padding(horizontal = 18.dp, vertical = 13.dp)) {
+                    Column(Modifier.fillMaxWidth().padding(vertical = 13.dp)) {
                         RText(untrusted(call.title).ifEmpty { untrusted(call.tool) }, RType.sans(16f, FontWeight.SemiBold), c.text, Modifier.testTag("mcpTool"), maxLines = 2)
                         if (call.title != call.tool) RText(untrusted(call.tool), RType.mono(12.5f), c.tertiary, Modifier.padding(top = 2.dp), maxLines = 1, ltr = true)
                         if (call.description.isNotBlank()) {
@@ -474,7 +474,7 @@ private fun McpFacts(call: dev.reins.core.McpCallView) {
                     }
                 },
                 {
-                    Column(Modifier.fillMaxWidth().padding(horizontal = 18.dp, vertical = 13.dp)) {
+                    Column(Modifier.fillMaxWidth().padding(vertical = 13.dp)) {
                         RText("Arguments", RType.sans(13f, FontWeight.Medium), c.tertiary)
                         RText(args, RType.mono(13f), c.text, Modifier.padding(top = 6.dp).testTag("mcpArguments"), maxLines = 12, ltr = true)
                     }
@@ -508,7 +508,7 @@ private fun SecretsFacts(secrets: dev.reins.core.SecretReleaseView) {
             secrets.purpose?.let(::untrusted)?.takeIf { it.isNotBlank() }?.let { add { FactRow("Says", "“$it”", valueTag = "secretsPurpose", maxLines = 2) } }
             secrets.items.forEachIndexed { i, item ->
                 add {
-                    Row(Modifier.fillMaxWidth().padding(horizontal = 18.dp, vertical = 13.dp), verticalAlignment = Alignment.CenterVertically) {
+                    Row(Modifier.fillMaxWidth().padding(vertical = 13.dp), verticalAlignment = Alignment.CenterVertically) {
                         Icon(Icons.Rounded.Key, null, Modifier.size(17.dp), tint = c.accent)
                         Spacer(Modifier.width(12.dp))
                         RText(untrusted(item), RType.sans(15.5f, FontWeight.Medium), c.text, Modifier.testTag("secret:$i"), maxLines = 2)
@@ -536,7 +536,7 @@ private fun SshFacts(ssh: dev.reins.core.SshSignView) {
 /** Text shown exactly as it is (a command, arguments), monospaced. */
 @Composable
 internal fun MonoBlock(text: String, tag: String, maxLines: Int = Int.MAX_VALUE) {
-    RText(text, RType.mono(13f), LocalColors.current.text, Modifier.fillMaxWidth().padding(horizontal = 18.dp, vertical = 13.dp).testTag(tag), maxLines = maxLines, ltr = true)
+    RText(text, RType.mono(13f), LocalColors.current.text, Modifier.fillMaxWidth().padding(vertical = 13.dp).testTag(tag), maxLines = maxLines, ltr = true)
 }
 
 /** A long text folded out of the main page, in full. */
@@ -550,7 +550,7 @@ internal fun TextPage(page: ApprovalPage.Text) {
                 page.body,
                 if (page.mono) RType.mono(14f) else RType.sans(15f, lineHeight = 21f),
                 c.text,
-                Modifier.fillMaxWidth().padding(18.dp).testTag(page.tag),
+                Modifier.fillMaxWidth().padding(vertical = 14.dp).testTag(page.tag),
                 ltr = page.mono,
             )
         },
@@ -564,8 +564,8 @@ private fun PublicDomainNote(view: ApprovalView, ui: ApprovalUi) {
     val choice = (buildDecision(view, ui.draft) as? BuildResult.Ok)?.choice ?: return
     val domains = publicDomainWarnings(choice)
     if (domains.isEmpty()) return
-    Row(Modifier.fillMaxWidth().padding(horizontal = 16.dp).testTag("publicDomainWarning"), verticalAlignment = Alignment.CenterVertically) {
-        WarnTag("Anyone at ${domains.joinToString(", ")}", c.warning)
+    Row(Modifier.fillMaxWidth().padding(horizontal = 22.dp).testTag("publicDomainWarning"), verticalAlignment = Alignment.CenterVertically) {
+        WarnLine("Anyone at ${domains.joinToString(", ")}", Modifier.weight(1f))
         Spacer(Modifier.width(8.dp))
         HelpDot("publicDomain", "These are free mail providers: allowing the whole domain covers millions of unrelated people. Prefer specific addresses.")
     }

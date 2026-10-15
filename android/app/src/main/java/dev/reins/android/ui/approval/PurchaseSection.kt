@@ -1,6 +1,9 @@
 package dev.reins.android.ui.approval
 
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
+import androidx.compose.ui.semantics.semantics
+import dev.reins.android.design.Glyph
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -48,52 +51,58 @@ import dev.reins.core.PurchaseView
 @Composable
 fun PurchaseSection(p: PurchaseView, draft: PurchaseDraft, viewModel: ApprovalViewModel) {
     val c = LocalColors.current
-    Card(Modifier.padding(horizontal = 16.dp, vertical = 8.dp).testTag("receipt")) {
-        Column(Modifier.padding(18.dp)) {
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                Column(Modifier.weight(1f)) {
-                    RText(untrusted(p.merchant), RType.sans(20f, FontWeight.SemiBold), c.text, maxLines = 2)
-                    RText(p.domain, RType.mono(13.5f), c.secondary, Modifier.padding(top = 2.dp).testTag("domain"), maxLines = 1, ltr = true)
-                }
-                Tag(p.currency, mono = true)
-            }
-            Spacer(Modifier.height(14.dp))
-            Hairline(inset = 0.dp)
-            for (item in p.items) {
-                Row(Modifier.fillMaxWidth().padding(top = 10.dp), verticalAlignment = Alignment.Top) {
-                    RText("${item.quantity} ×", RType.mono(14f), c.secondary, Modifier.width(44.dp))
-                    Column(Modifier.weight(1f)) {
-                        RText(untrusted(item.name), RType.sans(15f, FontWeight.Medium), c.text, maxLines = 3)
-                        val each = if (item.quantity > 1u) "${item.unitPrice} each" else null
-                        listOfNotNull(item.details?.let(::untrusted), each).joinToString(" · ").takeIf { it.isNotEmpty() }?.let {
-                            RText(it, RType.sans(13f), c.secondary, Modifier.padding(top = 1.dp), maxLines = 2)
-                        }
-                    }
-                    Spacer(Modifier.width(10.dp))
-                    RText(item.lineTotal, RType.mono(14.5f), c.text, align = TextAlign.End)
-                }
-            }
-            Spacer(Modifier.height(12.dp))
-            Hairline(inset = 0.dp)
-            Spacer(Modifier.height(6.dp))
-            Amount("Items", p.subtotal)
-            p.shipping?.let { Amount("Shipping", it) }
-            p.tax?.let { Amount("Tax", it) }
-            p.discount?.let { Amount("Discount", "-$it") }
-            Row(Modifier.fillMaxWidth().padding(top = 8.dp), verticalAlignment = Alignment.CenterVertically) {
-                RText("Total", RType.sans(17f, FontWeight.SemiBold), c.text, Modifier.weight(1f))
-                RText(p.total, RType.mono(22f, FontWeight.SemiBold), c.text, Modifier.testTag("total"))
-            }
+    // What the store or Reins flagged (a first purchase here, a price that changed) comes first, in full.
+    if (p.warnings.isNotEmpty()) {
+        Column(Modifier.padding(horizontal = 22.dp).padding(top = 4.dp, bottom = 6.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            for (w in p.warnings) WarnLine(untrusted(w), Modifier.testTag("purchaseWarning"))
         }
     }
-    for (w in p.warnings) {
-        Banner(untrusted(w), Modifier.padding(horizontal = 16.dp, vertical = 4.dp), BannerKind.Warning, tag = "purchaseWarning")
+    // The receipt (And-Pay 01): the store, each line, shipping and tax, and the total in serif, because it is the point.
+    Column(
+        Modifier
+            .padding(horizontal = 18.dp, vertical = 6.dp)
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(20.dp))
+            .background(c.paperRaised)
+            .border(1.dp, c.rule, RoundedCornerShape(20.dp))
+            .testTag("receipt")
+            .padding(horizontal = 16.dp, vertical = 14.dp),
+    ) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Row(Modifier.weight(1f), verticalAlignment = Alignment.CenterVertically) {
+                RText(untrusted(p.merchant), RType.sans(14.5f, FontWeight.Medium), c.ink, Modifier.weight(1f, fill = false), maxLines = 1)
+                RText(" · ", RType.sans(14.5f), c.inkMeta, maxLines = 1)
+                RText(p.domain, RType.mono(13f), c.inkMeta, Modifier.weight(1f, fill = false).testTag("domain"), maxLines = 1, ltr = true)
+            }
+            RText(p.currency, RType.mono(12f), c.inkMeta, Modifier.padding(start = 8.dp), maxLines = 1)
+        }
+        Spacer(Modifier.height(8.dp))
+        for (item in p.items) {
+            Row(Modifier.fillMaxWidth().padding(top = 6.dp), verticalAlignment = Alignment.Top) {
+                Column(Modifier.weight(1f)) {
+                    RText("${item.quantity} × ${untrusted(item.name)}", RType.sans(14.5f), c.ink, maxLines = 3)
+                    val each = if (item.quantity > 1u) "${item.unitPrice} each" else null
+                    listOfNotNull(item.details?.let(::untrusted), each).joinToString(" · ").takeIf { it.isNotEmpty() }?.let {
+                        RText(it, RType.meta, c.inkMeta, Modifier.padding(top = 1.dp), maxLines = 2)
+                    }
+                }
+                Spacer(Modifier.width(10.dp))
+                RText(item.lineTotal, RType.mono(14f), c.ink, align = TextAlign.End, ltr = true)
+            }
+        }
+        // "Shipping · Tax" on one line, as the receipt board has it; a discount on its own.
+        val extras = listOfNotNull(p.shipping?.let { "Shipping" to it }, p.tax?.let { "Tax" to it })
+        if (extras.isNotEmpty()) ExtraLine(extras.joinToString(" · ") { it.first }, extras.joinToString(" · ") { it.second })
+        p.discount?.let { ExtraLine("Discount", "-$it") }
+        Spacer(Modifier.height(12.dp))
+        Hairline(inset = 0.dp)
+        Row(Modifier.fillMaxWidth().padding(top = 10.dp), verticalAlignment = Alignment.CenterVertically) {
+            RText("Total", RType.sans(15f, FontWeight.Medium), c.ink, Modifier.weight(1f))
+            RText(p.total, RType.serif(28f, 32f), c.ink, Modifier.testTag("total"), maxLines = 1, ltr = true)
+        }
     }
     p.note?.let {
-        Column(Modifier.padding(horizontal = 20.dp, vertical = 8.dp)) {
-            RText("Why, in the AI's words", RType.sans(12.5f, FontWeight.Medium), c.secondary)
-            RText("“${untrusted(it)}”", RType.sans(15f, lineHeight = 21f), c.text, Modifier.padding(top = 3.dp), maxLines = 6)
-        }
+        FactGroup(rows = listOf({ FactRow("The AI says", "“${untrusted(it)}”", maxLines = 6) }))
     }
     if (p.ships) {
         Section("Ship to")
@@ -181,6 +190,27 @@ fun PurchaseSection(p: PurchaseView, draft: PurchaseDraft, viewModel: ApprovalVi
                 }
             }
         }
+    }
+}
+
+/** A quiet line of the receipt: what on the left, the amounts in mono on the right. */
+@Composable
+private fun ExtraLine(label: String, value: String) {
+    val c = LocalColors.current
+    Row(Modifier.fillMaxWidth().padding(top = 8.dp)) {
+        RText(label, RType.meta, c.inkMeta, Modifier.weight(1f), maxLines = 1)
+        Spacer(Modifier.width(10.dp))
+        RText(value, RType.mono(12.5f), c.inkMeta, maxLines = 1, align = TextAlign.End, ltr = true)
+    }
+}
+
+/** A warning line on paper: the amber sign and the words, never cut. */
+@Composable
+internal fun WarnLine(text: String, modifier: Modifier = Modifier) {
+    val c = LocalColors.current
+    Row(modifier.fillMaxWidth().semantics(mergeDescendants = true) {}, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+        GlyphIcon(Glyph.Warning, c.warning, size = 18.dp, modifier = Modifier.padding(top = 1.dp))
+        RText(text, RType.sans(14.5f, lineHeight = 20f), c.ink, Modifier.weight(1f))
     }
 }
 
