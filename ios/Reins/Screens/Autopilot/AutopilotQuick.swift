@@ -78,14 +78,14 @@ struct AutopilotQuickPill: View {
                         onStopOvernight: { Task { await ap.stopOvernight() } },
                         onMore: {
                             sliderOpen = false
-                            model.show(.autopilot)
+                            model.open(.trust)
                         }
                     )
                     .presentationCompactAdaptation(.popover)
                 }
             case .page:
                 ActivityModePill(settings: settings) {
-                    model.show(.autopilot)
+                    model.open(.trust)
                     feedback.defaultTap()
                 }
             }
@@ -194,7 +194,7 @@ struct AutopilotQuickMenu: ViewModifier {
                                 },
                                 onMore: {
                                     close()
-                                    model.show(.autopilot)
+                                    model.open(.trust)
                                 }
                             )
                             .frame(width: width)
@@ -283,8 +283,8 @@ private struct QuickMenuCard: View {
                         title: "\(AutopilotText.overnightName) on",
                         until: settings.overnightUntil.flatMap { AutopilotText.isUntilOff($0) ? nil : $0 },
                         hint: "Tap to stop",
-                        fill: Palette.overnight,
-                        text: Palette.dynamic(0xFFFFFF, 0x0E1033),
+                        fill: Palette.violetFill,
+                        text: Palette.onField,
                         action: onStopOvernight
                     )
                 } else {

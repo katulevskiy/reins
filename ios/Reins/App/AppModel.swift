@@ -817,6 +817,12 @@ final class AppModel {
 
     func path(_ s: AppSection) -> [Route] { paths[s] ?? [] }
 
+    /// A place's root, with nothing open on it (Autopilot settings is Trust's root, Integrations is Connections').
+    func open(_ target: AppSection) {
+        paths[target] = []
+        section = target
+    }
+
     /// From a section's root list: the detail column shows `route` (a regular width), or it is pushed (compact).
     func show(_ route: Route, in target: AppSection? = nil) {
         let s = target ?? section
@@ -930,14 +936,12 @@ final class AppModel {
             show(.activityDetail(id), in: .activity)
         case let .grant(id):
             await refreshPending()
-            section = .grants
-            paths[.grants] = grants.contains { $0.id == id } ? [.grantDetail(id)] : []
+            section = .trust
+            paths[.trust] = grants.contains { $0.id == id } ? [.grantDetail(id)] : []
         case .autopilot:
-            section = .autopilot
-            paths[.autopilot] = []
+            open(.trust)
         case .integrations:
-            home()
-            show(.integrations, in: .activity)
+            open(.connections)
         case .home:
             home()
         case .pair:

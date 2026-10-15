@@ -109,7 +109,7 @@ private struct ApprovalScreen: View {
                         AutopilotSheet(suggestion: s) {
                             nav.overlay = nil
                             model.closeSheet()
-                            model.select(.autopilot)
+                            model.open(.trust)
                         }
                     }
                 case .grant: GrantSheet(vm: vm, view: view)

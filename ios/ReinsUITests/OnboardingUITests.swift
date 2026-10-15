@@ -128,25 +128,21 @@ final class OnboardingUITests: XCTestCase {
         wait("integrations", 8)
     }
 
-    func testSettingsConnectsAComputerByItsCode() {
+    func testConnectionsConnectsAComputerByItsCode() {
         launch()
-        let tab = app.tabBars.buttons["Settings"]
-        XCTAssertTrue(tab.waitForExistence(timeout: 10))
-        tab.tap()
-        // Settings > + Connect > Computer > Type code.
+        XCTAssertTrue(app.openTab("connections"))
+        // Connections > + > Computer > Type code.
         scrollTo("connect")
         tap("connect")
         tap("sheetTypeCode")
-        shot("6-settings-connect-computer")
+        shot("6-connections-connect-computer")
         pairByTypedCode()
         shot("7-pairing-sheet")
     }
 
     func testAnExpiredCodeSaysToShowANewOne() {
         launch()
-        let tab = app.tabBars.buttons["Settings"]
-        XCTAssertTrue(tab.waitForExistence(timeout: 10))
-        tab.tap()
+        XCTAssertTrue(app.openTab("connections"))
         scrollTo("connect")
         tap("connect")
         tap("sheetTypeCode")
@@ -216,8 +212,7 @@ final class OnboardingUITests: XCTestCase {
 
     func testAnotherPhoneAsksToJoinAndThisOneApproves() {
         launch(["-demoJoin"])
-        let tab = app.tabBars.buttons["Activity"]
-        XCTAssertTrue(tab.waitForExistence(timeout: 10))
+        XCTAssertTrue(app.tab("activity").waitForExistence(timeout: 10))
         tap("pendingTitle:join-pixel")
         XCTAssertEqual(wait("joinCode").label, "Code 482 193")
         shot("12-join-sheet")

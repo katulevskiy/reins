@@ -154,14 +154,7 @@ final class PasskeyUITests: XCTestCase {
     // MARK: Settings
 
     private func openSettings() {
-        let tab = app.tabBars.buttons["Settings"]
-        if tab.waitForExistence(timeout: 5) {
-            tab.tap()
-        } else {
-            let cell = app.buttons["Settings"].firstMatch
-            XCTAssertTrue(cell.waitForExistence(timeout: 5), "no Settings")
-            cell.tap()
-        }
+        XCTAssertTrue(app.openTab("settings", timeout: 5), "no Settings")
     }
 
     func testSettingsListsAddsAndRemovesPasskeys() {

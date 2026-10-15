@@ -17,7 +17,7 @@ final class NotificationsUITests: XCTestCase {
         allowNotifications()
         // The first launch of a run can race xcodebuild still installing the app: it fails, or the app comes up again
         // without these arguments (on the real sign-in screen). Once, launch it again, and say so in the log.
-        if launchFailures > 0 || !app.tabBars.firstMatch.waitForExistence(timeout: 20) {
+        if launchFailures > 0 || !app.tab("activity").waitForExistence(timeout: 20) {
             XCTContext.runActivity(named: "Relaunching: the demo did not start") { _ in
                 shot("before-relaunch")
                 print("NotificationsUITests: relaunching, the demo did not start")

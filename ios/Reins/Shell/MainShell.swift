@@ -1,6 +1,6 @@
 import SwiftUI
 
-/// The signed-in app. A compact width (an iPhone, a folded iPhone Duo, iPad Slide Over) gets a Liquid Glass tab bar
+/// The signed-in app. A compact width (an iPhone, a folded iPhone Duo, iPad Slide Over) gets Signal's floating tab bar
 /// with a navigation stack per tab; a regular width (iPad, an unfolded iPhone Duo) gets a sidebar, the section's
 /// list and a detail column. Both read the same navigation state (`AppModel.section` / `paths`), so folding or
 /// resizing keeps what is open.
@@ -54,35 +54,48 @@ struct MainShell: View {
 
 // MARK: Compact
 
+/// Four navigation stacks, one per place, under Signal's tab bar (an inverse capsule floating over the content, which
+/// scrolls on beneath it). A stack is made the first time its tab is chosen and kept after, so going back to a tab
+/// finds it as it was.
 private struct TabShell: View {
     @Environment(AppModel.self) private var model
+    @State private var visited: Set<AppSection> = []
 
     var body: some View {
         @Bindable var model = model
-        TabView(selection: Binding(get: { model.section }, set: { model.select($0) })) {
+        ZStack {
             ForEach(AppSection.allCases) { section in
-                Tab(section.title, systemImage: section.symbol, value: section) {
+                if visited.contains(section) || section == model.section {
+                    let shown = section == model.section
                     NavigationStack(path: Binding(get: { model.path(section) }, set: { model.paths[section] = $0 })) {
                         SectionRoot(section: section)
                             .navigationDestination(for: Route.self) { RouteView(route: $0) }
                     }
                     .pageFeedback(model.path(section).count)
+                    .opacity(shown ? 1 : 0)
+                    .allowsHitTesting(shown)
+                    .accessibilityHidden(!shown)
                 }
-                // The system's own badge (never clipped by the bar), with "99+" past 99 like the sidebar's.
-                .badge(CountBadge.text(badge(section)).map { Text($0) })
             }
         }
-        .tabBarMinimizeBehavior(.onScrollDown)
-        .onChange(of: model.section) { model.feedback.play(.selection) }
+        .safeAreaInset(edge: .bottom, spacing: 0) {
+            SignalTabBar(items: items, selection: Binding(get: { model.section }, set: { model.select($0) }))
+                .padding(.bottom, 4)
+        }
+        .onChange(of: model.section, initial: true) { _, section in visited.insert(section) }
     }
 
-    private func badge(_ section: AppSection) -> Int {
-        switch section {
-        case .activity: model.pending.count
-        case .grants: model.activeGrants
-        default: 0
+    private var items: [SignalTabBar<AppSection>.Item] {
+        AppSection.allCases.map { section in
+            SignalTabBar.Item(
+                tab: section, title: section.title, glyph: section.glyph, identifier: section.identifier,
+                badge: section == .trust && bypassRunning, count: section == .activity ? model.pending.count : 0
+            )
         }
     }
+
+    /// A bypass is on: its dot breathes on Trust.
+    private var bypassRunning: Bool { model.autopilot?.mode == .bypass }
 }
 
 // MARK: Regular
@@ -123,9 +136,10 @@ private struct Sidebar: View {
                             if section == .activity { CountBadge(count: model.pending.count) }
                         }
                     } icon: {
-                        Image(systemName: section.symbol)
+                        GlyphIcon(section.glyph, size: 20)
                     }
                 }
+                .accessibilityIdentifier(section.identifier)
             }
         }
         .navigationTitle("Reins")
@@ -165,8 +179,8 @@ private struct DetailPlaceholder: View {
     var body: some View {
         let (symbol, text): (String, String) = switch section {
         case .activity: ("waveform.path.ecg", "Pick a request or an entry to see everything about it.")
-        case .grants: ("key.horizontal", "Pick a grant to see what it allows and how it was used.")
-        case .autopilot: ("bolt.shield", "Pick a profile to see what Autopilot learned.")
+        case .trust: ("checkmark.shield", "Pick a grant or a profile to see what it allows and what Autopilot learned.")
+        case .connections: ("link", "Pick an AI, a computer or a service to see what it can reach.")
         case .settings: ("gearshape", "Pick a setting.")
         }
         EmptyState(symbol: symbol, title: section.title, message: text)
@@ -184,8 +198,8 @@ struct SectionRoot: View {
     var body: some View {
         switch section {
         case .activity: ActivityScreen()
-        case .grants: GrantsScreen()
-        case .autopilot: AutopilotScreen(root: true)
+        case .trust: TrustScreen()
+        case .connections: ConnectionsScreen()
         case .settings: SettingsScreen()
         }
     }
@@ -204,11 +218,9 @@ struct RouteView: View {
         case .vaultAdd: VaultAddScreen()
         case let .vaultItem(id): VaultItemScreen(id: id)
         case let .vaultEdit(id, newItem): VaultEditScreen(id: id, newItem: newItem)
-        case .autopilot: AutopilotScreen()
         case let .autopilotProfile(id): ProfileScreen(profileId: id)
         case let .tryIt(id): TryItScreen(profileId: id)
         case let .connection(id): ConnectionDetailScreen(connectionId: id)
-        case .integrations: IntegrationsScreen()
         case .gmail: GmailScreen()
         case let .service(id): ServiceScreen(serviceId: id)
         case .mcpAdd: McpAddScreen()

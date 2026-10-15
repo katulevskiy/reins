@@ -655,10 +655,10 @@ struct ProfileEditorSheet: View {
     }
 }
 
-/// Where a screen in Autopilot opens the next one: from the section's root the detail column (or a push on a
-/// phone), from a pushed Autopilot (Activity's pill, Settings) one more screen on top.
+/// Where Autopilot's part of Trust opens the next one: from Trust's root the detail column (or a push on a phone),
+/// from anywhere deeper one more screen on top.
 extension AppModel {
     func openFromAutopilot(_ route: Route) {
-        if section == .autopilot && !path(section).contains(.autopilot) { show(route) } else { push(route) }
+        if section == .trust && path(section).isEmpty { show(route) } else { push(route) }
     }
 }

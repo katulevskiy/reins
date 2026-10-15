@@ -1,195 +1,12 @@
 import SwiftUI
 
-/// Autopilot: the mode (Manual or Auto, with Overnight, Bypass and Lock down at hand), this week in numbers, the model that runs
-/// on this phone, "Try it", and the profiles that learn from the user's answers. The Autopilot section's root
-/// (`root`), and also pushed from Activity's mode pill and Settings.
-struct AutopilotScreen: View {
-    var root = false
-
-    @Environment(AppModel.self) private var model
-    @Environment(\.feedback) private var feedback
-    @State private var ap = AutopilotModel()
-    @State private var bypassAsk = false
-    @State private var overnightAsk = false
-    @State private var mobileDataAsk = false
-    @State private var modelOpen = false
-    @State private var newProfile = false
-
-    var body: some View {
-        let page = ScrollView {
-            if let s = ap.settings {
-                content(s)
-                    .frame(maxWidth: 680)
-                    .frame(maxWidth: .infinity)
-                    .padding(.horizontal, 16)
-                    .padding(.bottom, 32)
-            } else {
-                ProgressView().padding(.top, 60).frame(maxWidth: .infinity)
-            }
-        }
-        .background(Palette.background.ignoresSafeArea())
-        .navigationTitle("Autopilot")
-        .refreshable {
-            feedback.play(.refresh)
-            await ap.refresh()
-            await ap.loadStats()
-        }
-        .task {
-            ap.bind(model)
-            await ap.refresh()
-            await ap.loadStats()
-        }
-        .sheet(isPresented: $bypassAsk) {
-            BypassSheet(who: nil) { length in
-                feedback.quietClose()
-                Task { await ap.startBypass(minutes: length.minutes) }
-            }
-            .environment(\.feedback, feedback)
-        }
-        .presentationFeedback(bypassAsk)
-        .sheet(isPresented: $overnightAsk) {
-            OvernightSheet(who: nil, ap: ap) { length in
-                feedback.quietClose()
-                Task { await ap.startOvernight(minutes: length.minutes) }
-            }
-            .environment(\.feedback, feedback)
-        }
-        .presentationFeedback(overnightAsk)
-        .sheet(isPresented: $modelOpen) {
-            ModelSheet(ap: ap)
-                .environment(\.feedback, feedback)
-        }
-        .presentationFeedback(modelOpen)
-        .sheet(isPresented: $newProfile) {
-            ProfileEditorSheet(title: "New profile", initialName: "", initialIcon: AutopilotText.icons[2], confirmLabel: "Create") { name, icon in
-                feedback.quietClose()
-                Task {
-                    if let id = await ap.createProfile(name: name, icon: icon) { model.openFromAutopilot(.autopilotProfile(id)) }
-                }
-            }
-        }
-        .presentationFeedback(newProfile)
-        .mobileDataPrompt(isPresented: $mobileDataAsk, ap: ap)
-
-        if root {
-            page.rootNavigationBar()
-        } else {
-            // The page draws its own large title under the back button.
-            page
-                .navigationBarTitleDisplayMode(.inline)
-                .toolbar { ToolbarItem(placement: .principal) { EmptyView() } }
-        }
-    }
-
-    private func content(_ s: AutopilotSettings) -> some View {
-        VStack(alignment: .leading, spacing: 22) {
-            PageHeader(title: "Autopilot") { EmptyView() }
-                .padding(.horizontal, 4)
-                .padding(.top, root ? 8 : 0)
-            VStack(alignment: .leading, spacing: 8) {
-                // "Mode" with its (?) right beside the word; what the modes do opens under it.
-                HelpHeader(title: "Mode", help: AutopilotText.modeHelp, id: "mode")
-                    .padding(.horizontal, 12)
-                    .accessibilityElement(children: .contain)
-                    .accessibilityIdentifier("modeHeader")
-                ModeHero(
-                    settings: s,
-                    modelReady: ap.modelReady,
-                    onPick: { pick($0, s) },
-                    onBypass: { bypassAsk = true },
-                    onOvernight: { overnightAsk = true },
-                    onLockdown: { Task { await ap.setMode(.lockdown) } },
-                    onEndLockdown: { Task { await ap.endLockdown() } },
-                    onStopBypass: { Task { await ap.stopBypass() } },
-                    onStopOvernight: { Task { await ap.stopOvernight() } },
-                    onWhenRisky: { risky in Task { await ap.setOvernightWhenRisky(risky) } }
-                )
-            }
-            .padding(.top, -8)
-            if ap.error != nil || ap.notice != nil {
-                VStack(spacing: 8) {
-                    if let error = ap.error { IntegrationBanner(text: error, kind: .error).accessibilityIdentifier("autopilotError") }
-                    if let notice = ap.notice { IntegrationBanner(text: notice).accessibilityIdentifier("autopilotNotice") }
-                }
-            }
-
-            if ap.modelReady {
-                VStack(alignment: .leading, spacing: 8) {
-                    SectionHeader("This week").padding(.horizontal, 12)
-                    WeekStats(stats: ap.stats)
-                }
-            } else if let m = ap.model {
-                ModelOffer(ap: ap, model: m, onDownload: download)
-            }
-
-            AutopilotGroup(header: nil) {
-                ModelRow(ap: ap, onUpdate: download) { modelOpen = true }
-                RowDivider(inset: 60)
-                AutopilotLinkRow(title: "Try it", symbol: "flask.fill", tint: Palette.send, identifier: "openTryIt") {
-                    if !ap.modelReady {
-                        Text("after download").font(RFont.sans(15)).foregroundStyle(Palette.tertiary).lineLimit(1)
-                    }
-                } action: {
-                    model.openFromAutopilot(.tryIt(nil))
-                }
-            }
-
-            VStack(alignment: .leading, spacing: 8) {
-                HStack {
-                    SectionHeader("Profiles")
-                    Button {
-                        feedback.play(.tap)
-                        newProfile = true
-                    } label: {
-                        Label("New", systemImage: "plus")
-                            .labelStyle(.titleAndIcon)
-                            .font(RFont.sans(14.5, .medium))
-                            .foregroundStyle(Palette.accent)
-                            .frame(minHeight: 30)
-                            .contentShape(Rectangle())
-                    }
-                    .buttonStyle(.plain)
-                    .accessibilityIdentifier("newProfile")
-                }
-                .padding(.horizontal, 12)
-                AutopilotGroup(header: nil) {
-                    ForEach(Array(ap.profiles.enumerated()), id: \.element.id) { i, profile in
-                        if i > 0 { RowDivider(inset: 64) }
-                        ProfileRow(profile: profile, line: AutopilotText.profileLine(profile, ais: ais(profile, s))) {
-                            model.openFromAutopilot(.autopilotProfile(profile.id))
-                        }
-                    }
-                }
-            }
-        }
-        .task(id: [s.bypassUntil, s.overnightUntil]) {
-            // The core ends a bypass or an Overnight when it is read after its time; read it then, so the screen moves
-            // on by itself. One without an end waits for the user.
-            let ends = [s.bypassUntil, s.overnightUntil].compactMap { $0 }.filter { !AutopilotText.isUntilOff($0) }
-            guard let until = ends.min() else { return }
-            let left = Double(until) - Date().timeIntervalSince1970
-            try? await Task.sleep(for: .seconds(max(left, 0) + 1))
-            if !Task.isCancelled { await model.refreshAutopilot() }
-        }
-    }
-
-    private func ais(_ p: ProfileView, _ s: AutopilotSettings) -> [String] {
-        AutopilotText.profileAis(p, settings: s, connections: model.connections.map { ($0.id, $0.label) })
-    }
-
-    private func pick(_ mode: AutopilotMode, _ s: AutopilotSettings) {
-        if mode != s.mode { Task { await ap.setMode(mode) } }
-    }
-
-    private func download() {
-        if ap.needsMobileDataConsent() { mobileDataAsk = true } else { ap.download() }
-    }
-}
+// Autopilot's parts of Trust (TrustScreen): the mode, this week's numbers, the model and its sheet, "Try it" and the
+// profiles.
 
 /// The mode, large. Manual and Auto side by side (the chosen one tinted), then Overnight, then Bypass and Lock down;
 /// amber in Lockdown, where neither is chosen and the last button ends it. During a bypass: red, its ring, what it
 /// does and Stop bypass; during an Overnight the same in night indigo, with what it does with what is too risky.
-private struct ModeHero: View {
+struct ModeHero: View {
     var settings: AutopilotSettings
     var modelReady: Bool
     var onPick: (AutopilotMode) -> Void
@@ -336,9 +153,9 @@ private struct ModeHero: View {
             Button(action: onStopOvernight) {
                 Text("Stop \(AutopilotText.overnightName)")
                     .font(RFont.sans(16, .semibold))
-                    .foregroundStyle(Palette.dynamic(0xFFFFFF, 0x0E1033))
+                    .foregroundStyle(Palette.onField)
                     .frame(maxWidth: .infinity, minHeight: 46)
-                    .background(Palette.overnight, in: Capsule())
+                    .background(Palette.violetFill, in: Capsule())
                     .contentShape(Capsule())
             }
             .buttonStyle(PressDim())
@@ -429,7 +246,7 @@ private struct HeroButton: View {
 }
 
 /// This week in three numbers: requests scored, how often Autopilot matched the user, kinds on Auto.
-private struct WeekStats: View {
+struct WeekStats: View {
     var stats: AutopilotStats?
 
     var body: some View {
@@ -445,7 +262,7 @@ private struct WeekStats: View {
 }
 
 /// Without the model: what it gives and getting it, with the download's progress while it comes.
-private struct ModelOffer: View {
+struct ModelOffer: View {
     var ap: AutopilotModel
     var model: ModelStatus
     var onDownload: () -> Void
@@ -520,7 +337,7 @@ private struct ModelOffer: View {
 
 /// "On-device model": Ready, Update (a tap downloads the newer model), the download's percent, or Download; opens the
 /// model's details.
-private struct ModelRow: View {
+struct ModelRow: View {
     var ap: AutopilotModel
     var onUpdate: () -> Void
     var action: () -> Void
@@ -576,7 +393,7 @@ private struct ModelRow: View {
 }
 
 /// A row of the Autopilot list: a coloured tile, a title, what goes on the right, and the disclosure mark.
-private struct AutopilotLinkRow<Trailing: View>: View {
+struct AutopilotLinkRow<Trailing: View>: View {
     var title: String
     var symbol: String
     var tint: Color
@@ -606,7 +423,7 @@ private struct AutopilotLinkRow<Trailing: View>: View {
 }
 
 /// A profile: its emoji, name, the AIs it learns from and how much it remembers.
-private struct ProfileRow: View {
+struct ProfileRow: View {
     var profile: ProfileView
     var line: String
     var action: () -> Void
@@ -638,7 +455,7 @@ private struct ProfileRow: View {
 }
 
 /// The model's details: what it is, getting it or removing it, and the Wi-Fi only switch.
-private struct ModelSheet: View {
+struct ModelSheet: View {
     var ap: AutopilotModel
     @State private var deleteAsk = false
     @State private var mobileDataAsk = false
@@ -813,7 +630,7 @@ private struct WifiOnlyRow: View {
     }
 }
 
-private extension View {
+extension View {
     /// Asks before downloading the model over mobile data while Wi-Fi only is on.
     func mobileDataPrompt(isPresented: Binding<Bool>, ap: AutopilotModel) -> some View {
         confirmationDialog("You are on mobile data", isPresented: isPresented, titleVisibility: .visible) {

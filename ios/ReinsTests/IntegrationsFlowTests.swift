@@ -263,11 +263,11 @@ final class IntegrationsFlowTests: XCTestCase {
         XCTAssertTrue(feedback.cues.contains(.delete))
     }
 
-    func testTheIntegrationsLinkOpensThePageOverActivity() async {
-        model.section = .grants
+    func testTheIntegrationsLinkOpensConnections() async {
+        model.section = .trust
         await model.handle(.integrations)
-        XCTAssertEqual(model.section, .activity)
-        XCTAssertEqual(model.path(.activity), [.integrations])
+        XCTAssertEqual(model.section, .connections)
+        XCTAssertEqual(model.path(.connections), [])
     }
 }
 
