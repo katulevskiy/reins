@@ -243,6 +243,55 @@ final class WarmPolicy: @unchecked Sendable {
     }
 }
 
+/// Whether a sound may be tried now. A sound must never hold the app up: while the sound queue is inside an audio call
+/// that has not come back for `stuckMs` (the audio server is not answering), or until a backoff after the engine
+/// failed to start has passed, sounds are skipped at once, from any thread, instead of queueing behind it. The
+/// backoff doubles with each failure up to `maxBackoffMs` and clears when the engine starts.
+final class SoundHealth: @unchecked Sendable {
+    static let stuckMs: Int64 = 250
+    static let firstBackoffMs: Int64 = 2_000
+    static let maxBackoffMs: Int64 = 60_000
+
+    private let lock = NSLock()
+    private var busySince: Int64?
+    private var retryAt = Int64.min / 2
+    private var backoffMs: Int64 = 0
+
+    func canTry(now: Int64) -> Bool {
+        lock.lock()
+        defer { lock.unlock() }
+        if let busySince, now - busySince >= Self.stuckMs { return false }
+        return now >= retryAt
+    }
+
+    /// The sound queue is about to make an audio call that may block (the session, the graph, starting the engine).
+    func begin(now: Int64) {
+        lock.lock()
+        busySince = now
+        lock.unlock()
+    }
+
+    func end() {
+        lock.lock()
+        busySince = nil
+        lock.unlock()
+    }
+
+    func failed(now: Int64) {
+        lock.lock()
+        backoffMs = backoffMs == 0 ? Self.firstBackoffMs : min(backoffMs * 2, Self.maxBackoffMs)
+        retryAt = now + backoffMs
+        lock.unlock()
+    }
+
+    func started() {
+        lock.lock()
+        backoffMs = 0
+        retryAt = Int64.min / 2
+        lock.unlock()
+    }
+}
+
 /// Which player voice a new cue takes: a free one, or, when all are sounding, the least important (oldest among
 /// equals) as long as it matters no more than the newcomer. The gate already turned away cues that could not win.
 struct VoicePool {
