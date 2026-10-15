@@ -101,7 +101,7 @@ struct RememberSheet: View {
             VStack(spacing: 8) {
                 HoldButton(title: "Remember until I revoke", symbol: nil) { apply() }
                     .accessibilityIdentifier("rememberConfirm")
-                Text("Hold for 2 seconds").font(RFont.sans(12)).foregroundStyle(Palette.tertiary)
+                Text(HoldButton.hint).font(RFont.sans(12)).foregroundStyle(Palette.tertiary)
             }
         } else {
             let label: String = if vm.draft.allMail != nil {

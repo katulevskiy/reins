@@ -687,9 +687,10 @@ private struct FooterSection: View {
 }
 
 #if DEBUG
-/// Debug builds only: what the header's Autopilot pill opens, to compare the designs on a phone.
+/// Debug builds only: what the header's Autopilot pill opens, to compare the designs on a phone, and the Signal gallery.
 private struct DeveloperGroup: View {
     @AppStorage(QuickStyle.key) private var style = QuickStyle.menu.rawValue
+    @State private var gallery = false
 
     var body: some View {
         Section {
@@ -699,8 +700,16 @@ private struct DeveloperGroup: View {
             .pickerStyle(.segmented)
             .cardRow()
             .accessibilityIdentifier("quickStyle")
+            Button("Signal gallery") { gallery = true }
+                .font(RFont.sans(16, .medium))
+                .foregroundStyle(Palette.ink)
+                .cardRow()
+                .accessibilityIdentifier("openSignalGallery")
         } header: {
             GroupHeader("Developer")
+        }
+        .fullScreenCover(isPresented: $gallery) {
+            SignalGallery(page: .type, onClose: { gallery = false })
         }
     }
 }

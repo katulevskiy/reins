@@ -80,7 +80,7 @@ struct FactRow<Trailing: View>: View {
 
     var body: some View {
         HStack(spacing: 14) {
-            Text(key).font(RFont.sans(15.5)).foregroundStyle(Palette.tertiary).lineLimit(1)
+            Text(key).font(RFont.sans(15.5)).foregroundStyle(Palette.ink2).lineLimit(1)
             Text(value)
                 .font(mono ? RFont.mono(14, .medium) : RFont.sans(15.5, .medium))
                 .foregroundStyle(tint ?? Palette.text)

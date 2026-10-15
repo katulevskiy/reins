@@ -1,9 +1,9 @@
 import SwiftUI
 
-// The shared building blocks. Surfaces follow Zeron: plain cards on the background, Liquid Glass for floating
-// controls (buttons over content, the tab bar, toasts); one violet accent; Geist type.
+// The shared building blocks, in Signal: paper, ink and hairlines; raised plates with a hairline ring for header
+// controls and toasts; one violet; the type roles of Typography.swift.
 
-/// "WAITING FOR YOU": a small uppercase heading above a group.
+/// "WAITING FOR YOU": a section label (mono capitals, tracked) above a group.
 struct SectionHeader: View {
     var title: String
     var trailing: String?
@@ -15,13 +15,12 @@ struct SectionHeader: View {
 
     var body: some View {
         HStack {
-            Text(title.uppercased())
-                .font(RFont.sans(12.5, .medium))
-                .tracking(0.6)
-                .foregroundStyle(Palette.secondary)
+            Text(title)
+                .textRole(.label)
+                .foregroundStyle(Palette.inkMeta)
             Spacer()
             if let trailing {
-                Text(trailing).font(RFont.sans(12.5)).foregroundStyle(Palette.tertiary)
+                Text(trailing).textRole(.meta).foregroundStyle(Palette.inkMeta)
             }
         }
         .padding(.horizontal, 4)
@@ -80,26 +79,20 @@ struct AccountTag: View {
     }
 }
 
-/// An outcome ("Allowed", "Denied", "Sent"), coloured by how it went.
+/// An outcome ("Allowed", "Denied", "Sent"): a Signal pill, coloured by how it went and always with its word.
 struct OutcomePill: View {
     enum Tone { case neutral, good, bad, accent }
     var text: String
     var tone: Tone = .neutral
 
     var body: some View {
-        let color: Color = switch tone {
-        case .neutral: Palette.secondary
-        case .good: Palette.success
-        case .bad: Palette.danger
-        case .accent: Palette.accent
+        let pill: Pill.Tone = switch tone {
+        case .neutral: .neutral
+        case .good: .success
+        case .bad: .danger
+        case .accent: .violet
         }
-        Text(text)
-            .font(RFont.sans(12.5, .medium))
-            .foregroundStyle(color)
-            .padding(.horizontal, 10)
-            .padding(.vertical, 4)
-            .background(tone == .neutral ? Palette.controlFill : color.opacity(0.13), in: Capsule())
-            .lineLimit(1)
+        Pill(text, tone: pill)
     }
 }
 
@@ -110,16 +103,9 @@ struct ActionTile: View {
     var size: CGFloat = 44
     var tint: Color? = nil
 
+    /// The kind's ink (`FieldKind`); an operation with no kind is ink-2.
     static func color(_ kind: ActionKind) -> Color {
-        switch kind {
-        case .search, .list: Palette.search
-        case .write, .send: Palette.send
-        case .read, .upload, .headlines: Palette.read
-        case .grant: Palette.grant
-        case .accounts: Palette.accounts
-        case .pair, .join: Palette.pair
-        case .other: Palette.secondary
-        }
+        FieldKind.of(kind)?.ink ?? Palette.secondary
     }
 
     var body: some View {
@@ -181,59 +167,30 @@ struct CountBadge: View {
     }
 }
 
-/// Big capsule buttons: Approve (the strong one), Deny (quiet), and destructive confirmations.
+/// Big capsule buttons: Approve (the strong one, `inverse`), quiet ones (`soft`), Allow (`violet`) and destructive ones
+/// (`danger` wash), drawn by Signal's button look.
 struct CapsuleButtonStyle: PrimitiveButtonStyle {
     enum Kind { case primary, secondary, accent, danger }
     var kind: Kind = .primary
     var height: CGFloat = 54
 
     func makeBody(configuration: Configuration) -> some View {
-        DefaultTapStyle(look: CapsuleLook(kind: kind, height: height)).makeBody(configuration: configuration)
-    }
-}
-
-private struct CapsuleLook: ButtonStyle {
-    var kind: CapsuleButtonStyle.Kind
-    var height: CGFloat
-
-    func makeBody(configuration: Configuration) -> some View {
-        let (fg, bg): (Color, Color) = switch kind {
-        case .primary: (Palette.background, Palette.text)
-        case .secondary: (Palette.text, Palette.controlFill)
-        case .accent: (.white, Palette.accent)
-        case .danger: (.white, Palette.danger)
+        let look: SignalButtonKind = switch kind {
+        case .primary: .inverse
+        case .secondary: .soft
+        case .accent: .violet
+        case .danger: .danger
         }
-        configuration.label
-            .font(RFont.sans(17, .semibold))
-            .foregroundStyle(fg)
-            .frame(maxWidth: .infinity, minHeight: height)
-            .background(bg, in: Capsule())
-            .opacity(configuration.isPressed ? 0.75 : 1)
-            .scaleEffect(configuration.isPressed ? 0.98 : 1)
-            .animation(.spring(duration: 0.2), value: configuration.isPressed)
+        return DefaultTapStyle(look: SignalButtonLook(kind: look, height: height)).makeBody(configuration: configuration)
     }
 }
 
 /// A compact pill button on a row ("Review").
 struct PillButtonStyle: PrimitiveButtonStyle {
-    var tint: Color = Palette.accent
+    var kind: SignalButtonKind = .violet
 
     func makeBody(configuration: Configuration) -> some View {
-        DefaultTapStyle(look: PillLook(tint: tint)).makeBody(configuration: configuration)
-    }
-}
-
-private struct PillLook: ButtonStyle {
-    var tint: Color
-
-    func makeBody(configuration: Configuration) -> some View {
-        configuration.label
-            .font(RFont.sans(15, .semibold))
-            .foregroundStyle(.white)
-            .padding(.horizontal, 16)
-            .padding(.vertical, 9)
-            .background(tint, in: Capsule())
-            .opacity(configuration.isPressed ? 0.75 : 1)
+        DefaultTapStyle(look: SignalButtonLook(kind: kind, size: .small, fill: false)).makeBody(configuration: configuration)
     }
 }
 
@@ -242,7 +199,7 @@ enum HeaderControl {
     static let height: CGFloat = 40
 }
 
-/// A round Liquid Glass icon button (close, more, settings).
+/// A round header button (close, more, settings): `paper-raised` with a hairline ring, as Signal draws them (no glass).
 struct GlassIconButton: View {
     var symbol: String
     var size: CGFloat = HeaderControl.height
@@ -260,14 +217,17 @@ struct GlassIconButton: View {
                 .font(.system(size: size * 0.4, weight: .semibold))
                 .foregroundStyle(Palette.text)
                 .frame(width: size, height: size)
+                .background(Palette.paperRaised, in: Circle())
+                .overlay(Circle().strokeBorder(Palette.rule, lineWidth: 1))
+                .contentShape(Circle())
         }
-        .buttonStyle(.plain)
-        .glassEffect(.regular.interactive(), in: Circle())
+        .buttonStyle(PressDimsStyle())
         .accessibilityLabel(label)
     }
 }
 
-/// A Liquid Glass capsule with an icon and text ("Manual", "Integrations").
+/// A header chip with an icon and text ("Manual", "Integrations"): `paper-raised` with a hairline ring, or filled in its
+/// tint.
 struct GlassPill: View {
     var symbol: String?
     var text: String
@@ -285,12 +245,16 @@ struct GlassPill: View {
                 if let symbol { Image(systemName: symbol).font(.system(size: 14, weight: .semibold)) }
                 Text(text).font(RFont.sans(15, .medium)).lineLimit(1)
             }
-            .foregroundStyle(tint ?? Palette.text)
+            .foregroundStyle(tint == nil ? Palette.text : .white)
             .padding(.horizontal, 14)
             .frame(height: HeaderControl.height)
+            .background(tint ?? Palette.paperRaised, in: Capsule())
+            .overlay {
+                if tint == nil { Capsule().strokeBorder(Palette.rule, lineWidth: 1) }
+            }
+            .contentShape(Capsule())
         }
-        .buttonStyle(.plain)
-        .glassEffect(tint.map { .regular.tint($0.opacity(0.18)).interactive() } ?? .regular.interactive(), in: Capsule())
+        .buttonStyle(PressDimsStyle())
     }
 }
 
@@ -299,6 +263,9 @@ struct EmptyState: View {
     var symbol: String
     var title: String
     var message: String? = nil
+
+    /// All quiet: the pond and one line in the mood serif ("All quiet on the water.").
+    static func calm(_ mood: String) -> CalmState { CalmState(mood: mood) }
 
     var body: some View {
         VStack(spacing: 10) {
@@ -318,6 +285,26 @@ struct EmptyState: View {
     }
 }
 
+/// The empty state of a quiet screen: the pond drawing and its mood line, centred, in ink-2.
+struct CalmState: View {
+    var mood: String
+
+    var body: some View {
+        VStack(spacing: 18) {
+            Illustration(.pond)
+                .frame(maxWidth: 320)
+            Text(mood)
+                .textRole(.mood)
+                .foregroundStyle(Palette.ink2)
+                .multilineTextAlignment(.center)
+        }
+        .padding(.horizontal, 24)
+        .padding(.vertical, 20)
+        .frame(maxWidth: .infinity)
+        .accessibilityElement(children: .combine)
+    }
+}
+
 /// A one-line message floating over the content.
 struct Toast: View {
     var text: String
@@ -333,7 +320,9 @@ struct Toast: View {
                 .padding(.vertical, 12)
         }
         .buttonStyle(.plain)
-        .glassEffect(.regular, in: Capsule())
+        .background(Palette.plate, in: Capsule())
+        .overlay(Capsule().strokeBorder(Palette.plateEdge, lineWidth: 1))
+        .shadow(color: .black.opacity(0.18), radius: 15, y: 8)
         .padding(.horizontal, 24)
         .task {
             try? await Task.sleep(for: .seconds(4))
@@ -342,7 +331,7 @@ struct Toast: View {
     }
 }
 
-/// The large page title with optional trailing controls, as on the Android screens ("Activity  [Manual] [Integrations]").
+/// The page title in the serif with optional trailing controls ("Activity  [Manual] [Integrations]").
 struct PageHeader<Trailing: View>: View {
     var title: String
     @ViewBuilder var trailing: Trailing
@@ -350,7 +339,7 @@ struct PageHeader<Trailing: View>: View {
     var body: some View {
         HStack(alignment: .center, spacing: 10) {
             Text(title)
-                .font(RFont.sans(34, .bold))
+                .textRole(.title)
                 .foregroundStyle(Palette.text)
                 .lineLimit(1)
                 .minimumScaleFactor(0.7)
@@ -358,6 +347,15 @@ struct PageHeader<Trailing: View>: View {
             Spacer(minLength: 8)
             trailing
         }
+    }
+}
+
+/// A plain button whose content dims to 55 % while pressed and 40 % when disabled.
+struct PressDimsStyle: ButtonStyle {
+    @Environment(\.isEnabled) private var enabled
+
+    func makeBody(configuration: Configuration) -> some View {
+        configuration.label.pressDims(pressed: configuration.isPressed, enabled: enabled)
     }
 }
 

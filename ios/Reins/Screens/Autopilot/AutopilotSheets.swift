@@ -153,7 +153,7 @@ enum TimedMode: Hashable {
 }
 
 /// Turning a bypass on, for every AI (`who` nil) or one (its name): 15 min, 1 hour, 1 day or Custom (which opens
-/// "Bypass for": 4 hours, 1 week, a number and unit of the user's own, or until turned off), held for two seconds to
+/// "Bypass for": 4 hours, 1 week, a number and unit of the user's own, or until turned off), held to
 /// confirm. Used by the Autopilot page, the mode pill's menu and an AI's page; no bypass starts with one tap.
 struct BypassSheet: View {
     var who: String?
@@ -288,7 +288,7 @@ struct TimedModeSheet<Extra: View>: View {
                         .accessibilityIdentifier(kind.id("confirmBypass"))
                 }
                 .padding(.top, 20)
-                Text("Hold for 2 seconds")
+                Text(HoldButton.hint)
                     .font(RFont.sans(12))
                     .foregroundStyle(Palette.tertiary)
                     .padding(.top, 8)
@@ -440,7 +440,7 @@ struct BypassForSheet: View {
                 }
                 .accessibilityIdentifier(kind.id("confirmBypassFor"))
                 .padding(.top, 16)
-                Text("Hold for 2 seconds")
+                Text(HoldButton.hint)
                     .font(RFont.sans(12))
                     .foregroundStyle(Palette.tertiary)
                     .frame(maxWidth: .infinity)
