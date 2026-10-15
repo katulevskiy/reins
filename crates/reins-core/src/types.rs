@@ -182,6 +182,29 @@ pub struct ActivityRequest {
     pub purpose: String,
     /// When it was asked (Unix seconds); 0 when not known.
     pub asked_at: i64,
+    /// A push: its refs, commits and files with the lines each adds and removes, kept with the entry so that every
+    /// device of the account has it (whichever decided it). Without the changes line by line (`GitFileView.diff` is
+    /// empty here): `activity_push` has them when they were kept. `None` for anything else, and for entries logged
+    /// before pushes were kept.
+    #[uniffi(default)]
+    pub git: Option<GitPushView>,
+}
+
+/// The push of an Activity entry, the best copy this device has (`activity_push`): this device's own copy of the
+/// approval when it showed it, else the copy synced with the entry.
+#[derive(Clone, Debug, PartialEq, Eq, uniffi::Record)]
+pub struct ActivityPush {
+    /// Refs, then each one's commits, then their files with lines added and removed, and the files' changes line by
+    /// line where `diffs`.
+    pub git: GitPushView,
+    /// Some file has its change line by line (`GitFileView.diff`).
+    pub diffs: bool,
+    /// The changes line by line were left out of the copy this device has, to keep the account's synced data small:
+    /// say "Diff not kept on this device" (`activity_commit_change` loads one commit's from GitHub). False when they
+    /// are here, or when the desktop app sent none (binary, too large).
+    pub diffs_not_kept: bool,
+    /// The copy is this device's own (the approval as it showed it); false: the one synced with the entry.
+    pub this_device: bool,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, uniffi::Enum)]

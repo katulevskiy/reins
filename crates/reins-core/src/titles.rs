@@ -658,6 +658,7 @@ pub fn activity_request(r: &AuditRequest) -> ActivityRequest {
         full: r.full.clone(),
         purpose: r.purpose.clone(),
         asked_at: r.asked_at,
+        git: None,
     }
 }
 

@@ -418,6 +418,8 @@ impl Engine {
         let mut info = views::audit_info(&request.call, released);
         info.label = Some(Box::new(crate::titles::of_parked(&parked)));
         info.request = Some(Box::new(crate::titles::request(&request.call, request.created_at)));
+        // A push's refs, commits and files travel with the entry to every device; the snapshot stays on this one.
+        info.git = crate::store::AuditPush::of_call(&parked.request.call).map(Box::new);
         info.snapshot = Some(Box::new(parked));
         AuditRecord {
             seq: 0,

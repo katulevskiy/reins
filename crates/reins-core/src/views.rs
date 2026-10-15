@@ -407,6 +407,11 @@ pub fn git_push_view(call: &ConnectorCall) -> Option<GitPushView> {
         return None;
     }
     let summary = crate::connector::github::git::summary_arg(call).ok()?;
+    Some(push_view(call.str_arg("repo").unwrap_or_default(), &summary))
+}
+
+/// A push of `repo`, ref by ref, from its summary (the desktop app's, or the copy kept with an Activity entry).
+pub fn push_view(repo: &str, summary: &desktop::PushSummary) -> GitPushView {
     let line = |s: &str| text::one_line(s);
     let refs = summary
         .updates
@@ -431,23 +436,7 @@ pub fn git_push_view(call: &ConnectorCall) -> Option<GitPushView> {
                 force: update && u.fast_forward != Some(true),
                 force_unknown: update && u.fast_forward.is_none(),
                 commit_count: u.commit_count,
-                commits: u
-                    .commits
-                    .iter()
-                    .map(|c| GitCommitView {
-                        short_sha: c.sha.chars().take(7).collect(),
-                        subject: line(&text::mark_invisible(&c.subject)),
-                        author: line(&text::mark_invisible(&c.author)),
-                        date: c.date,
-                        files_changed: c.files_changed,
-                        files: c.files.iter().map(git_file_view).collect(),
-                        additions: c.additions,
-                        deletions: c.deletions,
-                        hidden_chars: text::has_invisible(&c.subject)
-                            || text::has_invisible(&c.author)
-                            || c.files.iter().any(file_hidden_chars),
-                    })
-                    .collect(),
+                commits: u.commits.iter().map(commit_view).collect(),
                 files_changed: u.files_changed,
                 files: u.files.iter().map(git_file_view).collect(),
                 additions: u.additions,
@@ -455,13 +444,31 @@ pub fn git_push_view(call: &ConnectorCall) -> Option<GitPushView> {
             }
         })
         .collect();
-    Some(GitPushView {
-        repo: line(call.str_arg("repo").unwrap_or_default()),
+    GitPushView {
+        repo: line(repo),
         pack_bytes: summary.pack_bytes,
         notes: summary.notes.iter().map(|n| line(n)).collect(),
         refs,
         default_branch: summary.default_branch.as_deref().map(line).filter(|b| !b.is_empty()),
-    })
+    }
+}
+
+/// One commit of a push (or one loaded from the git host for an Activity entry), its files and their changes.
+pub fn commit_view(c: &desktop::CommitInfo) -> GitCommitView {
+    let line = |s: &str| text::one_line(&text::mark_invisible(s));
+    GitCommitView {
+        short_sha: c.sha.chars().take(7).collect(),
+        subject: line(&c.subject),
+        author: line(&c.author),
+        date: c.date,
+        files_changed: c.files_changed,
+        files: c.files.iter().map(git_file_view).collect(),
+        additions: c.additions,
+        deletions: c.deletions,
+        hidden_chars: text::has_invisible(&c.subject)
+            || text::has_invisible(&c.author)
+            || c.files.iter().any(file_hidden_chars),
+    }
 }
 
 fn git_file_view(f: &desktop::FileChange) -> GitFileView {
@@ -1239,7 +1246,56 @@ pub fn activity_entry(r: &AuditRecord) -> ActivityEntry {
         decided_by: r.info.decided_by.clone(),
         autopilot: crate::autopilot::activity_note(r),
         label: Some(crate::titles::of_entry(r)),
-        request: r.info.request.as_ref().map(|r| crate::titles::activity_request(r)),
+        request: match (r.info.request.as_deref(), r.info.git.as_deref()) {
+            (None, None) => None,
+            (request, git) => {
+                let mut shown = request.map(crate::titles::activity_request).unwrap_or_default();
+                shown.git = git.map(|g| g.view(false));
+                Some(shown)
+            }
+        },
+    }
+}
+
+/// An Activity entry's push read-only, from the copy synced with the entry, for a device that has no copy of its
+/// approval (another device showed it, or decided it alone): a write to the git host, with what the push changes.
+pub fn synced_push_approval_view(r: &AuditRecord, git: GitPushView) -> ApprovalView {
+    ApprovalView {
+        request_id: r.info.autopilot.as_ref().map(|a| a.request_id.clone()).unwrap_or_default(),
+        connection_id: r.connection_id.clone(),
+        connection_label: text::truncate_chars(&text::one_line(&r.connection_label), MAX_LABEL_CHARS),
+        kind: ApprovalKind::Write,
+        query: None,
+        messages: Vec::new(),
+        email: None,
+        created_at: r.info.request.as_ref().map(|q| q.asked_at).filter(|at| *at > 0).unwrap_or(r.at),
+        service: r.service.clone(),
+        account: r.account.clone(),
+        wait_until: None,
+        grant: None,
+        count: r.count,
+        accounts: Vec::new(),
+        shared_accounts: Vec::new(),
+        op: r.op.clone(),
+        resources: Vec::new(),
+        preview: Vec::new(),
+        no_standing: false,
+        op_title: op_title(&r.service, &r.op),
+        action: r.action.clone(),
+        class: String::new(),
+        classes: Vec::new(),
+        git: Some(git),
+        blob: None,
+        mcp: None,
+        ask: None,
+        secrets: None,
+        ssh: None,
+        headline: String::new(),
+        quick: None,
+        purchase: None,
+        env_release: None,
+        secrets_store: None,
+        token_store: None,
     }
 }
 

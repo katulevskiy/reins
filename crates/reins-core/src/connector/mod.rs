@@ -140,6 +140,18 @@ pub trait Connector: Send + Sync {
         Ok(None)
     }
 
+    /// One commit `sha` (40 hex digits) of `repo` as the host has it: its files and their changes, capped as a push's
+    /// summary from the desktop app is. The user's own read from the app (an Activity entry's push): never an AI's
+    /// request, so nothing is asked or logged.
+    async fn commit_change(
+        &self,
+        _account: &str,
+        _repo: &str,
+        _sha: &str,
+    ) -> Result<reins_proto::desktop::CommitInfo, CoreError> {
+        Err(CoreError::service("loading a commit's change works with GitHub only"))
+    }
+
     /// Whether the account works right now.
     async fn status(&self, account: &str) -> GmailStatus;
 
