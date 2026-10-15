@@ -318,6 +318,26 @@ class AskSentenceTest {
         assertEquals("signal/desktop-release · new branch and 1 more", askSentence(two, Tense.Done).details)
     }
 
+    @Test
+    fun anEntryReadsItsSyncedPushForTheCountAndTheBranch() {
+        val label = TestData.label("github", "push", "Push 3 commits to", "katulevskiy/reins")
+        val git = TestData.gitPush(TestData.gitRef("signal/desktop-release", change = "create", commitCount = 3u, force = false))
+        val synced = TestData.entry(1, "write", "released", label = label, request = TestData.asked("").copy(git = git), service = "github", op = "git_push")
+        val s = askSentence(synced)
+        assertEquals("Pushed 3 commits to katulevskiy/reins", s.text)
+        assertEquals("katulevskiy/reins", s.target)
+        assertEquals("signal/desktop-release · new branch", s.details)
+        // A force push and a deletion say so from the refs.
+        val forced = TestData.gitPush(TestData.gitRef("main", force = true, commitCount = 2u))
+        assertEquals("Force-pushed 2 commits to katulevskiy/reins", askSentence(synced.copy(request = synced.request!!.copy(git = forced))).text)
+        val gone = TestData.gitPush(TestData.gitRef("old", change = "delete", commitCount = 0u))
+        val deleted = askSentence(synced.copy(label = TestData.label("github", "delete", "Delete branch old from", "katulevskiy/reins"), request = synced.request!!.copy(git = gone)))
+        assertEquals("Deleted a branch from katulevskiy/reins", deleted.text)
+        assertEquals("old", deleted.details)
+        // Refused: what was asked, never past tense.
+        assertEquals("Asked to push 3 commits to katulevskiy/reins", askSentence(synced.copy(outcome = "denied")).text)
+    }
+
     // ---- the icon -----------------------------------------------------------------------------------------------------
 
     @Test

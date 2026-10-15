@@ -33,6 +33,11 @@ struct Snapshot: Codable, Equatable {
         /// A routine request that can be approved without opening it (`PendingItem.quick`): the Live Activity offers
         /// Approve. Optional so snapshots written before it still read.
         var quick: Bool? = nil
+        /// Its field (`FieldKind` raw value), picked by the app from the core's kind and action, never from text. Nil
+        /// in snapshots written before Signal: `Glance.field` falls back on the item's kind.
+        var field: String? = nil
+        /// The label line from the core's provider and action ("GitHub · Push"); nil before Signal.
+        var label: String? = nil
     }
 
     struct Entry: Codable, Equatable, Identifiable {

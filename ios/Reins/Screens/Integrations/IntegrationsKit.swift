@@ -10,7 +10,7 @@ extension View {
         listStyle(.plain)
             .scrollContentBackground(.hidden)
             .listRowSeparatorTint(Palette.rule)
-            .background(Palette.background.ignoresSafeArea())
+            .background(Palette.paper.ignoresSafeArea())
             .listSectionSpacing(18)
             .environment(\.defaultMinListRowHeight, 44)
     }
@@ -53,7 +53,7 @@ struct IntegrationBanner: View {
 
     private var tint: Color {
         switch kind {
-        case .notice: Palette.accent
+        case .notice: Palette.violet
         case .warning: Palette.warning
         case .error: Palette.danger
         case .success: Palette.success
@@ -77,7 +77,7 @@ struct IntegrationBanner: View {
                 .accessibilityHidden(true)
             Text(text)
                 .font(RFont.sans(14.5))
-                .foregroundStyle(Palette.text)
+                .foregroundStyle(Palette.ink)
                 .fixedSize(horizontal: false, vertical: true)
                 .frame(maxWidth: .infinity, alignment: .leading)
         }
@@ -207,7 +207,7 @@ struct PasteInto: View {
         }
         .labelStyle(.iconOnly)
         .buttonBorderShape(.circle)
-        .tint(Palette.accent)
+        .tint(Palette.violet)
         .controlSize(.small)
         .accessibilityLabel(label)
     }

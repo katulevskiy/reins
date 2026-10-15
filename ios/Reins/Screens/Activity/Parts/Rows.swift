@@ -231,7 +231,7 @@ struct HistoryRow: View {
         let field = EntryLook.field(entry)
         let line = EntryLook.line(entry)
         HStack(alignment: .center, spacing: 14) {
-            RequestIcon(spec: line.icon, size: 36, ring: selected ? Palette.accentSoft : Palette.paper)
+            RequestIcon(spec: line.icon, size: 36, ring: selected ? Palette.violetWash : Palette.paper)
                 .foldTile(entry.id)
                 .accessibilityHidden(true)
             VStack(alignment: .leading, spacing: 2) {
@@ -264,7 +264,7 @@ struct HistoryRow: View {
         .padding(.horizontal, 24)
         .background {
             if selected {
-                Palette.accentSoft
+                Palette.violetWash
             } else if glowing, let field {
                 field.tile.transition(.opacity)
             }
@@ -289,20 +289,20 @@ struct FileCard: View {
                 HStack(spacing: 10) {
                     Image(systemName: "tray.full")
                         .font(.system(size: 17, weight: .medium))
-                        .foregroundStyle(Palette.secondary)
+                        .foregroundStyle(Palette.ink2)
                     Text(name)
                         .font(RFont.sans(16.5, .semibold))
-                        .foregroundStyle(Palette.text)
+                        .foregroundStyle(Palette.ink)
                         .lineLimit(2)
                         .truncationMode(.middle)
                 }
                 Text(FileText.size(blob.size) + " · " + untrusted(blob.contentType))
                     .font(RFont.sans(13.5))
-                    .foregroundStyle(Palette.secondary)
+                    .foregroundStyle(Palette.ink2)
                     .lineLimit(1)
                 Text("SHA-256 " + FileText.shortSha(blob.sha256))
                     .font(RFont.mono(12.5))
-                    .foregroundStyle(Palette.tertiary)
+                    .foregroundStyle(Palette.inkMeta)
                     .lineLimit(1)
                     .environment(\.layoutDirection, .leftToRight)
                     .textSelection(.enabled)
@@ -323,24 +323,24 @@ struct FileCard: View {
                 .resizable()
                 .scaledToFit()
                 .frame(maxWidth: .infinity, maxHeight: 240)
-                .background(Palette.controlFill)
+                .background(Palette.paperSunken)
                 .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
                 .padding(.top, 6)
                 .accessibilityLabel("Preview of \(name)")
         } else if let text, FileText.isText(blob.contentType) {
             Text(text)
                 .font(RFont.mono(12.5))
-                .foregroundStyle(Palette.text)
+                .foregroundStyle(Palette.ink)
                 .lineLimit(12)
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .padding(12)
-                .background(Palette.controlFill, in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+                .background(Palette.paperSunken, in: RoundedRectangle(cornerRadius: 12, style: .continuous))
                 .environment(\.layoutDirection, .leftToRight)
                 .padding(.top, 6)
         } else if let text {
             Text(text)
                 .font(RFont.sans(14, .medium))
-                .foregroundStyle(Palette.secondary)
+                .foregroundStyle(Palette.ink2)
                 .lineLimit(2)
                 .padding(.top, 4)
         }

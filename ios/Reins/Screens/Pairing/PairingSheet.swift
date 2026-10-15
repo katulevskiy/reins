@@ -201,7 +201,7 @@ private struct PairingContent: View {
                 if let note = StartingRuleText.onPairing(model.startingPolicy) {
                     Text(note)
                         .font(RFont.sans(13.5))
-                        .foregroundStyle(Palette.tertiary)
+                        .foregroundStyle(Palette.inkMeta)
                         .fixedSize(horizontal: false, vertical: true)
                         .padding(.horizontal, 24)
                         .padding(.top, 12)

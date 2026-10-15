@@ -1123,9 +1123,14 @@ extension PendingItem {
             createdAt: createdAt,
             expiresAt: expiresAt,
             suggestion: suggestion,
-            quick: kind == .request && quick
+            quick: kind == .request && quick,
+            field: field.rawValue,
+            label: AskLabels.pending(self, field: field).kind
         )
     }
+
+    /// The field it is painted in outside the app, as on its waiting card (`ActivityText.field`).
+    private var field: FieldKind { ActivityText.field(self, danger: false) }
 }
 
 extension ActivityEntry {

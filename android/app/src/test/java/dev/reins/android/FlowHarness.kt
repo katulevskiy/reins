@@ -71,6 +71,10 @@ abstract class FlowHarness {
         core.connections = listOf(TestData.connection())
         core.activity = emptyList()
         core.entryApprovals.clear()
+        core.entryPushes.clear()
+        core.commitChanges.clear()
+        core.commitChangeCalls.clear()
+        core.commitChangeGate = null
         core.gmail = GmailStatus.Ready
         core.accounts = listOf(AccountView("gmail", "me@gmail.com", 1_700_000_000))
         core.catalogue = FakeCore.defaultServices()

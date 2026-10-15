@@ -97,7 +97,7 @@ extension View {
     func timeBar(fraction: Double, color: Color, corner: CGFloat = 18) -> some View {
         overlay {
             ZStack {
-                RoundedRectangle(cornerRadius: corner, style: .continuous).strokeBorder(Palette.hairline, lineWidth: 2)
+                RoundedRectangle(cornerRadius: corner, style: .continuous).strokeBorder(Palette.rule, lineWidth: 2)
                 if fraction > 0 {
                     TimeBarOutline(corner: corner, inset: 1)
                         .trim(from: 0, to: min(fraction, 1))
@@ -162,8 +162,8 @@ struct CountdownFrame<Content: View>: View {
     }
 
     static func color(_ u: Urgency?) -> Color {
-        guard let u else { return Palette.accent }
-        if u.stale { return Palette.tertiary }
-        return u.urgent ? Palette.danger : Palette.accent
+        guard let u else { return Palette.violet }
+        if u.stale { return Palette.inkMeta }
+        return u.urgent ? Palette.danger : Palette.violet
     }
 }

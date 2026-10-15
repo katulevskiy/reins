@@ -252,7 +252,7 @@ struct NewGrantScreen: View {
     }
 
     private func hint(_ text: String) -> some View {
-        Text(text).font(RFont.sans(15)).foregroundStyle(Palette.secondary)
+        Text(text).font(RFont.sans(15)).foregroundStyle(Palette.ink2)
     }
 }
 

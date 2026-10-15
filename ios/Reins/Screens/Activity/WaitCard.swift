@@ -73,7 +73,7 @@ enum WantsText {
         for piece in pieces {
             var run = AttributedString(piece.text)
             run.font = RFont.sans(size, piece.strong ? .semibold : .medium)
-            run.foregroundColor = piece.strong ? Palette.text : Palette.secondary
+            run.foregroundColor = piece.strong ? Palette.ink : Palette.ink2
             out += run
         }
         return Text(out)
@@ -170,18 +170,18 @@ struct WaitCard: View {
                 HStack(spacing: 7) {
                     Image(systemName: ActionKind.of(i.action).symbol)
                         .font(.system(size: 11, weight: .medium))
-                        .foregroundStyle(Palette.tertiary)
+                        .foregroundStyle(Palette.inkMeta)
                         .frame(width: 14)
                     Text(line(i))
                         .font(RFont.sans(13))
-                        .foregroundStyle(Palette.secondary)
+                        .foregroundStyle(Palette.ink2)
                         .lineLimit(1)
                 }
             }
             if group.items.count > 4 {
                 Text("and \(group.items.count - 4) more")
                     .font(RFont.sans(13))
-                    .foregroundStyle(Palette.tertiary)
+                    .foregroundStyle(Palette.inkMeta)
                     .padding(.leading, 21)
             }
         }
@@ -216,7 +216,7 @@ struct WaitCard: View {
             case let .unsure(p):
                 ThirdsRow(spacing: 8) {
                     HStack(spacing: 7) {
-                        ArcRing(fraction: p, color: Palette.search, track: Palette.search.opacity(0.2), lineWidth: 2.5)
+                        ArcRing(fraction: p, color: Palette.kindRead, track: Palette.kindRead.opacity(0.2), lineWidth: 2.5)
                             .frame(width: 16, height: 16)
                         Text("Unsure")
                     }
@@ -265,7 +265,7 @@ private extension View {
     /// The plain label in the left third of a card's bottom row ("Unsure", "Always asks").
     func note() -> some View {
         font(RFont.sans(14, .semibold))
-            .foregroundStyle(Palette.secondary)
+            .foregroundStyle(Palette.ink2)
             .frame(maxWidth: .infinity, minHeight: 42)
             .accessibilityElement(children: .combine)
     }

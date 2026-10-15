@@ -234,7 +234,7 @@ private struct ConnectionAutopilotGroup: View {
                         }
                     }
                 }
-                .modePill(fill: Palette.overnight.opacity(0.16), text: Palette.overnight)
+                .modePill(fill: Palette.violet.opacity(0.16), text: Palette.violet)
             }
             .buttonStyle(.plain)
             .accessibilityIdentifier("stopConnectionOvernight")
@@ -244,7 +244,7 @@ private struct ConnectionAutopilotGroup: View {
                 askOvernight = true
             } label: {
                 Label { Text(AutopilotText.overnightName) } icon: { GlyphIcon(.moon, size: 16) }
-                    .modePill(fill: Palette.overnight.opacity(0.12), text: Palette.overnight)
+                    .modePill(fill: Palette.violet.opacity(0.12), text: Palette.violet)
             }
             .buttonStyle(.plain)
             .accessibilityIdentifier("connMode:OVERNIGHT")
@@ -366,7 +366,7 @@ private struct ConnectionInfoGroup: View {
                     }
                 } label: {
                     SettingsRowLabel(title: "Learns into") {
-                        SettingsTile(symbol: "brain.head.profile", tint: Palette.accent)
+                        SettingsTile(symbol: "brain.head.profile", tint: Palette.violet)
                     } trailing: {
                         if let profileName { RowValue(profileName) }
                     }
@@ -378,7 +378,7 @@ private struct ConnectionInfoGroup: View {
                 .cardRow()
             }
             SettingsRowLabel(title: "Active grants", chevron: false) {
-                SettingsTile(symbol: "key.fill", tint: Palette.send)
+                SettingsTile(symbol: "key.fill", tint: Palette.kindPush)
             } trailing: {
                 RowValue(activeGrants == 0 ? "None" : "\(activeGrants)")
             }
@@ -386,7 +386,7 @@ private struct ConnectionInfoGroup: View {
             .accessibilityIdentifier("activeGrants")
             .cardRow()
             SettingsRowLabel(title: "Connected", chevron: false) {
-                SettingsTile(symbol: "clock.arrow.circlepath", tint: Palette.tertiary)
+                SettingsTile(symbol: "clock.arrow.circlepath", tint: Palette.inkMeta)
             } trailing: {
                 RowValue(SettingsText.shortDate(connection.createdAt))
             }
@@ -438,7 +438,7 @@ private struct ConnectionIconGroup: View {
             } label: {
                 SettingsRowLabel(title: "Icon") {
                     RoundedRectangle(cornerRadius: 8, style: .continuous)
-                        .fill(Palette.controlFill)
+                        .fill(Palette.paperSunken)
                         .frame(width: 32, height: 32)
                         .overlay { ConnectionAvatar(connection: connection, size: 24) }
                         .accessibilityHidden(true)
@@ -494,7 +494,7 @@ private struct IconPickerSheet: View {
             VStack(alignment: .leading, spacing: 12) {
                 Text("Icon")
                     .font(RFont.sans(18, .semibold))
-                    .foregroundStyle(Palette.text)
+                    .foregroundStyle(Palette.ink)
                     .accessibilityAddTraits(.isHeader)
                 if let connection = model.connection(connectionId) {
                     ProviderPicker(connection: connection, size: 50, onPick: onPick)
@@ -508,7 +508,7 @@ private struct IconPickerSheet: View {
         }
         .presentationDetents([.medium, .large])
         .presentationDragIndicator(.visible)
-        .presentationBackground(Palette.background)
+        .presentationBackground(Palette.paper)
         .accessibilityIdentifier("iconSheet")
     }
 

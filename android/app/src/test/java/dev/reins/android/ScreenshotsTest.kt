@@ -76,6 +76,9 @@ abstract class ScreenshotsBase(private val suffix: String) {
         core.gmail = GmailStatus.Ready
         core.activity = emptyList()
         core.entryApprovals.clear()
+        core.entryPushes.clear()
+        core.commitChanges.clear()
+        core.commitChangeGate = null
         core.catalogue = FakeCore.defaultServices()
         core.mcp = emptyList()
         core.blobs.clear()
@@ -1206,6 +1209,46 @@ abstract class ScreenshotsBase(private val suffix: String) {
         shoot("push-entry-diff")
     }
 
+    /** The same push decided on another device: its commits synced with the entry, a diff loaded from GitHub. */
+    @Test
+    fun pushOtherDevice() {
+        val view = reportedPushView()
+        val full = view.git!!.refs[0].commits[0]
+        val synced = view.git!!.copy(refs = view.git!!.refs.map { r -> r.copy(commits = r.commits.map { c -> c.copy(files = c.files.map { it.copy(diff = emptyList()) }) }, files = r.files.map { it.copy(diff = emptyList()) }) })
+        val entry = reportedPush()
+        core.activity = listOf(entry.copy(request = entry.request!!.copy(git = synced)))
+        core.entryApprovals[7L] = view.copy(git = synced)
+        core.entryPushes[7L] = dev.reins.core.ActivityPush(synced, false, true, false)
+        val gate = kotlinx.coroutines.CompletableDeferred<Unit>()
+        core.commitChangeGate = gate
+        launch()
+        await("entry:7")
+        repeat(10) { rule.mainClock.advanceTimeBy(50) }
+        shoot("push-other-row")
+        tap("entry:7")
+        await("entryApproval")
+        tap("gitCommits:0")
+        tap("gitCommit:0:0")
+        await("loadChangesAction")
+        repeat(20) { rule.mainClock.advanceTimeBy(50) }
+        shoot("push-other-not-kept")
+        tap("loadChangesAction")
+        repeat(10) { rule.mainClock.advanceTimeBy(50) }
+        shoot("push-other-loading", idle = false)
+        gate.complete(Unit)
+        await("retryChanges")
+        repeat(10) { rule.mainClock.advanceTimeBy(50) }
+        shoot("push-other-failed")
+        core.commitChangeGate = null
+        core.commitChanges[7L to full.shortSha] = full
+        tap("retryChanges")
+        await("commitFile:0")
+        tap("commitFile:0")
+        await("commitFile:0:diff")
+        repeat(20) { rule.mainClock.advanceTimeBy(50) }
+        shoot("push-other-loaded")
+    }
+
     /** A Gmail entry: the emails as the approval listed them, what was shared ticked. */
     @Test
     fun polishGmailEntry() {
@@ -1275,19 +1318,17 @@ abstract class ScreenshotsBase(private val suffix: String) {
         shoot("polish-new-grant")
     }
 
-    /** Autopilot during a bypass: Mode (?) on one line, Stop bypass without an icon; then the help open. */
+    /** Trust during a bypass: the red field with the time left and Stop now; the mode tiles step aside while it runs. */
     @Test
     fun polishAutopilotBypass() {
         core.model = installed
         core.apGlobal = FakeCore.ApRow(bypassUntil = now + 8 * 60 + 12, bypassSince = now - 60 * 7)
         launch()
         tap("tabTrust")
-        await("modeHero")
+        await("bypassClock")
+        await("stopBypass")
         repeat(20) { rule.mainClock.advanceTimeBy(50) }
         shoot("polish-autopilot-bypass")
-        tap("help:Mode")
-        repeat(20) { rule.mainClock.advanceTimeBy(50) }
-        shoot("polish-autopilot-mode-help")
     }
 
     /** The count on the Activity tab with many new entries, seen from another tab. */
@@ -1446,8 +1487,9 @@ abstract class ScreenshotsBase(private val suffix: String) {
         core.model = installed
         launch()
         top()
-        await("filter:automatic")
-        tap("filter:automatic")
+        // The filters open from the history's header; Autopilot lists whatever was decided without you.
+        click("filters")
+        click("filter:autopilot")
         await("entry:7")
         repeat(10) { rule.mainClock.advanceTimeBy(50) }
         shoot("76-activity-automatic")
@@ -1807,8 +1849,8 @@ abstract class ScreenshotsBase(private val suffix: String) {
         core.suggestions["req3"] = agSuggestion("req3", dev.reins.core.Verdict.ASK, 0.62f)
         launch()
         top()
+        // The stack shows its top card's buttons only; the others wait behind it.
         await("allow:req1")
-        await("unsure:req3")
         repeat(10) { rule.mainClock.advanceTimeBy(50) }
         shoot("android-activity-manual")
     }
