@@ -14,13 +14,11 @@
 //! Values are read again from the files (the scan kept none), held in [`Zeroizing`] buffers, and never printed:
 //! the types that hold them have a [`Debug`] that leaves them out and are never serialized.
 
-pub mod formats;
 pub mod real;
 pub mod receipt;
 mod rewrite;
 
 use std::collections::{BTreeMap, BTreeSet};
-use std::fmt::Write as _;
 use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
@@ -97,6 +95,17 @@ fn slug(s: &str) -> String {
     out.split('-').filter(|p| !p.is_empty()).collect::<Vec<_>>().join("-")
 }
 
+/// The longest project or environment name ([`reins_proto::desktop::name_ok`]).
+const MAX_NAME: usize = 64;
+
+/// `base` then `suffix`, `base` cut so that the whole is a name ([`reins_proto::desktop::name_ok`]: at most
+/// [`MAX_NAME`] lowercase letters, digits and `-`, not ending in `-`).
+fn named(base: &str, suffix: &str) -> String {
+    let room = MAX_NAME.saturating_sub(suffix.len());
+    let cut: String = base.chars().take(room).collect();
+    format!("{}{suffix}", cut.trim_end_matches('-'))
+}
+
 /// Four hex characters of `what`'s SHA-256: tells apart names that would otherwise be the same.
 fn short_hash(what: &str) -> String {
     use sha2::Digest as _;
@@ -115,7 +124,7 @@ pub fn machine_project(computer: &str, key_fingerprint: &str) -> String {
     } else {
         name
     };
-    format!("machine-{name}-{}", short_hash(key_fingerprint))
+    named(&format!("machine-{name}"), &format!("-{}", short_hash(key_fingerprint)))
 }
 
 /// This computer's machine project, from its name and its key (made the first time, as pairing does).
@@ -133,10 +142,16 @@ pub fn base_project(f: &Finding) -> String {
         slug(&parts[parts.len().saturating_sub(2)..].join("-"))
     });
     let name = from_origin.filter(|n| !n.is_empty()).unwrap_or_else(|| slug(f.project.as_deref().unwrap_or_default()));
-    if name.is_empty() {
-        "project".to_owned()
+    name_of(&name, "project")
+}
+
+/// `s` as a project or environment name ([`named`]), `fallback` when nothing of it is left.
+fn name_of(s: &str, fallback: &str) -> String {
+    let n = named(&slug(s), "");
+    if n.is_empty() {
+        fallback.to_owned()
     } else {
-        name
+        n
     }
 }
 
@@ -163,7 +178,7 @@ pub fn env_for(file_name: &str) -> String {
         "" | "local" | "development" | "dev" => DEFAULT_ENV.to_owned(),
         "production" | "prod" => "production".to_owned(),
         "test" | "testing" => "test".to_owned(),
-        other => slug(other),
+        other => name_of(other, DEFAULT_ENV),
     }
 }
 
@@ -173,12 +188,12 @@ pub fn env_for(file_name: &str) -> String {
 pub fn machine_var(source: Source, group: Option<&str>, name: &str) -> (String, String) {
     let g = group.unwrap_or_default();
     match source {
-        Source::Aws => (format!("aws-{}", slug(g)), var_name(name)),
+        Source::Aws => (name_of(&format!("aws-{g}"), "aws"), var_name(name)),
         Source::Npm => {
             let env = if g == "registry.npmjs.org" {
                 "npm".to_owned()
             } else {
-                format!("npm-{}", slug(g))
+                name_of(&format!("npm-{g}"), "npm")
             };
             let var = match name {
                 "_auth" => "NPM_AUTH",
@@ -191,7 +206,7 @@ pub fn machine_var(source: Source, group: Option<&str>, name: &str) -> (String, 
             if g == "pypi" {
                 "pypi".to_owned()
             } else {
-                format!("pypi-{}", slug(g))
+                name_of(&format!("pypi-{g}"), "pypi")
             },
             "TWINE_PASSWORD".to_owned(),
         ),
@@ -219,6 +234,10 @@ pub struct PlannedVar {
     pub name: String,
     pub item: String,
     pub finding: String,
+    /// Earlier settings of the same name in the same file: this one's value is what goes, and they leave the file
+    /// with it.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub covers: Vec<String>,
 }
 
 /// An environment the batch stores (`vault_secrets_store`).
@@ -237,10 +256,15 @@ pub struct EnvTarget {
 }
 
 impl EnvTarget {
+    /// The environment as Reins Secrets names it (project and env names are always valid here: [`named`]).
+    fn env_ref(&self) -> Option<crate::secrets::EnvRef> {
+        crate::secrets::EnvRef::new(&self.project, &self.env).ok()
+    }
+
     /// The vault folder: `Reins/<project>`.
     #[must_use]
     pub fn folder(&self) -> String {
-        format!("Reins/{}", self.project)
+        self.env_ref().map_or_else(|| format!("Reins/{}", self.project), |e| e.folder())
     }
 
     /// The vault item: `<project>/<env>`.
@@ -249,9 +273,10 @@ impl EnvTarget {
         format!("{}/{}", self.project, self.env)
     }
 
+    /// `vault:<project>/<env>/<var>`.
     #[must_use]
     pub fn reference(&self, var: &str) -> String {
-        formats::reference(&self.project, &self.env, var)
+        self.env_ref().map_or_else(|| format!("vault:{}/{}/{var}", self.project, self.env), |e| e.var(var).to_string())
     }
 }
 
@@ -344,15 +369,25 @@ pub struct Conflict {
     /// The finding whose value goes, and the one whose value does not.
     pub kept: String,
     pub dropped: String,
+    /// Both are in one file (`kept` and `dropped` say which lines).
+    #[serde(default)]
+    pub same_file: bool,
 }
 
 impl Conflict {
     #[must_use]
     pub fn line(&self) -> String {
-        format!(
-            "{} is in both {} and {}: {}'s goes to {} (the more specific file wins)",
-            self.name, self.dropped, self.kept, self.kept, self.item
-        )
+        if self.same_file {
+            format!(
+                "{} is set twice ({}, {}): the last one goes to {}, and both leave the file",
+                self.name, self.dropped, self.kept, self.item
+            )
+        } else {
+            format!(
+                "{} is in both {} and {}: {}'s goes to {} (the more specific file wins)",
+                self.name, self.dropped, self.kept, self.kept, self.item
+            )
+        }
     }
 }
 
@@ -420,11 +455,11 @@ impl Plan {
 /// a number (`api-2`).
 fn another_name(name: &str, root: &Path, taken: &dyn Fn(&str) -> bool) -> String {
     let parent = root.parent().and_then(Path::file_name).map(|p| slug(&p.to_string_lossy())).unwrap_or_default();
-    let with_parent = format!("{parent}-{name}");
+    let with_parent = named(&format!("{parent}-{name}"), "");
     if !parent.is_empty() && !taken(&with_parent) {
         return with_parent;
     }
-    (2..10_000).map(|n| format!("{name}-{n}")).find(|n| !taken(n)).unwrap_or_else(|| format!("{name}-x"))
+    (2..10_000).map(|n| named(name, &format!("-{n}"))).find(|n| !taken(n)).unwrap_or_else(|| named(name, "-x"))
 }
 
 /// Each repository's project (by its folder), and where it came from.
@@ -471,7 +506,7 @@ fn project_names(findings: &[&Finding], names: &Names<'_>) -> (Projects, Vec<Cla
                 another_name(&name, &root, &|n| in_vault(n) || same_here(n, &out))
             } else {
                 let what = origin.clone().unwrap_or_else(|| root.to_string_lossy().into_owned());
-                format!("{name}-{}", short_hash(&what))
+                named(&name, &format!("-{}", short_hash(&what)))
             };
             clashes.push(Clash {
                 name: name.clone(),
@@ -573,16 +608,32 @@ pub fn plan(report: &ScanReport, selected: &BTreeSet<String>, names: &Names<'_>)
                         name: var,
                         item: i.id.clone(),
                         finding: f.id.clone(),
+                        covers: Vec::new(),
                     };
                     match target.vars.iter_mut().find(|v| v.name == var.name) {
                         Some(v) => {
-                            // Never silently: the review says which file's value goes.
-                            if v.finding != var.finding {
+                            // Never silently: the review says which value goes.
+                            let mut var = var;
+                            if v.finding == var.finding {
+                                // Set twice in one file: the last one is what dotenv readers use, and the first
+                                // leaves the file with it.
+                                let line_of = |id: &str| f.items.iter().find(|i| i.id == id).map_or(0, |i| i.line);
+                                plan.conflicts.push(Conflict {
+                                    item: target_item,
+                                    name: var.name.clone(),
+                                    kept: format!("{} line {}", f.title, i.line),
+                                    dropped: format!("{} line {}", f.title, line_of(&v.item)),
+                                    same_file: true,
+                                });
+                                var.covers = std::mem::take(&mut v.covers);
+                                var.covers.push(v.item.clone());
+                            } else {
                                 plan.conflicts.push(Conflict {
                                     item: target_item,
                                     name: var.name.clone(),
                                     kept: title_of(&var.finding),
                                     dropped: title_of(&v.finding),
+                                    same_file: false,
                                 });
                             }
                             *v = var;
@@ -606,10 +657,9 @@ pub struct EnvWrite {
     pub origin: Option<String>,
 }
 
-/// An SSH private key, to store as an SSH key item.
+/// An SSH private key, to store as an SSH key item (always in the vault folder `Reins/ssh`).
 pub struct SshWrite {
     pub name: String,
-    pub folder: String,
     pub private_key: Zeroizing<String>,
 }
 
@@ -642,7 +692,7 @@ impl std::fmt::Debug for EnvWrite {
 
 impl std::fmt::Debug for SshWrite {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("SshWrite").field("name", &self.name).field("folder", &self.folder).finish_non_exhaustive()
+        f.debug_struct("SshWrite").field("name", &self.name).finish_non_exhaustive()
     }
 }
 
@@ -669,29 +719,11 @@ impl Batch {
         self.envs.iter().map(|e| e.vars.len()).sum::<usize>() + self.ssh.len() + self.tokens.len()
     }
 
-    /// The four check digits of the whole batch, shown here and on the phone: over every target and value in order.
-    /// (The batch store tool of Reins Secrets core defines the exact form the phone computes; this follows it.)
+    /// The four check digits of the whole batch, as the phone computes them for the store
+    /// ([`reins_proto::desktop::batch_check`]): the same on both screens, or something changed the batch on the way.
     #[must_use]
     pub fn check(&self) -> String {
-        let mut all = Zeroizing::new(String::new());
-        for e in &self.envs {
-            for (name, value) in &e.vars {
-                let _ = writeln!(all, "env {}/{}/{name}", e.project, e.env);
-                all.push_str(value);
-                all.push('\n');
-            }
-        }
-        for s in &self.ssh {
-            let _ = writeln!(all, "ssh {}", s.name);
-            all.push_str(&s.private_key);
-            all.push('\n');
-        }
-        for t in &self.tokens {
-            let _ = writeln!(all, "token {}", t.host);
-            all.push_str(&t.token);
-            all.push('\n');
-        }
-        reins_proto::desktop::value_check(&all)
+        crate::secrets_client::import_check(self)
     }
 }
 
@@ -778,16 +810,23 @@ impl Context {
     }
 }
 
-/// Reads the selected values again from their files (the scan kept none). A file that changed since the scan is an
-/// error: scan again.
+/// The text of each selected finding's file (by finding id), read once: the values sent come from it, and the rewrite
+/// edits exactly it (and only while the file still holds it).
+pub(crate) type Texts = BTreeMap<String, Zeroizing<String>>;
+
+/// Reads the selected values again from their files (the scan kept none), and keeps each file's text. A file that
+/// changed since the scan is an error: scan again.
 fn read_values(
     report: &ScanReport,
     selected: &BTreeSet<String>,
     machine: &dyn Machine,
-) -> Result<BTreeMap<String, Zeroizing<String>>, String> {
+) -> Result<(BTreeMap<String, Zeroizing<String>>, Texts), String> {
     let mut out = BTreeMap::new();
+    let mut texts = Texts::new();
     for f in report.findings.iter().filter(|f| f.items.iter().any(|i| selected.contains(&i.id))) {
-        let entries = secrets_scan::read_entries(f.source, &f.abs_path)?;
+        let text = secrets_scan::read_text(&f.abs_path)?;
+        let entries = secrets_scan::parse_entries(f.source, &text);
+        texts.insert(f.id.clone(), text);
         let ids = secrets_scan::item_ids(&f.id, &entries);
         let mut found: BTreeMap<String, Zeroizing<String>> =
             ids.into_iter().zip(entries).map(|(id, e)| (id, e.value)).collect();
@@ -799,7 +838,8 @@ fn read_values(
             };
             match value.filter(|v| !v.trim().is_empty()) {
                 Some(v) => {
-                    let v = if f.source == Source::SshKey {
+                    // A key file and a `.env` value go as written (quotes may hold spaces on purpose).
+                    let v = if matches!(f.source, Source::SshKey | Source::Dotenv) {
                         v
                     } else {
                         Zeroizing::new(v.trim().to_owned())
@@ -815,7 +855,7 @@ fn read_values(
             }
         }
     }
-    Ok(out)
+    Ok((out, texts))
 }
 
 /// Builds the batch for `plan` from the values read.
@@ -838,7 +878,6 @@ fn batch(plan: &Plan, values: &mut BTreeMap<String, Zeroizing<String>>) -> Batch
             .iter()
             .map(|s| SshWrite {
                 name: s.name.clone(),
-                folder: "Reins/ssh".to_owned(),
                 private_key: take(&s.item),
             })
             .collect(),
@@ -871,7 +910,7 @@ pub async fn import(
     if plan.count() == 0 {
         return Err("nothing selected to move".to_owned());
     }
-    let mut values = read_values(report, selected, machine)?;
+    let (mut values, texts) = read_values(report, selected, machine)?;
     let batch = batch(&plan, &mut values);
     drop(values);
     confirmed(&plan, &batch.check())?;
@@ -892,13 +931,16 @@ pub async fn import(
         match result {
             Ok(()) => {
                 for v in &target.vars {
-                    arrived.insert(v.item.clone());
-                    receipt.moved.push(Moved {
-                        item: v.item.clone(),
-                        finding: v.finding.clone(),
-                        to: target.reference(&v.name),
-                        on_disk: true,
-                    });
+                    for item in std::iter::once(&v.item).chain(&v.covers) {
+                        arrived.insert(item.clone());
+                        receipt.moved.push(Moved {
+                            item: item.clone(),
+                            finding: v.finding.clone(),
+                            to: target.reference(&v.name),
+                            on_disk: true,
+                            in_trash: false,
+                        });
+                    }
                 }
             }
             Err(e) => receipt.notes.push(format!("{} was not stored: {e}", target.item())),
@@ -913,6 +955,7 @@ pub async fn import(
                     finding: target.finding.clone(),
                     to: format!("Reins/ssh/{}", target.name),
                     on_disk: true,
+                    in_trash: false,
                 });
             }
             Err(e) => receipt.notes.push(format!("{} was not stored: {e}", target.name)),
@@ -928,6 +971,7 @@ pub async fn import(
                     finding: target.finding.clone(),
                     to: format!("git: {}", target.host),
                     on_disk: true,
+                    in_trash: false,
                 });
             }
             Err(e) => receipt.notes.push(format!("the token for {} was not stored: {e}", target.host)),
@@ -939,13 +983,21 @@ pub async fn import(
                 .notes
                 .push("Local copies were kept: the vault has a backup of each, and they are still on disk.".to_owned());
         }
-        BTreeSet::new()
+        rewrite::Gone::default()
     } else {
-        rewrite::all(report, selected, &arrived, &plan, machine, &mut receipt).await
+        rewrite::all(report, selected, &arrived, &plan, &texts, machine, &mut receipt).await
     };
-    // What the vault has but this computer still holds too.
+    drop(texts);
+    // What the vault has but this computer still holds too: where it was, or in the Trash until shredded.
     for m in &mut receipt.moved {
-        m.on_disk = !off_disk.contains(&m.item);
+        m.in_trash = off_disk.trashed.contains(&m.item);
+        m.on_disk = !off_disk.off.contains(&m.item) || m.in_trash;
+    }
+    if receipt.moved.iter().any(|m| m.in_trash) {
+        receipt.notes.push(
+            "The original files are in the Trash, still in plain text: empty the Trash, or Shred them once all works."
+                .to_owned(),
+        );
     }
     let path = if receipt.moved.is_empty() && receipt.changes.is_empty() {
         None

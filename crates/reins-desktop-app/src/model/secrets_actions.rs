@@ -4,7 +4,8 @@
 //! undoing it. The window is a person's (an agent does not click it), so its scan asks nothing first.
 //!
 //! `--demo` never scans this computer: made-up findings stand in, the pretend phone approves after a few seconds, and
-//! nothing is written. `REINS_DEMO_SECRETS=scanning|review|detail|moving|done` opens that step, for screenshots.
+//! nothing is written. `REINS_DEMO_SECRETS=scanning|review|key|detail|moving|done` opens that step, for screenshots
+//! (`key`: the review asking for the phone key's digits); `run` plays the whole flow by itself.
 
 use std::collections::BTreeSet;
 use std::sync::Arc;
@@ -19,13 +20,21 @@ use reins_desktop::secrets_scan::{self, Caller, Progress, ScanOptions, Source};
 
 use super::Model;
 use crate::demo::Demo;
-use crate::secrets::{Finished, Flow, Moving, Review, Scanning};
+use crate::secrets::{Finished, Flow, Moving, PhoneKey, Review, Scanning};
 
 /// `--demo`: how long each stage of the pretend scan takes, and the pretend phone.
 const DEMO_STAGE: Duration = Duration::from_millis(450);
 const DEMO_APPROVE: Duration = Duration::from_secs(3);
 /// How often the scan's progress reaches the window.
 const PROGRESS_EVERY: Duration = Duration::from_millis(80);
+
+/// `--demo` with `REINS_DEMO_SECRETS=run`: how long the review shows before the pretend move.
+const DEMO_REVIEW: Duration = Duration::from_millis(2_500);
+
+/// `--demo` with `REINS_DEMO_SECRETS=run`: the whole flow plays by itself (scan, review, move, done), as if clicked.
+pub(super) fn autoplay(demo: bool) -> bool {
+    demo && std::env::var("REINS_DEMO_SECRETS").is_ok_and(|v| v == "run")
+}
 
 /// The flow at start: in the demo, as `REINS_DEMO_SECRETS` says.
 pub(super) fn initial(demo: bool, home: &std::path::Path) -> Flow {
@@ -44,6 +53,14 @@ pub(super) fn initial(demo: bool, home: &std::path::Path) -> Flow {
             stop: Arc::new(AtomicBool::new(false)),
         }),
         "review" => Flow::Review(review()),
+        "key" => {
+            let mut r = review();
+            r.key = Some(PhoneKey {
+                typed: "4821-9930-12".to_owned(),
+                checking: false,
+            });
+            Flow::Review(r)
+        }
         "detail" => {
             let mut r = review();
             r.open = r.report.findings.first().map(|f| f.id.clone());
@@ -141,6 +158,14 @@ impl Model {
                                     Arc::new(Demo::secrets_report(&home)),
                                     Demo::secrets_vault(),
                                 ));
+                                // `REINS_DEMO_SECRETS=run`: the move follows by itself, as if clicked.
+                                if autoplay(true) {
+                                    cx.spawn(async move |this, cx| {
+                                        cx.background_executor().timer(DEMO_REVIEW).await;
+                                        let _gone = this.update(cx, Model::move_secrets);
+                                    })
+                                    .detach();
+                                }
                             }
                             cx.notify();
                             true
@@ -192,17 +217,28 @@ impl Model {
         let writer = real::PhoneWriter {
             paths: self.backend.paths().clone(),
             config: self.config_now().unwrap_or_default(),
+            phone_key_digits: None,
         };
+        // Never checked here: the review asks for the phone key's digits first (a window cannot ask at a terminal).
+        let unchecked = writer.phone_key_unchecked();
         cx.spawn(async move |this, cx| {
             let result = scan.await;
             // What the vault has, so the review never merges into a project from elsewhere unasked.
-            let existing = Tokio::spawn(cx, async move { secrets_import::existing(&writer).await })
-                .await
-                .unwrap_or_else(|e| secrets_import::Existing::Unknown(e.to_string()));
+            let existing = if unchecked {
+                secrets_import::Existing::Unknown("your phone's key is not checked yet".to_owned())
+            } else {
+                Tokio::spawn(cx, async move { secrets_import::existing(&writer).await })
+                    .await
+                    .unwrap_or_else(|e| secrets_import::Existing::Unknown(e.to_string()))
+            };
             let _gone = this.update(cx, |m, cx| {
                 m.secrets = match result {
                     Ok(report) if report.stopped => Flow::Idle,
-                    Ok(report) => Flow::Review(Review::new(Arc::new(report), existing)),
+                    Ok(report) => {
+                        let mut r = Review::new(Arc::new(report), existing);
+                        r.key = unchecked.then(PhoneKey::default);
+                        Flow::Review(r)
+                    }
                     Err(e) => {
                         m.notice = Some(e);
                         Flow::Idle
@@ -241,13 +277,72 @@ impl Model {
         }
     }
 
+    /// "Check" (or Enter) under the phone's key: the phone hands this computer its key (one approval), it is kept
+    /// when it matches the twelve digits typed, and the vault's projects are listed again with it.
+    pub fn check_phone_key(&mut self, cx: &mut Context<'_, Self>) {
+        let Flow::Review(review) = &mut self.secrets else {
+            return;
+        };
+        let Some(key) = review.key.as_mut() else {
+            return;
+        };
+        if key.checking {
+            return;
+        }
+        let Some(digits) = key.digits() else {
+            review.error = Some("Type the twelve digits your phone shows for its key.".to_owned());
+            cx.notify();
+            return;
+        };
+        key.checking = true;
+        review.error = None;
+        cx.notify();
+        if self.args.demo {
+            cx.spawn(async move |this, cx| {
+                cx.background_executor().timer(DEMO_APPROVE).await;
+                let _gone = this.update(cx, |m, cx| m.review(cx, |r| r.key = None));
+            })
+            .detach();
+            return;
+        }
+        let writer = real::PhoneWriter {
+            paths: self.backend.paths().clone(),
+            config: self.config_now().unwrap_or_default(),
+            phone_key_digits: Some(digits),
+        };
+        cx.spawn(async move |this, cx| {
+            let checked = Tokio::spawn(cx, async move {
+                writer.check_phone_key().await?;
+                Ok::<_, String>(secrets_import::existing(&writer).await)
+            })
+            .await
+            .unwrap_or_else(|e| Err(e.to_string()));
+            let _gone = this.update(cx, |m, cx| {
+                m.review(cx, |r| match checked {
+                    Ok(existing) => {
+                        r.key = None;
+                        r.existing = existing;
+                    }
+                    Err(e) => {
+                        if let Some(k) = r.key.as_mut() {
+                            k.checking = false;
+                        }
+                        r.error = Some(e);
+                    }
+                });
+            });
+        })
+        .detach();
+    }
+
     /// "Move N · approve on phone": the ticked secrets go to the vault as one batch; the window shows the check
     /// digits while the phone decides.
     pub fn move_secrets(&mut self, cx: &mut Context<'_, Self>) {
         let Flow::Review(review) = &self.secrets else {
             return;
         };
-        if review.count() == 0 {
+        // The phone's key is checked first (its digits typed in the review).
+        if review.count() == 0 || review.key.is_some() {
             return;
         }
         let review = review.clone();
@@ -309,6 +404,7 @@ impl Model {
                 let writer = real::PhoneWriter {
                     paths: paths.clone(),
                     config: config.clone(),
+                    phone_key_digits: None,
                 };
                 let system = real::System {
                     paths,
@@ -343,8 +439,7 @@ impl Model {
         .detach();
     }
 
-    /// "Remove the originals from the Trash" (held to confirm): deletes for good exactly the files the import sent
-    /// there.
+    /// "Shred" (held to confirm): overwrites and deletes exactly the files the import sent to the Trash.
     pub fn purge_originals(&mut self, cx: &mut Context<'_, Self>) {
         self.after_done(cx, true);
     }
@@ -362,7 +457,11 @@ impl Model {
             let n = done.receipt.trashed().len();
             done.after = Some(if purge {
                 done.receipt.purged_at = Some(reins_desktop::now_unix());
-                format!("Deleted the {n} originals from the Trash.")
+                for m in done.receipt.moved.iter_mut().filter(|m| m.in_trash) {
+                    m.in_trash = false;
+                    m.on_disk = false;
+                }
+                format!("Shredded the {n} originals.")
             } else {
                 done.receipt.undone_at = Some(reins_desktop::now_unix());
                 "Undone: the files are back. The secrets stay in your vault.".to_owned()

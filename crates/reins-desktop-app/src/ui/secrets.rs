@@ -9,10 +9,11 @@ use std::fmt::Write as _;
 use gpui::prelude::FluentBuilder as _;
 use gpui::{
     AnyElement, Context, Div, FontWeight, Hsla, InteractiveElement as _, IntoElement, ParentElement as _, SharedString,
-    StatefulInteractiveElement as _, Styled as _, div, linear_color_stop, linear_gradient, px, relative,
+    StatefulInteractiveElement as _, Styled as _, Window, div, linear_color_stop, linear_gradient, px, relative,
 };
 use reins_desktop::secrets_scan::{Confidence, Detector, Finding, Group, Risk, Source, Stage, StageState};
 
+use super::field::Field;
 use super::hold::Held;
 use super::icons::{Brand, Icon, Mark, icon};
 use super::parts::{
@@ -22,7 +23,7 @@ use super::parts::{
 use super::story::Words;
 use super::{Data, Root};
 use crate::model::Model;
-use crate::secrets::{self, Finished, Flow, Moving, Review, Scanning};
+use crate::secrets::{self, Finished, Flow, Moving, PhoneKey, Review, Scanning};
 use crate::theme::{MONO, Palette};
 
 fn words(parts: &[(&str, bool)]) -> Vec<Words> {
@@ -210,6 +211,7 @@ impl Root {
         &self,
         d: &Data,
         pal: Palette,
+        window: &Window,
         cx: &mut Context<'_, Self>,
     ) -> Option<(AnyElement, bool)> {
         match &d.secrets {
@@ -217,7 +219,7 @@ impl Root {
             Flow::Scanning(s) => Some((Self::scanning(s, pal, cx), false)),
             Flow::Review(r) => match r.open.as_ref().and_then(|id| r.report.finding(id)) {
                 Some(f) => Some((Self::finding_detail(r, f, d, pal, cx), false)),
-                None => Some((Self::review_page(r, d, pal, cx), true)),
+                None => Some((self.review_page(r, d, pal, window, cx), true)),
             },
             Flow::Moving(m) => Some((Self::moving(m, d, pal), false)),
             Flow::Done(done) => Some((self.secrets_done(done, d, pal, cx), false)),
@@ -357,7 +359,14 @@ impl Root {
             .into_any_element()
     }
 
-    fn review_page(r: &Review, d: &Data, pal: Palette, cx: &mut Context<'_, Self>) -> AnyElement {
+    fn review_page(
+        &self,
+        r: &Review,
+        d: &Data,
+        pal: Palette,
+        window: &Window,
+        cx: &mut Context<'_, Self>,
+    ) -> AnyElement {
         let top = if cfg!(target_os = "macos") {
             40.0
         } else {
@@ -435,11 +444,25 @@ impl Root {
             .h_full()
             .overflow_y_scroll()
             .child(div().px(px(34.0)).pt(px(top)).pb(px(34.0)).child(list));
-        div().size_full().flex().flex_row().child(left).child(Self::review_panel(r, d, pal, top, cx)).into_any_element()
+        div()
+            .size_full()
+            .flex()
+            .flex_row()
+            .child(left)
+            .child(self.review_panel(r, d, pal, top, window, cx))
+            .into_any_element()
     }
 
     /// The review's right panel: how many move, into which folder, what happens after, and Move.
-    fn review_panel(r: &Review, d: &Data, pal: Palette, top: f32, cx: &mut Context<'_, Self>) -> AnyElement {
+    fn review_panel(
+        &self,
+        r: &Review,
+        d: &Data,
+        pal: Palette,
+        top: f32,
+        window: &Window,
+        cx: &mut Context<'_, Self>,
+    ) -> AnyElement {
         let n = r.count();
         let plan = r.plan(&d.computer, &d.machine);
         let computer = d.computer.clone();
@@ -469,7 +492,7 @@ impl Root {
         };
         let move_label = format!("Move {n} · approve on phone");
         let mv = big(btn_icon("secrets-move", Icon::Smartphone, move_label, Btn::Primary, pal)).w_full().h(px(42.0));
-        let mv = if n == 0 {
+        let mv = if n == 0 || r.key.is_some() {
             mv.opacity(0.45).cursor_default()
         } else {
             mv.on_click(Self::on_model(cx, Model::move_secrets))
@@ -524,7 +547,7 @@ impl Root {
                         "secrets-then-reins",
                         !r.keep_local,
                         "Use them through Reins",
-                        "Local copies go to the Trash. Apps get them from your vault when you approve.",
+                        "Local copies go to the Trash, readable until you shred them. Apps get them from your vault when you approve.",
                         false,
                         true,
                         cx,
@@ -542,10 +565,45 @@ impl Root {
             .when(!plan.clashes.is_empty() || !plan.conflicts.is_empty(), |p| {
                 p.child(small_caps("Names").mt(px(18.0))).child(Self::names_card(&plan, pal, cx))
             })
+            .when_some(r.key.as_ref(), |p, key| {
+                p.child(small_caps("Your phone's key").mt(px(18.0))).child(self.phone_key_card(key, pal, window, cx))
+            })
             .when_some(r.error.clone(), |p, e| p.child(caption(e, pal).mt(px(12.0)).text_color(pal.danger)))
             .child(div().flex_1())
             .child(mv)
             .into_any_element()
+    }
+
+    /// The first time only: the twelve digits the phone shows for its key, typed here, then checked with the phone.
+    fn phone_key_card(&self, key: &PhoneKey, pal: Palette, window: &Window, cx: &mut Context<'_, Self>) -> Div {
+        let check = small(btn(
+            "secrets-key-check",
+            if key.checking {
+                "Approve on phone"
+            } else {
+                "Check"
+            },
+            Btn::Plain,
+            pal,
+        ));
+        let check = if key.checking || key.digits().is_none() {
+            check.opacity(0.45).cursor_default()
+        } else {
+            check.on_click(Self::on_model(cx, Model::check_phone_key))
+        };
+        card(pal)
+            .mt(px(8.0))
+            .p(px(12.0))
+            .gap(px(8.0))
+            .child(caption("12 digits: Reins on your phone, Settings › Devices", pal).text_color(pal.tertiary))
+            .child(
+                div()
+                    .flex()
+                    .items_center()
+                    .gap(px(8.0))
+                    .child(self.text_field(Field::PhoneKey, "0000-0000-0000", pal, window, cx))
+                    .child(check),
+            )
     }
 
     /// What the review says about names: a project the vault already has from another folder (a new name, or merge
@@ -627,7 +685,14 @@ impl Root {
             let on = r.ticked.contains(&item.id);
             let id = item.id.clone();
             let kind: AnyElement = if item.confidence == Confidence::None {
-                div().text_color(pal.tertiary).child("not a secret").into_any_element()
+                // A setting .env.reins cannot hold as it is stays where it is.
+                let file = f.abs_path.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
+                let words = if item.stays_in_file && !on {
+                    format!("stays in {file}")
+                } else {
+                    "not a secret".to_owned()
+                };
+                div().text_color(pal.tertiary).child(words).into_any_element()
             } else {
                 div()
                     .flex()
@@ -679,7 +744,7 @@ impl Root {
         if f.source == Source::Dotenv {
             let mut w = well(pal).w(px(300.0)).flex_none().text_size(px(11.5)).line_height(px(18.0));
             let project = secrets::project_in(&r.plan(&d.computer, &d.machine), f);
-            for (line, reference) in secrets::env_reins_preview(f, &r.ticked, &project).into_iter().take(6) {
+            for (line, reference) in secrets::env_reins_preview(f, &r.ticked, &project).into_iter().take(8) {
                 w = w.child(div().truncate().when(!reference, |l| l.text_color(pal.tertiary)).child(line));
             }
             after = after.child(w);
@@ -790,6 +855,7 @@ impl Root {
     fn secrets_done(&self, done: &Finished, d: &Data, pal: Palette, cx: &mut Context<'_, Self>) -> AnyElement {
         let receipt = &done.receipt;
         let off = receipt.off_disk();
+        let in_trash = receipt.moved.iter().filter(|m| m.in_trash).count();
         let n = receipt.moved.len();
         let title = match n {
             0 => "Nothing reached your vault".to_owned(),
@@ -799,11 +865,13 @@ impl Root {
         let mut under = format!("In your vault · from \"{}\"", receipt.computer);
         if receipt.keep_local {
             under.push_str(" · local copies kept");
-        } else if !receipt.trashed().is_empty() {
-            under.push_str(" · local copies in the Trash");
+        } else if in_trash > 0 {
+            under.push_str(" · local copies in the Trash until shredded");
+        } else if receipt.purged_at.is_some() {
+            under.push_str(" · local copies shredded");
         }
-        if n > off && !receipt.keep_local {
-            let _ = write!(under, " · {} still on disk", n - off);
+        if n > off + in_trash && !receipt.keep_local {
+            let _ = write!(under, " · {} still on disk", n - off - in_trash);
         }
         let head = div()
             .flex()
@@ -850,7 +918,7 @@ impl Root {
         for note in &receipt.notes {
             page = page.child(caption(note.clone(), pal).px(px(4.0)).text_color(pal.warning));
         }
-        // The originals in the Trash still hold the secrets: once all works, delete them for good (held to confirm).
+        // The originals in the Trash still hold the secrets in plain text: once all works, shred them (held to confirm).
         let trashed = receipt.trashed().len();
         if trashed > 0 && receipt.purged_at.is_none() && receipt.undone_at.is_none() {
             page = page.child(
@@ -858,11 +926,24 @@ impl Root {
                     row(pal, true)
                         .child(tile(Icon::Trash, pal.danger, 30.0))
                         .child(row_text(
-                            "The originals are in the Trash",
-                            Some(format!("{} still hold the secrets. Once everything works, remove them for good (undo then can't bring them back).", plural(trashed, "file", "files")).into_any_element()),
+                            "Still readable in the Trash",
+                            Some(
+                                format!(
+                                    "{}. Shred once all works; undo can't bring them back.",
+                                    plural(trashed, "file", "files")
+                                )
+                                .into_any_element(),
+                            ),
                             pal,
                         ))
-                        .child(div().w(px(220.0)).flex_none().child(self.hold_button("secrets-purge", Held::PurgeOriginals, Icon::Trash, "Remove from the Trash", pal, cx))),
+                        .child(div().w(px(220.0)).flex_none().child(self.hold_button(
+                            "secrets-purge",
+                            Held::PurgeOriginals,
+                            Icon::Trash,
+                            "Shred",
+                            pal,
+                            cx,
+                        ))),
                 ),
             );
         }

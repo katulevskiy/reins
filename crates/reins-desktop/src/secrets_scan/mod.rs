@@ -89,21 +89,10 @@ const MAX_SKIPPED_LISTED: usize = 200;
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(default, deny_unknown_fields)]
 pub struct SecretsConfig {
-    /// Finding and moving secrets (`reins secrets scan` / `import`, the app's Scan) while Reins Secrets is a
-    /// preview.
+    /// No longer read: finding and moving secrets is on for everyone. Kept so that a config that turned the preview on
+    /// (`preview = true`) still loads.
     pub preview: bool,
 }
-
-/// Whether finding and moving secrets is on: `[secrets] preview = true`, or `REINS_SECRETS_PREVIEW=1`. The one place
-/// the preview is decided (the CLI and the app ask here); remove it when Reins Secrets ships.
-#[must_use]
-pub fn preview(config: &crate::config::Config) -> bool {
-    config.secrets.preview || std::env::var("REINS_SECRETS_PREVIEW").is_ok_and(|v| !v.is_empty() && v != "0")
-}
-
-/// What the CLI says while the preview is off.
-pub const PREVIEW_OFF: &str = "finding and moving secrets is a preview: turn it on with `[secrets] preview = true` in \
-                               config.toml (or REINS_SECRETS_PREVIEW=1)";
 
 /// Who started the scan, from the environment.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -302,6 +291,10 @@ pub struct Item {
     pub preview: String,
     /// Pre-ticked in the review.
     pub suggested: bool,
+    /// A setting of a `.env` file that `.env.reins` cannot hold as it is (a line break, every kind of quote, a value
+    /// that reads as a reference): left unticked, it stays in its `.env` file.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub stays_in_file: bool,
 }
 
 /// A file with secrets in it.
@@ -962,7 +955,14 @@ impl Scan<'_> {
             if verdict.confidence == Confidence::None && source != Source::Dotenv {
                 continue;
             }
+            // Whether `.env.reins` could hold this setting as it is (`reins run` passes literals through).
+            let stays_in_file = source == Source::Dotenv
+                && verdict.confidence == Confidence::None
+                && crate::project::EnvFile::new()
+                    .set(&e.name, crate::project::EnvValue::Literal(e.value.to_string()))
+                    .is_err();
             items.push(Item {
+                stays_in_file,
                 id: item_id,
                 preview: detect::mask(&e.value),
                 name: e.name,
@@ -1128,6 +1128,7 @@ impl Scan<'_> {
                 confidence: Confidence::High,
                 preview,
                 suggested: true,
+                stays_in_file: false,
             });
             f.key_type = Some(key.kind);
             self.finish(f);
@@ -1162,6 +1163,7 @@ impl Scan<'_> {
                     confidence: Confidence::High,
                     preview: token.as_ref().map_or_else(|| "in the keychain".to_owned(), |t| detect::mask(t.trim())),
                     suggested: true,
+                    stays_in_file: false,
                 };
                 drop(token);
                 if let Some(f) = self.report.findings.get_mut(before) {
@@ -1336,13 +1338,24 @@ fn summary(f: &Finding) -> String {
 
 /// Reads a finding's file again and parses it as the scan did: the entries with their values, for import.
 pub fn read_entries(source: Source, path: &Path) -> Result<Vec<RawEntry>, String> {
+    Ok(parse_entries(source, &read_text(path)?))
+}
+
+/// A finding's file as text (at most [`MAX_FILE`]), in a buffer that is wiped.
+pub fn read_text(path: &Path) -> Result<Zeroizing<String>, String> {
     let meta = std::fs::metadata(path).map_err(|e| format!("{}: {e}", path.display()))?;
     if meta.len() > MAX_FILE {
         return Err(format!("{}: larger than 1 MB", path.display()));
     }
     let bytes = Zeroizing::new(std::fs::read(path).map_err(|e| format!("{}: {e}", path.display()))?);
     let text = std::str::from_utf8(&bytes).map_err(|_| format!("{}: not text", path.display()))?;
-    Ok(match source {
+    Ok(Zeroizing::new(text.to_owned()))
+}
+
+/// The entries of `text`, a file of `source`, as the scan read them.
+#[must_use]
+pub fn parse_entries(source: Source, text: &str) -> Vec<RawEntry> {
+    match source {
         Source::Dotenv => sources::dotenv(text),
         Source::Shell => sources::shell(text),
         Source::GhCli => sources::gh_hosts(text).0,
@@ -1360,10 +1373,11 @@ pub fn read_entries(source: Source, path: &Path) -> Result<Vec<RawEntry>, String
             name: "private_key".to_owned(),
             group: None,
             line: 1,
+            lines: u32::try_from(text.lines().count()).unwrap_or(u32::MAX),
             value: Zeroizing::new(text.to_owned()),
             credential: true,
         }],
-    })
+    }
 }
 
 /// Scans as `opts` says, telling `progress` as it goes. Refused when an AI agent started it ([`Caller`]).

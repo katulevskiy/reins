@@ -1,9 +1,6 @@
-//! The real [`VaultWriter`] and [`Machine`]: the phone through the existing sealed store, the OS trash, the Reins SSH
-//! agent's socket, git's config, `gh` and `config.toml`.
-//!
-//! Until Reins Secrets core is on this computer and the phone, only SSH keys can be stored (through
-//! `vault_secret_store`, kind ssh, one approval each); environments (`vault_secrets_store`) and git tokens
-//! (`integration_token_store`) come back as not stored, saying so, and their sources are left as they are.
+//! The real [`VaultWriter`] and [`Machine`]: the phone through Reins Secrets' store (`vault_secrets_store`: every
+//! environment, SSH key and git token of an import in one sealed box, one approval, one set of check digits), the OS
+//! trash, the Reins SSH agent's socket, git's config, `gh` and `config.toml`.
 
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
@@ -14,44 +11,44 @@ use zeroize::Zeroizing;
 
 use super::{Batch, Machine, Stored, VaultWriter};
 use crate::config::{Config, Paths};
-use crate::vault_cli::ItemKind;
+use crate::secrets_client::PhoneVaultWriter;
 
-/// What a batch part gets when this version cannot store it yet.
-pub const NEEDS_CORE: &str = "needs Reins Secrets on this computer and your phone (update both, then import again)";
-
-/// Stores through the phone's existing sealed tools.
+/// Stores through the paired phone.
 pub struct PhoneWriter {
     pub paths: Paths,
     pub config: Config,
+    /// The twelve digits of the phone's key, typed by the person where no terminal can ask (the first time only).
+    pub phone_key_digits: Option<String>,
+}
+
+impl PhoneWriter {
+    fn phone(&self) -> PhoneVaultWriter {
+        PhoneVaultWriter::new(&self.paths, &self.config, self.phone_key_digits.clone())
+    }
+
+    /// The phone's key has never been checked here: a window asks for its digits first.
+    #[must_use]
+    pub fn phone_key_unchecked(&self) -> bool {
+        self.phone().phone_key_unchecked()
+    }
+
+    /// Checks the phone's key against the digits given (one approval on the phone) and keeps it.
+    ///
+    /// # Errors
+    /// Why not, as the person can read it.
+    pub async fn check_phone_key(&self) -> Result<(), String> {
+        self.phone().check_phone_key().await.map_err(|e| e.to_string())
+    }
 }
 
 #[async_trait::async_trait]
 impl VaultWriter for PhoneWriter {
     async fn store(&self, batch: &Batch) -> Stored {
-        let mut stored = Stored {
-            envs: batch.envs.iter().map(|_| Err(NEEDS_CORE.to_owned())).collect(),
-            tokens: batch.tokens.iter().map(|_| Err(NEEDS_CORE.to_owned())).collect(),
-            ssh: Vec::new(),
-        };
-        for key in &batch.ssh {
-            let r = crate::vault_cli::save(
-                &self.paths,
-                &self.config,
-                (&key.name, ItemKind::Ssh, None, false),
-                key.private_key.clone(),
-                "reins secrets import",
-            )
-            .await
-            .map(|_| ());
-            stored.ssh.push(r);
-        }
-        stored
+        self.phone().store_import(batch).await
     }
 
     async fn projects(&self) -> Result<Vec<super::VaultProject>, String> {
-        // Reins Secrets core's listing (names and `reins.origin`) is not there yet: import then merges nothing it was
-        // not told to, and names new projects apart.
-        Err(NEEDS_CORE.to_owned())
+        self.phone().import_projects().await
     }
 }
 
@@ -99,9 +96,57 @@ mod bin {
         trash::os_limited::restore_all([item(path, id)?]).map_err(|e| format!("{}: {e}", path.display()))
     }
 
-    pub fn purge(path: &Path, id: Option<&str>) -> Result<(), String> {
-        trash::os_limited::purge_all([item(path, id)?]).map_err(|e| format!("{}: {e}", path.display()))
+    /// Where the trash keeps the item's bytes: freedesktop names it after the item's info file
+    /// (`<trash>/info/<name>.trashinfo` → `<trash>/files/<name>`); on Windows the id is that path.
+    fn bytes_of(item: &trash::TrashItem) -> Option<std::path::PathBuf> {
+        let id = Path::new(&item.id);
+        if cfg!(windows) {
+            return Some(id.to_path_buf());
+        }
+        let trash = id.parent()?.parent()?;
+        Some(trash.join("files").join(id.file_stem()?))
     }
+
+    /// Shreds the item: its bytes overwritten with zeros, then it is deleted from the trash.
+    pub fn purge(path: &Path, id: Option<&str>) -> Result<(), String> {
+        let item = item(path, id)?;
+        if let Some(bytes) = bytes_of(&item) {
+            super::overwrite(&bytes).map_err(|e| format!("{}: {e}", path.display()))?;
+        }
+        trash::os_limited::purge_all([item]).map_err(|e| format!("{}: {e}", path.display()))
+    }
+}
+
+/// Writes zeros over a plain file's bytes and flushes them to the disk (never through a link: anything else is left
+/// to the delete as it is). On SSDs and copy-on-write file systems old blocks may survive: this is best effort.
+#[cfg_attr(
+    not(any(windows, all(unix, not(target_os = "macos"), not(target_os = "ios"), not(target_os = "android")))),
+    allow(dead_code)
+)]
+fn overwrite(file: &Path) -> std::io::Result<()> {
+    use std::io::Write as _;
+    let meta = std::fs::symlink_metadata(file)?;
+    if !meta.is_file() {
+        return Ok(());
+    }
+    let mut f = std::fs::OpenOptions::new().write(true).open(file)?;
+    #[cfg(unix)]
+    {
+        // The file opened is the one looked at (not a link put in its place since).
+        use std::os::unix::fs::MetadataExt as _;
+        let opened = f.metadata()?;
+        if opened.dev() != meta.dev() || opened.ino() != meta.ino() {
+            return Err(std::io::Error::other("the file changed while it was being shredded"));
+        }
+    }
+    let zeros = [0u8; 8192];
+    let mut left = meta.len();
+    while left > 0 {
+        let n = usize::try_from(left).map_or(zeros.len(), |l| l.min(zeros.len()));
+        f.write_all(&zeros[..n])?;
+        left -= n as u64;
+    }
+    f.sync_all()
 }
 
 /// macOS's Trash keeps no record a program can read back: Finder's Put Back does it, and emptying the Trash.
@@ -118,7 +163,7 @@ mod bin {
     }
 
     pub fn purge(path: &Path, _id: Option<&str>) -> Result<(), String> {
-        Err(format!("delete {} from the Trash in Finder", path.display()))
+        Err(format!("{} is in the Trash: empty the Trash in Finder", path.display()))
     }
 }
 
@@ -277,4 +322,30 @@ async fn agent_check(socket: &Path, public_key: &[u8]) -> Result<(), String> {
 #[allow(clippy::unused_async, reason = "the same call as on unix, where it waits for the agent")]
 async fn agent_check(_socket: &Path, _public_key: &[u8]) -> Result<(), String> {
     Err("checking the agent's signature works on macOS and Linux for now".to_owned())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn shredding_writes_zeros_over_the_whole_file_and_never_through_a_link() {
+        let dir = tempfile::tempdir().unwrap();
+        let file = dir.path().join("item");
+        let text = "API_SECRET=".to_owned() + &"x".repeat(20_000);
+        std::fs::write(&file, &text).unwrap();
+        overwrite(&file).unwrap();
+        let after = std::fs::read(&file).unwrap();
+        assert_eq!(after.len(), text.len());
+        assert!(after.iter().all(|b| *b == 0));
+        #[cfg(unix)]
+        {
+            let target = dir.path().join("elsewhere");
+            std::fs::write(&target, "keep").unwrap();
+            let link = dir.path().join("link");
+            std::os::unix::fs::symlink(&target, &link).unwrap();
+            overwrite(&link).unwrap();
+            assert_eq!(std::fs::read_to_string(&target).unwrap(), "keep");
+        }
+    }
 }

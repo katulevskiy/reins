@@ -1,6 +1,6 @@
 //! The import receipt: what an import moved and every change it made, kept as `<state>/imports/<time>.json` (the
 //! folder 0700, the file 0600, written through a temporary file), read by `--undo`, `--finish` and
-//! `--purge-originals`.
+//! `--shred`.
 //!
 //! A receipt is **authenticated**: an HMAC-SHA256 over its JSON with a key of this install
 //! (`<state>/import-receipts.key`, 32 random bytes, 0600). One that does not verify (written or changed by anything
@@ -72,6 +72,10 @@ pub struct Moved {
     /// the agent): in the vault, but not moved off the disk.
     #[serde(default)]
     pub on_disk: bool,
+    /// Its file left its place for the trash, where it is still plain text (so it counts as on disk) until it is
+    /// shredded or the trash is emptied.
+    #[serde(default)]
+    pub in_trash: bool,
 }
 
 /// What the Done screen lists: one line per kind of thing that changed, and how to use it now.
@@ -422,7 +426,8 @@ pub async fn finish(
                 });
                 let finding = crate::secrets_scan::finding_id(Source::SshKey, &key.path);
                 for m in receipt.moved.iter_mut().filter(|m| m.finding == finding) {
-                    m.on_disk = false;
+                    // Still plain text in the trash until shredded.
+                    m.in_trash = true;
                 }
             }
             Err(why) => {
@@ -439,8 +444,10 @@ pub async fn finish(
     Ok(lines)
 }
 
-/// Deletes for good the originals the import sent to the trash (they hold the secrets): exactly those items, nothing
-/// else. Undo can no longer bring them back.
+/// Shreds the originals the import sent to the trash (they hold the secrets in plain text): exactly those items,
+/// nothing else, each overwritten and then deleted ([`Machine::purge`]). Only secrets the vault confirmed storing
+/// were ever trashed. Once all are shredded, the secrets that were in them count as off the disk; undo can no longer
+/// bring them back.
 pub fn purge(
     state_dir: &Path,
     path: &Path,
@@ -457,7 +464,7 @@ pub fn purge(
     let mut failed = false;
     for (file, trash_id) in receipt.trashed() {
         match machine.purge(file, trash_id) {
-            Ok(()) => lines.push(format!("{}: deleted from the trash", file.display())),
+            Ok(()) => lines.push(format!("{}: shredded", file.display())),
             Err(e) => {
                 failed = true;
                 lines.push(format!("{}: {e}", file.display()));
@@ -466,6 +473,10 @@ pub fn purge(
     }
     if !failed {
         receipt.purged_at = Some(crate::now_unix());
+        for m in receipt.moved.iter_mut().filter(|m| m.in_trash) {
+            m.in_trash = false;
+            m.on_disk = false;
+        }
         update(state_dir, path, receipt)?;
     }
     if lines.is_empty() {

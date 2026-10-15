@@ -17,6 +17,8 @@ struct FakeWriter {
     fail_envs: Vec<String>,
     seen: Mutex<Vec<String>>,
     vault: Option<Vec<VaultProject>>,
+    /// A file that gets a line more while the batch is being stored (as if edited meanwhile).
+    touch: Option<PathBuf>,
 }
 
 impl Default for FakeWriter {
@@ -25,6 +27,7 @@ impl Default for FakeWriter {
             fail_envs: Vec::new(),
             seen: Mutex::default(),
             vault: Some(Vec::new()),
+            touch: None,
         }
     }
 }
@@ -64,6 +67,11 @@ impl VaultWriter for FakeWriter {
     async fn store(&self, batch: &Batch) -> Stored {
         let mut seen = self.seen.lock().unwrap();
         seen.push(format!("{batch:?}"));
+        if let Some(p) = &self.touch {
+            let mut text = std::fs::read_to_string(p).unwrap();
+            text.push_str("ADDED_LATER=1\n");
+            std::fs::write(p, text).unwrap();
+        }
         Stored {
             envs: batch
                 .envs
@@ -88,6 +96,8 @@ struct FakeMachine {
     trashed: Mutex<BTreeMap<PathBuf, Vec<PathBuf>>>,
     purged: Mutex<Vec<PathBuf>>,
     signs: bool,
+    /// Its trash refuses everything.
+    fail_trash: bool,
     profiles: Mutex<BTreeMap<String, BTreeMap<String, String>>>,
     log: Mutex<Vec<String>>,
 }
@@ -101,6 +111,7 @@ impl FakeMachine {
             trashed: Mutex::default(),
             purged: Mutex::default(),
             signs,
+            fail_trash: false,
             profiles: Mutex::default(),
             log: Mutex::default(),
         }
@@ -114,6 +125,9 @@ impl FakeMachine {
 #[async_trait::async_trait]
 impl Machine for FakeMachine {
     fn trash(&self, path: &Path) -> Result<Option<String>, String> {
+        if self.fail_trash {
+            return Err(format!("{}: the trash is full", path.display()));
+        }
         let mut t = self.trashed.lock().unwrap();
         let n: usize = t.values().map(Vec::len).sum::<usize>() + self.purged.lock().unwrap().len();
         let to = self.trash_dir.join(format!("item-{n}"));
@@ -466,17 +480,28 @@ async fn an_import_moves_everything_and_rewrites_each_source() {
     // .env → reins.toml + .env.reins, the original in the trash.
     let acme = home.join("dev/acme-web");
     assert!(!acme.join(".env").exists() && machine.in_trash(&acme.join(".env")));
+    // Written and read back by Reins Secrets' own formats (`crate::project`).
+    let project = crate::project::ProjectFile::load(&acme.join("reins.toml")).unwrap();
+    assert_eq!((project.name.as_str(), project.default_env.as_str()), ("acme-web", "development"));
+    assert_eq!(project.env("development").lease_secs, Some(8 * 3_600));
+    let env_file = crate::project::EnvFile::load(&acme.join(".env.reins")).unwrap();
+    let lines: Vec<String> = env_file
+        .vars()
+        .map(|v| match &v.value {
+            crate::project::EnvValue::Reference(r) => format!("{}={r}", v.name),
+            crate::project::EnvValue::Literal(s) => format!("{}={s}", v.name),
+        })
+        .collect();
     assert_eq!(
-        std::fs::read_to_string(acme.join("reins.toml")).unwrap(),
-        "[project]\nname = \"acme-web\"\ndefault_env = \"development\"\n\n[env.development]\nlease = \"8h\"\n"
-    );
-    assert_eq!(
-        std::fs::read_to_string(acme.join(".env.reins")).unwrap(),
-        "OPENAI_API_KEY=vault:acme-web/development/OPENAI_API_KEY\n\
-         STRIPE_SECRET_KEY=vault:acme-web/development/STRIPE_SECRET_KEY\n\
-         DATABASE_URL=vault:acme-web/development/DATABASE_URL\n\
-         SUPABASE_SERVICE_KEY=vault:acme-web/development/SUPABASE_SERVICE_KEY\n\
-         NEXT_PUBLIC_SITE_URL=https://acme.dev\nLOG_LEVEL=debug\n"
+        lines,
+        [
+            "OPENAI_API_KEY=vault:acme-web/development/OPENAI_API_KEY",
+            "STRIPE_SECRET_KEY=vault:acme-web/development/STRIPE_SECRET_KEY",
+            "DATABASE_URL=vault:acme-web/development/DATABASE_URL",
+            "SUPABASE_SERVICE_KEY=vault:acme-web/development/SUPABASE_SERVICE_KEY",
+            "NEXT_PUBLIC_SITE_URL=https://acme.dev",
+            "LOG_LEVEL=debug",
+        ]
     );
     // The unticked suspected secret stays in its file; the setting goes to .env.reins.
     let api_dir = home.join("dev/api");
@@ -594,7 +619,8 @@ async fn what_did_not_arrive_stays_and_an_unsigned_key_waits() {
     let lines = receipt::finish(&c.home, &c.state_dir, &path, &mut receipt, &signing).await.unwrap();
     assert!(lines[0].contains("in the trash"), "{lines:?}");
     assert!(!home.join(".ssh/id_ed25519").exists() && receipt.pending_keys.is_empty());
-    assert!(receipt.moved.iter().filter(|m| m.to.starts_with("Reins/ssh/")).all(|m| !m.on_disk));
+    // In the trash now: still on disk, as plain text, until shredded.
+    assert!(receipt.moved.iter().filter(|m| m.to.starts_with("Reins/ssh/")).all(|m| m.on_disk && m.in_trash));
 }
 
 #[tokio::test]
@@ -642,7 +668,6 @@ fn values_never_print() {
         }],
         ssh: vec![SshWrite {
             name: "k".to_owned(),
-            folder: "Reins/ssh".to_owned(),
             private_key: Zeroizing::new(secret.clone()),
         }],
         tokens: vec![TokenWrite {
@@ -651,15 +676,13 @@ fn values_never_print() {
             token: Zeroizing::new(secret.clone()),
         }],
     };
-    let line = formats::EnvLine::Literal {
-        name: "X".to_owned(),
-        value: Zeroizing::new(secret.clone()),
-    };
-    let shown = format!("{batch:?} {:?} {:?} {:?} {line:?}", batch.envs[0], batch.ssh[0], batch.tokens[0]);
+    let shown = format!("{batch:?} {:?} {:?} {:?}", batch.envs[0], batch.ssh[0], batch.tokens[0]);
     assert!(!leaks(&shown, &secret), "{shown}");
     assert!(shown.contains("OPENAI_API_KEY"));
-    // The check digits change with any value.
+    // The check digits are the phone's own (Reins Secrets' batch check), and change with any value.
     let check = batch.check();
+    assert_eq!(check, crate::secrets_client::import_check(&batch));
+    assert!(check.len() == 4 && check.chars().all(|c| c.is_ascii_digit()));
     let mut other = batch;
     other.envs[0].vars[0].1 = Zeroizing::new(fake("sk-proj-", 61));
     assert_ne!(check, other.check());
@@ -677,6 +700,7 @@ fn the_receipt_format_is_stable() {
             finding: "dotenv-0123".to_owned(),
             to: "vault:acme-web/development/OPENAI_API_KEY".to_owned(),
             on_disk: false,
+            in_trash: false,
         }],
         changes: vec![
             Change::Created {
@@ -714,7 +738,7 @@ fn the_receipt_format_is_stable() {
     };
     let expected = serde_json::json!({
         "version": 1, "at": 1_700_000_000, "computer": "Dana's MacBook", "keep_local": false,
-        "moved": [{"item": "dotenv-0123/OPENAI_API_KEY", "finding": "dotenv-0123", "to": "vault:acme-web/development/OPENAI_API_KEY", "on_disk": false}],
+        "moved": [{"item": "dotenv-0123/OPENAI_API_KEY", "finding": "dotenv-0123", "to": "vault:acme-web/development/OPENAI_API_KEY", "on_disk": false, "in_trash": false}],
         "changes": [
             {"kind": "created", "path": "/h/dev/acme-web/reins.toml"},
             {"kind": "replaced", "path": "/h/.npmrc", "trash_id": "item-1"},
@@ -831,7 +855,9 @@ async fn new_files_hold_no_secret_and_keep_their_permissions() {
             assert!(!leaks(&text, secret), "a value in {}", path.display());
         }
     }
-    let on_disk: BTreeSet<&str> = receipt.moved.iter().filter(|m| m.on_disk).map(|m| m.finding.as_str()).collect();
+    // What was moved off is in the trash (plain text there until shredded); what stays is where it was.
+    let on_disk: BTreeSet<&str> =
+        receipt.moved.iter().filter(|m| m.on_disk && !m.in_trash).map(|m| m.finding.as_str()).collect();
     let kept_ids: BTreeSet<&str> = report
         .findings
         .iter()
@@ -854,7 +880,7 @@ async fn new_files_hold_no_secret_and_keep_their_permissions() {
 }
 
 #[tokio::test]
-async fn the_originals_can_be_deleted_from_the_trash_for_good() {
+async fn the_originals_in_the_trash_count_as_on_disk_until_shredded() {
     let fx = fixture();
     let report = report(&fx);
     let selected = select(&report, &[], true).unwrap();
@@ -863,13 +889,21 @@ async fn the_originals_can_be_deleted_from_the_trash_for_good() {
     let path = path.unwrap();
     let n = receipt.trashed().len();
     assert!(n > 5);
+    // Until shredded, what is in the trash is not off the disk, and the receipt says so.
+    let trashed = receipt.moved.iter().filter(|m| m.in_trash).count();
+    assert!(trashed > 0 && receipt.moved.iter().filter(|m| m.in_trash).all(|m| m.on_disk));
+    assert!(receipt.notes.iter().any(|n| n.contains("Trash, still in plain text") && n.contains("Shred")));
+    let off_before = receipt.off_disk();
     let c = ctx(&fx);
     let (_, mut r) = receipt::load(&c.state_dir, "last").unwrap();
     let lines = receipt::purge(&c.state_dir, &path, &mut r, &machine).unwrap();
     assert_eq!(lines.len(), n);
+    assert!(lines.iter().all(|l| l.ends_with("shredded")), "{lines:?}");
     assert_eq!(machine.purged.lock().unwrap().len(), n);
     assert!(std::fs::read_dir(&machine.trash_dir).unwrap().next().is_none(), "the trash holds none of them");
     let (_, mut r) = receipt::load(&c.state_dir, "last").unwrap();
+    assert!(r.moved.iter().all(|m| !m.in_trash));
+    assert_eq!(r.off_disk(), off_before + trashed);
     assert!(r.purged_at.is_some() && receipt::purge(&c.state_dir, &path, &mut r, &machine).is_err());
 }
 
@@ -879,9 +913,14 @@ fn project_and_environment_names_never_hold_a_slash() {
     let home = fx.home();
     std::fs::create_dir_all(home.join("dev/My App (v2)/.git")).unwrap();
     std::fs::write(home.join("dev/My App (v2)/.env.Staging_EU"), format!("API_SECRET={}\n", fake("", 33))).unwrap();
+    // Names longer than Reins Secrets allows are cut to fit.
+    let long = "a-very-long-repository-name-that-goes-on-and-on-well-past-sixty-four-characters";
+    std::fs::create_dir_all(home.join(format!("dev/{long}/.git"))).unwrap();
+    std::fs::write(home.join(format!("dev/{long}/.env.{long}")), format!("API_SECRET={}\n", fake("", 34))).unwrap();
     let report = report(&fx);
     let selected = select(&report, &[], true).unwrap();
-    for computer in ["Dana's MacBook", "ws-01.corp/LAB", "laptop"] {
+    let long_computer = "The Long-Named Workstation of the Platform Team, Third Floor, Building B";
+    for computer in ["Dana's MacBook", "ws-01.corp/LAB", "laptop", long_computer] {
         let machine = machine_project(computer, "key");
         for existing in [Existing::Known(Vec::new()), Existing::Unknown("offline".to_owned())] {
             let plan = plan(
@@ -897,12 +936,10 @@ fn project_and_environment_names_never_hold_a_slash() {
             assert!(!plan.envs.is_empty());
             for e in &plan.envs {
                 for name in [&e.project, &e.env] {
-                    assert!(
-                        !name.is_empty()
-                            && name.bytes().all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'-'),
-                        "{name} (computer {computer})"
-                    );
+                    // Reins Secrets' own rule for project and environment names.
+                    assert!(reins_proto::desktop::name_ok(name), "{name} (computer {computer})");
                 }
+                assert!(crate::secrets::EnvRef::new(&e.project, &e.env).is_ok());
                 assert_eq!(e.reference("X").matches('/').count(), 2, "{}", e.reference("X"));
             }
         }
@@ -910,4 +947,214 @@ fn project_and_environment_names_never_hold_a_slash() {
     let plan = plan_of(&report, &selected);
     assert!(plan.envs.iter().any(|e| e.project == "my-app-v2" && e.env == "staging-eu"));
     assert!(plan.envs.iter().any(|e| e.item() == format!("{}/aws-default", machine_name())));
+}
+
+#[tokio::test]
+async fn what_env_reins_cannot_hold_stays_in_env_as_written() {
+    let fx = fixture();
+    let dir = fx.home().join("dev/acme-web");
+    let key = fake("sk-proj-", 48);
+    std::fs::write(
+        dir.join(".env"),
+        format!(
+            "# kept as it is\nOPENAI_API_KEY=\"{key}\"\nLOG_LEVEL=debug\nBANNER=\"Hello\nthere\"\nPRIVATE_PEM=\"-----BEGIN \
+             PRIVATE KEY-----\n{}\n-----END PRIVATE KEY-----\"\n",
+            fake("", 40)
+        ),
+    )
+    .unwrap();
+    let report = report(&fx);
+    let f = report.findings.iter().find(|f| f.title == "acme-web/.env").unwrap();
+    assert!(f.items.iter().any(|i| i.name == "BANNER" && i.stays_in_file));
+    let selected = select(&report, std::slice::from_ref(&f.id), false).unwrap();
+    let machine = FakeMachine::new(fx.dir.path(), true);
+    let (receipt, _) = run(&fx, &report, &selected, false, &FakeWriter::default(), &machine).await.unwrap();
+    // What moved left (its multi-line value too), the setting went to .env.reins, what cannot be written there stayed.
+    let rest = std::fs::read_to_string(dir.join(".env")).unwrap();
+    assert_eq!(rest, "# kept as it is\nBANNER=\"Hello\nthere\"\n", "{rest}");
+    assert!(!leaks(&rest, &key));
+    let reins = std::fs::read_to_string(dir.join(".env.reins")).unwrap();
+    assert!(reins.contains("LOG_LEVEL=debug") && !reins.contains("BANNER"), "{reins}");
+    assert!(reins.contains("PRIVATE_PEM=vault:acme-web/development/PRIVATE_PEM"), "{reins}");
+    assert!(receipt.notes.iter().any(|n| n.contains("BANNER stays in")), "{:?}", receipt.notes);
+}
+
+/// A home folder with one project, `dev/shop`, whose `.env` is `text`.
+fn project_with(text: &str) -> Fixture {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path().join("home/dev/shop");
+    std::fs::create_dir_all(root.join(".git")).unwrap();
+    std::fs::write(root.join(".env"), text).unwrap();
+    Fixture {
+        dir,
+        secrets: Vec::new(),
+    }
+}
+
+/// Moves the variables `names` (every setting of each) of `dev/shop/.env`: the file's text after (`None`: gone to
+/// the trash), the receipt, and the ids moved.
+async fn move_vars(
+    fx: &Fixture,
+    names: &[&str],
+    writer: &FakeWriter,
+    machine: &FakeMachine,
+) -> (Option<String>, Receipt, BTreeSet<String>) {
+    let report = report(fx);
+    let f = report.findings.iter().find(|f| f.source == Source::Dotenv).expect("the .env is found");
+    let selected: BTreeSet<String> =
+        f.items.iter().filter(|i| names.contains(&i.name.as_str())).map(|i| i.id.clone()).collect();
+    for n in names {
+        assert!(f.items.iter().any(|i| i.name == *n), "{n} is read: {:?}", f.items);
+    }
+    let (receipt, _) = run(fx, &report, &selected, false, writer, machine).await.unwrap();
+    let text = std::fs::read_to_string(fx.home().join("dev/shop/.env")).ok();
+    (text, receipt, selected)
+}
+
+/// The two values these tests move and keep.
+fn moved_and_kept() -> (String, String) {
+    (fake("", 33), fake("", 35))
+}
+
+#[tokio::test]
+async fn line_endings_byte_order_marks_and_a_missing_last_newline_stay_as_written() {
+    let (s, u) = moved_and_kept();
+    for (text, after) in [
+        // CRLF, and no newline at the end.
+        (format!("API_SECRET={s}\r\nKEEP_SECRET={u}\r\n# end"), format!("KEEP_SECRET={u}\r\n# end")),
+        // The moved one is the last line, with no newline.
+        (format!("KEEP_SECRET={u}\r\nAPI_SECRET={s}"), format!("KEEP_SECRET={u}\r\n")),
+        // A byte order mark stays where it was.
+        (format!("\u{feff}API_SECRET={s}\nKEEP_SECRET={u}\n"), format!("\u{feff}KEEP_SECRET={u}\n")),
+    ] {
+        let fx = project_with(&text);
+        let machine = FakeMachine::new(fx.dir.path(), true);
+        let (rest, receipt, ids) = move_vars(&fx, &["API_SECRET"], &FakeWriter::default(), &machine).await;
+        assert_eq!(rest.as_deref(), Some(after.as_str()), "{text:?}");
+        let moved = receipt.moved.iter().find(|m| ids.contains(&m.item)).unwrap();
+        assert!(moved.in_trash && moved.on_disk, "the original is in the trash: not off the disk yet");
+    }
+}
+
+#[tokio::test]
+async fn lines_reins_cannot_read_stay_and_are_counted() {
+    let (s, u) = moved_and_kept();
+    for (text, after, lines) in [
+        // A lone carriage return (a line break to some readers).
+        (format!("API_SECRET={s}\nOLD_SECRET={u}\rX=1\n"), format!("OLD_SECRET={u}\rX=1\n"), 1),
+        // Single quotes across lines.
+        (format!("API_SECRET={s}\nPEM='{u}\nmore'\n"), format!("PEM='{u}\nmore'\n"), 2),
+        // A backslash continuation.
+        (format!("API_SECRET={s}\nLONG={u}\\\ntail\n"), format!("LONG={u}\\\ntail\n"), 2),
+        // YAML-style.
+        (format!("API_SECRET={s}\nKEY: {u}\n"), format!("KEY: {u}\n"), 1),
+    ] {
+        let fx = project_with(&text);
+        let machine = FakeMachine::new(fx.dir.path(), true);
+        let (rest, receipt, _) = move_vars(&fx, &["API_SECRET"], &FakeWriter::default(), &machine).await;
+        assert_eq!(rest.as_deref(), Some(after.as_str()), "{text:?}");
+        let unread = if lines == 1 {
+            "1 line Reins cannot read".to_owned()
+        } else {
+            format!("{lines} lines Reins cannot read")
+        };
+        assert!(receipt.notes.iter().any(|n| n.contains(&unread)), "{text:?}: {:?}", receipt.notes);
+    }
+}
+
+#[tokio::test]
+async fn quoted_values_over_several_lines_leave_whole() {
+    let (s, u) = moved_and_kept();
+    // An escaped quote and an escaped newline inside, and a real line break.
+    let text = format!("KEEP_SECRET={u}\nAPI_SECRET=\"{s}\\\"x\\n\n{s}\"\n# after\n");
+    let fx = project_with(&text);
+    let machine = FakeMachine::new(fx.dir.path(), true);
+    let (rest, _, _) = move_vars(&fx, &["API_SECRET"], &FakeWriter::default(), &machine).await;
+    assert_eq!(rest.as_deref(), Some(format!("KEEP_SECRET={u}\n# after\n").as_str()));
+}
+
+#[tokio::test]
+async fn export_and_spaced_assignments_are_read_and_removed() {
+    let (s, u) = moved_and_kept();
+    let s2 = fake("", 37);
+    let text = format!("export API_SECRET={s}\nexport  OTHER_SECRET = {s2}\nexport EMPTY=\nKEEP_SECRET={u}\n");
+    let fx = project_with(&text);
+    let machine = FakeMachine::new(fx.dir.path(), true);
+    let (rest, _, ids) = move_vars(&fx, &["API_SECRET", "OTHER_SECRET"], &FakeWriter::default(), &machine).await;
+    assert_eq!(ids.len(), 2);
+    assert_eq!(rest.as_deref(), Some(format!("KEEP_SECRET={u}\n").as_str()));
+    // The empty setting went to `.env.reins` as it is.
+    let reins = std::fs::read_to_string(fx.home().join("dev/shop/.env.reins")).unwrap();
+    assert!(reins.lines().any(|l| l == "EMPTY=\"\""), "{reins}");
+}
+
+#[tokio::test]
+async fn a_quoted_value_moves_exactly_as_the_file_has_it() {
+    // Spaces inside quotes are part of the value: what the vault gets is what the file held.
+    let s = fake("", 33);
+    let fx = project_with(&format!("API_SECRET=\"  {s}  \"\n"));
+    let report = report(&fx);
+    let selected = select(&report, &[], true).unwrap();
+    let (values, texts) = read_values(&report, &selected, &FakeMachine::new(fx.dir.path(), true)).unwrap();
+    assert_eq!(values.values().next().map(|v| v.as_str()), Some(format!("  {s}  ").as_str()));
+    assert_eq!(texts.len(), 1);
+}
+
+#[tokio::test]
+async fn a_name_set_twice_moves_the_last_and_leaves_both() {
+    let (s, u) = moved_and_kept();
+    let s2 = fake("", 37);
+    let text = format!("API_SECRET={s}\nKEEP_SECRET={u}\nAPI_SECRET={s2}\n");
+    let fx = project_with(&text);
+    let machine = FakeMachine::new(fx.dir.path(), true);
+    let (rest, receipt, ids) = move_vars(&fx, &["API_SECRET"], &FakeWriter::default(), &machine).await;
+    assert_eq!(ids.len(), 2, "each has its own id: {ids:?}");
+    assert_eq!(rest.as_deref(), Some(format!("KEEP_SECRET={u}\n").as_str()));
+    assert!(ids.iter().all(|id| receipt.moved.iter().any(|m| &m.item == id && m.in_trash)));
+    assert!(receipt.notes.iter().any(|n| n.contains("API_SECRET is set twice")), "{:?}", receipt.notes);
+}
+
+#[tokio::test]
+async fn a_value_that_would_stay_is_never_reported_off_the_disk() {
+    let (s, u) = moved_and_kept();
+    // The same value again, on a line Reins cannot read: what would stay still holds it.
+    let text = format!("API_SECRET={s}\nKEEP_SECRET={u}\nCOPY: {s}\n");
+    let fx = project_with(&text);
+    let machine = FakeMachine::new(fx.dir.path(), true);
+    let (rest, receipt, ids) = move_vars(&fx, &["API_SECRET"], &FakeWriter::default(), &machine).await;
+    assert_eq!(rest.as_deref(), Some(text.as_str()), "left as it is");
+    assert!(receipt.notes.iter().any(|n| n.contains("still holds a value")), "{:?}", receipt.notes);
+    let moved = receipt.moved.iter().find(|m| ids.contains(&m.item)).unwrap();
+    assert!(moved.on_disk && !moved.in_trash);
+    assert!(!machine.in_trash(&fx.home().join("dev/shop/.env")));
+}
+
+#[tokio::test]
+async fn a_file_changed_while_moving_is_left_alone() {
+    let (s, u) = moved_and_kept();
+    let text = format!("API_SECRET={s}\nKEEP_SECRET={u}\n");
+    let fx = project_with(&text);
+    let env = fx.home().join("dev/shop/.env");
+    let writer = FakeWriter {
+        touch: Some(env.clone()),
+        ..FakeWriter::default()
+    };
+    let machine = FakeMachine::new(fx.dir.path(), true);
+    let (rest, receipt, ids) = move_vars(&fx, &["API_SECRET"], &writer, &machine).await;
+    assert_eq!(rest, Some(format!("{text}ADDED_LATER=1\n")), "the edit made meanwhile is kept");
+    assert!(receipt.notes.iter().any(|n| n.contains("changed while its secrets were moving")), "{:?}", receipt.notes);
+    assert!(receipt.moved.iter().filter(|m| ids.contains(&m.item)).all(|m| m.on_disk && !m.in_trash));
+}
+
+#[tokio::test]
+async fn no_temporary_file_is_left_when_the_trash_refuses() {
+    let (s, u) = moved_and_kept();
+    let text = format!("API_SECRET={s}\nKEEP_SECRET={u}\n");
+    let fx = project_with(&text);
+    let mut machine = FakeMachine::new(fx.dir.path(), true);
+    machine.fail_trash = true;
+    let (rest, receipt, ids) = move_vars(&fx, &["API_SECRET"], &FakeWriter::default(), &machine).await;
+    assert_eq!(rest.as_deref(), Some(text.as_str()));
+    assert!(receipt.moved.iter().filter(|m| ids.contains(&m.item)).all(|m| m.on_disk && !m.in_trash));
+    assert!(!snapshot(&fx.home()).keys().any(|p| p.to_string_lossy().contains(".reins-")));
 }

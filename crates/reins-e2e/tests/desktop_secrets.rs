@@ -271,3 +271,178 @@ async fn an_environment_saved_from_the_computer_is_released_bound_to_one_command
     let (denied, ()) = tokio::join!(lease, user);
     assert!(denied.is_err());
 }
+
+/// This computer for an import, without touching the real one: its trash is a folder, the rest says no.
+struct TestMachine {
+    trash: std::path::PathBuf,
+}
+
+#[async_trait::async_trait]
+impl reins_desktop::secrets_import::Machine for TestMachine {
+    fn trash(&self, path: &std::path::Path) -> Result<Option<String>, String> {
+        let to = self.trash.join(uuid::Uuid::new_v4().to_string());
+        std::fs::rename(path, &to).map_err(|e| e.to_string())?;
+        Ok(to.file_name().map(|n| n.to_string_lossy().into_owned()))
+    }
+    fn restore(&self, _: &std::path::Path, _: Option<&str>) -> Result<(), String> {
+        Err("not in this test".to_owned())
+    }
+    fn purge(&self, _: &std::path::Path, _: Option<&str>) -> Result<(), String> {
+        Err("not in this test".to_owned())
+    }
+    fn gh_token(&self, _: &str) -> Option<zeroize::Zeroizing<String>> {
+        None
+    }
+    async fn agent_signs_with(&self, _: &[u8]) -> Result<(), String> {
+        Err("no agent in this test".to_owned())
+    }
+    fn ssh_setup(&self) -> Result<bool, String> {
+        Ok(false)
+    }
+    fn ssh_unsetup(&self) -> Result<(), String> {
+        Ok(())
+    }
+    fn git_through_reins(&self, _: &str) -> Result<(), String> {
+        Ok(())
+    }
+    fn gh_logout(&self, _: &str) -> Result<(), String> {
+        Ok(())
+    }
+    fn add_profile(&self, _: &str, _: &std::collections::BTreeMap<String, String>, _: &str) -> Result<(), String> {
+        Ok(())
+    }
+    fn remove_profile(&self, _: &str) -> Result<(), String> {
+        Ok(())
+    }
+}
+
+/// Approves the requests the phone gets until `done` has `n` of them; checks the store's view on the way (the import's
+/// check digits, no value) and returns it.
+async fn approve_all(phone: &Phone, n: usize, check: &std::sync::Mutex<Option<String>>, secret: &str) -> usize {
+    let mut stores = 0;
+    for _ in 0..n {
+        let item = phone.wait_for_item(Duration::from_secs(60)).await;
+        let view = phone.core.approval_view(item.id.clone()).await.unwrap();
+        assert!(!format!("{view:?}").contains(secret), "the phone's view never shows a value");
+        if let Some(s) = &view.secrets_store {
+            stores += 1;
+            assert_eq!(Some(s.check.clone()), check.lock().unwrap().clone(), "the same check digits on both sides");
+        }
+        phone
+            .core
+            .approve(
+                item.id,
+                ApprovalChoice {
+                    selected_message_ids: vec![],
+                    standing: None,
+                },
+            )
+            .await
+            .unwrap();
+    }
+    stores
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 6)]
+async fn an_import_moves_a_projects_secrets_into_the_vault_with_one_approval() {
+    reins_e2e::init_tls();
+    let server = Server::start(20, 10).await;
+    server.register(EMAIL).await;
+    let api = MockServer::start().await;
+    Mock::given(method("GET"))
+        .and(path("/user"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({"login": "me", "id": 1})))
+        .mount(&api)
+        .await;
+    let phone = Phone::sign_in_with_github(&server.base, EMAIL, &api.uri()).await;
+    phone.core.add_token_account("vault".to_owned(), PASSWORD.to_owned()).await.expect("the vault unlocks");
+    let state = tempfile::tempdir().unwrap();
+    let paths = Paths::under(state.path());
+    paths.ensure().unwrap();
+    std::fs::write(paths.config_file(), "[notify]\nphone = false\n").unwrap();
+    let identity = Identity::load_or_create(&paths.identity_file()).unwrap();
+    let (url_tx, url_rx) = tokio::sync::oneshot::channel::<String>();
+    let (code_tx, code_rx) = tokio::sync::oneshot::channel::<u8>();
+    let login = reins_desktop::server::oauth::login_with_browser(&paths, &identity, &server.base, move |url| {
+        url_tx.send(url.to_owned()).unwrap();
+    });
+    let browser = async { browse(url_rx.await.unwrap(), code_tx).await };
+    let user = async {
+        let item = phone.wait_for_item(Duration::from_secs(60)).await;
+        let code = code_rx.await.unwrap();
+        phone.core.answer_pairing(item.id, true, Some(code), Some("Laptop".to_owned())).await.unwrap();
+    };
+    let (logged_in, (), ()) = tokio::join!(login, browser, user);
+    logged_in.unwrap();
+    let config = Config {
+        mode: Mode::Reins,
+        approval_timeout_secs: 60,
+        ..Config::default()
+    };
+
+    // ---- a project with an .env, as a scan finds it ----
+    let home = tempfile::tempdir().unwrap();
+    let repo = home.path().join("dev/web");
+    std::fs::create_dir_all(repo.join(".git")).unwrap();
+    std::fs::write(repo.join(".git/config"), "[remote \"origin\"]\n\turl = git@github.com:acme/web.git\n").unwrap();
+    let secret = format!("sk-proj-{}", "Ab3dE5fG7hJ9kLmN2pQ4rS6tU8vWxYz0cR1aB3dE5fG7hJ9k");
+    std::fs::write(repo.join(".env"), format!("OPENAI_API_KEY={secret}\nLOG_LEVEL=debug\n")).unwrap();
+    let mut opts = reins_desktop::secrets_scan::ScanOptions::new(home.path().to_path_buf());
+    opts.caller = reins_desktop::secrets_scan::Caller::Person;
+    opts.gh_cli = false;
+    opts.git_history = false;
+    let report = reins_desktop::secrets_scan::scan(&opts, &mut |_| {}).unwrap();
+    let selected = reins_desktop::secrets_import::select(&report, &[], true).unwrap();
+    assert_eq!(selected.len(), 1);
+
+    // ---- the import: the vault's projects (to never merge unasked), then one store, the same digits on both sides ----
+    let digits = phone.core.phone_key_fingerprint().await.unwrap();
+    let writer = reins_desktop::secrets_import::real::PhoneWriter {
+        paths: paths.clone(),
+        config: config.clone(),
+        phone_key_digits: Some(digits),
+    };
+    let trash = tempfile::tempdir().unwrap();
+    let machine = TestMachine {
+        trash: trash.path().to_path_buf(),
+    };
+    let ctx = reins_desktop::secrets_import::Context {
+        home: home.path().to_path_buf(),
+        state_dir: paths.state_dir.clone(),
+        computer: "Laptop".to_owned(),
+        machine: reins_desktop::secrets_import::machine_project("Laptop", "e2e"),
+        caller: reins_desktop::secrets_scan::Caller::Person,
+        merge: std::collections::BTreeSet::new(),
+    };
+    let check = std::sync::Mutex::new(None::<String>);
+    let mut shown = |_: &reins_desktop::secrets_import::Plan, c: &str| {
+        *check.lock().unwrap() = Some(c.to_owned());
+        Ok(())
+    };
+    let import = reins_desktop::secrets_import::import(&ctx, &report, &selected, false, &writer, &machine, &mut shown);
+    // The phone's key, the list of projects, the store.
+    let (imported, stores) = tokio::join!(import, approve_all(&phone, 3, &check, &secret));
+    let (receipt, _) = imported.unwrap();
+    assert_eq!(stores, 1, "one approval for the whole batch");
+    assert_eq!(receipt.moved.len(), 1);
+    assert_eq!(receipt.moved[0].to, "vault:acme-web/development/OPENAI_API_KEY");
+    // Out of the repository; the original is in the trash, plain text there until shredded.
+    assert!(receipt.moved[0].in_trash && receipt.moved[0].on_disk);
+    assert!(!server.log().contains(&secret), "the server never sees a value");
+
+    // The repository uses it through Reins; the original is in the trash.
+    assert!(!repo.join(".env").exists());
+    let project = reins_desktop::project::ProjectFile::load(&repo.join("reins.toml")).unwrap();
+    assert_eq!((project.name.as_str(), project.origin.as_deref()), ("acme-web", Some("github.com/acme/web")));
+    let env = std::fs::read_to_string(repo.join(".env.reins")).unwrap();
+    assert!(
+        env.contains("OPENAI_API_KEY=vault:acme-web/development/OPENAI_API_KEY") && env.contains("LOG_LEVEL=debug")
+    );
+
+    // The vault knows where the project came from: a later import of another `web` is not merged into it.
+    let listed = reins_desktop::secrets_import::VaultWriter::projects(&writer);
+    let (projects, _) = tokio::join!(listed, approve_all(&phone, 1, &check, &secret));
+    let projects = projects.unwrap();
+    let web = projects.iter().find(|p| p.name == "acme-web").expect("the project is in the vault");
+    assert_eq!(web.origin.as_deref(), Some("github.com/acme/web"));
+}

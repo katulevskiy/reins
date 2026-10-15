@@ -472,6 +472,8 @@ impl Demo {
                     confidence: *confidence,
                     preview: (*preview).to_owned(),
                     suggested: confidence.suggested(),
+                    // A setting whose value .env.reins cannot hold as it is: it stays in .env.
+                    stays_in_file: *name == "WELCOME_BANNER",
                 })
                 .collect();
             let shown = format!("~/{rel}");
@@ -507,7 +509,7 @@ impl Demo {
                 Source::Dotenv,
                 "dev/acme-web/.env",
                 "acme-web/.env",
-                "6 keys",
+                "7 keys",
                 &[Risk::ReadableByAgents, Risk::InGitHistory, Risk::PlainText],
                 &[
                     ("OPENAI_API_KEY", None, Some(Detector::OpenAi), "OpenAI key", h, "sk-p••••••••a9F2"),
@@ -523,6 +525,7 @@ impl Demo {
                     ),
                     ("NEXT_PUBLIC_SITE_URL", None, None, "not a secret", n, "http••••••••.dev"),
                     ("LOG_LEVEL", None, None, "not a secret", n, "••••••••"),
+                    ("WELCOME_BANNER", None, None, "not a secret", n, "Welc••••••••ack!"),
                 ],
             ),
             finding(
@@ -738,7 +741,9 @@ impl Demo {
                 item: i.id.clone(),
                 finding: f.id.clone(),
                 to: format!("vault:{}", i.name),
-                on_disk: keep_local || matches!(f.source, Source::Kube | Source::Docker | Source::Gcp | Source::Netrc),
+                on_disk: true,
+                in_trash: !keep_local
+                    && !matches!(f.source, Source::Kube | Source::Docker | Source::Gcp | Source::Netrc),
             })
             .collect();
         let chosen = |source: Source| {

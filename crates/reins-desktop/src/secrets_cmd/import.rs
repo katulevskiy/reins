@@ -34,11 +34,11 @@ pub struct ImportArgs {
     #[arg(long, value_name = "RECEIPT", num_args = 0..=1, default_missing_value = "last",
           conflicts_with_all = ["from_scan", "select", "all_suggested", "keep_local"])]
     pub finish: Option<String>,
-    /// Delete for good the originals an import sent to the trash (they still hold the secrets). Undo can no longer
-    /// bring them back. `last` or a receipt.
-    #[arg(long, value_name = "RECEIPT", num_args = 0..=1, default_missing_value = "last",
+    /// Shred the originals an import sent to the trash (they still hold the secrets in plain text): overwritten,
+    /// then deleted. Undo can no longer bring them back. `last` or a receipt.
+    #[arg(long, alias = "purge-originals", value_name = "RECEIPT", num_args = 0..=1, default_missing_value = "last",
           conflicts_with_all = ["from_scan", "select", "all_suggested", "keep_local", "undo", "finish"])]
-    pub purge_originals: Option<String>,
+    pub shred: Option<String>,
 }
 
 /// What the picker shows: one line per finding, ticked or not, numbered from 1.
@@ -153,9 +153,13 @@ pub fn summary(receipt: &Receipt, path: Option<&std::path::Path>) -> Vec<String>
         1 => "1 secret is in your vault.".to_owned(),
         n => format!("{n} secrets are in your vault."),
     });
-    let on_disk = moved - receipt.off_disk();
+    let in_trash = receipt.moved.iter().filter(|m| m.in_trash).count();
+    let on_disk = moved - receipt.off_disk() - in_trash;
     if moved > 0 && on_disk > 0 {
         lines.push(format!("{on_disk} of them are still on disk too (see below)."));
+    }
+    if in_trash > 0 {
+        lines.push(format!("{in_trash} of them are in the Trash, still in plain text: empty it, or shred them."));
     }
     for d in &receipt.done {
         lines.push(format!(
@@ -175,7 +179,7 @@ pub fn summary(receipt: &Receipt, path: Option<&std::path::Path>) -> Vec<String>
     if let Some(p) = path {
         if !receipt.trashed().is_empty() {
             lines.push(format!(
-                "The originals in the trash still hold the secrets. Once all works: reins secrets import --purge-originals {}",
+                "The originals in the trash still hold the secrets in plain text. Once all works: reins secrets import --shred {}",
                 p.display()
             ));
         }
@@ -207,14 +211,12 @@ pub async fn run(args: &ImportArgs, paths: &Paths, config: &Config) -> Result<Ve
         let (path, mut receipt) = receipt::load(&paths.state_dir, which)?;
         return receipt::finish(&home, &paths.state_dir, &path, &mut receipt, &system).await;
     }
-    if let Some(which) = &args.purge_originals {
+    if let Some(which) = &args.shred {
         let (path, mut receipt) = receipt::load(&paths.state_dir, which)?;
         let n = receipt.trashed().len();
         person::check(
-            "reins secrets import --purge-originals",
-            &format!(
-                "Delete the {n} original file(s) of this import from the trash for good? Undo cannot bring them back."
-            ),
+            "reins secrets import --shred",
+            &format!("Shred the {n} original file(s) of this import in the trash? Undo cannot bring them back."),
             &caller,
             Terminal::now(),
             Needs {
@@ -289,6 +291,8 @@ pub async fn run(args: &ImportArgs, paths: &Paths, config: &Config) -> Result<Ve
     let writer = real::PhoneWriter {
         paths: paths.clone(),
         config: config.clone(),
+        // The phone's key is asked at this terminal the first time.
+        phone_key_digits: None,
     };
     // A project the vault already has from another folder: a new name, unless the person merges on purpose (asked
     // here only; without a terminal choice, always the new name).
@@ -370,6 +374,7 @@ mod tests {
                 finding: "f".to_owned(),
                 to: "vault:x/y/A".to_owned(),
                 on_disk: false,
+                in_trash: false,
             }],
             done: vec![secrets_import::Done {
                 source: crate::secrets_scan::Source::Dotenv,

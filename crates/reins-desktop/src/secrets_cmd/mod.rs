@@ -28,9 +28,6 @@ pub enum SecretsCmd {
 
 /// Runs `reins secrets …`; the lines to print.
 pub async fn run(cmd: &SecretsCmd, paths: &Paths, config: &Config) -> Result<Vec<String>, String> {
-    if !crate::secrets_scan::preview(config) {
-        return Err(crate::secrets_scan::PREVIEW_OFF.to_owned());
-    }
     match cmd {
         SecretsCmd::Scan(args) => scan::run(args, paths, config).await,
         SecretsCmd::Import(args) => import::run(args, paths, config).await,

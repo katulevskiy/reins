@@ -68,6 +68,8 @@ pub struct Root {
     /// The work session form's fields: what it is for, and a branch for each repository (made as rows appear).
     session_reason: FocusHandle,
     branch_fields: Vec<FocusHandle>,
+    /// The secrets review's field for the phone key's digits.
+    phone_key_field: FocusHandle,
     /// Activity's filters: one outcome, one kind (`None`: all), and whether their popover is open.
     outcome_filter: Option<Outcome>,
     kind_filter: Option<Kind>,
@@ -127,8 +129,6 @@ struct Data {
     /// This computer's name, and its machine project.
     computer: String,
     machine: String,
-    /// Finding and moving secrets is on (a preview; always in `--demo`).
-    secrets_preview: bool,
 }
 
 impl Data {
@@ -160,11 +160,6 @@ impl Data {
             secrets: m.secrets.clone(),
             computer: m.computer.clone(),
             machine: m.machine.clone(),
-            secrets_preview: m.args.demo
-                || m.snapshot
-                    .as_ref()
-                    .and_then(|s| s.config.as_ref().ok())
-                    .is_some_and(|c| reins_desktop::secrets_scan::preview(c)),
         }
     }
 
@@ -250,6 +245,7 @@ impl Root {
             guard_error: [None, None],
             session_reason: cx.focus_handle(),
             branch_fields: Vec::new(),
+            phone_key_field: cx.focus_handle(),
             outcome_filter: None,
             kind_filter: None,
             filter_open: demo_var("REINS_DEMO_FILTER").is_some(),
@@ -373,8 +369,8 @@ impl Root {
         } else {
             30.0
         };
-        let secrets_page = if d.section == Section::Keys && d.secrets_preview {
-            self.secrets_page(d, pal, cx)
+        let secrets_page = if d.section == Section::Keys {
+            self.secrets_page(d, pal, window, cx)
         } else {
             None
         };

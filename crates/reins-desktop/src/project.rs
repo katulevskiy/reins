@@ -56,6 +56,9 @@ pub struct ProjectFile {
     pub name: String,
     pub default_env: String,
     pub envs: BTreeMap<String, EnvSettings>,
+    /// Where the project came from (its git origin, `github.com/acme/api`), as `reins secrets import` wrote it: the
+    /// same as the environments' `reins.origin`, so a project of the same name from elsewhere is told apart.
+    pub origin: Option<String>,
 }
 
 #[derive(Deserialize)]
@@ -71,6 +74,7 @@ struct RawFile {
 struct RawProject {
     name: String,
     default_env: Option<String>,
+    origin: Option<String>,
 }
 
 #[derive(Deserialize)]
@@ -134,6 +138,7 @@ impl ProjectFile {
             name: name.to_owned(),
             default_env: default_env.to_owned(),
             envs: BTreeMap::new(),
+            origin: None,
         })
     }
 
@@ -142,6 +147,10 @@ impl ProjectFile {
         let raw: RawFile = toml::from_str(text).map_err(|e| e.to_string().trim().to_owned())?;
         let default_env = raw.project.default_env.unwrap_or_else(|| DEFAULT_ENV.to_owned());
         let mut file = Self::new(raw.project.name.trim(), default_env.trim()).map_err(|e| format!("[project]: {e}"))?;
+        file.origin = raw.project.origin.map(|o| o.trim().to_owned()).filter(|o| !o.is_empty());
+        if file.origin.as_deref().is_some_and(|o| o.len() > 300 || o.chars().any(char::is_control)) {
+            return Err("[project]: `origin` must be one line of at most 300 characters".to_owned());
+        }
         for (name, env) in raw.env {
             check_name("environment", &name).map_err(|e| format!("[env.{name}]: {e}"))?;
             let lease_secs = env
@@ -198,6 +207,9 @@ impl ProjectFile {
         out.push_str("). Safe to commit.\n");
         out.push_str("[project]\n");
         let _ = writeln!(out, "name = {}", toml_string(&self.name));
+        if let Some(origin) = &self.origin {
+            let _ = writeln!(out, "origin = {}", toml_string(origin));
+        }
         let _ = writeln!(out, "default_env = {}", toml_string(&self.default_env));
         for (name, env) in &self.envs {
             if env == &EnvSettings::default() {
@@ -312,6 +324,8 @@ struct RawVar {
     value: Zeroizing<String>,
     /// The line it starts on.
     line: usize,
+    /// The bytes of the text it takes: from the start of its first line to the end of its last, line ending included.
+    span: std::ops::Range<usize>,
 }
 
 enum RawLine {
@@ -330,10 +344,26 @@ fn lex(text: &str, multiline: bool) -> (Vec<RawLine>, Vec<(usize, String)>) {
     if text.ends_with('\n') {
         lines.pop();
     }
+    // Where each line starts in the text, and where the text ends.
+    let mut starts = Vec::with_capacity(lines.len() + 1);
+    let mut at = 0;
+    for l in &lines {
+        starts.push(at);
+        at += l.len() + 1;
+    }
+    starts.push(text.len());
+    let end_of = |next: usize| starts.get(next).copied().unwrap_or(text.len()).min(text.len());
     let mut i = 0;
     while i < lines.len() {
         let number = i + 1;
+        let first = i;
         let line = lines[i].strip_suffix('\r').unwrap_or(lines[i]);
+        // A byte order mark is not part of the first line.
+        let line = if i == 0 {
+            line.strip_prefix('\u{feff}').unwrap_or(line)
+        } else {
+            line
+        };
         i += 1;
         let trimmed = line.trim_start();
         if trimmed.trim().is_empty() {
@@ -342,6 +372,11 @@ fn lex(text: &str, multiline: bool) -> (Vec<RawLine>, Vec<(usize, String)>) {
         }
         if trimmed.starts_with('#') {
             out.push(RawLine::Comment(line.to_owned()));
+            continue;
+        }
+        // Some readers end a line at a lone carriage return: where one is, the line is not read, never guessed at.
+        if line.contains('\r') {
+            errors.push((number, "a carriage return inside a line".to_owned()));
             continue;
         }
         let body = trimmed.strip_prefix("export ").map_or(trimmed, str::trim_start);
@@ -369,8 +404,12 @@ fn lex(text: &str, multiline: bool) -> (Vec<RawLine>, Vec<(usize, String)>) {
                 if !multiline || i >= lines.len() {
                     break;
                 }
+                let next = lines[i].strip_suffix('\r').unwrap_or(lines[i]);
+                if next.contains('\r') {
+                    break;
+                }
                 chunk.push('\n');
-                chunk.push_str(lines[i].strip_suffix('\r').unwrap_or(lines[i]));
+                chunk.push_str(next);
                 i += 1;
             }
             let Some(end) = closed else {
@@ -409,7 +448,13 @@ fn lex(text: &str, multiline: bool) -> (Vec<RawLine>, Vec<(usize, String)>) {
                     break;
                 }
             }
-            value.push_str(rest[..end].trim_end());
+            let bare = rest[..end].trim_end();
+            // Some readers join the next line to one that ends in a backslash; which one is meant is not guessed.
+            if bare.ends_with('\\') {
+                errors.push((number, "a backslash at the end of a line (a continuation)".to_owned()));
+                continue;
+            }
+            value.push_str(bare);
             after = String::new();
         }
         let tail = after.trim();
@@ -421,6 +466,7 @@ fn lex(text: &str, multiline: bool) -> (Vec<RawLine>, Vec<(usize, String)>) {
             name: name.to_owned(),
             value,
             line: number,
+            span: starts[first]..end_of(i),
         }));
     }
     (out, errors)
@@ -564,6 +610,8 @@ fn lex_reins(text: &str) -> (Vec<RawLine>, Vec<(usize, String)>) {
             name: name.to_owned(),
             value: Zeroizing::new(value),
             line: number,
+            // `.env.reins` is rewritten whole, never by span.
+            span: 0..0,
         }));
     }
     (out, errors)
@@ -621,6 +669,61 @@ fn finish<T>(value: T, mut errors: Vec<(usize, String)>) -> Result<T, ParseError
     Err(ParseError {
         errors,
     })
+}
+
+/// One variable of a plaintext dotenv file, where it is in the text.
+pub struct DotenvVar {
+    pub name: String,
+    pub value: Zeroizing<String>,
+    /// The line it starts on (from 1), and how many lines it takes.
+    pub line: usize,
+    pub lines: usize,
+    /// Its bytes in the text, line endings included: removing them removes exactly it.
+    pub span: std::ops::Range<usize>,
+}
+
+impl std::fmt::Debug for DotenvVar {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        // Never the value.
+        f.debug_struct("DotenvVar")
+            .field("name", &self.name)
+            .field("line", &self.line)
+            .field("span", &self.span)
+            .finish_non_exhaustive()
+    }
+}
+
+/// A plaintext dotenv file as [`parse_dotenv`] reads it, without refusing it: every variable in order (a name set twice
+/// is there twice), and the lines that cannot be read (`(line, why)`), which stay as they are when the file is
+/// rewritten. Reins reads `.env` files only this way (to scan them, to move their values, to rewrite them), so what
+/// it moves and what it removes are the same bytes.
+#[derive(Debug)]
+pub struct DotenvParse {
+    pub vars: Vec<DotenvVar>,
+    pub errors: Vec<(usize, String)>,
+}
+
+#[must_use]
+pub fn parse_dotenv_spans(text: &str) -> DotenvParse {
+    let (lines, errors) = lex(text, true);
+    let vars = lines
+        .into_iter()
+        .filter_map(|l| match l {
+            RawLine::Var(v) => Some(v),
+            _ => None,
+        })
+        .map(|v| DotenvVar {
+            lines: text[v.span.clone()].trim_end_matches('\n').split('\n').count().max(1),
+            name: v.name,
+            value: v.value,
+            line: v.line,
+            span: v.span,
+        })
+        .collect();
+    DotenvParse {
+        vars,
+        errors,
+    }
 }
 
 /// The variables of a plaintext dotenv file (`.env`, `.env.production`), in order. `export NAME=`, quotes, escapes
@@ -865,6 +968,17 @@ mod tests {
     }
 
     #[test]
+    fn reins_toml_keeps_where_the_project_came_from() {
+        let mut file = ProjectFile::new("acme-api", "development").unwrap();
+        file.origin = Some("github.com/acme/api".to_owned());
+        let text = file.render();
+        assert!(text.contains("origin = \"github.com/acme/api\""), "{text}");
+        assert_eq!(ProjectFile::parse(&text).unwrap(), file);
+        assert_eq!(ProjectFile::parse("[project]\nname = \"x\"\n").unwrap().origin, None);
+        assert!(ProjectFile::parse("[project]\nname = \"x\"\norigin = \"a\\nb\"\n").is_err());
+    }
+
+    #[test]
     fn reins_toml_mistakes_are_errors() {
         for (bad, says) in [
             ("[project]\n", "name"),
@@ -1009,6 +1123,32 @@ mod tests {
         );
         assert!(parse_dotenv("A=\"never closed\nB=1\n").is_err());
         assert!(parse_dotenv("A=1\nA=2\n").is_err());
+        // What some readers read otherwise is not guessed at.
+        assert!(parse_dotenv("A=1\rB=2\n").unwrap_err().to_string().contains("carriage return"));
+        assert!(parse_dotenv("A=x\\\nB=2\n").unwrap_err().to_string().contains("continuation"));
+        assert!(parse_dotenv("A=\"x\ny\rz\"\n").is_err());
+    }
+
+    #[test]
+    fn a_dotenv_parse_says_where_each_variable_is() {
+        let text = "\u{feff}export  A = 1\r\n# c\nB=\"x\\\"\ny\"\nKEY: v\nA=2";
+        let parse = parse_dotenv_spans(text);
+        let got: Vec<(&str, &str, usize, usize, &str)> = parse
+            .vars
+            .iter()
+            .map(|v| (v.name.as_str(), v.value.as_str(), v.line, v.lines, &text[v.span.clone()]))
+            .collect();
+        assert_eq!(
+            got,
+            [
+                ("A", "1", 1, 1, "\u{feff}export  A = 1\r\n"),
+                ("B", "x\"\ny", 3, 2, "B=\"x\\\"\ny\"\n"),
+                ("A", "2", 6, 1, "A=2"),
+            ]
+        );
+        assert_eq!(parse.errors.iter().map(|(n, _)| *n).collect::<Vec<_>>(), [5]);
+        // Never a value in its debug form.
+        assert!(!format!("{parse:?}").contains("x\\\""));
     }
 
     #[test]

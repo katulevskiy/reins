@@ -14,6 +14,8 @@ pub struct RawEntry {
     pub group: Option<String>,
     /// 1-based.
     pub line: u32,
+    /// How many lines of the file it takes (a quoted value over several lines: more than 1).
+    pub lines: u32,
     pub value: Zeroizing<String>,
     /// The file's format says this field holds a credential.
     pub credential: bool,
@@ -35,6 +37,7 @@ fn entry(name: &str, group: Option<&str>, line: usize, value: &str, credential: 
         name: name.to_owned(),
         group: group.map(str::to_owned),
         line: u32::try_from(line + 1).unwrap_or(u32::MAX),
+        lines: 1,
         value: Zeroizing::new(value.to_owned()),
         credential,
     }
@@ -136,82 +139,24 @@ fn valid_name(name: &str) -> bool {
         && name.len() <= 200
 }
 
-/// A quoted value that starts at `rest` (after its opening quote `q`), maybe over several lines; the value and how
-/// many more lines it took.
-fn quoted(q: char, rest: &str, more: &mut dyn Iterator<Item = &str>) -> (Zeroizing<String>, usize) {
-    let mut out = Zeroizing::new(String::new());
-    let mut extra = 0;
-    let mut text: Zeroizing<String> = Zeroizing::new(rest.to_owned());
-    loop {
-        let mut chars = text.chars();
-        let mut closed = false;
-        while let Some(c) = chars.next() {
-            if c == q {
-                closed = true;
-                break;
-            }
-            if c == '\\' && q == '"' {
-                match chars.next() {
-                    Some('n') => out.push('\n'),
-                    Some('t') => out.push('\t'),
-                    Some('r') => out.push('\r'),
-                    Some(other) => out.push(other),
-                    None => {}
-                }
-                continue;
-            }
-            out.push(c);
-        }
-        if closed {
-            return (out, extra);
-        }
-        match more.next() {
-            Some(next) if extra < 200 => {
-                out.push('\n');
-                extra += 1;
-                text = Zeroizing::new(next.to_owned());
-            }
-            _ => return (out, extra),
-        }
-    }
-}
-
-/// `KEY=value` lines of a dotenv file (`export` allowed; quotes, `#` comments and multi-line quoted values as
-/// dotenv libraries read them).
+/// `KEY=value` lines of a dotenv file, read by the one dotenv reader Reins has ([`crate::project::parse_dotenv_spans`]:
+/// `export`, quotes, escapes, `#` comments, multi-line double-quoted values), so that what a scan sees, what import
+/// moves and what it removes from the file are the same. Lines it cannot read are not listed here (import keeps them
+/// in the file and says so).
 #[must_use]
 pub fn dotenv(text: &str) -> Vec<RawEntry> {
-    let mut out = Vec::new();
-    let mut lines = text.trim_start_matches('\u{feff}').lines().enumerate();
-    while let Some((n, line)) = lines.next() {
-        let line = line.trim_start();
-        if line.is_empty() || line.starts_with('#') {
-            continue;
-        }
-        let line = line.strip_prefix("export ").map_or(line, str::trim_start);
-        let Some((name, rest)) = line.split_once('=') else {
-            continue;
-        };
-        let name = name.trim();
-        if !valid_name(name) {
-            continue;
-        }
-        let rest = rest.trim_start();
-        let value = match rest.chars().next() {
-            Some(q @ ('"' | '\'' | '`')) => {
-                let mut more = lines.by_ref().map(|(_, l)| l);
-                quoted(q, &rest[1..], &mut more).0
-            }
-            _ => Zeroizing::new(strip_comment(rest).trim_end().to_owned()),
-        };
-        out.push(RawEntry {
-            name: name.to_owned(),
+    crate::project::parse_dotenv_spans(text)
+        .vars
+        .into_iter()
+        .map(|v| RawEntry {
+            name: v.name,
             group: None,
-            line: u32::try_from(n + 1).unwrap_or(u32::MAX),
-            value,
+            line: u32::try_from(v.line).unwrap_or(u32::MAX),
+            lines: u32::try_from(v.lines).unwrap_or(u32::MAX),
+            value: v.value,
             credential: false,
-        });
-    }
-    out
+        })
+        .collect()
 }
 
 /// `export NAME=value` (bash, zsh, sh) and `set -x NAME value` (fish) lines of a shell startup file. Values that
@@ -391,6 +336,7 @@ pub fn git_credentials(text: &str) -> Vec<RawEntry> {
             name: user.to_string(),
             group: Some(host.to_owned()),
             line: u32::try_from(n + 1).unwrap_or(u32::MAX),
+            lines: 1,
             value: percent_decode(password),
             credential: true,
         });

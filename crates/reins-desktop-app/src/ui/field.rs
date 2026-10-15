@@ -1,5 +1,5 @@
-//! One-line text fields: the server under "Other server", the inputs of the Rules lists, and the work session
-//! form's reason and branches. Typed by hand (key presses, backspace, Enter, paste with cmd/ctrl+V): the window has no
+//! One-line text fields: the server under "Other server", the inputs of the Rules lists, the work session form's
+//! reason and branches, and the phone key's digits in the secrets review. Typed by hand (key presses, backspace, Enter, paste with cmd/ctrl+V): the window has no
 //! text input widget.
 
 use gpui::prelude::FluentBuilder as _;
@@ -21,6 +21,8 @@ pub enum Field {
     SessionReason,
     /// The branch to push to, for the work session form's repository at this place (a handful at most).
     SessionBranch(u8),
+    /// The twelve digits of the phone's key, in the secrets review (the first time only).
+    PhoneKey,
 }
 
 /// What a key press did to a field's text.
@@ -73,6 +75,7 @@ impl Root {
             Field::Guard(list) => &self.guard_fields[slot(list)],
             Field::SessionReason => &self.session_reason,
             Field::SessionBranch(i) => self.branch_fields.get(usize::from(i)).unwrap_or(&self.focus),
+            Field::PhoneKey => &self.phone_key_field,
         }
     }
 
@@ -91,6 +94,10 @@ impl Root {
                 .as_ref()
                 .and_then(|f| f.branches.get(usize::from(i)).cloned())
                 .unwrap_or_default(),
+            Field::PhoneKey => match &self.model.read(cx).secrets {
+                crate::secrets::Flow::Review(r) => r.key.as_ref().map(|k| k.typed.clone()).unwrap_or_default(),
+                _ => String::new(),
+            },
         }
     }
 
@@ -118,6 +125,7 @@ impl Root {
             Field::SessionReason | Field::SessionBranch(_) => {
                 self.model.update(cx, crate::model::Model::start_work_session);
             }
+            Field::PhoneKey => self.model.update(cx, crate::model::Model::check_phone_key),
         }
         cx.notify();
     }
@@ -146,6 +154,19 @@ impl Root {
                         if let Some(branch) = m.work.form.as_mut().and_then(|f| f.branches.get_mut(usize::from(i))) {
                             *branch = text;
                         }
+                    }),
+                    // Digits, and the dashes or spaces they are shown with; never longer than the key's.
+                    Field::PhoneKey => self.model.update(cx, |m, cx| {
+                        m.review(cx, |r| {
+                            if let Some(k) = r.key.as_mut().filter(|k| !k.checking) {
+                                k.typed = text
+                                    .chars()
+                                    .filter(|c| c.is_ascii_digit() || matches!(c, '-' | ' '))
+                                    .take(16)
+                                    .collect();
+                                r.error = None;
+                            }
+                        });
                     }),
                 }
                 cx.notify();
@@ -178,6 +199,7 @@ impl Root {
             Field::Guard(list) => SharedString::from(format!("guard-field-{}", slot(list))),
             Field::SessionReason => "session-reason".into(),
             Field::SessionBranch(i) => SharedString::from(format!("session-branch-{i}")),
+            Field::PhoneKey => "secrets-phone-key".into(),
         };
         let click_focus = focus.clone();
         div()
