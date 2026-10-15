@@ -17,14 +17,15 @@ pub enum PauseFor {
 impl PauseFor {
     pub const ALL: [Self; 5] = [Self::Quarter, Self::Hour, Self::FourHours, Self::Day, Self::Manual];
 
+    /// For the tray's menu (`Desk-Extras.png`). "Until I resume…" opens the window's pause sheet, where it is held.
     #[must_use]
     pub fn label(self) -> &'static str {
         match self {
             Self::Quarter => "15 minutes",
             Self::Hour => "1 hour",
             Self::FourHours => "4 hours",
-            Self::Day => "24 hours",
-            Self::Manual => "Until I resume",
+            Self::Day => "1 day",
+            Self::Manual => "Until I resume…",
         }
     }
 

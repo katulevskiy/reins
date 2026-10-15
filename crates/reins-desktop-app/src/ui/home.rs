@@ -270,7 +270,7 @@ impl Root {
             .py(px(6.0))
             .min_w(px(0.0))
             .cursor_pointer()
-            .child(kit::kind_tile(s.icon.glyph(), s.tone, 32.0, pal))
+            .child(kit::kind_tile(s.icon, s.tone, 32.0, pal))
             .child(
                 div()
                     .flex()
@@ -444,7 +444,7 @@ impl Root {
 
         let agent = match s.agent {
             Mark::Brand(b) => super::icons::avatar(b, 24.0, pal).border_0().into_any_element(),
-            Mark::Icon(i) => div()
+            Mark::Glyph(i) => div()
                 .flex()
                 .flex_none()
                 .items_center()
@@ -452,7 +452,7 @@ impl Root {
                 .size(px(24.0))
                 .rounded_full()
                 .bg(pal.on_field_wash())
-                .child(glyph(i.glyph(), 14.0, on))
+                .child(glyph(i, 14.0, on))
                 .into_any_element(),
         };
         let who = who_from(e);

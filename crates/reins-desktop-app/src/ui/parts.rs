@@ -10,10 +10,9 @@ use gpui::{
     StyledText, anchored, canvas, deferred, div, point, px,
 };
 
-use super::icons::{Icon, Mark, avatar, icon};
+use super::icons::{Glyph, Mark, avatar, glyph};
 use super::story::Words;
 use super::{Data, Root};
-use crate::model::Step;
 use crate::theme::text::tracked;
 use crate::theme::{MONO, Palette, SERIF, SignalText as _, Tone, motion};
 use crate::welcome::Stage;
@@ -38,11 +37,11 @@ pub fn check_circle(side: f32, color: Hsla) -> Div {
         .size(px(side))
         .rounded_full()
         .bg(color.opacity(0.14))
-        .child(icon(Icon::Check, side * 0.5, color))
+        .child(glyph(Glyph::Check, side * 0.5, color))
 }
 
 /// A kind tile: an icon in `color` over `color` at 13% (a kind, a rule, a setting).
-pub fn tile(i: Icon, color: Hsla, side: f32) -> Div {
+pub fn tile(i: Glyph, color: Hsla, side: f32) -> Div {
     div()
         .flex()
         .flex_none()
@@ -51,25 +50,19 @@ pub fn tile(i: Icon, color: Hsla, side: f32) -> Div {
         .size(px(side))
         .rounded(px(side * 0.31))
         .bg(color.opacity(0.13))
-        .child(icon(i, side * 0.53, color))
+        .child(glyph(i, side * 0.53, color))
 }
 
 /// A kind tile of `tone` (a neutral one is `paper-sunken` under `ink`).
-pub fn tone_tile(i: Icon, tone: Tone, pal: Palette, side: f32) -> Div {
-    super::kit::kind_tile(i.glyph(), tone, side, pal)
-}
-
-/// What was a solid square of colour (a setting of "This computer"): Signal colours only what needs a decision, so
-/// a neutral tile, `ink` on `paper-sunken`.
-pub fn solid_tile(i: Icon, _tone: Tone, pal: Palette, side: f32) -> Div {
-    tone_tile(i, Tone::Neutral, pal, side)
+pub fn tone_tile(i: Glyph, tone: Tone, pal: Palette, side: f32) -> Div {
+    super::kit::kind_tile(i, tone, side, pal)
 }
 
 /// A logo (an AI tool, a git host, an API): a brand's mark in a white circle, an icon in a neutral tile.
 pub fn logo(m: Mark, pal: Palette) -> Div {
     match m {
         Mark::Brand(b) => avatar(b, 30.0, pal),
-        Mark::Icon(i) => tone_tile(i, Tone::Neutral, pal, 30.0),
+        Mark::Glyph(i) => tone_tile(i, Tone::Neutral, pal, 30.0),
     }
 }
 
@@ -137,8 +130,8 @@ pub fn help_with(
         .cursor_pointer()
         .when_else(
             open,
-            |m| m.bg(pal.violet().opacity(0.12)).child(icon(Icon::CircleHelp, 16.0, pal.violet())),
-            |m| m.hover(|s| s.bg(pal.paper_sunken())).child(icon(Icon::CircleHelp, 16.0, pal.ink_faint())),
+            |m| m.bg(pal.violet().opacity(0.12)).child(glyph(Glyph::Help, 16.0, pal.violet())),
+            |m| m.hover(|s| s.bg(pal.paper_sunken())).child(glyph(Glyph::Help, 16.0, pal.ink_faint())),
         )
         .on_click(cx.listener(move |this, _, _, cx| {
             // A (?) often sits in a row that is itself a toggle: the click is the (?)'s alone.
@@ -199,8 +192,6 @@ pub fn page_header(title: &'static str, help: Option<Stateful<Div>>) -> Div {
 pub enum Btn {
     /// Soft: `paper-sunken`.
     Plain,
-    /// `violet-fill`: connect, start.
-    Accent,
     /// `inverse`: continue, resume, confirm.
     Primary,
 }
@@ -211,7 +202,6 @@ impl Btn {
     pub fn look(self) -> super::kit::Look {
         match self {
             Self::Plain => super::kit::Look::Soft,
-            Self::Accent => super::kit::Look::Violet,
             Self::Primary => super::kit::Look::Inverse,
         }
     }
@@ -248,13 +238,13 @@ pub fn btn(id: impl Into<ElementId>, label: impl Into<SharedString>, look: Btn, 
 /// [`btn`] with an icon before its label.
 pub fn btn_icon(
     id: impl Into<ElementId>,
-    i: Icon,
+    i: Glyph,
     label: impl Into<SharedString>,
     look: Btn,
     pal: Palette,
 ) -> Stateful<Div> {
     let (b, fg) = btn_frame(id, look, pal);
-    b.child(icon(i, 14.0, fg)).child(label.into())
+    b.child(glyph(i, 14.0, fg)).child(label.into())
 }
 
 /// A smaller [`btn`], for tiles and chips' rows.
@@ -276,6 +266,20 @@ pub fn link(id: impl Into<ElementId>, label: impl Into<SharedString>, pal: Palet
         .whitespace_nowrap()
         .cursor_pointer()
         .hover(|s| s.opacity(0.75))
+        .child(label.into())
+}
+
+/// A quiet link (`Desk-Setup.png`'s "Use the browser", "Undo"): `ink-2`, underlined, `size` px.
+pub fn quiet_link(id: impl Into<ElementId>, label: impl Into<SharedString>, size: f32, pal: Palette) -> Stateful<Div> {
+    div()
+        .id(id.into())
+        .text_size(px(size))
+        .text_color(pal.ink_2())
+        .underline()
+        .whitespace_nowrap()
+        .cursor_pointer()
+        .hover(|s| s.text_color(pal.ink()))
+        .active(|s| s.opacity(super::kit::button::PRESSED))
         .child(label.into())
 }
 
@@ -307,35 +311,14 @@ pub fn row_text(title: impl Into<SharedString>, under: Option<AnyElement>, pal: 
         })
 }
 
-/// A switch: `violet-fill` on, `paper-sunken` off.
-pub fn toggle(on: bool, pal: Palette) -> Div {
-    let knob = div().size(px(17.0)).rounded_full().bg(gpui::white()).shadow_sm();
-    div()
-        .flex()
-        .flex_none()
-        .items_center()
-        .w(px(36.0))
-        .h(px(21.0))
-        .px(px(2.0))
-        .rounded_full()
-        .bg(if on {
-            pal.violet_fill()
-        } else {
-            pal.paper_sunken()
-        })
-        .when(!on && pal.dark, |t| t.border_1().border_color(pal.rule_2()))
-        .when_else(on, Div::justify_end, Div::justify_start)
-        .child(knob)
-}
-
 /// A dot that breathes (35% to 100%, still under Reduce Motion): something waits.
 pub fn waiting_dot(id: impl Into<ElementId>, color: Hsla, side: f32) -> impl IntoElement {
     motion::breathe(div().flex_none().size(px(side)).rounded_full().bg(color), id)
 }
 
 /// A chip: an icon and a few words, tinted with `color`.
-pub fn chip(i: Option<Icon>, label: impl Into<SharedString>, color: Hsla) -> Div {
-    chip_frame(i.is_some(), color).when_some(i, |c, i| c.child(icon(i, 13.0, color))).child(label.into())
+pub fn chip(i: Option<Glyph>, label: impl Into<SharedString>, color: Hsla) -> Div {
+    chip_frame(i.is_some(), color).when_some(i, |c, i| c.child(glyph(i, 13.0, color))).child(label.into())
 }
 
 fn chip_frame(lead: bool, color: Hsla) -> Div {
@@ -360,7 +343,7 @@ fn chip_frame(lead: bool, color: Hsla) -> Div {
 }
 
 /// A grey chip ("Asks next time", "By your rules").
-pub fn chip_plain(i: Option<Icon>, label: impl Into<SharedString>, pal: Palette) -> Div {
+pub fn chip_plain(i: Option<Glyph>, label: impl Into<SharedString>, pal: Palette) -> Div {
     chip(i, label, pal.ink_2()).bg(pal.paper_sunken())
 }
 
@@ -417,7 +400,7 @@ pub fn dots(color: Hsla, pal: Palette) -> Div {
 }
 
 /// One of the stage's squares: a logo or an icon, and maybe a badge on its corner.
-pub fn stage_tile(m: Mark, side: f32, badge: Option<(Icon, Hsla)>, behind: Hsla, pal: Palette) -> Div {
+pub fn stage_tile(m: Mark, side: f32, badge: Option<(Glyph, Hsla)>, behind: Hsla, pal: Palette) -> Div {
     div()
         .relative()
         .flex()
@@ -430,7 +413,7 @@ pub fn stage_tile(m: Mark, side: f32, badge: Option<(Icon, Hsla)>, behind: Hsla,
         .child(match m {
             // A logo sits in its white circle, so dark marks stay visible on dark paper.
             Mark::Brand(b) => avatar(b, side * 0.62, pal).border_0().into_any_element(),
-            Mark::Icon(_) => m.render(side * 0.5, pal.ink()),
+            Mark::Glyph(_) => m.render(side * 0.5, pal.ink()),
         })
         .when_some(badge, |t, (i, color)| {
             t.child(
@@ -446,13 +429,13 @@ pub fn stage_tile(m: Mark, side: f32, badge: Option<(Icon, Hsla)>, behind: Hsla,
                     .border_2()
                     .border_color(behind)
                     .bg(pal.paper_raised().blend(color.opacity(0.18)))
-                    .child(icon(i, 12.0, color)),
+                    .child(glyph(i, 12.0, color)),
             )
         })
 }
 
 /// Who → what: two squares and three dots between them, the last dot in `color`.
-pub fn stage(from: Mark, to: Mark, badge: Option<(Icon, Hsla)>, color: Hsla, side: f32, pal: Palette) -> Div {
+pub fn stage(from: Mark, to: Mark, badge: Option<(Glyph, Hsla)>, color: Hsla, side: f32, pal: Palette) -> Div {
     div()
         .flex()
         .flex_none()
@@ -686,28 +669,13 @@ pub fn warning(text: impl Into<SharedString>, pal: Palette) -> Div {
         .p(px(12.0))
         .bg(pal.warning.opacity(0.08))
         .border_color(pal.warning.opacity(0.3))
-        .child(icon(Icon::TriangleAlert, 16.0, pal.warning))
+        .child(glyph(Glyph::Warning, 16.0, pal.warning))
         .child(caption(text, pal).text_color(pal.ink()).flex_1().min_w(px(0.0)))
 }
 
 /// What a card says while it has nothing to show.
 pub fn empty(text: impl Into<SharedString>, pal: Palette) -> Div {
     div().px(px(14.0)).py(px(16.0)).child(caption(text, pal).text_color(pal.ink_meta()))
-}
-
-/// A step of "Turn on Reins" as it goes: a breathing dot, a check, or a cross, and what happened.
-pub fn step_line(label: &str, step: &Step, pal: Palette, first: bool) -> Div {
-    let (mark, detail): (AnyElement, String) = match step {
-        Step::Running => (
-            waiting_dot(SharedString::from(format!("step-{label}")), pal.violet(), 8.0).into_any_element(),
-            String::new(),
-        ),
-        Step::Done(d) => (icon(Icon::CircleCheck, 18.0, pal.success).into_any_element(), d.clone()),
-        Step::Failed(e) => (icon(Icon::CircleX, 18.0, pal.danger).into_any_element(), e.clone()),
-    };
-    row(pal, first)
-        .child(div().flex().flex_none().items_center().justify_center().size(px(30.0)).child(mark))
-        .child(row_text(label.to_owned(), (!detail.is_empty()).then(|| detail.into_any_element()), pal))
 }
 
 /// The QR code that opens Activity in the phone app.
@@ -730,28 +698,32 @@ pub fn phone_qr(pal: Palette) -> Div {
                 .gap(px(8.0))
                 .flex_1()
                 .min_w(px(0.0))
-                .child(icon(Icon::Smartphone, 16.0, pal.ink_2()))
+                .child(glyph(Glyph::Phone, 16.0, pal.ink_2()))
                 .child(caption("Scan to open Activity on your phone", pal)),
         )
 }
 
-/// The welcome flow's steps: "1 Pair — 2 AI tools — 3 Turn on — Done", the ones behind ticked.
+/// The welcome flow's steps (`Desk-Setup.png`): "1 Pair — 2 AI tools — 3 Turn on — ✓ Done". Behind: ink dots with a
+/// check; here: an ink ring; ahead: a hairline ring. Numbers in mono.
 pub fn step_indicator(current: Stage, pal: Palette) -> Div {
-    let mut bar = div().flex().items_center().justify_center().gap(px(12.0));
+    let mut bar = div().flex().items_center().justify_center().gap(px(8.0));
     for (i, stage) in Stage::ALL.into_iter().enumerate() {
-        let behind = stage < current || current == Stage::Done;
+        let behind = stage < current || (current == Stage::Done && stage != Stage::Done);
         let here = stage == current;
         if i > 0 {
-            bar = bar.child(div().w(px(36.0)).h(px(1.5)).rounded_full().bg(if stage <= current {
-                pal.violet_fill()
-            } else {
-                pal.rule_2()
-            }));
+            bar = bar.child(div().flex_none().w(px(28.0)).h(px(1.5)).bg(pal.rule_2()));
         }
+        let (ink, ring) = if behind {
+            (pal.paper(), None)
+        } else if here {
+            (pal.ink(), Some(pal.ink()))
+        } else {
+            (pal.ink_meta(), Some(pal.rule_2()))
+        };
+        // Behind, and Done itself: a check; the rest their number.
         let mark: AnyElement = match stage.number() {
-            _ if behind || (here && stage == Stage::Done) => icon(Icon::Check, 12.0, pal.on_field()).into_any_element(),
-            Some(n) => n.to_string().into_any_element(),
-            None => div().into_any_element(),
+            Some(n) if !behind => n.to_string().into_any_element(),
+            _ => glyph(Glyph::Check, 12.0, ink).into_any_element(),
         };
         let circle = div()
             .flex()
@@ -760,22 +732,14 @@ pub fn step_indicator(current: Stage, pal: Palette) -> Div {
             .justify_center()
             .size(px(22.0))
             .rounded_full()
-            .text_size(px(11.5))
-            .font_weight(FontWeight::SEMIBOLD)
-            .when_else(
-                behind || (here && stage == Stage::Done),
-                |c| c.bg(pal.violet_fill()),
-                |c| {
-                    c.border(px(1.5)).when_else(
-                        here,
-                        |c| c.border_color(pal.violet()).bg(pal.violet().opacity(0.13)).text_color(pal.violet()),
-                        |c| c.border_color(pal.rule_2()).text_color(pal.ink_meta()),
-                    )
-                },
-            )
+            .font_family(MONO)
+            .text_size(px(11.0))
+            .text_color(ink)
+            .when_some(ring, |c, r| c.border(px(1.5)).border_color(r))
+            .when(behind, |c| c.bg(pal.ink()))
             .child(mark);
         bar = bar.child(
-            div().flex().items_center().gap(px(8.0)).child(circle).child(
+            div().flex().flex_none().items_center().gap(px(8.0)).child(circle).child(
                 // One weight for every label: a bolder current step would widen the bar and shift it sideways.
                 div()
                     .text_size(px(12.5))
@@ -792,22 +756,23 @@ pub fn step_indicator(current: Stage, pal: Palette) -> Div {
     bar
 }
 
-/// The sentence a screen of the welcome flow is about, centred, in the serif with its target in italic; and a (?).
+/// The sentence a screen of the welcome flow is about: the serif at 40/42, centred, its target in italic; and a (?).
 pub fn welcome_title(words: &[Words], help: Option<Stateful<Div>>, pal: Palette) -> Div {
     div()
         .flex()
         .items_center()
         .justify_center()
         .gap(px(8.0))
+        .mt(px(6.0))
         .child(
             div()
                 .font_family(SERIF)
-                .text_size(px(32.0))
-                .line_height(px(36.0))
+                .text_size(px(40.0))
+                .line_height(px(42.0))
                 .font_weight(FontWeight::NORMAL)
                 .text_color(pal.ink())
                 .text_center()
-                .child(sentence(words, pal)),
+                .child(italic(words)),
         )
         .when_some(help, ParentElement::child)
 }

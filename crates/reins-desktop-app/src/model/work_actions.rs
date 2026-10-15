@@ -189,6 +189,7 @@ impl Model {
                 match started {
                     Ok(session) => {
                         log::info!("work session started: {} ({} grants)", session.reason, session.grants.len());
+                        m.play(super::Chime::Done);
                         m.work.form = None;
                         if m.args.demo {
                             m.work.demo = Some(session.clone());

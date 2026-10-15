@@ -173,17 +173,15 @@ impl Root {
             Test::Idle => (
                 div()
                     .flex()
-                    .items_center()
-                    .gap(px(10.0))
-                    .child(kit::kind_tile(Glyph::Send, Tone::Neutral, 32.0, pal))
+                    .flex_col()
                     .child(div().text_size(px(14.5)).font_weight(FontWeight::MEDIUM).child("See it work"))
-                    .child(help(
-                        "test",
-                        "Sends a harmless question to your phone. Approve or deny it; nothing happens either way.",
-                        d,
-                        pal,
-                        cx,
-                    ))
+                    .child(
+                        div()
+                            .text_size(px(12.5))
+                            .line_height(px(17.0))
+                            .text_color(pal.ink_meta())
+                            .child("Sends a harmless question to your phone"),
+                    )
                     .into_any_element(),
                 "Send a test",
                 d.paired,
@@ -249,12 +247,7 @@ impl Root {
                 )
             }
         };
-        let look = if matches!(d.test, Test::Idle) {
-            kit::Look::Inverse
-        } else {
-            kit::Look::Soft
-        };
-        let b = kit::button("send-test", look, kit::Size::Regular, Some(Glyph::Send), button_label, pal);
+        let b = kit::button("send-test", kit::Look::Soft, kit::Size::Small, None, button_label, pal);
         div()
             .flex()
             .flex_wrap()

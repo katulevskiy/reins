@@ -201,7 +201,7 @@ impl Root {
                 .border_1()
                 .border_color(pal.rule())
                 .when(!on, |p| p.opacity(0.7))
-                .child(kit::kind_tile(group_icon(id).glyph(), plate_tone(id), 32.0, pal))
+                .child(kit::kind_tile(group_icon(id), plate_tone(id), 32.0, pal))
                 .child(
                     div()
                         .flex()

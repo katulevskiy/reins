@@ -1,0 +1,10 @@
+Fonts in this folder, all licensed under the SIL Open Font License 1.1 (https://openfontlicense.org; the full text
+is in design/signal/fonts/OFL.txt and in each font's metadata). They are Latin subsets, as WOFF2, of the faces in
+ios/Shared/Fonts, made with fontTools (pyftsubset --flavor=woff2), for the server's own pages (src/api/reins/pages.rs):
+
+- Instrument Serif (InstrumentSerif-Regular.woff2, InstrumentSerif-Italic.woff2): Copyright 2022 The Instrument Serif
+  Project Authors (https://github.com/Instrument/instrument-serif).
+- Instrument Sans (InstrumentSans-Regular.woff2, InstrumentSans-SemiBold.woff2): Copyright 2022 The Instrument Sans
+  Project Authors (https://github.com/Instrument/instrument-sans).
+- Geist Mono (GeistMono.woff2): Copyright 2024 The Geist Project Authors (https://github.com/vercel/geist-font),
+  (c) Vercel.

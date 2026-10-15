@@ -1,45 +1,55 @@
-//! Steps 2 and 3 of the welcome flow, and its end: connect the AI tools (their real logos, one click each, undoable),
-//! turn Reins on (the background service, git, opening at login, each step as it goes), and "Reins is on" with a
-//! test to the phone. One sentence each, the important words bold; what goes on, bottom right.
+//! Steps 2 and 3 of the welcome flow, and its end (`Desk-Setup.png`): connect the AI tools (their real logos, one click
+//! each, undoable), turn Reins on (the background service, git, opening at login, each step as it goes), and "Reins is
+//! *on*" over the pond, with a test to the phone. One serif sentence each, plain rows, what goes on bottom right.
 
 use gpui::prelude::FluentBuilder as _;
 use gpui::{
-    AnyElement, Context, Div, FontWeight, InteractiveElement as _, IntoElement, ParentElement, SharedString,
+    AnyElement, Context, Div, FontWeight, InteractiveElement as _, IntoElement, ParentElement, SharedString, Stateful,
     StatefulInteractiveElement as _, Styled as _, div, px,
 };
 use reins_desktop::harness::after_add_note;
 
 use super::connections::harness_mark;
-use super::icons::{Icon, Mark, icon};
-use super::parts::{
-    Btn, big, btn, caption, card, chip, help, link, logo, row, row_text, solid_tile, stage, step_line, toggle, warning,
-    welcome_title,
-};
-use super::story::Words;
-use super::{Data, Root};
+use super::icons::{Glyph, Illustration, glyph, illustration};
+use super::parts::{caption, help, list_row, quiet_link, title_meta, waiting_dot, warning, welcome_title};
+use super::story::{bold, plain};
+use super::{Data, Root, kit};
 use crate::model::{Model, Step, TurnOn};
-use crate::theme::{Palette, Tone};
+use crate::theme::Palette;
 use crate::welcome::{self, ToolRow};
 
-/// Words of a sentence: `(text, bold)`.
-fn words(parts: &[(&str, bool)]) -> Vec<Words> {
-    parts
-        .iter()
-        .map(|&(t, b)| Words {
-            text: t.to_owned(),
-            bold: b,
-        })
-        .collect()
+/// A step's own button (`.btn` on the board: 42 px, 14.5).
+fn step_button(
+    id: impl Into<gpui::ElementId>,
+    look: kit::Look,
+    label: impl Into<SharedString>,
+    pal: Palette,
+) -> Stateful<Div> {
+    kit::button(id, look, kit::Size::Regular, None, label, pal).h(px(42.0)).px(px(18.0)).text_size(px(14.5))
 }
 
 /// The row of buttons at the bottom of a step: what goes back on the left, what goes on at the right.
 fn actions(back: Option<AnyElement>, forward: impl IntoElement) -> Div {
     div()
         .flex()
+        .w_full()
         .items_center()
         .gap(px(10.0))
+        .pt(px(8.0))
         .child(div().flex().flex_1().when_some(back, ParentElement::child))
         .child(forward)
+}
+
+/// The mark at the start of a row of "Turn on" and "Done": a check, a breathing dot while it runs, a cross.
+fn state_mark(step: Option<&Step>, id: &str, pal: Palette) -> AnyElement {
+    let slot = div().flex().flex_none().items_center().justify_center().size(px(18.0));
+    match step {
+        Some(Step::Running) => {
+            slot.child(waiting_dot(SharedString::from(format!("step-{id}")), pal.violet(), 8.0)).into_any_element()
+        }
+        Some(Step::Failed(_)) => slot.child(glyph(Glyph::Close, 16.0, pal.danger)).into_any_element(),
+        Some(Step::Done(_)) | None => slot.child(glyph(Glyph::Check, 16.0, pal.success)).into_any_element(),
+    }
 }
 
 impl Root {
@@ -54,7 +64,7 @@ impl Root {
             welcome::connectable(&rows)
         };
 
-        let mut list = card(pal);
+        let mut list = div().flex().flex_col().w_full();
         for (i, r) in rows.iter().enumerate() {
             let h = r.harness;
             // A line only when there is something to do or to know: why it failed, or the restart it needs.
@@ -77,46 +87,59 @@ impl Root {
                 None
             };
             let right: AnyElement = if r.busy {
-                div().text_size(px(12.0)).text_color(pal.ink_meta()).child("Connecting…").into_any_element()
+                div().text_size(px(12.5)).text_color(pal.ink_meta()).child("Connecting…").into_any_element()
             } else if r.connected {
                 div()
                     .flex()
                     .items_center()
-                    .gap(px(12.0))
+                    .gap(px(14.0))
                     .child(
-                        link(
+                        quiet_link(
                             SharedString::from(format!("undo-{}", h.id())),
                             if r.undoable {
                                 "Undo"
                             } else {
                                 "Remove"
                             },
+                            13.0,
                             pal,
                         )
-                        .text_size(px(12.0))
-                        .text_color(pal.ink_meta())
                         .on_click(Self::on_model(cx, move |m, cx| m.undo_tool(h, cx))),
                     )
-                    .child(chip(Some(Icon::Check), "Connected", pal.success))
+                    .child(
+                        div()
+                            .flex()
+                            .items_center()
+                            .gap(px(4.0))
+                            .text_size(px(12.5))
+                            .font_weight(FontWeight::SEMIBOLD)
+                            .text_color(pal.success)
+                            .child(glyph(Glyph::Check, 14.0, pal.success))
+                            .child("Connected"),
+                    )
                     .into_any_element()
             } else if r.installed {
-                let b = btn(SharedString::from(format!("connect-{}", h.id())), "Connect", Btn::Accent, pal);
+                let b = kit::button(
+                    SharedString::from(format!("connect-{}", h.id())),
+                    kit::Look::Inverse,
+                    kit::Size::Small,
+                    None,
+                    "Connect",
+                    pal,
+                );
                 if location.is_some() {
-                    b.opacity(0.45).cursor_default().into_any_element()
+                    kit::disabled(b).into_any_element()
                 } else {
                     b.on_click(Self::on_model(cx, move |m, cx| m.connect_tool(h, cx))).into_any_element()
                 }
             } else {
                 div().into_any_element()
             };
-            let mut line = row(pal, i == 0)
-                .min_h(px(54.0))
-                .child(logo(harness_mark(h), pal))
-                .child(row_text(h.label(), detail, pal))
-                .child(right);
-            if !r.installed && !r.connected {
-                line = line.opacity(0.5);
-            }
+            let line = list_row(pal, i + 1 == rows.len())
+                .child(kit::logo_tile(harness_mark(h), pal))
+                .child(title_meta(h.label(), detail, pal))
+                .child(right)
+                .when(!r.installed && !r.connected, |l| l.opacity(0.5));
             list = list.child(line);
         }
 
@@ -127,59 +150,51 @@ impl Root {
             .gap(px(10.0))
             .when(connectable.len() > 1, |f| {
                 f.child(
-                    btn("connect-all", "Connect all", Btn::Plain, pal).on_click(Self::on_model(cx, Model::connect_all)),
+                    step_button("connect-all", kit::Look::Soft, "Connect all", pal)
+                        .on_click(Self::on_model(cx, Model::connect_all)),
                 )
             })
             .child(
-                big(btn(
+                step_button(
                     "tools-continue",
+                    if any_connected || connectable.is_empty() {
+                        kit::Look::Inverse
+                    } else {
+                        kit::Look::Soft
+                    },
                     if any_connected || connectable.is_empty() {
                         "Continue"
                     } else {
                         "Skip for now"
                     },
-                    if any_connected || connectable.is_empty() {
-                        Btn::Primary
-                    } else {
-                        Btn::Plain
-                    },
                     pal,
-                ))
+                )
                 .on_click(Self::on_model(cx, Model::tools_continue)),
             );
 
         div()
             .flex()
             .flex_col()
-            .gap(px(16.0))
-            .child(
-                div()
-                    .flex()
-                    .flex_col()
-                    .items_center()
-                    .gap(px(6.0))
-                    .child(welcome_title(
-                        &words(&[("Connect your ", false), ("AI tools", true)]),
-                        Some(help(
-                            "tools",
-                            "Reins adds itself to each one: its tools reach your phone, and risky commands wait for \
-                             your OK. Undo takes it out again.",
-                            d,
-                            pal,
-                            cx,
-                        )),
-                        pal,
-                    ))
-                    .child(
-                        div()
-                            .text_size(px(13.0))
-                            .text_color(pal.ink_meta())
-                            .child(welcome::tools_line(&rows, super::parts::this_computer())),
-                    ),
-            )
+            .items_center()
+            .gap(px(20.0))
+            .child(welcome_title(
+                &[plain("Connect your "), bold("AI tools")],
+                Some(help(
+                    "tools",
+                    "Reins adds itself to each one: its tools reach your phone, and risky commands wait for your OK.",
+                    d,
+                    pal,
+                    cx,
+                )),
+                pal,
+            ))
+            .child(div().mt(px(-8.0)).text_size(px(14.0)).text_color(pal.ink_meta()).text_center().child(format!(
+                "{}. Reins adds itself to each; Undo takes it out again.",
+                welcome::tools_line(&rows, super::parts::this_computer())
+            )))
             .when_some(location, |p, problem| p.child(warning(problem, pal)))
-            .child(div().pt(px(4.0)).child(list))
-            .child(div().pt(px(2.0)).child(actions(None, forward)))
+            .child(list)
+            .child(actions(None, forward))
             .into_any_element()
     }
 
@@ -194,70 +209,102 @@ impl Root {
         let location = crate::backend::Backend::location_problem();
 
         let body = if steps.is_empty() {
+            let shield = if cfg!(target_os = "macos") {
+                "Adds the shield to the menu bar"
+            } else {
+                "Adds the shield to the tray"
+            };
             let option = |id: &'static str,
-                          ic: Icon,
-                          tone: Tone,
+                          g: Glyph,
                           title: &'static str,
+                          line: &'static str,
                           about: &'static str,
-                          what: Option<(TurnOn, bool)>| {
-                let r = row(pal, id == "turn-service")
+                          what: Option<(TurnOn, bool)>,
+                          last: bool| {
+                let r = list_row(pal, last)
                     .id(id)
-                    .min_h(px(54.0))
-                    .child(solid_tile(ic, tone, pal, 30.0))
-                    .child(row_text(title, None, pal))
+                    .child(div().flex().flex_none().items_center().justify_center().size(px(18.0)).child(glyph(
+                        g,
+                        16.0,
+                        pal.ink_2(),
+                    )))
+                    .child(title_meta(title, Some(line.into_any_element()), pal))
                     .child(help(id, about, d, pal, cx));
                 match what {
                     Some((what, on)) => r
                         .cursor_pointer()
-                        .child(toggle(on, pal))
+                        .child(kit::switch(SharedString::from(format!("{id}-switch")), on, pal))
                         .on_click(Self::on_model(cx, move |m, cx| m.toggle_turn_on(what, cx))),
-                    None => r.child(div().text_size(px(12.0)).text_color(pal.ink_meta()).child("Always")),
+                    None => r,
                 }
             };
-            card(pal)
+            div()
+                .flex()
+                .flex_col()
+                .w_full()
                 .child(option(
                     "turn-service",
-                    Icon::Server,
-                    Tone::Neutral,
-                    "Background service",
+                    Glyph::Server,
+                    "Start the background service",
+                    "Runs at login",
                     "Hooks, git and API keys go through it. It starts again when you log in.",
                     None,
+                    false,
                 ))
                 .child(option(
                     "turn-git",
-                    Icon::GitBranch,
-                    Tone::Neutral,
+                    Glyph::GitBranch,
                     "Send git through Reins",
+                    "Pushes ask your phone",
                     "Pushes to GitHub wait for your OK on your phone; agents never see your token.",
                     Some((TurnOn::Git, git)),
+                    false,
                 ))
                 .child(option(
                     "turn-login",
-                    Icon::Power,
-                    Tone::Neutral,
+                    Glyph::Power,
                     "Open at login",
+                    shield,
                     "The shield in the menu bar or tray shows that Reins is on.",
                     Some((TurnOn::Autostart, login)),
+                    true,
                 ))
         } else {
-            let mut progress = card(pal);
+            let mut progress = div().flex().flex_col().w_full();
             for (i, (label, step)) in steps.iter().enumerate() {
-                progress = progress.child(step_line(label, step, pal, i == 0));
+                let line = match step {
+                    Step::Running => None,
+                    Step::Done(t) | Step::Failed(t) => (!t.is_empty()).then(|| t.clone()),
+                };
+                let failed_line = matches!(step, Step::Failed(_));
+                progress = progress.child(
+                    list_row(pal, i + 1 == steps.len()).child(state_mark(Some(step), label, pal)).child(title_meta(
+                        label.clone(),
+                        line.map(|l| div().when(failed_line, |t| t.text_color(pal.danger)).child(l).into_any_element()),
+                        pal,
+                    )),
+                );
             }
             progress
         };
 
         let back = (!running && (!finished || failed)).then(|| {
-            btn("turn-back", "Back", Btn::Plain, pal).on_click(Self::on_model(cx, Model::setup_back)).into_any_element()
+            step_button("turn-back", kit::Look::Soft, "Back", pal)
+                .on_click(Self::on_model(cx, Model::setup_back))
+                .into_any_element()
         });
         let forward: AnyElement = if finished && failed {
             div()
                 .flex()
-                .gap(px(8.0))
+                .gap(px(10.0))
                 .child(
-                    btn("skip", "Continue anyway", Btn::Plain, pal).on_click(Self::on_model(cx, Model::finish_setup)),
+                    step_button("skip", kit::Look::Soft, "Continue anyway", pal)
+                        .on_click(Self::on_model(cx, Model::finish_setup)),
                 )
-                .child(big(btn("again", "Try again", Btn::Primary, pal)).on_click(Self::on_model(cx, Model::run_setup)))
+                .child(
+                    step_button("again", kit::Look::Inverse, "Try again", pal)
+                        .on_click(Self::on_model(cx, Model::run_setup)),
+                )
                 .into_any_element()
         } else {
             let label = if running {
@@ -268,42 +315,30 @@ impl Root {
                 "Turn on"
             };
             let enabled = !running && !finished && location.is_none();
-            let b = big(btn("run-setup", label, Btn::Primary, pal));
+            let b = step_button("run-setup", kit::Look::Inverse, label, pal);
             if enabled {
                 b.on_click(Self::on_model(cx, Model::run_setup)).into_any_element()
             } else {
-                b.opacity(0.55).cursor_default().into_any_element()
+                b.opacity(kit::button::PRESSED).cursor_default().into_any_element()
             }
         };
 
-        let mut page = div()
-            .flex()
-            .flex_col()
-            .gap(px(16.0))
-            .child(div().flex().justify_center().child(stage(
-                Mark::Icon(Icon::Laptop),
-                Mark::Icon(Icon::ShieldCheck),
-                None,
-                pal.violet(),
-                56.0,
+        let mut page = div().flex().flex_col().items_center().gap(px(20.0)).child(welcome_title(
+            &[plain("Turn "), bold("Reins"), plain(" on")],
+            Some(help(
+                "turn-on",
+                "Reins runs quietly in the background and asks your phone whenever an agent wants something risky.",
+                d,
                 pal,
-            )))
-            .child(welcome_title(
-                &words(&[("Turn ", false), ("Reins", true), (" on", false)]),
-                Some(help(
-                    "turn-on",
-                    "Reins runs quietly in the background and asks your phone whenever an agent wants something risky.",
-                    d,
-                    pal,
-                    cx,
-                )),
-                pal,
-            ));
-        page = page.child(div().pt(px(4.0)).child(body));
+                cx,
+            )),
+            pal,
+        ));
+        page = page.child(body);
         if let Some(problem) = location {
             page = page.child(warning(problem, pal));
         }
-        page = page.child(div().pt(px(2.0)).child(actions(back, forward)));
+        page = page.child(actions(back, forward));
         if let Some(n) = notice {
             page = page.child(caption(n, pal).text_color(pal.danger));
         }
@@ -317,90 +352,79 @@ impl Root {
         let git = m.turn_git;
         let login = m.autostart;
         let phone = d.saved.phone.clone();
-        let test_ok = matches!(&d.test, crate::health::Test::Ended(a, _) if !matches!(a, reins_desktop::ask::Answer::Unanswered(_)));
 
-        let mut summary = card(pal);
-        let mut lines: Vec<(Icon, bool, String)> = vec![(
-            Icon::Smartphone,
+        // What is on, as plain rows with a check; what still needs a step, in amber on the right.
+        let mut lines: Vec<(bool, String, Option<&str>)> = vec![(
             true,
             phone.map_or_else(|| "Paired with your phone".to_owned(), |p| format!("Paired with {p}")),
+            None,
         )];
         lines.push(match tools {
-            Some(names) => (Icon::Cable, true, format!("{names} connected")),
-            None => (Icon::Cable, false, "No AI tool connected".to_owned()),
+            Some(names) => (true, format!("{names} connected"), restart.then_some("restart it to finish")),
+            None => (false, "No AI tool connected".to_owned(), None),
         });
-        if git {
-            lines.push((Icon::GitBranch, true, "git through Reins".to_owned()));
+        match (git, login) {
+            (true, true) => lines.push((true, "git through Reins · opens at login".to_owned(), None)),
+            (true, false) => lines.push((true, "git through Reins".to_owned(), None)),
+            (false, true) => lines.push((true, "Opens at login".to_owned(), None)),
+            (false, false) => {}
         }
-        if login {
-            lines.push((Icon::Power, true, "Opens at login".to_owned()));
-        }
-        for (i, (ic, ok, text)) in lines.into_iter().enumerate() {
+        let n = lines.len();
+        let mut summary = div().flex().flex_col().w_full();
+        for (i, (ok, text, note)) in lines.into_iter().enumerate() {
             summary = summary.child(
-                row(pal, i == 0)
-                    .child(super::parts::tile(
-                        ic,
+                list_row(pal, i + 1 == n)
+                    .child(div().flex().flex_none().items_center().justify_center().size(px(18.0)).child(glyph(
+                        if ok {
+                            Glyph::Check
+                        } else {
+                            Glyph::Minus
+                        },
+                        16.0,
                         if ok {
                             pal.success
                         } else {
-                            pal.ink_meta()
+                            pal.ink_faint()
                         },
-                        30.0,
-                    ))
-                    .child(div().flex_1().min_w(px(0.0)).font_weight(FontWeight::MEDIUM).child(text))
-                    .child(if ok {
-                        icon(Icon::CircleCheck, 16.0, pal.success).into_any_element()
-                    } else {
-                        div().into_any_element()
-                    }),
+                    )))
+                    .child(
+                        div()
+                            .flex_1()
+                            .min_w(px(0.0))
+                            .text_size(px(14.5))
+                            .font_weight(FontWeight::MEDIUM)
+                            .text_color(pal.ink())
+                            .child(text),
+                    )
+                    .when_some(note, |r, note| r.child(div().text_size(px(12.5)).text_color(pal.warning).child(note))),
             );
         }
-
-        let hero = div()
-            .flex()
-            .flex_col()
-            .items_center()
-            .gap(px(16.0))
-            .child(stage(Mark::Icon(Icon::Laptop), Mark::Icon(Icon::Smartphone), None, pal.success, 56.0, pal))
-            .child(welcome_title(
-                &words(&[("Reins is ", false), ("on", true)]),
-                Some(help("done", "Your phone now approves what your AI agents do on this computer.", d, pal, cx)),
-                pal,
-            ));
 
         div()
             .flex()
             .flex_col()
-            .gap(px(14.0))
-            .child(hero)
-            .child(div().pt(px(4.0)).child(summary))
-            .when(restart, |p| {
-                p.child(
-                    div()
-                        .flex()
-                        .items_center()
-                        .gap(px(8.0))
-                        .px(px(4.0))
-                        .text_size(px(12.5))
-                        .text_color(pal.warning)
-                        .child(icon(Icon::TriangleAlert, 14.0, pal.warning))
-                        .child("Restart the AI tools you connected to finish"),
-                )
-            })
-            .child(card(pal).child(Self::test_panel(d, true, pal, cx)))
+            .items_center()
+            .gap(px(20.0))
+            .child(illustration(Illustration::Pond, 260.0, pal))
+            .child(welcome_title(
+                &[plain("Reins is "), bold("on")],
+                Some(help("done", "Your phone now approves what your AI agents do on this computer.", d, pal, cx)),
+                pal,
+            ))
+            .child(summary)
+            .child(
+                div()
+                    .w_full()
+                    .rounded(px(16.0))
+                    .bg(pal.paper_raised())
+                    .border_1()
+                    .border_color(pal.rule())
+                    .child(Self::test_panel(d, true, pal, cx)),
+            )
             .child(actions(
                 None,
-                big(btn(
-                    "open-reins",
-                    "Open Reins",
-                    if test_ok {
-                        Btn::Primary
-                    } else {
-                        Btn::Plain
-                    },
-                    pal,
-                ))
-                .on_click(Self::on_model(cx, Model::finish_setup)),
+                step_button("open-reins", kit::Look::Inverse, "Open Reins", pal)
+                    .on_click(Self::on_model(cx, Model::finish_setup)),
             ))
             .into_any_element()
     }

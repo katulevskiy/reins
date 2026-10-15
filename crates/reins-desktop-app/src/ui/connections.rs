@@ -13,7 +13,7 @@ use reins_desktop::harness::Harness;
 use reins_desktop::journal::{Entry, Kind};
 use reins_desktop::stats::Connection;
 
-use super::icons::{Brand, Glyph, Icon, Mark, glyph};
+use super::icons::{Brand, Glyph, Mark, glyph};
 use super::parts::{caption, columns, help, link, list_row, mono, page_title, section, this_computer, title_meta};
 use super::story::{agent_mark, plain};
 use super::{Data, Root, kit};
@@ -70,7 +70,7 @@ pub fn harness_mark(h: Harness) -> Mark {
         Harness::ClaudeCode => Mark::Brand(Brand::Claude),
         Harness::Gemini => Mark::Brand(Brand::Gemini),
         Harness::Cursor => Mark::Brand(Brand::Cursor),
-        Harness::Codex => Mark::Icon(Icon::SquareTerminal),
+        Harness::Codex => Mark::Glyph(Glyph::Terminal),
     }
 }
 
@@ -205,7 +205,7 @@ impl Root {
                 } else if name.contains("openai") {
                     Mark::Brand(Brand::OpenAI)
                 } else {
-                    Mark::Icon(Icon::Globe)
+                    Mark::Glyph(Glyph::Globe)
                 };
                 list = list.child(
                     list_row(pal, i + 1 == apis.len())
@@ -312,7 +312,7 @@ impl Root {
                     about.push("not set up in git yet".to_owned());
                 }
                 let (host, on) = (h.host.clone(), h.enabled);
-                let mark = Brand::of_host(&h.host).map_or(Mark::Icon(Icon::GitBranch), Mark::Brand);
+                let mark = Brand::of_host(&h.host).map_or(Mark::Glyph(Glyph::GitBranch), Mark::Brand);
                 hosts =
                     hosts.child(
                         list_row(pal, last || !repos.is_empty())
@@ -387,13 +387,13 @@ impl Root {
             let mut list = div().flex().flex_col();
             for (i, c) in ssh.iter().enumerate() {
                 let glyph_of = if c.target.contains("github") || c.target.contains("gitlab") {
-                    Icon::Terminal
+                    Glyph::Terminal
                 } else {
-                    Icon::Server
+                    Glyph::Server
                 };
                 list = list.child(
                     list_row(pal, i + 1 == ssh.len())
-                        .child(kit::logo_tile(Mark::Icon(glyph_of), pal))
+                        .child(kit::logo_tile(Mark::Glyph(glyph_of), pal))
                         .child(title_meta(
                             mono(c.target.clone(), 13.5),
                             Some(format::count(c.count, "sign-in", "sign-ins").into_any_element()),
@@ -490,7 +490,7 @@ mod tests {
     #[test]
     fn every_ai_tool_has_a_logo_and_apis_their_host() {
         assert_eq!(harness_mark(Harness::ClaudeCode), Mark::Brand(Brand::Claude));
-        assert_eq!(harness_mark(Harness::Codex), Mark::Icon(Icon::SquareTerminal));
+        assert_eq!(harness_mark(Harness::Codex), Mark::Glyph(Glyph::Terminal));
         assert_eq!(api_host("https://api.openai.com/v1/"), "api.openai.com/v1");
     }
 }

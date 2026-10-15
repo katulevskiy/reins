@@ -302,7 +302,7 @@ pub fn logo_tile(m: Mark, pal: Palette) -> Div {
             .border_1()
             .border_color(pal.rule())
             .child(gpui::img(b.path()).size(gpui::relative(0.58)).flex_none()),
-        Mark::Icon(i) => tile.bg(pal.paper_sunken()).child(glyph(i.glyph(), 17.0, pal.ink())),
+        Mark::Glyph(i) => tile.bg(pal.paper_sunken()).child(glyph(i, 17.0, pal.ink())),
     }
 }
 

@@ -290,7 +290,7 @@ impl Root {
         let mark = match e.outcome {
             Outcome::Denied | Outcome::Blocked => Glyph::Close,
             Outcome::Approved | Outcome::Allowed => Glyph::Check,
-            _ => ic.glyph(),
+            _ => ic,
         };
         let mut plate = div()
             .flex()
@@ -307,7 +307,7 @@ impl Root {
                     .flex()
                     .items_center()
                     .gap(px(10.0))
-                    .child(kit::kind_tile(s.icon.glyph(), s.tone, 40.0, pal).rounded(px(12.0)))
+                    .child(kit::kind_tile(s.icon, s.tone, 40.0, pal).rounded(px(12.0)))
                     .child(kit::section_label(format!("{} · {}", label_line(&s), format::when(d.now, e.at)), pal)),
             )
             .child(
