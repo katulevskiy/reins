@@ -5,6 +5,8 @@
 //! - control characters, as their Control Pictures (`␛`);
 //! - bidirectional overrides and isolates, zero-width characters and line separators, by their code point
 //!   (`⟨U+202E⟩`).
+//!
+//! The same characters are left out of what a sentence quotes ([`hidden`]).
 
 use std::fmt::Write as _;
 
@@ -15,6 +17,34 @@ pub struct HostLink {
     pub url: String,
 }
 
+/// A character that changes how text around it reads, or is not seen at all: bidirectional marks, overrides and
+/// isolates, zero-width and joining characters, line and paragraph separators, soft hyphens, invisible fillers,
+/// variation selectors and tags. C1 controls too ([`char::is_control`] covers C0, DEL and C1).
+#[must_use]
+pub fn hidden(c: char) -> bool {
+    c.is_control()
+        || matches!(
+            c,
+            '\u{00ad}'
+                | '\u{034f}'
+                | '\u{061c}'
+                | '\u{115f}'
+                | '\u{1160}'
+                | '\u{17b4}'
+                | '\u{17b5}'
+                | '\u{180b}'..='\u{180f}'
+                | '\u{200b}'..='\u{200f}'
+                | '\u{2028}'..='\u{202e}'
+                | '\u{2060}'..='\u{206f}'
+                | '\u{3164}'
+                | '\u{fe00}'..='\u{fe0f}'
+                | '\u{feff}'
+                | '\u{ffa0}'
+                | '\u{fff0}'..='\u{fffb}'
+                | '\u{e0000}'..='\u{e007f}'
+        )
+}
+
 /// `line` with every character that could act shown as itself instead.
 #[must_use]
 pub fn visible(line: &str) -> String {
@@ -23,14 +53,9 @@ pub fn visible(line: &str) -> String {
         match c {
             // Tabs only indent.
             '\t' => out.push_str("    "),
-            '\u{0}'..='\u{1f}' => out.push(char::from_u32(0x2400 + c as u32).unwrap_or('\u{fffd}')),
+            '\u{0}'..='\u{1f}' => out.push(char::from_u32(0x2400 + u32::from(c)).unwrap_or('\u{fffd}')),
             '\u{7f}' => out.push('\u{2421}'),
-            '\u{80}'..='\u{9f}'
-            | '\u{061c}'
-            | '\u{200b}'..='\u{200f}'
-            | '\u{2028}'..='\u{202e}'
-            | '\u{2060}'..='\u{2069}'
-            | '\u{feff}' => {
+            c if hidden(c) => {
                 let _infallible = write!(out, "⟨U+{:04X}⟩", u32::from(c));
             }
             _ => out.push(c),

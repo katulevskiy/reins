@@ -51,15 +51,15 @@ type Sample = (
 /// The approved command: a chain of eight, one of them a recursive delete.
 const COMMAND_WHAT: &str = "Claude Code wants to run: cd /tmp/sigwork && rm -rf jarx && mkdir jarx && cd jarx && unzip \
      -q -o ~/Android/Sdk/platforms/android-37.0/android.jar 'android/app/Notification$Builder.class' \
-     'android/service/quicksettings/*' && javap -cp . 'android.app.Notification$Builder' | grep -i \"promot\\|CriticalText\"; \
-     javap -cp . android.service.quicksettings.Tile | grep -i \"subtitle\\|STATE\"; javap -cp . \
-     android.service.quicksettings.TileService | grep -i \"ACTION\\|startActivityAndCollapse\"";
+     'android/service/quicksettings/*' && javap -cp . 'android.app.Notification$Builder' | grep -iE 'promot|CriticalText'; \
+     javap -cp . android.service.quicksettings.Tile | grep -iE 'subtitle|STATE'; javap -cp . \
+     android.service.quicksettings.TileService | grep -iE 'ACTION|startActivityAndCollapse'";
 const COMMAND_DETAIL: &str = "Rule: Recursive deletes · rm -r\nMatched: rm -rf jarx\nGroup: deletes (destructive)\n\n\
      Command:\ncd /tmp/sigwork && rm -rf jarx && mkdir jarx && cd jarx && unzip -q -o \
      ~/Android/Sdk/platforms/android-37.0/android.jar 'android/app/Notification$Builder.class' \
-     'android/service/quicksettings/*' && javap -cp . 'android.app.Notification$Builder' | grep -i \"promot\\|CriticalText\"; \
-     javap -cp . android.service.quicksettings.Tile | grep -i \"subtitle\\|STATE\"; javap -cp . \
-     android.service.quicksettings.TileService | grep -i \"ACTION\\|startActivityAndCollapse\"\n\nIn: \
+     'android/service/quicksettings/*' && javap -cp . 'android.app.Notification$Builder' | grep -iE 'promot|CriticalText'; \
+     javap -cp . android.service.quicksettings.Tile | grep -iE 'subtitle|STATE'; javap -cp . \
+     android.service.quicksettings.TileService | grep -iE 'ACTION|startActivityAndCollapse'\n\nIn: \
      /home/dana/code/reins";
 
 const SAMPLES: &[Sample] = &[
@@ -108,7 +108,9 @@ const SAMPLES: &[Sample] = &[
         Some("git"),
         Some("github.com/acme/web"),
         "push to github.com/acme/web: checkout-page (3 commits)",
-        Some("Ref: checkout-page · new branch\nChanges: +32 −10 · 6 files"),
+        Some(
+            "Commits: 3\nChanges: +32 −10 · 6 files\nRefs: 1 · deleted 0 · rewritten 0\nRef: checkout-page · new branch",
+        ),
         Outcome::Approved,
         Decider::Phone,
         None,
@@ -210,7 +212,7 @@ const SAMPLES: &[Sample] = &[
         Some("git"),
         Some("github.com/acme/api"),
         "push to github.com/acme/api: release/2.4 (1 commit)",
-        Some("Ref: release/2.4\nChanges: +12 −4 · 2 files"),
+        Some("Commits: 1\nChanges: +12 −4 · 2 files\nRefs: 1 · deleted 0 · rewritten 0\nRef: release/2.4"),
         Outcome::Denied,
         Decider::Phone,
         Some("Denied on your phone."),
@@ -1030,7 +1032,13 @@ mod tests {
             u.deletions.unwrap_or_default(),
             u.files_changed
         );
-        assert_eq!(entry.detail.as_deref(), Some(format!("Ref: checkout-page · new branch\n{changes}").as_str()));
+        assert_eq!(
+            entry.detail.as_deref(),
+            Some(
+                format!("Commits: 3\n{changes}\nRefs: 1 · deleted 0 · rewritten 0\nRef: checkout-page · new branch")
+                    .as_str()
+            )
+        );
         assert_eq!(u.commits.len(), usize::try_from(u.commit_count).unwrap());
         assert!(u.commits.iter().all(|c| c.files.iter().all(|f| f.patch.is_some())));
         assert!(entry.what.ends_with("checkout-page (3 commits)"));
