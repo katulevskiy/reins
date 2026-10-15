@@ -252,14 +252,15 @@ private fun StackCard(
     }
     Box(
         Modifier
+            // The cards below: narrower by INSET a side and lower by PEEK; when the one above goes, they spring up.
+            .layout { measurable, constraints ->
+                val side = (inset * d).roundToInt()
+                val w = (constraints.maxWidth - 2 * side).coerceAtLeast(0)
+                val p = measurable.measure(constraints.copy(minWidth = w, maxWidth = w))
+                layout(constraints.maxWidth, p.height) { p.place(side, (peek * d).roundToInt()) }
+            }
             .onSizeChanged { widthPx = it.width.toFloat().coerceAtLeast(1f) }
             .graphicsLayer {
-                // The cards below: narrower by INSET a side, lower by PEEK, all from the bottom edge.
-                val s = 1f - (2 * inset * d) / widthPx
-                scaleX = s
-                scaleY = s
-                transformOrigin = TransformOrigin(0.5f, 1f)
-                translationY = peek * d
                 translationX = dx
                 rotationZ = (dx / widthPx).coerceIn(-1f, 1f) * MAX_TILT
                 alpha = fade.value * if (d > 1.5f) 0.9f else 1f
