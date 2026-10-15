@@ -150,11 +150,15 @@ internal fun running(s: AutopilotSettings): Running? = when {
     else -> null
 }
 
-/** The field a running bypass, Overnight or lockdown puts at the top of Trust: bypass and lockdown red, Overnight violet. */
+/**
+ * The field a running bypass, Overnight or lockdown puts at the top of Trust (iOS-Trust 03): bypass red, Overnight
+ * violet, Lockdown the warn field (amber), as on the mode chip and the menu.
+ */
 fun trustField(s: AutopilotSettings?): Field? = when {
     s == null -> null
     running(s)?.kind == TimedKind.Overnight -> Field.Grant
-    running(s) != null || s.mode == AutopilotMode.LOCKDOWN -> Field.Delete
+    running(s) != null -> Field.Delete
+    s.mode == AutopilotMode.LOCKDOWN -> Field.Warn
     else -> null
 }
 
