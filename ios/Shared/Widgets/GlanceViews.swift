@@ -875,7 +875,7 @@ struct BypassLiveViews {
         }
     }
 
-    var minimal: some View { dot(12).accessibilityLabel(title) }
+    var minimal: some View { dot(12).accessibilityLabel(untilOff && !ended ? "\(title), until you stop it" : title) }
 
     var expandedLeading: some View {
         GlanceLabel(text: name, color: field.ink)
