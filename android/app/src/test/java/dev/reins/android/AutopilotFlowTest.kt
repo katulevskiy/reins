@@ -925,7 +925,8 @@ class AutopilotFlowTest : FlowHarness() {
         // The stack shows its top card's pick; each one is put on top in turn.
         fun onTop(item: dev.reins.core.PendingItem) {
             core.pending = listOf(item)
-            kotlinx.coroutines.runBlocking { container.refreshPending() }
+            // Off the main thread: an answer still going out holds the refresh, and it needs the main thread.
+            Thread { kotlinx.coroutines.runBlocking { container.refreshPending() } }.start()
         }
         core.pending = listOf(r1)
         launch()

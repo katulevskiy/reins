@@ -131,9 +131,10 @@ abstract class ScreenshotsBase(private val suffix: String) {
     }
 
     /** [dialogs]: also draws dialog windows (each over its dim), which live outside the activity's window. */
-    private fun shoot(name: String, dialogs: Boolean = false) {
+    private fun shoot(name: String, dialogs: Boolean = false, idle: Boolean = true) {
         val dir = System.getProperty("reins.screenshots")
-        rule.waitForIdle()
+        // A frame in the middle of an animation is taken as it is (the clock stopped), without waiting for idle.
+        if (idle) rule.waitForIdle()
         repeat(3) { settle() }
         var bitmap: android.graphics.Bitmap? = null
         scenario!!.onActivity { activity ->
@@ -1978,9 +1979,15 @@ abstract class ScreenshotsBase(private val suffix: String) {
         core.pending = emptyList()
         core.activity = listOf(TestData.entry(30, "write", "sent", 8u, at = now - 5).copy(connectionId = "c1", connectionLabel = "Claude Code", service = "github", account = "octo-cat", op = "git_push", opTitle = "Push to a branch")) + core.activity
         rule.mainClock.autoAdvance = false
-        kotlinx.coroutines.runBlocking { (context.applicationContext as ReinsApp).container.refreshPending() }
+        val container = (context.applicationContext as ReinsApp).container
+        // Off the main thread: a refresh may need it, and the clock is stopped here.
+        Thread { kotlinx.coroutines.runBlocking { container.refreshPending() } }.start()
+        rule.waitUntil(10_000) {
+            settle()
+            container.state.pending.value.isEmpty() && container.state.activity.value.firstOrNull()?.id == 30L
+        }
         frames(3)
-        shoot("sg-06-activity-folding")
+        shoot("sg-06-activity-folding", idle = false)
         rule.mainClock.autoAdvance = true
         frames(10)
         shoot("sg-07-activity-landed")
