@@ -2042,6 +2042,29 @@ abstract class ScreenshotsBase(private val suffix: String) {
         shoot("sg-21-asktext-river")
     }
 
+    /** Crafted requests: look-alike names, a climbing path, a store that is not ASCII. None reaches the serif. */
+    @Test
+    fun sgAskTextSpoofs() {
+        agConnections()
+        core.model = installed
+        core.pending = emptyList()
+        fun e(id: Long, label: dev.reins.core.RequestLabel, service: String, minutes: Long) =
+            TestData.entry(id, "write", "released", 1u, at = now - minutes * 60, label = label, service = service).copy(connectionId = "c1", connectionLabel = "Claude Code")
+        core.activity = listOf(
+            e(50, TestData.label("github", "push", "Push 2 commits to", "katulevskiy/reаins"), "github", 2).copy(op = "git_push"),
+            e(51, TestData.label("file", "read", "Read", "/tmp/../home/dana/.ssh/id_ed25519", code = true), "desktop", 5),
+            e(52, TestData.label("file", "read", "Read", "/home/dana/pаypal-invoice.pdf", code = true), "desktop", 9),
+            e(53, TestData.label("ssh", "secrets", "Sign in to", "gоogle.com", code = true), "vault", 14),
+            e(54, TestData.label("gmail", "send", "Send an email to", "Your bank <help@bаnk.com>"), "gmail", 20),
+            e(55, TestData.label("desktop", "ask", "Approve the pаypal payout?"), "desktop", 30).copy(op = "ask"),
+        )
+        launch()
+        top()
+        await("entry:55")
+        frames()
+        shoot("sg-25-asktext-spoofs")
+    }
+
     @Test
     fun sgAskTextField() {
         askTextData()

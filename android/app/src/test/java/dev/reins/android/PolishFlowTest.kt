@@ -60,7 +60,7 @@ class PolishFlowTest : FlowHarness() {
         launch()
         awaitTag("entry:7")
         rule.onNodeWithTag("entryTitle:7", useUnmergedTree = true).assertTextEquals("Asked to run a command in acme-web")
-        rule.onNodeWithTag("entryDetails:7", useUnmergedTree = true).assertTextEquals("git push --force origin main --no-verify")
+        rule.onNodeWithTag("entryDetails:7", useUnmergedTree = true).assertTextEquals("git push --force origin main \\\n--no-verify")
         rule.onNodeWithTag("entryTitle:8", useUnmergedTree = true).assertTextEquals("Read .env")
         rule.onNodeWithTag("entryDetails:8", useUnmergedTree = true).assertTextEquals("~/dev/api/.env")
         rule.onNodeWithTag("entryTitle:9", useUnmergedTree = true).assertTextEquals("Sent an email")

@@ -34,7 +34,7 @@ class NewApprovalsFlowTest : FlowHarness() {
         assertFalse(has("mcpDestructive"))
         // The server is the target; the tool, by its name, in mono under it (its title is the server's own words).
         rule.onNodeWithTag("what").assertTextEquals("Use a tool on Linear")
-        rule.onNodeWithTag("askDetails", useUnmergedTree = true).assertTextEquals("create_issue")
+        rule.onNodeWithTag("askDetails", useUnmergedTree = true).assertTextEquals("create_issue · mcp.linear.app")
         assertFalse(has("writePreview"))
         tap("approve")
         awaitCore { core.approvals.isNotEmpty() }
@@ -163,7 +163,7 @@ class NewApprovalsFlowTest : FlowHarness() {
         launch()
         awaitTag("pending:blob_0123456789abcdef")
         rule.onNodeWithTag("sentence:blob_0123456789abcdef", useUnmergedTree = true)
-            .assertTextEquals("Share report.csv")
+            .assertTextEquals("Share a file")
         if (!has("uploadSheet")) tap("pending:blob_0123456789abcdef")
         awaitTag("uploadSheet")
         rule.onNodeWithTag("uploadReason").assertTextContains("The quarterly numbers for the summary", substring = true)
