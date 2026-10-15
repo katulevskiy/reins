@@ -50,7 +50,6 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalContext
@@ -350,7 +349,7 @@ private fun AccountCard(email: String, serverUrl: String, state: AppState, viewM
         Modifier
             .padding(horizontal = 16.dp)
             .fillMaxWidth()
-            .background(Brush.linearGradient(listOf(c.accent.copy(alpha = 0.16f), c.accent.copy(alpha = 0.03f)), end = androidx.compose.ui.geometry.Offset(700f, 1200f)), shape)
+            .background(c.accent.copy(alpha = 0.09f), shape)
             .border(1.dp, c.accent.copy(alpha = 0.24f), shape)
             .padding(18.dp)
             .testTag("accountCard"),

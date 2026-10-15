@@ -66,7 +66,6 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.geometry.Offset
-import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.TransformOrigin
 import androidx.compose.ui.graphics.lerp
@@ -477,7 +476,7 @@ private fun SliderCard(
         Modifier
             .fillMaxWidth()
             .glass(c, RoundedCornerShape(26.dp), 16.dp)
-            .background(Brush.verticalGradient(listOf(tint.copy(alpha = if (c.dark) 0.16f + 0.10f * risk else 0.10f + 0.06f * risk), Color.Transparent)))
+            .background(tint.copy(alpha = if (c.dark) 0.08f + 0.05f * risk else 0.05f + 0.03f * risk))
             .animateContentSize(spring(dampingRatio = 0.9f, stiffness = 700f))
             .padding(horizontal = 18.dp, vertical = 16.dp)
             .testTag("autopilotQuick"),
@@ -584,10 +583,12 @@ private fun RiskTrack(
             ) {
                 val colors = modes.map { modeTint(it, c) }
                 Canvas(Modifier.padding(horizontal = thumb / 2).fillMaxWidth().height(8.dp)) {
-                    drawRoundRect(
-                        Brush.horizontalGradient(colors.map { it.copy(alpha = if (c.dark) 0.55f else 0.45f) }),
-                        cornerRadius = androidx.compose.ui.geometry.CornerRadius(size.height / 2),
-                    )
+                    // One flat segment per mode (Signal: no gradients).
+                    val seg = size.width / colors.size
+                    drawRoundRect(c.paperSunken, cornerRadius = androidx.compose.ui.geometry.CornerRadius(size.height / 2))
+                    colors.forEachIndexed { i, tone ->
+                        drawRect(tone.copy(alpha = if (c.dark) 0.55f else 0.45f), Offset(seg * i, 0f), androidx.compose.ui.geometry.Size(seg, size.height))
+                    }
                     val gap = size.width / last
                     for (i in 0..last) drawCircle(Color.White.copy(alpha = if (c.dark) 0.55f else 0.85f), 2.dp.toPx(), Offset(gap * i, size.height / 2))
                 }
@@ -596,7 +597,7 @@ private fun RiskTrack(
                     Modifier
                         .offset { IntOffset(((step * at).toPx() + (thumb / 2).toPx() - (thumb * 1.5f).toPx()).roundToInt(), 0) }
                         .size(thumb * 3f)
-                        .background(Brush.radialGradient(listOf(tint.copy(alpha = 0.18f + 0.32f * risk), Color.Transparent))),
+                        .background(tint.copy(alpha = 0.06f + 0.10f * risk), CircleShape),
                 )
                 Box(
                     Modifier

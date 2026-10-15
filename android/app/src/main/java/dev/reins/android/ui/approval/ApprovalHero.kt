@@ -49,7 +49,6 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
-import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.ColorFilter
 import androidx.compose.ui.graphics.StrokeCap
@@ -129,7 +128,7 @@ internal fun Hero(view: ApprovalView, ui: ApprovalUi, viewModel: ApprovalViewMod
             .padding(start = 12.dp, end = 12.dp, top = 4.dp)
             .fillMaxWidth()
             .clip(shape)
-            .background(Brush.verticalGradient(listOf(tone.copy(alpha = if (danger) 0.22f else 0.20f), tone.copy(alpha = 0.05f))))
+            .background(tone.copy(alpha = if (danger) 0.13f else 0.12f))
             .border(1.dp, tone.copy(alpha = if (danger) 0.32f else 0.26f), shape)
             .padding(start = 22.dp, end = 22.dp, top = 26.dp, bottom = 20.dp)
             .testTag("hero"),
