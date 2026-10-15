@@ -101,7 +101,8 @@ final class IntegrationsUITests: XCTestCase {
         text("Signed in to Docs")
         _ = waitFor("tool:search_issues")
         shot("mcp-signed-in")
-        element("heavy:create_issue").switches.firstMatch.tap()
+        // The app's switch (SignalSwitchStyle) is one element, and a tap anywhere on its row toggles it.
+        element("heavy:create_issue").tap()
         _ = waitFor("badge:create_issue:heavy")
     }
 }

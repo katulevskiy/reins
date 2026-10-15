@@ -26,6 +26,17 @@ final class SoundsScreenUITests: XCTestCase {
         toggle(id).coordinate(withNormalizedOffset: CGVector(dx: 0.93, dy: 0.5)).tap()
     }
 
+    /// The volume reads a whole tenth, one step from `percent` at most: `adjust(toNormalizedSliderPosition:)` drags to
+    /// about that point, and where it lands depends on the slider's width.
+    private func assertTenth(near percent: Int, file: StaticString = #filePath, line: UInt = #line) {
+        let label = app.staticTexts["volumeValue"].label
+        guard let value = Int(label.replacingOccurrences(of: "%", with: "")) else {
+            return XCTFail("volume reads \(label)", file: file, line: line)
+        }
+        XCTAssertEqual(value % 10, 0, "volume moves in tenths, reads \(label)", file: file, line: line)
+        XCTAssertLessThanOrEqual(abs(value - percent), 10, "volume reads \(label), wanted about \(percent)%", file: file, line: line)
+    }
+
     func testTheSwitchesCascadeAndTheVolumeMovesInSteps() {
         let master = toggle("soundsMaster")
         XCTAssertTrue(master.waitForExistence(timeout: 15))
@@ -41,9 +52,9 @@ final class SoundsScreenUITests: XCTestCase {
         let volume = app.sliders["volume"]
         XCTAssertTrue(volume.exists)
         volume.adjust(toNormalizedSliderPosition: 0.8)
-        XCTAssertEqual(app.staticTexts["volumeValue"].label, "80%")
+        assertTenth(near: 80)
         volume.adjust(toNormalizedSliderPosition: 0.5)
-        XCTAssertEqual(app.staticTexts["volumeValue"].label, "50%")
+        assertTenth(near: 50)
 
         app.swipeUp()
         shot("sounds-middle")
