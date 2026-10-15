@@ -11,7 +11,7 @@ struct ApprovalLiveActivity: Widget {
         ActivityConfiguration(for: ApprovalActivityAttributes.self) { context in
             ApprovalLiveViews(state: context.state, stale: context.isStale).lockScreen
                 .activityBackgroundTint(GlanceStyle.liveBackground)
-                .activitySystemActionForegroundColor(Palette.accent)
+                .activitySystemActionForegroundColor(Palette.violet)
                 .widgetURL(DeepLink.item(kind: context.state.kind, id: context.state.itemId).url)
         } dynamicIsland: { context in
             let v = ApprovalLiveViews(state: context.state, stale: context.isStale)
@@ -28,7 +28,7 @@ struct ApprovalLiveActivity: Widget {
                 v.minimal
             }
             .widgetURL(v.link)
-            .keylineTint(Palette.accent)
+            .keylineTint(Palette.violet)
         }
     }
 }
@@ -67,7 +67,7 @@ struct ModelDownloadLiveActivity: Widget {
         ActivityConfiguration(for: ModelDownloadActivityAttributes.self) { context in
             ModelDownloadLiveViews(state: context.state).lockScreen
                 .activityBackgroundTint(GlanceStyle.liveBackground)
-                .activitySystemActionForegroundColor(Palette.accent)
+                .activitySystemActionForegroundColor(Palette.violet)
                 .widgetURL(DeepLink.autopilot.url)
         } dynamicIsland: { context in
             let v = ModelDownloadLiveViews(state: context.state)
@@ -84,7 +84,7 @@ struct ModelDownloadLiveActivity: Widget {
                 v.minimal
             }
             .widgetURL(DeepLink.autopilot.url)
-            .keylineTint(Palette.accent)
+            .keylineTint(Palette.violet)
         }
     }
 }

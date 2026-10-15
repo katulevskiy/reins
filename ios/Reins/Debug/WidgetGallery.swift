@@ -49,7 +49,7 @@ struct WidgetGallery: View {
             .padding(.top, 8)
             .frame(maxWidth: .infinity)
         }
-        .background(Palette.background)
+        .background(Palette.paper)
         .task {
             while !Task.isCancelled {
                 snapshot = Snapshot.load()
@@ -174,7 +174,7 @@ struct WidgetGallery: View {
     // MARK: Frames
 
     private func caption(_ text: String) -> some View {
-        Text(text).font(RFont.fixedSans(12, .semibold)).foregroundStyle(Palette.secondary).padding(.top, 6)
+        Text(text).font(RFont.fixedSans(12, .semibold)).foregroundStyle(Palette.ink2).padding(.top, 6)
     }
 
     /// A Home Screen widget at the 6.9" iPhone's size, on its plate.

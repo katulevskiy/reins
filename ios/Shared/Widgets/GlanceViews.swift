@@ -15,9 +15,9 @@ enum GlanceStyle {
 
     static func tint(_ mode: Glance.Mode) -> Color {
         switch mode {
-        case .manual: Palette.search
-        case .auto: Palette.accent
-        case .overnight: Palette.overnight
+        case .manual: Palette.kindRead
+        case .auto: Palette.violet
+        case .overnight: Palette.violet
         case .bypass: Palette.danger
         case .lockdown: Palette.warning
         }
@@ -52,11 +52,11 @@ struct GlanceAvatar: View {
             .renderingMode(provider.mono || !full ? .template : .original)
             .resizable()
             .scaledToFit()
-            .foregroundStyle(full ? Palette.text : Color.primary)
+            .foregroundStyle(full ? Palette.ink : Color.primary)
             .frame(width: size * 0.56, height: size * 0.56)
             .frame(width: size, height: size)
             .background(full ? Palette.dynamic(0xFFFFFF, 0x1D1D21) : Color.primary.opacity(0.16), in: Circle())
-            .overlay(Circle().strokeBorder(full ? Palette.hairline : .clear, lineWidth: 1))
+            .overlay(Circle().strokeBorder(full ? Palette.rule : .clear, lineWidth: 1))
             .widgetAccentable()
             .accessibilityHidden(true)
     }
@@ -71,7 +71,7 @@ struct GlanceAvatar: View {
         .frame(width: size * 0.92, height: size * 0.92)
         .frame(width: size, height: size)
         .background(Palette.dynamic(0xFFFFFF, 0x1D1D21), in: Circle())
-        .overlay(Circle().strokeBorder(Palette.hairline, lineWidth: 1))
+        .overlay(Circle().strokeBorder(Palette.rule, lineWidth: 1))
         .clipShape(Circle())
         .accessibilityHidden(true)
     }
@@ -79,7 +79,7 @@ struct GlanceAvatar: View {
     private var initial: some View {
         let full = renderingMode == .fullColor
         return Circle()
-            .fill(full ? Palette.accentSoft : Color.primary.opacity(0.16))
+            .fill(full ? Palette.violetWash : Color.primary.opacity(0.16))
             .overlay {
                 Group {
                     if kind == .pairing || kind == .join || Glance.initial(label).isEmpty {
@@ -89,7 +89,7 @@ struct GlanceAvatar: View {
                         Text(Glance.initial(label)).font(RFont.fixedSans(size * 0.44, .semibold))
                     }
                 }
-                .foregroundStyle(full ? Palette.accent : Color.primary)
+                .foregroundStyle(full ? Palette.violet : Color.primary)
                 .widgetAccentable()
             }
             .frame(width: size, height: size)
@@ -102,7 +102,7 @@ struct Countdown: View {
     var from: Date
     var to: Date
     var size: CGFloat = 12
-    var color: Color = Palette.secondary
+    var color: Color = Palette.ink2
 
     var body: some View {
         Text(timerInterval: min(from, to)...to, countsDown: true)
@@ -115,7 +115,7 @@ struct Countdown: View {
 }
 
 extension Countdown {
-    init(_ item: Snapshot.Item, size: CGFloat = 12, color: Color = Palette.secondary) {
+    init(_ item: Snapshot.Item, size: CGFloat = 12, color: Color = Palette.ink2) {
         self.init(
             from: Date(timeIntervalSince1970: TimeInterval(item.createdAt)),
             to: Date(timeIntervalSince1970: TimeInterval(item.expiresAt)),
@@ -161,7 +161,7 @@ struct CountdownRing: View {
     var from: Date
     var to: Date
     var size: CGFloat = 44
-    var tint: Color = Palette.accent
+    var tint: Color = Palette.violet
 
     var body: some View {
         ZStack {
@@ -222,10 +222,10 @@ struct GlanceHeader: View {
 
     var body: some View {
         HStack(spacing: 6) {
-            Image(systemName: symbol).font(.system(size: 11, weight: .semibold)).foregroundStyle(Palette.accent).widgetAccentable()
-            Text(title).font(RFont.fixedSans(13, .semibold)).foregroundStyle(Palette.text)
+            Image(systemName: symbol).font(.system(size: 11, weight: .semibold)).foregroundStyle(Palette.violet).widgetAccentable()
+            Text(title).font(RFont.fixedSans(13, .semibold)).foregroundStyle(Palette.ink)
             if let count {
-                Text("\(count)").font(RFont.fixedMono(13, .semibold)).foregroundStyle(Palette.accent).widgetAccentable()
+                Text("\(count)").font(RFont.fixedMono(13, .semibold)).foregroundStyle(Palette.violet).widgetAccentable()
             }
             Spacer(minLength: 0)
         }
@@ -243,13 +243,13 @@ struct GlanceEmpty: View {
         VStack(alignment: compact ? .leading : .center, spacing: 4) {
             Image(systemName: symbol)
                 .font(.system(size: compact ? 20 : 24, weight: .medium))
-                .foregroundStyle(Palette.accent)
+                .foregroundStyle(Palette.violet)
                 .widgetAccentable()
                 .padding(.bottom, 4)
-            Text(title).font(RFont.fixedSans(14, .semibold)).foregroundStyle(Palette.text)
+            Text(title).font(RFont.fixedSans(14, .semibold)).foregroundStyle(Palette.ink)
             Text(message)
                 .font(RFont.fixedSans(11))
-                .foregroundStyle(Palette.secondary)
+                .foregroundStyle(Palette.ink2)
                 .multilineTextAlignment(compact ? .leading : .center)
                 .lineLimit(3)
         }
@@ -282,10 +282,10 @@ struct WaitingRow: View {
         HStack(spacing: 10) {
             GlanceAvatar(label: item.connection, kind: item.kind, icon: item.connectionIcon, size: 28)
             VStack(alignment: .leading, spacing: 1) {
-                Text(Glance.operation(item)).font(RFont.fixedSans(13, .semibold)).foregroundStyle(Palette.text).lineLimit(1)
+                Text(Glance.operation(item)).font(RFont.fixedSans(13, .semibold)).foregroundStyle(Palette.ink).lineLimit(1)
                 let byline = Glance.byline(item)
                 if !byline.isEmpty {
-                    Text(byline).font(RFont.fixedSans(11)).foregroundStyle(Palette.secondary).lineLimit(1)
+                    Text(byline).font(RFont.fixedSans(11)).foregroundStyle(Palette.ink2).lineLimit(1)
                 }
             }
             Spacer(minLength: 6)
@@ -310,26 +310,26 @@ struct WaitingSmallView: View {
                 HStack(alignment: .top) {
                     Text("\(list.count)")
                         .font(RFont.fixedMono(36, .semibold))
-                        .foregroundStyle(Palette.accent)
+                        .foregroundStyle(Palette.violet)
                         .widgetAccentable()
                     Spacer(minLength: 4)
                     GlanceAvatar(label: newest.connection, kind: newest.kind, icon: newest.connectionIcon, size: 30)
                 }
                 Text(list.count == 1 ? "waits for you" : "wait for you")
                     .font(RFont.fixedSans(12, .medium))
-                    .foregroundStyle(Palette.secondary)
+                    .foregroundStyle(Palette.ink2)
                 Spacer(minLength: 6)
                 Text(Glance.operation(newest))
                     .font(RFont.fixedSans(14, .semibold))
-                    .foregroundStyle(Palette.text)
+                    .foregroundStyle(Palette.ink)
                     .lineLimit(2)
                 HStack(spacing: 4) {
                     Text(newest.kind == .pairing ? "New connection" : newest.kind == .join ? "Another phone" : newest.connection)
                         .font(RFont.fixedSans(11))
-                        .foregroundStyle(Palette.secondary)
+                        .foregroundStyle(Palette.ink2)
                         .lineLimit(1)
                     Spacer(minLength: 2)
-                    Countdown(newest, size: 11, color: Palette.accent)
+                    Countdown(newest, size: 11, color: Palette.violet)
                         .frame(maxWidth: 52, alignment: .trailing)
                 }
                 .padding(.top, 2)
@@ -366,7 +366,7 @@ struct WaitingListView: View {
                 if list.count > rows {
                     Text("and \(list.count - rows) more")
                         .font(RFont.fixedSans(11, .medium))
-                        .foregroundStyle(Palette.tertiary)
+                        .foregroundStyle(Palette.inkMeta)
                         .padding(.top, 4)
                 }
             }
@@ -411,7 +411,7 @@ struct AutopilotWidgetView: View {
             HStack(alignment: .top) {
                 ModeBadge(mode: mode)
                 Spacer(minLength: 4)
-                Text("Autopilot").font(RFont.fixedSans(11, .medium)).foregroundStyle(Palette.tertiary)
+                Text("Autopilot").font(RFont.fixedSans(11, .medium)).foregroundStyle(Palette.inkMeta)
             }
             .padding(.bottom, 6)
             Text(mode.name)
@@ -425,7 +425,7 @@ struct AutopilotWidgetView: View {
                         // No end to count down to.
                         Text(someAIs ? "Bypass for some AIs" : "Until you stop it")
                             .font(RFont.fixedSans(11))
-                            .foregroundStyle(Palette.secondary)
+                            .foregroundStyle(Palette.ink2)
                             .lineLimit(1)
                         Image(systemName: "infinity")
                             .font(.system(size: 11, weight: .semibold))
@@ -434,20 +434,20 @@ struct AutopilotWidgetView: View {
                     } else {
                         Text(someAIs ? "Bypass for some AIs" : "Ends in")
                             .font(RFont.fixedSans(11))
-                            .foregroundStyle(Palette.secondary)
+                            .foregroundStyle(Palette.ink2)
                             .lineLimit(1)
                         Countdown(from: Date(timeIntervalSince1970: TimeInterval(now)), to: Date(timeIntervalSince1970: TimeInterval(end)), size: 11, color: Palette.danger)
                             .frame(maxWidth: 44, alignment: .leading)
                     }
                 }
             } else {
-                Text(mode.line).font(RFont.fixedSans(11)).foregroundStyle(Palette.secondary).lineLimit(2)
+                Text(mode.line).font(RFont.fixedSans(11)).foregroundStyle(Palette.ink2).lineLimit(2)
             }
             if medium {
                 Spacer(minLength: 0)
                 Text(snapshot.activeGrants == 1 ? "1 active grant" : "\(snapshot.activeGrants) active grants")
                     .font(RFont.fixedSans(11, .medium))
-                    .foregroundStyle(Palette.tertiary)
+                    .foregroundStyle(Palette.inkMeta)
             }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
@@ -496,9 +496,9 @@ struct GlanceActivityRow: View {
                 .font(.system(size: 16, weight: .semibold))
                 .foregroundStyle(entry.approved ? Palette.success : Palette.danger)
                 .widgetAccentable()
-            Text(entry.title).font(RFont.fixedSans(13, .medium)).foregroundStyle(Palette.text).lineLimit(1)
+            Text(entry.title).font(RFont.fixedSans(13, .medium)).foregroundStyle(Palette.ink).lineLimit(1)
             Spacer(minLength: 6)
-            Text(Glance.ago(entry.at, now: now)).font(RFont.fixedMono(11)).foregroundStyle(Palette.tertiary)
+            Text(Glance.ago(entry.at, now: now)).font(RFont.fixedMono(11)).foregroundStyle(Palette.inkMeta)
         }
         .accessibilityElement(children: .combine)
     }
@@ -641,19 +641,19 @@ struct ApprovalLiveViews {
                 .buttonStyle(.plain)
             }
             Link(destination: link) {
-                GlanceButtonLabel(title: "Review", symbol: "arrow.up.forward", tint: Palette.accent, filled: !quick)
+                GlanceButtonLabel(title: "Review", symbol: "arrow.up.forward", tint: Palette.violet, filled: !quick)
             }
         }
     }
 
     var text: some View {
         VStack(alignment: .leading, spacing: 2) {
-            Text(title).font(RFont.fixedSans(15, .semibold)).foregroundStyle(Palette.text).lineLimit(2)
+            Text(title).font(RFont.fixedSans(15, .semibold)).foregroundStyle(Palette.ink).lineLimit(2)
             if !byline.isEmpty {
-                Text(byline).font(RFont.fixedSans(12)).foregroundStyle(Palette.secondary).lineLimit(1)
+                Text(byline).font(RFont.fixedSans(12)).foregroundStyle(Palette.ink2).lineLimit(1)
             }
             if let more {
-                Text(more).font(RFont.fixedSans(11, .medium)).foregroundStyle(Palette.accent)
+                Text(more).font(RFont.fixedSans(11, .medium)).foregroundStyle(Palette.violet)
             }
         }
     }
@@ -676,13 +676,13 @@ struct ApprovalLiveViews {
     var compactLeading: some View { GlanceAvatar(label: state.connection, kind: state.kind, icon: state.connectionIcon, size: 24) }
 
     var compactTrailing: some View {
-        Countdown(from: state.createdAt, to: state.expiresAt, size: 13, color: Palette.accent)
+        Countdown(from: state.createdAt, to: state.expiresAt, size: 13, color: Palette.violet)
             .frame(maxWidth: 46)
     }
 
     var minimal: some View {
         ZStack {
-            TimerRing(from: state.createdAt, to: state.expiresAt, tint: Palette.accent, lineWidth: 3)
+            TimerRing(from: state.createdAt, to: state.expiresAt, tint: Palette.violet, lineWidth: 3)
             Text("\(state.count)").font(RFont.fixedMono(11, .semibold)).foregroundStyle(.white)
         }
         .accessibilityLabel(Glance.countLine(state.count))
@@ -724,7 +724,7 @@ struct BypassLiveViews {
 
     var name: String { overnight ? AutopilotText.overnightName : "Bypass" }
 
-    var tint: Color { overnight ? Palette.overnight : Palette.danger }
+    var tint: Color { overnight ? Palette.violet : Palette.danger }
 
     var symbol: String { overnight ? AutopilotText.overnightSymbol : "bolt.fill" }
 
@@ -799,8 +799,8 @@ struct BypassLiveViews {
             HStack(spacing: 12) {
                 bolt
                 VStack(alignment: .leading, spacing: 2) {
-                    Text(title).font(RFont.fixedSans(15, .semibold)).foregroundStyle(Palette.text)
-                    Text(line).font(RFont.fixedSans(12)).foregroundStyle(Palette.secondary).lineLimit(2)
+                    Text(title).font(RFont.fixedSans(15, .semibold)).foregroundStyle(Palette.ink)
+                    Text(line).font(RFont.fixedSans(12)).foregroundStyle(Palette.ink2).lineLimit(2)
                 }
                 Spacer(minLength: 4)
                 if !ended { timer }
@@ -808,7 +808,7 @@ struct BypassLiveViews {
             if !ended {
                 bar
                 HStack {
-                    Text(approved).font(RFont.fixedSans(12, .medium)).foregroundStyle(Palette.secondary)
+                    Text(approved).font(RFont.fixedSans(12, .medium)).foregroundStyle(Palette.ink2)
                     Spacer()
                     stop
                 }
@@ -883,7 +883,7 @@ struct ModelDownloadLiveViews {
 
     var symbol: String { state.failed ? "exclamationmark.triangle.fill" : state.finished ? "checkmark" : "arrow.down" }
 
-    var tint: Color { state.failed ? Palette.warning : Palette.accent }
+    var tint: Color { state.failed ? Palette.warning : Palette.violet }
 
     var percent: String { "\(Int((Glance.downloadFraction(state) * 100).rounded()))%" }
 
@@ -904,14 +904,14 @@ struct ModelDownloadLiveViews {
             badge
             VStack(alignment: .leading, spacing: 5) {
                 HStack {
-                    Text(title).font(RFont.fixedSans(15, .semibold)).foregroundStyle(Palette.text).lineLimit(1)
+                    Text(title).font(RFont.fixedSans(15, .semibold)).foregroundStyle(Palette.ink).lineLimit(1)
                     Spacer(minLength: 4)
                     if !state.finished && !state.failed {
                         Text(percent).font(RFont.fixedMono(13, .semibold)).foregroundStyle(tint)
                     }
                 }
                 if !state.finished && !state.failed { bar }
-                Text(Glance.downloadLine(state)).font(RFont.fixedSans(12)).foregroundStyle(Palette.secondary).lineLimit(1)
+                Text(Glance.downloadLine(state)).font(RFont.fixedSans(12)).foregroundStyle(Palette.ink2).lineLimit(1)
             }
         }
         .padding(16)

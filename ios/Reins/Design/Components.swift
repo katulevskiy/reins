@@ -39,10 +39,10 @@ struct Card<Content: View>: View {
         content
             .padding(padding)
             .frame(maxWidth: .infinity, alignment: .leading)
-            .background(Palette.elevated, in: RoundedRectangle(cornerRadius: radius, style: .continuous))
+            .background(Palette.paperRaised, in: RoundedRectangle(cornerRadius: radius, style: .continuous))
             .overlay(
                 RoundedRectangle(cornerRadius: radius, style: .continuous)
-                    .strokeBorder(stroke ?? Palette.hairline, lineWidth: stroke == nil ? 0.5 : 1.5)
+                    .strokeBorder(stroke ?? Palette.rule, lineWidth: stroke == nil ? 0.5 : 1.5)
             )
     }
 }
@@ -54,10 +54,10 @@ struct ServiceTag: View {
     var body: some View {
         Text(text)
             .font(RFont.sans(13, .medium))
-            .foregroundStyle(Palette.accent)
+            .foregroundStyle(Palette.violet)
             .padding(.horizontal, 9)
             .padding(.vertical, 4)
-            .background(Palette.accentSoft, in: Capsule())
+            .background(Palette.violetWash, in: Capsule())
             .lineLimit(1)
     }
 }
@@ -69,10 +69,10 @@ struct AccountTag: View {
     var body: some View {
         Text(text)
             .font(RFont.mono(12.5))
-            .foregroundStyle(Palette.secondary)
+            .foregroundStyle(Palette.ink2)
             .padding(.horizontal, 9)
             .padding(.vertical, 4)
-            .background(Palette.controlFill, in: Capsule())
+            .background(Palette.paperSunken, in: Capsule())
             .lineLimit(1)
             .truncationMode(.middle)
             .environment(\.layoutDirection, .leftToRight)
@@ -105,7 +105,7 @@ struct ActionTile: View {
 
     /// The kind's ink (`FieldKind`); an operation with no kind is ink-2.
     static func color(_ kind: ActionKind) -> Color {
-        FieldKind.of(kind)?.ink ?? Palette.secondary
+        FieldKind.of(kind)?.ink ?? Palette.ink2
     }
 
     var body: some View {
@@ -144,7 +144,7 @@ struct ActionTile: View {
 /// A small number on a tab or a row: round for one digit, a capsule for two or three ("99+"), never cut.
 struct CountBadge: View {
     var count: Int
-    var tint: Color = Palette.accent
+    var tint: Color = Palette.violet
 
     /// "1" to "99", then "99+"; nil when there is nothing to count (no badge).
     static func text(_ count: Int) -> String? {
@@ -215,7 +215,7 @@ struct GlassIconButton: View {
         } label: {
             Image(systemName: symbol)
                 .font(.system(size: size * 0.4, weight: .semibold))
-                .foregroundStyle(Palette.text)
+                .foregroundStyle(Palette.ink)
                 .frame(width: size, height: size)
                 .background(Palette.paperRaised, in: Circle())
                 .overlay(Circle().strokeBorder(Palette.rule, lineWidth: 1))
@@ -245,7 +245,7 @@ struct GlassPill: View {
                 if let symbol { Image(systemName: symbol).font(.system(size: 14, weight: .semibold)) }
                 Text(text).font(RFont.sans(15, .medium)).lineLimit(1)
             }
-            .foregroundStyle(tint == nil ? Palette.text : .white)
+            .foregroundStyle(tint == nil ? Palette.ink : .white)
             .padding(.horizontal, 14)
             .frame(height: HeaderControl.height)
             .background(tint ?? Palette.paperRaised, in: Capsule())
@@ -271,12 +271,12 @@ struct EmptyState: View {
         VStack(spacing: 10) {
             Image(systemName: symbol)
                 .font(.system(size: 34, weight: .regular))
-                .foregroundStyle(Palette.tertiary)
-            Text(title).font(RFont.sans(17, .semibold)).foregroundStyle(Palette.text)
+                .foregroundStyle(Palette.inkMeta)
+            Text(title).font(RFont.sans(17, .semibold)).foregroundStyle(Palette.ink)
             if let message {
                 Text(message)
                     .font(RFont.sans(15))
-                    .foregroundStyle(Palette.secondary)
+                    .foregroundStyle(Palette.ink2)
                     .multilineTextAlignment(.center)
             }
         }
@@ -314,14 +314,14 @@ struct Toast: View {
         Button(action: onDismiss) {
             Text(text)
                 .font(RFont.sans(15, .medium))
-                .foregroundStyle(Palette.text)
+                .foregroundStyle(Palette.ink)
                 .multilineTextAlignment(.center)
                 .padding(.horizontal, 18)
                 .padding(.vertical, 12)
         }
         .buttonStyle(.plain)
-        .background(Palette.plate, in: Capsule())
-        .overlay(Capsule().strokeBorder(Palette.plateEdge, lineWidth: 1))
+        .background(Palette.paperRaised, in: Capsule())
+        .overlay(Capsule().strokeBorder(Palette.rule, lineWidth: 1))
         .shadow(color: .black.opacity(0.18), radius: 15, y: 8)
         .padding(.horizontal, 24)
         .task {
@@ -340,7 +340,7 @@ struct PageHeader<Trailing: View>: View {
         HStack(alignment: .center, spacing: 10) {
             Text(title)
                 .textRole(.title)
-                .foregroundStyle(Palette.text)
+                .foregroundStyle(Palette.ink)
                 .lineLimit(1)
                 .minimumScaleFactor(0.7)
                 .accessibilityAddTraits(.isHeader)
@@ -362,7 +362,7 @@ struct PressDimsStyle: ButtonStyle {
 extension View {
     /// The app background behind a scrolling page.
     func pageBackground() -> some View {
-        background(Palette.background.ignoresSafeArea())
+        background(Palette.paper.ignoresSafeArea())
     }
 
     /// Plays a tap's feedback alongside a control's own action; `.tap` is the default tap, which gives way to what the

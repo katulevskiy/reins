@@ -39,7 +39,7 @@ struct WaitingControl: ControlWidget {
             ControlWidgetButton(action: ShowWaitingIntent()) {
                 Label(Glance.countLine(count), systemImage: count == 0 ? "tray" : "tray.full.fill")
             }
-            .tint(Palette.accent)
+            .tint(Palette.violet)
         }
         .displayName("Waiting request")
         .description("Opens the newest request that waits for you.")
