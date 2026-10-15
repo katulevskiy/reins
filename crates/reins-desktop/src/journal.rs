@@ -141,9 +141,15 @@ pub struct Entry {
     pub ended_at: Option<i64>,
 }
 
-fn cut(text: &str, max: usize, one_line: bool) -> String {
-    let text = if one_line {
-        text.split_whitespace().collect::<Vec<_>>().join(" ")
+/// `text` on one line, as `what`, `source` and `service` are kept: each run of whitespace one space.
+#[must_use]
+pub fn one_line(text: &str) -> String {
+    text.split_whitespace().collect::<Vec<_>>().join(" ")
+}
+
+fn cut(text: &str, max: usize, single: bool) -> String {
+    let text = if single {
+        one_line(text)
     } else {
         text.chars().filter(|c| !c.is_control() || matches!(c, '\n' | '\t')).collect()
     };
