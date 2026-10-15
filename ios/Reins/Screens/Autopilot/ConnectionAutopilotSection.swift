@@ -1,9 +1,9 @@
 import SwiftUI
 
 /// The Autopilot part of an AI's page (the Android app's `ConnectionAutopilotSection`): its own mode (or the global
-/// one), a bypass for just this AI, and the profile its answers teach. Self-contained: it reads and changes
-/// everything through `AppModel`, holds Bypass to confirm (and the owner confirms it), plays the same feedback as the
-/// Autopilot screen, and shows its own errors.
+/// one), an Overnight or a bypass for just this AI, and the profile its answers teach. Self-contained: it reads and
+/// changes everything through `AppModel`, holds Overnight and Bypass to confirm (and the owner confirms them), plays
+/// the same feedback as the Autopilot screen, and shows its own errors.
 ///
 /// For a `List` (an inset grouped settings list), as a `Section`:
 ///
@@ -50,6 +50,7 @@ struct ConnectionAutopilotContent: View {
     @Environment(\.feedback) private var feedback
     @State private var ap = AutopilotModel()
     @State private var bypassAsk = false
+    @State private var overnightAsk = false
 
     private var name: String { label ?? model.connection(connectionId)?.label ?? "this AI" }
 
@@ -73,26 +74,38 @@ struct ConnectionAutopilotContent: View {
             .environment(\.feedback, feedback)
         }
         .presentationFeedback(bypassAsk)
+        .sheet(isPresented: $overnightAsk) {
+            OvernightSheet(who: name, ap: ap) { length in
+                feedback.quietClose()
+                Task { await ap.startOvernight(connectionId: connectionId, minutes: length.minutes, label: name) }
+            }
+            .environment(\.feedback, feedback)
+        }
+        .presentationFeedback(overnightAsk)
     }
 
     private func rows(_ s: AutopilotSettings) -> some View {
         let own = s.connections.first { $0.connectionId == connectionId }
         let mode = own?.mode ?? s.mode
         let bypassUntil = own?.bypassUntil
-        let chosen: AutopilotMode? = bypassUntil != nil ? .bypass : own?.baseMode
+        let overnightUntil = own?.overnightUntil
+        let chosen: AutopilotMode? = bypassUntil != nil ? .bypass : overnightUntil != nil ? .overnight : own?.baseMode
+        // What counts down: its bypass, else its Overnight.
+        let running = bypassUntil ?? overnightUntil
         let profileId = own?.profileId ?? s.defaultProfileId
         return VStack(alignment: .leading, spacing: 0) {
             HStack(spacing: 14) {
                 IconTile(symbol: AutopilotText.symbol(mode), tint: AutopilotStyle.tint(mode), size: 44, filled: true)
                 VStack(alignment: .leading, spacing: 2) {
                     Text(AutopilotText.name(mode)).font(RFont.sans(17, .semibold)).foregroundStyle(Palette.text)
-                    // Only a bypass counts down; otherwise the line does not change with time.
-                    if let until = bypassUntil, !AutopilotText.isUntilOff(until) {
+                    // Only a bypass or an Overnight counts down; otherwise the line does not change with time.
+                    if let until = running, !AutopilotText.isUntilOff(until) {
                         TimelineView(.periodic(from: .now, by: 1)) { context in
-                            modeText(modeLine(s, own: own, mode: mode, chosen: chosen, now: Int64(context.date.timeIntervalSince1970)), bypass: true)
+                            modeText(modeLine(s, own: own, mode: mode, chosen: chosen, now: Int64(context.date.timeIntervalSince1970)), tint: AutopilotStyle.tint(mode))
                         }
                     } else {
-                        modeText(modeLine(s, own: own, mode: mode, chosen: chosen, now: Int64(Date().timeIntervalSince1970)), bypass: false)
+                        modeText(modeLine(s, own: own, mode: mode, chosen: chosen, now: Int64(Date().timeIntervalSince1970)),
+                                 tint: running != nil ? AutopilotStyle.tint(mode) : nil)
                     }
                 }
                 Spacer(minLength: 8)
@@ -102,6 +115,11 @@ struct ConnectionAutopilotContent: View {
                         Task { await ap.stopBypass(connectionId) }
                     }
                     .accessibilityIdentifier("stopConnectionBypass")
+                } else if overnightUntil != nil {
+                    ActionButton(title: "Stop", kind: .secondary, compact: true) {
+                        Task { await ap.stopOvernight(connectionId) }
+                    }
+                    .accessibilityIdentifier("stopConnectionOvernight")
                 }
             }
             .padding(16)
@@ -148,10 +166,11 @@ struct ConnectionAutopilotContent: View {
         }
     }
 
-    private func modeText(_ line: String, bypass: Bool) -> some View {
+    /// The line under the mode, in the mode's colour while a bypass or an Overnight runs.
+    private func modeText(_ line: String, tint: Color?) -> some View {
         Text(line)
             .font(RFont.sans(13))
-            .foregroundStyle(bypass ? Palette.danger : Palette.secondary)
+            .foregroundStyle(tint ?? Palette.secondary)
             .fixedSize(horizontal: false, vertical: true)
             .accessibilityIdentifier("connectionModeLine")
     }
@@ -159,12 +178,18 @@ struct ConnectionAutopilotContent: View {
     private func modeLine(_ s: AutopilotSettings, own: ConnectionAutopilot?, mode: AutopilotMode, chosen: AutopilotMode?, now: Int64) -> String {
         if mode == .lockdown && s.mode == .lockdown && own?.baseMode != .lockdown { return "Every AI is locked down" }
         if let until = own?.bypassUntil { return "Bypass for this AI · " + AutopilotText.timeLeft(until: until, now: now) }
+        if let until = own?.overnightUntil {
+            return "\(AutopilotText.overnightName) for this AI · " + AutopilotText.timeLeft(until: until, now: now)
+        }
+        if mode == .overnight, s.overnightUntil != nil { return "\(AutopilotText.overnightName) for every AI" }
         if chosen == nil { return "Like every AI" }
         return "Its own mode"
     }
 
     private func pick(_ m: AutopilotMode, chosen: AutopilotMode?) {
         switch m {
+        case .overnight:
+            if m != chosen { overnightAsk = true }
         case .bypass:
             // Refused for an AI paired in the last 10 minutes; say so before asking for Face ID.
             if let refusal = ap.bypassRefusal(connectionId) {

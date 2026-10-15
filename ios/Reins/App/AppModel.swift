@@ -532,10 +532,46 @@ final class AppModel {
         guard let settings = await refreshAutopilot() else { return }
         let now = Int64(Date().timeIntervalSince1970)
         if (settings.bypassUntil ?? 0) > now {
-            try? await core.setAutopilotMode(connectionId: nil, mode: settings.baseMode, minutes: nil)
+            try? await endBypass(nil, in: settings)
         }
         for c in settings.connections where (c.bypassUntil ?? 0) > now {
-            try? await core.setAutopilotMode(connectionId: c.connectionId, mode: c.baseMode, minutes: nil)
+            try? await endBypass(c.connectionId, in: settings)
+        }
+        await refreshAutopilot()
+    }
+
+    /// Ends the bypass of `connectionId` (nil: the global one) and puts back the mode under it. An Overnight it ran
+    /// over carries on until its own end: the core clears a bypass only by setting a mode, so this sets the mode that
+    /// Overnight interrupted and starts Overnight again for the time it had left (no new owner check: it was confirmed
+    /// when it started).
+    func endBypass(_ connectionId: String?, in s: AutopilotSettings, now: Int64 = Int64(Date().timeIntervalSince1970)) async throws {
+        let own = connectionId.flatMap { id in s.connections.first { $0.connectionId == id } }
+        let base = connectionId == nil ? s.baseMode : own?.baseMode
+        let overnight = connectionId == nil ? s.overnightUntil : own?.overnightUntil
+        if base == .overnight, let until = overnight, until > now {
+            try await core.setAutopilotMode(connectionId: connectionId, mode: OvernightReturn.mode(connectionId), minutes: nil)
+            try await core.startOvernight(connectionId: connectionId, minutes: AutopilotText.minutesLeft(until: until, now: now))
+        } else {
+            try await core.setAutopilotMode(connectionId: connectionId, mode: base, minutes: nil)
+        }
+    }
+
+    /// Stops the Overnight of `connectionId` (nil: every AI's): back to the mode it interrupted. Setting that mode ends
+    /// a bypass of the same scope too, which only ever makes Autopilot stricter.
+    func endOvernight(_ connectionId: String?) async throws {
+        try await core.setAutopilotMode(connectionId: connectionId, mode: OvernightReturn.mode(connectionId), minutes: nil)
+        OvernightReturn.forget(connectionId)
+    }
+
+    /// Stops every Overnight now (the Live Activity's Stop, Siri): each goes back to the mode it interrupted.
+    func stopOvernights() async {
+        guard let settings = await refreshAutopilot() else { return }
+        let now = Int64(Date().timeIntervalSince1970)
+        if (settings.overnightUntil ?? 0) > now {
+            try? await endOvernight(nil)
+        }
+        for c in settings.connections where (c.overnightUntil ?? 0) > now {
+            try? await endOvernight(c.connectionId)
         }
         await refreshAutopilot()
     }

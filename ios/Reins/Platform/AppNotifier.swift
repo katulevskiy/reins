@@ -59,8 +59,9 @@ final class AppNotifier: Notifier, @unchecked Sendable {
             switch event {
             case .bypassEnded:
                 if model.isActive { model.feedback.play(.bypassOff) }
-            case .overnightEnded:
+            case let .overnightEnded(connectionId):
                 // Back to the mode it interrupted, by the core: felt as a step back, as a bypass's end is.
+                OvernightReturn.forget(connectionId)
                 if model.isActive { model.feedback.play(.autopilotModeChanged(moreAutonomy: false)) }
             case let .paused(connectionId, connectionLabel, reason):
                 // Auto-approvals stopped for a connection (unusual volume); its requests wait for the user.

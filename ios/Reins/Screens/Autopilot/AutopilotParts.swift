@@ -232,13 +232,16 @@ struct RadioDot: View {
     }
 }
 
-/// A running bypass's ring: it empties as the time runs out, with the clock in the middle; a bypass without an end is
-/// a full ring around an infinity sign.
+/// A running bypass's ring (or an Overnight's, in its colour): it empties as the time runs out, with the clock in the
+/// middle; one without an end is a full ring around an infinity sign.
 struct BypassRing: View {
     var until: Int64
     var since: Int64?
     var size: CGFloat = 76
     var stroke: CGFloat = 5
+    var tint: Color = Palette.danger
+    var name = "Bypass"
+    var identifier = "bypassClock"
 
     var body: some View {
         LiveClock(interval: 1) { time in
@@ -246,18 +249,18 @@ struct BypassRing: View {
             Group {
                 if AutopilotText.isUntilOff(until) {
                     Circle()
-                        .strokeBorder(Palette.danger, lineWidth: stroke)
+                        .strokeBorder(tint, lineWidth: stroke)
                         .frame(width: size, height: size)
                         .overlay {
                             Image(systemName: "infinity")
                                 .font(.system(size: size * 0.38, weight: .semibold))
-                                .foregroundStyle(Palette.danger)
+                                .foregroundStyle(tint)
                         }
                 } else {
-                    ProgressRing(fraction: AutopilotText.bypassFraction(until: until, since: since, now: now), tint: Palette.danger, size: size, stroke: stroke) {
+                    ProgressRing(fraction: AutopilotText.bypassFraction(until: until, since: since, now: now), tint: tint, size: size, stroke: stroke) {
                         Text(AutopilotText.clock(until: until, now: now))
                             .font(RFont.mono(size * 0.21, .semibold))
-                            .foregroundStyle(Palette.danger)
+                            .foregroundStyle(tint)
                             .monospacedDigit()
                             .lineLimit(1)
                             .minimumScaleFactor(0.6)
@@ -266,8 +269,8 @@ struct BypassRing: View {
                 }
             }
             .accessibilityElement(children: .ignore)
-            .accessibilityLabel("Bypass, \(AutopilotText.timeLeft(until: until, now: now))")
-            .accessibilityIdentifier("bypassClock")
+            .accessibilityLabel("\(name), \(AutopilotText.timeLeft(until: until, now: now))")
+            .accessibilityIdentifier(identifier)
         }
     }
 }

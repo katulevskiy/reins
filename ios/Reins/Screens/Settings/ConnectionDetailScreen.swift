@@ -97,15 +97,18 @@ private struct ConnectionAutopilotIfRead: View {
     }
 }
 
-/// The Autopilot part of an AI's page: like every AI or its own mode (Manual, Auto) in a segmented control, then a
-/// bypass for just this AI (the bypass sheet, held to confirm) and a lockdown for just this AI (a tap).
+/// The Autopilot part of an AI's page: like every AI or its own mode (Manual, Auto) in a segmented control, then an
+/// Overnight and a bypass for just this AI (their sheets, held to confirm) and a lockdown for just this AI (a tap).
 private struct ConnectionAutopilotGroup: View {
     var connection: ConnectionView
     var settings: AutopilotSettings
     @Environment(AppModel.self) private var model
     @Environment(\.feedback) private var feedback
     @State private var askBypass = false
+    @State private var askOvernight = false
     @State private var error: String?
+    /// Overnight starts and stops as on the Autopilot page (the owner's check, the mode it interrupted).
+    @State private var ap = AutopilotModel()
 
     private var own: ConnectionAutopilot? { settings.connections.first { $0.connectionId == connection.id } }
     private var mode: AutopilotMode { own?.mode ?? settings.mode }
@@ -125,6 +128,7 @@ private struct ConnectionAutopilotGroup: View {
         Section {
             VStack(alignment: .leading, spacing: 12) {
                 segments
+                overnightButton
                 HStack(spacing: 8) {
                     bypassButton
                     lockButton
@@ -135,7 +139,7 @@ private struct ConnectionAutopilotGroup: View {
                         .foregroundStyle(Palette.warning)
                         .accessibilityIdentifier("connectionModeLine")
                 }
-                if let error {
+                if let error = error ?? ap.error {
                     FormBanner(text: error).accessibilityIdentifier("connAutopilotError")
                 }
             }
@@ -153,6 +157,16 @@ private struct ConnectionAutopilotGroup: View {
             .environment(\.feedback, feedback)
         }
         .presentationFeedback(askBypass)
+        .sheet(isPresented: $askOvernight) {
+            OvernightSheet(who: label, ap: ap) { length in
+                feedback.quietClose()
+                error = nil
+                Task { await ap.startOvernight(connectionId: connection.id, minutes: length.minutes, label: label) }
+            }
+            .environment(\.feedback, feedback)
+        }
+        .presentationFeedback(askOvernight)
+        .onAppear { ap.bind(model) }
     }
 
     private var segments: some View {
@@ -220,6 +234,39 @@ private struct ConnectionAutopilotGroup: View {
         }
     }
 
+    /// Overnight for just this AI, or, while it runs, Stop with the time it has left. Words only to stop, as a bypass.
+    @ViewBuilder private var overnightButton: some View {
+        if let until = own?.overnightUntil {
+            Button {
+                error = nil
+                Task { await ap.stopOvernight(connection.id) }
+            } label: {
+                Group {
+                    if AutopilotText.isUntilOff(until) {
+                        Text("Stop \(AutopilotText.overnightName) · until off")
+                    } else {
+                        TimelineView(.periodic(from: .now, by: 15)) { ctx in
+                            Text("Stop \(AutopilotText.overnightName) · " + AutopilotText.timeLeft(until: until, now: nowSeconds(ctx.date)))
+                        }
+                    }
+                }
+                .modePill(fill: Palette.overnight.opacity(0.16), text: Palette.overnight)
+            }
+            .buttonStyle(.plain)
+            .accessibilityIdentifier("stopConnectionOvernight")
+        } else {
+            Button {
+                feedback.play(.tap)
+                askOvernight = true
+            } label: {
+                Label(AutopilotText.overnightName, systemImage: AutopilotText.overnightSymbol)
+                    .modePill(fill: Palette.overnight.opacity(0.12), text: Palette.overnight)
+            }
+            .buttonStyle(.plain)
+            .accessibilityIdentifier("connMode:OVERNIGHT")
+        }
+    }
+
     @ViewBuilder private var lockButton: some View {
         if chosen == .lockdown {
             Button {
@@ -247,6 +294,8 @@ private struct ConnectionAutopilotGroup: View {
     private func setMode(_ new: AutopilotMode?) {
         if let event = SettingsText.modeChangeEvent(mode, new ?? settings.mode) { feedback.play(event) }
         let id = connection.id
+        // Leaving its Overnight by picking another mode: what it interrupted no longer matters.
+        if own?.baseMode == .overnight { OvernightReturn.forget(id) }
         model.patchAutopilot { $0.applyMode(new, minutes: 0, connectionId: id) }
         run {
             try await model.core.setAutopilotMode(connectionId: id, mode: new, minutes: nil)
@@ -269,12 +318,12 @@ private struct ConnectionAutopilotGroup: View {
         }
     }
 
-    /// Ends this AI's bypass: it goes back to its own setting.
+    /// Ends this AI's bypass: it goes back to its own setting (an Overnight under it carries on until its end).
     private func stopBypass() {
         feedback.play(.bypassOff)
-        let (id, base) = (connection.id, own?.baseMode)
-        model.patchAutopilot { $0.applyMode(base, minutes: 0, connectionId: id) }
-        run { try await model.core.setAutopilotMode(connectionId: id, mode: base, minutes: nil) }
+        let (id, s) = (connection.id, settings)
+        model.patchAutopilot { $0.applyBypassEnd(connectionId: id) }
+        run { try await model.endBypass(id, in: s) }
     }
 
     private func run(_ work: @escaping () async throws -> Void) {
