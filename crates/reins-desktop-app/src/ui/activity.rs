@@ -1,36 +1,49 @@
-//! Activity: this computer's log of requests (journal) as a list and the request picked in it. The list has what waits
-//! for the phone first, then the days; a filter picks outcomes and kinds. The detail is the phone's hero (who →
-//! what, one sentence, how it ended and where), the values (asked, answered in, the command or tool) and the detail
-//! in a mono well.
+//! Activity (`Desk-Activity.png`): this computer's log of requests (journal) as a list, and the request picked in it
+//! as a plate beside. The list has what waits for the phone first, then the days; its filter is an inverse button
+//! that opens a menu of outcomes and kinds, each outcome with how many. The plate: the kind tile and the label line
+//! with the time, the request in the serif with its target in italic, how it ended and where, the facts as rows, and
+//! the request as a terminal showed it, in a mono well.
+
+use std::time::{Duration, Instant};
 
 use gpui::prelude::FluentBuilder as _;
 use gpui::{
-    AnyElement, Context, FontWeight, InteractiveElement as _, IntoElement, ParentElement as _, SharedString,
-    StatefulInteractiveElement as _, Styled as _, anchored, deferred, div, point, px, relative,
+    Anchor, AnyElement, Context, Div, FontWeight, InteractiveElement as _, IntoElement, ParentElement as _,
+    SharedString, Stateful, StatefulInteractiveElement as _, Styled as _, div, px,
 };
 use reins_desktop::journal::{Decider, Entry, Kind, Outcome};
 
-use super::icons::{Icon, Mark};
-use super::parts::{
-    Btn, btn, btn_icon, caption, card, chip, empty, empty_state, filter_chip, fine, group_title, help, info_row,
-    phone_qr, popover, ring, sentence, stage, well,
-};
-use super::sidebar::clock_left;
-use super::story::{Story, answer};
-use super::{Data, ROWS, Root};
+use super::home::label_line;
+use super::icons::{Glyph, glyph};
+use super::parts::{fact_rows, italic, phone_qr};
+use super::story::{Fact, Story, answer, facts, transcript};
+use super::{Data, ROWS, Root, kit};
+use crate::backend::ACTIVITY_LIMIT;
 use crate::format;
 use crate::model::Model;
-use crate::theme::{MONO, Palette, SERIF, Tone};
+use crate::theme::{MONO, Palette, SERIF, SignalText as _};
 
-/// The outcome filters, in order.
-const OUTCOMES: [(Option<Outcome>, &str); 6] = [
+/// The outcome filters, in order: the board's, then the rarer ones (shown when there are some).
+const OUTCOMES: [(Option<Outcome>, &str); 8] = [
     (None, "All"),
-    (Some(Outcome::Waiting), "Waiting"),
     (Some(Outcome::Approved), "Approved"),
     (Some(Outcome::Denied), "Denied"),
     (Some(Outcome::TimedOut), "Timed out"),
+    (Some(Outcome::Allowed), "Allowed by rules"),
+    (Some(Outcome::Waiting), "Waiting"),
     (Some(Outcome::Failed), "Failed"),
+    (Some(Outcome::Blocked), "Blocked"),
 ];
+
+/// The kind filters, in the board's order.
+const KINDS: [Kind; 8] =
+    [Kind::Git, Kind::Command, Kind::File, Kind::Ssh, Kind::Api, Kind::Secrets, Kind::Mcp, Kind::Ask];
+
+/// How many of [`OUTCOMES`] always show.
+const ALWAYS: usize = 5;
+
+/// A menu closed by a press outside it: a press on its trigger right then does not open it again.
+pub const REOPEN_GUARD: Duration = Duration::from_millis(250);
 
 /// Whether `e` passes the filters (`None`: any).
 #[must_use]
@@ -38,7 +51,7 @@ pub fn matches(e: &Entry, outcome: Option<Outcome>, kind: Option<Kind>) -> bool 
     outcome.is_none_or(|o| e.outcome == o) && kind.is_none_or(|k| e.kind == k)
 }
 
-/// Who decided, in a few words; nothing when the phone answered (the usual, and the chip says how).
+/// Who decided, in a few words; nothing when the phone answered (the usual, and the verdict says how).
 #[must_use]
 pub fn decided(e: &Entry) -> Option<&'static str> {
     match (e.decider, e.outcome) {
@@ -65,22 +78,47 @@ pub fn day(now: i64, at: i64) -> String {
 
 /// The filter button's label: what it shows.
 fn filter_label(outcome: Option<Outcome>, kind: Option<Kind>) -> String {
+    let name = |o: Outcome| OUTCOMES.iter().find(|(x, _)| *x == Some(o)).map_or(o.label(), |(_, l)| l);
     match (outcome, kind) {
         (None, None) => "All".to_owned(),
-        (Some(o), None) => o.label().to_owned(),
+        (Some(o), None) => name(o).to_owned(),
         (None, Some(k)) => k.label().to_owned(),
-        (Some(o), Some(k)) => format!("{} · {}", o.label(), k.label()),
+        (Some(o), Some(k)) => format!("{} · {}", name(o), k.label()),
     }
 }
 
-/// "Today, 14:32:05".
-fn asked_at(now: i64, at: i64) -> String {
-    let when = format::when(now, at);
-    when.strip_prefix("today ").map_or(when.clone(), |time| format!("Today, {time}"))
+/// The list's last line: "3 of 142 · newest 500 are kept here".
+fn footer(shown: usize, total: usize) -> String {
+    format!("{shown} of {total} · newest {ACTIVITY_LIMIT} are kept here")
+}
+
+/// A filter's choice in the menu: its label and how many (mono), `inverse` when picked.
+fn choice(id: impl Into<gpui::ElementId>, label: &str, count: Option<usize>, on: bool, pal: Palette) -> Stateful<Div> {
+    div()
+        .id(id.into())
+        .flex()
+        .flex_none()
+        .items_center()
+        .gap(px(6.0))
+        .h(px(30.0))
+        .px(px(11.0))
+        .rounded_full()
+        .text_size(px(13.0))
+        .font_weight(FontWeight::MEDIUM)
+        .whitespace_nowrap()
+        .cursor_pointer()
+        .active(|s| s.opacity(kit::button::PRESSED))
+        .when_else(
+            on,
+            |c| c.bg(pal.inverse()).text_color(pal.on_inverse()),
+            |c| c.bg(pal.paper_sunken()).text_color(pal.ink_2()).hover(|s| s.text_color(pal.ink())),
+        )
+        .child(label.to_owned())
+        .when_some(count, |c, n| c.child(div().font_family(MONO).text_size(px(11.5)).opacity(0.7).child(n.to_string())))
 }
 
 impl Root {
-    pub(super) fn activity(&mut self, d: &Data, pal: Palette, top: f32, cx: &mut Context<'_, Self>) -> AnyElement {
+    pub(super) fn activity(&mut self, d: &Data, pal: Palette, cx: &mut Context<'_, Self>) -> AnyElement {
         let all = d.activity();
         let (outcome, kind) = (self.outcome_filter, self.kind_filter);
         let shown: Vec<&Entry> = all.iter().filter(|e| matches(e, outcome, kind)).collect();
@@ -98,145 +136,114 @@ impl Root {
         let header = div()
             .flex()
             .items_center()
-            .gap(px(10.0))
-            .child(
-                div()
-                    .flex_1()
-                    .min_w(px(0.0))
-                    .text_size(px(44.0))
-                    .line_height(px(44.0))
-                    .font_family(SERIF)
-                    .font_weight(FontWeight::NORMAL)
-                    .child("Activity"),
-            )
-            .child(help(
-                "activity",
-                "Everything asked for on this computer, and how it ended. Approving always happens on your phone; \
-                 Reins only keeps the record here, the newest 500.",
-                d,
-                pal,
-                cx,
-            ))
+            .gap(px(12.0))
+            .child(div().flex_1().min_w(px(0.0)).title().text_color(pal.ink()).child("Activity"))
             .when(!all.is_empty(), |h| h.child(self.filter_button(all, pal, cx)));
 
-        let mut list = div().flex().flex_col().gap(px(8.0)).child(header);
+        let mut list = div().flex().flex_col().gap(px(16.0)).child(header);
         if all.is_empty() {
-            list = list.child(
-                card(pal)
-                    .mt(px(10.0))
-                    .child(empty_state(
-                        Icon::Activity,
-                        "Nothing asked yet",
-                        Some(help(
-                            "activity-empty",
-                            "When an AI agent, git or ssh on this computer asks for something, it shows up here: what \
-                             it was, who asked, and how your phone answered. Send a test to see one arrive.",
-                            d,
-                            pal,
-                            cx,
-                        )),
-                        pal,
-                    ))
-                    .child(div().border_t_1().border_color(pal.rule()).child(Self::test_panel(d, true, pal, cx))),
-            );
+            list = list
+                .child(kit::empty_state("Nothing asked yet.", 280.0, pal))
+                .child(kit::plate(pal).p(px(0.0)).child(Self::test_panel(d, true, pal, cx)));
         } else if total == 0 {
-            list = list.child(card(pal).mt(px(10.0)).child(empty("No matches", pal)));
+            list = list.child(div().text_size(px(13.0)).text_color(pal.ink_meta()).child("No matches"));
         } else {
-            let open = |e: &Entry| {
-                let id = e.id.clone();
-                move |this: &mut Self, _: &mut Context<'_, Self>| this.selected = Some(id.clone())
-            };
             let sel = selected.map(|e| e.id.clone());
+            let mut groups: Vec<(String, Vec<&Entry>)> = Vec::new();
             if !waiting.is_empty() {
-                let mut c = card(pal);
-                for (i, e) in waiting.iter().enumerate() {
-                    c = c.child(
-                        Self::history_row(e, "activity", d, pal, i == 0, sel.as_ref() == Some(&e.id))
-                            .on_click(Self::on_view(cx, open(e))),
-                    );
-                }
-                list = list.child(group_title("Waiting", pal).mt(px(10.0))).child(c);
+                groups.push(("Waiting".to_owned(), waiting));
             }
-            let mut days: Vec<(String, Vec<&Entry>)> = Vec::new();
             for e in rest {
                 let label = day(d.now, e.at);
-                match days.last_mut() {
+                match groups.last_mut() {
                     Some((l, entries)) if *l == label => entries.push(e),
-                    _ => days.push((label, vec![e])),
+                    _ => groups.push((label, vec![e])),
                 }
             }
-            for (label, entries) in days {
-                let mut c = card(pal);
+            let mut body = div().flex().flex_col().gap(px(18.0));
+            for (label, entries) in groups {
+                let mut rows = div().flex().flex_col().mt(px(6.0));
                 for (i, e) in entries.iter().enumerate() {
-                    c = c.child(
-                        Self::history_row(e, "activity", d, pal, i == 0, sel.as_ref() == Some(&e.id))
-                            .on_click(Self::on_view(cx, open(e))),
+                    let id = e.id.clone();
+                    let picked = sel.as_ref() == Some(&e.id);
+                    rows = rows.child(
+                        Self::entry_row(e, "activity", d, pal, i + 1 == entries.len(), Some(picked))
+                            .on_click(Self::on_view(cx, move |this, _| this.selected = Some(id.clone()))),
                     );
                 }
-                list = list.child(group_title(&label, pal).mt(px(10.0))).child(c);
+                body = body.child(div().flex().flex_col().child(kit::section_label(label, pal)).child(rows));
             }
+            let mut foot = div().flex().items_center().gap(px(12.0)).child(
+                div()
+                    .flex_1()
+                    .text_size(px(12.5))
+                    .text_color(pal.ink_meta())
+                    .child(footer(total.min(self.rows_shown), all.len())),
+            );
             if total > self.rows_shown {
-                list = list.child(
-                    div()
-                        .flex()
-                        .items_center()
-                        .gap(px(12.0))
-                        .pt(px(6.0))
-                        .child(fine(format!("{} of {total}", self.rows_shown), pal).flex_1())
-                        .child(
-                            btn("more", "Show more", Btn::Plain, pal)
-                                .on_click(Self::on_view(cx, |this, _| this.rows_shown += ROWS)),
-                        ),
+                foot = foot.child(
+                    kit::button("more", kit::Look::Soft, kit::Size::Small, None, "Show more", pal)
+                        .on_click(Self::on_view(cx, |this, _| this.rows_shown += ROWS)),
                 );
-            } else {
-                list =
-                    list.child(fine(format::count(total as u64, "request", "requests"), pal).px(px(4.0)).pt(px(4.0)));
             }
+            list = list.child(body.child(foot));
         }
 
-        let left = div()
-            .id("activity-list")
-            .flex_1()
-            .min_w(px(260.0))
-            .h_full()
-            .overflow_y_scroll()
-            .child(div().px(px(28.0)).pt(px(top)).pb(px(30.0)).child(list));
-        let Some(e) = selected else {
-            return div().size_full().flex().child(left).into_any_element();
-        };
-        let detail_bg = if pal.dark {
-            gpui::rgb(0x0009_090B).into()
-        } else {
-            pal.paper().blend(gpui::white().opacity(0.5))
-        };
-        let right = div()
-            .id("activity-detail")
-            .w(relative(0.47))
-            .min_w(px(260.0))
-            .max_w(px(540.0))
-            .h_full()
-            .overflow_y_scroll()
-            .bg(detail_bg)
-            .border_l_1()
-            .border_color(pal.rule())
-            .child(div().px(px(26.0)).pt(px(top)).pb(px(30.0)).child(Self::entry_detail(e, d, pal, cx)));
-        div().size_full().flex().child(left).child(right).into_any_element()
+        let page =
+            div().flex().flex_wrap().items_start().gap(px(32.0)).child(div().flex_1().min_w(px(360.0)).child(list));
+        match selected {
+            Some(e) => page.child(div().flex_1().min_w(px(360.0)).child(Self::entry_detail(e, d, pal, cx))),
+            None => page,
+        }
+        .into_any_element()
     }
 
-    /// The filter button and, while open, its popover: outcomes, then kinds, each with how many.
+    /// The filter: an inverse button, and while open its menu of outcomes and kinds.
     fn filter_button(&self, all: &[Entry], pal: Palette, cx: &mut Context<'_, Self>) -> AnyElement {
         let (outcome, kind) = (self.outcome_filter, self.kind_filter);
-        let filtered = outcome.is_some() || kind.is_some();
-        let mut b = btn_icon("activity-filter", Icon::ListFilter, filter_label(outcome, kind), Btn::Plain, pal)
-            .when(filtered, |b| b.bg(pal.violet().opacity(0.12)).text_color(pal.violet()))
-            .on_click(Self::on_view(cx, |this, _| this.filter_open = !this.filter_open));
-        if !self.filter_open {
-            return b.into_any_element();
+        let open = self.filter_open;
+        let trigger = div()
+            .id("activity-filter")
+            .relative()
+            .flex()
+            .flex_none()
+            .items_center()
+            .gap(px(7.0))
+            .h(px(36.0))
+            .px(px(14.0))
+            .rounded_full()
+            .bg(pal.inverse())
+            .text_color(pal.on_inverse())
+            .text_size(px(13.5))
+            .font_weight(FontWeight::SEMIBOLD)
+            .whitespace_nowrap()
+            .cursor_pointer()
+            .active(|s| s.opacity(kit::button::PRESSED))
+            .child(glyph(Glyph::Filter, 16.0, pal.on_inverse()))
+            .child(filter_label(outcome, kind))
+            .child(glyph(
+                if open {
+                    Glyph::ChevronUp
+                } else {
+                    Glyph::ChevronDown
+                },
+                14.0,
+                pal.on_inverse(),
+            ))
+            .on_click(Self::on_view(cx, |this, _| {
+                let just_closed = this.menu_closed.is_some_and(|at| at.elapsed() < REOPEN_GUARD);
+                this.filter_open = !this.filter_open && !just_closed;
+            }));
+        if !open {
+            return trigger.into_any_element();
         }
         let mut outcomes = div().flex().flex_wrap().gap(px(6.0));
         for (i, (o, label)) in OUTCOMES.into_iter().enumerate() {
             let n = all.iter().filter(|e| matches(e, o, kind)).count();
-            outcomes = outcomes.child(filter_chip(("outcome", i), label, Some(n), outcome == o, pal).on_click(
+            if i >= ALWAYS && n == 0 && outcome != o {
+                continue;
+            }
+            outcomes = outcomes.child(choice(("outcome", i), label, Some(n), outcome == o, pal).on_click(
                 Self::on_view(cx, move |this, _| {
                     this.outcome_filter = o;
                     this.rows_shown = ROWS;
@@ -244,179 +251,162 @@ impl Root {
             ));
         }
         let mut kinds = div().flex().flex_wrap().gap(px(6.0)).child(
-            filter_chip("kind-all", "All kinds", None, kind.is_none(), pal).on_click(Self::on_view(cx, |this, _| {
+            choice("kind-all", "All kinds", None, kind.is_none(), pal).on_click(Self::on_view(cx, |this, _| {
                 this.kind_filter = None;
                 this.rows_shown = ROWS;
             })),
         );
-        for (i, k) in Kind::ALL.into_iter().enumerate() {
-            let n = all.iter().filter(|e| matches(e, outcome, Some(k))).count();
-            kinds = kinds.child(filter_chip(("kind", i), k.label(), Some(n), kind == Some(k), pal).on_click(
-                Self::on_view(cx, move |this, _| {
+        for (i, k) in KINDS.into_iter().enumerate() {
+            kinds = kinds.child(choice(("kind", i), k.label(), None, kind == Some(k), pal).on_click(Self::on_view(
+                cx,
+                move |this, _| {
                     this.kind_filter = Some(k);
                     this.rows_shown = ROWS;
-                }),
-            ));
+                },
+            )));
         }
-        let pop = popover(pal)
-            .w(px(360.0))
+        let menu = kit::menu(pal)
+            .w(px(340.0))
+            .p(px(16.0))
             .gap(px(12.0))
-            .child(group_title("Outcome", pal).px(px(0.0)))
+            .child(kit::section_label("Outcome", pal))
             .child(outcomes)
-            .child(group_title("Kind", pal).px(px(0.0)))
-            .child(kinds);
-        b = b.on_mouse_down_out(cx.listener(|this, _, _, cx| {
-            this.filter_open = false;
-            cx.notify();
-        }));
-        b.relative()
-            .child(
-                div().absolute().top_0().right_0().size_0().child(
-                    deferred(
-                        anchored().offset(point(px(-360.0), px(40.0))).snap_to_window_with_margin(px(12.0)).child(pop),
-                    )
-                    .with_priority(1),
-                ),
-            )
-            .into_any_element()
+            .child(kit::section_label("Kind", pal).mt(px(4.0)))
+            .child(kinds)
+            .on_mouse_down_out(cx.listener(|this, _, _, cx| {
+                this.filter_open = false;
+                this.menu_closed = Some(Instant::now());
+                cx.notify();
+            }));
+        trigger.child(kit::open_menu("activity-filter-menu", menu, Anchor::TopRight)).into_any_element()
     }
 
-    /// One request, as the phone shows it.
+    /// One request, as a plate: the kind tile and the label line, the request in the serif, how it ended, the facts
+    /// and the transcript.
     fn entry_detail(e: &Entry, d: &Data, pal: Palette, cx: &mut Context<'_, Self>) -> AnyElement {
-        let mut s = Story::of(e);
-        if s.target == Mark::Icon(Icon::GitBranch)
-            && let Some(b) = d.git_host_mark()
-        {
-            s.target = Mark::Brand(b);
-        }
-        let color = if s.tone == Tone::Neutral {
-            pal.violet()
-        } else {
-            pal.tone(s.tone)
-        };
+        let s = Story::of(e);
         let (ic, tone, said) = answer(e, &d.phone());
-        let mut hero = div()
+        let verdict = pal.tone(tone);
+        let mark = match e.outcome {
+            Outcome::Denied | Outcome::Blocked => Glyph::Close,
+            Outcome::Approved | Outcome::Allowed => Glyph::Check,
+            _ => ic.glyph(),
+        };
+        let mut plate = div()
             .flex()
             .flex_col()
-            .items_center()
-            .gap(px(12.0))
-            .p(px(18.0))
-            .rounded(px(18.0))
+            .gap(px(14.0))
+            .px(px(28.0))
+            .py(px(26.0))
+            .rounded(px(24.0))
             .bg(pal.paper_raised())
             .border_1()
             .border_color(pal.rule())
-            .child(stage(s.agent, s.target, Some((s.badge, color)), color, 46.0, pal))
             .child(
                 div()
-                    .w_full()
-                    .text_center()
+                    .flex()
+                    .items_center()
+                    .gap(px(10.0))
+                    .child(kit::kind_tile(s.icon.glyph(), s.tone, 40.0, pal).rounded(px(12.0)))
+                    .child(kit::section_label(format!("{} · {}", label_line(&s), format::when(d.now, e.at)), pal)),
+            )
+            .child(
+                div()
                     .font_family(SERIF)
-                    .text_size(px(26.0))
-                    .line_height(px(30.0))
-                    .font_weight(FontWeight::NORMAL)
+                    .text_size(px(38.0))
+                    .line_height(px(40.0))
                     .text_color(pal.ink())
-                    .child(sentence(&s.sentence, pal)),
+                    .child(italic(&s.sentence)),
             )
             .child(
                 div()
                     .flex()
-                    .flex_wrap()
-                    .justify_center()
+                    .items_center()
                     .gap(px(8.0))
-                    .when_some(s.risk, |c, risk| c.child(chip(Some(Icon::TriangleAlert), risk, color)))
-                    .child(chip(Some(ic), said, pal.tone(tone))),
+                    .text_size(px(14.5))
+                    .font_weight(FontWeight::MEDIUM)
+                    .text_color(verdict)
+                    .child(glyph(mark, 16.0, verdict))
+                    .child(said),
             );
         if e.outcome == Outcome::Waiting {
             let (total, left) = d.wait_left(e);
-            #[allow(clippy::cast_precision_loss, reason = "minutes of seconds")]
-            let fraction = left as f32 / total as f32;
-            hero = hero.child(
+            plate = plate.child(
                 div()
                     .flex()
                     .flex_wrap()
-                    .justify_center()
                     .items_center()
-                    .gap(px(10.0))
+                    .gap(px(12.0))
                     .child(
                         div()
                             .flex()
                             .items_center()
-                            .gap(px(7.0))
-                            .h(px(32.0))
-                            .pl(px(8.0))
-                            .pr(px(11.0))
-                            .rounded_full()
-                            .bg(pal.paper_sunken())
-                            .text_size(px(13.0))
-                            .font_weight(FontWeight::SEMIBOLD)
-                            .text_color(pal.ink_2())
-                            .child(ring(fraction, pal.ink_2(), pal.rule(), 18.0, 2.4))
-                            .child(clock_left(left)),
+                            .gap(px(6.0))
+                            .font_family(MONO)
+                            .text_size(px(14.0))
+                            .child(kit::timer(left, i64::try_from(total).unwrap_or(i64::MAX), pal.ink()))
+                            .when(left >= 15, |t| t.child("left")),
                     )
                     .child(
-                        btn_icon(
+                        kit::button(
                             "detail-qr",
-                            Icon::QrCode,
+                            kit::Look::Soft,
+                            kit::Size::Small,
+                            Some(Glyph::QrCode),
                             if d.show_qr {
                                 "Hide code"
                             } else {
                                 "Open on phone"
                             },
-                            Btn::Plain,
                             pal,
                         )
                         .on_click(Self::on_model(cx, Model::toggle_phone_qr)),
                     ),
             );
+            if d.show_qr {
+                plate = plate.child(phone_qr(pal));
+            }
         }
 
-        let mut facts = card(pal).child(info_row("Asked", asked_at(d.now, e.at), pal, true));
+        let fact = |key: &str, value: String| Fact {
+            key: key.to_owned(),
+            value,
+            mono: false,
+        };
+        let mut rows = Vec::new();
         if let Some(end) = e.ended_at {
-            let label = match e.outcome {
+            let key = match e.outcome {
                 Outcome::Approved | Outcome::Denied => "Answered in",
                 Outcome::TimedOut => "Waited",
                 _ => "Took",
             };
-            facts = facts.child(info_row(label, format::duration(end - e.at), pal, false));
+            rows.push(fact(key, format::duration(end - e.at)));
         } else if e.outcome == Outcome::Waiting {
-            facts = facts.child(info_row("Waiting", format::duration(d.now - e.at), pal, false));
+            rows.push(fact("Waiting", format::duration(d.now - e.at)));
         }
         if let Some(who) = decided(e).filter(|_| e.decider != Decider::Phone) {
-            facts = facts.child(info_row("Decided", who, pal, false));
+            rows.push(fact("Decided", who.to_owned()));
         }
-        if let Some((label, value)) = s.fact {
-            facts = facts.child(info_row(
-                label,
-                div().min_w(px(0.0)).truncate().font_family(MONO).text_size(px(12.5)).child(value),
-                pal,
-                false,
-            ));
+        rows.extend(facts(e).0);
+        plate = plate.child(fact_rows(&rows, 0.0, Some(120.0), pal));
+
+        let mut well = div()
+            .flex()
+            .flex_col()
+            .px(px(16.0))
+            .py(px(14.0))
+            .rounded(px(14.0))
+            .bg(pal.paper())
+            .font_family(MONO)
+            .text_size(px(12.5))
+            .line_height(px(19.0))
+            .text_color(pal.ink_2())
+            .min_w(px(0.0))
+            .overflow_hidden();
+        for line in transcript(e, &d.phone()) {
+            well = well.child(div().min_w(px(0.0)).child(SharedString::from(line)));
         }
-        let mut page = div().flex().flex_col().gap(px(12.0)).child(hero);
-        if d.show_qr {
-            page = page.child(phone_qr(pal));
-        }
-        page = page.child(facts);
-        if let Some(reason) = &e.reason {
-            let color = if matches!(e.outcome, Outcome::Denied | Outcome::Failed | Outcome::Blocked) {
-                pal.danger
-            } else {
-                pal.ink_2()
-            };
-            page = page.child(caption(reason.clone(), pal).px(px(4.0)).text_color(color));
-        }
-        if let Some(detail) = &e.detail {
-            let mut w = well(pal);
-            for line in detail.lines() {
-                w = w.child(if line.trim().is_empty() {
-                    div().h(px(6.0))
-                } else {
-                    div().min_w(px(0.0)).child(SharedString::from(line.to_owned()))
-                });
-            }
-            page = page.child(w);
-        }
-        page.into_any_element()
+        plate.child(well).into_any_element()
     }
 }
 
@@ -446,6 +436,7 @@ mod tests {
         assert_eq!(count(Some(Outcome::TimedOut), None), 0);
         assert_eq!(filter_label(None, None), "All");
         assert_eq!(filter_label(Some(Outcome::Denied), Some(Kind::Git)), "Denied · git");
+        assert_eq!(filter_label(Some(Outcome::Allowed), None), "Allowed by rules");
     }
 
     #[test]
@@ -464,12 +455,18 @@ mod tests {
         assert_eq!(day(now, now - 60), "Today");
         assert_eq!(day(now, format::start_of_day(now) - 60), "Yesterday");
         assert_eq!(day(now, now - 5 * 86_400), format::date(now - 5 * 86_400));
-        assert!(asked_at(now, now - 60).starts_with("Today, "));
     }
 
+    /// The board's outcomes come first, every outcome has a filter, and the list says how much is kept.
     #[test]
-    fn outcome_filters_start_with_all() {
+    fn outcome_filters_start_with_the_boards() {
         assert_eq!(OUTCOMES[0], (None, "All"));
-        assert!(OUTCOMES[1..].iter().all(|(o, label)| o.is_some_and(|o| o.label() == *label)));
+        let labels: Vec<&str> = OUTCOMES[..ALWAYS].iter().map(|(_, l)| *l).collect();
+        assert_eq!(labels, ["All", "Approved", "Denied", "Timed out", "Allowed by rules"]);
+        let outcomes: std::collections::HashSet<_> = OUTCOMES.iter().filter_map(|(o, _)| *o).collect();
+        assert_eq!(outcomes.len(), OUTCOMES.len() - 1);
+        assert_eq!(footer(3, 142), "3 of 142 · newest 500 are kept here");
+        let kinds: std::collections::HashSet<_> = KINDS.into_iter().collect();
+        assert!(Kind::ALL.iter().all(|k| kinds.contains(k)), "every kind has a filter");
     }
 }
