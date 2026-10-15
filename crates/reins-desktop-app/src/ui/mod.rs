@@ -447,6 +447,13 @@ impl Render for Root {
             self.help = None;
             self.filter_open = false;
         }
+        // The tray's "Until I resume…": the pause sheet, there, to be held.
+        if self.model.read(cx).pause_hold_asked {
+            self.model.update(cx, |m, _| m.pause_hold_asked = false);
+            self.pause_sheet = true;
+            self.pause_choice = PauseFor::Manual;
+            self.hold = None;
+        }
         let mut d = Data::of(self.model.read(cx));
         d.help = self.help;
         d.gallery = self.gallery && d.demo;

@@ -188,6 +188,8 @@ pub struct Model {
     pub note: Option<String>,
     /// The QR code that opens Activity on the phone is showing.
     pub show_phone_qr: bool,
+    /// The tray's "Until I resume…": the window opens its pause sheet there, to be held.
+    pub pause_hold_asked: bool,
     /// "Other server" is open.
     pub show_server: bool,
     pub server_input: String,
@@ -329,6 +331,7 @@ impl Model {
                 notice: None,
                 note: None,
                 show_phone_qr: false,
+                pause_hold_asked: false,
                 show_server: false,
                 autostart: autostart::enabled(&home),
                 cli_installed: args_demo || backend_cli,
@@ -405,6 +408,13 @@ impl Model {
                         cx.notify();
                     }
                 }
+                cx.defer(Self::show_window);
+            }
+            // Until resumed is held to confirm, in the window's pause sheet.
+            Action::Pause(PauseFor::Manual) if self.screen == Screen::Status => {
+                self.pause_hold_asked = true;
+                self.show_phone_qr = false;
+                cx.notify();
                 cx.defer(Self::show_window);
             }
             Action::Pause(length) => self.pause_for(length, cx),
@@ -660,9 +670,13 @@ impl Model {
         let paused = look == Look::Paused;
         let now = reins_desktop::now_unix();
         let session = self.snapshot.as_ref().and_then(|s| work::running(s.work_session.as_ref(), now));
+        let phone = self.saved.phone.clone().unwrap_or_else(|| "Your phone".to_owned());
+        let (status, detail) =
+            crate::tray::status_lines(look, work::tray_line(look, status, session, now), &phone, self.pause().short(now));
         let shown = Shown {
             look,
-            status: work::tray_line(look, status, session, now),
+            status,
+            detail,
             can_pause: self.paired() && !paused,
             can_resume: self.paired() && paused,
             can_end: session.is_some() && !self.work.ending,
