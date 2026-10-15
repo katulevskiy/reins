@@ -278,7 +278,7 @@ class PasswordlessFlowTest : FlowHarness() {
         awaitTag("joinCode")
         rule.onNodeWithTag("joinCode").assertTextEquals("482 193")
         assertEquals(listOf(Build.MODEL), core.joinBegins.toList())
-        assertTrue(showsText("Check that your other phone shows"))
+        assertTrue(showsText("Approve this one only if your other phone shows the same code."))
         assertTrue(core.registrations.isEmpty())
         repeat(3) { pollOnce() }
         recordRecovery()
@@ -377,7 +377,8 @@ class PasswordlessFlowTest : FlowHarness() {
         while (nextStarted() != null) { /* the first sign-in's page */ }
         tap("resetVault")
         awaitTag("confirmReset")
-        tap("confirmReset")
+        // Starting over is held, never tapped.
+        hold("confirmReset")
         rule.waitUntil(10_000) { container.ssoSignIn.pending()?.purpose == SsoPurpose.Reset }
     }
 
@@ -540,7 +541,7 @@ class PasswordlessFlowTest : FlowHarness() {
         awaitTag("recoveryCodeSheet")
         assertEquals(2, prompts.get())
         assertTrue(showsText("ABCD EFGH IJKL MNOP", substring = true))
-        assertTrue(showsText("Write it down", substring = true))
+        assertTrue(showsText("Write down your recovery code", substring = true))
         tap("recoveryCode")
         val clip = context.getSystemService(ClipboardManager::class.java).primaryClip
         assertEquals(FakeCore.RECOVERY_CODE, clip?.getItemAt(0)?.text?.toString())
