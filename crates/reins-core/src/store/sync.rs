@@ -37,9 +37,9 @@ pub(crate) type Upload = (u64, Zeroizing<Vec<u8>>);
 pub(crate) enum Pulled {
     /// The server has nothing newer.
     Current,
-    /// This phone had nothing new: it now has the server's state.
+    /// The merge is the server's state: nothing to upload (what of this phone's the rules dropped is in the backup).
     Imported,
-    /// Both had changes: this phone has the merge, which still has to be uploaded.
+    /// The merge has something the server does not: it still has to be uploaded.
     Merged,
     /// The server's state cannot be used by this version: a notice says so and nothing changed.
     Unusable,
@@ -215,18 +215,21 @@ impl Store {
                 Some(base) => canonical_hash(&local) != canonical_hash(base),
                 None => !synced.is_some_and(|h| h == canonical_hash(&local) || h == raw_hash(&local_plain)),
             };
-            if changed {
-                let merged = merge::merge(base.as_ref(), &local, &server, super::unix_now());
-                if base.is_none() {
-                    // Nothing tells what the server's version replaced on purpose: keep this phone's as it was, inert.
-                    self.write_side(BACKUP, BACKUP, &local_plain)?;
-                }
-                snapshot::import_snapshot(&mut conn, merged.snapshot, true)?;
-                (Pulled::Merged, base.is_none() && merged.dropped_local)
-            } else {
-                snapshot::import_snapshot(&mut conn, server.clone(), true)?;
-                (Pulled::Imported, false)
+            // Always the merge, never the server's state as it is: even with nothing changed here, a grant revoked here
+            // stays revoked, and the tombstones and every other rule apply (the merge of an unchanged side is the
+            // other side, but for those).
+            let merged = merge::merge(base.as_ref(), &local, &server, super::unix_now());
+            if changed && base.is_none() {
+                // Nothing tells what the server's version replaced on purpose: keep this phone's as it was, inert.
+                self.write_side(BACKUP, BACKUP, &local_plain)?;
             }
+            let pulled = if canonical_hash(&merged.snapshot) == canonical_hash(&server) {
+                Pulled::Imported
+            } else {
+                Pulled::Merged
+            };
+            snapshot::import_snapshot(&mut conn, merged.snapshot, true)?;
+            (pulled, changed && base.is_none() && merged.dropped_local)
         };
         if replaced {
             self.meta_set(NOTICE, NOTICE_REPLACED)?;
@@ -271,6 +274,7 @@ mod tests {
     use crate::crypto::VaultKey;
     use crate::store::Owner;
     use crate::store::tests::FakeKeys;
+    use std::collections::BTreeMap;
     use std::path::Path;
     use std::sync::Arc;
 
@@ -402,7 +406,7 @@ mod tests {
         let other = Phone::new(other.path()).open();
         other.add_account("github", "from-the-other-phone", 2).unwrap();
         let pulled = store.pull(5, Some(&other.export_account().unwrap())).unwrap();
-        assert_eq!(pulled, Pulled::Merged);
+        assert_eq!(pulled, Pulled::Imported, "the server's state, nothing of this phone's left to upload");
         assert_eq!(names(&store), ["from-the-other-phone"]);
         assert_eq!(store.sync_notice().unwrap().as_deref(), Some(NOTICE_REPLACED));
         let backup = store.read_side(BACKUP, BACKUP).unwrap().expect("a sealed backup");
@@ -428,7 +432,7 @@ mod tests {
         assert_eq!(server.pull(&other), Pulled::Imported);
         other.add_account("github", "there", 3).unwrap();
         server.sync(&other);
-        assert_eq!(server.pull(&store), Pulled::Merged);
+        assert_eq!(server.pull(&store), Pulled::Imported);
         assert_eq!(names(&store), ["first", "there"]);
         assert!(store.read_side(BACKUP, BACKUP).unwrap().is_some());
         assert_eq!(store.sync_notice().unwrap().as_deref(), Some(NOTICE_REPLACED));
@@ -574,7 +578,7 @@ mod tests {
         let other = tempfile::tempdir().unwrap();
         let other = Phone::new(other.path()).open();
         other.add_account("github", "from-the-other-phone", 2).unwrap();
-        assert_eq!(store.pull(5, Some(&other.export_account().unwrap())).unwrap(), Pulled::Merged);
+        assert_eq!(store.pull(5, Some(&other.export_account().unwrap())).unwrap(), Pulled::Imported);
         assert!(store.grants().unwrap().is_empty(), "the server's state won");
         let upload = store.pending_upload().unwrap();
         assert!(
@@ -672,6 +676,114 @@ mod tests {
         assert_eq!(left, ["kept"], "the old grant only B had is dropped; the one the server has stays");
         assert!(!names(&b).contains(&"b-offline".to_owned()), "B's own extras are suspect too (kept in the backup)");
         assert!(b.read_side(BACKUP, BACKUP).unwrap().is_some());
+    }
+
+    /// The security-relevant tables and this phone's own state, as rows, for comparing before and after.
+    fn security_state(store: &Store) -> BTreeMap<String, Vec<String>> {
+        let conn = store.lock().unwrap();
+        let mut out = BTreeMap::new();
+        for (table, order) in [
+            ("grants", "id"),
+            ("accounts", "service, account"),
+            ("secrets", "service, account"),
+            ("desktop_keys", "connection_id"),
+            ("mcp_servers", "id"),
+            ("autopilot_targets", "key"),
+            ("autopilot_settings", "scope"),
+            ("pending", "id"),
+            ("handled", "id"),
+        ] {
+            let mut stmt = conn.prepare(&format!("SELECT * FROM {table} ORDER BY {order}")).unwrap();
+            let n = stmt.column_count();
+            let rows: Vec<String> = stmt
+                .query_map([], |r| {
+                    Ok((0..n)
+                        .map(|i| format!("{:?}", r.get::<_, rusqlite::types::Value>(i).unwrap()))
+                        .collect::<Vec<_>>()
+                        .join("|"))
+                })
+                .unwrap()
+                .collect::<Result<_, _>>()
+                .unwrap();
+            out.insert(table.to_owned(), rows);
+        }
+        let mut stmt = conn.prepare("SELECT key FROM meta WHERE key LIKE 'app.tombstone.%' ORDER BY key").unwrap();
+        out.insert(
+            "tombstones".to_owned(),
+            stmt.query_map([], |r| r.get(0)).unwrap().collect::<Result<_, _>>().unwrap(),
+        );
+        out
+    }
+
+    /// What protects the account comes through an app update (the migrations) and a pull unchanged, even when the
+    /// server's state is stale or was uploaded by an older version that brought back what was removed: revocations
+    /// stay, tombstones stay, removed records stay removed, lockdown stays, and this phone's own pending requests and
+    /// handled ids are untouched. Only what migration 11 drops (a topic-keyed desktop answer) goes.
+    #[test]
+    fn security_state_survives_migrations_and_imports() {
+        let dir = tempfile::tempdir().unwrap();
+        let phone = Phone::new(dir.path());
+        let store = phone.open();
+        let id = |s: &str| reins_proto::ids::GrantId(s.to_owned());
+        let g = |s: &str| crate::store::grants::tests::read_grant(s, "c1", Some(5));
+        store.insert_grant(&g("active"), "Claude").unwrap();
+        store.insert_grant(&g("revoked"), "Claude").unwrap();
+        assert!(store.revoke_grant(&id("revoked")).unwrap());
+        store.insert_grant(&g("gone"), "Claude").unwrap();
+        assert!(store.revoke_grant(&id("gone")).unwrap());
+        assert!(store.delete_ended_grant(&id("gone"), 100).unwrap());
+        store.add_account("github", "work", 1).unwrap();
+        store.secret_put("github", "work", b"token").unwrap();
+        store.pin_desktop_key("c1", "laptop-key", "Laptop", 1).unwrap();
+        store
+            .lock()
+            .unwrap()
+            .execute_batch(
+                "INSERT INTO mcp_servers (id, name, url, auth, added_at) VALUES ('m1', 'M', 'https://m.example', 'none', 1);
+                 INSERT INTO autopilot_targets (key, at) VALUES ('t1', 1);
+                 INSERT INTO autopilot_settings (scope, mode, updated_at) VALUES ('', 'lockdown', 1);
+                 INSERT INTO handled (id, at) VALUES ('h1', 1);",
+            )
+            .unwrap();
+        store.park("p1", crate::PendingKind::Request, 1, crate::store::unix_now(), b"{}").unwrap();
+        let mut server = Server::default();
+        server.sync(&store);
+        let before = security_state(&store);
+        assert_eq!(before["tombstones"], ["app.tombstone.grants:[\"gone\"]"]);
+
+        // An app update: sealed by version 10, with a topic-keyed desktop answer migration 11 drops.
+        desktop_topic_grant(&store);
+        store.lock().unwrap().execute_batch("PRAGMA user_version = 10;").unwrap();
+        store.meta_set("sealed-by", "an older version").unwrap();
+        drop(store);
+        let store = phone.open();
+        assert_eq!(security_state(&store), before, "the migrations change nothing that protects the account");
+
+        // A pull of a state that brings back what was removed or revoked (as an older version could upload it): the
+        // revoked grant active again, the deleted one back without its tombstone, the token and computer key of a
+        // later removal still there, lockdown cleared at the same time on the other phone... merged, not imported.
+        let mut stale: serde_json::Value = serde_json::from_slice(&store.export_account().unwrap()).unwrap();
+        let grants = stale["tables"]["grants"]["rows"].as_array_mut().unwrap();
+        for row in grants.iter_mut() {
+            if row[0]["Text"] == "revoked" {
+                let mut resumed: serde_json::Value = serde_json::from_str(row[4]["Text"].as_str().unwrap()).unwrap();
+                resumed["revoked"] = serde_json::json!(false);
+                row[4] = serde_json::json!({"Text": resumed.to_string()});
+            }
+        }
+        let mut back = grants[0].clone();
+        back[0] = serde_json::json!({"Text": "gone"});
+        back[4] = serde_json::json!({"Text": serde_json::to_string(&g("gone")).unwrap()});
+        grants.push(back);
+        stale["tables"]["meta"]["rows"]
+            .as_array_mut()
+            .unwrap()
+            .retain(|r| !r[0]["Text"].as_str().unwrap().starts_with("app.tombstone."));
+        let pulled = store.pull(2, Some(&serde_json::to_vec(&stale).unwrap())).unwrap();
+        assert_eq!(pulled, Pulled::Merged, "this phone's tombstone and revocation are to be uploaded back");
+        assert_eq!(security_state(&store), before, "nothing revoked, removed or locked down comes back undone");
+        let (_, plain) = store.pending_upload().unwrap().unwrap();
+        assert!(String::from_utf8_lossy(&plain).contains("app.tombstone.grants:[\\\"gone\\\"]"));
     }
 
     /// Adding a record again on purpose clears its tombstone, and that reaches the other phone.

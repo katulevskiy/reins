@@ -218,7 +218,11 @@ fn keyed(
                 "autopilot_settings" => setting_versions(&server.columns, &v),
                 // Without a base nothing tells a tombstone added on one side from one cleared on the other (by adding
                 // the record again): kept. With one, the usual rules, so that adding a record again carries.
-                "meta" if !v.has_base && is_tombstone(&server.columns, v.local.or(v.server)) => {
+                // A grant's id is never given out again: its tombstone is never cleared, by anyone.
+                "meta"
+                    if (!v.has_base || is_grant_tombstone(&server.columns, v.local.or(v.server)))
+                        && is_tombstone(&server.columns, v.local.or(v.server)) =>
+                {
                     v.local.or(v.server).cloned()
                 }
                 _ => plain_versions(name, &server.columns, &v),
@@ -232,6 +236,10 @@ fn keyed(
         columns: server.columns.clone(),
         rows,
     }
+}
+
+fn is_grant_tombstone(columns: &[String], row: Option<&Row>) -> bool {
+    matches!(row.and_then(|r| cell(columns, r, "key")), Some(Cell::Text(k)) if k.starts_with(&format!("{}grants:", super::TOMBSTONE_PREFIX)))
 }
 
 fn is_tombstone(columns: &[String], row: Option<&Row>) -> bool {

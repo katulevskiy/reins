@@ -117,6 +117,10 @@ fn tombstone_triggers() -> String {
                 format!("WHEN old.service NOT IN ({device_secrets})"),
                 format!("WHEN new.service NOT IN ({device_secrets})"),
             )
+        } else if *table == "grants" {
+            // A grant's id is never given out again: nothing clears its tombstone (an import replacing rows has the
+            // triggers off anyway).
+            (String::new(), "WHEN 0".to_owned())
         } else {
             (String::new(), String::new())
         };
@@ -300,9 +304,11 @@ const DATA_FIXUPS: &str = DROP_TOPIC_DESKTOP_GRANTS;
 /// restored from disk (written by this version, an older one, or another process).
 fn prepare(conn: &Connection) -> Result<(), CoreError> {
     conn.execute_batch(SCHEMA)?;
+    // A migration's rewrites are no one's removals: no tombstones (a copy sealed earlier has the triggers already).
+    // What a migration drops cannot come back either way: `DATA_FIXUPS` drops it again from every snapshot read.
+    drop_tombstone_triggers(conn)?;
     migrate(conn)?;
-    // After the migrations: the tables they add need to exist. Migration 11's drops are no one's to merge back
-    // either, but `DATA_FIXUPS` drops those again on every snapshot that still has them.
+    // After the migrations: the tables they add need to exist.
     conn.execute_batch(&tombstone_triggers())?;
     conn.execute_batch("PRAGMA temp_store=MEMORY; PRAGMA secure_delete=ON;")?;
     Ok(())
